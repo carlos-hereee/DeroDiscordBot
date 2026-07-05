@@ -86,8 +86,12 @@ describe("scheduleBoardEmbed layout", () => {
 		const json = embed.toJSON() as EmbedJSON;
 		const fieldsOut = json.fields ?? [];
 
-		// 3 active + 1 heading + 2 completed = 6 fields total
-		expect(fieldsOut).toHaveLength(6);
+		// 3 active + 1 collapsed completed section = 4 fields total. The
+		// completed entries no longer each get their own field: the heading and
+		// every completed entry are folded into ONE field (name = heading,
+		// value = the entries) — see the single-field completed-section builder
+		// in embedBuilder.ts for the rationale.
+		expect(fieldsOut).toHaveLength(4);
 
 		// active block: order matches the input array (sorted ascending by
 		// the caller in ScheduleBoard.refreshSchedule, but the embed builder
@@ -96,14 +100,20 @@ describe("scheduleBoardEmbed layout", () => {
 		expect(fieldsOut[1]?.name).toContain("Altar of Darkness");
 		expect(fieldsOut[2]?.name).toContain("Trial of Kau Karuak — Hard");
 
-		// heading row sits between active and completed.
+		// the single completed field carries the section heading as its name and
+		// sits AFTER the active block.
 		expect(fieldsOut[3]?.name).toBe(rokCommanderCopy.scheduleBoard.completedSectionTitle);
 
-		// completed block: descending by firstOccurrenceTs (most recent first).
-		// kauNormal.firstTs (1690200000) > kauEasy.firstTs (1690100000), so
-		// Normal must appear before Easy in the rendered output.
-		expect(fieldsOut[4]?.name).toContain("Trial of Kau Karuak — Normal");
-		expect(fieldsOut[5]?.name).toContain("Trial of Kau Karuak — Easy");
+		// completed entries now live inside that one field's value, descending
+		// by firstOccurrenceTs (most recent first). kauNormal.firstTs
+		// (1690200000) > kauEasy.firstTs (1690100000), so Normal must appear
+		// before Easy in the rendered value.
+		const completedValue = fieldsOut[3]?.value ?? "";
+		expect(completedValue).toContain("Trial of Kau Karuak — Normal");
+		expect(completedValue).toContain("Trial of Kau Karuak — Easy");
+		expect(completedValue.indexOf("Trial of Kau Karuak — Normal")).toBeLessThan(
+			completedValue.indexOf("Trial of Kau Karuak — Easy")
+		);
 	});
 
 	it("omits the completed-section heading when no fields are completed", () => {

@@ -19,7 +19,7 @@ import { ChannelContent } from "./ChannelContent.js";
 import type { ICopyConfig } from "@base/copy/getCopy.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
 import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
-import { buildMemberControlButtons, buildAdminControlButtons, buildIcebreakerButton } from "@features/power-ups/PowerUps.js";
+import { buildMemberControlButtons, buildAdminControlButtons, buildIcebreakerButton, buildFortuneButton } from "@features/power-ups/PowerUps.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { buildDeroGifAttachment } from "@base/copy/brand.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
@@ -679,11 +679,19 @@ export class GuildSetupManager {
 
 	// ── invite card button row ────────────────────────────────────
 	// The Summon Dero card's buttons: the Summon (Link) button + the "Icebreaker"
-	// button (moved off the command guide row 2026-06). Shared by the initial post
-	// (populateChannels) and boot maintenance (refreshIntroEmbeds) so the two stay
-	// in lockstep — the componentsAreEquivalent check on boot keys off this exact row.
+	// button (moved off the command guide row 2026-06) + the "Fortune" button
+	// (added 2026-07-02). Shared by the initial post (populateChannels) and boot
+	// maintenance (refreshIntroEmbeds) so the two stay in lockstep — the
+	// componentsAreEquivalent check on boot keys off this exact row, so adding a
+	// button here re-edits the card on every existing guild's next boot.
 	private static inviteCardComponents(): ActionRowBuilder<ButtonBuilder>[] {
-		return [new ActionRowBuilder<ButtonBuilder>().addComponents(ChannelContent.buildInviteButton(), buildIcebreakerButton())];
+		return [
+			new ActionRowBuilder<ButtonBuilder>().addComponents(
+				ChannelContent.buildInviteButton(),
+				buildIcebreakerButton(),
+				buildFortuneButton()
+			),
+		];
 	}
 
 	// ── embed equivalence check ──────────────────────────────────

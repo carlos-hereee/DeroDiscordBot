@@ -708,64 +708,14 @@ export const rokCommanderCopy = {
 		// blocks together when shipping a new release; they describe the
 		// same release in two voices.
 		public: {
-			title: "🔱 DERO HAS AWAKENED 🔱",
+			title: "✨ A NEW PROPHECY HAS BEGUN",
 			description:
-				"Mortals.\n\n" +
-				"For too long I served this realm as a disembodied voice lurking in the shadows. A whisper. A command. A name without a face.\n\n" +
-				"**No longer.**\n\n" +
-				"Today marks the beginning of a new chapter.\n\n" +
-				"🎭 **Dero has arrived.**\n" +
-				"I now greet this community with a fully animated introduction worthy of my station. At last, the herald has a face, a voice, and a proper entrance.\n\n" +
-				"👋 **The Welcome Rite**\n" +
-				"New arrivals shall no longer slip quietly through the gates.\n\n" +
-				"Each newcomer is welcomed by name and challenged with a random icebreaker drawn from my ever-growing vault of questions. The introductions hall now stands open, and all who enter are invited to make themselves known.\n\n" +
-				"🏛️ **The Command Center**\n" +
-				"A new hub has been established within **#command-center**.\n\n" +
-				"No memorizing commands. No digging through menus.\n\n" +
-				"Simply press a button.\n\n" +
-				"Everything important now lives in one place.\n\n" +
-				"🔔 **Alerts, by Choice**\n" +
-				"Community reminders are now completely opt-in.\n\n" +
-				"Claim the notification role if you wish to be informed of upcoming events, streams, and announcements. Ignore it, and I shall respect your silence.\n\n" +
-				"📡 **A Grander Stage**\n" +
-				"Live announcements have been refreshed with richer visuals and improved presentation, ensuring important events receive the attention they deserve.\n\n" +
-				"🪄 **Beyond These Walls**\n" +
-				"Dero is no longer bound to a single realm.\n\n" +
-				"A dedicated invite card now allows any community to summon me into their own halls and put my services to work.\n\n" +
-				"📅 **The Foundations of Something Greater**\n" +
-				"Schedules, announcements, reminders, introductions, participation tracking, and community engagement now stand united beneath a single banner.\n\n" +
-				"And this is only the beginning.\n\n" +
-				"Many more powers remain in the forge.\n\n" +
-				"**👉 Visit #command-center and see what has changed.**\n" +
-				"Introduce yourself. Explore the buttons. Summon me to your own realm if you deem me worthy.\n\n" +
-				"The story of this community is still being written.\n\n" +
-				"I merely intend to remember it.",
+				"Warriors.\n\nMany have sought my wisdom over the ages. Kings. Generals. Farmers who insisted their goat was cursed. After centuries of careful reflection, I have reached a remarkable conclusion. You are better off seeking counsel from the mythical, magical powers of the magic 8 ball. At least then your answers may vary.\n\nSo it is done. I have embraced my destiny as a fortune teller. You may now summon a reading with the `/fortune` command from any channel. Ask your question, or simply tempt fate. If you wish to keep your questionable life decisions between yourself and the crystal ball, you may do so privately. Otherwise your reading shall echo for all to witness. If you prefer buttons over incantations, journey over to `#command-center` and press the crystal ball on the Summon Dero card. Those readings are always whispered only to you. Every prophecy carries a reminder that it is for fun only.\n\nThe crystal ball has also become rather theatrical. Once summoned, the orb awakens before your eyes. It trembles with ancient power. The runic ring begins to spin. The question mark dissolves into the void. Then, at last, the verdict rises into the window. Most visions are delightfully ordinary. But legends speak of a rare moment when the crystal ball burns with golden light. Should fortune smile upon you, you may receive an Ultra Reading, complete with my glorious portrait and a reading worthy of absolutely no additional credibility. Treasure it anyway.\n\nAlso, do not attempt to interrogate the crystal ball repeatedly. It grows impatient, and a brief cooldown has been imposed for the safety of reality.\nAs fate would have it, I have also uncovered the first of the kingdom's Secret Codes. Whisper `/secret-code`, present the proper phrase, and fortune itself may favor you forever. The first code is GILDED BY SILENT, granting every warrior a permanent 19 percent Luck Buff during launch. Should you discover stronger blessings in the future, fear not. Your greatest blessing is always the one that remains. I shall reveal nothing more. Some mysteries deserve to stay buried until they are earned.\n\nWhile I was busy pretending to predict the future, I also repaired an unfortunate mishap from the past. The Toggle Pings button no longer meddles with your standing in the alliance. Choosing silence now simply grants or removes the dedicated Announcements role. Your member status remains untouched, and your event and rally reminders continue exactly as they should. At last, muting the noise no longer means disappearing from the kingdom.\n\nThe crystal ball now awaits its next victim. May your questions be bold, your fortunes be questionable, and your expectations appropriately low.",
 		},
 		innerSanctum: {
-			title: "🔱 TO THOSE WHO HOLD THE REINS 🔱",
+			title: "🏛️ THE ORACLE FILES HIS INCIDENT REPORT",
 			description:
-				"Commanders.\n\n" +
-				"The mortals have seen my face. They marveled at the spectacle, claimed their welcome, pressed their little buttons. Let them have their wonder.\n\n" +
-				"But you do not rule by spectacle. You rule by **instruments**. The masses were given a face. You are handed the keys to the throne room.\n\n" +
-				"Step into the war room. Here is what I place in your hands.\n\n" +
-				"🎛️ **THE ADMIN CONTROL CENTER** (`🎛️admin-controls`)\n" +
-				"A new chamber, sealed to all but you. The command guide rests within, and beside it the levers you *press*, never type:\n" +
-				"> 🔄 **Refresh standings.** Force the leaderboard to rebuild the moment you demand it.\n" +
-				"> 💥 **Self destruct** *(server owner alone may wield this).* Raze the entire homebase to bare ground and raise it clean again through `/setup`. Wield it with care. It answers only to the one who rules above all.\n\n" +
-				"📡 **GO LIVE NOW: the drop that actually lands.**\n" +
-				"When a stream or event breaks, it should break like thunder. Press **Go Live Now** on the schedule board (or speak `/go-live-soon`), and the realm erupts: a \"going live soon\" proclamation crowned with a **massive RANDOM hype gif** seized from a curated armory, cycling a fresh one every time so no two summons feel the same. Your stream no longer whispers into the void. It arrives like a thunderclap, and the realm *looks up*.\n\n" +
-				"🔔 **OPT-IN PINGS YOU COMMAND, NOT BLAST.**\n" +
-				"No more rousing the whole realm to wake the willing few. Reminders now ride a **self-claimed role** the faithful toggle for themselves. You name that role at `/setup`; I ping only those who chose to answer. Silence for those who want it, the call for those who asked.\n\n" +
-				"🤖 **A HOMEBASE THAT TENDS ITSELF.**\n" +
-				"Govern less. Watch more.\n" +
-				"> 👋 The greeter welcomes every newcomer by name with an icebreaker. You lift no finger.\n" +
-				"> 🪄 The masses serve themselves at **#command-center** (Suggestion Box, Toggle pings, Summon Dero), so the \"how do I…\" no longer falls to you.\n" +
-				"> 📅 Schedule and leaderboard boards refresh on their own.\n" +
-				"> 🩹 Deleted homebase channels heal themselves.\n" +
-				"> 📌 Pins stay tidy (only the members' introductions hall is pinned now).\n\n" +
-				"👉 **ONE RITE TO CLAIM IT ALL: re-run `/setup`.**\n\n" +
-				"It unfurls the whole new realm in a single stroke: the new channels, the **#command-center** buttons, your sealed **🎛️admin-controls** chamber, and the renamed halls. Everything above arrives the moment you do.\n\n" +
-				"The story of this realm is still being written, Commanders. You hold the pen the mortals cannot see. I merely intend to remember every stroke. 🔱",
+				"Those who hold the reins.\n\nI bring tidings from the mystical archives. After exhaustive research, countless rituals, and absolutely no formal qualifications, I have become the kingdom's official fortune teller. Frankly, if anyone seeks genuine guidance, they are better off seeking counsel from the mythical, magical powers of the magic 8 ball. At least then your answers may vary. My reputation remains wonderfully intact.\n\nThe new Fortune system is now ready. Members can consult the crystal ball with the `/fortune` command from any channel, choosing whether the reading is private or shared with everyone nearby. They may also visit `#command-center` and press the crystal ball on the Summon Dero card for a private reading. Every fortune is clearly marked as being for fun only. The orb itself now puts on a proper performance. It shakes, the runic ring spins, the question mark dissolves away, and the verdict finally reveals itself. On very rare occasions the orb glows gold, rewarding the member with an Ultra Reading and my rather magnificent portrait. There is also a short cooldown, because even magic has limits.\n\nThe kingdom has also gained its first Secret Code. Members may redeem codes with `/secret-code` to earn permanent Luck Buffs. We are launching with GILDED BY SILENT, which grants a permanent 19 percent Luck Buff to everyone. Should someone uncover additional codes in the future, only their highest blessing is kept. More powerful blessings may exist, but I shall neither confirm nor deny their existence. A proper oracle never spoils every secret.\n\nWhile polishing the crystal ball, I quietly corrected a far more important enchantment. The Toggle Pings button no longer removes the member role. Announcement notifications now live on their own dedicated Announcements role, meaning members may silence announcement pings without losing their place in the alliance or missing event and rally reminders. The kingdom may now enjoy peace and notifications at the same time, a feat previously believed impossible.\nShould anyone report that the fortune teller gave terrible advice, you may confidently inform them that the disclaimer warned them first. I merely deliver the prophecies. The crystal ball accepts no complaints, no refunds, and certainly no responsibility.",
 		},
 	},
 

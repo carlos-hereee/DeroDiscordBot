@@ -53,7 +53,7 @@ export const getOutageNoticeState = (): { noticeFiredAt: number | null } => ({ n
 
 const outageEmbed = (failureDurationMinutes: number): EmbedBuilder =>
 	new EmbedBuilder()
-		.setTitle("⚠️ ROK Commander: platform unreachable")
+		.setTitle("⚠️ Dero Discord Bot: platform unreachable")
 		.setDescription(
 			[
 				`The bot has been unable to reach nexious-server for **${failureDurationMinutes} minutes**.`,
@@ -73,7 +73,7 @@ const outageEmbed = (failureDurationMinutes: number): EmbedBuilder =>
 
 const recoveryEmbed = (outageDurationMinutes: number): EmbedBuilder =>
 	new EmbedBuilder()
-		.setTitle("✅ ROK Commander: platform reachable again")
+		.setTitle("✅ Dero Discord Bot: platform reachable again")
 		.setDescription(
 			[
 				`nexious-server is responding to the bot again after a **${outageDurationMinutes}-minute** outage.`,

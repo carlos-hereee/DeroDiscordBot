@@ -42,7 +42,7 @@ const dryRun = process.env.DRY_RUN === "1" || process.env.DRY_RUN === "true";
 const limitGuild = (process.env.LIMIT_GUILD ?? "").trim();
 
 if (!sourceUri) {
-	console.error("MONGOOSE_URI not set. Check Rok-CommanderBot/.env");
+	console.error("MONGOOSE_URI not set. Check DeroDiscordBot/.env");
 	process.exit(1);
 }
 

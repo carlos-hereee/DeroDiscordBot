@@ -38,6 +38,10 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 		adminRoleId: null,
 		memberRoleId: null,
 		setupComplete: true,
+		// auto-heal is the realistic default for these repair tests: the
+		// watcher bails at the autoHealEnabled gate before any repair when this
+		// is falsy, so a guild that expects self-heal must have it on.
+		autoHealEnabled: true,
 		...overrides,
 	};
 }
@@ -98,6 +102,9 @@ function makeGuild(options: {
 		id: "guild-1",
 		ownerId: "owner-1",
 		roles: { everyone: { id: "everyone" } },
+		// buildSingleChannel (reached on repair) reads guild.client.user.id via
+		// botSelfOverwrite; without it the repair throws before it can create.
+		client: { user: { id: "bot-1" } },
 		channels: {
 			fetch: vi.fn(async (id: string) => {
 				if (id in map) {
@@ -123,6 +130,11 @@ function makeDeletedChannel(id: string, guild: Guild, name = "deleted"): unknown
 function makeCategory(): CategoryChannel {
 	const cat = Object.create(CategoryChannel.prototype) as CategoryChannel;
 	Object.assign(cat, { id: "cat-1", type: ChannelType.GuildCategory });
+	// children is a getter on CategoryChannel.prototype (a GuildChannelManager),
+	// so it must be shadowed with defineProperty rather than Object.assign.
+	// repairOneChannel's adopt-before-build guard scans children.cache; an empty
+	// cache (find → undefined) forces the build-fresh path the repair tests want.
+	Object.defineProperty(cat, "children", { value: { cache: { find: () => undefined } }, configurable: true });
 	return cat;
 }
 
@@ -235,10 +247,12 @@ describe("ChannelDeleteWatcher", () => {
 				announcementsChannelId: expect.stringContaining("intro-"),
 			}),
 		});
-		// one repair notice landed in the inner sanctum.
+		// one repair notice landed in the inner sanctum. postRepairNotices now
+		// sends a single channelsRestoredSummary embed (summaryTitle), not the
+		// old per-channel channelRepairNotice.title.
 		expect(adminChannel.send).toHaveBeenCalledOnce();
 		const sent = adminChannel.send.mock.calls[0][0] as { embeds: Array<{ data: { title: string } }> };
-		expect(sent.embeds[0].data.title).toBe(rokCommanderCopy.channelContent.channelRepairNotice.title);
+		expect(sent.embeds[0].data.title).toBe(rokCommanderCopy.channelContent.channelRepairNotice.summaryTitle);
 	});
 
 	it("throttles a second repair of the same channel within the 60s cooldown", async () => {

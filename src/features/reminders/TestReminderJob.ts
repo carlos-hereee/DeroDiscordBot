@@ -3,6 +3,7 @@ import { IGameEvent } from "@features/events/event.types.js";
 import { reminderStore } from "@db/stores/reminderStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { testReminderEmbed } from "@utils/embedBuilder.js";
+import { buildAudienceMention } from "@utils/mentions.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { getUpcomingOccurrences } from "@features/events/occurrenceCalculator.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
@@ -81,17 +82,19 @@ export async function fireTestReminder(client: Client, event: IGameEvent): Promi
 	// so it cannot be accidentally removed by a caller.
 	const embed = testReminderEmbed(event, nextOccurrence, config);
 
-	// ④ post the message. the real ReminderJob pings the per-event mention
-	// override first, then the guild member role, then @here. We mirror that
-	// precedence here so the test fire preview shows exactly which role the
-	// real fire would have pinged — a streamer testing /configure-stream-schedule
-	// needs to see the stream-notifications role in the preview, not the
-	// alliance member role. allowedMentions stays { parse: [] } so the role
-	// renders as a styled mention without anyone actually being notified.
+	// ④ post the message. Mirror the real ReminderJob's audience EXACTLY (same
+	// buildAudienceMention helper) so the test fire preview shows precisely which
+	// role(s) the real fire would ping: a per-event override, else the guild member
+	// role PLUS the opt-in "🔔 Announcements" role, else @here. We take only the
+	// helper's `content`; allowedMentions stays fully suppressed below so the
+	// role(s) render as a styled mention without anyone actually being notified.
 	// This matches the spec invariant: the test fire must never ping the whole
 	// channel or any role every time the admin clicks the button.
-	const previewRoleId = event.mentionRoleId ?? config.memberRoleId;
-	const mentionPreview = previewRoleId ? `<@&${previewRoleId}>` : "@here";
+	const { content: mentionPreview } = buildAudienceMention({
+		overrideRoleId: event.mentionRoleId,
+		memberRoleId: config.memberRoleId,
+		notificationsRoleId: config.notificationsRoleId,
+	});
 	let message;
 	try {
 		message = await channel.send({

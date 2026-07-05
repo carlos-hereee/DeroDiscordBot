@@ -1,4 +1,4 @@
-# ROK Commander Bot
+# Dero Discord Bot
 
 ## Owner
 qwerty (97hernandez.c@gmail.com)

@@ -514,10 +514,10 @@ export const generalEventsCopy: IPluginCopy = {
 		postFailed: "Could not post the announcement. Check bot permissions on the announcements channel.",
 	},
 
-	// featureAnnouncement: rok-commander's copy is kingdom-voice. This
-	// general-events equivalent uses plain English for non-ROK communities.
-	// When the next bot release ships, BOTH packs need their copy updated in
-	// lockstep; both the public and inner-sanctum blocks get translated per voice.
+	// featureAnnouncement: as of 2026-07-04 (owner decision) BOTH packs use the
+	// SAME Dero kingdom-voice announcement, so this general-events block mirrors
+	// rok-commander verbatim rather than translating to plain English. When the
+	// next release ships, keep both packs' public + inner-sanctum blocks identical.
 	featureAnnouncement: {
 		// ── launch release ── Dero mascot / command-center hub / invite card / admin controls ──
 		// The launch release in plain English. Public block is the
@@ -526,37 +526,14 @@ export const generalEventsCopy: IPluginCopy = {
 		// self-maintaining homebase, re-run /setup). Update BOTH blocks
 		// together with the rok-commander pack when shipping a new release.
 		public: {
-			title: "📣 A big upgrade for your community",
+			title: "✨ A NEW PROPHECY HAS BEGUN",
 			description:
-				"A lot changed today. Here's what's new.\n\n" +
-				"🎭 **Meet your host.**\n" +
-				"The bot now has a face: a fully animated introduction instead of a faceless voice.\n\n" +
-				"👋 **A real welcome.**\n" +
-				"Every new member is greeted by name and given a random icebreaker to break the ice, and the introductions channel is open for them to answer.\n\n" +
-				"🏛️ **The Command Center.**\n" +
-				"A new hub lives in **#command-center**. No commands to memorize and no menus to dig through, just press a button. Everything important is in one place.\n\n" +
-				"🔔 **Reminders, opt-in.**\n" +
-				"Event and stream reminders are now completely opt-in. Claim the notification role if you want to hear about upcoming events, streams, and announcements, or skip it for silence.\n\n" +
-				"📡 **A bigger stage.**\n" +
-				"Live announcements have been refreshed with richer visuals so the moments that matter actually get noticed.\n\n" +
-				"🪄 **Bring the bot anywhere.**\n" +
-				"A dedicated invite card lets any community add the bot to their own server in one click.\n\n" +
-				"📅 **One foundation.**\n" +
-				"Schedules, announcements, reminders, introductions, participation tracking, and community engagement now live under a single roof. This is only the start.\n\n" +
-				"**👉 Visit #command-center to see what changed.** Introduce yourself, explore the buttons, and add the bot to your own server if you like what you see.",
+				"Warriors.\n\nMany have sought my wisdom over the ages. Kings. Generals. Farmers who insisted their goat was cursed. After centuries of careful reflection, I have reached a remarkable conclusion. You are better off seeking counsel from the mythical, magical powers of the magic 8 ball. At least then your answers may vary.\n\nSo it is done. I have embraced my destiny as a fortune teller. You may now summon a reading with the `/fortune` command from any channel. Ask your question, or simply tempt fate. If you wish to keep your questionable life decisions between yourself and the crystal ball, you may do so privately. Otherwise your reading shall echo for all to witness. If you prefer buttons over incantations, journey over to `#command-center` and press the crystal ball on the Summon Dero card. Those readings are always whispered only to you. Every prophecy carries a reminder that it is for fun only.\n\nThe crystal ball has also become rather theatrical. Once summoned, the orb awakens before your eyes. It trembles with ancient power. The runic ring begins to spin. The question mark dissolves into the void. Then, at last, the verdict rises into the window. Most visions are delightfully ordinary. But legends speak of a rare moment when the crystal ball burns with golden light. Should fortune smile upon you, you may receive an Ultra Reading, complete with my glorious portrait and a reading worthy of absolutely no additional credibility. Treasure it anyway.\n\nAlso, do not attempt to interrogate the crystal ball repeatedly. It grows impatient, and a brief cooldown has been imposed for the safety of reality.\nAs fate would have it, I have also uncovered the first of the kingdom's Secret Codes. Whisper `/secret-code`, present the proper phrase, and fortune itself may favor you forever. The first code is GILDED BY SILENT, granting every warrior a permanent 19 percent Luck Buff during launch. Should you discover stronger blessings in the future, fear not. Your greatest blessing is always the one that remains. I shall reveal nothing more. Some mysteries deserve to stay buried until they are earned.\n\nWhile I was busy pretending to predict the future, I also repaired an unfortunate mishap from the past. The Toggle Pings button no longer meddles with your standing in the alliance. Choosing silence now simply grants or removes the dedicated Announcements role. Your member status remains untouched, and your event and rally reminders continue exactly as they should. At last, muting the noise no longer means disappearing from the kingdom.\n\nThe crystal ball now awaits its next victim. May your questions be bold, your fortunes be questionable, and your expectations appropriately low.",
 		},
 		innerSanctum: {
-			title: "🛠️ Admin update",
+			title: "🏛️ THE ORACLE FILES HIS INCIDENT REPORT",
 			description:
-				"Here's what's new for admins.\n\n" +
-				"**Admin control center.** A new admin-only channel (`🎛️admin-controls`) holds the command guide plus buttons you press instead of type:\n" +
-				"• **Refresh standings** rebuilds the leaderboard on demand.\n" +
-				"• **Self destruct** (server owner only) tears the whole homebase down and rebuilds it clean via `/setup`. Use with care.\n\n" +
-				"**Go Live Now.** The Go Live Now button on the schedule board (or `/go-live-soon`) now fires a going-live announcement with a large random hype gif, cycling a fresh one every time, so a stream or event drop actually lands.\n\n" +
-				"**Opt-in pings you control.** Reminders now use a self-claimed role members toggle themselves. You set the member role at `/setup`, and the bot only pings members who opted in. No more blasting everyone.\n\n" +
-				"**A homebase that maintains itself.** The greeter welcomes and icebreaks every new member, schedule and leaderboard boards refresh on their own, deleted homebase channels heal themselves, and pins stay tidy (only the member-writable introductions channel is pinned now).\n\n" +
-				"**One action to claim it all: re-run `/setup`.** It rolls out the new channels, the **#command-center** buttons, your sealed **🎛️admin-controls** channel, and the renamed channels in a single step.\n\n" +
-				"If this bot has helped your community, consider sharing it with another server admin at [Company Uno](https://companyuno.com).",
+				"Those who hold the reins.\n\nI bring tidings from the mystical archives. After exhaustive research, countless rituals, and absolutely no formal qualifications, I have become the kingdom's official fortune teller. Frankly, if anyone seeks genuine guidance, they are better off seeking counsel from the mythical, magical powers of the magic 8 ball. At least then your answers may vary. My reputation remains wonderfully intact.\n\nThe new Fortune system is now ready. Members can consult the crystal ball with the `/fortune` command from any channel, choosing whether the reading is private or shared with everyone nearby. They may also visit `#command-center` and press the crystal ball on the Summon Dero card for a private reading. Every fortune is clearly marked as being for fun only. The orb itself now puts on a proper performance. It shakes, the runic ring spins, the question mark dissolves away, and the verdict finally reveals itself. On very rare occasions the orb glows gold, rewarding the member with an Ultra Reading and my rather magnificent portrait. There is also a short cooldown, because even magic has limits.\n\nThe kingdom has also gained its first Secret Code. Members may redeem codes with `/secret-code` to earn permanent Luck Buffs. We are launching with GILDED BY SILENT, which grants a permanent 19 percent Luck Buff to everyone. Should someone uncover additional codes in the future, only their highest blessing is kept. More powerful blessings may exist, but I shall neither confirm nor deny their existence. A proper oracle never spoils every secret.\n\nWhile polishing the crystal ball, I quietly corrected a far more important enchantment. The Toggle Pings button no longer removes the member role. Announcement notifications now live on their own dedicated Announcements role, meaning members may silence announcement pings without losing their place in the alliance or missing event and rally reminders. The kingdom may now enjoy peace and notifications at the same time, a feat previously believed impossible.\nShould anyone report that the fortune teller gave terrible advice, you may confidently inform them that the disclaimer warned them first. I merely deliver the prophecies. The crystal ball accepts no complaints, no refunds, and certainly no responsibility.",
 		},
 	},
 

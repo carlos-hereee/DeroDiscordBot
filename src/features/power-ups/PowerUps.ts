@@ -1,4 +1,4 @@
-import { ButtonBuilder, ButtonStyle, Client, Guild, MessageFlags, TextChannel, type ButtonInteraction } from "discord.js";
+import { ButtonBuilder, ButtonStyle, Client, Guild, MessageFlags, Role, TextChannel, type ButtonInteraction } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
@@ -6,6 +6,7 @@ import { errorEmbed } from "@utils/embedBuilder.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { refreshLeaderboard } from "@features/leaderboard/LeaderboardBoard.js";
 import { welcomeNewMember } from "@features/greeter/welcomeNewMember.js";
+import { respondWithFortune } from "@features/fortune/respondWithFortune.js";
 
 // ── Channel controls (v1.6 item 36; folded into intro guides 2026-06) ──────
 // The bot's common channel actions are one-click buttons in Discord, no slash
@@ -37,6 +38,9 @@ const POWERUP_PREFIX = "powerup";
 const POWERUP_ACTIONS = {
 	"member:subscribe": { adminOnly: false },
 	"member:greet": { adminOnly: false },
+	// "Fortune" (member:fortune) — any member can pull their own fortune reading,
+	// so it is NOT adminOnly.
+	"member:fortune": { adminOnly: false },
 	"admin:refresh": { adminOnly: true },
 } as const satisfies Record<string, { adminOnly: boolean }>;
 
@@ -59,6 +63,14 @@ export function buildMemberControlButtons(): ButtonBuilder[] {
 // card, not the command guide row.
 export function buildIcebreakerButton(): ButtonBuilder {
 	return new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:greet`).setLabel("Icebreaker").setEmoji("🎲").setStyle(ButtonStyle.Secondary);
+}
+
+// "Fortune" — pulls the clicking member a quick personal fortune reading
+// (ephemeral, so it never clutters the read-only #command-center guide).
+// Member-usable (member:fortune). Rides the Summon Dero invite card next to
+// Icebreaker.
+export function buildFortuneButton(): ButtonBuilder {
+	return new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:fortune`).setLabel("Fortune").setEmoji("🔮").setStyle(ButtonStyle.Secondary);
 }
 
 // admin-controls guide row: refresh the leaderboard standings. Owner/admin gated
@@ -107,6 +119,9 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 		case "member:greet":
 			await runFireGreeting(interaction);
 			return;
+		case "member:fortune":
+			await runFortune(interaction);
+			return;
 		case "member:subscribe":
 			await runToggleNotificationRole(interaction, guildId);
 			return;
@@ -151,6 +166,58 @@ async function runFireGreeting(interaction: ButtonInteraction): Promise<void> {
 	}
 }
 
+async function runFortune(interaction: ButtonInteraction): Promise<void> {
+	// A quick personal reading, always ephemeral so it never clutters the
+	// read-only #command-center guide. A button cannot take text input without a
+	// modal, so the button gives a no-question reading; /fortune is the path for a
+	// custom question. All reading logic (kill-switch, cooldown, roll, embed) is
+	// shared with the slash command via respondWithFortune, and the cooldown Map
+	// is shared too, so alternating button and command cannot bypass the gate.
+	await respondWithFortune(interaction, { isPrivate: true });
+}
+
+const NOTIFICATIONS_ROLE_NAME = "🔔 Announcements";
+
+// Dedupe concurrent first-use creates: without this, two members tapping the
+// brand-new guild's Toggle pings in the same tick would each create a duplicate
+// Announcements role, since the read-then-create below is not atomic. Cache the
+// in-flight resolve per guild so a second caller awaits the first. Mirrors
+// GuildSetupManager.inflightAutoSetups; single-process only.
+const inflightNotificationsRoleResolves = new Map<string, Promise<Role>>();
+
+// Resolve the guild's dedicated announcement-ping role, creating it on first use
+// and recreating it if an admin deleted the stored one. The id is persisted on
+// config.notificationsRoleId. Kept separate from memberRoleId on purpose: that is
+// the verified-member role + the default reminder audience, so toggling it here
+// would strip a member's standing instead of just their pings.
+async function resolveOrCreateNotificationsRole(guild: Guild, guildId: string, storedRoleId: string | null): Promise<Role> {
+	const inflight = inflightNotificationsRoleResolves.get(guildId);
+	if (inflight) return inflight;
+
+	const work = (async (): Promise<Role> => {
+		// Reuse the stored role when it still exists; an admin deleting it falls
+		// through to a fresh create so the button always works.
+		if (storedRoleId) {
+			const existing = guild.roles.cache.get(storedRoleId) ?? (await guild.roles.fetch(storedRoleId).catch(() => null));
+			if (existing) return existing;
+		}
+		const created = await guild.roles.create({
+			name: NOTIFICATIONS_ROLE_NAME,
+			mentionable: true,
+			reason: "Announcement ping opt-in role, self-assigned via the Toggle pings power-up",
+		});
+		await guildConfigStore.update(guildId, { notificationsRoleId: created.id });
+		return created;
+	})();
+
+	inflightNotificationsRoleResolves.set(guildId, work);
+	try {
+		return await work;
+	} finally {
+		inflightNotificationsRoleResolves.delete(guildId);
+	}
+}
+
 async function runToggleNotificationRole(interaction: ButtonInteraction, guildId: string): Promise<void> {
 	if (!interaction.guild) {
 		await interaction.reply({ embeds: [errorEmbed("This only works inside a server.")], flags: MessageFlags.Ephemeral });
@@ -162,29 +229,25 @@ async function runToggleNotificationRole(interaction: ButtonInteraction, guildId
 		return;
 	}
 
-	// The bot only ever pings the member role the admin chose at /setup
-	// (config.memberRoleId — see fireReminder). So "announcement pings" is just
-	// membership in THAT role; there is no separate ping role to create. Note
-	// this means opting out removes the member role outright (its job here is to
-	// be the pinged role).
-	const memberRoleId = config.memberRoleId;
-	if (!memberRoleId) {
+	// Resolve (or lazily create) the DEDICATED announcement-ping role. This is
+	// deliberately NOT config.memberRoleId: that is the verified-member role from
+	// /setup and the default reminder audience, so toggling it here would strip a
+	// member's standing instead of just their pings. The opt-in role is its own
+	// mentionable role, created on first use, recreated if an admin deletes it,
+	// and its id is persisted on config.notificationsRoleId.
+	let role: Role;
+	try {
+		role = await resolveOrCreateNotificationsRole(interaction.guild, guildId, config.notificationsRoleId ?? null);
+	} catch (err) {
+		console.error(`[powerup] could not resolve or create notifications role in guild ${guildId}`, err);
 		await interaction.reply({
-			embeds: [errorEmbed("No member role is configured yet. An admin needs to run `/setup` first.")],
+			embeds: [errorEmbed("Could not set up the announcements role. The bot may be missing Manage Roles, or its own role is too low to create one.")],
 			flags: MessageFlags.Ephemeral,
 		});
 		return;
 	}
 
 	try {
-		const role = interaction.guild.roles.cache.get(memberRoleId) ?? (await interaction.guild.roles.fetch(memberRoleId).catch(() => null));
-		if (!role) {
-			await interaction.reply({
-				embeds: [errorEmbed("The configured member role no longer exists. An admin needs to re-run `/setup`.")],
-				flags: MessageFlags.Ephemeral,
-			});
-			return;
-		}
 
 		// Resolve the clicking member cache-first, fetch fallback (the cache can be
 		// cold on a fresh restart).
@@ -205,11 +268,11 @@ async function runToggleNotificationRole(interaction: ButtonInteraction, guildId
 			await interaction.reply({ content: "🔔 You're on the announcement ping list. Tap again to opt out.", flags: MessageFlags.Ephemeral });
 		}
 	} catch (err) {
-		console.error(`[powerup] toggle member role failed in guild ${guildId}`, err);
+		console.error(`[powerup] toggle notifications role failed in guild ${guildId}`, err);
 		await interaction.reply({
 			embeds: [
 				errorEmbed(
-					"Could not update your notifications. The bot may be missing Manage Roles, or the member role sits above the bot's own role. Try again in a moment."
+					"Could not update your notifications. The bot may be missing Manage Roles, or the announcements role sits above the bot's own role. Try again in a moment."
 				),
 			],
 			flags: MessageFlags.Ephemeral,

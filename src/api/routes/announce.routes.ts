@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { Client, EmbedBuilder, TextChannel } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { buildAudienceMention } from "@utils/mentions.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { requireGuildId } from "../middleware/requireGuildId.js";
 
@@ -102,12 +103,18 @@ export function createAnnounceRouter(client: Client): Router {
 				return;
 			}
 
-			// Optional override role. Falls back to memberRoleId, then @here —
-			// same precedence as the slash command.
-			const mentionRoleId =
-				typeof body.mentionRoleId === "string" && body.mentionRoleId
-					? body.mentionRoleId
-					: (config.memberRoleId ?? null);
+			// Resolve the audience. An explicit override (body.mentionRoleId) targets
+			// exactly that role; otherwise the default is the member role PLUS the
+			// opt-in "🔔 Announcements" role (config.notificationsRoleId), so opting in
+			// via Toggle pings adds you without shrinking reach. The helper returns the
+			// content string and allowedMentions together so a malicious note can never
+			// smuggle an @everyone past the whitelist.
+			const overrideRoleId = typeof body.mentionRoleId === "string" && body.mentionRoleId ? body.mentionRoleId : null;
+			const { content: mention, allowedMentions } = buildAudienceMention({
+				overrideRoleId,
+				memberRoleId: config.memberRoleId,
+				notificationsRoleId: config.notificationsRoleId,
+			});
 
 			// Sanitize the note. The slash command caps at 500 chars via Discord's
 			// option validation; we replicate that here since HTTP callers have
@@ -147,16 +154,13 @@ export function createAnnounceRouter(client: Client): Router {
 				.setColor(rokCommanderCopy.COLORS.ANNOUNCEMENTS)
 				.setFooter({ text: rokCommanderCopy.FOOTER });
 
-			const mention = mentionRoleId ? `<@&${mentionRoleId}>` : "@here";
-
-			// ④ Send. allowedMentions discipline mirrors the slash command —
-			//    only whitelist the role we explicitly named in `content`, never
-			//    a wildcard parse:["users","roles"] that would let a malicious
-			//    note string smuggle through @everyone.
+			// ④ Send. allowedMentions (from buildAudienceMention) whitelists exactly
+			//    the roles named in `content`, never a wildcard that would let a
+			//    malicious note string smuggle through @everyone.
 			const message = await channel.send({
 				content: mention,
 				embeds: [embed],
-				allowedMentions: mentionRoleId ? { roles: [mentionRoleId] } : { parse: ["everyone"] },
+				allowedMentions,
 			});
 
 			// ⑤ Record the cooldown only AFTER a successful post. Failed posts
@@ -238,10 +242,12 @@ export function createStandaloneGoLiveRouter(client: Client): Router {
 				return;
 			}
 
-			const mentionRoleId =
-				typeof body.mentionRoleId === "string" && body.mentionRoleId
-					? body.mentionRoleId
-					: (config.memberRoleId ?? null);
+			const overrideRoleId = typeof body.mentionRoleId === "string" && body.mentionRoleId ? body.mentionRoleId : null;
+			const { content: mention, allowedMentions } = buildAudienceMention({
+				overrideRoleId,
+				memberRoleId: config.memberRoleId,
+				notificationsRoleId: config.notificationsRoleId,
+			});
 
 			const noteRaw = typeof body.note === "string" ? body.note.trim() : "";
 			const note = noteRaw && noteRaw.length > 0 ? noteRaw.slice(0, 500) : null;
@@ -275,12 +281,10 @@ export function createStandaloneGoLiveRouter(client: Client): Router {
 				.setColor(rokCommanderCopy.COLORS.ANNOUNCEMENTS)
 				.setFooter({ text: rokCommanderCopy.FOOTER });
 
-			const mention = mentionRoleId ? `<@&${mentionRoleId}>` : "@here";
-
 			const message = await channel.send({
 				content: mention,
 				embeds: [embed],
-				allowedMentions: mentionRoleId ? { roles: [mentionRoleId] } : { parse: ["everyone"] },
+				allowedMentions,
 			});
 
 			lastFiredAt.set(guildId, now);

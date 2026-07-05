@@ -3,6 +3,7 @@ import { IGameEvent } from "@features/events/event.types.js";
 import { reminderStore } from "@db/stores/reminderStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { reminderEmbed } from "@utils/embedBuilder.js";
+import { buildAudienceMention } from "@utils/mentions.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { refreshNextUp } from "@features/schedule/NextUpBoard.js";
 import { refreshLeaderboard } from "@features/leaderboard/LeaderboardBoard.js";
@@ -32,25 +33,28 @@ export async function fireReminder(client: Client, event: IGameEvent, occurrence
 	const img = event.imageUrl ?? config.defaultEventImageUrl ?? null;
 	const embed = reminderEmbed(event, occurrence, offsetMinutes, img, config);
 
-	// ③ compose the mention. precedence is event override → guild member
-	// role → @here. The per-event override (event.mentionRoleId) lets a
-	// streamer schedule ping a "stream notifications" role while a sibling
-	// ROK KvK event in the same guild still pings the alliance member role.
-	// Falling back to memberRoleId preserves legacy behavior for every
-	// event created before mentionRoleId existed (the field loads as null).
-	// Final @here fallback only kicks in for legacy guild configs that
-	// predate /setup requiring a member role.
-	const roleId = event.mentionRoleId ?? config.memberRoleId;
-	const mention = roleId ? `<@&${roleId}>` : "@here";
+	// ③ compose the mention via the shared audience helper. A per-event override
+	// (event.mentionRoleId) targets exactly that role, a deliberate narrow
+	// audience (e.g. a streamer's "stream notifications" role), and is left as-is.
+	// With no override the default audience is the guild member role PLUS the
+	// opt-in "🔔 Announcements" role (config.notificationsRoleId), so a member who
+	// tapped Toggle pings is added to event pings without anyone losing the
+	// whole-member reach. Legacy guilds with neither role fall back to @here. The
+	// helper returns content + allowedMentions together so the role we name can
+	// never diverge from the role we whitelist.
+	const { content: mention, allowedMentions } = buildAudienceMention({
+		overrideRoleId: event.mentionRoleId,
+		memberRoleId: config.memberRoleId,
+		notificationsRoleId: config.notificationsRoleId,
+	});
 
-	// ④ post the message. allowedMentions is set explicitly so a malformed
-	// event description cannot accidentally ping @everyone. Mirrors the
-	// roleId resolution above so the role we name in `content` is the same
-	// role we whitelist in allowedMentions.
+	// ④ post the message. allowedMentions (from the helper) whitelists exactly the
+	// roles named in `content`, so a malformed event description cannot smuggle an
+	// @everyone ping.
 	const message = await channel.send({
 		content: mention,
 		embeds: [embed],
-		allowedMentions: roleId ? { roles: [roleId] } : { parse: ["everyone"] },
+		allowedMentions,
 	});
 
 	// ⑤ add the acknowledgement reaction

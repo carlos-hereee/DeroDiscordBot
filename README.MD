@@ -1,4 +1,4 @@
-# 🔱 ROK Commander Bot
+# 🔱 Dero Discord Bot
 
 A Discord bot built to help Rise of Kingdoms alliances manage KvK season events,
 track player participation, and rank members for MGE priority access — all through
@@ -10,7 +10,7 @@ an automated reminder system and activity tracker.
 
 ## Overview
 
-ROK Commander Bot automates the repetitive but critical work of managing a KvK
+Dero Discord Bot automates the repetitive but critical work of managing a KvK
 alliance in Rise of Kingdoms:
 
 - **Event reminders** — automatically posts reminders 15 and 30 minutes before

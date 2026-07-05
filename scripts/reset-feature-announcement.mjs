@@ -25,7 +25,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const uri = process.env.MONGOOSE_URI;
 if (!uri) {
-	console.error("MONGOOSE_URI not set. Check Rok-CommanderBot/.env");
+	console.error("MONGOOSE_URI not set. Check DeroDiscordBot/.env");
 	process.exit(1);
 }
 

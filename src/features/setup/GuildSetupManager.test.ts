@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TextChannel, DiscordAPIError } from "discord.js";
 import type { Client, Guild } from "discord.js";
 
@@ -16,6 +16,7 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({
 }));
 
 import { GuildSetupManager } from "./GuildSetupManager.js";
+import { ChannelContent } from "./ChannelContent.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 
@@ -38,6 +39,11 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 		scheduleChannelId: "ch-schedule",
 		announcementsChannelId: "ch-announcements",
 		adminChannelId: "ch-admin",
+		// The 7th/8th homebase channels. repairMissingChannels treats a
+		// null/undefined stored id as "also missing, rebuild too", so these must
+		// be present or every repair sweep rebuilds them alongside the real target.
+		nextDecreeChannelId: "ch-nextdecree",
+		adminCommandsChannelId: "ch-admincommands",
 		scheduleMessageId: "msg-schedule",
 		adminRoleId: null,
 		memberRoleId: null,
@@ -97,7 +103,22 @@ function makeGuild(options: {
 	createHandler?: (opts: unknown) => Promise<unknown>;
 }): Guild {
 	const categoryId = options.categoryId;
-	const map = options.channelFetchMap ?? {};
+	// repairOneChannel's adopt-before-build guard scans category.children.cache;
+	// augment the caller's bare { id } fixture with an empty cache (find →
+	// undefined) so the repair path builds fresh. null (category-gone) and Error
+	// (fetch throws) pass through untouched.
+	const categoryObject =
+		categoryId && typeof categoryId === "object" && !(categoryId instanceof Error)
+			? { children: { cache: { find: () => undefined } }, ...(categoryId as object) }
+			: categoryId;
+	// The 7th/8th homebase channels default to present so tests that only wire
+	// up the original six do not trip repairMissingChannels' "stored id →
+	// rebuild too" branch for them. A test can still override either id.
+	const map: Record<string, unknown> = {
+		"ch-nextdecree": { id: "ch-nextdecree" },
+		"ch-admincommands": { id: "ch-admincommands" },
+		...(options.channelFetchMap ?? {}),
+	};
 	const create =
 		options.createHandler ??
 		vi.fn(async (opts: { name: string }) => {
@@ -115,11 +136,14 @@ function makeGuild(options: {
 		id: "guild-1",
 		ownerId: "owner-1",
 		roles: { everyone: { id: "everyone" } },
+		// buildSingleChannel (reached on repair) reads guild.client.user.id via
+		// botSelfOverwrite; without it the repair throws before it can create.
+		client: { user: { id: "bot-1" } },
 		channels: {
 			fetch: vi.fn(async (id: string) => {
 				if (id === "cat-1" && categoryId !== undefined) {
 					if (categoryId instanceof Error) throw categoryId;
-					return categoryId as unknown;
+					return categoryObject as unknown;
 				}
 				if (id in map) {
 					const v = map[id];
@@ -141,6 +165,14 @@ describe("GuildSetupManager.ensureHomebase", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		autoSetupSpy = vi.spyOn(GuildSetupManager, "autoSetup").mockResolvedValue(undefined);
+	});
+
+	// vi.clearAllMocks() resets call history but does NOT un-spy, so without
+	// this the autoSetup spy would leak into the "autoSetup persistence" block
+	// below and make those tests run against the mock (resolving undefined)
+	// instead of the real method.
+	afterEach(() => {
+		autoSetupSpy.mockRestore();
 	});
 
 	it("builds fresh when no GuildConfig exists", async () => {
@@ -334,10 +366,12 @@ describe("GuildSetupManager.ensureHomebase", () => {
 				announcementsChannelId: expect.stringContaining("intro-"),
 			}),
 		});
-		// notice embed landed in inner sanctum.
+		// notice embed landed in inner sanctum. postRepairNotices now sends a
+		// single channelsRestoredSummary embed (summaryTitle), not the old
+		// per-channel channelRepairNotice.title.
 		expect(adminChannel.send).toHaveBeenCalledOnce();
 		const sent = adminChannel.send.mock.calls[0][0] as { embeds: Array<{ data: { title: string } }> };
-		expect(sent.embeds[0].data.title).toBe(rokCommanderCopy.channelContent.channelRepairNotice.title);
+		expect(sent.embeds[0].data.title).toBe(rokCommanderCopy.channelContent.channelRepairNotice.summaryTitle);
 	});
 
 	it("repairs the admin channel itself and posts the notice into the rebuilt admin channel", async () => {
@@ -425,7 +459,9 @@ describe("GuildSetupManager.ensureHomebase", () => {
 			fetchChannel: async (id) => (id === "ch-admin" ? adminChannel : null),
 		});
 
-		const fakeCategory = { id: "cat-1" } as unknown as import("discord.js").CategoryChannel;
+		// children.cache is scanned by repairOneChannel's adopt guard; empty
+		// cache forces the build-fresh path this direct repair call exercises.
+		const fakeCategory = { id: "cat-1", children: { cache: { find: () => undefined } } } as unknown as import("discord.js").CategoryChannel;
 		const repaired = await GuildSetupManager.repairMissingChannels(client, guild, fakeCategory);
 
 		expect(repaired).toEqual([rokCommanderCopy.setup.channels.schedule]);
@@ -472,8 +508,14 @@ describe("GuildSetupManager.ensureHomebase", () => {
 
 		expect(result.action).toBe("repaired");
 		expect(result.repairedChannels).toEqual([rokCommanderCopy.setup.channels.intro, rokCommanderCopy.setup.channels.leaderboard]);
-		// two repair notices posted to inner sanctum.
-		expect(adminChannel.send).toHaveBeenCalledTimes(2);
+		// ONE summary notice covers all repaired channels — postRepairNotices
+		// sends a single channelsRestoredSummary embed whose description lists
+		// every rebuilt channel, not one message per channel.
+		expect(adminChannel.send).toHaveBeenCalledOnce();
+		const summary = adminChannel.send.mock.calls[0][0] as { embeds: Array<{ data: { title: string; description: string } }> };
+		expect(summary.embeds[0].data.title).toBe(rokCommanderCopy.channelContent.channelRepairNotice.summaryTitle);
+		expect(summary.embeds[0].data.description).toContain(rokCommanderCopy.setup.channels.intro);
+		expect(summary.embeds[0].data.description).toContain(rokCommanderCopy.setup.channels.leaderboard);
 	});
 
 	it("does NOT rebuild when the stored scheduleMessageId is null — repairs in place", async () => {
@@ -538,6 +580,10 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 			id: "guild-1",
 			ownerId: "owner-1",
 			roles: { everyone: { id: "everyone" } },
+			// createChannels reads guild.client.user.id via botSelfOverwrite; real
+			// autoSetup throws without it (the ensureHomebase block spies over
+			// autoSetup, so this fixture only matters once the spy is restored).
+			client: { user: { id: "bot-1" } },
 			channels: {
 				create: vi.fn(async (opts: { name: string; type: number }) => {
 					// categories come back with just an id — populateChannels
@@ -618,42 +664,92 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 		vi.clearAllMocks();
 	});
 
-	// TextChannel stand in with pluggable messages.fetch and send. the
-	// messages.fetch impl decides whether the stored anchor edits in place
-	// (success) or triggers a repost (10008 / 10003).
-	function makeChannelWithMessage(
-		id: string,
-		messageFetchImpl: (messageId: string) => Promise<unknown>,
-		sendImpl?: () => Promise<{ id: string; pin: ReturnType<typeof vi.fn> }>
-	): TextChannel & { send: ReturnType<typeof vi.fn>; messages: { fetch: ReturnType<typeof vi.fn> } } {
-		const ch = Object.create(TextChannel.prototype) as TextChannel & {
-			send: ReturnType<typeof vi.fn>;
-			messages: { fetch: ReturnType<typeof vi.fn> };
-		};
-		Object.assign(ch, {
-			id,
-			messages: { fetch: vi.fn(messageFetchImpl) },
-			send:
-				sendImpl !== undefined
-					? vi.fn(sendImpl)
-					: vi.fn().mockResolvedValue({ id: `reposted-${id}`, pin: vi.fn().mockResolvedValue(undefined) }),
-		});
-		return ch;
-	}
+	// refreshIntroEmbeds compares each stored intro message against a freshly
+	// resolved embed + component pair (the private resolveIntroEmbed /
+	// resolveIntroComponents / inviteCardComponents statics) and only edits in
+	// place when the embed copy matches but the components drifted. To drive
+	// that path deterministically we build the stored messages from those very
+	// builders, so "copy is current" is a real, exact match rather than a mock.
+	// Test files are excluded from the tsc build, so reaching the private
+	// statics through a cast is compile-safe.
+	const internals = GuildSetupManager as unknown as {
+		resolveIntroEmbed(field: string, guild: Guild, adminRoleId: string | null, config: unknown): { data: unknown };
+		resolveIntroComponents(field: string): { toJSON(): unknown }[] | null;
+		inviteCardComponents(): { toJSON(): unknown }[];
+	};
 
-	// minimal guild — refreshIntroEmbeds only reads guild.ownerId (for admin
-	// embed resolution) and guild.id (for log interpolation).
+	// minimal guild — refreshIntroEmbeds reads guild.id, guild.ownerId, and
+	// guild.client.user.id (the repost + invite-card adopt scans).
 	function makeGuildFixture(): Guild {
 		return {
 			id: "guild-1",
 			ownerId: "owner-1",
+			client: { user: { id: "bot-1" } },
 		} as unknown as Guild;
 	}
 
-	it("edits every stored intro in place when all anchors resolve", async () => {
-		// each of the six channel ids has an intro message id stored. the
-		// message fetches all succeed, so every edit is in place and nothing
-		// gets reposted or repersisted.
+	// Stale component row: any signature that differs from the real resolved
+	// components so componentsAreEquivalent reports drift and the sweep edits in
+	// place. Models the 2026-06/2026-07 button relocations on existing guilds.
+	const staleComponents = [{ toJSON: () => ({ components: [{ custom_id: "stale-button", style: 2, label: "stale" }] }) }];
+
+	// A stored intro message whose embed matches the current resolved copy for
+	// `field` (embedsAreEquivalent → true) but whose components are stale
+	// (componentsAreEquivalent → false), i.e. the edit-in-place case.
+	function currentIntroMessage(field: string, id: string, edit: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(undefined)) {
+		return {
+			id,
+			embeds: [internals.resolveIntroEmbed(field, makeGuildFixture(), null, makeStoredConfig()).data],
+			components: staleComponents,
+			pinned: true, // introductions is the only pinned channel; true skips the pin backfill
+			edit,
+		};
+	}
+
+	// The standalone invite card (second message on the command-center channel),
+	// built current + equivalent so the post-loop card block is a clean no-op in
+	// tests that only exercise the per-channel intro sweep.
+	function currentInviteCardMessage(id = "msg-invite") {
+		return {
+			id,
+			embeds: [ChannelContent.inviteCard().data],
+			components: internals.inviteCardComponents(),
+			edit: vi.fn().mockResolvedValue(undefined),
+		};
+	}
+
+	// TextChannel stand-in that serves messages by id via messages.fetch(id) and
+	// returns an empty collection ({ find }) for the {limit} adopt scans. An
+	// unknown string id throws Unknown Message (10008) so the caller's catch
+	// resolves it to null (the "anchor deleted" case). send is a spy.
+	function makeChannel(
+		id: string,
+		messagesById: Record<string, unknown>,
+		send: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue({ id: `reposted-${id}`, pin: vi.fn().mockResolvedValue(undefined) })
+	): TextChannel {
+		const ch = Object.create(TextChannel.prototype) as TextChannel;
+		Object.assign(ch, {
+			id,
+			messages: {
+				fetch: vi.fn(async (arg: unknown) => {
+					// options fetch (adopt scan) → empty collection, nothing to adopt.
+					if (typeof arg !== "string") return { find: () => undefined };
+					if (arg in messagesById) return messagesById[arg];
+					const err = Object.create(DiscordAPIError.prototype);
+					Object.assign(err, { code: 10008, message: "Unknown Message" });
+					throw err;
+				}),
+			},
+			send,
+		});
+		return ch;
+	}
+
+	it("edits every stored intro in place when anchors resolve and only the button layout drifted", async () => {
+		// Every stored anchor resolves and the embed copy is current, but the
+		// stored component rows are stale (button relocations). refreshIntroEmbeds
+		// must edit each intro IN PLACE — no reposts, no config write. The
+		// schedule anchor always edits in place regardless of drift.
 		const storedIntroIds = {
 			introChannelId: "msg-intro",
 			commandsChannelId: "msg-commands",
@@ -661,40 +757,49 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 			scheduleChannelId: "msg-schedule",
 			announcementsChannelId: "msg-announcements",
 			adminChannelId: "msg-admin",
+			inviteCardId: "msg-invite",
 		};
 		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ introMessageIds: storedIntroIds }));
 
-		// every channel's fetch returns a message with a spyable edit.
-		const edits: ReturnType<typeof vi.fn>[] = [];
-		const channels: Record<string, TextChannel> = {};
-		for (const [field, msgId] of Object.entries(storedIntroIds)) {
-			const edit = vi.fn().mockResolvedValue(undefined);
-			edits.push(edit);
-			const channelId = makeStoredConfig()[field as keyof ReturnType<typeof makeStoredConfig>] as string;
-			channels[channelId] = makeChannelWithMessage(channelId, async (id) => {
-				if (id === msgId) return { id: msgId, edit };
-				throw new Error(`unexpected message fetch: ${id}`);
-			});
-		}
+		const edits = {
+			introChannelId: vi.fn().mockResolvedValue(undefined),
+			commandsChannelId: vi.fn().mockResolvedValue(undefined),
+			leaderboardChannelId: vi.fn().mockResolvedValue(undefined),
+			scheduleChannelId: vi.fn().mockResolvedValue(undefined),
+			announcementsChannelId: vi.fn().mockResolvedValue(undefined),
+			adminChannelId: vi.fn().mockResolvedValue(undefined),
+		};
 
-		const client = makeClient({
-			selfId: "bot-1",
-			fetchChannel: async (id) => channels[id] ?? null,
-		});
+		const channels: Record<string, TextChannel> = {
+			"ch-intro": makeChannel("ch-intro", { "msg-intro": currentIntroMessage("introChannelId", "msg-intro", edits.introChannelId) }),
+			"ch-commands": makeChannel("ch-commands", {
+				"msg-commands": currentIntroMessage("commandsChannelId", "msg-commands", edits.commandsChannelId),
+				"msg-invite": currentInviteCardMessage(),
+			}),
+			"ch-leaderboard": makeChannel("ch-leaderboard", { "msg-leaderboard": currentIntroMessage("leaderboardChannelId", "msg-leaderboard", edits.leaderboardChannelId) }),
+			// the schedule branch edits its anchor directly, without the equivalence check.
+			"ch-schedule": makeChannel("ch-schedule", { "msg-schedule": { id: "msg-schedule", edit: edits.scheduleChannelId } }),
+			"ch-announcements": makeChannel("ch-announcements", { "msg-announcements": currentIntroMessage("announcementsChannelId", "msg-announcements", edits.announcementsChannelId) }),
+			"ch-admin": makeChannel("ch-admin", { "msg-admin": currentIntroMessage("adminChannelId", "msg-admin", edits.adminChannelId) }),
+		};
+
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => channels[id] ?? null });
 
 		const summary = await GuildSetupManager.refreshIntroEmbeds(client, makeGuildFixture());
 
+		// all six intros edited in place (5 via drift + schedule always); the
+		// invite card is current so it is a no-op, and nothing reposts.
 		expect(summary).toEqual({ edited: 6, reposted: 0 });
-		// all six edits fired, none were reposts.
-		for (const edit of edits) expect(edit).toHaveBeenCalledOnce();
-		// no persist needed when every anchor still exists.
+		for (const edit of Object.values(edits)) expect(edit).toHaveBeenCalledOnce();
+		// no persist needed when every anchor resolves and only components moved.
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
 	});
 
 	it("reposts a fresh intro when the stored anchor is missing (10008)", async () => {
-		// stored anchors exist but one fetch throws Unknown Message (10008).
-		// the refresh loop must repost a fresh intro and persist the new id
-		// under introMessageIds so the next boot edits in place.
+		// stored anchors exist but the announcements fetch throws Unknown Message
+		// (10008). the refresh loop must repost a fresh intro and persist the new
+		// id under introMessageIds so the next boot edits in place. The other five
+		// intros edit in place (copy current, components drifted).
 		const storedIntroIds = {
 			introChannelId: "msg-intro",
 			commandsChannelId: "msg-commands",
@@ -702,92 +807,85 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 			scheduleChannelId: "msg-schedule",
 			announcementsChannelId: "msg-gone",
 			adminChannelId: "msg-admin",
+			inviteCardId: "msg-invite",
 		};
 		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ introMessageIds: storedIntroIds }));
 		guildConfigMock.update.mockResolvedValue(undefined);
 
-		const okEdit = vi.fn().mockResolvedValue(undefined);
-		const channels: Record<string, TextChannel> = {};
-		// five healthy channels — edit in place.
-		for (const field of ["introChannelId", "commandsChannelId", "leaderboardChannelId", "scheduleChannelId", "adminChannelId"] as const) {
-			const channelId = makeStoredConfig()[field] as string;
-			const msgId = storedIntroIds[field];
-			channels[channelId] = makeChannelWithMessage(channelId, async () => ({ id: msgId, edit: okEdit }));
-		}
-		// announcements channel: fetch throws 10008 → repost path.
-		channels["ch-announcements"] = makeChannelWithMessage(
-			"ch-announcements",
-			async () => {
-				const err = Object.create(DiscordAPIError.prototype);
-				Object.assign(err, { code: 10008, message: "Unknown Message" });
-				throw err;
-			},
-			async () => ({ id: "msg-announcements-fresh", pin: vi.fn().mockResolvedValue(undefined) })
-		);
+		const channels: Record<string, TextChannel> = {
+			"ch-intro": makeChannel("ch-intro", { "msg-intro": currentIntroMessage("introChannelId", "msg-intro") }),
+			"ch-commands": makeChannel("ch-commands", {
+				"msg-commands": currentIntroMessage("commandsChannelId", "msg-commands"),
+				"msg-invite": currentInviteCardMessage(),
+			}),
+			"ch-leaderboard": makeChannel("ch-leaderboard", { "msg-leaderboard": currentIntroMessage("leaderboardChannelId", "msg-leaderboard") }),
+			"ch-schedule": makeChannel("ch-schedule", { "msg-schedule": { id: "msg-schedule", edit: vi.fn().mockResolvedValue(undefined) } }),
+			// announcements anchor "msg-gone" is not served → fetch throws 10008 →
+			// repost path posts a fresh intro whose id we assert on.
+			"ch-announcements": makeChannel("ch-announcements", {}, vi.fn().mockResolvedValue({ id: "msg-announcements-fresh", pin: vi.fn().mockResolvedValue(undefined) })),
+			"ch-admin": makeChannel("ch-admin", { "msg-admin": currentIntroMessage("adminChannelId", "msg-admin") }),
+		};
 
-		const client = makeClient({
-			selfId: "bot-1",
-			fetchChannel: async (id) => channels[id] ?? null,
-		});
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => channels[id] ?? null });
 
 		const summary = await GuildSetupManager.refreshIntroEmbeds(client, makeGuildFixture());
 
 		expect(summary).toEqual({ edited: 5, reposted: 1 });
-		// persisted the new announcements id alongside the preserved ids for
-		// the other five slots.
+		// persisted the new announcements id alongside the preserved ids for the
+		// other slots.
 		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", {
 			introMessageIds: expect.objectContaining({ announcementsChannelId: "msg-announcements-fresh" }),
 		});
 	});
 
-	it("reposts all six when introMessageIds is absent (legacy row)", async () => {
-		// legacy row: introMessageIds never set. every spec falls into the
-		// repost path and the persist at the end covers all six.
+	it("reposts the intro channels but NOT schedule when introMessageIds is absent (legacy row)", async () => {
+		// legacy row: introMessageIds never set. Every channel with a stored id
+		// and no anchor reposts a fresh intro — EXCEPT the schedule channel, which
+		// defers to ScheduleBoard's own recovery and never reposts here. The
+		// standalone invite card also posts fresh (first time on this guild).
 		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ introMessageIds: null }));
 		guildConfigMock.update.mockResolvedValue(undefined);
 
-		const channels: Record<string, TextChannel> = {};
-		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
-			const channelId = makeStoredConfig()[spec.configField] as string;
-			channels[channelId] = makeChannelWithMessage(
-				channelId,
-				async () => {
-					throw new Error("never called — no anchor to fetch");
-				},
-				async () => ({ id: `reposted-${spec.configField}`, pin: vi.fn().mockResolvedValue(undefined) })
-			);
-		}
+		// no anchors served anywhere → every eligible channel reposts via send.
+		const channels: Record<string, TextChannel> = {
+			"ch-intro": makeChannel("ch-intro", {}),
+			"ch-commands": makeChannel("ch-commands", {}),
+			"ch-leaderboard": makeChannel("ch-leaderboard", {}),
+			"ch-schedule": makeChannel("ch-schedule", {}),
+			"ch-announcements": makeChannel("ch-announcements", {}),
+			"ch-admin": makeChannel("ch-admin", {}),
+		};
 
-		const client = makeClient({
-			selfId: "bot-1",
-			fetchChannel: async (id) => channels[id] ?? null,
-		});
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => channels[id] ?? null });
 
 		const summary = await GuildSetupManager.refreshIntroEmbeds(client, makeGuildFixture());
 
+		// intro, commands, leaderboard, announcements, admin repost (5) + the
+		// invite card (1) = 6. schedule does NOT repost (deferred). Nothing edits.
 		expect(summary).toEqual({ edited: 0, reposted: 6 });
-		// single persist batched at the end. introMessageIds carries six
-		// fresh ids and scheduleMessageId is kept in sync with the schedule
-		// channel's new intro anchor.
+
 		expect(guildConfigMock.update).toHaveBeenCalledOnce();
 		const [, payload] = guildConfigMock.update.mock.calls[0] as [string, Record<string, unknown>];
-		const ids = payload.introMessageIds as Record<string, string>;
-		expect(ids.introChannelId).toBe("reposted-introChannelId");
-		expect(ids.commandsChannelId).toBe("reposted-commandsChannelId");
-		expect(ids.leaderboardChannelId).toBe("reposted-leaderboardChannelId");
-		expect(ids.scheduleChannelId).toBe("reposted-scheduleChannelId");
-		expect(ids.announcementsChannelId).toBe("reposted-announcementsChannelId");
-		expect(ids.adminChannelId).toBe("reposted-adminChannelId");
-		// scheduleMessageId repointed at the new anchor so ScheduleBoard does
-		// not chase a dangling pointer.
-		expect(payload.scheduleMessageId).toBe("reposted-scheduleChannelId");
+		const ids = payload.introMessageIds as Record<string, string | null>;
+		expect(ids.introChannelId).toBe("reposted-ch-intro");
+		expect(ids.commandsChannelId).toBe("reposted-ch-commands");
+		expect(ids.leaderboardChannelId).toBe("reposted-ch-leaderboard");
+		expect(ids.announcementsChannelId).toBe("reposted-ch-announcements");
+		expect(ids.adminChannelId).toBe("reposted-ch-admin");
+		// schedule never reposts on a legacy row (it defers to ScheduleBoard), so
+		// its intro id stays null and scheduleMessageId is not written.
+		expect(ids.scheduleChannelId).toBeNull();
+		expect(payload).not.toHaveProperty("scheduleMessageId");
+		// the standalone invite card was posted on the command-center channel and tracked.
+		expect(ids.inviteCardId).toBe("reposted-ch-commands");
 	});
 
 	it("skips the edit on 50005 (author mismatch) without reposting", async () => {
-		// 50005 means our stored id points at a message authored by someone
-		// else — corruption scenario. we must NOT repost (that would duplicate
-		// content) and we must NOT edit (Discord would reject). bail so
-		// ensureHomebase can detect ownership drift on its next pass.
+		// 50005 means our stored id points at a message authored by someone else —
+		// corruption scenario. The edit is attempted (copy current, components
+		// drifted) but Discord rejects it; we must NOT repost (that would
+		// duplicate content) and must NOT persist. Bail so ensureHomebase can
+		// detect ownership drift on its next pass.
 		const storedIntroIds = {
 			introChannelId: "msg-intro",
 			commandsChannelId: "msg-commands",
@@ -795,37 +893,36 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 			scheduleChannelId: "msg-schedule",
 			announcementsChannelId: "msg-foreign",
 			adminChannelId: "msg-admin",
+			inviteCardId: "msg-invite",
 		};
 		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ introMessageIds: storedIntroIds }));
 
-		const okEdit = vi.fn().mockResolvedValue(undefined);
-		const channels: Record<string, TextChannel> = {};
-		for (const field of ["introChannelId", "commandsChannelId", "leaderboardChannelId", "scheduleChannelId", "adminChannelId"] as const) {
-			const channelId = makeStoredConfig()[field] as string;
-			const msgId = storedIntroIds[field];
-			channels[channelId] = makeChannelWithMessage(channelId, async () => ({ id: msgId, edit: okEdit }));
-		}
-		// announcements channel: messages.fetch returns an edit that rejects
-		// with 50005. repost path must NOT fire.
 		const badEdit = vi.fn().mockImplementation(async () => {
 			const err = Object.create(DiscordAPIError.prototype);
 			Object.assign(err, { code: 50005, message: "Cannot edit a message authored by another user" });
 			throw err;
 		});
-		channels["ch-announcements"] = makeChannelWithMessage(
-			"ch-announcements",
-			async () => ({ id: "msg-foreign", edit: badEdit })
-		);
-		const announcementsSend = (channels["ch-announcements"] as unknown as { send: ReturnType<typeof vi.fn> }).send;
+		// announcements send must never fire — a repost would duplicate content.
+		const announcementsSend = vi.fn();
 
-		const client = makeClient({
-			selfId: "bot-1",
-			fetchChannel: async (id) => channels[id] ?? null,
-		});
+		const channels: Record<string, TextChannel> = {
+			"ch-intro": makeChannel("ch-intro", { "msg-intro": currentIntroMessage("introChannelId", "msg-intro") }),
+			"ch-commands": makeChannel("ch-commands", {
+				"msg-commands": currentIntroMessage("commandsChannelId", "msg-commands"),
+				"msg-invite": currentInviteCardMessage(),
+			}),
+			"ch-leaderboard": makeChannel("ch-leaderboard", { "msg-leaderboard": currentIntroMessage("leaderboardChannelId", "msg-leaderboard") }),
+			"ch-schedule": makeChannel("ch-schedule", { "msg-schedule": { id: "msg-schedule", edit: vi.fn().mockResolvedValue(undefined) } }),
+			"ch-announcements": makeChannel("ch-announcements", { "msg-foreign": currentIntroMessage("announcementsChannelId", "msg-foreign", badEdit) }, announcementsSend),
+			"ch-admin": makeChannel("ch-admin", { "msg-admin": currentIntroMessage("adminChannelId", "msg-admin") }),
+		};
+
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => channels[id] ?? null });
 
 		const summary = await GuildSetupManager.refreshIntroEmbeds(client, makeGuildFixture());
 
-		// five edited, announcements skipped. no repost, no persist.
+		// five edited (intro, commands, leaderboard, schedule, admin);
+		// announcements attempted an edit that threw 50005 and was skipped.
 		expect(summary).toEqual({ edited: 5, reposted: 0 });
 		expect(announcementsSend).not.toHaveBeenCalled();
 		expect(guildConfigMock.update).not.toHaveBeenCalled();

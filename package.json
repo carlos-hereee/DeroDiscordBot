@@ -1,6 +1,6 @@
 {
-	"name": "rok-bot",
-	"version": "1.6.0",
+	"name": "dero-discord-bot",
+	"version": "1.6.1",
 	"description": "This is a discord bot, it will be used to display commander builds ie. talent tress",
 	"main": "./dist/main.js",
 	"scripts": {
@@ -36,6 +36,7 @@
 		"uuid": "^11.1.0"
 	},
 	"devDependencies": {
+		"@resvg/resvg-js": "^2.6.2",
 		"@types/cors": "^2.8.19",
 		"@types/express": "^5.0.6",
 		"@types/node": "^24.3.0",
@@ -50,7 +51,9 @@
 		"eslint-plugin-import": "^2.32.0",
 		"eslint-plugin-prettier": "^5.5.5",
 		"fix-esm-import-path": "^1.10.3",
+		"gifenc": "^1.0.3",
 		"nodemon": "^3.1.10",
+		"pngjs": "^7.0.0",
 		"prettier": "^3.8.1",
 		"rimraf": "^6.1.2",
 		"supertest": "^7.2.2",
