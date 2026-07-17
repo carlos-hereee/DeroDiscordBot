@@ -76,7 +76,6 @@ typings/
 .serverless
 
 bot.db
-#package lock
 config.json
 eng.traineddata
 
