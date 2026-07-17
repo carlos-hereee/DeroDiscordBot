@@ -77,7 +77,6 @@ typings/
 
 bot.db
 #package lock
-.env
 config.json
 eng.traineddata
 
