@@ -35,6 +35,7 @@ import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/p
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
 import { registerGreeter, ensureIntroChannelsWritable } from "@features/greeter/welcomeNewMember.js";
+import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 
 // ── DNS resolver guard ─────────────────────────────────────────────────────
 // Some dev machines leave node's DNS library (c-ares) unable to read the system
@@ -376,6 +377,22 @@ process.on("uncaughtException", (err) => {
 					});
 					return;
 				}
+			}
+		}
+
+		// ── Studio early-access gate ("Dero's new powers first") ──
+		// A command listed in EARLY_ACCESS_FEATURES stays exclusive to Studio-owned guilds
+		// until its release date, then opens to all. Runs AFTER the admin guard so a
+		// permission failure takes precedence over the upsell. Skips DMs (no guildId), and
+		// for the un-listed common case returns instantly with no network call.
+		if (interaction.guildId) {
+			const access = await checkEarlyAccess(interaction.commandName, interaction.guildId);
+			if (!access.allowed && access.generalReleaseAt) {
+				await interaction.reply({
+					embeds: [earlyAccessEmbed(access.generalReleaseAt)],
+					flags: MessageFlags.Ephemeral,
+				});
+				return;
 			}
 		}
 
