@@ -48,6 +48,41 @@ export const gamesCopy = {
 		subcommandDescription: "Challenge a member to rock paper scissors",
 		opponentOptionDescription: "The member you want to challenge",
 		label: "rock paper scissors",
+
+		cooldownMessage: (seconds: number): string => `Dero is still resetting the ring. Try again in ${seconds}s.`,
+
+		// ── the secret pick prompt ──
+		// Sent as its OWN ephemeral message to each player, never one shared
+		// message, so neither can see the other's throw before both are locked in.
+		pickPrompt: "Throw in secret. Your opponent cannot see this.",
+		rockLabel: "Rock",
+		paperLabel: "Paper",
+		scissorsLabel: "Scissors",
+
+		// Shown to whichever player throws FIRST, so they are not left staring at
+		// a message that appears to have done nothing.
+		pickReceived: (choice: string, opponentId: string): string =>
+			`Locked in: **${choice}**. Waiting on <@${opponentId}>.`,
+		// Shown to the player who completes the round, in the same beat as the
+		// public reveal.
+		pickReceivedFinal: (choice: string): string => `Locked in: **${choice}**. Revealing now.`,
+		alreadyPicked: (choice: string): string => `You already threw **${choice}**. No takebacks.`,
+		roundClosed: "That round is already over.",
+
+		// ── the public reveal ──
+		revealTitle: "🪨 📄 ✂️ The throws are revealed",
+		revealLine: (challengerId: string, challengerChoice: string, opponentId: string, opponentChoice: string): string =>
+			`<@${challengerId}> threw **${challengerChoice}**\n<@${opponentId}> threw **${opponentChoice}**`,
+		winnerLine: (winnerId: string): string => `\n\n👑 <@${winnerId}> takes it.`,
+		tieLine: "\n\nSame throw. Nobody takes it. Run it back.",
+
+		// ── the accepted but never thrown timeout ──
+		// Distinct from the challenge timeout: the challenge WAS accepted, so the
+		// channel watched this round start and deserves to see it end.
+		timeoutTitle: "🪨 📄 ✂️ The round expired",
+		timeoutOneSided: (readyId: string, stalledId: string): string =>
+			`<@${readyId}> threw in time. <@${stalledId}> never did, so the round is void.`,
+		timeoutNeither: "Neither player threw in time. The round is void.",
 	},
 
 	hangman: {

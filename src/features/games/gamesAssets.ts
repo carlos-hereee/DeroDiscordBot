@@ -41,11 +41,14 @@ export const GAME_ASSET_FILES = {
 	duelCoin: "duel/coin-flip.gif",
 	duelTie: "duel/tie.png",
 
-	// ── rock paper scissors (Phase 3, declared, not yet rendered) ──
+	// ── rock paper scissors (Phase 3, LIVE) ──
+	// The reveal embed carries the WINNING throw, so the image says something the
+	// text does not already say twice. A generic "both hands come down" reveal gif
+	// was considered and dropped: it cannot show who won, and declaring art that
+	// nothing renders would make this manifest lie about what needs drawing.
 	rpsRock: "rps/rock.png",
 	rpsPaper: "rps/paper.png",
 	rpsScissors: "rps/scissors.png",
-	rpsReveal: "rps/reveal.gif",
 	rpsTie: "rps/tie.png",
 
 	// ── hangman (Phase 4, declared, not yet rendered) ──

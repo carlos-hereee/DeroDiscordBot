@@ -2,6 +2,7 @@ import { EmbedBuilder } from "discord.js";
 import { AUTHOR, COLORS } from "@base/copy/brand.js";
 import { gamesCopy } from "./gamesCopy.js";
 import type { DuelResult } from "./duelResolve.js";
+import type { RpsChoice, RpsOutcome } from "./rpsWinner.js";
 
 // ── /mini-game embeds ──────────────────────────────────────────────────────
 // Self-contained game embeds. They do NOT reuse embedBuilder.base() on purpose:
@@ -88,4 +89,35 @@ export function buildDuelResultEmbed(
 		.setColor(COLORS.GAME_DUEL)
 		.setDescription(`${body}${verdict}`)
 		.setImage(imageRef);
+}
+
+// ── buildRpsRevealEmbed ────────────────────────────────────────────────────
+// The public payoff for /mini-game rps. Posted once, only after BOTH throws are
+// recorded, so this function is the first place either choice becomes visible.
+// Nothing upstream of the reveal may render a choice.
+export function buildRpsRevealEmbed(
+	challengerId: string,
+	challengerChoice: RpsChoice,
+	opponentId: string,
+	opponentChoice: RpsChoice,
+	outcome: RpsOutcome,
+	imageRef: string
+): EmbedBuilder {
+	const c = gamesCopy.rps;
+	const verdict =
+		outcome === "tie" ? c.tieLine : c.winnerLine(outcome === "challenger" ? challengerId : opponentId);
+
+	return base()
+		.setTitle(c.revealTitle)
+		.setColor(COLORS.GAME_RPS)
+		.setDescription(`${c.revealLine(challengerId, challengerChoice, opponentId, opponentChoice)}${verdict}`)
+		.setImage(imageRef);
+}
+
+// ── buildRpsTimeoutEmbed ───────────────────────────────────────────────────
+// The round was accepted and then stalled. Deliberately does NOT reveal the
+// throw of whoever did commit: the round is void, so publishing one player's
+// choice would hand their opponent free information for the rematch.
+export function buildRpsTimeoutEmbed(description: string): EmbedBuilder {
+	return base().setTitle(gamesCopy.rps.timeoutTitle).setColor(COLORS.GAME_CHALLENGE).setDescription(description);
 }
