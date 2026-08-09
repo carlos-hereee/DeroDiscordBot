@@ -52,7 +52,7 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 	};
 }
 
-// Object.create(TextChannel.prototype) — leanest object that still passes
+// Object.create(TextChannel.prototype), leanest object that still passes
 // `channel instanceof TextChannel` inside ensureHomebase without pulling in
 // the full discord.js Guild + Client construction chain.
 function makeScheduleChannel(fetchImpl: (messageId: string) => Promise<unknown>): TextChannel {
@@ -250,7 +250,7 @@ describe("GuildSetupManager.ensureHomebase", () => {
 		expect(autoSetupSpy).toHaveBeenCalledWith(guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true });
 	});
 
-	it("does NOT rebuild when the stored schedule message is missing (10008) — repairs in place", async () => {
+	it("does NOT rebuild when the stored schedule message is missing (10008), repairs in place", async () => {
 		// Regression (auto-heal duplicate-homebase bug): a deleted/unfetchable
 		// schedule message is NOT proof the homebase is foreign. The ownership
 		// probe returns "unknown", so ensureHomebase keeps the category and
@@ -508,7 +508,7 @@ describe("GuildSetupManager.ensureHomebase", () => {
 
 		expect(result.action).toBe("repaired");
 		expect(result.repairedChannels).toEqual([rokCommanderCopy.setup.channels.intro, rokCommanderCopy.setup.channels.leaderboard]);
-		// ONE summary notice covers all repaired channels — postRepairNotices
+		// ONE summary notice covers all repaired channels, postRepairNotices
 		// sends a single channelsRestoredSummary embed whose description lists
 		// every rebuilt channel, not one message per channel.
 		expect(adminChannel.send).toHaveBeenCalledOnce();
@@ -518,7 +518,7 @@ describe("GuildSetupManager.ensureHomebase", () => {
 		expect(summary.embeds[0].data.description).toContain(rokCommanderCopy.setup.channels.leaderboard);
 	});
 
-	it("does NOT rebuild when the stored scheduleMessageId is null — repairs in place", async () => {
+	it("does NOT rebuild when the stored scheduleMessageId is null, repairs in place", async () => {
 		// Regression (auto-heal duplicate-homebase bug): a legacy/blank
 		// scheduleMessageId is not proof of a foreign homebase either. The probe
 		// returns "unknown" (no anchor to check), so we keep the category and
@@ -586,7 +586,7 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 			client: { user: { id: "bot-1" } },
 			channels: {
 				create: vi.fn(async (opts: { name: string; type: number }) => {
-					// categories come back with just an id — populateChannels
+					// categories come back with just an id, populateChannels
 					// never touches a category object directly.
 					if (opts.type === 4) return { id: "new-cat-1" };
 					return makeCh(opts.name);
@@ -607,7 +607,7 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true });
 
 		// update was called, create was not. this is the whole point of
-		// the update branch — do not try to insert when a row already
+		// the update branch, do not try to insert when a row already
 		// exists in the DB, because on a shared cluster that row might be
 		// foreign.
 		expect(guildConfigMock.update).toHaveBeenCalledOnce();
@@ -631,7 +631,7 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 		const dupKey = Object.assign(new Error("E11000 duplicate key error collection"), { code: 11000 });
 		guildConfigMock.create.mockRejectedValue(dupKey);
 
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 		const guild = makePersistGuild();
 
 		await expect(
@@ -642,7 +642,7 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 		// string includes "duplicate key" so the operator can grep for it.
 		const loggedMessages = errorSpy.mock.calls.map((call) => String(call[0]));
 		expect(loggedMessages.some((msg) => msg.includes("duplicate key"))).toBe(true);
-		// critically, no update or delete was attempted — we never silently
+		// critically, no update or delete was attempted, we never silently
 		// overwrite the foreign row.
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
 		expect(guildConfigMock.deleteByGuildId).not.toHaveBeenCalled();
@@ -678,7 +678,7 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 		inviteCardComponents(): { toJSON(): unknown }[];
 	};
 
-	// minimal guild — refreshIntroEmbeds reads guild.id, guild.ownerId, and
+	// minimal guild, refreshIntroEmbeds reads guild.id, guild.ownerId, and
 	// guild.client.user.id (the repost + invite-card adopt scans).
 	function makeGuildFixture(): Guild {
 		return {
@@ -748,7 +748,7 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 	it("edits every stored intro in place when anchors resolve and only the button layout drifted", async () => {
 		// Every stored anchor resolves and the embed copy is current, but the
 		// stored component rows are stale (button relocations). refreshIntroEmbeds
-		// must edit each intro IN PLACE — no reposts, no config write. The
+		// must edit each intro IN PLACE, no reposts, no config write. The
 		// schedule anchor always edits in place regardless of drift.
 		const storedIntroIds = {
 			introChannelId: "msg-intro",
@@ -840,7 +840,7 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 
 	it("reposts the intro channels but NOT schedule when introMessageIds is absent (legacy row)", async () => {
 		// legacy row: introMessageIds never set. Every channel with a stored id
-		// and no anchor reposts a fresh intro — EXCEPT the schedule channel, which
+		// and no anchor reposts a fresh intro, EXCEPT the schedule channel, which
 		// defers to ScheduleBoard's own recovery and never reposts here. The
 		// standalone invite card also posts fresh (first time on this guild).
 		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ introMessageIds: null }));
@@ -881,7 +881,7 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 	});
 
 	it("skips the edit on 50005 (author mismatch) without reposting", async () => {
-		// 50005 means our stored id points at a message authored by someone else —
+		// 50005 means our stored id points at a message authored by someone else,
 		// corruption scenario. The edit is attempted (copy current, components
 		// drifted) but Discord rejects it; we must NOT repost (that would
 		// duplicate content) and must NOT persist. Bail so ensureHomebase can
@@ -902,7 +902,7 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 			Object.assign(err, { code: 50005, message: "Cannot edit a message authored by another user" });
 			throw err;
 		});
-		// announcements send must never fire — a repost would duplicate content.
+		// announcements send must never fire, a repost would duplicate content.
 		const announcementsSend = vi.fn();
 
 		const channels: Record<string, TextChannel> = {

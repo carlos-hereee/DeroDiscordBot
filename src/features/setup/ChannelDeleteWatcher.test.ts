@@ -3,7 +3,7 @@ import { TextChannel, CategoryChannel, ChannelType, Events } from "discord.js";
 import type { Client, Guild } from "discord.js";
 
 // Mock the guild config store before importing the unit under test. Same
-// pattern the GuildSetupManager suite uses — the Mongoose model chain tries
+// pattern the GuildSetupManager suite uses, the Mongoose model chain tries
 // to open a real DB connection at import time otherwise.
 vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: {
@@ -181,7 +181,7 @@ describe("ChannelDeleteWatcher", () => {
 		const deleted = makeDeletedChannel("random-channel", guild);
 		await captured.handler!(deleted);
 
-		// no repair, no update. silent bail is correct — the guild never
+		// no repair, no update. silent bail is correct, the guild never
 		// completed a homebase build so there is nothing for us to heal.
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
 	});
@@ -206,7 +206,7 @@ describe("ChannelDeleteWatcher", () => {
 
 		const guild = makeGuild({});
 		// the deleted channel IS the stored category. realtime path must
-		// NOT try to rebuild the whole homebase — that is the boot sweep's
+		// NOT try to rebuild the whole homebase, that is the boot sweep's
 		// job and racing it would fight the admin who is tearing down.
 		const deleted = makeDeletedChannel("cat-1", guild, "NOTICE BOARD");
 		await captured.handler!(deleted);
@@ -284,7 +284,7 @@ describe("ChannelDeleteWatcher", () => {
 		// channel id differs from the old one.
 		await captured.handler!(makeDeletedChannel("ch-announcements", guild));
 
-		// still only one update — the second repair was blocked.
+		// still only one update, the second repair was blocked.
 		expect(guildConfigMock.update).toHaveBeenCalledOnce();
 	});
 
@@ -314,11 +314,11 @@ describe("ChannelDeleteWatcher", () => {
 		const captured = makeClientCapturing({ selfId: "bot-1" });
 		registerChannelDeleteWatcher(captured.client);
 
-		// guild.channels.fetch("cat-1") returns null — category is gone.
+		// guild.channels.fetch("cat-1") returns null, category is gone.
 		const guild = makeGuild({ categoryFetchMap: { "cat-1": null } });
 		await captured.handler!(makeDeletedChannel("ch-announcements", guild));
 
-		// no rebuild — realtime defers full category restoration to the
+		// no rebuild, realtime defers full category restoration to the
 		// next ensureHomebase sweep.
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
 	});
@@ -344,7 +344,7 @@ describe("ChannelDeleteWatcher", () => {
 			}),
 		});
 
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
 		await expect(captured.handler!(makeDeletedChannel("ch-announcements", guild))).resolves.toBeUndefined();
 		expect(errorSpy).toHaveBeenCalled();
@@ -353,7 +353,7 @@ describe("ChannelDeleteWatcher", () => {
 });
 
 describe("GuildSetupManager.CHANNEL_SPECS", () => {
-	// cheap structural guard — if someone adds a new homebase channel and
+	// cheap structural guard, if someone adds a new homebase channel and
 	// forgets to list it in CHANNEL_SPECS, the watcher will silently ignore
 	// deletes on the new channel. tests below flag the regression.
 	it("has one entry per homebase field", () => {

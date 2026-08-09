@@ -16,7 +16,12 @@ export default [
 			parserOptions: {
 				ecmaVersion: "latest",
 				sourceType: "module",
-				project: "./tsconfig.json",
+				// NOT tsconfig.json. That one excludes **/*.test.ts so tests never
+				// compile into dist/, which left every colocated test file outside
+				// any project and failing to parse. tsconfig.eslint.json is the same
+				// config minus that exclusion, so tests get linted with the same
+				// rules as the code they cover. See the header of that file.
+				project: "./tsconfig.eslint.json",
 			},
 		},
 
@@ -65,28 +70,28 @@ export default [
 			"no-var": "error",
 			"prefer-const": "error",
 
-			// ── turned off — TypeScript handles these natively ────
+			// ── turned off, TypeScript handles these natively ────
 			"no-undef": "off", // TS already catches undefined variables
 			"no-console": "off", // needed for scheduler/tracker logging
 			"no-inline-comments": "off", // your codebase uses inline comments heavily
 			"handle-callback-err": "off",
 
-			// ── shadow — relaxed for common Discord.js patterns ───
+			// ── shadow, relaxed for common Discord.js patterns ───
 			"no-shadow": [
 				"error",
 				{
 					allow: ["err", "resolve", "reject", "interaction", "client", "event"],
 					//                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 					//                                   these are reused across every
-					//                                   command and listener — not a bug
+					//                                   command and listener, not a bug
 				},
 			],
 
-			// ── unused vars — use TS version, not base ESLint ─────
-			// base eslint rule off — it doesn't understand TS interfaces
+			// ── unused vars, use TS version, not base ESLint ─────
+			// base eslint rule off, it doesn't understand TS interfaces
 			"no-unused-vars": "off",
 
-			// TS version on — understands interfaces, type params etc
+			// TS version on, understands interfaces, type params etc
 			"@typescript-eslint/no-unused-vars": [
 				"error",
 				{
@@ -99,14 +104,14 @@ export default [
 			],
 
 			// ── removed @typescript-eslint/no-explicit-any ────────
-			// 'any' is sometimes necessary in Discord.js — e.g interaction handlers,
+			// 'any' is sometimes necessary in Discord.js, e.g interaction handlers,
 			// partial types, dynamic command loading. Enforcing this causes more
 			// suppression comments than it prevents actual bugs.
 			// If you want a softer version, use warn instead:
 			// "@typescript-eslint/no-explicit-any": "warn",
 
-			// ── empty functions — off for TS interfaces/abstracts ─
-			// base rule off — flags interface method signatures as "empty"
+			// ── empty functions, off for TS interfaces/abstracts ─
+			// base rule off, flags interface method signatures as "empty"
 			"no-empty-function": "off",
 			// TS version understands the difference
 			"@typescript-eslint/no-empty-function": [

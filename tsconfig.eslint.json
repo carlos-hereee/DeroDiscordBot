@@ -1,0 +1,27 @@
+{
+	// ── lint-only TypeScript project ──────────────────────────────────────
+	// What:  the same compiler options as tsconfig.json, but WITHOUT its
+	//        `**/*.test.ts` exclusion, so typescript-eslint can resolve a
+	//        program for test files.
+	// Who:   read only by eslint.config.js (`parserOptions.project`). Nothing
+	//        compiles through this file.
+	// When:  every `npm run lint` run.
+	// Where: tsconfig.json deliberately EXCLUDES test files so they never
+	//        compile into dist/ (see that file, and rule 4 in CLAUDE.md). But
+	//        eslint.config.js lints `**/*.ts` and its ignore list covers only
+	//        dist, node_modules and scripts, so every colocated test file
+	//        landed in neither the project nor the ignores and failed to parse
+	//        with "The file was not found in any of the provided project(s)".
+	//        That was 27 of the 29 errors `npm run lint` reported, which made
+	//        the lint gate permanently red and therefore useless as a signal.
+	// How:   extend the real config and restate `exclude` WITHOUT the test
+	//        pattern. `include` stays identical, so the two projects see the
+	//        same source tree and differ only in whether tests are members.
+	//
+	// ⚠️ Do NOT merge this back into tsconfig.json. Including test files there
+	// would make `npm run build` compile them into dist/ and ship test code to
+	// Railway, which is exactly what that exclusion exists to prevent.
+	"extends": "./tsconfig.json",
+	"include": ["src/**/*"],
+	"exclude": ["node_modules", "dist"]
+}

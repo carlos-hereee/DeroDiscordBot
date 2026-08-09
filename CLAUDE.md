@@ -14,7 +14,7 @@ Key domains under `src/features/`:
 | `setup/` | Auto builds the guild's home base (category + six channels) when the bot joins, then applies admin and member roles when `/setup` runs. |
 | `events/` | Event data model, occurrenceCalculator (pure math), GuildEventManager (creates ROK KvK season events). |
 | `reminders/` | ReminderScheduler (cron), ReminderJob (fires real reminders), TestReminderJob (dashboard test fires). |
-| `schedule/` | ScheduleBoard — keeps a pinned message in the event-schedule channel in sync with active events. |
+| `schedule/` | ScheduleBoard, keeps a pinned message in the event-schedule channel in sync with active events. |
 | `activity-tracking/` | Tracks voice minutes and reaction acks for participation scoring. |
 | `university/` | Commander build lookups (talents, tree guides). |
 | `greeter/` | Welcomes new members in the introductions channel on `guildMemberAdd` (a pack-voiced welcome framing + a random icebreaker from a ~500-question bank in `icebreakers.ts`), pinging the member. The intro power-up panel's admin "Say hello" button reuses the same `welcomeNewMember` flow on demand. |
@@ -30,10 +30,12 @@ npm install         # triggers postinstall (tsc + tsc-alias)
 npm run build       # clean + tsc + tsc-alias
 npm run development # nodemon on dist/, NODE_ENV=development
 npm run deploy      # registers slash commands with Discord
-npm test            # vitest (watch)
-npm run test:run    # vitest (single run)
-npm run test:coverage
+npm test            # vitest, SINGLE run (this is `vitest run`)
+npm run test:watch  # vitest in watch mode
+npm run lint        # eslint over ./src, tests included
 ```
+
+**Corrected 2026-08-08, verified against `package.json`.** This block previously listed `npm run test:run` and `npm run test:coverage`; NEITHER script exists, and it had `npm test` backwards as watch mode. The wrong name had already been copied into a spec doc before anyone ran it.
 
 ## Path aliases (tsconfig)
 
@@ -71,7 +73,7 @@ Recovery: if the stored message was deleted by an admin, the next refresh repost
 ## Conventions and rules for working on this codebase
 
 1. Never use dashes in chat replies (the owner's preference).
-2. `npx tsc --noEmit` (type-check only, no emit) IS the standard verification in code mode: run it to catch compile errors before ending a session and fix what it reports. Do NOT run `npm run build`, `tsc-alias`, or anything that EMITS a build artifact or deploys (Railway, `npm run deploy`) — the owner does those manually before deploy. `npm install` runs `tsc` via postinstall, so prefer writing files and asking the owner to install rather than running install yourself.
+2. `npx tsc --noEmit` (type-check only, no emit) IS the standard verification in code mode: run it to catch compile errors before ending a session and fix what it reports. Do NOT run `npm run build`, `tsc-alias`, or anything that EMITS a build artifact or deploys (Railway, `npm run deploy`): the owner does those manually before deploy. `npm install` runs `tsc` via postinstall, so prefer writing files and asking the owner to install rather than running install yourself.
 3. Comment complicated logic. Every non trivial branch, algorithm, invariant, or workaround should have an inline comment. Complex comments must answer the relevant 5Ws (Who, What, When, Where, How) adapted to code:
    - What: what this block does in one line
    - Who: which callers or downstream consumers are affected
@@ -79,24 +81,24 @@ Recovery: if the stored message was deleted by an admin, the next refresh repost
    - Where: how this piece fits into the surrounding system (upstream caller, downstream effect)
    - How: the mechanism or algorithm, especially when non obvious
    Not every comment needs all five. Function or module level comments should cover most of them. Inline comments on a single line can focus on the one or two that matter. Trivial wiring does not need comments; anything requiring a second read does. Match the existing voice: prose explanations, numbered steps (①②③) for multi phase functions, section markers (// ── Section ──) for major groups.
-4. Tests live colocated next to the module (`src/features/events/occurrenceCalculator.test.ts` next to `occurrenceCalculator.ts`). Vitest picks them up via `src/**/*.test.ts`, and the main tsconfig excludes them so they never compile into `dist/`.
-5. When adding user facing copy that warriors see in Discord, route it through the rok-commander pack at `src/base/copy/packs/rok-commander.pack.ts`. Keep the medieval kingdom voice (castle, scroll, shield, "Summon New Event", "The kingdom rests"). Admin facing ephemeral copy can be more practical. New copy edits land in the pack file directly so they apply to anything reading via `getPluginCopy(guildConfig)`. (The legacy `embed-content.ts` back-compat shim was retired in Phase 5; brand-level constants — colors, footer, the Dero author — now live in `src/base/copy/brand.ts`.)
+4. Tests live colocated next to the module (`src/features/events/occurrenceCalculator.test.ts` next to `occurrenceCalculator.ts`). Vitest picks them up via `src/**/*.test.ts`, and `tsconfig.json` excludes them so they never compile into `dist/`. **Eslint reads `tsconfig.eslint.json` instead** (same options, minus that exclusion) so tests are linted with the same rules as the code they cover. Do NOT merge the two: putting tests in `tsconfig.json` would ship test code to Railway. A helper deliberately kept but not yet used takes a leading underscore, which is what `no-unused-vars` is configured to treat as intentional.
+5. When adding user facing copy that warriors see in Discord, route it through the rok-commander pack at `src/base/copy/packs/rok-commander.pack.ts`. Keep the medieval kingdom voice (castle, scroll, shield, "Summon New Event", "The kingdom rests"). Admin facing ephemeral copy can be more practical. New copy edits land in the pack file directly so they apply to anything reading via `getPluginCopy(guildConfig)`. (The legacy `embed-content.ts` back-compat shim was retired in Phase 5; brand-level constants, colors, footer, the Dero author, now live in `src/base/copy/brand.ts`.)
 6. Stores (`src/db/stores/*`) are thin Mongoose wrappers. Business logic belongs in feature modules, not in stores. Do not test store methods.
 7. Discord side effects in a feature should be fire and forget when they follow a successful primary action (for example, schedule refreshes after reminder fires). Log errors, never throw back into the caller.
 8. The bot is ESM. All local imports must carry the `.js` suffix even though the source is `.ts`.
 
 ## Plugin copy packs (streamer-plugin spec Phase 1)
 
-The bot's user-facing strings live in plugin-scoped packs under `src/base/copy/`. Two ids are reserved today: `rok-commander` (the kingdom-voice pack used by every existing guild) and `general-events` (the streamer-tone pack, content lands in Phase 2 — registry slot reserved, lookup falls back to rok-commander when the guild's pluginId points at an unregistered pack).
+The bot's user-facing strings live in plugin-scoped packs under `src/base/copy/`. Two ids are reserved today: `rok-commander` (the kingdom-voice pack used by every existing guild) and `general-events` (the streamer-tone pack, content lands in Phase 2, registry slot reserved, lookup falls back to rok-commander when the guild's pluginId points at an unregistered pack).
 
 Module layout:
-- `src/base/copy/packs/rok-commander.pack.ts` — the canonical pack. New copy edits land here.
-- `src/base/copy/brand.ts` — shared brand identity (`FOOTER`, `AUTHOR`, `COLORS`). Pack-independent and identical across packs; both packs reference it, and non pack-aware call sites (no guildConfig in scope) import colors/footer from here directly.
-- `src/base/copy/types.ts` — `IEmbedField`, `IPluginCopy` (derived from the rok-commander pack), `PluginId` union.
-- `src/base/copy/packs.ts` — `COPY_PACKS` registry plus `DEFAULT_PLUGIN_ID`.
-- `src/base/copy/getCopy.ts` — `getPluginCopy(guildConfig)` resolves the active pack; `getCopyOverride(key, guildConfig)` resolves the per-guild owner-authored override (Phase 3 editor UI writes these).
-- `src/base/copy/index.ts` — barrel export (`@base/copy`).
-- `src/base/constants/embed-content.ts` — REMOVED (Phase 5). This was the back-compat shim re-exporting `rokCommanderCopy` as `embedContent`. All call sites now read `getPluginCopy(guildConfig)` (pack-aware), or import `rokCommanderCopy` / the `@base/copy/brand` constants directly where the default pack is correct (KvK-only, no-config, guild-create-time).
+- `src/base/copy/packs/rok-commander.pack.ts`: the canonical pack. New copy edits land here.
+- `src/base/copy/brand.ts`: shared brand identity (`FOOTER`, `AUTHOR`, `COLORS`). Pack-independent and identical across packs; both packs reference it, and non pack-aware call sites (no guildConfig in scope) import colors/footer from here directly.
+- `src/base/copy/types.ts`: `IEmbedField`, `IPluginCopy` (derived from the rok-commander pack), `PluginId` union.
+- `src/base/copy/packs.ts`: `COPY_PACKS` registry plus `DEFAULT_PLUGIN_ID`.
+- `src/base/copy/getCopy.ts`: `getPluginCopy(guildConfig)` resolves the active pack; `getCopyOverride(key, guildConfig)` resolves the per-guild owner-authored override (Phase 3 editor UI writes these).
+- `src/base/copy/index.ts`: barrel export (`@base/copy`).
+- `src/base/constants/embed-content.ts`: REMOVED (Phase 5). This was the back-compat shim re-exporting `rokCommanderCopy` as `embedContent`. All call sites now read `getPluginCopy(guildConfig)` (pack-aware), or import `rokCommanderCopy` / the `@base/copy/brand` constants directly where the default pack is correct (KvK-only, no-config, guild-create-time).
 
 `GuildConfig` carries the per-guild pluginId and copyOverrides Map. Both fields default to "rok-commander" / empty Map respectively, so legacy rows load cleanly without a backfill.
 
@@ -111,14 +113,14 @@ Phase 1 shipped the pack architecture, schema fields, and lookup helpers. The fo
 
 Inbound requests from the nexious-server plugin proxy carry HMAC-SHA256 signatures in `x-timestamp` and `x-signature` headers, verified by `src/api/middleware/verifySignature.ts`. The canonical string format and rollout sequence are documented in the sibling company-uno repo at `rok-commander-signing-rollout.md`. Keep the bot's `canonicalizeQuery` in lockstep with the server's copy or every proxied request will 401.
 
-Outbound requests (Future A: bot → server) reuse the same secret and same canonical format in reverse. `src/utils/serverApi.ts` signs the request, the server's `verifyBotSignature` middleware verifies it. The canonicalization helpers are duplicated across both files — when changing one, change all three (bot inbound, bot outbound, server inbound) and the format-pinning test in `nexious-server/src/__tests__/features/signRequest.test.ts`.
+Outbound requests (Future A: bot → server) reuse the same secret and same canonical format in reverse. `src/utils/serverApi.ts` signs the request, the server's `verifyBotSignature` middleware verifies it. The canonicalization helpers are duplicated across both files, when changing one, change all three (bot inbound, bot outbound, server inbound) and the format-pinning test in `nexious-server/src/__tests__/features/signRequest.test.ts`.
 
 Env vars:
-- `DASHBOARD_API_KEY` — legacy shared secret for `x-api-key`
-- `DASHBOARD_SIGNING_SECRET` — HMAC secret. Used in both directions (verify inbound, sign outbound). When unset, inbound verification transparently falls back to plain api key auth so the rollout can land one side at a time; outbound calls fail with `ServerNotConfiguredError`.
-- `REQUIRE_SIGNED_REQUESTS` — strict mode. When true, `verifySignature` rejects any unsigned `/api/*` request (no fallback to plain api-key auth). OFF by default so the rollout can land one side at a time. Flip on AFTER both sides sign every request — it closes the last path by which a caller holding only the shared api key could pass an arbitrary `?guildId=`.
-- `SERVER_BASE_URL` (alias `NEXIOUS_BASE_URL`) — Heroku URL of the platform server. Required when `USE_REMOTE_EVENTS=true`. `serverApi` reads `SERVER_BASE_URL` first, then falls back to `NEXIOUS_BASE_URL`, so either name works; set one.
-- `USE_REMOTE_EVENTS` — feature flag. When true, `eventStore` routes reads/writes through `serverApi` instead of local Mongo. Off by default; flip on AFTER the F4 migration script has copied existing events into the platform DB.
+- `DASHBOARD_API_KEY`: legacy shared secret for `x-api-key`
+- `DASHBOARD_SIGNING_SECRET`: HMAC secret. Used in both directions (verify inbound, sign outbound). When unset, inbound verification transparently falls back to plain api key auth so the rollout can land one side at a time; outbound calls fail with `ServerNotConfiguredError`.
+- `REQUIRE_SIGNED_REQUESTS`: strict mode. When true, `verifySignature` rejects any unsigned `/api/*` request (no fallback to plain api-key auth). OFF by default so the rollout can land one side at a time. Flip on AFTER both sides sign every request, it closes the last path by which a caller holding only the shared api key could pass an arbitrary `?guildId=`.
+- `SERVER_BASE_URL` (alias `NEXIOUS_BASE_URL`): Heroku URL of the platform server. Required when `USE_REMOTE_EVENTS=true`. `serverApi` reads `SERVER_BASE_URL` first, then falls back to `NEXIOUS_BASE_URL`, so either name works; set one.
+- `USE_REMOTE_EVENTS`: feature flag. When true, `eventStore` routes reads/writes through `serverApi` instead of local Mongo. Off by default; flip on AFTER the F4 migration script has copied existing events into the platform DB.
 
 ## Operational Dependencies (Future A)
 
@@ -127,9 +129,9 @@ When `USE_REMOTE_EVENTS=true` the bot has a HARD dependency on `nexious-server` 
 - **Read path (cron tick, ActivityTracker)**: `remoteEventStore` falls back to its 60-second in-process cache during brief outages. If the outage exceeds the cache TTL the bot returns empty arrays and reminders stop firing. Pre-existing reminder fires already in flight are unaffected.
 - **Write path (slash commands)**: a server outage surfaces to the user as "the platform is unreachable, try again in a moment." No retry loop; the bot does not buffer writes for replay.
 - **Schedule board refreshes**: degrade silently. The hourly safety tick will reconverge once the server is reachable again.
-- **Health metrics**: `ReminderScheduler` emits an hourly `[metrics]` log line with bot→server p50/p95/p99 latency. Watch for warnings about `outbound_p99 > 500ms` or `failure_rate > 1%` — the cron tick has a 60-second budget and a stuck server can blow it.
+- **Health metrics**: `ReminderScheduler` emits an hourly `[metrics]` log line with bot→server p50/p95/p99 latency. Watch for warnings about `outbound_p99 > 500ms` or `failure_rate > 1%`: the cron tick has a 60-second budget and a stuck server can blow it.
 
-If the platform server is down, the safest user-visible posture is to communicate the outage. The owner-notice mechanism is implemented in `src/features/observability/outageWatcher.ts` — DMs the platform owner (env `CREATOR_DISCORD_ID`) once after 5 minutes of continuous unreachability, again on recovery. Idempotent across an outage; resets on bot restart.
+If the platform server is down, the safest user-visible posture is to communicate the outage. The owner-notice mechanism is implemented in `src/features/observability/outageWatcher.ts`, DMs the platform owner (env `CREATOR_DISCORD_ID`) once after 5 minutes of continuous unreachability, again on recovery. Idempotent across an outage; resets on bot restart.
 
 ## Current rollout state
 

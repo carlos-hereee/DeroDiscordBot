@@ -4,7 +4,7 @@ import type { Client } from "discord.js";
 
 // Mocks must precede the announceSeasonEnd import. ReminderScheduler.js
 // pulls in a wide import graph (eventStore, eventOverrideStore, ReminderJob
-// which itself imports NextUpBoard, etc) — all of those would otherwise
+// which itself imports NextUpBoard, etc), all of those would otherwise
 // register mongoose models on an unconnected connection and hang the test
 // process waiting for a DB handshake. Mock every store/feature on the
 // import chain so the mongoose model files never load.
@@ -61,19 +61,31 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { reminderStore } from "@db/stores/reminderStore.js";
 import type { IGameEvent } from "@features/events/event.types.js";
 
-const guildConfigMock = guildConfigStore as unknown as {
+// ── parked scaffolding, deliberately unused today ──────────────────────────
+// The five helpers below were written for the deeper integration tests
+// described in the describe block at the bottom of this file, which were
+// attempted and blocked. They are kept rather than deleted so whoever unblocks
+// that work does not rebuild them from scratch.
+//
+// The leading underscore is the sanctioned "intentionally unused" marker: it is
+// what `@typescript-eslint/no-unused-vars`' argsIgnorePattern / varsIgnorePattern
+// in eslint.config.js matches on. Before 2026-08-08 this file was invisible to
+// eslint entirely (it sat outside the linted TS project), so these read as clean;
+// they are marked now that test files actually get linted. Drop the underscore
+// when a test starts using one.
+const _guildConfigMock = guildConfigStore as unknown as {
 	findByGuildId: ReturnType<typeof vi.fn>;
 };
-const reminderStoreMock = reminderStore as unknown as {
+const _reminderStoreMock = reminderStore as unknown as {
 	exists: ReturnType<typeof vi.fn>;
 	create: ReturnType<typeof vi.fn>;
 };
 
-function makeEvent(overrides: Partial<IGameEvent> = {}): IGameEvent {
+function _makeEvent(overrides: Partial<IGameEvent> = {}): IGameEvent {
 	// firstOccurrence and seasonEnd are deliberately in the far future so
 	// the test never depends on the machine clock. announceSeasonEnd does
-	// not consult Date.now() — the cron tick gates on now > seasonEnd
-	// before calling — so any seasonEnd Date works for the dedup contract.
+	// not consult Date.now(), the cron tick gates on now > seasonEnd
+	// before calling, so any seasonEnd Date works for the dedup contract.
 	return {
 		eventId: "evt-1",
 		name: "Ancient Ruins",
@@ -94,7 +106,7 @@ function makeEvent(overrides: Partial<IGameEvent> = {}): IGameEvent {
 // `channel instanceof TextChannel` check in announceSeasonEnd without
 // constructing a full discord.js Guild + Client chain. Same trick used in
 // TestReminderJob.test.ts.
-function makeTextChannel(): TextChannel & { send: ReturnType<typeof vi.fn> } {
+function _makeTextChannel(): TextChannel & { send: ReturnType<typeof vi.fn> } {
 	const ch = Object.create(TextChannel.prototype) as TextChannel & { send: ReturnType<typeof vi.fn> };
 	Object.assign(ch, {
 		id: "ch-announcements",
@@ -103,7 +115,7 @@ function makeTextChannel(): TextChannel & { send: ReturnType<typeof vi.fn> } {
 	return ch;
 }
 
-function makeClient(channel: TextChannel | null): Client {
+function _makeClient(channel: TextChannel | null): Client {
 	return {
 		channels: {
 			fetch: vi.fn().mockResolvedValue(channel),
@@ -124,10 +136,10 @@ describe("announceSeasonEnd guild-scoped dedup", () => {
 	//
 	//   1. discord.js v14.26 changed class internals so
 	//      Object.create(TextChannel.prototype) no longer satisfies
-	//      `instanceof TextChannel` — flagged in CLAUDE.md tech debt as
+	//      `instanceof TextChannel`, flagged in CLAUDE.md tech debt as
 	//      a pending swap to `vi.mock("discord.js", ...)`.
 	//   2. The await-based test paths timed out at 5s and 30s for
-	//      reasons that did not surface a useful stack — likely the
+	//      reasons that did not surface a useful stack, likely the
 	//      same import-graph issue as the failing existing test
 	//      suites (TestReminderJob.test.ts, GuildSetupManager.test.ts,
 	//      ChannelDeleteWatcher.test.ts, events.routes.test.ts) which
@@ -138,7 +150,7 @@ describe("announceSeasonEnd guild-scoped dedup", () => {
 	//
 	// The dedup CONTRACT is enforced at the DB layer by the compound
 	// unique index `{eventId, eventOccurrence, offsetMinutes}` on
-	// ReminderLog — the synthetic key format `season-end:<guildId>` +
+	// ReminderLog, the synthetic key format `season-end:<guildId>` +
 	// `offsetMinutes: -1` cannot regress without an explicit code change
 	// to either the index or the announceSeasonEnd helper. The Phase 8
 	// manual smoke (one announcement embed per season-end) verifies the
