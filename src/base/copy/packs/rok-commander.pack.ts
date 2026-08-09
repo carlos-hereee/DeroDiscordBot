@@ -25,7 +25,7 @@ import { COLORS, FOOTER, AUTHOR } from "../brand.js";
 //        any visual diff in Discord.
 export const rokCommanderCopy = {
 	// Brand identity (footer wordmark, Dero author, color palette) is shared
-	// across every pack — see @base/copy/brand. Referenced here so
+	// across every pack, see @base/copy/brand. Referenced here so
 	// getPluginCopy(config).FOOTER / .AUTHOR / .COLORS keep resolving off the
 	// pack, and so IPluginCopy (= typeof rokCommanderCopy) still carries them.
 	FOOTER,
@@ -37,7 +37,7 @@ export const rokCommanderCopy = {
 	// (welcomeNewMember). Each takes the member mention AND a randomly chosen
 	// icebreaker (from @features/greeter/icebreakers, a shared neutral bank of
 	// ~500) and weaves them into a kingdom-voiced welcome. Posted as message
-	// CONTENT, not an embed, so the ping actually notifies — Discord does not
+	// CONTENT, not an embed, so the ping actually notifies, Discord does not
 	// fire notifications for mentions inside embed descriptions. The framing
 	// carries the voice; the icebreaker carries the variety (a few framings ×
 	// hundreds of questions = thousands of distinct welcomes).
@@ -78,7 +78,7 @@ export const rokCommanderCopy = {
 		successDescription: (name: string) => `✅ **${name}** has been deleted. No further reminders will fire.`,
 		notFound: (input: string) => `❌ No active event found matching **${input}**.`,
 		cancelled: "❌ Deletion cancelled.",
-		timedOut: "⏱️ No response — deletion cancelled.",
+		timedOut: "⏱️ No response, deletion cancelled.",
 	},
 	reminder: {
 		title: (name: string, minutes: number) => `⚔️ ${name} starts in ${minutes} minutes!`,
@@ -90,7 +90,7 @@ export const rokCommanderCopy = {
 	testReminder: {
 		// [TEST] prefix is not optional. it is the user-facing safety signal
 		// that this fire is a drill dispatched from the dashboard and not a real alert.
-		title: (name: string) => `[TEST] ⚔️ ${name} — reminder drill`,
+		title: (name: string) => `[TEST] ⚔️ ${name}, reminder drill`,
 		description:
 			"This is a drill dispatched from the admin dashboard. " +
 			"No warrior is expected to act on it. " +
@@ -115,18 +115,18 @@ export const rokCommanderCopy = {
 		//        is demoted to the closing line.
 		// When:  exactly once per guild per season, gated by the
 		//        guild-scoped dedup in announceSeasonEnd. Never edit
-		//        this by tweaking past messages — refreshIntroEmbeds is
+		//        this by tweaking past messages, refreshIntroEmbeds is
 		//        the only safe place to anchor-edit; one-shot
 		//        announcements like this one stand as posted.
-		title: "🏁 KvK Season Concluded — Stand Down, Heroes",
+		title: "🏁 KvK Season Concluded, Stand Down, Heroes",
 		description:
-			"The campaign closes. To every warrior who answered the bell, every commander who held the line, every governor who marched out when it counted — thank you. Your discipline shaped this season.\n\n" +
+			"The campaign closes. To every warrior who answered the bell, every commander who held the line, every governor who marched out when it counted, thank you. Your discipline shaped this season.\n\n" +
 			"Whether the kingdom feasts or rebuilds, the next decree always rises. When the call comes, an admin can summon the next schedule with `/configure-kvk-season`.\n\n" +
 			"Sharpen your blades. The realm remembers what you did here.",
 	},
 
 	leaderboard: {
-		title: (name: string) => `🏆 ${name} — Leaderboard`,
+		title: (name: string) => `🏆 ${name}, Leaderboard`,
 		footer: "Full leaderboard available on the admin dashboard",
 		row: (medal: string, username: string, score: number, events: number, acknowledged: number) =>
 			`${medal} **${username}**\n` + `Score: ${score} | ` + `Events: ${events} | ` + `Reminders acknowledged: ${acknowledged}`,
@@ -180,19 +180,19 @@ export const rokCommanderCopy = {
 	// adjusted from one place alongside the rest of the kingdom voice.
 	configureReminders: {
 		setupRequired: "This guild has not finished setup. Run /setup before configuring reminders.",
-		ruinsInvalid: "Ruins date invalid — use format MM/DD @HH e.g. `04/20 @12`",
-		altarInvalid: "Altar date invalid — use format MM/DD @HH e.g. `04/20 @12`",
-		kauInvalid: "Kau Karuak date invalid — use format MM/DD e.g. `04/20`",
+		ruinsInvalid: "Ruins date invalid, use format MM/DD @HH e.g. `04/20 @12`",
+		altarInvalid: "Altar date invalid, use format MM/DD @HH e.g. `04/20 @12`",
+		kauInvalid: "Kau Karuak date invalid, use format MM/DD e.g. `04/20`",
 		invalidInputsHeader: "❌ Invalid inputs:",
 		ruinsAfterSeason: "Ruins date must be before the season end date",
 		altarAfterSeason: "Altar date must be before the season end date",
 		kauAfterSeason: "Kau Karuak Easy date must be before the season end date",
 		dateConflictsHeader: "❌ Date conflicts:",
-		cancelled: "❌ Configuration cancelled — run `/configure-kvk-season` again with the correct dates.",
+		cancelled: "❌ Configuration cancelled, run `/configure-kvk-season` again with the correct dates.",
 		settingUp: "⏳ Setting up reminders...",
-		timedOut: "⏱️ Configuration timed out — please run the command again.",
-		confirmButtonLabel: "✅ Confirm — Dates are correct",
-		editButtonLabel: "✏️ Edit — Dates need changing",
+		timedOut: "⏱️ Configuration timed out, please run the command again.",
+		confirmButtonLabel: "✅ Confirm, Dates are correct",
+		editButtonLabel: "✏️ Edit, Dates need changing",
 		// formats an array of error lines into the bulleted block that sits
 		// under invalidInputsHeader or dateConflictsHeader.
 		bulletList: (items: string[]) => items.map((item) => `- ${item}`).join("\n"),
@@ -227,12 +227,12 @@ export const rokCommanderCopy = {
 		checklistResolvedAccept: "✅ Defaults applied to every event in this season.",
 		checklistResolvedCustom: (itemCount: number) =>
 			`✅ Custom checklist applied (${itemCount} item${itemCount === 1 ? "" : "s"}) to every event in this season.`,
-		checklistResolvedSkipped: "⏭️ Skipped — defaults applied. Edit per event from the dashboard any time.",
+		checklistResolvedSkipped: "⏭️ Skipped, defaults applied. Edit per event from the dashboard any time.",
 		checklistEmptyError: "❌ Checklist cannot be empty. Customize requires at least one item, or use Accept defaults instead.",
-		checklistPromptTimedOut: "⏱️ Checklist prompt timed out — defaults were applied to every event.",
+		checklistPromptTimedOut: "⏱️ Checklist prompt timed out, defaults were applied to every event.",
 	},
 	kvkConfirmation: {
-		title: "⚔️ KvK Reminder Configuration — Please Confirm",
+		title: "⚔️ KvK Reminder Configuration, Please Confirm",
 		description: "Verify these dates match what you see in-game.\n" + "Timestamps shown in **your local timezone**.",
 		fields: {
 			seasonEnd: "📅 Season End",
@@ -307,7 +307,7 @@ export const rokCommanderCopy = {
 			// What:  home of the NextUpBoard. A new post appears here
 			//        whenever an event enters the 24h rolling horizon
 			//        (or a same day group fires together as "today's
-			//        decrees"). Each post is permanent audit trail —
+			//        decrees"). Each post is permanent audit trail,
 			//        the bot never edits these.
 			// Who:   NextUpBoard posts. GuildSetupManager provisions.
 			// Where: sits beside 📢announcements in the homebase
@@ -327,7 +327,7 @@ export const rokCommanderCopy = {
 			// What:  pinned intro embed that greets every mortal who enters
 			//        the 📜introductions channel. Also doubles as the public
 			//        pitch for anyone who wanders in from outside the
-			//        alliance — the invite button sits right beneath this
+			//        alliance, the invite button sits right beneath this
 			//        embed and the copy must earn a stranger's click.
 			// Who:   every mortal in the guild + any outsider who has been
 			//        shown the channel by a current member.
@@ -360,15 +360,15 @@ export const rokCommanderCopy = {
 		// been moved to commandContentAdmin below which is posted to
 		// #inner-sanctum and gated by the admin role.
 		commandGuide: {
-			title: "📖 The Sacred Texts — Member Commands",
+			title: "📖 The Sacred Texts, Member Commands",
 			// Description carries the beloved "tools of your trade / wield
-			// with purpose / Impress me" line — restored 2026-04-24 after
+			// with purpose / Impress me" line, restored 2026-04-24 after
 			// it had been truncated during the public/admin split. Then a
 			// blank line and a short "more may be unlocked" teaser so the
 			// embed sets up the short command list below without feeling
 			// empty.
 			description:
-				"The tools available to every mortal of this alliance. Go on — wield them with purpose. Learn them. Use them. **Impress me.**\n\n" +
+				"The tools available to every mortal of this alliance. Go on, wield them with purpose. Learn them. Use them. **Impress me.**\n\n" +
 				"More may be unlocked as you rise.",
 			fields: [
 				{
@@ -383,6 +383,24 @@ export const rokCommanderCopy = {
 					name: "💡 Suggestion Box",
 					value: ["`/suggestion-box`", "Send a suggestion or feature request to the Company Uno team."].join("\n"),
 				},
+				// The ONE place the games touch a copy pack, and it is a command
+				// LISTING rather than game content, so it does not contradict the
+				// games' standing decision to stay out of the pack system (see the
+				// header of src/features/games/gamesCopy.ts).
+				// The two commands are named TOGETHER on purpose: /secret-code buffs
+				// the fortune subcommand while living outside the command that holds
+				// it, and this guide is the only surface that can make that pairing
+				// obvious. It is also the first time /secret-code has appeared in any
+				// guide at all, despite being live since 2026-07-04.
+				{
+					name: "🎲 Games of Chance",
+					value: [
+						"`/mini-game`",
+						"Duel a rival, throw rock paper scissors, hang a word, or tempt the crystal ball.",
+						"`/secret-code`",
+						"Whisper a phrase you have uncovered. Fortune may favor your readings forever.",
+					].join("\n"),
+				},
 			] satisfies IEmbedField[],
 		},
 
@@ -395,14 +413,14 @@ export const rokCommanderCopy = {
 		// mortals never see this content even if they stumble into a
 		// leaked preview link.
 		adminCommandGuide: {
-			title: "🔒 The Inner Sanctum — Admin Command Guide",
+			title: "🔒 The Inner Sanctum, Admin Command Guide",
 			// Description matches the Member Commands voice: opens with
 			// the "tools of your trade / wield / Impress me" line that
 			// the owner specifically asked to preserve, then frames the
 			// scope. Earlier draft ended with "I'll be watching either
 			// way" which read as creepy surveillance; removed 2026-04-24.
 			description:
-				"These are the tools of your trade. Go on — wield them with purpose. Learn them. Use them. **Impress me.**\n\n" +
+				"These are the tools of your trade. Go on, wield them with purpose. Learn them. Use them. **Impress me.**\n\n" +
 				"Commands reserved for those with the admin role.",
 			// ── whitespace strategy ─────────────────────────────────
 			// One blank line between sections. Commands within a section
@@ -587,7 +605,7 @@ export const rokCommanderCopy = {
 	// ── streamer / general schedule copy ──────────────────────────
 	// Copy lives in this same copy pack (same audit point as the
 	// kingdom voice) but speaks plainly. Streamers want a working
-	// schedule, not a roleplay. Voice still leans casual gamer — Discord
+	// schedule, not a roleplay. Voice still leans casual gamer, Discord
 	// communities skew that way and the streamer who first asked for the
 	// bot is in that audience.
 	streamSchedule: {
@@ -602,7 +620,7 @@ export const rokCommanderCopy = {
 			title: "📺 Confirm stream schedule",
 			description: (name: string, dayLabel: string, nextOccurrenceUnix: number) =>
 				[
-					`**${name}** — every **${dayLabel}**.`,
+					`**${name}**, every **${dayLabel}**.`,
 					`Next stream: <t:${nextOccurrenceUnix}:F> (<t:${nextOccurrenceUnix}:R>)`,
 					"",
 					"Reminders fire at the offsets configured for this guild (default: 30 and 15 minutes before).",
@@ -618,7 +636,7 @@ export const rokCommanderCopy = {
 		cancelled: "Cancelled. Nothing was saved.",
 		timedOut: "Timed out. Run the command again when ready.",
 		saved: (name: string) => `✅ **${name}** is live. The bot will post reminders before every stream.`,
-		saveFailed: "Could not save the schedule. Try again — if it keeps failing, ping the bot owner.",
+		saveFailed: "Could not save the schedule. Try again, if it keeps failing, ping the bot owner.",
 	},
 
 	// ── pause / continue ──────────────────────────────────────────
@@ -638,7 +656,7 @@ export const rokCommanderCopy = {
 	// Skip-already-paused semantics on the pause path preserve any per-event
 	// pausedUntil dates the streamer set with /pause-schedule earlier.
 	pauseAllSchedules: {
-		noEvents: "No schedules to pause — this server has no events configured.",
+		noEvents: "No schedules to pause, this server has no events configured.",
 		allAlreadyPaused: (total: number) =>
 			`All ${total} schedules are already paused. Use \`/continue-all-schedules\` to resume them.`,
 		paused: (count: number, skipped: number) =>
@@ -656,7 +674,7 @@ export const rokCommanderCopy = {
 	},
 
 	continueAllSchedules: {
-		noEvents: "No schedules to resume — this server has no events configured.",
+		noEvents: "No schedules to resume, this server has no events configured.",
 		noneCurrentlyPaused: "No schedules are currently paused. Nothing to resume.",
 		resumed: (count: number) =>
 			`▶️ Resumed **${count}** schedule(s). Reminders will fire on each event's next scheduled time.`,
@@ -667,7 +685,7 @@ export const rokCommanderCopy = {
 
 	// ── /go-live-soon (panic button) ──────────────────────────────
 	// Drops a one-off announcement for a stream starting in the next few
-	// hours. NOT a recurring event — this is a single now-ish nudge, the
+	// hours. NOT a recurring event, this is a single now-ish nudge, the
 	// kind a streamer fires from the green room when life happened and
 	// they did not pre-announce.
 	goLiveSoon: {
@@ -678,7 +696,7 @@ export const rokCommanderCopy = {
 		// the markdown but the bot still does not allowedMentions @everyone).
 		announcementTitle: "📺 Going live soon",
 		announcementBody: (leadLabel: string, startUnix: number, note: string | null) =>
-			[`Stream starts **${leadLabel}** — <t:${startUnix}:t> (<t:${startUnix}:R>).`, note ? `\n${note}` : ""]
+			[`Stream starts **${leadLabel}**, <t:${startUnix}:t> (<t:${startUnix}:R>).`, note ? `\n${note}` : ""]
 				.filter(Boolean)
 				.join("\n"),
 		posted: "✅ Announcement posted.",
@@ -694,7 +712,7 @@ export const rokCommanderCopy = {
 	// When:  on boot, after ensureHomebase + refreshIntroEmbeds +
 	//        refreshAllSchedules, so everything else is settled before
 	//        we broadcast. New guilds (setupComplete:false) are skipped
-	//        — their intro embed tells them what the bot does; they do
+	//       , their intro embed tells them what the bot does; they do
 	//        not need a "what's new" for features already live.
 	// Where: copy lives here so a release-day edit is a one file change.
 	//        Update BOTH public and innerSanctum together when shipping

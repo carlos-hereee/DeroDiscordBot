@@ -13,7 +13,7 @@ import { COLORS, FOOTER, AUTHOR } from "../brand.js";
 // When:  every embed builder and slash command response that already calls
 //        `getPluginCopy(guildConfig)` pulls from this pack when the guild
 //        opted into "general-events". Per-guild copy overrides via
-//        `getCopyOverride` still layer on top — owners who want to nudge a
+//        `getCopyOverride` still layer on top, owners who want to nudge a
 //        single string can do so without forking the pack.
 // Where: lives at `@base/copy/packs/general-events.pack`. Registered in
 //        `@base/copy/packs.ts` COPY_PACKS so the runtime resolver finds it.
@@ -27,14 +27,14 @@ import { COLORS, FOOTER, AUTHOR } from "../brand.js";
 //        the user-visible string surfaces the bug loudly instead of silently
 //        rendering empty content. The streamer-tone blocks that already
 //        existed inside rok-commander (`streamSchedule`, `pauseSchedule`,
-//        `goLiveSoon`, `announceStream`) are reproduced verbatim — they were
+//        `goLiveSoon`, `announceStream`) are reproduced verbatim, they were
 //        authored in plain voice from day one and no rewrite is needed.
 
 const STUB = "[unused in this plugin]";
 
 export const generalEventsCopy: IPluginCopy = {
 	// Brand identity (footer, Dero author, color palette) is shared across all
-	// packs — see @base/copy/brand. Identical to every other pack by design
+	// packs, see @base/copy/brand. Identical to every other pack by design
 	// (the kingdom vs neutral split is words, not chrome).
 	FOOTER,
 	AUTHOR,
@@ -79,21 +79,21 @@ export const generalEventsCopy: IPluginCopy = {
 		successDescription: (name: string) => `✅ **${name}** has been deleted. No further reminders will fire.`,
 		notFound: (input: string) => `❌ No active event found matching **${input}**.`,
 		cancelled: "❌ Deletion cancelled.",
-		timedOut: "⏱️ No response — deletion cancelled.",
+		timedOut: "⏱️ No response, deletion cancelled.",
 	},
 
 	reminder: {
 		title: (name: string, minutes: number) => `📺 ${name} starts in ${minutes} minutes!`,
-		description: "Heads up — getting close to start time.",
+		description: "Heads up, getting close to start time.",
 		checklistField: "📋 Pre-stream Checklist",
 		timeField: "🕐 Start Time",
 	},
 
 	testReminder: {
-		// [TEST] prefix is a non-negotiable safety signal — same as rok-commander.
+		// [TEST] prefix is a non-negotiable safety signal, same as rok-commander.
 		// The dashboard test fire feature is the same on both packs; only the
 		// audience copy underneath changes.
-		title: (name: string) => `[TEST] 📺 ${name} — reminder drill`,
+		title: (name: string) => `[TEST] 📺 ${name}, reminder drill`,
 		description:
 			"This is a test reminder dispatched from the admin dashboard. " +
 			"No action required. " +
@@ -111,7 +111,7 @@ export const generalEventsCopy: IPluginCopy = {
 	},
 
 	leaderboard: {
-		title: (name: string) => `🏆 ${name} — Leaderboard`,
+		title: (name: string) => `🏆 ${name}, Leaderboard`,
 		footer: "Full leaderboard available on the admin dashboard",
 		row: (medal: string, username: string, score: number, events: number, acknowledged: number) =>
 			`${medal} **${username}**\n` + `Score: ${score} | ` + `Events: ${events} | ` + `Reminders acknowledged: ${acknowledged}`,
@@ -147,7 +147,7 @@ export const generalEventsCopy: IPluginCopy = {
 		nextOccurrenceLabel: "Next",
 		scheduledDateLabel: "Scheduled",
 		intervalLabel: (hours: number) => `Repeats every **${hours} hours**`,
-		// Kept as STUB — there is no season anchor on general-events guilds.
+		// Kept as STUB, there is no season anchor on general-events guilds.
 		seasonEndTopLabel: STUB,
 		completedSectionTitle: "📜 Completed Events",
 		completedDateLabel: "Concluded",
@@ -240,7 +240,7 @@ export const generalEventsCopy: IPluginCopy = {
 	setup: {
 		// Universal category name across packs. Decision 2026-05-22: the category
 		// name is the first field that goes universal across packs (the rest of
-		// per-pack voice — intro copy, leaderboard framing, command guide tone —
+		// per-pack voice, intro copy, leaderboard framing, command guide tone,
 		// stays pack-specific). Rationale: the category is the bot's brand mark
 		// in every server, and ROK-coded names alienate streamer / community
 		// guilds. "Community Notice Board" reads natively for alliance leaders,
@@ -267,7 +267,7 @@ export const generalEventsCopy: IPluginCopy = {
 		introduction: {
 			title: "📺 Welcome.",
 			description:
-				"Hey everyone — I am the **Stream Commander** for this server.\n\n" +
+				"Hey everyone, I am the **Stream Commander** for this server.\n\n" +
 				"I keep an eye on the schedule so you do not have to. I post reminders before every stream or event, " +
 				"keep a pinned schedule visible, and track who showed up.\n\n" +
 				"**── What I do ──**\n" +
@@ -275,7 +275,7 @@ export const generalEventsCopy: IPluginCopy = {
 				"📅 A pinned schedule that stays current automatically.\n" +
 				"🏆 An optional leaderboard for active members.\n" +
 				"⚙️ Configurable from Discord slash commands or the dashboard.\n\n" +
-				"*Stick around — the next event is on its way.*\n\n" +
+				"*Stick around, the next event is on its way.*\n\n" +
 				"**Want me on your server?** The button below will summon me.",
 		},
 
@@ -296,6 +296,26 @@ export const generalEventsCopy: IPluginCopy = {
 					name: "💡 Suggestion Box",
 					value: ["`/suggestion-box`", "Send a suggestion or feature request to the Company Uno team."].join("\n"),
 				},
+				// The ONE place the games touch a copy pack, and it is a command
+				// LISTING rather than game content, so it does not contradict the
+				// games' standing decision to stay out of the pack system (see the
+				// header of src/features/games/gamesCopy.ts). Keep this field in
+				// lockstep with the rok-commander pack's, same two commands, plain
+				// voice instead of kingdom voice.
+				// The two are named TOGETHER on purpose: /secret-code buffs the
+				// fortune subcommand while living outside the command that holds it,
+				// and this guide is the only surface that can make that pairing
+				// obvious. It is also the first time /secret-code has appeared in any
+				// guide at all, despite being live since 2026-07-04.
+				{
+					name: "🎲 Mini Games",
+					value: [
+						"`/mini-game`",
+						"Duel, rock paper scissors, hangman, and a fortune reading, all under one command.",
+						"`/secret-code`",
+						"Redeem a code for a permanent luck buff on your fortune readings.",
+					].join("\n"),
+				},
 			] satisfies IEmbedField[],
 		},
 
@@ -303,7 +323,7 @@ export const generalEventsCopy: IPluginCopy = {
 			title: "🔒 Admin Command Guide",
 			description:
 				"The slash commands available to admins on this server.\n\n" +
-				"Members never see this guide — the admin channel is role-gated.",
+				"Members never see this guide, the admin channel is role-gated.",
 			fields: [
 				{
 					name: "📺 Stream / Schedule Commands",
@@ -415,7 +435,7 @@ export const generalEventsCopy: IPluginCopy = {
 				`<@&${adminRoleId}> now has access to the admin channel.\n\n` +
 				"You can configure your first event with `/configure-stream-schedule` or `/announce-stream`.",
 		}),
-		// Stubbed — kvkConfigured is the success response for /configure-kvk-season,
+		// Stubbed, kvkConfigured is the success response for /configure-kvk-season,
 		// a ROK-only command. General-events guilds never reach this code path; if
 		// they do the sentinel surfaces the routing bug.
 		kvkConfigured: (_seasonEnd: number, _channelId: string) => STUB,
@@ -432,7 +452,7 @@ export const generalEventsCopy: IPluginCopy = {
 	},
 
 	// Streamer-tone copy that already lived in rok-commander.pack.ts. Reproduced
-	// here verbatim because it was already authored in plain voice — no rewrite
+	// here verbatim because it was already authored in plain voice, no rewrite
 	// needed. Eventually this and the rok-commander copy could share a base
 	// fragment, but Phase 2 prioritizes correctness over deduplication.
 	streamSchedule: {
@@ -445,7 +465,7 @@ export const generalEventsCopy: IPluginCopy = {
 			title: "📺 Confirm stream schedule",
 			description: (name: string, dayLabel: string, nextOccurrenceUnix: number) =>
 				[
-					`**${name}** — every **${dayLabel}**.`,
+					`**${name}**, every **${dayLabel}**.`,
 					`Next stream: <t:${nextOccurrenceUnix}:F> (<t:${nextOccurrenceUnix}:R>)`,
 					"",
 					"Reminders fire at the offsets configured for this guild (default: 30 and 15 minutes before).",
@@ -459,7 +479,7 @@ export const generalEventsCopy: IPluginCopy = {
 		cancelled: "Cancelled. Nothing was saved.",
 		timedOut: "Timed out. Run the command again when ready.",
 		saved: (name: string) => `✅ **${name}** is live. The bot will post reminders before every stream.`,
-		saveFailed: "Could not save the schedule. Try again — if it keeps failing, ping the bot owner.",
+		saveFailed: "Could not save the schedule. Try again, if it keeps failing, ping the bot owner.",
 	},
 
 	pauseSchedule: {
@@ -475,7 +495,7 @@ export const generalEventsCopy: IPluginCopy = {
 	},
 
 	pauseAllSchedules: {
-		noEvents: "No schedules to pause — this server has no events configured.",
+		noEvents: "No schedules to pause, this server has no events configured.",
 		allAlreadyPaused: (total: number) =>
 			`All ${total} schedules are already paused. Use \`/continue-all-schedules\` to resume them.`,
 		paused: (count: number, skipped: number) =>
@@ -493,7 +513,7 @@ export const generalEventsCopy: IPluginCopy = {
 	},
 
 	continueAllSchedules: {
-		noEvents: "No schedules to resume — this server has no events configured.",
+		noEvents: "No schedules to resume, this server has no events configured.",
 		noneCurrentlyPaused: "No schedules are currently paused. Nothing to resume.",
 		resumed: (count: number) =>
 			`▶️ Resumed **${count}** schedule(s). Reminders will fire on each event's next scheduled time.`,
@@ -507,7 +527,7 @@ export const generalEventsCopy: IPluginCopy = {
 		invalidLeadTime: "Pick a lead time from the list (now / 10m / 30m / 1h / 3h / 6h).",
 		announcementTitle: "📺 Going live soon",
 		announcementBody: (leadLabel: string, startUnix: number, note: string | null) =>
-			[`Stream starts **${leadLabel}** — <t:${startUnix}:t> (<t:${startUnix}:R>).`, note ? `\n${note}` : ""]
+			[`Stream starts **${leadLabel}**, <t:${startUnix}:t> (<t:${startUnix}:R>).`, note ? `\n${note}` : ""]
 				.filter(Boolean)
 				.join("\n"),
 		posted: "✅ Announcement posted.",

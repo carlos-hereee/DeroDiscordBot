@@ -12,17 +12,22 @@ import { respondWithFortune } from "@features/fortune/respondWithFortune.js";
 //        untouched by the command merge.
 // When:  every /mini-game fortune invocation.
 // Where: this file exists so the dispatch table has four entries of one uniform
-//        shape and the command file reads no options of its own. It replaces the
-//        30 line src/commands/fun/fortune.ts, whose body this is, and carries no
-//        fortune logic itself.
-// How:   both options are optional, matching the shipped /fortune contract
+//        shape and the command file reads no options of its own. It REPLACED the
+//        30 line src/commands/fun/fortune.ts, whose body this is verbatim, and it
+//        carries no fortune logic of its own.
+// How:   both options are optional, matching the retired /fortune contract
 //        exactly. `private` defaults to false (public reading) when omitted, so a
-//        member who typed /fortune yesterday gets an identical result today.
+//        member who typed /fortune before the merge gets an identical result now.
 //
-// NOTE for Phase 5: deleting src/commands/fun/fortune.ts is what retires the old
-// /fortune name. No deregistration call is needed, deploy-commands.ts PUTs the
-// whole command set and a PUT replaces rather than merges. FortuneBuff rows are
-// keyed by userId with no command name in the schema, so there is no migration.
+// ── on the retirement of /fortune ──
+// Deleting that command file is the ENTIRE retirement. deploy-commands.ts PUTs
+// the whole command set and a PUT replaces rather than merges, so the old name
+// deregisters itself on the next deploy; there is no cleanup call to write and
+// none should be added. FortuneBuff rows are keyed by userId with no command name
+// anywhere in the schema, so no redeemed buff and no pity streak was at risk and
+// there is no migration. The #command-center invite card's Fortune button never
+// routed through the command at all: it calls respondWithFortune directly from
+// PowerUps.ts and was unaffected in both directions.
 export async function runFortune(interaction: ChatInputCommandInteraction): Promise<void> {
 	const question = interaction.options.getString("question", false);
 	const isPrivate = interaction.options.getBoolean("private", false) ?? false;
