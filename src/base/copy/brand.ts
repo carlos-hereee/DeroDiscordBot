@@ -14,7 +14,7 @@ import { join } from "node:path";
 //        (config).COLORS / .FOOTER / .AUTHOR keep working unchanged; color
 //        and footer only consumers import the named exports directly.
 // When:  read at module load (packs) and per render (consumers). Frozen for
-//        the process lifetime — pure constants.
+//        the process lifetime, pure constants.
 // Where: lives at @base/copy/brand, a sibling of the packs. Replaces the role
 //        the legacy embed-content.ts shim played for these constants.
 
@@ -27,7 +27,7 @@ export const FOOTER = "Company Uno";
 // icon is a 128px PNG: Discord renders author icons as a single static frame, so
 // the icon-sized PNG is the right asset here; the animated gif is used as the
 // introductions embed image instead (see DERO_GIF_URL). Same value across every
-// pack — the bot presents as Dero regardless of voice.
+// pack, the bot presents as Dero regardless of voice.
 //
 // DEPLOY NOTE: these assets live in nexious-client/public/dero and only render
 // once the web app is deployed with them. Until then companyuno.com/dero/* 200s
@@ -44,11 +44,11 @@ export const DERO_GIF_URL = "https://www.companyuno.com/dero/dero-default.gif";
 // ── bundled Dero images ──────────────────────────────────────────────────
 // Files shipped in the bot's assets/ dir (so they deploy WITH the bot on
 // Railway), attached to messages via Discord's attachment:// reference. This
-// avoids depending on companyuno.com serving /dero — the gif URL above 404s to
+// avoids depending on companyuno.com serving /dero, the gif URL above 404s to
 // the SPA's HTML until that web app ships. Two sizes for two jobs:
-//   • the 85 KB still PNG — the per-announcement go-live thumbnail, where the
+//   • the 85 KB still PNG, the per-announcement go-live thumbnail, where the
 //     ~2.8 MB gif would be far too heavy to re-upload every time.
-//   • the ~2.8 MB animated gif — the invite card, a post-once pinned message
+//   • the ~2.8 MB animated gif, the invite card, a post-once pinned message
 //     where the upload happens rarely and the animation is worth it.
 export const DERO_IMAGE_FILE = "dero-avatar-512.png";
 export const DERO_IMAGE_REF = `attachment://${DERO_IMAGE_FILE}`;
@@ -69,8 +69,8 @@ export function buildDeroGifAttachment(): AttachmentBuilder {
 	return buildDeroAttachment(DERO_GIF_FILE);
 }
 
-// Embed color palette. Color is neutral by design — the kingdom vs streamer
-// split happens in words, not in chrome — so the palette is identical across
+// Embed color palette. Color is neutral by design, the kingdom vs streamer
+// split happens in words, not in chrome, so the palette is identical across
 // packs and lives here once. Keys map to embed types (reminder, schedule, etc).
 export const COLORS = {
 	REMINDER: "Red",
@@ -99,4 +99,14 @@ export const COLORS = {
 	// reads as the top rung of the brand's default→activation→ultra ladder.
 	FORTUNE: "#4f46e5",
 	FORTUNE_ULTRA: "#ffd23a",
+	// /mini-game subcommands (plain bot commands, not platform plugins, same
+	// non pack-aware path fortune uses above). One key per game so a player can
+	// tell at a glance which game an embed belongs to when several rounds are
+	// live in the same channel. GAME_CHALLENGE is deliberately the muted one:
+	// a challenge is a PENDING state, so it should not out-shout the resolved
+	// result embed that follows it. All four are distinct from every key above.
+	GAME_CHALLENGE: "#64748b",
+	GAME_DUEL: "#f97316",
+	GAME_RPS: "#0ea5e9",
+	GAME_HANGMAN: "#22c55e",
 } satisfies Record<string, ColorResolvable>;
