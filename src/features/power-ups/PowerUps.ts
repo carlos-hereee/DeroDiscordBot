@@ -7,6 +7,8 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { refreshLeaderboard } from "@features/leaderboard/LeaderboardBoard.js";
 import { welcomeNewMember } from "@features/greeter/welcomeNewMember.js";
 import { respondWithFortune } from "@features/fortune/respondWithFortune.js";
+import { startHangmanRound } from "@features/games/hangmanHandler.js";
+import { gamesCopy } from "@features/games/gamesCopy.js";
 
 // ── Channel controls (v1.6 item 36; folded into intro guides 2026-06) ──────
 // The bot's common channel actions are one-click buttons in Discord, no slash
@@ -15,14 +17,17 @@ import { respondWithFortune } from "@features/fortune/respondWithFortune.js";
 //   • #command-center guide: "Toggle pings" (any member)
 //   • Summon Dero invite card: "Icebreaker" (any member)
 //   • admin-controls guide:  "Refresh standings" (owner/admin)
-// resolveIntroComponents (GuildSetupManager) composes these — built by the
-// factories below — into the guide rows alongside the suggestion-box, invite,
+//   • admin-controls guide:  "Post hangman" (owner/admin), posts a PUBLIC
+//     /mini-game hangman board into #command-center. The game is open to
+//     everyone; only posting one on the channel's behalf is gated.
+// resolveIntroComponents (GuildSetupManager) composes these, built by the
+// factories below, into the guide rows alongside the suggestion-box, invite,
 // and self-destruct buttons.
 //
 // This module still owns the button BEHAVIOUR:
 //  - customId scheme `powerup:<kind>:<action>`, dispatched on the "powerup"
 //    prefix through interactionRegistry; handlePowerUpButton splits + gates +
-//    routes. The host message does not matter — routing is purely by customId.
+//    routes. The host message does not matter, routing is purely by customId.
 //  - the one-time removeAllPowerUpPanels sweep deletes the OLD standalone panels
 //    from guilds set up before the fold-in.
 // The schedule channel is deliberately NOT here: its controls (Go Live + a
@@ -33,15 +38,21 @@ const POWERUP_PREFIX = "powerup";
 
 // The folded controls, keyed by `<kind>:<action>` (the customId tail). The
 // handler reads this table to (a) reject unknown/retired customIds and (b)
-// decide whether to gate the click. "Icebreaker" (member:greet) is member-usable —
-// any member can pull their own icebreaker question — so it is NOT adminOnly.
+// decide whether to gate the click. "Icebreaker" (member:greet) is member-usable,
+// any member can pull their own icebreaker question, so it is NOT adminOnly.
 const POWERUP_ACTIONS = {
 	"member:subscribe": { adminOnly: false },
 	"member:greet": { adminOnly: false },
-	// "Fortune" (member:fortune) — any member can pull their own fortune reading,
+	// "Fortune" (member:fortune), any member can pull their own fortune reading,
 	// so it is NOT adminOnly.
 	"member:fortune": { adminOnly: false },
 	"admin:refresh": { adminOnly: true },
+	// "Post hangman" (admin:hangman), starts a public /mini-game hangman round in
+	// the guild's #command-center. adminOnly because it POSTS to a channel other
+	// than the one clicked, which is a moderator action; the game itself is open
+	// to everyone, and any member can start their own round with
+	// /mini-game hangman in any channel they can talk in.
+	"admin:hangman": { adminOnly: true },
 } as const satisfies Record<string, { adminOnly: boolean }>;
 
 // ── button factories (folded into the intro guides) ──────────────────────
@@ -49,7 +60,7 @@ const POWERUP_ACTIONS = {
 // Returned as bare ButtonBuilders so resolveIntroComponents can pack several into
 // one ActionRow. The customIds MUST match POWERUP_ACTIONS / the switch below.
 
-// #command-center guide row: the announcement-ping toggle ("Toggle pings" — the
+// #command-center guide row: the announcement-ping toggle ("Toggle pings", the
 // bell carries "announcements"). Open to any member. Secondary style so the
 // Suggestion Box (Primary) stays the row's visual lead.
 export function buildMemberControlButtons(): ButtonBuilder[] {
@@ -58,14 +69,14 @@ export function buildMemberControlButtons(): ButtonBuilder[] {
 	];
 }
 
-// "Icebreaker" — pulls the clicking member a random icebreaker question (posted to
+// "Icebreaker", pulls the clicking member a random icebreaker question (posted to
 // #introductions). Member-usable (member:greet). Lives on the Summon Dero invite
 // card, not the command guide row.
 export function buildIcebreakerButton(): ButtonBuilder {
 	return new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:greet`).setLabel("Icebreaker").setEmoji("🎲").setStyle(ButtonStyle.Secondary);
 }
 
-// "Fortune" — pulls the clicking member a quick personal fortune reading
+// "Fortune", pulls the clicking member a quick personal fortune reading
 // (ephemeral, so it never clutters the read-only #command-center guide).
 // Member-usable (member:fortune). Rides the Summon Dero invite card next to
 // Icebreaker.
@@ -78,6 +89,12 @@ export function buildFortuneButton(): ButtonBuilder {
 export function buildAdminControlButtons(): ButtonBuilder[] {
 	return [
 		new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:admin:refresh`).setLabel("Refresh standings").setEmoji("🔄").setStyle(ButtonStyle.Primary),
+		// Posts a public hangman board to #command-center. Secondary so Refresh
+		// standings stays the row's lead. Adding a button here re-edits every
+		// existing guild's pinned admin card on its next boot, via the
+		// componentsAreEquivalent check in refreshIntroEmbeds, so this ships with
+		// no re-run of /setup.
+		new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:admin:hangman`).setLabel("Post hangman").setEmoji("🪢").setStyle(ButtonStyle.Secondary),
 	];
 }
 
@@ -116,6 +133,9 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 		case "admin:refresh":
 			await runLeaderboardRefresh(interaction, guildId);
 			return;
+		case "admin:hangman":
+			await runPostHangman(interaction, guildId);
+			return;
 		case "member:greet":
 			await runFireGreeting(interaction);
 			return;
@@ -126,7 +146,7 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 			await runToggleNotificationRole(interaction, guildId);
 			return;
 		default:
-			// In POWERUP_ACTIONS but not wired here — should not happen for shipped
+			// In POWERUP_ACTIONS but not wired here, should not happen for shipped
 			// actions, but keeps the switch exhaustive and loud.
 			await interaction.reply({ content: "This control is not wired up yet.", flags: MessageFlags.Ephemeral });
 	}
@@ -143,10 +163,46 @@ async function runLeaderboardRefresh(interaction: ButtonInteraction, guildId: st
 	await interaction.editReply({ content: "🔄 Standings refreshed." });
 }
 
+async function runPostHangman(interaction: ButtonInteraction, guildId: string): Promise<void> {
+	// Defer: this resolves the guild config, fetches a channel and posts a board,
+	// three round trips that can exceed the 3s interaction ack window on a cold
+	// cache. Same reasoning as runLeaderboardRefresh above.
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+	// The board goes to #command-center, NOT to the channel this button lives in.
+	// The admin controls card sits in the role-gated admin channel, so posting
+	// there would make a "public board" that only admins can see. #command-center
+	// is the members' bot hub and is read-only, which suits a board perfectly:
+	// nobody can bury it in chat and everyone plays through the button.
+	const config = await guildConfigStore.findByGuildId(guildId);
+	const channelId = config?.commandsChannelId;
+	const channel = channelId ? await interaction.client.channels.fetch(channelId).catch(() => null) : null;
+	if (!(channel instanceof TextChannel)) {
+		await interaction.editReply({ embeds: [errorEmbed(gamesCopy.hangman.noChannel)] });
+		return;
+	}
+
+	// Shared with the /mini-game hangman slash path so the two entry points cannot
+	// drift, exactly as runFortune below shares respondWithFortune with its
+	// command. The board, the rules, the modal and the cleanup all live in the
+	// games feature; this function only decides WHERE to post.
+	const result = await startHangmanRound(channel, interaction.user.id);
+	if (result === "alreadyRunning") {
+		await interaction.editReply({ embeds: [errorEmbed(gamesCopy.hangman.alreadyRunning)] });
+		return;
+	}
+	if (result === "failed") {
+		await interaction.editReply({ embeds: [errorEmbed(gamesCopy.hangman.noChannel)] });
+		return;
+	}
+
+	await interaction.editReply({ content: gamesCopy.hangman.startedIn(channel.id) });
+}
+
 async function runFireGreeting(interaction: ButtonInteraction): Promise<void> {
 	// Fire the real new-member greeting flow for the clicking member: the same
 	// path a join takes (a pack-voiced welcome framing + a random icebreaker,
-	// posted to the introductions channel pinging them). Member-usable — anyone
+	// posted to the introductions channel pinging them). Member-usable, anyone
 	// can drop a fresh icebreaker or re-introduce themselves on demand. Reuses
 	// welcomeNewMember so the on-demand fire and the on-join fire never drift.
 	// Silent ack: the posted greeting IS the visible feedback, so there is no
@@ -283,7 +339,7 @@ async function runToggleNotificationRole(interaction: ButtonInteraction, guildId
 /**
  * Register the power-up button handler. Called once at boot from main.ts
  * alongside the other registerXHandlers, BEFORE the InteractionCreate listener.
- * Still required even though the buttons now live on the intro guides — every
+ * Still required even though the buttons now live on the intro guides, every
  * `powerup:*` click routes through here.
  */
 export function registerPowerUpHandlers(): void {

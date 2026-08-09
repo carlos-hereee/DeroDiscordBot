@@ -88,6 +88,45 @@ export const gamesCopy = {
 	hangman: {
 		subcommandDescription: "Start a hangman round anyone in this channel can play",
 		label: "hangman",
+
+		cooldownMessage: (seconds: number): string => `Dero is still setting the gallows. Try again in ${seconds}s.`,
+		alreadyRunning: "A round is already running in this channel. Finish that one first.",
+		started: "Round posted. Anyone in the channel can guess.",
+		startedIn: (channelId: string): string => `Round posted in <#${channelId}>. Anyone there can guess.`,
+		noChannel: "Could not find a channel to post the board in. Run /setup first.",
+
+		// ── the public board ──
+		boardTitle: "🪢 Hangman",
+		guessButtonLabel: "Guess a letter",
+		wordLabel: "Word",
+		missesLabel: "Misses",
+		attemptsLabel: "Attempts left",
+		noMisses: "none yet",
+		startedBy: (starterId: string): string => `Started by <@${starterId}>. Anyone in this channel can guess.`,
+
+		// ── the modal ──
+		modalTitle: "Guess a letter",
+		modalInputLabel: "One letter",
+		modalPlaceholder: "a",
+
+		// ── per guess feedback, all ephemeral to the guesser ──
+		// Only the BOARD is public. Telling the whole channel that someone typed a
+		// digit would be noise, and the board already shows every real outcome.
+		hit: (letter: string): string => `**${letter.toUpperCase()}** is in the word.`,
+		miss: (letter: string, remaining: number): string =>
+			`**${letter.toUpperCase()}** is not in the word. ${remaining} attempt${remaining === 1 ? "" : "s"} left.`,
+		repeat: (letter: string): string => `**${letter.toUpperCase()}** was already tried. That one is free.`,
+		invalid: "One letter, a through z. That one does not count against you.",
+		closed: "That round is already over.",
+
+		// ── end states ──
+		wonTitle: "🪢 Solved",
+		wonDescription: (word: string, solverId: string): string =>
+			`The word was **${word.toUpperCase()}**.\n\n👑 <@${solverId}> landed the last letter.`,
+		lostTitle: "🪢 Out of attempts",
+		lostDescription: (word: string): string => `The word was **${word.toUpperCase()}**. Nobody got there.`,
+		expiredTitle: "🪢 Round expired",
+		expiredDescription: (word: string): string => `Nobody finished it in time. The word was **${word.toUpperCase()}**.`,
 	},
 
 	// ── shared challenge and accept engine copy ──

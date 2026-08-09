@@ -114,6 +114,43 @@ export function buildRpsRevealEmbed(
 		.setImage(imageRef);
 }
 
+// ── buildHangmanBoardEmbed ─────────────────────────────────────────────────
+// The public board, edited IN PLACE after every real guess so the whole channel
+// watches one message evolve rather than scrolling a wall of updates. The image
+// is the gallows frame for the current miss count, which is why the art manifest
+// declares seven of them.
+//
+// The masked word arrives already escaped by hangmanState.maskedWord: a bare
+// underscore is markdown for italics in Discord, so an unescaped mask renders as
+// slanted nothing instead of blanks.
+export function buildHangmanBoardEmbed(
+	masked: string,
+	misses: string[],
+	attemptsLeft: number,
+	starterId: string,
+	imageRef: string
+): EmbedBuilder {
+	const c = gamesCopy.hangman;
+	return base()
+		.setTitle(c.boardTitle)
+		.setColor(COLORS.GAME_HANGMAN)
+		.setDescription(c.startedBy(starterId))
+		.addFields(
+			{ name: c.wordLabel, value: masked, inline: false },
+			{ name: c.missesLabel, value: misses.length ? misses.map((l) => l.toUpperCase()).join(" ") : c.noMisses, inline: true },
+			{ name: c.attemptsLabel, value: String(attemptsLeft), inline: true }
+		)
+		.setImage(imageRef);
+}
+
+// ── buildHangmanEndEmbed ───────────────────────────────────────────────────
+// Replaces the board on a win, a loss, or an expiry. Always names the word: a
+// round that ends without revealing it is the one outcome players actually
+// resent, and there is nothing left to protect once the round is over.
+export function buildHangmanEndEmbed(title: string, description: string, imageRef: string): EmbedBuilder {
+	return base().setTitle(title).setColor(COLORS.GAME_HANGMAN).setDescription(description).setImage(imageRef);
+}
+
 // ── buildRpsTimeoutEmbed ───────────────────────────────────────────────────
 // The round was accepted and then stalled. Deliberately does NOT reveal the
 // throw of whoever did commit: the round is void, so publishing one player's
