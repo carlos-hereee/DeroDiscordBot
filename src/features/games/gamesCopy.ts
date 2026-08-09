@@ -28,6 +28,20 @@ export const gamesCopy = {
 		diceChoiceLabel: "Dice roll",
 		coinChoiceLabel: "Coin flip",
 		label: "a duel",
+
+		// ── result embed ──
+		// The mentions here never ping: this embed is the payoff, and pinging both
+		// players a second time (they were already pinged by the challenge) would
+		// be noise. Mentions inside an embed render as names without notifying.
+		resultTitle: "⚔️ The duel is settled",
+		cooldownMessage: (seconds: number): string => `Dero is still clearing the field. Try again in ${seconds}s.`,
+
+		diceLine: (challengerId: string, challengerRoll: number, opponentId: string, opponentRoll: number): string =>
+			`<@${challengerId}> rolled **${challengerRoll}**\n<@${opponentId}> rolled **${opponentRoll}**`,
+		coinLine: (face: string): string => `The coin lands on **${face}**.`,
+
+		winnerLine: (winnerId: string): string => `\n\n👑 <@${winnerId}> takes it.`,
+		tieLine: "\n\nDead even. Nobody takes it. Run it back.",
 	},
 
 	rps: {

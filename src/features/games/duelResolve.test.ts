@@ -1,0 +1,126 @@
+import { describe, it, expect } from "vitest";
+import { resolveDuel, DUEL_DIE_SIDES } from "./duelResolve.js";
+
+// A stub rng that walks a fixed script, so a two roll dice duel gets two
+// controlled values rather than one repeated one.
+function scriptedRng(...values: number[]): () => number {
+	let index = 0;
+	return () => values[Math.min(index++, values.length - 1)];
+}
+
+describe("resolveDuel, coin", () => {
+	it("gives heads to the challenger", () => {
+		const result = resolveDuel("coin", () => 0.49);
+		expect(result).toEqual({ flip: "coin", face: "heads", winner: "challenger" });
+	});
+
+	it("gives tails to the opponent", () => {
+		const result = resolveDuel("coin", () => 0.5);
+		expect(result).toEqual({ flip: "coin", face: "tails", winner: "opponent" });
+	});
+
+	it("treats exactly 0.5 as tails, so the two faces split the range evenly", () => {
+		// The boundary is the only place a coin can quietly become unfair. rng is
+		// [0, 1), so heads must be strictly below 0.5 and tails must own 0.5 up.
+		expect(resolveDuel("coin", () => 0).face).toBe("heads");
+		expect(resolveDuel("coin", () => 0.499999).face).toBe("heads");
+		expect(resolveDuel("coin", () => 0.5).face).toBe("tails");
+		expect(resolveDuel("coin", () => 0.999999).face).toBe("tails");
+	});
+
+	it("never ties, a single coin has no third outcome", () => {
+		for (let i = 0; i < 200; i++) {
+			expect(resolveDuel("coin").winner).not.toBe("tie");
+		}
+	});
+
+	it("stays near an even split over many flips", () => {
+		const runs = 5000;
+		let heads = 0;
+		for (let i = 0; i < runs; i++) {
+			if (resolveDuel("coin").winner === "challenger") heads++;
+		}
+		const rate = heads / runs;
+		// Loose band around 0.5. At n=5000 the 3-sigma spread is ~0.021, so
+		// [0.45, 0.55] is a safe, non-flaky envelope.
+		expect(rate).toBeGreaterThan(0.45);
+		expect(rate).toBeLessThan(0.55);
+	});
+});
+
+describe("resolveDuel, dice", () => {
+	it("awards the higher roll to the challenger", () => {
+		const result = resolveDuel("dice", scriptedRng(0.9, 0.1));
+		expect(result.flip).toBe("dice");
+		if (result.flip !== "dice") throw new Error("expected a dice result");
+		expect(result.challengerRoll).toBeGreaterThan(result.opponentRoll);
+		expect(result.winner).toBe("challenger");
+	});
+
+	it("awards the higher roll to the opponent", () => {
+		const result = resolveDuel("dice", scriptedRng(0.1, 0.9));
+		if (result.flip !== "dice") throw new Error("expected a dice result");
+		expect(result.opponentRoll).toBeGreaterThan(result.challengerRoll);
+		expect(result.winner).toBe("opponent");
+	});
+
+	it("reports a tie when both roll the same face", () => {
+		const result = resolveDuel("dice", scriptedRng(0.42, 0.42));
+		if (result.flip !== "dice") throw new Error("expected a dice result");
+		expect(result.challengerRoll).toBe(result.opponentRoll);
+		expect(result.winner).toBe("tie");
+	});
+
+	it("maps the rng boundaries onto real die faces, never 0 and never past the top", () => {
+		// The classic off by one lives here: rng is [0, 1), so an rng of 0 must
+		// produce face 1 and an rng approaching 1 must produce the top face.
+		const low = resolveDuel("dice", scriptedRng(0, 0));
+		if (low.flip !== "dice") throw new Error("expected a dice result");
+		expect(low.challengerRoll).toBe(1);
+		expect(low.opponentRoll).toBe(1);
+
+		const high = resolveDuel("dice", scriptedRng(0.9999999, 0.9999999));
+		if (high.flip !== "dice") throw new Error("expected a dice result");
+		expect(high.challengerRoll).toBe(DUEL_DIE_SIDES);
+		expect(high.opponentRoll).toBe(DUEL_DIE_SIDES);
+	});
+
+	it("only ever produces faces inside the die's range", () => {
+		for (let i = 0; i < 2000; i++) {
+			const result = resolveDuel("dice");
+			if (result.flip !== "dice") throw new Error("expected a dice result");
+			for (const roll of [result.challengerRoll, result.opponentRoll]) {
+				expect(Number.isInteger(roll)).toBe(true);
+				expect(roll).toBeGreaterThanOrEqual(1);
+				expect(roll).toBeLessThanOrEqual(DUEL_DIE_SIDES);
+			}
+		}
+	});
+
+	it("ties at roughly one in the die's face count", () => {
+		const runs = 20000;
+		let ties = 0;
+		for (let i = 0; i < runs; i++) {
+			if (resolveDuel("dice").winner === "tie") ties++;
+		}
+		const rate = ties / runs;
+		// Expected 1/20 = 0.05. Wide band so this can never flake, but tight
+		// enough to catch a die that silently became a d6 (0.167) or a d100.
+		expect(rate).toBeGreaterThan(0.03);
+		expect(rate).toBeLessThan(0.07);
+	});
+
+	it("does not favor either player", () => {
+		const runs = 20000;
+		let challenger = 0;
+		let opponent = 0;
+		for (let i = 0; i < runs; i++) {
+			const winner = resolveDuel("dice").winner;
+			if (winner === "challenger") challenger++;
+			if (winner === "opponent") opponent++;
+		}
+		// Going first must not be an advantage. Both draw from the same rng, so
+		// the two win rates should sit on top of each other.
+		expect(Math.abs(challenger - opponent) / runs).toBeLessThan(0.03);
+	});
+});

@@ -1,0 +1,52 @@
+// ── duelResolve ────────────────────────────────────────────────────────────
+// Pure resolution for /mini-game duel. No Discord types, no I/O, no module
+// state, so the odds are testable in isolation exactly the way rollFortune.ts
+// splits its roll from respondWithFortune's side effects. The rng is injectable
+// for the same reason: production passes nothing and gets Math.random, tests
+// pass a stub and pin the boundaries.
+
+export type DuelFlip = "dice" | "coin";
+export type DuelWinner = "challenger" | "opponent" | "tie";
+export type CoinFace = "heads" | "tails";
+
+// A twenty sided die rather than a six. Both are "dice" to a player, but d20
+// puts the tie rate at 5 percent instead of nearly 17, and a duel that ties one
+// time in six stops feeling like a duel. Named so the number is changeable in
+// one place if that judgement turns out wrong in real use.
+export const DUEL_DIE_SIDES = 20;
+
+// The two modes resolve differently on purpose, which is what makes the option
+// worth offering at all:
+//   • dice, both players roll independently and the higher roll wins, so a tie
+//     is possible and the numbers give the embed something to show.
+//   • coin, ONE flip decides it. Heads is the challenger, tails is the opponent.
+//     A single coin cannot tie, so this is the mode to pick when someone needs
+//     an answer rather than a story.
+export type DuelResult =
+	| { flip: "dice"; challengerRoll: number; opponentRoll: number; winner: DuelWinner }
+	| { flip: "coin"; face: CoinFace; winner: "challenger" | "opponent" };
+
+export function resolveDuel(flip: DuelFlip, rng: () => number = Math.random): DuelResult {
+	if (flip === "coin") {
+		// Strictly below 0.5 is heads, so the two faces split the [0, 1) range
+		// evenly. Math.random never returns 1, so tails is not shortchanged.
+		const face: CoinFace = rng() < 0.5 ? "heads" : "tails";
+		return { flip: "coin", face, winner: face === "heads" ? "challenger" : "opponent" };
+	}
+
+	const challengerRoll = rollDie(rng);
+	const opponentRoll = rollDie(rng);
+	const winner: DuelWinner =
+		challengerRoll === opponentRoll ? "tie" : challengerRoll > opponentRoll ? "challenger" : "opponent";
+	return { flip: "dice", challengerRoll, opponentRoll, winner };
+}
+
+// ── private ────────────────────────────────────────────────────────────────
+
+// 1 through DUEL_DIE_SIDES inclusive. rng() is [0, 1), so floor(rng * sides)
+// lands in [0, sides - 1] and the +1 shifts it onto a real die face. An rng
+// stubbed to exactly 0 must give 1, and one approaching 1 must give the top
+// face, both of which the tests pin.
+function rollDie(rng: () => number): number {
+	return Math.floor(rng() * DUEL_DIE_SIDES) + 1;
+}

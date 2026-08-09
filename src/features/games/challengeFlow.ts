@@ -11,6 +11,7 @@ import {
 import { v4 as uuid } from "uuid";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { gamesCopy } from "./gamesCopy.js";
+import { resolveGameAsset } from "./gamesAssets.js";
 import { buildChallengeEmbed, buildChallengeClosedEmbed } from "./gamesEmbeds.js";
 
 // ── challengeFlow ──────────────────────────────────────────────────────────
@@ -147,6 +148,11 @@ export async function issueChallenge(options: IssueChallengeOptions): Promise<Ch
 			new ButtonBuilder().setCustomId(declineId).setLabel(gamesCopy.challenge.declineLabel).setStyle(ButtonStyle.Secondary)
 		);
 
+		// Custom challenge art when it exists on disk, the bundled Dero avatar
+		// until then. The attachment and the embed's reference MUST ride the same
+		// message or the thumbnail slot renders empty.
+		const art = resolveGameAsset("challenge");
+
 		// Public, because the whole channel watching is half the fun, and because
 		// the opponent has to be able to click it. The notifying mention rides the
 		// message CONTENT (a mention inside an embed never pings) with
@@ -154,8 +160,9 @@ export async function issueChallenge(options: IssueChallengeOptions): Promise<Ch
 		// no other mention in this message can resolve.
 		await interaction.reply({
 			content: gamesCopy.challenge.mentionLine(opponent.id),
-			embeds: [buildChallengeEmbed(challengerId, opponent.id, gameLabel)],
+			embeds: [buildChallengeEmbed(challengerId, opponent.id, gameLabel, art.ref)],
 			components: [row],
+			files: [art.attachment],
 			allowedMentions: { users: [opponent.id] },
 		});
 
@@ -200,10 +207,14 @@ export async function issueChallenge(options: IssueChallengeOptions): Promise<Ch
 		if (answered.customId === declineId) {
 			// Decline is fully terminal here, so this file owns the acknowledgement
 			// and updates the public message through the button itself.
+			// files: [] drops the challenge art. The closed embed sets no image, so
+			// leaving the attachment behind would render a stray file card under a
+			// message about nothing happening.
 			await answered.update({
 				content: "",
 				embeds: [buildChallengeClosedEmbed(gamesCopy.challenge.declined(opponent.id))],
 				components: [],
+				files: [],
 			});
 			return { status: "declined" };
 		}
@@ -247,6 +258,6 @@ async function reject(
 // the house convention).
 async function closeChallenge(interaction: ChatInputCommandInteraction, description: string): Promise<void> {
 	await interaction
-		.editReply({ content: "", embeds: [buildChallengeClosedEmbed(description)], components: [] })
+		.editReply({ content: "", embeds: [buildChallengeClosedEmbed(description)], components: [], files: [] })
 		.catch((error: unknown) => console.warn("[mini-game] failed to close out the challenge message", error));
 }
