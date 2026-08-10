@@ -48,6 +48,31 @@ const guildConfigSchema = new Schema(
 		// creates it (repairMissingChannels treats null as "missing, build it").
 		adminCommandsChannelId: { type: String, required: false, default: null },
 
+		// ── GAME ROOMS: the guild's SECOND managed category (2026-08-10) ──
+		// What:  ids of the 🎮 GAME ROOMS category and the two managed channels
+		//        inside it, 📋game-rules and ⚔️challenges. Per match game rooms
+		//        are created as further children of this category and are NOT
+		//        tracked here, they live on their own GameRoom rows.
+		// Who:   GuildSetupManager (create + self heal), ChannelDeleteWatcher
+		//        (realtime rebuild), selfDestruct (teardown), OnboardingCheck,
+		//        and RoomProvisioner, which parents every new room channel to
+		//        gamesCategoryId.
+		// When:  populated by the first /setup or boot sweep that runs AFTER
+		//        this field is merged. Legacy rows load null until then.
+		// Where: ⚠️ categoryId above is `required: true` and SINGULAR, and every
+		//        consumer written before today reads it as "the" category. These
+		//        are the first fields to break that assumption, which is why a
+		//        channel spec must now name WHICH category it belongs to rather
+		//        than inheriting the only one that used to exist.
+		// How:   nullable, following nextDecreeChannelId exactly, so existing
+		//        guilds load cleanly and the boot sweep treats null as "missing,
+		//        build it". Deliberately NOT required: making gamesCategoryId
+		//        required would fail validation on every legacy row in the
+		//        collection the moment this ships.
+		gamesCategoryId: { type: String, required: false, default: null },
+		gamesRulesChannelId: { type: String, required: false, default: null },
+		gamesChallengesChannelId: { type: String, required: false, default: null },
+
 		// id of the pinned message inside scheduleChannelId that ScheduleBoard
 		// keeps up to date. null until autoSetup finishes posting the intro,
 		// at which point this is populated and every subsequent refresh edits
@@ -159,6 +184,19 @@ const guildConfigSchema = new Schema(
 				// refreshIntroEmbeds maintains it; null on legacy rows until the first
 				// boot posts it.
 				inviteCardId: { type: String, required: false, default: null },
+				// ── GAME ROOMS intro anchors (2026-08-10) ──────────────
+				// Paired with gamesRulesChannelId and gamesChallengesChannelId
+				// above. ⚠️ THESE TWO KEYS ARE THE WHOLE REASON THE POST MORTEM
+				// FURTHER DOWN THIS FILE EXISTS. Mongoose runs strict, so a write
+				// to an UNDECLARED key inside this subdocument is dropped in
+				// silence, the read comes back undefined, and refreshIntroEmbeds
+				// reads undefined as "no anchor yet, post a fresh intro and
+				// persist the id". It would then repost both cards on EVERY BOOT,
+				// forever, with nothing failing anywhere. Declaring them here is
+				// not bookkeeping, it is the fix for a bug that would otherwise
+				// ship looking like it worked.
+				gamesRulesChannelId: { type: String, required: false, default: null },
+				gamesChallengesChannelId: { type: String, required: false, default: null },
 			},
 			required: false,
 			default: () => ({}),
