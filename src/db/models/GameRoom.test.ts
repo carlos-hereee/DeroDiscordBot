@@ -1,0 +1,106 @@
+import { describe, it, expect } from "vitest";
+import { GameRoom } from "./GameRoom.js";
+import { GAME_SLUGS, NON_TERMINAL_ROOM_STATUSES, ROOM_STATUSES, ROOM_VISIBILITIES } from "@features/game-rooms/roomTypes.js";
+
+// ── GameRoom index and enum declarations ──────────────────────────────────
+// SCOPE NOTE, read this before adding to the file. These are SCHEMA assertions, not store
+// tests (house rule 6 says stores are thin wrappers and are not tested). They exist because
+// the guarantees this feature rests on are declarative: "one open room per host" is a partial
+// unique index, and "the sweep cannot touch a live game" is a status filter that only works if
+// the index behind it is the one we think it is. Both are invisible at the call site and both
+// fail silently when wrong, so they are pinned here.
+//
+// What this file CANNOT prove: that Mongo actually rejects the second insert. That needs a live
+// server (mongodb-memory-server is not a dependency of this repo, and the house pattern set by
+// pendingPairingStore.test.ts is to pin the SHAPES that make a Mongo guarantee hold rather than
+// to stand up a database). The enforcement itself is covered by end to end scenario 7 in the
+// master plan: same host, second attempt, expect a jump link to the first room.
+//
+// Importing the model is safe here: mongoose.model() only registers a schema. It opens no
+// connection, so nothing in this file can hang waiting on Mongo.
+
+type DeclaredIndex = [Record<string, unknown>, Record<string, unknown>];
+const indexes = GameRoom.schema.indexes() as unknown as DeclaredIndex[];
+
+const findIndex = (key: Record<string, unknown>): DeclaredIndex | undefined =>
+	indexes.find(([fields]) => JSON.stringify(fields) === JSON.stringify(key));
+
+describe("GameRoom indexes", () => {
+	it("declares the roomId unique index exactly once", () => {
+		// Declared by the field-level `unique: true`. Declaring it AGAIN via schema.index() would
+		// make Mongoose 8 log a duplicate-index warning on every boot, so the count is the assertion.
+		const roomIdIndexes = indexes.filter(([fields]) => JSON.stringify(fields) === JSON.stringify({ roomId: 1 }));
+		expect(roomIdIndexes).toHaveLength(1);
+		expect(roomIdIndexes[0][1].unique).toBe(true);
+	});
+
+	it("enforces one open room per host with a PARTIAL unique index, not a plain one", () => {
+		const hostIndex = findIndex({ guildId: 1, hostId: 1 });
+		expect(hostIndex).toBeDefined();
+		const options = hostIndex![1];
+		expect(options.unique).toBe(true);
+		// Partial is load bearing. A plain unique index here would make a host's SECOND EVER room
+		// collide with their first finished one, so nobody could ever play twice.
+		expect(options.partialFilterExpression).toEqual({
+			status: { $in: [...NON_TERMINAL_ROOM_STATUSES] },
+		});
+	});
+
+	it("scopes the partial filter to exactly the non-terminal statuses", () => {
+		// The filter must not drift from the list the store queries with. If these ever disagree,
+		// the index stops covering the query it exists for and the guarantee evaporates silently.
+		expect([...NON_TERMINAL_ROOM_STATUSES]).toEqual(["draft", "open", "playing"]);
+		expect([...NON_TERMINAL_ROOM_STATUSES].every((status) => (ROOM_STATUSES as readonly string[]).includes(status))).toBe(
+			true
+		);
+		expect([...NON_TERMINAL_ROOM_STATUSES]).not.toContain("finished");
+		expect([...NON_TERMINAL_ROOM_STATUSES]).not.toContain("archived");
+	});
+
+	it("indexes the archive sweep's query on status first", () => {
+		// The sweep filters status "finished" AND archiveAt <= now. Leading with status keeps the
+		// scan off the far larger set of archived rows.
+		expect(findIndex({ status: 1, archiveAt: 1 })).toBeDefined();
+	});
+
+	it("indexes the per-guild cap query and the dashboard history query", () => {
+		expect(findIndex({ guildId: 1, status: 1 })).toBeDefined();
+		expect(findIndex({ guildId: 1, playerIds: 1, endedAt: -1 })).toBeDefined();
+	});
+
+	it("does not carry a redundant standalone guildId index", () => {
+		// { guildId: 1, status: 1 } already serves every guildId-only query as its prefix. A second
+		// single-field index would cost a write on every move append and buy nothing.
+		expect(findIndex({ guildId: 1 })).toBeUndefined();
+	});
+});
+
+describe("GameRoom enums stay in step with roomTypes", () => {
+	const enumOf = (path: string): string[] =>
+		(GameRoom.schema.path(path) as unknown as { enumValues: string[] }).enumValues;
+
+	it("accepts exactly the declared game slugs", () => {
+		expect(enumOf("game")).toEqual([...GAME_SLUGS]);
+	});
+
+	it("accepts exactly the declared statuses and defaults to draft", () => {
+		expect(enumOf("status")).toEqual([...ROOM_STATUSES]);
+		expect(GameRoom.schema.path("status").options.default).toBe("draft");
+	});
+
+	it("accepts exactly the declared visibilities and defaults to invite", () => {
+		// Default private on purpose: a room that accidentally opened public would expose a match
+		// the host meant to keep to two people, and capability alone must never expose anything.
+		expect(enumOf("visibility")).toEqual([...ROOM_VISIBILITIES]);
+		expect(GameRoom.schema.path("visibility").options.default).toBe("invite");
+	});
+});
+
+describe("GameRoom archive safety", () => {
+	it("leaves archiveAt null by default, so an unfinished room can never match the sweep", () => {
+		// This is the other half of risk R3. The sweep filters on status AND archiveAt, and a room
+		// that is still playing has archiveAt null, so no filter bug can reach a live game.
+		expect(GameRoom.schema.path("archiveAt").options.default).toBe(null);
+		expect(GameRoom.schema.path("endedAt").options.default).toBe(null);
+	});
+});

@@ -50,9 +50,9 @@ export const BOT_LOG_EVENTS = {
 	// the two. Not idempotent on purpose: every successful redemption logs a
 	// fresh row, so a re-invite that issues a new code and gets redeemed
 	// again shows up as a second redemption (the funnel measures activation
-	// events, not unique guilds). Metadata shape matches PAIRING_CODE_SENT
-	// — `{ ownerId }` (sourced from the PendingPairing row's ownerUserId
-	// field but keyed `ownerId` for cross-event funnel queries) — so the
+	// events, not unique guilds). Metadata shape matches PAIRING_CODE_SENT,
+	// `{ ownerId }` (sourced from the PendingPairing row's ownerUserId
+	// field but keyed `ownerId` for cross-event funnel queries), so the
 	// analytics query that joins the two events on guildId can also slice
 	// by ownerId without translating field names per event type.
 	PAIRING_REDEEMED: "pairing_redeemed",
@@ -70,6 +70,26 @@ export const BOT_LOG_EVENTS = {
 	//        feature-announcement key, so call sites stay symmetric and the
 	//        pollId rides in the event string without a new schema field.
 	POLL_SENT_PREFIX: "poll_sent",
+	// ── game room lifecycle (Game Rooms Phase 1) ───────────────────
+	// What:  the open and close bookends of one game room. The log `event`
+	//        strings are composed as `game_room_created:<roomId>` and
+	//        `game_room_archived:<roomId>` so each room gets its own bucket.
+	// Who:   RoomProvisioner writes the created row; the archive sweep and
+	//        the Archive now button write the archived row through the one
+	//        shared delete path. Nothing reads them on the hot path.
+	// When:  once per room open, once per room archive. Unlike the
+	//        announcement keys these are NOT read for idempotency, because
+	//        the partial unique index on GameRoom already guarantees one
+	//        live room per host. They exist for AUDIT: paired on roomId they
+	//        give room lifetime, archive latency against the 4 hour target,
+	//        and how often an admin deleted a room channel early (an
+	//        archived row whose channel was already gone).
+	// Where: same BotLog collection as every other bot-side event, so the
+	//        audit model stays consistent across features.
+	// How:   prefix constant + composer below, matching featureAnnouncedEvent,
+	//        so the roomId rides in the event string with no new schema field.
+	GAME_ROOM_CREATED_PREFIX: "game_room_created",
+	GAME_ROOM_ARCHIVED_PREFIX: "game_room_archived",
 	// add more here as needed
 } as const;
 
@@ -82,3 +102,9 @@ export const featureAnnouncedEvent = (version: string): string =>
 // Compose the per-poll dispatch event key. Mirrors featureAnnouncedEvent so the
 // idempotency model stays consistent across broadcast features.
 export const pollSentEvent = (pollId: string): string => `${BOT_LOG_EVENTS.POLL_SENT_PREFIX}:${pollId}`;
+
+// Compose the per-room lifecycle event keys. Same shape as the two above, so an audit query
+// can slice BotLog by prefix across every feature that logs per-entity events.
+export const gameRoomCreatedEvent = (roomId: string): string => `${BOT_LOG_EVENTS.GAME_ROOM_CREATED_PREFIX}:${roomId}`;
+
+export const gameRoomArchivedEvent = (roomId: string): string => `${BOT_LOG_EVENTS.GAME_ROOM_ARCHIVED_PREFIX}:${roomId}`;

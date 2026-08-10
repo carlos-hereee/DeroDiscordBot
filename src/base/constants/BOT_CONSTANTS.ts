@@ -22,7 +22,7 @@ export const BOT_CONSTANTS = {
 	],
 
 	// ── admin commands that require role check ────────────────────
-	// /list-events and /leaderboard are deliberately NOT in this set —
+	// /list-events and /leaderboard are deliberately NOT in this set,
 	// both are read-only and were moved to the public #command-center
 	// when the public/admin command guide split landed on 2026-04-24.
 	// Mortals seeing their rank and what's scheduled is the whole point.
@@ -69,6 +69,52 @@ export const BOT_CONSTANTS = {
 	// one edit per guild per window so the board updates promptly without
 	// hammering Discord with dozens of edits. Read by scheduleLeaderboardRefresh.
 	LEADERBOARD_REFRESH_DEBOUNCE_MS: 60_000, // at most one activity-driven refresh per guild per 60s
+
+	// ── game rooms ────────────────────────────────────────────────
+	// What:  the four numbers and one schedule that bound the Game Rooms
+	//        feature. A room is one match of one mini game in its own
+	//        Discord channel, archived (channel deleted, transcript kept)
+	//        once the match has been over for a while.
+	// Who:   RoomProvisioner reads the caps, roomLifecycle reads the delay,
+	//        ReminderScheduler reads the cron, the challenge board reads the
+	//        spectator cap.
+	// When:  every room open, and every sweep tick.
+	// Where: these are the knobs an operator would actually turn, which is
+	//        why they are constants here rather than env vars: a config typo
+	//        must not be able to silently delete a live match early.
+
+	// How long a finished room's channel survives before the sweep deletes
+	// it. Long enough for both players to scroll the match back and share it,
+	// short enough that a busy guild never approaches Discord's hard cap of
+	// 50 channels per category. The transcript is already in Mongo before the
+	// delete happens, so this window is about convenience, not durability.
+	GAME_ROOM_ARCHIVE_DELAY_MS: 4 * 60 * 60 * 1000, // 4 hours
+
+	// Concurrent non-terminal rooms allowed per guild. Discord caps a category
+	// at 50 channels and a full category makes EVERY new room fail, so this
+	// keeps a guild an order of magnitude clear of the ceiling even before the
+	// sweep runs. Hitting it produces an honest "the arena is full" reply, not
+	// a silent no-op.
+	GAME_ROOM_MAX_PER_GUILD: 20,
+
+	// Explicit spectators on an invite-only room. Each one is a real permission
+	// overwrite, and Discord's select menus cap at 25 options, so the two limits
+	// agree at 25 by coincidence and by design. This binds ONLY the private
+	// path: a public match spends a single @everyone overwrite no matter how
+	// many members watch. A truncated list must SAY it was truncated.
+	GAME_ROOM_MAX_SPECTATORS: 25,
+
+	// How often the archive sweep looks for finished rooms past their
+	// archiveAt. Deliberately its OWN cron and not a passenger on the
+	// per-minute reminder tick, which has a 60s budget and an overlap guard
+	// that a slow channel-delete fan-out would blow.
+	GAME_ROOM_SWEEP_CRON: "*/5 * * * *", // every 5 minutes
+
+	// How long a draft room (host picked a game but never pressed Start) may
+	// hold that host's one room slot before it is reaped. Without this, an
+	// abandoned draft locks the host out of the board forever, since the
+	// partial unique index counts "draft" as live.
+	GAME_ROOM_DRAFT_TIMEOUT_MS: 10 * 60_000, // 10 minutes
 
 	// ── invite URL provenance ─────────────────────────────────────
 	// The actual OAuth install URL is composed in @utils/config as
