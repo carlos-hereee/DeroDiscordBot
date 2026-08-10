@@ -42,7 +42,7 @@ export class GuildEventManager {
 			const guildId = interaction.guildId!;
 
 			// read the announcements channel once for the reply footer. the
-			// event rows themselves do not store a channelId anymore — that
+			// event rows themselves do not store a channelId anymore, that
 			// would freeze the channel into stale data if the admin later
 			// reconfigures the home base. ReminderJob reads GuildConfig fresh
 			// every tick.
@@ -62,9 +62,9 @@ export class GuildEventManager {
 			//        single transaction with the new event rows below.
 			// Where: GuildConfig is created during /setup (autoSetup), so the
 			//        update path here always finds an existing row. If config
-			//        is missing we still proceed with event creation — the
+			//        is missing we still proceed with event creation, the
 			//        rest of the slash command was already tolerant of that
-			//        edge — but log it so the field gap is visible.
+			//        edge, but log it so the field gap is visible.
 			// How:   fire and forget at this point would race with the dashboard
 			//        reading the value moments later. Awaiting the update keeps
 			//        the slash command response and the cached value in lock
@@ -111,7 +111,7 @@ export class GuildEventManager {
 			//        rows that confuse members.
 			// Who:   the admin who re-runs /configure-kvk-season at the
 			//        start of every new season. Streamer events created
-			//        via /configure-stream-schedule are NOT touched —
+			//        via /configure-stream-schedule are NOT touched,
 			//        the seasonEnd != null filter excludes them because
 			//        streamer schedules leave seasonEnd null by design.
 			// When:  exactly once per /configure-kvk-season invocation,
@@ -129,7 +129,7 @@ export class GuildEventManager {
 			//          this guild. ③ filter to those with a name match
 			//          AND a non-null seasonEnd (the KvK marker). ④ soft-
 			//          delete each via eventStore.deleteInGuild. Failures
-			//          are logged but do not abort the season setup —
+			//          are logged but do not abort the season setup,
 			//          a stale duplicate is less harmful than failing to
 			//          configure the new season.
 			const kvkNames = new Set(rokEvents.events.map((e) => e.name));
@@ -149,21 +149,26 @@ export class GuildEventManager {
 				{ key: "altar_of_darkness", firstOccurrence: input.altarFirst },
 			];
 
+			// `eventDefinition`, not `config`: this is a row from the static
+			// rokEvents catalog (name, cadence, prep steps), a different thing
+			// entirely from the guild's GuildConfig read as `config` above. The
+			// two shared a name until 2026-08-08, which read as if the loop were
+			// reassigning the guild settings.
 			for (const { key, firstOccurrence } of recurringEvents) {
-				const config = rokEvents.events.find((e) => e.key === key)!;
+				const eventDefinition = rokEvents.events.find((e) => e.key === key)!;
 
 				await eventStore.create({
-					name: config.name,
+					name: eventDefinition.name,
 					description: "",
 					type: "recurring",
-					intervalHours: config.intervalHours,
+					intervalHours: eventDefinition.intervalHours,
 					firstOccurrence,
 					seasonEnd: input.seasonEnd,
 					reminderOffsets: [...BOT_CONSTANTS.DEFAULT_REMINDER_OFFSETS],
-					// channelId intentionally omitted — falls back to
+					// channelId intentionally omitted, falls back to
 					// guildConfig.announcementsChannelId at fire time
 					guildId,
-					prepSteps: resolvePrepSteps(config),
+					prepSteps: resolvePrepSteps(eventDefinition),
 					active: true,
 				});
 			}
@@ -176,20 +181,22 @@ export class GuildEventManager {
 				{ key: "kau_karuak_nightmare", date: input.kauNightmare },
 			];
 
+			// Same rename and same reason as the recurring loop above: a catalog
+			// row, not the guild's config.
 			for (const { key, date } of kauOccurrences) {
-				const config = rokEvents.events.find((e) => e.key === key)!;
+				const eventDefinition = rokEvents.events.find((e) => e.key === key)!;
 
 				await eventStore.create({
-					name: config.name,
+					name: eventDefinition.name,
 					description: "",
 					type: "one-time",
 					intervalHours: 0,
 					firstOccurrence: date,
 					seasonEnd: input.seasonEnd,
 					reminderOffsets: [...BOT_CONSTANTS.DEFAULT_REMINDER_OFFSETS],
-					// channelId intentionally omitted — see note above
+					// channelId intentionally omitted, see note above
 					guildId,
-					prepSteps: resolvePrepSteps(config),
+					prepSteps: resolvePrepSteps(eventDefinition),
 					active: true,
 				});
 			}
@@ -202,7 +209,7 @@ export class GuildEventManager {
 			});
 
 			// refresh the pinned schedule board now that events exist. fire
-			// and forget — the admin's reply has already gone out and the
+			// and forget, the admin's reply has already gone out and the
 			// schedule is eventually consistent via the hourly safety tick.
 			refreshSchedule(interaction.client, guildId).catch((err) =>
 				console.error(LOG_MESSAGES.schedule.refreshAfterConfigureFailed, err)
