@@ -38,7 +38,7 @@ export const data = new SlashCommandBuilder()
 	.addStringOption((option) =>
 		option
 			.setName("ruins-date-time")
-			.setDescription("Next Ancient Ruins date — format: MM/DD @HH e.g. 03/20 @12")
+			.setDescription("Next Ancient Ruins date, format: MM/DD @HH e.g. 03/20 @12")
 			.setRequired(true)
 	)
 
@@ -46,13 +46,13 @@ export const data = new SlashCommandBuilder()
 	.addStringOption((option) =>
 		option
 			.setName("altar-date-time")
-			.setDescription("Next Altar of Darkness date — format: MM/DD @HH e.g. 03/20 @12")
+			.setDescription("Next Altar of Darkness date, format: MM/DD @HH e.g. 03/20 @12")
 			.setRequired(true)
 	)
 
 	// ── trial of kau karuak ──────────────────────────────────────
 	.addStringOption((option) =>
-		option.setName("kau-date").setDescription("Trial of Kau Karuak Easy date — format: MM/DD e.g. 03/14").setRequired(true)
+		option.setName("kau-date").setDescription("Trial of Kau Karuak Easy date, format: MM/DD e.g. 03/14").setRequired(true)
 	);
 
 // NOTE: the old `channel` option has been removed. reminders always post to
@@ -175,14 +175,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 			// What:  second ephemeral step. Admin already confirmed the
 			//        dates; now they pick which preparation checklist
 			//        gets baked into every event created by this call.
-			// Who:   only the admin who ran the command sees it — same
+			// Who:   only the admin who ran the command sees it, same
 			//        ephemeral reply is being edited, so Discord scopes
 			//        visibility automatically.
 			// When:  immediately after "Confirm dates are correct".
 			// Where: the resolved customChecklist (or undefined) is
 			//        passed to GuildEventManager.configureKvKSeason,
 			//        which forwards it to every eventStore.create call.
-			// How:   we show three buttons — Accept defaults, Customize,
+			// How:   we show three buttons, Accept defaults, Customize,
 			//        Skip. Customize opens a modal; the other two resolve
 			//        immediately. On modal submit the text is split on
 			//        newlines, trimmed, and empty lines are dropped.
@@ -235,7 +235,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 						components: [],
 					});
 				} else if (choice.customId === "checklist_skip") {
-					// Semantically identical to Accept at persist time —
+					// Semantically identical to Accept at persist time,
 					// both leave customChecklist undefined so defaults
 					// apply. We keep them separate so the admin's intent
 					// ("I'll configure later") reads clearly in the
@@ -272,7 +272,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
 					// awaitModalSubmit is scoped to this interaction so we
 					// do not accidentally capture another admin's modal.
-					// filter is defensive — Discord should already scope
+					// filter is defensive, Discord should already scope
 					// this to the same interaction, but the custom id
 					// filter guards against any stray submission.
 					const submission = await choice.awaitModalSubmit({
@@ -284,7 +284,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
 					// Parse: split on newline, trim each line, drop empty
 					// lines. This is the one place the raw admin input is
-					// sanitized — GuildEventManager trusts its caller.
+					// sanitized, GuildEventManager trusts its caller.
 					const parsed = raw
 						.split(/\r?\n/)
 						.map((line) => line.trim())
@@ -293,7 +293,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 					if (parsed.length === 0) {
 						// Admin submitted only whitespace or empty lines.
 						// Bail out of the modal branch with an error and
-						// stop the whole command — safer than silently
+						// stop the whole command, safer than silently
 						// falling back to defaults, because the admin
 						// clearly intended to customize.
 						await submission.reply({
@@ -324,7 +324,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 			} catch {
 				// Timeout on the checklist prompt OR on the modal submit.
 				// Either way we fall back to defaults so the admin's date
-				// work is never wasted — the season gets configured with
+				// work is never wasted, the season gets configured with
 				// per event type defaults from rok-events.json.
 				customChecklist = undefined;
 				resolutionMessage = configureReminders.checklistPromptTimedOut;
@@ -360,7 +360,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 					ephemeral: true,
 				});
 			} catch {
-				// Non critical — if the follow up fails the primary
+				// Non critical, if the follow up fails the primary
 				// reply still stands and the events are persisted.
 			}
 		}

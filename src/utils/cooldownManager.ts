@@ -2,7 +2,7 @@
 // Generic in-memory per-key cooldown. The bot had per-guild and per-guild+event
 // cooldowns inlined in individual route handlers but no reusable per-user
 // helper; /fortune needs one, so it is extracted here for reuse. State is a
-// plain Map at instance scope — fine for a single-process bot; it would only
+// plain Map at instance scope, fine for a single-process bot; it would only
 // need Redis if the bot ever ran multiple processes.
 //
 // `now` is injectable so callers (and tests) control the clock; production
@@ -13,7 +13,7 @@ export class CooldownManager {
 
 	constructor(private readonly windowMs: number) {}
 
-	// Read-only check. It does NOT record — callers record() only AFTER the
+	// Read-only check. It does NOT record, callers record() only AFTER the
 	// guarded action succeeds, so a failed action never burns the user's window.
 	check(key: string, now: number = Date.now()): { onCooldown: boolean; remainingMs: number } {
 		const last = this.lastUsed.get(key);

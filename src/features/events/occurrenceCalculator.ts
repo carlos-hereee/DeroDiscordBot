@@ -1,6 +1,6 @@
 import { IGameEvent } from "./event.types.js";
 
-// pure function — no DB calls, no Discord, just math
+// pure function, no DB calls, no Discord, just math
 // this makes it trivially easy to unit test
 export function getUpcomingOccurrences(event: IGameEvent, count: number): Date[] {
 	// if intervalHours is 0, it's a one-time event  either it hasn't happened yet (return the single occurrence)
@@ -49,7 +49,7 @@ export function isEventWindowOpen(event: IGameEvent, now = new Date(), windowMin
 
 	const nextOccurrence = occurrences[0];
 
-	// look backwards — was the most recent occurrence within the last EVENT_WINDOW_MINUTES?
+	// look backwards, was the most recent occurrence within the last EVENT_WINDOW_MINUTES?
 	const intervalMs = event.intervalHours * 60 * 60 * 1000;
 	const lastOccurrence = new Date(nextOccurrence.getTime() - intervalMs);
 	const windowEnd = new Date(

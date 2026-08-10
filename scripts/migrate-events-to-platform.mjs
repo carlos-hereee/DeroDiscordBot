@@ -1,7 +1,7 @@
 // ── F4: migrate bot-owned events to the platform DB ──────────────────────────
 // What: copies every active event from the ROK Commander bot's Mongo DB into
 //   the nexious-server's Events collection so the bot can flip USE_REMOTE_EVENTS
-//   without losing data. Idempotent — running twice does NOT duplicate events.
+//   without losing data. Idempotent, running twice does NOT duplicate events.
 // Who: operators running this once during the F4 migration window. Not part of
 //   the runtime path.
 // When: AFTER the server's F1 endpoints are deployed (so the platform DB has the
@@ -58,7 +58,7 @@ if (!targetUri) {
 	process.exit(1);
 }
 
-// Minimal schemas — we don't enforce validation here because both sides have
+// Minimal schemas, we don't enforce validation here because both sides have
 // strict schemas in their real models. We just need to read/write fields.
 // strict: false lets us read fields that the schema doesn't declare (mentionRoleId
 // was added later, prepSteps came after, etc).
@@ -68,7 +68,7 @@ const targetConn = await mongoose.createConnection(targetUri).asPromise();
 console.log(`Source: ${sourceConn.name}`);
 console.log(`Target: ${targetConn.name}`);
 if (limitGuild) console.log(`Scope:  guildId=${limitGuild} (single-guild mode)`);
-console.log(dryRun ? "DRY RUN — no writes will be made\n" : "LIVE RUN — writes are real\n");
+console.log(dryRun ? "DRY RUN, no writes will be made\n" : "LIVE RUN, writes are real\n");
 
 const SourceEvent = sourceConn.model("Event", new mongoose.Schema({}, { strict: false, collection: "events" }));
 
@@ -139,14 +139,14 @@ for (const src of sourceEvents) {
 	const resolved = await resolveGuild(guildId);
 	if (!resolved) {
 		counters.skippedNoApp++;
-		console.warn(`  ⚠ guild ${guildId} has no installed app on the platform — skipping event ${eventId}`);
+		console.warn(`  ⚠ guild ${guildId} has no installed app on the platform, skipping event ${eventId}`);
 		continue;
 	}
 	const { app, calendar } = resolved;
 	if (!calendar) {
 		counters.skippedNoCalendar++;
 		console.warn(
-			`  ⚠ app ${app.uid} (guildId ${guildId}) has no calendar — skipping event ${eventId}. ` +
+			`  ⚠ app ${app.uid} (guildId ${guildId}) has no calendar, skipping event ${eventId}. ` +
 				"Initialize a calendar via the dashboard then re-run this script."
 		);
 		continue;
@@ -212,9 +212,9 @@ console.log("\n── Migration summary ──");
 console.log(`  scanned                ${counters.scanned}`);
 console.log(`  copied                 ${counters.copied}`);
 console.log(`  updated (re-run)       ${counters.updated}`);
-console.log(`  skipped — already in target  ${counters.skippedAlreadyPresent}`);
-console.log(`  skipped — no app for guild   ${counters.skippedNoApp}`);
-console.log(`  skipped — no calendar        ${counters.skippedNoCalendar}`);
+console.log(`  skipped, already in target  ${counters.skippedAlreadyPresent}`);
+console.log(`  skipped, no app for guild   ${counters.skippedNoApp}`);
+console.log(`  skipped, no calendar        ${counters.skippedNoCalendar}`);
 console.log(`  errors                 ${counters.errors}`);
 
 if (dryRun) {
@@ -224,7 +224,7 @@ if (dryRun) {
 	console.log("  1. Verify a sample of events in the platform DB match what the bot DB had.");
 	console.log("  2. Set USE_REMOTE_EVENTS=true on the bot (Railway env) and redeploy.");
 	console.log("  3. Set VITE_USE_DIRECT_EVENTS=true on the dashboard (Vercel env) and redeploy.");
-	console.log("  4. Watch the next cron tick (within 60s) — the bot should fire reminders sourced from the platform DB.");
+	console.log("  4. Watch the next cron tick (within 60s), the bot should fire reminders sourced from the platform DB.");
 	console.log("  5. After 24 hours of stable operation, the bot's local Event model can be safely deleted.");
 }
 

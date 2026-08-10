@@ -41,15 +41,15 @@ export function startApiServer(client: Client): Server {
 	// Health checks.
 	// What: two paths that return the same payload. Root /health is the
 	//   classic platform probe (Railway/Render watchdogs hit this). /api/health
-	//   exists so the dashboard's plugin proxy — which prepends /api to every
-	//   forwarded path — can reach it without the bot having to special-case
+	//   exists so the dashboard's plugin proxy, which prepends /api to every
+	//   forwarded path, can reach it without the bot having to special-case
 	//   the "health" wildcard on the proxy side.
 	// Who: Railway/Render deploy infra hits /health. The Company Uno plugin
 	//   proxy (forwardToBot.ts) hits /api/health when PluginSettings's Test
 	//   Connection button calls checkHealth().
 	// When: on deploy boot loop + on every owner-initiated Test Connection click.
 	// Where: mounted BEFORE verifySignature so neither path requires an HMAC
-	//   signature or API key. Health is public by design — returning "ok" from
+	//   signature or API key. Health is public by design, returning "ok" from
 	//   an unauthenticated probe leaks nothing, and requiring a signature would
 	//   defeat the whole point of a liveness check.
 	// How: one shared handler, two mount points. Keep the body identical so
@@ -60,7 +60,7 @@ export function startApiServer(client: Client): Server {
 
 	// All /api routes below this point require a valid HMAC signature from the dashboard proxy.
 	// During the rollout window verifySignature falls back to plain API-key auth if signing
-	// headers are absent or the secret is not yet configured — see the middleware comment for
+	// headers are absent or the secret is not yet configured, see the middleware comment for
 	// the exact fall-through rules. Health routes above are intentionally outside this gate.
 	app.use(verifySignature);
 
@@ -86,24 +86,24 @@ export function startApiServer(client: Client): Server {
 	app.use("/api/players", createPlayersRouter(client));
 	app.use("/api/reminders", remindersRouter);
 	// Schedule-level pause/resume for the Command Center button. Separate
-	// router from the per-event pause that lives in events.routes — the
+	// router from the per-event pause that lives in events.routes, the
 	// guild-wide flag has different semantics than the per-event flag.
 	app.use("/api/schedule", createScheduleRouter());
 	// Standalone /api/go-live-now (no eventId) for the Command Center
 	// Go Live button. The event-bound version remains mounted under
 	// /api/events/:eventId/go-live-now via createAnnounceRouter.
 	app.use("/api/go-live-now", createStandaloneGoLiveRouter(client));
-	// /api/leaderboard-tracking — HTTP twin of the slash command for the
+	// /api/leaderboard-tracking, HTTP twin of the slash command for the
 	// Command Center leaderboard pause/continue button.
 	app.use("/api/leaderboard-tracking", createLeaderboardTrackingRouter());
-	// /api/auto-heal — HTTP twin of /configure-auto-heal for the Settings
+	// /api/auto-heal, HTTP twin of /configure-auto-heal for the Settings
 	// tab toggle. Same idempotency + payload shape as leaderboard-tracking.
 	app.use("/api/auto-heal", createAutoHealRouter());
-	// /api/pairing — exchanges a one-time claim code (issued + DM'd on
+	// /api/pairing, exchanges a one-time claim code (issued + DM'd on
 	// guildCreate in Phase 1 of FUTURE_PLANS item 63) for guildId +
 	// ownerUserId so the platform server can bind this Discord guild into
 	// the user's pluginConfig. Unlike every other /api/* route this one does
-	// NOT take ?guildId= because the code IS the discriminator — the
+	// NOT take ?guildId= because the code IS the discriminator, the
 	// platform does not yet know the guildId at redemption time. Still
 	// behind verifySignature because the signed proxy is the only caller.
 	app.use("/api/pairing", createPairingRouter());

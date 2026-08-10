@@ -37,7 +37,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 /**
  * Refresh the leaderboard board for a single guild. Safe to call fire and
- * forget — swallows any error and logs it. Returns nothing.
+ * forget, swallows any error and logs it. Returns nothing.
  */
 export async function refreshLeaderboard(client: Client, guildId: string): Promise<void> {
 	try {
@@ -46,7 +46,7 @@ export async function refreshLeaderboard(client: Client, guildId: string): Promi
 		if (config?.homebaseDestroyed) return;
 		if (!config?.leaderboardChannelId) {
 			// guild has not finished its home base build yet. silent bail is
-			// correct — autoSetup / ensureHomebase will take care of this state.
+			// correct, autoSetup / ensureHomebase will take care of this state.
 			return;
 		}
 
@@ -69,7 +69,7 @@ export async function refreshLeaderboard(client: Client, guildId: string): Promi
 		const eventIds = events.map((e) => e.eventId);
 		const records = await activityStore.findAllGroupedByPlayerInEvents(eventIds, range);
 
-		// Top 10, same shape /leaderboard renders. An empty list is fine — the
+		// Top 10, same shape /leaderboard renders. An empty list is fine, the
 		// embed builder renders the board's empty-state copy in that case.
 		const ranked = records.slice(0, 10).map(
 			(r: { username: string; totalScore: number; eventsAttended: number; totalAcknowledged: number }) => ({
@@ -105,7 +105,7 @@ const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /**
  * Request a leaderboard refresh after activity, coalesced per guild. Safe to
- * call on every ✅ reaction / voice event — at most one refresh fires per
+ * call on every ✅ reaction / voice event, at most one refresh fires per
  * guild per LEADERBOARD_REFRESH_DEBOUNCE_MS window.
  */
 export function scheduleLeaderboardRefresh(client: Client, guildId: string): void {
@@ -145,7 +145,7 @@ async function postOrEdit(
 			// is stale (rotated token, cross-environment DB seeding, shared cluster).
 			// ScheduleBoard owns the heavyweight rebuildHomebase recovery; the
 			// leaderboard board must NOT trigger a second rebuild nor post into a
-			// foreign channel. Bail quietly — the next refresh after ScheduleBoard
+			// foreign channel. Bail quietly, the next refresh after ScheduleBoard
 			// has rebuilt the homebase will post a fresh board we own.
 			if (selfId && existing.author.id !== selfId) {
 				console.warn(LOG_MESSAGES.leaderboard.staleAuthor(existingMessageId, guildId));
@@ -164,7 +164,7 @@ async function postOrEdit(
 				console.warn(LOG_MESSAGES.leaderboard.storedMessageDeleted(existingMessageId, guildId));
 			} else if (error instanceof DiscordAPIError && error.code === 50005) {
 				// cache race: the pre-check missed the author mismatch but Discord
-				// caught it on edit. Same posture as the pre-check — bail, do not
+				// caught it on edit. Same posture as the pre-check, bail, do not
 				// repost into a channel we may not own.
 				console.warn(LOG_MESSAGES.leaderboard.staleAuthor(existingMessageId, guildId));
 				return;
@@ -186,7 +186,7 @@ async function postOrEdit(
 	}
 
 	// No pin: the leaderboard channel is read-only, so the board stays put without
-	// one (2026-06 pinning policy — only the member-writable introductions channel
+	// one (2026-06 pinning policy, only the member-writable introductions channel
 	// is pinned).
 
 	await guildConfigStore.update(guildId, { leaderboardMessageId: message.id });

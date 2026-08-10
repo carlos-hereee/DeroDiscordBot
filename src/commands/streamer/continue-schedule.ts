@@ -18,14 +18,14 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 //        firing reminders on the next matching occurrence. Inverse of
 //        /pause-schedule. Same autocomplete pattern.
 // Who:   streamers and KvK admins resuming a previously paused event.
-// When:  on demand — typically right when the streamer is back from
+// When:  on demand, typically right when the streamer is back from
 //        vacation. If they used /pause-schedule with a duration the
 //        scheduler will auto-resume on its own; this command is for the
 //        "resume early" or "resume an indefinite pause" case.
 // Where: writes the Event document via eventStore.update, then kicks a
 //        schedule board refresh so the paused tag disappears.
 // How:   ① autocomplete shows only PAUSED events to keep the list short
-//        and the choice obvious; ② idempotent — already-active events
+//        and the choice obvious; ② idempotent, already-active events
 //        report "already active" rather than silently no-op.
 
 const c = rokCommanderCopy.pauseSchedule;
@@ -46,7 +46,7 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
 	// Filter to paused only. Listing every event would force the streamer
 	// to scroll past schedules that are already active, and the natural
 	// failure mode (selecting an active event) just shows "already
-	// active" — annoying but harmless. Scoping the list keeps the choice
+	// active", annoying but harmless. Scoping the list keeps the choice
 	// space minimal for the common case.
 	const events = await eventStore.findByGuildId(interaction.guildId);
 	const paused = events.filter((e) => e.paused);
@@ -63,7 +63,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	const eventId = interaction.options.getString("name", true);
 	// findByIdInGuild scopes by guildId at the store layer so cross-guild access is
 	// blocked whether we're hitting the local DB or the remote API. The redundant
-	// event.guildId check below is gone — the store guarantees a guild match.
+	// event.guildId check below is gone, the store guarantees a guild match.
 	const event = await eventStore.findByIdInGuild(eventId, guildId);
 
 	if (!event) {

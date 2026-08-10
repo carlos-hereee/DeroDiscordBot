@@ -59,7 +59,7 @@ try {
 		// owner testing the same patch across several servers does not have
 		// to swap env vars or rerun the script. Sequential loop so one
 		// guild's 4xx (eg revoked applications.commands scope) does not
-		// abort the whole run — log the failure and continue.
+		// abort the whole run, log the failure and continue.
 		console.log(
 			`[deploy] Targeting ${discordGuildIds.length} guild${discordGuildIds.length === 1 ? "" : "s"}: ${discordGuildIds.join(", ")}`
 		);
@@ -81,7 +81,7 @@ try {
 		if (successCount === 0 && failureCount > 0) {
 			// Surface a non-zero exit when nothing landed so CI / build
 			// pipelines treat the run as a failure. A partial success
-			// (some guilds OK) does not exit non-zero — losing one guild
+			// (some guilds OK) does not exit non-zero, losing one guild
 			// out of three is recoverable; the other two still got the
 			// update and the failing one can be retried separately.
 			process.exit(1);

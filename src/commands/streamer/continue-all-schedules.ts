@@ -10,7 +10,7 @@ import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
-// /continue-all-schedules — bulk equivalent of /continue-schedule. Resumes
+// /continue-all-schedules, bulk equivalent of /continue-schedule. Resumes
 // every paused event in the guild, including ones that had a pausedUntil
 // set. The intent of running this command is "everything back on right
 // now", so clearing pausedUntil alongside paused is correct.
@@ -46,7 +46,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	let failed = 0;
 	for (const event of toResume) {
 		try {
-			// Clear both fields together — same reasoning as /continue-schedule:
+			// Clear both fields together, same reasoning as /continue-schedule:
 			// leaving a stale pausedUntil around lets a future pause accidentally
 			// re-use it.
 			await eventStore.updateInGuild(event.eventId, guildId, { paused: false, pausedUntil: null });

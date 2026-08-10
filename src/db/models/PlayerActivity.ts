@@ -23,17 +23,17 @@ const playerActivitySchema = new Schema(
 		joinedVoiceDuring: { type: Boolean, default: false },
 		voiceMinutes: { type: Number, default: 0 },
 
-		// computed — recalculated whenever any field above changes
+		// computed, recalculated whenever any field above changes
 		participationScore: { type: Number, default: 0 },
 	},
 	{ timestamps: true }
 );
 
-// compound index — one record per player per event occurrence
+// compound index, one record per player per event occurrence
 playerActivitySchema.index({ eventId: 1, eventOccurrence: 1, userId: 1 }, { unique: true });
 
 // ── retention NOTE (deliberately no TTL) ──────────────────────────────
-// Unlike ReminderLog, PlayerActivity is NOT throwaway dedup state — it is the
+// Unlike ReminderLog, PlayerActivity is NOT throwaway dedup state, it is the
 // historical record the /leaderboard command and the dashboard read back
 // (all-time, month, week views). A blind TTL here would silently delete a
 // guild's leaderboard history, which is destructive and not ours to decide.

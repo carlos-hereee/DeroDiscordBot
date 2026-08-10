@@ -51,7 +51,7 @@ export async function respondWithFortune(
 	// mid-reply and Discord returns error 10062 (Unknown interaction).
 	await interaction.deferReply(options.isPrivate ? { flags: MessageFlags.Ephemeral } : undefined);
 
-	// Trim only — the command caps length via setMaxLength(200), and the question
+	// Trim only, the command caps length via setMaxLength(200), and the question
 	// is rendered ONLY inside an embed with mention parsing disabled below, so it
 	// can never ping even if it contains @everyone.
 	const question = options.question ? options.question.trim() : null;

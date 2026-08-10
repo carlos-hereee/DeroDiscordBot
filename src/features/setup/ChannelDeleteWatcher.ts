@@ -36,7 +36,7 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 //        ⑦ delegate to GuildSetupManager.repairOneChannel, then call
 //           GuildSetupManager.postRepairNotices for the single repaired
 //           channel so the inner sanctum gets the audit line.
-//        Errors after the cooldown gate are logged and swallowed — the
+//        Errors after the cooldown gate are logged and swallowed, the
 //        gateway connection must never crash because of a repair fault.
 
 // ── cooldown map ──────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ export function registerChannelDeleteWatcher(client: Client): void {
 
 			// self-destruct gate. demolishHomebase sets homebaseDestroyed=true
 			// BEFORE deleting any channel, so this fires for every channel it
-			// removes — skip rebuild so the teardown is not undone mid-demolish.
+			// removes, skip rebuild so the teardown is not undone mid-demolish.
 			// Run /setup to rebuild. The boot sweep honors the same flag.
 			if (stored.homebaseDestroyed) {
 				console.log(
@@ -96,7 +96,7 @@ export function registerChannelDeleteWatcher(client: Client): void {
 			}
 
 			// ③ match the deleted channel id to one of the six homebase fields.
-			//    also short circuit if the deleted channel IS the category —
+			//    also short circuit if the deleted channel IS the category,
 			//    that is a full rebuild case and we leave it to the boot sweep
 			//    so we do not fight an admin who is intentionally removing
 			//    the bot.
@@ -143,7 +143,7 @@ export function registerChannelDeleteWatcher(client: Client): void {
 
 			// ⑤ verify category still exists. if the admin just nuked the
 			//    whole category the child channel delete events will fire
-			//    alongside the category delete — we do NOT want to rebuild
+			//    alongside the category delete, we do NOT want to rebuild
 			//    child channels under a dead category. let ensureHomebase
 			//    handle the full rebuild on next wake.
 			const category = await guild.channels.fetch(stored.categoryId).catch(() => null);
@@ -154,7 +154,7 @@ export function registerChannelDeleteWatcher(client: Client): void {
 
 			// ⑥ ownership probe. Refuse repair ONLY when the homebase is positively
 			//    foreign (anchor authored by a different bot). "unknown" (missing or
-			//    deleted anchor) proceeds to repair — same rule as the boot sweep, so
+			//    deleted anchor) proceeds to repair, same rule as the boot sweep, so
 			//    a deleted schedule message never blocks a legitimate channel repair.
 			const ownership = await GuildSetupManager.isHomebaseOwnedByThisBot(client, guild.id, stored);
 			if (ownership === "foreign") {
@@ -186,7 +186,7 @@ export function registerChannelDeleteWatcher(client: Client): void {
 			repairCooldowns.set(cooldownKey, Date.now());
 			console.log(LOG_MESSAGES.setup.realtimeRepairCompleted(spec.displayName, guild.id));
 		} catch (error) {
-			// best effort. never crash the gateway listener — an unhandled
+			// best effort. never crash the gateway listener, an unhandled
 			// throw here propagates through discord.js and can wedge other
 			// event handlers. log and move on; boot sweep will catch any
 			// repair that could not land at runtime.

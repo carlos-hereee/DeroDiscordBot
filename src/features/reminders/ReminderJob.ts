@@ -12,7 +12,7 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 export async function fireReminder(client: Client, event: IGameEvent, occurrence: Date, offsetMinutes: number): Promise<void> {
 	// ① resolve the destination channel. the single source of truth is the
 	// guild's configured announcements channel. there is no per-event override
-	// and never will be — the home base's announcement channel is the one place
+	// and never will be, the home base's announcement channel is the one place
 	// an admin can move reminders. if the guild has not finished /setup we bail
 	// because blindly posting to a wrong channel is worse than missing a fire.
 	const config = await guildConfigStore.findByGuildId(event.guildId);
@@ -60,7 +60,7 @@ export async function fireReminder(client: Client, event: IGameEvent, occurrence
 	// ⑤ add the acknowledgement reaction
 	await message.react("✅");
 
-	// ⑥ log to DB — this is what prevents duplicate fires
+	// ⑥ log to DB, this is what prevents duplicate fires
 	// and what the ActivityTracker uses to link reactions back to events
 	await reminderStore.create({
 		eventId: event.eventId,
@@ -77,14 +77,14 @@ export async function fireReminder(client: Client, event: IGameEvent, occurrence
 	refreshSchedule(client, event.guildId).catch((err) => console.error(LOG_MESSAGES.schedule.refreshAfterReminderFailed, err));
 
 	// ⑧ post any new upcoming decrees in the next-decree channel for this
-	// guild. Fire-and-forget for the same reason as refreshSchedule above —
+	// guild. Fire-and-forget for the same reason as refreshSchedule above,
 	// the NextUpBoard channel is append-only and a missed post just means
 	// the next refresh trigger (next fire, next boot) catches up.
 	refreshNextUp(client, event.guildId).catch((err) => console.error("[reminder] refreshNextUp failed after fire", err));
 
 	// ⑨ refresh the pinned leaderboard board so this week's standings reflect
 	// the fresh acknowledgement window. Fire-and-forget for the same reason as
-	// the two refreshes above — a Discord hiccup here must not undo the
+	// the two refreshes above, a Discord hiccup here must not undo the
 	// successful reminder fire.
 	refreshLeaderboard(client, event.guildId).catch((err) => console.error(LOG_MESSAGES.leaderboard.refreshAfterReminderFailed, err));
 }
@@ -93,7 +93,7 @@ export async function fireReminder(client: Client, event: IGameEvent, occurrence
 
 **Why the DB write happens last:**
 
-The order here is intentional — post to Discord first, then write to DB.
+The order here is intentional, post to Discord first, then write to DB.
 If you did it in reverse and the Discord post failed, you'd have a DB record
 saying the reminder fired when it never did, and the duplicate check would
 block it from ever retrying. Failing fast before writing means a failed post

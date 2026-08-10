@@ -23,7 +23,7 @@ import { dirname, resolve } from "node:path";
 //        modules that the tests *transitively* import resolve fine
 //        (those files are NOT excluded), but direct test-file imports
 //        of @-prefixed paths fail with "Cannot find package".
-// Who:   every test that imports an @-aliased module at top level —
+// Who:   every test that imports an @-aliased module at top level,
 //        TestReminderJob.test.ts, GuildSetupManager.test.ts, and
 //        ChannelDeleteWatcher.test.ts were the original surfacing.
 // When:  in effect for every vitest run. The plugin and the explicit
@@ -32,7 +32,7 @@ import { dirname, resolve } from "node:path";
 //        test-file imports. Removing either would re-break one of the
 //        two surfaces.
 // Where: the `${"./src/<dir>"}` shape mirrors the tsconfig paths value
-//        with the trailing `/*` stripped — Vite's alias matches by
+//        with the trailing `/*` stripped, Vite's alias matches by
 //        prefix and rewrites the rest of the path verbatim.
 // How:   import.meta.url + dirname gives us the project root in a way
 //        that survives any future hoist of this config file. resolve()

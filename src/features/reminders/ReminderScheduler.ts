@@ -33,7 +33,7 @@ import { playerActivityRetentionDays } from "@utils/config.js";
 //        with N guilds × M events per guild this is N*M reads per minute,
 //        a load the underlying compound unique index handles trivially.
 // Where: sits between the cron tick and fireReminder. ReminderJob.fireReminder
-//        does NOT consult EventOverride — only the scheduler does, so the
+//        does NOT consult EventOverride, only the scheduler does, so the
 //        contract is "scheduler resolves overrides, fireReminder posts".
 async function resolveOverride(
 	event: IGameEvent,
@@ -61,7 +61,7 @@ async function resolveOverride(
 //   surface the platform's health at a glance.
 // Who: incremented by the scheduler's per-event branches (one-time + recurring).
 //   Read by logHourlyMetrics() below.
-// When: reset every hour after the log line — a rolling window means a transient
+// When: reset every hour after the log line, a rolling window means a transient
 //   spike doesn't hide behind a wall of healthy historical data.
 // Where: per-process counters; multi-instance deployments would need to ship to
 //   a central metrics store. Single Railway dyno keeps it simple.
@@ -91,10 +91,10 @@ const logHourlyMetrics = (): void => {
 	);
 	// Alert thresholds. These are warns (not errors) so a single bad hour does not
 	// page anyone, but they ARE louder than info so a log scan catches them. The
-	// roadmap (F5) calls out "alert if failure rate > 1% over a 1-hour window" —
+	// roadmap (F5) calls out "alert if failure rate > 1% over a 1-hour window",
 	// that's the threshold here.
 	if (latency.p99 > 500 && latency.samples >= 10) {
-		console.warn(`[metrics] outbound_p99 ${latency.p99}ms exceeds 500ms threshold — cron tick may overrun its 60s budget`);
+		console.warn(`[metrics] outbound_p99 ${latency.p99}ms exceeds 500ms threshold, cron tick may overrun its 60s budget`);
 	}
 	if (failureRate > 0.01 && total >= 10) {
 		console.warn(`[metrics] reminder failure rate ${(failureRate * 100).toFixed(1)}% exceeds 1% threshold over the last hour`);
@@ -111,7 +111,7 @@ const logHourlyMetrics = (): void => {
 // unindexed Event scan), and the next minute's tick would then start
 // concurrently. Two concurrent ticks both pass the reminderStore.exists()
 // dedup check before either writes its row, so both call fireReminder and the
-// alliance gets a DUPLICATE ping — the compound unique index only catches the
+// alliance gets a DUPLICATE ping, the compound unique index only catches the
 // second reminderStore.create, after the duplicate Discord post is already
 // live. This boolean serializes the per-minute tick within the process: if a
 // tick is still running when the next fires, the new one is skipped and the
@@ -210,13 +210,13 @@ export function startScheduler(client: Client): void {
 			// surfacing fresh data within one tick of any write.
 			const guildIds = Array.from(client.guilds.cache.keys());
 			// Track whether any guild succeeded so we can call noteServerSuccess
-			// at most once per tick — each individual guild call doesn't trigger
+			// at most once per tick, each individual guild call doesn't trigger
 			// the recovery DM, only "tick had at least one success" does.
 			let anySuccess = false;
 			let anyUnreachable = false;
 			// Fetch events AND guild config per guild in parallel. The config
 			// carries the schedule-level pause state (schedulePaused) which we
-			// honor BEFORE the per-event paused check below — when the
+			// honor BEFORE the per-event paused check below, when the
 			// schedule is paused, every event in this guild is skipped this
 			// tick regardless of its individual paused flag.
 			// Bounded fan-out: read at most SCHEDULER_GUILD_CONCURRENCY guilds at
@@ -239,7 +239,7 @@ export function startScheduler(client: Client): void {
 						// will eventually return; the next tick will catch up. Logging
 						// at warn (not error) because brief Heroku blips are routine.
 						console.warn(LOG_MESSAGES.api.errorFindingEvents, { guildId, err });
-						// Notify health tracker — only ServerUnreachableError counts
+						// Notify health tracker, only ServerUnreachableError counts
 						// as a platform outage; other errors (validation, auth) don't.
 						noteServerFailure(client, err);
 						anyUnreachable = true;
@@ -300,7 +300,7 @@ export function startScheduler(client: Client): void {
 				// just expired resumes on this same tick instead of waiting
 				// one more cycle (a 60s delay is fine, but it would also
 				// silently delay the very first reminder if the next
-				// occurrence is also overdue — the cleaner contract is
+				// occurrence is also overdue, the cleaner contract is
 				// "auto-resume always wins on the tick it fires"). Both
 				// fields are cleared so the event behaves as if pause never
 				// happened: ReminderScheduler can fire, ScheduleBoard drops
@@ -317,7 +317,7 @@ export function startScheduler(client: Client): void {
 				// dashboard or via /pause-schedule. Paused events stay in
 				// the DB, still render on the schedule board (with a
 				// "paused" tag rendered by ScheduleBoard), still appear in
-				// /event-list — they simply skip the fire decision until
+				// /event-list, they simply skip the fire decision until
 				// /continue-schedule flips paused back to false.
 				//
 				// Why this lives BEFORE the seasonEnd check: a paused
@@ -374,7 +374,7 @@ export function startScheduler(client: Client): void {
 
 						// Wrap fire in success/failure metrics. fireReminder swallows its own
 						// Discord errors (channel missing, permission denied), so we only see
-						// throws on truly unexpected failures — but counting both branches
+						// throws on truly unexpected failures, but counting both branches
 						// gives operators a real signal in the hourly metric log.
 						try {
 							await fireReminder(client, mergedEvent, fireMoment, offsetMinutes);
@@ -481,7 +481,7 @@ export async function announceSeasonEnd(client: Client, event: IGameEvent): Prom
 		// `create()` write key off the same Date object. Without this
 		// shared reference, a future refactor that mutates event.seasonEnd
 		// between the two reads (or moves the truthy guard) could land
-		// `eventOccurrence: 1970-01-01` on the create — silently
+		// `eventOccurrence: 1970-01-01` on the create, silently
 		// breaking dedup since 1970-01-01 is a fixed-point epoch zero
 		// every guild would collide on.
 		const seasonEndDate = new Date(event.seasonEnd);
@@ -507,7 +507,7 @@ export async function announceSeasonEnd(client: Client, event: IGameEvent): Prom
 		//        circuits the channel.send.
 		// Where: the loop in startReminderScheduler() is sequential
 		//        (for-of with await), so the first call's create() lands
-		//        before the second call's exists() runs — no TOCTOU race
+		//        before the second call's exists() runs, no TOCTOU race
 		//        within a single tick. Across ticks, the record persists
 		//        in reminderStore so the second tick is also a no-op.
 		// How:   prefix "season-end:" + event.guildId. The "season-end:"
@@ -535,7 +535,7 @@ export async function announceSeasonEnd(client: Client, event: IGameEvent): Prom
 		//        duplicate for a silent miss: a Discord 5xx or
 		//        permission change after the row lands blocks every
 		//        retry on subsequent ticks and the season-end is
-		//        skipped without a user-visible signal — a worse
+		//        skipped without a user-visible signal, a worse
 		//        failure mode.
 		// When:  the crash window between these two awaits is
 		//        sub-second on a healthy host, so a duplicate is the

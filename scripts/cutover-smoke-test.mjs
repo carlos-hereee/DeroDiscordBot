@@ -10,7 +10,7 @@
 // When: every cutover, before each flag flip. Five minutes of operator time
 //   that can save hours of debugging an actual production outage.
 // Where: pure HTTP. Does not touch Mongo directly. Does not touch Discord.
-//   Hits whatever SERVER_BASE_URL points at — staging or prod — using the
+//   Hits whatever SERVER_BASE_URL points at, staging or prod, using the
 //   guildId you pass via SMOKE_GUILD_ID.
 // How:
 //   ① Sign each request the same way serverApi.ts does (HMAC-SHA256, sorted
@@ -55,12 +55,12 @@ const results = [];
 const ok = (label, detail = "") => {
 	passes++;
 	results.push({ label, detail, status: "PASS" });
-	console.log(`  ✓ ${label}${detail ? ` — ${detail}` : ""}`);
+	console.log(`  ✓ ${label}${detail ? `, ${detail}` : ""}`);
 };
 const fail = (label, detail = "") => {
 	failures++;
 	results.push({ label, detail, status: "FAIL" });
-	console.error(`  ✗ ${label}${detail ? ` — ${detail}` : ""}`);
+	console.error(`  ✗ ${label}${detail ? `, ${detail}` : ""}`);
 };
 
 // ── canonicalization (must match serverApi.ts exactly) ──
@@ -273,5 +273,5 @@ try {
 console.log(`\n── Summary ──`);
 console.log(`  passes   ${passes}`);
 console.log(`  failures ${failures}`);
-console.log(failures === 0 ? "\nALL CHECKS PASSED" : "\nFAILURES PRESENT — do not flip cutover flags until resolved");
+console.log(failures === 0 ? "\nALL CHECKS PASSED" : "\nFAILURES PRESENT, do not flip cutover flags until resolved");
 process.exit(failures === 0 ? 0 : 1);

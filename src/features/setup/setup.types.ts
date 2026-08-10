@@ -50,17 +50,17 @@ export interface IChannelObjects {
 
 // return shape of GuildSetupManager.ensureHomebase. the ready sweep in main.ts
 // reads action to decide whether to send the owner the first-time arrival DM:
-//   • "built"    — no prior GuildConfig existed, a fresh homebase was just
+//   • "built"   , no prior GuildConfig existed, a fresh homebase was just
 //                  constructed. DM the owner, log INTRO_DM_SENT.
-//   • "rebuilt"  — a stale GuildConfig was cleared and replaced (category
+//   • "rebuilt" , a stale GuildConfig was cleared and replaced (category
 //                  gone or foreign). A "castle rebuilt" notice is posted in
 //                  the new inner sanctum by ensureHomebase itself. No DM.
-//   • "repaired" — category was intact and owned by this bot, but one or
+//   • "repaired", category was intact and owned by this bot, but one or
 //                  more individual channels were missing and were rebuilt.
 //                  repairedChannels lists the human readable names (same
 //                  strings the copy pack's setup.channels exposes). A per
 //                  channel notice is posted to the inner sanctum.
-//   • "skipped"  — stored homebase exists in full and is owned by this bot.
+//   • "skipped" , stored homebase exists in full and is owned by this bot.
 export interface IEnsureHomebaseResult {
 	action: "built" | "rebuilt" | "repaired" | "skipped";
 	// populated only when action === "repaired". empty array on every other

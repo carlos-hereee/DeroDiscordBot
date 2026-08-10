@@ -35,7 +35,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 		let nextOccurrenceTs: number;
 
 		if (event.type === "one-time") {
-			// use firstOccurrence directly — no interval math needed
+			// use firstOccurrence directly, no interval math needed
 			nextOccurrenceTs = Math.floor(new Date(event.firstOccurrence).getTime() / 1000);
 		} else {
 			const [next] = getUpcomingOccurrences(event as any, 1);
@@ -50,8 +50,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
 		// Pass pause state straight through so the embed can render the
 		// "⏸️ paused" tag. The schedule arithmetic above still runs even
-		// for paused events — paused only suppresses reminder firing, not
-		// the occurrence calculation — so "would have fired" timestamps
+		// for paused events, paused only suppresses reminder firing, not
+		// the occurrence calculation, so "would have fired" timestamps
 		// stay informative for the admin scanning the list.
 		const pausedUntilTs = event.pausedUntil ? Math.floor(new Date(event.pausedUntil).getTime() / 1000) : null;
 

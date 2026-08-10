@@ -26,7 +26,7 @@ import { decreeEditCustomIds } from "./decreeEditHandlers.js";
 // a decree gets posted as soon as it enters the window.
 //
 // Dedup model: the in-memory postedDecrees Set is a cache. The channel
-// itself is the source of truth — the Edit button on every post carries
+// itself is the source of truth, the Edit button on every post carries
 // a customId encoding (eventId, occurrenceUnix), so on first refresh per
 // guild per process we seed the cache from the channel's last 100
 // messages. That makes the dedup survive bot restarts without a database
@@ -48,7 +48,7 @@ function postedDecreeKey(guildId: string, eventId: string, occurrenceMs: number)
 	return `${guildId}:${eventId}:${occurrenceMs}`;
 }
 
-// Exported for testing — lets tests reset module state between runs.
+// Exported for testing, lets tests reset module state between runs.
 export function _resetNextUpDedupForTest(): void {
 	postedDecrees.clear();
 	seededGuilds.clear();
@@ -74,7 +74,7 @@ export async function refreshNextUp(client: Client, guildId: string): Promise<vo
 	if (!config?.nextDecreeChannelId) {
 		// Legacy guilds (those that ran /setup before nextDecreeChannelId
 		// was added to the schema) load without the channel id. Silent
-		// bail — autoSetup will provision the channel on the next run
+		// bail, autoSetup will provision the channel on the next run
 		// without a re-/setup.
 		return;
 	}
@@ -88,7 +88,7 @@ export async function refreshNextUp(client: Client, guildId: string): Promise<vo
 	// Seed dedup from channel history on the first refresh per guild per
 	// process. The channel is the source of truth for "what has already
 	// been posted"; the in-memory Set is just a cache that needs warming.
-	// Seed failures do not abort the refresh — worst case we re-post some
+	// Seed failures do not abort the refresh, worst case we re-post some
 	// decrees, which is the same bug we are fixing but degraded gracefully.
 	if (!seededGuilds.has(guildId)) {
 		await seedDedupFromChannel(channel, guildId);
@@ -111,7 +111,7 @@ export async function refreshNextUp(client: Client, guildId: string): Promise<vo
 		// Compute up to 5 upcoming occurrences and filter to the window.
 		// 5 is comfortably above the maximum a 40-hour-cadence event
 		// could produce in 24h (which is 1), and even a 4-hour cadence
-		// caps at 6 — close enough that the constant is fine.
+		// caps at 6, close enough that the constant is fine.
 		const upcoming = getUpcomingOccurrences(event, 5);
 		for (const occurrence of upcoming) {
 			const occurrenceMs = occurrence.getTime();
@@ -135,7 +135,7 @@ export async function refreshNextUp(client: Client, guildId: string): Promise<vo
 // Walks the last 100 messages in the next-decree channel and seeds the
 // postedDecrees Set with the (guildId, eventId, occurrenceMs) tuples it
 // finds. The Edit button on each decree post carries a customId of shape
-// `edit_decree:{eventId}:{occurrenceUnix}` — parsing that gives back the
+// `edit_decree:{eventId}:{occurrenceUnix}`, parsing that gives back the
 // exact key the live refresh path writes after a successful post.
 //
 // 100 messages is enough for any realistic 24-hour horizon (typical KvK
@@ -228,7 +228,7 @@ async function tryPostDecree(
 	const img = event.imageUrl ?? defaultImageUrl ?? null;
 	if (img) embed.setImage(img);
 
-	// occurrence (not renderedTime) is the original anchor — that's the
+	// occurrence (not renderedTime) is the original anchor, that's the
 	// key the modal handler uses when looking up + writing overrides, so
 	// the customId must carry the ORIGINAL occurrence even when the
 	// override has shifted the actual fire time.

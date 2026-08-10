@@ -10,7 +10,7 @@ import { thisWeekRange, thisMonthRange, weekBoundaryTitle, type WeekStart } from
 //        the guild has run. Replaces the legacy "type an event id by hand"
 //        UX with an autocomplete dropdown that lists every event by name
 //        and offers an "All time" option at the top.
-// Who:   any member of the guild. Reads only — never mutates the activity
+// Who:   any member of the guild. Reads only, never mutates the activity
 //        store. Not admin-gated because mortals viewing their own
 //        ranking is the whole point of a leaderboard.
 // When:  on demand. Future enhancement: a LeaderboardBoard module will
@@ -42,7 +42,7 @@ const THIS_WEEK_SENTINEL = "__thisweek__";
 // reuses the same window math instead of forking a copy.
 
 // /leaderboard intentionally does NOT setDefaultMemberPermissions. As of
-// the 2026-04-24 public/admin command guide split it is a member command —
+// the 2026-04-24 public/admin command guide split it is a member command,
 // mortals viewing their own ranking is the whole point of a leaderboard
 // and the command only ever READS activity data. The admin-gate check in
 // main.ts's ADMIN_COMMANDS was also dropped for the same reason.
@@ -71,11 +71,11 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
 	// thing members want to scroll back through.
 	const events = await eventStore.findByGuildId(interaction.guildId);
 	// All time first so it is the default highlighted suggestion. Slice
-	// events to 24 instead of 25 to leave room for the sentinel — Discord's
+	// events to 24 instead of 25 to leave room for the sentinel, Discord's
 	// hard limit is 25 total autocomplete entries.
 	// Three rolling-window views at the top of the dropdown, then events by
 	// name. Slice events to 22 instead of 25 to leave room for the three
-	// sentinels — Discord's hard limit is 25 total autocomplete entries.
+	// sentinels, Discord's hard limit is 25 total autocomplete entries.
 	const choices = [
 		{ name: "🌟 All time (across all events)", value: ALL_TIME_SENTINEL },
 		{ name: "📅 This month", value: THIS_MONTH_SENTINEL },
@@ -157,7 +157,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 	}
 
 	// ── per-event branch ─────────────────────────────────────────
-	// findByIdInGuild scopes the lookup to this guild — works under both
+	// findByIdInGuild scopes the lookup to this guild, works under both
 	// the legacy local-DB path and the Future-A remote API path. eventValue
 	// here is a real eventId because the autocomplete dropdown handed it to
 	// the user; we still validate because nothing prevents a user from

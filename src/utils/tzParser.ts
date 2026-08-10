@@ -6,7 +6,7 @@
 // Who:   slash commands that take human-typed times from streamers
 //        (configure-stream-schedule today, plus any future command
 //        that wants the same input surface). Never read the user's
-//        Discord locale directly — we ask them to declare a timezone
+//        Discord locale directly, we ask them to declare a timezone
 //        explicitly so two streamers in different rooms don't get
 //        ambiguous schedules.
 // When:  at submit time of every recurring/one-time event command.
@@ -32,7 +32,7 @@
 //        should reuse this rather than re-rolling its own regex.
 // When:  per slash command submission, before the confirmation embed.
 // Where: paired with the time-utc option in the command, but no
-//        longer assumes UTC — see the timezone option pattern in
+//        longer assumes UTC, see the timezone option pattern in
 //        configure-stream-schedule. The function itself is timezone-
 //        agnostic; conversion happens in localTimeToUtc.
 // How:   single regex captures (hour)(:minute)?(am|pm)?. Cases:
@@ -144,7 +144,7 @@ export function dateInTimezone(
 //        candidate by the diff. Two iterations converge in normal
 //        time. DST transitions can cause a one-hour shift; a
 //        third iteration catches that. After three iterations
-//        we accept the candidate even if non-converged — the
+//        we accept the candidate even if non-converged, the
 //        only way to genuinely fail is to ask for a wall-clock
 //        time that doesn't exist in the zone (the spring-forward
 //        gap), which is rare in streamer schedules.
@@ -217,7 +217,7 @@ export function nextOccurrenceInZone(
 
 	// Add dayDelta days to today's date IN THE USER'S TIMEZONE. We
 	// do this by adding days to a UTC midnight anchored at the
-	// user's local date — month/year boundaries are handled
+	// user's local date, month/year boundaries are handled
 	// correctly because Date arithmetic carries.
 	const anchor = new Date(Date.UTC(tzNow.year, tzNow.month - 1, tzNow.day));
 	anchor.setUTCDate(anchor.getUTCDate() + dayDelta);
@@ -235,7 +235,7 @@ export function nextOccurrenceInZone(
 // ── isValidTimezone ───────────────────────────────────────────
 // What:  validate that a string names a real IANA timezone.
 // Who:   slash command validation paths. We never trust a string
-//        from a user — autocomplete narrows the choice but a
+//        from a user, autocomplete narrows the choice but a
 //        determined user can still type anything they want into a
 //        Discord autocomplete option.
 // When:  per command submission, before localTimeToUtc.
@@ -312,7 +312,7 @@ export const COMMON_TIMEZONES = [
 //        typed-so-far string, ranked by COMMON_TIMEZONES first
 //        then the full Intl.supportedValuesOf list.
 // Who:   the autocomplete handler in configure-stream-schedule.
-// When:  per keystroke — Discord's autocomplete fires every time
+// When:  per keystroke, Discord's autocomplete fires every time
 //        the user changes the input.
 // Where: keep the full-list fallback inside this helper so the
 //        command file stays terse. Uses Intl.supportedValuesOf

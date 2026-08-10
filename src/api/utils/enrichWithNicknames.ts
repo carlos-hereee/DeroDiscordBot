@@ -4,7 +4,7 @@ import { Client } from "discord.js";
 // What:  enrich a list of activity-style records with each warrior's CURRENT
 //        per guild nickname (or globalName, or username) at API read time.
 //        Records that were written before nickname tracking landed have the
-//        bare Discord username stored — without this pass the dashboard
+//        bare Discord username stored, without this pass the dashboard
 //        would keep rendering "silent6804" forever even after the warrior
 //        sets a nickname inside the guild.
 // Who:   /api/players (leaderboard + profile) and /api/leaderboard.
@@ -15,8 +15,8 @@ import { Client } from "discord.js";
 //        username pair. The route owns the {data} envelope; this helper just
 //        rewrites the username field in place.
 // How:   ① resolve the guild from the live Discord client (cache first,
-//        fetch fallback). If the client has no view of the guild — e.g.
-//        the bot was kicked between requests — we return the records
+//        fetch fallback). If the client has no view of the guild, e.g.
+//        the bot was kicked between requests, we return the records
 //        untouched so the API still responds.
 //        ② collect the unique userIds and fetch them in BATCHES via
 //        guild.members.fetch({ user: [...] }) rather than one fetch per id.

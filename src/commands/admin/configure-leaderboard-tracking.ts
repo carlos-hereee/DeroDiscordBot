@@ -22,7 +22,7 @@ import { buildLeaderboardChannelDeleteCustomId } from "@features/leaderboard/lea
 // Who:   streamers who do not want participation tracked, or who want
 //        to pause tracking during a hiatus without losing prior data.
 //        Captured from 2026-05-11 streamer feedback.
-// When:  on demand. Same idempotency contract as /configure-auto-heal —
+// When:  on demand. Same idempotency contract as /configure-auto-heal,
 //        no silent re-writes, explicit "already on / already off"
 //        feedback on repeat invocations.
 // Where: writes GuildConfig.leaderboardTrackingEnabled via
@@ -65,7 +65,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	}
 
 	if (config.leaderboardTrackingEnabled === enabled) {
-		// Idempotent on the toggle itself — but the admin may have run this
+		// Idempotent on the toggle itself, but the admin may have run this
 		// to GET the channel-removal button rather than to flip the flag.
 		// When the request is "already off" AND the channel still exists,
 		// surface the Remove button anyway. The toggle does not move; the
@@ -124,7 +124,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 		// Body copy diverges per branch. The toggle-OFF path additionally
 		// offers a follow-up button to remove the leaderboard channel
-		// itself — useful for streamers who want the feature fully gone,
+		// itself, useful for streamers who want the feature fully gone,
 		// not just paused. The toggle-ON path mentions channel rebuild so
 		// the admin knows what to expect if they deleted the channel
 		// previously.
@@ -136,7 +136,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 				: "The bot will record ✅ reactions and voice-channel joins as participation. This is the default behavior.";
 		} else {
 			body =
-				"The bot will no longer record new participation. Existing /leaderboard data stays visible — this toggle stops new writes, it does not delete history. Run this command again with `enabled:True` to resume tracking.\n\nIf you also want to remove the leaderboard channel itself, click the button below. The channel can be restored later by re-enabling tracking with auto-heal on.";
+				"The bot will no longer record new participation. Existing /leaderboard data stays visible, this toggle stops new writes, it does not delete history. Run this command again with `enabled:True` to resume tracking.\n\nIf you also want to remove the leaderboard channel itself, click the button below. The channel can be restored later by re-enabling tracking with auto-heal on.";
 		}
 
 		// Build the components row only when we have a button to attach.

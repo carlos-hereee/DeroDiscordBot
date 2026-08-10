@@ -33,7 +33,7 @@ type EventsRequest = Request<
 export function createEventsRouter(client: Client): Router {
 	const eventsRouter = Router();
 
-	// GET /api/events?guildId=... — list all active events for one guild
+	// GET /api/events?guildId=..., list all active events for one guild
 	eventsRouter.get("/", async (req: EventsRequest, res: Response) => {
 		const guildId = requireGuildId(req, res);
 		if (guildId === null) return;
@@ -46,12 +46,12 @@ export function createEventsRouter(client: Client): Router {
 		}
 	});
 
-	// GET /api/events/:eventId?guildId=... — get one event, scoped to guild
+	// GET /api/events/:eventId?guildId=..., get one event, scoped to guild
 	eventsRouter.get("/:eventId", async (req: EventsRequest, res: Response) => {
 		const guildId = requireGuildId(req, res);
 		if (guildId === null) return;
 		try {
-			// findByIdInGuild applies the guild scope at the store layer — same shape
+			// findByIdInGuild applies the guild scope at the store layer, same shape
 			// under the local-DB path and the remote-API path. The redundant guildId
 			// check that used to follow has been removed.
 			const event = await eventStore.findByIdInGuild(req.params.eventId, guildId);
@@ -66,7 +66,7 @@ export function createEventsRouter(client: Client): Router {
 		}
 	});
 
-	// POST /api/events?guildId=... — create a new event. body.guildId must
+	// POST /api/events?guildId=..., create a new event. body.guildId must
 	// match the query guildId. if the body omits guildId, we inject it from
 	// the query so the dashboard can post a slimmer payload.
 	eventsRouter.post("/", async (req: EventsRequest, res: Response) => {
@@ -101,7 +101,7 @@ export function createEventsRouter(client: Client): Router {
 			//        in-process create call too).
 			// When:  every POST /api/events. Pure validation step before
 			//        eventStore.create touches Mongo.
-			// Where: announcementType never lands in the document — it is
+			// Where: announcementType never lands in the document, it is
 			//        the form's choice, the persisted value is seasonEnd
 			//        (Date or null). Stripped after derivation so mongoose
 			//        strict mode does not drop it as a silent no-op.
@@ -137,7 +137,7 @@ export function createEventsRouter(client: Client): Router {
 		}
 	});
 
-	// PATCH /api/events/:eventId?guildId=... — update an event the guild owns
+	// PATCH /api/events/:eventId?guildId=..., update an event the guild owns
 	eventsRouter.patch("/:eventId", async (req: EventsRequest, res: Response) => {
 		const guildId = requireGuildId(req, res);
 		if (guildId === null) return;
@@ -164,7 +164,7 @@ export function createEventsRouter(client: Client): Router {
 		}
 	});
 
-	// DELETE /api/events/:eventId?guildId=... — soft delete an event the guild owns
+	// DELETE /api/events/:eventId?guildId=..., soft delete an event the guild owns
 	eventsRouter.delete("/:eventId", async (req: EventsRequest, res: Response) => {
 		const guildId = requireGuildId(req, res);
 		if (guildId === null) return;

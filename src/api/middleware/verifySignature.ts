@@ -20,7 +20,7 @@ import { buildCanonicalString, hashBody } from "@utils/canonicalRequest.js";
 //   ① Read x-timestamp, x-signature, and x-api-key headers. If the server did not send
 //      signing headers (rollout, or secret not yet configured on server side), fall back
 //      to apiKeyAuth so the request still passes.
-//   ② Reject on clock skew beyond ±5 minutes. This is the replay window — an attacker who
+//   ② Reject on clock skew beyond ±5 minutes. This is the replay window, an attacker who
 //      steals a signed request has only this window to reuse it before the timestamp check
 //      rejects it.
 //   ③ Rebuild the canonical string the server signed: METHOD + "\n" + path(?sortedQuery)
@@ -74,7 +74,7 @@ export function verifySignature(req: Request, res: Response, next: NextFunction)
 	if (!dashboardSigningSecret) {
 		if (requireSignedRequests) {
 			// Strict mode promises every request is signature-verified, but with no
-			// secret configured we cannot verify anything — fail closed rather than
+			// secret configured we cannot verify anything, fail closed rather than
 			// silently downgrade to api-key auth. This only fires on a deploy that set
 			// REQUIRE_SIGNED_REQUESTS without DASHBOARD_SIGNING_SECRET (an operator error).
 			res.status(401).json({ error: "Unauthorized" });
@@ -89,7 +89,7 @@ export function verifySignature(req: Request, res: Response, next: NextFunction)
 
 	// Same rollout safety: if the server is signing-capable but this specific request has
 	// no signing headers (e.g. curl from an operator, old server binary), fall back to
-	// apiKeyAuth — UNLESS strict mode is on, in which case an unsigned request is rejected.
+	// apiKeyAuth, UNLESS strict mode is on, in which case an unsigned request is rejected.
 	// Strict mode closes the last fallback path where a caller holding only the shared
 	// static api key could pass an arbitrary ?guildId= (audit item C2); flip it on once
 	// every caller signs.

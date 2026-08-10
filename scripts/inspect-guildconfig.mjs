@@ -23,7 +23,7 @@ if (!uri) {
 	process.exit(1);
 }
 
-// Minimal schema — we only read, so schema strictness doesn't matter. The real
+// Minimal schema, we only read, so schema strictness doesn't matter. The real
 // schema lives in src/db/models/GuildConfig.ts. We use { strict: false } so this
 // script keeps working even if the real schema adds fields later.
 const GuildConfig = mongoose.model("GuildConfig", new mongoose.Schema({}, { strict: false, collection: "guildconfigs" }));

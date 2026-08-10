@@ -17,7 +17,7 @@ const eventSchema = new Schema(
 		description: { type: String, default: "" },
 		// ── optional event image (v1.6 Phase 4, media attachments) ──────
 		// What:  public https URL of an image rendered in this event's Discord
-		//        embeds — a large banner on go-live and decree posts, a small
+		//        embeds, a large banner on go-live and decree posts, a small
 		//        thumbnail on reminders. null means no image and the embeds post
 		//        as text exactly as before.
 		// Who:   set by the dashboard upload flow (the client + server half of
@@ -25,7 +25,7 @@ const eventSchema = new Schema(
 		//        renders it; the create/update handler passes it straight through
 		//        and the embed sites read it with GuildConfig.defaultEventImageUrl
 		//        as the fallback.
-		// When:  optional and additive — legacy events load null and render
+		// When:  optional and additive, legacy events load null and render
 		//        unchanged, so no backfill.
 		// How:   plain nullable String. URL validation / whitelisting is the
 		//        server-and-client half's responsibility; the bot trusts the
@@ -38,7 +38,7 @@ const eventSchema = new Schema(
 		//        GuildConfig.kvkSeasonEnd at create time so admins never
 		//        type the same date twice. Regular announcements (the
 		//        new "regular" announcementType) leave it null and never
-		//        auto archive — they live until an admin retires them.
+		//        auto archive, they live until an admin retires them.
 		// Who:   ReminderScheduler skips its season-end branch when the
 		//        field is null, ScheduleBoard hides the "Season ends"
 		//        line for that event, and embedBuilder treats it as
@@ -75,7 +75,7 @@ const eventSchema = new Schema(
 		//        Legacy events (created before this field existed) load
 		//        with null, so the fallback to memberRoleId preserves
 		//        existing behavior.
-		// Where: nullable string — Mongoose stores absent as null which
+		// Where: nullable string, Mongoose stores absent as null which
 		//        the ?? fallback in ReminderJob handles uniformly.
 		mentionRoleId: { type: String, required: false, default: null },
 
@@ -83,7 +83,7 @@ const eventSchema = new Schema(
 		// What:  when true, ReminderScheduler skips this event entirely
 		//        on every cron tick. The event still exists, still shows
 		//        up on the schedule board (with a "paused" tag), still
-		//        appears in /event-list — it just does not fire reminders
+		//        appears in /event-list, it just does not fire reminders
 		//        until /continue-schedule flips this back to false (or
 		//        pausedUntil expires and the scheduler auto-resumes).
 		// Who:   ReminderScheduler (gates the fire decision and handles
@@ -101,7 +101,7 @@ const eventSchema = new Schema(
 		//        automatically flip paused back to false on the next cron
 		//        tick at or after this date. Persisted (not setTimeout) so
 		//        the auto-resume survives a bot restart. Null means
-		//        "paused indefinitely" — only /continue-schedule clears it.
+		//        "paused indefinitely", only /continue-schedule clears it.
 		// Who:   /pause-schedule writes this when the streamer passes a
 		//        days argument. /continue-schedule clears both paused and
 		//        pausedUntil. ReminderScheduler reads it.
@@ -122,7 +122,7 @@ const eventSchema = new Schema(
 // EventModel.find({ guildId, active: true }) once per guild (see eventStore
 // .findByGuildId / .findAll). Without this compound index those are collection
 // scans, so tick duration grows linearly with the Event collection and
-// eventually overruns the 60s budget — the condition the overlap guard in
+// eventually overruns the 60s budget, the condition the overlap guard in
 // ReminderScheduler exists to survive. The field order is { guildId, active }
 // because guildId is the high-selectivity equality match and active narrows
 // within it; this same index also serves the guild-scoped findByGuildId reads

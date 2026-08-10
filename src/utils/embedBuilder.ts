@@ -8,7 +8,7 @@ import type { IPluginCopy } from "@base/copy/types.js";
 // getPluginCopy(guildConfig): non-ROK guilds (pluginId !== "rok-commander")
 // render the neutral general-events pack, ROK guilds keep the kingdom voice.
 // guildConfig is optional and defaults to undefined, which getPluginCopy
-// resolves to the rok-commander pack — so a caller that has not been threaded
+// resolves to the rok-commander pack, so a caller that has not been threaded
 // yet behaves exactly as it did before the plugin-copy migration: the
 // rok-commander default.
 
@@ -51,13 +51,13 @@ export function listEventsEmbed(
 		const occurrenceLabel = field.type === "recurring" ? c.nextOccurrenceLabel : c.scheduledDateLabel;
 
 		// Paused rows lead with the pause notice and skip the next-occurrence
-		// line entirely. Pairing "paused" with a fire time was misleading —
+		// line entirely. Pairing "paused" with a fire time was misleading,
 		// admins read it as "still firing at X". The interval line is also
 		// suppressed for the same reason (cadence is meaningless while paused).
 		// Mirrors the schedule board's pause vocabulary so the two surfaces
 		// stay consistent.
 		if (field.paused) {
-			lines.push("⏸️ _Reminders paused — resume with `/continue-schedule`_");
+			lines.push("⏸️ _Reminders paused, resume with `/continue-schedule`_");
 			if (field.pausedUntilTs !== null && field.pausedUntilTs !== undefined) {
 				// relative + absolute so the admin can scan "in 3 days" without
 				// doing timezone math, then confirm the exact moment.
@@ -70,7 +70,7 @@ export function listEventsEmbed(
 			}
 		}
 		// Regular announcements skip the "Season ends" line. See IScheduleField
-		// notes — same reasoning, the embed must not render "Invalid Date"
+		// notes, same reasoning, the embed must not render "Invalid Date"
 		// when the field is null.
 		if (field.seasonEndTs !== null) {
 			lines.push(`**${c.seasonEndLabel}:** <t:${field.seasonEndTs}:D>`);
@@ -182,7 +182,7 @@ export interface IScheduleField {
 	// unix seconds. null for regular announcements that opted out of the
 	// KvK season scope (announcementType "regular"). Retained because
 	// upstream (ScheduleBoard.toField) still computes it cheaply, but the
-	// schedule embed no longer renders a per-row season-end line — the
+	// schedule embed no longer renders a per-row season-end line, the
 	// banner moved to the description (see options.guildSeasonEndTs).
 	seasonEndTs: number | null;
 	// when true, the row renders with a "paused" tag in the field name and a
@@ -196,7 +196,7 @@ export interface IScheduleField {
 	// the "Concluded" date once a one-time occurrence is in the past.
 	firstOccurrenceTs: number;
 	// True iff the event is one-time AND its firstOccurrence is in the past.
-	// Recurring events are never completed within a live season — they
+	// Recurring events are never completed within a live season, they
 	// recur forever until the season closes. The caller (ScheduleBoard.toField)
 	// computes this against Date.now() at refresh time so the partition
 	// reflects the moment the embed renders.
@@ -224,7 +224,7 @@ export function scheduleBoardEmbed(
 	// ── description: greeting + bolded season-end banner ──
 	// What:  the season anchor renders ONCE at the top so the eye lands on
 	//        it before scanning the per-event roster. Per-row season-end
-	//        lines were dropped — every event in a guild shares the same
+	//        lines were dropped, every event in a guild shares the same
 	//        seasonEnd, so repeating it on N rows was noise.
 	// Who:   read by every warrior in the alliance (channel is public).
 	// When:  guildSeasonEndTs is provided when the guild has at least one
@@ -244,13 +244,13 @@ export function scheduleBoardEmbed(
 	// Active block keeps the order received from the caller (sorted ascending
 	// by nextOccurrenceTs in ScheduleBoard.refreshSchedule). Completed block
 	// re-sorts descending by firstOccurrenceTs so the most recently concluded
-	// event leads — that's the row a returning warrior is most likely to want.
+	// event leads, that's the row a returning warrior is most likely to want.
 	//
 	// ── field count audit (2026-04-27) ──
 	//   typical KvK guild: 6 active + 1 heading + 4 completed = 11 fields
 	//   Discord cap: 25 fields per embed, 6000 chars total per embed
 	//   Headroom is more than 2x today. If a future feature pushes the
-	//   roster past ~15 active rows, re-audit before shipping — the 25-field
+	//   roster past ~15 active rows, re-audit before shipping, the 25-field
 	//   cap is silent (Discord drops overflow without an error).
 	const active = fields.filter((f) => !f.isCompleted);
 	const completed = fields.filter((f) => f.isCompleted).sort((a, b) => b.firstOccurrenceTs - a.firstOccurrenceTs);
@@ -275,7 +275,7 @@ export function scheduleBoardEmbed(
 		// When:  every refresh that has at least one completed event.
 		//        Skipped entirely when completed.length === 0 so guilds
 		//        with no concluded events do not get an empty field.
-		// Where: pairs with buildCompletedLine below — the line builder
+		// Where: pairs with buildCompletedLine below, the line builder
 		//        is now plain text with markdown bolding (since the
 		//        field-name auto-bold is gone), not a full Discord field.
 		// How:   join entries with `\n\n` so each entry is visually
@@ -303,7 +303,7 @@ function buildActiveField(field: IScheduleField, c: IPluginCopy["scheduleBoard"]
 	// pure schedule arithmetic) but readers should treat them as "would have
 	// fired" not "will fire".
 	if (field.paused) {
-		lines.push("⏸️ _Reminders paused — resume with `/continue-schedule`_");
+		lines.push("⏸️ _Reminders paused, resume with `/continue-schedule`_");
 	}
 
 	if (field.nextOccurrenceTs !== null) {

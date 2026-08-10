@@ -10,7 +10,7 @@ import type { rokCommanderCopy } from "./packs/rok-commander.pack.js";
 // Who:   pack authors (Phase 2's `general-events.pack.ts`, plus any future
 //        neutral / streamer-tone packs) consume `IPluginCopy`. The lookup
 //        helpers in `getCopy.ts` consume `PluginId`.
-// Where: lives at `@base/copy/types`. Type-only — no runtime exports — so
+// Where: lives at `@base/copy/types`. Type-only, no runtime exports, so
 //        it stays a pure shape declaration.
 // How:   `IPluginCopy` is derived from `typeof rokCommanderCopy` instead of
 //        being authored as a hand-rolled interface. The rok-commander pack
@@ -30,7 +30,7 @@ export interface IEmbedField {
 // rok-commander pack so adding a new key to that pack automatically widens
 // the shape every other pack must implement. If a key is too rok-specific
 // to make sense in a sibling pack (e.g. `kvkConfirmation`), the sibling
-// pack still has to satisfy the type — common pattern is to fill those
+// pack still has to satisfy the type, common pattern is to fill those
 // keys with stub values that read "[unused in this plugin]" so any
 // accidental code path that hits them surfaces the bug loudly rather than
 // silently rendering an empty embed.

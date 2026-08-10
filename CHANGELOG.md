@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 This file starts at v1.4.0. Earlier releases predate the changelog convention; the public-facing summaries for those releases live in the historical `embedContent.featureAnnouncement` blocks rendered to each guild via the boot-time announcement system.
 
-## [1.4.0] — 2026-04-27
+## [1.4.0]: 2026-04-27
 
 ### Fixed
 

@@ -1,7 +1,7 @@
 // ── /fortune user-facing copy ─────────────────────────────────────────────
 // Feature-local copy module. Centralizes every string the command shows so none
 // is hardcoded in the handler, WITHOUT threading through the pluginId copy packs
-// (the fortune command is not a platform plugin — master plan v3). If it ever
+// (the fortune command is not a platform plugin, master plan v3). If it ever
 // graduates into a real plugin, this content moves into the pack + copyOverrides
 // system so it becomes per-guild voiceable and admin-editable.
 
@@ -13,7 +13,7 @@ export const fortuneCopy = {
 	title: "🔮 Dero reads your fortune",
 	ultraTitle: "✨ An Ultra Reading ✨",
 
-	// Always shown on both tiers — the "for fun only" guardrail that keeps any
+	// Always shown on both tiers, the "for fun only" guardrail that keeps any
 	// answer from reading as real advice.
 	disclaimerFooter: "Company Uno • for fun only, not actual advice",
 

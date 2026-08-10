@@ -59,7 +59,7 @@ export const eventOverrideStore = {
 	// Used by ReminderJob at fire time and by NextUpBoard at render time
 	// to merge override values on top of the event payload before
 	// embedding/sending. Returns null when no override exists for the
-	// occurrence — the caller treats null as "use the event's values".
+	// occurrence, the caller treats null as "use the event's values".
 	async findOne(query: IFindOverrideQuery): Promise<IEventOverride | null> {
 		const doc = await EventOverrideModel.findOne({
 			eventId: query.eventId,

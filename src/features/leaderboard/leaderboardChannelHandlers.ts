@@ -15,7 +15,7 @@ import { COLORS } from "@base/copy/brand.js";
 //        rebuild-now) can register additional prefixes from this module.
 // When:  click time. The button persists indefinitely on the original
 //        reply, so this handler must not assume the toggle is still off
-//        — the admin could have re-enabled tracking in between. Re-read
+//       , the admin could have re-enabled tracking in between. Re-read
 //        GuildConfig at handler entry to make a fresh decision.
 // Where: customId format is `lb-ch-del:<guildId>`. The guildId is
 //        included as positional arg so a stale message from a different
@@ -35,7 +35,7 @@ const BUTTON_PREFIX = "lb-ch-del";
 
 // Exported so the configure-leaderboard-tracking command can build the
 // matching customId. Centralizing the prefix here means the slash command
-// file does not need to know the format string — it just calls this helper.
+// file does not need to know the format string, it just calls this helper.
 export function buildLeaderboardChannelDeleteCustomId(guildId: string): string {
 	return `${BUTTON_PREFIX}:${guildId}`;
 }
@@ -87,7 +87,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 
 	const channelId = config.leaderboardChannelId;
 	if (!channelId) {
-		// Already deleted (or never set). Idempotent reply — surface what
+		// Already deleted (or never set). Idempotent reply, surface what
 		// the admin probably wanted to hear rather than a confusing error.
 		await interaction.reply({
 			embeds: [
@@ -107,7 +107,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 		// channel. Discord's channelDelete event fires synchronously when we
 		// call channel.delete(), and ChannelDeleteWatcher reads GuildConfig
 		// at that moment to decide whether to rebuild. If we delete first
-		// and flag second, the watcher races us — it reads the pre-flag
+		// and flag second, the watcher races us, it reads the pre-flag
 		// state, sees autoHealEnabled is still true, and rebuilds the
 		// channel before our flag write lands. Reordering closes the race.
 		// Defense in depth: ChannelDeleteWatcher also checks the flag
@@ -119,7 +119,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 			userRemovedChannels: Array.from(removed),
 		});
 
-		// Now safe to delete the channel — when the channelDelete event
+		// Now safe to delete the channel, when the channelDelete event
 		// fires, the flag is already on disk and the watcher will honor it.
 		// May be null if the admin already deleted it in Discord directly
 		// between the slash command and the button click. Treat that as
@@ -130,7 +130,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 		}
 
 		// Clear the stored id after the delete settles. Splitting the write
-		// from the flag update is harmless — repairMissingChannels checks
+		// from the flag update is harmless, repairMissingChannels checks
 		// the flag before the storedId, so a state where flag-is-set and
 		// storedId-is-stale still skips rebuild correctly.
 		await guildConfigStore.update(guildId, {
@@ -140,7 +140,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 		// Audit notice in the admin channel. Other admins see "X removed
 		// the leaderboard channel via /configure-leaderboard-tracking" so
 		// the action is traceable without broadcasting to every member.
-		// Swallow send failures — the deletion itself succeeded and the
+		// Swallow send failures, the deletion itself succeeded and the
 		// notice is observability, not the load-bearing path.
 		try {
 			const adminChannel = await interaction.guild?.channels.fetch(config.adminChannelId).catch(() => null);
@@ -164,7 +164,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 			embeds: [
 				infoEmbed(
 					"🗑️ Leaderboard channel removed",
-					"The leaderboard channel has been deleted from this server and flagged so auto-heal will not rebuild it. To restore it later, run /configure-leaderboard-tracking enabled:True — that re-enables tracking AND clears the removal flag, so the channel rebuilds on the next boot sweep (assuming autoHealEnabled is on).",
+					"The leaderboard channel has been deleted from this server and flagged so auto-heal will not rebuild it. To restore it later, run /configure-leaderboard-tracking enabled:True, that re-enables tracking AND clears the removal flag, so the channel rebuilds on the next boot sweep (assuming autoHealEnabled is on).",
 					COLORS.SCHEDULE
 				),
 			],
@@ -182,7 +182,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 /**
  * Register the leaderboard channel button handlers. Call once at bot boot
  * from main.ts, alongside registerDecreeEditHandlers(). Idempotent at module
- * level — the registry throws on duplicate prefix registration, which
+ * level, the registry throws on duplicate prefix registration, which
  * surfaces a bootstrap bug at startup rather than at first click.
  */
 export function registerLeaderboardChannelHandlers(): void {

@@ -5,7 +5,7 @@ import { DERO_GIF_URL, COLORS, DERO_GIF_REF } from "@base/copy/brand.js";
 // botInviteLink is composed in @utils/config from the env-driven
 // clientId, so a dev process serves the dev install URL and a prod
 // process serves the prod install URL automatically. We deliberately
-// do NOT import BOT_CONSTANTS.INVITE_URL anymore — that string is
+// do NOT import BOT_CONSTANTS.INVITE_URL anymore, that string is
 // pinned to the prod client id and was the source of dev/prod mix-up
 // risk.
 import { botInviteLink } from "@utils/config.js";
@@ -48,7 +48,7 @@ export const ChannelContent = {
 	// Who:   populateChannels (initial post) + refreshIntroEmbeds (maintains it).
 	// How:   brand-indigo (COLORS.DERO) so it reads as a Dero card, not a channel
 	//        intro. NOTE: like buildInviteButton, the pitch is hardcoded kingdom
-	//        voice and is NOT pack-aware — a general-events guild sees ROK wording.
+	//        voice and is NOT pack-aware, a general-events guild sees ROK wording.
 	//        Same pre-existing debt as the button it pairs with; tracked separately.
 	inviteCard(): EmbedBuilder {
 		return infoEmbed(
@@ -61,7 +61,7 @@ export const ChannelContent = {
 	// ── invite button ────────────────────────────────────────────────
 	// What:  the "Summon me to your server" Link button. Opens Discord's OAuth
 	//        consent screen for inviting the bot into another server. Link buttons
-	//        need no interaction handler — Discord opens the URL directly.
+	//        need no interaction handler, Discord opens the URL directly.
 	// Who:   attached to the standalone invite card (ChannelContent.inviteCard), its
 	//        own pinned message in #command-center. MOVED off the introductions
 	//        intro (2026-06) because that channel is now member-writable and the
@@ -159,7 +159,7 @@ export const ChannelContent = {
 	// by postRepairNotices when the bot rebuilt several missing channels
 	// at once (eg after toggling leaderboard back on triggered a sweep
 	// that rebuilt every removed homebase channel). One message in
-	// inner-sanctum is enough — the admin only needs to know which
+	// inner-sanctum is enough, the admin only needs to know which
 	// channels were touched, not see N copies of the same warning
 	// paragraph. Reuses the existing repair-notice copy template via
 	// the locale's summaryTitle / summaryBody keys.

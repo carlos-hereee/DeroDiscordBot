@@ -40,7 +40,7 @@ import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/early
 // ── DNS resolver guard ─────────────────────────────────────────────────────
 // Some dev machines leave node's DNS library (c-ares) unable to read the system
 // resolver config, so it falls back to its hard-coded 127.0.0.1 default where
-// nothing is listening — and EVERY lookup fails with ECONNREFUSED, including the
+// nothing is listening, and EVERY lookup fails with ECONNREFUSED, including the
 // Atlas SRV record mongoose needs at startup. Detect that loopback-only fallback
 // and point node at public resolvers instead. Runs at module load, before
 // connectMongoose (the first DNS consumer) is called below. No-op in production:
@@ -73,7 +73,7 @@ const client = new Client({
 		GatewayIntentBits.GuildMessageReactions, // ← needed for MessageReactionAdd
 	],
 	// Discord only sends full data for recent messages.
-	// For older messages it sends a "partial" — an incomplete object with just the ID.
+	// For older messages it sends a "partial", an incomplete object with just the ID.
 	//  Without declaring `Partials.Message`, `Partials.Reaction`, and `Partials.User`,
 	// reactions on reminder messages that are more than a few minutes old will be silently ignored,
 	//  and `reaction.fetch()` in the listener won't work correctly.
@@ -98,7 +98,7 @@ let isShuttingDown = false;
 async function gracefulShutdown(signal: string, exitCode = 0): Promise<void> {
 	if (isShuttingDown) return; // a second signal during teardown is a no-op
 	isShuttingDown = true;
-	console.log(`[shutdown] received ${signal} — shutting down gracefully`);
+	console.log(`[shutdown] received ${signal}, shutting down gracefully`);
 	// ① stop cron so no new reminder tick begins mid-teardown.
 	try {
 		stopScheduler();
@@ -198,7 +198,7 @@ process.on("uncaughtException", (err) => {
 			// the missing category, run rebuildFromStaleConfig, and
 			// post the recovery notice. We do NOT re-DM the owner here
 			// because the INTRO_DM_SENT log is still set from the
-			// original install — re-DMing on every re-invite would be
+			// original install, re-DMing on every re-invite would be
 			// noise.
 			if (alreadyBuilt?.setupComplete) {
 				await GuildSetupManager.ensureHomebase(client, guild);
@@ -252,7 +252,7 @@ process.on("uncaughtException", (err) => {
 		} catch (error) {
 			// Do NOT leave the guild on autoSetup failure. The bot stays in the
 			// guild so ensureHomebase can self-heal on the next boot via the
-			// rebuild paths. Leaving was the old behavior — it forced owners to
+			// rebuild paths. Leaving was the old behavior, it forced owners to
 			// re-invite manually after any transient failure (Discord 5xx, rate
 			// limit, mid-build disconnect), which is harsher than the partial
 			// install state ensureHomebase already knows how to recover from.
@@ -260,7 +260,7 @@ process.on("uncaughtException", (err) => {
 		}
 	});
 	// register persistent button + modal handlers BEFORE the listener
-	// installs. Each register* call is idempotent at module level — the
+	// installs. Each register* call is idempotent at module level, the
 	// registry throws if the same prefix gets registered twice, which
 	// surfaces a duplicate-bootstrap bug at boot rather than at the first
 	// click. Add new handler registrations here as new persistent UIs ship.
@@ -285,7 +285,7 @@ process.on("uncaughtException", (err) => {
 		// What:  routes button clicks (Edit on a NextUpBoard post, etc) to
 		//        the registered handler in interactionRegistry.
 		// When:  every Discord ButtonInteraction. A `false` return from
-		//        dispatchButton means no global handler matched — that's
+		//        dispatchButton means no global handler matched, that's
 		//        the expected case for buttons consumed by an inline
 		//        awaitMessageComponent collector inside a slash command
 		//        (configure-rok-reminders, the apply-scope flow inside
@@ -294,7 +294,7 @@ process.on("uncaughtException", (err) => {
 		//        handler acks the interaction.
 		// Where: handlers register their prefix at boot (registerDecreeEdit
 		//        Handlers above). Per-handler permission gates live inside
-		//        the handler — the dispatcher does not authorize.
+		//        the handler, the dispatcher does not authorize.
 		if (interaction.isButton()) {
 			try {
 				await dispatchButton(interaction);
@@ -343,12 +343,12 @@ process.on("uncaughtException", (err) => {
 		}
 
 		// ── admin role guard ───────────────────────────────────────────
-		// skip for /setup — it has its own owner-only check
+		// skip for /setup, it has its own owner-only check
 		if (interaction.commandName !== "setup") {
 			const config = await guildConfigStore.findByGuildId(interaction.guildId!);
 
 			if (ADMIN_COMMANDS.has(interaction.commandName)) {
-				// guild hasn't run /setup yet — no config means no admin role is defined
+				// guild hasn't run /setup yet, no config means no admin role is defined
 				if (!config) {
 					await interaction.reply({
 						embeds: [errorEmbed(rokCommanderCopy.responses.setupRequired)],
@@ -432,7 +432,7 @@ process.on("uncaughtException", (err) => {
 		// owner once if the server is unreachable for >= 5 minutes, and
 		// once again when it recovers. No-op when CREATOR_DISCORD_ID is
 		// unset (logs a warn so operators notice on first boot). Fully
-		// decoupled from the request path — outageWatcher only reads
+		// decoupled from the request path, outageWatcher only reads
 		// state, never participates in the actual server calls.
 		registerOutageWatcher(client);
 
@@ -502,7 +502,7 @@ process.on("uncaughtException", (err) => {
 				// item 35 shipped. The helper is idempotent via the
 				// ONBOARDING_HEADSUP_SENT log key so once-per-guild DM
 				// behavior holds across boots. Failure to check is
-				// non-fatal — the bot still runs, just without the
+				// non-fatal, the bot still runs, just without the
 				// proactive heads-up for that one guild.
 				try {
 					await checkOnboardingAndNotifyOwner(client, guild);
@@ -526,7 +526,7 @@ process.on("uncaughtException", (err) => {
 				//       op for that branch, but running it uniformly keeps
 				//       the code path simple and the logs symmetric.
 				// Where: failures here must not cancel the rest of the boot
-				//        loop — swallow with a log so one guild cannot stall
+				//        loop, swallow with a log so one guild cannot stall
 				//        the others.
 				try {
 					await GuildSetupManager.refreshIntroEmbeds(client, guild);
@@ -619,7 +619,7 @@ process.on("uncaughtException", (err) => {
 		//       schedules are edited in place, next-decree posts are NEW.
 		// When: once per boot. The dedup Set inside NextUpBoard guarantees
 		//       a re-boot within 24h does not duplicate posts already made
-		//       by a prior process — except across a restart, where some
+		//       by a prior process, except across a restart, where some
 		//       overlap is the accepted trade-off (channel is append-only).
 		// Where: failures per-guild are logged and swallowed inside
 		//        refreshAllNextUp; one bad guild does not stall the others.
@@ -643,14 +643,14 @@ process.on("uncaughtException", (err) => {
 		// ── feature announcement sweep ─────────────────────────────
 		// What: once-per-version broadcast to every setup-complete guild.
 		//       Public post lands in #announcements, admin post in
-		//       #inner-sanctum. Idempotent via botLogStore — most boots
+		//       #inner-sanctum. Idempotent via botLogStore, most boots
 		//       are no-ops, only the first boot after a deploy posts.
 		// Who:  postFeatureAnnouncements in features/announcements/.
 		//       Reads package.json version synchronously at module load.
 		// When: runs LAST in the boot sequence so ensureHomebase +
 		//       refreshIntroEmbeds + refreshAllSchedules have finished
 		//       and channel ids in GuildConfig are freshest.
-		// Where: fire-and-forget? NO — we await it, but internally each
+		// Where: fire-and-forget? NO, we await it, but internally each
 		//        guild is isolated so one failure cannot stall others.
 		//        Errors are logged and swallowed inside the helper.
 		await postFeatureAnnouncements(client);
@@ -661,7 +661,7 @@ process.on("uncaughtException", (err) => {
 		//       tally so the platform owner can read accumulating results from
 		//       Railway logs.
 		// When: boot tail, after postFeatureAnnouncements, so channel ids in
-		//       GuildConfig are freshest. Same per-guild isolation — one guild's
+		//       GuildConfig are freshest. Same per-guild isolation, one guild's
 		//       failure cannot stall the rest (handled inside dispatchPolls).
 		await dispatchPolls(client);
 		await logPollTallies();

@@ -6,7 +6,7 @@ import { requireGuildId } from "../middleware/requireGuildId.js";
 // What:  HTTP twin of /configure-auto-heal slash command. Lets the
 //        Settings tab toggle GuildConfig.autoHealEnabled without the
 //        admin opening Discord. Body: { enabled: boolean }. Same
-//        idempotency contract as the slash command — re-writing the
+//        idempotency contract as the slash command, re-writing the
 //        same state is a no-op with a clear "already that way" response.
 // Who:   called by the nexious-server plugin proxy when the dashboard's
 //        Settings auto-heal toggle button is clicked.

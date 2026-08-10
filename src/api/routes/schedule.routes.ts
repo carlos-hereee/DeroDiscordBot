@@ -5,8 +5,8 @@ import { requireGuildId } from "../middleware/requireGuildId.js";
 // ── /api/schedule ─────────────────────────────────────────────────────
 // What:  HTTP twin of the schedule-level pause/resume affordances on the
 //        Command Center. Two endpoints:
-//          POST /pause  — set GuildConfig.schedulePaused.paused = true
-//          POST /resume — set GuildConfig.schedulePaused.paused = false
+//          POST /pause , set GuildConfig.schedulePaused.paused = true
+//          POST /resume, set GuildConfig.schedulePaused.paused = false
 //        Both also clear / set the optional pausedUntil so the
 //        ReminderScheduler's auto-resume contract works.
 // Who:   called by the nexious-server plugin proxy when the dashboard's
@@ -78,7 +78,7 @@ export function createScheduleRouter(): Router {
 	});
 
 	// POST /api/schedule/resume
-	// Body: {} — resume always clears both paused and pausedUntil.
+	// Body: {}, resume always clears both paused and pausedUntil.
 	router.post("/resume", async (req: Request, res: Response) => {
 		const guildId = requireGuildId(req, res);
 		if (guildId === null) return;

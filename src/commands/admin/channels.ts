@@ -12,7 +12,7 @@ import { getPluginCopy } from "@base/copy/getCopy.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { creatorId } from "@utils/config.js";
 
-/* /channels — v1.5.1 visibility-toggle command.
+/* /channels, v1.5.1 visibility-toggle command.
    Three subcommands let admins hide or show the five optional homebase
    channels without deleting them. Hiding applies @everyone deny
    ViewChannel; showing clears the deny. Channels always exist and

@@ -45,7 +45,7 @@ const __dirname = path.dirname(__filename);
 // ── resolve bot version from package.json ───────────────────────────
 // Compiled module lives at dist/features/announcements/postFeatureAnnouncement.js
 // so package.json is three directories up. Resolve once at module load
-// and cache — version cannot change without a new process. fs.readFileSync
+// and cache, version cannot change without a new process. fs.readFileSync
 // is correct here: this is one-shot init, not a hot path.
 function loadBotVersion(): string {
 	try {
@@ -135,7 +135,7 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			}
 
 			// Idempotency: has this guild already seen this version?
-			// botLogStore.has is a single-document indexed lookup — cheap
+			// botLogStore.has is a single-document indexed lookup, cheap
 			// enough to run once per guild per boot without batching.
 			const alreadyAnnounced = await botLogStore.has(guild.id, eventKey);
 			if (alreadyAnnounced) {
@@ -144,7 +144,7 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			}
 
 			// Resolve target channels. Both must exist and be TextChannels
-			// for the announcement to fire — a missing announcements
+			// for the announcement to fire, a missing announcements
 			// channel is either a brand-new guild (caught above) or a
 			// destroyed homebase (ensureHomebase's problem, not ours).
 			const announcementsChannelId = config.announcementsChannelId;
@@ -179,7 +179,7 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			// release boot (since this fires once per version per guild
 			// and existing members already have the notification dot).
 			//
-			// allowedMentions: { parse: [] } is belt-and-suspenders —
+			// allowedMentions: { parse: [] } is belt-and-suspenders,
 			// if a future edit ever adds a raw @everyone to the copy,
 			// this prevents accidental mass notifications.
 			// Inject the release version into the title from BOT_VERSION (package.json),
@@ -205,7 +205,7 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			// ── ③ log success ──────────────────────────────────────
 			// Only AFTER both posts succeeded. A partial failure above
 			// leaves the log blank, so the next boot re-attempts. This
-			// is why the public post comes first — a duplicate public
+			// is why the public post comes first, a duplicate public
 			// post on retry is visible to the community, so we want the
 			// admin post to be the one that retries, not the public one.
 			// ...Actually on second thought that reasoning is reversed:

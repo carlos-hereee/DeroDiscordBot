@@ -97,7 +97,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 			return;
 		}
 
-		// confirmed — soft delete
+		// confirmed, soft delete
 		await eventStore.deleteInGuild(event.eventId, guildId);
 		await button.update({
 			embeds: [infoEmbed(c.confirmTitle, c.successDescription(event.name), rokCommanderCopy.COLORS.SCHEDULE)],

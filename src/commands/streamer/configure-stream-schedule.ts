@@ -30,14 +30,14 @@ import {
 //        announcements channel pinging an optional role override
 //        (defaults to the guild member role).
 // Who:   streamers (or anyone running a weekly recurring stream / call).
-//        Sibling to /configure-kvk-season — same primitive, simpler
+//        Sibling to /configure-kvk-season, same primitive, simpler
 //        input surface because the cadence is fixed at "weekly".
 // When:  the streamer runs this once per recurring schedule. Re-running
 //        with the same name short circuits with a "use /pause-schedule"
 //        hint so two schedules never collide on a guild.
 // Where: persists into the same Event collection as KvK events. Every
 //        downstream system (ReminderScheduler, ScheduleBoard, Test
-//        Reminder, /event-list) reads it without code changes — that
+//        Reminder, /event-list) reads it without code changes, that
 //        was the whole point of letting the data layer stay generic.
 //        firstOccurrence is stored as UTC; Discord's <t:UNIX:F> renders
 //        each viewer's local time so the timezone input affects only
@@ -154,7 +154,7 @@ export const data = new SlashCommandBuilder()
 // How:   defer to searchTimezones in tzParser. The returned array
 //        is { name, value } pairs where name is the human-visible
 //        zone string and value is the same string sent to execute().
-//        Cap at 25 — Discord rejects autocomplete responses larger
+//        Cap at 25, Discord rejects autocomplete responses larger
 //        than that.
 export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
 	const focused = interaction.options.getFocused(true);
@@ -171,7 +171,7 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		// Slash commands inside DMs have no guild — this command only ever
+		// Slash commands inside DMs have no guild, this command only ever
 		// makes sense inside a server. Discord's own permissioning blocks
 		// most of this path but the explicit guard keeps the rest of the
 		// function free of "what if guildId is null" branches.
@@ -224,7 +224,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		return;
 	}
 
-	// Duplicate-name guard. Active events only — a soft-deleted event with
+	// Duplicate-name guard. Active events only, a soft-deleted event with
 	// the same name is allowed to be re-created (the streamer probably
 	// retired the old schedule on purpose). Comparison is case-insensitive
 	// so "Friday Night Stream" and "friday night stream" do not coexist.
@@ -291,7 +291,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 			return;
 		}
 
-		// confirmed — persist
+		// confirmed, persist
 		try {
 			await eventStore.create({
 				name,
@@ -304,7 +304,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 				active: true,
 				mentionRoleId,
 				paused: false,
-				// seasonEnd intentionally omitted — streamer schedules have
+				// seasonEnd intentionally omitted, streamer schedules have
 				// no season scope. Schema default is null, ScheduleBoard +
 				// ReminderScheduler treat null as "no auto archive".
 			});
@@ -314,7 +314,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 				components: [],
 			});
 
-			// Fire and forget — schedule board refresh failure must not
+			// Fire and forget, schedule board refresh failure must not
 			// undo the successful save. Same pattern as the events route.
 			refreshSchedule(interaction.client, guildId).catch((err) =>
 				console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/configure-stream-schedule"), err)

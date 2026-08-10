@@ -14,7 +14,7 @@ export const FORTUNE_ORB_REF = `attachment://${FORTUNE_ORB_FILE}`;
 // purpose: base() resolves branding through getPluginCopy(guildConfig), which
 // couples a caller to the pluginId copy-pack system. /fortune is a plain
 // command (not a plugin), so it pulls the Dero author + colors straight from
-// brand.ts — exactly the "non pack-aware call site" path brand.ts documents.
+// brand.ts, exactly the "non pack-aware call site" path brand.ts documents.
 //
 // orbRef, when passed, sets the embed's main image to the attached orb animation.
 // The ultra tier also sets a thumbnail pointing at the bundled Dero avatar; the

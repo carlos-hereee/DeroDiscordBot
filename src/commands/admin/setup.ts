@@ -16,7 +16,7 @@ export const data = new SlashCommandBuilder()
 	.addRoleOption((option) =>
 		option
 			.setName("member-role")
-			.setDescription("The role assigned to verified Mortals — this role is pinged on every event reminder")
+			.setDescription("The role assigned to verified Mortals, this role is pinged on every event reminder")
 			.setRequired(true)
 	);
 
@@ -59,7 +59,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 			// autoSetup swallows a missing-permissions failure (it catches 50013
 			// and returns without building), so confirm the homebase actually came
 			// back before clearing the flag. Otherwise the owner is stranded with
-			// the flag cleared, a stale categoryId, and no channels — unable to
+			// the flag cleared, a stale categoryId, and no channels, unable to
 			// rebuild via /setup. Re-read the fresh config and verify the category.
 			const rebuilt = await guildConfigStore.findByGuildId(interaction.guildId!);
 			const category = rebuilt?.categoryId
@@ -78,7 +78,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 				memberRoleId: memberRole.id,
 			});
 
-			// Clear the flag LAST — only after a verified rebuild AND roles applied,
+			// Clear the flag LAST, only after a verified rebuild AND roles applied,
 			// so any failure above leaves the guild destroyed and the next /setup
 			// retries the full rebuild rather than dead-ending.
 			await guildConfigStore.update(interaction.guildId!, { homebaseDestroyed: false });

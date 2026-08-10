@@ -8,7 +8,7 @@ const botLogSchema = new mongoose.Schema({
 	createdAt: { type: Date, default: Date.now },
 });
 
-// compound index — fast lookup for "did this event happen for this guild"
+// compound index, fast lookup for "did this event happen for this guild"
 botLogSchema.index({ guildId: 1, event: 1 });
 
 export const BotLog = mongoose.model("BotLog", botLogSchema);

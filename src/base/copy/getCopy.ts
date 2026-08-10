@@ -14,7 +14,7 @@ import { COPY_PACKS, DEFAULT_PLUGIN_ID } from "./packs.js";
 //             Phase 1 only stages the read path so call sites can opt in
 //             without a second migration later.
 // Who:   embed builders, slash command handlers, ChannelContent.
-// When:  on every render of a user-facing string. Cheap — registry lookup
+// When:  on every render of a user-facing string. Cheap, registry lookup
 //        plus, when overrides are present, a single Map.get.
 // Where: lives at `@base/copy/getCopy`. The Discord-rendered copy lives
 //        in the copy packs (`@base/copy/packs`); brand constants (colors,
@@ -44,7 +44,7 @@ export interface ICopyConfig {
 // config whose `pluginId` is unset both fall back to the rok-commander
 // pack, which preserves the pre-Phase-1 behaviour of every existing
 // guild. A config that names a plugin we have not registered yet (e.g.
-// `general-events` before Phase 2 ships its pack) ALSO falls back —
+// `general-events` before Phase 2 ships its pack) ALSO falls back,
 // silently, and intentionally. The streamer-plugin rollout is a
 // content-first then content-only migration; the schema is allowed to
 // march ahead of the registry.

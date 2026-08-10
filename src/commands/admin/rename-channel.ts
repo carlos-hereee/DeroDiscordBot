@@ -19,7 +19,7 @@ import { COLORS } from "@base/copy/brand.js";
 //        channel got deleted and re-created.
 // Who:   server admins. Permission-gated to Administrator like the rest
 //        of the /configure-* family.
-// When:  on demand. Idempotent — running with the same name twice is a
+// When:  on demand. Idempotent, running with the same name twice is a
 //        no-op write (we still emit a "no change made" reply rather
 //        than a silent success so the admin gets clear feedback).
 // Where: writes both (a) the live Discord channel via channel.setName,
@@ -132,7 +132,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	// the channelNames map.
 	if (!VALID_SLOTS.has(slot)) {
 		await interaction.reply({
-			embeds: [errorEmbed("Pick a slot from the dropdown — that value is not a known channel slot.")],
+			embeds: [errorEmbed("Pick a slot from the dropdown, that value is not a known channel slot.")],
 			flags: MessageFlags.Ephemeral,
 		});
 		return;
@@ -196,7 +196,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 	try {
 		// Rename the live channel first. If the API call fails (rate limit,
-		// permission missing, etc.) we bail before writing the override —
+		// permission missing, etc.) we bail before writing the override,
 		// otherwise the GuildConfig would claim a name that does not exist
 		// in Discord and rebuilds would propagate the false name forward.
 		await channel.setName(newName, "Renamed via /rename-channel");
@@ -229,7 +229,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		await interaction.reply({
 			embeds: [
 				errorEmbed(
-					"Could not rename the channel. Check the bot's Manage Channels permission, or try again — Discord enforces a rate limit of 2 renames per 10 minutes per channel."
+					"Could not rename the channel. Check the bot's Manage Channels permission, or try again, Discord enforces a rate limit of 2 renames per 10 minutes per channel."
 				),
 			],
 			flags: MessageFlags.Ephemeral,

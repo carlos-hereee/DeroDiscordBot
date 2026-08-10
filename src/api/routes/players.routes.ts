@@ -14,7 +14,7 @@ type PlayersRequest = Request<
 >;
 
 // ── PlayerSummary ─────────────────────────────────────────────
-// What:  the wire shape of a single row on the GET /api/players list — one
+// What:  the wire shape of a single row on the GET /api/players list, one
 //        warrior with their aggregate stats across every event in this guild.
 // Who:   dashboard's PluginContext.fetchPlayers reads this off data.data
 //        and renders the players grid.
@@ -70,12 +70,12 @@ async function getEventIdsForGuild(guildId: string): Promise<string[]> {
 // factory: like createEventsRouter, the Discord client is a dependency
 // because the nickname backfill needs to resolve GuildMember objects from
 // the live client cache. The pure DB read paths still work even if the
-// client is missing the guild — enrichWithNicknames returns the records
+// client is missing the guild, enrichWithNicknames returns the records
 // untouched in that case.
 export function createPlayersRouter(client: Client): Router {
 	const playersRouter = Router();
 
-	// GET /api/players?guildId=... — all players ranked by total score across
+	// GET /api/players?guildId=..., all players ranked by total score across
 	// the requesting guild's events only
 	playersRouter.get("/", async (req: PlayersRequest, res: Response) => {
 		const guildId = requireGuildId(req, res);
@@ -103,7 +103,7 @@ export function createPlayersRouter(client: Client): Router {
 		}
 	});
 
-	// GET /api/players/:userId?guildId=... — full activity history for one
+	// GET /api/players/:userId?guildId=..., full activity history for one
 	// player, scoped to the requesting guild's events
 	playersRouter.get("/:userId", async (req: PlayersRequest, res: Response) => {
 		const guildId = requireGuildId(req, res);

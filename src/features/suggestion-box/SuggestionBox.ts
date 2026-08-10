@@ -81,7 +81,7 @@ export function buildSuggestionBoxButton(): ButtonBuilder {
 }
 
 // Button handler: just shows the modal. No permission gate because
-// the suggestion box is open to all guild members — friction defeats
+// the suggestion box is open to all guild members, friction defeats
 // the purpose of feedback collection.
 async function handleOpenButton(interaction: ButtonInteraction): Promise<void> {
 	await interaction.showModal(buildSuggestionModal());

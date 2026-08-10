@@ -18,7 +18,7 @@ export const PITY_THRESHOLD = 23;
 // Pick a tier by weighted coin flip, then a line from that tier's pool.
 // `rng` is injectable ONLY so tests can drive the tier boundary deterministically;
 // production always uses Math.random. getRandom handles the within-tier uniform
-// pick (DRY — the same helper the greeter and go-live features use). A one-shot
+// pick (DRY, the same helper the greeter and go-live features use). A one-shot
 // Discord handler is a safe place for Math.random; never call this from a
 // deterministic/replayable context.
 export function rollFortune(

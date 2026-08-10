@@ -25,7 +25,7 @@ export interface IGameEvent {
 	// may be absent). Without `?` here every Mongoose-typed event flowing
 	// into a function that takes IGameEvent fails with TS2345
 	// ("property is optional in source but required in target"). Treat
-	// undefined the same as null at every read site — there is no
+	// undefined the same as null at every read site, there is no
 	// semantic difference between "field absent" and "field explicitly null".
 	seasonEnd?: Date | null;
 	reminderOffsets: readonly number[]; // ← was number[]
@@ -44,18 +44,18 @@ export interface IGameEvent {
 	// TestReminderJob both treat undefined and null identically and fall
 	// back to GuildConfig.memberRoleId.
 	mentionRoleId?: string | null;
-	// Pause flag — when true, ReminderScheduler skips this event on every
+	// Pause flag, when true, ReminderScheduler skips this event on every
 	// cron tick. Same `?` + `| null` shape as seasonEnd / mentionRoleId /
 	// pausedUntil: Mongoose infers `required: false, default: false` as
 	// `boolean | null | undefined`, and TypeScript will not assign that
 	// to a plain `boolean`. Treat falsy (false, null, undefined) as "not
-	// paused" at every call site — the schema default writes `false` on
+	// paused" at every call site, the schema default writes `false` on
 	// creation, legacy rows load as `undefined`, and /continue-schedule
 	// explicitly writes `false`, so the three states are semantically
 	// identical.
 	paused?: boolean | null;
 	// Optional auto-resume timestamp paired with paused:true. Same `?`
-	// reasoning as seasonEnd / mentionRoleId — Mongoose marks
+	// reasoning as seasonEnd / mentionRoleId, Mongoose marks
 	// `required:false` fields as truly optional in the inferred document
 	// type. Null means "paused indefinitely". ReminderScheduler clears
 	// both paused and pausedUntil when this date passes.
@@ -64,7 +64,7 @@ export interface IGameEvent {
 	updatedAt?: Date;
 }
 
-// sub-type for prep steps — mirrors the sub-schema in the Mongoose model
+// sub-type for prep steps, mirrors the sub-schema in the Mongoose model
 export interface IPrepStep {
 	id: string;
 	label: string; // e.g. "Activate stats token"
@@ -75,8 +75,8 @@ export interface IPrepStep {
 // eventId is excluded because the store generates it
 export type TCreateEventInput = Omit<IGameEvent, "eventId" | "createdAt" | "updatedAt">;
 
-// what the admin can update — everything optional except eventId
+// what the admin can update, everything optional except eventId
 export type TUpdateEventInput = Partial<Omit<IGameEvent, "eventId" | "createdAt" | "updatedAt">>;
 
-// template shape used by BOT_CONSTANTS — id not yet assigned
+// template shape used by BOT_CONSTANTS, id not yet assigned
 export type TPrepStepTemplate = Omit<IPrepStep, "id">;

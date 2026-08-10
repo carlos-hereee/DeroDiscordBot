@@ -24,7 +24,7 @@ type LeaderboardRequest = Request<
 //        hydrated Mongoose Documents while the all-time path builds plain
 //        objects from a Map. Without a normalize step the two branches had
 //        incompatible types and enrichWithNicknames<T> inferred T from the
-//        Document branch, where username is not a settable field — that
+//        Document branch, where username is not a settable field, that
 //        broke the build with TS2345 on the spread inside the helper.
 // How:   we shape both branches into LeaderboardRow before enrichment so
 //        the helper's `T extends { userId; username }` constraint is met
@@ -57,7 +57,7 @@ export function createLeaderboardRouter(client: Client): Router {
 			const occurrence = req.query.occurrence as string;
 
 			// findByIdInGuild applies the guild scope at the store layer. The 404 (not 403)
-			// on cross-guild is preserved — the store returns null for either missing or
+			// on cross-guild is preserved, the store returns null for either missing or
 			// wrong-guild and we do not distinguish them in the public response.
 			const event = await eventStore.findByIdInGuild(eventId, guildId);
 			if (!event) {
@@ -87,7 +87,7 @@ export function createLeaderboardRouter(client: Client): Router {
 					totalAcknowledged: r.acknowledgedReminder ? 1 : 0,
 				}));
 			} else {
-				// all time — fetch all records and aggregate per player
+				// all time, fetch all records and aggregate per player
 				const all = await activityStore.findByEvent(eventId);
 
 				// group by userId and sum their scores

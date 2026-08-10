@@ -72,7 +72,7 @@ export async function fireTestReminder(client: Client, event: IGameEvent): Promi
 	}
 
 	// ② pick a "next occurrence" to show in the embed time field.
-	// this is cosmetic — it lets the admin see how the real reminder will look.
+	// this is cosmetic, it lets the admin see how the real reminder will look.
 	// if the event has no upcoming occurrences (eg season already ended),
 	// we fall back to firstOccurrence so the embed still renders something sensible.
 	const upcoming = getUpcomingOccurrences(event, 1);

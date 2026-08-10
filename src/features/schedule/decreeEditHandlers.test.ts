@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 
 // The decreeEditHandlers module imports several stores + the
 // ScheduleBoard refresh helper. None of those are exercised by
-// parseModalValues / decreeEditCustomIds — but importing the module
+// parseModalValues / decreeEditCustomIds, but importing the module
 // pulls them in, and a couple drag mongoose models behind them. Mock
 // the heavy ones so the test process never opens a DB connection.
 vi.mock("@db/stores/eventStore.js", () => ({ eventStore: {} }));
@@ -116,7 +116,7 @@ describe("parseModalValues", () => {
 });
 
 // ── new split helpers (post timezone-dropdown redesign) ─────────────
-// extractAndValidate handles structural validation only — it must NOT
+// extractAndValidate handles structural validation only, it must NOT
 // resolve the override time, because the timezone is collected via a
 // separate StringSelectMenu after modal submit. resolveOverrideTime is
 // the second half: given a parsed time-of-day plus a chosen IANA zone,

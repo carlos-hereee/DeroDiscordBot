@@ -2,7 +2,7 @@
 // Pure date-range helpers shared by the /leaderboard command and the pinned
 // LeaderboardBoard. Extracted from leaderboard.ts in v1.6 Phase 2 so the
 // board reuses the exact same window math (item 13 + item 17) instead of
-// forking a second copy. No Discord or DB imports — keep it pure so both the
+// forking a second copy. No Discord or DB imports, keep it pure so both the
 // command and the board can call it freely and it stays trivially testable.
 
 export type WeekStart = "sunday" | "monday";
@@ -30,7 +30,7 @@ export function thisWeekRange(weekStart: WeekStart): { from: Date; to: Date } {
 export function thisMonthRange(): { from: Date; to: Date } {
 	const now = new Date();
 	const from = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-	// last millisecond of the last day of the month — month-end without
+	// last millisecond of the last day of the month, month-end without
 	// caring how many days the month has.
 	const to = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 	return { from, to };

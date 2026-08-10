@@ -46,8 +46,8 @@ export function registerModal(prefix: string, handler: TModalHandler): void {
 
 /**
  * Dispatch a button interaction to the registered handler. Returns true when
- * a handler ran (regardless of whether it threw — the listener wrapper logs
- * the error). Returns false when no handler matched the customId prefix —
+ * a handler ran (regardless of whether it threw, the listener wrapper logs
+ * the error). Returns false when no handler matched the customId prefix,
  * the caller should treat that as an unhandled persistent button (possibly
  * a stale message from a previous bot version).
  */

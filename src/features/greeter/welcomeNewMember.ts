@@ -15,7 +15,7 @@ import { ICEBREAKERS } from "./icebreakers.js";
 // When:  every non-bot join in a setup-complete guild that has an intro channel.
 // How:   compose a random pack-voiced framing (kingdom vs neutral) with a random
 //        icebreaker from the shared bank, then post as message CONTENT (not an
-//        embed) so the mention actually notifies — Discord does not fire a
+//        embed) so the mention actually notifies, Discord does not fire a
 //        notification for a mention inside an embed description. allowedMentions
 //        is scoped to the one joining member so nothing else can be pinged.
 
@@ -31,7 +31,7 @@ function pick<T>(arr: readonly T[]): T | undefined {
 // uses it to give the admin an honest success/failure ack instead of a blind
 // confirmation.
 export async function welcomeNewMember(member: GuildMember): Promise<boolean> {
-	// Never greet bots — they don't read it and it would clutter the channel.
+	// Never greet bots, they don't read it and it would clutter the channel.
 	if (member.user.bot) return false;
 
 	try {
@@ -94,7 +94,7 @@ export async function ensureIntroChannelsWritable(client: Client): Promise<void>
 // Per-guild rolling-window cap so a raid / invite-blast / mass-join cannot turn
 // the greeter into a self-inflicted flood: at most GREET_BURST greetings per
 // GREET_WINDOW_MS per guild; joins past that are skipped (logged). Only the
-// on-join path is throttled — the admin "Fire a greeting" button calls
+// on-join path is throttled, the admin "Fire a greeting" button calls
 // welcomeNewMember directly and is never rate-limited. In-memory like the bot's
 // other cooldowns (announce / test-fire routes); resets on restart, which is fine.
 const GREET_WINDOW_MS = 60_000;

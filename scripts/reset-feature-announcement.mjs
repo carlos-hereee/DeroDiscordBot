@@ -67,7 +67,7 @@ try {
 		console.log("Nothing to reset. If the announcement still is not posting, check:");
 		console.log("  1. Did the bot actually RESTART? It posts on ClientReady, not on build.");
 		console.log("  2. Boot logs for a line like:");
-		console.log("       [feature-announcement] version " + version + " — posted to X guild(s), skipped Y");
+		console.log("       [feature-announcement] version " + version + ", posted to X guild(s), skipped Y");
 		console.log("     No line at all means BOT_VERSION was empty (package.json unreadable in dist).");
 		console.log("  3. The guild's setupComplete is true and announcementsChannelId / adminChannelId are set");
 		console.log("     (run `node scripts/inspect-guildconfig.mjs`). A missing channel defers the post.");

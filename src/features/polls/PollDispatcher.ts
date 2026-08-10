@@ -35,7 +35,7 @@ import { ACTIVE_POLLS, IPollDefinition } from "./pollDefinitions.js";
 // on the "poll" prefix; this handler splits the rest.
 const POLL_BUTTON_PREFIX = "poll";
 
-// Neutral platform framing — see pollDefinitions for why poll copy is not pack
+// Neutral platform framing, see pollDefinitions for why poll copy is not pack
 // voice. Kept here as module consts so the reusable framing stays in one place.
 const POLL_EMBED_TITLE = "📊 Quick question";
 const POLL_INSTRUCTION =
@@ -60,7 +60,7 @@ async function handlePollVote(interaction: ButtonInteraction): Promise<void> {
 	}
 
 	// Polls only post to guild channels, but a button can technically be clicked
-	// from a forwarded/DM context — guard so we never write a null guildId row.
+	// from a forwarded/DM context, guard so we never write a null guildId row.
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await interaction.reply({ content: "Please vote from within the server.", flags: MessageFlags.Ephemeral });
@@ -152,7 +152,7 @@ async function dispatchOnePoll(client: Client, poll: IPollDefinition): Promise<v
 
 			const announcementsChannelId = config.announcementsChannelId;
 			if (!announcementsChannelId) {
-				// Not a failure — defer without logging so the next boot (once
+				// Not a failure, defer without logging so the next boot (once
 				// ensureHomebase has rebuilt) re-attempts.
 				console.warn(`[poll] guild ${guild.id} missing announcements channel; deferring ${poll.pollId}`);
 				continue;
@@ -181,7 +181,7 @@ async function dispatchOnePoll(client: Client, poll: IPollDefinition): Promise<v
 	}
 
 	if (posted > 0 || skipped > 0) {
-		console.log(`[poll] ${poll.pollId} — posted to ${posted} guild(s), skipped ${skipped}`);
+		console.log(`[poll] ${poll.pollId}, posted to ${posted} guild(s), skipped ${skipped}`);
 	}
 }
 

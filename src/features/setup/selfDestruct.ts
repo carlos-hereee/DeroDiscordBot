@@ -32,7 +32,7 @@ import { COLORS } from "@base/copy/brand.js";
 // the "self_destruct" prefix via interactionRegistry. The "Self destruct" button
 // folded into the admin command guide row uses `self_destruct:prompt`, which
 // handleSelfDestruct turns into the Confirm/Cancel prompt; confirm/cancel use the
-// same prefix. (It is NOT a powerup-prefixed control — PowerUps does not delegate here.)
+// same prefix. (It is NOT a powerup-prefixed control, PowerUps does not delegate here.)
 
 const PREFIX = "self_destruct";
 const CONFIRM_ID = `${PREFIX}:confirm`;
@@ -92,7 +92,7 @@ export async function showSelfDestructConfirm(interaction: SelfDestructEntry): P
 async function handleSelfDestruct(interaction: ButtonInteraction): Promise<void> {
 	const action = interaction.customId.split(":")[1];
 
-	// Re-verify owner on every action — the prompt button lives on the pinned
+	// Re-verify owner on every action, the prompt button lives on the pinned
 	// admin command guide (visible to admins), and the confirm button is the
 	// irreversible one.
 	if (!isServerOwner(interaction)) {

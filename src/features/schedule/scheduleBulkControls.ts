@@ -4,7 +4,7 @@ import { eventStore } from "@db/stores/eventStore.js";
 // Guild-wide pause/resume primitives extracted so the schedule channel
 // power-up button (v1.6 Phase 5, item 36) can reuse the bulk logic. A single
 // button cannot pick an event the way /pause-schedule does, so the channel
-// control operates on every event at once — the same intent as the
+// control operates on every event at once, the same intent as the
 // /pause-all-schedules and /continue-all-schedules commands.
 //
 // DEBT: those two commands still carry equivalent inline loops. They predate
@@ -24,7 +24,7 @@ export interface IBulkScheduleResult {
 }
 
 // Pause every not-yet-paused event in the guild. pausedUntil is cleared to null
-// (indefinite) — the button is the no-argument panic switch; the slash command
+// (indefinite), the button is the no-argument panic switch; the slash command
 // remains the path for a timed pause.
 export async function pauseAllGuildEvents(guildId: string): Promise<IBulkScheduleResult> {
 	const events = await eventStore.findByGuildId(guildId);

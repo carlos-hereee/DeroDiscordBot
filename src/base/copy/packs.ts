@@ -2,7 +2,7 @@ import type { IPluginCopy, PluginId } from "./types.js";
 import { rokCommanderCopy } from "./packs/rok-commander.pack.js";
 import { generalEventsCopy } from "./packs/general-events.pack.js";
 
-// ── COPY_PACKS — plugin → pack registry ──────────────────────────────────
+// ── COPY_PACKS, plugin → pack registry ──────────────────────────────────
 // What:  the runtime registry that maps a `pluginId` to the matching copy
 //        pack. `getPluginCopy` reads this when resolving a guild's voice.
 // Who:   every embed builder, slash command response, and channel intro
@@ -23,7 +23,7 @@ import { generalEventsCopy } from "./packs/general-events.pack.js";
 //        forcing the Phase 2 stub to land in the same change.
 export const COPY_PACKS: Partial<Record<PluginId, IPluginCopy>> = {
 	"rok-commander": rokCommanderCopy,
-	// general-events landed in Phase 2 of the streamer-plugin spec — plain English /
+	// general-events landed in Phase 2 of the streamer-plugin spec, plain English /
 	// streamer-tone pack that satisfies the same IPluginCopy contract. ROK-only keys
 	// (kvkConfirmation, configureReminders, seasonEnd, kvkConfigured) are stubbed with
 	// "[unused in this plugin]" sentinels so any code path that leaks ROK config flow
@@ -35,6 +35,6 @@ export const COPY_PACKS: Partial<Record<PluginId, IPluginCopy>> = {
 // Re-export the default plugin id used as the back-compat fallback. Schema
 // migrations and call sites that need to look up "what does an unset
 // pluginId resolve to" should read this constant instead of hard-coding
-// the literal — that way a future renaming or default change is a single-
+// the literal, that way a future renaming or default change is a single-
 // file edit.
 export const DEFAULT_PLUGIN_ID: PluginId = "rok-commander";

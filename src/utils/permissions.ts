@@ -8,7 +8,7 @@ import type { ButtonInteraction, GuildMember } from "discord.js";
 //
 // Why a helper instead of inlining the check at the call site: persistent
 // button interactions (the Edit button on NextUpBoard posts) cannot rely
-// on Discord's built-in setDefaultMemberPermissions slash-command gate —
+// on Discord's built-in setDefaultMemberPermissions slash-command gate,
 // that only filters the command picker. The component handler must
 // re-verify the actor on every interaction, and that re-verification
 // must match the gate the slash command would have applied.
@@ -29,7 +29,7 @@ interface IGuildConfigPermissionShape {
  *        flow. Returns true on the happy path; the caller replies with an
  *        ephemeral denial when false.
  * When:  evaluated on every button click and every modal submit. The
- *        permission check is NOT cached — a role removal on Discord
+ *        permission check is NOT cached, a role removal on Discord
  *        propagates to the next interaction immediately.
  * How:   server owner always passes. Admin-role match falls back to
  *        guild-level role cache, which discord.js refreshes on
@@ -62,7 +62,7 @@ export function isOwnerOrAdmin(member: GuildMember, config: IGuildConfigPermissi
  * handlers cannot lean on a slash command's setDefaultMemberPermissions, so
  * they must re-verify the clicker. ButtonInteraction.member can be a partial
  * API member with no populated roles cache, and the guild cache can be cold
- * after a restart, so we resolve cache-first then fetch — a miss would wrongly
+ * after a restart, so we resolve cache-first then fetch, a miss would wrongly
  * deny a real admin. Returns false (deny) when there is no guild context or the
  * member cannot be resolved.
  *

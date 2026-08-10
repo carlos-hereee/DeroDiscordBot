@@ -6,7 +6,7 @@ import { serverApi, ServerUnreachableError } from "@utils/serverApi.js";
 //   source; the local Mongoose-backed eventStore is the legacy source kept for
 //   rollback safety.
 // Who: called by db/stores/eventStore.ts when USE_REMOTE_EVENTS is on. Slash commands
-//   and the scheduler still import the original eventStore module — they never see
+//   and the scheduler still import the original eventStore module, they never see
 //   the remote/local distinction.
 // When: every event read or write while the remote flag is on. Reads go through a
 //   60-second in-process cache so the cron tick (which scans all events every minute)
@@ -14,10 +14,10 @@ import { serverApi, ServerUnreachableError } from "@utils/serverApi.js";
 // Where: pure HTTP. No Mongo connection. Survives a local DB outage.
 // How:
 //   ① All requests carry a guildId query param so the server can scope by guild and
-//      apply HMAC verification (signature alone is not enough — the server checks
+//      apply HMAC verification (signature alone is not enough, the server checks
 //      the guild belongs to an installed app).
 //   ② Reads use an in-process cache keyed by (operation, guildId, eventId). Writes
-//      invalidate the cache for that guild. Cache TTL is 60s — same window the cron
+//      invalidate the cache for that guild. Cache TTL is 60s, same window the cron
 //      tick uses, so a freshly-written event is visible to the next tick.
 //   ③ Server failures fall through to the caller as ServerUnreachableError. Reads
 //      that match a not-yet-expired cache entry succeed even when the server is down,
@@ -93,7 +93,7 @@ const isFresh = <T>(entry: CacheEntry<T> | undefined): boolean => {
 };
 
 // Invalidate the list cache for one guild after a write so the next read sees the change.
-// We deliberately do NOT invalidate item caches granularly — the next request will refetch
+// We deliberately do NOT invalidate item caches granularly, the next request will refetch
 // after TTL anyway, and stale-but-not-very-stale single-event data is acceptable for the
 // 60s window (consistent with the cron-tick window).
 const invalidateGuild = (guildId: string): void => {
@@ -107,14 +107,14 @@ export const remoteEventStore = {
 	// Throws so a missed call site fails loudly instead of silently returning [].
 	async findAll(): Promise<RemoteEventHydrated[]> {
 		throw new Error(
-			"remoteEventStore.findAll() is not supported — pass a guildId via findByGuildId(). " +
+			"remoteEventStore.findAll() is not supported, pass a guildId via findByGuildId(). " +
 				"The scheduler must iterate guilds and call findByGuildId per guild."
 		);
 	},
 
 	async findById(eventId: string): Promise<RemoteEventHydrated | null> {
 		// Item cache short-circuit. Only used after a fresh write or read in the same
-		// 60s window — the cache is per-event so single-event lookups don't pre-warm
+		// 60s window, the cache is per-event so single-event lookups don't pre-warm
 		// from the list endpoint (different shape, different fields surfaced).
 		const cached = itemCache.get(eventId);
 		// Explicit `cached &&` narrows to non-undefined for the early return; isFresh
@@ -125,7 +125,7 @@ export const remoteEventStore = {
 		// We need a guildId to satisfy the server's HMAC + ownership checks, but the bot's
 		// /admin/leaderboard.ts and /reminders/:eventId routes call findById without
 		// guildId in scope. The server defends against cross-guild leakage server-side, so
-		// we pass the empty guildId and let the server 400 us — caller catches and falls
+		// we pass the empty guildId and let the server 400 us, caller catches and falls
 		// back to local. This is a temporary bridge; the long-term fix is to thread guildId
 		// through all call sites.
 		try {
@@ -177,7 +177,7 @@ export const remoteEventStore = {
 			listCache.set(guildId, { value: events, ts: Date.now() });
 			return events;
 		} catch (err) {
-			// Same stale-cache fallback as findByIdInGuild — let the scheduler keep firing
+			// Same stale-cache fallback as findByIdInGuild, let the scheduler keep firing
 			// reminders during a brief Heroku blip. If the cache is empty, surface the
 			// error so the caller can decide what to show the user (e.g. an embed warning
 			// "the platform is unreachable, try again in a moment").

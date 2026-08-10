@@ -14,7 +14,7 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 //
 // This helper checks the onboarding state and DMs the guild owner once
 // with instructions to add the homebase category to defaults. It is
-// idempotent via the ONBOARDING_HEADSUP_SENT log key — every restart
+// idempotent via the ONBOARDING_HEADSUP_SENT log key, every restart
 // re-checks but only DMs the first time. If the owner ignores the DM,
 // silence is the correct outcome rather than nagging on every deploy.
 //
@@ -24,7 +24,7 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 //     paired before this feature shipped)
 //
 // All failures are swallowed. Onboarding readability is operational
-// hygiene, not load-bearing for bot function — a guild without the
+// hygiene, not load-bearing for bot function, a guild without the
 // DM still has a perfectly working bot, just one its new members
 // cannot find by accident.
 export async function checkOnboardingAndNotifyOwner(_client: Client, guild: Guild): Promise<void> {
@@ -39,7 +39,7 @@ export async function checkOnboardingAndNotifyOwner(_client: Client, guild: Guil
 	// COMMUNITY flag in their features list cannot have Onboarding
 	// enabled at all, so there is nothing to check. fetchOnboarding
 	// would throw for these guilds anyway, but the property read is
-	// O(1) and free — no rate limit, no network round trip. If the
+	// O(1) and free, no rate limit, no network round trip. If the
 	// admin later enables Community on the guild, the features list
 	// updates on the next gateway tick and the next boot picks it up.
 	if (!guild.features.includes("COMMUNITY")) return;
@@ -87,7 +87,7 @@ export async function checkOnboardingAndNotifyOwner(_client: Client, guild: Guil
 	// problem (new members not seeing the announcements they post), so
 	// the copy avoids first-person bot references and stays direct.
 	// If the universal category name shortens later (FUTURE_PLANS item
-	// 59), update this body too — the **🪧 NOTICE BOARD**
+	// 59), update this body too, the **🪧 NOTICE BOARD**
 	// reference is the same string that appears in the pack copy.
 	const dmBody = [
 		`Heads up about ${guild.name}.`,

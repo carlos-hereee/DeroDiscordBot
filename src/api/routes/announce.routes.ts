@@ -12,7 +12,7 @@ import { requireGuildId } from "../middleware/requireGuildId.js";
 //   announcement a streamer would otherwise post manually with /go-live-soon.
 // Who: called by the nexious-server plugin proxy when the dashboard hits
 //   POST /api/proxy/{pluginId}/events/{eventId}/go-live-now. The :eventId
-//   param is currently unused (the announcement is event-agnostic — it just
+//   param is currently unused (the announcement is event-agnostic, it just
 //   needs the guild's configured channel + role) but the dashboard URL keeps
 //   the eventId so the same button can later evolve into "announce this
 //   specific event is going live" without a route shape change.
@@ -29,14 +29,14 @@ import { requireGuildId } from "../middleware/requireGuildId.js";
 //   ⑤ Return 200 with { ok: true, ... } on success, 4xx with a typed
 //      reason on failure so the dashboard can render an actionable message.
 
-// In-memory cooldown tracker. 60s per guild — same window as TestReminderJob's
+// In-memory cooldown tracker. 60s per guild, same window as TestReminderJob's
 // per-event cooldown but keyed by guild because go-live-now does not target a
 // specific event. Resets on bot restart, which is acceptable for an anti-spam
 // guard (an attacker who can restart the bot can also post by hand).
 const COOLDOWN_MS = 60_000;
 const lastFiredAt = new Map<string, number>();
 
-// Same closed set the slash command uses. Keep these in sync — diverging would
+// Same closed set the slash command uses. Keep these in sync, diverging would
 // produce two different sets of valid lead-time strings between the dashboard
 // path and the slash command path.
 const LEAD_TIMES: Record<string, { minutes: number; label: string }> = {
@@ -189,7 +189,7 @@ export function createAnnounceRouter(client: Client): Router {
 // ── /api/go-live-now (standalone, no eventId) ─────────────────────────
 // Twin of the event-bound /api/events/:eventId/go-live-now route above
 // but for the Command Center button which is not scoped to a specific
-// event. Same embed/cooldown/mention logic — only the URL shape differs.
+// event. Same embed/cooldown/mention logic, only the URL shape differs.
 // Lifting the implementation here lets us share the LEAD_TIMES table
 // and the per-guild cooldown map declared at the top of this module
 // rather than duplicating them in a new file.
@@ -228,7 +228,7 @@ export function createStandaloneGoLiveRouter(client: Client): Router {
 			// announcement per minute. The map is keyed by guildId only,
 			// so an admin who hits Command Center's Go Live Now and then
 			// the Event detail's Go Live Now within 60s gets the second
-			// click rejected as a cooldown hit — which is the right
+			// click rejected as a cooldown hit, which is the right
 			// behavior for "do not spam the announcements channel."
 			const last = lastFiredAt.get(guildId);
 			const now = Date.now();

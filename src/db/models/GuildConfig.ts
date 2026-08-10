@@ -11,9 +11,9 @@ const guildConfigSchema = new Schema(
 
 		// category
 		categoryId: { type: String, required: true },
-		// member role assigned to verified users during onboarding — stored here for easy access when assigning during onboarding
+		// member role assigned to verified users during onboarding, stored here for easy access when assigning during onboarding
 		memberRoleId: { type: String, required: false, default: null },
-		// channel IDs — stored so bot always knows where to post.
+		// channel IDs, stored so bot always knows where to post.
 		// All channels stay required because v1.5.1 ships the visibility-
 		// toggle approach (channels always exist, /setup hide/show controls
 		// @everyone ViewChannel overwrites). A future create-or-delete
@@ -27,7 +27,7 @@ const guildConfigSchema = new Schema(
 		// ── next decree channel ───────────────────────────────────────
 		// What:  id of the 🛡️next-decree channel where NextUpBoard posts
 		//        a fresh embed for each upcoming event (24h rolling
-		//        horizon). NEW posts, never edits — each post is an audit
+		//        horizon). NEW posts, never edits, each post is an audit
 		//        trail entry leaders can scroll back through.
 		// Who:   NextUpBoard (post creation), GuildSetupManager
 		//        (channel provisioning + self heal).
@@ -83,7 +83,7 @@ const guildConfigSchema = new Schema(
 		//        KvK toggle when no season is configured yet.
 		// When:  written once per season at /configure-kvk-season time.
 		//        Cleared (back to null) when ReminderScheduler.announceSeasonEnd
-		//        flips the last KvK event inactive — but ONLY if no other
+		//        flips the last KvK event inactive, but ONLY if no other
 		//        active KvK events still reference a future date. For v1
 		//        we leave the cleanup to the next /configure-kvk-season run
 		//        which overwrites the field; this avoids a multi guild race
@@ -137,14 +137,14 @@ const guildConfigSchema = new Schema(
 				//        refreshIntroEmbeds (edit in place on every boot).
 				// When:  populated on fresh setups shipped after this
 				//        migration. Legacy rows load as null, and the
-				//        refresh sweep treats null as "no anchor — post
+				//        refresh sweep treats null as "no anchor, post
 				//        a fresh admin command guide and persist the id,"
 				//        which doubles as the migration path.
 				// Where: breaks the one-key-per-channel invariant of this
 				//        sub-doc. Accepted as tech debt: the alternative
 				//        (restructuring adminChannelId to a sub-object)
 				//        would require a breaking migration touching
-				//        every live row. Flat keys scale — add another
+				//        every live row. Flat keys scale, add another
 				//        for the next second-message-in-a-channel use
 				//        case and move on.
 				// How:   nullable string, same contract as every sibling.
@@ -154,7 +154,7 @@ const guildConfigSchema = new Schema(
 				adminCommandsChannelId: { type: String, required: false, default: null },
 				// ── invite card (2026-06) ──────────────────────────────
 				// Flat key (like adminCommandGuideId): the SECOND pinned message in
-				// #command-center — the standalone "summon Dero" card (pitch + gif +
+				// #command-center, the standalone "summon Dero" card (pitch + gif +
 				// Summon button), separate from commandsChannelId (the command guide).
 				// refreshIntroEmbeds maintains it; null on legacy rows until the first
 				// boot posts it.
@@ -185,7 +185,7 @@ const guildConfigSchema = new Schema(
 		//        load as "rok-commander" without any data backfill.
 		// Where: read by `getPluginCopy` at every render. Written by the
 		//        plugin-install slash command (Phase 2) and never mutated
-		//        at runtime — switching plugins after install is an admin
+		//        at runtime, switching plugins after install is an admin
 		//        action that requires re-running setup so the home base
 		//        category and channels match the new pack's expectations.
 		// How:   loose `String` validator (not an enum) so adding a third
@@ -205,14 +205,14 @@ const guildConfigSchema = new Schema(
 		//        an override wins over the pack default. Written by the
 		//        Phase 3 dashboard editor UI ("Voice & Copy" tab under
 		//        plugin settings).
-		// When:  Phase 1 ships the data plumbing only — the schema field
+		// When:  Phase 1 ships the data plumbing only, the schema field
 		//        and the resolver function. Call sites do not honor the
 		//        override layer until they migrate to `getCopyOverride`,
 		//        which happens incrementally as Phase 2 / Phase 3 deliver
 		//        the streamer plugin and the editor UI. New rows get an
 		//        empty Map; legacy rows load Map() lazily on first read.
 		// Where: stored as a Mongoose Map so adding new overridable keys
-		//        requires no schema migration — every key the bot reads
+		//        requires no schema migration, every key the bot reads
 		//        through `getCopyOverride` is overridable for free.
 		// How:   `default: () => new Map()` rather than a static literal
 		//        so each document gets its own Map instance instead of
@@ -237,7 +237,7 @@ const guildConfigSchema = new Schema(
 		// When:  read by ChannelDeleteWatcher and by GuildSetupManager.autoSetup
 		//        before the repair sweep. Toggled by /configure-auto-heal.
 		// Where: nullable so legacy rows load cleanly. Default true preserves
-		//        existing behavior — no data migration needed.
+		//        existing behavior, no data migration needed.
 		// How:   plain Boolean. Schema bumps for additional repair-related
 		//        flags can sibling this field; no need to nest yet.
 		autoHealEnabled: { type: Boolean, required: false, default: true },
@@ -259,7 +259,7 @@ const guildConfigSchema = new Schema(
 		//        existing spec.displayName).
 		// Where: a Mongoose Map so adding a new slot in the future is a
 		//        zero-migration write. Direct Discord-side renames do
-		//        NOT update this map by design — the announcement copy
+		//        NOT update this map by design, the announcement copy
 		//        explains the rule so admins understand "to persist
 		//        across rebuilds, use the slash command."
 		// How:   default empty Map. Legacy rows load with no overrides
@@ -275,7 +275,7 @@ const guildConfigSchema = new Schema(
 		//        consults this array per spec and SKIPS rebuilding any
 		//        entry whose configField is listed here, even when
 		//        autoHealEnabled is true. This is how a user-initiated
-		//        removal supersedes the global auto-heal default — without
+		//        removal supersedes the global auto-heal default, without
 		//        this flag the boot sweep treats null storedId as
 		//        "legacy row missing the new channel, rebuild it," which
 		//        is the wrong semantics for "the admin deleted this on
@@ -290,7 +290,7 @@ const guildConfigSchema = new Schema(
 		//        re-enables the related feature toggle.
 		// Where: stored as a flat string array (configField names) rather
 		//        than nesting per-channel objects. Adding a new
-		//        removable channel later requires no schema migration —
+		//        removable channel later requires no schema migration,
 		//        just push its configField name from the new handler.
 		// How:   default empty array so legacy rows load cleanly. The
 		//        repair sweep treats absence-from-array as "not removed"
@@ -341,7 +341,7 @@ const guildConfigSchema = new Schema(
 		// Who:   read by ReminderJob, NextUpBoard, and postGoLiveAnnouncement at
 		//        embed-build time. Set by the dashboard (server/client half).
 		// When:  optional. null on legacy rows, so embeds stay text-only until a
-		//        guild opts in. Never empty by contract once set — it is the
+		//        guild opts in. Never empty by contract once set, it is the
 		//        last-resort image so the embed always has something to render.
 		// How:   plain nullable String, same trust model as Event.imageUrl.
 		defaultEventImageUrl: { type: String, required: false, default: null },
@@ -403,13 +403,13 @@ const guildConfigSchema = new Schema(
 		// ── power-up message ids (v1.6 item 36; RETIRED 2026-06) ────────
 		// What:  LEGACY. Per-channel id of a pinned standalone "power-up" panel
 		//        message. The controls (toggle pings, say hello, refresh) no
-		//        longer live on standalone panels — they are buttons folded into
+		//        longer live on standalone panels, they are buttons folded into
 		//        the pinned intro guides now (see resolveIntroComponents). This
 		//        field is kept only so the one-time cleanup can find + delete the
 		//        old panels on guilds set up before the fold-in.
 		// Who:   read + cleared by PowerUps.removeAllPowerUpPanels (the boot-time
 		//        cleanup sweep). Nothing writes a non-null value anymore. The
-		//        button handler never read these — it routes purely on customId.
+		//        button handler never read these, it routes purely on customId.
 		// When:  legacy rows carry the old panel ids until the cleanup runs once,
 		//        after which every slot is null and the sweep is a no-op.
 		// How:   nullable per slot. Safe to drop this field entirely once every

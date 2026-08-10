@@ -13,14 +13,14 @@ type RemindersRequest = Request<
 	{ mode?: string; occurrence?: string; guildId?: string } // ← QueryString:  req.query shape
 >;
 
-// GET /api/reminders/:eventId?guildId=... — reminder history for an event
+// GET /api/reminders/:eventId?guildId=..., reminder history for an event
 // the event must belong to the requesting guild or we 404.
 remindersRouter.get("/:eventId", async (req: RemindersRequest, res: Response) => {
 	const guildId = requireGuildId(req, res);
 	if (guildId === null) return;
 	try {
 		// findByIdInGuild applies the guild scope at the store layer. The 404 on
-		// cross-guild stays — the store collapses missing and wrong-guild into one null.
+		// cross-guild stays, the store collapses missing and wrong-guild into one null.
 		const event = await eventStore.findByIdInGuild(req.params.eventId, guildId);
 		if (!event) {
 			res.status(404).json({ error: "Event not found" });

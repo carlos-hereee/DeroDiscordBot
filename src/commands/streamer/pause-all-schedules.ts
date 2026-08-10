@@ -10,7 +10,7 @@ import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
-// /pause-all-schedules — bulk equivalent of /pause-schedule. Pauses every
+// /pause-all-schedules, bulk equivalent of /pause-schedule. Pauses every
 // non-paused event in the guild in one shot. Already-paused events are
 // skipped on purpose so any pausedUntil the streamer set individually
 // earlier (e.g. /pause-schedule X days:14) stays intact and is not

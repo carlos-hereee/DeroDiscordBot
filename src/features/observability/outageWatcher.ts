@@ -7,13 +7,13 @@ import { COLORS, FOOTER } from "@base/copy/brand.js";
 // What: polls serverApi's reachability state on a 60-second tick. When the bot
 //   has been failing to reach nexious-server continuously for 5 minutes, DMs
 //   the platform owner once. When the server becomes reachable again after a
-//   notice was already sent, DMs a recovery notice once. Idempotent — does not
+//   notice was already sent, DMs a recovery notice once. Idempotent, does not
 //   spam the owner during a long outage, does not send duplicate recovery
 //   notices on a flapping outage.
 // Who: registered from main.ts after the Discord client is ready. Reads
 //   serverApi.getServerReachabilityState() (no direct coupling to the request
 //   path) and creatorId from config (the platform owner's Discord user ID).
-// When: every 60 seconds for the lifetime of the process. Cheap — one read of
+// When: every 60 seconds for the lifetime of the process. Cheap, one read of
 //   in-memory state plus a comparison. The DM only fires on threshold crossing.
 // Where: lives in features/observability/ alongside any future ops-side code
 //   (latency alerts, fire-rate alerts, etc). Fire-and-forget; failures DMing
@@ -41,7 +41,7 @@ const TICK_INTERVAL_MS = 60 * 1000;
 
 // In-memory record of when we last DM'd the owner about an outage. Null means
 // "no notice currently outstanding." Set to a timestamp when a notice fires;
-// cleared when recovery fires. Survives only as long as the process — a bot
+// cleared when recovery fires. Survives only as long as the process, a bot
 // restart resets the outage state to "no notice outstanding," which is the
 // right behavior because the owner already knows the bot is up if it just
 // restarted.
@@ -88,7 +88,7 @@ const recoveryEmbed = (outageDurationMinutes: number): EmbedBuilder =>
 
 const dmOwner = async (client: Client, embed: EmbedBuilder): Promise<void> => {
 	if (!creatorId) {
-		// No CREATOR_DISCORD_ID configured — log instead of throwing so the
+		// No CREATOR_DISCORD_ID configured, log instead of throwing so the
 		// watcher keeps running. Operators who care about outage alerts will
 		// notice this in startup logs and set the env var.
 		console.warn(
@@ -121,7 +121,7 @@ export const registerOutageWatcher = (client: Client): void => {
 			if (state.currentlyFailing && state.failureDurationMs >= OUTAGE_THRESHOLD_MS && noticeFiredAt === null) {
 				const minutes = Math.floor(state.failureDurationMs / 60_000);
 				console.warn(
-					`[outageWatcher] server unreachable for ${minutes} minute(s) — DMing platform owner`
+					`[outageWatcher] server unreachable for ${minutes} minute(s), DMing platform owner`
 				);
 				await dmOwner(client, outageEmbed(minutes));
 				noticeFiredAt = Date.now();
@@ -133,7 +133,7 @@ export const registerOutageWatcher = (client: Client): void => {
 				const outageDurationMs = Date.now() - noticeFiredAt;
 				const minutes = Math.floor(outageDurationMs / 60_000);
 				console.log(
-					`[outageWatcher] server reachable again after ~${minutes} minute(s) — DMing platform owner`
+					`[outageWatcher] server reachable again after ~${minutes} minute(s), DMing platform owner`
 				);
 				await dmOwner(client, recoveryEmbed(minutes));
 				noticeFiredAt = null;
@@ -149,6 +149,6 @@ export const registerOutageWatcher = (client: Client): void => {
 	}, TICK_INTERVAL_MS);
 
 	console.log(
-		`[outageWatcher] registered — will DM platform owner if server is unreachable for >= ${OUTAGE_THRESHOLD_MS / 60_000} minute(s)`
+		`[outageWatcher] registered, will DM platform owner if server is unreachable for >= ${OUTAGE_THRESHOLD_MS / 60_000} minute(s)`
 	);
 };

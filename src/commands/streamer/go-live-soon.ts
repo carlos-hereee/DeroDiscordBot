@@ -17,13 +17,13 @@ import { postGoLiveAnnouncement } from "@features/schedule/postGoLiveAnnouncemen
 // Who:   streamers who forgot to pre-announce. Discord communities
 //        notice when a streamer goes live without a heads-up; this is
 //        the 30-second escape hatch that fixes that.
-// When:  on demand, ad-hoc. No persistence — if the streamer wants
+// When:  on demand, ad-hoc. No persistence, if the streamer wants
 //        recurring reminders they should run /configure-stream-schedule.
 //        Two /go-live-soon calls in a row will produce two separate
 //        announcement messages on purpose: each one is a fresh "now-ish"
 //        signal, not an edit of the previous.
 // Where: posts to guildConfig.announcementsChannelId. Same channel that
-//        ReminderJob and TestReminderJob target — the home base
+//        ReminderJob and TestReminderJob target, the home base
 //        announcements channel is the single source of truth for outward
 //        bot communication.
 // How:   the actual channel resolution + embed composition + allowed-

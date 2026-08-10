@@ -13,7 +13,7 @@ import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 // rebuilt by ScheduleBoard.refreshSchedule on every refresh (so it tracks the
 // live state without a second pinned message):
 //
-//   - Go Live Now — ALWAYS present. Streamers announce going live whether or
+//   - Go Live Now, ALWAYS present. Streamers announce going live whether or
 //     not a recurring schedule exists, so this never hides.
 //   - then exactly one state button:
 //       • no events configured        → "Set up your schedule" (how-to reply)
@@ -27,7 +27,7 @@ import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 // channel (those controls now live here on the board).
 //
 // All four actions are owner/admin gated via gateOwnerOrAdmin. discord.js note:
-// message.edit must pass embeds AND components or the buttons drop — ScheduleBoard
+// message.edit must pass embeds AND components or the buttons drop, ScheduleBoard
 // passes both on every send and edit.
 //
 // Note: this module imports refreshSchedule from ScheduleBoard while ScheduleBoard
@@ -64,7 +64,7 @@ export function buildScheduleControlRow(state: IScheduleControlState): ActionRow
 
 	let stateButton: ButtonBuilder;
 	if (!state.hasEvents) {
-		// No schedule yet — a pause/resume control would be meaningless, so offer
+		// No schedule yet, a pause/resume control would be meaningless, so offer
 		// the how-to instead.
 		stateButton = new ButtonBuilder()
 			.setCustomId(CONFIGURE_CUSTOM_ID)
@@ -130,7 +130,7 @@ async function handleScheduleControl(interaction: ButtonInteraction): Promise<vo
 
 async function runGoLiveNow(interaction: ButtonInteraction, guildId: string): Promise<void> {
 	// Fire the equivalent of /go-live-soon when:now via the shared helper. Note +
-	// role override are null — the button is the one-tap shortcut; the slash
+	// role override are null, the button is the one-tap shortcut; the slash
 	// command remains the path for richer inputs.
 	const result = await postGoLiveAnnouncement(interaction.client, guildId, "now", null, null);
 	const c = rokCommanderCopy.goLiveSoon;
@@ -163,7 +163,7 @@ async function runBulkSchedule(interaction: ButtonInteraction, guildId: string, 
 	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 	const result = action === "paused" ? await pauseAllGuildEvents(guildId) : await resumeAllGuildEvents(guildId);
 	// Refresh the board so the toggle flips to its opposite and paused tags
-	// update. Fire-and-forget — the DB writes are the source of truth and the
+	// update. Fire-and-forget, the DB writes are the source of truth and the
 	// next refresh tick reconciles regardless.
 	refreshSchedule(interaction.client, guildId).catch((err) => console.error(`[schedule-controls] refresh after ${action} failed`, err));
 	await interaction.editReply({ content: summarizeBulk(result, action) });

@@ -6,7 +6,7 @@
 // verdict strings MUST match scripts/render-orbs.mjs (the orb file is looked up by
 // the verdict's slug), so edit both lists together.
 //
-// Deliberately NOT threaded through the pluginId copy packs — /fortune is a plain
+// Deliberately NOT threaded through the pluginId copy packs, /fortune is a plain
 // bot command, not a Company Uno platform plugin (see the master plan v3 scope).
 
 export type FortuneTier = "common" | "ultra";

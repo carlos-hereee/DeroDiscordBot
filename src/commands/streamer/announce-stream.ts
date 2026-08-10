@@ -21,7 +21,7 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 // What:  schedules a one-time stream announcement at a specific future
 //        date+time. Creates a one-time Event so the existing
 //        ReminderScheduler fires the standard reminder offsets (default
-//        30 and 15 min before) automatically — no special-case logic
+//        30 and 15 min before) automatically, no special-case logic
 //        needed downstream.
 // Who:   streamers planning a one-off (charity stream, special guest,
 //        scheduled premiere). Pairs with /go-live-soon for the
@@ -30,7 +30,7 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 // When:  on demand. The streamer types the date once, the bot handles
 //        the reminders. After the stream the event auto-deactivates
 //        (one-time event handling in ReminderScheduler already does
-//        this — we get it for free).
+//        this, we get it for free).
 // Where: writes a one-time Event into the same collection as KvK and
 //        weekly stream events. ScheduleBoard renders it next to other
 //        active events with no special casing.
@@ -82,7 +82,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	const mentionRole = interaction.options.getRole("mention-role", false);
 	const description = interaction.options.getString("description", false)?.trim() ?? "";
 
-	// Parse + validate. Past dates are rejected outright — a one-time
+	// Parse + validate. Past dates are rejected outright, a one-time
 	// event whose firstOccurrence is already in the past would never
 	// fire (ReminderScheduler's diff-window check skips negative diffs)
 	// so accepting it would silently swallow the streamer's input.
@@ -137,7 +137,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 			return;
 		}
 
-		// confirmed — persist as a one-time event. intervalHours is set
+		// confirmed, persist as a one-time event. intervalHours is set
 		// to a sentinel-ish value (1) because the schema requires it and
 		// the recurring math is ignored for type:"one-time" events. The
 		// scheduler reads firstOccurrence directly for one-time fires.
