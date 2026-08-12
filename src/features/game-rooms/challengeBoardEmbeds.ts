@@ -25,17 +25,35 @@ import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 // one joiner to play and the rest watch. Hangman is COOPERATIVE: everyone who joined
 // guesses together against a word the host wrote, so every joiner becomes a player
 // and the host is the one person who does not play. See COOPERATIVE_GAMES below.
-export const CHALLENGE_GAMES: readonly GameSlug[] = ["coinflip", "diceroll", "rps", "hangman", "battleship"] as const;
+export const CHALLENGE_GAMES: readonly GameSlug[] = [
+	"coinflip",
+	"diceroll",
+	"rps",
+	"hangman",
+	"battleship",
+	"holdem",
+] as const;
 
 // Games whose whole pool plays rather than one chosen opponent. Declared as a set
 // rather than checked inline, because the start path and the permission matrix both
 // need the answer and a second `=== "hangman"` in either would be the beginning of a
 // drift.
-export const COOPERATIVE_GAMES: readonly GameSlug[] = ["hangman"] as const;
+// ⚠️ HOLD EM IS COOPERATIVE ONLY IN THE NARROW SENSE THIS SET MEANS. It is fiercely
+// competitive at the table, but the board's question is "does the host pick ONE
+// opponent, or does the whole pool play?", and a poker tournament seats everyone.
+// A better name would be MULTI_PLAYER_GAMES; the set is what matters.
+export const COOPERATIVE_GAMES: readonly GameSlug[] = ["hangman", "holdem"] as const;
 
 export const isCooperativeGame = (game: GameSlug): boolean => COOPERATIVE_GAMES.includes(game);
 
-const GAME_EMOJI: Record<string, string> = { coinflip: "🪙", diceroll: "🎲", rps: "✊", hangman: "🪢", battleship: "🚢" };
+const GAME_EMOJI: Record<string, string> = {
+	coinflip: "🪙",
+	diceroll: "🎲",
+	rps: "✊",
+	hangman: "🪢",
+	battleship: "🚢",
+	holdem: "🃏",
+};
 
 export function boardIntroEmbed(): EmbedBuilder {
 	return infoEmbed(

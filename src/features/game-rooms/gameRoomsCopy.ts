@@ -20,6 +20,7 @@ const GAME_LABELS: Record<GameSlug, string> = {
 	diceroll: "Dice roll",
 	rps: "Rock paper scissors",
 	battleship: "Battleship",
+	holdem: "Texas hold em",
 };
 
 export const gameRoomsCopy = {
@@ -253,6 +254,61 @@ export const gameRoomsCopy = {
 		hit: (shooterId: string, coord: string): string => `💥 <@${shooterId}> fired on **${coord}**. Hit.`,
 		sank: (shooterId: string, coord: string, ship: string): string =>
 			`🔥 <@${shooterId}> fired on **${coord}** and sank the **${ship}**.`,
+	},
+
+	// ── hold em in a room (Phase 8) ──
+	holdem: {
+		tableTitle: "🃏 The table",
+		boardLabel: "Board:",
+		potLabel: "Pot:",
+		noBoardYet: "*nothing dealt yet*",
+
+		joiningLine: (seated: number): string =>
+			`Buy in to take a seat. ${seated} seated so far. Chips are for this table only and vanish when it ends.`,
+		handLine: (hand: number, small: number, big: number): string => `Hand ${hand} · blinds ${small}/${big}`,
+		finishedLine: (winnerId: string | null): string =>
+			winnerId ? `👑 <@${winnerId}> takes the tournament.` : "The tournament is over.",
+
+		allInTag: "all in",
+		foldedTag: "folded",
+		bustedTag: "out",
+
+		buyInLabel: (stack: number): string => `Buy in (${stack})`,
+		startLabel: "Deal",
+		foldLabel: "Fold",
+		checkLabel: "Check",
+		callLabel: "Call",
+		raiseLabel: "Raise",
+		allInLabel: "All in",
+		halfPotLabel: (amount: number): string => `Half pot (${amount})`,
+		potLabelButton: (amount: number): string => `Pot (${amount})`,
+		showCardsLabel: "Show my cards",
+
+		yourCardsTitle: "🂠 Your hand",
+		noCardsYet: "You have no cards. Wait for the next deal.",
+		yourStack: (stack: number): string => `Your stack: **${stack}**`,
+
+		// ── refusals ──
+		notSeated: "You are not in this tournament.",
+		alreadySeated: "You already have a seat.",
+		tableFull: "Every seat is taken.",
+		alreadyStarted: "This tournament has already started.",
+		needMorePlayers: "You need at least two players to deal.",
+		notYourTurn: "It is not your turn.",
+		tournamentOver: "This tournament is over.",
+
+		// ── the trail ──
+		seatTaken: (userId: string, seated: number): string => `🪙 <@${userId}> bought in. ${seated} at the table.`,
+		handDealt: (hand: number, small: number, big: number): string =>
+			`🃏 **Hand ${hand}** is dealt. Blinds are ${small}/${big}.`,
+		blindsUp: (small: number, big: number): string => `⏫ Blinds are up: ${small}/${big}.`,
+		streetDealt: (street: string, cards: string): string => `**${street}:** ${cards}`,
+		handWon: (userId: string, amount: number): string => `<@${userId}> takes ${amount}.`,
+		showdownLine: (userId: string, hand: string): string => `<@${userId}> shows ${hand}.`,
+		busted: (userId: string): string => `💀 <@${userId}> is out.`,
+		// ⚠️ FORCE FOLD, NEVER PAUSE. Said out loud so the table knows why a player's
+		// turn passed without them doing anything.
+		timedOut: (userId: string, action: string): string => `⏳ <@${userId}> ran out of time and ${action}.`,
 	},
 
 	// ── the move trail ──

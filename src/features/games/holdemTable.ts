@@ -311,9 +311,15 @@ function advanceStreet(table: HoldemTable, rng: () => number): ActionOutcome {
 		committed: 0,
 	}));
 
-	// Everyone still in is all in, so there is nothing left to decide. Deal the rest
-	// of the board rather than asking a player with no chips to act.
-	if (!streetSeats.some((seat) => !seat.folded && !seat.allIn)) return runOutAndSettle(table, rng);
+	// ⚠️ FEWER THAN TWO PLAYERS WITH CHIPS MEANS THERE IS NO BETTING LEFT, and the
+	// off-by-one here is the difference between a table that finishes and one that
+	// hangs. Checking only for ZERO contenders misses the ordinary all-in shape: one
+	// player is all in and ONE other still has chips, so there is nobody left to bet
+	// against. That street would open with a single player to act, no bet to call
+	// and nothing to raise into, and the table would sit there forever waiting for
+	// an action that has no legal form.
+	const contenders = streetSeats.filter((seat) => !seat.folded && !seat.allIn);
+	if (contenders.length < 2) return runOutAndSettle(table, rng);
 
 	// Post-flop the first live player after the button acts, not the blinds.
 	table.betting = nextStreet({ ...table.betting!, seats: streetSeats }, 0);

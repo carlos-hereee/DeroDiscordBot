@@ -20,6 +20,7 @@ import { CHALLENGE_GAMES } from "./challengeBoardEmbeds.js";
 import { runRoomMove, handleRpsSelect } from "./roomGames.js";
 import { openAuthoringModal, openGuessModal, handleAuthoringModal, handleGuessModal } from "./roomHangman.js";
 import { roomBattleshipHandlers } from "./roomBattleshipHandlers.js";
+import { roomHoldemHandlers } from "./roomHoldemHandlers.js";
 import type { GameSlug } from "./roomTypes.js";
 
 // The actions that only make sense while a draft is still a draft. Listed once so
@@ -132,6 +133,18 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		// ── in the room ──
 		case "author":
 			await openAuthoringModal(interaction, room);
+			return;
+		case "hjoin":
+			await roomHoldemHandlers.handleBuyIn(interaction, room);
+			return;
+		case "hstart":
+			await roomHoldemHandlers.handleDeal(interaction, room);
+			return;
+		case "hmove":
+			await roomHoldemHandlers.handleMove(interaction, room, parsed.arg ?? "");
+			return;
+		case "hcards":
+			await roomHoldemHandlers.handleShowCards(interaction, room);
 			return;
 		case "board":
 			await roomBattleshipHandlers.handleViewBoard(interaction, room);

@@ -15,6 +15,8 @@ import {
 	battleshipRows,
 	rerollRow,
 } from "./roomBattleship.js";
+import { createTable as createHoldemTable } from "@features/games/holdemTable.js";
+import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -229,6 +231,18 @@ export const RoomProvisioner = {
 		// message to edit every turn. Done here rather than lazily on the first click
 		// so both players see the grid the moment the channel appears, and so the
 		// fleets exist before anyone can press Fire.
+		// Hold em opens as a JOINING table rather than a dealt hand: the room's
+		// players are whoever buys in, which is not known until they do.
+		if (game === "holdem") {
+			const table = createHoldemTable();
+			const boardMessage = await channel
+				.send({ embeds: [holdemTableEmbed(table, 0)], components: holdemJoiningRows(room.roomId, 0) })
+				.catch(() => null);
+			await gameRoomStore.update(guild.id, room.roomId, {
+				secret: { ...table, boardMessageId: boardMessage?.id ?? null } as never,
+			});
+		}
+
 		if (game === "battleship") {
 			const usernames = Object.fromEntries(
 				playerIds.map((id) => [id, guild.members.cache.get(id)?.displayName ?? id])

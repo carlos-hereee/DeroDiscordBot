@@ -71,6 +71,17 @@ export const GAME_ROOM_ACTIONS = {
 	board: { hostOnly: false, playersOnly: true },
 	// Battleship: re-lay your own fleet, before the first shot only.
 	reroll: { hostOnly: false, playersOnly: true },
+
+	// ── hold em ──
+	// Buying in is how you BECOME a player, so it cannot be playersOnly: that gate
+	// reads room.playerIds, which this action is what adds you to.
+	hjoin: { hostOnly: false, playersOnly: false },
+	// Dealing is the host's call, both for the first hand and every one after.
+	hstart: { hostOnly: true, playersOnly: false },
+	// Fold, check, call, raise and all in, with the choice in the customId's arg.
+	hmove: { hostOnly: false, playersOnly: true },
+	// The private peek at your own two cards.
+	hcards: { hostOnly: false, playersOnly: true },
 } as const satisfies Record<string, { hostOnly: boolean; playersOnly: boolean }>;
 
 export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;
