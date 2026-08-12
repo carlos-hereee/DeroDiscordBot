@@ -32,6 +32,8 @@ import { refreshAllLeaderboards } from "@features/leaderboard/LeaderboardBoard.j
 import { registerScheduleControlHandlers } from "@features/schedule/ScheduleControls.js";
 import { registerSuggestionBoxHandlers } from "@features/suggestion-box/SuggestionBox.js";
 import { registerArcadeHostHandlers } from "@features/games/arcadeHost.js";
+import { registerGameRoomHandlers } from "@features/game-rooms/gameRoomHandlers.js";
+import { recoverGameRoomsOnBoot } from "@features/game-rooms/roomBootRecovery.js";
 import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/polls/PollDispatcher.js";
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
@@ -300,6 +302,10 @@ process.on("uncaughtException", (err) => {
 	// PREFIX at the client level, like every other handler here, so the buttons
 	// keep working on a card posted by an earlier deploy.
 	registerArcadeHostHandlers();
+	// The in-room controls (Archive now, Forfeit). Registered at the client level
+	// like the rest, so a result card posted by an earlier deploy keeps working:
+	// a room's buttons outlive the room, and its customIds outlive the deploy.
+	registerGameRoomHandlers();
 	registerPollHandlers();
 	registerSelfDestructHandlers();
 	registerPowerUpHandlers();
@@ -703,6 +709,18 @@ process.on("uncaughtException", (err) => {
 		// idempotent sweep brings guilds set up before the greeter shipped into
 		// line so newcomers can post their answer to the welcome icebreaker.
 		await ensureIntroChannelsWritable(client);
+
+		// ── game room boot recovery ────────────────────────────────
+		// What: reconcile what the GameRoom rows claim with what Discord has, then
+		//       catch up on any archiving missed while the process was down.
+		// When: every boot, which on Railway means every deploy.
+		// Why:  a row that says "playing" is a CLAIM. While the bot was down an admin
+		//       can delete a room's channel, and nothing was listening; the row would
+		//       then hold that host's one room slot forever (the partial unique index
+		//       counts non-terminal statuses) and no error would ever be raised.
+		// Where: errors are isolated per room inside the helper, so one unreachable
+		//        guild cannot fail the boot.
+		await recoverGameRoomsOnBoot(client);
 
 		// ── feature announcement sweep ─────────────────────────────
 		// What: once-per-version broadcast to every setup-complete guild.

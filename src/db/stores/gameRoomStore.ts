@@ -135,6 +135,17 @@ export const gameRoomStore = {
 		return GameRoom.find({ status: "finished", archiveAt: { $ne: null, $lte: now } });
 	},
 
+	// Every room that believes it is still live, across every guild.
+	//
+	// Cross-guild for the same reason findExpiredArchives is: the boot recovery sweep runs
+	// once for the whole process, not once per guild. It reads rooms whose status is
+	// non-terminal so the caller can ask Discord whether each one's channel still exists;
+	// a row that says "playing" is a CLAIM about the world, and a bot that was offline
+	// while an admin deleted the channel comes back holding a claim that is no longer true.
+	async findNonTerminal() {
+		return GameRoom.find({ status: { $in: [...NON_TERMINAL_ROOM_STATUSES] } });
+	},
+
 	// Called after the channel is gone, by both the sweep and the Archive now button, which
 	// share one delete path. A channel that was already deleted by an admin reaches this the
 	// same way a swept one does: it is a success, not an error.

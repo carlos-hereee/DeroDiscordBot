@@ -23,6 +23,7 @@ import { buildArcadeHostRow } from "@features/games/arcadeHost.js";
 import { buildMemberControlButtons, buildAdminControlButtons, buildIcebreakerButton, buildFortuneButton } from "@features/power-ups/PowerUps.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { buildDeroGifAttachment } from "@base/copy/brand.js";
+import { buildBotSelfOverwrite } from "@utils/channelOverwrites.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
@@ -106,21 +107,12 @@ export class GuildSetupManager {
 	private static botSelfOverwrite(guild: Guild) {
 		// non-null assertion: guildCreate fires after the client is logged
 		// in, so client.user is guaranteed populated.
-		const botId = guild.client.user!.id;
-		return {
-			id: botId,
-			allow: [
-				PermissionFlagsBits.ViewChannel,
-				PermissionFlagsBits.ManageChannels,
-				PermissionFlagsBits.ManageRoles,
-				PermissionFlagsBits.SendMessages,
-				PermissionFlagsBits.EmbedLinks,
-				PermissionFlagsBits.ReadMessageHistory,
-				PermissionFlagsBits.ManageMessages,
-				PermissionFlagsBits.AddReactions,
-				PermissionFlagsBits.MentionEveryone,
-			],
-		};
+		//
+		// The permission LIST moved to @utils/channelOverwrites so game rooms can
+		// build the identical overwrite without importing this class (roomPermissions
+		// is pure, and reaching in here would drag the stores and copy packs into it).
+		// This wrapper stays because every call site here has a Guild and not a bot id.
+		return buildBotSelfOverwrite(guild.client.user!.id);
 	}
 
 	// ── Phase 1: auto-construct on join / restart ─────────────

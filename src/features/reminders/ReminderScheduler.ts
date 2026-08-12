@@ -12,6 +12,7 @@ import { seasonEndEmbed } from "@utils/embedBuilder.js";
 import { refreshAllSchedules, refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { refreshAllLeaderboards } from "@features/leaderboard/LeaderboardBoard.js";
 import { refreshAllLevelsBoards } from "@features/leveling/LevelsBoard.js";
+import { sweepExpiredRooms } from "@features/game-rooms/roomArchiveSweep.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { getOutboundLatencyStats } from "@utils/serverApi.js";
 import { noteFailure as noteServerFailure, noteSuccess as noteServerSuccess } from "./serverHealthNotifier.js";
@@ -190,6 +191,30 @@ export function startScheduler(client: Client): void {
 			})
 		);
 	}
+
+	// ── game room archive sweep (game rooms Phase 3) ──
+	// Deletes the channel of every finished room past its archiveAt. Its OWN cron and
+	// deliberately not a passenger on the per-minute tick below: that tick has a 60s
+	// budget and an overlap guard, and a guild that let a backlog of rooms expire while
+	// the bot was down would fan out enough channel deletes to blow both.
+	//
+	// Unconditional, unlike the retention sweep above: this deletes a CHANNEL whose
+	// transcript is already safe in Mongo, not the historical record itself, so there is
+	// nothing here for an owner to opt into. Pushed to scheduledTasks so stopScheduler
+	// halts it on Railway's SIGTERM; without that the sweep would keep firing while
+	// main.ts tears the client down and a delete could land against a dead connection.
+	scheduledTasks.push(
+		cron.schedule(BOT_CONSTANTS.GAME_ROOM_SWEEP_CRON, async () => {
+			try {
+				await sweepExpiredRooms(client);
+			} catch (err) {
+				// sweepExpiredRooms already isolates per room, so reaching this means the
+				// QUERY itself failed. Log and let the next tick retry; the rooms are
+				// still stamped and nothing is lost by waiting five minutes.
+				console.error("[game-rooms] archive sweep tick failed", err);
+			}
+		})
+	);
 
 	scheduledTasks.push(cron.schedule(BOT_CONSTANTS.SCHEDULER_CRON, async () => {
 		// Skip this run if the previous minute's tick has not finished. See the

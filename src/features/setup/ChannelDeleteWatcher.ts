@@ -1,5 +1,7 @@
 import { Client, Events, DMChannel, NonThreadGuildBasedChannel, GuildChannel, CategoryChannel, ChannelType } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { finish as finishGameRoom } from "@features/game-rooms/roomLifecycle.js";
 import { GuildSetupManager } from "./GuildSetupManager.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
@@ -70,6 +72,34 @@ export function registerChannelDeleteWatcher(client: Client): void {
 			//    handle new guilds; ensureHomebase handles reinstalls.)
 			const stored = await guildConfigStore.findByGuildId(guild.id);
 			if (!stored) return;
+
+			// ── risk R14: the deleted channel was a live GAME ROOM ──
+			// What:  finish the room as abandoned and stop, before any homebase logic.
+			// Why:   a room channel is NOT a CHANNEL_SPECS entry, so without this the
+			//        spec lookup below would simply find nothing and return, silently.
+			//        Nothing would ever finish the row, and because the partial unique
+			//        index counts non-terminal statuses, that dead row would hold its
+			//        host's ONE room slot forever: that member could never start another
+			//        game, everyone else would be fine, and no error would be raised
+			//        anywhere. The boot sweep catches it, but only on the next restart.
+			// Where: deliberately ABOVE the autoHealEnabled and homebaseDestroyed gates
+			//        rather than beside the spec lookup. Those two govern whether the bot
+			//        REBUILDS a channel, which is a different question from whether its
+			//        own room bookkeeping stays true. A guild with auto-heal off still
+			//        wants its rooms closed out, and /self-destruct deletes room channels
+			//        along with everything else, which is exactly when a pile of rooms
+			//        needs finishing.
+			const liveRoom = await gameRoomStore.findByChannelId(guild.id, channel.id).catch(() => null);
+			if (liveRoom) {
+				console.log(`[realtime-repair] channel ${channel.id} in guild ${guild.id} was a game room; closing it as abandoned.`);
+				// finish() looks the channel up itself, finds it gone, and simply stamps
+				// the row. No rebuild, ever: a room is a per-match channel, not a managed
+				// slot, and recreating it would resurrect a match nobody is playing.
+				await finishGameRoom(client, liveRoom, { abandoned: true }).catch((error) =>
+					console.error("[realtime-repair] failed to close abandoned game room", { roomId: liveRoom.roomId, error })
+				);
+				return;
+			}
 
 			// auto-heal toggle gate. when off, the admin has explicitly
 			// opted out of automatic channel rebuilds. log a single

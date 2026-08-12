@@ -12,15 +12,30 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({
 	},
 }));
 
+// The watcher asks whether a deleted channel was a live game room BEFORE it does
+// anything else (risk R14). Without these two mocks that lookup reaches the real
+// Mongoose model, which never resolves with no DB behind it, and every test in this
+// file times out rather than failing with a useful message.
+vi.mock("@db/stores/gameRoomStore.js", () => ({
+	gameRoomStore: { findByChannelId: vi.fn() },
+}));
+vi.mock("@features/game-rooms/roomLifecycle.js", () => ({
+	finish: vi.fn(),
+}));
+
 import { registerChannelDeleteWatcher, __resetRepairCooldownsForTests } from "./ChannelDeleteWatcher.js";
 import { GuildSetupManager } from "./GuildSetupManager.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { finish as finishGameRoom } from "@features/game-rooms/roomLifecycle.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 
 const guildConfigMock = guildConfigStore as unknown as {
 	findByGuildId: ReturnType<typeof vi.fn>;
 	update: ReturnType<typeof vi.fn>;
 };
+const gameRoomMock = gameRoomStore as unknown as { findByChannelId: ReturnType<typeof vi.fn> };
+const finishRoomMock = finishGameRoom as unknown as ReturnType<typeof vi.fn>;
 
 // ── fixtures ──────────────────────────────────────────────────────────
 
@@ -170,6 +185,10 @@ describe("ChannelDeleteWatcher", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		__resetRepairCooldownsForTests();
+		// Default: the deleted channel was NOT a game room, which is the case every
+		// homebase repair test below is about.
+		gameRoomMock.findByChannelId.mockResolvedValue(null);
+		finishRoomMock.mockResolvedValue(undefined);
 	});
 
 	it("ignores channel deletes for guilds with no GuildConfig", async () => {
@@ -432,6 +451,120 @@ describe("ChannelDeleteWatcher", () => {
 		await expect(captured.handler!(makeDeletedChannel("ch-announcements", guild))).resolves.toBeUndefined();
 		expect(errorSpy).toHaveBeenCalled();
 		errorSpy.mockRestore();
+	});
+});
+
+// ── risk R14: a deleted GAME ROOM channel ───────────────────────────────
+// A room channel is not a CHANNEL_SPECS entry, so before this guard the spec lookup
+// found nothing and the watcher returned silently. Nothing then finished the row, and
+// because the partial unique index counts non-terminal statuses, that dead row held
+// its host's ONE room slot forever: that member could never start another game,
+// everyone else was fine, and nothing was logged.
+describe("ChannelDeleteWatcher, game rooms (R14)", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		__resetRepairCooldownsForTests();
+		gameRoomMock.findByChannelId.mockResolvedValue(null);
+		finishRoomMock.mockResolvedValue(undefined);
+	});
+
+	function makeRoom() {
+		return { roomId: "room-1", guildId: "guild-1", channelId: "ch-room", hostId: "host-1" };
+	}
+
+	// The room path bails long before any homebase machinery, so the client only has
+	// to exist and be registered.
+	function driveRoomDelete(config: Record<string, unknown> = {}) {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig(config));
+		gameRoomMock.findByChannelId.mockResolvedValue(makeRoom());
+		const captured = makeClientCapturing({ selfId: "bot-1" });
+		registerChannelDeleteWatcher(captured.client);
+		const guild = makeGuild({});
+		return { captured, guild };
+	}
+
+	it("closes a deleted room as abandoned instead of ignoring it", async () => {
+		const { captured, guild } = driveRoomDelete();
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+		await captured.handler!(makeDeletedChannel("ch-room", guild, "hangman-qwerty"));
+
+		expect(finishRoomMock).toHaveBeenCalledOnce();
+		expect(finishRoomMock.mock.calls[0][2]).toEqual({ abandoned: true });
+		logSpy.mockRestore();
+	});
+
+	// A room is a per-match channel, not a managed slot. Rebuilding one would
+	// resurrect a match nobody is playing, in a channel whose overwrites name players
+	// who have moved on.
+	it("never rebuilds the deleted room channel", async () => {
+		const { captured, guild } = driveRoomDelete();
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+		await captured.handler!(makeDeletedChannel("ch-room", guild, "hangman-qwerty"));
+
+		expect(guild.channels.create).not.toHaveBeenCalled();
+		logSpy.mockRestore();
+	});
+
+	// ⚠️ THE PLACEMENT TEST. The room check sits ABOVE the autoHealEnabled and
+	// homebaseDestroyed gates on purpose: those govern whether the bot REBUILDS a
+	// channel, which is a different question from whether its own room bookkeeping
+	// stays true. Moving the check below either gate would leave rooms stuck open in
+	// exactly the guilds most likely to have a pile of them, and /self-destruct
+	// deletes every room channel it finds.
+	it.each([
+		["auto-heal is off", { autoHealEnabled: false }],
+		["the homebase was self-destructed", { homebaseDestroyed: true }],
+	])("still closes the room when %s", async (_label, configOverride) => {
+		const { captured, guild } = driveRoomDelete(configOverride);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+		await captured.handler!(makeDeletedChannel("ch-room", guild, "hangman-qwerty"));
+
+		expect(finishRoomMock).toHaveBeenCalledOnce();
+		logSpy.mockRestore();
+	});
+
+	it("does not crash the gateway listener when closing the room throws", async () => {
+		const { captured, guild } = driveRoomDelete();
+		finishRoomMock.mockRejectedValue(new Error("mongo down"));
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+		await expect(captured.handler!(makeDeletedChannel("ch-room", guild, "hangman-qwerty"))).resolves.toBeUndefined();
+
+		logSpy.mockRestore();
+		errorSpy.mockRestore();
+	});
+
+	it("leaves an ordinary homebase repair alone when the channel is not a room", async () => {
+		// The regression direction: the new lookup must not swallow the deletes this
+		// watcher already existed to handle.
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig());
+		guildConfigMock.update.mockResolvedValue(undefined);
+		const captured = makeClientCapturing({
+			selfId: "bot-1",
+			channelFetchMap: { "ch-admin": makeAdminChannel("ch-admin"), "ch-schedule": makeScheduleChannel("bot-1") },
+		});
+		registerChannelDeleteWatcher(captured.client);
+
+		const createCalls: Array<{ name: string }> = [];
+		const guild = makeGuild({
+			categoryFetchMap: { "cat-1": makeCategory("cat-1") },
+			createHandler: async (opts) => {
+				const options = opts as { name: string };
+				createCalls.push(options);
+				const created = Object.create(TextChannel.prototype) as TextChannel & { send: ReturnType<typeof vi.fn> };
+				Object.assign(created, { id: `new-${options.name}`, send: vi.fn().mockResolvedValue({ id: "intro-1" }) });
+				return created;
+			},
+		});
+
+		await captured.handler!(makeDeletedChannel("ch-announcements", guild, "📢announcements"));
+
+		expect(finishRoomMock).not.toHaveBeenCalled();
+		expect(createCalls).toHaveLength(1);
 	});
 });
 
