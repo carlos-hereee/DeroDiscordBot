@@ -15,9 +15,14 @@ Key domains under `src/features/`:
 | `events/` | Event data model, occurrenceCalculator (pure math), GuildEventManager (creates ROK KvK season events). |
 | `reminders/` | ReminderScheduler (cron), ReminderJob (fires real reminders), TestReminderJob (dashboard test fires). |
 | `schedule/` | ScheduleBoard, keeps a pinned message in the event-schedule channel in sync with active events. |
-| `activity-tracking/` | Tracks voice minutes and reaction acks for participation scoring. |
+| `activity-tracking/` | Tracks voice minutes and reaction acks for participation scoring. **Answers "did this warrior show up for this KvK event".** Not to be confused with `leveling/`; see the warning below the table. |
+| `leveling/` | XP, levels, prime-numbered milestones, role rewards and achievements. **Answers "how present is this member in this server over time".** `awardXp` is the ONLY public way to grant XP; every listener, game and admin command goes through it. Pure modules (`levelCurve`, `primeLevels`, `xpRules`, `achievementEngine`) carry no discord.js. |
 | `university/` | Commander build lookups (talents, tree guides). |
 | `greeter/` | Welcomes new members in the introductions channel on `guildMemberAdd` (a pack-voiced welcome framing + a random icebreaker from a ~500-question bank in `icebreakers.ts`), pinging the member. The intro power-up panel's admin "Say hello" button reuses the same `welcomeNewMember` flow on demand. |
+
+**⚠️ TWO SYSTEMS MEASURE PRESENCE AND THEY ARE NOT THE SAME ONE.** `activity-tracking/` scores KvK EVENT PARTICIPATION into `PlayerActivity`, keyed `{ eventId, eventOccurrence, userId }`, and renders through `/leaderboard` and `LeaderboardBoard`. `leveling/` scores PRESENCE OVER TIME into `MemberLevel`, and renders through `/account`, `/levels` and `LevelsBoard`. Both boards live in the same `#leaderboard` channel and each embed states which question it answers. **Never fold one into the other:** leveling through `PlayerActivity` would need a fake `eventId` for "just chatting", which corrupts the participation score, `/leaderboard`, the dashboard players route and the pinned board simultaneously.
+
+**⚠️ THERE ARE TWO `MessageReactionAdd` LISTENERS, ON PURPOSE.** `activity-tracking/ActivityTracker.ts` filters to ✅ on a stored `ReminderLog` and writes `PlayerActivity`; `leveling/reactionXp.ts` accepts any emoji on any message and writes `MemberLevel`. Both files carry a comment pointing at the other. Two listeners on one event reads as a bug on sight, and it is not one.
 
 `src/api/` has middleware, routes, and the Express server. `src/db/` has Mongoose models and thin store wrappers. `src/base/` has constants and types.
 
@@ -46,7 +51,10 @@ npm run lint        # eslint over ./src, tests included
 @features/*  -> ./src/features/*
 @commands/*  -> ./src/commands/*
 @db/*        -> ./src/db/*
+@handlers/*  -> ./src/handlers/*
 ```
+
+`@handlers/*` was missing from this list until 2026-08-11 while being live in `tsconfig.json` the whole time and imported by `main.ts` (`@handlers/interactionRegistry.js`). A doc gap rather than a code one, but the kind that makes a reader invent a relative import.
 
 `baseUrl` was deprecated in TypeScript 6.0; paths are declared relative to `tsconfig.json` directly.
 
