@@ -37,6 +37,15 @@ export const memberLevelStore = {
 		return MemberLevel.bulkWrite(operations, { ordered: false });
 	},
 
+	// Read back a set of members in one query, which is what lets the flush detect
+	// level crossings without a findOneAndUpdate per member. Matches the unique
+	// { guildId, userId } index. Guild scoped like everything else here, so a
+	// userId from another guild simply does not come back.
+	async findManyInGuild(guildId: string, userIds: string[]) {
+		if (userIds.length === 0) return [];
+		return MemberLevel.find({ guildId, userId: { $in: userIds } });
+	},
+
 	// The write-through path for a single award (a game result, an admin
 	// correction), and the upsert every new member's row is born from.
 	//

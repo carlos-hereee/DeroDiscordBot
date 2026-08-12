@@ -26,6 +26,7 @@ import {
 	remainingAttempts,
 	type HangmanState,
 } from "./hangmanState.js";
+import { awardMultiPlayerResult } from "./gameXp.js";
 
 // ── /mini-game hangman ─────────────────────────────────────────────────────
 // What:  a PUBLIC, channel wide round. The board is a normal channel message
@@ -65,6 +66,21 @@ const MODAL_FIELD = "letter";
 interface HangmanRound {
 	starterId: string;
 	state: HangmanState;
+	// ── who actually played ──
+	// What:  every member who submitted a guess this round, plus the starter.
+	// Who:   the leveling award at the end of the round reads it, and it is the
+	//        ONLY record of participation that exists: the state carries the
+	//        letters guessed but not who guessed them.
+	// When:  seeded with the starter at round creation, and added to on every
+	//        modal submit that reaches the round, including repeats and invalid
+	//        characters, because taking part is what is being rewarded rather
+	//        than guessing well.
+	// Where: this is what makes the ASSIST outcome possible at all. Hangman is
+	//        the only current game with a genuine assist, because a public round
+	//        is solved by one member on top of letters several others revealed.
+	//        Without this set the round could only ever reward two people, the
+	//        starter and whoever happened to land the final letter.
+	participants: Set<string>;
 	// Stops the collector, whose end handler is the one cleanup path. Assigned
 	// once the collector exists.
 	stop: () => void;
@@ -94,6 +110,9 @@ export async function startHangmanRound(channel: TextChannel, starterId: string)
 	const round: HangmanRound = {
 		starterId,
 		state: createHangmanState(pickWord()),
+		// The starter counts as a participant from the outset: they opened the
+		// round, which is participation even if they never guess a letter.
+		participants: new Set<string>([starterId]),
 		stop: () => undefined,
 	};
 	hangmanRounds.set(channel.id, round);
@@ -261,6 +280,11 @@ async function onGuessClick(click: ButtonInteraction, channelId: string, board: 
 		return;
 	}
 
+	// Recorded BEFORE the guess is scored, and for every submit including repeats
+	// and invalid characters: the set answers "who played this round", not "who
+	// played it well". A member whose only guess was a repeat still took part.
+	live.participants.add(submit.user.id);
+
 	// ⚠️ SYNCHRONOUS. The board is public, so several members can submit in the
 	// same tick. applyGuess does its whole check-then-write without yielding, so
 	// two simultaneous guesses cannot both spend the last attempt or both win.
@@ -323,6 +347,16 @@ async function renderBoard(board: Message, round: HangmanRound, channelId: strin
 		})
 		.catch(swallow("hangman end board"));
 
+	// ── leveling ──
+	// After the end board, so the award can never delay the moment the channel
+	// has been waiting for.
+	//
+	// ⚠️ GATE THE WIN ON `won`, NOT ON actorId. actorId is whoever made the FINAL
+	// guess, which is the solver on a win and the member who hanged the round on a
+	// loss. Passing it as the winner unconditionally would hand the win bonus to
+	// the person who lost it.
+	awardHangmanRound(board, round, won ? actorId : null);
+
 	// Stopping the collector fires its end handler, which is what deletes the map
 	// entry. One cleanup path, reached from every ending.
 	round.stop();
@@ -334,7 +368,8 @@ async function finishRound(channelId: string, board: Message): Promise<void> {
 	hangmanRounds.delete(channelId);
 	if (!round) return;
 
-	// A won or lost round already drew its own ending. Only an expiry is left.
+	// A won or lost round already drew its own ending, and already awarded. Only
+	// an expiry is left, so this is the one path that still owes an award.
 	if (round.state.status !== "playing") return;
 
 	const art = resolveGameAsset("hangmanLose");
@@ -351,6 +386,30 @@ async function finishRound(channelId: string, board: Message): Promise<void> {
 			files: [art.attachment],
 		})
 		.catch(swallow("hangman expiry board"));
+
+	// Nobody solved it, so nobody wins, but everyone who guessed still played and
+	// showing up is the behavior being rewarded.
+	awardHangmanRound(board, round, null);
+}
+
+// Resolve every participant to a display name and hand the round to the shared
+// games award helper. Display names come from the member cache rather than a
+// fetch: this runs after the round is over, and a cache miss degrades to the raw
+// id in the standings rather than costing a round of Discord calls at the exact
+// moment the channel is busiest.
+function awardHangmanRound(board: Message, round: HangmanRound, winnerId: string | null): void {
+	const guild = board.guild;
+	awardMultiPlayerResult({
+		client: board.client,
+		guildId: guild?.id ?? null,
+		channelId: board.channelId,
+		game: "hangman",
+		participants: [...round.participants].map((userId) => ({
+			userId,
+			username: guild?.members.cache.get(userId)?.displayName ?? userId,
+		})),
+		winnerId,
+	});
 }
 
 // Board edits and feedback replies are fire and forget after the primary action:

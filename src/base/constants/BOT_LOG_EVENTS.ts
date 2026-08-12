@@ -90,6 +90,23 @@ export const BOT_LOG_EVENTS = {
 	//        so the roomId rides in the event string with no new schema field.
 	GAME_ROOM_CREATED_PREFIX: "game_room_created",
 	GAME_ROOM_ARCHIVED_PREFIX: "game_room_archived",
+	// ── leveling introduction notice (leveling Phase 2) ────────────
+	// What:  per-guild log that the one time "leveling is now live here" notice
+	//        has been posted to the guild's admin channel.
+	// Who:   levelUpAnnouncer reads it before the FIRST level up it ever handles
+	//        in a guild, and writes it once the notice actually posts.
+	// When:  read once per guild per process, on the first crossing only; after
+	//        the row exists the read is skipped entirely by an in-memory guard,
+	//        so this is not a per level up query.
+	// Where: this exists because of the owner's decision that leveling ships ON
+	//        in every guild with no opt in. Without it, some admin meets the
+	//        feature for the first time when a member asks them what the new
+	//        messages in #announcements are. With it, they meet it through a
+	//        message that names /setup-level-system and says how to turn it off.
+	// How:   a plain per-guild key rather than a prefixed one: unlike the version
+	//        and poll keys there is nothing to namespace, the notice fires once
+	//        per guild for the life of the feature.
+	LEVELING_INTRO_SENT: "leveling_intro_sent",
 	// add more here as needed
 } as const;
 

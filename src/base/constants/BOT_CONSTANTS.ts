@@ -144,6 +144,20 @@ export const BOT_CONSTANTS = {
 		// slow leak on a busy bot rather than an immediate failure.
 		MAP_SWEEP_INTERVAL_MS: 5 * 60_000,
 
+		// The longest cooldown an admin may configure, and therefore the age past
+		// which a cooldown entry can no longer block anything and is safe to sweep.
+		// /setup-level-system clamps every cooldown input to this ceiling, so the
+		// sweep and the config can never disagree about what "expired" means.
+		MAX_COOLDOWN_SECONDS: 3600,
+
+		// Ceiling on how much voice time one sweep tick may pay for. The sweep pays
+		// for elapsed minutes rather than per tick, so a process that was paused
+		// (a laptop sleeping in dev, a long GC, a Railway restart mid session)
+		// would otherwise hand out a lump sum for wall clock nobody was watched
+		// through. Capping at a few minutes keeps the award honest without needing
+		// the sweep to run on a perfect schedule.
+		VOICE_MAX_MINUTES_PER_AWARD: 5,
+
 		// The coalescing window for level up announcements. The FIRST level up
 		// schedules a send this far out and later ones inside the window are
 		// absorbed into it, with the timer LEFT RUNNING. Deliberately not a

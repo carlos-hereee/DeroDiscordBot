@@ -6,6 +6,7 @@ import { resolveGameAsset, type GameAssetKey } from "./gamesAssets.js";
 import { buildDuelResultEmbed } from "./gamesEmbeds.js";
 import { issueChallenge } from "./challengeFlow.js";
 import { resolveDuel, type DuelFlip, type DuelResult } from "./duelResolve.js";
+import { awardTwoPlayerResult } from "./gameXp.js";
 
 // ── /mini-game duel ────────────────────────────────────────────────────────
 // What:  the thin Discord facing half of the duel. Every guard, prompt, button,
@@ -81,6 +82,22 @@ export async function runDuel(interaction: ChatInputCommandInteraction): Promise
 	});
 
 	cooldown.record(cooldownKey);
+
+	// ── leveling ──
+	// Fire and forget, and deliberately AFTER the reply: both players have already
+	// seen the outcome, so nothing about the award can change what the duel looked
+	// like, and awardXp never throws by contract. A coin duel cannot tie, which the
+	// DuelResult union already guarantees, so "tie" only ever reaches here from the
+	// dice branch.
+	awardTwoPlayerResult({
+		client: interaction.client,
+		guildId: interaction.guildId,
+		channelId: interaction.channelId,
+		game: "duel",
+		challenger: interaction.user,
+		opponent,
+		winner: result.winner,
+	});
 }
 
 // ── private ────────────────────────────────────────────────────────────────

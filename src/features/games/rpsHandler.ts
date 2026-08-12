@@ -7,6 +7,7 @@ import {
 	type ButtonInteraction,
 	type ChatInputCommandInteraction,
 	type Message,
+	type User,
 } from "discord.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { CooldownManager } from "@utils/cooldownManager.js";
@@ -15,6 +16,7 @@ import { resolveGameAsset, type GameAssetKey } from "./gamesAssets.js";
 import { buildRpsRevealEmbed, buildRpsTimeoutEmbed } from "./gamesEmbeds.js";
 import { issueChallenge } from "./challengeFlow.js";
 import { scoreRps, type RpsChoice } from "./rpsWinner.js";
+import { awardTwoPlayerResult } from "./gameXp.js";
 import { createRpsRound, applyPick, closeRound, type RpsRoundState, type RpsSide } from "./rpsRound.js";
 
 // ── /mini-game rps ─────────────────────────────────────────────────────────
@@ -84,6 +86,10 @@ interface RpsContext {
 	round: RpsRoundState;
 	challengerId: string;
 	opponentId: string;
+	// The resolved opponent, carried alongside their id because the leveling
+	// award needs a display name and the reveal fires from a collector callback
+	// that has no other route back to the User.
+	opponent: User;
 	// Ends the round exactly once, from a pick, a timeout, or an error.
 	finish: () => void;
 }
@@ -128,6 +134,7 @@ export async function runRps(interaction: ChatInputCommandInteraction): Promise<
 		round,
 		challengerId: interaction.user.id,
 		opponentId: opponent.id,
+		opponent,
 		finish: () => undefined,
 	};
 
@@ -308,6 +315,21 @@ async function postReveal(context: RpsContext): Promise<void> {
 			allowedMentions: { parse: [] },
 		})
 		.catch(swallow("rps reveal"));
+
+	// ── leveling ──
+	// After the reveal, never before it: the award must not be able to delay or
+	// alter the one public message this whole round exists to produce. Same three
+	// way shape as duel, so both games share one payout helper rather than each
+	// deciding what a tie is worth.
+	awardTwoPlayerResult({
+		client: context.interaction.client,
+		guildId: context.interaction.guildId,
+		channelId: context.interaction.channelId,
+		game: "rps",
+		challenger: context.interaction.user,
+		opponent: context.opponent,
+		winner: outcome,
+	});
 }
 
 async function handleTimeout(context: RpsContext): Promise<void> {

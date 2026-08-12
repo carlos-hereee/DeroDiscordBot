@@ -9,6 +9,8 @@ import { buildFortuneEmbed, FORTUNE_ORB_FILE, FORTUNE_ORB_REF } from "./fortuneE
 import { verdictSlug } from "./fortunes.js";
 import { fortuneCopy } from "./fortuneCopy.js";
 import { fortuneBuffStore } from "@db/stores/fortuneBuffStore.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { awardXp } from "@features/leveling/awardXp.js";
 
 // One reading per user every 10 seconds, SHARED across every entry point: the
 // /fortune slash command and the #command-center invite-card button both call
@@ -90,4 +92,28 @@ export async function respondWithFortune(
 	// Advance the pity streak: reset to 0 on a gold, increment otherwise.
 	await fortuneBuffStore.recordRoll(interaction.user.id, tier === "ultra");
 	cooldown.record(cooldownKey);
+
+	// ── leveling ──
+	// ⚠️ THE AWARD LIVES HERE, NOT IN fortuneHandler.ts, and that is the whole
+	// point of this function existing. The `powerup:member:fortune` button in
+	// PowerUps.ts calls respondWithFortune DIRECTLY, bypassing the command
+	// handler, so an award placed in the handler would leave the button path
+	// silently earning nothing.
+	//
+	// Fortune is the most farmable award in the feature: a 10 second cooldown, no
+	// opponent, and no way to lose. So it is small, flat, and has no win bonus to
+	// chase. The fortuneReadings counter rides along because the hidden dero-knows
+	// achievement reads it and nothing else increments it.
+	if (interaction.guildId) {
+		void awardXp({
+			client: interaction.client,
+			guildId: interaction.guildId,
+			userId: interaction.user.id,
+			username: interaction.user.globalName ?? interaction.user.username,
+			amount: BOT_CONSTANTS.LEVELING.FORTUNE_XP,
+			source: "game",
+			counters: { fortuneReadings: 1 },
+			channelId: interaction.channelId,
+		});
+	}
 }

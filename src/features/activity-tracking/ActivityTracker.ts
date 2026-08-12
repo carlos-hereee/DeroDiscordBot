@@ -20,6 +20,24 @@ export function registerActivityListeners(client: Client): void {
 	// ─────────────────────────────────────────
 	// LISTENER 1, Reaction tracking
 	// fires when any user reacts to any message
+	//
+	// ⚠️ THIS IS NOT THE ONLY MessageReactionAdd LISTENER. A second one lives in
+	// src/features/leveling/reactionXp.ts and both are registered from main.ts.
+	// Two listeners on one event reads as a bug on sight, so this comment exists
+	// to say it is not. The differences are total:
+	//
+	//   this one     filters to the ✅ emoji, ONLY on a message that is a stored
+	//                ReminderLog, ONLY when that log is not a test fire, and
+	//                writes PlayerActivity (did this warrior show up for this
+	//                KvK event).
+	//   reactionXp   accepts ANY emoji on ANY message, ignores ReminderLog
+	//                entirely, and writes MemberLevel (how present is this member
+	//                in this server over time).
+	//
+	// Neither may touch the other's model, and neither may be folded into the
+	// other: leveling through PlayerActivity would need a fake eventId for "just
+	// chatting", which corrupts the participation score, /leaderboard, the
+	// dashboard players route and the pinned board all at once.
 	// ─────────────────────────────────────────
 
 	client.on(

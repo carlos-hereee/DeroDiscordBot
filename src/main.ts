@@ -36,6 +36,10 @@ import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
 import { registerGreeter, ensureIntroChannelsWritable } from "@features/greeter/welcomeNewMember.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
+import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
+import { registerMessageXp } from "@features/leveling/messageXp.js";
+import { registerReactionXp } from "@features/leveling/reactionXp.js";
+import { startVoiceSweep } from "@features/leveling/voiceXp.js";
 
 // ── DNS resolver guard ─────────────────────────────────────────────────────
 // Some dev machines leave node's DNS library (c-ares) unable to read the system
@@ -66,10 +70,18 @@ const client = new Client({
 		GatewayIntentBits.GuildPresences, // ← needed for PresenceUpdate
 		// MessageContent intent intentionally NOT requested: the bot reads no
 		// message text (every message.content reference is commented-out legacy
-		// code, and there is no messageCreate listener). MessageContent is a
+		// code, and the one messageCreate listener, leveling's messageXp, reads
+		// only WHO posted and WHERE, never the body). MessageContent is a
 		// privileged intent gated by Discord verification at 100+ guilds, so
 		// requesting it while unused is pure verification risk. Re-add only if a
 		// feature genuinely needs to read message bodies.
+		//
+		// ⚠️ The pressure to re-add it will come from leveling: per word or per
+		// character xp is the obvious "improvement" and it is the one thing here
+		// that would need this intent. It is also the most gameable mode in that
+		// category, which is why xpRules.rollXp takes no message text parameter at
+		// all. Adding length based xp would mean deliberately changing a signature,
+		// not just flipping this line.
 		GatewayIntentBits.GuildMessageReactions, // ← needed for MessageReactionAdd
 	],
 	// Discord only sends full data for recent messages.
@@ -99,6 +111,20 @@ async function gracefulShutdown(signal: string, exitCode = 0): Promise<void> {
 	if (isShuttingDown) return; // a second signal during teardown is a no-op
 	isShuttingDown = true;
 	console.log(`[shutdown] received ${signal}, shutting down gracefully`);
+	// ⓪ flush buffered leveling xp FIRST, while the Mongo connection is still up.
+	// Message xp is staged in memory and written on an interval, so a redeploy
+	// lands somewhere inside a flush window and would otherwise drop it.
+	//
+	// ⚠️ This lives INSIDE gracefulShutdown rather than in a second
+	// process.on("SIGTERM") in xpWriter, deliberately. A sibling signal listener
+	// would race this sequence: the flush could be cut off mid bulkWrite, or fire
+	// after ④ below had already closed the socket it needs. One shutdown path,
+	// ordered explicitly.
+	try {
+		await flushNow();
+	} catch (err) {
+		console.error(LOG_MESSAGES.leveling.shutdownFlushFailed, err);
+	}
 	// ① stop cron so no new reminder tick begins mid-teardown.
 	try {
 		stopScheduler();
@@ -426,6 +452,28 @@ process.on("uncaughtException", (err) => {
 		startScheduler(client);
 		registerActivityListeners(client);
 		apiServer = startApiServer(client);
+
+		// ── leveling ──────────────────────────────────────────────
+		// What: the bot's first messageCreate listener, a SECOND
+		//       MessageReactionAdd listener beside ActivityTracker's, an
+		//       interval sweep over cached voice states, and the buffered
+		//       writer they all stage into.
+		// Who:  src/features/leveling/. Registered here, right after
+		//       registerActivityListeners, because the reaction listener is
+		//       deliberately a sibling of that one and the two are easiest to
+		//       reason about when they are declared together.
+		// When: once per boot. Leveling is ON in every guild by default (the
+		//       owner's locked decision), so these are live everywhere
+		//       immediately; per guild it is switched by
+		//       GuildConfig.leveling.enabled, which needs no deploy.
+		// Where: the writer must start BEFORE the listeners, or a message
+		//       arriving in the same tick would stage into a buffer with no
+		//       flush timer behind it. Its shutdown flush is step ⓪ of
+		//       gracefulShutdown above, not a second signal listener.
+		startXpWriter(client);
+		registerMessageXp(client);
+		registerReactionXp(client);
+		startVoiceSweep(client);
 
 		// ── outage watcher ────────────────────────────────────────
 		// Polls serverApi reachability state every 60s. DMs the platform
