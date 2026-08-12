@@ -58,8 +58,8 @@ describe("⚠️ every number in every track is PRIME", () => {
 });
 
 describe("the shape of every track", () => {
-	it("ships exactly twelve tracks", () => {
-		expect(ACHIEVEMENTS).toHaveLength(12);
+	it("ships exactly thirteen tracks", () => {
+		expect(ACHIEVEMENTS).toHaveLength(13);
 	});
 
 	it("gives every track four tiers, named bronze to diamond in that order", () => {

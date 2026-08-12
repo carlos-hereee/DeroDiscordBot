@@ -12,7 +12,7 @@
 //        hidden prime-mover track counts milestone levels reached).
 // When:  isMilestone runs on every level up, so it is a Set.has and nothing more.
 // Where: pure. No discord.js, no store, no I/O, no clock. Same discipline as
-//        levelCurve.ts, duelResolve.ts and hangmanState.ts.
+//        levelCurve.ts, versusResolve.ts and hangmanState.ts.
 //
 // WHY PRIMES, and this is the part worth keeping: it started as the owner's
 // aesthetic preference and turns out to be structurally correct. Milestone

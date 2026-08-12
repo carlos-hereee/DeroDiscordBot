@@ -26,14 +26,14 @@ describe("arcadeRulesIntro", () => {
 	it("groups the roster by player count", () => {
 		const names = fields(embed).map((f) => f.name);
 		expect(names).toContain(c.soloTitle);
-		expect(names).toContain(c.duelTitle);
+		expect(names).toContain(c.versusTitle);
 		expect(names).toContain(c.partyTitle);
 		// Groups come after the explanatory sections, never interleaved with them.
 		expect(names.indexOf(c.soloTitle)).toBeGreaterThan(names.indexOf(c.levelingTitle));
 	});
 
 	it("lists every game in exactly one group, except blackjack which has two real modes", () => {
-		const grouped = [...c.solo, ...c.duel, ...c.party].map((g) => g.name);
+		const grouped = [...c.solo, ...c.versus, ...c.party].map((g) => g.name);
 		// Solo blackjack and a blackjack TABLE are different games to a member
 		// deciding what to open, so both are listed. Everything else appears once.
 		expect(grouped).toHaveLength(new Set(grouped).size);
@@ -63,7 +63,7 @@ describe("both packs describe the same arcade", () => {
 		const general = generalEventsCopy.channelContent.arcadeRules;
 		expect(Object.keys(general).sort()).toEqual(Object.keys(rok).sort());
 		expect(general.solo).toHaveLength(rok.solo.length);
-		expect(general.duel).toHaveLength(rok.duel.length);
+		expect(general.versus).toHaveLength(rok.versus.length);
 		expect(general.party).toHaveLength(rok.party.length);
 	});
 

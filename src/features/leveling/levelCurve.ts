@@ -1,6 +1,6 @@
 // ── levelCurve ─────────────────────────────────────────────────────────────
 // The leveling system's arithmetic, kept PURE and separate from every writer,
-// command, board and announcer, the same split duelResolve.ts / duelHandler.ts,
+// command, board and announcer, the same split versusResolve.ts / versusHandler.ts,
 // rpsWinner.ts / rpsHandler.ts and hangmanState.ts / hangmanHandler.ts already
 // draw. No discord.js, no store, no I/O, no clock. The one piece of module state
 // is a memo table that is a pure function of its key, so two calls with the same

@@ -167,7 +167,7 @@ export const ChannelContent = {
 		// ships fewer games does not leave a bare heading behind.
 		const groups: Array<{ title: string; games: ReadonlyArray<{ name: string; how: string }> }> = [
 			{ title: c.soloTitle, games: c.solo },
-			{ title: c.duelTitle, games: c.duel },
+			{ title: c.versusTitle, games: c.versus },
 			{ title: c.partyTitle, games: c.party },
 		];
 		for (const group of groups) {

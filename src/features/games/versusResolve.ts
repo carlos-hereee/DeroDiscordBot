@@ -1,12 +1,12 @@
-// ── duelResolve ────────────────────────────────────────────────────────────
+// ── versusResolve ────────────────────────────────────────────────────────────
 // Pure resolution for /mini-game duel. No Discord types, no I/O, no module
 // state, so the odds are testable in isolation exactly the way rollFortune.ts
 // splits its roll from respondWithFortune's side effects. The rng is injectable
 // for the same reason: production passes nothing and gets Math.random, tests
 // pass a stub and pin the boundaries.
 
-export type DuelFlip = "dice" | "coin";
-export type DuelWinner = "challenger" | "opponent" | "tie";
+export type VersusFlip = "dice" | "coin";
+export type VersusWinner = "challenger" | "opponent" | "tie";
 export type CoinFace = "heads" | "tails";
 
 // A twenty sided die rather than a six. Both are "dice" to a player, but d20
@@ -22,11 +22,11 @@ export const DUEL_DIE_SIDES = 20;
 //   • coin, ONE flip decides it. Heads is the challenger, tails is the opponent.
 //     A single coin cannot tie, so this is the mode to pick when someone needs
 //     an answer rather than a story.
-export type DuelResult =
-	| { flip: "dice"; challengerRoll: number; opponentRoll: number; winner: DuelWinner }
+export type VersusResult =
+	| { flip: "dice"; challengerRoll: number; opponentRoll: number; winner: VersusWinner }
 	| { flip: "coin"; face: CoinFace; winner: "challenger" | "opponent" };
 
-export function resolveDuel(flip: DuelFlip, rng: () => number = Math.random): DuelResult {
+export function resolveVersus(flip: VersusFlip, rng: () => number = Math.random): VersusResult {
 	if (flip === "coin") {
 		// Strictly below 0.5 is heads, so the two faces split the [0, 1) range
 		// evenly. Math.random never returns 1, so tails is not shortchanged.
@@ -36,7 +36,7 @@ export function resolveDuel(flip: DuelFlip, rng: () => number = Math.random): Du
 
 	const challengerRoll = rollDie(rng);
 	const opponentRoll = rollDie(rng);
-	const winner: DuelWinner =
+	const winner: VersusWinner =
 		challengerRoll === opponentRoll ? "tie" : challengerRoll > opponentRoll ? "challenger" : "opponent";
 	return { flip: "dice", challengerRoll, opponentRoll, winner };
 }

@@ -421,15 +421,16 @@ export const generalEventsCopy: IPluginCopy = {
 				"XP becomes levels. Check yours with `/account`, and see the standings with `/levels`.",
 
 			soloTitle: "🎯 Play alone (1 player)",
-			duelTitle: "⚔️ Head to head (exactly 2)",
+			versusTitle: "⚔️ Head to head (exactly 2)",
 			partyTitle: "🎉 Party games (2 or more)",
 
 			solo: [
 				{ name: "🃏 Blackjack", how: "Beat the dealer without going over 21." },
 				{ name: "🔮 Fortune", how: "Ask the crystal ball. Do not act on the answer." },
 			],
-			duel: [
-				{ name: "⚔️ Duel", how: "One dice roll, or one coin flip. Winner takes it." },
+			versus: [
+				{ name: "🪙 Coin Flip", how: "One coin decides it. No ties." },
+				{ name: "🎲 Dice Roll", how: "Both roll a d20. Highest wins, and a tie means nobody does." },
 				{ name: "✂️ Rock Paper Scissors", how: "Both players pick in secret, revealed together." },
 			],
 			party: [

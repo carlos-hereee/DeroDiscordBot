@@ -21,27 +21,42 @@ export const gamesCopy = {
 	// only ever read inside the command picker, above the four game entries.
 	commandDescription: "Play a quick game with Dero",
 
-	duel: {
-		subcommandDescription: "Challenge a member to a dice roll or a coin flip",
+	// ── coin flip and dice roll ──
+	// ONE game until 2026-08-12, when "duel" was split in two. It had asked
+	// "dice or coin?" as a required option, which meant its name could never
+	// describe it and a member had to make a rules decision before they had
+	// played once. Two games, no mode question, and each keeps its own /account
+	// record so a member can see which they actually play.
+	//
+	// The shared half stays shared: both go through the same challengeFlow
+	// handshake, the same pure resolver, and the same result embed builder.
+	// Only the words and the art differ.
+	versus: {
 		opponentOptionDescription: "The member you want to challenge",
-		flipOptionDescription: "Settle it with a dice roll or a coin flip",
-		diceChoiceLabel: "Dice roll",
-		coinChoiceLabel: "Coin flip",
-		label: "a duel",
+		cooldownMessage: (seconds: number): string => `Dero is still clearing the field. Try again in ${seconds}s.`,
+		winnerLine: (winnerId: string): string => `\n\n👑 <@${winnerId}> takes it.`,
+		// ⚠️ Only ever reachable from a DICE roll. A single coin cannot tie, which
+		// the VersusResult union guarantees at the type level.
+		tieLine: "\n\nDead even. Nobody takes it. Run it back.",
+	},
 
+	coinFlip: {
+		subcommandDescription: "Challenge a member. One coin, one winner, no ties",
+		label: "a coin flip",
 		// ── result embed ──
 		// The mentions here never ping: this embed is the payoff, and pinging both
 		// players a second time (they were already pinged by the challenge) would
 		// be noise. Mentions inside an embed render as names without notifying.
-		resultTitle: "⚔️ The duel is settled",
-		cooldownMessage: (seconds: number): string => `Dero is still clearing the field. Try again in ${seconds}s.`,
+		resultTitle: "🪙 The coin has landed",
+		coinLine: (face: string): string => `The coin lands on **${face}**.`,
+	},
 
+	diceRoll: {
+		subcommandDescription: "Challenge a member to a d20 roll. Highest wins, ties are possible",
+		label: "a dice roll",
+		resultTitle: "🎲 The dice have spoken",
 		diceLine: (challengerId: string, challengerRoll: number, opponentId: string, opponentRoll: number): string =>
 			`<@${challengerId}> rolled **${challengerRoll}**\n<@${opponentId}> rolled **${opponentRoll}**`,
-		coinLine: (face: string): string => `The coin lands on **${face}**.`,
-
-		winnerLine: (winnerId: string): string => `\n\n👑 <@${winnerId}> takes it.`,
-		tieLine: "\n\nDead even. Nobody takes it. Run it back.",
 	},
 
 	rps: {

@@ -9,7 +9,7 @@ import type { HandOutcome, SeatResult } from "./blackjackState.js";
 //
 // What:  turns a finished round into xp and a win/loss record for everyone who
 //        took part.
-// Who:   duelHandler and rpsHandler (both two player, both the same three way
+// Who:   versusHandler and rpsHandler (both two player, both the same three way
 //        shape), hangmanHandler (many players, its own shape), and the three
 //        games arriving in phases 6 to 8.
 // When:  AFTER the player facing result has already been posted. Never before,

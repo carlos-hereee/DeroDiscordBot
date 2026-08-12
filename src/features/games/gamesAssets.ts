@@ -36,10 +36,15 @@ export const GAME_ASSET_FILES = {
 	// Thumbnail on the "X challenges Y" prompt, shared by duel and rps.
 	challenge: "challenge.gif",
 
-	// ── duel (Phase 2, LIVE) ──
-	duelDice: "duel/dice-roll.gif",
-	duelCoin: "duel/coin-flip.gif",
-	duelTie: "duel/tie.png",
+	// ── coin flip and dice roll (Phase 2, LIVE) ──
+	// ⚠️ THE ART PATHS MOVED on 2026-08-12 when "duel" split into two games. The
+	// files do not exist on disk yet (assets/ holds only dero and fortune), which
+	// is why renaming the folders was free; drop the art at these paths, not the
+	// old duel/ ones.
+	diceRoll: "dice-roll/roll.gif",
+	coinFlip: "coin-flip/flip.gif",
+	// Reachable only from a dice roll. A single coin cannot tie.
+	diceTie: "dice-roll/tie.png",
 
 	// ── rock paper scissors (Phase 3, LIVE) ──
 	// The reveal embed carries the WINNING throw, so the image says something the

@@ -130,12 +130,12 @@ describe("the per game record rides in the same write as the xp", () => {
 	it("increments played AND the outcome in one $inc", async () => {
 		// Two separate writes could partially fail and leave a member's total
 		// disagreeing with their win/loss line, and /account renders both.
-		await awardXp(input({ game: "duel", outcome: "won", amount: 100 }));
+		await awardXp(input({ game: "diceroll", outcome: "won", amount: 100 }));
 
 		expect(incrementsOf()).toEqual({
 			totalXp: 100,
-			"games.duel.played": 1,
-			"games.duel.won": 1,
+			"games.diceroll.played": 1,
+			"games.diceroll.won": 1,
 		});
 	});
 
@@ -152,8 +152,8 @@ describe("the per game record rides in the same write as the xp", () => {
 	});
 
 	it("counts a round played even with no outcome", async () => {
-		await awardXp(input({ game: "duel" }));
-		expect(incrementsOf()["games.duel.played"]).toBe(1);
+		await awardXp(input({ game: "diceroll" }));
+		expect(incrementsOf()["games.diceroll.played"]).toBe(1);
 	});
 
 	it("carries lifetime counters alongside", async () => {

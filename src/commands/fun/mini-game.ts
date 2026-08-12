@@ -2,7 +2,7 @@ import { SlashCommandBuilder, MessageFlags, type ChatInputCommandInteraction } f
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { gamesCopy } from "@features/games/gamesCopy.js";
 import { fortuneCopy } from "@features/fortune/fortuneCopy.js";
-import { runDuel } from "@features/games/duelHandler.js";
+import { runCoinFlip, runDiceRoll } from "@features/games/versusHandler.js";
 import { runRps } from "@features/games/rpsHandler.js";
 import { runHangman } from "@features/games/hangmanHandler.js";
 import { runBlackjack } from "@features/games/blackjackHandler.js";
@@ -46,21 +46,25 @@ import { runFortune } from "@features/games/fortuneHandler.js";
 export const data = new SlashCommandBuilder()
 	.setName("mini-game")
 	.setDescription(gamesCopy.commandDescription)
+	// ── the two head to head wagers ──
+	// One subcommand ("duel") until 2026-08-12, with a REQUIRED flip option that
+	// made a member choose a rule before they had played once and left the game
+	// with a name that described half of it. Two subcommands, no option, no
+	// question. Both still take the same required opponent.
 	.addSubcommand((sub) =>
 		sub
-			.setName("duel")
-			.setDescription(gamesCopy.duel.subcommandDescription)
+			.setName("coin-flip")
+			.setDescription(gamesCopy.coinFlip.subcommandDescription)
 			.addUserOption((option) =>
-				option.setName("opponent").setDescription(gamesCopy.duel.opponentOptionDescription).setRequired(true)
+				option.setName("opponent").setDescription(gamesCopy.versus.opponentOptionDescription).setRequired(true)
 			)
-			.addStringOption((option) =>
-				option
-					.setName("flip")
-					.setDescription(gamesCopy.duel.flipOptionDescription)
-					.setRequired(true)
-					// Choices, not free text, so Discord rejects anything else before the
-					// interaction reaches the bot and the handler never hand validates it.
-					.addChoices({ name: gamesCopy.duel.diceChoiceLabel, value: "dice" }, { name: gamesCopy.duel.coinChoiceLabel, value: "coin" })
+	)
+	.addSubcommand((sub) =>
+		sub
+			.setName("dice-roll")
+			.setDescription(gamesCopy.diceRoll.subcommandDescription)
+			.addUserOption((option) =>
+				option.setName("opponent").setDescription(gamesCopy.versus.opponentOptionDescription).setRequired(true)
 			)
 	)
 	.addSubcommand((sub) =>
@@ -123,7 +127,8 @@ export const data = new SlashCommandBuilder()
 // asserts that both ways round, which is the guard that catches the obvious way
 // to break this file while adding a game.
 export const MINI_GAME_HANDLERS = {
-	duel: runDuel,
+	"coin-flip": runCoinFlip,
+	"dice-roll": runDiceRoll,
 	rps: runRps,
 	hangman: runHangman,
 	blackjack: runBlackjack,

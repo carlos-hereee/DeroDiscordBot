@@ -552,15 +552,16 @@ export const rokCommanderCopy = {
 				"Renown becomes levels. Check yours with `/account`, and see who stands where with `/levels`.",
 
 			soloTitle: "🎯 Play alone (1 player)",
-			duelTitle: "⚔️ Head to head (exactly 2)",
+			versusTitle: "⚔️ Head to head (exactly 2)",
 			partyTitle: "🎉 Party games (2 or more)",
 
 			solo: [
 				{ name: "🃏 Blackjack", how: "Beat my dealer without passing 21." },
 				{ name: "🔮 Fortune", how: "Ask the crystal ball. Expect nothing useful." },
 			],
-			duel: [
-				{ name: "⚔️ Duel", how: "One roll of the dice, or one flip of the coin. Winner takes all." },
+			versus: [
+				{ name: "🪙 Coin Flip", how: "One coin decides it. No ties, ever." },
+				{ name: "🎲 Dice Roll", how: "Both roll a d20. Highest takes it, and a tie means nobody does." },
 				{ name: "✂️ Rock Paper Scissors", how: "Both choose in secret. I reveal together." },
 			],
 			party: [

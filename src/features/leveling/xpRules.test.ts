@@ -93,7 +93,7 @@ describe("resolveMultiplier", () => {
 });
 
 describe("rollXp", () => {
-	// rng is injectable exactly as duelResolve's is, so a test pins the award
+	// rng is injectable exactly as versusResolve's is, so a test pins the award
 	// rather than asserting a range and hoping.
 	const lowest = () => 0;
 	const highest = () => 0.999999;

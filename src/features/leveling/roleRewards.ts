@@ -18,7 +18,7 @@ import { getLevelingConfig, invalidateLevelingConfig } from "./levelingConfig.js
 //        sees it apply without a mass assign).
 // When:  lazily, never in a sweep. See NEVER MASS ASSIGN below.
 // Where: the pure half (computeDesiredRoles) is exported and unit tested with no
-//        discord.js in sight, the same split duelResolve / duelHandler draws.
+//        discord.js in sight, the same split versusResolve / versusHandler draws.
 
 export interface RewardRule {
 	level: number;

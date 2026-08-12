@@ -1,6 +1,6 @@
 // ── xpRules ────────────────────────────────────────────────────────────────
 // The decisions an earn event needs, kept PURE and separate from the three
-// listeners that make them. Same split duelResolve.ts / duelHandler.ts and
+// listeners that make them. Same split versusResolve.ts / versusHandler.ts and
 // hangmanState.ts / hangmanHandler.ts already draw: no discord.js, no store, no
 // I/O, no module state, and the rng is injectable so a test can pin a roll.
 //
@@ -97,7 +97,7 @@ export function resolveMultiplier(rules: readonly MultiplierRule[], matchIds: re
 // its own tests, while an award is a payout and flooring it means the bot never
 // pays a fraction of a point more than the configured range implies.
 //
-// rng is injectable and defaults to Math.random, matching duelResolve and
+// rng is injectable and defaults to Math.random, matching versusResolve and
 // hangmanState, so a test can pin the exact award rather than assert a range.
 export function rollXp(min: number, max: number, multiplier = 1, rng: () => number = Math.random): number {
 	// A misconfigured range (max below min, a NaN from a hand edited row) must

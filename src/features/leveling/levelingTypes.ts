@@ -39,7 +39,7 @@
 // phases 6 to 8. A Mongoose Map needs no migration to gain a key, so declaring
 // them early costs nothing and means the /account renderer, the achievement
 // definitions and the award API all speak one closed union from day one.
-export const LEVELING_GAME_SLUGS = ["duel", "rps", "hangman", "blackjack", "battleship", "holdem"] as const;
+export const LEVELING_GAME_SLUGS = ["coinflip", "diceroll", "rps", "hangman", "blackjack", "battleship", "holdem"] as const;
 export type LevelingGameSlug = (typeof LEVELING_GAME_SLUGS)[number];
 
 // ── Where an award came from ──

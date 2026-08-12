@@ -1,7 +1,7 @@
 import { EmbedBuilder } from "discord.js";
 import { AUTHOR, COLORS } from "@base/copy/brand.js";
 import { gamesCopy } from "./gamesCopy.js";
-import type { DuelResult } from "./duelResolve.js";
+import type { VersusResult } from "./versusResolve.js";
 import type { RpsChoice, RpsOutcome } from "./rpsWinner.js";
 import { handValue, type BlackjackTable, type Card, type HandOutcome, type SeatResult, type Suit } from "./blackjackState.js";
 
@@ -57,7 +57,7 @@ export function buildChallengeClosedEmbed(description: string): EmbedBuilder {
 	return base().setTitle(gamesCopy.challenge.closedTitle).setColor(COLORS.GAME_CHALLENGE).setDescription(description);
 }
 
-// ── buildDuelResultEmbed ───────────────────────────────────────────────────
+// ── buildVersusResultEmbed ───────────────────────────────────────────────────
 // The payoff embed for /mini-game duel. This one takes the full width image
 // rather than a thumbnail: it is the moment the round exists for, and it is
 // posted once, so it earns the visual weight the challenge prompt deliberately
@@ -65,29 +65,32 @@ export function buildChallengeClosedEmbed(description: string): EmbedBuilder {
 //
 // The result is a discriminated union, so the dice and coin branches each render
 // only the fields their own mode actually has. That is the whole reason
-// duelResolve returns a union instead of one shape with optional fields: an
+// versusResolve returns a union instead of one shape with optional fields: an
 // embed can never accidentally print a roll on a coin flip.
-export function buildDuelResultEmbed(
+export function buildVersusResultEmbed(
 	challengerId: string,
 	opponentId: string,
-	result: DuelResult,
+	result: VersusResult,
 	imageRef: string
 ): EmbedBuilder {
-	const c = gamesCopy.duel;
+	// Shared by both head to head games. The `flip` on the result is what selects
+	// the per game title, color and body line, so one builder serves both and they
+	// cannot drift apart in layout.
+	const shared = gamesCopy.versus;
+	const dice = result.flip === "dice";
 
-	const body =
-		result.flip === "dice"
-			? c.diceLine(challengerId, result.challengerRoll, opponentId, result.opponentRoll)
-			: c.coinLine(result.face);
+	const body = dice
+		? gamesCopy.diceRoll.diceLine(challengerId, result.challengerRoll, opponentId, result.opponentRoll)
+		: gamesCopy.coinFlip.coinLine(result.face);
 
-	// A coin duel can never tie, which the union already encodes, so the tie line
+	// A coin flip can never tie, which the union already encodes, so the tie line
 	// is only reachable from the dice branch.
 	const verdict =
-		result.winner === "tie" ? c.tieLine : c.winnerLine(result.winner === "challenger" ? challengerId : opponentId);
+		result.winner === "tie" ? shared.tieLine : shared.winnerLine(result.winner === "challenger" ? challengerId : opponentId);
 
 	return base()
-		.setTitle(c.resultTitle)
-		.setColor(COLORS.GAME_DUEL)
+		.setTitle(dice ? gamesCopy.diceRoll.resultTitle : gamesCopy.coinFlip.resultTitle)
+		.setColor(dice ? COLORS.GAME_DICEROLL : COLORS.GAME_COINFLIP)
 		.setDescription(`${body}${verdict}`)
 		.setImage(imageRef);
 }

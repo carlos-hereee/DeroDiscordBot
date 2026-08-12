@@ -40,7 +40,7 @@ describe("two player results (duel and rps share this)", () => {
 		awardTwoPlayerResult({
 			client,
 			guildId: "g1",
-			game: "duel",
+			game: "diceroll",
 			challenger: user("challenger"),
 			opponent: user("opponent"),
 			winner,
@@ -74,7 +74,7 @@ describe("two player results (duel and rps share this)", () => {
 
 	it("tags the game so /account can keep a per game row", async () => {
 		duel("challenger");
-		expect(awards().every((award) => award.game === "duel" && award.source === "game")).toBe(true);
+		expect(awards().every((award) => award.game === "diceroll" && award.source === "game")).toBe(true);
 	});
 
 	it("awards nothing in a DM, where there is no guild to be ranked in", async () => {
@@ -159,7 +159,7 @@ describe("no amount is inlined", () => {
 		awardTwoPlayerResult({
 			client,
 			guildId: "g1",
-			game: "duel",
+			game: "diceroll",
 			challenger: user("a"),
 			opponent: user("b"),
 			winner: "challenger",

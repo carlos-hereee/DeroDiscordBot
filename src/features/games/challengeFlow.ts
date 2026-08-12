@@ -20,7 +20,7 @@ import { buildChallengeEmbed, buildChallengeClosedEmbed } from "./gamesEmbeds.js
 //        an "accepted" outcome; every other path (self challenge, bot opponent,
 //        duplicate, decline, timeout) is reported to the players HERE so neither
 //        game repeats that handling.
-// Who:   duelHandler.ts (Phase 2) and rpsHandler.ts (Phase 3). Hangman and
+// Who:   versusHandler.ts (Phase 2) and rpsHandler.ts (Phase 3). Hangman and
 //        fortune never touch this file, they have no opponent.
 // When:  once per challenge, start to finish, inside one slash command
 //        execution. Nothing here survives a restart, see the state note below.
@@ -48,7 +48,7 @@ export const CHALLENGE_TIMEOUT_MS = 60_000;
 // them.
 const CHALLENGE_CUSTOM_ID_PREFIX = "minigame:challenge";
 
-export type ChallengeKind = "duel" | "rps";
+export type ChallengeKind = "coinflip" | "diceroll" | "rps";
 
 export type ChallengeRejectionReason = "selfChallenge" | "botOpponent" | "duplicate" | "outsideGuild";
 

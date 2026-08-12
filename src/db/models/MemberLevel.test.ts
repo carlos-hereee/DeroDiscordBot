@@ -108,10 +108,10 @@ describe("the per game record round trips", () => {
 		// a member simply never having won.
 		const doc = new MemberLevel({
 			...baseRow,
-			games: { duel: { played: 9, won: 5, lost: 3, drawn: 1, assists: 0 } },
+			games: { diceroll: { played: 9, won: 5, lost: 3, drawn: 1, assists: 0 } },
 		});
 
-		const record = doc.games.get("duel");
+		const record = doc.games.get("diceroll");
 		expect(record).toBeDefined();
 		expect(record!.played).toBe(9);
 		expect(record!.won).toBe(5);
@@ -188,9 +188,9 @@ describe("the control case: strict mode really is on", () => {
 		// an error and the record would simply never move.
 		const doc = new MemberLevel({
 			...baseRow,
-			games: { duel: { played: 1, wonn: 1 } },
+			games: { diceroll: { played: 1, wonn: 1 } },
 		} as unknown as Record<string, unknown>);
-		expect(doc.games.get("duel")!.won).toBe(0);
-		expect((doc.games.get("duel") as unknown as Record<string, unknown>).wonn).toBeUndefined();
+		expect(doc.games.get("diceroll")!.won).toBe(0);
+		expect((doc.games.get("diceroll") as unknown as Record<string, unknown>).wonn).toBeUndefined();
 	});
 });

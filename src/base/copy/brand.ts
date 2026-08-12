@@ -106,7 +106,11 @@ export const COLORS = {
 	// a challenge is a PENDING state, so it should not out-shout the resolved
 	// result embed that follows it. All four are distinct from every key above.
 	GAME_CHALLENGE: "#64748b",
-	GAME_DUEL: "#f97316",
+	GAME_COINFLIP: "#f97316",
+	// A warmer amber than the coin's orange, so the two head to head games are
+	// still tellable apart at a glance when both are live in one channel. They
+	// were one game ("duel") until 2026-08-12 and so shared one color.
+	GAME_DICEROLL: "#eab308",
 	GAME_RPS: "#0ea5e9",
 	GAME_HANGMAN: "#22c55e",
 	// The ARCADE GAMES category's own surfaces (the rules card, the challenge board

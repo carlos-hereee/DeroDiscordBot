@@ -103,7 +103,7 @@ export const inBounds = (coord: Coord): boolean =>
 // fraction of the value and is deferred (the plan says so, and the Reroll button
 // on the placement screen is what makes auto placement acceptable).
 //
-// The rng is injected exactly as duelResolve and blackjackState inject theirs,
+// The rng is injected exactly as versusResolve and blackjackState inject theirs,
 // so a test gets a known fleet and production passes nothing.
 export function placeFleet(rng: () => number = Math.random): Ship[] {
 	const ships: Ship[] = [];

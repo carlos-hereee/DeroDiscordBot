@@ -10,7 +10,8 @@ import { ApplicationCommandOptionType, type ChatInputCommandInteraction } from "
 // vi.mock is hoisted above the imports, so the spies have to be created inside
 // vi.hoisted or the factory below would reference an uninitialized binding.
 const handlers = vi.hoisted(() => ({
-	runDuel: vi.fn(async () => undefined),
+	runCoinFlip: vi.fn(async () => undefined),
+	runDiceRoll: vi.fn(async () => undefined),
 	runRps: vi.fn(async () => undefined),
 	runHangman: vi.fn(async () => undefined),
 	runBlackjack: vi.fn(async () => undefined),
@@ -19,7 +20,7 @@ const handlers = vi.hoisted(() => ({
 
 // Mocked by the SAME specifier mini-game.ts imports, so the real handlers (and
 // their transitive Mongo / Discord dependencies) never load in this suite.
-vi.mock("@features/games/duelHandler.js", () => ({ runDuel: handlers.runDuel }));
+vi.mock("@features/games/versusHandler.js", () => ({ runCoinFlip: handlers.runCoinFlip, runDiceRoll: handlers.runDiceRoll }));
 vi.mock("@features/games/rpsHandler.js", () => ({ runRps: handlers.runRps }));
 vi.mock("@features/games/hangmanHandler.js", () => ({ runHangman: handlers.runHangman }));
 vi.mock("@features/games/blackjackHandler.js", () => ({ runBlackjack: handlers.runBlackjack }));
@@ -28,7 +29,7 @@ vi.mock("@features/games/fortuneHandler.js", () => ({ runFortune: handlers.runFo
 import { data, execute, MINI_GAME_HANDLERS } from "./mini-game.js";
 
 // Declaration order, which the builder shape assertion below depends on.
-const SUBCOMMANDS = ["duel", "rps", "hangman", "blackjack", "fortune"] as const;
+const SUBCOMMANDS = ["coin-flip", "dice-roll", "rps", "hangman", "blackjack", "fortune"] as const;
 
 function fakeInteraction(subcommand: string): { interaction: ChatInputCommandInteraction; reply: ReturnType<typeof vi.fn> } {
 	const reply = vi.fn(async () => undefined);
@@ -87,7 +88,8 @@ describe("/mini-game builder shape", () => {
 			const sub = topLevel.find((option) => option.name === name) as { options?: { name: string; required?: boolean }[] } | undefined;
 			return sub?.options?.find((option) => option.name === "opponent");
 		};
-		expect(opponentOf("duel")?.required).toBe(true);
+		expect(opponentOf("coin-flip")?.required).toBe(true);
+		expect(opponentOf("dice-roll")?.required).toBe(true);
 		expect(opponentOf("rps")?.required).toBe(true);
 		expect(opponentOf("hangman")).toBeUndefined();
 		expect(opponentOf("fortune")).toBeUndefined();
@@ -109,7 +111,8 @@ describe("/mini-game execute routing", () => {
 	});
 
 	it.each([
-		["duel", "runDuel"],
+		["coin-flip", "runCoinFlip"],
+		["dice-roll", "runDiceRoll"],
 		["rps", "runRps"],
 		["hangman", "runHangman"],
 		["fortune", "runFortune"],

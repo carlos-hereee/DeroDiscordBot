@@ -44,7 +44,7 @@ export const HANGMAN_WORDS: readonly string[] = [
 ] as const;
 
 // Pull a word at random. rng is injectable so a test can pin the choice without
-// stubbing Math.random globally, matching rollFortune.ts and duelResolve.ts.
+// stubbing Math.random globally, matching rollFortune.ts and versusResolve.ts.
 export function pickWord(rng: () => number = Math.random): string {
 	return HANGMAN_WORDS[Math.floor(rng() * HANGMAN_WORDS.length)];
 }

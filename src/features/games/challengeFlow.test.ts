@@ -94,7 +94,7 @@ describe("issueChallenge guards", () => {
 		const outcome = await issueChallenge({
 			interaction: h.interaction,
 			opponent: fakeUser(CHALLENGER_ID),
-			kind: "duel",
+			kind: "diceroll",
 			gameLabel: "a duel",
 		});
 
@@ -124,7 +124,7 @@ describe("issueChallenge guards", () => {
 		const outcome = await issueChallenge({
 			interaction: h.interaction,
 			opponent: fakeUser(OPPONENT_ID),
-			kind: "duel",
+			kind: "diceroll",
 			gameLabel: "a duel",
 		});
 
@@ -139,7 +139,7 @@ describe("issueChallenge guards", () => {
 		const pending = issueChallenge({
 			interaction: first.interaction,
 			opponent: fakeUser(OPPONENT_ID),
-			kind: "duel",
+			kind: "diceroll",
 			gameLabel: "a duel",
 		});
 		// The slot is claimed synchronously, before the first await in the engine,
@@ -151,7 +151,7 @@ describe("issueChallenge guards", () => {
 		const outcome = await issueChallenge({
 			interaction: second.interaction,
 			opponent: fakeUser(OPPONENT_ID),
-			kind: "duel",
+			kind: "diceroll",
 			gameLabel: "a duel",
 		});
 		expect(outcome).toEqual({ status: "rejected", reason: "duplicate" });
@@ -169,7 +169,7 @@ describe("issueChallenge guards", () => {
 		const pending = issueChallenge({
 			interaction: first.interaction,
 			opponent: fakeUser(OPPONENT_ID),
-			kind: "duel",
+			kind: "diceroll",
 			gameLabel: "a duel",
 		});
 
@@ -180,7 +180,7 @@ describe("issueChallenge guards", () => {
 		const outcome = await issueChallenge({
 			interaction: reverse.interaction,
 			opponent: fakeUser(CHALLENGER_ID),
-			kind: "duel",
+			kind: "diceroll",
 			gameLabel: "a duel",
 		});
 		expect(outcome).toEqual({ status: "rejected", reason: "duplicate" });
@@ -196,7 +196,7 @@ describe("issueChallenge outcomes", () => {
 		const pending = issueChallenge({
 			interaction: h.interaction,
 			opponent: fakeUser(OPPONENT_ID),
-			kind: "duel",
+			kind: "diceroll",
 			gameLabel: "a duel",
 		});
 
@@ -221,7 +221,7 @@ describe("issueChallenge outcomes", () => {
 		const pending = issueChallenge({
 			interaction: h.interaction,
 			opponent: fakeUser(OPPONENT_ID),
-			kind: "duel",
+			kind: "diceroll",
 			gameLabel: "a duel",
 		});
 		await vi.advanceTimersByTimeAsync(0);

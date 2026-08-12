@@ -1,7 +1,7 @@
 // ── blackjackState ──────────────────────────────────────────────────────────
 // The table's rules, kept PURE and separate from blackjackHandler's Discord
-// work, the same split hangmanState / hangmanHandler and duelResolve /
-// duelHandler already draw. Every fiddly part of blackjack (soft aces, what
+// work, the same split hangmanState / hangmanHandler and versusResolve /
+// versusHandler already draw. Every fiddly part of blackjack (soft aces, what
 // counts as a natural, what a split may and may not do afterwards, when the
 // dealer stops) is decided here, so it is testable without a single Discord mock.
 //
@@ -91,7 +91,7 @@ export function handValue(cards: Card[]): HandValue {
 
 // ── The shoe ────────────────────────────────────────────────────────────────
 
-// Fisher-Yates, with the rng injected exactly as duelResolve injects it, so a
+// Fisher-Yates, with the rng injected exactly as versusResolve injects it, so a
 // test can hand in a scripted sequence and get a known deal. Production passes
 // nothing and takes Math.random.
 export function buildShoe(deckCount: number = DEFAULT_DECK_COUNT, rng: () => number = Math.random): Card[] {

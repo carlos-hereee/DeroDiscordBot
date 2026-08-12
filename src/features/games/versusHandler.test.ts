@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ButtonInteraction, ChatInputCommandInteraction, User } from "discord.js";
 
-// ── duelHandler ────────────────────────────────────────────────────────────
-// duelResolve already pins the odds exhaustively. What only a handler test can
+// ── versusHandler ────────────────────────────────────────────────────────────
+// versusResolve already pins the odds exhaustively. What only a handler test can
 // reach is the wiring: that a non accepted challenge stays silent and costs the
 // challenger nothing, that the result answers the ACCEPT click rather than the
 // original command, and that the payoff does not ping two people a second time.
@@ -12,17 +12,17 @@ import type { ButtonInteraction, ChatInputCommandInteraction, User } from "disco
 
 const mocks = vi.hoisted(() => ({
 	issueChallenge: vi.fn(),
-	resolveDuel: vi.fn(),
+	resolveVersus: vi.fn(),
 }));
 vi.mock("./challengeFlow.js", () => ({ issueChallenge: mocks.issueChallenge }));
-vi.mock("./duelResolve.js", async (importOriginal) => {
+vi.mock("./versusResolve.js", async (importOriginal) => {
 	// Keep the real types and constants, swap only the resolver, so the handler
-	// under test still sees a genuine DuelResult shape.
-	const actual = await importOriginal<typeof import("./duelResolve.js")>();
-	return { ...actual, resolveDuel: mocks.resolveDuel };
+	// under test still sees a genuine VersusResult shape.
+	const actual = await importOriginal<typeof import("./versusResolve.js")>();
+	return { ...actual, resolveVersus: mocks.resolveVersus };
 });
 
-import { runDuel } from "./duelHandler.js";
+import { runCoinFlip, runDiceRoll } from "./versusHandler.js";
 
 const OPPONENT_ID = "222222222222222222";
 
@@ -37,6 +37,9 @@ function harness(flip: "dice" | "coin" = "dice"): {
 	challengerId: string;
 	reply: ReturnType<typeof vi.fn>;
 	acceptReply: ReturnType<typeof vi.fn>;
+	// The flip is no longer an OPTION, it is which subcommand was invoked, so the
+	// harness hands back the runner matching the mode it was built for.
+	run: () => Promise<void>;
 } {
 	const challengerId = nextChallengerId();
 	const reply = vi.fn(async () => undefined);
@@ -53,7 +56,8 @@ function harness(flip: "dice" | "coin" = "dice"): {
 		reply,
 	} as unknown as ChatInputCommandInteraction;
 
-	return { interaction, accept, challengerId, reply, acceptReply };
+	const run = (): Promise<void> => (flip === "coin" ? runCoinFlip(interaction) : runDiceRoll(interaction));
+	return { interaction, accept, challengerId, reply, acceptReply, run };
 }
 
 const accepted = (accept: ButtonInteraction): void => {
@@ -65,19 +69,21 @@ const embedDescription = (acceptReply: ReturnType<typeof vi.fn>): string =>
 
 beforeEach(() => {
 	mocks.issueChallenge.mockReset();
-	mocks.resolveDuel.mockReset();
-	mocks.resolveDuel.mockReturnValue({ flip: "dice", challengerRoll: 18, opponentRoll: 4, winner: "challenger" });
+	mocks.resolveVersus.mockReset();
+	mocks.resolveVersus.mockReturnValue({ flip: "dice", challengerRoll: 18, opponentRoll: 4, winner: "challenger" });
 });
 
-describe("runDuel, handing off to the challenge engine", () => {
+describe("coin flip and dice roll, handing off to the challenge engine", () => {
 	it("issues the challenge as a duel against the named opponent", async () => {
 		const h = harness();
 		accepted(h.accept);
-		await runDuel(h.interaction);
+		await h.run();
 
 		expect(mocks.issueChallenge).toHaveBeenCalledTimes(1);
 		const request = mocks.issueChallenge.mock.calls[0][0] as { kind: string; opponent: { id: string } };
-		expect(request.kind).toBe("duel");
+		// The kind is now per game rather than the single "duel" it was before the
+		// 2026-08-12 split, which is what gives each half its own /account record.
+		expect(request.kind).toBe("diceroll");
 		expect(request.opponent.id).toBe(OPPONENT_ID);
 	});
 
@@ -88,11 +94,11 @@ describe("runDuel, handing off to the challenge engine", () => {
 			// message here would double up on every decline and every timeout.
 			const h = harness();
 			mocks.issueChallenge.mockResolvedValue(outcome);
-			await runDuel(h.interaction);
+			await h.run();
 
 			expect(h.reply).not.toHaveBeenCalled();
 			expect(h.acceptReply).not.toHaveBeenCalled();
-			expect(mocks.resolveDuel).not.toHaveBeenCalled();
+			expect(mocks.resolveVersus).not.toHaveBeenCalled();
 		}
 	);
 
@@ -101,22 +107,22 @@ describe("runDuel, handing off to the challenge engine", () => {
 		// for the window simply by refusing every challenge.
 		const h = harness();
 		mocks.issueChallenge.mockResolvedValue({ status: "declined" });
-		await runDuel(h.interaction);
+		await h.run();
 
 		accepted(h.accept);
-		await runDuel(h.interaction);
+		await h.run();
 		expect(h.acceptReply).toHaveBeenCalledTimes(1);
 	});
 });
 
-describe("runDuel, the payoff", () => {
+describe("coin flip and dice roll, the payoff", () => {
 	it("answers the ACCEPT click, not the original command", async () => {
 		// challengeFlow hands the click back unacknowledged, and Discord gives
 		// three seconds to answer it. Duel has no secret step, so duel is the one
 		// that acknowledges it, by replying with the result.
 		const h = harness();
 		accepted(h.accept);
-		await runDuel(h.interaction);
+		await h.run();
 
 		expect(h.acceptReply).toHaveBeenCalledTimes(1);
 		const payload = h.acceptReply.mock.calls[0][0] as { embeds: unknown[]; files: unknown[]; allowedMentions: unknown };
@@ -130,8 +136,8 @@ describe("runDuel, the payoff", () => {
 	it("names the winner on a decisive dice duel, and shows both rolls", async () => {
 		const h = harness();
 		accepted(h.accept);
-		mocks.resolveDuel.mockReturnValue({ flip: "dice", challengerRoll: 18, opponentRoll: 4, winner: "challenger" });
-		await runDuel(h.interaction);
+		mocks.resolveVersus.mockReturnValue({ flip: "dice", challengerRoll: 18, opponentRoll: 4, winner: "challenger" });
+		await h.run();
 
 		const text = embedDescription(h.acceptReply);
 		expect(text).toContain("18");
@@ -142,8 +148,8 @@ describe("runDuel, the payoff", () => {
 	it("renders a tie without naming a winner", async () => {
 		const h = harness();
 		accepted(h.accept);
-		mocks.resolveDuel.mockReturnValue({ flip: "dice", challengerRoll: 11, opponentRoll: 11, winner: "tie" });
-		await runDuel(h.interaction);
+		mocks.resolveVersus.mockReturnValue({ flip: "dice", challengerRoll: 11, opponentRoll: 11, winner: "tie" });
+		await h.run();
 
 		const text = embedDescription(h.acceptReply);
 		expect(text).toContain("Nobody takes it");
@@ -153,8 +159,8 @@ describe("runDuel, the payoff", () => {
 	it("shows the coin face rather than rolls on a coin duel", async () => {
 		const h = harness("coin");
 		accepted(h.accept);
-		mocks.resolveDuel.mockReturnValue({ flip: "coin", face: "tails", winner: "opponent" });
-		await runDuel(h.interaction);
+		mocks.resolveVersus.mockReturnValue({ flip: "coin", face: "tails", winner: "opponent" });
+		await h.run();
 
 		const text = embedDescription(h.acceptReply);
 		expect(text).toContain("tails");
@@ -164,22 +170,22 @@ describe("runDuel, the payoff", () => {
 	it("passes the chosen flip through to the resolver", async () => {
 		const h = harness("coin");
 		accepted(h.accept);
-		mocks.resolveDuel.mockReturnValue({ flip: "coin", face: "heads", winner: "challenger" });
-		await runDuel(h.interaction);
+		mocks.resolveVersus.mockReturnValue({ flip: "coin", face: "heads", winner: "challenger" });
+		await h.run();
 
-		expect(mocks.resolveDuel).toHaveBeenCalledWith("coin");
+		expect(mocks.resolveVersus).toHaveBeenCalledWith("coin");
 	});
 });
 
-describe("runDuel, the spam gate", () => {
+describe("coin flip and dice roll, the spam gate", () => {
 	it("blocks a second duel inside the window, before any public message", async () => {
 		const h = harness();
 		accepted(h.accept);
-		await runDuel(h.interaction);
+		await h.run();
 		expect(h.acceptReply).toHaveBeenCalledTimes(1);
 
 		mocks.issueChallenge.mockClear();
-		await runDuel(h.interaction);
+		await h.run();
 
 		// Rejected ephemerally, and crucially the engine was never reached, so a
 		// rate limited challenger cannot ping their target at all.
@@ -190,11 +196,11 @@ describe("runDuel, the spam gate", () => {
 	it("gates per challenger, not globally", async () => {
 		const first = harness();
 		accepted(first.accept);
-		await runDuel(first.interaction);
+		await first.run();
 
 		const second = harness();
 		accepted(second.accept);
-		await runDuel(second.interaction);
+		await second.run();
 
 		// A different member must not inherit the first one's cooldown.
 		expect(second.acceptReply).toHaveBeenCalledTimes(1);

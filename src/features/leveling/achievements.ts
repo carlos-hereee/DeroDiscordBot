@@ -127,15 +127,35 @@ export const ACHIEVEMENTS: readonly AchievementDefinition[] = Object.freeze([
 		roleId: null,
 		earnedBy: (tier) => `won ${tier.threshold.toLocaleString()} rounds`,
 	},
+	// ── the two head to head tracks ──
+	// ONE track ("duelist", metric "duel.won") until 2026-08-12, when duel split
+	// into coin flip and dice roll. It became two tracks rather than one pointed
+	// at half the game, because the metric can only name a single slug and
+	// choosing either one would have silently stopped counting the other. Same
+	// thresholds on both, so neither is the harder achievement.
+	//
+	// Note `gamesWon` still aggregates across every game, so a member who spreads
+	// their wins is not disadvantaged overall by the split; these two only reward
+	// specialising.
 	{
-		id: "duelist",
-		label: "Duelist",
+		id: "coin-caller",
+		label: "Coin Caller",
 		category: "games",
-		metric: "duel.won",
+		metric: "coinflip.won",
 		tiers: tiers(3, 17, 71, 199),
 		hidden: false,
 		roleId: null,
-		earnedBy: (tier) => `won ${tier.threshold} duels`,
+		earnedBy: (tier) => `won ${tier.threshold} coin flips`,
+	},
+	{
+		id: "dice-roller",
+		label: "Dice Roller",
+		category: "games",
+		metric: "diceroll.won",
+		tiers: tiers(3, 17, 71, 199),
+		hidden: false,
+		roleId: null,
+		earnedBy: (tier) => `won ${tier.threshold} dice rolls`,
 	},
 	{
 		id: "strategist",
