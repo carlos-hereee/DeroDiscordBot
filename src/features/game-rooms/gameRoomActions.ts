@@ -16,6 +16,10 @@ export const GAME_ROOM_PREFIX = "gameroom";
 // keys each component type in its own map.
 export const GAME_ROOM_SELECT_PREFIX = "gameroomSelect";
 
+// The modal prefix, registered separately again because the registry keys each
+// component type in its own map. Used by hangman's authoring and guess modals.
+export const GAME_ROOM_MODAL_PREFIX = "gameroomModal";
+
 // customId shape: `gameroom:<action>:<tail>[:<arg>]`.
 //
 // `tail` is a roomId for every action except `new`, which carries a game slug because
@@ -52,10 +56,14 @@ export const GAME_ROOM_ACTIONS = {
 	// game is the obvious griefing shape, and the room's own players are the only
 	// people whose surrender means anything.
 	forfeit: { hostOnly: false, playersOnly: true },
-	// The in-room game control: the coin/dice button, and rps's secret pick prompt.
-	// playersOnly is the whole reason spectators cannot influence a match they are
-	// only watching.
+	// The in-room game control: the coin/dice button, rps's secret pick prompt, and
+	// hangman's guess modal. playersOnly is the whole reason spectators cannot
+	// influence a match they are only watching.
 	move: { hostOnly: false, playersOnly: true },
+	// Hangman only: the host opens the authoring modal to set the word. hostOnly is
+	// the point rather than a convenience, since the author is precisely the one
+	// person who must not then guess it.
+	author: { hostOnly: true, playersOnly: false },
 } as const satisfies Record<string, { hostOnly: boolean; playersOnly: boolean }>;
 
 export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;

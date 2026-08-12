@@ -7,6 +7,7 @@ import {
 	wrongLetters,
 	remainingAttempts,
 	HANGMAN_MAX_WRONG,
+	HINT_REVEAL_THRESHOLDS,
 } from "./hangmanState.js";
 import { HANGMAN_WORDS, pickWord } from "./hangmanWords.js";
 
@@ -165,5 +166,76 @@ describe("the word bank", () => {
 	it("picks inside the bank at both rng boundaries", () => {
 		expect(pickWord(() => 0)).toBe(HANGMAN_WORDS[0]);
 		expect(pickWord(() => 0.9999999)).toBe(HANGMAN_WORDS[HANGMAN_WORDS.length - 1]);
+	});
+});
+
+// ── the hint ladder (game rooms Phase 5) ──────────────────────────────────
+// Wrong-guess counts at which a host-authored hint is earned. The thresholds are
+// tested DIRECTLY rather than through a played-out round, because the interesting
+// property is that they fire on the exact miss and never twice.
+describe("hint reveals", () => {
+	const hints = ["first hint", "second hint", "third hint"];
+	const miss = (state: ReturnType<typeof createHangmanState>, letter: string) => applyGuess(state, letter);
+
+	function makeRound() {
+		// "planet" so the misses below are genuinely misses.
+		return createHangmanState("planet", { hints, authoredBy: "host-1" });
+	}
+
+	it("reveals nothing before the first rung", () => {
+		const state = makeRound();
+		const result = miss(state, "b");
+		expect(result.status).toBe("miss");
+		expect((result as { revealedHint?: string }).revealedHint).toBeUndefined();
+		expect(state.revealedHints).toBe(0);
+	});
+
+	it("reveals one hint per rung, on the exact miss that reaches it", () => {
+		const state = makeRound();
+		const reveals: Array<string | undefined> = [];
+		for (const letter of ["b", "c", "d", "f", "g", "h"]) {
+			reveals.push((miss(state, letter) as { revealedHint?: string }).revealedHint);
+		}
+		// wrong counts 1..6; the rungs are 2, 4 and 5.
+		expect(reveals).toEqual([undefined, hints[0], undefined, hints[1], hints[2], undefined]);
+		expect(state.revealedHints).toBe(3);
+	});
+
+	it("matches the exported thresholds rather than a second hand-written copy", () => {
+		const state = makeRound();
+		const revealedAt: number[] = [];
+		for (const letter of ["b", "c", "d", "f", "g", "h"]) {
+			if ((miss(state, letter) as { revealedHint?: string }).revealedHint) revealedAt.push(state.wrong);
+		}
+		expect(revealedAt).toEqual([...HINT_REVEAL_THRESHOLDS]);
+	});
+
+	it("never climbs a rung on a hit or a repeat", () => {
+		const state = makeRound();
+		applyGuess(state, "p");
+		applyGuess(state, "p");
+		applyGuess(state, "l");
+		expect(state.revealedHints).toBe(0);
+		expect(state.wrong).toBe(0);
+	});
+
+	it("stops at the hints the host actually wrote", () => {
+		// One hint, three rungs. The room must not reveal an undefined second hint
+		// when it reaches rung two.
+		const state = createHangmanState("planet", { hints: ["only one"], authoredBy: "host-1" });
+		const reveals: Array<string | undefined> = [];
+		for (const letter of ["b", "c", "d", "f", "g"]) {
+			reveals.push((applyGuess(state, letter) as { revealedHint?: string }).revealedHint);
+		}
+		expect(reveals.filter(Boolean)).toEqual(["only one"]);
+		expect(state.revealedHints).toBe(1);
+	});
+
+	it("reveals nothing at all for a bank word, which has no hints", () => {
+		const state = createHangmanState("planet");
+		for (const letter of ["b", "c", "d", "f", "g"]) {
+			expect((applyGuess(state, letter) as { revealedHint?: string }).revealedHint).toBeUndefined();
+		}
+		expect(state.authoredBy).toBeNull();
 	});
 });

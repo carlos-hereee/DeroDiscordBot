@@ -17,7 +17,7 @@ import { checkGameRoomAccess, gameRoomUpgradeEmbed } from "@features/entitlement
 import { RoomProvisioner, describeRoomOpenFailure } from "./RoomProvisioner.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
-import { openerCardEmbed, openerCardRows, type OpenerCardState } from "./challengeBoardEmbeds.js";
+import { openerCardEmbed, openerCardRows, isCooperativeGame, type OpenerCardState } from "./challengeBoardEmbeds.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -284,6 +284,16 @@ export async function startMatch(interaction: ButtonInteraction, room: IGameRoom
 		return;
 	}
 
+	// ⚠️ A COOPERATIVE GAME NEVER ASKS WHO PLAYS. In hangman the whole pool guesses
+	// together against the host's word, so picking one of them would turn a party
+	// game into a duel and leave the rest as spectators of a game they joined to
+	// play. provisionFromDraft handles the promotion; this just skips the question.
+	if (isCooperativeGame(room.game)) {
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+		await provisionFromDraft(interaction, room, null);
+		return;
+	}
+
 	// More than one candidate: the host chooses who plays, and everyone else stays in
 	// spectatorIds, already in the right field. One candidate needs no question.
 	if (pool.length > 1) {
@@ -349,7 +359,9 @@ export async function handleOpponentSelect(interaction: StringSelectMenuInteract
 async function provisionFromDraft(
 	interaction: ButtonInteraction | StringSelectMenuInteraction,
 	room: IGameRoom,
-	opponentId: string
+	// Null for a cooperative game, where the whole pool plays and there is nobody to
+	// single out.
+	opponentId: string | null
 ): Promise<void> {
 	const guild = interaction.guild!;
 	const stored = await guildConfigStore.findByGuildId(guild.id);
@@ -362,13 +374,18 @@ async function provisionFromDraft(
 		return;
 	}
 
-	// Everyone in the pool who is NOT the chosen opponent becomes an explicit
-	// spectator. In a public room they are dropped instead: the single @everyone
-	// overwrite already covers watching, and per-member entries there would
-	// reintroduce exactly the O(members) cost the public case exists to avoid.
-	const others = (room.spectatorIds ?? []).filter((id) => id !== opponentId);
+	// Head to head: the chosen opponent plays and everyone else in the pool becomes an
+	// explicit spectator. Cooperative: the WHOLE pool plays and nobody is left over.
+	//
+	// Either way, in a PUBLIC room the leftovers are dropped rather than written as
+	// overwrites, because the single @everyone entry already covers watching and
+	// per-member entries would reintroduce the O(members) cost the public case exists
+	// to avoid.
+	const pool = room.spectatorIds ?? [];
+	const cooperative = isCooperativeGame(room.game);
+	const playerIds = cooperative ? [room.hostId, ...pool] : [room.hostId, opponentId as string];
+	const others = cooperative ? [] : pool.filter((id) => id !== opponentId);
 	const spectatorIds = room.visibility === "public" ? [] : others;
-	const playerIds = [room.hostId, opponentId];
 
 	await gameRoomStore.update(room.guildId, room.roomId, { playerIds, spectatorIds });
 

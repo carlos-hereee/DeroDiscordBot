@@ -18,6 +18,7 @@ Key domains under `src/features/`:
 | `activity-tracking/` | Tracks voice minutes and reaction acks for participation scoring. **Answers "did this warrior show up for this KvK event".** Not to be confused with `leveling/`; see the warning below the table. |
 | `leveling/` | XP, levels, prime-numbered milestones, role rewards and achievements. **Answers "how present is this member in this server over time".** `awardXp` is the ONLY public way to grant XP; every listener, game and admin command goes through it. Pure modules (`levelCurve`, `primeLevels`, `xpRules`, `achievementEngine`) carry no discord.js. |
 | `university/` | Commander build lookups (talents, tree guides). |
+| `game-rooms/` | A per match Discord channel with its own permission matrix, an append only transcript, and an archive clock. **A room is earned by DURATION, not head count**: hangman, coin flip, dice roll and rps get one; a blackjack table does not, because a hand takes a minute and runs in place on one edited message. `⚔️challenges` is where a match starts. |
 | `greeter/` | Welcomes new members in the introductions channel on `guildMemberAdd` (a pack-voiced welcome framing + a random icebreaker from a ~500-question bank in `icebreakers.ts`), pinging the member. The intro power-up panel's admin "Say hello" button reuses the same `welcomeNewMember` flow on demand. |
 
 **⚠️ TWO SYSTEMS MEASURE PRESENCE AND THEY ARE NOT THE SAME ONE.** `activity-tracking/` scores KvK EVENT PARTICIPATION into `PlayerActivity`, keyed `{ eventId, eventOccurrence, userId }`, and renders through `/leaderboard` and `LeaderboardBoard`. `leveling/` scores PRESENCE OVER TIME into `MemberLevel`, and renders through `/account`, `/levels` and `LevelsBoard`. Both boards live in the same `#leaderboard` channel and each embed states which question it answers. **Never fold one into the other:** leveling through `PlayerActivity` would need a fake `eventId` for "just chatting", which corrupts the participation score, `/leaderboard`, the dashboard players route and the pinned board simultaneously.
@@ -27,6 +28,24 @@ Key domains under `src/features/`:
 `src/api/` has middleware, routes, and the Express server. `src/db/` has Mongoose models and thin store wrappers. `src/base/` has constants and types.
 
 **Introductions channel is member-writable.** Unlike the other homebase channels (members are read-only), the introductions channel lets `@everyone` send, so newcomers can answer the greeter's icebreaker (and satisfy a Discord Onboarding gate that requires posting in a channel before full access). New guilds get this from `GuildSetupManager.createChannels` (`introOverwrites`); guilds set up before the greeter shipped are migrated idempotently on boot by `ensureIntroChannelsWritable`. The welcome embed is pinned (intro added to `refreshIntroEmbeds`' `shouldBePinned`) so member chatter does not bury it.
+
+## Game rooms
+
+**Two managed categories, not one.** `/setup` builds 🪧 NOTICE BOARD with eight homebase channels and 🎮 ARCADE GAMES with `📋arcade-rules` and `⚔️challenges`. Every consumer that builds or repairs a channel resolves its parent from the spec's REQUIRED `categoryField`; an optional field with a `categoryId` default would let a games spec silently inherit the homebase category, which is risk R2 and produces duplicate channels with nothing thrown.
+
+**A room is a per-match channel inside the arcade category**, created by `RoomProvisioner.open` and destroyed by the archive sweep. Its GameRoom row OUTLIVES it: the transcript is the product, the channel is only where it was played.
+
+Invariants worth knowing before touching any of it:
+
+- **`archiveAt` is written by `roomLifecycle.finish` and by nothing else.** That single-writer property is what makes the 5 minute sweep safe: a live match has a null `archiveAt` and is unreachable from the sweep's query however the clock behaves.
+- **`roomLifecycle.finish` PERSISTS BEFORE IT LOCKS.** A crash between the two this way leaves a finished row and a still-writable channel, which the sweep cleans on schedule. The reverse would leave a locked channel on a row still marked playing, which the finished-only sweep never touches and no recovery path finds.
+- **The lock is an `@everyone` SendMessages DENY, not the removal of a player's allow.** With no explicit deny, players fall through to the guild-wide base permission, which grants SendMessages in almost every server.
+- **A public room spends exactly ONE `@everyone` overwrite**, never one per member. That is the difference between a room that works in a 5000 member guild and one that does not.
+- **`roomTrail.postMove` sends FIRST, then appends.** A transcript row for a move nobody saw is unrecoverable; a missing row after a successful send is merely a gap.
+- **One open room per host, enforced by a PARTIAL UNIQUE INDEX** over the non-terminal statuses, not by a Map. A Map dies on every Railway deploy; the index does not. A dead row therefore holds its host's one slot forever, which is why `ChannelDeleteWatcher` and the boot sweep both close abandoned rooms.
+- **`secret.word` is server side only.** It reaches Discord in exactly one place, hangman's result line, after the round is over, and the dashboard route projects it away at the database.
+- **The host does not guess their own hangman word.** Refused in both the button and the modal submit, because a modal is reachable without the button that opened it.
+- **No bot can be an opponent, structurally.** The two ways into a match are a StringSelect the BOT populates and a Join button a bot cannot click. Do not add an `addUserOption` to a game: that is what made the old rejection string necessary, and the string is gone.
 
 ## Commands and scripts
 

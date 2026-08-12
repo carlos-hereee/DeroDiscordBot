@@ -17,6 +17,17 @@ export const HANGMAN_MAX_WRONG = 6;
 
 export type HangmanStatus = "playing" | "won" | "lost";
 
+// ── the hint ladder (game rooms Phase 5) ──
+// Wrong-guess counts at which the next host-authored hint is earned. Three rungs
+// against three allowed extra hints, and the spacing is deliberate: 2 is early
+// enough to rescue a room that opened badly, then 4 and 5 tighten as the gallows
+// fills, so the last hint lands when it is nearly over rather than as a
+// consolation after it is.
+//
+// A hint is earned on the miss that REACHES the threshold, never on a hit and
+// never on a repeat, because neither of those cost the room anything.
+export const HINT_REVEAL_THRESHOLDS: readonly number[] = [2, 4, 5];
+
 export interface HangmanState {
 	word: string;
 	// Every letter tried this round, hits and misses alike, lowercased. A Set so
@@ -24,6 +35,15 @@ export interface HangmanState {
 	guessed: Set<string>;
 	wrong: number;
 	status: HangmanStatus;
+	// The host's extra hints, in the order they were authored. Empty for a casual
+	// round drawn from the bundled bank, which has no hints at all.
+	hints: string[];
+	// How many rungs of the ladder the room has climbed. Only ever incremented by
+	// applyGuess, so it cannot drift from `wrong`.
+	revealedHints: number;
+	// The host, when a member authored this word. Null for a bank word, which is
+	// what tells the handler whether anybody is barred from guessing.
+	authoredBy: string | null;
 }
 
 export type HangmanGuess =
@@ -37,10 +57,29 @@ export type HangmanGuess =
 	// nothing.
 	| { status: "closed" }
 	| { status: "hit"; letter: string; solved: boolean }
-	| { status: "miss"; letter: string; remaining: number; lost: boolean };
+	// `revealedHint` is present only on the miss that crossed a rung of the ladder.
+	// Carried on the RESULT rather than left for the caller to derive, so the room
+	// trail can post the reveal as its own move without re-deriving a threshold and
+	// getting it subtly different.
+	| { status: "miss"; letter: string; remaining: number; lost: boolean; revealedHint?: string };
 
-export function createHangmanState(word: string): HangmanState {
-	return { word: word.toLowerCase(), guessed: new Set<string>(), wrong: 0, status: "playing" };
+export interface CreateHangmanOptions {
+	// The host's extra hints. A bank word passes none.
+	hints?: string[];
+	// The host, when a member authored the word. They are barred from guessing it.
+	authoredBy?: string | null;
+}
+
+export function createHangmanState(word: string, options: CreateHangmanOptions = {}): HangmanState {
+	return {
+		word: word.toLowerCase(),
+		guessed: new Set<string>(),
+		wrong: 0,
+		status: "playing",
+		hints: options.hints ?? [],
+		revealedHints: 0,
+		authoredBy: options.authoredBy ?? null,
+	};
 }
 
 export function applyGuess(state: HangmanState, raw: string): HangmanGuess {
@@ -66,7 +105,23 @@ export function applyGuess(state: HangmanState, raw: string): HangmanGuess {
 	state.wrong += 1;
 	const lost = state.wrong >= HANGMAN_MAX_WRONG;
 	if (lost) state.status = "lost";
-	return { status: "miss", letter, remaining: HANGMAN_MAX_WRONG - state.wrong, lost };
+
+	// Climb at most ONE rung per miss. `HINT_REVEAL_THRESHOLDS[revealedHints]` is the
+	// next rung this room has not taken, so comparing it against the new wrong count
+	// needs no search and cannot double-reveal: the counter advances with the reveal,
+	// which moves the comparison to the following rung.
+	//
+	// Still synchronous, and it must stay that way. An await anywhere between the
+	// check and the increment would let two members' misses land in the same tick and
+	// both claim the same hint.
+	let revealedHint: string | undefined;
+	const nextRung = HINT_REVEAL_THRESHOLDS[state.revealedHints];
+	if (nextRung !== undefined && state.wrong >= nextRung && state.hints.length > state.revealedHints) {
+		revealedHint = state.hints[state.revealedHints];
+		state.revealedHints += 1;
+	}
+
+	return { status: "miss", letter, remaining: HANGMAN_MAX_WRONG - state.wrong, lost, revealedHint };
 }
 
 // Every distinct letter of the word has been guessed. Derived rather than

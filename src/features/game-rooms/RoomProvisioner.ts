@@ -7,6 +7,7 @@ import { buildRoomChannelName, resolveRoomChannelName } from "./roomNaming.js";
 import { buildRoomOverwrites } from "./roomPermissions.js";
 import { roomOpenerEmbed } from "./gameRoomsEmbeds.js";
 import { roomMoveRow } from "./roomGames.js";
+import { hangmanRow } from "./roomHangman.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -195,7 +196,10 @@ export const RoomProvisioner = {
 		const opener = await channel
 			.send({
 				embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility === "public")],
-				components: [roomMoveRow({ roomId: room.roomId, game })],
+				// Hangman opens with the AUTHORING control, not a guess control: there
+				// is no word yet, and offering "guess a letter" before one exists would
+				// be a button whose only possible answer is "not yet".
+				components: [game === "hangman" ? hangmanRow({ roomId: room.roomId }, false) : roomMoveRow({ roomId: room.roomId, game })],
 			})
 			.catch(() => null);
 		await opener?.pin().catch(() => undefined);

@@ -1,5 +1,5 @@
 import { MessageFlags, type ButtonInteraction } from "discord.js";
-import { registerButton, registerSelectMenu } from "@handlers/interactionRegistry.js";
+import { registerButton, registerSelectMenu, registerModal } from "@handlers/interactionRegistry.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
@@ -7,6 +7,7 @@ import { errorEmbed } from "@utils/embedBuilder.js";
 import {
 	GAME_ROOM_PREFIX,
 	GAME_ROOM_SELECT_PREFIX,
+	GAME_ROOM_MODAL_PREFIX,
 	GAME_ROOM_ACTIONS,
 	parseGameRoomCustomId,
 	type GameRoomAction,
@@ -17,6 +18,7 @@ import { roomTrail } from "./roomTrail.js";
 import { challengeBoard } from "./challengeBoard.js";
 import { CHALLENGE_GAMES } from "./challengeBoardEmbeds.js";
 import { runRoomMove, handleRpsSelect } from "./roomGames.js";
+import { openAuthoringModal, openGuessModal, handleAuthoringModal, handleGuessModal } from "./roomHangman.js";
 import type { GameSlug } from "./roomTypes.js";
 
 // The actions that only make sense while a draft is still a draft. Listed once so
@@ -127,7 +129,18 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			return;
 
 		// ── in the room ──
+		case "author":
+			await openAuthoringModal(interaction, room);
+			return;
 		case "move":
+			// Hangman's move is a MODAL rather than an immediate resolution, so it
+			// forks here instead of inside runRoomMove: a modal must be shown as the
+			// FIRST response to the interaction, and runRoomMove's other games have
+			// already deferred by the time they know which game they are.
+			if (room.game === "hangman") {
+				await openGuessModal(interaction, room);
+				return;
+			}
 			await runRoomMove(interaction, room);
 			return;
 		case "archive": {
@@ -174,6 +187,14 @@ export function registerGameRoomHandlers(): void {
 		if (action === "invite") return challengeBoard.handleInviteSelect(interaction);
 		if (action === "opponent") return challengeBoard.handleOpponentSelect(interaction);
 		if (action === "rps") return handleRpsSelect(interaction);
+		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
+	});
+	// Hangman's two modals. Same sub-routing shape, and each sub-handler re-gates the
+	// actor: a modal submit is reachable without the button that opened it.
+	registerModal(GAME_ROOM_MODAL_PREFIX, async (interaction) => {
+		const action = interaction.customId.split(":")[1];
+		if (action === "word") return handleAuthoringModal(interaction);
+		if (action === "guess") return handleGuessModal(interaction);
 		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
 	});
 }

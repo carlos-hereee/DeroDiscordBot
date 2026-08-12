@@ -1,0 +1,133 @@
+// ── hangmanAuthoring ───────────────────────────────────────────────────────
+// What:  validates a host-authored hangman word, its required hint, and its
+//        optional extra hints, and hands back either a clean triple or ONE
+//        specific reason it was refused.
+// Who:   the `gameroomModal:word:<roomId>` submit handler, and nothing else.
+// When:  once per hosted room, before the round exists.
+// Where: PURE. No Discord, no store, no I/O, which is what lets every refusal
+//        below be a unit test rather than something you discover by typing an
+//        accented word into a modal in a real guild.
+// How:   normalise first, then check in the order a host would hit the problems,
+//        and return a discriminated union so the handler renders one message per
+//        reason and cannot accidentally show a generic "invalid word".
+//
+// ⚠️ THE WORD NEVER LEAVES THIS MODULE IN AN ERROR. Every rejection reason below
+// is a bare tag, never the offending text, because the handler echoes the reason
+// back into the channel-adjacent ephemeral reply and a reason carrying the word
+// would defeat the entire point of a hidden word (risk R12).
+
+// The mask leaks structure if a word carries anything but letters: a space or a
+// hyphen shows through as itself, so "ice cream" is half solved before a letter is
+// played. Same rule the bundled word bank documents for itself.
+const WORD_PATTERN = /^[a-z]+$/;
+
+// 4 is the floor because below it a lucky pair of vowels solves the word. 12 is a
+// deliberate widening over the bundled bank's 9: a host who wants it harder should
+// be allowed to, and past 12 a six miss budget stops being a game and becomes a
+// coin flip.
+export const HANGMAN_WORD_MIN = 4;
+export const HANGMAN_WORD_MAX = 12;
+
+// "aaaa" and "abab" are technically words-shaped and are not games. Three distinct
+// letters is the smallest count where the mask actually carries information.
+export const HANGMAN_MIN_DISTINCT = 3;
+
+export const HANGMAN_HINT_MAX = 100;
+export const HANGMAN_MAX_EXTRA_HINTS = 3;
+
+// A small screen, not a profanity filter. The bundled bank documents the same rule
+// for itself: a PARTIALLY revealed word can read as a slur even when the whole word
+// is innocent, and the mask is on screen for the entire round. Kept short and
+// obvious on purpose; this is a guard rail, not moderation.
+const DENYLIST: readonly string[] = ["nazi", "rape", "slut", "whore", "nigg", "fagg", "kike", "spic", "chink"];
+
+export type HangmanAuthoringRejection =
+	| "wordMissing"
+	| "wordNotLetters"
+	| "wordTooShort"
+	| "wordTooLong"
+	| "wordTooFewDistinct"
+	| "wordDenied"
+	| "hintMissing"
+	| "hintTooLong"
+	| "hintContainsWord"
+	| "tooManyExtraHints"
+	| "extraHintTooLong"
+	| "extraHintContainsWord";
+
+export type HangmanAuthoringResult =
+	| { ok: true; word: string; hint: string; extraHints: string[] }
+	| { ok: false; reason: HangmanAuthoringRejection };
+
+// Fold a raw modal value into the form everything downstream compares against.
+// Internal whitespace is COLLAPSED rather than stripped so a hint keeps its shape
+// while a word with a space in it still fails WORD_PATTERN and is refused honestly
+// rather than silently repaired into a different word.
+function normalise(raw: string): string {
+	return raw.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// ⚠️ A HINT MAY NOT GIVE THE WORD AWAY, AND THE OBVIOUS CHECK MISSES HALF OF IT.
+// Two directions, both needed:
+//   ① the hint CONTAINS the word. Catches "the answer is planet" and also
+//      "planetary", since that token contains "planet" outright.
+//   ② a hint token is contained BY the word. Catches "plan" for "planet", which
+//      direction ① cannot see: "plan" does not contain "planet". A four letter
+//      prefix of a six letter word hands over most of the mask in order, which is
+//      the same leak wearing a shorter coat.
+// Tokens shorter than HANGMAN_MIN_DISTINCT are ignored in direction ②, because at
+// one or two letters almost any hint would collide with almost any word and every
+// hint would be refused.
+function mentionsWord(text: string, word: string): boolean {
+	const normalised = normalise(text);
+	if (normalised.includes(word)) return true;
+
+	return normalised
+		.split(/[^a-z]+/)
+		.some((token) => token.length >= HANGMAN_MIN_DISTINCT && word.includes(token));
+}
+
+export function validateHangmanAuthoring(
+	rawWord: string,
+	rawHint: string,
+	rawExtraHints: string[] = []
+): HangmanAuthoringResult {
+	const word = normalise(rawWord);
+
+	if (!word) return { ok: false, reason: "wordMissing" };
+	// Checked before length, because "ice cream" is 9 characters and reporting it as
+	// the wrong length would send the host off fixing the wrong thing.
+	if (!WORD_PATTERN.test(word)) return { ok: false, reason: "wordNotLetters" };
+	if (word.length < HANGMAN_WORD_MIN) return { ok: false, reason: "wordTooShort" };
+	if (word.length > HANGMAN_WORD_MAX) return { ok: false, reason: "wordTooLong" };
+	if (new Set(word).size < HANGMAN_MIN_DISTINCT) return { ok: false, reason: "wordTooFewDistinct" };
+	if (DENYLIST.some((entry) => word.includes(entry))) return { ok: false, reason: "wordDenied" };
+
+	const hint = rawHint.trim().replace(/\s+/g, " ");
+	if (!hint) return { ok: false, reason: "hintMissing" };
+	if (hint.length > HANGMAN_HINT_MAX) return { ok: false, reason: "hintTooLong" };
+	if (mentionsWord(hint, word)) return { ok: false, reason: "hintContainsWord" };
+
+	// Blank lines are dropped rather than counted: a host who leaves a trailing
+	// newline in the paragraph box has not written a fourth hint.
+	const extraHints = rawExtraHints.map((line) => line.trim().replace(/\s+/g, " ")).filter((line) => line.length > 0);
+
+	if (extraHints.length > HANGMAN_MAX_EXTRA_HINTS) return { ok: false, reason: "tooManyExtraHints" };
+	for (const extra of extraHints) {
+		if (extra.length > HANGMAN_HINT_MAX) return { ok: false, reason: "extraHintTooLong" };
+		if (mentionsWord(extra, word)) return { ok: false, reason: "extraHintContainsWord" };
+	}
+
+	return { ok: true, word, hint, extraHints };
+}
+
+// Split the modal's paragraph field into candidate hints.
+//
+// ⚠️ SPLIT ON \r?\n, NOT \n. A multipart or browser-submitted textarea value can
+// arrive CRLF-terminated, and splitting on "\n" alone leaves a trailing carriage
+// return on every line, which then counts toward the 100 character cap and shows up
+// as a stray character in the rendered hint.
+export function splitExtraHints(raw: string | null | undefined): string[] {
+	if (!raw) return [];
+	return raw.split(/\r?\n/);
+}

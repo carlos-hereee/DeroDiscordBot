@@ -159,6 +159,60 @@ export const gameRoomsCopy = {
 			`<@${challengerId}> threw **${challengerPick}**. <@${opponentId}> threw **${opponentPick}**.`,
 	},
 
+	// ── hangman in a room (Phase 5) ──
+	hangman: {
+		authorButtonLabel: "Set the word",
+		guessButtonLabel: "Guess a letter",
+
+		modalTitle: "Set the word",
+		wordLabel: "The word",
+		wordPlaceholder: "4 to 12 letters, a to z only",
+		hintLabel: "A hint (required)",
+		hintPlaceholder: "Something true that does not give it away",
+		extraHintsLabel: "Extra hints, one per line (optional)",
+		extraHintsPlaceholder: "Earned after 2, 4 and 5 wrong guesses",
+
+		// ⚠️ ECHOES THE HINT, NEVER THE WORD (risk R12). The host already knows the
+		// word; repeating it buys nothing and puts it one mis-click from a channel.
+		authored: (hint: string, extraCount: number): string =>
+			extraCount > 0
+				? `The word is set. Your hint: "${hint}" (plus ${extraCount} more to be earned).`
+				: `The word is set. Your hint: "${hint}"`,
+
+		waitingForWord: (hostId: string): string => `<@${hostId}> is choosing a word.`,
+		// The bar, said out loud on the card rather than only enforced. A host who
+		// finds out by being refused reads it as a bug.
+		hostCannotGuess: "You set the word, so you do not get to guess it.",
+		opener: (hostId: string, hint: string): string =>
+			[`<@${hostId}> set the word.`, "", `**Hint:** ${hint}`, "", "Everyone else: guess a letter."].join("\n"),
+
+		guessModalTitle: "Guess a letter",
+		guessLabel: "One letter",
+
+		// ── the move trail ──
+		// Each of these is its own message. The scroll IS the game's history, which
+		// is the whole reason a room exists rather than one edited board.
+		hit: (actorId: string, letter: string, mask: string, remaining: number): string =>
+			`✅ <@${actorId}> played **${letter.toUpperCase()}**\n\`${mask}\`\nMisses left: ${remaining}`,
+		miss: (actorId: string, letter: string, mask: string, misses: string[], remaining: number): string =>
+			[
+				`❌ <@${actorId}> played **${letter.toUpperCase()}**`,
+				`\`${mask}\``,
+				misses.length ? `Tried and failed: ${misses.map((m) => m.toUpperCase()).join(" ")}` : "",
+				`Misses left: ${remaining}`,
+			]
+				.filter(Boolean)
+				.join("\n"),
+		hintRevealed: (hint: string): string => `💡 The room has earned a hint: **${hint}**`,
+		repeat: (letter: string): string => `**${letter.toUpperCase()}** has already been played.`,
+		invalid: "That is not a single letter from A to Z.",
+		closed: "This round is already over.",
+
+		// The ONLY place the word is ever rendered.
+		wonLine: (word: string): string => `🎉 The room got it. The word was **${word.toUpperCase()}**.`,
+		lostLine: (word: string): string => `💀 The gallows wins. The word was **${word.toUpperCase()}**.`,
+	},
+
 	// ── the move trail ──
 	trail: {
 		// A join is the one move kind posted by the room itself rather than by a game.

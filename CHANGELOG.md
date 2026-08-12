@@ -6,6 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 This file starts at v1.4.0. Earlier releases predate the changelog convention; the public-facing summaries for those releases live in the historical `embedContent.featureAnnouncement` blocks rendered to each guild via the boot-time announcement system.
 
+## [Unreleased]
+
+⚠️ **This file skips from 1.4.0 to here.** Releases 1.5.x and 1.6.x shipped without changelog entries; `package.json` is at 1.6.1. That gap is not filled below, it is only noted so a reader does not mistake this entry for the whole of what changed since April.
+
+### Added
+
+* **Game rooms.** A two-player or cooperative match now plays in its own Discord channel under a second managed category, 🎮 ARCADE GAMES. `⚔️challenges` carries a board where a member starts a challenge, chooses **Invite only** or **Open to all**, gathers who is in, and opens the room. The room's full move list is kept as an append-only transcript that outlives the channel.
+* **Hangman with a host-authored word.** The host writes the word behind a modal with a required hint and up to three extra hints, earned by the room at 2, 4 and 5 wrong guesses. Every letter played is its own attributed message. The host cannot guess their own word, and the word appears in exactly one message, the result card.
+* **`GET /api/game-rooms`** for the dashboard, behind the existing signature gate. Returns finished matches newest first, excluding the hidden word and the full move list.
+* **A room archive sweep** on its own 5 minute cron. A finished room stays readable for four hours, or clears immediately when the host presses **Archive now**.
+
+### Changed
+
+* **`/mini-game coin-flip`, `dice-roll` and `rps` no longer take an `opponent`.** They post a challenge card to `⚔️challenges` instead. A Discord user picker can return a bot, which is why the bot used to carry a "pick a real member" refusal; the two ways into a match are now a bot-populated menu and a button, so the refusal has nothing left to refuse and was removed.
+* **`/mini-game hangman` is unchanged outside a room** and is refused inside one, where the room's own controls play the round.
+
+### Removed
+
+* **The old challenge handshake** (`challengeFlow`, and the duel and rps handlers built on it). It kept a match in process memory, so a Railway deploy mid-handshake lost it; a room row survives the deploy.
+
 ## [1.4.0]: 2026-04-27
 
 ### Fixed

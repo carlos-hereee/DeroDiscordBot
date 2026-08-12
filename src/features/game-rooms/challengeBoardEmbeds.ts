@@ -16,12 +16,26 @@ import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 //        posted a fresh message for each of visibility, join and start would bury
 //        the channel it lives in, and ⚔️challenges is meant to be scannable.
 
-// The two-player games the board can start. Hangman and blackjack are absent on
-// purpose: they are hostable from the 📋arcade-rules card because they need no named
-// opponent, and a room is earned by DURATION rather than by head count.
-export const CHALLENGE_GAMES: readonly GameSlug[] = ["coinflip", "diceroll", "rps"] as const;
+// The games the board can start. Blackjack is absent on purpose: it needs no named
+// opponent and a hand takes a minute, so a table runs in place on one edited message
+// and never earns a room.
+//
+// ⚠️ HANGMAN IS HERE BUT IS NOT HEAD TO HEAD, and the difference is load bearing at
+// the start step. Coin flip, dice roll and rps seat exactly TWO, so the host picks
+// one joiner to play and the rest watch. Hangman is COOPERATIVE: everyone who joined
+// guesses together against a word the host wrote, so every joiner becomes a player
+// and the host is the one person who does not play. See COOPERATIVE_GAMES below.
+export const CHALLENGE_GAMES: readonly GameSlug[] = ["coinflip", "diceroll", "rps", "hangman"] as const;
 
-const GAME_EMOJI: Record<string, string> = { coinflip: "🪙", diceroll: "🎲", rps: "✊" };
+// Games whose whole pool plays rather than one chosen opponent. Declared as a set
+// rather than checked inline, because the start path and the permission matrix both
+// need the answer and a second `=== "hangman"` in either would be the beginning of a
+// drift.
+export const COOPERATIVE_GAMES: readonly GameSlug[] = ["hangman"] as const;
+
+export const isCooperativeGame = (game: GameSlug): boolean => COOPERATIVE_GAMES.includes(game);
+
+const GAME_EMOJI: Record<string, string> = { coinflip: "🪙", diceroll: "🎲", rps: "✊", hangman: "🪢" };
 
 export function boardIntroEmbed(): EmbedBuilder {
 	return infoEmbed(

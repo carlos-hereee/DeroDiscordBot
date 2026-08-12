@@ -27,6 +27,7 @@ import {
 	type HangmanState,
 } from "./hangmanState.js";
 import { awardMultiPlayerResult } from "./gameXp.js";
+import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 
 // ── /mini-game hangman ─────────────────────────────────────────────────────
 // What:  a PUBLIC, channel wide round. The board is a normal channel message
@@ -167,6 +168,27 @@ export async function runHangman(interaction: ChatInputCommandInteraction): Prom
 	if (!(channel instanceof TextChannel)) {
 		await interaction.editReply({ embeds: [errorEmbed(gamesCopy.outsideGuild)] });
 		return;
+	}
+
+	// ── casual mode vs room mode (game rooms plan task 5.8) ──
+	// What:  refuse the CASUAL board inside a game room channel.
+	// Why:   a room's hangman is a different game: the host authors the word, the
+	//        host may not guess, and every move is its own message. Posting the
+	//        casual in-place board on top of that would put a SECOND round in the
+	//        channel, drawn from the bundled word bank, with no author and no
+	//        host bar, and the two boards would race each other for the scroll.
+	// Where: the selector is the existence of a GameRoom row for this channel,
+	//        exactly as the plan specifies, rather than a channel name or a
+	//        category check, both of which an admin can change.
+	// How:   casual behaviour OUTSIDE a room is untouched by this branch, which is
+	//        the other half of 5.8: everything below this point is the code that
+	//        shipped before rooms existed.
+	if (interaction.guildId) {
+		const room = await gameRoomStore.findByChannelId(interaction.guildId, channel.id).catch(() => null);
+		if (room && room.status === "playing") {
+			await interaction.editReply({ embeds: [errorEmbed(gamesCopy.hangmanInRoom)] });
+			return;
+		}
 	}
 
 	const cooldownKey = `${interaction.guildId ?? "dm"}:${interaction.user.id}`;

@@ -239,6 +239,10 @@ export const gamesCopy = {
 	// feature builds, and `outsideGuild` is hangman's "not in a DM" refusal.
 	footer: "Company Uno • for fun only",
 	outsideGuild: "Games only work inside a server, not in a DM.",
+	// Refused rather than allowed, because a casual round posted inside a game room
+	// would put a SECOND hangman in the channel, drawn from the word bank, with no
+	// author and no host bar, racing the room's own board for the scroll.
+	hangmanInRoom: "This channel is a game room. Use the buttons on the room's own card to play the round in here.",
 
 	// Phase 1 placeholder for the three games whose handlers land in Phases 2
 	// through 4. It exists so the command shell is invokable and the routing test

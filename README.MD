@@ -177,15 +177,26 @@ Bot DMs server owner
 Owner runs /setup @AdminRole
       │
       ▼
-🪧 NOTICE BOARD constructed
-  ├── category created (hidden from @everyone)
-  ├── #📜introductions  → bot introduces itself
-  ├── #📖command-center → command guide
-  ├── #🏆leaderboard    → public rankings
-  ├── #📅event-schedule → upcoming events
-  ├── #📢announcements  → reminders post here
-  └── #🔒inner-sanctum  → admin only, completely hidden
+TWO categories constructed
+      │
+🪧 NOTICE BOARD
+  ├── #📜introductions   → bot introduces itself (the one member-writable channel)
+  ├── #📖command-center  → command guide
+  ├── #🏆leaderboard     → public rankings
+  ├── #📅event-schedule  → upcoming events
+  ├── #📢announcements   → reminders post here
+  ├── #🔜upcoming-events → a post per event inside the 24h horizon
+  ├── #🔒inner-sanctum   → admin only, completely hidden
+  └── #🎛️admin-controls  → admin command guide and control panel
+      │
+🎮 ARCADE GAMES
+  ├── #📋arcade-rules    → what you can play, with who, and what a room is
+  └── #⚔️challenges      → where a match starts; rooms are created under here
 ```
+
+Ten channels across two categories. A **game room** is a per-match channel created
+under 🎮 ARCADE GAMES and deleted four hours after the match ends; its transcript is
+kept in Mongo and outlives the channel.
 
 ### ② Admin configures the season
 

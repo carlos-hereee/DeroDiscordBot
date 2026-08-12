@@ -13,6 +13,7 @@ import { createScheduleRouter } from "./routes/schedule.routes.js";
 import { createLeaderboardTrackingRouter } from "./routes/leaderboardTracking.routes.js";
 import { createAutoHealRouter } from "./routes/autoHeal.routes.js";
 import { createPairingRouter } from "./routes/pairing.routes.js";
+import { createGameRoomsRouter } from "./routes/gameRooms.routes.js";
 import { dashboardOrigin, port } from "@utils/config.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
@@ -85,6 +86,11 @@ export function startApiServer(client: Client): Server {
 	app.use("/api/leaderboard", createLeaderboardRouter(client));
 	app.use("/api/players", createPlayersRouter(client));
 	app.use("/api/reminders", remindersRouter);
+	// Game room history for the dashboard. No client injection: unlike leaderboard
+	// and players it does not enrich rows with live nicknames, because a room row
+	// already carries the ids the dashboard needs and the match is over by the time
+	// it is listed.
+	app.use("/api/game-rooms", createGameRoomsRouter());
 	// Schedule-level pause/resume for the Command Center button. Separate
 	// router from the per-event pause that lives in events.routes, the
 	// guild-wide flag has different semantics than the per-event flag.
