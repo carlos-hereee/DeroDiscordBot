@@ -116,6 +116,94 @@ export const BOT_CONSTANTS = {
 	// partial unique index counts "draft" as live.
 	GAME_ROOM_DRAFT_TIMEOUT_MS: 10 * 60_000, // 10 minutes
 
+	// ── leveling ──────────────────────────────────────────────────
+	// What:  every number the leveling system runs on: how often buffered xp is
+	//        flushed, how long the in-memory maps may hold an entry, how level up
+	//        announcements are coalesced, how often voice is swept, and what each
+	//        game pays.
+	// Who:   xpWriter (the intervals), levelUpAnnouncer (the coalescing pair),
+	//        voiceXp (the sweep), every game's award hook (the amounts),
+	//        XpPeriod's TTL index (the retention window).
+	// When:  read at boot for the intervals, and per award for the amounts.
+	// Where: constants rather than env vars, and rather than GuildConfig, for the
+	//        same reason the GAME_ROOM_ numbers above are: these are the knobs an
+	//        operator would turn, and a config typo must not be able to silently
+	//        reprice a guild's progression. The per-guild knobs that DO belong to
+	//        an admin (cooldowns, xp ranges, multipliers, the curve) live on
+	//        GuildConfig.leveling instead.
+	LEVELING: {
+		// How often staged message xp is written. Buffered xp is lost on a hard
+		// crash, bounded by this interval, which is acceptable for xp specifically
+		// and would not be for anything a member paid for. A graceful Railway
+		// redeploy loses nothing: flushNow() runs inside the existing
+		// gracefulShutdown before the Mongo disconnect.
+		FLUSH_INTERVAL_MS: 10_000,
+
+		// How often the cooldown and pending maps are swept for dead entries. Both
+		// are module scoped and grow with unique members, so an unswept map is a
+		// slow leak on a busy bot rather than an immediate failure.
+		MAP_SWEEP_INTERVAL_MS: 5 * 60_000,
+
+		// The coalescing window for level up announcements. The FIRST level up
+		// schedules a send this far out and later ones inside the window are
+		// absorbed into it, with the timer LEFT RUNNING. Deliberately not a
+		// reset-on-each-call debounce, which would starve the channel during a
+		// busy burst. Same shape as scheduleLeaderboardRefresh.
+		ANNOUNCE_COALESCE_MS: 15_000,
+
+		// Above this many level ups in one window, send ONE combined message
+		// instead of that many separate ones. This is what keeps a live
+		// #announcements channel readable, and it is also the per-channel 429
+		// defense, solved once by the same mechanism.
+		ANNOUNCE_BURST_THRESHOLD: 3,
+
+		// How often the voice sweep walks cached voice states. Voice xp is a SWEEP
+		// rather than an award on VoiceStateUpdate: joining a channel to measure it
+		// would limit voice xp to one channel per guild, cost real resources, and
+		// be a privacy problem, which is Arcane's own stated reasoning.
+		VOICE_SWEEP_INTERVAL_MS: 60_000,
+
+		// How long an XpPeriod row survives. 400 days keeps a full year plus a
+		// month of slack, so a "same month last year" comparison stays possible,
+		// while bounding a collection that gains a row per member per period
+		// forever. Expressed in seconds because that is what Mongo's
+		// expireAfterSeconds takes.
+		XP_PERIOD_RETENTION_SECONDS: 400 * 24 * 60 * 60,
+
+		// ── what each source pays ──
+		// Per game amounts. A game played in its own GAME ROOM pays more than the
+		// same game played in a channel, because a match with its own channel is a
+		// bigger commitment than a one message duel.
+		GAME_PLAY_XP: 25,
+		GAME_WIN_XP: 75,
+		GAME_TIE_XP: 40,
+		GAME_ROOM_PLAY_XP: 40,
+		GAME_ROOM_WIN_XP: 120,
+
+		// Fortune is the most farmable award in the feature: it has a 10 second
+		// cooldown and no opponent, so its payout is small and flat and it has no
+		// win bonus to chase.
+		FORTUNE_XP: 10,
+	},
+
+	// ── PINGABLE ──────────────────────────────────────────────────
+	// What:  the message kinds that are ALLOWED to mention members. Everything
+	//        not named here must send with
+	//        allowedMentions: { parse: [], roles: [], users: [] }.
+	// Who:   levelUpAnnouncer asserts its own kind is absent from this set before
+	//        every send; the reminder and go-live paths are the kinds that ARE in
+	//        it.
+	// When:  checked at send time.
+	// Where: this exists because "never ping" is a rule the owner set for the
+	//        whole leveling feature (locked decision D3) and rules enforced by
+	//        habit decay. A future engineer who wants leveling to ping now has to
+	//        add a named kind to a named list, which is a decision somebody can
+	//        review, instead of deleting one allowedMentions line, which is an
+	//        accident nobody notices until a thousand members get a notification.
+	// How:   a frozen Set of stable kind strings. Membership is the ONLY thing
+	//        that grants permission to mention.
+	PINGABLE: new Set<string>(["reminder.fire", "stream.goLive"]),
+
 	// ── invite URL provenance ─────────────────────────────────────
 	// The actual OAuth install URL is composed in @utils/config as
 	// `botInviteLink` so dev and prod each serve their own client id.

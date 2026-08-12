@@ -153,6 +153,27 @@ const enforceGameRoomTier = (() => {
 	const raw = (process.env.ENFORCE_GAME_ROOM_TIER ?? "").toLowerCase().trim();
 	return raw === "1" || raw === "true" || raw === "yes";
 })();
+
+// ── Leveling paid-tier enforcement ──
+// What: when true, earning xp asks nexious-server whether this guild carries the entitlement.
+//   When false (the default, and the production state today, and the state the owner intends
+//   for the foreseeable future) the gate returns allowed immediately with ZERO network calls.
+// Who: read only by features/entitlements/levelingAccess.ts.
+// When: leveling is FREE for every member, mirroring the mini games decision, so this is not
+//   expected to be flipped. The seam exists so that if it ever is, the change is a config flip
+//   rather than threading a gate through the award path after the fact.
+// Where: identical shape and reasoning to enforceGameRoomTier above, deliberately. nexious-server
+//   remains the tier authority; the bot's own DB never stores a guild's platform tier.
+// How: same explicit string comparison, NOT a truthiness check, so a stray "false" in the env
+//   cannot read as on.
+//
+// ⚠️ This is NOT a kill switch for the leveling feature. Turning leveling OFF is
+// GuildConfig.leveling.enabled per guild, which needs no deploy. Do not conflate the two: this
+// flag decides who is ENTITLED, and it fails OPEN, so setting it could never disable anything.
+const enforceLevelingTier = (() => {
+	const raw = (process.env.ENFORCE_LEVELING_TIER ?? "").toLowerCase().trim();
+	return raw === "1" || raw === "true" || raw === "yes";
+})();
 // CORS allow-list for the dashboard.
 // What: the Express `cors({ origin })` middleware accepts a string (single
 //   origin), an array (multiple origins), or a function. We want multiple
@@ -203,4 +224,5 @@ export {
 	useRemoteEvents,
 	playerActivityRetentionDays,
 	enforceGameRoomTier,
+	enforceLevelingTier,
 };

@@ -309,6 +309,72 @@ export const LOG_MESSAGES = {
 		presenceError: "Presence tracking error:",
 	},
 
+	// ── leveling ───────────────────────────────────────────────────────
+	// Every console line the leveling system emits. Note what is NOT here and
+	// never will be: any message content, any word count, any per message log at
+	// all. Message xp is awarded WITHOUT reading message text, and a log line
+	// that quoted one would reintroduce the privacy surface the whole design
+	// avoids by not requesting the MessageContent intent.
+	leveling: {
+		// ── the write path ──
+		flushFailed: (guildCount: number) => `[leveling] flush of ${guildCount} pending member(s) failed:`,
+		// Buffered xp lost on a hard crash is bounded by the flush interval and is
+		// accepted. This fires only when the graceful path itself failed, which
+		// means a redeploy really did drop awards and an operator should see it.
+		shutdownFlushFailed: "[leveling] flushNow during graceful shutdown failed, buffered xp for this window is lost:",
+		awardFailed: (source: string, guildId: string) =>
+			`[leveling] award from source ${source} failed for guild ${guildId}, swallowed:`,
+		// Two concurrent upserts on a missing row race and one loses. Expected and
+		// recovered by a single retry, so this is a debug-level breadcrumb rather
+		// than a problem, and it only becomes interesting if it repeats.
+		upsertRaced: (guildId: string, userId: string) =>
+			`[leveling] duplicate key upserting ${userId} in guild ${guildId}, retrying once`,
+		upsertRetryFailed: (guildId: string, userId: string) =>
+			`[leveling] retry after duplicate key still failed for ${userId} in guild ${guildId}:`,
+
+		// ── announcements ──
+		announceChannelMissing: (channelId: string, guildId: string) =>
+			`[leveling] announce channel ${channelId} not found or not a TextChannel for guild ${guildId}`,
+		// The failure that is otherwise INVISIBLE to an admin: the bot is in the
+		// channel, the feature is on, and nothing ever posts. Named permissions so
+		// the fix is in the log line rather than a support conversation.
+		announceMissingPermissions: (channelId: string, guildId: string, missing: string) =>
+			`[leveling] cannot announce in ${channelId} for guild ${guildId}, missing: ${missing}`,
+		announceFailed: (guildId: string) => `[leveling] level up announcement failed for guild ${guildId}:`,
+		reactionFailed: (guildId: string) =>
+			`[leveling] could not add the congratulations reaction for guild ${guildId} (likely missing AddReactions):`,
+		adminNoticeFailed: (guildId: string) => `[leveling] first level up admin notice failed for guild ${guildId}:`,
+
+		// ── role rewards ──
+		// Logged ONCE per guild plus role, never once per member: a large guild
+		// crossing a broken reward would otherwise write the same line thousands of
+		// times into Railway's log and bury everything else.
+		rewardHierarchy: (roleId: string, guildId: string) =>
+			`[leveling] cannot grant reward role ${roleId} in guild ${guildId}: it sits at or above the bot's highest role. Administrator does NOT bypass role hierarchy. Not retrying.`,
+		rewardManaged: (roleId: string, guildId: string) =>
+			`[leveling] reward role ${roleId} in guild ${guildId} is managed by an integration and can never be assigned by a bot. Not retrying.`,
+		rewardRefusedPrivileged: (roleId: string, guildId: string) =>
+			`[leveling] REFUSING reward role ${roleId} in guild ${guildId}: it carries Administrator or Manage Server. A leveling bot handing out admin because someone chatted a lot is a security incident, not a bug.`,
+		rewardRoleDeleted: (roleId: string, guildId: string) =>
+			`[leveling] reward role ${roleId} no longer exists in guild ${guildId}, removing it from the config`,
+		rewardFailed: (guildId: string) => `[leveling] role reconcile failed for guild ${guildId}:`,
+
+		// ── boards, sweeps and achievements ──
+		boardChannelMissing: (channelId: string, guildId: string) =>
+			`[leveling] leaderboard channel ${channelId} not found or not a TextChannel for guild ${guildId}`,
+		boardStoredMessageDeleted: (messageId: string, guildId: string) =>
+			`[leveling] stored levelsMessageId ${messageId} was deleted for guild ${guildId}. reposting.`,
+		boardEditFailed: (messageId: string, guildId: string) =>
+			`[leveling] failed to edit levelsMessageId ${messageId} for guild ${guildId}:`,
+		boardStaleAuthor: (messageId: string, guildId: string) =>
+			`[leveling] levelsMessageId ${messageId} in guild ${guildId} is not authored by this bot. skipping, ScheduleBoard owns homebase recovery.`,
+		boardPostFailed: (guildId: string) => `[leveling] failed to post the levels board for guild ${guildId}:`,
+		hourlyRefreshFailed: "[leveling] hourly refreshAllLevelsBoards failed:",
+		voiceSweepFailed: (guildId: string) => `[leveling] voice sweep failed for guild ${guildId}:`,
+		achievementFailed: (guildId: string, userId: string) =>
+			`[leveling] achievement evaluation failed for ${userId} in guild ${guildId}, swallowed:`,
+	},
+
 	// ── ready / startup ────────────────────────────────────────────────
 	ready: {
 		loggedInAs: (tag: string) => `\n\nReady! Logged in as ${tag}\n`,

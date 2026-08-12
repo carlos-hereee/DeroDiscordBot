@@ -109,6 +109,160 @@ describe("GuildConfig declares the GAME ROOMS intro anchors inside introMessageI
 	});
 });
 
+describe("GuildConfig declares the LEVELING subtree", () => {
+	it("declares levelsMessageId beside leaderboardMessageId without disturbing it", () => {
+		// Two boards, two anchors, one channel. Sharing an anchor would make each
+		// board overwrite the other's message on every refresh.
+		const doc = new GuildConfigModel({ ...baseRow, levelsMessageId: "msg-levels", leaderboardMessageId: "msg-lb" });
+		expect(doc.get("levelsMessageId")).toBe("msg-levels");
+		expect(doc.get("leaderboardMessageId")).toBe("msg-lb");
+	});
+
+	it("defaults levelsMessageId to null so the first refresh posts fresh", () => {
+		expect(new GuildConfigModel(baseRow).get("levelsMessageId")).toBeNull();
+	});
+
+	it("ships leveling ENABLED on every legacy row, with no backfill", () => {
+		// Locked decision D4: leveling is on in every guild immediately, no opt in.
+		// A legacy row that has never seen /setup-level-system must therefore load
+		// with a complete working configuration, which is what these defaults are.
+		const doc = new GuildConfigModel(baseRow);
+		expect(doc.get("leveling.enabled")).toBe(true);
+		expect(doc.get("leveling.curve")).toBe("dero");
+		expect(doc.get("leveling.curveMultiplier")).toBe(1);
+		expect(doc.get("leveling.maxLevel")).toBeNull();
+		expect(doc.get("leveling.milestoneMode")).toBe("prime");
+		expect(doc.get("leveling.announceMode")).toBe("announcements");
+		expect(doc.get("leveling.reactionEmoji")).toBe("🎉");
+	});
+
+	it("defaults the three earn sources to the documented rates", () => {
+		const doc = new GuildConfigModel(baseRow);
+
+		expect(doc.get("leveling.message.enabled")).toBe(true);
+		expect(doc.get("leveling.message.min")).toBe(15);
+		expect(doc.get("leveling.message.max")).toBe(40);
+		// The industry floor, and the single most effective anti farm measure here.
+		expect(doc.get("leveling.message.cooldownSeconds")).toBe(60);
+
+		expect(doc.get("leveling.reaction.awards")).toBe("reactor");
+		expect(doc.get("leveling.reaction.cooldownSeconds")).toBe(300);
+
+		expect(doc.get("leveling.voice.perMinute")).toBe(5);
+		expect(doc.get("leveling.voice.minMembers")).toBe(2);
+		expect(doc.get("leveling.voice.decayAfterMinutes")).toBe(120);
+		expect(doc.get("leveling.voice.decayFactor")).toBe(0.25);
+	});
+
+	it("defaults approvedChannels to EMPTY, which means nobody earns voice xp", () => {
+		// ⚠️ The opposite polarity from every other list in the subtree, and the
+		// one a later reader is most likely to invert. Voice xp is opt in PER
+		// CHANNEL by construction, so a guild that never configures it never has a
+		// voice farming surface. If this ever defaults to "all channels", a 24/7
+		// voice self bot earns from day one in every guild on the platform.
+		const doc = new GuildConfigModel(baseRow);
+		expect(doc.get("leveling.voice.approvedChannels")).toEqual([]);
+	});
+
+	it("defaults restrictions to excluding NOTHING, so nothing silently earns zero", () => {
+		// One mode plus one list. The failure this shape makes unrepresentable is
+		// Arcane's largest support item: a sibling whitelist where adding a single
+		// channel silently kills xp in every other channel.
+		const doc = new GuildConfigModel(baseRow);
+		expect(doc.get("leveling.restrictionMode")).toBe("exclude");
+		expect(doc.get("leveling.restrictedChannels")).toEqual([]);
+		expect(doc.get("leveling.restrictedRoles")).toEqual([]);
+	});
+
+	it("defaults rewards and multipliers to empty and non stacking", () => {
+		const doc = new GuildConfigModel(baseRow);
+		expect(doc.get("leveling.rewards")).toEqual([]);
+		expect(doc.get("leveling.roleMultipliers")).toEqual([]);
+		expect(doc.get("leveling.channelMultipliers")).toEqual([]);
+		expect(doc.get("leveling.stackRewards")).toBe(true);
+		expect(doc.get("leveling.stackMultipliers")).toBe(false);
+	});
+
+	it("round trips an admin's configuration rather than dropping it", () => {
+		const doc = new GuildConfigModel({
+			...baseRow,
+			leveling: {
+				enabled: false,
+				curve: "linear",
+				curveMultiplier: 2.5,
+				maxLevel: 50,
+				announceMode: "milestone",
+				announceChannelId: "c-levels",
+				restrictionMode: "only",
+				restrictedChannels: ["c-general"],
+				voice: { approvedChannels: ["v-1", "v-2"], minMembers: 3 },
+				rewards: [{ level: 10, roleId: "role-10" }],
+				roleMultipliers: [{ roleId: "role-boost", multiplier: 1.5 }],
+			},
+		});
+
+		expect(doc.get("leveling.enabled")).toBe(false);
+		expect(doc.get("leveling.curve")).toBe("linear");
+		expect(doc.get("leveling.curveMultiplier")).toBe(2.5);
+		expect(doc.get("leveling.maxLevel")).toBe(50);
+		expect(doc.get("leveling.announceMode")).toBe("milestone");
+		expect(doc.get("leveling.announceChannelId")).toBe("c-levels");
+		expect(doc.get("leveling.restrictionMode")).toBe("only");
+		expect(doc.get("leveling.restrictedChannels")).toEqual(["c-general"]);
+		expect(doc.get("leveling.voice.approvedChannels")).toEqual(["v-1", "v-2"]);
+		expect(doc.get("leveling.voice.minMembers")).toBe(3);
+		expect(doc.get("leveling.rewards")).toHaveLength(1);
+		expect(doc.get("leveling.rewards")[0].roleId).toBe("role-10");
+		expect(doc.get("leveling.roleMultipliers")[0].multiplier).toBe(1.5);
+
+		// A partial write must not wipe the siblings it did not mention.
+		expect(doc.get("leveling.voice.perMinute")).toBe(5);
+		expect(doc.get("leveling.message.cooldownSeconds")).toBe(60);
+	});
+
+	it("keeps leveling.enabled entirely separate from leaderboardTrackingEnabled", () => {
+		// Two toggles, two systems. leaderboardTrackingEnabled governs PARTICIPATION
+		// writes (PlayerActivity, the ROK event score) and must never be reused,
+		// extended or renamed to cover leveling, or turning one off silently kills
+		// the other.
+		const doc = new GuildConfigModel({ ...baseRow, leveling: { enabled: false } });
+		expect(doc.get("leveling.enabled")).toBe(false);
+		expect(doc.get("leaderboardTrackingEnabled")).toBe(true);
+	});
+
+	it("exposes every leveling leaf as a real schema path, so $set updates are not stripped", () => {
+		// Document construction is only half the exposure. Strict mode also strips
+		// undeclared paths out of an UPDATE payload, so /setup-level-system would
+		// silently no-op on any field missing here.
+		const paths = [
+			"leveling.enabled",
+			"leveling.curve",
+			"leveling.curveMultiplier",
+			"leveling.maxLevel",
+			"leveling.milestoneMode",
+			"leveling.milestoneEveryN",
+			"leveling.message.min",
+			"leveling.message.max",
+			"leveling.message.cooldownSeconds",
+			"leveling.reaction.awards",
+			"leveling.voice.approvedChannels",
+			"leveling.voice.decayFactor",
+			"leveling.announceMode",
+			"leveling.announceChannelId",
+			"leveling.reactionEmoji",
+			"leveling.restrictionMode",
+			"leveling.restrictedChannels",
+			"leveling.restrictedRoles",
+			"leveling.stackRewards",
+			"leveling.stackMultipliers",
+			"levelsMessageId",
+		];
+		for (const path of paths) {
+			expect(GuildConfigModel.schema.path(path), `${path} is not declared`).toBeDefined();
+		}
+	});
+});
+
 describe("the control case: strict mode really is on", () => {
 	// Without this, every assertion above could pass for the wrong reason. If strict mode were
 	// off, an undeclared field would round trip happily and the tests would be measuring nothing.

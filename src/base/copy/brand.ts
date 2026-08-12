@@ -109,4 +109,34 @@ export const COLORS = {
 	GAME_DUEL: "#f97316",
 	GAME_RPS: "#0ea5e9",
 	GAME_HANGMAN: "#22c55e",
+	// ── leveling (2026-08-11) ──
+	// Same non pack-aware path as the games and fortune above: leveling is a
+	// plain bot feature, not a platform plugin, so its embeds pull colors from
+	// here directly rather than through getPluginCopy.
+	//
+	// LEVEL_UP is the ordinary level, a calm teal that does not compete with the
+	// reminder red or the announcement red it will sit beside in the same
+	// channel. LEVEL_MILESTONE is a PRIME level and has to read as clearly rarer
+	// at a glance, so it takes the violet that nothing else in this palette uses
+	// and that the wider games convention already reads as "epic". The gap
+	// between those two is the whole point: a member scrolling past should know
+	// which kind of level up they are looking at before reading a word of it.
+	// Gold is not available for the milestone, FORTUNE_ULTRA already owns the
+	// brand's top rung and two golds would flatten that ladder.
+	LEVEL_UP: "#14b8a6",
+	LEVEL_MILESTONE: "#a855f7",
+	// The member profile. A blue distinct from GAME_RPS's lighter sky, chosen to
+	// read as identity rather than as an event; /account is a reference surface,
+	// not a payoff, so it stays out of the celebratory end of the palette.
+	ACCOUNT: "#2563eb",
+	// Achievement unlocks. A bronze rather than a gold, deliberately: the tracks
+	// run bronze through diamond, so no single embed color can stand for a tier,
+	// and the darker metal keeps it clear of LEADERBOARD's Gold and of DarkGold.
+	ACHIEVEMENT: "#b45309",
+	// The levels standings board. Reads as family with LEVEL_UP on purpose, they
+	// are one system, but it MUST stay far from LEADERBOARD's Gold: the two
+	// boards live in the SAME channel and answer different questions (event
+	// participation vs presence over time), so color is the first thing telling
+	// a member which one they are scrolling past.
+	LEVELS_BOARD: "#0d9488",
 } satisfies Record<string, ColorResolvable>;

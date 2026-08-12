@@ -96,6 +96,181 @@ const guildConfigSchema = new Schema(
 		//        null as "never posted, send a fresh one and persist the id".
 		leaderboardMessageId: { type: String, required: false, default: null },
 
+		// ── levels board message id (leveling, added 2026-08-11) ────────
+		// What:  id of the SECOND bot message inside leaderboardChannelId, the one
+		//        LevelsBoard keeps up to date with the guild's xp standings.
+		//        Deliberately a sibling of leaderboardMessageId and never a
+		//        replacement for it: the two boards live in the same channel and
+		//        answer different questions, so each owns its own anchor.
+		// Who:   written by LevelsBoard.postOrEdit on first post; read on every
+		//        refresh so later updates edit that one message in place.
+		// When:  null until the first refresh posts the board. Repopulated when an
+		//        admin deletes the message and the next refresh reposts.
+		// Where: reusing leaderboardChannelId rather than provisioning a levels
+		//        channel is a deliberate cost decision: a new channel means a
+		//        CHANNEL_SPECS entry, a SLOT_LABELS entry, a rename path and a
+		//        backfill for every existing guild, and GuildSetupManager.
+		//        createChannels has ZERO test coverage today.
+		// How:   nullable so legacy rows load cleanly; the post path treats null as
+		//        "never posted, send a fresh one and persist the id".
+		levelsMessageId: { type: String, required: false, default: null },
+
+		// ── leveling (added 2026-08-11) ────────────────────────────────
+		// What:  every per-guild knob of the leveling system. The numbers an
+		//        OPERATOR would turn (flush intervals, xp amounts per game) live in
+		//        BOT_CONSTANTS.LEVELING instead; what lives here is what an ADMIN
+		//        configures through /setup-level-system.
+		// Who:   messageXp, reactionXp and voiceXp (the earn rules), awardXp (the
+		//        curve), levelUpAnnouncer (where and how loudly), roleRewards.
+		// When:  read from a TTL cache on the message path, so this subtree is hit
+		//        constantly and must never be fetched fresh per message.
+		// Where: a nested subtree rather than fifteen sibling fields, so the whole
+		//        feature is one path to read, one path to reset, and one path to
+		//        ignore entirely when leveling is off.
+		// How:   nullable-by-default shape with every leaf carrying a default, so
+		//        every legacy row in the collection loads with a complete, working
+		//        configuration and no backfill runs.
+		//
+		// ⚠️ THREE DEFAULTS BELOW ARE COUNTERINTUITIVE ON PURPOSE. Each carries its
+		// reasoning inline. Do not "correct" any of them without reading it.
+		leveling: {
+			type: {
+				// ⚠️ TRUE. The owner decided leveling ships ON in every guild
+				// immediately, with no opt in (locked decision D4). Do not helpfully
+				// default this to false. The mitigations that make it safe are: no
+				// leveling message ever pings, the announce channel falls back to the
+				// announcements channel every set up guild already has, restrictions
+				// exclude nothing by default so nothing silently earns zero, and the
+				// first level up in a guild posts a one time notice to the admin
+				// channel naming /setup-level-system and how to turn this off.
+				enabled: { type: Boolean, required: false, default: true },
+
+				// The xp curve. "dero" is 3n^2 + 47n + 101, all three coefficients
+				// prime, sitting between Arcane's linear and the steeper exponentials.
+				// See @features/leveling/levelCurve.ts.
+				curve: { type: String, enum: ["dero", "linear", "exponential", "flat"], default: "dero" },
+				curveMultiplier: { type: Number, required: false, default: 1 },
+				// null means uncapped. A cap clamps without erroring.
+				maxLevel: { type: Number, required: false, default: null },
+
+				// PRIME LEVELS ARE THE MILESTONE LEVELS. "everyN" survives only as an
+				// opt out for a guild that wants the ordinary thing; milestoneEveryN
+				// is read ONLY when milestoneMode is "everyN".
+				milestoneMode: { type: String, enum: ["prime", "everyN"], default: "prime" },
+				milestoneEveryN: { type: Number, required: false, default: 5 },
+
+				message: {
+					type: {
+						enabled: { type: Boolean, required: false, default: true },
+						min: { type: Number, required: false, default: 15 },
+						max: { type: Number, required: false, default: 40 },
+						// 60 seconds is the category's floor and the single most
+						// effective anti farm measure in the feature. There is
+						// deliberately no length or per word bonus anywhere, which is
+						// both the most gameable mode in this category and the only
+						// thing that would require the MessageContent intent.
+						cooldownSeconds: { type: Number, required: false, default: 60 },
+					},
+					required: false,
+					default: () => ({}),
+				},
+
+				reaction: {
+					type: {
+						enabled: { type: Boolean, required: false, default: true },
+						min: { type: Number, required: false, default: 10 },
+						max: { type: Number, required: false, default: 25 },
+						cooldownSeconds: { type: Number, required: false, default: 300 },
+						// Who gets paid for a reaction. Never both ends of a member
+						// reacting to their own message, whatever this says.
+						awards: { type: String, enum: ["reactor", "author", "both"], default: "reactor" },
+					},
+					required: false,
+					default: () => ({}),
+				},
+
+				voice: {
+					type: {
+						enabled: { type: Boolean, required: false, default: true },
+						perMinute: { type: Number, required: false, default: 5 },
+						cooldownSeconds: { type: Number, required: false, default: 180 },
+
+						// ⚠️ EMPTY MEANS NOBODY EARNS VOICE XP. This is the OPPOSITE
+						// polarity from every other list in this subtree and it is
+						// deliberate: the owner asked for "approved voice calls", so
+						// voice xp is opt in PER CHANNEL by construction and a guild
+						// that never configures it never has a voice farming surface at
+						// all. An empty array that means "none" rather than "all" is
+						// exactly the kind of thing a later reader inverts, so it is
+						// said loudly here and again in voiceXp.
+						approvedChannels: { type: [String], required: false, default: () => [] as string[] },
+
+						// Arcane's anti farm set, copied wholesale, because a 24/7 voice
+						// self bot is a real, public, mature tool: a minimum headcount so
+						// sitting alone pays nothing, a mute and deafen check, and a
+						// decay that cuts the award once a session runs long.
+						minMembers: { type: Number, required: false, default: 2 },
+						decayAfterMinutes: { type: Number, required: false, default: 120 },
+						decayFactor: { type: Number, required: false, default: 0.25 },
+					},
+					required: false,
+					default: () => ({}),
+				},
+
+				// Where a level up posts. "announcements" uses announceChannelId and
+				// falls back to the guild's announcementsChannelId, which every set
+				// up guild has; "current" posts wherever the xp was earned;
+				// "milestone" posts prime levels only; "off" posts nothing.
+				announceMode: {
+					type: String,
+					enum: ["announcements", "current", "milestone", "off"],
+					default: "announcements",
+				},
+				announceChannelId: { type: String, required: false, default: null },
+				// The bot adds this to its OWN level up message so members can pile
+				// on. On its own post, not the member's, because a level up can come
+				// from a voice sweep where there is no message to react to.
+				reactionEmoji: { type: String, required: false, default: "🎉" },
+
+				// ⚠️ ONE MODE PLUS ONE LIST, never a blacklist and a whitelist as
+				// siblings. Arcane ships both as adjacent settings with inverted
+				// semantics and their own restrictions page opens with a DANGER
+				// banner calling that misconfiguration their largest support item,
+				// because adding one channel to the whitelist silently kills xp
+				// everywhere else. One mode plus one list makes that unrepresentable.
+				restrictionMode: { type: String, enum: ["exclude", "only"], default: "exclude" },
+				restrictedChannels: { type: [String], required: false, default: () => [] as string[] },
+				restrictedRoles: { type: [String], required: false, default: () => [] as string[] },
+
+				// true keeps every reward role earned; false keeps only the highest
+				// and removes the rest. Either way the full desired set is computed
+				// and applied in ONE roles.set call, never add then remove.
+				stackRewards: { type: Boolean, required: false, default: true },
+				rewards: {
+					type: [{ level: { type: Number }, roleId: { type: String } }],
+					required: false,
+					default: () => [],
+				},
+
+				roleMultipliers: {
+					type: [{ roleId: { type: String }, multiplier: { type: Number } }],
+					required: false,
+					default: () => [],
+				},
+				channelMultipliers: {
+					type: [{ channelId: { type: String }, multiplier: { type: Number } }],
+					required: false,
+					default: () => [],
+				},
+				// false means the HIGHEST applicable multiplier wins; true means they
+				// combine. Defaulting to false keeps a member holding three boosted
+				// roles from earning a surprising multiple of everyone else.
+				stackMultipliers: { type: Boolean, required: false, default: false },
+			},
+			required: false,
+			default: () => ({}),
+		},
+
 		// ── KvK season end ─────────────────────────────────────────────
 		// What:  the configured end date of the guild's current KvK season.
 		//        Single canonical date per guild. Events created with

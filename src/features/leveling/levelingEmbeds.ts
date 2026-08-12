@@ -1,0 +1,288 @@
+import { EmbedBuilder } from "discord.js";
+import { AUTHOR, COLORS, FOOTER } from "@base/copy/brand.js";
+import { levelingCopy } from "./levelingCopy.js";
+import type { IAchievementUnlock, IGameRecord } from "./levelingTypes.js";
+
+// ── leveling embeds ────────────────────────────────────────────────────────
+// Self-contained embed builders. They do NOT reuse embedBuilder.base() on
+// purpose: base() resolves branding through getPluginCopy(guildConfig), which
+// couples a caller to the pluginId copy-pack system. Leveling is a plain bot
+// feature (not a platform plugin), so it pulls the Dero author and colors
+// straight from brand.ts, the same "non pack-aware call site" path brand.ts
+// documents and that gamesEmbeds.ts and fortuneEmbed.ts already take.
+//
+// Every builder here takes a VIEW MODEL rather than a Mongoose document. That
+// keeps them pure and renderable in a test without a database, and it is what
+// stops embed code from quietly growing a store import.
+
+// Every embed in this feature carries the same Dero author and footer, so the
+// shared spine lives in one place and a new builder cannot forget it.
+function base(): EmbedBuilder {
+	return new EmbedBuilder().setTimestamp().setAuthor({ name: AUTHOR.name, iconURL: AUTHOR.iconURL }).setFooter({ text: FOOTER });
+}
+
+// ── the progress bar ────────────────────────────────────────────────────────
+// One helper, used by /account and by /achievements, so a member never sees two
+// differently shaped bars for the same idea (rule 17: one helper per concept).
+//
+// Unicode blocks rather than a custom emoji: a bar is rendered inside an embed
+// description alongside other text, and custom emoji serialize to roughly 25
+// characters each, so a ten segment custom bar would spend 250 characters to say
+// what 10 characters say here.
+const BAR_SEGMENTS = 10;
+
+export function progressBar(current: number, total: number, segments = BAR_SEGMENTS): string {
+	// A zero or negative span means "nothing left to fill", which is the capped
+	// member's case, and a full bar is the honest rendering of it.
+	if (!Number.isFinite(total) || total <= 0) return "▰".repeat(segments);
+	const fraction = Math.min(1, Math.max(0, current / total));
+	const filled = Math.round(fraction * segments);
+	return `${"▰".repeat(filled)}${"▱".repeat(segments - filled)}`;
+}
+
+// ── the level up card ───────────────────────────────────────────────────────
+// The PRIME MILESTONE treatment only. An ordinary level up is deliberately not
+// an embed at all, it is one compact line in the coalesced message, because an
+// embed per level up in a live guild is what trains a community to mute the
+// channel. The visible gap between the two is the mechanic.
+export interface LevelUpView {
+	// Already rendered by the announcer's template pass, so this builder never
+	// touches copyOverrides and stays free of a guild config dependency.
+	description: string;
+	level: number;
+	milestone: boolean;
+	// attachment:// reference for the bundled Dero art, or null to render flat.
+	imageRef?: string | null;
+}
+
+export function buildLevelUpEmbed(view: LevelUpView): EmbedBuilder {
+	const embed = base()
+		.setTitle(view.milestone ? levelingCopy.levelUp.milestoneTitle : levelingCopy.levelUp.ordinaryTitle)
+		.setColor(view.milestone ? COLORS.LEVEL_MILESTONE : COLORS.LEVEL_UP)
+		.setDescription(view.description);
+
+	// The mechanic is invisible otherwise: nobody deduces "the loud ones are
+	// prime numbers" from a single celebration, so the milestone card says it.
+	if (view.milestone) embed.setFooter({ text: `${FOOTER} • ${levelingCopy.levelUp.milestoneFooter}` });
+	if (view.imageRef) embed.setImage(view.imageRef);
+
+	return embed;
+}
+
+// ── the combined burst message ──────────────────────────────────────────────
+// Sent INSTEAD of N separate messages once a burst passes the threshold. This
+// solves the unreadable channel complaint and Discord's per channel 429 risk
+// with one mechanism.
+export interface CombinedLevelUp {
+	userId: string;
+	level: number;
+	milestone: boolean;
+}
+
+export function buildCombinedLevelUpEmbed(entries: CombinedLevelUp[]): EmbedBuilder {
+	const anyMilestone = entries.some((entry) => entry.milestone);
+	return base()
+		.setTitle(levelingCopy.levelUp.combinedTitle)
+		// A burst containing even one milestone takes the milestone color, so a
+		// rare level is never demoted just because it arrived in a busy minute.
+		.setColor(anyMilestone ? COLORS.LEVEL_MILESTONE : COLORS.LEVEL_UP)
+		.setDescription(
+			[
+				levelingCopy.levelUp.combinedIntro(entries.length),
+				"",
+				...entries.map((entry) => levelingCopy.levelUp.combinedLine(entry.userId, entry.level, entry.milestone)),
+			].join("\n")
+		);
+}
+
+// ── /account, the member profile ────────────────────────────────────────────
+// Absorbs what would otherwise be a /rank command. One profile surface, not two,
+// following the owner's standing rule that too many slash commands is itself a
+// usability problem.
+export interface AccountView {
+	displayName: string;
+	avatarUrl: string | null;
+	level: number;
+	totalXp: number;
+	xpIntoLevel: number;
+	xpToNext: number;
+	nextLevelIsMilestone: boolean;
+	guildRank: number;
+	guildSize: number;
+	weekRank: number | null;
+	monthRank: number | null;
+	messages: number;
+	reactionsGiven: number;
+	voiceMinutes: number;
+	// Slug plus record, already ordered by the caller. Games the member has never
+	// played are omitted rather than rendered as a row of zeros.
+	games: Array<{ slug: string; record: IGameRecord }>;
+	unlocked: IAchievementUnlock[];
+}
+
+function ratio(won: number, lost: number): string {
+	// An undefeated member divides by zero, so the record is stated rather than
+	// computed in that case. "5/0" reads better than "Infinity" and better than a
+	// silent dash.
+	if (lost === 0) return won === 0 ? "0.00" : `${won}/0`;
+	return (won / lost).toFixed(2);
+}
+
+export function buildAccountEmbed(view: AccountView): EmbedBuilder {
+	const c = levelingCopy.labels;
+
+	// ① Identity and progress. The bar is the first thing a member looks for, so
+	// it leads, and the milestone nudge rides directly under it because it is only
+	// meaningful in the context of the next level.
+	const identity = [
+		`**${c.level} ${view.level}**  ${progressBar(view.xpIntoLevel, view.xpIntoLevel + view.xpToNext)}`,
+		`${c.xpIntoLevel}: **${view.xpIntoLevel.toLocaleString()}**  •  ${c.xpToNext}: **${view.xpToNext.toLocaleString()}**`,
+		`${c.totalXp}: **${view.totalXp.toLocaleString()}**`,
+		view.nextLevelIsMilestone ? `\n✦ ${c.nextMilestone}` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+
+	const embed = base().setTitle(view.displayName).setColor(COLORS.ACCOUNT).setDescription(identity);
+	if (view.avatarUrl) embed.setThumbnail(view.avatarUrl);
+
+	// ② Standing. Guild rank comes from an index-only count, never a sort.
+	const standing = [
+		`${c.guildRank}: **#${view.guildRank}** of ${view.guildSize.toLocaleString()}`,
+		view.weekRank !== null ? `${c.weekRank}: **#${view.weekRank}**` : null,
+		view.monthRank !== null ? `${c.monthRank}: **#${view.monthRank}**` : null,
+	]
+		.filter(Boolean)
+		.join("\n");
+	embed.addFields({ name: c.rank, value: standing, inline: false });
+
+	// ③ The record. A code block so the columns line up in both light and dark
+	// mode and on mobile, where a markdown table does not exist and spaces inside
+	// normal text collapse.
+	if (view.games.length > 0) {
+		const rows = view.games.map((entry) => {
+			const r = entry.record;
+			return `${entry.slug.padEnd(11)}${String(r.played).padStart(4)}${String(r.won).padStart(5)}${String(r.lost).padStart(5)}${String(r.drawn).padStart(6)}${String(r.assists).padStart(8)}   ${ratio(r.won, r.lost)}`;
+		});
+		const totals = view.games.reduce(
+			(sum, entry) => ({
+				played: sum.played + entry.record.played,
+				won: sum.won + entry.record.won,
+				lost: sum.lost + entry.record.lost,
+				drawn: sum.drawn + entry.record.drawn,
+				assists: sum.assists + entry.record.assists,
+			}),
+			{ played: 0, won: 0, lost: 0, drawn: 0, assists: 0 }
+		);
+		const header = `${"".padEnd(11)}${c.played.slice(0, 4).padStart(4)}${c.won.padStart(5)}${c.lost.padStart(5)}${c.drawn.padStart(6)}${c.assists.padStart(8)}   ${c.ratio}`;
+		const overall = `${c.overall.padEnd(11)}${String(totals.played).padStart(4)}${String(totals.won).padStart(5)}${String(totals.lost).padStart(5)}${String(totals.drawn).padStart(6)}${String(totals.assists).padStart(8)}   ${ratio(totals.won, totals.lost)}`;
+		embed.addFields({
+			name: "Record",
+			value: ["```", header, ...rows, overall, "```"].join("\n"),
+			inline: false,
+		});
+	} else {
+		embed.addFields({ name: "Record", value: c.noRecordYet, inline: false });
+	}
+
+	// ④ Presence.
+	embed.addFields({
+		name: "Presence",
+		value: [
+			`${c.messages}: **${view.messages.toLocaleString()}**`,
+			`${c.reactions}: **${view.reactionsGiven.toLocaleString()}**`,
+			`${c.voiceMinutes}: **${view.voiceMinutes.toLocaleString()}**`,
+		].join("\n"),
+		inline: false,
+	});
+
+	// ⑤ Achievements, each WITH the action that earned it. That sentence is stored
+	// on the unlock rather than reconstructed here, because the counters behind it
+	// have moved on by the time anyone opens their profile.
+	embed.addFields({
+		name: c.achievements,
+		value:
+			view.unlocked.length > 0
+				? view.unlocked.map((entry) => `**${entry.id}** (${entry.tier}) • ${entry.earnedBy}`).join("\n")
+				: c.noAchievementsYet,
+		inline: false,
+	});
+
+	return embed;
+}
+
+// ── the levels standings board ──────────────────────────────────────────────
+// A SECOND pinned message in the leaderboard channel, beside the participation
+// board. The subtitle is not decoration: two boards in one channel answering
+// different questions is the single most likely confusion in this feature, so
+// every render states which question this one answers.
+export interface LevelsBoardEntry {
+	userId: string;
+	username: string;
+	level: number;
+	xp: number;
+}
+
+export function buildLevelsBoardEmbed(windowLabel: string, entries: LevelsBoardEntry[]): EmbedBuilder {
+	const embed = base()
+		.setTitle(`${levelingCopy.board.title} • ${windowLabel}`)
+		.setColor(COLORS.LEVELS_BOARD)
+		.setDescription(levelingCopy.boardSubtitles.levels);
+
+	if (entries.length === 0) return embed.addFields({ name: windowLabel, value: levelingCopy.board.emptyState });
+
+	const medal = (index: number): string => (index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `${index + 1}.`);
+	return embed.addFields({
+		name: windowLabel,
+		value: entries
+			.map(
+				(entry, index) =>
+					`${medal(index)} **${entry.username}** • ${levelingCopy.labels.level} ${entry.level} • ${entry.xp.toLocaleString()} ${levelingCopy.labels.xp}`
+			)
+			.join("\n"),
+	});
+}
+
+// ── achievements ────────────────────────────────────────────────────────────
+// Hidden entries are omitted ENTIRELY until they unlock, not shown as a locked
+// placeholder with the name blanked out. A placeholder tells a member a secret
+// exists, which is most of what the secret was.
+export interface AchievementProgressView {
+	id: string;
+	label: string;
+	current: number;
+	threshold: number;
+	nextTier: string;
+}
+
+export function buildAchievementsEmbed(
+	displayName: string,
+	unlocked: IAchievementUnlock[],
+	inProgress: AchievementProgressView[]
+): EmbedBuilder {
+	const embed = base().setTitle(`${levelingCopy.labels.achievements} • ${displayName}`).setColor(COLORS.ACHIEVEMENT);
+
+	embed.addFields({
+		name: levelingCopy.labels.achievements,
+		value:
+			unlocked.length > 0
+				? unlocked.map((entry) => `**${entry.id}** (${entry.tier}) • ${entry.earnedBy}`).join("\n")
+				: levelingCopy.labels.noAchievementsYet,
+		inline: false,
+	});
+
+	if (inProgress.length > 0) {
+		embed.addFields({
+			name: levelingCopy.labels.inProgress,
+			value: inProgress
+				.map(
+					(entry) =>
+						`**${entry.label}** (${entry.nextTier})\n${progressBar(entry.current, entry.threshold)} ${entry.current.toLocaleString()} / ${entry.threshold.toLocaleString()}`
+				)
+				.join("\n"),
+			inline: false,
+		});
+	}
+
+	return embed;
+}
