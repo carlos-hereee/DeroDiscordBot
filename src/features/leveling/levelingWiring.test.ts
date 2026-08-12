@@ -23,6 +23,25 @@ import { describe, it, expect } from "vitest";
 //
 // These imports are deliberately UNMOCKED. Importing a Mongoose model only
 // registers a schema, it opens no connection, so nothing here can hang.
+//
+// ── why these tests carry an explicit timeout ──────────────────────────────
+// ⚠️ RAISED FROM VITEST'S 5s DEFAULT ON 2026-08-12, AND DO NOT LOWER IT BACK.
+// These cases `await import()` the REAL module graph with nothing mocked, so the
+// first one pays for transforming and evaluating that whole subtree. Under a full
+// suite run, competing with every other file's transforms, that had crept to ~10s
+// and this file went red on every run while passing alone in 1.2s. A permanently
+// red gate stops being a signal, which is how a real failure hides behind a known
+// one, and the project's shipping rules say so explicitly.
+//
+// The budget does NOT weaken the guard. The failure this file exists to catch is a
+// TDZ error, which throws the INSTANT the cycle is evaluated; it does not take
+// five seconds and it will not take thirty. The timeout only ever bounds the
+// machine's transform speed, so a larger one trades nothing away.
+//
+// Deleting the file instead is the tempting fix and the wrong one: it reads as a
+// slow pointless test precisely because it reports as a timeout rather than an
+// assertion, and removing it re-opens a boot-time crash in production.
+const GRAPH_LOAD_TIMEOUT_MS = 30_000;
 
 describe("the circular import between xpWriter, achievementUnlock and awardXp", () => {
 	it("resolves when xpWriter is loaded first", async () => {
@@ -30,17 +49,17 @@ describe("the circular import between xpWriter, achievementUnlock and awardXp", 
 		expect(typeof xpWriter.stage).toBe("function");
 		expect(typeof xpWriter.flushNow).toBe("function");
 		expect(typeof xpWriter.claimCooldown).toBe("function");
-	});
+	}, GRAPH_LOAD_TIMEOUT_MS);
 
 	it("resolves when awardXp is loaded first", async () => {
 		const awardXp = await import("./awardXp.js");
 		expect(typeof awardXp.awardXp).toBe("function");
-	});
+	}, GRAPH_LOAD_TIMEOUT_MS);
 
 	it("resolves when achievementUnlock is loaded first", async () => {
 		const unlock = await import("./achievementUnlock.js");
 		expect(typeof unlock.runAchievementPass).toBe("function");
-	});
+	}, GRAPH_LOAD_TIMEOUT_MS);
 
 	it("leaves every binding in the cycle defined, not undefined", async () => {
 		// The specific failure a broken cycle produces: the module loads, but one
@@ -55,7 +74,7 @@ describe("the circular import between xpWriter, achievementUnlock and awardXp", 
 		expect(xpWriter.stage).toBeDefined();
 		expect(awardXpModule.awardXp).toBeDefined();
 		expect(unlock.runAchievementPass).toBeDefined();
-	});
+	}, GRAPH_LOAD_TIMEOUT_MS);
 });
 
 describe("the rest of the leveling graph loads", () => {
@@ -81,5 +100,5 @@ describe("the rest of the leveling graph loads", () => {
 		"./achievementEngine.js",
 	])("%s evaluates without throwing", async (specifier) => {
 		await expect(import(specifier)).resolves.toBeDefined();
-	});
+	}, GRAPH_LOAD_TIMEOUT_MS);
 });
