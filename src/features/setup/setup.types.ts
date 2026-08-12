@@ -33,6 +33,15 @@ export interface ICreatedChannels {
 	// guide + the admin power-up panel; kept out of inner-sanctum so daily
 	// announcements there do not bury the quick-action controls.
 	adminCommandsChannelId: string;
+	// ── 🎮 ARCADE GAMES, the SECOND managed category ──
+	// Declared here rather than left to the boot sweep because a fresh install
+	// should produce both categories in one pass. These three are hand written
+	// literals, NOT derived from CHANNEL_FIELDS, so this interface and that array
+	// are two lists that must be extended together; the compiler catches the
+	// direction that matters (a missing id here fails createChannels' return).
+	gamesCategoryId: string;
+	gamesRulesChannelId: string;
+	gamesChallengesChannelId: string;
 }
 
 // live channel objects returned from createChannels
@@ -42,10 +51,12 @@ export interface IChannelObjects {
 	commandsChannel: TextChannel;
 	leaderboardChannel: TextChannel;
 	scheduleChannel: TextChannel;
-	announcementsChannel: TextChannel;
 	adminChannel: TextChannel;
+	announcementsChannel: TextChannel;
 	nextDecreeChannel: TextChannel;
 	adminCommandsChannel: TextChannel;
+	gamesRulesChannel: TextChannel;
+	gamesChallengesChannel: TextChannel;
 }
 
 // return shape of GuildSetupManager.ensureHomebase. the ready sweep in main.ts

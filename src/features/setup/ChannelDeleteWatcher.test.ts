@@ -366,9 +366,29 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			"adminChannelId",
 			"nextDecreeChannelId",
 			"adminCommandsChannelId",
+			// The two under 🎮 ARCADE GAMES. CHANNEL_SPECS now spans TWO categories.
+			"gamesRulesChannelId",
+			"gamesChallengesChannelId",
 		];
 		const actualFields = GuildSetupManager.CHANNEL_SPECS.map((s) => s.configField);
 		expect(actualFields.sort()).toEqual(expectedFields.sort());
+	});
+
+	// ⚠️ THE R2 GUARD. Every spec has to name the category it belongs under, and
+	// getting one wrong builds the channel in the wrong place without throwing.
+	// The compiler enforces that the field is PRESENT; only a test can enforce
+	// that its VALUE is right, because both categories are the same type.
+	it("files every spec under the correct category", () => {
+		const byCategory = (field: string) =>
+			GuildSetupManager.CHANNEL_SPECS.filter((s) => s.categoryField === field)
+				.map((s) => s.configField)
+				.sort();
+
+		expect(byCategory("gamesCategoryId")).toEqual(["gamesChallengesChannelId", "gamesRulesChannelId"]);
+		expect(byCategory("categoryId")).toHaveLength(8);
+		// No spec may be left unfiled, which a typo in the union would otherwise
+		// produce silently.
+		expect(byCategory("categoryId").length + byCategory("gamesCategoryId").length).toBe(GuildSetupManager.CHANNEL_SPECS.length);
 	});
 
 	it("marks the admin channel and the admin command center as kind 'admin'", () => {

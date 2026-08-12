@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { TextChannel, DiscordAPIError } from "discord.js";
+import { TextChannel, DiscordAPIError, ChannelType } from "discord.js";
 import type { Client, Guild } from "discord.js";
 
 // mock the guild config store before importing the unit under test. the
@@ -44,6 +44,14 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 		// be present or every repair sweep rebuilds them alongside the real target.
 		nextDecreeChannelId: "ch-nextdecree",
 		adminCommandsChannelId: "ch-admincommands",
+		// The 9th/10th channels, under 🎮 ARCADE GAMES. Present for exactly the
+		// reason the two above are: a null id reads as "missing, rebuild too", so
+		// leaving them out would have every unrelated repair test also provisioning
+		// the arcade. The migration case (all three null) gets its OWN test rather
+		// than being smuggled into every other one.
+		gamesCategoryId: "games-cat-1",
+		gamesRulesChannelId: "ch-gamesrules",
+		gamesChallengesChannelId: "ch-gameschallenges",
 		scheduleMessageId: "msg-schedule",
 		adminRoleId: null,
 		memberRoleId: null,
@@ -117,11 +125,24 @@ function makeGuild(options: {
 	const map: Record<string, unknown> = {
 		"ch-nextdecree": { id: "ch-nextdecree" },
 		"ch-admincommands": { id: "ch-admincommands" },
+		// The arcade category and its two channels, present by default for the
+		// same reason. A test exercising the MIGRATION overrides these to null.
+		"games-cat-1": { id: "games-cat-1", type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } },
+		"ch-gamesrules": { id: "ch-gamesrules" },
+		"ch-gameschallenges": { id: "ch-gameschallenges" },
 		...(options.channelFetchMap ?? {}),
 	};
 	const create =
 		options.createHandler ??
-		vi.fn(async (opts: { name: string }) => {
+		vi.fn(async (opts: { name: string; type?: number }) => {
+			// A created CATEGORY needs a children cache, because repairOneChannel's
+			// adopt-before-build guard scans parent.children.cache and a category
+			// fixture without one throws inside the repair rather than failing an
+			// assertion. Mirrors the augmentation the stored-category fixture above
+			// already does.
+			if (opts.type === ChannelType.GuildCategory) {
+				return { id: `new-${opts.name}`, type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } };
+			}
 			// fabricate a TextChannel shape with a unique id per creation so
 			// the updated config stores something distinguishable.
 			const created = Object.create(TextChannel.prototype) as TextChannel & { send: ReturnType<typeof vi.fn> };
@@ -318,6 +339,60 @@ describe("GuildSetupManager.ensureHomebase", () => {
 		expect(autoSetupSpy).not.toHaveBeenCalled();
 		expect(guildConfigMock.deleteByGuildId).not.toHaveBeenCalled();
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
+	});
+
+	// ⚠️ THE MIGRATION PATH, AND THE R2 REGRESSION GUARD AT RUNTIME.
+	// A row written before 🎮 ARCADE GAMES existed carries three null ids, which
+	// the sweep reads as "missing, build it". Both channels must land under the
+	// ARCADE category, and the compiler cannot help here because both parents are
+	// the same type. Building them under cat-1 is invisible in production until
+	// somebody notices game-rules sitting in the notice board, and by then the
+	// adopt-before-build scan is looking in the wrong parent and making duplicates.
+	it("gives a legacy guild the arcade category and files both channels under it", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(
+			makeStoredConfig({ gamesCategoryId: null, gamesRulesChannelId: null, gamesChallengesChannelId: null })
+		);
+
+		const createCalls: Array<{ name: string; type?: number; parent?: string }> = [];
+		const intact = { id: "intact" };
+		const guild = makeGuild({
+			categoryId: { id: "cat-1" },
+			channelFetchMap: {
+				"ch-intro": intact,
+				"ch-commands": intact,
+				"ch-leaderboard": intact,
+				"ch-schedule": intact,
+				"ch-announcements": intact,
+				"ch-admin": intact,
+			},
+			createHandler: async (opts) => {
+				const options = opts as { name: string; type?: number; parent?: string };
+				createCalls.push(options);
+				if (options.type === ChannelType.GuildCategory) {
+					return { id: "new-arcade", type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } };
+				}
+				const created = Object.create(TextChannel.prototype) as TextChannel & { send: ReturnType<typeof vi.fn> };
+				Object.assign(created, { id: `new-${options.name}`, send: vi.fn().mockResolvedValue({ id: "intro-msg" }) });
+				return created;
+			},
+		});
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async () => null });
+
+		await GuildSetupManager.ensureHomebase(client, guild);
+
+		// The category was created once, and its id persisted so the SECOND arcade
+		// spec in the same sweep reuses it rather than creating a rival.
+		const categoryCreates = createCalls.filter((c) => c.type === ChannelType.GuildCategory);
+		expect(categoryCreates).toHaveLength(1);
+		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", { gamesCategoryId: "new-arcade" });
+
+		// Both arcade channels went under the NEW category, never under cat-1.
+		const arcadeChannels = createCalls.filter((c) => c.type !== ChannelType.GuildCategory);
+		expect(arcadeChannels).toHaveLength(2);
+		for (const call of arcadeChannels) {
+			expect(call.parent).toBe("new-arcade");
+			expect(call.parent).not.toBe("cat-1");
+		}
 	});
 
 	it("repairs a single missing public channel and posts a notice in the inner sanctum", async () => {

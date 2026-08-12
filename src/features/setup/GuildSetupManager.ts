@@ -64,11 +64,7 @@ function resolveCategoryName(): string {
 // Reads rokCommanderCopy directly, matching resolveCategoryName, because the
 // category name is universal across packs by the 2026-05-22 decision. If it ever
 // stops being universal, BOTH helpers become pack aware together.
-// ⚠️ Leading underscore because it is deliberately kept and NOT YET CALLED: the
-// caller lands with task 2.6 (runAutoSetup creating the second category). That
-// is the repo's documented convention for an intentional unused helper, per
-// CLAUDE.md rule 4, and the underscore comes OFF in the same commit that wires it.
-function _resolveGamesCategoryName(): string {
+function resolveGamesCategoryName(): string {
 	return process.env.NODE_ENV === "development"
 		? rokCommanderCopy.setup.gamesCategoryName + rokCommanderCopy.setup.devSuffix
 		: rokCommanderCopy.setup.gamesCategoryName;
@@ -220,7 +216,15 @@ export class GuildSetupManager {
 			throw error;
 		}
 
-		const { ids, objects } = await GuildSetupManager.createChannels(guild, category, config);
+		// The SECOND category. Built here rather than left to the boot sweep so a
+		// fresh install produces both categories and all ten channels in one pass,
+		// which is what the completion criteria for this phase actually asks for.
+		// A null return means a 50013 already routed through handlePermissionFailure,
+		// so bail exactly as the homebase category create above does.
+		const gamesCategory = await GuildSetupManager.resolveOrCreateArcadeCategory(guild, null, config.ownerId);
+		if (!gamesCategory) return;
+
+		const { ids, objects } = await GuildSetupManager.createChannels(guild, category, gamesCategory, config);
 		const { scheduleMessageId, introMessageIds } = await GuildSetupManager.populateChannels(objects);
 
 		// What: persist the freshly built channel ids.
@@ -257,6 +261,14 @@ export class GuildSetupManager {
 			// adminCommandsChannelId, can post as soon as ensurePowerUps runs
 			// after /setup, without waiting for a reboot.
 			adminCommandsChannelId: ids.adminCommandsChannelId,
+			// ── 🎮 ARCADE GAMES ──
+			// All three persisted in the SAME payload as the rest, deliberately.
+			// nextDecreeChannelId's original omission (it relied on boot-sweep
+			// adoption instead) meant the id was null until the next reboot, and
+			// anything keying off it silently no-opped in between. Do not copy that.
+			gamesCategoryId: ids.gamesCategoryId,
+			gamesRulesChannelId: ids.gamesRulesChannelId,
+			gamesChallengesChannelId: ids.gamesChallengesChannelId,
 			// v1.5.1 item 9: clear any previously-tracked permission failure
 			// so a guild that recovered from missing-permissions state stops
 			// being on the auto-leave countdown. Safe to set unconditionally
@@ -631,23 +643,25 @@ export class GuildSetupManager {
 		// admin channel); hosts the command guide + admin power-up panel.
 		{ configField: "adminCommandsChannelId", displayName: channels.adminCommands, kind: "admin", categoryField: "categoryId" },
 
-		// ── 🎮 ARCADE GAMES: DELIBERATELY NOT LISTED YET ────────────────
-		// ⚠️ THE TWO GAMES SPECS LAND WITH TASK 2.7, NOT HERE, AND THE ORDER IS
-		// LOAD BEARING. Adding an entry to this array is what ARMS the boot repair
-		// sweep: repairMissingChannels treats a null stored id as case ③, "legacy
-		// guild predating a new channel spec, build it", and hands the spec to
-		// repairOneChannel along with the ONE category it was given. Until that
-		// function resolves the parent from spec.categoryField, every existing
-		// guild would build 📋game-rules and ⚔️challenges under 🪧 NOTICE BOARD on
-		// its very next boot. That is risk R2, it fires without an error, and the
-		// adopt-before-build scan would then look in the wrong parent forever after
-		// and produce duplicates.
+		// ── 🎮 ARCADE GAMES, the two specs under the SECOND category ──
+		// ⚠️ THESE TWO LINES ARM THE BOOT REPAIR SWEEP, and they were deliberately
+		// held back until repairMissingChannels learned to resolve a parent from
+		// categoryField (task 2.7, landed with them). The sweep treats a null
+		// stored id as case ③, "legacy guild predating a new channel spec, build
+		// it", so on the next boot of every existing guild these two get built.
+		// That is correct ONLY because the sweep now creates and passes the arcade
+		// category; with the old single-category call they would have landed under
+		// 🪧 NOTICE BOARD silently, and the adopt-before-build scan would then have
+		// searched the wrong parent forever after and produced duplicates.
 		//
-		// The plan lists 2.4/2.5 before 2.7, which is safe to WRITE in that order
-		// but not safe to SHIP in it. Everything else in this change set is inert:
-		// the categoryField requirement, the two CHANNEL_FIELDS entries and the two
-		// resolveIntroEmbed cases all describe channels that no code path can reach
-		// while these two lines are absent.
+		// Both are member facing on purpose: the rules card answers "who can play
+		// what" and the board is where a match starts, so a member who cannot see
+		// them cannot play at all. The per match ROOM channels are NOT specs and
+		// never will be, because they are created and destroyed per match and live
+		// on their own GameRoom rows; ChannelDeleteWatcher depends on that
+		// distinction to avoid rebuilding a deleted room as a managed channel.
+		{ configField: "gamesRulesChannelId", displayName: channels.gamesRules, kind: "public", categoryField: "gamesCategoryId" },
+		{ configField: "gamesChallengesChannelId", displayName: channels.gamesChallenges, kind: "public", categoryField: "gamesCategoryId" },
 	];
 
 	// ── intro content resolver ────────────────────────────────
@@ -1089,6 +1103,17 @@ export class GuildSetupManager {
 		const userRemovedSlots = ((stored as unknown as { userRemovedChannels?: string[] }).userRemovedChannels ?? []) as string[];
 
 		const repaired: string[] = [];
+
+		// ── the arcade category, resolved ONCE per sweep ────────────────
+		// ⚠️ Cached in a local rather than read back off `stored`, and that is not
+		// an optimization. The loop below reassigns `stored` from repairOneChannel's
+		// return on every repair, which overwrites any gamesCategoryId written
+		// here; the second arcade spec would then read null again and create a
+		// SECOND category beside the first. A test caught exactly that.
+		// `undefined` means not yet resolved, `null` means resolution failed
+		// (50013, already reported) and the arcade specs are to be skipped.
+		let arcadeCategory: CategoryChannel | null | undefined;
+
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 			// Honor per-channel user removal. If the admin removed this slot,
 			// skip it regardless of autoHealEnabled. The slot returns when the
@@ -1133,8 +1158,41 @@ export class GuildSetupManager {
 			// fallthrough: either storedId was falsy, or the channel was
 			// missing despite a stored id. Either way, build it.
 
+			// ── resolve THIS spec's parent ──────────────────────────────
+			// ⚠️ RISK R2 LIVES HERE. Before this block the sweep handed every spec
+			// the ONE category it was given, so the moment the two arcade specs
+			// joined CHANNEL_SPECS, every existing guild would have built
+			// 📋game-rules and ⚔️challenges under 🪧 NOTICE BOARD on its next boot.
+			// Nothing throws when that happens: the channels appear in the wrong
+			// place, and the adopt-before-build scan inside repairOneChannel then
+			// searches the wrong category's children forever after, so the next
+			// sweep does not adopt them and builds duplicates instead.
+			//
+			// A legacy guild's row predates the arcade category entirely, so the
+			// id is null and the category has to be created on demand. It is
+			// persisted IMMEDIATELY rather than at the end of the sweep, which is
+			// what makes the second arcade spec in this same loop fetch the one we
+			// just made instead of creating a second one.
+			let parent = category;
+			if (spec.categoryField === "gamesCategoryId") {
+				if (arcadeCategory === undefined) {
+					const storedArcadeId = (stored as unknown as { gamesCategoryId?: string | null }).gamesCategoryId ?? null;
+					arcadeCategory = await GuildSetupManager.resolveOrCreateArcadeCategory(guild, storedArcadeId, guild.ownerId);
+					// Persist immediately when it was just built, so a guild that
+					// crashes mid sweep does not create a second category next boot.
+					if (arcadeCategory && arcadeCategory.id !== storedArcadeId) {
+						await guildConfigStore.update(guild.id, { gamesCategoryId: arcadeCategory.id });
+					}
+				}
+				// null means a 50013 already routed through handlePermissionFailure.
+				// Skip the arcade specs rather than abandoning the sweep: the
+				// homebase specs may still be repairable.
+				if (!arcadeCategory) continue;
+				parent = arcadeCategory;
+			}
+
 			try {
-				const result = await GuildSetupManager.repairOneChannel(guild, category, spec, stored);
+				const result = await GuildSetupManager.repairOneChannel(guild, parent, spec, stored);
 				// refresh local stored so the next spec + the notice post
 				// step below see the new ids. Notably: if the admin channel
 				// was the one repaired, stored.adminChannelId now points at
@@ -1509,9 +1567,62 @@ export class GuildSetupManager {
 	}
 
 	// ── channel creation ──────────────────────────────────────
+	// ── resolve or create the 🎮 ARCADE GAMES category ────────
+	// What:  hand back the guild's arcade category, creating it when the stored
+	//        id is null or points at something that no longer exists.
+	// Who:   runAutoSetup (fresh install, stored id is always null) and
+	//        repairMissingChannels (a legacy guild whose row predates the
+	//        category). ONE helper for both, so the two paths cannot build it
+	//        with different overwrites and drift.
+	// When:  once per autoSetup, and lazily on the boot sweep the first time a
+	//        games spec needs a parent.
+	// Where: the overwrites deliberately MIRROR the homebase category's, owner
+	//        allow and nothing else. runAutoSetup's own comment explains why an
+	//        @everyone deny on a category is actively harmful (it clobbers the
+	//        bot's ViewChannel inheritance via @everyone-role membership and
+	//        produces a 50013 on the very next child create), and that reasoning
+	//        applies here identically. Privacy is enforced per child channel.
+	// How:   returns null on a 50013 after routing through handlePermissionFailure,
+	//        matching runAutoSetup's posture: a guild that will not let the bot
+	//        build is tracked toward the auto-leave grace period rather than
+	//        throwing on every boot forever.
+	private static async resolveOrCreateArcadeCategory(
+		guild: Guild,
+		storedId: string | null | undefined,
+		ownerId: string
+	): Promise<CategoryChannel | null> {
+		if (storedId) {
+			const existing = await guild.channels.fetch(storedId).catch(() => null);
+			if (existing && existing.type === ChannelType.GuildCategory) return existing as CategoryChannel;
+		}
+
+		try {
+			return await guild.channels.create({
+				name: resolveGamesCategoryName(),
+				type: ChannelType.GuildCategory,
+				permissionOverwrites: [
+					{
+						id: ownerId,
+						allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+					},
+				],
+			});
+		} catch (error) {
+			if (error instanceof DiscordAPIError && error.code === 50013) {
+				await GuildSetupManager.handlePermissionFailure(guild);
+				return null;
+			}
+			throw error;
+		}
+	}
+
 	private static async createChannels(
 		guild: Guild,
 		category: CategoryChannel,
+		// The SECOND parent. Passed in rather than resolved here so createChannels
+		// stays a pure "build these channels under these parents" step and the
+		// 50013 handling lives in one place above.
+		gamesCategory: CategoryChannel,
 		config: ISetupConfig
 	): Promise<{ ids: ICreatedChannels; objects: IChannelObjects }> {
 		// public channels, owner can send, everyone else read-only.
@@ -1571,6 +1682,8 @@ export class GuildSetupManager {
 			adminChannel,
 			nextDecreeChannel,
 			adminCommandsChannel,
+			gamesRulesChannel,
+			gamesChallengesChannel,
 		] = await Promise.all([
 			guild.channels.create({
 				name: channels.intro,
@@ -1631,6 +1744,30 @@ export class GuildSetupManager {
 				parent: category.id,
 				permissionOverwrites: adminOverwrites,
 			}),
+			// ── ninth and tenth, under 🎮 ARCADE GAMES ────────────
+			// ⚠️ NOTE THE PARENT: gamesCategory.id, not category.id. These two are
+			// the only channels here that do not live in the homebase, and getting
+			// this wrong is risk R2 in a form the compiler cannot catch (both are
+			// CategoryChannel), which is why the specs carry categoryField for
+			// every OTHER consumer.
+			//
+			// Both take publicOverwrites: members read, the bot writes. The rules
+			// card is a pinned reference and the challenge board is a wall of bot
+			// posted cards with buttons, so member SendMessages would only let
+			// chatter bury them. Challenges are issued by command, not by typing
+			// here, so the lockdown costs nothing.
+			guild.channels.create({
+				name: channels.gamesRules,
+				type: ChannelType.GuildText,
+				parent: gamesCategory.id,
+				permissionOverwrites: publicOverwrites,
+			}),
+			guild.channels.create({
+				name: channels.gamesChallenges,
+				type: ChannelType.GuildText,
+				parent: gamesCategory.id,
+				permissionOverwrites: publicOverwrites,
+			}),
 		]);
 
 		return {
@@ -1644,6 +1781,9 @@ export class GuildSetupManager {
 				adminChannelId: adminChannel.id,
 				nextDecreeChannelId: nextDecreeChannel.id,
 				adminCommandsChannelId: adminCommandsChannel.id,
+				gamesCategoryId: gamesCategory.id,
+				gamesRulesChannelId: gamesRulesChannel.id,
+				gamesChallengesChannelId: gamesChallengesChannel.id,
 			},
 			objects: {
 				introChannel,
@@ -1654,6 +1794,8 @@ export class GuildSetupManager {
 				adminChannel,
 				nextDecreeChannel,
 				adminCommandsChannel,
+				gamesRulesChannel,
+				gamesChallengesChannel,
 			},
 		};
 	}
@@ -1688,6 +1830,12 @@ export class GuildSetupManager {
 			// guide). Standard one-key-per-channel slot, the guide is this
 			// channel's only tracked message after the 2026-06-19 split.
 			adminCommandsChannelId: string;
+			// ── 🎮 ARCADE GAMES intro anchors ──
+			// Same one-key-per-channel slot every other intro gets, so
+			// refreshIntroEmbeds edits both cards in place on later boots instead of
+			// reposting them. GuildConfig declared these two keys in task 2.1.
+			gamesRulesChannelId: string;
+			gamesChallengesChannelId: string;
 			// Second pinned message in #command-center: the standalone invite card.
 			inviteCardId: string;
 		};
@@ -1701,6 +1849,8 @@ export class GuildSetupManager {
 			adminChannel,
 			nextDecreeChannel,
 			adminCommandsChannel,
+			gamesRulesChannel,
+			gamesChallengesChannel,
 		} = discordChannels;
 
 		const [
@@ -1717,6 +1867,12 @@ export class GuildSetupManager {
 			// one batch and ordering is deterministic. Persisted on
 			// introMessageIds.adminCommandsChannelId like every other channel intro.
 			adminCommandsMsg,
+			// ── 🎮 ARCADE GAMES ───────────────────────
+			// The rules card and the challenge board intro. Neither is pinned, per
+			// the pinning policy below: both channels are read-only for members, so
+			// there is nothing to bury the bot's message under.
+			gamesRulesMsg,
+			gamesChallengesMsg,
 			// Second #command-center message: the standalone invite card (pitch +
 			// Dero gif + Summon button), pinned separately from the command guide.
 			inviteCardMsg,
@@ -1748,6 +1904,11 @@ export class GuildSetupManager {
 			// (gated in the handler). Pinning handled below alongside the
 			// schedule + next-decree pins.
 			adminCommandsChannel.send({ embeds: [ChannelContent.adminCommandGuide()], components: GuildSetupManager.resolveIntroComponents("adminCommandsChannelId") ?? [] }),
+			// The arcade's two cards. Ordering inside this array is load bearing:
+			// the destructure above is positional, which is exactly why every entry
+			// is named rather than indexed.
+			gamesRulesChannel.send({ embeds: [ChannelContent.gamesRulesIntro()] }),
+			gamesChallengesChannel.send({ embeds: [ChannelContent.gamesChallengesIntro()] }),
 			// Standalone invite card in #command-center: short pitch + Dero gif + the
 			// Summon button. Its own message so the wide button is not crammed into
 			// the command guide's row. refreshIntroEmbeds maintains it on boot.
@@ -1785,6 +1946,8 @@ export class GuildSetupManager {
 				adminChannelId: adminMsg.id,
 				nextDecreeChannelId: nextDecreeMsg.id,
 				adminCommandsChannelId: adminCommandsMsg.id,
+				gamesRulesChannelId: gamesRulesMsg.id,
+				gamesChallengesChannelId: gamesChallengesMsg.id,
 				inviteCardId: inviteCardMsg.id,
 			},
 		};
