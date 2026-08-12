@@ -137,6 +137,32 @@ export const ChannelContent = {
 		return infoEmbed(cc.nextDecree.title, cc.nextDecree.description, copy.COLORS.NEXT_DECREE);
 	},
 
+	// ── 🎮 GAME ROOMS intros ──────────────────────────────────
+	// The rules card, one FIELD per game rather than one embed per game.
+	// The plan asked for an embed each; the intro pipeline (resolveIntroEmbed,
+	// populateChannels, refreshIntroEmbeds, repairOneChannel, the delete watcher)
+	// is built around ONE embed per channel, and widening all of it to an array
+	// would be real surgery for a difference a reader cannot see: a field renders
+	// as its own titled block either way. Discord allows 25 fields and the roster
+	// is five games, seven once battleship and holdem land, so the ceiling is not
+	// close. If the roster ever outgrows that, THAT is the moment to widen the
+	// pipeline rather than to truncate the list.
+	gamesRulesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		const embed = infoEmbed(cc.gamesRules.title, cc.gamesRules.description, copy.COLORS.GAME_ROOMS);
+		for (const game of cc.gamesRules.games) {
+			embed.addFields({ name: game.name, value: `${game.how}\n**Players:** ${game.players}\n**Start it:** ${game.who}`, inline: false });
+		}
+		return embed;
+	},
+
+	gamesChallengesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.gamesChallenges.title, cc.gamesChallenges.description, copy.COLORS.GAME_ROOMS);
+	},
+
 	adminWelcome(ownerId: string, adminRoleId: string, guildConfig?: ICopyConfig | null): EmbedBuilder {
 		const copy = getPluginCopy(guildConfig);
 		const cc = copy.channelContent;

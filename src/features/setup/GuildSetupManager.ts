@@ -583,6 +583,16 @@ export class GuildSetupManager {
 		// admin power-up panel. kept separate so daily inner-sanctum notices
 		// never bury the quick-action controls.
 		"adminCommandsChannelId",
+		// ── ninth and tenth, under the SECOND category ────────────
+		// 📋game-rules and ⚔️challenges. This array is consumed in TYPE positions
+		// only (it types configField, the resolveIntroEmbed switch, and the
+		// introMessageIds map); the repair sweep and the delete watcher walk
+		// CHANNEL_SPECS instead. Listing them here therefore widens the union and
+		// forces the switch to grow a case, without arming anything. Which CATEGORY
+		// each belongs under is carried by its spec's categoryField, never inferred
+		// from position in this array.
+		"gamesRulesChannelId",
+		"gamesChallengesChannelId",
 	] as const;
 
 	// exported so ChannelDeleteWatcher can map a deleted channel id to its
@@ -591,25 +601,53 @@ export class GuildSetupManager {
 		configField: (typeof GuildSetupManager.CHANNEL_FIELDS)[number];
 		displayName: string;
 		kind: "public" | "admin";
+		// ⚠️ REQUIRED ON PURPOSE, and that is the entire mitigation for risk R2.
+		// There are TWO managed categories now, and every consumer that builds or
+		// repairs a channel has to know which parent it belongs under. An optional
+		// field with a "categoryId" default would let a games spec silently inherit
+		// the homebase category, which produces 📋game-rules under 🪧 NOTICE BOARD,
+		// an adopt-before-build scan that searches the wrong parent, and therefore
+		// duplicate channels. None of that throws. Making it required turns that
+		// entire class of mistake into a compile error at the moment a spec is
+		// added, which is the only place anyone would ever get it wrong.
+		categoryField: "categoryId" | "gamesCategoryId";
 	}> = [
-		{ configField: "introChannelId", displayName: channels.intro, kind: "public" },
+		{ configField: "introChannelId", displayName: channels.intro, kind: "public", categoryField: "categoryId" },
 		// Commands channel is read-only for members on purpose. The pinned
 		// command-center embed is the channel's reason for existing; opening
 		// SendMessages here would let unrelated chatter bury that message.
 		// Slash commands work in any channel anyway, so locking this one
 		// down does not block functionality.
-		{ configField: "commandsChannelId", displayName: channels.commands, kind: "public" },
-		{ configField: "leaderboardChannelId", displayName: channels.leaderboard, kind: "public" },
-		{ configField: "scheduleChannelId", displayName: channels.schedule, kind: "public" },
-		{ configField: "announcementsChannelId", displayName: channels.announcements, kind: "public" },
-		{ configField: "adminChannelId", displayName: channels.admin, kind: "admin" },
+		{ configField: "commandsChannelId", displayName: channels.commands, kind: "public", categoryField: "categoryId" },
+		{ configField: "leaderboardChannelId", displayName: channels.leaderboard, kind: "public", categoryField: "categoryId" },
+		{ configField: "scheduleChannelId", displayName: channels.schedule, kind: "public", categoryField: "categoryId" },
+		{ configField: "announcementsChannelId", displayName: channels.announcements, kind: "public", categoryField: "categoryId" },
+		{ configField: "adminChannelId", displayName: channels.admin, kind: "admin", categoryField: "categoryId" },
 		// 🛡️ seventh, next-decree. public so mortals see the board
 		// posts, bot only writes (the category level overwrites already
 		// gate SendMessages for "public" kind).
-		{ configField: "nextDecreeChannelId", displayName: channels.nextDecree, kind: "public" },
+		{ configField: "nextDecreeChannelId", displayName: channels.nextDecree, kind: "public", categoryField: "categoryId" },
 		// 🛡️ eighth, admin command center. admin-only (same gating as the
 		// admin channel); hosts the command guide + admin power-up panel.
-		{ configField: "adminCommandsChannelId", displayName: channels.adminCommands, kind: "admin" },
+		{ configField: "adminCommandsChannelId", displayName: channels.adminCommands, kind: "admin", categoryField: "categoryId" },
+
+		// ── 🎮 GAME ROOMS: DELIBERATELY NOT LISTED YET ────────────────
+		// ⚠️ THE TWO GAMES SPECS LAND WITH TASK 2.7, NOT HERE, AND THE ORDER IS
+		// LOAD BEARING. Adding an entry to this array is what ARMS the boot repair
+		// sweep: repairMissingChannels treats a null stored id as case ③, "legacy
+		// guild predating a new channel spec, build it", and hands the spec to
+		// repairOneChannel along with the ONE category it was given. Until that
+		// function resolves the parent from spec.categoryField, every existing
+		// guild would build 📋game-rules and ⚔️challenges under 🪧 NOTICE BOARD on
+		// its very next boot. That is risk R2, it fires without an error, and the
+		// adopt-before-build scan would then look in the wrong parent forever after
+		// and produce duplicates.
+		//
+		// The plan lists 2.4/2.5 before 2.7, which is safe to WRITE in that order
+		// but not safe to SHIP in it. Everything else in this change set is inert:
+		// the categoryField requirement, the two CHANNEL_FIELDS entries and the two
+		// resolveIntroEmbed cases all describe channels that no code path can reach
+		// while these two lines are absent.
 	];
 
 	// ── intro content resolver ────────────────────────────────
@@ -657,6 +695,14 @@ export class GuildSetupManager {
 				// the 2026-06-19 split). Self-destruct button rides along via
 				// resolveIntroComponents.
 				return ChannelContent.adminCommandGuide(guildConfig);
+			// ── 🎮 GAME ROOMS ────────────────────────────────────────
+			// Neither depends on adminRoleId: both channels are member facing, and
+			// the rules card is the answer to "who can play what" for everyone
+			// rather than an admin surface.
+			case "gamesRulesChannelId":
+				return ChannelContent.gamesRulesIntro(guildConfig);
+			case "gamesChallengesChannelId":
+				return ChannelContent.gamesChallengesIntro(guildConfig);
 		}
 	}
 
