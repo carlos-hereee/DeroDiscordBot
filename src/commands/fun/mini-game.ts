@@ -5,6 +5,7 @@ import { fortuneCopy } from "@features/fortune/fortuneCopy.js";
 import { runDuel } from "@features/games/duelHandler.js";
 import { runRps } from "@features/games/rpsHandler.js";
 import { runHangman } from "@features/games/hangmanHandler.js";
+import { runBlackjack } from "@features/games/blackjackHandler.js";
 import { runFortune } from "@features/games/fortuneHandler.js";
 
 // ── /mini-game ─────────────────────────────────────────────────────────────
@@ -73,6 +74,24 @@ export const data = new SlashCommandBuilder()
 	.addSubcommand((sub) => sub.setName("hangman").setDescription(gamesCopy.hangman.subcommandDescription))
 	.addSubcommand((sub) =>
 		sub
+			.setName("blackjack")
+			.setDescription(gamesCopy.blackjack.subcommandDescription)
+			.addStringOption((option) =>
+				option
+					.setName("mode")
+					.setDescription(gamesCopy.blackjack.modeOptionDescription)
+					// Optional, defaulting to solo, so the shortest path to a hand is
+					// /mini-game blackjack and nothing else. Choices rather than free text
+					// so Discord rejects anything else before it reaches the handler.
+					.setRequired(false)
+					.addChoices(
+						{ name: gamesCopy.blackjack.soloChoiceLabel, value: "solo" },
+						{ name: gamesCopy.blackjack.tableChoiceLabel, value: "table" }
+					)
+			)
+	)
+	.addSubcommand((sub) =>
+		sub
 			// The absorbed /fortune. Option names, types, requiredness, and the 200
 			// character cap are copied verbatim from the shipped command, and the
 			// descriptions are READ from fortuneCopy rather than retyped, so the two
@@ -107,6 +126,7 @@ export const MINI_GAME_HANDLERS = {
 	duel: runDuel,
 	rps: runRps,
 	hangman: runHangman,
+	blackjack: runBlackjack,
 	fortune: runFortune,
 } as const satisfies Record<string, (interaction: ChatInputCommandInteraction) => Promise<void>>;
 

@@ -3,6 +3,7 @@ import { AUTHOR, COLORS } from "@base/copy/brand.js";
 import { gamesCopy } from "./gamesCopy.js";
 import type { DuelResult } from "./duelResolve.js";
 import type { RpsChoice, RpsOutcome } from "./rpsWinner.js";
+import { handValue, type BlackjackTable, type Card, type HandOutcome, type SeatResult, type Suit } from "./blackjackState.js";
 
 // ── /mini-game embeds ──────────────────────────────────────────────────────
 // Self-contained game embeds. They do NOT reuse embedBuilder.base() on purpose:
@@ -157,4 +158,117 @@ export function buildHangmanEndEmbed(title: string, description: string, imageRe
 // choice would hand their opponent free information for the rematch.
 export function buildRpsTimeoutEmbed(description: string): EmbedBuilder {
 	return base().setTitle(gamesCopy.rps.timeoutTitle).setColor(COLORS.GAME_CHALLENGE).setDescription(description);
+}
+
+// ── blackjack ───────────────────────────────────────────────────────────────
+// Cards render as TEXT, not as application emojis, and that is a deliberate v1
+// choice rather than the plan's. The plan calls for a 52 card application emoji
+// set, which is genuinely better looking and works in every guild without admin
+// setup, but it needs 52 uploaded image assets that do not exist yet. Text cards
+// need nothing, read fine at a glance, and cost no upload on every redraw. The
+// emoji set is a drop in upgrade later: only these two helpers change.
+
+const SUIT_SYMBOLS: Record<Suit, string> = { S: "♠", H: "♥", D: "♦", C: "♣" };
+
+export function renderCard(card: Card): string {
+	return `${card.rank}${SUIT_SYMBOLS[card.suit]}`;
+}
+
+export function renderHand(cards: Card[]): string {
+	return cards.map(renderCard).join("  ");
+}
+
+// "18" or "soft 17". The soft marker is not decoration: it is the difference
+// between a hand that can take a card safely and one that cannot, and a player
+// who cannot see it is being asked to do the ace arithmetic in their head.
+function renderTotal(cards: Card[]): string {
+	const { total, soft } = handValue(cards);
+	return soft ? gamesCopy.blackjack.softTotal(total) : String(total);
+}
+
+// ── buildBlackjackSeatingEmbed ─────────────────────────────────────────────
+// Table mode only. A solo game never posts this: it deals immediately, because
+// a join window for one player is a countdown to nothing.
+export function buildBlackjackSeatingEmbed(hostId: string, seated: string[], secondsLeft: number): EmbedBuilder {
+	const c = gamesCopy.blackjack;
+	return base()
+		.setTitle(c.seatingTitle)
+		.setColor(COLORS.GAME_BLACKJACK)
+		.setDescription(`${c.seatingDescription(hostId)}\n\n${c.seatingClosesIn(secondsLeft)}`)
+		.addFields({
+			name: c.seatsLabel,
+			value: seated.length ? seated.map((id) => `<@${id}>`).join("\n") : c.noSeats,
+			inline: false,
+		});
+}
+
+// ── buildBlackjackTableEmbed ───────────────────────────────────────────────
+// The live board, edited in place for the whole hand. `revealDealer` is false
+// for every render before the dealer plays, which is what keeps the hole card
+// secret from EVERYONE, players and spectators alike. That single fact is why
+// blackjack needs no per player private view and therefore never runs into the
+// 15 minute interaction token limit.
+export function buildBlackjackTableEmbed(table: BlackjackTable, revealDealer: boolean): EmbedBuilder {
+	const c = gamesCopy.blackjack;
+	const dealerValue = revealDealer
+		? `${renderHand(table.dealer.cards)}  •  ${renderTotal(table.dealer.cards)}`
+		: `${renderCard(table.dealer.cards[0])}  ${c.holeCard}`;
+
+	const embed = base().setTitle(c.tableTitle).setColor(COLORS.GAME_BLACKJACK).addFields({ name: c.dealerLabel, value: dealerValue, inline: false });
+
+	for (const seat of table.seats) {
+		// One field per HAND, not per seat, so a split shows as two lines a player
+		// can actually tell apart. The active hand is marked, because after a split
+		// "which of these am I playing" is otherwise guesswork.
+		const lines = seat.hands.map((hand, index) => {
+			const active = table.phase === "playing" && table.seats[table.turn]?.userId === seat.userId && seat.activeHand === index;
+			const notes = [hand.status === "bust" ? c.bustNote : null, hand.doubled ? c.doubledNote : null].filter(Boolean).join(", ");
+			const label = c.handLabel(index, seat.hands.length);
+			return `${active ? "▶ " : ""}${label}: ${renderHand(hand.cards)}  •  ${renderTotal(hand.cards)}${notes ? `  (${notes})` : ""}`;
+		});
+		embed.addFields({ name: seat.username, value: lines.join("\n"), inline: false });
+	}
+
+	if (table.phase === "playing") {
+		const acting = table.seats[table.turn];
+		if (acting) embed.setDescription(c.turnLine(acting.userId));
+	}
+
+	return embed;
+}
+
+// ── buildBlackjackResultEmbed ──────────────────────────────────────────────
+// Replaces the board once the dealer has settled. Always reveals everything:
+// the hand is over, so there is nothing left to protect, and a result card that
+// hides the dealer's cards is the one thing players will not accept.
+export function buildBlackjackResultEmbed(table: BlackjackTable, results: SeatResult[], anyDoubledLoss: boolean): EmbedBuilder {
+	const c = gamesCopy.blackjack;
+	const OUTCOME_LABELS: Record<HandOutcome, string> = {
+		blackjack: c.outcomeBlackjack,
+		win: c.outcomeWin,
+		push: c.outcomePush,
+		lose: c.outcomeLose,
+	};
+
+	const embed = base()
+		.setTitle(c.resultTitle)
+		.setColor(COLORS.GAME_BLACKJACK)
+		.addFields({
+			name: c.dealerLabel,
+			value: `${renderHand(table.dealer.cards)}  •  ${renderTotal(table.dealer.cards)}`,
+			inline: false,
+		});
+
+	for (const result of results) {
+		const seat = table.seats.find((s) => s.userId === result.userId);
+		const lines = result.hands.map((outcome, index) => {
+			const cards = seat ? renderHand(seat.hands[index].cards) : "";
+			const doubled = result.doubled[index] ? `  (${c.doubledNote})` : "";
+			return `**${OUTCOME_LABELS[outcome]}** ${cards}${doubled}`;
+		});
+		embed.addFields({ name: result.username, value: lines.join("\n"), inline: false });
+	}
+
+	if (anyDoubledLoss) embed.setDescription(c.doubledLostAll);
+	return embed;
 }

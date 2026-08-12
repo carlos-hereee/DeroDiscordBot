@@ -129,6 +129,75 @@ export const gamesCopy = {
 		expiredDescription: (word: string): string => `Nobody finished it in time. The word was **${word.toUpperCase()}**.`,
 	},
 
+	// ── blackjack ──
+	// Three surfaces on one table: a solo game against the dealer, a table a host
+	// opens for others, and joining a table somebody already opened. They share
+	// every string below because they share one engine; only the seating board
+	// differs, and a solo game simply never shows it.
+	blackjack: {
+		subcommandDescription: "Play blackjack against Dero's dealer, alone or at a table",
+		label: "blackjack",
+
+		modeOptionDescription: "Play alone right now, or open a table others can join",
+		soloChoiceLabel: "Solo, deal me in now",
+		tableChoiceLabel: "Table, let others join first",
+
+		cooldownMessage: (seconds: number): string => `The dealer is still shuffling. Try again in ${seconds}s.`,
+		alreadyRunning: "A table is already running in this channel. Join that one, or wait for it to finish.",
+		noChannel: "Could not find a channel to deal in.",
+		outsideGuild: "Blackjack only works inside a server, not in a DM.",
+
+		// ── the seating board, table mode only ──
+		seatingTitle: "🃏 A table is open",
+		seatingDescription: (hostId: string): string =>
+			`<@${hostId}> has opened a table. Take a seat, and the dealer will begin shortly.`,
+		seatsLabel: "Seated",
+		noSeats: "nobody yet",
+		joinLabel: "Take a seat",
+		leaveLabel: "Leave",
+		dealLabel: "Deal now",
+		seatingClosesIn: (seconds: number): string => `Betting closes in ${seconds}s.`,
+		joined: "You are seated. Wait for the deal.",
+		left: "You have left the table.",
+		alreadySeated: "You already have a seat at this table.",
+		tableFull: "That table is full. Wait for the next one.",
+		notSeated: "You are not seated at this table.",
+		hostOnlyDeal: "Only the member who opened the table can deal early.",
+		nobodyCame: "Nobody took a seat. The dealer packs up.",
+
+		// ── the table board ──
+		tableTitle: "🃏 Blackjack",
+		dealerLabel: "Dealer",
+		// The dealer's second card stays face down until every seat has acted, which
+		// is what makes the whole game a decision rather than arithmetic.
+		holeCard: "??",
+		turnLine: (userId: string): string => `It is <@${userId}>'s turn.`,
+		handLabel: (index: number, total: number): string => (total > 1 ? `Hand ${index + 1} of ${total}` : "Hand"),
+		softTotal: (total: number): string => `soft ${total}`,
+
+		hitLabel: "Hit",
+		standLabel: "Stand",
+		doubleLabel: "Double",
+		splitLabel: "Split",
+
+		notYourTurn: "It is not your turn at this table.",
+		notPlaying: "You are not playing at this table.",
+		illegalAction: "You cannot do that with this hand.",
+
+		// ── results ──
+		resultTitle: "🃏 The dealer settles up",
+		outcomeBlackjack: "Blackjack",
+		outcomeWin: "Win",
+		outcomePush: "Push",
+		outcomeLose: "Lose",
+		bustNote: "bust",
+		doubledNote: "doubled",
+		// Stated on the result card because doubling is the one action whose cost is
+		// invisible in the cards themselves.
+		doubledLostAll: "A doubled hand that loses pays nothing at all.",
+		tableTimedOut: "The table sat idle too long. The dealer clears the felt.",
+	},
+
 	// ── shared challenge and accept engine copy ──
 	// Consumed only by challengeFlow.ts. The duel and rps handlers pass their own
 	// `label` from above so one set of strings covers both games.

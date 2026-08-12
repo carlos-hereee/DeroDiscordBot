@@ -109,6 +109,9 @@ export const COLORS = {
 	GAME_DUEL: "#f97316",
 	GAME_RPS: "#0ea5e9",
 	GAME_HANGMAN: "#22c55e",
+	// Felt green, deliberately DARKER than GAME_HANGMAN's brighter green so the two
+	// are still distinguishable side by side in a channel that has both open.
+	GAME_BLACKJACK: "#15803d",
 	// ── leveling (2026-08-11) ──
 	// Same non pack-aware path as the games and fortune above: leveling is a
 	// plain bot feature, not a platform plugin, so its embeds pull colors from

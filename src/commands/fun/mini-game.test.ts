@@ -13,6 +13,7 @@ const handlers = vi.hoisted(() => ({
 	runDuel: vi.fn(async () => undefined),
 	runRps: vi.fn(async () => undefined),
 	runHangman: vi.fn(async () => undefined),
+	runBlackjack: vi.fn(async () => undefined),
 	runFortune: vi.fn(async () => undefined),
 }));
 
@@ -21,11 +22,13 @@ const handlers = vi.hoisted(() => ({
 vi.mock("@features/games/duelHandler.js", () => ({ runDuel: handlers.runDuel }));
 vi.mock("@features/games/rpsHandler.js", () => ({ runRps: handlers.runRps }));
 vi.mock("@features/games/hangmanHandler.js", () => ({ runHangman: handlers.runHangman }));
+vi.mock("@features/games/blackjackHandler.js", () => ({ runBlackjack: handlers.runBlackjack }));
 vi.mock("@features/games/fortuneHandler.js", () => ({ runFortune: handlers.runFortune }));
 
 import { data, execute, MINI_GAME_HANDLERS } from "./mini-game.js";
 
-const SUBCOMMANDS = ["duel", "rps", "hangman", "fortune"] as const;
+// Declaration order, which the builder shape assertion below depends on.
+const SUBCOMMANDS = ["duel", "rps", "hangman", "blackjack", "fortune"] as const;
 
 function fakeInteraction(subcommand: string): { interaction: ChatInputCommandInteraction; reply: ReturnType<typeof vi.fn> } {
 	const reply = vi.fn(async () => undefined);
@@ -47,7 +50,7 @@ describe("/mini-game builder shape", () => {
 		expect(json.name).toBe("mini-game");
 	});
 
-	it("declares exactly the four expected subcommands", () => {
+	it("declares exactly the expected subcommands", () => {
 		const names = topLevel.map((option) => option.name);
 		expect(names).toEqual([...SUBCOMMANDS]);
 	});
