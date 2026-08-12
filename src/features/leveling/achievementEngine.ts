@@ -10,7 +10,7 @@ import type { IGameRecord } from "./levelingTypes.js";
 //        flush, and from nowhere else.
 // When:  after every flush, for every member the flush touched, whether or not
 //        they crossed a level. A member can unlock "sent 53 messages" without
-//        levelling at all.
+//        leveling at all.
 // Where: it reads counters MemberLevel already maintains, so the whole
 //        achievement system adds ZERO new listeners and ZERO new writes on the
 //        message path. Adding a track later is a data change in

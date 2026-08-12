@@ -249,7 +249,7 @@ describe("level crossing dispatch", () => {
 		// that is what stops "unlock grants xp, xp crosses a level, a level changes
 		// the metrics an unlock was evaluated against" from becoming a loop.
 		// It is also deliberately not gated on a crossing: a member can unlock
-		// "sent 53 messages" without levelling at all.
+		// "sent 53 messages" without leveling at all.
 		mocks.findManyInGuild.mockResolvedValue([{ userId: "u1", username: "silent", totalXp: 10 }]);
 		startXpWriter(client, { flushIntervalMs: 60_000, sweepIntervalMs: 60_000 });
 

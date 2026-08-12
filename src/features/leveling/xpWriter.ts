@@ -276,7 +276,7 @@ async function dispatchCrossings(
 			// here means it runs exactly once per flushed member per flush.
 			//
 			// Deliberately NOT gated on a level crossing: a member can unlock "sent
-			// 53 messages" without levelling at all.
+			// 53 messages" without leveling at all.
 			if (context?.settings.enabled) {
 				await runAchievementPass(client, guildId, doc, context.settings);
 			}
