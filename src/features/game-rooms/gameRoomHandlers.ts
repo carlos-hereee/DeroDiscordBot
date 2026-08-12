@@ -19,6 +19,7 @@ import { challengeBoard } from "./challengeBoard.js";
 import { CHALLENGE_GAMES } from "./challengeBoardEmbeds.js";
 import { runRoomMove, handleRpsSelect } from "./roomGames.js";
 import { openAuthoringModal, openGuessModal, handleAuthoringModal, handleGuessModal } from "./roomHangman.js";
+import { roomBattleshipHandlers } from "./roomBattleshipHandlers.js";
 import type { GameSlug } from "./roomTypes.js";
 
 // The actions that only make sense while a draft is still a draft. Listed once so
@@ -132,13 +133,24 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		case "author":
 			await openAuthoringModal(interaction, room);
 			return;
+		case "board":
+			await roomBattleshipHandlers.handleViewBoard(interaction, room);
+			return;
+		case "reroll":
+			await roomBattleshipHandlers.handleReroll(interaction, room);
+			return;
 		case "move":
-			// Hangman's move is a MODAL rather than an immediate resolution, so it
-			// forks here instead of inside runRoomMove: a modal must be shown as the
-			// FIRST response to the interaction, and runRoomMove's other games have
-			// already deferred by the time they know which game they are.
+			// Each game answers `move` its own way and the fork has to happen HERE
+			// rather than inside runRoomMove: hangman shows a modal, which must be the
+			// FIRST response to an interaction, and battleship replies ephemerally,
+			// while the one-press games defer an update. By the time runRoomMove knew
+			// which game it was, the wrong response would already have been sent.
 			if (room.game === "hangman") {
 				await openGuessModal(interaction, room);
+				return;
+			}
+			if (room.game === "battleship") {
+				await roomBattleshipHandlers.handleFire(interaction, room);
 				return;
 			}
 			await runRoomMove(interaction, room);
@@ -187,6 +199,9 @@ export function registerGameRoomHandlers(): void {
 		if (action === "invite") return challengeBoard.handleInviteSelect(interaction);
 		if (action === "opponent") return challengeBoard.handleOpponentSelect(interaction);
 		if (action === "rps") return handleRpsSelect(interaction);
+		// Battleship's two aim selects share one handler, which reads which half of
+		// the coordinate it was given off the action name.
+		if (action === "bscol" || action === "bsrow") return roomBattleshipHandlers.handleAimSelect(interaction);
 		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
 	});
 	// Hangman's two modals. Same sub-routing shape, and each sub-handler re-gates the

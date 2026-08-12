@@ -8,6 +8,13 @@ import { buildRoomOverwrites } from "./roomPermissions.js";
 import { roomOpenerEmbed } from "./gameRoomsEmbeds.js";
 import { roomMoveRow } from "./roomGames.js";
 import { hangmanRow } from "./roomHangman.js";
+import {
+	startMatch as startBattleshipMatch,
+	deserializeMatch,
+	publicBoardEmbed,
+	battleshipRows,
+	rerollRow,
+} from "./roomBattleship.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -199,7 +206,15 @@ export const RoomProvisioner = {
 				// Hangman opens with the AUTHORING control, not a guess control: there
 				// is no word yet, and offering "guess a letter" before one exists would
 				// be a button whose only possible answer is "not yet".
-				components: [game === "hangman" ? hangmanRow({ roomId: room.roomId }, false) : roomMoveRow({ roomId: room.roomId, game })],
+				// Battleship's controls ride its own board message below, which is the
+				// one that gets edited every turn; the opener stays a plain card.
+				...(game === "battleship"
+					? {}
+					: {
+							components: [
+								game === "hangman" ? hangmanRow({ roomId: room.roomId }, false) : roomMoveRow({ roomId: room.roomId, game }),
+							],
+					  }),
 			})
 			.catch(() => null);
 		await opener?.pin().catch(() => undefined);
@@ -209,6 +224,29 @@ export const RoomProvisioner = {
 			openerMessageId: opener?.id ?? null,
 			startedAt: new Date(),
 		});
+
+		// Battleship needs a MATCH, not just a room: two fleets laid out and a board
+		// message to edit every turn. Done here rather than lazily on the first click
+		// so both players see the grid the moment the channel appears, and so the
+		// fleets exist before anyone can press Fire.
+		if (game === "battleship") {
+			const usernames = Object.fromEntries(
+				playerIds.map((id) => [id, guild.members.cache.get(id)?.displayName ?? id])
+			);
+			const match = startBattleshipMatch(started ?? room, usernames);
+			const boardMessage = await channel
+				.send({
+					embeds: [publicBoardEmbed(deserializeMatch(match))],
+					components: battleshipRows(room.roomId, deserializeMatch(match)),
+				})
+				.catch(() => null);
+			// The reroll offer rides its own message so it can be ignored without
+			// cluttering the board that gets edited thirty times.
+			await channel.send({ components: [rerollRow(room.roomId)] }).catch(() => undefined);
+			await gameRoomStore.update(guild.id, room.roomId, {
+				secret: { ...match, boardMessageId: boardMessage?.id ?? null } as never,
+			});
+		}
 
 		// ⑥ Fire and forget, per house rule 7: an audit write that failed must never take
 		// down a room the members can already see and play in.

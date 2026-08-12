@@ -64,6 +64,13 @@ export const GAME_ROOM_ACTIONS = {
 	// the point rather than a convenience, since the author is precisely the one
 	// person who must not then guess it.
 	author: { hostOnly: true, playersOnly: false },
+	// Battleship: the pull-based private board (Q8). playersOnly because it renders
+	// the viewer's OWN fleet, and a spectator has no fleet to see; it is also the
+	// surface that would leak a position if it were ever public, so the gate matters
+	// more here than its ephemeral reply already implies.
+	board: { hostOnly: false, playersOnly: true },
+	// Battleship: re-lay your own fleet, before the first shot only.
+	reroll: { hostOnly: false, playersOnly: true },
 } as const satisfies Record<string, { hostOnly: boolean; playersOnly: boolean }>;
 
 export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;

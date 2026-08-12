@@ -23,7 +23,7 @@
 // belong here, because a hand takes a minute and a table runs in place on one edited
 // message. A room is earned by DURATION and a transcript worth keeping, which is why
 // battleship and holdem will join this list and a blackjack table will not.
-export const GAME_SLUGS = ["hangman", "coinflip", "diceroll", "rps"] as const;
+export const GAME_SLUGS = ["hangman", "coinflip", "diceroll", "rps", "battleship"] as const;
 export type GameSlug = (typeof GAME_SLUGS)[number];
 
 // ── Who may see the room ──

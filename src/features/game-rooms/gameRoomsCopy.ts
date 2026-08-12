@@ -19,6 +19,7 @@ const GAME_LABELS: Record<GameSlug, string> = {
 	coinflip: "Coin flip",
 	diceroll: "Dice roll",
 	rps: "Rock paper scissors",
+	battleship: "Battleship",
 };
 
 export const gameRoomsCopy = {
@@ -211,6 +212,41 @@ export const gameRoomsCopy = {
 		// The ONLY place the word is ever rendered.
 		wonLine: (word: string): string => `🎉 The room got it. The word was **${word.toUpperCase()}**.`,
 		lostLine: (word: string): string => `💀 The gallows wins. The word was **${word.toUpperCase()}**.`,
+	},
+
+	// ── battleship in a room (Phase 7) ──
+	battleship: {
+		boardTitle: "🚢 The fleets",
+		ownBoardTitle: "🗺️ Your own waters",
+		turnLine: (userId: string): string => `It is <@${userId}>'s turn to fire.`,
+		finished: (winnerId: string | null): string =>
+			winnerId ? `👑 <@${winnerId}> has sunk the fleet.` : "The match is over.",
+		fleetLine: (afloat: string[]): string =>
+			afloat.length ? `Still afloat: ${afloat.join(", ")}` : "Every ship you had is on the bottom.",
+
+		columnPlaceholder: "Column (A to J)",
+		rowPlaceholder: "Row (1 to 10)",
+		fireLabel: "Fire",
+		viewLabel: "View my board",
+		forfeitLabel: "Surrender",
+		rerollLabel: "Reroll my fleet",
+
+		aimed: (coord: string): string => `Target set: **${coord}**. Press Fire when you are ready.`,
+		aimedPartial: "Target set. Pick the other half of the coordinate, then Fire.",
+		noTarget: "Pick a column and a row first.",
+		notYourTurn: "It is not your turn.",
+		offGrid: "That is not on the grid.",
+		matchOver: "This match is already over.",
+		alreadyFired: (coord: string): string => `You have already fired on **${coord}**.`,
+		rerolled: "Your fleet has been laid out again. Only you can see where.",
+		rerollTooLate: "The first shot has been fired. The fleets are where they are.",
+
+		// The public narration. None of these names an UNFIRED position, which is the
+		// property the whole feature turns on.
+		miss: (shooterId: string, coord: string): string => `🌊 <@${shooterId}> fired on **${coord}**. Miss.`,
+		hit: (shooterId: string, coord: string): string => `💥 <@${shooterId}> fired on **${coord}**. Hit.`,
+		sank: (shooterId: string, coord: string, ship: string): string =>
+			`🔥 <@${shooterId}> fired on **${coord}** and sank the **${ship}**.`,
 	},
 
 	// ── the move trail ──
