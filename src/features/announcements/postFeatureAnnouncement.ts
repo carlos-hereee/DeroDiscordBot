@@ -1,4 +1,4 @@
-import { Client, TextChannel } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, Client, TextChannel } from "discord.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -6,6 +6,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { featureAnnouncedEvent } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
+import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 
 // ── postFeatureAnnouncement ──────────────────────────────────────────
@@ -186,8 +187,20 @@ export async function postFeatureAnnouncements(client: Client): Promise<void> {
 			// the single source of truth this announcement is keyed to, so the title
 			// always reads the right version with no hardcoded version in the copy packs.
 			const publicEmbed = infoEmbed(`${c.public.title} (v${BOT_VERSION})`, c.public.description, packCopy.COLORS.ANNOUNCEMENTS);
+
+			// Suggestion Box rides the PUBLIC announcement only. A release post is the
+			// one moment a member is already reading about what changed, which is when
+			// "what should we build next" actually gets answers; #command-center's copy
+			// of this button is passive and only found by someone already looking.
+			// Safe to attach anywhere: registerSuggestionBoxHandlers (main.ts) dispatches
+			// by customId PREFIX at the client level, so the button is not bound to the
+			// message or channel it was built in. The admin send deliberately omits it,
+			// admins have the same button in #command-center and the inner-sanctum post
+			// is a changelog, not a call to action.
+			const suggestionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(buildSuggestionBoxButton());
 			await announcementsChannel.send({
 				embeds: [publicEmbed],
+				components: [suggestionRow],
 				allowedMentions: { parse: [] },
 			});
 
