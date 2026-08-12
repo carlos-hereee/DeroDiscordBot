@@ -257,16 +257,22 @@ export class GuildSetupManager {
 			scheduleChannelId: ids.scheduleChannelId,
 			announcementsChannelId: ids.announcementsChannelId,
 			adminChannelId: ids.adminChannelId,
-			// Persisted immediately (unlike nextDecreeChannelId, which relies on
-			// boot-sweep adoption) so the admin power-up panel, which keys off
-			// adminCommandsChannelId, can post as soon as ensurePowerUps runs
-			// after /setup, without waiting for a reboot.
+			// ⚠️ EVERY ID createChannels RETURNS IS STORED HERE, NO EXCEPTIONS, and
+			// the exception this payload used to carry is why that is worth stating.
+			// 🔜upcoming-events was built alongside the others but its id was left
+			// out, so the row held null until the NEXT boot, when the repair sweep's
+			// adopt-before-build scan found the orphan channel and persisted it. The
+			// channel existed the whole time; only the pointer was missing, and
+			// NextUpBoard reads that pointer, bails on null, and posts nothing. Every
+			// guild therefore had a dead 🔜upcoming-events between /setup and its
+			// first reboot. Closed 2026-08-12; the sweep still adopts for genuinely
+			// legacy rows (case ③ in repairMissingChannels), it is just no longer
+			// load bearing for a fresh install.
+			nextDecreeChannelId: ids.nextDecreeChannelId,
+			// Keys the admin power-up panel, so ensurePowerUps can post as soon as
+			// /setup runs rather than waiting for a reboot.
 			adminCommandsChannelId: ids.adminCommandsChannelId,
 			// ── 🎮 ARCADE GAMES ──
-			// All three persisted in the SAME payload as the rest, deliberately.
-			// nextDecreeChannelId's original omission (it relied on boot-sweep
-			// adoption instead) meant the id was null until the next reboot, and
-			// anything keying off it silently no-opped in between. Do not copy that.
 			gamesCategoryId: ids.gamesCategoryId,
 			arcadeRulesChannelId: ids.arcadeRulesChannelId,
 			arcadeChallengesChannelId: ids.arcadeChallengesChannelId,

@@ -947,12 +947,14 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		}
 	});
 
-	it("persists both category ids and all three arcade ids in the SAME payload", async () => {
-		// The arcade ids are the point. nextDecreeChannelId was originally left
-		// out of this payload and relied on boot-sweep adoption instead, so it
-		// stayed null until the next reboot and everything keyed off it silently
-		// no-opped in between. createChannels' own comment says not to copy that,
-		// and this asserts the three arcade ids did not.
+	it("persists every id it just created, both categories included, in ONE payload", async () => {
+		// ⚠️ THE POINT OF THIS TEST IS THE ABSENCE OF AN EXCEPTION. The payload
+		// used to skip nextDecreeChannelId and lean on the next boot's repair
+		// sweep to adopt the orphan, which left NextUpBoard reading null and
+		// posting nothing for the whole window between /setup and that reboot.
+		// Closed 2026-08-12. Asserting the full set, rather than only the ids a
+		// given change happened to add, is what stops a twelfth channel from
+		// quietly reintroducing the same gap.
 		await runFreshInstall();
 
 		expect(guildConfigMock.create).toHaveBeenCalledOnce();
@@ -963,29 +965,22 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		expect(payload.arcadeRulesChannelId).toBe(`new-${packChannels.arcadeRules}`);
 		expect(payload.arcadeChallengesChannelId).toBe(`new-${packChannels.arcadeChallenges}`);
 		expect(payload.adminCommandsChannelId).toBe(`new-${packChannels.adminCommands}`);
+		expect(payload.nextDecreeChannelId).toBe(`new-${packChannels.nextDecree}`);
 		expect(payload.introChannelId).toBe(`new-${packChannels.intro}`);
 		expect(payload.commandsChannelId).toBe(`new-${packChannels.commands}`);
 		expect(payload.leaderboardChannelId).toBe(`new-${packChannels.leaderboard}`);
 		expect(payload.scheduleChannelId).toBe(`new-${packChannels.schedule}`);
 		expect(payload.announcementsChannelId).toBe(`new-${packChannels.announcements}`);
 		expect(payload.adminChannelId).toBe(`new-${packChannels.admin}`);
-	});
 
-	it("still omits nextDecreeChannelId from the persist payload, which is a KNOWN GAP", async () => {
-		// ⚠️ THIS TEST PINS A DEFECT, NOT A DECISION, and it is deliberately
-		// written so it FAILS when the defect is fixed. 🔜upcoming-events is
-		// created above with all the others but never persisted here, so the id
-		// is null until the next boot's repair sweep adopts the channel; anything
-		// reading nextDecreeChannelId in that window silently no-ops. Every other
-		// channel now persists immediately, and createChannels' arcade comment
-		// names this omission as the mistake it was told not to copy.
-		//
-		// When someone adds it to persistPayload: DELETE this test in the same
-		// commit and add nextDecreeChannelId to the assertions above.
-		await runFreshInstall();
-
-		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
-		expect(payload).not.toHaveProperty("nextDecreeChannelId");
+		// Structural backstop for the same failure: every channel createChannels
+		// built has to appear in the payload under its own configField. A new
+		// spec that lands without a persist line fails HERE even if nobody thinks
+		// to add an assertion for it above, which is exactly how the last one got
+		// through. CHANNEL_FIELDS is the derived list, so it grows on its own.
+		for (const field of GuildSetupManager.CHANNEL_FIELDS) {
+			expect(payload[field], `${field} was created but never persisted`).toBeDefined();
+		}
 	});
 });
 
