@@ -127,9 +127,9 @@ function makeDeletedChannel(id: string, guild: Guild, name = "deleted"): unknown
 
 // Intact category fixture. The watcher narrows via
 // `category.type !== ChannelType.GuildCategory` so we set the type.
-function makeCategory(): CategoryChannel {
+function makeCategory(id = "cat-1"): CategoryChannel {
 	const cat = Object.create(CategoryChannel.prototype) as CategoryChannel;
-	Object.assign(cat, { id: "cat-1", type: ChannelType.GuildCategory });
+	Object.assign(cat, { id, type: ChannelType.GuildCategory });
 	// children is a getter on CategoryChannel.prototype (a GuildChannelManager),
 	// so it must be shadowed with defineProperty rather than Object.assign.
 	// repairOneChannel's adopt-before-build guard scans children.cache; an empty
@@ -253,6 +253,89 @@ describe("ChannelDeleteWatcher", () => {
 		expect(adminChannel.send).toHaveBeenCalledOnce();
 		const sent = adminChannel.send.mock.calls[0][0] as { embeds: Array<{ data: { title: string } }> };
 		expect(sent.embeds[0].data.title).toBe(rokCommanderCopy.channelContent.channelRepairNotice.summaryTitle);
+	});
+
+	// ── 🎮 ARCADE GAMES, the second category ──────────────────────────
+
+	const arcadeConfig = () =>
+		makeStoredConfig({
+			gamesCategoryId: "games-cat-1",
+			gamesRulesChannelId: "ch-gamesrules",
+			gamesChallengesChannelId: "ch-gameschallenges",
+		});
+
+	it("rebuilds a deleted arcade channel under the ARCADE category, never under the homebase", async () => {
+		// ⚠️ RISK R2 IN ITS REALTIME FORM, and the more surprising half: this path
+		// reads as though there were only one category. Before the spec's
+		// categoryField was consulted here it fetched stored.categoryId, found the
+		// homebase alive, and rebuilt ⚔️challenges under 🪧 NOTICE BOARD. Nothing
+		// throws; the misplaced channel then poisons repairOneChannel's
+		// adopt-before-build scan, so the next sweep builds a duplicate instead of
+		// adopting what is already there.
+		guildConfigMock.findByGuildId.mockResolvedValue(arcadeConfig());
+		guildConfigMock.update.mockResolvedValue(undefined);
+
+		const adminChannel = makeAdminChannel("ch-admin");
+		const scheduleChannel = makeScheduleChannel("bot-1");
+		const captured = makeClientCapturing({
+			selfId: "bot-1",
+			channelFetchMap: { "ch-admin": adminChannel, "ch-schedule": scheduleChannel },
+		});
+		registerChannelDeleteWatcher(captured.client);
+
+		const createCalls: Array<{ name: string; parent?: string }> = [];
+		const guild = makeGuild({
+			categoryFetchMap: { "cat-1": makeCategory("cat-1"), "games-cat-1": makeCategory("games-cat-1") },
+			createHandler: async (opts) => {
+				const options = opts as { name: string; parent?: string };
+				createCalls.push(options);
+				const created = Object.create(TextChannel.prototype) as TextChannel & { send: ReturnType<typeof vi.fn> };
+				Object.assign(created, { id: `new-${options.name}`, send: vi.fn().mockResolvedValue({ id: `intro-${options.name}` }) });
+				return created;
+			},
+		});
+
+		await captured.handler!(makeDeletedChannel("ch-gameschallenges", guild, "⚔️challenges"));
+
+		expect(createCalls).toHaveLength(1);
+		expect(createCalls[0].parent).toBe("games-cat-1");
+		expect(createCalls[0].parent).not.toBe("cat-1");
+	});
+
+	it("declines to rebuild an arcade channel when the arcade category itself is gone", async () => {
+		// An admin deleting the whole category fires a delete for it AND for each
+		// child. Rebuilding the children would scatter arcade channels loose in the
+		// server, since Discord orphans rather than cascades. The boot sweep
+		// rebuilds the category and its children together instead.
+		guildConfigMock.findByGuildId.mockResolvedValue(arcadeConfig());
+
+		const captured = makeClientCapturing({ selfId: "bot-1" });
+		registerChannelDeleteWatcher(captured.client);
+
+		// The homebase category is alive; the arcade one is absent from the map so
+		// its fetch resolves null. Reading stored.categoryId here (the old
+		// behaviour) would have found a live category and rebuilt anyway.
+		const guild = makeGuild({ categoryFetchMap: { "cat-1": makeCategory("cat-1") } });
+
+		await captured.handler!(makeDeletedChannel("ch-gamesrules", guild, "📋game-rules"));
+
+		expect(guildConfigMock.update).not.toHaveBeenCalled();
+	});
+
+	it("recognises an arcade CATEGORY delete and defers to the boot sweep", async () => {
+		// The arcade category is not a CHANNEL_SPECS entry, so without an explicit
+		// check its delete falls through the spec lookup and is indistinguishable
+		// from an unrelated channel. Naming it is what produces the honest
+		// "category gone" log rather than silence.
+		guildConfigMock.findByGuildId.mockResolvedValue(arcadeConfig());
+
+		const captured = makeClientCapturing({ selfId: "bot-1" });
+		registerChannelDeleteWatcher(captured.client);
+
+		const guild = makeGuild({ categoryFetchMap: { "cat-1": makeCategory("cat-1") } });
+		await captured.handler!(makeDeletedChannel("games-cat-1", guild, "🎮 ARCADE GAMES"));
+
+		expect(guildConfigMock.update).not.toHaveBeenCalled();
 	});
 
 	it("throttles a second repair of the same channel within the 60s cooldown", async () => {

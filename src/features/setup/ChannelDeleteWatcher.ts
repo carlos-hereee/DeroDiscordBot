@@ -100,14 +100,19 @@ export function registerChannelDeleteWatcher(client: Client): void {
 			//    that is a full rebuild case and we leave it to the boot sweep
 			//    so we do not fight an admin who is intentionally removing
 			//    the bot.
-			if (channel.id === stored.categoryId) {
+			// EITHER managed category counts. The arcade category has to be named
+			// explicitly here: it is not a CHANNEL_SPECS entry, so without this
+			// check its delete would fall through to the spec lookup below, match
+			// nothing, and return silently as if it were an unrelated channel.
+			// Recognising it is what produces the honest log line, and the boot
+			// sweep is what rebuilds it.
+			const storedIds = stored as unknown as Record<string, string | null | undefined>;
+			if (channel.id === stored.categoryId || channel.id === storedIds.gamesCategoryId) {
 				console.warn(LOG_MESSAGES.setup.realtimeRepairCategoryGone(guild.id));
 				return;
 			}
 
-			const spec = GuildSetupManager.CHANNEL_SPECS.find(
-				(s) => (stored as unknown as Record<string, string | null | undefined>)[s.configField] === channel.id
-			);
+			const spec = GuildSetupManager.CHANNEL_SPECS.find((s) => storedIds[s.configField] === channel.id);
 			if (!spec) return; // not a homebase channel
 
 			// per-channel user-removed gate. when the admin explicitly removed
@@ -141,12 +146,25 @@ export function registerChannelDeleteWatcher(client: Client): void {
 
 			console.log(LOG_MESSAGES.setup.realtimeRepairStarted(spec.displayName, guild.id));
 
-			// ⑤ verify category still exists. if the admin just nuked the
-			//    whole category the child channel delete events will fire
+			// ⑤ verify THIS SPEC'S category still exists. if the admin just nuked
+			//    the whole category the child channel delete events will fire
 			//    alongside the category delete, we do NOT want to rebuild
 			//    child channels under a dead category. let ensureHomebase
 			//    handle the full rebuild on next wake.
-			const category = await guild.channels.fetch(stored.categoryId).catch(() => null);
+			//
+			// ⚠️ RESOLVED FROM spec.categoryField, NOT from stored.categoryId. This
+			// is risk R2 in its realtime form and it is the more surprising half:
+			// the boot sweep at least walks specs in a loop, whereas this path
+			// looks like it is handling "the" category. Before this, deleting
+			// ⚔️challenges fetched the HOMEBASE category, found it alive, and
+			// rebuilt the arcade channel under 🪧 NOTICE BOARD. Nothing throws, and
+			// the misplaced channel then poisons the adopt-before-build scan.
+			//
+			// Reading the spec's own field also fixes the inverse case for free: if
+			// the arcade category is gone, its id fetches to null and we correctly
+			// decline to rebuild its children under anything.
+			const parentId = storedIds[spec.categoryField];
+			const category = parentId ? await guild.channels.fetch(parentId).catch(() => null) : null;
 			if (!category || category.type !== ChannelType.GuildCategory) {
 				console.warn(LOG_MESSAGES.setup.realtimeRepairCategoryGone(guild.id));
 				return;
