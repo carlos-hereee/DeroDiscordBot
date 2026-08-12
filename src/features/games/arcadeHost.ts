@@ -65,7 +65,7 @@ async function handleArcadeHost(interaction: ButtonInteraction): Promise<void> {
 	const stored = await guildConfigStore.findByGuildId(guild.id);
 	const copy = getPluginCopy(stored as unknown as ICopyConfig | null).channelContent.arcadeRules;
 
-	const challengesId = (stored as unknown as { gamesChallengesChannelId?: string | null } | null)?.gamesChallengesChannelId;
+	const challengesId = (stored as unknown as { arcadeChallengesChannelId?: string | null } | null)?.arcadeChallengesChannelId;
 	const channel = challengesId ? await guild.channels.fetch(challengesId).catch(() => null) : null;
 	if (!(channel instanceof TextChannel)) {
 		// The arcade was never built, or an admin removed the board. Say which,

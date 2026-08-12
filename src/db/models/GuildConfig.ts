@@ -71,7 +71,7 @@ const guildConfigSchema = new Schema(
 		//        collection the moment this ships.
 		gamesCategoryId: { type: String, required: false, default: null },
 		arcadeRulesChannelId: { type: String, required: false, default: null },
-		gamesChallengesChannelId: { type: String, required: false, default: null },
+		arcadeChallengesChannelId: { type: String, required: false, default: null },
 
 		// id of the pinned message inside scheduleChannelId that ScheduleBoard
 		// keeps up to date. null until autoSetup finishes posting the intro,
@@ -360,7 +360,7 @@ const guildConfigSchema = new Schema(
 				// boot posts it.
 				inviteCardId: { type: String, required: false, default: null },
 				// ── ARCADE GAMES intro anchors (2026-08-10) ──────────────
-				// Paired with arcadeRulesChannelId and gamesChallengesChannelId
+				// Paired with arcadeRulesChannelId and arcadeChallengesChannelId
 				// above. ⚠️ THESE TWO KEYS ARE THE WHOLE REASON THE POST MORTEM
 				// FURTHER DOWN THIS FILE EXISTS. Mongoose runs strict, so a write
 				// to an UNDECLARED key inside this subdocument is dropped in
@@ -371,7 +371,7 @@ const guildConfigSchema = new Schema(
 				// not bookkeeping, it is the fix for a bug that would otherwise
 				// ship looking like it worked.
 				arcadeRulesChannelId: { type: String, required: false, default: null },
-				gamesChallengesChannelId: { type: String, required: false, default: null },
+				arcadeChallengesChannelId: { type: String, required: false, default: null },
 			},
 			required: false,
 			default: () => ({}),

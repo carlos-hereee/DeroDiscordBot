@@ -51,7 +51,7 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 		// than being smuggled into every other one.
 		gamesCategoryId: "games-cat-1",
 		arcadeRulesChannelId: "ch-arcaderules",
-		gamesChallengesChannelId: "ch-gameschallenges",
+		arcadeChallengesChannelId: "ch-arcadechallenges",
 		scheduleMessageId: "msg-schedule",
 		adminRoleId: null,
 		memberRoleId: null,
@@ -129,7 +129,7 @@ function makeGuild(options: {
 		// same reason. A test exercising the MIGRATION overrides these to null.
 		"games-cat-1": { id: "games-cat-1", type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } },
 		"ch-arcaderules": { id: "ch-arcaderules" },
-		"ch-gameschallenges": { id: "ch-gameschallenges" },
+		"ch-arcadechallenges": { id: "ch-arcadechallenges" },
 		...(options.channelFetchMap ?? {}),
 	};
 	const create =
@@ -350,7 +350,7 @@ describe("GuildSetupManager.ensureHomebase", () => {
 	// adopt-before-build scan is looking in the wrong parent and making duplicates.
 	it("gives a legacy guild the arcade category and files both channels under it", async () => {
 		guildConfigMock.findByGuildId.mockResolvedValue(
-			makeStoredConfig({ gamesCategoryId: null, arcadeRulesChannelId: null, gamesChallengesChannelId: null })
+			makeStoredConfig({ gamesCategoryId: null, arcadeRulesChannelId: null, arcadeChallengesChannelId: null })
 		);
 
 		const createCalls: Array<{ name: string; type?: number; parent?: string }> = [];
@@ -884,7 +884,7 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 			makeStoredConfig({
 				introMessageIds: {
 					arcadeRulesChannelId: "msg-arcaderules",
-					gamesChallengesChannelId: "msg-gameschallenges",
+					arcadeChallengesChannelId: "msg-arcadechallenges",
 				},
 			})
 		);
@@ -900,9 +900,9 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 				{ "msg-arcaderules": currentIntroMessage("arcadeRulesChannelId", "msg-arcaderules") },
 				sends.rules
 			),
-			"ch-gameschallenges": makeChannel(
-				"ch-gameschallenges",
-				{ "msg-gameschallenges": currentIntroMessage("gamesChallengesChannelId", "msg-gameschallenges") },
+			"ch-arcadechallenges": makeChannel(
+				"ch-arcadechallenges",
+				{ "msg-arcadechallenges": currentIntroMessage("arcadeChallengesChannelId", "msg-arcadechallenges") },
 				sends.challenges
 			),
 		};

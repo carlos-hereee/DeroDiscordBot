@@ -31,7 +31,7 @@ describe("self-destruct demolishes every managed channel", () => {
 		// this pair is the reason R13 was raised in the first place: they were the
 		// first managed channels to live outside the homebase category.
 		expect(HOMEBASE_CHANNEL_FIELDS).toContain("arcadeRulesChannelId");
-		expect(HOMEBASE_CHANNEL_FIELDS).toContain("gamesChallengesChannelId");
+		expect(HOMEBASE_CHANNEL_FIELDS).toContain("arcadeChallengesChannelId");
 	});
 });
 

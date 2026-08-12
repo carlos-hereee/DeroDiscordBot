@@ -261,7 +261,7 @@ describe("ChannelDeleteWatcher", () => {
 		makeStoredConfig({
 			gamesCategoryId: "games-cat-1",
 			arcadeRulesChannelId: "ch-arcaderules",
-			gamesChallengesChannelId: "ch-gameschallenges",
+			arcadeChallengesChannelId: "ch-arcadechallenges",
 		});
 
 	it("rebuilds a deleted arcade channel under the ARCADE category, never under the homebase", async () => {
@@ -295,7 +295,7 @@ describe("ChannelDeleteWatcher", () => {
 			},
 		});
 
-		await captured.handler!(makeDeletedChannel("ch-gameschallenges", guild, "⚔️challenges"));
+		await captured.handler!(makeDeletedChannel("ch-arcadechallenges", guild, "⚔️challenges"));
 
 		expect(createCalls).toHaveLength(1);
 		expect(createCalls[0].parent).toBe("games-cat-1");
@@ -451,7 +451,7 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			"adminCommandsChannelId",
 			// The two under 🎮 ARCADE GAMES. CHANNEL_SPECS now spans TWO categories.
 			"arcadeRulesChannelId",
-			"gamesChallengesChannelId",
+			"arcadeChallengesChannelId",
 		];
 		const actualFields = GuildSetupManager.CHANNEL_SPECS.map((s) => s.configField);
 		expect(actualFields.sort()).toEqual(expectedFields.sort());
@@ -467,7 +467,7 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 				.map((s) => s.configField)
 				.sort();
 
-		expect(byCategory("gamesCategoryId")).toEqual(["arcadeRulesChannelId", "gamesChallengesChannelId"]);
+		expect(byCategory("gamesCategoryId")).toEqual(["arcadeChallengesChannelId", "arcadeRulesChannelId"]);
 		expect(byCategory("categoryId")).toHaveLength(8);
 		// No spec may be left unfiled, which a typo in the union would otherwise
 		// produce silently.

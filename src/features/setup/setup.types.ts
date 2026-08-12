@@ -41,7 +41,7 @@ export interface ICreatedChannels {
 	// direction that matters (a missing id here fails createChannels' return).
 	gamesCategoryId: string;
 	arcadeRulesChannelId: string;
-	gamesChallengesChannelId: string;
+	arcadeChallengesChannelId: string;
 }
 
 // live channel objects returned from createChannels
@@ -56,7 +56,7 @@ export interface IChannelObjects {
 	nextDecreeChannel: TextChannel;
 	adminCommandsChannel: TextChannel;
 	arcadeRulesChannel: TextChannel;
-	gamesChallengesChannel: TextChannel;
+	arcadeChallengesChannel: TextChannel;
 }
 
 // return shape of GuildSetupManager.ensureHomebase. the ready sweep in main.ts

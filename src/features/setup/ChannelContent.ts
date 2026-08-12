@@ -182,10 +182,10 @@ export const ChannelContent = {
 		return embed;
 	},
 
-	gamesChallengesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+	arcadeChallengesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
 		const copy = getPluginCopy(guildConfig);
 		const cc = copy.channelContent;
-		return infoEmbed(cc.gamesChallenges.title, cc.gamesChallenges.description, copy.COLORS.ARCADE);
+		return infoEmbed(cc.arcadeChallenges.title, cc.arcadeChallenges.description, copy.COLORS.ARCADE);
 	},
 
 	adminWelcome(ownerId: string, adminRoleId: string, guildConfig?: ICopyConfig | null): EmbedBuilder {

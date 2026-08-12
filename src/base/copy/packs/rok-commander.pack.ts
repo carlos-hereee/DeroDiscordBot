@@ -331,7 +331,7 @@ export const rokCommanderCopy = {
 			// card answers "who can play what" and the board is where a match is
 			// started, so a member who cannot see them cannot play at all.
 			arcadeRules: "📋arcade-rules",
-			gamesChallenges: "⚔️challenges",
+			arcadeChallenges: "⚔️challenges",
 		},
 	},
 
@@ -577,7 +577,7 @@ export const rokCommanderCopy = {
 		},
 
 		// ── the challenge board ───────────────────────────────────
-		gamesChallenges: {
+		arcadeChallenges: {
 			title: "⚔️ The Challenge Board",
 			description:
 				"This is where a match begins.\n\n" +

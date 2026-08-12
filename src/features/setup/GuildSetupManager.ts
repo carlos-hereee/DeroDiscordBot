@@ -269,7 +269,7 @@ export class GuildSetupManager {
 			// anything keying off it silently no-opped in between. Do not copy that.
 			gamesCategoryId: ids.gamesCategoryId,
 			arcadeRulesChannelId: ids.arcadeRulesChannelId,
-			gamesChallengesChannelId: ids.gamesChallengesChannelId,
+			arcadeChallengesChannelId: ids.arcadeChallengesChannelId,
 			// v1.5.1 item 9: clear any previously-tracked permission failure
 			// so a guild that recovered from missing-permissions state stops
 			// being on the auto-leave countdown. Safe to set unconditionally
@@ -605,7 +605,7 @@ export class GuildSetupManager {
 		// each belongs under is carried by its spec's categoryField, never inferred
 		// from position in this array.
 		"arcadeRulesChannelId",
-		"gamesChallengesChannelId",
+		"arcadeChallengesChannelId",
 	] as const;
 
 	// exported so ChannelDeleteWatcher can map a deleted channel id to its
@@ -662,7 +662,7 @@ export class GuildSetupManager {
 		// on their own GameRoom rows; ChannelDeleteWatcher depends on that
 		// distinction to avoid rebuilding a deleted room as a managed channel.
 		{ configField: "arcadeRulesChannelId", displayName: channels.arcadeRules, kind: "public", categoryField: "gamesCategoryId" },
-		{ configField: "gamesChallengesChannelId", displayName: channels.gamesChallenges, kind: "public", categoryField: "gamesCategoryId" },
+		{ configField: "arcadeChallengesChannelId", displayName: channels.arcadeChallenges, kind: "public", categoryField: "gamesCategoryId" },
 	];
 
 	// ── intro content resolver ────────────────────────────────
@@ -716,8 +716,8 @@ export class GuildSetupManager {
 			// rather than an admin surface.
 			case "arcadeRulesChannelId":
 				return ChannelContent.arcadeRulesIntro(guildConfig);
-			case "gamesChallengesChannelId":
-				return ChannelContent.gamesChallengesIntro(guildConfig);
+			case "arcadeChallengesChannelId":
+				return ChannelContent.arcadeChallengesIntro(guildConfig);
 		}
 	}
 
@@ -1691,7 +1691,7 @@ export class GuildSetupManager {
 			nextDecreeChannel,
 			adminCommandsChannel,
 			arcadeRulesChannel,
-			gamesChallengesChannel,
+			arcadeChallengesChannel,
 		] = await Promise.all([
 			guild.channels.create({
 				name: channels.intro,
@@ -1771,7 +1771,7 @@ export class GuildSetupManager {
 				permissionOverwrites: publicOverwrites,
 			}),
 			guild.channels.create({
-				name: channels.gamesChallenges,
+				name: channels.arcadeChallenges,
 				type: ChannelType.GuildText,
 				parent: gamesCategory.id,
 				permissionOverwrites: publicOverwrites,
@@ -1791,7 +1791,7 @@ export class GuildSetupManager {
 				adminCommandsChannelId: adminCommandsChannel.id,
 				gamesCategoryId: gamesCategory.id,
 				arcadeRulesChannelId: arcadeRulesChannel.id,
-				gamesChallengesChannelId: gamesChallengesChannel.id,
+				arcadeChallengesChannelId: arcadeChallengesChannel.id,
 			},
 			objects: {
 				introChannel,
@@ -1803,7 +1803,7 @@ export class GuildSetupManager {
 				nextDecreeChannel,
 				adminCommandsChannel,
 				arcadeRulesChannel,
-				gamesChallengesChannel,
+				arcadeChallengesChannel,
 			},
 		};
 	}
@@ -1843,7 +1843,7 @@ export class GuildSetupManager {
 			// refreshIntroEmbeds edits both cards in place on later boots instead of
 			// reposting them. GuildConfig declared these two keys in task 2.1.
 			arcadeRulesChannelId: string;
-			gamesChallengesChannelId: string;
+			arcadeChallengesChannelId: string;
 			// Second pinned message in #command-center: the standalone invite card.
 			inviteCardId: string;
 		};
@@ -1858,7 +1858,7 @@ export class GuildSetupManager {
 			nextDecreeChannel,
 			adminCommandsChannel,
 			arcadeRulesChannel,
-			gamesChallengesChannel,
+			arcadeChallengesChannel,
 		} = discordChannels;
 
 		const [
@@ -1880,7 +1880,7 @@ export class GuildSetupManager {
 			// the pinning policy below: both channels are read-only for members, so
 			// there is nothing to bury the bot's message under.
 			arcadeRulesMsg,
-			gamesChallengesMsg,
+			arcadeChallengesMsg,
 			// Second #command-center message: the standalone invite card (pitch +
 			// Dero gif + Summon button), pinned separately from the command guide.
 			inviteCardMsg,
@@ -1916,7 +1916,7 @@ export class GuildSetupManager {
 			// the destructure above is positional, which is exactly why every entry
 			// is named rather than indexed.
 			arcadeRulesChannel.send({ embeds: [ChannelContent.arcadeRulesIntro()] }),
-			gamesChallengesChannel.send({ embeds: [ChannelContent.gamesChallengesIntro()] }),
+			arcadeChallengesChannel.send({ embeds: [ChannelContent.arcadeChallengesIntro()] }),
 			// Standalone invite card in #command-center: short pitch + Dero gif + the
 			// Summon button. Its own message so the wide button is not crammed into
 			// the command guide's row. refreshIntroEmbeds maintains it on boot.
@@ -1955,7 +1955,7 @@ export class GuildSetupManager {
 				nextDecreeChannelId: nextDecreeMsg.id,
 				adminCommandsChannelId: adminCommandsMsg.id,
 				arcadeRulesChannelId: arcadeRulesMsg.id,
-				gamesChallengesChannelId: gamesChallengesMsg.id,
+				arcadeChallengesChannelId: arcadeChallengesMsg.id,
 				inviteCardId: inviteCardMsg.id,
 			},
 		};

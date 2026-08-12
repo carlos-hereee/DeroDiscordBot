@@ -268,7 +268,7 @@ export const generalEventsCopy: IPluginCopy = {
 			// (the same reason the category name is), so these match rok-commander
 			// exactly; only the intro copy below differs in voice.
 			arcadeRules: "📋arcade-rules",
-			gamesChallenges: "⚔️challenges",
+			arcadeChallenges: "⚔️challenges",
 		},
 	},
 
@@ -445,7 +445,7 @@ export const generalEventsCopy: IPluginCopy = {
 			hostStarted: (game: string): string => `Your ${game} is live. Go play.`,
 		},
 
-		gamesChallenges: {
+		arcadeChallenges: {
 			title: "⚔️ Challenge board",
 			description:
 				"This is where a match starts.\n\n" +

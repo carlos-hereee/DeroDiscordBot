@@ -59,7 +59,7 @@ export const HOMEBASE_CHANNEL_FIELDS = [
 	"adminCommandsChannelId",
 	// 🎮 ARCADE GAMES
 	"arcadeRulesChannelId",
-	"gamesChallengesChannelId",
+	"arcadeChallengesChannelId",
 ] as const;
 
 // Both managed categories, deleted last and in this order. Per-match ROOM
