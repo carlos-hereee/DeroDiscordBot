@@ -19,9 +19,17 @@
 // ⚠️ This is NOT @features/game-rooms/roomTypes.ts's GAME_SLUGS and must not be
 // swapped for it. That list means "games that get their own channel", so it
 // holds exactly hangman, duel and rps today, deliberately excludes fortune
-// (single player), and will gain battleship and holdem but never blackjack
-// (which needs no room). This list means "games that keep a record on
-// /account", which is a different question with a different answer.
+// (single player), and will gain battleship and holdem but never blackjack.
+// This list means "games that keep a record on /account", which is a different
+// question with a different answer.
+//
+// Blackjack is the clearest illustration that the two questions differ, and the
+// reason is NOT that it is single player: it grew multi seat tables on
+// 2026-08-11. It stays out of the room list because a blackjack hand takes a
+// minute, so a table runs in place on one edited message the way a hangman round
+// already does. A room is earned by DURATION and a transcript worth keeping,
+// which is why holdem (six players, 45 plus minutes) gets one and a blackjack
+// table does not.
 //
 // Fortune is absent here too, and for its own reason: a reading has no winner,
 // so it has no record. It is counted by MemberLevel.fortuneReadings instead,

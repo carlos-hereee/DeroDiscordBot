@@ -17,8 +17,12 @@
 //        index and the query silently stop agreeing.
 
 // ── Which game a room is playing ──
-// Only games that need two or more humans get a room. Fortune is single player and stays a
-// plain slash command, so it is deliberately absent.
+// Needing two or more humans is NECESSARY but not sufficient. Fortune is single player and
+// stays a plain slash command, so it is deliberately absent. Blackjack is the case that
+// shows the rest of the rule: it grew multi seat tables on 2026-08-11 and still does not
+// belong here, because a hand takes a minute and a table runs in place on one edited
+// message. A room is earned by DURATION and a transcript worth keeping, which is why
+// battleship and holdem will join this list and a blackjack table will not.
 export const GAME_SLUGS = ["hangman", "duel", "rps"] as const;
 export type GameSlug = (typeof GAME_SLUGS)[number];
 
