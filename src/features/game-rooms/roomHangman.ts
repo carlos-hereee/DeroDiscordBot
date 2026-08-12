@@ -26,6 +26,7 @@ import {
 	type HangmanState,
 } from "@features/games/hangmanState.js";
 import { awardMultiPlayerResult } from "@features/games/gameXp.js";
+import { resolveGameAsset } from "@features/games/gamesAssets.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -341,7 +342,14 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	// A hangman room has no single winner: the guessers win or lose together, and the
 	// host is not competing. winnerId stays null and the XP hook takes the whole
 	// participant list.
-	await roomLifecycle.finish(interaction.client, room, { winnerId: null });
+	// ⚠️ THE RESULT CARD CARRIES THE GALLOWS (plan task 5.7), and it is the ONLY
+	// message in the room that carries art at all. A move card stays text and embed
+	// (R8): a round can run to thirty of them, and re-uploading a PNG per move is
+	// bandwidth and a rate limit for nothing.
+	await roomLifecycle.finish(interaction.client, room, {
+		winnerId: null,
+		art: resolveGameAsset(won ? "hangmanWin" : "hangmanLose"),
+	});
 
 	// The host is excluded from the award list: they set the word, so they were never
 	// playing. Display names come from the guild cache with the id as a last resort,

@@ -29,18 +29,28 @@ export function roomOpenerEmbed(game: GameSlug, hostId: string, playerIds: strin
 // The card that closes a room. `winnerId` null covers every drawn, forfeited or
 // abandoned ending; `abandoned` distinguishes the one the players did not choose, so
 // a reaped room does not read as though somebody lost.
-export function roomResultEmbed(winnerId: string | null, abandoned = false): EmbedBuilder {
+// `imageRef` is an `attachment://` reference whose file MUST ride the same message,
+// or Discord renders an empty image slot.
+//
+// ⚠️ ART RIDES THE OPENER AND THE RESULT CARD ONLY (risk R8). A move card must stay
+// text and embed, because a room can carry thirty of them and re-uploading a PNG per
+// move is bandwidth and a rate limit for no gain. This is the payoff moment and is
+// posted once, so it earns the weight.
+export function roomResultEmbed(winnerId: string | null, abandoned = false, imageRef?: string): EmbedBuilder {
 	const outcome = abandoned
 		? gameRoomsCopy.result.abandonedLine
 		: winnerId
 		  ? gameRoomsCopy.result.winnerLine(winnerId)
 		  : gameRoomsCopy.result.noWinnerLine;
 
-	return infoEmbed(
+	const embed = infoEmbed(
 		gameRoomsCopy.result.title,
 		[outcome, "", gameRoomsCopy.result.archiveNotice()].join("\n"),
 		COLORS.ARCADE as ColorResolvable
 	);
+
+	if (imageRef) embed.setImage(imageRef);
+	return embed;
 }
 
 // ── the Archive now row ──

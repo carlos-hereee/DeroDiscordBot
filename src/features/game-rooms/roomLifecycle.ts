@@ -1,4 +1,4 @@
-import { type Client, type TextChannel } from "discord.js";
+import { type AttachmentBuilder, type Client, type TextChannel } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
@@ -31,6 +31,12 @@ async function resolveRoomChannel(client: Client, channelId: string | null): Pro
 
 export interface FinishRoomInput {
 	winnerId?: string | null;
+	// The payoff image, resolved by the GAME because only it knows which frame the
+	// ending earned (a full gallows, a coin, the winning throw). Optional: an
+	// abandoned room and a forfeit have no art to show, and resolveGameAsset already
+	// degrades to the Dero avatar when a file is not on disk yet, so a caller never
+	// has to check whether the art exists.
+	art?: { attachment: AttachmentBuilder; ref: string };
 	// True when nobody chose this ending: the channel was deleted underneath a live
 	// room, or a boot found a room whose channel no longer exists. It changes only the
 	// wording, so a reaped room does not read as though somebody lost.
@@ -83,8 +89,14 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	// ③ The result card, carrying Archive now. Posted after the lock so the last message
 	// in the channel is the outcome rather than a move, and it lands at all only because
 	// the bot keeps its own SendMessages allow in the locked overwrite set.
+	// The attachment and the embed's reference to it MUST ride the same message, or
+	// the image slot renders empty.
 	await channel
-		.send({ embeds: [roomResultEmbed(winnerId, input.abandoned ?? false)], components: [roomArchiveRow(room.roomId)] })
+		.send({
+			embeds: [roomResultEmbed(winnerId, input.abandoned ?? false, input.art?.ref)],
+			components: [roomArchiveRow(room.roomId)],
+			...(input.art ? { files: [input.art.attachment] } : {}),
+		})
 		.catch((error) => console.error("[game-rooms] failed to post result card", { roomId: room.roomId, error }));
 }
 

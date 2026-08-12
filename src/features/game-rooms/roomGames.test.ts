@@ -133,13 +133,29 @@ describe("rock paper scissors secrecy", () => {
 		await handleRpsSelect(makeSelect(OPPONENT, "paper"));
 
 		expect(lifecycleMock.finish).toHaveBeenCalledOnce();
-		expect(lifecycleMock.finish.mock.calls[0][2]).toEqual({ winnerId: OPPONENT });
+		// toMatchObject, not toEqual: the payload also carries the payoff art, which
+		// is a separate concern from who won.
+		expect(lifecycleMock.finish.mock.calls[0][2]).toMatchObject({ winnerId: OPPONENT });
 	});
 
 	it("reports a tie as no winner rather than inventing one", async () => {
 		storeMock.findByRoomId.mockResolvedValue(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
 		await handleRpsSelect(makeSelect(OPPONENT, "rock"));
-		expect(lifecycleMock.finish.mock.calls[0][2]).toEqual({ winnerId: null });
+		expect(lifecycleMock.finish.mock.calls[0][2]).toMatchObject({ winnerId: null });
+	});
+
+	// ⚠️ ART RIDES THE RESULT CARD ONLY (R8). The move trail must stay text and
+	// embed: a room can carry thirty move posts and re-uploading a PNG per move is
+	// bandwidth and a rate limit for nothing.
+	it("hands the payoff art to the result card and never to a move", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
+
+		await handleRpsSelect(makeSelect(OPPONENT, "paper"));
+
+		expect(lifecycleMock.finish.mock.calls[0][2]).toHaveProperty("art");
+		for (const call of trailMock.postMove.mock.calls) {
+			expect(call[2]).not.toHaveProperty("files");
+		}
 	});
 
 	it("refuses a second pick from the same player", async () => {

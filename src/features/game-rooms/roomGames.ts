@@ -9,6 +9,7 @@ import {
 } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { resolveVersus, type VersusFlip } from "@features/games/versusResolve.js";
+import { resolveGameAsset, type GameAssetKey } from "@features/games/gamesAssets.js";
 import { scoreRps, RPS_CHOICES, type RpsChoice } from "@features/games/rpsWinner.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { roomTrail } from "./roomTrail.js";
@@ -94,7 +95,11 @@ async function runVersusMove(interaction: ButtonInteraction, room: IGameRoom): P
 		meta: { result },
 	});
 
-	await roomLifecycle.finish(interaction.client, room, { winnerId });
+	// The payoff frame. A dice TIE gets its own image so the flattest outcome still
+	// reads as an outcome rather than a missing winner; a coin cannot tie, which the
+	// VersusResult union already guarantees.
+	const artKey: GameAssetKey = result.flip === "coin" ? "coinFlip" : result.winner === "tie" ? "diceTie" : "diceRoll";
+	await roomLifecycle.finish(interaction.client, room, { winnerId, art: resolveGameAsset(artKey) });
 
 	// Fire and forget after the primary action, per house rule 7. Both players have
 	// already seen the outcome, so nothing the award does can change what the match
@@ -204,7 +209,13 @@ export async function handleRpsSelect(interaction: StringSelectMenuInteraction):
 		meta: { picks, outcome },
 	});
 
-	await roomLifecycle.finish(interaction.client, room, { winnerId });
+	// The WINNING throw, so the image says something the text does not already say
+	// twice. A tie has its own frame.
+	const rpsArt: GameAssetKey =
+		outcome === "tie"
+			? "rpsTie"
+			: (`rps${(outcome === "challenger" ? picks[challengerId] : picks[opponentId]).replace(/^./, (c) => c.toUpperCase())}` as GameAssetKey);
+	await roomLifecycle.finish(interaction.client, room, { winnerId, art: resolveGameAsset(rpsArt) });
 
 	awardTwoPlayerResult({
 		client: interaction.client,
