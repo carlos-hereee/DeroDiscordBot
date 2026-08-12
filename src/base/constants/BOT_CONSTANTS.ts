@@ -125,6 +125,17 @@ export const BOT_CONSTANTS = {
 	// partial unique index counts "draft" as live.
 	GAME_ROOM_DRAFT_TIMEOUT_MS: 10 * 60_000, // 10 minutes
 
+	// How long a battleship player has to take their turn before it is forfeited.
+	// TWO consecutive expiries forfeit the MATCH, so an abandoned game dies about 20
+	// minutes after the last shot rather than sitting open until the archive window.
+	//
+	// ⚠️ CHECKED ON THE 5 MINUTE ROOM SWEEP, so the real expiry lands somewhere
+	// between 10 and 15 minutes. That granularity is deliberate rather than a
+	// limitation: a second, faster cron for one game's clock would cost a tick every
+	// minute across every guild to save a casual player five minutes, and the number
+	// that matters is that a walked-away match terminates at all.
+	GAME_ROOM_TURN_TIMEOUT_MS: 10 * 60_000, // 10 minutes
+
 	// ── leveling ──────────────────────────────────────────────────
 	// What:  every number the leveling system runs on: how often buffered xp is
 	//        flushed, how long the in-memory maps may hold an entry, how level up
@@ -224,6 +235,18 @@ export const BOT_CONSTANTS = {
 		GAME_TIE_XP: 40,
 		GAME_ROOM_PLAY_XP: 40,
 		GAME_ROOM_WIN_XP: 120,
+
+		// ── battleship ──
+		// Paid PER SINK, on top of the ordinary play and win amounts, to the player
+		// who fired the sinking shot. Small on purpose: a full match sinks five
+		// ships, so at 15 the bonus tops out at 75, below GAME_ROOM_WIN_XP. Making
+		// it larger would pay a losing player who sank four ships more than the
+		// winner who sank five, which inverts the thing being rewarded.
+		//
+		// It exists at all because battleship is the one game here with meaningful
+		// progress BEFORE the result: sinking a carrier is an event, and a match
+		// that pays nothing until the final shot feels flat for twenty minutes.
+		GAME_SINK_XP: 15,
 
 		// ── blackjack ──
 		// Blackjack deliberately reuses GAME_PLAY_XP, GAME_WIN_XP and GAME_TIE_XP

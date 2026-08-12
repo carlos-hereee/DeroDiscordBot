@@ -239,6 +239,12 @@ export const gameRoomsCopy = {
 		matchOver: "This match is already over.",
 		alreadyFired: (coord: string): string => `You have already fired on **${coord}**.`,
 		rerolled: "Your fleet has been laid out again. Only you can see where.",
+
+		// The idle clock's two outcomes. Both are public, because the other player
+		// needs to know why the board moved without them firing.
+		forfeitedTurn: (userId: string): string => `⏳ <@${userId}> took too long. Their turn passes.`,
+		forfeitedMatch: (userId: string): string =>
+			`⏳ <@${userId}> missed two turns in a row and forfeits the match.`,
 		rerollTooLate: "The first shot has been fired. The fleets are where they are.",
 
 		// The public narration. None of these names an UNFIRED position, which is the

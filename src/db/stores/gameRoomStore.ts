@@ -172,6 +172,18 @@ export const gameRoomStore = {
 		return GameRoom.find({ status: { $in: [...NON_TERMINAL_ROOM_STATUSES] } });
 	},
 
+	// Every live match of one game, across every guild. Backs the battleship turn
+	// clock, which is per GAME rather than per room: no other game here has a turn
+	// that can be abandoned mid-match, because every other one resolves in a single
+	// press or ends when its word is guessed.
+	//
+	// Cross-guild for the same reason the archive sweep is: one cron tick serves the
+	// whole process. `status: "playing"` rather than the non-terminal set on purpose,
+	// since a draft has no match to time.
+	async findPlayingByGame(game: GameSlug) {
+		return GameRoom.find({ game, status: "playing" });
+	},
+
 	// Called after the channel is gone, by both the sweep and the Archive now button, which
 	// share one delete path. A channel that was already deleted by an admin reaches this the
 	// same way a swept one does: it is a success, not an error.

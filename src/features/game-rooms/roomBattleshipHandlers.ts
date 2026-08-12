@@ -2,6 +2,8 @@ import { MessageFlags, TextChannel, type ButtonInteraction, type StringSelectMen
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { placeFleet } from "@features/games/battleshipState.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
+import { awardXp } from "@features/leveling/awardXp.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -132,6 +134,31 @@ export async function handleFire(interaction: ButtonInteraction, room: IGameRoom
 	});
 
 	await refreshBoard(interaction, room, next);
+
+	// ── the per sink bonus ──
+	// ⚠️ AWARDED WITHOUT `game`, DELIBERATELY. awardXp increments
+	// `games.<slug>.played` for ANY call that names a game, so passing
+	// game: "battleship" here would record a fifth and sixth "played" for a match
+	// the member played once, and /account renders that line. The match record is
+	// written exactly once, by awardTwoPlayerResult on the winning shot; this call
+	// is xp only.
+	//
+	// Fire and forget after the primary action (house rule 7): the shot has already
+	// landed and been narrated, and awardXp never throws by contract.
+	if (outcome.sunk) {
+		void awardXp({
+			client: interaction.client,
+			guildId: room.guildId,
+			userId: interaction.user.id,
+			username:
+				interaction.guild?.members.cache.get(interaction.user.id)?.displayName ??
+				interaction.user.globalName ??
+				interaction.user.username,
+			amount: BOT_CONSTANTS.LEVELING.GAME_SINK_XP,
+			source: "game",
+			channelId: room.channelId,
+		});
+	}
 
 	if (!outcome.won) return;
 
