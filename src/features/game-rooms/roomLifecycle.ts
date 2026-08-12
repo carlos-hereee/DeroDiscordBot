@@ -4,6 +4,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { gameRoomArchivedEvent } from "@base/constants/BOT_LOG_EVENTS.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { awardXp } from "@features/leveling/awardXp.js";
 import { buildRoomOverwrites } from "./roomPermissions.js";
 import { roomResultEmbed, roomArchiveRow } from "./gameRoomsEmbeds.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -62,6 +63,12 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 		archiveAt: new Date(now.getTime() + BOT_CONSTANTS.GAME_ROOM_ARCHIVE_DELAY_MS),
 	});
 
+	// ①ᵇ The room-rate top up, paid here rather than after the channel resolves below.
+	// XP is a database fact and the channel is a Discord fact: a match whose channel an
+	// admin deleted in the final seconds still happened, and the early return under
+	// `if (!channel)` would otherwise silently unpay everyone who played it.
+	payRoomRateTopUp(client, room, winnerId, input.abandoned ?? false);
+
 	const channel = await resolveRoomChannel(client, room.channelId);
 	// An already-deleted channel is the ordinary abandonment case, not an error. The
 	// row is stamped, so the sweep will close it out on its next pass.
@@ -98,6 +105,83 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 			...(input.art ? { files: [input.art.attachment] } : {}),
 		})
 		.catch((error) => console.error("[game-rooms] failed to post result card", { roomId: room.roomId, error }));
+}
+
+// ── the room-rate top up ──────────────────────────────────────────────
+// What:  pays the DIFFERENCE between the room rate and the ordinary channel rate, so a
+//        match played in its own room lands on GAME_ROOM_PLAY_XP / GAME_ROOM_WIN_XP in
+//        total rather than on top of them.
+// Who:   everyone in `room.playerIds`. Spectators earn nothing: watching is not playing,
+//        which is the same line the dashboard's userId filter draws.
+// When:  once per room, from `finish`, after the row is stamped.
+// Where: the fifth and last of the leveling award hooks (duel, rps, hangman and fortune
+//        shipped in leveling Phase 2; this one waited on `finish` existing at all).
+// How:   a top up, NOT an additive bonus, and that is the whole subtlety. Every room game
+//        already pays its own award through `gameXp` before it calls `finish`, so a flat
+//        40/120 here would total 65/195 and make the constants' face values describe
+//        nothing observable. Subtracting means an operator who retunes GAME_ROOM_* gets
+//        the number they typed. Floored at zero so raising GAME_PLAY_XP above the room
+//        rate degrades to "no bonus" rather than to a negative award.
+//
+// ⚠️ IT MUST NOT PASS `game`. awardXp increments `games.<slug>.played` for ANY call that
+// names one, and the game's own hook has already recorded this match. Naming it here
+// would make /account read "played 2" for every room match ever played. Same rule that
+// governs battleship's per-sink bonus and hold em's per-hand payout.
+//
+// ⚠️ HOLD EM IS EXCLUDED. Its placement prize is already calibrated to include the room
+// win (see HOLDEM_PLACEMENT_XP's note: a tournament is worth "roughly a room win plus the
+// hands it took to get there"), so topping it up pays that win twice.
+//
+// ABANDONED PAYS NOTHING, and it is the reason this function takes the flag at all.
+// `finish` is also called with abandoned:true by the boot recovery sweep and by the R14
+// path in ChannelDeleteWatcher, neither of which involves a match anyone played. Paying
+// there would be farmable for as long as anyone cared to do it: open a room, delete the
+// channel, repeat. The cost of this choice is real and accepted, a genuine disconnect or
+// an admin tidying channels pays its players nothing.
+function payRoomRateTopUp(client: Client, room: IGameRoom, winnerId: string | null, abandoned: boolean): void {
+	if (abandoned) return;
+	if (room.game === "holdem") return;
+	if (!room.guildId || room.playerIds.length === 0) return;
+
+	const { GAME_PLAY_XP, GAME_WIN_XP, GAME_ROOM_PLAY_XP, GAME_ROOM_WIN_XP } = BOT_CONSTANTS.LEVELING;
+	const playTopUp = Math.max(0, GAME_ROOM_PLAY_XP - GAME_PLAY_XP);
+	const winTopUp = Math.max(0, GAME_ROOM_WIN_XP - GAME_WIN_XP);
+	if (playTopUp === 0 && winTopUp === 0) return;
+
+	// Fire and forget after a successful primary write (house rule 7). awardXp never throws
+	// by contract, and `finish` must not be held up by, or fail on, bookkeeping.
+	void (async () => {
+		const guild = await client.guilds.fetch(room.guildId).catch(() => null);
+		if (!guild) return;
+
+		// One bulk fetch to populate the cache. The RESULT is deliberately ignored and every
+		// read below goes through the cache instead, because discord.js returns a bare
+		// GuildMember for a single-id fetch and a Collection for a multi-id one, and branching
+		// on that shape is a bug waiting for the first one-player room.
+		await guild.members.fetch({ user: room.playerIds }).catch(() => null);
+
+		for (const userId of room.playerIds) {
+			const member = guild.members.cache.get(userId);
+			// ⚠️ SKIP rather than fall back to the raw id. memberLevelStore does
+			// `$set: { username }` on EVERY award, so handing it a snowflake would overwrite a
+			// real display name on /account and /levels with a string of digits. Losing one
+			// top up for a member who left mid-match is far cheaper than corrupting the name
+			// on both leaderboards, and their own game hook already paid them.
+			if (!member) continue;
+
+			void awardXp({
+				client,
+				guildId: room.guildId,
+				userId,
+				username: member.displayName,
+				amount: playTopUp + (userId === winnerId ? winTopUp : 0),
+				source: "gameRoom",
+				// No `game` and therefore no `outcome`: awardXp only reads outcome when a game
+				// is named, so passing one would be dead weight that reads as a recorded result.
+				channelId: room.channelId,
+			});
+		}
+	})().catch((error) => console.error("[game-rooms] room-rate top up failed", { roomId: room.roomId, error }));
 }
 
 // ── the one delete path ───────────────────────────────────────────────

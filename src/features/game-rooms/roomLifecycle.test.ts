@@ -9,8 +9,10 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: { findByGuildId: vi.fn() },
 }));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: vi.fn() } }));
+vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 
 import { finish, archiveRoom, archiveNow } from "./roomLifecycle.js";
+import { awardXp } from "@features/leveling/awardXp.js";
 import { postMove } from "./roomTrail.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -25,6 +27,20 @@ const storeMock = gameRoomStore as unknown as {
 };
 const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
 const logMock = botLogStore as unknown as { log: ReturnType<typeof vi.fn> };
+const awardMock = awardXp as unknown as ReturnType<typeof vi.fn>;
+
+// The room-rate top up resolves display names through the guild member CACHE, after one
+// bulk fetch it deliberately ignores. Seeding the cache is therefore what decides whether a
+// player is payable at all, which is exactly what the "member who left" case exercises.
+function makeGuild(memberIds: string[] = ["host-1", "player-2"]) {
+	const cache = new Map(memberIds.map((id) => [id, { id, displayName: `Display ${id}` }]));
+	return {
+		members: {
+			fetch: vi.fn().mockResolvedValue(undefined),
+			cache,
+		},
+	};
+}
 
 function makeRoom(overrides: Partial<IGameRoom> = {}): IGameRoom {
 	return {
@@ -61,10 +77,11 @@ function makeChannel() {
 	};
 }
 
-function makeClient(channel: unknown): Client {
+function makeClient(channel: unknown, guild: unknown = makeGuild()): Client {
 	return {
 		user: { id: "bot-1" },
 		channels: { fetch: vi.fn().mockResolvedValue(channel) },
+		guilds: { fetch: vi.fn().mockResolvedValue(guild) },
 	} as unknown as Client;
 }
 
@@ -153,6 +170,103 @@ describe("roomLifecycle.finish", () => {
 
 		// The admin role is a nice-to-have on the overwrite array; the LOCK is not.
 		expect(channel.permissionOverwrites.set).toHaveBeenCalledOnce();
+	});
+});
+
+// ── the room-rate top up ──
+// Every case here is one that type checks either way and only one shape is right, which is
+// the whole reason this block is longer than the feature it covers.
+describe("roomLifecycle.finish room-rate top up", () => {
+	const { GAME_PLAY_XP, GAME_WIN_XP, GAME_ROOM_PLAY_XP, GAME_ROOM_WIN_XP } = BOT_CONSTANTS.LEVELING;
+	const playTopUp = GAME_ROOM_PLAY_XP - GAME_PLAY_XP;
+	const winTopUp = GAME_ROOM_WIN_XP - GAME_WIN_XP;
+
+	// The award is fire and forget inside finish, so it lands a microtask or two after the
+	// call resolves. Polling beats a fixed tick count, which would silently start passing
+	// for the wrong reason if an await were ever added ahead of it.
+	const awaitAwards = (count: number) => vi.waitFor(() => expect(awardMock).toHaveBeenCalledTimes(count));
+
+	it("tops the winner and the loser up to exactly the room rate", async () => {
+		await finish(makeClient(makeChannel()), makeRoom(), { winnerId: "player-2" });
+		await awaitAwards(2);
+
+		const byUser = Object.fromEntries(awardMock.mock.calls.map(([call]) => [call.userId, call]));
+
+		// The POINT of a top up rather than a flat bonus: added to what the game's own hook
+		// already paid, each total lands on the constant's face value. If someone converts
+		// this to an additive bonus these two lines are what break.
+		expect(byUser["player-2"].amount + GAME_PLAY_XP + GAME_WIN_XP).toBe(GAME_ROOM_PLAY_XP + GAME_ROOM_WIN_XP);
+		expect(byUser["host-1"].amount + GAME_PLAY_XP).toBe(GAME_ROOM_PLAY_XP);
+
+		expect(byUser["player-2"].amount).toBe(playTopUp + winTopUp);
+		expect(byUser["host-1"].amount).toBe(playTopUp);
+	});
+
+	it("never names a game, which is what stops /account reading 'played 2'", async () => {
+		await finish(makeClient(makeChannel()), makeRoom(), { winnerId: "player-2" });
+		await awaitAwards(2);
+
+		for (const [call] of awardMock.mock.calls) {
+			// `game` is the field that increments games.<slug>.played, and the game's own hook
+			// has already recorded this match. `outcome` is dead weight without it.
+			expect(call.game).toBeUndefined();
+			expect(call.outcome).toBeUndefined();
+			expect(call.source).toBe("gameRoom");
+		}
+	});
+
+	it("pays NOTHING for an abandoned room, which is the farm this closes", async () => {
+		// Open a room, delete its channel, repeat. finish() is called with abandoned:true by
+		// both the boot recovery sweep and ChannelDeleteWatcher's R14 path.
+		await finish(makeClient(makeChannel()), makeRoom(), { abandoned: true });
+		await finish(makeClient(makeChannel()), makeRoom(), { winnerId: "player-2", abandoned: true });
+
+		expect(awardMock).not.toHaveBeenCalled();
+	});
+
+	it("excludes hold em, whose placement prize already includes the room win", async () => {
+		await finish(makeClient(makeChannel()), makeRoom({ game: "holdem" }), { winnerId: "player-2" });
+
+		expect(awardMock).not.toHaveBeenCalled();
+	});
+
+	it("pays a tie: no winner means the play top up for everyone and no win top up", async () => {
+		await finish(makeClient(makeChannel()), makeRoom(), { winnerId: null });
+		await awaitAwards(2);
+
+		for (const [call] of awardMock.mock.calls) {
+			expect(call.amount).toBe(playTopUp);
+		}
+	});
+
+	it("SKIPS an unresolvable member rather than writing their id as their username", async () => {
+		// memberLevelStore does `$set: { username }` on every award, so an id fallback would
+		// replace a real display name with a snowflake on /account AND /levels. One missed
+		// top up is the cheaper failure, and their own game hook already paid them.
+		const guild = makeGuild(["host-1"]);
+		await finish(makeClient(makeChannel(), guild), makeRoom(), { winnerId: "player-2" });
+		await awaitAwards(1);
+
+		expect(awardMock.mock.calls[0][0].userId).toBe("host-1");
+		expect(awardMock.mock.calls[0][0].username).toBe("Display host-1");
+		for (const [call] of awardMock.mock.calls) {
+			expect(call.username).not.toBe(call.userId);
+		}
+	});
+
+	it("still pays when the channel is already gone, because xp is not a Discord fact", async () => {
+		// finish() early-returns under `if (!channel)`. The top up sits ABOVE that on purpose:
+		// a match whose channel an admin deleted in the final seconds still happened.
+		await finish(makeClient(null), makeRoom(), { winnerId: "player-2" });
+		await awaitAwards(2);
+	});
+
+	it("does not reject when the guild cannot be fetched", async () => {
+		const client = makeClient(makeChannel());
+		(client.guilds.fetch as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("gateway blip"));
+
+		await expect(finish(client, makeRoom(), { winnerId: "player-2" })).resolves.toBeUndefined();
+		expect(awardMock).not.toHaveBeenCalled();
 	});
 });
 
