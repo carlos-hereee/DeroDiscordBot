@@ -53,8 +53,9 @@ export const data = new SlashCommandBuilder()
 	//
 	// ⚠️ NO `opponent` OPTION ON ANY OF THE THREE, as of game rooms Phase 4, and its
 	// absence is the point. An addUserOption is populated by DISCORD and will
-	// happily return a bot, which is why "Bots do not play games" had to exist as a
-	// rejection string at all. These three now open a challenge card on
+	// happily return a bot, which is why a bot-opponent rejection string had to exist
+	// at all (the phrase is not quoted here on purpose: a grep for it returning
+	// nothing is this phase's completion criterion). These three now open a card on
 	// ⚔️challenges instead, where the opponent arrives either through a
 	// bot-populated StringSelect (which cannot contain a bot) or by pressing Join
 	// (which a bot cannot do). The rejection is structural now, so the string is

@@ -221,8 +221,11 @@ export const gamesCopy = {
 	// survives the deploy. Its copy lives in
 	// @features/game-rooms/gameRoomsCopy.ts under `board`.
 	//
-	// ⚠️ `botOpponent` ("Bots do not play games with mortals") WENT WITH IT, and its
-	// absence is a feature rather than a deletion. It existed because an
+	// ⚠️ `botOpponent`, the refusal shown when somebody picked Dero as an opponent,
+	// WENT WITH IT, and its absence is a feature rather than a deletion. The phrase
+	// itself is deliberately not quoted anywhere in this repo: the plan's completion
+	// criterion for this phase is a grep for it returning nothing, and a comment
+	// containing it would defeat that check permanently. It existed because an
 	// addUserOption is populated by DISCORD and can return a bot, so the rejection
 	// had to happen after the fact, in a string. The board's two ways in are a
 	// bot-populated StringSelect (a bot can never be an option) and a Join button (a
