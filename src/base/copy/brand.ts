@@ -109,6 +109,10 @@ export const COLORS = {
 	GAME_DUEL: "#f97316",
 	GAME_RPS: "#0ea5e9",
 	GAME_HANGMAN: "#22c55e",
+	// The GAME ROOMS category's own surfaces (the rules card, the challenge board
+	// intro, a room's opener). Deliberately NOT one of the per game colors above:
+	// those identify a match, this identifies the arena the matches live in.
+	GAME_ROOMS: "#7c3aed",
 	// Felt green, deliberately DARKER than GAME_HANGMAN's brighter green so the two
 	// are still distinguishable side by side in a channel that has both open.
 	GAME_BLACKJACK: "#15803d",

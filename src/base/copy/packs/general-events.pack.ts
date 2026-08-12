@@ -247,6 +247,10 @@ export const generalEventsCopy: IPluginCopy = {
 		// streamers, and community organizers alike. Aligns with the item 32
 		// Herald rename direction toward unified bot identity at the brand level.
 		categoryName: "🪧 NOTICE BOARD",
+		// Universal across packs for the same reason categoryName is: a category
+		// is the bot's brand mark in every server. Keep this identical to
+		// rok-commander's.
+		gamesCategoryName: "🎮 GAME ROOMS",
 		devSuffix: " (dev)",
 		channels: {
 			// Same channel keys as rok-commander so GuildSetupManager.populateChannels
@@ -260,6 +264,11 @@ export const generalEventsCopy: IPluginCopy = {
 			nextDecree: "🔜upcoming-events",
 			// Eighth channel: admin-only command + control surface (mirrors rok-commander).
 			adminCommands: "🎛️admin-controls",
+			// The two GAME ROOMS channels. Channel NAMES are universal across packs
+			// (the same reason the category name is), so these match rok-commander
+			// exactly; only the intro copy below differs in voice.
+			gamesRules: "📋game-rules",
+			gamesChallenges: "⚔️challenges",
 		},
 	},
 
@@ -381,6 +390,31 @@ export const generalEventsCopy: IPluginCopy = {
 				"A heads-up for what is coming next.\n\n" +
 				"As each event moves within the next day, a fresh post appears here with its time and any prep notes.\n\n" +
 				"*Posts stay so you can scroll back to confirm what was announced.*",
+		},
+
+		// One embed PER GAME, same structure as rok-commander's, plain voice. The
+		// `games` array is what the renderer walks, so adding a game is one entry
+		// in BOTH packs and nothing else.
+		gamesRules: {
+			title: "📋 Game rules",
+			description:
+				"Every game this bot runs is listed below. Anyone can play, and every match earns XP toward your level.\n\n" +
+				"*Start a two player match from the challenge board. Everything else runs anywhere with `/mini-game`.*",
+			games: [
+				{ name: "⚔️ Duel", how: "One dice roll, or one coin flip. Winner takes it.", players: "2", who: "Challenge anyone from the board." },
+				{ name: "✂️ Rock Paper Scissors", how: "Both players pick in secret, revealed together.", players: "2", who: "Challenge anyone from the board." },
+				{ name: "🪢 Hangman", how: "One word, six wrong guesses, everyone in the channel guessing.", players: "Any", who: "Anyone can start one." },
+				{ name: "🃏 Blackjack", how: "Beat the dealer without going over 21. Play solo, or open a table others can join.", players: "1 to 5", who: "Anyone can deal in." },
+				{ name: "🔮 Fortune", how: "Ask the crystal ball. Do not act on the answer.", players: "1", who: "Anyone, any channel." },
+			],
+		},
+
+		gamesChallenges: {
+			title: "⚔️ Challenge board",
+			description:
+				"This is where a match starts.\n\n" +
+				"Issue a challenge and it shows up here for your opponent to accept. Once they do, a room is created for the two of you and the match plays out inside it.\n\n" +
+				"*A finished room is locked, then cleared away. The record of the match is kept.*",
 		},
 
 		adminWelcome: {

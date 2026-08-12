@@ -55,6 +55,25 @@ function resolveCategoryName(): string {
 		: rokCommanderCopy.setup.categoryName;
 }
 
+// The SECOND managed category, holding the game rules card and the challenge
+// board. Deliberately a sibling of resolveCategoryName rather than a parameter
+// on it: both read the same devSuffix and must branch on env identically, and a
+// dev instance that suffixed one category but not the other would collide with
+// prod on exactly one of them, which is the confusing half of that bug.
+//
+// Reads rokCommanderCopy directly, matching resolveCategoryName, because the
+// category name is universal across packs by the 2026-05-22 decision. If it ever
+// stops being universal, BOTH helpers become pack aware together.
+// ⚠️ Leading underscore because it is deliberately kept and NOT YET CALLED: the
+// caller lands with task 2.6 (runAutoSetup creating the second category). That
+// is the repo's documented convention for an intentional unused helper, per
+// CLAUDE.md rule 4, and the underscore comes OFF in the same commit that wires it.
+function _resolveGamesCategoryName(): string {
+	return process.env.NODE_ENV === "development"
+		? rokCommanderCopy.setup.gamesCategoryName + rokCommanderCopy.setup.devSuffix
+		: rokCommanderCopy.setup.gamesCategoryName;
+}
+
 export class GuildSetupManager {
 	// ── bot self overwrite ────────────────────────────────────
 	// What: build the channel permission overwrite that grants this bot

@@ -292,9 +292,15 @@ export const rokCommanderCopy = {
 		// alienated streamer / community guilds. See general-events.pack.ts for
 		// the full rationale.
 		categoryName: "🪧 NOTICE BOARD",
+		// The SECOND managed category, holding the game rules card and the
+		// challenge board. Universal across packs for exactly the reason
+		// categoryName is: a category is the bot's brand mark in every server.
+		// Single leading emoji, matching the NOTICE BOARD convention.
+		gamesCategoryName: "🎮 GAME ROOMS",
 		// appended to categoryName when NODE_ENV=development so a dev instance
 		// sharing a guild with prod builds a visually distinct home base.
-		// GuildSetupManager reads this and composes the final name.
+		// GuildSetupManager reads this and composes the final name. Applies to
+		// BOTH categories, via resolveCategoryName and resolveGamesCategoryName.
 		devSuffix: " (dev)",
 		channels: {
 			intro: "📜introductions",
@@ -318,6 +324,14 @@ export const rokCommanderCopy = {
 			// guide moved out of inner-sanctum, with the admin control buttons folded
 			// into its pinned row).
 			adminCommands: "🎛️admin-controls",
+			// ── the two GAME ROOMS channels ───────────────────────
+			// Both live under gamesCategoryName, NOT under the homebase category,
+			// which is why every CHANNEL_SPECS entry now has to declare which
+			// category it belongs to. Both are member facing and public: the rules
+			// card answers "who can play what" and the board is where a match is
+			// started, so a member who cannot see them cannot play at all.
+			gamesRules: "📋game-rules",
+			gamesChallenges: "⚔️challenges",
 		},
 	},
 
@@ -503,6 +517,34 @@ export const rokCommanderCopy = {
 				"A heads-up for what is coming next.\n\n" +
 				"As each event moves within the next day, a fresh post appears here with its time and any prep notes.\n\n" +
 				"*Posts stay so you can scroll back to confirm what was announced.*",
+		},
+
+		// ── the game rules card ───────────────────────────────────
+		// One embed PER GAME, which is the point: it is the answer to "who can
+		// play what", and a single wall of text is the answer nobody reads.
+		// Adding a game means adding an entry to `games` and nothing else, so the
+		// card cannot drift from the roster the way a hand written paragraph would.
+		gamesRules: {
+			title: "📋 The Rules of the Arena",
+			description:
+				"Every game I keep is listed below. Anyone may play, and every match earns renown toward your level.\n\n" +
+				"*Start a two player match from the challenge board. The rest you may summon anywhere with `/mini-game`.*",
+			games: [
+				{ name: "⚔️ Duel", how: "A single roll of the dice, or a single flip of the coin. Winner takes all.", players: "2", who: "Challenge anyone from the board." },
+				{ name: "✂️ Rock Paper Scissors", how: "Both of you choose in secret. I reveal together.", players: "2", who: "Challenge anyone from the board." },
+				{ name: "🪢 Hangman", how: "A word, six wrong guesses, and a whole channel shouting letters.", players: "Any", who: "Anyone may start one." },
+				{ name: "🃏 Blackjack", how: "Beat my dealer without passing 21. Play alone, or open a table others may join.", players: "1 to 5", who: "Anyone may deal in." },
+				{ name: "🔮 Fortune", how: "Ask the crystal ball. Expect nothing useful.", players: "1", who: "Anyone, any channel." },
+			],
+		},
+
+		// ── the challenge board ───────────────────────────────────
+		gamesChallenges: {
+			title: "⚔️ The Challenge Board",
+			description:
+				"This is where a match begins.\n\n" +
+				"Issue a challenge and it appears here for your opponent to accept. Once they do, I raise a room for the two of you and the match plays out inside it.\n\n" +
+				"*A finished room is sealed, then cleared away. The record of it survives.*",
 		},
 
 		adminWelcome: {
