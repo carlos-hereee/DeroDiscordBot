@@ -1,7 +1,8 @@
 import type { Client, User } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { awardXp } from "@features/leveling/awardXp.js";
-import type { LevelingGameSlug } from "@features/leveling/levelingTypes.js";
+import type { GameOutcome, LevelingGameSlug } from "@features/leveling/levelingTypes.js";
+import type { HandOutcome, SeatResult } from "./blackjackState.js";
 
 // ── gameXp ─────────────────────────────────────────────────────────────────
 // The games feature's one seam into the leveling system.
@@ -106,6 +107,85 @@ export function awardMultiPlayerResult(result: MultiPlayerResult): void {
 			game: result.game,
 			outcome: isWinner ? "won" : assisted ? "assist" : "lost",
 			channelId: result.channelId ?? null,
+		});
+	}
+}
+
+// ── blackjack ───────────────────────────────────────────────────────────────
+// The third shape, and it needs to exist because neither helper above fits.
+// awardTwoPlayerResult is two sided. awardMultiPlayerResult assumes ONE winner
+// the whole table is measured against. A blackjack table has neither: every
+// hand is an independent bet against the DEALER, who is not a member and earns
+// nothing, so six seats can all win, all lose, or any mixture, at once.
+
+// What one hand is worth. Split out so the arithmetic is readable in isolation
+// and so the doubling asymmetry is stated exactly once.
+function blackjackHandXp(outcome: HandOutcome, doubled: boolean): number {
+	const { GAME_PLAY_XP, GAME_WIN_XP, GAME_TIE_XP, BLACKJACK_NATURAL_XP, BLACKJACK_DOUBLE_WIN_MULTIPLIER } = BOT_CONSTANTS.LEVELING;
+
+	// Doubling raises the WIN BONUS and nothing else. See the constant's own note:
+	// multiplying the whole award would make a doubled loss pay more than an
+	// ordinary one, and the correct play would be to double every hand.
+	const winBonus = doubled ? GAME_WIN_XP * BLACKJACK_DOUBLE_WIN_MULTIPLIER : GAME_WIN_XP;
+
+	switch (outcome) {
+		// A natural cannot actually be doubled (it is final the moment it is dealt,
+		// so no action is ever offered on it), but the bonus is written to compose
+		// rather than to assume that, because a future rule change should not
+		// silently produce a wrong number here.
+		case "blackjack":
+			return GAME_PLAY_XP + winBonus + BLACKJACK_NATURAL_XP;
+		case "win":
+			return GAME_PLAY_XP + winBonus;
+		// A push returns the stake, so doubling neither helps nor hurts.
+		case "push":
+			return GAME_TIE_XP;
+		// The staked half of doubling: a doubled loss forfeits even the play xp.
+		case "lose":
+			return doubled ? 0 : GAME_PLAY_XP;
+	}
+}
+
+const BLACKJACK_RECORD: Record<HandOutcome, GameOutcome> = {
+	blackjack: "won",
+	win: "won",
+	push: "drawn",
+	lose: "lost",
+};
+
+interface BlackjackPayout {
+	client: Client;
+	guildId: string | null;
+	channelId?: string | null;
+	// Straight from blackjackState.settle(), one entry per seat, each carrying one
+	// outcome per hand in hand order.
+	seats: SeatResult[];
+}
+
+// ONE AWARD PER HAND, not per seat, which is the honest reading: a seat that
+// split is playing two bets and may win one and lose the other, so collapsing
+// them into a single outcome would have to invent a winner. Two awards means
+// /account reads "played 2, won 1, lost 1", which is what actually happened.
+//
+// A zero amount still awards, and deliberately: awardXp only short circuits on
+// zero when there is no `game` attached, so a doubled loss records the hand
+// (played +1, lost +1) while paying nothing.
+export function awardBlackjackResult(result: BlackjackPayout): void {
+	if (!result.guildId) return;
+
+	for (const seat of result.seats) {
+		seat.hands.forEach((outcome, index) => {
+			void awardXp({
+				client: result.client,
+				guildId: result.guildId as string,
+				userId: seat.userId,
+				username: seat.username,
+				amount: blackjackHandXp(outcome, seat.doubled[index] ?? false),
+				source: "game",
+				game: "blackjack",
+				outcome: BLACKJACK_RECORD[outcome],
+				channelId: result.channelId ?? null,
+			});
 		});
 	}
 }

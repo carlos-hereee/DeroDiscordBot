@@ -225,6 +225,23 @@ export const BOT_CONSTANTS = {
 		GAME_ROOM_PLAY_XP: 40,
 		GAME_ROOM_WIN_XP: 120,
 
+		// ── blackjack ──
+		// Blackjack deliberately reuses GAME_PLAY_XP, GAME_WIN_XP and GAME_TIE_XP
+		// above (a push is a tie) so it cannot quietly pay differently from its
+		// siblings. Only the two genuinely blackjack-shaped rules get their own
+		// numbers, and each is awarded PER HAND, because a split seat is playing
+		// two independent bets against the dealer.
+		//
+		// A natural pays a bonus on top of a win because it is the one hand you
+		// cannot play your way into: it is dealt or it is not.
+		BLACKJACK_NATURAL_XP: 50,
+		// ⚠️ Doubling multiplies the WIN BONUS ONLY, and a doubled loss pays ZERO
+		// rather than the usual play xp. That asymmetry is the entire point. If
+		// doubling multiplied the whole award, a doubled loss would pay MORE than an
+		// ordinary loss and the correct play would be to double every single hand,
+		// which is not a decision, it is a formality.
+		BLACKJACK_DOUBLE_WIN_MULTIPLIER: 2,
+
 		// Fortune is the most farmable award in the feature: it has a 10 second
 		// cooldown and no opponent, so its payout is small and flat and it has no
 		// win bonus to chase.

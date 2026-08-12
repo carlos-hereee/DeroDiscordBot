@@ -12,9 +12,10 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 const mocks = vi.hoisted(() => ({ awardXp: vi.fn() }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: mocks.awardXp }));
 
-import { awardMultiPlayerResult, awardTwoPlayerResult } from "./gameXp.js";
+import { awardBlackjackResult, awardMultiPlayerResult, awardTwoPlayerResult } from "./gameXp.js";
+import type { SeatResult } from "./blackjackState.js";
 
-const { GAME_PLAY_XP, GAME_WIN_XP, GAME_TIE_XP } = BOT_CONSTANTS.LEVELING;
+const { GAME_PLAY_XP, GAME_WIN_XP, GAME_TIE_XP, BLACKJACK_NATURAL_XP, BLACKJACK_DOUBLE_WIN_MULTIPLIER } = BOT_CONSTANTS.LEVELING;
 
 const client = {} as Client;
 const user = (id: string): User => ({ id, username: id, globalName: id }) as unknown as User;
@@ -167,5 +168,73 @@ describe("no amount is inlined", () => {
 		const paid = awards().map((award) => award.amount);
 		expect(paid).toContain(GAME_PLAY_XP + GAME_WIN_XP);
 		expect(paid).toContain(GAME_PLAY_XP);
+	});
+});
+
+// ── blackjack ───────────────────────────────────────────────────────────────
+// The shape worth pinning here is that a hand, not a seat, is the unit of
+// payment, and that doubling is a genuine gamble rather than free upside.
+
+describe("blackjack results", () => {
+	const seat = (userId: string, hands: SeatResult["hands"], doubled: boolean[] = hands.map(() => false)): SeatResult => ({
+		userId,
+		username: userId,
+		hands,
+		doubled,
+	});
+
+	const play = (seats: SeatResult[]) => awardBlackjackResult({ client, guildId: "g1", seats });
+
+	it("pays each hand independently, so a split seat gets two awards", () => {
+		play([seat("a", ["win", "lose"])]);
+		expect(awards()).toHaveLength(2);
+		expect(awards().map((award) => award.amount)).toEqual([GAME_PLAY_XP + GAME_WIN_XP, GAME_PLAY_XP]);
+		expect(awards().map((award) => award.outcome)).toEqual(["won", "lost"]);
+	});
+
+	it("pays a natural more than an ordinary win", () => {
+		play([seat("a", ["blackjack"])]);
+		expect(awardFor("a")?.amount).toBe(GAME_PLAY_XP + GAME_WIN_XP + BLACKJACK_NATURAL_XP);
+		expect(awardFor("a")?.outcome).toBe("won");
+	});
+
+	it("records a push as a draw and pays the tie amount", () => {
+		play([seat("a", ["push"])]);
+		expect(awardFor("a")?.amount).toBe(GAME_TIE_XP);
+		expect(awardFor("a")?.outcome).toBe("drawn");
+	});
+
+	it("doubles the WIN BONUS on a doubled win, not the whole award", () => {
+		play([seat("a", ["win"], [true])]);
+		expect(awardFor("a")?.amount).toBe(GAME_PLAY_XP + GAME_WIN_XP * BLACKJACK_DOUBLE_WIN_MULTIPLIER);
+	});
+
+	it("pays NOTHING on a doubled loss, which is what makes doubling a decision", () => {
+		// The asymmetry that stops "always double" from being correct: an ordinary
+		// loss still pays the play xp, a doubled one forfeits it.
+		play([seat("a", ["lose"], [true]), seat("b", ["lose"])]);
+		expect(awardFor("a")?.amount).toBe(0);
+		expect(awardFor("b")?.amount).toBe(GAME_PLAY_XP);
+	});
+
+	it("still records the hand when a doubled loss pays zero", () => {
+		// awardXp only short circuits a zero amount when no game is attached, so the
+		// win/loss record must still move. Losing the xp is the cost; losing the row
+		// would make /account disagree with what the member watched happen.
+		play([seat("a", ["lose"], [true])]);
+		expect(awardFor("a")).toMatchObject({ game: "blackjack", outcome: "lost", source: "game" });
+	});
+
+	it("pays every seat at a table, because the dealer is not a member", () => {
+		play([seat("a", ["win"]), seat("b", ["win"]), seat("c", ["lose"])]);
+		expect(awards()).toHaveLength(3);
+		expect(awardFor("a")?.amount).toBe(GAME_PLAY_XP + GAME_WIN_XP);
+		expect(awardFor("b")?.amount).toBe(GAME_PLAY_XP + GAME_WIN_XP);
+		expect(awardFor("c")?.amount).toBe(GAME_PLAY_XP);
+	});
+
+	it("awards nothing outside a guild", () => {
+		awardBlackjackResult({ client, guildId: null, seats: [seat("a", ["win"])] });
+		expect(awards()).toHaveLength(0);
 	});
 });
