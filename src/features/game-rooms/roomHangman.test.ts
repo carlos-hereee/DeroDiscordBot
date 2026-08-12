@@ -7,33 +7,50 @@ vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 vi.mock("@features/games/gamesAssets.js", () => ({ resolveGameAsset: vi.fn(() => null) }));
 
-import { openGuessModal, handleGuessModal } from "./roomHangman.js";
+import {
+	hangmanRow,
+	openAuthoringModal,
+	handleAuthoringModal,
+	openGuessModal,
+	handleGuessModal,
+} from "./roomHangman.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
+import { GAME_ROOM_PREFIX, GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
+import { HANGMAN_HINT_MAX } from "@features/games/hangmanAuthoring.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
-// ── roomHangman, the host gate ───────────────────────────────────────
-// What:  pins "the host does not guess their own word" at BOTH places it is
-//        enforced, and pins that everyone else still gets through.
-// Who:   the `gameroom:move` button (openGuessModal) and the `gameroomModal:guess`
-//        submit (handleGuessModal).
-// When:  every guess, for the whole life of a hosted round.
-// Where: this gate is the difference between a game and a host solving their own
-//        puzzle, and until this file existed nothing asserted it. Deleting the
-//        check outright left the full suite green, which is how it got written.
-// How:   drive the two real handlers against a rehydrated room row, once as the
-//        author and once as a guesser.
+// ── roomHangman ──────────────────────────────────────────────────────
+// What:  the Discord half of hosted hangman, both ends of it: the host authoring a
+//        word, and everybody else guessing at it.
+// Who:   the `gameroom:author` and `gameroom:move` buttons, and the two
+//        `gameroomModal:` submits.
+// When:  once per hosted room for the authoring half, every guess for the other.
+// Where: the pure halves are covered elsewhere and thoroughly (hangmanAuthoring
+//        validates, hangmanState decides what a guess did). What is covered HERE is
+//        the wiring that applies them, which is where the module's own risk lives:
+//        R12 says `secret.word` reaches Discord in exactly ONE place, and every
+//        line that could break that promise is in this file rather than in the
+//        pure ones.
+// How:   drive the real handlers against a room row, with the store, the trail and
+//        the lifecycle mocked out.
 //
-// ⚠️ BOTH DIRECTIONS ARE THE POINT. A test that only proves the host is refused
-// passes just as happily when EVERYONE is refused, which is a broken game that
-// looks like a working guard. The refusal cases below are each paired with the
-// guesser case that proves the door is still open.
+// ⚠️ BOTH DIRECTIONS ARE THE POINT, EVERYWHERE BELOW. A test that only proves the
+// host is refused passes just as happily when EVERYONE is refused, which is a
+// broken game that looks like a working guard. Every refusal case here is paired
+// with the case that proves the door is still open to whoever should get through.
+//
+// ⚠️ THIS FILE EXISTS BECAUSE THE GATES DELETED CLEANLY. Before it, replacing the
+// host-cannot-guess check with `if (false)` left the whole suite green. Every case
+// below was mutation checked the same way rather than trusted for being green.
 
 const HOST = "host-1";
 const GUESSER = "guesser-1";
 const WORD = "planet";
+// Chosen so neither leak direction trips: it does not contain "planet", and none of
+// its tokens of three characters or more is contained BY "planet".
+const HINT = "it goes around a star";
 
 const storeMock = gameRoomStore as unknown as {
 	update: ReturnType<typeof vi.fn>;
@@ -54,13 +71,29 @@ function makeRoom(authoredBy: string | null = HOST): IGameRoom {
 		channelId: "ch-1",
 		secret: {
 			word: WORD,
-			hint: "it goes around a star",
+			hint: HINT,
 			extraHints: [],
 			revealedHints: 0,
 			authoredBy,
 			guessedLetters: [],
 			wrong: 0,
 		},
+	} as unknown as IGameRoom;
+}
+
+// A room BEFORE anybody has authored: the provisioner opens it with no secret at
+// all, which is the state the authoring modal is reachable from.
+function makeUnwordedRoom(overrides: Partial<IGameRoom> = {}): IGameRoom {
+	return {
+		roomId: "room-1",
+		guildId: "guild-1",
+		game: "hangman",
+		status: "playing",
+		hostId: HOST,
+		playerIds: [HOST, GUESSER],
+		channelId: "ch-1",
+		secret: null,
+		...overrides,
 	} as unknown as IGameRoom;
 }
 
@@ -89,13 +122,266 @@ function makeSubmit(userId: string, letter = "p"): ModalSubmitInteraction {
 	} as unknown as ModalSubmitInteraction;
 }
 
+interface AuthorFields {
+	word?: string;
+	hint?: string;
+	extraHints?: string;
+}
+
+// The authoring submit reads three fields BY NAME. They are spelled here exactly as
+// `openAuthoringModal` spells them, which is the contract the two halves share.
+function makeAuthorSubmit(
+	userId: string,
+	fields: AuthorFields = {},
+	customId = `${GAME_ROOM_MODAL_PREFIX}:word:room-1`
+): ModalSubmitInteraction {
+	const values: Record<string, string> = {
+		word: fields.word ?? WORD,
+		hint: fields.hint ?? HINT,
+		extraHints: fields.extraHints ?? "",
+	};
+	return {
+		customId,
+		guildId: "guild-1",
+		user: { id: userId },
+		client: {},
+		fields: { getTextInputValue: (key: string) => values[key] ?? "" },
+		reply: vi.fn().mockResolvedValue(undefined),
+	} as unknown as ModalSubmitInteraction;
+}
+
 const replyOf = (interaction: { reply: unknown }) =>
 	(interaction.reply as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string; flags?: number };
+
+// What the store was asked to persist, which is the only place `authoredBy` is ever
+// written and therefore the root of the guess gate covered further down.
+const savedSecret = () => storeMock.update.mock.calls[0][2].secret as Record<string, unknown>;
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
 	trailMock.postMove.mockResolvedValue(undefined);
+});
+
+// ── the control contract ──────────────────────────────────────────────
+// `hangmanRow` chooses which customId the primary button carries, and
+// `gameRoomHandlers` routes on the action inside it. Those two are a pair that
+// nothing else enforces, and a mismatch produces a button that is silently dead
+// rather than one that errors, so it is worth pinning both sides.
+describe("hangmanRow", () => {
+	it("offers the AUTHOR action before a word exists", () => {
+		const [primary] = hangmanRow({ roomId: "room-1" }, false).toJSON().components;
+
+		expect(primary.custom_id).toBe(`${GAME_ROOM_PREFIX}:author:room-1`);
+	});
+
+	it("swaps to the MOVE action once a word exists, so the host cannot re-author", () => {
+		const [primary] = hangmanRow({ roomId: "room-1" }, true).toJSON().components;
+
+		expect(primary.custom_id).toBe(`${GAME_ROOM_PREFIX}:move:room-1`);
+	});
+});
+
+describe("openAuthoringModal", () => {
+	it("stamps the customId handleAuthoringModal actually parses", async () => {
+		const interaction = makeButton(HOST);
+
+		await openAuthoringModal(interaction, makeUnwordedRoom());
+
+		const modal = (interaction.showModal as ReturnType<typeof vi.fn>).mock.calls[0][0];
+		// A drifted action here is not an error, it is a submit that returns silently
+		// on its first line and a host who thinks the modal broke.
+		expect(modal.toJSON().custom_id).toBe(`${GAME_ROOM_MODAL_PREFIX}:word:room-1`);
+	});
+
+	it("carries the three fields the submit reads by name", async () => {
+		const interaction = makeButton(HOST);
+
+		await openAuthoringModal(interaction, makeUnwordedRoom());
+
+		const modal = (interaction.showModal as ReturnType<typeof vi.fn>).mock.calls[0][0];
+		const ids = modal.toJSON().components.flatMap((row: { components: { custom_id: string }[] }) =>
+			row.components.map((input) => input.custom_id)
+		);
+		// getTextInputValue throws on a name that is not there, so a rename on one side
+		// only takes down the submit, not the modal that opened it.
+		expect(ids).toEqual(["word", "hint", "extraHints"]);
+	});
+});
+
+// ── who may author ────────────────────────────────────────────────────
+describe("handleAuthoringModal, the write gate", () => {
+	it("refuses anybody who is not the host, and writes nothing", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeUnwordedRoom());
+		const interaction = makeAuthorSubmit(GUESSER);
+
+		await handleAuthoringModal(interaction);
+
+		expect(replyOf(interaction).content).toBe(gameRoomsCopy.errors.notYours);
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	// The room is already guessing at a word. Replacing it mid-round would invalidate
+	// every letter played so far, with no way for the room to tell it happened.
+	it("refuses a SECOND word on a room that already has one", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		const interaction = makeAuthorSubmit(HOST, { word: "cattle" });
+
+		await handleAuthoringModal(interaction);
+
+		expect(replyOf(interaction).content).toBe(gameRoomsCopy.errors.notYours);
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("refuses a room that is no longer playing", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeUnwordedRoom({ status: "finished" } as Partial<IGameRoom>));
+		const interaction = makeAuthorSubmit(HOST);
+
+		await handleAuthoringModal(interaction);
+
+		expect(replyOf(interaction).content).toBe(gameRoomsCopy.errors.notFound);
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("ignores a submit that is not its own, without even reading the room", async () => {
+		await handleAuthoringModal(makeAuthorSubmit(HOST, {}, `${GAME_ROOM_MODAL_PREFIX}:guess:room-1`));
+
+		expect(storeMock.findByRoomId).not.toHaveBeenCalled();
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("lets the host through, so the refusals above are not refusing everyone", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeUnwordedRoom());
+
+		await handleAuthoringModal(makeAuthorSubmit(HOST));
+
+		expect(storeMock.update).toHaveBeenCalledOnce();
+	});
+});
+
+// ── validation is actually REACHED ────────────────────────────────────
+// hangmanAuthoring is covered exhaustively on its own. What is unproven without
+// these is that this handler calls it at all and renders what it returns.
+describe("handleAuthoringModal, validation wiring", () => {
+	beforeEach(() => storeMock.findByRoomId.mockResolvedValue(makeUnwordedRoom()));
+
+	it("writes nothing and posts nothing when the word is refused", async () => {
+		await handleAuthoringModal(makeAuthorSubmit(HOST, { word: "ice cream" }));
+
+		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(trailMock.postMove).not.toHaveBeenCalled();
+	});
+
+	// ⚠️ THE POINT OF REJECTION_COPY IS THAT A HOST IS TOLD WHAT TO FIX. Collapsing it
+	// to one generic "invalid word" would leave every case below still refused and
+	// still green, which is why this asserts the messages are DISTINCT rather than
+	// merely present.
+	//
+	// ⚠️ AND IT COVERS EVERY REASON THE HANDLER CAN REACH, not a sample. A five case
+	// version of this test was written first and a mutation collapsing ONE entry
+	// survived it, because the two reasons that ended up sharing a message were not
+	// both in the sample. A partial collapse is the realistic regression here (two
+	// branches pointed at one string), so a partial sample is the wrong instrument.
+	//
+	// `wordDenied` is the one reason deliberately absent: reaching it means putting a
+	// slur in this file, and the denylist itself is covered in hangmanAuthoring's own
+	// suite where the constant lives.
+	it("gives each rejection reason its own message", async () => {
+		const longText = "x".repeat(HANGMAN_HINT_MAX + 1);
+		const cases: [string, AuthorFields][] = [
+			["wordMissing", { word: "" }],
+			["wordNotLetters", { word: "ice cream" }],
+			["wordTooShort", { word: "cat" }],
+			["wordTooLong", { word: "abcdefghijklm" }],
+			["wordTooFewDistinct", { word: "aaaa" }],
+			["hintMissing", { hint: "" }],
+			["hintTooLong", { hint: longText }],
+			["hintContainsWord", { hint: `the answer is ${WORD}` }],
+			["tooManyExtraHints", { extraHints: "one1\ntwo2\nthree3\nfour4" }],
+			["extraHintTooLong", { extraHints: longText }],
+			["extraHintContainsWord", { extraHints: `it is a ${WORD}` }],
+		];
+
+		const seen = new Map<string, string>();
+		for (const [reason, fields] of cases) {
+			const interaction = makeAuthorSubmit(HOST, fields);
+			await handleAuthoringModal(interaction);
+			const message = replyOf(interaction).content;
+
+			expect(message, `${reason} produced no message`).toBeTruthy();
+			// Naming the collision beats a bare count: a failure here should say WHICH
+			// two reasons a host can no longer tell apart.
+			expect(seen.get(message), `${reason} shares its message with ${seen.get(message)}`).toBeUndefined();
+			seen.set(message, reason);
+		}
+
+		expect(seen.size).toBe(cases.length);
+	});
+
+	// Both directions of the leak check, because the obvious one misses half of it:
+	// "plan" does not CONTAIN "planet", it is contained BY it, and a four letter
+	// prefix hands over most of the mask in order.
+	it.each([
+		["the hint contains the word", `the answer is ${WORD}`],
+		["a hint token is contained by the word", "plan"],
+	])("refuses when %s", async (_label, hint) => {
+		await handleAuthoringModal(makeAuthorSubmit(HOST, { hint }));
+
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+});
+
+// ── what acceptance actually stores and says ──────────────────────────
+describe("handleAuthoringModal, acceptance", () => {
+	beforeEach(() => storeMock.findByRoomId.mockResolvedValue(makeUnwordedRoom()));
+
+	it("stores the normalised word, the author, and a zeroed round", async () => {
+		await handleAuthoringModal(makeAuthorSubmit(HOST, { word: "  PLANET  " }));
+
+		expect(savedSecret()).toMatchObject({
+			word: WORD,
+			hint: HINT,
+			// ⚠️ THE FIELD THE GUESS GATE READS. Without it every host can guess their
+			// own word and the gate covered below never fires, which is a silent
+			// failure in a different file.
+			authoredBy: HOST,
+			revealedHints: 0,
+			guessedLetters: [],
+			wrong: 0,
+		});
+	});
+
+	it("keeps the extra hints the host wrote, one per line, and drops the blanks", async () => {
+		await handleAuthoringModal(makeAuthorSubmit(HOST, { extraHints: "orbits a sun\n\nnot a moon\n" }));
+
+		expect(savedSecret().extraHints).toEqual(["orbits a sun", "not a moon"]);
+	});
+
+	// ⚠️ RISK R12, AND THIS IS THE ASSERTION THAT GUARDS IT. The word is in scope on
+	// both of these lines and neither may render it: the private reply echoes the
+	// HINT back to a host who already knows the word, and the opener is a real
+	// message in a channel the whole room can read.
+	it("puts the word in NEITHER the private confirmation nor the public opener", async () => {
+		const interaction = makeAuthorSubmit(HOST);
+
+		await handleAuthoringModal(interaction);
+
+		const confirmation = replyOf(interaction);
+		const opener = trailMock.postMove.mock.calls[0][2] as { text: string };
+
+		expect(confirmation.content).toContain(HINT);
+		expect(confirmation.content).not.toMatch(new RegExp(WORD, "i"));
+		expect(opener.text).toContain(HINT);
+		expect(opener.text).not.toMatch(new RegExp(WORD, "i"));
+	});
+
+	it("keeps the confirmation ephemeral, so the room does not watch the host author", async () => {
+		const interaction = makeAuthorSubmit(HOST);
+
+		await handleAuthoringModal(interaction);
+
+		expect(replyOf(interaction).flags).toBe(MessageFlags.Ephemeral);
+	});
 });
 
 // ── the button ────────────────────────────────────────────────────────
