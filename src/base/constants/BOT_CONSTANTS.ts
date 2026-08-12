@@ -136,6 +136,35 @@ export const BOT_CONSTANTS = {
 	// that matters is that a walked-away match terminates at all.
 	GAME_ROOM_TURN_TIMEOUT_MS: 10 * 60_000, // 10 minutes
 
+	// ── hold em ──────────────────────────────────────────────────
+	// ⚠️ CHIPS ARE PER TOURNAMENT AND DIE WITH THE TABLE (A9, R22). There is no
+	// persistent balance anywhere, and there must never be one: a balance that
+	// survives a table is an economy, and an economy players can accumulate is a
+	// gambling moderation surface this bot has no business owning. Everything below
+	// is a tournament-local number.
+	HOLDEM_STARTING_STACK: 1000,
+	HOLDEM_MIN_SEATS: 2,
+	// Six is the plan's ceiling and also a readability one: a board naming nine
+	// players and their stacks stops being scannable on a phone.
+	HOLDEM_MAX_SEATS: 6,
+
+	HOLDEM_SMALL_BLIND: 10,
+	HOLDEM_BIG_BLIND: 20,
+	// Blinds DOUBLE every this many hands, which is what makes a tournament
+	// converge instead of running until everyone gets bored. At 1000 chips and a
+	// double every 6 hands, a six player table is usually decided inside 30 hands.
+	// Without escalation a short stack can fold forever and nothing ever resolves.
+	HOLDEM_BLIND_ESCALATION_HANDS: 6,
+
+	// A player has this long to act before they are FORCE FOLDED. Never paused:
+	// pausing hands one absent player the power to stall five present ones, which
+	// is the failure mode a turn clock exists to prevent.
+	HOLDEM_TURN_TIMEOUT_MS: 30_000,
+	// How often the clock is checked. A 30 second budget needs a tick well under
+	// it, so this is its own interval rather than a passenger on the 5 minute room
+	// sweep, which would make a 30 second clock fire somewhere inside 5 minutes.
+	HOLDEM_CLOCK_TICK_MS: 10_000,
+
 	// ── leveling ──────────────────────────────────────────────────
 	// What:  every number the leveling system runs on: how often buffered xp is
 	//        flushed, how long the in-memory maps may hold an entry, how level up
@@ -247,6 +276,15 @@ export const BOT_CONSTANTS = {
 		// progress BEFORE the result: sinking a carrier is an event, and a match
 		// that pays nothing until the final shot feels flat for twenty minutes.
 		GAME_SINK_XP: 15,
+
+		// ── hold em ──
+		// Paid per HAND won, so a long tournament pays out along the way rather than
+		// only at the end, and small because a hand is a minute of play. The
+		// placement bonus is the real prize and is multiplied by finishing position
+		// (1st takes the full amount, 2nd half, and so on), so winning a tournament
+		// is worth roughly a room win plus the hands it took to get there.
+		HOLDEM_HAND_WIN_XP: 10,
+		HOLDEM_PLACEMENT_XP: 100,
 
 		// ── blackjack ──
 		// Blackjack deliberately reuses GAME_PLAY_XP, GAME_WIN_XP and GAME_TIE_XP
