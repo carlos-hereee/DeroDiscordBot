@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { TextChannel, DiscordAPIError, ChannelType } from "discord.js";
+import { TextChannel, DiscordAPIError, ChannelType, PermissionFlagsBits } from "discord.js";
 import type { Client, Guild } from "discord.js";
 
 // mock the guild config store before importing the unit under test. the
@@ -723,6 +723,269 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 		expect(guildConfigMock.deleteByGuildId).not.toHaveBeenCalled();
 
 		errorSpy.mockRestore();
+	});
+});
+
+// ── createChannels, the fresh install create path ───────────────────────
+// What:  pins what a fresh install actually BUILDS: two categories, ten
+//        channels, each under the right parent and carrying the overwrite
+//        array its privacy posture requires.
+// Who:   runAutoSetup on guildCreate, and ensureHomebase's force rebuild.
+// Why it exists: the persistence block above does reach createChannels for
+//        real, but every assertion it makes is about the PERSIST branch
+//        (update vs insert, duplicate key). Nothing asserted the SHAPE of
+//        what was created, so the 8 to 10 channel change landed with its
+//        whole surface uncovered. A wrong parent or a swapped overwrite
+//        array throws nothing, fails no type check, and stays invisible
+//        until a member opens Discord and finds 📋arcade-rules filed under
+//        🪧 NOTICE BOARD or an admin channel readable by everyone.
+// Where: this is the create-path twin of the R2 guard ChannelDeleteWatcher
+//        .test.ts already keeps over the REPAIR path. Both paths build
+//        channels; both can put one under the wrong category; only the
+//        repair half was watched.
+describe("GuildSetupManager.autoSetup channel creation", () => {
+	const packChannels = rokCommanderCopy.setup.channels;
+	const EVERYONE_ID = "everyone";
+	const OWNER_ID = "owner-1";
+	const BOT_ID = "bot-1";
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	// Distinct id per created category, keyed off the name, because telling the
+	// two parents apart is the entire point of this block. The persistence
+	// fixture above hands back a single "new-cat-1" for every category, which
+	// cannot express the R2 bug: under it, a channel built under the wrong
+	// parent is indistinguishable from one built under the right parent.
+	function makeCreateGuild(): Guild {
+		const create = vi.fn(async (opts: { name: string; type: number }) => {
+			if (opts.type === ChannelType.GuildCategory) return { id: `cat-${opts.name}` };
+			const ch = Object.create(TextChannel.prototype) as TextChannel & {
+				send: ReturnType<typeof vi.fn>;
+				pin: ReturnType<typeof vi.fn>;
+			};
+			Object.assign(ch, {
+				id: `new-${opts.name}`,
+				guildId: "guild-1",
+				send: vi.fn().mockResolvedValue({ id: `msg-${opts.name}`, pin: vi.fn().mockResolvedValue(undefined) }),
+				pin: vi.fn().mockResolvedValue(undefined),
+			});
+			return ch;
+		});
+		return {
+			id: "guild-1",
+			ownerId: OWNER_ID,
+			roles: { everyone: { id: EVERYONE_ID } },
+			// createChannels reads guild.client.user.id via botSelfOverwrite.
+			client: { user: { id: BOT_ID } },
+			channels: { create },
+		} as unknown as Guild;
+	}
+
+	interface ICreateCall {
+		name: string;
+		type: number;
+		parent?: string;
+		permissionOverwrites?: Array<{ id: string; allow?: bigint[]; deny?: bigint[] }>;
+	}
+
+	// Path A, the true fresh install: no stored row, so autoSetup builds both
+	// categories, all ten channels, then inserts. The existing persistence
+	// tests deliberately never complete this path (one forces an update, the
+	// other rejects the insert), so nothing until now ran it end to end.
+	async function runFreshInstall(): Promise<{ categories: ICreateCall[]; textChannels: ICreateCall[] }> {
+		guildConfigMock.findByGuildId.mockResolvedValue(null);
+		guildConfigMock.create.mockResolvedValue(undefined);
+
+		const guild = makeCreateGuild();
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID });
+
+		const createMock = guild.channels.create as unknown as ReturnType<typeof vi.fn>;
+		const calls = createMock.mock.calls.map((call) => call[0] as ICreateCall);
+		return {
+			categories: calls.filter((call) => call.type === ChannelType.GuildCategory),
+			textChannels: calls.filter((call) => call.type === ChannelType.GuildText),
+		};
+	}
+
+	it("builds exactly two categories and ten channels", async () => {
+		const { categories, textChannels } = await runFreshInstall();
+
+		// Both categories, in build order, with NO dev suffix: vitest runs under
+		// NODE_ENV=test, and resolveCategoryName only suffixes on "development".
+		// Worth pinning, because a suffixed category name in production is a
+		// visible brand mark on every server the bot joins.
+		expect(categories.map((category) => category.name)).toEqual([
+			rokCommanderCopy.setup.categoryName,
+			rokCommanderCopy.setup.gamesCategoryName,
+		]);
+
+		expect(textChannels).toHaveLength(10);
+		expect(textChannels.map((channel) => channel.name).sort()).toEqual(
+			[
+				packChannels.intro,
+				packChannels.commands,
+				packChannels.leaderboard,
+				packChannels.schedule,
+				packChannels.announcements,
+				packChannels.admin,
+				packChannels.nextDecree,
+				packChannels.adminCommands,
+				packChannels.arcadeRules,
+				packChannels.arcadeChallenges,
+			].sort()
+		);
+	});
+
+	// ⚠️ THE R2 GUARD, create-path half. Both parents are CategoryChannel, so
+	// the compiler cannot tell them apart and a swapped parent.id is a silent
+	// misfile. CHANNEL_SPECS.categoryField protects every OTHER consumer;
+	// createChannels passes the parent literally, so only a test protects it.
+	it("files the eight homebase channels and the two arcade channels under their own categories", async () => {
+		const { textChannels } = await runFreshInstall();
+
+		const homebaseParent = `cat-${rokCommanderCopy.setup.categoryName}`;
+		const arcadeParent = `cat-${rokCommanderCopy.setup.gamesCategoryName}`;
+		const parentOf = (name: string) => textChannels.find((channel) => channel.name === name)?.parent;
+
+		for (const name of [
+			packChannels.intro,
+			packChannels.commands,
+			packChannels.leaderboard,
+			packChannels.schedule,
+			packChannels.announcements,
+			packChannels.admin,
+			packChannels.nextDecree,
+			packChannels.adminCommands,
+		]) {
+			expect(parentOf(name), `${name} belongs under the homebase category`).toBe(homebaseParent);
+		}
+
+		for (const name of [packChannels.arcadeRules, packChannels.arcadeChallenges]) {
+			expect(parentOf(name), `${name} belongs under the arcade category`).toBe(arcadeParent);
+		}
+
+		// No channel may land unparented or under a third parent, which a typo
+		// in a parent id would otherwise produce without failing either loop.
+		expect(textChannels.filter((channel) => channel.parent === homebaseParent)).toHaveLength(8);
+		expect(textChannels.filter((channel) => channel.parent === arcadeParent)).toHaveLength(2);
+	});
+
+	// The three postures createChannels mints, expressed as what @everyone and
+	// the guild owner get. The bot's own entry is asserted separately: it is
+	// byte identical on all ten, so folding it in here would make one legitimate
+	// change to botSelfOverwrite fail ten assertions instead of one.
+	const POSTURES = {
+		// Members read, only the bot writes.
+		public: {
+			everyone: { id: EVERYONE_ID, allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] },
+			owner: { id: OWNER_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+		},
+		// 📜introductions, the one member-writable channel: public MINUS the
+		// SendMessages deny. A member who cannot post here cannot answer the
+		// greeter's icebreaker and cannot clear Discord's Onboarding gate, so
+		// silently tightening this to `public` breaks onboarding, not just chat.
+		intro: {
+			everyone: { id: EVERYONE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+			owner: { id: OWNER_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+		},
+		// Hidden from members outright.
+		admin: {
+			everyone: { id: EVERYONE_ID, deny: [PermissionFlagsBits.ViewChannel] },
+			owner: {
+				id: OWNER_ID,
+				allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+			},
+		},
+	} as const;
+
+	const EXPECTED_POSTURES: Array<[string, keyof typeof POSTURES]> = [
+		[packChannels.intro, "intro"],
+		[packChannels.commands, "public"],
+		[packChannels.leaderboard, "public"],
+		[packChannels.schedule, "public"],
+		[packChannels.announcements, "public"],
+		[packChannels.admin, "admin"],
+		[packChannels.nextDecree, "public"],
+		[packChannels.adminCommands, "admin"],
+		// Both arcade channels are member facing and bot written: the rules card
+		// is a pinned reference and the board is a wall of bot posted cards, so
+		// member SendMessages would only bury them. Challenges are issued by
+		// command, never by typing here, so the lockdown costs nothing.
+		[packChannels.arcadeRules, "public"],
+		[packChannels.arcadeChallenges, "public"],
+	];
+
+	it("gives every channel the overwrite array its privacy posture requires", async () => {
+		const { textChannels } = await runFreshInstall();
+
+		for (const [name, posture] of EXPECTED_POSTURES) {
+			const created = textChannels.find((channel) => channel.name === name);
+			expect(created, `${name} was never created`).toBeDefined();
+
+			const overwrites = created!.permissionOverwrites ?? [];
+			expect(overwrites.find((entry) => entry.id === EVERYONE_ID), `${name} @everyone overwrite`).toEqual(POSTURES[posture].everyone);
+			expect(overwrites.find((entry) => entry.id === OWNER_ID), `${name} owner overwrite`).toEqual(POSTURES[posture].owner);
+		}
+	});
+
+	it("carries the bot self overwrite on all ten channels", async () => {
+		// Not decoration. Without it the @everyone SendMessages deny suppresses
+		// the bot's OWN posts on a public channel, and the @everyone ViewChannel
+		// deny hides an admin channel from the bot entirely. Both fail at post
+		// time, long after setup reported success, so the failure surfaces as a
+		// missing intro embed rather than as a setup error.
+		const { textChannels } = await runFreshInstall();
+		expect(textChannels).toHaveLength(10);
+
+		for (const created of textChannels) {
+			const botEntry = (created.permissionOverwrites ?? []).find((entry) => entry.id === BOT_ID);
+			expect(botEntry, `${created.name} is missing the bot self overwrite`).toBeDefined();
+			expect(botEntry!.allow, `${created.name} bot ViewChannel`).toContain(PermissionFlagsBits.ViewChannel);
+			expect(botEntry!.allow, `${created.name} bot SendMessages`).toContain(PermissionFlagsBits.SendMessages);
+		}
+	});
+
+	it("persists both category ids and all three arcade ids in the SAME payload", async () => {
+		// The arcade ids are the point. nextDecreeChannelId was originally left
+		// out of this payload and relied on boot-sweep adoption instead, so it
+		// stayed null until the next reboot and everything keyed off it silently
+		// no-opped in between. createChannels' own comment says not to copy that,
+		// and this asserts the three arcade ids did not.
+		await runFreshInstall();
+
+		expect(guildConfigMock.create).toHaveBeenCalledOnce();
+		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
+
+		expect(payload.categoryId).toBe(`cat-${rokCommanderCopy.setup.categoryName}`);
+		expect(payload.gamesCategoryId).toBe(`cat-${rokCommanderCopy.setup.gamesCategoryName}`);
+		expect(payload.arcadeRulesChannelId).toBe(`new-${packChannels.arcadeRules}`);
+		expect(payload.arcadeChallengesChannelId).toBe(`new-${packChannels.arcadeChallenges}`);
+		expect(payload.adminCommandsChannelId).toBe(`new-${packChannels.adminCommands}`);
+		expect(payload.introChannelId).toBe(`new-${packChannels.intro}`);
+		expect(payload.commandsChannelId).toBe(`new-${packChannels.commands}`);
+		expect(payload.leaderboardChannelId).toBe(`new-${packChannels.leaderboard}`);
+		expect(payload.scheduleChannelId).toBe(`new-${packChannels.schedule}`);
+		expect(payload.announcementsChannelId).toBe(`new-${packChannels.announcements}`);
+		expect(payload.adminChannelId).toBe(`new-${packChannels.admin}`);
+	});
+
+	it("still omits nextDecreeChannelId from the persist payload, which is a KNOWN GAP", async () => {
+		// ⚠️ THIS TEST PINS A DEFECT, NOT A DECISION, and it is deliberately
+		// written so it FAILS when the defect is fixed. 🔜upcoming-events is
+		// created above with all the others but never persisted here, so the id
+		// is null until the next boot's repair sweep adopts the channel; anything
+		// reading nextDecreeChannelId in that window silently no-ops. Every other
+		// channel now persists immediately, and createChannels' arcade comment
+		// names this omission as the mistake it was told not to copy.
+		//
+		// When someone adds it to persistPayload: DELETE this test in the same
+		// commit and add nextDecreeChannelId to the assertions above.
+		await runFreshInstall();
+
+		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
+		expect(payload).not.toHaveProperty("nextDecreeChannelId");
 	});
 });
 
