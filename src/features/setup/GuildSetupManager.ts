@@ -1516,51 +1516,47 @@ export class GuildSetupManager {
 		const stored = await guildConfigStore.findByGuildId(config.guildId);
 		if (!stored) throw new Error("No guild config found, channels have not been constructed yet.");
 
-		const [category, introChannel, commandsChannel, leaderboardChannel, scheduleChannel, announcementsChannel, adminChannel, adminCommandsChannel] =
-			(await Promise.all([
-				guild.channels.fetch(stored.categoryId),
-				guild.channels.fetch(stored.introChannelId),
-				guild.channels.fetch(stored.commandsChannelId),
-				guild.channels.fetch(stored.leaderboardChannelId),
-				guild.channels.fetch(stored.scheduleChannelId),
-				guild.channels.fetch(stored.announcementsChannelId),
-				guild.channels.fetch(stored.adminChannelId),
-				// admin command center: nullable on legacy rows that ran /setup
-				// before this channel existed (the boot sweep creates it later),
-				// so fetch defensively and skip the grant when not yet present.
-				stored.adminCommandsChannelId ? guild.channels.fetch(stored.adminCommandsChannelId) : Promise.resolve(null),
-			])) as (GuildChannel | null)[];
+		// ⚠️ DERIVED FROM CHANNEL_SPECS, NOT HAND LISTED, and that is a bug fix.
+		// This used to fetch a hand written list of seven channels, which had
+		// already rotted: nextDecreeChannelId was never in it, so the admin role
+		// was NEVER granted on 🔜upcoming-events. Nothing errored, because every
+		// grant is optional-chained; the channel simply stayed ungranted forever.
+		// Adding the two ARCADE GAMES channels by hand would have made an
+		// eleven-entry list of the same kind. Walking the specs means channel
+		// eleven is granted the day it is declared.
+		//
+		// Every id is optional-chained and fetched defensively: a legacy row
+		// carries nulls for any channel added after it was written, and the boot
+		// sweep builds those later.
+		const storedIds = stored as unknown as Record<string, string | null | undefined>;
+		const fetchChannel = async (id: string | null | undefined): Promise<GuildChannel | null> =>
+			id ? ((await guild.channels.fetch(id).catch(() => null)) as GuildChannel | null) : null;
 
-		// grant admin role access to category
-		await category?.permissionOverwrites.create(config.adminRoleId, {
-			ViewChannel: true,
-			SendMessages: true,
-			ReadMessageHistory: true,
-		});
-
-		// grant admin role send permissions on public channels
-		for (const ch of [introChannel, commandsChannel, leaderboardChannel, scheduleChannel, announcementsChannel]) {
-			await ch?.permissionOverwrites.create(config.adminRoleId, {
+		// Both managed categories. The arcade one is nullable on every row written
+		// before it existed.
+		for (const field of ["categoryId", "gamesCategoryId"] as const) {
+			const category = await fetchChannel(storedIds[field]);
+			await category?.permissionOverwrites.create(config.adminRoleId, {
 				ViewChannel: true,
 				SendMessages: true,
+				ReadMessageHistory: true,
 			});
 		}
 
-		// grant admin role full access to admin channel
-		await adminChannel?.permissionOverwrites.create(config.adminRoleId, {
-			ViewChannel: true,
-			SendMessages: true,
-			ReadMessageHistory: true,
-		});
-
-		// grant admin role full access to the admin command center (same gating
-		// as the admin channel). Optional-chained so a legacy row whose channel
-		// the boot sweep has not built yet simply skips the grant.
-		await adminCommandsChannel?.permissionOverwrites.create(config.adminRoleId, {
-			ViewChannel: true,
-			SendMessages: true,
-			ReadMessageHistory: true,
-		});
+		// Every managed channel, with the grant shaped by the spec's own kind:
+		// admin channels also get ReadMessageHistory, which is what makes an
+		// admin-only channel readable rather than merely visible.
+		let adminChannel: GuildChannel | null = null;
+		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+			const channel = await fetchChannel(storedIds[spec.configField]);
+			if (spec.configField === "adminChannelId") adminChannel = channel;
+			await channel?.permissionOverwrites.create(
+				config.adminRoleId,
+				spec.kind === "admin"
+					? { ViewChannel: true, SendMessages: true, ReadMessageHistory: true }
+					: { ViewChannel: true, SendMessages: true }
+			);
+		}
 
 		// post the real welcome message now that the role is known
 		if (adminChannel?.isTextBased()) {

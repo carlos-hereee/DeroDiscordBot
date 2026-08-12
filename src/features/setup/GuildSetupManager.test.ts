@@ -1063,3 +1063,88 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
 	});
 });
+
+// ── applyAdminRole ─────────────────────────────────────────────────────────
+// ⚠️ THIS BLOCK EXISTS BECAUSE THE FUNCTION HAD NO TESTS AT ALL, and that is
+// how it shipped a real gap: it fetched a HAND WRITTEN list of seven channels
+// which never included nextDecreeChannelId, so the admin role was never granted
+// on 🔜upcoming-events. Nothing errored, because every grant is optional
+// chained; the channel simply stayed ungranted forever.
+//
+// So the assertion is a COMPLETENESS check against the spec list rather than a
+// behavioural spot check of one grant. A spot check passes happily while the
+// list is one short, which is the only failure mode this function actually has.
+describe("GuildSetupManager.applyAdminRole", () => {
+	function grantHarness() {
+		const created: Record<string, Record<string, boolean>> = {};
+		const channelFor = (id: string) => ({
+			id,
+			permissionOverwrites: {
+				create: vi.fn(async (_roleId: string, perms: Record<string, boolean>) => {
+					created[id] = perms;
+				}),
+			},
+			isTextBased: () => false,
+		});
+		const guild = {
+			id: "guild-1",
+			channels: { fetch: vi.fn(async (id: string) => channelFor(id)) },
+		} as unknown as Guild;
+		return { guild, created };
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig());
+		guildConfigMock.update.mockResolvedValue(undefined);
+	});
+
+	it("grants the admin role on EVERY managed channel, not a hand picked subset", async () => {
+		const { guild, created } = grantHarness();
+		await GuildSetupManager.applyAdminRole(guild, {
+			guildId: "guild-1",
+			adminRoleId: "role-admin",
+			memberRoleId: "role-member",
+			ownerId: "owner-1",
+		} as never);
+
+		const stored = makeStoredConfig() as unknown as Record<string, string>;
+		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+			const id = stored[spec.configField];
+			expect(created[id], `${spec.configField} was never granted`).toBeDefined();
+			expect(created[id].ViewChannel).toBe(true);
+			expect(created[id].SendMessages).toBe(true);
+		}
+	});
+
+	it("grants on BOTH managed categories", async () => {
+		const { guild, created } = grantHarness();
+		await GuildSetupManager.applyAdminRole(guild, {
+			guildId: "guild-1",
+			adminRoleId: "role-admin",
+			memberRoleId: "role-member",
+			ownerId: "owner-1",
+		} as never);
+
+		// The arcade category is as much the bot's surface as the homebase one, and
+		// an admin who cannot see it cannot manage the games inside it.
+		expect(created["cat-1"]).toBeDefined();
+		expect(created["games-cat-1"]).toBeDefined();
+	});
+
+	it("gives admin channels ReadMessageHistory and public ones not", async () => {
+		// The difference is what makes an admin-only channel readable rather than
+		// merely visible, so it is shaped by the spec's kind rather than by a
+		// second hand written list of which channels are private.
+		const { guild, created } = grantHarness();
+		await GuildSetupManager.applyAdminRole(guild, {
+			guildId: "guild-1",
+			adminRoleId: "role-admin",
+			memberRoleId: "role-member",
+			ownerId: "owner-1",
+		} as never);
+
+		expect(created["ch-admin"].ReadMessageHistory).toBe(true);
+		expect(created["ch-arcaderules"].ReadMessageHistory).toBeUndefined();
+	});
+});
