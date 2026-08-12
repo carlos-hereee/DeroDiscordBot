@@ -2010,21 +2010,24 @@ export class GuildSetupManager {
 		// a runtime-safe read without widening the declared type.
 		const storedIntroIds = (stored.introMessageIds ?? {}) as Record<string, string | null | undefined>;
 		const nextIntroIds: Record<string, string | null> = {
-			introChannelId: storedIntroIds.introChannelId ?? null,
-			commandsChannelId: storedIntroIds.commandsChannelId ?? null,
-			leaderboardChannelId: storedIntroIds.leaderboardChannelId ?? null,
-			scheduleChannelId: storedIntroIds.scheduleChannelId ?? null,
-			announcementsChannelId: storedIntroIds.announcementsChannelId ?? null,
-			adminChannelId: storedIntroIds.adminChannelId ?? null,
-			// legacy rows predating the seventh channel have this as null.
-			// refreshIntroEmbeds then treats it like any other missing
-			// anchor, reposts a fresh intro the first time the channel
-			// is present and persists the new id.
-			nextDecreeChannelId: storedIntroIds.nextDecreeChannelId ?? null,
-			// Intro anchor for the admin command center. Legacy rows predating
-			// the 2026-06-19 split load as null; the spec loop reposts a fresh
-			// guide the first time the channel is present and persists the id.
-			adminCommandsChannelId: storedIntroIds.adminCommandsChannelId ?? null,
+			// ⚠️ DERIVED FROM CHANNEL_FIELDS, NOT HAND LISTED, and that change is a
+			// bug fix rather than tidying. The loop below reads its anchor out of
+			// THIS object (`nextIntroIds[spec.configField]`), so a channel missing
+			// from here resolves to undefined on EVERY boot, is read as "nothing
+			// posted yet", and gets its intro REPOSTED forever. Nothing errors and
+			// the id even persists correctly; the initializer simply never reads it
+			// back. That is the exact failure risk R1 describes, and it is not
+			// hypothetical: both ARCADE GAMES cards did it the moment their specs
+			// joined CHANNEL_SPECS, because this literal had not grown with them.
+			// Deriving it means channel eleven cannot repeat the trick.
+			//
+			// Legacy rows load a null for any channel added after they were written.
+			// That is correct and self healing: the loop treats a null anchor as
+			// "post it once", then persists the new id.
+			...Object.fromEntries(GuildSetupManager.CHANNEL_FIELDS.map((field) => [field, storedIntroIds[field] ?? null])),
+			// The two FLAT keys stay explicit, because they are not a channel's own
+			// intro and so are deliberately absent from CHANNEL_FIELDS.
+			//
 			// Legacy flat key for the OLD admin command guide that used to live
 			// in #inner-sanctum. Retained only so the retirement block below can
 			// unpin that stale message and null this key; new setups never set it.

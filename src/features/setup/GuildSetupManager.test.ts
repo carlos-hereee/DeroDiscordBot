@@ -870,6 +870,54 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
 	});
 
+	// ⚠️ REGRESSION GUARD for the repost-forever bug.
+	// The sweep resolves each anchor out of the nextIntroIds object, NOT out of
+	// the stored row directly. A channel missing from that initializer therefore
+	// reads as "nothing posted yet" on EVERY boot: it reposts its intro, persists
+	// a fresh id, and then never reads that id back. Nothing errors, the write
+	// succeeds, and the guild quietly accumulates a duplicate card per boot.
+	// Both ARCADE GAMES cards did exactly this from the moment their specs joined
+	// CHANNEL_SPECS until the initializer was derived from CHANNEL_FIELDS. If
+	// anyone hand lists those keys again, this test goes red.
+	it("reads back the ARCADE GAMES anchors instead of reposting them on every boot", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(
+			makeStoredConfig({
+				introMessageIds: {
+					gamesRulesChannelId: "msg-gamesrules",
+					gamesChallengesChannelId: "msg-gameschallenges",
+				},
+			})
+		);
+
+		const sends = {
+			rules: vi.fn().mockResolvedValue({ id: "reposted-rules", pin: vi.fn().mockResolvedValue(undefined) }),
+			challenges: vi.fn().mockResolvedValue({ id: "reposted-challenges", pin: vi.fn().mockResolvedValue(undefined) }),
+		};
+
+		const channels: Record<string, TextChannel> = {
+			"ch-gamesrules": makeChannel(
+				"ch-gamesrules",
+				{ "msg-gamesrules": currentIntroMessage("gamesRulesChannelId", "msg-gamesrules") },
+				sends.rules
+			),
+			"ch-gameschallenges": makeChannel(
+				"ch-gameschallenges",
+				{ "msg-gameschallenges": currentIntroMessage("gamesChallengesChannelId", "msg-gameschallenges") },
+				sends.challenges
+			),
+		};
+
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => channels[id] ?? null });
+
+		const summary = await GuildSetupManager.refreshIntroEmbeds(client, makeGuildFixture());
+
+		// The anchors resolved, so neither card was reposted and neither channel
+		// was sent to at all.
+		expect(summary.reposted).toBe(0);
+		expect(sends.rules).not.toHaveBeenCalled();
+		expect(sends.challenges).not.toHaveBeenCalled();
+	});
+
 	it("reposts a fresh intro when the stored anchor is missing (10008)", async () => {
 		// stored anchors exist but the announcements fetch throws Unknown Message
 		// (10008). the refresh loop must repost a fresh intro and persist the new
