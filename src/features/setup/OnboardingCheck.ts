@@ -2,6 +2,10 @@ import { Client, Guild } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
+// Category names come from the pack rather than being retyped here. Both are
+// universal across packs (the 2026-05-22 decision), which is why this reads the
+// rok-commander pack directly, exactly as resolveCategoryName does.
+import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 
 // ── Discord Onboarding compatibility (FUTURE_PLANS item 35) ─────────
 // When a guild has Discord Onboarding enabled (Community Server feature),
@@ -71,30 +75,52 @@ export async function checkOnboardingAndNotifyOwner(_client: Client, guild: Guil
 	// future restart to catch that transition.
 	if (!onboarding.enabled) return;
 
-	// Homebase category already in defaults → new members see the bot
-	// on join, no warning needed. Same "do not log idempotency" rule:
-	// if the admin later removes the category from defaults, the next
-	// restart should catch it.
-	if (onboarding.defaultChannels.has(stored.categoryId)) return;
+	// ── which managed categories are hidden from new members ──
+	// BOTH categories count as of the 🎮 ARCADE GAMES work. A guild whose
+	// homebase is defaulted but whose arcade is not has members who can read
+	// announcements and cannot find a single game, which is exactly the
+	// discovery problem this check exists to prevent, just one surface over.
+	//
+	// The arcade id is nullable on any row written before it existed, so it is
+	// filtered out rather than reported as hidden: a category that does not
+	// exist yet is the boot sweep's problem, not the owner's.
+	const managed = [
+		{ id: stored.categoryId, name: rokCommanderCopy.setup.categoryName },
+		{ id: (stored as unknown as { gamesCategoryId?: string | null }).gamesCategoryId, name: rokCommanderCopy.setup.gamesCategoryName },
+	].filter((category): category is { id: string; name: string } => Boolean(category.id));
 
-	// Onboarding is enabled AND our homebase is not a default channel.
-	// New members are blind to the bot until they opt in. DM the owner
-	// with targeted instructions. We deliberately do NOT modify the
-	// onboarding config from the bot side; that would be invasive
-	// without explicit consent (and would require additional Discord
-	// permissions the bot does not currently request).
-	// Owner-focused framing. The DM helps the owner solve a discovery
-	// problem (new members not seeing the announcements they post), so
-	// the copy avoids first-person bot references and stays direct.
-	// If the universal category name shortens later (FUTURE_PLANS item
-	// 59), update this body too, the **🪧 NOTICE BOARD**
-	// reference is the same string that appears in the pack copy.
+	const hidden = managed.filter((category) => !onboarding.defaultChannels.has(category.id));
+
+	// All managed categories already in defaults → new members see the bot on
+	// join, no warning needed. Same "do not log idempotency" rule: if the admin
+	// later removes one from defaults, the next restart should catch it.
+	if (hidden.length === 0) return;
+
+	// Onboarding is enabled AND at least one managed category is not a default
+	// channel. New members are blind to that surface until they opt in. DM the
+	// owner with targeted instructions. We deliberately do NOT modify the
+	// onboarding config from the bot side; that would be invasive without
+	// explicit consent (and would require additional Discord permissions the bot
+	// does not currently request).
+	//
+	// Owner-focused framing. The DM helps the owner solve a discovery problem
+	// (new members not seeing what they post), so the copy avoids first-person
+	// bot references and stays direct.
+	//
+	// Names the categories that are ACTUALLY hidden rather than a hardcoded one,
+	// so an owner who already defaulted the homebase is not told to go and do the
+	// thing they have done. The names are read from the pack rather than retyped,
+	// which is what stops this DM from citing a category name that has since
+	// changed (the 🎮 ARCADE GAMES rename would have broken a literal here).
+	const hiddenNames = hidden.map((category) => category.name);
+	const list = hiddenNames.length === 1 ? `the **${hiddenNames[0]}** category` : `these categories: **${hiddenNames.join("**, **")}**`;
+
 	const dmBody = [
 		`Heads up about ${guild.name}.`,
 		``,
-		`Onboarding is enabled in this server. By default, new members will not see the **🪧 NOTICE BOARD** category until they opt in through Channels & Roles.`,
+		`Onboarding is enabled in this server. By default, new members will not see ${list} until they opt in through Channels & Roles.`,
 		``,
-		`To ensure members can see announcements posted automatically, go to **Server Settings → Onboarding → Default Channels** and add NOTICE BOARD to the list.`,
+		`To ensure members can see what the bot posts, go to **Server Settings → Onboarding → Default Channels** and add ${hiddenNames.length === 1 ? "it" : "them"} to the list.`,
 		``,
 		`One-time setup. No action needed if you prefer members to opt in on their own.`,
 	].join("\n");
@@ -118,7 +144,9 @@ export async function checkOnboardingAndNotifyOwner(_client: Client, guild: Guil
 	try {
 		await botLogStore.log(guild.id, BOT_LOG_EVENTS.ONBOARDING_HEADSUP_SENT, {
 			dmSent,
-			categoryId: stored.categoryId,
+			// Which categories were hidden at the time, so an operator can tell a
+			// homebase-only warning from an arcade-only one without re-reading the DM.
+			hiddenCategoryIds: hidden.map((category) => category.id),
 			guildName: guild.name,
 		});
 	} catch (error) {
