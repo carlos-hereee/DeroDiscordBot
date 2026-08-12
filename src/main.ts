@@ -31,6 +31,7 @@ import { refreshAllNextUp } from "@features/schedule/NextUpBoard.js";
 import { refreshAllLeaderboards } from "@features/leaderboard/LeaderboardBoard.js";
 import { registerScheduleControlHandlers } from "@features/schedule/ScheduleControls.js";
 import { registerSuggestionBoxHandlers } from "@features/suggestion-box/SuggestionBox.js";
+import { registerArcadeHostHandlers } from "@features/games/arcadeHost.js";
 import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/polls/PollDispatcher.js";
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
@@ -295,6 +296,10 @@ process.on("uncaughtException", (err) => {
 	registerLeaderboardChannelHandlers();
 	registerScheduleControlHandlers();
 	registerSuggestionBoxHandlers();
+	// The Host a game buttons on the 📋arcade-rules card. Registered by customId
+	// PREFIX at the client level, like every other handler here, so the buttons
+	// keep working on a card posted by an earlier deploy.
+	registerArcadeHostHandlers();
 	registerPollHandlers();
 	registerSelfDestructHandlers();
 	registerPowerUpHandlers();

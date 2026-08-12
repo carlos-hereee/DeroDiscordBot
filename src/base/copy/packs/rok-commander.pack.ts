@@ -330,7 +330,7 @@ export const rokCommanderCopy = {
 			// category it belongs to. Both are member facing and public: the rules
 			// card answers "who can play what" and the board is where a match is
 			// started, so a member who cannot see them cannot play at all.
-			gamesRules: "📋game-rules",
+			arcadeRules: "📋arcade-rules",
 			gamesChallenges: "⚔️challenges",
 		},
 	},
@@ -519,23 +519,61 @@ export const rokCommanderCopy = {
 				"*Posts stay so you can scroll back to confirm what was announced.*",
 		},
 
-		// ── the game rules card ───────────────────────────────────
-		// One embed PER GAME, which is the point: it is the answer to "who can
-		// play what", and a single wall of text is the answer nobody reads.
-		// Adding a game means adding an entry to `games` and nothing else, so the
-		// card cannot drift from the roster the way a hand written paragraph would.
-		gamesRules: {
+		// ── the arcade rules card ─────────────────────────────────
+		// Grouped BY PLAYER COUNT rather than one entry per game, and that is the
+		// whole design. A flat list was already crowded at five games and would be
+		// unreadable at eight; grouping answers the question a member actually
+		// arrives with, which is "what can I play right now, with the people I
+		// have". Adding a game is one entry in one group, so the card cannot drift
+		// from the roster the way a hand written paragraph would.
+		//
+		// A game may appear in TWO groups when it genuinely has two modes.
+		// Blackjack does: alone against the dealer, or a table others join. That is
+		// not duplication, it is the honest answer to both questions.
+		arcadeRules: {
 			title: "📋 The Rules of the Arena",
 			description:
-				"Every game I keep is listed below. Anyone may play, and every match earns renown toward your level.\n\n" +
-				"*Start a two player match from the challenge board. The rest you may summon anywhere with `/mini-game`.*",
-			games: [
-				{ name: "⚔️ Duel", how: "A single roll of the dice, or a single flip of the coin. Winner takes all.", players: "2", who: "Challenge anyone from the board." },
-				{ name: "✂️ Rock Paper Scissors", how: "Both of you choose in secret. I reveal together.", players: "2", who: "Challenge anyone from the board." },
-				{ name: "🪢 Hangman", how: "A word, six wrong guesses, and a whole channel shouting letters.", players: "Any", who: "Anyone may start one." },
-				{ name: "🃏 Blackjack", how: "Beat my dealer without passing 21. Play alone, or open a table others may join.", players: "1 to 5", who: "Anyone may deal in." },
-				{ name: "🔮 Fortune", how: "Ask the crystal ball. Expect nothing useful.", players: "1", who: "Anyone, any channel." },
+				"Welcome to the arcade. Every game here is free to play, open to all, and every match earns renown toward your level.\n\n" +
+				"Pick a game below, or press **Host a game** and I shall set the table for you.",
+
+			hostTitle: "🎲 How to host a game",
+			hostBody:
+				"Press **Host a game** beneath this scroll and choose your poison. I raise the game where it belongs and announce it.\n\n" +
+				"You may also summon any game yourself with `/mini-game`.",
+
+			joinTitle: "🚪 How to join a game",
+			joinBody:
+				"An open game posts a card with a button on it. Press it and you are in.\n\n" +
+				"Two player games wait for you at the challenge board. Party games seat anyone who presses **Take a seat** before the dealing starts.",
+
+			levelingTitle: "📈 How playing raises your level",
+			levelingBody:
+				"Every match pays renown, win or lose, because showing up is the thing being rewarded. Winning pays more, and a rare hand pays more still.\n\n" +
+				"Renown becomes levels. Check yours with `/account`, and see who stands where with `/levels`.",
+
+			soloTitle: "🎯 Play alone (1 player)",
+			duelTitle: "⚔️ Head to head (exactly 2)",
+			partyTitle: "🎉 Party games (2 or more)",
+
+			solo: [
+				{ name: "🃏 Blackjack", how: "Beat my dealer without passing 21." },
+				{ name: "🔮 Fortune", how: "Ask the crystal ball. Expect nothing useful." },
 			],
+			duel: [
+				{ name: "⚔️ Duel", how: "One roll of the dice, or one flip of the coin. Winner takes all." },
+				{ name: "✂️ Rock Paper Scissors", how: "Both choose in secret. I reveal together." },
+			],
+			party: [
+				{ name: "🪢 Hangman", how: "A word, six wrong guesses, and a whole channel shouting letters." },
+				{ name: "🃏 Blackjack table", how: "Up to five seats against my dealer. Everyone plays their own hand." },
+			],
+
+			hostButtonLabel: "Host a game",
+			hostPickerPlaceholder: "Choose a game to host",
+			hostPickerTitle: "🎲 What shall we play?",
+			hostNoChannel: "The arcade is not built yet. An admin must run `/setup`.",
+			hostFailed: "I could not set that table. Try again in a moment.",
+			hostStarted: (game: string): string => `Your ${game} is live. Go and play.`,
 		},
 
 		// ── the challenge board ───────────────────────────────────

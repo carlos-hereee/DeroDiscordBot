@@ -147,13 +147,38 @@ export const ChannelContent = {
 	// is five games, seven once battleship and holdem land, so the ceiling is not
 	// close. If the roster ever outgrows that, THAT is the moment to widen the
 	// pipeline rather than to truncate the list.
-	gamesRulesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+	arcadeRulesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
 		const copy = getPluginCopy(guildConfig);
-		const cc = copy.channelContent;
-		const embed = infoEmbed(cc.gamesRules.title, cc.gamesRules.description, copy.COLORS.ARCADE);
-		for (const game of cc.gamesRules.games) {
-			embed.addFields({ name: game.name, value: `${game.how}\n**Players:** ${game.players}\n**Start it:** ${game.who}`, inline: false });
+		const c = copy.channelContent.arcadeRules;
+		const embed = infoEmbed(c.title, c.description, copy.COLORS.ARCADE);
+
+		// Order is the reading order a newcomer needs: what this place is, how to
+		// start something, how to join something somebody else started, why any of
+		// it is worth doing, and only THEN the roster. Leading with the roster is
+		// what made the old card read as a wall.
+		embed.addFields(
+			{ name: c.hostTitle, value: c.hostBody, inline: false },
+			{ name: c.joinTitle, value: c.joinBody, inline: false },
+			{ name: c.levelingTitle, value: c.levelingBody, inline: false }
+		);
+
+		// The three rosters, grouped by how many humans a game needs. A group with
+		// no games is omitted rather than rendered empty, so a future pack that
+		// ships fewer games does not leave a bare heading behind.
+		const groups: Array<{ title: string; games: ReadonlyArray<{ name: string; how: string }> }> = [
+			{ title: c.soloTitle, games: c.solo },
+			{ title: c.duelTitle, games: c.duel },
+			{ title: c.partyTitle, games: c.party },
+		];
+		for (const group of groups) {
+			if (!group.games.length) continue;
+			embed.addFields({
+				name: group.title,
+				value: group.games.map((game) => `**${game.name}** ${game.how}`).join("\n"),
+				inline: false,
+			});
 		}
+
 		return embed;
 	},
 

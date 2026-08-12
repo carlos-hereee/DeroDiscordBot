@@ -267,7 +267,7 @@ export const generalEventsCopy: IPluginCopy = {
 			// The two ARCADE GAMES channels. Channel NAMES are universal across packs
 			// (the same reason the category name is), so these match rok-commander
 			// exactly; only the intro copy below differs in voice.
-			gamesRules: "📋game-rules",
+			arcadeRules: "📋arcade-rules",
 			gamesChallenges: "⚔️challenges",
 		},
 	},
@@ -395,18 +395,54 @@ export const generalEventsCopy: IPluginCopy = {
 		// One embed PER GAME, same structure as rok-commander's, plain voice. The
 		// `games` array is what the renderer walks, so adding a game is one entry
 		// in BOTH packs and nothing else.
-		gamesRules: {
-			title: "📋 Game rules",
+		// Grouped by player count, same structure as rok-commander's and for the
+		// same reason: a flat list was already crowded at five games and would be
+		// unreadable at eight. Blackjack appears in two groups on purpose, because
+		// it genuinely has a solo mode and a table mode.
+		arcadeRules: {
+			title: "📋 Arcade rules",
 			description:
-				"Every game this bot runs is listed below. Anyone can play, and every match earns XP toward your level.\n\n" +
-				"*Start a two player match from the challenge board. Everything else runs anywhere with `/mini-game`.*",
-			games: [
-				{ name: "⚔️ Duel", how: "One dice roll, or one coin flip. Winner takes it.", players: "2", who: "Challenge anyone from the board." },
-				{ name: "✂️ Rock Paper Scissors", how: "Both players pick in secret, revealed together.", players: "2", who: "Challenge anyone from the board." },
-				{ name: "🪢 Hangman", how: "One word, six wrong guesses, everyone in the channel guessing.", players: "Any", who: "Anyone can start one." },
-				{ name: "🃏 Blackjack", how: "Beat the dealer without going over 21. Play solo, or open a table others can join.", players: "1 to 5", who: "Anyone can deal in." },
-				{ name: "🔮 Fortune", how: "Ask the crystal ball. Do not act on the answer.", players: "1", who: "Anyone, any channel." },
+				"Welcome to the arcade. Every game here is free to play, open to everyone, and every match earns XP toward your level.\n\n" +
+				"Pick a game below, or hit **Host a game** and one will be set up for you.",
+
+			hostTitle: "🎲 How to host a game",
+			hostBody:
+				"Hit **Host a game** under this card and pick what you want. It gets set up in the right channel and announced.\n\n" +
+				"You can also start any game yourself with `/mini-game`.",
+
+			joinTitle: "🚪 How to join a game",
+			joinBody:
+				"An open game posts a card with a button on it. Press it and you are in.\n\n" +
+				"Two player games wait for you on the challenge board. Party games seat anyone who hits **Take a seat** before the deal starts.",
+
+			levelingTitle: "📈 How playing levels you up",
+			levelingBody:
+				"Every match pays XP, win or lose, because turning up is what is being rewarded. Winning pays more, and a rare hand pays more again.\n\n" +
+				"XP becomes levels. Check yours with `/account`, and see the standings with `/levels`.",
+
+			soloTitle: "🎯 Play alone (1 player)",
+			duelTitle: "⚔️ Head to head (exactly 2)",
+			partyTitle: "🎉 Party games (2 or more)",
+
+			solo: [
+				{ name: "🃏 Blackjack", how: "Beat the dealer without going over 21." },
+				{ name: "🔮 Fortune", how: "Ask the crystal ball. Do not act on the answer." },
 			],
+			duel: [
+				{ name: "⚔️ Duel", how: "One dice roll, or one coin flip. Winner takes it." },
+				{ name: "✂️ Rock Paper Scissors", how: "Both players pick in secret, revealed together." },
+			],
+			party: [
+				{ name: "🪢 Hangman", how: "One word, six wrong guesses, everyone in the channel guessing." },
+				{ name: "🃏 Blackjack table", how: "Up to five seats against the dealer. Everyone plays their own hand." },
+			],
+
+			hostButtonLabel: "Host a game",
+			hostPickerPlaceholder: "Choose a game to host",
+			hostPickerTitle: "🎲 What do you want to play?",
+			hostNoChannel: "The arcade is not built yet. An admin needs to run `/setup`.",
+			hostFailed: "That game could not be set up. Try again in a moment.",
+			hostStarted: (game: string): string => `Your ${game} is live. Go play.`,
 		},
 
 		gamesChallenges: {

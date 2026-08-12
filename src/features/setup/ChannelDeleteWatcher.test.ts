@@ -260,7 +260,7 @@ describe("ChannelDeleteWatcher", () => {
 	const arcadeConfig = () =>
 		makeStoredConfig({
 			gamesCategoryId: "games-cat-1",
-			gamesRulesChannelId: "ch-gamesrules",
+			arcadeRulesChannelId: "ch-arcaderules",
 			gamesChallengesChannelId: "ch-gameschallenges",
 		});
 
@@ -317,7 +317,7 @@ describe("ChannelDeleteWatcher", () => {
 		// behaviour) would have found a live category and rebuilt anyway.
 		const guild = makeGuild({ categoryFetchMap: { "cat-1": makeCategory("cat-1") } });
 
-		await captured.handler!(makeDeletedChannel("ch-gamesrules", guild, "📋game-rules"));
+		await captured.handler!(makeDeletedChannel("ch-arcaderules", guild, "📋arcade-rules"));
 
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
 	});
@@ -450,7 +450,7 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			"nextDecreeChannelId",
 			"adminCommandsChannelId",
 			// The two under 🎮 ARCADE GAMES. CHANNEL_SPECS now spans TWO categories.
-			"gamesRulesChannelId",
+			"arcadeRulesChannelId",
 			"gamesChallengesChannelId",
 		];
 		const actualFields = GuildSetupManager.CHANNEL_SPECS.map((s) => s.configField);
@@ -467,7 +467,7 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 				.map((s) => s.configField)
 				.sort();
 
-		expect(byCategory("gamesCategoryId")).toEqual(["gamesChallengesChannelId", "gamesRulesChannelId"]);
+		expect(byCategory("gamesCategoryId")).toEqual(["arcadeRulesChannelId", "gamesChallengesChannelId"]);
 		expect(byCategory("categoryId")).toHaveLength(8);
 		// No spec may be left unfiled, which a typo in the union would otherwise
 		// produce silently.

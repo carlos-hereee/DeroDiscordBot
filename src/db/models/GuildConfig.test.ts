@@ -37,18 +37,18 @@ describe("GuildConfig declares the ARCADE GAMES category fields", () => {
 		const doc = new GuildConfigModel({
 			...baseRow,
 			gamesCategoryId: "games-cat",
-			gamesRulesChannelId: "c-rules",
+			arcadeRulesChannelId: "c-rules",
 			gamesChallengesChannelId: "c-challenges",
 		});
 
 		expect(doc.get("gamesCategoryId")).toBe("games-cat");
-		expect(doc.get("gamesRulesChannelId")).toBe("c-rules");
+		expect(doc.get("arcadeRulesChannelId")).toBe("c-rules");
 		expect(doc.get("gamesChallengesChannelId")).toBe("c-challenges");
 
 		// toObject() is what the store hands back to callers, so the values must survive it too.
 		const plain = doc.toObject() as Record<string, unknown>;
 		expect(plain.gamesCategoryId).toBe("games-cat");
-		expect(plain.gamesRulesChannelId).toBe("c-rules");
+		expect(plain.arcadeRulesChannelId).toBe("c-rules");
 		expect(plain.gamesChallengesChannelId).toBe("c-challenges");
 	});
 
@@ -58,7 +58,7 @@ describe("GuildConfig declares the ARCADE GAMES category fields", () => {
 		// as "missing, build it", which is also the backfill path for guilds set up before today.
 		const doc = new GuildConfigModel(baseRow);
 		expect(doc.get("gamesCategoryId")).toBeNull();
-		expect(doc.get("gamesRulesChannelId")).toBeNull();
+		expect(doc.get("arcadeRulesChannelId")).toBeNull();
 		expect(doc.get("gamesChallengesChannelId")).toBeNull();
 	});
 
@@ -66,7 +66,7 @@ describe("GuildConfig declares the ARCADE GAMES category fields", () => {
 		// Document construction is only half the exposure. Strict mode also strips undeclared
 		// paths out of an update payload, so guildConfigStore.update would silently no-op on a
 		// field missing here. A declared path is the one thing that prevents both.
-		for (const path of ["gamesCategoryId", "gamesRulesChannelId", "gamesChallengesChannelId"]) {
+		for (const path of ["gamesCategoryId", "arcadeRulesChannelId", "gamesChallengesChannelId"]) {
 			expect(GuildConfigModel.schema.path(path), `${path} is not declared`).toBeDefined();
 			expect(GuildConfigModel.schema.path(path).instance).toBe("String");
 		}
@@ -81,12 +81,12 @@ describe("GuildConfig declares the ARCADE GAMES intro anchors inside introMessag
 		const doc = new GuildConfigModel({
 			...baseRow,
 			introMessageIds: {
-				gamesRulesChannelId: "msg-rules",
+				arcadeRulesChannelId: "msg-rules",
 				gamesChallengesChannelId: "msg-challenges",
 			},
 		});
 
-		expect(doc.get("introMessageIds.gamesRulesChannelId")).toBe("msg-rules");
+		expect(doc.get("introMessageIds.arcadeRulesChannelId")).toBe("msg-rules");
 		expect(doc.get("introMessageIds.gamesChallengesChannelId")).toBe("msg-challenges");
 	});
 
@@ -99,13 +99,13 @@ describe("GuildConfig declares the ARCADE GAMES intro anchors inside introMessag
 			introMessageIds: {
 				introChannelId: "msg-intro",
 				inviteCardId: "msg-invite",
-				gamesRulesChannelId: "msg-rules",
+				arcadeRulesChannelId: "msg-rules",
 			},
 		});
 
 		expect(doc.get("introMessageIds.introChannelId")).toBe("msg-intro");
 		expect(doc.get("introMessageIds.inviteCardId")).toBe("msg-invite");
-		expect(doc.get("introMessageIds.gamesRulesChannelId")).toBe("msg-rules");
+		expect(doc.get("introMessageIds.arcadeRulesChannelId")).toBe("msg-rules");
 	});
 });
 

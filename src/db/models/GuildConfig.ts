@@ -50,7 +50,7 @@ const guildConfigSchema = new Schema(
 
 		// ── ARCADE GAMES: the guild's SECOND managed category (2026-08-10) ──
 		// What:  ids of the 🎮 ARCADE GAMES category and the two managed channels
-		//        inside it, 📋game-rules and ⚔️challenges. Per match game rooms
+		//        inside it, 📋arcade-rules and ⚔️challenges. Per match game rooms
 		//        are created as further children of this category and are NOT
 		//        tracked here, they live on their own GameRoom rows.
 		// Who:   GuildSetupManager (create + self heal), ChannelDeleteWatcher
@@ -70,7 +70,7 @@ const guildConfigSchema = new Schema(
 		//        required would fail validation on every legacy row in the
 		//        collection the moment this ships.
 		gamesCategoryId: { type: String, required: false, default: null },
-		gamesRulesChannelId: { type: String, required: false, default: null },
+		arcadeRulesChannelId: { type: String, required: false, default: null },
 		gamesChallengesChannelId: { type: String, required: false, default: null },
 
 		// id of the pinned message inside scheduleChannelId that ScheduleBoard
@@ -360,7 +360,7 @@ const guildConfigSchema = new Schema(
 				// boot posts it.
 				inviteCardId: { type: String, required: false, default: null },
 				// ── ARCADE GAMES intro anchors (2026-08-10) ──────────────
-				// Paired with gamesRulesChannelId and gamesChallengesChannelId
+				// Paired with arcadeRulesChannelId and gamesChallengesChannelId
 				// above. ⚠️ THESE TWO KEYS ARE THE WHOLE REASON THE POST MORTEM
 				// FURTHER DOWN THIS FILE EXISTS. Mongoose runs strict, so a write
 				// to an UNDECLARED key inside this subdocument is dropped in
@@ -370,7 +370,7 @@ const guildConfigSchema = new Schema(
 				// forever, with nothing failing anywhere. Declaring them here is
 				// not bookkeeping, it is the fix for a bug that would otherwise
 				// ship looking like it worked.
-				gamesRulesChannelId: { type: String, required: false, default: null },
+				arcadeRulesChannelId: { type: String, required: false, default: null },
 				gamesChallengesChannelId: { type: String, required: false, default: null },
 			},
 			required: false,

@@ -19,6 +19,7 @@ import { ChannelContent } from "./ChannelContent.js";
 import type { ICopyConfig } from "@base/copy/getCopy.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
 import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
+import { buildArcadeHostRow } from "@features/games/arcadeHost.js";
 import { buildMemberControlButtons, buildAdminControlButtons, buildIcebreakerButton, buildFortuneButton } from "@features/power-ups/PowerUps.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { buildDeroGifAttachment } from "@base/copy/brand.js";
@@ -267,7 +268,7 @@ export class GuildSetupManager {
 			// adoption instead) meant the id was null until the next reboot, and
 			// anything keying off it silently no-opped in between. Do not copy that.
 			gamesCategoryId: ids.gamesCategoryId,
-			gamesRulesChannelId: ids.gamesRulesChannelId,
+			arcadeRulesChannelId: ids.arcadeRulesChannelId,
 			gamesChallengesChannelId: ids.gamesChallengesChannelId,
 			// v1.5.1 item 9: clear any previously-tracked permission failure
 			// so a guild that recovered from missing-permissions state stops
@@ -596,14 +597,14 @@ export class GuildSetupManager {
 		// never bury the quick-action controls.
 		"adminCommandsChannelId",
 		// ── ninth and tenth, under the SECOND category ────────────
-		// 📋game-rules and ⚔️challenges. This array is consumed in TYPE positions
+		// 📋arcade-rules and ⚔️challenges. This array is consumed in TYPE positions
 		// only (it types configField, the resolveIntroEmbed switch, and the
 		// introMessageIds map); the repair sweep and the delete watcher walk
 		// CHANNEL_SPECS instead. Listing them here therefore widens the union and
 		// forces the switch to grow a case, without arming anything. Which CATEGORY
 		// each belongs under is carried by its spec's categoryField, never inferred
 		// from position in this array.
-		"gamesRulesChannelId",
+		"arcadeRulesChannelId",
 		"gamesChallengesChannelId",
 	] as const;
 
@@ -617,7 +618,7 @@ export class GuildSetupManager {
 		// There are TWO managed categories now, and every consumer that builds or
 		// repairs a channel has to know which parent it belongs under. An optional
 		// field with a "categoryId" default would let a games spec silently inherit
-		// the homebase category, which produces 📋game-rules under 🪧 NOTICE BOARD,
+		// the homebase category, which produces 📋arcade-rules under 🪧 NOTICE BOARD,
 		// an adopt-before-build scan that searches the wrong parent, and therefore
 		// duplicate channels. None of that throws. Making it required turns that
 		// entire class of mistake into a compile error at the moment a spec is
@@ -660,7 +661,7 @@ export class GuildSetupManager {
 		// never will be, because they are created and destroyed per match and live
 		// on their own GameRoom rows; ChannelDeleteWatcher depends on that
 		// distinction to avoid rebuilding a deleted room as a managed channel.
-		{ configField: "gamesRulesChannelId", displayName: channels.gamesRules, kind: "public", categoryField: "gamesCategoryId" },
+		{ configField: "arcadeRulesChannelId", displayName: channels.arcadeRules, kind: "public", categoryField: "gamesCategoryId" },
 		{ configField: "gamesChallengesChannelId", displayName: channels.gamesChallenges, kind: "public", categoryField: "gamesCategoryId" },
 	];
 
@@ -713,8 +714,8 @@ export class GuildSetupManager {
 			// Neither depends on adminRoleId: both channels are member facing, and
 			// the rules card is the answer to "who can play what" for everyone
 			// rather than an admin surface.
-			case "gamesRulesChannelId":
-				return ChannelContent.gamesRulesIntro(guildConfig);
+			case "arcadeRulesChannelId":
+				return ChannelContent.arcadeRulesIntro(guildConfig);
 			case "gamesChallengesChannelId":
 				return ChannelContent.gamesChallengesIntro(guildConfig);
 		}
@@ -750,6 +751,13 @@ export class GuildSetupManager {
 				// admin-controls guide row (2 buttons): owner-only Self destruct + the
 				// admin controls (Refresh standings).
 				return [new ActionRowBuilder<ButtonBuilder>().addComponents(buildSelfDestructButton(), ...buildAdminControlButtons())];
+			case "arcadeRulesChannelId":
+				// The arcade rules card carries the Host a game row, so a member can
+				// start a game by pressing a button instead of learning /mini-game
+				// first. The hosted game is posted into ⚔️challenges, never here: this
+				// card is a pinned reference and a live board on top of it would bury
+				// what the member came to read.
+				return [buildArcadeHostRow()];
 			default:
 				// introductions + every other channel: intro embed only, no buttons.
 				return null;
@@ -1162,7 +1170,7 @@ export class GuildSetupManager {
 			// ⚠️ RISK R2 LIVES HERE. Before this block the sweep handed every spec
 			// the ONE category it was given, so the moment the two arcade specs
 			// joined CHANNEL_SPECS, every existing guild would have built
-			// 📋game-rules and ⚔️challenges under 🪧 NOTICE BOARD on its next boot.
+			// 📋arcade-rules and ⚔️challenges under 🪧 NOTICE BOARD on its next boot.
 			// Nothing throws when that happens: the channels appear in the wrong
 			// place, and the adopt-before-build scan inside repairOneChannel then
 			// searches the wrong category's children forever after, so the next
@@ -1682,7 +1690,7 @@ export class GuildSetupManager {
 			adminChannel,
 			nextDecreeChannel,
 			adminCommandsChannel,
-			gamesRulesChannel,
+			arcadeRulesChannel,
 			gamesChallengesChannel,
 		] = await Promise.all([
 			guild.channels.create({
@@ -1757,7 +1765,7 @@ export class GuildSetupManager {
 			// chatter bury them. Challenges are issued by command, not by typing
 			// here, so the lockdown costs nothing.
 			guild.channels.create({
-				name: channels.gamesRules,
+				name: channels.arcadeRules,
 				type: ChannelType.GuildText,
 				parent: gamesCategory.id,
 				permissionOverwrites: publicOverwrites,
@@ -1782,7 +1790,7 @@ export class GuildSetupManager {
 				nextDecreeChannelId: nextDecreeChannel.id,
 				adminCommandsChannelId: adminCommandsChannel.id,
 				gamesCategoryId: gamesCategory.id,
-				gamesRulesChannelId: gamesRulesChannel.id,
+				arcadeRulesChannelId: arcadeRulesChannel.id,
 				gamesChallengesChannelId: gamesChallengesChannel.id,
 			},
 			objects: {
@@ -1794,7 +1802,7 @@ export class GuildSetupManager {
 				adminChannel,
 				nextDecreeChannel,
 				adminCommandsChannel,
-				gamesRulesChannel,
+				arcadeRulesChannel,
 				gamesChallengesChannel,
 			},
 		};
@@ -1834,7 +1842,7 @@ export class GuildSetupManager {
 			// Same one-key-per-channel slot every other intro gets, so
 			// refreshIntroEmbeds edits both cards in place on later boots instead of
 			// reposting them. GuildConfig declared these two keys in task 2.1.
-			gamesRulesChannelId: string;
+			arcadeRulesChannelId: string;
 			gamesChallengesChannelId: string;
 			// Second pinned message in #command-center: the standalone invite card.
 			inviteCardId: string;
@@ -1849,7 +1857,7 @@ export class GuildSetupManager {
 			adminChannel,
 			nextDecreeChannel,
 			adminCommandsChannel,
-			gamesRulesChannel,
+			arcadeRulesChannel,
 			gamesChallengesChannel,
 		} = discordChannels;
 
@@ -1871,7 +1879,7 @@ export class GuildSetupManager {
 			// The rules card and the challenge board intro. Neither is pinned, per
 			// the pinning policy below: both channels are read-only for members, so
 			// there is nothing to bury the bot's message under.
-			gamesRulesMsg,
+			arcadeRulesMsg,
 			gamesChallengesMsg,
 			// Second #command-center message: the standalone invite card (pitch +
 			// Dero gif + Summon button), pinned separately from the command guide.
@@ -1907,7 +1915,7 @@ export class GuildSetupManager {
 			// The arcade's two cards. Ordering inside this array is load bearing:
 			// the destructure above is positional, which is exactly why every entry
 			// is named rather than indexed.
-			gamesRulesChannel.send({ embeds: [ChannelContent.gamesRulesIntro()] }),
+			arcadeRulesChannel.send({ embeds: [ChannelContent.arcadeRulesIntro()] }),
 			gamesChallengesChannel.send({ embeds: [ChannelContent.gamesChallengesIntro()] }),
 			// Standalone invite card in #command-center: short pitch + Dero gif + the
 			// Summon button. Its own message so the wide button is not crammed into
@@ -1946,7 +1954,7 @@ export class GuildSetupManager {
 				adminChannelId: adminMsg.id,
 				nextDecreeChannelId: nextDecreeMsg.id,
 				adminCommandsChannelId: adminCommandsMsg.id,
-				gamesRulesChannelId: gamesRulesMsg.id,
+				arcadeRulesChannelId: arcadeRulesMsg.id,
 				gamesChallengesChannelId: gamesChallengesMsg.id,
 				inviteCardId: inviteCardMsg.id,
 			},

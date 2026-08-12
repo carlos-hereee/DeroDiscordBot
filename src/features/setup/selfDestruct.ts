@@ -58,7 +58,7 @@ export const HOMEBASE_CHANNEL_FIELDS = [
 	"adminChannelId",
 	"adminCommandsChannelId",
 	// 🎮 ARCADE GAMES
-	"gamesRulesChannelId",
+	"arcadeRulesChannelId",
 	"gamesChallengesChannelId",
 ] as const;
 

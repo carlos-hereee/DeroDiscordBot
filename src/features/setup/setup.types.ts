@@ -40,7 +40,7 @@ export interface ICreatedChannels {
 	// are two lists that must be extended together; the compiler catches the
 	// direction that matters (a missing id here fails createChannels' return).
 	gamesCategoryId: string;
-	gamesRulesChannelId: string;
+	arcadeRulesChannelId: string;
 	gamesChallengesChannelId: string;
 }
 
@@ -55,7 +55,7 @@ export interface IChannelObjects {
 	announcementsChannel: TextChannel;
 	nextDecreeChannel: TextChannel;
 	adminCommandsChannel: TextChannel;
-	gamesRulesChannel: TextChannel;
+	arcadeRulesChannel: TextChannel;
 	gamesChallengesChannel: TextChannel;
 }
 

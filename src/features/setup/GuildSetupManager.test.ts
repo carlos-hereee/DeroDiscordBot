@@ -50,7 +50,7 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 		// the arcade. The migration case (all three null) gets its OWN test rather
 		// than being smuggled into every other one.
 		gamesCategoryId: "games-cat-1",
-		gamesRulesChannelId: "ch-gamesrules",
+		arcadeRulesChannelId: "ch-arcaderules",
 		gamesChallengesChannelId: "ch-gameschallenges",
 		scheduleMessageId: "msg-schedule",
 		adminRoleId: null,
@@ -128,7 +128,7 @@ function makeGuild(options: {
 		// The arcade category and its two channels, present by default for the
 		// same reason. A test exercising the MIGRATION overrides these to null.
 		"games-cat-1": { id: "games-cat-1", type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } },
-		"ch-gamesrules": { id: "ch-gamesrules" },
+		"ch-arcaderules": { id: "ch-arcaderules" },
 		"ch-gameschallenges": { id: "ch-gameschallenges" },
 		...(options.channelFetchMap ?? {}),
 	};
@@ -346,11 +346,11 @@ describe("GuildSetupManager.ensureHomebase", () => {
 	// the sweep reads as "missing, build it". Both channels must land under the
 	// ARCADE category, and the compiler cannot help here because both parents are
 	// the same type. Building them under cat-1 is invisible in production until
-	// somebody notices game-rules sitting in the notice board, and by then the
+	// somebody notices arcade-rules sitting in the notice board, and by then the
 	// adopt-before-build scan is looking in the wrong parent and making duplicates.
 	it("gives a legacy guild the arcade category and files both channels under it", async () => {
 		guildConfigMock.findByGuildId.mockResolvedValue(
-			makeStoredConfig({ gamesCategoryId: null, gamesRulesChannelId: null, gamesChallengesChannelId: null })
+			makeStoredConfig({ gamesCategoryId: null, arcadeRulesChannelId: null, gamesChallengesChannelId: null })
 		);
 
 		const createCalls: Array<{ name: string; type?: number; parent?: string }> = [];
@@ -883,7 +883,7 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 		guildConfigMock.findByGuildId.mockResolvedValue(
 			makeStoredConfig({
 				introMessageIds: {
-					gamesRulesChannelId: "msg-gamesrules",
+					arcadeRulesChannelId: "msg-arcaderules",
 					gamesChallengesChannelId: "msg-gameschallenges",
 				},
 			})
@@ -895,9 +895,9 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 		};
 
 		const channels: Record<string, TextChannel> = {
-			"ch-gamesrules": makeChannel(
-				"ch-gamesrules",
-				{ "msg-gamesrules": currentIntroMessage("gamesRulesChannelId", "msg-gamesrules") },
+			"ch-arcaderules": makeChannel(
+				"ch-arcaderules",
+				{ "msg-arcaderules": currentIntroMessage("arcadeRulesChannelId", "msg-arcaderules") },
 				sends.rules
 			),
 			"ch-gameschallenges": makeChannel(
