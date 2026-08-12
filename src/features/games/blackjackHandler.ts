@@ -42,7 +42,7 @@ import { awardBlackjackResult } from "./gameXp.js";
 
 // A seating window long enough to notice and short enough that a table does not
 // hold a channel hostage waiting for a second player who is not coming.
-const SEATING_WINDOW_MS = 45_000;
+export const SEATING_WINDOW_MS = 45_000;
 
 // The whole board's lifetime. Generous, because a five seat hand with splits is
 // genuinely slow, but finite so an abandoned table cleans itself up rather than
@@ -51,7 +51,7 @@ const TABLE_TIMEOUT_MS = 10 * 60_000;
 
 // Seven is a real blackjack table. Five keeps the result embed inside a
 // comfortable field count and keeps the slowest hand tolerable for seat one.
-const MAX_SEATS = 5;
+export const MAX_SEATS = 5;
 
 // Per starter, so one member cannot carpet a server with tables. Tables are
 // already one per channel, so this only gates how fast someone opens new ones.
@@ -158,37 +158,76 @@ export async function runBlackjack(interaction: ChatInputCommandInteraction): Pr
 		return;
 	}
 
-	// Claim the channel slot synchronously, the same discipline hangman uses: the
-	// check and the write sit adjacent with no await between, so two members
-	// racing the command in one channel cannot both open a table.
-	if (games.has(channel.id)) {
+	const solo = interaction.options.getString("mode") !== "table";
+	const host = { userId: interaction.user.id, username: interaction.user.globalName ?? interaction.user.username };
+	const result = await startBlackjackTable(channel, interaction.guildId, host, solo);
+
+	if (result === "alreadyRunning") {
 		await interaction.editReply({ embeds: [errorEmbed(c.alreadyRunning)] });
 		return;
 	}
+	if (result === "failed") {
+		await interaction.editReply({ embeds: [errorEmbed(c.noChannel)] });
+		return;
+	}
 
-	const solo = interaction.options.getString("mode") !== "table";
-	const player = { userId: interaction.user.id, username: interaction.user.globalName ?? interaction.user.username };
+	cooldown.record(`${interaction.guildId}:${interaction.user.id}`);
+	await interaction.editReply({
+		embeds: [infoEmbed(c.tableTitle, solo ? c.joined : c.seatingDescription(interaction.user.id), COLORS.GAME_BLACKJACK)],
+	});
+}
+
+export type BlackjackStartResult = "started" | "alreadyRunning" | "failed";
+
+// ── the shared core ─────────────────────────────────────────────────────────
+// Split out from runBlackjack for the same two reasons startHangmanRound is:
+// a second entry point (a dashboard button, say) must not drift from the slash
+// path, and everything interesting here is reachable in a test without
+// constructing a real ChatInputCommandInteraction. runBlackjack above is now
+// only interaction plumbing: defer, guard, cooldown, delegate, reply.
+export async function startBlackjackTable(
+	channel: TextChannel,
+	guildId: string,
+	host: { userId: string; username: string },
+	solo: boolean
+): Promise<BlackjackStartResult> {
+	// ① Claim the channel slot SYNCHRONOUSLY, the same discipline hangman uses:
+	// the check and the write sit adjacent with no await between them, so two
+	// members racing the command in one channel cannot both open a table.
+	if (games.has(channel.id)) return "alreadyRunning";
+
 	const game: BlackjackGame = {
-		hostId: interaction.user.id,
-		guildId: interaction.guildId,
-		seated: [player],
+		hostId: host.userId,
+		guildId,
+		seated: [host],
 		table: null,
 		settled: false,
 		seatingTimer: null,
 		stop: () => undefined,
 	};
 	games.set(channel.id, game);
-	cooldown.record(`${interaction.guildId}:${interaction.user.id}`);
 
 	try {
-		// A solo game deals straight away. A join window for one player is a
+		// ② A solo game deals straight away. A join window for one player is a
 		// countdown to nothing, so solo never renders the seating board at all.
 		let board: Message;
+		let settledOnDeal = false;
 		if (solo) {
 			const { table, embed } = dealAndRender(game);
+
+			// ⚠️ A NATURAL ENDS THE HAND BEFORE A SINGLE BUTTON EXISTS. createTable
+			// marks it and advances the turn pointer straight past the seat, so the
+			// table is already in the dealer phase here. Roughly one opening hand in
+			// twenty is a natural, and without this the seat would get a board whose
+			// every button is disabled, pay nothing, and sit dead until the collector
+			// timed out ten minutes later. The table paths (dealInto, closeSeating)
+			// each carry the same check for the same reason.
+			const result = table.phase === "dealer" ? settleGame(game, channel.id, channel.client) : null;
+			settledOnDeal = result !== null;
+
 			board = await channel.send({
-				embeds: [embed],
-				components: [actionRow(channel.id, table)],
+				embeds: [result ?? embed],
+				components: result ? [] : [actionRow(channel.id, table)],
 				allowedMentions: { parse: [] },
 			});
 		} else {
@@ -199,9 +238,15 @@ export async function runBlackjack(interaction: ChatInputCommandInteraction): Pr
 			});
 		}
 
+		// ③ Nothing is clickable until the collector is wired, and the gap is one
+		// tick, so a click cannot arrive early. Wired even for a hand that already
+		// settled above, because its end handler is the ONE path that drops the map
+		// entry; stopping it immediately runs that handler rather than leaving the
+		// channel occupied by a finished game.
 		wireCollector(game, channel.id, board);
+		if (settledOnDeal) game.stop();
 
-		// The window closes itself. Without this a table whose host never presses
+		// ④ The window closes itself. Without this a table whose host never presses
 		// Deal would sit in the seating phase until the collector's own timeout,
 		// which is thirteen times longer.
 		if (!solo) {
@@ -210,13 +255,13 @@ export async function runBlackjack(interaction: ChatInputCommandInteraction): Pr
 			}, SEATING_WINDOW_MS);
 		}
 
-		await interaction.editReply({ embeds: [infoEmbed(c.tableTitle, solo ? c.joined : c.seatingDescription(interaction.user.id), COLORS.GAME_BLACKJACK)] });
+		return "started";
 	} catch (error) {
 		// Release the slot so a failed send does not lock the channel out of
 		// blackjack for the life of the process.
 		games.delete(channel.id);
 		console.warn(`[mini-game] blackjack could not post a board in channel ${channel.id}`, error);
-		await interaction.editReply({ embeds: [errorEmbed(c.noChannel)] });
+		return "failed";
 	}
 }
 
