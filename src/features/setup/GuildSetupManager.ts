@@ -631,7 +631,7 @@ export class GuildSetupManager {
 		// admin channel); hosts the command guide + admin power-up panel.
 		{ configField: "adminCommandsChannelId", displayName: channels.adminCommands, kind: "admin", categoryField: "categoryId" },
 
-		// ── 🎮 GAME ROOMS: DELIBERATELY NOT LISTED YET ────────────────
+		// ── 🎮 ARCADE GAMES: DELIBERATELY NOT LISTED YET ────────────────
 		// ⚠️ THE TWO GAMES SPECS LAND WITH TASK 2.7, NOT HERE, AND THE ORDER IS
 		// LOAD BEARING. Adding an entry to this array is what ARMS the boot repair
 		// sweep: repairMissingChannels treats a null stored id as case ③, "legacy
@@ -695,7 +695,7 @@ export class GuildSetupManager {
 				// the 2026-06-19 split). Self-destruct button rides along via
 				// resolveIntroComponents.
 				return ChannelContent.adminCommandGuide(guildConfig);
-			// ── 🎮 GAME ROOMS ────────────────────────────────────────
+			// ── 🎮 ARCADE GAMES ────────────────────────────────────────
 			// Neither depends on adminRoleId: both channels are member facing, and
 			// the rules card is the answer to "who can play what" for everyone
 			// rather than an admin surface.

@@ -250,7 +250,7 @@ export const generalEventsCopy: IPluginCopy = {
 		// Universal across packs for the same reason categoryName is: a category
 		// is the bot's brand mark in every server. Keep this identical to
 		// rok-commander's.
-		gamesCategoryName: "🎮 GAME ROOMS",
+		gamesCategoryName: "🎮 ARCADE GAMES",
 		devSuffix: " (dev)",
 		channels: {
 			// Same channel keys as rok-commander so GuildSetupManager.populateChannels
@@ -264,7 +264,7 @@ export const generalEventsCopy: IPluginCopy = {
 			nextDecree: "🔜upcoming-events",
 			// Eighth channel: admin-only command + control surface (mirrors rok-commander).
 			adminCommands: "🎛️admin-controls",
-			// The two GAME ROOMS channels. Channel NAMES are universal across packs
+			// The two ARCADE GAMES channels. Channel NAMES are universal across packs
 			// (the same reason the category name is), so these match rok-commander
 			// exactly; only the intro copy below differs in voice.
 			gamesRules: "📋game-rules",

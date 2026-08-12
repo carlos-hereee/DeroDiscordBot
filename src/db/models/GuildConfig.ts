@@ -48,8 +48,8 @@ const guildConfigSchema = new Schema(
 		// creates it (repairMissingChannels treats null as "missing, build it").
 		adminCommandsChannelId: { type: String, required: false, default: null },
 
-		// ── GAME ROOMS: the guild's SECOND managed category (2026-08-10) ──
-		// What:  ids of the 🎮 GAME ROOMS category and the two managed channels
+		// ── ARCADE GAMES: the guild's SECOND managed category (2026-08-10) ──
+		// What:  ids of the 🎮 ARCADE GAMES category and the two managed channels
 		//        inside it, 📋game-rules and ⚔️challenges. Per match game rooms
 		//        are created as further children of this category and are NOT
 		//        tracked here, they live on their own GameRoom rows.
@@ -359,7 +359,7 @@ const guildConfigSchema = new Schema(
 				// refreshIntroEmbeds maintains it; null on legacy rows until the first
 				// boot posts it.
 				inviteCardId: { type: String, required: false, default: null },
-				// ── GAME ROOMS intro anchors (2026-08-10) ──────────────
+				// ── ARCADE GAMES intro anchors (2026-08-10) ──────────────
 				// Paired with gamesRulesChannelId and gamesChallengesChannelId
 				// above. ⚠️ THESE TWO KEYS ARE THE WHOLE REASON THE POST MORTEM
 				// FURTHER DOWN THIS FILE EXISTS. Mongoose runs strict, so a write

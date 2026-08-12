@@ -296,7 +296,7 @@ export const rokCommanderCopy = {
 		// challenge board. Universal across packs for exactly the reason
 		// categoryName is: a category is the bot's brand mark in every server.
 		// Single leading emoji, matching the NOTICE BOARD convention.
-		gamesCategoryName: "🎮 GAME ROOMS",
+		gamesCategoryName: "🎮 ARCADE GAMES",
 		// appended to categoryName when NODE_ENV=development so a dev instance
 		// sharing a guild with prod builds a visually distinct home base.
 		// GuildSetupManager reads this and composes the final name. Applies to
@@ -324,7 +324,7 @@ export const rokCommanderCopy = {
 			// guide moved out of inner-sanctum, with the admin control buttons folded
 			// into its pinned row).
 			adminCommands: "🎛️admin-controls",
-			// ── the two GAME ROOMS channels ───────────────────────
+			// ── the two ARCADE GAMES channels ───────────────────────
 			// Both live under gamesCategoryName, NOT under the homebase category,
 			// which is why every CHANNEL_SPECS entry now has to declare which
 			// category it belongs to. Both are member facing and public: the rules

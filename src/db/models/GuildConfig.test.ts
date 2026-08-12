@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import GuildConfigModel from "./GuildConfig.js";
 
-// ── GuildConfig round trip for the GAME ROOMS fields (plan risk R1) ───────
+// ── GuildConfig round trip for the ARCADE GAMES fields (plan risk R1) ───────
 // WHY THIS FILE EXISTS, and it is not bookkeeping. Mongoose runs in strict mode, so a write to
 // a field the schema does not declare is dropped IN SILENCE: no throw, no warning, and the
 // read afterwards returns undefined. This repo has already shipped that bug once, and the post
@@ -32,7 +32,7 @@ const baseRow = {
 	adminChannelId: "c-admin",
 };
 
-describe("GuildConfig declares the GAME ROOMS category fields", () => {
+describe("GuildConfig declares the ARCADE GAMES category fields", () => {
 	it("round trips all three ids through a document rather than dropping them", () => {
 		const doc = new GuildConfigModel({
 			...baseRow,
@@ -73,7 +73,7 @@ describe("GuildConfig declares the GAME ROOMS category fields", () => {
 	});
 });
 
-describe("GuildConfig declares the GAME ROOMS intro anchors inside introMessageIds", () => {
+describe("GuildConfig declares the ARCADE GAMES intro anchors inside introMessageIds", () => {
 	it("round trips both anchor ids through the subdocument", () => {
 		// The failure this guards is not a missing id, it is an infinite repost: refreshIntroEmbeds
 		// treats an undefined anchor as "nothing posted yet", so a dropped write here means both
