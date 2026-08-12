@@ -37,6 +37,25 @@ describe("member command guide", () => {
 		expect(paired).toHaveLength(1);
 	});
 
+	it.each(PACKS)("$name names /account, the leveling profile", ({ copy }) => {
+		// This guide is the ONLY surface that tells a member a command exists. A
+		// leveling system nothing advertises is a leveling system nobody checks.
+		expect(guideText(copy)).toContain("`/account`");
+	});
+
+	it.each(PACKS)("$name names /levels, the standings", ({ copy }) => {
+		expect(guideText(copy)).toContain("`/levels`");
+	});
+
+	it.each(PACKS)("$name does NOT yet advertise /achievements", ({ copy }) => {
+		// ⚠️ DELIBERATE, and it is a deviation from the master plan, which lists all
+		// three as one Phase 3 task. The /achievements COMMAND does not exist until
+		// Phase 4, and a guide naming a command Discord does not know sends members
+		// to a dead end. It joins the guide in the same commit that ships the
+		// command. Delete this case then, do not delete it before.
+		expect(guideText(copy)).not.toContain("`/achievements`");
+	});
+
 	it.each(PACKS)("$name no longer advertises the retired /fortune command", ({ copy }) => {
 		// /fortune was absorbed into /mini-game fortune and its command file is
 		// deleted, so a guide still pointing at it would send members to a command

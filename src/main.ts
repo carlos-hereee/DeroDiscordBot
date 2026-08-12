@@ -40,6 +40,7 @@ import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
 import { registerMessageXp } from "@features/leveling/messageXp.js";
 import { registerReactionXp } from "@features/leveling/reactionXp.js";
 import { startVoiceSweep } from "@features/leveling/voiceXp.js";
+import { refreshAllLevelsBoards } from "@features/leveling/LevelsBoard.js";
 
 // ── DNS resolver guard ─────────────────────────────────────────────────────
 // Some dev machines leave node's DNS library (c-ares) unable to read the system
@@ -660,6 +661,16 @@ process.on("uncaughtException", (err) => {
 		//        and swallowed inside refreshLeaderboard so one bad guild cannot
 		//        stall the rest.
 		await refreshAllLeaderboards(client);
+
+		// ── startup rehydration of the levels board ──
+		// What: refresh every guild's SECOND board in the leaderboard channel, the
+		//       xp standings, so a bot that was offline while members played comes
+		//       back showing the truth rather than yesterday's order.
+		// Where: mirrors refreshAllLeaderboards immediately above, and runs after
+		//        it so the two boards in one channel settle in a stable order on a
+		//        first boot. Per-guild errors are logged and swallowed inside
+		//        refreshLevelsBoard, so one bad guild cannot stall the rest.
+		await refreshAllLevelsBoards(client);
 
 		// ── startup sweep of next-decree boards ──
 		// What: posts every upcoming decree in the next 24h horizon to each

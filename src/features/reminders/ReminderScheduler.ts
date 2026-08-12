@@ -11,6 +11,7 @@ import { IGameEvent } from "../events/event.types.js";
 import { seasonEndEmbed } from "@utils/embedBuilder.js";
 import { refreshAllSchedules, refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { refreshAllLeaderboards } from "@features/leaderboard/LeaderboardBoard.js";
+import { refreshAllLevelsBoards } from "@features/leveling/LevelsBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { getOutboundLatencyStats } from "@utils/serverApi.js";
 import { noteFailure as noteServerFailure, noteSuccess as noteServerSuccess } from "./serverHealthNotifier.js";
@@ -153,6 +154,15 @@ export function startScheduler(client: Client): void {
 			await refreshAllLeaderboards(client);
 		} catch (error) {
 			console.error(LOG_MESSAGES.leaderboard.hourlyRefreshFailed, error);
+		}
+		// Levels board floor, the SECOND board in the same channel. Same reasoning
+		// as the leaderboard sweep above and, like it, deliberately separate: the
+		// two read different collections and answer different questions, so one
+		// failing must not stop the other refreshing.
+		try {
+			await refreshAllLevelsBoards(client);
+		} catch (error) {
+			console.error(LOG_MESSAGES.leveling.hourlyRefreshFailed, error);
 		}
 		// Emit hourly metrics line right after the board sweeps so a single
 		// log timestamp captures both. The metrics function never throws.

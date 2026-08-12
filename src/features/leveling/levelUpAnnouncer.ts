@@ -11,6 +11,7 @@ import { isMilestone } from "./primeLevels.js";
 import { levelingCopy } from "./levelingCopy.js";
 import { buildCombinedLevelUpEmbed, buildLevelUpEmbed } from "./levelingEmbeds.js";
 import { getLevelingConfig, type GuildLevelingContext } from "./levelingConfig.js";
+import { scheduleLevelsBoardRefresh } from "./LevelsBoard.js";
 
 // ── levelUpAnnouncer ───────────────────────────────────────────────────────
 // Decides that a level was crossed, claims the right to say so exactly once, and
@@ -127,6 +128,10 @@ export async function handleLevelCrossing(input: LevelCrossingInput): Promise<vo
 			xpIntoLevel: xpIntoLevel(input.newTotalXp, settings.curve, settings.curveMultiplier, settings.maxLevel),
 			earnedRoleId: null,
 		});
+
+		// The standings moved, so nudge the pinned board. Coalesced per guild, so a
+		// busy evening produces one edit per window rather than one per level up.
+		scheduleLevelsBoardRefresh(input.client, input.guildId);
 
 		// Fire and forget, and deliberately after the enqueue: the member's
 		// celebration must not wait on an admin notice.

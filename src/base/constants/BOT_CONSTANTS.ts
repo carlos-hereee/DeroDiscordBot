@@ -37,6 +37,15 @@ export const BOT_CONSTANTS = {
 		"continue-schedule",
 		"go-live-soon",
 		"announce-stream",
+		// ── leveling ──
+		// Both of these ALSO carry .setDefaultMemberPermissions(Administrator) on
+		// their builders. The two mechanisms are independent and both are needed:
+		// the builder flag is what HIDES a command in a non-admin's picker, and
+		// this Set is the runtime gate that catches anyone who reaches it anyway.
+		// /account and /levels are deliberately in NEITHER, like /leaderboard and
+		// /list-events: members seeing their own standing is the entire point.
+		"setup-level-system",
+		"xp",
 	]),
 	// scheduler
 	SCHEDULER_CRON: "* * * * *", // every minute
@@ -149,6 +158,28 @@ export const BOT_CONSTANTS = {
 		// /setup-level-system clamps every cooldown input to this ceiling, so the
 		// sweep and the config can never disagree about what "expired" means.
 		MAX_COOLDOWN_SECONDS: 3600,
+
+		// ── input bounds for /setup-level-system ──
+		// Every numeric an admin can type is clamped into these ranges at the
+		// COMMAND layer, because guildConfigStore.update runs findOneAndUpdate
+		// without runValidators, so the schema's own constraints never see it.
+		// They live here rather than in the command file because levelingConfig
+		// normalizes against the same bounds when it reads a row back, and two
+		// copies of a range is how a value gets written that a reader then
+		// silently rejects.
+		LIMITS: {
+			MIN_COOLDOWN_SECONDS: 5,
+			MIN_XP: 1,
+			MAX_XP: 1000,
+			MIN_CURVE_MULTIPLIER: 0.1,
+			MAX_CURVE_MULTIPLIER: 100,
+			MIN_VOICE_MEMBERS: 1,
+			MAX_VOICE_MEMBERS: 25,
+			// A level an admin may write with /xp set-level. Capped well inside
+			// levelCurve's own ceiling so nobody can set a level whose cumulative
+			// cost was never computed.
+			MAX_SETTABLE_LEVEL: 500,
+		},
 
 		// Ceiling on how much voice time one sweep tick may pay for. The sweep pays
 		// for elapsed minutes rather than per tick, so a process that was paused

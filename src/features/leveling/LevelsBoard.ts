@@ -1,0 +1,191 @@
+import { Client, DiscordAPIError, Message, TextChannel } from "discord.js";
+import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { memberLevelStore } from "@db/stores/memberLevelStore.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { LOG_MESSAGES } from "@base/constants/log-messages.js";
+import { levelFromTotalXp } from "./levelCurve.js";
+import { levelingCopy } from "./levelingCopy.js";
+import { buildLevelsBoardEmbed, type LevelsBoardEntry } from "./levelingEmbeds.js";
+import { getLevelingConfig } from "./levelingConfig.js";
+
+// ── LevelsBoard ────────────────────────────────────────────────────────────
+// A SECOND self-refreshing message in the guild's leaderboard channel, beside
+// the participation board that has been there since v1.6.
+//
+// What:  the guild's all-time xp standings, edited in place.
+// Who:   a boot sweep in main.ts, the hourly safety tick in ReminderScheduler,
+//        and a coalesced refresh after a level up.
+// When:  at most once per guild per LEADERBOARD_REFRESH_DEBOUNCE_MS window.
+// Where: the SAME channel as LeaderboardBoard, anchored by its own
+//        GuildConfig.levelsMessageId. It must never read or write
+//        leaderboardMessageId.
+//
+// ⚠️ TWO BOARDS IN ONE CHANNEL IS THE MOST LIKELY CONFUSION IN THIS FEATURE, for
+// members and for the next engineer alike. They answer different questions:
+//
+//   LeaderboardBoard   participation SCORE, aggregated from PlayerActivity,
+//                      keyed by event and occurrence. "Did this warrior show up
+//                      for this KvK event?"
+//   this one           XP and LEVELS, from MemberLevel. "How present is this
+//                      member in this server over time?"
+//
+// So every embed this renders carries a one line subtitle saying which question
+// it answers, and its color is deliberately far from the participation board's
+// Gold. Do NOT import LeaderboardBoard and do NOT try to generalize the two into
+// one module: they read different collections, render different embeds, and
+// answer different questions. Two clear files beat one abstract one here.
+//
+// ⚠️ NO NEW DISCORD CHANNEL. Reusing leaderboardChannelId is a deliberate cost
+// decision: a levels channel would need a CHANNEL_SPECS entry, a SLOT_LABELS
+// entry in rename-channel.ts, a rename path, and a backfill for every existing
+// guild, and GuildSetupManager.createChannels has ZERO test coverage today. All
+// of that to separate two things that are both standings.
+//
+// ⚠️ THE BOARD IS ALL TIME, deliberately. "This week" and "this month" live on
+// /levels instead. The board's own subtitle promises presence "all the time",
+// and an all-time render needs no join: the period collection stores a userId
+// and an xp total but no display name, so a weekly board would have to look up
+// every member on every refresh to say who they are.
+
+/**
+ * Refresh one guild's levels board. Safe to call fire and forget: it swallows
+ * every error and logs it, so a refresh failure can never block the level up,
+ * boot sweep, or cron tick that triggered it.
+ */
+export async function refreshLevelsBoard(client: Client, guildId: string): Promise<void> {
+	try {
+		const context = await getLevelingConfig(guildId);
+		// Self destructed guild: the homebase channels are gone, nothing to refresh.
+		if (!context || context.homebaseDestroyed) return;
+		// A guild that turned leveling off keeps its board rather than having it
+		// wiped: the standings are history, and the toggle stops new writes, not
+		// old data. Same posture as leaderboardTrackingEnabled.
+		if (!context.leaderboardChannelId) {
+			// Setup has not finished. Silent bail is correct, autoSetup and
+			// ensureHomebase reach their own terminal state eventually.
+			return;
+		}
+
+		const channel = await client.channels.fetch(context.leaderboardChannelId).catch(() => null);
+		if (!channel || !(channel instanceof TextChannel)) {
+			console.error(LOG_MESSAGES.leveling.boardChannelMissing(context.leaderboardChannelId, guildId));
+			return;
+		}
+
+		const settings = context.settings;
+		const rows = await memberLevelStore.topByTotalXp(guildId, 10);
+		const entries: LevelsBoardEntry[] = rows.map((row) => ({
+			userId: row.userId,
+			username: row.username,
+			// Derived, never stored, so the board cannot drift from /account after a
+			// curve change the way a cached level field would.
+			level: levelFromTotalXp(row.totalXp, settings.curve, settings.curveMultiplier, settings.maxLevel),
+			xp: row.totalXp,
+		}));
+
+		const embed = buildLevelsBoardEmbed(levelingCopy.board.allTime, entries);
+		const config = await guildConfigStore.findByGuildId(guildId);
+		await postOrEdit(channel, (config?.levelsMessageId as string | null) ?? null, embed, guildId);
+	} catch (error) {
+		console.error(LOG_MESSAGES.leveling.boardPostFailed(guildId), error);
+	}
+}
+
+/**
+ * Refresh every guild. Used by the boot sweep and the hourly cron tick. An error
+ * in one guild never stops the sweep.
+ */
+export async function refreshAllLevelsBoards(client: Client): Promise<void> {
+	for (const [guildId] of client.guilds.cache) {
+		await refreshLevelsBoard(client, guildId);
+	}
+}
+
+// ── the coalescing throttle ────────────────────────────────────────────────
+// Copied in shape from scheduleLeaderboardRefresh, including the reasoning that
+// is not obvious: the FIRST level up schedules a refresh one window out and
+// every later one inside that window is ABSORBED with the timer LEFT RUNNING.
+// Deliberately not a reset-on-each-call debounce, which would starve the board
+// for an entire busy evening and only update once everything went quiet.
+const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+export function scheduleLevelsBoardRefresh(client: Client, guildId: string): void {
+	if (refreshTimers.has(guildId)) return;
+	const timer = setTimeout(() => {
+		refreshTimers.delete(guildId);
+		refreshLevelsBoard(client, guildId).catch((error) =>
+			console.error(LOG_MESSAGES.leveling.boardPostFailed(guildId), error)
+		);
+	}, BOT_CONSTANTS.LEADERBOARD_REFRESH_DEBOUNCE_MS);
+	timer.unref?.();
+	refreshTimers.set(guildId, timer);
+}
+
+export const _clearLevelsBoardTimers = (): void => {
+	for (const timer of refreshTimers.values()) clearTimeout(timer);
+	refreshTimers.clear();
+};
+
+// ── postOrEdit ─────────────────────────────────────────────────────────────
+// Structure, invariants and error taxonomy copied wholesale from
+// LeaderboardBoard.postOrEdit. The three behaviours worth restating, because
+// each of them is load bearing:
+//
+//   • a stored message NOT authored by this bot means the whole homebase is
+//     stale (rotated token, cross environment DB seeding, a shared cluster).
+//     BAIL QUIETLY. ScheduleBoard owns the heavyweight rebuild; a second board
+//     must not trigger a second rebuild, and must never post into a channel it
+//     may not own.
+//   • 10008 (unknown message) and 10003 (unknown channel) both mean "an admin
+//     deleted it", and both resolve the same way: fall through and post fresh,
+//     persisting the new id.
+//   • any OTHER error returns without posting, so the next trigger retries
+//     rather than this one duplicating the board.
+async function postOrEdit(
+	channel: TextChannel,
+	existingMessageId: string | null,
+	embed: ReturnType<typeof buildLevelsBoardEmbed>,
+	guildId: string
+): Promise<void> {
+	const selfId = channel.client.user?.id;
+
+	if (existingMessageId) {
+		try {
+			const existing = await channel.messages.fetch(existingMessageId);
+			if (selfId && existing.author.id !== selfId) {
+				console.warn(LOG_MESSAGES.leveling.boardStaleAuthor(existingMessageId, guildId));
+				return;
+			}
+			await existing.edit({ embeds: [embed] });
+			return;
+		} catch (error) {
+			if (error instanceof DiscordAPIError && (error.code === 10008 || error.code === 10003)) {
+				console.warn(LOG_MESSAGES.leveling.boardStoredMessageDeleted(existingMessageId, guildId));
+			} else if (error instanceof DiscordAPIError && error.code === 50005) {
+				// Cache race: the author pre-check missed it but Discord caught it on
+				// edit. Same posture as the pre-check, bail rather than repost.
+				console.warn(LOG_MESSAGES.leveling.boardStaleAuthor(existingMessageId, guildId));
+				return;
+			} else {
+				console.error(LOG_MESSAGES.leveling.boardEditFailed(existingMessageId, guildId), error);
+				return;
+			}
+		}
+	}
+
+	let message: Message;
+	try {
+		message = await channel.send({ embeds: [embed] });
+	} catch (error) {
+		console.error(LOG_MESSAGES.leveling.boardPostFailed(guildId), error);
+		return;
+	}
+
+	// No pin, matching LeaderboardBoard: the leaderboard channel is read only so
+	// the board stays put without one, and the 2026-06 pinning policy only pins
+	// the member-writable introductions channel.
+	//
+	// ⚠️ levelsMessageId, never leaderboardMessageId. Writing the wrong field
+	// would make each board overwrite the other's message on every refresh.
+	await guildConfigStore.update(guildId, { levelsMessageId: message.id });
+}
