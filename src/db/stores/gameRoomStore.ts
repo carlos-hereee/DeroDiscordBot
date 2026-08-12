@@ -82,6 +82,32 @@ export const gameRoomStore = {
 		return GameRoom.countDocuments({ guildId, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] } });
 	},
 
+	// General patch, for the draft-stage edits the challenge board makes: visibility,
+	// the board message id, and the player/pool arrays at the moment the host starts.
+	//
+	// Separate from setStatus because a draft edit is NOT a lifecycle transition and
+	// must not have to name a status to avoid changing one. Callers pass only what
+	// changed; this store decides nothing.
+	async update(guildId: string, roomId: string, patch: Partial<IGameRoom>) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $set: patch }, { new: true });
+	},
+
+	// Add one member to a draft's joiner pool.
+	//
+	// ⚠️ $addToSet, NOT a read-modify-write. An open-to-all challenge is exactly the
+	// situation where several members click Join in the same tick, and reading the
+	// array then writing it back would silently drop everyone but the last writer.
+	// $addToSet is atomic server-side and idempotent, so a double click is a no-op
+	// rather than a duplicate entry.
+	//
+	// The pool lives on spectatorIds because that is what the pool BECOMES: at start
+	// the host promotes one member into playerIds and everyone else is already in the
+	// right field. See the challenge board for why one mechanism serves both
+	// visibilities.
+	async addPoolMember(guildId: string, roomId: string, userId: string) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $addToSet: { spectatorIds: userId } }, { new: true });
+	},
+
 	// Append one entry to the transcript.
 	//
 	// Called ONLY by roomTrail.postMove, and only AFTER its channel.send resolved. A transcript

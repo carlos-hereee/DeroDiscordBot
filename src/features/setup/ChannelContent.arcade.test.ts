@@ -15,12 +15,17 @@ describe("arcadeRulesIntro", () => {
 	const embed = ChannelContent.arcadeRulesIntro();
 	const c = rokCommanderCopy.channelContent.arcadeRules;
 
-	it("leads with how to host, join, and level up, before any roster", () => {
+	it("leads with how to host, join, what a room is, and levelling, before any roster", () => {
 		// Reading order is the point. The old card opened with the game list, which
 		// is what made it read as a wall; a newcomer needs to know what this place
 		// IS before a roster means anything.
+		//
+		// `roomTitle` joined the sequence in game rooms Phase 4, between joining and
+		// levelling, because that is where the reader's next question arrives: they
+		// have just been told they can join a match and do not yet know where it
+		// happens.
 		const names = fields(embed).map((f) => f.name);
-		expect(names.slice(0, 3)).toEqual([c.hostTitle, c.joinTitle, c.levelingTitle]);
+		expect(names.slice(0, 4)).toEqual([c.hostTitle, c.joinTitle, c.roomTitle, c.levelingTitle]);
 	});
 
 	it("groups the roster by player count", () => {
@@ -46,7 +51,7 @@ describe("arcadeRulesIntro", () => {
 		// doubles; Discord caps an embed at 25 fields.
 		const solo = fields(embed).find((f) => f.name === c.soloTitle);
 		for (const game of c.solo) expect(solo?.value).toContain(game.name);
-		expect(fields(embed)).toHaveLength(6);
+		expect(fields(embed)).toHaveLength(7);
 	});
 
 	it("stays inside Discord's field ceiling with room to grow", () => {
@@ -70,6 +75,6 @@ describe("both packs describe the same arcade", () => {
 	it("renders a card in the neutral voice too", () => {
 		const neutral = ChannelContent.arcadeRulesIntro({ pluginId: "general-events" } as never);
 		expect(neutral.data.title).toBe(generalEventsCopy.channelContent.arcadeRules.title);
-		expect(fields(neutral)).toHaveLength(6);
+		expect(fields(neutral)).toHaveLength(7);
 	});
 });

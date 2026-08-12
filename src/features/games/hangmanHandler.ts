@@ -165,7 +165,7 @@ export async function runHangman(interaction: ChatInputCommandInteraction): Prom
 
 	const channel = interaction.channel;
 	if (!(channel instanceof TextChannel)) {
-		await interaction.editReply({ embeds: [errorEmbed(gamesCopy.challenge.outsideGuild)] });
+		await interaction.editReply({ embeds: [errorEmbed(gamesCopy.outsideGuild)] });
 		return;
 	}
 

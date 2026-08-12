@@ -407,13 +407,24 @@ export const generalEventsCopy: IPluginCopy = {
 
 			hostTitle: "🎲 How to host a game",
 			hostBody:
-				"Hit **Host a game** under this card and pick what you want. It gets set up in the right channel and announced.\n\n" +
+				"Hit **Host a game** under this card for anything you can play alone or with a crowd. It gets set up in the right channel and announced.\n\n" +
+				"For a head to head match, go to the challenge board and pick your game there. A card gets posted, you choose who can see the room, and the match plays out inside it.\n\n" +
 				"You can also start any game yourself with `/mini-game`.",
 
 			joinTitle: "🚪 How to join a game",
 			joinBody:
 				"An open game posts a card with a button on it. Press it and you are in.\n\n" +
-				"Two player games wait for you on the challenge board. Party games seat anyone who hits **Take a seat** before the deal starts.",
+				"On the challenge board, a card marked **Open to all** takes anyone who hits **Join**; the host then picks who plays, and everyone else who joined can watch. A card marked **Invite only** is visible to the people the host picked and nobody else.\n\n" +
+				"Party games seat anyone who hits **Take a seat** before the deal starts.",
+
+			// Mirrors the rok-commander pack key for key. The two packs differ in VOICE
+			// only; a key that exists in one and not the other is a compile error,
+			// because IPluginCopy is derived from the rok-commander pack.
+			roomTitle: "🏛️ What happens in a room",
+			roomBody:
+				"A head to head match gets its own channel under this category. Only the players can talk in it; anyone the host invited, or the whole server if the card was open, can watch and react.\n\n" +
+				"When the match ends the room is locked. Nobody can type, the result gets posted, and the host can clear it right away with **Archive now**. Left alone, it clears itself a few hours later.\n\n" +
+				"The record of the match outlives the room. Every move is kept, so a locked room is still readable until it is swept.",
 
 			levelingTitle: "📈 How playing levels you up",
 			levelingBody:

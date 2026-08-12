@@ -538,13 +538,24 @@ export const rokCommanderCopy = {
 
 			hostTitle: "🎲 How to host a game",
 			hostBody:
-				"Press **Host a game** beneath this scroll and choose your poison. I raise the game where it belongs and announce it.\n\n" +
+				"Press **Host a game** beneath this scroll for anything you can play alone or with a crowd. I raise the table where it belongs and announce it.\n\n" +
+				"For a head to head match, go to the challenge board and pick your game there. I post a card, you choose who may see the room, and the match plays out inside it.\n\n" +
 				"You may also summon any game yourself with `/mini-game`.",
 
 			joinTitle: "🚪 How to join a game",
 			joinBody:
 				"An open game posts a card with a button on it. Press it and you are in.\n\n" +
-				"Two player games wait for you at the challenge board. Party games seat anyone who presses **Take a seat** before the dealing starts.",
+				"On the challenge board, a card marked **Open to all** takes anyone who presses **Join**; the host then chooses who plays, and everyone else who joined may watch. A card marked **Invite only** is visible to the people the host picked and nobody else.\n\n" +
+				"Party games seat anyone who presses **Take a seat** before the dealing starts.",
+
+			// The non-game half of the arcade's lifecycle, which is most of what a
+			// member actually needs explaining. Added Phase 4, when rooms became the
+			// way a head to head match is played rather than a thing the plan promised.
+			roomTitle: "🏛️ What happens in a room",
+			roomBody:
+				"A head to head match gets its own channel under this category. Only the players may speak in it; anyone the host invited, or the whole server if the card was open, may watch and react.\n\n" +
+				"When the match ends I seal the room. Nobody can type, the result is posted, and the host may clear it away at once with **Archive now**. Left alone, it clears itself a few hours later.\n\n" +
+				"The record of the match survives the room. Every move is kept, so a sealed room is a story you can still read until it is swept.",
 
 			levelingTitle: "📈 How playing raises your level",
 			levelingBody:

@@ -156,9 +156,14 @@ export const ChannelContent = {
 		// start something, how to join something somebody else started, why any of
 		// it is worth doing, and only THEN the roster. Leading with the roster is
 		// what made the old card read as a wall.
+		// `roomBody` explains what a head to head match actually IS now that Phase 4
+		// made rooms real, and it sits between joining and leveling because that is
+		// where a reader's question arrives: they have just been told they can join a
+		// match, and the next thing they do not know is where it happens.
 		embed.addFields(
 			{ name: c.hostTitle, value: c.hostBody, inline: false },
 			{ name: c.joinTitle, value: c.joinBody, inline: false },
+			{ name: c.roomTitle, value: c.roomBody, inline: false },
 			{ name: c.levelingTitle, value: c.levelingBody, inline: false }
 		);
 

@@ -77,6 +77,88 @@ export const gameRoomsCopy = {
 		notYours: "Only the host or an admin can do that.",
 	},
 
+	// ── the challenge board (Phase 4) ──
+	board: {
+		introTitle: "⚔️ The challenge board",
+		introDescription: [
+			"Pick a game to start a challenge. Dero posts a card here, you choose who can see it, and the match plays out in its own channel.",
+			"",
+			"**Invite only** hides the room from everyone but the people you pick.",
+			"**Open to all** lets anyone in the server press Join, and you choose who plays.",
+			"",
+			"You can hold one challenge at a time. Finish it and the next one is yours.",
+		].join("\n"),
+		startButtonLabel: (game: GameSlug): string => GAME_LABELS[game] ?? game,
+
+		// ── the opener card, which is edited in place as the draft progresses ──
+		cardTitle: (game: GameSlug): string => `${GAME_LABELS[game] ?? game} challenge`,
+		cardWaitingVisibility: (hostId: string): string =>
+			`<@${hostId}> is starting a challenge. They are choosing who can see it.`,
+		cardInviteOnly: (hostId: string): string => `<@${hostId}> is picking who to invite.`,
+		cardOpenToAll: (hostId: string): string =>
+			`<@${hostId}> is looking for an opponent. Press Join to put your name in.`,
+		// The pool line. It names the cap out loud when it truncates, because a silent
+		// cut reads as "that is everyone" and the host would pick from a list that
+		// quietly lost people.
+		cardPool: (ids: string[], shown: number): string => {
+			if (ids.length === 0) return "Nobody has joined yet.";
+			const names = ids.slice(0, shown).map((id) => `<@${id}>`).join(", ");
+			const hidden = ids.length - shown;
+			return hidden > 0 ? `Joined (${ids.length}): ${names} and ${hidden} more` : `Joined (${ids.length}): ${names}`;
+		},
+		cardCancelled: (hostId: string): string => `<@${hostId}> called off the challenge.`,
+		cardStarted: (channelId: string): string => `The match is under way in <#${channelId}>.`,
+
+		visibilityInviteLabel: "Invite only",
+		visibilityOpenLabel: "Open to all",
+		joinLabel: "Join",
+		startLabel: "Start the match",
+		cancelLabel: "Call it off",
+
+		// ── the invite picker ──
+		pickerPlaceholder: "Choose who to invite",
+		pickerPrompt: [
+			"Pick the members you want in this room. The first one you choose plays; anyone else can watch.",
+			"",
+			"Only real members appear here. Dero does not play games.",
+		].join("\n"),
+		pickerEmpty: "There is nobody else in this server to invite yet.",
+		pickerSaved: (count: number): string =>
+			count === 1 ? "Invited 1 member. Press Start the match when you are ready." : `Invited ${count} members. Press Start the match when you are ready.`,
+
+		// ── the acceptance step ──
+		chooseOpponentPlaceholder: "Choose who plays",
+		chooseOpponentPrompt: "More than one member joined. Pick who plays; the rest can watch.",
+
+		// ── refusals ──
+		notYourChallenge: "This is somebody else's challenge.",
+		alreadyJoined: "You already joined this one.",
+		hostCannotJoin: "You are the host. You are already in.",
+		poolEmpty: "Nobody has joined yet, so there is nobody to play against.",
+		poolFull: (max: number): string => `This challenge already has ${max} members. Start it or call it off.`,
+		needVisibility: "Choose who can see the room first.",
+		draftGone: "That challenge is no longer open.",
+	},
+
+	// ── the games, played inside a room (Phase 4) ──
+	games: {
+		coinLine: (face: string): string => `The coin lands on **${face}**.`,
+		diceLine: (challengerId: string, challengerRoll: number, opponentId: string, opponentRoll: number): string =>
+			`<@${challengerId}> rolled **${challengerRoll}**. <@${opponentId}> rolled **${opponentRoll}**.`,
+
+		rpsPlaceholder: "Rock, paper or scissors",
+		rpsPrompt: "Pick in secret. Nobody sees it until you have both chosen.",
+		rpsLabel: (choice: string): string => choice.charAt(0).toUpperCase() + choice.slice(1),
+		rpsLocked: (choice: string): string => `Locked in: **${choice}**. Waiting on the other player.`,
+		rpsAlreadyPicked: "You already made your pick.",
+		// ⚠️ NAMES THE PLAYER, NEVER THE CHOICE. This one is PUBLIC, and it exists so
+		// the other player knows to go. Adding the throw here would leak it to every
+		// spectator one message before the reveal.
+		rpsLockedPublic: (actorId: string): string => `<@${actorId}> has locked in their pick.`,
+		rpsReveal: (challengerId: string, challengerPick: string, opponentId: string, opponentPick: string): string =>
+			`<@${challengerId}> threw **${challengerPick}**. <@${opponentId}> threw **${opponentPick}**.`,
+	},
+
 	// ── the move trail ──
 	trail: {
 		// A join is the one move kind posted by the room itself rather than by a game.

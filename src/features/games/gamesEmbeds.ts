@@ -23,39 +23,16 @@ function base(): EmbedBuilder {
 	return new EmbedBuilder()
 		.setTimestamp()
 		.setAuthor({ name: AUTHOR.name, iconURL: AUTHOR.iconURL })
-		.setFooter({ text: gamesCopy.challenge.footer });
+		.setFooter({ text: gamesCopy.footer });
 }
 
-// ── buildChallengeEmbed ────────────────────────────────────────────────────
-// The public "X challenges Y" prompt that carries the Accept and Decline row.
-// gameLabel comes from the calling game's own copy block (gamesCopy.duel.label,
-// gamesCopy.rps.label) so one embed serves both challenge-based games and a
-// third game only needs a label, not a new builder.
-//
-// The mentions in the description do NOT ping: mentions inside an embed never
-// notify. challengeFlow puts the notifying mention in the message content with
-// allowedMentions pinned to the opponent, so the ping is deliberate and bounded.
-// thumbnailRef comes from resolveGameAsset("challenge"), which hands back the
-// bundled Dero avatar until real challenge art lands under assets/games/. A
-// small corner thumbnail rather than a full width image, matching reminderEmbed's
-// rule that the big banner is reserved for the payoff moment; here the payoff is
-// the result embed the game posts next.
-export function buildChallengeEmbed(challengerId: string, opponentId: string, gameLabel: string, thumbnailRef: string): EmbedBuilder {
-	return base()
-		.setTitle(gamesCopy.challenge.title)
-		.setColor(COLORS.GAME_CHALLENGE)
-		.setDescription(gamesCopy.challenge.description(challengerId, opponentId, gameLabel))
-		.setThumbnail(thumbnailRef);
-}
-
-// ── buildChallengeClosedEmbed ──────────────────────────────────────────────
-// The terminal state for a challenge that ended WITHOUT a game starting, either
-// declined or timed out. Reuses the challenge color rather than the error color
-// on purpose: a declined challenge is a normal outcome, not a failure, and
-// painting it red would read as "something broke."
-export function buildChallengeClosedEmbed(description: string): EmbedBuilder {
-	return base().setTitle(gamesCopy.challenge.closedTitle).setColor(COLORS.GAME_CHALLENGE).setDescription(description);
-}
+// ── buildChallengeEmbed / buildChallengeClosedEmbed: RETIRED (Phase 4) ──
+// Both existed for challengeFlow's public "X challenges Y" prompt and its
+// declined/timed-out terminal card. The challenge board replaced that whole
+// handshake with an opener card edited in place on ⚔️challenges, whose builders
+// live in @features/game-rooms/challengeBoardEmbeds.ts. COLORS.GAME_CHALLENGE is
+// still exported and is now unused here; it stays in the palette because the board
+// card is the same concept wearing a different name.
 
 // ── buildVersusResultEmbed ───────────────────────────────────────────────────
 // The payoff embed for /mini-game duel. This one takes the full width image

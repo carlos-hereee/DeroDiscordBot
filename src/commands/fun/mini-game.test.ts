@@ -20,8 +20,13 @@ const handlers = vi.hoisted(() => ({
 
 // Mocked by the SAME specifier mini-game.ts imports, so the real handlers (and
 // their transitive Mongo / Discord dependencies) never load in this suite.
-vi.mock("@features/games/versusHandler.js", () => ({ runCoinFlip: handlers.runCoinFlip, runDiceRoll: handlers.runDiceRoll }));
-vi.mock("@features/games/rpsHandler.js", () => ({ runRps: handlers.runRps }));
+// The three head to head games route through challengeEntry as of game rooms
+// Phase 4; versusHandler.ts and rpsHandler.ts were retired with challengeFlow.
+vi.mock("@features/games/challengeEntry.js", () => ({
+	runCoinFlip: handlers.runCoinFlip,
+	runDiceRoll: handlers.runDiceRoll,
+	runRps: handlers.runRps,
+}));
 vi.mock("@features/games/hangmanHandler.js", () => ({ runHangman: handlers.runHangman }));
 vi.mock("@features/games/blackjackHandler.js", () => ({ runBlackjack: handlers.runBlackjack }));
 vi.mock("@features/games/fortuneHandler.js", () => ({ runFortune: handlers.runFortune }));
@@ -83,16 +88,21 @@ describe("/mini-game builder shape", () => {
 		expect(isPrivate?.required ?? false).toBe(false);
 	});
 
-	it("requires an opponent on both challenge based games and none on the solo ones", () => {
-		const opponentOf = (name: string): { required?: boolean } | undefined => {
-			const sub = topLevel.find((option) => option.name === name) as { options?: { name: string; required?: boolean }[] } | undefined;
-			return sub?.options?.find((option) => option.name === "opponent");
-		};
-		expect(opponentOf("coin-flip")?.required).toBe(true);
-		expect(opponentOf("dice-roll")?.required).toBe(true);
-		expect(opponentOf("rps")?.required).toBe(true);
-		expect(opponentOf("hangman")).toBeUndefined();
-		expect(opponentOf("fortune")).toBeUndefined();
+	// ⚠️ THIS TEST WAS INVERTED BY GAME ROOMS PHASE 4, and the inversion is the
+	// requirement. It used to assert an opponent option was REQUIRED on all three
+	// head to head games. An addUserOption is populated by DISCORD and will happily
+	// return a bot, which is the only reason the bot had to carry a "Bots do not
+	// play games with mortals" rejection string at all. Those three games now open a
+	// challenge card on ⚔️challenges, where the opponent arrives through a
+	// bot-populated StringSelect (a bot can never be an option) or a Join button (a
+	// bot cannot click). F9 became structural, and this asserts the surface that made
+	// it non-structural is gone.
+	it("offers NO user option on any subcommand, so no picker can return a bot", () => {
+		const userOptions = topLevel.flatMap((sub) => {
+			const options = (sub as { options?: { name: string; type: number }[] }).options ?? [];
+			return options.filter((option) => option.type === ApplicationCommandOptionType.User);
+		});
+		expect(userOptions).toEqual([]);
 	});
 });
 

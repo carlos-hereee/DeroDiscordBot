@@ -213,37 +213,29 @@ export const gamesCopy = {
 		tableTimedOut: "The table sat idle too long. The dealer clears the felt.",
 	},
 
-	// ── shared challenge and accept engine copy ──
-	// Consumed only by challengeFlow.ts. The duel and rps handlers pass their own
-	// `label` from above so one set of strings covers both games.
-	challenge: {
-		title: "⚔️ A challenge has been issued",
-		closedTitle: "⚔️ Challenge closed",
+	// ── the challenge and accept engine copy: RETIRED (game rooms Phase 4) ──
+	// This block held the strings for challengeFlow.ts, which ran a whole match
+	// inside one slash invocation with an inline collector and, for rps, a
+	// module-scoped Map of open rounds. All of it died on every Railway deploy.
+	// The challenge board replaced it: a draft GameRoom row is the handshake, and it
+	// survives the deploy. Its copy lives in
+	// @features/game-rooms/gameRoomsCopy.ts under `board`.
+	//
+	// ⚠️ `botOpponent` ("Bots do not play games with mortals") WENT WITH IT, and its
+	// absence is a feature rather than a deletion. It existed because an
+	// addUserOption is populated by DISCORD and can return a bot, so the rejection
+	// had to happen after the fact, in a string. The board's two ways in are a
+	// bot-populated StringSelect (a bot can never be an option) and a Join button (a
+	// bot cannot click). There is nothing left to reject, so the string would be
+	// answering a question that can no longer be asked. Requirement F9 is now
+	// structural. Do not reintroduce it, and do not add a user option to a game.
 
-		// Rendered as the message CONTENT, not inside the embed, because a mention
-		// inside an embed does not notify anyone. The reply pins allowedMentions to
-		// this one user id so the ping reaches the opponent and nothing else can
-		// smuggle a mass ping through.
-		mentionLine: (opponentId: string): string => `<@${opponentId}>, you have been called out.`,
-
-		description: (challengerId: string, opponentId: string, gameLabel: string): string =>
-			`<@${challengerId}> challenges <@${opponentId}> to ${gameLabel}.\n\nDo you accept?`,
-
-		footer: "Company Uno • for fun only",
-
-		acceptLabel: "Accept",
-		declineLabel: "Decline",
-
-		declined: (opponentId: string): string => `<@${opponentId}> declined. The moment passes.`,
-		timedOut: "Nobody answered the call. The challenge fades.",
-
-		// Rejection reasons, all shown ephemerally to the challenger before any
-		// public message posts, so a rejected challenge never clutters a channel.
-		selfChallenge: "You cannot challenge yourself. Find a worthy opponent.",
-		botOpponent: "Bots do not play games with mortals. Pick a real member.",
-		duplicate: "You two already have a challenge open. Settle that one first.",
-		outsideGuild: "Challenges only work inside a server, not in a DM.",
-	},
+	// Two strings that lived in that block and were never about challenges. Promoted
+	// here when it retired rather than deleted, because both have consumers that have
+	// nothing to do with two-player games: `footer` is the spine of EVERY embed this
+	// feature builds, and `outsideGuild` is hangman's "not in a DM" refusal.
+	footer: "Company Uno • for fun only",
+	outsideGuild: "Games only work inside a server, not in a DM.",
 
 	// Phase 1 placeholder for the three games whose handlers land in Phases 2
 	// through 4. It exists so the command shell is invokable and the routing test

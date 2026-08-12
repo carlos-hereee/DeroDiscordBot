@@ -2,8 +2,7 @@ import { SlashCommandBuilder, MessageFlags, type ChatInputCommandInteraction } f
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { gamesCopy } from "@features/games/gamesCopy.js";
 import { fortuneCopy } from "@features/fortune/fortuneCopy.js";
-import { runCoinFlip, runDiceRoll } from "@features/games/versusHandler.js";
-import { runRps } from "@features/games/rpsHandler.js";
+import { runCoinFlip, runDiceRoll, runRps } from "@features/games/challengeEntry.js";
 import { runHangman } from "@features/games/hangmanHandler.js";
 import { runBlackjack } from "@features/games/blackjackHandler.js";
 import { runFortune } from "@features/games/fortuneHandler.js";
@@ -46,35 +45,23 @@ import { runFortune } from "@features/games/fortuneHandler.js";
 export const data = new SlashCommandBuilder()
 	.setName("mini-game")
 	.setDescription(gamesCopy.commandDescription)
-	// ── the two head to head wagers ──
+	// ── the three head to head games ──
 	// One subcommand ("duel") until 2026-08-12, with a REQUIRED flip option that
 	// made a member choose a rule before they had played once and left the game
 	// with a name that described half of it. Two subcommands, no option, no
-	// question. Both still take the same required opponent.
-	.addSubcommand((sub) =>
-		sub
-			.setName("coin-flip")
-			.setDescription(gamesCopy.coinFlip.subcommandDescription)
-			.addUserOption((option) =>
-				option.setName("opponent").setDescription(gamesCopy.versus.opponentOptionDescription).setRequired(true)
-			)
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("dice-roll")
-			.setDescription(gamesCopy.diceRoll.subcommandDescription)
-			.addUserOption((option) =>
-				option.setName("opponent").setDescription(gamesCopy.versus.opponentOptionDescription).setRequired(true)
-			)
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("rps")
-			.setDescription(gamesCopy.rps.subcommandDescription)
-			.addUserOption((option) =>
-				option.setName("opponent").setDescription(gamesCopy.rps.opponentOptionDescription).setRequired(true)
-			)
-	)
+	// question.
+	//
+	// ⚠️ NO `opponent` OPTION ON ANY OF THE THREE, as of game rooms Phase 4, and its
+	// absence is the point. An addUserOption is populated by DISCORD and will
+	// happily return a bot, which is why "Bots do not play games" had to exist as a
+	// rejection string at all. These three now open a challenge card on
+	// ⚔️challenges instead, where the opponent arrives either through a
+	// bot-populated StringSelect (which cannot contain a bot) or by pressing Join
+	// (which a bot cannot do). The rejection is structural now, so the string is
+	// gone. Do NOT add a user option back to any game.
+	.addSubcommand((sub) => sub.setName("coin-flip").setDescription(gamesCopy.coinFlip.subcommandDescription))
+	.addSubcommand((sub) => sub.setName("dice-roll").setDescription(gamesCopy.diceRoll.subcommandDescription))
+	.addSubcommand((sub) => sub.setName("rps").setDescription(gamesCopy.rps.subcommandDescription))
 	.addSubcommand((sub) => sub.setName("hangman").setDescription(gamesCopy.hangman.subcommandDescription))
 	.addSubcommand((sub) =>
 		sub

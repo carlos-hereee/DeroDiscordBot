@@ -62,7 +62,28 @@ beforeEach(() => {
 
 describe("parseGameRoomCustomId", () => {
 	it("parses a known control", () => {
-		expect(parseGameRoomCustomId("gameroom:archive:room-1")).toEqual({ action: "archive", roomId: "room-1" });
+		expect(parseGameRoomCustomId("gameroom:archive:room-1")).toEqual({
+			action: "archive",
+			tail: "room-1",
+			arg: undefined,
+		});
+	});
+
+	// `vis` is the one control carrying a fourth segment. Dropping it would silently
+	// default every visibility choice to invite, so a public room could never be made
+	// and nothing would report an error.
+	it("keeps the fourth segment for the visibility chooser", () => {
+		expect(parseGameRoomCustomId("gameroom:vis:room-1:public")).toEqual({
+			action: "vis",
+			tail: "room-1",
+			arg: "public",
+		});
+	});
+
+	// `new` carries a game SLUG rather than a roomId, because it runs before any room
+	// exists. The parser must not assume otherwise.
+	it("parses the pre-room control, whose tail is a game slug", () => {
+		expect(parseGameRoomCustomId("gameroom:new:rps")).toEqual({ action: "new", tail: "rps", arg: undefined });
 	});
 
 	// customIds live as long as the messages carrying them, so a control retired two
@@ -71,11 +92,8 @@ describe("parseGameRoomCustomId", () => {
 	it.each([
 		["a foreign prefix", "powerup:archive:room-1"],
 		["an unknown action", "gameroom:selfdestruct:room-1"],
-		["a missing roomId", "gameroom:archive"],
+		["a missing tail", "gameroom:archive"],
 		["garbage", "nonsense"],
-		// Phase 4's reserved controls are deliberately NOT in the table yet, so they
-		// must read as unknown rather than routing into a branch that does not exist.
-		["a Phase 4 control that is not built", "gameroom:join:room-1"],
 	])("returns null for %s", (_label, customId) => {
 		expect(parseGameRoomCustomId(customId)).toBeNull();
 	});
@@ -83,9 +101,21 @@ describe("parseGameRoomCustomId", () => {
 
 describe("gameRoomHandlers routing", () => {
 	it("answers an unknown control honestly instead of crashing", async () => {
-		const interaction = makeInteraction("gameroom:join:room-1");
+		const interaction = makeInteraction("gameroom:selfdestruct:room-1");
 		await _handleGameRoomButton(interaction);
 		expect(replyText(interaction)).toContain("no longer available");
+	});
+
+	// A cancelled draft's card, and a finished room's, both stay scrollable forever
+	// with their buttons attached. Refusing by STATUS is what stops a stale press
+	// re-opening something that is over; hiding the buttons would only be a hint.
+	it("refuses a board control once the draft is no longer a draft", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "archived" }));
+		const interaction = makeInteraction("gameroom:join:room-1", "player-9");
+
+		await _handleGameRoomButton(interaction);
+
+		expect(replyText(interaction)).toContain("no longer open");
 	});
 
 	// ⚠️ GUILD SCOPING IS A SECURITY BOUNDARY (invariant 2). The roomId rides a

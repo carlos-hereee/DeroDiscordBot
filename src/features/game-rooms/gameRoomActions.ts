@@ -12,15 +12,38 @@
 
 export const GAME_ROOM_PREFIX = "gameroom";
 
-// customId shape: `gameroom:<action>:<roomId>`.
+// The select menu prefix, registered separately from the buttons because the registry
+// keys each component type in its own map.
+export const GAME_ROOM_SELECT_PREFIX = "gameroomSelect";
+
+// customId shape: `gameroom:<action>:<tail>[:<arg>]`.
 //
-// ⚠️ ONLY THE CONTROLS PHASE 3 ACTUALLY HANDLES ARE LISTED. The plan's namespace also
-// reserves new / vis / invite / join / start / cancel for the challenge board, and
-// `move` for the in-room game controls. None of those have a button that emits them or
-// a branch that answers them yet, and declaring them here would make an unknown-control
-// reply ("this control is no longer available") impossible to tell from a real gap.
-// Phase 4 adds its entries in the same commit as its buttons.
+// `tail` is a roomId for every action except `new`, which carries a game slug because
+// no room exists yet at that point. `arg` is used only by `vis`.
+//
+// ⚠️ EVERY ENTRY HERE HAS A BUTTON THAT EMITS IT AND A BRANCH THAT ANSWERS IT. Phase 3
+// deliberately declared only archive and forfeit for that reason, and Phase 4 adds the
+// rest in the same commit as the board that emits them. Keep that property: an action
+// listed here with no branch turns the honest "this control is no longer available"
+// reply into a lie, and a member cannot tell a retired button from a broken one.
 export const GAME_ROOM_ACTIONS = {
+	// ── the board (Phase 4) ──
+	// Start a challenge. Carries a GAME SLUG, not a roomId: this is the one action
+	// that runs before a room exists. Any member may start one, so no gate.
+	new: { hostOnly: false, playersOnly: false },
+	// Host picks Invite only or Open to all. hostOnly: it is their draft.
+	vis: { hostOnly: true, playersOnly: false },
+	// Host opens the member picker.
+	invite: { hostOnly: true, playersOnly: false },
+	// A member volunteers for an open-to-all challenge. Deliberately ungated: the
+	// whole point is that anyone may take it up.
+	join: { hostOnly: false, playersOnly: false },
+	// Host provisions the room from the pool they gathered.
+	start: { hostOnly: true, playersOnly: false },
+	// Host abandons the draft before it becomes a room.
+	cancel: { hostOnly: true, playersOnly: false },
+
+	// ── in the room (Phase 3, plus the game controls Phase 4 adds) ──
 	// Delete the room's channel now rather than waiting out the archive window.
 	// hostOnly, with the admin override applied in the handler: an admin clearing a
 	// room is moderation, and an admin is not a player.
@@ -29,19 +52,31 @@ export const GAME_ROOM_ACTIONS = {
 	// game is the obvious griefing shape, and the room's own players are the only
 	// people whose surrender means anything.
 	forfeit: { hostOnly: false, playersOnly: true },
+	// The in-room game control: the coin/dice button, and rps's secret pick prompt.
+	// playersOnly is the whole reason spectators cannot influence a match they are
+	// only watching.
+	move: { hostOnly: false, playersOnly: true },
 } as const satisfies Record<string, { hostOnly: boolean; playersOnly: boolean }>;
 
 export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;
 
-// Parse `gameroom:<action>:<roomId>` without trusting either half.
+export interface ParsedGameRoomCustomId {
+	action: GameRoomAction;
+	// The roomId for every action but `new`, where it is the game slug instead.
+	tail: string;
+	// Present only on `vis`. Undefined elsewhere.
+	arg?: string;
+}
+
+// Parse a game room customId without trusting any part of it.
 //
 // A stale button from an older bot version is the ordinary case here, not an attack:
 // customIds live forever in Discord's message history, so a control retired two
 // deploys ago is still clickable by anyone scrolling back. Returning null rather than
 // throwing is what lets the handler answer honestly instead of crashing.
-export function parseGameRoomCustomId(customId: string): { action: GameRoomAction; roomId: string } | null {
-	const [prefix, action, roomId] = customId.split(":");
-	if (prefix !== GAME_ROOM_PREFIX || !action || !roomId) return null;
+export function parseGameRoomCustomId(customId: string): ParsedGameRoomCustomId | null {
+	const [prefix, action, tail, arg] = customId.split(":");
+	if (prefix !== GAME_ROOM_PREFIX || !action || !tail) return null;
 	if (!(action in GAME_ROOM_ACTIONS)) return null;
-	return { action: action as GameRoomAction, roomId };
+	return { action: action as GameRoomAction, tail, arg };
 }

@@ -1,0 +1,150 @@
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type ColorResolvable } from "discord.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
+import { COLORS } from "@base/copy/brand.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
+import type { GameSlug, RoomVisibility } from "./roomTypes.js";
+
+// ── challengeBoardEmbeds ─────────────────────────────────────────────
+// What:  the pinned ⚔️challenges intro, and the opener card that is edited in place
+//        as one challenge moves from "choosing visibility" to "under way".
+// Who:   challengeBoard.ts.
+// When:  the intro once per boot (refreshIntroEmbeds keeps it current); the card on
+//        every state change of a draft.
+// How:   ONE card, edited, rather than a new message per step. A challenge that
+//        posted a fresh message for each of visibility, join and start would bury
+//        the channel it lives in, and ⚔️challenges is meant to be scannable.
+
+// The two-player games the board can start. Hangman and blackjack are absent on
+// purpose: they are hostable from the 📋arcade-rules card because they need no named
+// opponent, and a room is earned by DURATION rather than by head count.
+export const CHALLENGE_GAMES: readonly GameSlug[] = ["coinflip", "diceroll", "rps"] as const;
+
+const GAME_EMOJI: Record<string, string> = { coinflip: "🪙", diceroll: "🎲", rps: "✊" };
+
+export function boardIntroEmbed(): EmbedBuilder {
+	return infoEmbed(
+		gameRoomsCopy.board.introTitle,
+		gameRoomsCopy.board.introDescription,
+		COLORS.ARCADE as ColorResolvable
+	);
+}
+
+// One button per two-player game. Carries the SLUG rather than a roomId, because no
+// room exists until this is pressed.
+export function boardStartRow(): ActionRowBuilder<ButtonBuilder> {
+	return new ActionRowBuilder<ButtonBuilder>().addComponents(
+		...CHALLENGE_GAMES.map((game) =>
+			new ButtonBuilder()
+				.setCustomId(`${GAME_ROOM_PREFIX}:new:${game}`)
+				.setLabel(gameRoomsCopy.board.startButtonLabel(game))
+				.setEmoji(GAME_EMOJI[game] ?? "⚔️")
+				.setStyle(ButtonStyle.Primary)
+		)
+	);
+}
+
+export interface OpenerCardState {
+	game: GameSlug;
+	hostId: string;
+	visibility: RoomVisibility | null;
+	pool: string[];
+	// Terminal states. When either is set the card stops offering controls.
+	cancelled?: boolean;
+	startedChannelId?: string | null;
+}
+
+// How many pool members the card names before it summarises the rest. Well under the
+// 25 member cap so the card never becomes a wall of mentions, and the copy states the
+// remainder rather than silently dropping it.
+const POOL_NAMES_SHOWN = 8;
+
+export function openerCardEmbed(state: OpenerCardState): EmbedBuilder {
+	const lines: string[] = [];
+
+	if (state.cancelled) {
+		lines.push(gameRoomsCopy.board.cardCancelled(state.hostId));
+	} else if (state.startedChannelId) {
+		lines.push(gameRoomsCopy.board.cardStarted(state.startedChannelId));
+	} else if (!state.visibility) {
+		lines.push(gameRoomsCopy.board.cardWaitingVisibility(state.hostId));
+	} else if (state.visibility === "invite") {
+		lines.push(gameRoomsCopy.board.cardInviteOnly(state.hostId));
+		lines.push("", gameRoomsCopy.board.cardPool(state.pool, POOL_NAMES_SHOWN));
+	} else {
+		lines.push(gameRoomsCopy.board.cardOpenToAll(state.hostId));
+		lines.push("", gameRoomsCopy.board.cardPool(state.pool, POOL_NAMES_SHOWN));
+	}
+
+	return infoEmbed(
+		gameRoomsCopy.board.cardTitle(state.game),
+		lines.join("\n"),
+		COLORS.ARCADE as ColorResolvable
+	);
+}
+
+// The card's controls for the current state. Returns an empty array once the draft is
+// terminal, which is what strips the buttons off a finished card rather than leaving
+// dead controls a member can still press.
+export function openerCardRows(roomId: string, state: OpenerCardState): ActionRowBuilder<ButtonBuilder>[] {
+	if (state.cancelled || state.startedChannelId) return [];
+
+	const cancel = new ButtonBuilder()
+		.setCustomId(`${GAME_ROOM_PREFIX}:cancel:${roomId}`)
+		.setLabel(gameRoomsCopy.board.cancelLabel)
+		.setStyle(ButtonStyle.Secondary);
+
+	// Step 1: the host has not chosen who can see the room yet.
+	if (!state.visibility) {
+		return [
+			new ActionRowBuilder<ButtonBuilder>().addComponents(
+				new ButtonBuilder()
+					.setCustomId(`${GAME_ROOM_PREFIX}:vis:${roomId}:invite`)
+					.setLabel(gameRoomsCopy.board.visibilityInviteLabel)
+					.setEmoji("🔒")
+					.setStyle(ButtonStyle.Secondary),
+				new ButtonBuilder()
+					.setCustomId(`${GAME_ROOM_PREFIX}:vis:${roomId}:public`)
+					.setLabel(gameRoomsCopy.board.visibilityOpenLabel)
+					.setEmoji("🌐")
+					.setStyle(ButtonStyle.Primary),
+				cancel
+			),
+		];
+	}
+
+	// Step 2: gather the pool, then start.
+	//
+	// Invite mode offers the picker; open-to-all offers Join to everyone. Start is
+	// present in both and refuses an empty pool in the handler rather than being
+	// hidden here: a hidden button is a suggestion, not a gate, and an honestly
+	// refused press tells the host WHY nothing happened.
+	const gather =
+		state.visibility === "invite"
+			? new ButtonBuilder()
+					.setCustomId(`${GAME_ROOM_PREFIX}:invite:${roomId}`)
+					.setLabel(gameRoomsCopy.board.pickerPlaceholder)
+					.setEmoji("✉️")
+					.setStyle(ButtonStyle.Secondary)
+			: new ButtonBuilder()
+					.setCustomId(`${GAME_ROOM_PREFIX}:join:${roomId}`)
+					.setLabel(gameRoomsCopy.board.joinLabel)
+					.setEmoji("🙋")
+					.setStyle(ButtonStyle.Success)
+					// The cap is Discord's select ceiling and the overwrite budget at once.
+					// Disabling at the cap beats letting a press fail.
+					.setDisabled(state.pool.length >= BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS);
+
+	return [
+		new ActionRowBuilder<ButtonBuilder>().addComponents(
+			gather,
+			new ButtonBuilder()
+				.setCustomId(`${GAME_ROOM_PREFIX}:start:${roomId}`)
+				.setLabel(gameRoomsCopy.board.startLabel)
+				.setEmoji("⚔️")
+				.setStyle(ButtonStyle.Primary),
+			cancel
+		),
+	];
+}

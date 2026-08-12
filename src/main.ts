@@ -24,7 +24,7 @@ import { refreshAllSchedules } from "@features/schedule/ScheduleBoard.js";
 import { postFeatureAnnouncements } from "@features/announcements/postFeatureAnnouncement.js";
 import { registerOutageWatcher } from "@features/observability/outageWatcher.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
-import { dispatchButton, dispatchModal } from "@handlers/interactionRegistry.js";
+import { dispatchButton, dispatchModal, dispatchSelectMenu } from "@handlers/interactionRegistry.js";
 import { registerDecreeEditHandlers } from "@features/schedule/decreeEditHandlers.js";
 import { registerLeaderboardChannelHandlers } from "@features/leaderboard/leaderboardChannelHandlers.js";
 import { refreshAllNextUp } from "@features/schedule/NextUpBoard.js";
@@ -338,6 +338,34 @@ process.on("uncaughtException", (err) => {
 				await dispatchButton(interaction);
 			} catch (error) {
 				console.error(`[interactions] button handler threw for customId='${interaction.customId}'`, error);
+				if (!interaction.replied && !interaction.deferred) {
+					await interaction
+						.reply({
+							embeds: [errorEmbed(rokCommanderCopy.responses.commandExecuteFailure)],
+							flags: MessageFlags.Ephemeral,
+						})
+						.catch(() => undefined);
+				}
+			}
+			return;
+		}
+
+		// ── persistent string select dispatch ──
+		// Same dispatch model as buttons, added for the game rooms invite picker.
+		// A select driven by an inline collector (configure-rok-reminders' timezone
+		// picker) flows through here too; dispatchSelectMenu returns false and the
+		// collector handles it, exactly as with buttons and modals.
+		//
+		// isStringSelectMenu specifically, NOT isAnySelectMenu: the other select
+		// types (User, Role, Channel, Mentionable) are populated by DISCORD, and
+		// game rooms deliberately uses a bot-populated StringSelect so a bot can
+		// never appear as an opponent. Nothing here should quietly start routing a
+		// component type that reintroduces that.
+		if (interaction.isStringSelectMenu()) {
+			try {
+				await dispatchSelectMenu(interaction);
+			} catch (error) {
+				console.error(`[interactions] select handler threw for customId='${interaction.customId}'`, error);
 				if (!interaction.replied && !interaction.deferred) {
 					await interaction
 						.reply({

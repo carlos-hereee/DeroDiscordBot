@@ -6,6 +6,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { buildRoomChannelName, resolveRoomChannelName } from "./roomNaming.js";
 import { buildRoomOverwrites } from "./roomPermissions.js";
 import { roomOpenerEmbed } from "./gameRoomsEmbeds.js";
+import { roomMoveRow } from "./roomGames.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -59,6 +60,13 @@ export interface RoomOpenInput {
 	spectatorIds?: string[];
 	visibility: RoomVisibility;
 	adminRoleId?: string | null;
+	// Set when a DRAFT row already exists, which is the challenge board's path: the
+	// row was created the moment the host pressed Start a challenge, and this call is
+	// promoting it rather than opening from nothing. Without this the insert below
+	// would collide with the partial unique index against the host's own draft, and
+	// the honest-looking result would be "you already have a room open" pointing at
+	// the very draft the member is trying to start.
+	existingRoomId?: string;
 }
 
 export const RoomProvisioner = {
@@ -90,9 +98,14 @@ export const RoomProvisioner = {
 		// ① F11, the friendly half. The partial unique index is the real enforcement and
 		// would throw a duplicate key on create; checking first is what turns that into a
 		// jump link to the room the host already has.
-		const existing = await gameRoomStore.findOpenByHost(guild.id, hostId);
-		if (existing) {
-			return { ok: false, reason: "alreadyHosting", existingChannelId: existing.channelId };
+		//
+		// Skipped entirely when adopting a draft: the host's one open room IS the draft
+		// being promoted, so this check would refuse the very thing it is protecting.
+		if (!input.existingRoomId) {
+			const existing = await gameRoomStore.findOpenByHost(guild.id, hostId);
+			if (existing) {
+				return { ok: false, reason: "alreadyHosting", existingChannelId: existing.channelId };
+			}
 		}
 
 		// ② The guild cap. Counting ROWS rather than the category's children stays correct
@@ -143,16 +156,26 @@ export const RoomProvisioner = {
 
 		// ④ The row. Created AFTER the channel so a row can never point at a channel that
 		// was never built; the opposite order would leave a phantom room in every list.
+		//
+		// Adopting a draft skips the insert: the board created that row when the host
+		// pressed Start a challenge, and it already carries the boardMessageId this
+		// channel's card is anchored to.
 		let room: IGameRoom;
 		try {
-			room = await gameRoomStore.create({
-				guildId: guild.id,
-				game,
-				hostId,
-				visibility,
-				playerIds,
-				spectatorIds,
-			});
+			if (input.existingRoomId) {
+				const adopted = await gameRoomStore.findByRoomId(guild.id, input.existingRoomId);
+				if (!adopted) throw new Error(`draft ${input.existingRoomId} vanished before provisioning`);
+				room = adopted;
+			} else {
+				room = await gameRoomStore.create({
+					guildId: guild.id,
+					game,
+					hostId,
+					visibility,
+					playerIds,
+					spectatorIds,
+				});
+			}
 		} catch (error) {
 			// Almost certainly the partial unique index catching a race the in-flight map
 			// could not (two processes, or a click that straddled a deploy). The channel
@@ -166,8 +189,14 @@ export const RoomProvisioner = {
 		// ⑤ Move to "playing" and record the ids that only exist now. Two writes rather
 		// than one because create() owns the shape of a new row and this owns the
 		// transition; folding them would put lifecycle logic into the store.
+		// The opener carries the game's own controls, so a player never has to find a
+		// command to take their turn. Pinned below, which is what keeps it reachable
+		// once the trail has scrolled past it.
 		const opener = await channel
-			.send({ embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility === "public")] })
+			.send({
+				embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility === "public")],
+				components: [roomMoveRow({ roomId: room.roomId, game })],
+			})
 			.catch(() => null);
 		await opener?.pin().catch(() => undefined);
 
