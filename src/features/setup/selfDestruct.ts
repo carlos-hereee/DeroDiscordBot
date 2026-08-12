@@ -38,9 +38,17 @@ const PREFIX = "self_destruct";
 const CONFIRM_ID = `${PREFIX}:confirm`;
 const CANCEL_ID = `${PREFIX}:cancel`;
 
-// GuildConfig channel-id fields demolished on self-destruct (the category is
+// GuildConfig channel-id fields demolished on self-destruct (the categories are
 // fetched + deleted separately). Children are deleted first; the category last.
-const HOMEBASE_CHANNEL_FIELDS = [
+//
+// ⚠️ SPANS BOTH MANAGED CATEGORIES as of the ARCADE GAMES work. The name still
+// says "homebase" because self-destruct's job is "remove everything this bot
+// built", and that surface is now two categories rather than one. Any new
+// managed channel must be added here in the SAME change that creates it (risk
+// R13): a channel this list forgets survives the demolition, and the
+// homebaseDestroyed flag set moments earlier then stops ensureHomebase from ever
+// touching it again, so the leftover is PERMANENT rather than merely untidy.
+export const HOMEBASE_CHANNEL_FIELDS = [
 	"introChannelId",
 	"commandsChannelId",
 	"leaderboardChannelId",
@@ -49,7 +57,16 @@ const HOMEBASE_CHANNEL_FIELDS = [
 	"nextDecreeChannelId",
 	"adminChannelId",
 	"adminCommandsChannelId",
+	// 🎮 ARCADE GAMES
+	"gamesRulesChannelId",
+	"gamesChallengesChannelId",
 ] as const;
+
+// Both managed categories, deleted last and in this order. Per-match ROOM
+// channels are deliberately absent: they live on GameRoom rows rather than on
+// GuildConfig, and the children sweep inside demolishCategory catches them
+// anyway, which is the correct outcome for a self-destruct.
+export const MANAGED_CATEGORY_FIELDS = ["categoryId", "gamesCategoryId"] as const;
 
 type SelfDestructEntry = ButtonInteraction | ChatInputCommandInteraction;
 
@@ -74,7 +91,11 @@ export async function showSelfDestructConfirm(interaction: SelfDestructEntry): P
 	const warning = infoEmbed(
 		"💥 Self destruct the homebase?",
 		[
-			"This DELETES the bot's category and every homebase channel in this server (introductions, command center, leaderboard, event schedule, announcements, upcoming events, the admin channel, and the admin command center) along with everything posted in them.",
+			"This DELETES **both** of the bot's categories and every channel in them, along with everything posted there.",
+			"",
+			"🪧 NOTICE BOARD: introductions, command center, leaderboard, event schedule, announcements, upcoming events, the admin channel, and the admin command center.",
+			"",
+			"🎮 ARCADE GAMES: the game rules card, the challenge board, and **any match currently in progress**.",
 			"",
 			"It stays gone across restarts until you run `/setup` again. **This cannot be undone.**",
 		].join("\n"),
@@ -172,27 +193,40 @@ async function demolishHomebase(client: Client, guild: Guild, actorId: string): 
 		}
 	}
 
-	if (config.categoryId) {
-		const category = await guild.channels.fetch(config.categoryId).catch(() => null);
-		if (category) {
-			// Defensive: delete any channel still parented to the category before
-			// removing it (a tracked child whose delete above failed, or one an
-			// admin filed under it). Discord orphans children when a category is
-			// deleted rather than cascading, so this prevents stray leftover channels.
-			if (category instanceof CategoryChannel) {
-				for (const child of category.children.cache.values()) {
-					await child
-						.delete("Homebase self-destruct")
-						.catch((err) => console.warn(`[self-destruct] failed to delete orphan child ${child.id} in guild ${guild.id}`, err));
-				}
-			}
-			await category
-				.delete("Homebase self-destruct")
-				.catch((err) => console.warn(`[self-destruct] failed to delete category in guild ${guild.id}`, err));
-		}
+	// Both managed categories, through one helper so the arcade cannot be
+	// demolished less thoroughly than the homebase.
+	for (const field of MANAGED_CATEGORY_FIELDS) {
+		await demolishCategory(guild, ids[field], field);
 	}
 
 	console.warn(`[self-destruct] homebase demolished in guild ${guild.id}`);
+}
+
+/**
+ * Delete one managed category and anything still parented to it. Best effort
+ * throughout: a failed delete is logged and the rest proceed, because a partial
+ * demolition that reports honestly beats one that aborts halfway.
+ */
+async function demolishCategory(guild: Guild, categoryId: string | null | undefined, label: string): Promise<void> {
+	if (!categoryId) return;
+	const category = await guild.channels.fetch(categoryId).catch(() => null);
+	if (!category) return;
+
+	// Defensive: delete any channel still parented to the category before removing
+	// it (a tracked child whose delete above failed, one an admin filed under it,
+	// or, under the arcade, a live per-match room channel that is not tracked on
+	// GuildConfig at all). Discord ORPHANS children when a category is deleted
+	// rather than cascading, so without this they survive as stray top level
+	// channels that nothing will ever clean up.
+	if (category instanceof CategoryChannel) {
+		for (const child of category.children.cache.values()) {
+			await child
+				.delete("Homebase self-destruct")
+				.catch((err) => console.warn(`[self-destruct] failed to delete orphan child ${child.id} in guild ${guild.id}`, err));
+		}
+	}
+
+	await category.delete("Homebase self-destruct").catch((err) => console.warn(`[self-destruct] failed to delete ${label} in guild ${guild.id}`, err));
 }
 
 /**
