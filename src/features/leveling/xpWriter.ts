@@ -8,6 +8,8 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import type { LifetimeCounter } from "./levelingTypes.js";
 import { handleLevelCrossing } from "./levelUpAnnouncer.js";
+import { getLevelingConfig } from "./levelingConfig.js";
+import { runAchievementPass } from "./achievementUnlock.js";
 
 // ── xpWriter ───────────────────────────────────────────────────────────────
 // The three mechanisms that let the bot's FIRST EVER messageCreate listener sit
@@ -241,6 +243,10 @@ async function dispatchCrossings(
 
 	for (const [guildId, userIds] of byGuild) {
 		const docs = await memberLevelStore.findManyInGuild(guildId, userIds);
+		// Read once per guild, not once per member: the achievement pass below needs
+		// the curve to derive a level, and the config read is TTL cached anyway.
+		const context = await getLevelingConfig(guildId);
+
 		for (const doc of docs) {
 			const entry = totals.get(`${guildId}:${doc.userId}`);
 			if (!entry) continue;
@@ -261,6 +267,19 @@ async function dispatchCrossings(
 				oldTotalXp: doc.totalXp - entry.xp,
 				newTotalXp: doc.totalXp,
 			});
+
+			// ⚠️ THIS IS THE ONLY CALL SITE OF THE ACHIEVEMENT PASS in the codebase,
+			// and that is load bearing rather than incidental. Running it from
+			// anywhere else, and in particular from inside an unlock handler, turns
+			// "unlock grants xp, xp crosses a level, a level changes the metrics an
+			// unlock is evaluated against" into a loop that feeds itself. Keeping it
+			// here means it runs exactly once per flushed member per flush.
+			//
+			// Deliberately NOT gated on a level crossing: a member can unlock "sent
+			// 53 messages" without levelling at all.
+			if (context?.settings.enabled) {
+				await runAchievementPass(client, guildId, doc, context.settings);
+			}
 		}
 	}
 }

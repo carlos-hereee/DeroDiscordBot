@@ -47,13 +47,12 @@ describe("member command guide", () => {
 		expect(guideText(copy)).toContain("`/levels`");
 	});
 
-	it.each(PACKS)("$name does NOT yet advertise /achievements", ({ copy }) => {
-		// ⚠️ DELIBERATE, and it is a deviation from the master plan, which lists all
-		// three as one Phase 3 task. The /achievements COMMAND does not exist until
-		// Phase 4, and a guide naming a command Discord does not know sends members
-		// to a dead end. It joins the guide in the same commit that ships the
-		// command. Delete this case then, do not delete it before.
-		expect(guideText(copy)).not.toContain("`/achievements`");
+	it.each(PACKS)("$name names /achievements", ({ copy }) => {
+		// Added in Phase 4, in the same commit that shipped the command. Through
+		// Phase 3 this case asserted the OPPOSITE, because the guide is the only
+		// surface telling a member a command exists and naming one Discord does not
+		// know sends them to a dead end.
+		expect(guideText(copy)).toContain("`/achievements`");
 	});
 
 	it.each(PACKS)("$name no longer advertises the retired /fortune command", ({ copy }) => {

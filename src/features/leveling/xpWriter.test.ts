@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
 	periodBulkWrite: vi.fn(),
 	findManyInGuild: vi.fn(),
 	handleLevelCrossing: vi.fn(),
+	getLevelingConfig: vi.fn(),
+	runAchievementPass: vi.fn(),
 }));
 
 vi.mock("@db/stores/memberLevelStore.js", () => ({
@@ -24,6 +26,8 @@ vi.mock("@db/stores/xpPeriodStore.js", () => ({
 	xpPeriodStore: { bulkWrite: mocks.periodBulkWrite },
 }));
 vi.mock("./levelUpAnnouncer.js", () => ({ handleLevelCrossing: mocks.handleLevelCrossing }));
+vi.mock("./levelingConfig.js", () => ({ getLevelingConfig: mocks.getLevelingConfig }));
+vi.mock("./achievementUnlock.js", () => ({ runAchievementPass: mocks.runAchievementPass }));
 
 import {
 	_clearXpWriter,
@@ -56,6 +60,11 @@ beforeEach(() => {
 	mocks.periodBulkWrite.mockReset().mockResolvedValue(null);
 	mocks.findManyInGuild.mockReset().mockResolvedValue([]);
 	mocks.handleLevelCrossing.mockReset().mockResolvedValue(undefined);
+	mocks.getLevelingConfig.mockReset().mockResolvedValue({
+		settings: { enabled: true, curve: "dero", curveMultiplier: 1, maxLevel: null },
+		weekStart: "sunday",
+	});
+	mocks.runAchievementPass.mockReset().mockResolvedValue(undefined);
 });
 
 describe("① the cooldown claim", () => {
@@ -233,6 +242,33 @@ describe("level crossing dispatch", () => {
 		await flushNow();
 
 		expect(mocks.findManyInGuild).toHaveBeenCalledTimes(2);
+	});
+
+	it("runs the achievement pass for EVERY flushed member, not just those who leveled", async () => {
+		// ⚠️ This is the ONLY call site of the achievement pass in the codebase, and
+		// that is what stops "unlock grants xp, xp crosses a level, a level changes
+		// the metrics an unlock was evaluated against" from becoming a loop.
+		// It is also deliberately not gated on a crossing: a member can unlock
+		// "sent 53 messages" without levelling at all.
+		mocks.findManyInGuild.mockResolvedValue([{ userId: "u1", username: "silent", totalXp: 10 }]);
+		startXpWriter(client, { flushIntervalMs: 60_000, sweepIntervalMs: 60_000 });
+
+		stage(award({ xp: 5 })); // nowhere near a level boundary
+		await flushNow();
+
+		expect(mocks.handleLevelCrossing).toHaveBeenCalledTimes(1);
+		expect(mocks.runAchievementPass).toHaveBeenCalledTimes(1);
+	});
+
+	it("skips the achievement pass when the guild has leveling disabled", async () => {
+		mocks.getLevelingConfig.mockResolvedValue({ settings: { enabled: false }, weekStart: "sunday" });
+		mocks.findManyInGuild.mockResolvedValue([{ userId: "u1", username: "silent", totalXp: 10 }]);
+		startXpWriter(client, { flushIntervalMs: 60_000, sweepIntervalMs: 60_000 });
+
+		stage(award());
+		await flushNow();
+
+		expect(mocks.runAchievementPass).not.toHaveBeenCalled();
 	});
 
 	it("skips the read back entirely when no client is bound", async () => {

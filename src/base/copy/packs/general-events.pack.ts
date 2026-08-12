@@ -318,6 +318,8 @@ export const generalEventsCopy: IPluginCopy = {
 						"Your profile: level, server rank, your win/loss record in every game, and your achievements.",
 						"`/levels`",
 						"See who is most active in the server, this week, this month, or all time.",
+						"`/achievements`",
+						"What you have unlocked and what is closest. A few stay hidden until you earn them.",
 					].join("\n"),
 				},
 			] satisfies IEmbedField[],

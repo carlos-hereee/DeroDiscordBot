@@ -101,7 +101,20 @@ describe("the buffered / write-through fork", () => {
 		expect(staged.month).toMatch(/^\d{4}-\d{2}$/);
 	});
 
-	it.each(["reaction", "voice", "game", "gameRoom", "achievement", "admin"] as const)(
+	it("STAGES an achievement award, for a completely different reason", async () => {
+		// ⚠️ Not a performance decision like message xp. An achievement's bonus is
+		// granted from inside the flush's own achievement pass, so writing it
+		// through would let it cross a level in the SAME pass that granted it, and
+		// a level change moves the metrics that pass was evaluating. Buffering
+		// pushes it into the next flush window as an ordinary award. See the
+		// recursion note in achievementEngine.ts.
+		await awardXp(input({ source: "achievement", amount: 101 }));
+
+		expect(mocks.stage).toHaveBeenCalledTimes(1);
+		expect(mocks.incrementAndReturn).not.toHaveBeenCalled();
+	});
+
+	it.each(["reaction", "voice", "game", "gameRoom", "admin"] as const)(
 		"writes %s through immediately",
 		async (source) => {
 			// A game result or an admin correction must be visible on the very next

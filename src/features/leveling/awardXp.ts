@@ -87,12 +87,18 @@ export async function awardXp(input: AwardXpInput): Promise<void> {
 		const { week, month } = periodKeysFor(new Date(), context.weekStart);
 
 		// ── ② the fork ──
-		// "message" is the only buffered source, and it is buffered because it is
-		// the only one that arrives faster than a database round trip. Everything
-		// else writes through immediately, because a game result or an admin
-		// correction should be visible on the very next /account rather than up to
-		// a flush window later.
-		if (input.source === "message") {
+		// "message" is buffered because it arrives faster than a database round
+		// trip. Everything else writes through immediately, because a game result or
+		// an admin correction should be visible on the very next /account rather
+		// than up to a flush window later.
+		//
+		// ⚠️ "achievement" IS ALSO BUFFERED, and for a completely different reason:
+		// it is half of the recursion defense. An achievement's xp bonus is granted
+		// from inside the flush's own achievement pass, so writing it through would
+		// let it cross a level in the same pass that granted it. Buffering pushes it
+		// into the NEXT flush window as an ordinary award, where it is evaluated
+		// once, idempotently, like anything else. See achievementEngine.ts.
+		if (input.source === "message" || input.source === "achievement") {
 			stage({
 				guildId: input.guildId,
 				userId: input.userId,

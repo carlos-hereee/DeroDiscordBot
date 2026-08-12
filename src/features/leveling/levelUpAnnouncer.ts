@@ -12,6 +12,8 @@ import { levelingCopy } from "./levelingCopy.js";
 import { buildCombinedLevelUpEmbed, buildLevelUpEmbed } from "./levelingEmbeds.js";
 import { getLevelingConfig, type GuildLevelingContext } from "./levelingConfig.js";
 import { scheduleLevelsBoardRefresh } from "./LevelsBoard.js";
+import { reconcileRewards } from "./roleRewards.js";
+import { buildAchievementUnlockEmbed } from "./levelingEmbeds.js";
 
 // ── levelUpAnnouncer ───────────────────────────────────────────────────────
 // Decides that a level was crossed, claims the right to say so exactly once, and
@@ -113,10 +115,14 @@ export async function handleLevelCrossing(input: LevelCrossingInput): Promise<vo
 		const claimed = await memberLevelStore.claimAnnouncement(input.guildId, input.userId, newLevel);
 		if (!claimed) return;
 
-		// ── Phase 4 seam: role rewards ──
-		// reconcileRewards(input.client, input.guildId, input.userId, newLevel)
-		// lands here and populates earnedRoleId below, so the {earned:...} block
-		// renders in the same message as the level up rather than in a second one.
+		// ── role rewards ──
+		// AWAITED, deliberately, unlike every other side effect here. The role has
+		// to be known before the message is composed so the {earned:...} block
+		// renders in the SAME message as the level up rather than arriving in a
+		// second one a moment later. reconcileRewards never throws and returns null
+		// when there is nothing to grant, which is the overwhelming majority of
+		// level ups, so this costs nothing on the common path.
+		const earnedRoleId = await reconcileRewards(input.client, input.guildId, input.userId, newLevel);
 
 		const channel = await resolveAnnounceChannel(input.client, input.guildId, context, input.sourceChannelId ?? null);
 		if (!channel) return;
@@ -126,7 +132,7 @@ export async function handleLevelCrossing(input: LevelCrossingInput): Promise<vo
 			level: newLevel,
 			milestone,
 			xpIntoLevel: xpIntoLevel(input.newTotalXp, settings.curve, settings.curveMultiplier, settings.maxLevel),
-			earnedRoleId: null,
+			earnedRoleId,
 		});
 
 		// The standings moved, so nudge the pinned board. Coalesced per guild, so a
@@ -411,6 +417,49 @@ function assertNotPingable(): void {
 	const message = `[leveling] "${LEVELING_MESSAGE_KIND}" was added to BOT_CONSTANTS.PINGABLE. Leveling must never ping (owner decision D3).`;
 	if (process.env.NODE_ENV !== "production") throw new Error(message);
 	console.error(message);
+}
+
+// ── announceAchievements ───────────────────────────────────────────────────
+// Achievement unlocks post through THIS module rather than their own, so every
+// leveling send in the codebase passes the same never-ping assertion and the
+// same permission precheck. A second sender would be a second place to forget
+// allowedMentions.
+//
+// Never throws, and deliberately not coalesced: unlocks are far rarer than level
+// ups (a member crosses at most 48 tier thresholds ever), so a burst is not a
+// realistic shape and batching them would delay a rare moment for no benefit.
+export async function announceAchievements(
+	client: Client,
+	guildId: string,
+	userId: string,
+	unlocks: readonly { id: string; tier: string; earnedBy: string }[]
+): Promise<void> {
+	try {
+		if (unlocks.length === 0) return;
+		const context = await getLevelingConfig(guildId);
+		if (!context || context.homebaseDestroyed) return;
+		if (!context.settings.enabled) return;
+		// An achievement is not a level, so "milestone" mode (prime levels only)
+		// does not suppress it; only "off" does.
+		if (context.settings.announceMode === "off") return;
+
+		const channel = await resolveAnnounceChannel(client, guildId, context, null);
+		if (!channel) return;
+
+		const missing = missingPermissions(channel);
+		if (missing.length > 0) {
+			console.warn(LOG_MESSAGES.leveling.announceMissingPermissions(channel.id, guildId, missing.join(", ")));
+			return;
+		}
+
+		assertNotPingable();
+		await channel.send({
+			embeds: [buildAchievementUnlockEmbed(userId, unlocks)],
+			allowedMentions: NO_MENTIONS,
+		});
+	} catch (error) {
+		console.error(LOG_MESSAGES.leveling.announceFailed(guildId), error);
+	}
 }
 
 // ── the one time admin notice ──────────────────────────────────────────────

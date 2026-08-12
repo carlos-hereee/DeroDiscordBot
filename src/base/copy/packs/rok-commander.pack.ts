@@ -403,6 +403,8 @@ export const rokCommanderCopy = {
 						"Your renown: level, rank in the realm, your record in every game, and the honors you hold.",
 						"`/levels`",
 						"See which warriors are most present in this realm, this week, this month, or all time.",
+						"`/achievements`",
+						"The honors you have claimed, and the ones within reach. Some stay secret until earned.",
 					].join("\n"),
 				},
 			] satisfies IEmbedField[],

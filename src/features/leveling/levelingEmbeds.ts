@@ -243,6 +243,26 @@ export function buildLevelsBoardEmbed(windowLabel: string, entries: LevelsBoardE
 	});
 }
 
+// ── the unlock announcement ─────────────────────────────────────────────────
+// Posted once per pass, listing every tier crossed in that pass. A member who
+// jumps from nothing to gold gets one message naming all three rather than three
+// messages, which is the same reasoning behind the level up coalescing.
+export function buildAchievementUnlockEmbed(
+	userId: string,
+	unlocks: readonly { id: string; tier: string; earnedBy: string }[]
+): EmbedBuilder {
+	return base()
+		.setTitle(unlocks.length === 1 ? levelingCopy.achievements.unlockedOne : levelingCopy.achievements.unlockedMany)
+		.setColor(COLORS.ACHIEVEMENT)
+		.setDescription(
+			[
+				levelingCopy.achievements.unlockedBy(userId),
+				"",
+				...unlocks.map((unlock) => levelingCopy.achievements.unlockLine(unlock.id, unlock.tier, unlock.earnedBy)),
+			].join("\n")
+		);
+}
+
 // ── achievements ────────────────────────────────────────────────────────────
 // Hidden entries are omitted ENTIRELY until they unlock, not shown as a locked
 // placeholder with the name blanked out. A placeholder tells a member a secret

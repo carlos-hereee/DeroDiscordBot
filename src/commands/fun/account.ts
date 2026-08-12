@@ -7,6 +7,7 @@ import { nextMilestoneAtOrAbove } from "@features/leveling/primeLevels.js";
 import { periodKeysFor } from "@features/leveling/levelPeriod.js";
 import { getLevelingConfig } from "@features/leveling/levelingConfig.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
+import { reconcileRewards } from "@features/leveling/roleRewards.js";
 import { buildAccountEmbed, type AccountView } from "@features/leveling/levelingEmbeds.js";
 import { LEVELING_GAME_SLUGS, type IGameRecord } from "@features/leveling/levelingTypes.js";
 
@@ -113,18 +114,20 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 	await interaction.editReply({ embeds: [buildAccountEmbed(view)] });
 
-	// ── Phase 4 seam: reward role reconciliation ──
-	// reconcileRewards(interaction.client, guildId, target.id, level) lands here,
-	// fire and forget.
+	// ── reward role reconciliation, as a SIDE EFFECT of viewing a profile ──
+	// Fire and forget, and deliberately after the reply: a role write must never
+	// delay or break the profile the member asked for.
 	//
-	// It looks like an odd place for a role write, so the reason is written down:
-	// reward roles are NEVER mass assigned (Discord does not want it, and at ten
-	// thousand members it is ten thousand calls against a per-guild bucket), so an
-	// admin who adds a level 10 reward sees nothing happen for existing level 40
-	// members and reports the feature as broken. Reconciling on the member's own
-	// profile view is the pull-based half of that fix. Arcane shipped exactly this
-	// on 2025-07-28 "due to a large number of users needing the ability to apply
-	// role rewards retroactively".
+	// It looks like an odd place for a role write, so the reason is written down.
+	// Reward roles are NEVER mass assigned (Discord does not want it, and at ten
+	// thousand members it is ten thousand calls against one per-guild bucket), so
+	// an admin who adds a level 10 reward sees NOTHING happen for existing level 40
+	// members and reports the feature as broken. Reconciling here is the pull based
+	// half of the fix: the member's own profile view is the moment they are most
+	// likely to notice a missing role, and it costs one cached read when there is
+	// nothing to change. Arcane shipped exactly this on 2025-07-28 "due to a large
+	// number of users needing the ability to apply role rewards retroactively".
+	void reconcileRewards(interaction.client, guildId, target.id, level);
 }
 
 // Null rather than a number when the member earned nothing in the period, which

@@ -150,6 +150,19 @@ export const levelingCopy = {
 		thisMonth: "This month",
 	},
 
+	// ── achievements ──
+	// The tier names are the ladder members read at a glance, so they stay short
+	// and in one place rather than being formatted at each render site.
+	achievements: {
+		unlockedOne: "Achievement unlocked",
+		unlockedMany: "Achievements unlocked",
+		unlockedBy: (userId: string): string => `<@${userId}> earned:`,
+		// The id is rendered rather than the label on purpose: ids are stable and
+		// searchable, and a member comparing screenshots is comparing ids.
+		unlockLine: (id: string, tier: string, earnedBy: string): string => `**${id}** (${tier}) • ${earnedBy}`,
+		hiddenNote: "Some achievements stay hidden until you earn them.",
+	},
+
 	// ── errors and refusals ──
 	errors: {
 		disabled: "Leveling is turned off in this server.",

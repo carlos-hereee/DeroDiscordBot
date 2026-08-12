@@ -6,6 +6,7 @@ import { XP_SUBCOMMANDS, data as xpData } from "./xp.js";
 import { data as setupData } from "./setup-level-system.js";
 import { data as accountData } from "@commands/fun/account.js";
 import { data as levelsData } from "@commands/fun/levels.js";
+import { data as achievementsData } from "@commands/fun/achievements.js";
 
 // ── the leveling command surface ───────────────────────────────────────────
 // Two things are pinned here, and both fail SILENTLY when wrong.
@@ -93,6 +94,7 @@ describe("the member commands are PUBLIC, in neither mechanism", () => {
 	it.each([
 		["account", accountData],
 		["levels", levelsData],
+		["achievements", achievementsData],
 	])("%s is visible to every member", (name, builder) => {
 		// Deliberately public, like /leaderboard and /list-events. Members seeing
 		// their own standing is the entire point of the feature, so an accidental
