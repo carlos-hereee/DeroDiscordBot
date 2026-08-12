@@ -13,7 +13,7 @@ import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { creatorId } from "@utils/config.js";
 
 /* /channels, v1.5.1 visibility-toggle command.
-   Three subcommands let admins hide or show the five optional homebase
+   Three subcommands let admins hide or show the member-facing homebase
    channels without deleting them. Hiding applies @everyone deny
    ViewChannel; showing clears the deny. Channels always exist and
    the bot still posts to them; only member visibility changes.
@@ -24,13 +24,29 @@ import { creatorId } from "@utils/config.js";
    UX trap where a static dropdown lets the admin pick a channel that
    is already in the desired state and the command silently no-ops. */
 
-const HIDEABLE_CHANNELS = [
+export const HIDEABLE_CHANNELS = [
 	{ name: "Command center", value: "commandsChannelId" },
 	{ name: "Leaderboard", value: "leaderboardChannelId" },
 	{ name: "Event schedule", value: "scheduleChannelId" },
 	{ name: "Announcements", value: "announcementsChannelId" },
 	{ name: "Upcoming events", value: "nextDecreeChannelId" },
+	// ── 🎮 ARCADE GAMES ──
+	// Both belong here because both are MEMBER FACING and public, which is the
+	// only criterion this list applies. An admin who does not want games in their
+	// server should be able to hide the arcade without deleting it, exactly as
+	// they can with the leaderboard.
+	{ name: "Arcade rules", value: "arcadeRulesChannelId" },
+	{ name: "Challenge board", value: "arcadeChallengesChannelId" },
 ] as const;
+
+// ⚠️ THIS LIST IS A DELIBERATE SUBSET OF CHANNEL_SPECS, NOT A MIRROR OF IT, and
+// that is the one thing to understand before extending it. Introductions is
+// excluded because hiding the channel new members are pointed at defeats the
+// greeter, and both admin channels are excluded because they are already
+// invisible to members, so "hide" would be a no-op with a confusing label.
+// Do NOT "fix" this by deriving it from CHANNEL_SPECS the way the intro anchor
+// map and the admin-role grant now are; those two had to cover everything, this
+// one has to cover a choice.
 
 type HideableField = (typeof HIDEABLE_CHANNELS)[number]["value"];
 type GuildConfigDoc = NonNullable<Awaited<ReturnType<typeof guildConfigStore.findByGuildId>>>;
@@ -151,6 +167,17 @@ function resolveChannelId(config: GuildConfigDoc, field: HideableField): string 
 			break;
 		case "nextDecreeChannelId":
 			value = config.nextDecreeChannelId;
+			break;
+		// ⚠️ A CASE MISSING HERE IS SILENT. The switch has no default, so an
+		// unhandled field leaves `value` undefined, this returns null, and the
+		// autocomplete filter above drops the channel entirely: the option simply
+		// never appears and /channels hide quietly does not support it. Adding to
+		// HIDEABLE_CHANNELS without adding here looks like it works and does not.
+		case "arcadeRulesChannelId":
+			value = (config as unknown as Record<string, string | null | undefined>).arcadeRulesChannelId;
+			break;
+		case "arcadeChallengesChannelId":
+			value = (config as unknown as Record<string, string | null | undefined>).arcadeChallengesChannelId;
 			break;
 	}
 	return typeof value === "string" && value.length > 0 ? value : null;

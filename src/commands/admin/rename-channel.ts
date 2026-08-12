@@ -42,7 +42,7 @@ import { COLORS } from "@base/copy/brand.js";
 // what the admin sees ("Leaderboard"); the value is the configField name
 // the handler operates on. Adding a future channel slot requires a one-
 // liner here plus the schema/spec wiring in GuildSetupManager.
-const SLOT_LABELS: ReadonlyArray<{ label: string; configField: string }> = [
+export const SLOT_LABELS: ReadonlyArray<{ label: string; configField: string }> = [
 	{ label: "Introduction channel", configField: "introChannelId" },
 	{ label: "Commands channel", configField: "commandsChannelId" },
 	{ label: "Leaderboard", configField: "leaderboardChannelId" },
@@ -50,6 +50,16 @@ const SLOT_LABELS: ReadonlyArray<{ label: string; configField: string }> = [
 	{ label: "Announcements", configField: "announcementsChannelId" },
 	{ label: "Admin / inner sanctum", configField: "adminChannelId" },
 	{ label: "Upcoming events", configField: "nextDecreeChannelId" },
+	// Admin command center. MISSING until 2026-08-12, so the one channel an admin
+	// is most likely to want renamed was the one slot they could not pick. Not a
+	// deliberate exclusion, just a list nobody extended when the channel shipped.
+	{ label: "Admin controls", configField: "adminCommandsChannelId" },
+	// ── 🎮 ARCADE GAMES ──
+	// Both member facing and both renameable: a guild that calls its arcade
+	// something else should be able to say so, and repairOneChannel already
+	// honors a stored override across rebuilds.
+	{ label: "Arcade rules", configField: "arcadeRulesChannelId" },
+	{ label: "Challenge board", configField: "arcadeChallengesChannelId" },
 ];
 const VALID_SLOTS = new Set(SLOT_LABELS.map((s) => s.configField));
 
