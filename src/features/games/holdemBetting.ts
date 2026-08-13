@@ -283,8 +283,33 @@ export function openRound(seats: Seat[], firstToAct: number, currentBet = 0, las
 		closed: false,
 	};
 	// A round can be closed before anybody acts, when everyone is already all in.
-	if (contesting(state).length === 0) state.closed = true;
+	if (contesting(state).length === 0) {
+		state.closed = true;
+		return state;
+	}
+
+	// ⚠️ THE OPENER IS NOT ALWAYS ABLE TO ACT, and pointing `toAct` at them wedges
+	// the whole table rather than producing a visible error. A blind poster whose
+	// stack was smaller than the blind is already all in before anybody chooses
+	// anything, so `postBlinds` can hand this function a `firstToAct` that
+	// `legalActions` will answer with an empty list: the other player is told it is
+	// not their turn, and the turn clock's forceFold finds no legal action to force
+	// either, so it skips the table on every tick forever. Since `contesting` is
+	// non-empty above, an actable seat is guaranteed to exist; find it.
+	if (!canAct(state.seats[state.toAct])) state.toAct = nextActableIndex(state, state.toAct);
 	return state;
+}
+
+const canAct = (seat: Seat | undefined): boolean => Boolean(seat) && !seat!.folded && !seat!.allIn;
+
+// The next seat that can actually act, scanning forward with wraparound. Callers
+// must have established that one exists.
+function nextActableIndex(state: BettingState, from: number): number {
+	for (let step = 1; step <= state.seats.length; step++) {
+		const index = (from + step) % state.seats.length;
+		if (canAct(state.seats[index])) return index;
+	}
+	return from;
 }
 
 /**
@@ -307,7 +332,15 @@ export function postBlinds(seats: Seat[], smallBlindIndex: number, smallBlind: n
 
 // Reset per-round commitments between streets. `totalCommitted` deliberately
 // survives, because that is what the pot builder reads.
-export function nextStreet(state: BettingState, firstToAct: number): BettingState {
+//
+// ⚠️ `bigBlind` SEEDS THE MINIMUM OPENING BET AND ZERO IS NOT A SAFE DEFAULT.
+// `legalActions` computes `minTotal = currentBet + max(lastRaiseSize, 1)`, so a
+// street opened with a zero last-raise let a player open the flop for ONE chip at
+// blinds of 320/640, and the next minimum raise was then 2 rather than 640. Under a
+// 30 second clock that is a way to stall a table, not a bet. Real hold em floors the
+// opening bet at the big blind, which is what the preflop round already does via
+// `postBlinds`.
+export function nextStreet(state: BettingState, firstToAct: number, bigBlind: number): BettingState {
 	const seats = state.seats.map((seat) => ({ ...seat, committed: 0 }));
-	return openRound(seats, firstToAct, 0, 0);
+	return openRound(seats, firstToAct, 0, bigBlind);
 }

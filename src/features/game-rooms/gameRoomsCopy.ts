@@ -72,6 +72,10 @@ export const gameRoomsCopy = {
 		// 50013. Names the missing permission, because the member who clicked cannot
 		// fix it and the admin who can needs to know what to grant.
 		missingPermissions: "Dero cannot create a channel in the arcade category. An admin needs to grant Manage Channels.",
+		// A button from an older message whose action no longer exists. Discord keeps
+		// every component clickable forever, so this is a normal thing for a member to
+		// hit rather than an error, and the copy says so without apologising.
+		controlRetired: "This control is no longer available.",
 		// Anything else. Deliberately does not promise a retry loop; there is none.
 		createFailed: "Something went wrong opening that room. Try again in a moment.",
 		noArcadeCategory: "This server has no arcade category yet. An admin can run /setup to build it.",
@@ -275,6 +279,9 @@ export const gameRoomsCopy = {
 
 		buyInLabel: (stack: number): string => `Buy in (${stack})`,
 		startLabel: "Deal",
+		// The same control between hands, worded so the host can tell the first deal
+		// from the ones after it.
+		nextHandLabel: "Deal the next hand",
 		foldLabel: "Fold",
 		checkLabel: "Check",
 		callLabel: "Call",
@@ -296,6 +303,13 @@ export const gameRoomsCopy = {
 		needMorePlayers: "You need at least two players to deal.",
 		notYourTurn: "It is not your turn.",
 		tournamentOver: "This tournament is over.",
+		// Distinct from notYourTurn on purpose. Telling the player whose turn it IS
+		// that it is not their turn is what the raise refusal used to do, and it reads
+		// as the bot losing track of the table rather than as a rejected action.
+		illegalMove: "That is not a legal action right now.",
+		handInProgress: "A hand is already running. Finish it before dealing again.",
+		// Somebody else's write landed first. Ordinary, so the copy is not an apology.
+		tableBusy: "The table just changed. Try that again.",
 
 		// ── the trail ──
 		seatTaken: (userId: string, seated: number): string => `🪙 <@${userId}> bought in. ${seated} at the table.`,
@@ -304,6 +318,10 @@ export const gameRoomsCopy = {
 		blindsUp: (small: number, big: number): string => `⏫ Blinds are up: ${small}/${big}.`,
 		streetDealt: (street: string, cards: string): string => `**${street}:** ${cards}`,
 		handWon: (userId: string, amount: number): string => `<@${userId}> takes ${amount}.`,
+		// NOT a win, and worded so nobody reads it as one. These are chips the player
+		// bet that nobody ever matched, so they were never at risk.
+		uncalledReturned: (userId: string, amount: number): string =>
+			`↩️ ${amount} goes back to <@${userId}>, uncalled.`,
 		showdownLine: (userId: string, hand: string): string => `<@${userId}> shows ${hand}.`,
 		busted: (userId: string): string => `💀 <@${userId}> is out.`,
 		// ⚠️ FORCE FOLD, NEVER PAUSE. Said out loud so the table knows why a player's

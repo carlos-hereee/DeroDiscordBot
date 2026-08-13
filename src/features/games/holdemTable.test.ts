@@ -295,3 +295,154 @@ describe("the tournament ends", () => {
 		expect(JSON.stringify(table)).not.toContain("persist");
 	});
 });
+
+// ── regressions from the 2026-08-12 review ────────────────────────────
+// Each case below is a bug that shipped, and each one looked exactly like poker on
+// screen while it was wrong. That is why they are pinned rather than trusted.
+
+describe("position after the flop", () => {
+	// ⚠️ THE BUTTON ACTS LAST POST FLOP. seatOrderFrom starts AT the button, so
+	// opening the street at index 0 handed the worst position to the seat that is
+	// supposed to have the best, on every street of every hand, and nothing threw.
+	it("opens the flop on the seat after the button, never on the button", () => {
+		const table = tableWith(3);
+		const order = table.betting!.seats.map((seat) => seat.userId);
+		// Preflop the small blind is one seat after the button, so index 0 is the button.
+		const button = order[0];
+
+		// Close the preflop round: everyone calls, big blind checks its option.
+		act(table, whoActs(table)!, "call");
+		act(table, whoActs(table)!, "call");
+		act(table, whoActs(table)!, "check");
+
+		expect(table.street).toBe("flop");
+		expect(whoActs(table)).not.toBe(button);
+		expect(whoActs(table)).toBe(order[1]);
+	});
+
+	it("keeps the button acting last for the whole street, not just the first action", () => {
+		const table = tableWith(3);
+		const order = table.betting!.seats.map((seat) => seat.userId);
+		const button = order[0];
+
+		act(table, whoActs(table)!, "call");
+		act(table, whoActs(table)!, "call");
+		act(table, whoActs(table)!, "check");
+
+		// Two checks from the two blinds, and the button is the one still to speak.
+		act(table, whoActs(table)!, "check");
+		act(table, whoActs(table)!, "check");
+		expect(whoActs(table)).toBe(button);
+	});
+});
+
+describe("a blind bigger than a stack", () => {
+	// ⚠️ THE OPENER MAY BE ALL IN BEFORE ANYBODY CHOOSES ANYTHING. A small blind whose
+	// stack was smaller than the blind is all in the moment it is posted, and pointing
+	// toAct at them wedged the table for good: legalActions answered nothing, the
+	// opponent was told it was not their turn, and forceFold found no action to force,
+	// so the clock skipped it every ten seconds forever.
+	it("never leaves an all-in blind poster as the player to act", () => {
+		const table = createTable();
+		joinTable(table, "short", "Short");
+		joinTable(table, "deep", "Deep");
+		table.status = "playing";
+		// Heads up posts the small blind ON the button, which is seat 0.
+		table.seats[0].stack = 5;
+		dealHand(table, seededRng(11));
+
+		const acting = whoActs(table);
+		expect(acting).not.toBeNull();
+		expect(acting).not.toBe("short");
+		// And the table can actually be driven to a conclusion from here.
+		expect(actionsFor(table, acting!).length).toBeGreaterThan(0);
+	});
+
+	it("resolves the hand instead of stalling on the short stack", () => {
+		const table = createTable();
+		joinTable(table, "short", "Short");
+		joinTable(table, "deep", "Deep");
+		table.status = "playing";
+		table.seats[0].stack = 5;
+		dealHand(table, seededRng(11));
+
+		const outcome = act(table, whoActs(table)!, "check", 0, seededRng(3));
+		expect(outcome.ok).toBe(true);
+		expect(outcome.handOver).toBe(true);
+	});
+});
+
+describe("uncalled chips come back", () => {
+	// ⚠️ THIS IS A HAND HISTORY BUG, NOT A MISSING CHIP, and the distinction is worth
+	// stating because the first version of this note claimed otherwise. holdemPots
+	// exports `uncalledPortion` for exactly this and nothing called it, so a player
+	// who shoved 1000 into a pot nobody could match was credited with winning all of
+	// it. The chips did land in the right stack either way (the layers merge, so the
+	// shover was eligible for their own uncalled money), which is why no total ever
+	// looked wrong. What was wrong is the sentence the transcript prints, and the
+	// transcript is the product.
+	function shoveAndFold() {
+		const table = createTable();
+		joinTable(table, "shover", "Shover");
+		joinTable(table, "folder", "Folder");
+		table.status = "playing";
+		dealHand(table, seededRng(11));
+		// Heads up the button posts the small blind and acts first preflop.
+		act(table, whoActs(table)!, "allIn");
+		return { table, outcome: act(table, whoActs(table)!, "fold") };
+	}
+
+	it("reports the uncalled chips as returned rather than won", () => {
+		const { outcome } = shoveAndFold();
+
+		// The blinds are 10/20, so only 40 was ever contested and the rest was never
+		// at risk.
+		expect(outcome.returned).toEqual({ userId: "shover", amount: START - 20 });
+		expect(outcome.awards).toEqual([{ userId: "shover", amount: 40 }]);
+	});
+
+	it("still leaves the shover with every chip they are owed", () => {
+		const { table } = shoveAndFold();
+
+		// The returned slice plus the contested pot, which is the blind they won.
+		expect(table.seats.find((seat) => seat.userId === "shover")!.stack).toBe(START + 20);
+		expect(chipsInPlay(table)).toBe(START * 2);
+	});
+});
+
+describe("the minimum bet after the flop", () => {
+	// ⚠️ ONE CHIP IS NOT A BET. legalActions computes minTotal as
+	// `currentBet + max(lastRaiseSize, 1)`, and a street used to open with a zero last
+	// raise, so at blinds of 320/640 a player could open the flop for a SINGLE chip and
+	// the next minimum raise was then 2 rather than 640. Under a 30 second clock that is
+	// a way to stall a table, not a bet.
+	function toTheFlop() {
+		const table = tableWith(3);
+		act(table, whoActs(table)!, "call");
+		act(table, whoActs(table)!, "call");
+		act(table, whoActs(table)!, "check");
+		return table;
+	}
+
+	it("floors the opening bet at the big blind", () => {
+		const table = toTheFlop();
+		expect(table.street).toBe("flop");
+
+		const opener = whoActs(table)!;
+		const bet = actionsFor(table, opener).find((entry) => entry.action === "bet");
+
+		expect(bet).toBeDefined();
+		expect(bet!.min).toBe(table.bigBlind);
+	});
+
+	// The other half of the same trap, and the one that made every post-flop bet
+	// impossible: the engine names the aggressive action "bet" when there is no bet to
+	// raise, so anything dispatching a hardcoded "raise" misses.
+	it("names the aggressive action bet, not raise, on a fresh street", () => {
+		const table = toTheFlop();
+		const legal = actionsFor(table, whoActs(table)!).map((entry) => entry.action);
+
+		expect(legal).toContain("bet");
+		expect(legal).not.toContain("raise");
+	});
+});

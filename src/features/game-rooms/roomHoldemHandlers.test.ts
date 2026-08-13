@@ -2,22 +2,33 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ButtonInteraction, Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { update: vi.fn(), findPlayingByGame: vi.fn() },
+	gameRoomStore: {
+		update: vi.fn(),
+		findPlayingByGame: vi.fn(),
+		// The compare-and-swap every hold em write goes through. A truthy return means
+		// the caller's read was still current and its write landed; null means somebody
+		// else got there first, which callers treat as "their action counts, not mine".
+		updateSecretIf: vi.fn(),
+		findByRoomId: vi.fn(),
+	},
 }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 
-import { handleBuyIn, handleShowCards, handleMove, sweepHoldemClocks } from "./roomHoldemHandlers.js";
+import { handleBuyIn, handleDeal, handleShowCards, handleMove, sweepHoldemClocks } from "./roomHoldemHandlers.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { awardXp } from "@features/leveling/awardXp.js";
-import { createTable, joinTable, dealHand, whoActs, type HoldemTable } from "@features/games/holdemTable.js";
+import { act, createTable, joinTable, dealHand, whoActs, type HoldemTable } from "@features/games/holdemTable.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 const storeMock = gameRoomStore as unknown as {
 	update: ReturnType<typeof vi.fn>;
 	findPlayingByGame: ReturnType<typeof vi.fn>;
+	updateSecretIf: ReturnType<typeof vi.fn>;
+	findByRoomId: ReturnType<typeof vi.fn>;
 };
 const awardXpMock = awardXp as unknown as ReturnType<typeof vi.fn>;
 
@@ -66,6 +77,10 @@ const client = { channels: { fetch: vi.fn().mockResolvedValue(null) } } as unkno
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
+	// The default is the UNCONTENDED case: the caller's read was still current, so the
+	// write landed. Cases that exercise a race override this per test.
+	storeMock.updateSecretIf.mockResolvedValue({} as never);
+	storeMock.findByRoomId.mockResolvedValue(null);
 });
 
 // ⚠️ THE HOLE CARDS ARE THE WHOLE SECRECY PROPERTY. A player's two cards must
@@ -114,10 +129,42 @@ describe("buying in", () => {
 
 		await handleBuyIn(interaction, room);
 
-		const patch = storeMock.update.mock.calls[0][2] as { playerIds: string[] };
-		// Without this, the playersOnly gate on every other hold em control would
+		// ⚠️ $addToSet ON THE SAME WRITE AS THE SEAT, not a rebuilt array. Two members
+		// buying in at once both read the same playerIds, so writing the array back
+		// dropped whichever of them lost the race, AFTER the trail had announced them.
+		// Without the id here the playersOnly gate on every other hold em control would
 		// refuse the very player who just bought in.
-		expect(patch.playerIds).toContain("newcomer");
+		const [, , expected, , extra] = storeMock.updateSecretIf.mock.calls[0] as [
+			string,
+			string,
+			Record<string, unknown>,
+			unknown,
+			{ $addToSet: { playerIds: string } },
+		];
+		expect(extra.$addToSet.playerIds).toBe("newcomer");
+		// And the write is CONDITIONAL on the seat count it read, which is what makes
+		// the loser of that race write nothing at all.
+		expect(expected).toEqual({ "secret.seats": { $size: 0 } });
+	});
+
+	it("re-reads and seats the loser of a race rather than overwriting the winner", async () => {
+		// The first write loses (another buy in landed between this handler's read and
+		// its write), so the handler must pick up the winner's table and seat itself on
+		// top of it. Overwriting was the bug: the winner lost their seat AND their
+		// stack, and only found out when every later control refused them.
+		const stale = createTable();
+		const winners = createTable();
+		joinTable(winners, "first", "First");
+
+		storeMock.updateSecretIf.mockResolvedValueOnce(null).mockResolvedValueOnce({} as never);
+		storeMock.findByRoomId.mockResolvedValue(makeRoom(winners) as never);
+
+		await handleBuyIn(makeInteraction("second"), makeRoom(stale));
+
+		expect(storeMock.updateSecretIf).toHaveBeenCalledTimes(2);
+		const retried = storeMock.updateSecretIf.mock.calls[1] as [string, string, unknown, HoldemTable, unknown];
+		// Both players are seated, in the order they won the race.
+		expect(retried[3].seats.map((seat) => seat.userId)).toEqual(["first", "second"]);
 	});
 
 	it("refuses a second buy in from the same player", async () => {
@@ -264,5 +311,124 @@ describe("the turn clock", () => {
 
 		expect(await sweepHoldemClocks(client)).toEqual({ forced: 1 });
 		errorSpy.mockRestore();
+	});
+});
+
+// ── regressions from the 2026-08-12 review ────────────────────────────
+describe("aggression after the flop", () => {
+	// ⚠️ THE BUG THAT MADE HOLD EM UNPLAYABLE PAST PREFLOP. The size presets were
+	// dispatched as a hardcoded "raise", but the engine names the aggressive action
+	// "bet" whenever there is no bet to raise, and every street after preflop opens
+	// that way. applyAction's `legal.find` therefore missed, returned "illegal", and
+	// the handler answered with the NOT YOUR TURN copy to the one player whose turn it
+	// actually was. Both halves are pinned: that the press lands, and that the refusal
+	// copy is no longer a lie.
+	function tableOnTheFlop(): HoldemTable {
+		const table = dealtTable();
+		act(table, whoActs(table)!, "call");
+		act(table, whoActs(table)!, "call");
+		act(table, whoActs(table)!, "check");
+		return table;
+	}
+
+	it("accepts a min bet on the flop instead of refusing it", async () => {
+		const table = tableOnTheFlop();
+		expect(table.street).toBe("flop");
+		const actor = whoActs(table)!;
+		const interaction = makeInteraction(actor);
+
+		await handleMove(interaction, makeRoom(table), "min");
+
+		expect(interaction.reply).not.toHaveBeenCalled();
+		expect(interaction.deferUpdate).toHaveBeenCalled();
+		// The bet actually landed rather than being silently dropped.
+		expect(table.betting!.currentBet).toBe(table.bigBlind);
+	});
+
+	it("accepts the pot preset on the flop", async () => {
+		const table = tableOnTheFlop();
+		const interaction = makeInteraction(whoActs(table)!);
+
+		await handleMove(interaction, makeRoom(table), "pot");
+
+		expect(interaction.reply).not.toHaveBeenCalled();
+		expect(table.betting!.currentBet).toBeGreaterThanOrEqual(table.bigBlind);
+	});
+
+	it("never answers a real turn with the not-your-turn copy", async () => {
+		const table = tableOnTheFlop();
+		const interaction = makeInteraction(whoActs(table)!);
+
+		await handleMove(interaction, makeRoom(table), "min");
+
+		const replies = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls;
+		for (const [payload] of replies) {
+			expect((payload as { content: string }).content).not.toBe(gameRoomsCopy.holdem.notYourTurn);
+		}
+	});
+});
+
+describe("dealing the next hand", () => {
+	// ⚠️ dealHand IS NOT A RESTART. It reshuffles and zeroes every seat's committed
+	// chips while their stacks stay debited, so dealing over a running hand vaporises
+	// the pot standing in it. The status check cannot catch this, because the joining
+	// branch sets the status to "playing" one line before the status is tested.
+	it("refuses a second deal while a hand is live", async () => {
+		const table = dealtTable();
+		const interaction = makeInteraction("p0");
+
+		await handleDeal(interaction, makeRoom(table));
+
+		expect(interaction.reply).toHaveBeenCalledWith(
+			expect.objectContaining({ content: gameRoomsCopy.holdem.handInProgress })
+		);
+		expect(table.handNumber).toBe(1);
+	});
+
+	it("refuses the loser of a double click, so only one hand is dealt", async () => {
+		const table = createTable();
+		joinTable(table, "p0", "P0");
+		joinTable(table, "p1", "P1");
+		// The claim write finds a different hand number, meaning the other half of the
+		// double click already dealt.
+		storeMock.updateSecretIf.mockResolvedValue(null);
+		const interaction = makeInteraction("p0");
+
+		await handleDeal(interaction, makeRoom(table));
+
+		expect(interaction.reply).toHaveBeenCalledWith(
+			expect.objectContaining({ content: gameRoomsCopy.holdem.handInProgress })
+		);
+		expect(interaction.deferUpdate).not.toHaveBeenCalled();
+	});
+
+	it("deals hand two once the previous one has settled", async () => {
+		// The dead end this closes: the Deal control lived only in joiningRows, and
+		// redraw stopped rendering those the instant hand one was dealt, so a tournament
+		// sat on disabled buttons forever holding its host's one room slot.
+		const table = dealtTable(2);
+		act(table, whoActs(table)!, "fold");
+		expect(table.street).toBe("showdown");
+		const interaction = makeInteraction("p0");
+
+		await handleDeal(interaction, makeRoom(table));
+
+		expect(table.handNumber).toBe(2);
+		expect(interaction.deferUpdate).toHaveBeenCalled();
+	});
+});
+
+describe("the turn clock defers to a real action", () => {
+	// The sweep decides against a snapshot read seconds earlier, so a short stack
+	// acting at 29.9 seconds races the fold. If their action landed first the
+	// conditional write finds a different lastActionAt and does nothing, so their real
+	// move stands. Without it both wrote, both settled, and payPlacements paid twice.
+	it("forces nothing when the player's own action won the race", async () => {
+		const table = dealtTable();
+		table.lastActionAt = Date.now() - BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS - 1000;
+		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(table)]);
+		storeMock.updateSecretIf.mockResolvedValue(null);
+
+		expect(await sweepHoldemClocks(client)).toEqual({ forced: 0 });
 	});
 });

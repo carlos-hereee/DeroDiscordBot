@@ -9,7 +9,7 @@ import {
 	type BettingState,
 	type Seat,
 } from "./holdemBetting.js";
-import { buildPots, awardPots, type PlayerCommitment } from "./holdemPots.js";
+import { buildPots, awardPots, uncalledPortion, type PlayerCommitment } from "./holdemPots.js";
 
 // ── holdemTable ─────────────────────────────────────────────────────────────
 // What:  the tournament on top of the three pure modules. Seats, chips, the
@@ -169,13 +169,31 @@ export function dealHand(table: HoldemTable, rng: () => number = Math.random): v
 	table.lastActionAt = Date.now();
 }
 
-// The live seats in play order starting after the button.
+// The live seats in play order starting AT the button. Dealing and the blinds are
+// both defined from the button itself, so this is the order they read.
 function seatOrderFrom(table: HoldemTable, buttonIndex: number): TableSeat[] {
 	const players = livePlayers(table);
 	if (players.length === 0) return [];
 	const start = buttonIndex % players.length;
 	return [...players.slice(start), ...players.slice(0, start)];
 }
+
+// The same ring rotated one seat, so it starts LEFT of the button. Two rules read
+// this rather than the button-first order: post-flop action, and the odd chip in a
+// split pot, which holdemPots defines as "the earliest eligible player in seatOrder,
+// which is the house rule closest to first left of the button". Passing the
+// button-first order to either one silently hands the button an advantage it is not
+// entitled to.
+function seatOrderAfterButton(table: HoldemTable): TableSeat[] {
+	const order = seatOrderFrom(table, table.buttonIndex);
+	return order.length <= 1 ? order : [...order.slice(1), order[0]];
+}
+
+// A hand is live from the deal until settleHand stamps the showdown street. Between
+// hands the table is still "playing" with nothing to act on, which is the state the
+// host is offered the next deal in and the state a second deal must be refused in.
+export const handInProgress = (table: HoldemTable): boolean =>
+	table.status === "playing" && table.street !== "showdown";
 
 const toBettingSeats = (seats: TableSeat[]): Seat[] =>
 	seats.map((seat) => ({
@@ -219,6 +237,10 @@ export interface ActionOutcome {
 	narration?: string;
 	// Payouts from the hand, when it ended.
 	awards?: { userId: string; amount: number }[];
+	// Chips handed straight back because nobody ever called them. NOT a win, and
+	// reported separately so the transcript does not claim somebody won chips they
+	// were never at risk of losing.
+	returned?: { userId: string; amount: number };
 	// Who busted on this hand, worst first.
 	busted?: string[];
 	// Set at showdown, for the result card.
@@ -321,10 +343,19 @@ function advanceStreet(table: HoldemTable, rng: () => number): ActionOutcome {
 	const contenders = streetSeats.filter((seat) => !seat.folded && !seat.allIn);
 	if (contenders.length < 2) return runOutAndSettle(table, rng);
 
-	// Post-flop the first live player after the button acts, not the blinds.
-	table.betting = nextStreet({ ...table.betting!, seats: streetSeats }, 0);
-	const firstLive = table.betting.seats.findIndex((seat) => !seat.folded && !seat.allIn);
-	table.betting.toAct = firstLive;
+	// ⚠️ THE BUTTON ACTS LAST AFTER THE FLOP, NOT FIRST. `order` starts AT the
+	// button, so opening at index 0 handed the worst position to the seat that is
+	// supposed to have the best, on every street of every hand, and nothing threw.
+	// Start one seat later instead. When the button has folded they are absent from
+	// `streetSeats` altogether and index 0 is already the first player left of them,
+	// which is why the miss resolves to 0 rather than to an error.
+	const buttonId = order[0]?.userId;
+	const buttonAt = streetSeats.findIndex((seat) => seat.userId === buttonId);
+	const opensAt = buttonAt === -1 ? 0 : (buttonAt + 1) % streetSeats.length;
+
+	// openRound skips forward when the seat it lands on cannot act, so an all-in
+	// player never becomes the opener here.
+	table.betting = nextStreet({ ...table.betting!, seats: streetSeats }, opensAt, table.bigBlind);
 	writeBack(table);
 	return { ok: true };
 }
@@ -344,6 +375,26 @@ function settleHand(table: HoldemTable, showdown: boolean, _rng: () => number = 
 	const commitments: PlayerCommitment[] = table.seats
 		.filter((seat) => seat.totalCommitted > 0)
 		.map((seat) => ({ userId: seat.userId, committed: seat.totalCommitted, folded: seat.folded }));
+
+	// ⚠️ RETURN THE UNCALLED CHIPS BEFORE BUILDING THE POTS, AND SUBTRACT THEM FROM
+	// THE COMMITMENT RATHER THAN REFUNDING ON TOP. holdemPots has documented this
+	// rule since it was written and nothing called it, which cost real chips: chips
+	// nobody could match were never contested, so they formed a layer whose only
+	// contributor was the player who bet them, and when that player had FOLDED (legal,
+	// and reachable any time their bet went uncalled) the layer arrived at awardPots
+	// with an empty eligible list and was dropped on the floor.
+	//
+	// Subtracting is what keeps the table's total conserved. Refunding on top would
+	// leave the same chips inside a pot AND in a stack, paying the top bettor twice,
+	// and the pots test would not catch it: expectConserved computes the uncalled
+	// portion and never asserts on it.
+	const uncalled = uncalledPortion(commitments);
+	if (uncalled) {
+		const owner = commitments.find((entry) => entry.userId === uncalled.userId);
+		if (owner) owner.committed -= uncalled.amount;
+		const ownerSeat = seatOf(table, uncalled.userId);
+		if (ownerSeat) ownerSeat.stack += uncalled.amount;
+	}
 
 	const pots = buildPots(commitments);
 
@@ -368,7 +419,9 @@ function settleHand(table: HoldemTable, showdown: boolean, _rng: () => number = 
 		for (const seat of contenders) strength.set(seat.userId, 1);
 	}
 
-	const seatOrderIds = seatOrderFrom(table, table.buttonIndex).map((seat) => seat.userId);
+	// Left of the button, not the button. awardPots breaks an odd chip by this order,
+	// and its own comment names the rule as "first left of the button".
+	const seatOrderIds = seatOrderAfterButton(table).map((seat) => seat.userId);
 	const awards = awardPots(pots, (userId) => strength.get(userId) ?? 0, seatOrderIds);
 	for (const award of awards) {
 		const seat = seatOf(table, award.userId);
@@ -407,6 +460,7 @@ function settleHand(table: HoldemTable, showdown: boolean, _rng: () => number = 
 		handOver: true,
 		tournamentOver,
 		awards,
+		returned: uncalled ?? undefined,
 		busted,
 		showdown: shown.length ? shown : undefined,
 	};

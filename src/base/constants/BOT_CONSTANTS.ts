@@ -164,6 +164,11 @@ export const BOT_CONSTANTS = {
 	// it, so this is its own interval rather than a passenger on the 5 minute room
 	// sweep, which would make a 30 second clock fire somewhere inside 5 minutes.
 	HOLDEM_CLOCK_TICK_MS: 10_000,
+	// How many times a buy in re-reads and retries when another player's seat write
+	// beat it. Six members can click Buy in at once, and each retry only loses to a
+	// DIFFERENT winner, so the attempts need to cover a full table plus headroom
+	// rather than the usual one-retry-and-give-up.
+	HOLDEM_SEAT_CLAIM_ATTEMPTS: 8,
 
 	// ── leveling ──────────────────────────────────────────────────
 	// What:  every number the leveling system runs on: how often buffered xp is

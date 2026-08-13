@@ -34,7 +34,9 @@ export function tableEmbed(table: HoldemTable, potTotal: number): EmbedBuilder {
 				  : seat.folded
 				    ? gameRoomsCopy.holdem.foldedTag
 				    : `${seat.stack}`;
-			return `${marker} <@${seat.userId}> — ${state}`;
+			// Parentheses rather than a dash: house rule 1 bans em dashes in anything a
+			// member reads, and this line renders on every redraw of every table.
+			return `${marker} <@${seat.userId}> (${state})`;
 		})
 		.join("\n");
 
@@ -94,6 +96,43 @@ export function joiningRows(roomId: string, seatCount: number): ActionRowBuilder
 	];
 }
 
+// The controls BETWEEN hands: the tournament is still running, the last hand has
+// settled, and the host decides when the next one starts.
+//
+// ⚠️ THE DEAL CONTROL HAS TO COME BACK, and rendering it only in `joiningRows` is
+// exactly why a tournament used to dead end after hand one. `redraw` edits ONE board
+// message, so the joining row that carried `hstart` was replaced the instant the
+// first hand was dealt, leaving no surface anywhere that could start hand two: the
+// table sat on disabled buttons, the clock skipped it because nobody was to act, and
+// the row held its host's one-room slot until somebody archived it by hand.
+export function betweenHandsRows(roomId: string): ActionRowBuilder<ButtonBuilder>[] {
+	return [
+		new ActionRowBuilder<ButtonBuilder>().addComponents(
+			new ButtonBuilder()
+				.setCustomId(`${GAME_ROOM_PREFIX}:hstart:${roomId}`)
+				.setLabel(gameRoomsCopy.holdem.nextHandLabel)
+				.setEmoji("🃏")
+				.setStyle(ButtonStyle.Primary),
+			new ButtonBuilder()
+				.setCustomId(`${GAME_ROOM_PREFIX}:hcards:${roomId}`)
+				.setLabel(gameRoomsCopy.holdem.showCardsLabel)
+				.setEmoji("🂠")
+				.setStyle(ButtonStyle.Secondary)
+		),
+	];
+}
+
+// The one aggressive action currently open to a player, whatever the engine calls
+// it.
+//
+// ⚠️ THE ENGINE NAMES IT "bet" WHEN THERE IS NOTHING TO RAISE AND "raise" OTHERWISE,
+// and every street after preflop opens at a current bet of zero, so post-flop the
+// legal label is "bet". Three call sites used to hardcode or re-derive that pairing;
+// deriving it once is what stops the buttons and the dispatcher disagreeing, which
+// is the shape the raise bug took.
+export const aggressiveActionFor = (table: HoldemTable, userId: string) =>
+	actionsFor(table, userId).find((entry) => entry.action === "raise" || entry.action === "bet");
+
 // ⚠️ FIVE BUTTONS IN ONE ROW AND NO MODAL. A modal for a raise size costs a round
 // trip and a focus change on every aggressive action, in a game where the turn
 // clock is 30 seconds. The presets below are why a modal is not needed: they cover
@@ -101,7 +140,7 @@ export function joiningRows(roomId: string, seatCount: number): ActionRowBuilder
 export function bettingRows(table: HoldemTable, roomId: string, potTotal: number): ActionRowBuilder<ButtonBuilder>[] {
 	const acting = whoActs(table);
 	const legal = acting ? actionsFor(table, acting).map((entry) => entry.action) : [];
-	const raise = acting ? actionsFor(table, acting).find((entry) => entry.action === "raise" || entry.action === "bet") : undefined;
+	const raise = acting ? aggressiveActionFor(table, acting) : undefined;
 
 	const action = (key: string, label: string, style: ButtonStyle, enabled: boolean, emoji?: string) => {
 		const button = new ButtonBuilder()
@@ -158,7 +197,7 @@ export function bettingRows(table: HoldemTable, roomId: string, potTotal: number
  * the player never typed.
  */
 export function resolveRaiseAmount(table: HoldemTable, userId: string, preset: string, potTotal: number): number {
-	const raise = actionsFor(table, userId).find((entry) => entry.action === "raise" || entry.action === "bet");
+	const raise = aggressiveActionFor(table, userId);
 	if (!raise) return 0;
 	const min = raise.min ?? 0;
 	const max = raise.max ?? 0;

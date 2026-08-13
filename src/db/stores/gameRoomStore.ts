@@ -92,6 +92,39 @@ export const gameRoomStore = {
 		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $set: patch }, { new: true });
 	},
 
+	// Compare and swap on the Mixed `secret` blob: write it only if the row still
+	// matches what the caller read.
+	//
+	// ⚠️ THIS IS THE CONCURRENCY CLAIM FOR EVERY GAME THAT KEEPS ITS STATE IN
+	// `secret`, and `update` above cannot serve that purpose. `secret` is a single
+	// Mixed field, so `$set` REPLACES it wholesale; two handlers that both read the
+	// same room and both write back leave only the second one's work, and the first
+	// player's move, seat or shot is gone with nothing logged. Passing the value the
+	// caller read as `expected` (a dotted subfield such as `secret.lastActionAt` or
+	// `secret.handNumber`) makes Mongo compare it server side, so the loser writes
+	// nothing and gets a null back to react to.
+	//
+	// `extra` carries update operators that must land in the SAME write, which is
+	// what keeps a seat and its playerIds entry atomic with each other. Use an atomic
+	// operator there ($addToSet, $push), never another read-modify-write.
+	//
+	// Returns the updated row, or null when the expectation did not hold. A null is
+	// an ordinary outcome, not an error: the caller re-reads and retries, or defers
+	// to whoever won.
+	async updateSecretIf(
+		guildId: string,
+		roomId: string,
+		expected: Record<string, unknown>,
+		secret: unknown,
+		extra: Record<string, unknown> = {}
+	) {
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, ...expected },
+			{ $set: { secret }, ...extra },
+			{ new: true }
+		);
+	},
+
 	// Add one member to a draft's joiner pool.
 	//
 	// ⚠️ $addToSet, NOT a read-modify-write. An open-to-all challenge is exactly the

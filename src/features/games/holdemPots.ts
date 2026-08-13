@@ -45,6 +45,8 @@ export function buildPots(commitments: PlayerCommitment[]): Pot[] {
 
 	const pots: Pot[] = [];
 	let previous = 0;
+	// Chips from a layer nobody can win, held until a layer that somebody can.
+	let carry = 0;
 
 	for (const level of levels) {
 		const contributors = commitments.filter((player) => player.committed >= level);
@@ -54,13 +56,32 @@ export function buildPots(commitments: PlayerCommitment[]): Pot[] {
 
 		const eligible = contributors.filter((player) => !player.folded).map((player) => player.userId);
 
+		// ⚠️ A LAYER WITH NO ELIGIBLE WINNER STILL HOLDS REAL CHIPS. Every contributor
+		// at this level folded, so there is nobody to award it to, and emitting it
+		// meant `awardPots` skipped it and the chips left the table for good. The
+		// ordinary cause is an uncalled bet, which `settleHand` now strips before
+		// calling here; the carry is the backstop for what stripping cannot reach, two
+		// folded players tied at the top level. Rolling the chips into a pot somebody
+		// CAN win keeps the table's total exact, which is the property that matters.
+		if (eligible.length === 0) {
+			carry += amount;
+			continue;
+		}
+
+		const total = amount + carry;
+		carry = 0;
+
 		// Two adjacent layers with the SAME eligible set are one pot to a player, and
 		// splitting them would show "main pot 30, side pot 20" for what is plainly a
 		// single 50 chip pot. Merge on the way in rather than post-processing.
 		const last = pots[pots.length - 1];
-		if (last && sameMembers(last.eligible, eligible)) last.amount += amount;
-		else pots.push({ amount, eligible });
+		if (last && sameMembers(last.eligible, eligible)) last.amount += total;
+		else pots.push({ amount: total, eligible });
 	}
+
+	// A carry left over means the TOP layers were the unwinnable ones, so there was
+	// no later pot to roll into. The last pot that does have a winner takes them.
+	if (carry > 0 && pots.length > 0) pots[pots.length - 1].amount += carry;
 
 	return pots;
 }
@@ -118,6 +139,9 @@ export function awardPots(
 	const add = (userId: string, amount: number) => totals.set(userId, (totals.get(userId) ?? 0) + amount);
 
 	for (const pot of pots) {
+		// buildPots no longer emits an unwinnable pot (it rolls those chips into one
+		// that has a winner), so this is a guard against a hand-built Pot rather than
+		// a live path. It must never become the way chips leave the table again.
 		if (pot.eligible.length === 0) continue;
 
 		const best = Math.max(...pot.eligible.map(rankOf));

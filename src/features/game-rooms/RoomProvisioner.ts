@@ -46,6 +46,18 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 //        real guarantee and this is only the thing that keeps the failure cheap.
 const inflightOpens = new Map<string, Promise<RoomOpenResult>>();
 
+// Games whose controls ride their OWN board message, the one that gets edited every
+// turn. Their pinned opener stays a plain card.
+//
+// ⚠️ A GAME MISSING FROM THIS LIST GETS A DEAD BUTTON, which is what hold em shipped
+// with: it was neither "battleship" nor "hangman", so the opener fell through to
+// roomMoveRow and pinned a "Make your pick" button (the rps fallback label, ✊ and
+// all) above a real poker table. Pressing it routed to runRoomMove, matched no branch
+// there, and answered "This game has no room controls yet." on a game that shipped
+// the same day. Naming the set instead of testing one slug is what stops the next
+// game repeating it.
+const SELF_BOARDED_GAMES: readonly GameSlug[] = ["battleship", "holdem"];
+
 // Test seam, and the reason this is not just a module-local: a leaked entry would make
 // every later open by that host return the previous result forever.
 export const _clearInflightOpens = (): void => inflightOpens.clear();
@@ -208,9 +220,7 @@ export const RoomProvisioner = {
 				// Hangman opens with the AUTHORING control, not a guess control: there
 				// is no word yet, and offering "guess a letter" before one exists would
 				// be a button whose only possible answer is "not yet".
-				// Battleship's controls ride its own board message below, which is the
-				// one that gets edited every turn; the opener stays a plain card.
-				...(game === "battleship"
+				...(SELF_BOARDED_GAMES.includes(game)
 					? {}
 					: {
 							components: [
