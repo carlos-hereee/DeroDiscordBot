@@ -46,7 +46,12 @@ export interface FinishRoomInput {
 }
 
 // End a match: stamp the row, lock the channel, post the result card.
-export async function finish(client: Client, room: IGameRoom, input: FinishRoomInput = {}): Promise<void> {
+//
+// Returns TRUE when this call is the one that ended the match and FALSE when the room was
+// already finished. Every caller may ignore it; the one that must not is a caller which pays
+// something of its own AFTER this returns (runVersusMove's awardTwoPlayerResult), because that
+// work is outside the claim below and would otherwise run once per press.
+export async function finish(client: Client, room: IGameRoom, input: FinishRoomInput = {}): Promise<boolean> {
 	const now = input.now ?? new Date();
 	const winnerId = input.winnerId ?? null;
 
@@ -57,11 +62,21 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	// leave a LOCKED channel attached to a row still marked "playing", which the sweep
 	// (finished-only, by design) would never touch and no recovery path would find,
 	// so the room would sit locked and silent forever.
-	await gameRoomStore.finish(room.guildId, room.roomId, {
+	//
+	// ①ᵃ AND THE PERSIST IS ALSO THE CLAIM. gameRoomStore.finish only matches a room in a
+	// non-terminal status, so a null return means somebody else already finished this one and
+	// everything below (the payout, the lock, the result card) has already happened for it.
+	// Returning here is what makes `finish` safe to call twice, which four paths can do: the
+	// Forfeit button stays clickable on a finished room, ChannelDeleteWatcher still matches a
+	// finished row for the whole archive window, versus has no claim of its own, and the hold em
+	// clock sweeps on a timer. Re-running would pay everyone a second time (payRoomRateTopUp has
+	// no idempotency key), and the forfeit replay would let the WINNER set winnerId to the loser.
+	const claimed = await gameRoomStore.finish(room.guildId, room.roomId, {
 		winnerId,
 		endedAt: now,
 		archiveAt: new Date(now.getTime() + BOT_CONSTANTS.GAME_ROOM_ARCHIVE_DELAY_MS),
 	});
+	if (!claimed) return false;
 
 	// ①ᵇ The room-rate top up, paid here rather than after the channel resolves below.
 	// XP is a database fact and the channel is a Discord fact: a match whose channel an
@@ -71,8 +86,10 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 
 	const channel = await resolveRoomChannel(client, room.channelId);
 	// An already-deleted channel is the ordinary abandonment case, not an error. The
-	// row is stamped, so the sweep will close it out on its next pass.
-	if (!channel) return;
+	// row is stamped, so the sweep will close it out on its next pass. TRUE, not false:
+	// this call DID end the match, and the return value reports the claim rather than
+	// whether Discord still had a channel to decorate.
+	if (!channel) return true;
 
 	// ② Lock it. `set` REPLACES the whole overwrite array rather than merging, which is
 	// what guarantees no stale SendMessages allow survives from the playing phase; a
@@ -105,6 +122,8 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 			...(input.art ? { files: [input.art.attachment] } : {}),
 		})
 		.catch((error) => console.error("[game-rooms] failed to post result card", { roomId: room.roomId, error }));
+
+	return true;
 }
 
 // ── the room-rate top up ──────────────────────────────────────────────

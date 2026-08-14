@@ -666,6 +666,12 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 					if (opts.type === 4) return { id: "new-cat-1" };
 					return makeCh(opts.name);
 				}),
+				// Reached only on the force:true rebuild, where runAutoSetup now hands the
+				// STORED arcade category id to resolveOrCreateArcadeCategory instead of null.
+				// Resolving it is what proves the reuse branch is live on this path; before the
+				// fix it was dead here and every forced rebuild built a second 🎮 ARCADE GAMES
+				// beside the live one, orphaning its channels and every room parented under it.
+				fetch: vi.fn(async (id: string) => (id === "games-cat-1" ? { id, type: 4 } : null)),
 			},
 		} as unknown as Guild;
 	}
@@ -694,6 +700,17 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 		expect(payload.categoryId).toBe("new-cat-1");
 		expect(payload).not.toHaveProperty("adminRoleId");
 		expect(payload).not.toHaveProperty("setupComplete");
+		// ⚠️ AND THE ARCADE CATEGORY IS REUSED, NOT REBUILT. force:true is reached by
+		// rebuildFromStaleConfig and ScheduleBoard.rebuildHomebase, both of which fire when only
+		// the HOMEBASE category is missing. Creating a second arcade category here would repoint
+		// gamesCategoryId at it and permanently orphan the original, its channels, and every
+		// in-progress room channel parented under it (selfDestruct reads the stored id, so
+		// /self-destruct could not reach them either).
+		expect(payload.gamesCategoryId).toBe("games-cat-1");
+		const categoryCreates = (guild.channels.create as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+			([opts]) => (opts as { type: number }).type === 4
+		);
+		expect(categoryCreates).toHaveLength(1);
 	});
 
 	it("logs loudly and rethrows when create hits the 11000 duplicate key error", async () => {

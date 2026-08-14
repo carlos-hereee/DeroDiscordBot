@@ -214,7 +214,20 @@ export class GuildSetupManager {
 		// which is what the completion criteria for this phase actually asks for.
 		// A null return means a 50013 already routed through handlePermissionFailure,
 		// so bail exactly as the homebase category create above does.
-		const gamesCategory = await GuildSetupManager.resolveOrCreateArcadeCategory(guild, null, config.ownerId);
+		// ⚠️ THREAD THE STORED ARCADE ID. This used to hardcode null, which made the
+		// helper's reuse branch dead on this path and always created a category. That
+		// is harmless on a fresh install (the id genuinely is null) but this is NOT
+		// only the fresh-install path: rebuildFromStaleConfig and ScheduleBoard
+		// .rebuildHomebase both call in with force: true, which walks straight past
+		// the early return above. An admin deleting only the NOTICE BOARD category
+		// therefore got a SECOND 🎮 ARCADE GAMES built beside the live one, with
+		// gamesCategoryId repointed at it, permanently orphaning the original
+		// category, its channels, and every in-progress room channel parented under
+		// it (selfDestruct's MANAGED_CATEGORY_FIELDS reads the stored id, so
+		// /self-destruct could not reach them either). repairMissingChannels passes
+		// the stored id for exactly this reason; this is the same call.
+		const storedArcadeId = (existing as unknown as { gamesCategoryId?: string | null } | null)?.gamesCategoryId ?? null;
+		const gamesCategory = await GuildSetupManager.resolveOrCreateArcadeCategory(guild, storedArcadeId, config.ownerId);
 		if (!gamesCategory) return;
 
 		const { ids, objects } = await GuildSetupManager.createChannels(guild, category, gamesCategory, config);
@@ -1572,10 +1585,14 @@ export class GuildSetupManager {
 	// ── resolve or create the 🎮 ARCADE GAMES category ────────
 	// What:  hand back the guild's arcade category, creating it when the stored
 	//        id is null or points at something that no longer exists.
-	// Who:   runAutoSetup (fresh install, stored id is always null) and
-	//        repairMissingChannels (a legacy guild whose row predates the
-	//        category). ONE helper for both, so the two paths cannot build it
-	//        with different overwrites and drift.
+	// Who:   runAutoSetup and repairMissingChannels (a legacy guild whose row
+	//        predates the category). ONE helper for both, so the two paths cannot
+	//        build it with different overwrites and drift.
+	// ⚠️     BOTH callers must pass the STORED id. This comment used to claim
+	//        runAutoSetup's stored id "is always null", which is only true of a
+	//        fresh install; the forced rebuild paths reach it with a live category
+	//        already recorded, and passing null there duplicated the category.
+	//        See the call site in runAutoSetup for the full failure.
 	// When:  once per autoSetup, and lazily on the boot sweep the first time a
 	//        games spec needs a parent.
 	// Where: the overwrites deliberately MIRROR the homebase category's, owner

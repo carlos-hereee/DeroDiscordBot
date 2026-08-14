@@ -12,6 +12,7 @@ import { runRoomMove, handleRpsSelect } from "./roomGames.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
+import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 const storeMock = gameRoomStore as unknown as {
@@ -20,6 +21,7 @@ const storeMock = gameRoomStore as unknown as {
 };
 const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn> };
 const lifecycleMock = roomLifecycle as unknown as { finish: ReturnType<typeof vi.fn> };
+const awardMock = awardTwoPlayerResult as unknown as ReturnType<typeof vi.fn>;
 
 const HOST = "host-1";
 const OPPONENT = "player-2";
@@ -70,7 +72,10 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
 	trailMock.postMove.mockResolvedValue(true);
-	lifecycleMock.finish.mockResolvedValue(undefined);
+	// TRUE, not undefined. finish returns whether THIS call claimed the transition, and the
+	// versus award is gated on it. Resolving a falsy default here would silently make every
+	// versus test exercise the losing-press path.
+	lifecycleMock.finish.mockResolvedValue(true);
 });
 
 // ⚠️ THE ONE REGRESSION THE PLAN CALLS UNFORGIVABLE. A spectator must not learn
@@ -205,6 +210,25 @@ describe("coin flip and dice roll in a room", () => {
 		// A coin cannot tie, so one of the two players always wins. Passing
 		// "challenger" straight through would write a token where a user id belongs.
 		expect([HOST, OPPONENT]).toContain(winnerId);
+	});
+
+	// ⚠️ THE DOUBLE-PRESS GUARD. Nothing stops both players pressing in the same tick: each
+	// resolves its own flip and each reaches finish, whose conditional write lets exactly one
+	// through. The game's own award sits OUTSIDE that write, so the loser's press would pay
+	// the base XP a second time and record `games.coinflip.played` twice on both members.
+	it("pays the game award only on the press that actually ended the match", async () => {
+		lifecycleMock.finish.mockResolvedValue(false);
+
+		await runRoomMove(makeButton(OPPONENT), makeRoom({ game: "coinflip" }));
+
+		expect(lifecycleMock.finish).toHaveBeenCalledOnce();
+		expect(awardMock).not.toHaveBeenCalled();
+	});
+
+	it("pays the game award once when the press does end the match", async () => {
+		await runRoomMove(makeButton(HOST), makeRoom({ game: "coinflip" }));
+
+		expect(awardMock).toHaveBeenCalledOnce();
 	});
 
 	it("refuses a move in a room that is not playing", async () => {

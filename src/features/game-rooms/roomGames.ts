@@ -99,7 +99,15 @@ async function runVersusMove(interaction: ButtonInteraction, room: IGameRoom): P
 	// reads as an outcome rather than a missing winner; a coin cannot tie, which the
 	// VersusResult union already guarantees.
 	const artKey: GameAssetKey = result.flip === "coin" ? "coinFlip" : result.winner === "tie" ? "diceTie" : "diceRoll";
-	await roomLifecycle.finish(interaction.client, room, { winnerId, art: resolveGameAsset(artKey) });
+	const ended = await roomLifecycle.finish(interaction.client, room, { winnerId, art: resolveGameAsset(artKey) });
+
+	// ⚠️ ONLY THE PRESS THAT ENDED THE MATCH PAYS. This function takes no claim of its own,
+	// so two players pressing in the same tick both reach here having each resolved their own
+	// flip. finish is conditional on a non-terminal status and reports which press won, and the
+	// award sits OUTSIDE that write, so without this guard the loser's press would pay the base
+	// game XP a second time and record `games.<slug>.played` twice on both members. The room's
+	// own rate top up is already inside the claim.
+	if (!ended) return;
 
 	// Fire and forget after the primary action, per house rule 7. Both players have
 	// already seen the outcome, so nothing the award does can change what the match

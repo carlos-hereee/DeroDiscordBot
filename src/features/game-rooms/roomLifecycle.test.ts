@@ -87,7 +87,11 @@ function makeClient(channel: unknown, guild: unknown = makeGuild()): Client {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	storeMock.finish.mockResolvedValue(undefined);
+	// A ROW, not undefined. gameRoomStore.finish is a conditional write over the non-terminal
+	// statuses, so its return value is the claim: a row means this caller took the transition,
+	// null means somebody else already finished the room. Resolving undefined here would make
+	// every test in this file exercise the already-finished path by accident.
+	storeMock.finish.mockResolvedValue(makeRoom({ status: "finished" }));
 	storeMock.markArchived.mockResolvedValue(undefined);
 	storeMock.appendMove.mockResolvedValue(undefined);
 	configMock.findByGuildId.mockResolvedValue({ adminRoleId: "admin-role" });
@@ -115,12 +119,34 @@ describe("roomLifecycle.finish", () => {
 	it("persists the row BEFORE it touches the channel", async () => {
 		const order: string[] = [];
 		const channel = makeChannel();
-		storeMock.finish.mockImplementation(async () => void order.push("persist"));
+		storeMock.finish.mockImplementation(async () => {
+			order.push("persist");
+			return makeRoom({ status: "finished" });
+		});
 		channel.permissionOverwrites.set.mockImplementation(async () => void order.push("lock"));
 
 		await finish(makeClient(channel), makeRoom());
 
 		expect(order).toEqual(["persist", "lock"]);
+	});
+
+	// ⚠️ THE REPLAY GUARD. Four paths can call finish on a room that is already finished: the
+	// Forfeit button stays clickable (the status refusal in gameRoomHandlers covers only
+	// BOARD_ACTIONS, and a SendMessages deny does not block a component interaction),
+	// ChannelDeleteWatcher still matches the row for the whole archive window, versus takes no
+	// claim of its own, and the hold em clock sweeps on a timer. The store's conditional write
+	// is what stops them, and this asserts finish HONORS the refusal instead of carrying on:
+	// re-running would pay every player a second time and let the winner overwrite winnerId
+	// with the loser.
+	it("does nothing at all when the room was already finished by somebody else", async () => {
+		const channel = makeChannel();
+		storeMock.finish.mockResolvedValue(null);
+
+		await finish(makeClient(channel), makeRoom({ status: "finished" }), { winnerId: "player-2" });
+
+		expect(channel.permissionOverwrites.set).not.toHaveBeenCalled();
+		expect(channel.send).not.toHaveBeenCalled();
+		expect(awardMock).not.toHaveBeenCalled();
 	});
 
 	it("locks the channel so nobody but the bot can write", async () => {
@@ -265,7 +291,9 @@ describe("roomLifecycle.finish room-rate top up", () => {
 		const client = makeClient(makeChannel());
 		(client.guilds.fetch as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("gateway blip"));
 
-		await expect(finish(client, makeRoom(), { winnerId: "player-2" })).resolves.toBeUndefined();
+		// true, not undefined: finish reports whether THIS call claimed the transition, and a
+		// guild it could not fetch is a failure of the bookkeeping, not of ending the match.
+		await expect(finish(client, makeRoom(), { winnerId: "player-2" })).resolves.toBe(true);
 		expect(awardMock).not.toHaveBeenCalled();
 	});
 });

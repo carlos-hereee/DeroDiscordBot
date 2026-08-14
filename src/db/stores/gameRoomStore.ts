@@ -164,13 +164,25 @@ export const gameRoomStore = {
 	// stays thin, and keeping the arithmetic in one feature module is what guarantees archiveAt
 	// is stamped by exactly one code path. That single-writer property is what makes the sweep
 	// safe, because a room that is still playing has archiveAt null and no filter bug can reach it.
+	//
+	// ⚠️ THE STATUS FILTER IS A CLAIM, NOT A TIDINESS CHECK, and it is the ONE write that makes
+	// finishing idempotent. findOneAndUpdate is atomic, so the first caller to match a
+	// non-terminal room takes the transition and every later caller gets null back. Without it
+	// four reachable paths could each re-finish the same room: the still-clickable Forfeit
+	// button on a finished room (the status refusal in gameRoomHandlers covers only BOARD_ACTIONS,
+	// and a SendMessages deny does not block a component interaction), the channel-delete watcher
+	// (findByChannelId has no status filter and channelId survives until markArchived), a double
+	// press in versus, and the hold em clock. Each replay re-ran payRoomRateTopUp, which carries
+	// no idempotency key, so the winner could pay everyone again, overwrite winnerId with the
+	// loser, and push archiveAt out another four hours, repeatedly. One conditional write here
+	// beats four call-site guards, because this is the shared infrastructure all four go through.
 	async finish(
 		guildId: string,
 		roomId: string,
 		outcome: { winnerId: string | null; endedAt: Date; archiveAt: Date }
 	) {
 		return GameRoom.findOneAndUpdate(
-			{ guildId, roomId },
+			{ guildId, roomId, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] } },
 			{
 				$set: {
 					status: "finished",

@@ -91,12 +91,14 @@ describe("/mini-game builder shape", () => {
 	// ⚠️ THIS TEST WAS INVERTED BY GAME ROOMS PHASE 4, and the inversion is the
 	// requirement. It used to assert an opponent option was REQUIRED on all three
 	// head to head games. An addUserOption is populated by DISCORD and will happily
-	// return a bot, which is the only reason the bot had to carry a "Bots do not
-	// play games with mortals" rejection string at all. Those three games now open a
-	// challenge card on ⚔️challenges, where the opponent arrives through a
-	// bot-populated StringSelect (a bot can never be an option) or a Join button (a
-	// bot cannot click). F9 became structural, and this asserts the surface that made
-	// it non-structural is gone.
+	// return a bot, which is the only reason the bot had to carry a bot-opponent
+	// rejection string at all (the phrase is not quoted here on purpose: a grep for
+	// it returning nothing is this phase's completion criterion, and quoting it
+	// across two lines is what made that grep pass by accident rather than by
+	// absence). Those three games now open a challenge card on ⚔️challenges, where
+	// the opponent arrives through a bot-populated StringSelect (a bot can never be
+	// an option) or a Join button (a bot cannot click). F9 became structural, and
+	// this asserts the surface that made it non-structural is gone.
 	it("offers NO user option on any subcommand, so no picker can return a bot", () => {
 		const userOptions = topLevel.flatMap((sub) => {
 			const options = (sub as { options?: { name: string; type: number }[] }).options ?? [];
