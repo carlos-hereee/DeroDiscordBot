@@ -125,6 +125,39 @@ export const gameRoomStore = {
 		);
 	},
 
+	// Claim ONE field inside the `secret` blob, and only if nobody has claimed it yet.
+	//
+	// ⚠️ NARROWER THAN updateSecretIf, AND BETTER WHERE IT FITS. The CAS above writes the whole
+	// blob, so it needs the caller to have read a value it can compare against. A per-player slot
+	// (`picks.<userId>`, `pending.<userId>`) does not need that: a dotted $set touches only its own
+	// subfield, so two players claiming DIFFERENT slots in the same tick both land and neither can
+	// erase the other. That is the failure this replaces for rps, where both picks arriving in one
+	// tick left only the second, `bothIn` was false for both players, and the room sat at "playing"
+	// forever holding its host's one-room slot with nothing sweeping it.
+	//
+	// TWO writes, and the first one is not optional. `secret` defaults to null, and Mongo refuses to
+	// create a dotted path inside a null ("Cannot create field 'picks' in element {secret: null}"),
+	// so a fresh room has nothing to write into. Seeding it is safe to race: the `secret: null`
+	// filter stops matching the instant anybody's claim lands, so a late seeder cannot wipe a claim
+	// that beat it, and two seeders that both match write the same empty object.
+	//
+	// `path` is interpolated into the query, so it must never carry user text. Every caller today
+	// passes a Discord snowflake, which is digits only.
+	//
+	// Returns the updated row, whose `secret` reflects EVERY claim including the other player's, or
+	// null when the slot was already taken. Read the follow-on state off the returned row rather
+	// than off the row you read before calling, which is the half of this bug that made both
+	// players think they were waiting on each other.
+	async claimSecretField(guildId: string, roomId: string, path: string, value: unknown) {
+		const field = `secret.${path}`;
+		await GameRoom.updateOne({ guildId, roomId, secret: null }, { $set: { secret: {} } });
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, [field]: { $exists: false } },
+			{ $set: { [field]: value } },
+			{ new: true }
+		);
+	},
+
 	// Add one member to a draft's joiner pool.
 	//
 	// ⚠️ $addToSet, NOT a read-modify-write. An open-to-all challenge is exactly the

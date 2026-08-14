@@ -180,18 +180,29 @@ export async function handleRpsSelect(interaction: StringSelectMenuInteraction):
 	const choice = interaction.values[0] as RpsChoice;
 	if (!RPS_CHOICES.includes(choice)) return;
 
-	const picks = { ...(((room.secret as RpsSecret | null)?.picks ?? {}) as Record<string, RpsChoice>) };
-	if (picks[interaction.user.id]) {
+	// ⚠️ CLAIM THE SLOT, DO NOT READ-MODIFY-WRITE THE BLOB. `secret` is a single Mixed
+	// field, so writing back `{ picks }` built from this handler's own read replaced it
+	// wholesale: both players picking in the same tick left only the second pick, `bothIn`
+	// was false for BOTH of them, and the room sat at "playing" forever holding its host's
+	// one-room slot with nothing to sweep it. A dotted claim on this player's own slot
+	// cannot touch the other player's, and a null return means this player had already
+	// picked. That null REPLACES the read-then-check this handler used to do: the check and
+	// the write are now one server-side operation, so a double submit cannot slip between
+	// them. promptRpsChoice still refuses early on the button, but a select's customId is
+	// user input and this handler is reachable without it.
+	const claimed = await gameRoomStore.claimSecretField(guildId, roomId, `picks.${interaction.user.id}`, choice);
+	if (!claimed) {
 		await interaction.reply({ content: gameRoomsCopy.games.rpsAlreadyPicked, flags: MessageFlags.Ephemeral });
 		return;
 	}
-	picks[interaction.user.id] = choice;
-
-	await gameRoomStore.update(guildId, roomId, { secret: { picks } as never });
 	// Ephemeral confirmation. Naming the choice back to the player who made it is
 	// safe; it is their own screen.
 	await interaction.reply({ content: gameRoomsCopy.games.rpsLocked(choice), flags: MessageFlags.Ephemeral });
 
+	// Off the RETURNED row, never off `room`. The row this handler read predates the other
+	// player's claim, so deciding `bothIn` from it is exactly how both players ended up
+	// waiting on each other.
+	const picks = ((claimed.secret as RpsSecret | null)?.picks ?? {}) as Record<string, RpsChoice>;
 	const [challengerId, opponentId] = room.playerIds;
 	const bothIn = Boolean(picks[challengerId] && picks[opponentId]);
 

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ButtonInteraction, StringSelectMenuInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findByRoomId: vi.fn(), update: vi.fn() },
+	gameRoomStore: { findByRoomId: vi.fn(), update: vi.fn(), claimSecretField: vi.fn() },
 }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
@@ -18,6 +18,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 const storeMock = gameRoomStore as unknown as {
 	findByRoomId: ReturnType<typeof vi.fn>;
 	update: ReturnType<typeof vi.fn>;
+	claimSecretField: ReturnType<typeof vi.fn>;
 };
 const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn> };
 const lifecycleMock = roomLifecycle as unknown as { finish: ReturnType<typeof vi.fn> };
@@ -68,9 +69,32 @@ function makeSelect(userId: string, value: string): StringSelectMenuInteraction 
 
 const publicTrailText = (): string[] => trailMock.postMove.mock.calls.map((call) => (call[2] as { text: string }).text);
 
+// Stands in for the real dotted claim: it refuses a slot that is already taken and otherwise
+// returns the row with EVERY pick on it, the other player's included. Modelling that return is
+// the point, because the handler now decides `bothIn` from it rather than from the row it read.
+function claimAgainst(room: IGameRoom | null) {
+	return async (_guildId: string, _roomId: string, path: string, value: unknown) => {
+		const existing = ((room?.secret as { picks?: Record<string, unknown> } | null)?.picks ?? {}) as Record<
+			string,
+			unknown
+		>;
+		const slot = path.replace(/^picks\./, "");
+		if (existing[slot]) return null;
+		return { ...(room as IGameRoom), secret: { picks: { ...existing, [slot]: value } } } as IGameRoom;
+	};
+}
+
+// findByRoomId and the claim must describe the SAME room, or a test proves nothing about either.
+function seedRoom(room: IGameRoom) {
+	storeMock.findByRoomId.mockResolvedValue(room);
+	storeMock.claimSecretField.mockImplementation(claimAgainst(room));
+	return room;
+}
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
+	storeMock.claimSecretField.mockImplementation(claimAgainst(null));
 	trailMock.postMove.mockResolvedValue(true);
 	// TRUE, not undefined. finish returns whether THIS call claimed the transition, and the
 	// versus award is gated on it. Resolving a falsy default here would silently make every
@@ -92,7 +116,7 @@ describe("rock paper scissors secrecy", () => {
 	});
 
 	it("posts NOTHING public naming the choice when the first player picks", async () => {
-		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		seedRoom(makeRoom());
 
 		await handleRpsSelect(makeSelect(HOST, "rock"));
 
@@ -107,7 +131,7 @@ describe("rock paper scissors secrecy", () => {
 		// The transcript is read back by the future dashboard, so a leak into `meta`
 		// or `text` on the interim move would leak to a second surface later even if
 		// Discord never showed it.
-		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		seedRoom(makeRoom());
 
 		await handleRpsSelect(makeSelect(HOST, "scissors"));
 
@@ -116,13 +140,13 @@ describe("rock paper scissors secrecy", () => {
 	});
 
 	it("does not finish the match on the first pick", async () => {
-		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		seedRoom(makeRoom());
 		await handleRpsSelect(makeSelect(HOST, "rock"));
 		expect(lifecycleMock.finish).not.toHaveBeenCalled();
 	});
 
 	it("reveals BOTH throws only once the second pick lands", async () => {
-		storeMock.findByRoomId.mockResolvedValue(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
+		seedRoom(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
 
 		await handleRpsSelect(makeSelect(OPPONENT, "paper"));
 
@@ -133,7 +157,7 @@ describe("rock paper scissors secrecy", () => {
 
 	it("scores the reveal and finishes with the right winner", async () => {
 		// paper beats rock, and the opponent threw paper.
-		storeMock.findByRoomId.mockResolvedValue(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
+		seedRoom(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
 
 		await handleRpsSelect(makeSelect(OPPONENT, "paper"));
 
@@ -144,7 +168,7 @@ describe("rock paper scissors secrecy", () => {
 	});
 
 	it("reports a tie as no winner rather than inventing one", async () => {
-		storeMock.findByRoomId.mockResolvedValue(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
+		seedRoom(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
 		await handleRpsSelect(makeSelect(OPPONENT, "rock"));
 		expect(lifecycleMock.finish.mock.calls[0][2]).toMatchObject({ winnerId: null });
 	});
@@ -153,7 +177,7 @@ describe("rock paper scissors secrecy", () => {
 	// embed: a room can carry thirty move posts and re-uploading a PNG per move is
 	// bandwidth and a rate limit for nothing.
 	it("hands the payoff art to the result card and never to a move", async () => {
-		storeMock.findByRoomId.mockResolvedValue(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
+		seedRoom(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
 
 		await handleRpsSelect(makeSelect(OPPONENT, "paper"));
 
@@ -164,32 +188,67 @@ describe("rock paper scissors secrecy", () => {
 	});
 
 	it("refuses a second pick from the same player", async () => {
-		storeMock.findByRoomId.mockResolvedValue(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
+		seedRoom(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
 		const interaction = makeSelect(HOST, "paper");
 
 		await handleRpsSelect(interaction);
 
 		// Re-picking would let a player change their throw after seeing the public
-		// "locked in" line from the other, which is the cheapest possible cheat.
-		expect(storeMock.update).not.toHaveBeenCalled();
+		// "locked in" line from the other, which is the cheapest possible cheat. The
+		// refusal is now the CLAIM's null return rather than a read-then-check, so the
+		// assertion is that nothing downstream ran: no public line, no finish.
+		expect(trailMock.postMove).not.toHaveBeenCalled();
 		expect(lifecycleMock.finish).not.toHaveBeenCalled();
+	});
+
+	// ⚠️ THE RACE THIS HANDLER USED TO LOSE. Both players submitting in the same tick each
+	// read a row without the other's pick; the old code wrote `{ picks }` built from that read,
+	// so the Mixed blob was replaced wholesale, one pick vanished, `bothIn` was false for BOTH,
+	// and the room sat at "playing" forever holding its host's one-room slot with nothing to
+	// sweep an rps room. The fix has two halves and this pins the second: the claim is a dotted
+	// write on one slot, and the handler reads the result off the RETURNED row.
+	it("reveals from the returned row when the other pick landed after this handler read", async () => {
+		// The stale read: no picks at all. The claim comes back carrying both, which is what
+		// the server would return once the other player's dotted write had landed.
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		storeMock.claimSecretField.mockResolvedValue(
+			makeRoom({ secret: { picks: { [HOST]: "rock", [OPPONENT]: "paper" } } as never })
+		);
+
+		await handleRpsSelect(makeSelect(OPPONENT, "paper"));
+
+		expect(publicTrailText().join(" ")).toMatch(/rock/i);
+		expect(lifecycleMock.finish).toHaveBeenCalledOnce();
+		expect(lifecycleMock.finish.mock.calls[0][2]).toMatchObject({ winnerId: OPPONENT });
+	});
+
+	it("claims only this player's own slot, so a concurrent pick cannot be erased", async () => {
+		seedRoom(makeRoom());
+
+		await handleRpsSelect(makeSelect(OPPONENT, "paper"));
+
+		// A whole-blob write is what lost the other player's pick. The path must name one slot.
+		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.claimSecretField).toHaveBeenCalledWith("guild-1", "room-1", `picks.${OPPONENT}`, "paper");
 	});
 
 	// The select handler is reachable directly; its customId and values are user
 	// input whoever built the menu. Gating only the button that opens it would be a
 	// gate on the suggestion rather than on the action.
+	// claimSecretField, not update: the claim IS the write now, so asserting on `update`
+	// would pass whatever the gate did.
 	it("refuses a pick from somebody who is not a player", async () => {
-		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		seedRoom(makeRoom());
 		await handleRpsSelect(makeSelect("spectator-9", "rock"));
 
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.claimSecretField).not.toHaveBeenCalled();
 		expect(trailMock.postMove).not.toHaveBeenCalled();
 	});
 
 	it("refuses a pick once the room is no longer playing", async () => {
-		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished" }));
+		seedRoom(makeRoom({ status: "finished" }));
 		await handleRpsSelect(makeSelect(HOST, "rock"));
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.claimSecretField).not.toHaveBeenCalled();
 	});
 });
 
