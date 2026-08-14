@@ -17,6 +17,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { GuildSetupManager } from "@features/setup/GuildSetupManager.js";
 import { registerChannelDeleteWatcher } from "@features/setup/ChannelDeleteWatcher.js";
 import { checkOnboardingAndNotifyOwner } from "@features/setup/OnboardingCheck.js";
+import { migrateArcadeChannelFields } from "@features/setup/migrateArcadeChannelFields.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { pendingPairingStore } from "@db/stores/pendingPairingStore.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
@@ -541,6 +542,19 @@ process.on("uncaughtException", (err) => {
 		// homebase sweep) makes existing guilds' intro channels member-writable
 		// so newcomers can actually answer.
 		registerGreeter(client);
+
+		// ── legacy arcade field rename ─────────────────────────────
+		// What: renames gamesRulesChannelId / gamesChallengesChannelId (and their
+		//       introMessageIds copies) to their arcade* names on any row still
+		//       carrying the pre-2026-08-12 spelling.
+		// When: BEFORE the ensureHomebase sweep below, and the order is the point:
+		//       repairMissingChannels is what reads those fields, and a legacy row
+		//       reads them as null, which makes it build a SECOND rules channel
+		//       beside the live one. See the module header for why the category
+		//       still resolving is what hides this.
+		// Where: idempotent and DB-only, so it costs one filtered updateMany per
+		//        field on a boot where nothing is stale.
+		await migrateArcadeChannelFields();
 
 		// ── homebase self heal on wake up ──────────────────────────
 		// What: every guild the bot is cached in gets an ensureHomebase pass.
