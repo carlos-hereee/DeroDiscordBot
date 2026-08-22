@@ -39,7 +39,9 @@ export interface AwardXpInput {
 	client: Client;
 	guildId: string;
 	userId: string;
-	username: string;
+	// UNDEFINED when the caller could not resolve a display name, never a fallback. The award
+	// still lands; only the username write is skipped. See memberLevelStore.incrementAndReturn.
+	username?: string;
 	// The pre-multiplier base. Callers that roll (the passive sources) have
 	// already applied their multipliers; game hooks pass a flat constant.
 	amount: number;

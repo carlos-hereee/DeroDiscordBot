@@ -56,7 +56,7 @@ export const memberLevelStore = {
 	async incrementAndReturn(
 		guildId: string,
 		userId: string,
-		username: string,
+		username: string | undefined,
 		increments: Record<string, number>
 	) {
 		return MemberLevel.findOneAndUpdate(
@@ -65,7 +65,15 @@ export const memberLevelStore = {
 				$inc: increments,
 				// username is refreshed on every award so a nickname change is picked
 				// up without a backfill; guildId and userId only matter on insert.
-				$set: { username, lastAwardAt: new Date() },
+				//
+				// ⚠️ ONLY WHEN THE CALLER ACTUALLY RESOLVED ONE. Because this is a WRITE on every
+				// award rather than a hint used on insert, an unresolved caller that passed a
+				// fallback would overwrite a real display name on /account, /levels and
+				// LevelsBoard, and it would STAY overwritten until that member's next award from
+				// a path that could resolve a name. Nothing errors and no test fails, which is
+				// why the fix belongs here rather than at each call site: a caller that cannot
+				// resolve a name passes undefined and still gets its xp credited.
+				$set: username ? { username, lastAwardAt: new Date() } : { lastAwardAt: new Date() },
 				$setOnInsert: { guildId, userId },
 			},
 			{ new: true, upsert: true }

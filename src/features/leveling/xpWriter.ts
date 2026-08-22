@@ -72,7 +72,9 @@ export function releaseCooldown(key: string): void {
 export interface StagedAward {
 	guildId: string;
 	userId: string;
-	username: string;
+	// Optional for the same reason memberLevelStore.incrementAndReturn takes it optional: the
+	// flush $sets it, so an unresolved caller must pass nothing rather than a fallback.
+	username?: string;
 	xp: number;
 	counters: Partial<Record<LifetimeCounter, number>>;
 	// Resolved when the award is STAGED, not when it is flushed. An award earned
@@ -105,7 +107,9 @@ export function stage(award: StagedAward): void {
 	existing.xp += award.xp;
 	// The freshest display name wins, so a nickname change lands on the next
 	// flush rather than waiting for the member's next distinct period.
-	existing.username = award.username;
+	// Only when this award actually carries one, so a later unresolved award cannot blank a
+	// name an earlier award in the same window already staged.
+	if (award.username) existing.username = award.username;
 	for (const [counter, value] of Object.entries(award.counters)) {
 		const name = counter as LifetimeCounter;
 		existing.counters[name] = (existing.counters[name] ?? 0) + (value ?? 0);
@@ -165,7 +169,7 @@ export async function flushNow(): Promise<void> {
 		// Aggregated per MEMBER (not per member and period), because level crossing
 		// is a question about a lifetime total and a member who straddled a period
 		// boundary in one window still crossed only once.
-		const totals = new Map<string, { guildId: string; userId: string; username: string; xp: number }>();
+		const totals = new Map<string, { guildId: string; userId: string; username?: string; xp: number }>();
 		const stampedAt = new Date();
 
 		for (const award of batch.values()) {
@@ -179,7 +183,9 @@ export async function flushNow(): Promise<void> {
 					filter: { guildId: award.guildId, userId: award.userId },
 					update: {
 						$inc: increments,
-						$set: { username: award.username, lastAwardAt: stampedAt },
+						$set: award.username
+							? { username: award.username, lastAwardAt: stampedAt }
+							: { lastAwardAt: stampedAt },
 						$setOnInsert: { guildId: award.guildId, userId: award.userId },
 					},
 					upsert: true,
@@ -229,7 +235,7 @@ export async function flushNow(): Promise<void> {
 // trip this whole module exists to avoid. One extra indexed read per flush,
 // grouped per guild, is the right price.
 async function dispatchCrossings(
-	totals: Map<string, { guildId: string; userId: string; username: string; xp: number }>
+	totals: Map<string, { guildId: string; userId: string; username?: string; xp: number }>
 ): Promise<void> {
 	const client = boundClient;
 	if (!client || totals.size === 0) return;

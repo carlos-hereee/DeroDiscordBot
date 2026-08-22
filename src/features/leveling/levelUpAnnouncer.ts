@@ -63,7 +63,9 @@ export interface LevelCrossingInput {
 	client: Client;
 	guildId: string;
 	userId: string;
-	username: string;
+	// Optional, mirroring AwardXpInput. Nothing in this file reads it; the announcement
+	// addresses the member by mention, which needs only the id.
+	username?: string;
 	oldTotalXp: number;
 	newTotalXp: number;
 	// Where the xp was earned, when that is knowable. Only read under

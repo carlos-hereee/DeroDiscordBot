@@ -353,7 +353,10 @@ async function settleOutcome(
 				client,
 				guildId: room.guildId,
 				userId: award.userId,
-				username: table.seats.find((seat) => seat.userId === award.userId)?.username ?? award.userId,
+				// undefined, NOT the raw snowflake. A seat rebuilt from Mongo after a Railway
+				// restart can legitimately miss its username, and awardXp $sets whatever it is
+				// given, so a fallback here renders a string of digits on both leaderboards.
+				username: table.seats.find((seat) => seat.userId === award.userId)?.username,
 				amount: BOT_CONSTANTS.LEVELING.HOLDEM_HAND_WIN_XP,
 				source: "game",
 				channelId: room.channelId,
@@ -389,7 +392,8 @@ async function payPlacements(client: Client, room: IGameRoom, table: HoldemTable
 			client,
 			guildId: room.guildId,
 			userId,
-			username: table.seats.find((seat) => seat.userId === userId)?.username ?? userId,
+			// undefined rather than the raw id, same reason as the per-hand payout above.
+			username: table.seats.find((seat) => seat.userId === userId)?.username,
 			amount,
 			source: "game",
 			// The ONE call that records the match, so /account shows a hold em played
