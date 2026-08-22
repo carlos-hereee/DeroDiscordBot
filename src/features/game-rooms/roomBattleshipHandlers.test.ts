@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ButtonInteraction } from "discord.js";
+import type { ButtonInteraction, StringSelectMenuInteraction } from "discord.js";
 
-vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn() } }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({
+	gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn() },
+}));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardTwoPlayerResult: vi.fn() }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 
-import { handleFire, handleViewBoard, handleReroll } from "./roomBattleshipHandlers.js";
+import { handleFire, handleViewBoard, handleReroll, handleAimSelect } from "./roomBattleshipHandlers.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
@@ -15,7 +17,11 @@ import { startMatch, deserializeMatch, serializeMatch, type StoredBattleship } f
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
-const storeMock = gameRoomStore as unknown as { update: ReturnType<typeof vi.fn> };
+const storeMock = gameRoomStore as unknown as {
+	update: ReturnType<typeof vi.fn>;
+	findByRoomId: ReturnType<typeof vi.fn>;
+	setSecretField: ReturnType<typeof vi.fn>;
+};
 const awardXpMock = awardXp as unknown as ReturnType<typeof vi.fn>;
 const awardMatchMock = awardTwoPlayerResult as unknown as ReturnType<typeof vi.fn>;
 
@@ -156,6 +162,43 @@ describe("the private board", () => {
 	});
 });
 
+describe("aiming", () => {
+	beforeEach(() => storeMock.findByRoomId.mockResolvedValue(makeRoom(freshMatch())));
+
+	const aimInteraction = (userId: string, action: string, value: string) =>
+		({
+			...makeInteraction(userId),
+			customId: `bs:${action}:room-1`,
+			values: [value],
+		}) as unknown as StringSelectMenuInteraction;
+
+	it("writes ONLY the aiming player's own pending slot", async () => {
+		await handleAimSelect(aimInteraction(A, "bscol", "3"));
+
+		const [guildId, roomId, path, value] = storeMock.setSecretField.mock.calls[0];
+		expect([guildId, roomId]).toEqual(["guild-1", "room-1"]);
+		// ⚠️ Both players aim SIMULTANEOUSLY, unlike firing, which is turn gated. The old write
+		// persisted the whole secret from a snapshot read at handler entry, so an aim landing
+		// just after the opponent's shot wrote their shot, the turn and their sunk-ship progress
+		// back to what they were before it. Scoping the path is what closes that.
+		expect(path).toBe(`pending.${A}`);
+		expect(value).toEqual({ x: 3 });
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("lets the second select land on top of the first rather than claiming once", async () => {
+		const match = freshMatch();
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ ...match, pending: { [A]: { x: 3 } } }));
+
+		await handleAimSelect(aimInteraction(A, "bsrow", "5"));
+
+		const [, , path, value] = storeMock.setSecretField.mock.calls[0];
+		expect(path).toBe(`pending.${A}`);
+		// Not claimSecretField: a claim would refuse the second half of the coordinate.
+		expect(value).toEqual({ x: 3, y: 5 });
+	});
+});
+
 describe("reroll", () => {
 	it("re-lays the caller's fleet before the first shot", async () => {
 		const room = makeRoom(freshMatch());
@@ -163,10 +206,14 @@ describe("reroll", () => {
 
 		await handleReroll(makeInteraction(A), room);
 
-		const saved = storeMock.update.mock.calls[0][2].secret as StoredBattleship;
-		expect(JSON.stringify(saved.players[0].ships)).not.toBe(before);
-		// The opponent's fleet is untouched.
-		expect(saved.players[1].ships).toEqual((room.secret as StoredBattleship).players[1].ships);
+		const [, , path, value] = storeMock.setSecretField.mock.calls[0];
+		// ⚠️ THE PATH IS THE ASSERTION. A whole-secret write here reverted whatever the opponent
+		// did between this handler's read and its write; a dotted $set on ONE player's slot
+		// cannot touch the other's, so "the opponent's fleet is untouched" stops being a fact
+		// about this code path and becomes a fact about the query.
+		expect(path).toBe("players.0");
+		expect(JSON.stringify((value as StoredBattleship["players"][number]).ships)).not.toBe(before);
+		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
 	// Re-laying mid-match would move ships out from under hits the opponent has

@@ -57,6 +57,13 @@ async function refreshBoard(interaction: ButtonInteraction, room: IGameRoom, sto
 // The two selects each store HALF a coordinate on the row. Keeping it on the row
 // rather than in a Map means a deploy mid-aim costs a re-click at worst, and two
 // players aiming at once cannot collide on one shared slot.
+//
+// ⚠️ THAT LAST CLAUSE IS TRUE OF THE SLOT AND WAS FALSE OF THE WRITE. Each player owns
+// `pending.<their id>`, but this handler used to persist `{ ...stored, pending }`, the WHOLE
+// secret rebuilt from a snapshot read at handler entry. So an aim landing just after the
+// opponent's shot wrote their shot, the turn and their sunk-ship progress straight back to
+// what they were before it. A dotted setSecretField on this player's own slot touches
+// nothing else, which is what makes the original comment true.
 export async function handleAimSelect(interaction: StringSelectMenuInteraction): Promise<void> {
 	const [, action, roomId] = interaction.customId.split(":");
 	const guildId = interaction.guildId;
@@ -82,13 +89,13 @@ export async function handleAimSelect(interaction: StringSelectMenuInteraction):
 	const value = Number.parseInt(interaction.values[0] ?? "", 10);
 	if (!Number.isInteger(value)) return;
 
-	const pending = { ...(stored.pending ?? {}) };
-	const mine = { ...(pending[interaction.user.id] ?? {}) };
+	const mine = { ...(stored.pending?.[interaction.user.id] ?? {}) };
 	if (action === "bscol") mine.x = value;
 	else mine.y = value;
-	pending[interaction.user.id] = mine;
 
-	await persist(room, { ...stored, pending });
+	// setSecretField, not claimSecretField: the second select must land ON TOP of the first,
+	// so this is a revision, not a once-only claim.
+	await gameRoomStore.setSecretField(guildId, roomId, `pending.${interaction.user.id}`, mine);
 
 	// Ephemeral, always: announcing an aim publicly would tell the opponent where
 	// the next shot is going before it is fired.
@@ -215,12 +222,14 @@ export async function handleReroll(interaction: ButtonInteraction, room: IGameRo
 		return;
 	}
 
-	const players = [...stored.players] as StoredBattleship["players"];
-	players[index] = {
-		...players[index],
+	const relaid = {
+		...stored.players[index],
 		ships: placeFleet().map((ship) => ({ name: ship.name, cells: ship.cells, hits: [] })),
 	};
-	await persist(room, { ...stored, players });
+	// One player's fleet slot, by index, for the same reason as the aim above: writing the whole
+	// secret back would revert whatever the opponent did between this handler's read and its
+	// write. The guard overhead is the opponent's own reroll, which is a DIFFERENT index.
+	await gameRoomStore.setSecretField(room.guildId, room.roomId, `players.${index}`, relaid);
 
 	// Ephemeral: the whole point is that nobody else learns the new layout.
 	await interaction.reply({ content: gameRoomsCopy.battleship.rerolled, ...PRIVATE });

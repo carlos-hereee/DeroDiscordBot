@@ -158,6 +158,30 @@ export const gameRoomStore = {
 		);
 	},
 
+	// Write ONE field inside the `secret` blob, whether or not it already holds a value.
+	//
+	// ⚠️ THE SIBLING OF claimSecretField, AND THE DIFFERENCE IS THE ONLY THING THAT MATTERS.
+	// That one refuses to overwrite (`$exists: false`), which is what makes it a CLAIM. This one
+	// always writes, for the slots a player REVISES rather than claims once: battleship's aim is
+	// two selects that each fill half a coordinate, so the second must land on top of the first.
+	//
+	// Use it wherever a handler owns a slot NOBODY ELSE writes. The whole-blob write it replaces
+	// (`update(..., { secret: { ...stored, mine } })`) persists a snapshot read before the
+	// opponent's move, so it silently REVERTS their shot, the turn and their sunk-ship progress.
+	// A dotted $set touches only its own subfield, so a concurrent write to another slot survives.
+	//
+	// Same two-write shape as claimSecretField and for the same reason: `secret` defaults to null
+	// and Mongo will not create a dotted path inside a null. The seeding write is safe to race,
+	// because `secret: null` stops matching the instant anybody's write lands.
+	//
+	// `path` is interpolated into the update, so it must never carry user text. Every caller today
+	// passes a Discord snowflake or an array index, both digits only.
+	async setSecretField(guildId: string, roomId: string, path: string, value: unknown) {
+		const field = `secret.${path}`;
+		await GameRoom.updateOne({ guildId, roomId, secret: null }, { $set: { secret: {} } });
+		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $set: { [field]: value } }, { new: true });
+	},
+
 	// Add one member to a draft's joiner pool.
 	//
 	// ⚠️ $addToSet, NOT a read-modify-write. An open-to-all challenge is exactly the
