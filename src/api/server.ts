@@ -14,6 +14,7 @@ import { createLeaderboardTrackingRouter } from "./routes/leaderboardTracking.ro
 import { createAutoHealRouter } from "./routes/autoHeal.routes.js";
 import { createPairingRouter } from "./routes/pairing.routes.js";
 import { createGameRoomsRouter } from "./routes/gameRooms.routes.js";
+import { createStreamerRouter } from "./routes/streamer.routes.js";
 import { dashboardOrigin, port } from "@utils/config.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
@@ -91,6 +92,12 @@ export function startApiServer(client: Client): Server {
 	// already carries the ids the dashboard needs and the match is over by the time
 	// it is listed.
 	app.use("/api/game-rooms", createGameRoomsRouter());
+	// /api/streamer, the Dero Live stream companion's read-only recent-activity
+	// summary (counts and highlights from leveling plus active events, never a
+	// transcript). Behind verifySignature like every /api route; the platform
+	// side additionally allowlists the "streamer" prefix on the general-events
+	// proxy entry ONLY. No client injection: pure DB reads.
+	app.use("/api/streamer", createStreamerRouter());
 	// Schedule-level pause/resume for the Command Center button. Separate
 	// router from the per-event pause that lives in events.routes, the
 	// guild-wide flag has different semantics than the per-event flag.

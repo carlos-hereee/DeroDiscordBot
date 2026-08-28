@@ -43,6 +43,20 @@ export const xpPeriodStore = {
 		return (await XpPeriod.countDocuments({ guildId, period, xp: { $gt: xp } })) + 1;
 	},
 
+	// One period's headline numbers for the streamer recent-activity summary:
+	// how many members earned anything, and how much xp the guild earned in
+	// total. One aggregate on the { guildId, period } index rather than two
+	// queries; a period with no rows resolves to zeros, which the summary
+	// renders as a quiet week rather than an error.
+	async statsForPeriod(guildId: string, period: string): Promise<{ activeMembers: number; totalXp: number }> {
+		const rows = await XpPeriod.aggregate<{ activeMembers: number; totalXp: number }>([
+			{ $match: { guildId, period } },
+			{ $group: { _id: null, activeMembers: { $sum: 1 }, totalXp: { $sum: "$xp" } } },
+			{ $project: { _id: 0, activeMembers: 1, totalXp: 1 } },
+		]);
+		return rows[0] ?? { activeMembers: 0, totalXp: 0 };
+	},
+
 	// /xp reset-member and reset-server clear a member's period history alongside
 	// their lifetime row, so a reset leaves nothing behind on any board.
 	async deleteMember(guildId: string, userId: string) {
