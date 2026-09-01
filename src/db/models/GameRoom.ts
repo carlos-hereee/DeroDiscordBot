@@ -54,6 +54,12 @@ export interface IGameRoom {
 	// The live card on the ⚔️challenges board, edited as the challenge progresses.
 	boardMessageId: string | null;
 	status: RoomStatus;
+	// The FINISHED room this one was opened as a rematch of, or null. Written once at
+	// create and used as the idempotency key for the Rematch button: a finished room's
+	// result card stays clickable for the whole archive window, and without this a
+	// scrolled-back second press would spawn a room per click. Queried by
+	// findByRematchedFrom, rarely enough that it carries no index.
+	rematchedFromRoomId: string | null;
 	// Hangman's hidden word and hint stack. Null for duel and rps, which have no secret.
 	secret: RoomSecret | null;
 	moves: RoomMove[];
@@ -104,6 +110,7 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		inviteCode: { type: String, default: null },
 		boardMessageId: { type: String, default: null },
 		status: { type: String, required: true, enum: [...ROOM_STATUSES], default: "draft" },
+		rematchedFromRoomId: { type: String, default: null },
 		// Mixed rather than a typed subdocument: only hangman populates it, its shape will grow
 		// as other games gain hidden state, and a strict subschema here would silently drop the
 		// next game's fields the way GuildConfig.schedulePaused was dropped before it was declared.

@@ -129,6 +129,11 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		case "cancel":
 			await challengeBoard.cancelDraft(interaction, room);
 			return;
+		case "rematch":
+			// On the result card of a finished room. rematchFromRoom refuses by status
+			// and enforces the one-rematch-per-room rule itself.
+			await challengeBoard.rematchFromRoom(interaction, room);
+			return;
 
 		// ── in the room ──
 		case "author":

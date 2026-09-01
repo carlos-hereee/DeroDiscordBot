@@ -22,11 +22,16 @@ import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 // and rpsWinner, are unchanged and are now called from
 // @features/game-rooms/roomGames.ts.
 
-export const runCoinFlip = (interaction: ChatInputCommandInteraction): Promise<void> =>
-	startChallengeDraft(interaction, "coinflip");
+// startChallengeDraft returns the draft row for the rematch path's benefit; the slash
+// doorway has no use for it, so each wrapper discards it back to void.
+export const runCoinFlip = async (interaction: ChatInputCommandInteraction): Promise<void> => {
+	await startChallengeDraft(interaction, "coinflip");
+};
 
-export const runDiceRoll = (interaction: ChatInputCommandInteraction): Promise<void> =>
-	startChallengeDraft(interaction, "diceroll");
+export const runDiceRoll = async (interaction: ChatInputCommandInteraction): Promise<void> => {
+	await startChallengeDraft(interaction, "diceroll");
+};
 
-export const runRps = (interaction: ChatInputCommandInteraction): Promise<void> =>
-	startChallengeDraft(interaction, "rps");
+export const runRps = async (interaction: ChatInputCommandInteraction): Promise<void> => {
+	await startChallengeDraft(interaction, "rps");
+};

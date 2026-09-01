@@ -15,6 +15,8 @@ import { errorEmbed } from "@utils/embedBuilder.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { checkGameRoomAccess, gameRoomUpgradeEmbed } from "@features/entitlements/gameRoomAccess.js";
 import { RoomProvisioner, describeRoomOpenFailure } from "./RoomProvisioner.js";
+import { openSoloRoom, describeSoloOpenFailure } from "./soloRooms.js";
+import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { openerCardEmbed, openerCardRows, isCooperativeGame, type OpenerCardState } from "./challengeBoardEmbeds.js";
@@ -81,18 +83,27 @@ async function refreshCard(guild: Guild, room: IGameRoom, state: OpenerCardState
 		.catch((error) => console.warn("[game-rooms] failed to refresh the opener card", error));
 }
 
+// A rematch's head start: the finished room's other players pre-fill the pool, and
+// the finished room's id rides the row as the one-rematch-per-room idempotency key.
+export interface ChallengeDraftSeed {
+	spectatorIds: string[];
+	rematchedFromRoomId: string;
+}
+
 // ── start a challenge ─────────────────────────────────────────────────
 // Reached from the board's per-game buttons AND from /mini-game, so the two cannot
-// drift into different rules about who may start what.
+// drift into different rules about who may start what. Returns the draft row when one
+// was created, or null when the press was refused (the refusal has already replied).
 export async function startChallengeDraft(
 	interaction: ButtonInteraction | { guild: Guild | null; guildId: string | null; user: { id: string }; reply: ButtonInteraction["reply"] },
-	game: GameSlug
-): Promise<void> {
+	game: GameSlug,
+	seed?: ChallengeDraftSeed
+): Promise<IGameRoom | null> {
 	const guild = interaction.guild;
 	const guildId = interaction.guildId;
 	if (!guild || !guildId) {
 		await interaction.reply({ embeds: [errorEmbed("This only works inside a server.")], flags: MessageFlags.Ephemeral });
-		return;
+		return null;
 	}
 
 	// The paid-tier seam. Fails OPEN by design (see gameRoomAccess), and costs nothing
@@ -100,7 +111,7 @@ export async function startChallengeDraft(
 	const access = await checkGameRoomAccess(guildId, interaction.user.id);
 	if (!access.allowed) {
 		await interaction.reply({ embeds: [gameRoomUpgradeEmbed(access.upgradeUrl)], flags: MessageFlags.Ephemeral });
-		return;
+		return null;
 	}
 
 	// F11's friendly half, checked before anything is posted publicly. The partial
@@ -111,27 +122,36 @@ export async function startChallengeDraft(
 			content: gameRoomsCopy.errors.alreadyHosting(existing.channelId),
 			flags: MessageFlags.Ephemeral,
 		});
-		return;
+		return null;
 	}
 
 	const channel = await resolveChallengesChannel(guild);
 	if (!channel) {
 		await interaction.reply({ embeds: [errorEmbed(gameRoomsCopy.errors.noArcadeCategory)], flags: MessageFlags.Ephemeral });
-		return;
+		return null;
 	}
 
 	let room: IGameRoom;
 	try {
-		room = await gameRoomStore.create({ guildId, game, hostId: interaction.user.id, visibility: "invite" });
+		room = await gameRoomStore.create({
+			guildId,
+			game,
+			hostId: interaction.user.id,
+			visibility: "invite",
+			// A rematch arrives with the finished table already in the pool, so the
+			// host only re-confirms who plays rather than re-gathering everyone.
+			spectatorIds: seed?.spectatorIds,
+			rematchedFromRoomId: seed?.rematchedFromRoomId ?? null,
+		});
 	} catch (error) {
 		// Almost certainly the unique index catching a double click that outran the
 		// findOpenByHost above. The honest answer is the same as the friendly one.
 		console.error("[game-rooms] draft create failed", { guildId, error });
 		await interaction.reply({ content: gameRoomsCopy.errors.alreadyHosting(null), flags: MessageFlags.Ephemeral });
-		return;
+		return null;
 	}
 
-	const state = cardStateFor(room, { visibility: null, pool: [] });
+	const state = cardStateFor(room, { visibility: null, pool: room.spectatorIds ?? [] });
 	const card = await channel
 		.send({ embeds: [openerCardEmbed(state)], components: openerCardRows(room.roomId, state) })
 		.catch(() => null);
@@ -141,14 +161,17 @@ export async function startChallengeDraft(
 		// can never see or cancel. Roll the draft back rather than stranding them.
 		await gameRoomStore.markArchived(guildId, room.roomId);
 		await interaction.reply({ embeds: [errorEmbed(gameRoomsCopy.errors.createFailed)], flags: MessageFlags.Ephemeral });
-		return;
+		return null;
 	}
 
 	await gameRoomStore.update(guildId, room.roomId, { boardMessageId: card.id });
 	await interaction.reply({
-		content: gameRoomsCopy.board.cardStarted(channel.id).replace("The match is under way in", "Your challenge card is in"),
+		content: seed
+			? gameRoomsCopy.board.rematchOffered(channel.id)
+			: gameRoomsCopy.board.cardStarted(channel.id).replace("The match is under way in", "Your challenge card is in"),
 		flags: MessageFlags.Ephemeral,
 	});
+	return room;
 }
 
 // ── the visibility chooser ────────────────────────────────────────────
@@ -418,6 +441,81 @@ async function provisionFromDraft(
 	);
 }
 
+// ── rematch ───────────────────────────────────────────────────────────
+// Pressed on a FINISHED room's result card. The board path opens a fresh challenge
+// card (visibility resets, the host chooses again) with the finished table already in
+// the pool; the solo path skips the board and provisions a new solo room directly.
+// One rematch per finished room, ever: the card stays clickable for the whole archive
+// window, and rematchedFromRoomId is what stops a press per scroll-back.
+export async function rematchFromRoom(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	// The result card only exists on a finished room, but its buttons live as long as
+	// the message: refuse by STATUS, exactly like the board controls.
+	if (room.status !== "finished") {
+		await interaction.reply({ content: gameRoomsCopy.errors.notFound, flags: MessageFlags.Ephemeral });
+		return;
+	}
+
+	const already = await gameRoomStore.findByRematchedFrom(room.guildId, room.roomId);
+	if (already) {
+		await interaction.reply({ content: gameRoomsCopy.errors.rematchAlreadyOffered, flags: MessageFlags.Ephemeral });
+		return;
+	}
+
+	// ── solo: no challenge board, straight to a new room ──
+	// The gate on this path is the private tier quota inside the provisioner; running
+	// out of private slots on a solo rematch is an honest refusal, not a silent one.
+	if (room.visibility === "solo") {
+		if (room.game !== "solo-hangman" && room.game !== "solo-blackjack") {
+			await interaction.reply({ content: gameRoomsCopy.errors.notFound, flags: MessageFlags.Ephemeral });
+			return;
+		}
+		const guild = interaction.guild!;
+		const member = guild.members.cache.get(interaction.user.id);
+		const result = await openSoloRoom(
+			guild,
+			room.game,
+			{
+				userId: interaction.user.id,
+				displayName: member?.displayName ?? interaction.user.globalName ?? interaction.user.username,
+			},
+			room.roomId
+		);
+		if (!result.ok) {
+			await interaction.reply({ embeds: [errorEmbed(describeSoloOpenFailure(result))], flags: MessageFlags.Ephemeral });
+			return;
+		}
+		await interaction.reply({ content: gameRoomsCopy.board.cardStarted(result.channel.id), flags: MessageFlags.Ephemeral });
+		// The connecting line in the finished room's transcript (announcement 4e).
+		await roomTrail.postMove(interaction.client, room, {
+			actorId: interaction.user.id,
+			kind: "system",
+			text: gameRoomsCopy.trail.rematchOpened(result.channel.id),
+		});
+		return;
+	}
+
+	// ── board games: a fresh challenge card, presser as host ──
+	// The OTHER players from the finished room pre-fill the pool, so the invite list
+	// already has them; nobody is auto promoted, the host still presses Start.
+	const others = room.playerIds.filter((id) => id !== interaction.user.id);
+	const draft = await startChallengeDraft(interaction, room.game, {
+		spectatorIds: others,
+		rematchedFromRoomId: room.roomId,
+	});
+	if (!draft) return;
+
+	// The connecting line in the finished room's transcript (announcement 4e), posted
+	// after the card exists so the link never points at a rematch that failed to open.
+	const channel = await resolveChallengesChannel(interaction.guild!);
+	if (channel) {
+		await roomTrail.postMove(interaction.client, room, {
+			actorId: interaction.user.id,
+			kind: "system",
+			text: gameRoomsCopy.trail.rematchOpened(channel.id),
+		});
+	}
+}
+
 // ── cancel ────────────────────────────────────────────────────────────
 export async function cancelDraft(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	// "archived" rather than a delete: the row is the audit trail, and the partial
@@ -437,4 +535,5 @@ export const challengeBoard = {
 	startMatch,
 	handleOpponentSelect,
 	cancelDraft,
+	rematchFromRoom,
 };

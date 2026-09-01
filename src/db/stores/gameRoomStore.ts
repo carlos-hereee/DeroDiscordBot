@@ -31,6 +31,9 @@ interface ICreateGameRoom {
 	playerIds?: string[];
 	spectatorIds?: string[];
 	boardMessageId?: string | null;
+	// Set at create when this room is a rematch of a finished one, so the button's
+	// idempotency check and the row are born in the same write with no race window.
+	rematchedFromRoomId?: string | null;
 }
 
 export const gameRoomStore = {
@@ -52,8 +55,16 @@ export const gameRoomStore = {
 			playerIds: input.playerIds ?? [input.hostId],
 			spectatorIds: input.spectatorIds ?? [],
 			boardMessageId: input.boardMessageId ?? null,
+			rematchedFromRoomId: input.rematchedFromRoomId ?? null,
 			status: "draft",
 		});
+	},
+
+	// The Rematch button's idempotency check: has ANY room already been opened as a
+	// rematch of this finished one? Statuses are deliberately not filtered, because a
+	// rematch that was itself cancelled or finished still consumed the one offer.
+	async findByRematchedFrom(guildId: string, roomId: string) {
+		return GameRoom.findOne({ guildId, rematchedFromRoomId: roomId });
 	},
 
 	// Primary lookup for every gameroom: button, whose customId carries the roomId.

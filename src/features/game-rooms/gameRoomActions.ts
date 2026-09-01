@@ -56,6 +56,10 @@ export const GAME_ROOM_ACTIONS = {
 	// game is the obvious griefing shape, and the room's own players are the only
 	// people whose surrender means anything.
 	forfeit: { hostOnly: false, playersOnly: true },
+	// Offer a rematch from a FINISHED room's result card. Any player at the table may
+	// propose it (the challenge board flow re-confirms participation); a spectator may
+	// not, for the same reason they cannot forfeit. Idempotent via rematchedFromRoomId.
+	rematch: { hostOnly: false, playersOnly: true },
 	// The in-room game control: the coin/dice button, rps's secret pick prompt, and
 	// hangman's guess modal. playersOnly is the whole reason spectators cannot
 	// influence a match they are only watching.

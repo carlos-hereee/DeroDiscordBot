@@ -73,6 +73,7 @@ export const gameRoomsCopy = {
 			return `This room is now read only. It disappears in ${hours} hours, or right now if the host presses Archive now.`;
 		},
 		archiveButtonLabel: "Archive now",
+		rematchButtonLabel: "Rematch",
 	},
 
 	// ── ephemeral replies from the provisioner ──
@@ -99,6 +100,9 @@ export const gameRoomsCopy = {
 		noArcadeCategory: "This server has no arcade category yet. An admin can run /setup to build it.",
 		notFound: "That room no longer exists.",
 		notYours: "Only the host or an admin can do that.",
+		// One rematch per finished room, ever. Without this the still clickable button
+		// on a scrolled back result card would spawn a room per press.
+		rematchAlreadyOffered: "Someone already offered a rematch from this room. Head to the challenge board.",
 	},
 
 	// ── the challenge board (Phase 4) ──
@@ -132,6 +136,9 @@ export const gameRoomsCopy = {
 		},
 		cardCancelled: (hostId: string): string => `<@${hostId}> called off the challenge.`,
 		cardStarted: (channelId: string): string => `The match is under way in <#${channelId}>.`,
+
+		// The rematch presser's ephemeral confirmation, pointing at the fresh card.
+		rematchOffered: (channelId: string): string => `Rematch card is up in <#${channelId}>.`,
 
 		visibilityInviteLabel: "Invite only",
 		visibilityOpenLabel: "Open to all",
@@ -360,5 +367,9 @@ export const gameRoomsCopy = {
 		// A join is the one move kind posted by the room itself rather than by a game.
 		joined: (actorId: string): string => `<@${actorId}> joined the room.`,
 		forfeited: (actorId: string): string => `<@${actorId}> forfeited.`,
+		// Posted on the FINISHED room when a rematch opens: the one line that connects
+		// the two rooms in the transcript, so a returning player scrolling back does
+		// not think the button silently did nothing.
+		rematchOpened: (channelId: string): string => `The rematch is up in <#${channelId}>.`,
 	},
 } as const;

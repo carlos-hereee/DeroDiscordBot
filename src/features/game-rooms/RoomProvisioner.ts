@@ -88,6 +88,11 @@ export interface RoomOpenInput {
 	spectatorIds?: string[];
 	visibility: RoomVisibility;
 	adminRoleId?: string | null;
+	// The finished room this open is a rematch of, threaded into the row at create so
+	// the rematch button's idempotency check has no race window. Solo rematches are
+	// the only path that reaches the provisioner with it; board rematches carry it on
+	// their draft row instead.
+	rematchedFromRoomId?: string | null;
 	// Set when a DRAFT row already exists, which is the challenge board's path: the
 	// row was created the moment the host pressed Start a challenge, and this call is
 	// promoting it rather than opening from nothing. Without this the insert below
@@ -206,6 +211,7 @@ export const RoomProvisioner = {
 					visibility,
 					playerIds,
 					spectatorIds,
+					rematchedFromRoomId: input.rematchedFromRoomId ?? null,
 				});
 			}
 		} catch (error) {

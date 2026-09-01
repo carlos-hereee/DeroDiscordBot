@@ -59,13 +59,19 @@ export function roomResultEmbed(winnerId: string | null, abandoned = false, imag
 	return embed;
 }
 
-// ── the Archive now row ──
+// ── the result card's row: Rematch, then Archive now ──
 // Rendered for everyone, gated in the handler. Discord has no per-member button
 // visibility, so a "host only" button is a lie the client cannot tell: the honest
 // shape is a visible button whose handler refuses politely, which is what
-// GAME_ROOM_ACTIONS.archive.hostOnly does.
+// GAME_ROOM_ACTIONS.archive.hostOnly does. Rematch leads because it is the action a
+// table that just finished actually wants; Archive stays for the player who does not.
 export function roomArchiveRow(roomId: string): ActionRowBuilder<ButtonBuilder> {
 	return new ActionRowBuilder<ButtonBuilder>().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`${GAME_ROOM_PREFIX}:rematch:${roomId}`)
+			.setLabel(gameRoomsCopy.result.rematchButtonLabel)
+			.setEmoji("🔁")
+			.setStyle(ButtonStyle.Primary),
 		new ButtonBuilder()
 			.setCustomId(`${GAME_ROOM_PREFIX}:archive:${roomId}`)
 			.setLabel(gameRoomsCopy.result.archiveButtonLabel)

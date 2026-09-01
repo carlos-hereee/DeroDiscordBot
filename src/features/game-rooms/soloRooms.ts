@@ -27,7 +27,13 @@ export interface SoloHost {
 
 export type SoloOpenResult = RoomOpenResult | { ok: false; reason: "noArcadeCategory" };
 
-export async function openSoloRoom(guild: Guild, game: SoloGameSlug, host: SoloHost): Promise<SoloOpenResult> {
+export async function openSoloRoom(
+	guild: Guild,
+	game: SoloGameSlug,
+	host: SoloHost,
+	// Set by the rematch path so the new room and the idempotency marker are one write.
+	rematchedFromRoomId: string | null = null
+): Promise<SoloOpenResult> {
 	const stored = await guildConfigStore.findByGuildId(guild.id);
 	const config = stored as unknown as { gamesCategoryId?: string | null; adminRoleId?: string | null } | null;
 
@@ -47,6 +53,7 @@ export async function openSoloRoom(guild: Guild, game: SoloGameSlug, host: SoloH
 		spectatorIds: [],
 		visibility: "solo",
 		adminRoleId: config?.adminRoleId ?? null,
+		rematchedFromRoomId,
 	});
 	if (!result.ok) return result;
 
