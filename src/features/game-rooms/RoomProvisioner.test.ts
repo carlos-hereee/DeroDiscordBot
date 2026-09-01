@@ -8,6 +8,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		countOpenInGuild: vi.fn(),
 		create: vi.fn(),
 		setStatus: vi.fn(),
+		update: vi.fn(),
 	},
 }));
 
@@ -50,7 +51,9 @@ function makeGuild(
 	return {
 		id: "guild-1",
 		roles: { everyone: { id: "everyone" } },
-		client: { user: { id: "bot-1" } },
+		// channels.fetch backs roomTrail's channel resolution on the solo-hangman seed
+		// path; null keeps the trail post a no-op in these unit tests.
+		client: { user: { id: "bot-1" }, channels: { fetch: vi.fn().mockResolvedValue(null) } },
 		channels: { create: vi.fn(createImpl ?? (async () => created)) },
 	} as unknown as Guild;
 }
@@ -204,6 +207,71 @@ describe("RoomProvisioner.open, the invite link", () => {
 		const opener = channel.send.mock.calls[0][0] as { embeds: { data: { description?: string } }[] };
 		expect(opener.embeds[0].data.description).not.toContain("discord.gg");
 		errorSpy.mockRestore();
+	});
+});
+
+describe("RoomProvisioner.open, solo rooms", () => {
+	it("seats exactly the host, drops passed spectators, and persists visibility solo", async () => {
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const input = makeInput({
+			game: "solo-hangman",
+			visibility: "solo",
+			playerIds: ["host-1", "stowaway-1"],
+			spectatorIds: ["watcher-1", "watcher-2"],
+		});
+		const result = await RoomProvisioner.open(input);
+
+		expect(result.ok).toBe(true);
+		// One seat, no watchers, whatever the caller passed: solo is structural, not
+		// a convention the call sites have to remember.
+		expect(storeMock.create).toHaveBeenCalledWith(
+			expect.objectContaining({ visibility: "solo", playerIds: ["host-1"], spectatorIds: [] })
+		);
+
+		// And the permission matrix Discord receives carries no per-member spectator
+		// entry: @everyone (denied), the bot, and the host. Nothing else.
+		const createMock = input.guild.channels.create as unknown as ReturnType<typeof vi.fn>;
+		const overwrites = (createMock.mock.calls[0][0] as { permissionOverwrites: { id: string; deny?: bigint[] }[] })
+			.permissionOverwrites;
+		expect(overwrites.map((entry) => entry.id).sort()).toEqual(["admin-role", "bot-1", "everyone", "host-1"]);
+		expect(overwrites.find((entry) => entry.id === "everyone")?.deny).toContain(PermissionFlagsBits.ViewChannel);
+		warnSpy.mockRestore();
+	});
+
+	it("seeds solo-hangman with a bank word (no author) and mints no invite link", async () => {
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const input = makeInput({ game: "solo-hangman", visibility: "solo", playerIds: [] });
+		await RoomProvisioner.open(input);
+
+		// The bank seed: a real word, authoredBy null so the host may guess it, and
+		// no hint because the bank carries none.
+		const seed = storeMock.update.mock.calls.find(
+			(call) => (call[2] as { secret?: { word?: string } })?.secret?.word
+		)?.[2] as { secret: { word: string; authoredBy: string | null; hint: string } };
+		expect(seed.secret.word).toMatch(/^[a-z]+$/);
+		expect(seed.secret.authoredBy).toBeNull();
+
+		// No invite for a room only one member can ever see.
+		const channel = await createdChannelOf(input.guild);
+		expect(channel.createInvite).not.toHaveBeenCalled();
+		expect(storeMock.setStatus).toHaveBeenCalledWith(
+			"guild-1",
+			"room-1",
+			"playing",
+			expect.objectContaining({ inviteCode: null })
+		);
+		warnSpy.mockRestore();
+	});
+
+	it("gives solo-blackjack a bare opener: its board message is not the opener's job", async () => {
+		const input = makeInput({ game: "solo-blackjack", visibility: "solo", playerIds: [] });
+		await RoomProvisioner.open(input);
+
+		const channel = await createdChannelOf(input.guild);
+		const opener = channel.send.mock.calls[0][0] as { components?: unknown[] };
+		// SELF_BOARDED_GAMES: the table board is posted by startBlackjackTable after
+		// the open, so the opener carries no controls at all.
+		expect(opener.components).toBeUndefined();
 	});
 });
 

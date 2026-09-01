@@ -17,6 +17,8 @@ import { gamesCopy } from "./gamesCopy.js";
 import { buildBlackjackResultEmbed, buildBlackjackSeatingEmbed, buildBlackjackTableEmbed } from "./gamesEmbeds.js";
 import { applyAction, createTable, legalActions, playDealer, settle, type BlackjackAction, type BlackjackTable } from "./blackjackState.js";
 import { awardBlackjackResult } from "./gameXp.js";
+import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
 
 // ── /mini-game blackjack ───────────────────────────────────────────────────
 // What:  three surfaces on ONE engine, exactly as the owner asked. `solo` deals
@@ -39,6 +41,15 @@ import { awardBlackjackResult } from "./gameXp.js";
 // problem that shapes battleship and holdem. Do not "improve" this by showing a
 // player their own hand ephemerally; there is nothing they can see that the
 // board does not already show them.
+//
+// ⚠️ KNOWN GAP: A SOLO ROOM'S TABLE STILL DIES ON RAILWAY SIGTERM. Solo blackjack
+// now opens through RoomProvisioner (a GameRoom row, a channel, the tier quota),
+// but the HAND state stays in the module-scoped `games` Map below, so a redeploy
+// mid-hand loses the table while the room row lives on until someone forfeits or
+// the boot sweep reaps it. Routing into a room gave the game a channel, not a
+// restart-survivable memory model; the boot recovery path for an in-memory table
+// is its own job, tracked in SACRED_FILES/2026-09/FUTURE_PLANS.md and
+// SACRED_FILES/TECH_DEBT.md. Do not bolt a partial recovery onto this file.
 
 // A seating window long enough to notice and short enough that a table does not
 // hold a channel hostage waiting for a second player who is not coming.
@@ -78,6 +89,10 @@ interface BlackjackGame {
 	// because the last action and the timeout can both reach settlement and paying
 	// a table twice is the one bug here that costs real xp.
 	settled: boolean;
+	// Set when this table was opened as a SOLO game room: the settle path then closes
+	// the room through roomLifecycle.finish (lock, result card, archive clock). Null
+	// for the inline table form, which lives in ⚔️challenges and owns no room.
+	roomId: string | null;
 	seatingTimer: NodeJS.Timeout | null;
 	stop: () => void;
 }
@@ -189,7 +204,10 @@ export async function startBlackjackTable(
 	channel: TextChannel,
 	guildId: string,
 	host: { userId: string; username: string },
-	solo: boolean
+	solo: boolean,
+	// The GameRoom this table plays inside, when it was opened as a solo room via
+	// soloRooms.openSoloRoom. The inline forms pass nothing.
+	roomId: string | null = null
 ): Promise<BlackjackStartResult> {
 	// ① Claim the channel slot SYNCHRONOUSLY, the same discipline hangman uses:
 	// the check and the write sit adjacent with no await between them, so two
@@ -202,6 +220,7 @@ export async function startBlackjackTable(
 		seated: [host],
 		table: null,
 		settled: false,
+		roomId,
 		seatingTimer: null,
 		stop: () => undefined,
 	};
@@ -458,6 +477,26 @@ function settleGame(game: BlackjackGame, channelId: string, client: Message["cli
 		channelId,
 		seats: results,
 	});
+
+	// A table that plays inside a SOLO ROOM closes its room here: finish stamps the
+	// row, locks the channel, posts the result card and starts the archive clock.
+	// Fire and forget after the settle (convention 7), and NO extra xp is paid by
+	// this call site: awardBlackjackResult above already paid the game's own award,
+	// and finish's room-rate top up adds only the room delta on top, the same
+	// convention every other room hosted game follows.
+	if (game.roomId) {
+		const roomId = game.roomId;
+		const seat = results.find((entry) => entry.userId === game.hostId);
+		// The room's winner is the solo seat when ANY of its hands beat the dealer
+		// (a split seat reports both halves); a push-only or losing hand ends the
+		// room with no winner, which finish renders honestly.
+		const winnerId = seat?.hands.some((outcome) => outcome === "win" || outcome === "blackjack") ? game.hostId : null;
+		void (async () => {
+			const room = await gameRoomStore.findByRoomId(game.guildId, roomId);
+			if (!room) return;
+			await roomLifecycle.finish(client, room, { winnerId });
+		})().catch((error) => console.error("[mini-game] solo blackjack room finish failed", { roomId, error }));
+	}
 
 	const anyDoubledLoss = results.some((seat) => seat.hands.some((outcome, index) => outcome === "lose" && seat.doubled[index]));
 	return buildBlackjackResultEmbed(game.table, results, anyDoubledLoss);

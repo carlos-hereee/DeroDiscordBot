@@ -16,7 +16,9 @@ import {
 	rerollRow,
 } from "./roomBattleship.js";
 import { createTable as createHoldemTable } from "@features/games/holdemTable.js";
+import { pickWord } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
+import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -56,7 +58,11 @@ const inflightOpens = new Map<string, Promise<RoomOpenResult>>();
 // there, and answered "This game has no room controls yet." on a game that shipped
 // the same day. Naming the set instead of testing one slug is what stops the next
 // game repeating it.
-const SELF_BOARDED_GAMES: readonly GameSlug[] = ["battleship", "holdem"];
+// solo-blackjack is here because a blackjack table has ALWAYS ridden its own edited
+// board message (posted by startBlackjackTable after the room opens), so its opener
+// stays a plain card exactly like battleship's and hold em's. solo-hangman is NOT
+// here: it rides the trail plus the pinned guess control, like room hangman.
+const SELF_BOARDED_GAMES: readonly GameSlug[] = ["battleship", "holdem", "solo-blackjack"];
 
 // Test seam, and the reason this is not just a module-local: a leaked entry would make
 // every later open by that host return the previous result forever.
@@ -137,8 +143,12 @@ export const RoomProvisioner = {
 			return { ok: false, reason: "guildFull" };
 		}
 
-		const playerIds = Array.from(new Set([hostId, ...input.playerIds]));
-		const spectatorIds = input.spectatorIds ?? [];
+		// A solo room seats the host and NOBODY else, structurally: extra players and
+		// spectators are dropped here the way a public room's spectators are dropped in
+		// provisionFromDraft, so a caller cannot smuggle a second seat or a watcher into
+		// a one-player room.
+		const playerIds = visibility === "solo" ? [hostId] : Array.from(new Set([hostId, ...input.playerIds]));
+		const spectatorIds = visibility === "solo" ? [] : input.spectatorIds ?? [];
 
 		// ③ The name. Collisions are ordinary rather than exceptional: a finished room
 		// keeps its channel for the whole archive window, so a host playing twice in an
@@ -221,12 +231,16 @@ export const RoomProvisioner = {
 		// Fire and forget in spirit (house rule 7): the members can already see the
 		// channel, so a failed mint (typically 50013 when the bot's CreateInstantInvite
 		// bit is missing) logs and degrades to a room without a link, never a failed open.
+		// Solo rooms mint nothing: the room admits exactly one member and a share link
+		// for a channel nobody else can ever see would be a lie in URL form.
 		let inviteCode: string | null = null;
-		try {
-			const invite = await channel.createInvite({ maxAge: 0, maxUses: 0, unique: true, reason: `game room ${room.roomId}` });
-			inviteCode = invite?.code ?? null;
-		} catch (error) {
-			console.error("[game-rooms] failed to mint invite", { guildId: guild.id, roomId: room.roomId, error });
+		if (visibility !== "solo") {
+			try {
+				const invite = await channel.createInvite({ maxAge: 0, maxUses: 0, unique: true, reason: `game room ${room.roomId}` });
+				inviteCode = invite?.code ?? null;
+			} catch (error) {
+				console.error("[game-rooms] failed to mint invite", { guildId: guild.id, roomId: room.roomId, error });
+			}
 		}
 
 		// ⑤ Move to "playing" and record the ids that only exist now. Two writes rather
@@ -237,15 +251,21 @@ export const RoomProvisioner = {
 		// once the trail has scrolled past it.
 		const opener = await channel
 			.send({
-				embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility === "public", inviteCode)],
+				embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility, inviteCode)],
 				// Hangman opens with the AUTHORING control, not a guess control: there
 				// is no word yet, and offering "guess a letter" before one exists would
-				// be a button whose only possible answer is "not yet".
+				// be a button whose only possible answer is "not yet". The solo form is
+				// the opposite: its word is seeded from the bank below, so it opens
+				// straight on the GUESS control and never shows authoring at all.
 				...(SELF_BOARDED_GAMES.includes(game)
 					? {}
 					: {
 							components: [
-								game === "hangman" ? hangmanRow({ roomId: room.roomId }, false) : roomMoveRow({ roomId: room.roomId, game }),
+								game === "hangman"
+									? hangmanRow({ roomId: room.roomId }, false)
+									: game === "solo-hangman"
+									  ? hangmanRow({ roomId: room.roomId }, true)
+									  : roomMoveRow({ roomId: room.roomId, game }),
 							],
 					  }),
 			})
@@ -272,6 +292,31 @@ export const RoomProvisioner = {
 				.catch(() => null);
 			await gameRoomStore.update(guild.id, room.roomId, {
 				secret: { ...table, boardMessageId: boardMessage?.id ?? null } as never,
+			});
+		}
+
+		// Solo hangman is seeded HERE rather than authored: the host is the guesser, so
+		// the word comes from the bundled bank with no author and no hint (the same
+		// shape the old channel hangman used). authoredBy null is what lets the host
+		// past roomHangman's host-cannot-guess gate, which keys on the AUTHOR, not the
+		// host. Seeded after the opener so a click racing the seed reads as "waiting
+		// for the word" for a moment rather than erroring.
+		if (game === "solo-hangman") {
+			await gameRoomStore.update(guild.id, room.roomId, {
+				secret: {
+					word: pickWord(),
+					hint: "",
+					extraHints: [],
+					revealedHints: 0,
+					authoredBy: null,
+					guessedLetters: [],
+					wrong: 0,
+				} as never,
+			});
+			await roomTrail.postMove(guild.client, { guildId: guild.id, roomId: room.roomId, channelId: channel.id }, {
+				actorId: hostId,
+				kind: "system",
+				text: gameRoomsCopy.hangman.soloOpener,
 			});
 		}
 

@@ -68,6 +68,9 @@ export function buildRoomOverwrites(input: RoomPermissionInput): RoomOverwrite[]
 	// is "playing minus every SendMessages allow"; taken literally that leaves an
 	// invite-only finished room fully writable by its players, which contradicts the
 	// phase's own completion criterion ("on finish, nobody can type"). The criterion wins.
+	// "solo" deliberately shares the else branch with "invite": identical @everyone deny,
+	// identical admin row below, and the spectator loop further down is invite-only so a
+	// solo room can never carry a per-member watcher entry.
 	if (visibility === "public") {
 		overwrites.push({
 			id: everyoneRoleId,

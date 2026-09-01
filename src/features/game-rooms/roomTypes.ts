@@ -23,14 +23,22 @@
 // belong here, because a hand takes a minute and a table runs in place on one edited
 // message. A room is earned by DURATION and a transcript worth keeping, which is why
 // battleship and holdem will join this list and a blackjack table will not.
-export const GAME_SLUGS = ["hangman", "coinflip", "diceroll", "rps", "battleship", "holdem"] as const;
+// The two solo- slugs are the arcade host's one-player forms, routed through the same
+// provisioner so they hold the host's one-room slot, count against the guild cap, and
+// count as PRIVATE rooms for the tier quota. They are their OWN slugs rather than a
+// `mode: "solo"` field on hangman/blackjack so every customId, enum validator and trail
+// entry is unambiguous about which form was played, and so SELF_BOARDED_GAMES can name
+// solo-blackjack (rides its own edited board message) without a mode branch.
+export const GAME_SLUGS = ["hangman", "coinflip", "diceroll", "rps", "battleship", "holdem", "solo-hangman", "solo-blackjack"] as const;
 export type GameSlug = (typeof GAME_SLUGS)[number];
 
 // ── Who may see the room ──
 // "invite": @everyone is denied ViewChannel and each accepted member gets an explicit
 // overwrite. "public": one @everyone overwrite grants view and denies send, so a 5000 member
-// guild costs exactly the same as a 50 member one.
-export const ROOM_VISIBILITIES = ["invite", "public"] as const;
+// guild costs exactly the same as a 50 member one. "solo": a variant of "invite", never of
+// "public" (@everyone denied ViewChannel, NO spectators, only the host in playerIds), so a
+// solo room is private by construction and counts as private wherever the tier quota asks.
+export const ROOM_VISIBILITIES = ["invite", "public", "solo"] as const;
 export type RoomVisibility = (typeof ROOM_VISIBILITIES)[number];
 
 // ── Lifecycle ──

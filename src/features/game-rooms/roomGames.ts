@@ -140,7 +140,10 @@ async function runVersusMove(interaction: ButtonInteraction, room: IGameRoom): P
 		client: interaction.client,
 		guildId: room.guildId,
 		channelId: room.channelId ?? "",
-		game: room.game,
+		// This path is reachable only for the two versus games (runRoomMove routes),
+		// so the re-derivation is a type narrowing, not a runtime branch: GameSlug is
+		// wider than LevelingGameSlug now that the solo- slugs exist.
+		game: room.game === "coinflip" ? "coinflip" : "diceroll",
 		challenger: { id: challengerId } as never,
 		opponent: { id: opponentId } as never,
 		winner: result.winner,

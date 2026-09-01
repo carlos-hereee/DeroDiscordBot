@@ -3,7 +3,8 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
-import { startHangmanRound } from "./hangmanHandler.js";
+import { openSoloRoom, describeSoloOpenFailure } from "@features/game-rooms/soloRooms.js";
+import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { startBlackjackTable } from "./blackjackHandler.js";
 
 // ── arcadeHost ─────────────────────────────────────────────────────────────
@@ -17,16 +18,17 @@ import { startBlackjackTable } from "./blackjackHandler.js";
 //        The rules card is a pinned reference that members read; dropping a live
 //        board on top of it would bury the thing they came to read, and the
 //        challenge board channel exists precisely to be where a match begins.
-// How:   one button per hostable game, each delegating to the SAME shared core
-//        the slash path uses (startHangmanRound, startBlackjackTable), so a game
-//        started from a button and one started from `/mini-game` cannot diverge.
+// How:   the SOLO forms (Host Hangman, Play Blackjack) open a solo GameRoom via
+//        soloRooms.openSoloRoom, so a one-player game holds the host's one-room
+//        slot, counts against the guild cap and counts as a PRIVATE room for the
+//        tier quota, exactly like every other room. "Open a Blackjack table"
+//        deliberately stays on the inline multi-seat path in ⚔️challenges: it is
+//        the DISCOVERABLE public form of blackjack, a hand takes a minute, and a
+//        table has never earned a room (see roomTypes' duration rule).
 //
 // ⚠️ ONLY GAMES THAT NEED NO NAMED OPPONENT ARE HOSTABLE HERE, and the omission
-// is honest rather than an oversight. Duel and rock paper scissors both go
-// through challengeFlow, which requires a specific opponent chosen up front;
-// turning them into "anyone may accept" is the challenge board's job (game rooms
-// phase 4) and does not exist yet. The rules copy says so in its Join section,
-// so the card and the buttons tell the same story.
+// is honest rather than an oversight. Head-to-head games start from the
+// challenge board, which owns opponent selection.
 
 const PREFIX = "arcade_host";
 
@@ -65,6 +67,24 @@ async function handleArcadeHost(interaction: ButtonInteraction): Promise<void> {
 	const stored = await guildConfigStore.findByGuildId(guild.id);
 	const copy = getPluginCopy(stored as unknown as ICopyConfig | null).channelContent.arcadeRules;
 
+	// ── the solo forms: a private one-player room ──
+	if (choice === "hangman" || choice === "blackjack") {
+		const member = guild.members.cache.get(interaction.user.id);
+		const result = await openSoloRoom(guild, choice === "hangman" ? "solo-hangman" : "solo-blackjack", {
+			userId: interaction.user.id,
+			displayName: member?.displayName ?? interaction.user.globalName ?? interaction.user.username,
+		});
+		if (result.ok) {
+			await interaction.editReply({ content: gameRoomsCopy.board.cardStarted(result.channel.id) });
+			return;
+		}
+		// Every refusal names itself (room slot held, guild full, quota hit, no
+		// arcade), so the member learns what to do rather than that something failed.
+		await interaction.editReply({ embeds: [errorEmbed(describeSoloOpenFailure(result))] });
+		return;
+	}
+
+	// ── the inline multi-seat table, posted into ⚔️challenges ──
 	const challengesId = (stored as unknown as { arcadeChallengesChannelId?: string | null } | null)?.arcadeChallengesChannelId;
 	const channel = challengesId ? await guild.channels.fetch(challengesId).catch(() => null) : null;
 	if (!(channel instanceof TextChannel)) {
@@ -75,17 +95,14 @@ async function handleArcadeHost(interaction: ButtonInteraction): Promise<void> {
 	}
 
 	const host = { userId: interaction.user.id, username: interaction.user.globalName ?? interaction.user.username };
-	const result =
-		choice === "hangman"
-			? await startHangmanRound(channel, host.userId)
-			: await startBlackjackTable(channel, guild.id, host, choice === "blackjack");
+	const result = await startBlackjackTable(channel, guild.id, host, false);
 
 	if (result === "started") {
 		await interaction.editReply({ content: copy.hostStarted(labelFor(choice)) });
 		return;
 	}
-	// "alreadyRunning" and "failed" both mean nothing was posted. The shared cores
-	// already log the failure cause, so the member gets the short version.
+	// "alreadyRunning" and "failed" both mean nothing was posted. The shared core
+	// already logs the failure cause, so the member gets the short version.
 	await interaction.editReply({ embeds: [errorEmbed(copy.hostFailed)] });
 }
 

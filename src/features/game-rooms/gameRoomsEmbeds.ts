@@ -3,7 +3,7 @@ import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
-import type { GameSlug } from "./roomTypes.js";
+import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 
 // ── gameRoomsEmbeds ──────────────────────────────────────────────────
 // What:  every embed and button row a room renders: the pinned opener card and the
@@ -22,12 +22,12 @@ export function roomOpenerEmbed(
 	game: GameSlug,
 	hostId: string,
 	playerIds: string[],
-	isPublic: boolean,
+	visibility: RoomVisibility,
 	inviteCode?: string | null
 ): EmbedBuilder {
 	return infoEmbed(
 		gameRoomsCopy.opener.title(game),
-		gameRoomsCopy.opener.description(hostId, playerIds, isPublic, inviteCode),
+		gameRoomsCopy.opener.description(hostId, playerIds, visibility, inviteCode),
 		COLORS.ARCADE as ColorResolvable
 	);
 }

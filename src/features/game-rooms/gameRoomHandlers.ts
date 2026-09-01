@@ -158,7 +158,10 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			// FIRST response to an interaction, and battleship replies ephemerally,
 			// while the one-press games defer an update. By the time runRoomMove knew
 			// which game it was, the wrong response would already have been sent.
-			if (room.game === "hangman") {
+			// The solo form shares hangman's guess flow wholesale: the gate that stops
+			// an author guessing keys on secret.authoredBy, which a bank-seeded solo
+			// word leaves null, so the host guesses their own room legally.
+			if (room.game === "hangman" || room.game === "solo-hangman") {
 				await openGuessModal(interaction, room);
 				return;
 			}

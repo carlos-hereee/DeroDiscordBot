@@ -1,5 +1,5 @@
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import type { GameSlug } from "./roomTypes.js";
+import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 
 // ── game rooms user-facing copy ──────────────────────────────────────
 // Feature-local copy module, the exact sibling of gamesCopy.ts and fortuneCopy.ts,
@@ -21,6 +21,8 @@ const GAME_LABELS: Record<GameSlug, string> = {
 	rps: "Rock paper scissors",
 	battleship: "Battleship",
 	holdem: "Texas hold em",
+	"solo-hangman": "Hangman (solo)",
+	"solo-blackjack": "Blackjack (solo)",
 };
 
 export const gameRoomsCopy = {
@@ -39,14 +41,17 @@ export const gameRoomsCopy = {
 		// through the link, so the caveat sentence is what keeps the link from reading
 		// as broken. Rendered as an inline URL rather than a button on purpose: a link
 		// component is not tap-to-copy on mobile the way an inline URL is.
-		description: (hostId: string, playerIds: string[], isPublic: boolean, inviteCode?: string | null): string => {
+		description: (hostId: string, playerIds: string[], visibility: RoomVisibility, inviteCode?: string | null): string => {
 			const roster = playerIds.map((id) => `<@${id}>`).join(" versus ");
-			const audience = isPublic
-				? "Anyone in the server can watch this room. Only the players can type."
-				: "This room is invite only. Only the players and the members they invited can see it.";
+			const audience =
+				visibility === "public"
+					? "Anyone in the server can watch this room. Only the players can type."
+					: visibility === "solo"
+					  ? "This is a solo room. Only you and the admins can see it."
+					  : "This room is invite only. Only the players and the members they invited can see it.";
 			const lines = [`Host: <@${hostId}>`, "", roster, "", audience];
 			if (inviteCode) {
-				if (!isPublic) lines.push("", "Invite only rooms are hidden from members who were not invited.");
+				if (visibility === "invite") lines.push("", "Invite only rooms are hidden from members who were not invited.");
 				lines.push("", `Invite link: https://discord.gg/${inviteCode}`);
 			}
 			return lines.join("\n");
@@ -186,6 +191,10 @@ export const gameRoomsCopy = {
 	hangman: {
 		authorButtonLabel: "Set the word",
 		guessButtonLabel: "Guess a letter",
+
+		// The solo form's opener: the word comes from the bundled bank (no author and no
+		// hint), so the line says so instead of pointing at a host who is the guesser.
+		soloOpener: "Dero picked a word from the word bank. Guess a letter.",
 
 		modalTitle: "Set the word",
 		wordLabel: "The word",
