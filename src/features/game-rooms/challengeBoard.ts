@@ -15,7 +15,7 @@ import { errorEmbed } from "@utils/embedBuilder.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { checkGameRoomAccess, gameRoomUpgradeEmbed } from "@features/entitlements/gameRoomAccess.js";
 import { RoomProvisioner, describeRoomOpenFailure } from "./RoomProvisioner.js";
-import { openSoloRoom, describeSoloOpenFailure } from "./soloRooms.js";
+import { openSoloRoom, describeSoloOpenFailure, readPrivateQuotaStatus } from "./soloRooms.js";
 import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
@@ -181,6 +181,19 @@ export async function chooseVisibility(interaction: ButtonInteraction, room: IGa
 
 	await interaction.deferUpdate();
 	await refreshCard(interaction.guild!, updated, cardStateFor(updated, { visibility, pool: updated.spectatorIds ?? [] }));
+
+	// A host choosing the PRIVATE form sees the ceiling before the refusal ever
+	// could: "Your server has 6/10 private rooms open on the Starter plan." Null
+	// (and therefore silent) while the tier surface is not enforcing, which is
+	// production today. Fire and forget after the card edit; a failed followUp must
+	// not undo a visibility choice that already landed.
+	if (visibility === "invite") {
+		readPrivateQuotaStatus(room.guildId, interaction.user.id)
+			.then((status) =>
+				status ? interaction.followUp({ content: `Invite only. ${status}`, flags: MessageFlags.Ephemeral }) : undefined
+			)
+			.catch((error) => console.warn("[game-rooms] private quota status failed", error));
+	}
 }
 
 // ── the invite picker (F9's structural half) ──────────────────────────

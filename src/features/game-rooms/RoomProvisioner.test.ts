@@ -6,9 +6,11 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: {
 		findOpenByHost: vi.fn(),
 		countOpenInGuild: vi.fn(),
+		countOpenInGuildByVisibility: vi.fn(),
 		create: vi.fn(),
 		setStatus: vi.fn(),
 		update: vi.fn(),
+		findByRoomId: vi.fn(),
 	},
 }));
 
@@ -16,18 +18,28 @@ vi.mock("@db/stores/botLogStore.js", () => ({
 	botLogStore: { log: vi.fn() },
 }));
 
+// The tier decision, defaulted to "not enforcing" (infinite quota) so every test that
+// is not about the quota costs nothing, exactly like production today.
+vi.mock("@features/entitlements/gameRoomAccess.js", () => ({
+	checkGameRoomAccess: vi.fn(),
+}));
+
 import { RoomProvisioner, _clearInflightOpens, describeRoomOpenFailure, type RoomOpenInput } from "./RoomProvisioner.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
+import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 const storeMock = gameRoomStore as unknown as {
 	findOpenByHost: ReturnType<typeof vi.fn>;
 	countOpenInGuild: ReturnType<typeof vi.fn>;
+	countOpenInGuildByVisibility: ReturnType<typeof vi.fn>;
 	create: ReturnType<typeof vi.fn>;
 	setStatus: ReturnType<typeof vi.fn>;
+	update: ReturnType<typeof vi.fn>;
 };
 const logMock = botLogStore as unknown as { log: ReturnType<typeof vi.fn> };
+const accessMock = checkGameRoomAccess as unknown as ReturnType<typeof vi.fn>;
 
 // A category whose children.cache exposes just the `map` the provisioner uses to
 // collect taken names.
@@ -87,9 +99,12 @@ beforeEach(() => {
 	_clearInflightOpens();
 	storeMock.findOpenByHost.mockResolvedValue(null);
 	storeMock.countOpenInGuild.mockResolvedValue(0);
+	storeMock.countOpenInGuildByVisibility.mockResolvedValue(0);
 	storeMock.create.mockResolvedValue({ roomId: "room-1", guildId: "guild-1" });
 	storeMock.setStatus.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", status: "playing" });
 	logMock.log.mockResolvedValue(undefined);
+	// Production default: not enforcing, infinite quota, zero cost.
+	accessMock.mockResolvedValue({ allowed: true, privateQuota: Number.POSITIVE_INFINITY });
 });
 
 describe("RoomProvisioner.open, happy path", () => {
@@ -328,6 +343,56 @@ describe("RoomProvisioner.open, refusals", () => {
 		expect(result).toEqual({ ok: false, reason: "createFailed" });
 		expect(createdChannel.delete).toHaveBeenCalled();
 		errorSpy.mockRestore();
+	});
+});
+
+describe("RoomProvisioner.open, the private tier quota (②ᵇ)", () => {
+	beforeEach(() => {
+		accessMock.mockResolvedValue({ allowed: true, privateQuota: 10, tierKey: "free" });
+	});
+
+	it("refuses a private room at the ceiling, naming the number and the plan", async () => {
+		storeMock.countOpenInGuildByVisibility.mockResolvedValue(10);
+		const input = makeInput({ visibility: "invite" });
+
+		const result = await RoomProvisioner.open(input);
+
+		expect(result).toEqual({ ok: false, reason: "privateQuotaHit", quota: 10, tier: "free" });
+		expect(input.guild.channels.create).not.toHaveBeenCalled();
+		const copy = describeRoomOpenFailure(result as never);
+		expect(copy).toContain("(10)");
+		expect(copy).toContain("Starter");
+		// The count asked for exactly the private visibilities, never public.
+		expect(storeMock.countOpenInGuildByVisibility).toHaveBeenCalledWith("guild-1", ["invite", "solo"]);
+	});
+
+	it("counts solo rooms against the same ceiling", async () => {
+		storeMock.countOpenInGuildByVisibility.mockResolvedValue(10);
+		const result = await RoomProvisioner.open(makeInput({ game: "solo-hangman", visibility: "solo", playerIds: [] }));
+		expect(result).toEqual({ ok: false, reason: "privateQuotaHit", quota: 10, tier: "free" });
+	});
+
+	it("never gates a PUBLIC room on the private quota, and never even counts", async () => {
+		storeMock.countOpenInGuildByVisibility.mockResolvedValue(999);
+		const result = await RoomProvisioner.open(makeInput({ visibility: "public" }));
+		expect(result.ok).toBe(true);
+		expect(storeMock.countOpenInGuildByVisibility).not.toHaveBeenCalled();
+	});
+
+	it("skips the count entirely while the quota is infinite (enforcement off)", async () => {
+		accessMock.mockResolvedValue({ allowed: true, privateQuota: Number.POSITIVE_INFINITY });
+		const result = await RoomProvisioner.open(makeInput({ visibility: "invite" }));
+		expect(result.ok).toBe(true);
+		expect(storeMock.countOpenInGuildByVisibility).not.toHaveBeenCalled();
+	});
+
+	it("lets a draft AT the ceiling promote itself: it is already one of the counted rooms", async () => {
+		// The adopted draft carries its own visibility row, so the count of 10
+		// includes it; refusing here would refuse the very room being started.
+		storeMock.countOpenInGuildByVisibility.mockResolvedValue(10);
+		storeMock.findByRoomId.mockResolvedValue({ roomId: "draft-1", guildId: "guild-1" });
+		const result = await RoomProvisioner.open(makeInput({ visibility: "invite", existingRoomId: "draft-1" }));
+		expect(result.ok).toBe(true);
 	});
 });
 

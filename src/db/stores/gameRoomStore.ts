@@ -105,6 +105,17 @@ export const gameRoomStore = {
 		return GameRoom.countDocuments({ guildId, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] } });
 	},
 
+	// Backs the tier-gated PRIVATE room quota: how many live rooms of the given
+	// visibilities this guild holds. The { guildId, status } compound index covers the
+	// selective half of the filter; visibility is narrowed from those candidates.
+	async countOpenInGuildByVisibility(guildId: string, visibilities: RoomVisibility[]): Promise<number> {
+		return GameRoom.countDocuments({
+			guildId,
+			status: { $in: [...NON_TERMINAL_ROOM_STATUSES] },
+			visibility: { $in: visibilities },
+		});
+	},
+
 	// General patch, for the draft-stage edits the challenge board makes: visibility,
 	// the board message id, and the player/pool arrays at the moment the host starts.
 	//

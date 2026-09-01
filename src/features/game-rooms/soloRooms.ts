@@ -1,5 +1,7 @@
 import { ChannelType, type CategoryChannel, type Guild } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { startBlackjackTable } from "@features/games/blackjackHandler.js";
 import { RoomProvisioner, describeRoomOpenFailure, type RoomOpenResult } from "./RoomProvisioner.js";
 import { roomLifecycle } from "./roomLifecycle.js";
@@ -85,4 +87,19 @@ export async function openSoloRoom(
 export function describeSoloOpenFailure(result: Exclude<SoloOpenResult, { ok: true }>): string {
 	if (result.reason === "noArcadeCategory") return gameRoomsCopy.errors.noArcadeCategory;
 	return describeRoomOpenFailure(result);
+}
+
+// The "6/10 private rooms on the Starter plan" status line, or null while the tier
+// surface is not enforcing (infinite quota) or the member is blocked outright. Shared
+// by the visibility chooser and the solo entry points so the count, the ceiling and
+// the plan name always come from the same cached decision.
+export async function readPrivateQuotaStatus(guildId: string, userId: string): Promise<string | null> {
+	const decision = await checkGameRoomAccess(guildId, userId);
+	if (!decision.allowed || !Number.isFinite(decision.privateQuota)) return null;
+	const open = await gameRoomStore.countOpenInGuildByVisibility(guildId, ["invite", "solo"]);
+	return gameRoomsCopy.board.privateQuotaStatus(
+		open,
+		decision.privateQuota,
+		gameRoomsCopy.tierName(decision.tierKey ?? "unsubscribed")
+	);
 }

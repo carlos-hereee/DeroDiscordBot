@@ -47,6 +47,11 @@ describe("checkGameRoomAccess, enforcement off (production today)", () => {
 		expect(decision.reason).toBeUndefined();
 		expect(mockGet).not.toHaveBeenCalled();
 	});
+
+	it("reports an infinite private quota, so the provisioner's count never runs", async () => {
+		const decision = await checkGameRoomAccess(GUILD, USER, NOW);
+		expect(decision.privateQuota).toBe(Number.POSITIVE_INFINITY);
+	});
 });
 
 describe("checkGameRoomAccess, enforcement on", () => {
@@ -86,6 +91,25 @@ describe("checkGameRoomAccess, enforcement on", () => {
 		expect(mockGet).not.toHaveBeenCalled();
 	});
 
+	it("carries the server's private quota and tier key, from the wire and from cache", async () => {
+		mockGet.mockResolvedValue({ guildId: GUILD, userId: USER, allowed: true, privateQuota: 25, tierKey: "pro" });
+		const fresh = await checkGameRoomAccess(GUILD, USER, NOW);
+		const cached = await checkGameRoomAccess(GUILD, USER, new Date(NOW.getTime() + 1_000));
+		expect(fresh.privateQuota).toBe(25);
+		expect(fresh.tierKey).toBe("pro");
+		expect(cached.privateQuota).toBe(25);
+		expect(cached.tierKey).toBe("pro");
+		expect(mockGet).toHaveBeenCalledTimes(1);
+	});
+
+	it("falls back to the strictest quota when the server omits the number", async () => {
+		// An old server build that predates privateQuota must read as the floor, not
+		// as unlimited: the response shape is the wire contract, not a promise.
+		mockGet.mockResolvedValue({ guildId: GUILD, userId: USER, allowed: true });
+		const decision = await checkGameRoomAccess(GUILD, USER, NOW);
+		expect(decision.privateQuota).toBe(5);
+	});
+
 	it("keys the cache on guild AND user, so two members of one guild resolve independently", async () => {
 		mockGet
 			.mockResolvedValueOnce({ guildId: GUILD, userId: "founder", founding: true })
@@ -117,6 +141,29 @@ describe("checkGameRoomAccess FAILS OPEN (the opposite of earlyAccess, deliberat
 		expect(decision.allowed).toBe(true);
 		expect(decision.reason).toBeUndefined();
 		expect(warnSpy).toHaveBeenCalled();
+	});
+
+	// ⚠️ THE QUOTA FAILS THE OTHER WAY FROM THE BOOLEAN, DELIBERATELY. Allowing is
+	// "do not take a free feature away in an outage"; the quota falling to unlimited
+	// would be "an outage hands every guild a paid ceiling", the wrong direction.
+	it("fails open on the QUOTA to the strictest number when nothing is cached", async () => {
+		mockGet.mockRejectedValue(new Error("server down"));
+		const decision = await checkGameRoomAccess(GUILD, USER, NOW);
+		expect(decision.allowed).toBe(true);
+		expect(decision.privateQuota).toBe(5);
+	});
+
+	it("prefers the last confirmed tier's quota over the floor when one is still known", async () => {
+		mockGet
+			.mockResolvedValueOnce({ guildId: GUILD, userId: USER, allowed: true, privateQuota: 25, tierKey: "pro" })
+			.mockRejectedValueOnce(new Error("server down"));
+		await checkGameRoomAccess(GUILD, USER, NOW);
+		// Past the confirmed TTL, so the entry is expired but deliberately still in
+		// the map; the error path reads its quota back rather than dropping to 5.
+		const afterOutage = await checkGameRoomAccess(GUILD, USER, new Date(NOW.getTime() + 61 * 60_000));
+		expect(afterOutage.allowed).toBe(true);
+		expect(afterOutage.privateQuota).toBe(25);
+		expect(afterOutage.tierKey).toBe("pro");
 	});
 
 	it("retries after the short error TTL lapses rather than pinning the permissive answer", async () => {

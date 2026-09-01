@@ -99,12 +99,18 @@ export const BOT_CONSTANTS = {
 	// delete happens, so this window is about convenience, not durability.
 	GAME_ROOM_ARCHIVE_DELAY_MS: 4 * 60 * 60 * 1000, // 4 hours
 
-	// Concurrent non-terminal rooms allowed per guild. Discord caps a category
-	// at 50 channels and a full category makes EVERY new room fail, so this
-	// keeps a guild an order of magnitude clear of the ceiling even before the
-	// sweep runs. Hitting it produces an honest "the arena is full" reply, not
-	// a silent no-op.
-	GAME_ROOM_MAX_PER_GUILD: 20,
+	// Concurrent non-terminal rooms allowed per guild, BOTH visibilities. This is
+	// the hard wall; the tier quota on PRIVATE rooms (server-resolved, up to 50 at
+	// Studio) is the softer wall inside it for invite and solo rooms specifically.
+	//
+	// 30, raised from 20 when the tier quota shipped, and the arithmetic is the
+	// point: Discord caps a category at 50 channels, the arcade category holds ~5
+	// fixed channels (rules, challenges, leaderboard and kin), so 30 rooms lands at
+	// 35/50 with headroom for finished rooms cooling off in their archive window.
+	// At 20, a Pro guild (25 private) could never actually REACH its private
+	// ceiling; at 30 it can, with a few public rooms alongside. Hitting the cap
+	// produces an honest "the arena is full" reply, not a silent no-op.
+	GAME_ROOM_MAX_PER_GUILD: 30,
 
 	// Explicit spectators on an invite-only room. Each one is a real permission
 	// overwrite, and Discord's select menus cap at 25 options, so the two limits

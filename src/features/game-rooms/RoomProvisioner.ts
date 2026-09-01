@@ -19,6 +19,7 @@ import { createTable as createHoldemTable } from "@features/games/holdemTable.js
 import { pickWord } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
 import { roomTrail } from "./roomTrail.js";
+import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -35,6 +36,32 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // How:   ① claim the host's in-flight slot, ② check the guild cap, ③ create the
 //        channel, ④ create the row, ⑤ post and pin the opener, ⑥ log. Every failure
 //        path releases the slot in a finally.
+
+// ── rate limit and cap arithmetic at the Pro ceiling (25 private rooms) ──
+// Checked 2026-09-01 against Discord's public limits (docs.discord.com Channels
+// resource, docs.discord.food rate-limit topic); the one live measurement still owed
+// is flagged below.
+//
+//   Channels per category: 50, hard. The arcade category holds ~5 fixed channels
+//   (rules, challenges, leaderboard and kin) plus rooms, so 25 private rooms lands at
+//   30/50. A guild running public rooms alongside a full private ceiling has
+//   50 - 5 - 25 = 20 public slots before Discord refuses the create; not a documented
+//   risk, but the arithmetic the next tier bump has to redo.
+//   Channels per guild: 500, hard. Not a constraint at any tier.
+//   Channel creation: ~50 creates per 10 min per guild is the widely observed soft
+//   bucket (not officially documented). 25 concurrent private rooms is at most 25
+//   creates in a burst, well under it; if POST /guilds/{id}/channels ever answers
+//   429, the fix is a per-guild queue around guild.channels.create, NOT a lower tier
+//   cap. No queue is built yet, deliberately.
+//   Message send: 5 per 5s PER CHANNEL. Every room is its own channel, so 25 rooms
+//   firing turns concurrently is 25 independent buckets, never one shared one.
+//   Invite creation (⑤ᵃ below): one createInvite per room open, far under any
+//   plausible bucket. ⚠️ NOT yet measured live: read the X-RateLimit-* headers off
+//   one createInvite against a test guild before raising any tier past 50.
+//   Mongo writes: ~3 to 5 per turn per room (row update, move append, opener edit,
+//   audit log). 25 rooms at a turn per 10s is ~12 writes/s worst case. Not a concern.
+//   Bot memory: rooms are Mongo backed; the only per-open memory here is the small
+//   inflightOpens Map below. Not a concern.
 
 // ── the in-flight map ─────────────────────────────────────────────────
 // What:  the one piece of state this feature keeps in memory, and it keeps only this.
@@ -75,6 +102,9 @@ export type RoomOpenResult =
 	// whether waiting, upgrading or asking an admin is the fix.
 	| { ok: false; reason: "alreadyHosting"; existingChannelId: string | null }
 	| { ok: false; reason: "guildFull" }
+	// The tier-gated PRIVATE ceiling (invite + solo). Carries the numbers so the copy
+	// can say which limit on which plan, not just "no".
+	| { ok: false; reason: "privateQuotaHit"; quota: number; tier: string }
 	| { ok: false; reason: "missingPermissions" }
 	| { ok: false; reason: "createFailed" };
 
@@ -146,6 +176,29 @@ export const RoomProvisioner = {
 		const openCount = await gameRoomStore.countOpenInGuild(guild.id);
 		if (openCount >= BOT_CONSTANTS.GAME_ROOM_MAX_PER_GUILD) {
 			return { ok: false, reason: "guildFull" };
+		}
+
+		// ②ᵇ The tier-gated PRIVATE ceiling: "invite" and "solo" rooms count, "public"
+		// never does. The decision is the same cached, fail-open answer the challenge
+		// board reads; while ENFORCE_GAME_ROOM_TIER is unset (production today) the
+		// quota is Infinity and this whole block costs zero I/O beyond the flag read.
+		if (visibility !== "public") {
+			const decision = await checkGameRoomAccess(guild.id, hostId);
+			if (Number.isFinite(decision.privateQuota)) {
+				const privateOpen = await gameRoomStore.countOpenInGuildByVisibility(guild.id, ["invite", "solo"]);
+				// An adopted draft already sits in that count with this very visibility
+				// (chooseVisibility wrote it), so promoting it must not read as opening a
+				// room BEYOND the one it already is. Fresh opens have no row yet.
+				const alreadyCounted = input.existingRoomId ? 1 : 0;
+				if (privateOpen - alreadyCounted >= decision.privateQuota) {
+					return {
+						ok: false,
+						reason: "privateQuotaHit",
+						quota: decision.privateQuota,
+						tier: decision.tierKey ?? "unsubscribed",
+					};
+				}
+			}
 		}
 
 		// A solo room seats the host and NOBODY else, structurally: extra players and
@@ -369,6 +422,8 @@ export function describeRoomOpenFailure(result: Exclude<RoomOpenResult, { ok: tr
 			return gameRoomsCopy.errors.alreadyHosting(result.existingChannelId);
 		case "guildFull":
 			return gameRoomsCopy.errors.guildFull();
+		case "privateQuotaHit":
+			return gameRoomsCopy.errors.privateQuotaHit(result.quota, gameRoomsCopy.tierName(result.tier));
 		case "missingPermissions":
 			return gameRoomsCopy.errors.missingPermissions;
 		case "createFailed":

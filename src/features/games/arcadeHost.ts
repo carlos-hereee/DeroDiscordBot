@@ -3,7 +3,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
-import { openSoloRoom, describeSoloOpenFailure } from "@features/game-rooms/soloRooms.js";
+import { openSoloRoom, describeSoloOpenFailure, readPrivateQuotaStatus } from "@features/game-rooms/soloRooms.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { startBlackjackTable } from "./blackjackHandler.js";
 
@@ -75,7 +75,12 @@ async function handleArcadeHost(interaction: ButtonInteraction): Promise<void> {
 			displayName: member?.displayName ?? interaction.user.globalName ?? interaction.user.username,
 		});
 		if (result.ok) {
-			await interaction.editReply({ content: gameRoomsCopy.board.cardStarted(result.channel.id) });
+			// The quota status line rides the confirmation when the tier surface is
+			// enforcing, so a solo host sees the ceiling the same way an invite host
+			// does on the visibility chooser. Null (and skipped) in production today.
+			const status = await readPrivateQuotaStatus(guild.id, interaction.user.id).catch(() => null);
+			const started = gameRoomsCopy.board.cardStarted(result.channel.id);
+			await interaction.editReply({ content: status ? `${started} ${status}` : started });
 			return;
 		}
 		// Every refusal names itself (room slot held, guild full, quota hit, no

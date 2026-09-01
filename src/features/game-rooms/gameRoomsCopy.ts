@@ -25,8 +25,19 @@ const GAME_LABELS: Record<GameSlug, string> = {
 	"solo-blackjack": "Blackjack (solo)",
 };
 
+// Human names for the server's tier keys, used only in quota copy. The keys are the
+// SERVER's vocabulary (nexious-server resolves the tier; the bot never stores one),
+// so an unknown key renders as itself rather than crashing a refusal message.
+const TIER_NAMES: Record<string, string> = {
+	unsubscribed: "free",
+	free: "Starter",
+	pro: "Creator Pro",
+	business: "Creator Studio",
+};
+
 export const gameRoomsCopy = {
 	gameLabel: (game: GameSlug): string => GAME_LABELS[game] ?? game,
+	tierName: (tierKey: string): string => TIER_NAMES[tierKey] ?? tierKey,
 
 	// ── the opener card, pinned inside the room ──
 	opener: {
@@ -88,6 +99,10 @@ export const gameRoomsCopy = {
 		// button being broken.
 		guildFull: (): string =>
 			`This server already has ${BOT_CONSTANTS.GAME_ROOM_MAX_PER_GUILD} rooms open. Wait for one to finish and try again.`,
+		// The tier-gated private ceiling. Names the number, the plan, and all three
+		// ways out, because "no" alone reads as the button being broken.
+		privateQuotaHit: (quota: number, tierName: string): string =>
+			`This server has reached its private room limit (${quota}) for the ${tierName} plan. Wait for one to finish, upgrade the plan, or start a public room.`,
 		// 50013. Names the missing permission, because the member who clicked cannot
 		// fix it and the admin who can needs to know what to grant.
 		missingPermissions: "Dero cannot create a channel in the arcade category. An admin needs to grant Manage Channels.",
@@ -139,6 +154,12 @@ export const gameRoomsCopy = {
 
 		// The rematch presser's ephemeral confirmation, pointing at the fresh card.
 		rematchOffered: (channelId: string): string => `Rematch card is up in <#${channelId}>.`,
+
+		// The quota status line a host sees when choosing a private form, so the
+		// ceiling is visible BEFORE the refusal would be. Rendered only while the
+		// tier surface is enforcing (a finite quota).
+		privateQuotaStatus: (open: number, quota: number, tierName: string): string =>
+			`Your server has ${open}/${quota} private rooms open on the ${tierName} plan.`,
 
 		visibilityInviteLabel: "Invite only",
 		visibilityOpenLabel: "Open to all",

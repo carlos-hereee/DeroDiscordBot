@@ -41,6 +41,12 @@ interface EligibilityEntry {
 	// to a member if it comes with the link that resolves it. Caching the bare boolean would make
 	// the first denial in an hour show an upgrade link and every later one show none.
 	upgradeUrl?: string;
+	// The private room ceiling and the tier key that produced it, cached with the answer so the
+	// quota gate and its refusal copy ride the same hour of cache the boolean does. An EXPIRED
+	// entry is deliberately never deleted from the map: its quota is the "last known tier" the
+	// fail-open path below prefers over the unsubscribed floor.
+	privateQuota?: number;
+	tierKey?: string;
 	expiresAt: number;
 }
 
@@ -52,6 +58,14 @@ const eligibilityCache = new Map<string, EligibilityEntry>();
 // Test seam: reset the cache between cases.
 export const _clearGameRoomAccessCache = (): void => eligibilityCache.clear();
 
+// ── the fail-open quota floor ──
+// When the server cannot answer and no cached tier exists, the quota falls back to the
+// STRICTEST permitted number, the unsubscribed ceiling, not to unlimited. Fail-open on
+// the BOOLEAN means "do not take a free feature away in an outage"; fail-open on the
+// QUOTA pointing the other way would mean a Heroku blip quietly hands every guild a
+// paid ceiling, which is the wrong direction for a number that prices a plan.
+const FAIL_OPEN_PRIVATE_QUOTA = 5;
+
 export interface GameRoomAccessDecision {
 	allowed: boolean;
 	// Present only when blocked. A single reason today; a union member gets added the day a
@@ -59,6 +73,14 @@ export interface GameRoomAccessDecision {
 	reason?: "tier";
 	// Where to go to fix it. Server-supplied so pricing can move without a bot deploy.
 	upgradeUrl?: string;
+	// The per-server ceiling on PRIVATE rooms ("invite" and "solo"). Infinity while the
+	// enforcement flag is off, so the whole tier surface stays a no-op in production
+	// until ENFORCE_GAME_ROOM_TIER flips; the provisioner skips the count entirely for
+	// a non-finite quota.
+	privateQuota: number;
+	// The server-resolved tier key behind the quota, for the refusal copy's plan name.
+	// Absent while not enforcing.
+	tierKey?: string;
 }
 
 interface GameRoomAccessResponse {
@@ -69,6 +91,8 @@ interface GameRoomAccessResponse {
 	// server so the grandfather list has exactly one home.
 	founding?: boolean;
 	upgradeUrl?: string;
+	privateQuota?: number;
+	tierKey?: string;
 }
 
 // Note there is deliberately NO generalReleaseAt anywhere in this module. earlyAccess entries
@@ -81,17 +105,27 @@ export const checkGameRoomAccess = async (
 	now: Date = new Date()
 ): Promise<GameRoomAccessDecision> => {
 	// ① Not enforcing. This is the production state today and it must cost nothing: no cache
-	// read, no network call, no allocation beyond the returned object.
-	if (!enforceGameRoomTier) return { allowed: true };
+	// read, no network call, no allocation beyond the returned object. The quota is Infinity
+	// for the same reason the boolean is true: the whole tier surface is off.
+	if (!enforceGameRoomTier) return { allowed: true, privateQuota: Number.POSITIVE_INFINITY };
 
 	// ② Missing context. A DM, a partial interaction, anything without both ids. Never block on
 	// absent context in a fail-open gate; there is nothing here to confirm and nothing to protect.
-	if (!guildId || !userId) return { allowed: true };
+	// The quota takes the strict floor, since there is no tier to read a bigger number from.
+	if (!guildId || !userId) return { allowed: true, privateQuota: FAIL_OPEN_PRIVATE_QUOTA };
 
 	const key = `${guildId}:${userId}`;
 	const cached = eligibilityCache.get(key);
 	if (cached && cached.expiresAt > now.getTime()) {
-		return cached.value ? { allowed: true } : { allowed: false, reason: "tier", upgradeUrl: cached.upgradeUrl };
+		return cached.value
+			? { allowed: true, privateQuota: cached.privateQuota ?? FAIL_OPEN_PRIVATE_QUOTA, tierKey: cached.tierKey }
+			: {
+					allowed: false,
+					reason: "tier",
+					upgradeUrl: cached.upgradeUrl,
+					privateQuota: cached.privateQuota ?? FAIL_OPEN_PRIVATE_QUOTA,
+					tierKey: cached.tierKey,
+			  };
 	}
 
 	try {
@@ -99,15 +133,35 @@ export const checkGameRoomAccess = async (
 		// A founding member is allowed even when the tier check says no. The server owns that list;
 		// the bot only honors the flag.
 		const value = res?.founding === true || res?.allowed === true;
-		eligibilityCache.set(key, { value, upgradeUrl: res?.upgradeUrl, expiresAt: now.getTime() + CONFIRMED_TTL_MS });
-		return value ? { allowed: true } : { allowed: false, reason: "tier", upgradeUrl: res?.upgradeUrl };
+		const privateQuota = typeof res?.privateQuota === "number" ? res.privateQuota : FAIL_OPEN_PRIVATE_QUOTA;
+		eligibilityCache.set(key, {
+			value,
+			upgradeUrl: res?.upgradeUrl,
+			privateQuota,
+			tierKey: res?.tierKey,
+			expiresAt: now.getTime() + CONFIRMED_TTL_MS,
+		});
+		return value
+			? { allowed: true, privateQuota, tierKey: res?.tierKey }
+			: { allowed: false, reason: "tier", upgradeUrl: res?.upgradeUrl, privateQuota, tierKey: res?.tierKey };
 	} catch (err) {
 		// Fail OPEN, and cache the permissive answer only briefly so a recovered server is picked
 		// up within the minute. Logged rather than swallowed: a gate that quietly stops gating is
 		// exactly the thing an operator needs to see in the Railway logs.
+		//
+		// The QUOTA fails toward strictness instead: the last confirmed tier's number when one is
+		// still in the map (expired entries are kept for exactly this read), else the unsubscribed
+		// floor. An outage must not quietly hand every guild a paid ceiling.
 		console.warn("[game-rooms] entitlement lookup failed, allowing access", err);
-		eligibilityCache.set(key, { value: true, expiresAt: now.getTime() + ERROR_TTL_MS });
-		return { allowed: true };
+		const stale = eligibilityCache.get(key);
+		const privateQuota = stale?.privateQuota ?? FAIL_OPEN_PRIVATE_QUOTA;
+		eligibilityCache.set(key, {
+			value: true,
+			privateQuota,
+			tierKey: stale?.tierKey,
+			expiresAt: now.getTime() + ERROR_TTL_MS,
+		});
+		return { allowed: true, privateQuota, tierKey: stale?.tierKey };
 	}
 };
 
