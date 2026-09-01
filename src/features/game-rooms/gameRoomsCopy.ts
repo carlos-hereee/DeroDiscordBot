@@ -31,12 +31,25 @@ export const gameRoomsCopy = {
 		title: (game: GameSlug): string => `${GAME_LABELS[game] ?? game} room`,
 		// Rendered once, at open. The visibility line matters because it is the only
 		// place a player is told who else can read what they type.
-		description: (hostId: string, playerIds: string[], isPublic: boolean): string => {
+		//
+		// ⚠️ THE INVITE LINE IS HONEST ONLY WITH ITS CAVEAT. A discord.gg URL is a GUILD
+		// invite: it lets a stranger join the SERVER, and it does not touch the room's
+		// permission overwrites. A public room's @everyone allow already covers the
+		// newcomer; an invite-only room stays hidden from them even after they join
+		// through the link, so the caveat sentence is what keeps the link from reading
+		// as broken. Rendered as an inline URL rather than a button on purpose: a link
+		// component is not tap-to-copy on mobile the way an inline URL is.
+		description: (hostId: string, playerIds: string[], isPublic: boolean, inviteCode?: string | null): string => {
 			const roster = playerIds.map((id) => `<@${id}>`).join(" versus ");
 			const audience = isPublic
 				? "Anyone in the server can watch this room. Only the players can type."
 				: "This room is invite only. Only the players and the members they invited can see it.";
-			return [`Host: <@${hostId}>`, "", roster, "", audience].join("\n");
+			const lines = [`Host: <@${hostId}>`, "", roster, "", audience];
+			if (inviteCode) {
+				if (!isPublic) lines.push("", "Invite only rooms are hidden from members who were not invited.");
+				lines.push("", `Invite link: https://discord.gg/${inviteCode}`);
+			}
+			return lines.join("\n");
 		},
 	},
 

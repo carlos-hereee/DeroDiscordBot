@@ -37,11 +37,15 @@ function makeCategory(childNames: string[] = []): CategoryChannel {
 	} as unknown as CategoryChannel;
 }
 
-function makeGuild(createImpl?: (opts: unknown) => Promise<unknown>): Guild {
+function makeGuild(
+	createImpl?: (opts: unknown) => Promise<unknown>,
+	createInviteImpl?: () => Promise<unknown>
+): Guild {
 	const created = {
 		id: "room-channel-1",
 		send: vi.fn().mockResolvedValue({ id: "opener-1", pin: vi.fn().mockResolvedValue(undefined) }),
 		delete: vi.fn().mockResolvedValue(undefined),
+		createInvite: vi.fn(createInviteImpl ?? (async () => ({ code: "invite-1" }))),
 	};
 	return {
 		id: "guild-1",
@@ -49,6 +53,16 @@ function makeGuild(createImpl?: (opts: unknown) => Promise<unknown>): Guild {
 		client: { user: { id: "bot-1" } },
 		channels: { create: vi.fn(createImpl ?? (async () => created)) },
 	} as unknown as Guild;
+}
+
+// The channel the guild's create resolved to, so a test can reach the send/invite
+// mocks that live on it.
+async function createdChannelOf(guild: Guild): Promise<{
+	send: ReturnType<typeof vi.fn>;
+	createInvite: ReturnType<typeof vi.fn>;
+}> {
+	const createMock = guild.channels.create as unknown as ReturnType<typeof vi.fn>;
+	return (await createMock.mock.results[0].value) as never;
 }
 
 function makeInput(overrides: Partial<RoomOpenInput> = {}): RoomOpenInput {
@@ -91,6 +105,7 @@ describe("RoomProvisioner.open, happy path", () => {
 		expect(storeMock.setStatus).toHaveBeenCalledWith("guild-1", "room-1", "playing", {
 			channelId: "room-channel-1",
 			openerMessageId: "opener-1",
+			inviteCode: "invite-1",
 			startedAt: expect.any(Date),
 		});
 	});
@@ -127,6 +142,68 @@ describe("RoomProvisioner.open, happy path", () => {
 
 		const createMock = input.guild.channels.create as unknown as ReturnType<typeof vi.fn>;
 		expect((createMock.mock.calls[0][0] as { name: string }).name).toBe("hangman-qwerty-2");
+	});
+});
+
+describe("RoomProvisioner.open, the invite link", () => {
+	it("mints an invite for a public room and persists the CODE on the row", async () => {
+		const input = makeInput({ visibility: "public" });
+		const result = await RoomProvisioner.open(input);
+
+		expect(result.ok).toBe(true);
+		const channel = await createdChannelOf(input.guild);
+		expect(channel.createInvite).toHaveBeenCalledWith(
+			expect.objectContaining({ maxAge: 0, maxUses: 0, unique: true })
+		);
+		// The code, not the URL: the renderer owns the URL shape.
+		expect(storeMock.setStatus).toHaveBeenCalledWith(
+			"guild-1",
+			"room-1",
+			"playing",
+			expect.objectContaining({ inviteCode: "invite-1" })
+		);
+		// And the URL rides the opener description as an inline link.
+		const opener = channel.send.mock.calls[0][0] as { embeds: { data: { description?: string } }[] };
+		expect(opener.embeds[0].data.description).toContain("https://discord.gg/invite-1");
+	});
+
+	it("mints for an invite-only room too, with the hidden-from-newcomers caveat (fork a)", async () => {
+		const input = makeInput({ visibility: "invite" });
+		await RoomProvisioner.open(input);
+
+		const channel = await createdChannelOf(input.guild);
+		const opener = channel.send.mock.calls[0][0] as { embeds: { data: { description?: string } }[] };
+		// The link is a GUILD invite and does not touch the room's overwrites, so the
+		// caveat sentence is what keeps it from reading as broken.
+		expect(opener.embeds[0].data.description).toContain("https://discord.gg/invite-1");
+		expect(opener.embeds[0].data.description).toContain("hidden from members who were not invited");
+		expect(storeMock.setStatus).toHaveBeenCalledWith(
+			"guild-1",
+			"room-1",
+			"playing",
+			expect.objectContaining({ inviteCode: "invite-1" })
+		);
+	});
+
+	it("degrades to inviteCode null when the mint throws, without failing the open", async () => {
+		// The 50013 shape: the bot's CreateInstantInvite bit is missing on the channel.
+		const denied = Object.assign(Object.create(DiscordAPIError.prototype), { code: 50013 });
+		const input = makeInput({ guild: makeGuild(undefined, async () => Promise.reject(denied)) });
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+		const result = await RoomProvisioner.open(input);
+
+		expect(result.ok).toBe(true);
+		expect(storeMock.setStatus).toHaveBeenCalledWith(
+			"guild-1",
+			"room-1",
+			"playing",
+			expect.objectContaining({ inviteCode: null })
+		);
+		const channel = await createdChannelOf(input.guild);
+		const opener = channel.send.mock.calls[0][0] as { embeds: { data: { description?: string } }[] };
+		expect(opener.embeds[0].data.description).not.toContain("discord.gg");
+		errorSpy.mockRestore();
 	});
 });
 

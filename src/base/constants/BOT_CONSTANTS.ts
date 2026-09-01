@@ -368,8 +368,9 @@ export const BOT_CONSTANTS = {
 	// Who:   anyone reading the bot's README or install guide. Not
 	//        consumed by code today.
 	// How:   bit names match discord.js PermissionFlagsBits. Sum is
-	//        268659792 (the integer we'd use without the Discord
-	//        enforcement catch-22).
+	//        268659793 (the integer we'd use without the Discord
+	//        enforcement catch-22). Create Invite (bit 1) joined the list
+	//        when game rooms started minting a per-room invite link.
 	MIN_PERMISSIONS_DOCS: [
 		"View Channel",
 		"Manage Channels",
@@ -380,5 +381,6 @@ export const BOT_CONSTANTS = {
 		"Read Message History",
 		"Add Reactions",
 		"Mention Everyone",
+		"Create Invite",
 	] as const,
 } as const; // ← this is important, explained below

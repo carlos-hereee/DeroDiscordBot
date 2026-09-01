@@ -47,6 +47,10 @@ export interface IGameRoom {
 	channelId: string | null;
 	// The pinned opener card inside the room.
 	openerMessageId: string | null;
+	// The CODE of the guild invite minted at open (discord.gg/<code>), or null when the
+	// mint failed or was skipped. Stored as the code rather than the full URL so the
+	// renderer owns the URL shape. Nothing queries by it, so it carries no index.
+	inviteCode: string | null;
 	// The live card on the ⚔️challenges board, edited as the challenge progresses.
 	boardMessageId: string | null;
 	status: RoomStatus;
@@ -97,6 +101,7 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		visibility: { type: String, required: true, enum: [...ROOM_VISIBILITIES], default: "invite" },
 		channelId: { type: String, default: null },
 		openerMessageId: { type: String, default: null },
+		inviteCode: { type: String, default: null },
 		boardMessageId: { type: String, default: null },
 		status: { type: String, required: true, enum: [...ROOM_STATUSES], default: "draft" },
 		// Mixed rather than a typed subdocument: only hangman populates it, its shape will grow

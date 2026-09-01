@@ -18,10 +18,16 @@ import type { GameSlug } from "./roomTypes.js";
 //        several games compete for a reader's eye; inside a room there is only ever
 //        one game, so the useful signal is which arena you are in, not which game.
 
-export function roomOpenerEmbed(game: GameSlug, hostId: string, playerIds: string[], isPublic: boolean): EmbedBuilder {
+export function roomOpenerEmbed(
+	game: GameSlug,
+	hostId: string,
+	playerIds: string[],
+	isPublic: boolean,
+	inviteCode?: string | null
+): EmbedBuilder {
 	return infoEmbed(
 		gameRoomsCopy.opener.title(game),
-		gameRoomsCopy.opener.description(hostId, playerIds, isPublic),
+		gameRoomsCopy.opener.description(hostId, playerIds, isPublic, inviteCode),
 		COLORS.ARCADE as ColorResolvable
 	);
 }

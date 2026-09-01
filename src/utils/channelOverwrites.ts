@@ -38,6 +38,12 @@ export function buildBotSelfOverwrite(botId: string): { id: string; allow: bigin
 			PermissionFlagsBits.ManageMessages,
 			PermissionFlagsBits.AddReactions,
 			PermissionFlagsBits.MentionEveryone,
+			// Game rooms mint a per-room invite link at open (RoomProvisioner). The bit
+			// lives HERE rather than ad hoc in roomPermissions because this list is the
+			// single copy both consumers share, which is the entire point of this module.
+			// Harmless for the homebase channels: holding the bit is not the same as
+			// minting an invite, and nothing in setup ever calls createInvite.
+			PermissionFlagsBits.CreateInstantInvite,
 		],
 	};
 }

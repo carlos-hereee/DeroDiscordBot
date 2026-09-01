@@ -208,6 +208,27 @@ export const RoomProvisioner = {
 			return { ok: false, reason: "createFailed" };
 		}
 
+		// ⑤ᵃ Mint the room's invite link, best effort, before the opener composes so the
+		// URL can ride the opener's LAST line. maxAge/maxUses 0 keeps the link alive for
+		// the whole archive window; unique:true stops Discord handing back somebody
+		// else's cached invite for the channel.
+		//
+		// ⚠️ A GUILD INVITE, NOT A ROOM GRANT. The link brings a stranger into the
+		// SERVER pointing at this channel; it does not touch the permission overwrites,
+		// so an invite-only room stays hidden from whoever used it. The opener copy
+		// carries the caveat that makes that honest (see gameRoomsCopy.opener).
+		//
+		// Fire and forget in spirit (house rule 7): the members can already see the
+		// channel, so a failed mint (typically 50013 when the bot's CreateInstantInvite
+		// bit is missing) logs and degrades to a room without a link, never a failed open.
+		let inviteCode: string | null = null;
+		try {
+			const invite = await channel.createInvite({ maxAge: 0, maxUses: 0, unique: true, reason: `game room ${room.roomId}` });
+			inviteCode = invite?.code ?? null;
+		} catch (error) {
+			console.error("[game-rooms] failed to mint invite", { guildId: guild.id, roomId: room.roomId, error });
+		}
+
 		// ⑤ Move to "playing" and record the ids that only exist now. Two writes rather
 		// than one because create() owns the shape of a new row and this owns the
 		// transition; folding them would put lifecycle logic into the store.
@@ -216,7 +237,7 @@ export const RoomProvisioner = {
 		// once the trail has scrolled past it.
 		const opener = await channel
 			.send({
-				embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility === "public")],
+				embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility === "public", inviteCode)],
 				// Hangman opens with the AUTHORING control, not a guess control: there
 				// is no word yet, and offering "guess a letter" before one exists would
 				// be a button whose only possible answer is "not yet".
@@ -234,6 +255,7 @@ export const RoomProvisioner = {
 		const started = await gameRoomStore.setStatus(guild.id, room.roomId, "playing", {
 			channelId: channel.id,
 			openerMessageId: opener?.id ?? null,
+			inviteCode,
 			startedAt: new Date(),
 		});
 
