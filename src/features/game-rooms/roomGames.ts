@@ -79,6 +79,15 @@ async function runVersusMove(interaction: ButtonInteraction, room: IGameRoom): P
 
 	await interaction.deferUpdate();
 
+	// ① Re-read the row before resolving anything. The `room` this handler was given was
+	// loaded at button-press time, so when both players press in the same tick, both arrive
+	// here holding a "playing" snapshot. A fresh read turns most of those second presses into
+	// a silent no-op BEFORE a flip line is composed or posted (the first press's outcome is
+	// already on screen, so there is nothing to tell this presser). This only NARROWS the
+	// window; the finish claim below plus the superseded line at ③ close what remains.
+	const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId);
+	if (!fresh || fresh.status !== "playing") return;
+
 	const result = resolveVersus(flip);
 	const winnerId =
 		result.winner === "tie" ? null : result.winner === "challenger" ? challengerId : opponentId;
@@ -107,7 +116,22 @@ async function runVersusMove(interaction: ButtonInteraction, room: IGameRoom): P
 	// award sits OUTSIDE that write, so without this guard the loser's press would pay the base
 	// game XP a second time and record `games.<slug>.played` twice on both members. The room's
 	// own rate top up is already inside the claim.
-	if (!ended) return;
+	//
+	// ③ The losing press already POSTED its flip at ②, because posting first is the
+	// send-first-then-append invariant and moving it after the claim would trade a cosmetic
+	// wart for an unrecoverable one. So when the claim reports this press lost the race, say
+	// so where both contradictory lines are standing: an append-only correction through the
+	// same trail, never an edit of the posted row. The channel and the transcript then both
+	// record which result was real.
+	if (!ended) {
+		await roomTrail.postMove(interaction.client, room, {
+			actorId: interaction.user.id,
+			kind: "system",
+			text: gameRoomsCopy.games.flipSuperseded,
+			meta: { superseded: true, result },
+		});
+		return;
+	}
 
 	// Fire and forget after the primary action, per house rule 7. Both players have
 	// already seen the outcome, so nothing the award does can change what the match

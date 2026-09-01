@@ -253,8 +253,10 @@ describe("rock paper scissors secrecy", () => {
 });
 
 describe("coin flip and dice roll in a room", () => {
+	// The handler re-reads the row before posting anything (the double-press narrowing),
+	// so every versus test seeds findByRoomId with the same playing room it passes in.
 	it("resolves, posts the result to the trail, and finishes in one press", async () => {
-		const room = makeRoom({ game: "coinflip" });
+		const room = seedRoom(makeRoom({ game: "coinflip" }));
 		await runRoomMove(makeButton(HOST), room);
 
 		expect(trailMock.postMove).toHaveBeenCalledOnce();
@@ -263,7 +265,7 @@ describe("coin flip and dice roll in a room", () => {
 	});
 
 	it("names a real player as the winner, never the raw resolver token", async () => {
-		await runRoomMove(makeButton(HOST), makeRoom({ game: "coinflip" }));
+		await runRoomMove(makeButton(HOST), seedRoom(makeRoom({ game: "coinflip" })));
 
 		const { winnerId } = lifecycleMock.finish.mock.calls[0][2] as { winnerId: string | null };
 		// A coin cannot tie, so one of the two players always wins. Passing
@@ -275,19 +277,42 @@ describe("coin flip and dice roll in a room", () => {
 	// resolves its own flip and each reaches finish, whose conditional write lets exactly one
 	// through. The game's own award sits OUTSIDE that write, so the loser's press would pay
 	// the base XP a second time and record `games.coinflip.played` twice on both members.
-	it("pays the game award only on the press that actually ended the match", async () => {
+	// The losing press ALSO posted a contradictory flip line before its claim lost, so it now
+	// follows up with the append-only superseded correction instead of leaving two results.
+	it("pays no award on the losing press and posts the superseded correction", async () => {
 		lifecycleMock.finish.mockResolvedValue(false);
 
-		await runRoomMove(makeButton(OPPONENT), makeRoom({ game: "coinflip" }));
+		await runRoomMove(makeButton(OPPONENT), seedRoom(makeRoom({ game: "coinflip" })));
 
 		expect(lifecycleMock.finish).toHaveBeenCalledOnce();
 		expect(awardMock).not.toHaveBeenCalled();
+		// Two trail posts: the flip it composed before losing the race, then the correction
+		// naming which result stands. Append-only on purpose; editing the posted row would
+		// break the send-first-then-append invariant.
+		expect(trailMock.postMove).toHaveBeenCalledTimes(2);
+		expect(publicTrailText()[1]).toMatch(/already decided/i);
+		const meta = trailMock.postMove.mock.calls[1][2] as { meta?: { superseded?: boolean } };
+		expect(meta.meta?.superseded).toBe(true);
 	});
 
 	it("pays the game award once when the press does end the match", async () => {
-		await runRoomMove(makeButton(HOST), makeRoom({ game: "coinflip" }));
+		await runRoomMove(makeButton(HOST), seedRoom(makeRoom({ game: "coinflip" })));
 
 		expect(awardMock).toHaveBeenCalledOnce();
+	});
+
+	// The fresh re-read: a press whose room already went terminal between the button load and
+	// this handler posts NOTHING, because the first press's outcome is already on screen and a
+	// second flip line would only contradict it. This is the common double-press case; the
+	// superseded correction above covers the narrower race that slips past this read.
+	it("drops a press whose room went terminal since the button loaded, posting nothing", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ game: "coinflip", status: "finished" }));
+
+		await runRoomMove(makeButton(OPPONENT), makeRoom({ game: "coinflip" }));
+
+		expect(trailMock.postMove).not.toHaveBeenCalled();
+		expect(lifecycleMock.finish).not.toHaveBeenCalled();
+		expect(awardMock).not.toHaveBeenCalled();
 	});
 
 	it("refuses a move in a room that is not playing", async () => {

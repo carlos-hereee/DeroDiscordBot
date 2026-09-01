@@ -149,6 +149,10 @@ export const gameRoomsCopy = {
 	// ── the games, played inside a room (Phase 4) ──
 	games: {
 		coinLine: (face: string): string => `The coin lands on **${face}**.`,
+		// The double-press correction. Posted when a flip line landed AFTER another press had
+		// already decided the match, so the channel and the transcript both say which of the
+		// two lines is the real outcome instead of leaving two contradictory results standing.
+		flipSuperseded: "That one landed after the match was already decided. The earlier result stands.",
 		diceLine: (challengerId: string, challengerRoll: number, opponentId: string, opponentRoll: number): string =>
 			`<@${challengerId}> rolled **${challengerRoll}**. <@${opponentId}> rolled **${opponentRoll}**.`,
 
