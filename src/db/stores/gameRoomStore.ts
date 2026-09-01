@@ -86,6 +86,18 @@ export const gameRoomStore = {
 		return GameRoom.findOne({ guildId, hostId, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] } });
 	},
 
+	// Every live room in this guild the given member is PLAYING in. Backs the
+	// GuildMemberRemove watcher, which runs on EVERY departure whether or not the
+	// member was in a room, so in a busy guild this fires around once a minute.
+	//
+	// ⚠️ THE QUERY MUST STAY ON THE { guildId, playerIds, endedAt } COMPOUND INDEX.
+	// guildId + playerIds is that index's prefix, so this shape is an index seek; a
+	// bare { playerIds: userId } would collection-scan the whole rooms history on
+	// every leave, which is a Mongo bill for an event that almost never matches.
+	async findOpenByPlayer(guildId: string, userId: string) {
+		return GameRoom.find({ guildId, playerIds: userId, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] } });
+	},
+
 	// Backs the GAME_ROOM_MAX_PER_GUILD check. Counting live rooms rather than channels is
 	// deliberate: it stays correct even if an admin deletes a room channel by hand, whereas
 	// counting the games category's children would drift.

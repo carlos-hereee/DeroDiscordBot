@@ -34,6 +34,7 @@ import { registerScheduleControlHandlers } from "@features/schedule/ScheduleCont
 import { registerSuggestionBoxHandlers } from "@features/suggestion-box/SuggestionBox.js";
 import { registerArcadeHostHandlers } from "@features/games/arcadeHost.js";
 import { registerGameRoomHandlers } from "@features/game-rooms/gameRoomHandlers.js";
+import { registerGameRoomMemberRemoveWatcher } from "@features/game-rooms/guildMemberRemoveWatcher.js";
 import { recoverGameRoomsOnBoot } from "@features/game-rooms/roomBootRecovery.js";
 import { sweepHoldemClocks } from "@features/game-rooms/roomHoldemHandlers.js";
 import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/polls/PollDispatcher.js";
@@ -534,6 +535,13 @@ process.on("uncaughtException", (err) => {
 		// while the bot was offline. See ChannelDeleteWatcher.ts for the
 		// cooldown + ownership probe contract.
 		registerChannelDeleteWatcher(client);
+
+		// ── game room departures ──────────────────────────────────
+		// A member leaving the guild ends every live room they were
+		// playing in (forfeit semantics; solo and unstarted rooms close
+		// as abandoned), with a system line in the room saying why. Rides
+		// the same GuildMembers intent the greeter needs.
+		registerGameRoomMemberRemoveWatcher(client);
 
 		// ── new-member greeter ────────────────────────────────────
 		// Attach the guildMemberAdd listener so new joins get welcomed (ping +

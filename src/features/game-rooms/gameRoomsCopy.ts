@@ -367,6 +367,9 @@ export const gameRoomsCopy = {
 		// A join is the one move kind posted by the room itself rather than by a game.
 		joined: (actorId: string): string => `<@${actorId}> joined the room.`,
 		forfeited: (actorId: string): string => `<@${actorId}> forfeited.`,
+		// A departure ends the match the way a forfeit does; the line is why the board
+		// moved without anyone pressing anything.
+		playerLeftGuild: (userId: string): string => `<@${userId}> left the server. The match ends.`,
 		// Posted on the FINISHED room when a rematch opens: the one line that connects
 		// the two rooms in the transcript, so a returning player scrolling back does
 		// not think the button silently did nothing.
