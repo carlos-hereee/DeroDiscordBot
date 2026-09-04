@@ -391,6 +391,9 @@ export const gameRoomsCopy = {
 		// A departure ends the match the way a forfeit does; the line is why the board
 		// moved without anyone pressing anything.
 		playerLeftGuild: (userId: string): string => `<@${userId}> left the server. The match ends.`,
+		// The boot sweep's line for a solo blackjack room whose hand did not survive a redeploy.
+		// Says plainly that no result was settled, so nobody reads the closed room as a loss.
+		tableLostToRestart: "Dero restarted mid hand and this table was lost. No hand was settled, so nothing was paid or lost. Dero is closing the room.",
 		// Posted on the FINISHED room when a rematch opens: the one line that connects
 		// the two rooms in the transcript, so a returning player scrolling back does
 		// not think the button silently did nothing.

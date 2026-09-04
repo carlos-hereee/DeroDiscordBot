@@ -6,20 +6,33 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 }));
 vi.mock("./roomLifecycle.js", () => ({ finish: vi.fn() }));
 vi.mock("./roomArchiveSweep.js", () => ({ sweepExpiredRooms: vi.fn() }));
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+vi.mock("@features/games/blackjackHandler.js", () => ({
+	hasLiveBlackjackTable: vi.fn(),
+	disarmStaleBlackjackBoard: vi.fn(),
+}));
 
 import { recoverGameRoomsOnBoot } from "./roomBootRecovery.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { finish } from "./roomLifecycle.js";
 import { sweepExpiredRooms } from "./roomArchiveSweep.js";
+import { roomTrail } from "./roomTrail.js";
+import { disarmStaleBlackjackBoard, hasLiveBlackjackTable } from "@features/games/blackjackHandler.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
 const storeMock = gameRoomStore as unknown as { findNonTerminal: ReturnType<typeof vi.fn> };
 const finishMock = finish as unknown as ReturnType<typeof vi.fn>;
 const sweepMock = sweepExpiredRooms as unknown as ReturnType<typeof vi.fn>;
+const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
+const hasTableMock = hasLiveBlackjackTable as unknown as ReturnType<typeof vi.fn>;
+const disarmMock = disarmStaleBlackjackBoard as unknown as ReturnType<typeof vi.fn>;
 
-const makeRoom = (roomId: string, channelId: string | null) => ({
+const makeRoom = (roomId: string, channelId: string | null, game = "hangman") => ({
 	roomId,
 	guildId: "guild-1",
+	hostId: "host-1",
 	channelId,
+	game,
 	status: "playing",
 });
 
@@ -37,6 +50,9 @@ beforeEach(() => {
 	storeMock.findNonTerminal.mockResolvedValue([]);
 	finishMock.mockResolvedValue(undefined);
 	sweepMock.mockResolvedValue({ archived: 0, failed: 0 });
+	postMoveMock.mockResolvedValue(true);
+	hasTableMock.mockReturnValue(false);
+	disarmMock.mockResolvedValue(undefined);
 });
 
 describe("recoverGameRoomsOnBoot", () => {
@@ -122,6 +138,77 @@ describe("recoverGameRoomsOnBoot", () => {
 		// This runs inside main.ts's ready handler. A rejection here would surface as a
 		// startup failure in a feature that is not on the critical path.
 		sweepMock.mockRejectedValue(new Error("discord down"));
-		await expect(recoverGameRoomsOnBoot(makeClient([]))).resolves.toEqual({ abandoned: 0, archived: 0 });
+		await expect(recoverGameRoomsOnBoot(makeClient([]))).resolves.toEqual({ abandoned: 0, lostTables: 0, archived: 0 });
+	});
+
+	// ── ①ᵇ the solo blackjack table that did not survive the redeploy ──
+	// The hand lives only in blackjackHandler's process-scoped Map, which every boot
+	// starts empty. A "playing" solo blackjack row with a live channel is therefore a
+	// match SIGTERM already ended: its board's buttons reach nothing and nothing will
+	// ever finish it, so the host's one room slot is held by a dead hand.
+	describe("a solo blackjack room whose table was lost to the restart", () => {
+		it("says so in the room, disarms the dead board, and closes the room as abandoned", async () => {
+			const room = makeRoom("solo", "ch-live", "solo-blackjack");
+			storeMock.findNonTerminal.mockResolvedValue([room]);
+			const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+			const summary = await recoverGameRoomsOnBoot(makeClient(["ch-live"]));
+
+			expect(summary).toMatchObject({ abandoned: 0, lostTables: 1 });
+			expect(postMoveMock).toHaveBeenCalledOnce();
+			expect(postMoveMock.mock.calls[0][2]).toMatchObject({
+				actorId: "bot-1",
+				kind: "system",
+				text: gameRoomsCopy.trail.tableLostToRestart,
+			});
+			expect(disarmMock).toHaveBeenCalledWith({ id: "ch-live" });
+			// Abandoned, not a loss: no hand was settled, and abandoned pays nothing, so a
+			// redeploy can never be farmed for room xp.
+			expect(finishMock).toHaveBeenCalledOnce();
+			expect(finishMock.mock.calls[0][2]).toEqual({ abandoned: true });
+			// The line lands BEFORE the result card, so the scroll reads as an explanation
+			// followed by the close rather than a close followed by an excuse.
+			expect(postMoveMock.mock.invocationCallOrder[0]).toBeLessThan(finishMock.mock.invocationCallOrder[0]);
+			logSpy.mockRestore();
+		});
+
+		it("leaves the room alone when this process holds its table", async () => {
+			// Defensive rather than expected: the sweep runs in the ready handler, so a
+			// table opened by a click that raced the sweep must not be closed underneath it.
+			hasTableMock.mockReturnValue(true);
+			storeMock.findNonTerminal.mockResolvedValue([makeRoom("solo", "ch-live", "solo-blackjack")]);
+
+			const summary = await recoverGameRoomsOnBoot(makeClient(["ch-live"]));
+
+			expect(summary.lostTables).toBe(0);
+			expect(finishMock).not.toHaveBeenCalled();
+			expect(postMoveMock).not.toHaveBeenCalled();
+		});
+
+		it("never treats another game's live room as a lost table, whatever the Map says", async () => {
+			// Every other room keeps its state on the row and comes back playable. The
+			// Map check is asked only for solo blackjack.
+			storeMock.findNonTerminal.mockResolvedValue([makeRoom("hang", "ch-live", "solo-hangman"), makeRoom("bs", "ch-live", "battleship")]);
+
+			const summary = await recoverGameRoomsOnBoot(makeClient(["ch-live"]));
+
+			expect(summary.lostTables).toBe(0);
+			expect(hasTableMock).not.toHaveBeenCalled();
+			expect(finishMock).not.toHaveBeenCalled();
+		});
+
+		it("takes the ordinary channel-gone path when the channel is missing too", async () => {
+			// A solo blackjack room whose channel was deleted while the bot was down is
+			// the ① case, not ①ᵇ: no channel to post into, no board to disarm.
+			storeMock.findNonTerminal.mockResolvedValue([makeRoom("solo", "ch-gone", "solo-blackjack")]);
+			const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+			const summary = await recoverGameRoomsOnBoot(makeClient([]));
+
+			expect(summary).toMatchObject({ abandoned: 1, lostTables: 0 });
+			expect(postMoveMock).not.toHaveBeenCalled();
+			expect(disarmMock).not.toHaveBeenCalled();
+			logSpy.mockRestore();
+		});
 	});
 });

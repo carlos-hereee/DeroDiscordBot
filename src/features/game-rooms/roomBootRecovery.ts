@@ -2,8 +2,11 @@ import { type Client } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { mapWithConcurrency } from "@utils/mapWithConcurrency.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { disarmStaleBlackjackBoard, hasLiveBlackjackTable } from "@features/games/blackjackHandler.js";
 import { finish } from "./roomLifecycle.js";
 import { sweepExpiredRooms } from "./roomArchiveSweep.js";
+import { roomTrail } from "./roomTrail.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
 // ── roomBootRecovery ─────────────────────────────────────────────────
 // What:  reconciles what the GameRoom rows CLAIM with what Discord actually has, once
@@ -16,16 +19,22 @@ import { sweepExpiredRooms } from "./roomArchiveSweep.js";
 //        But surviving a restart is not the same as being TRUE: while the process was
 //        down, an admin can delete a room channel and nothing was listening.
 // How:   ① every non-terminal room whose channel is gone is finished as abandoned,
+//        ①ᵇ a solo blackjack room whose channel survived but whose in-memory table did
+//        not is closed out loud (a system line, the dead board disarmed, then abandoned),
 //        ② then the ordinary expiry sweep runs immediately rather than waiting up to
 //        five minutes for its first cron tick.
 
 export interface BootRecoverySummary {
 	abandoned: number;
+	// Solo blackjack rooms closed because this boot held no table for them. Counted apart
+	// from `abandoned` because the channel was fine; it is the hand that did not survive.
+	lostTables: number;
 	archived: number;
 }
 
 export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecoverySummary> {
 	let abandoned = 0;
+	let lostTables = 0;
 
 	try {
 		const live = await gameRoomStore.findNonTerminal();
@@ -40,7 +49,28 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 				if (!room.channelId) return;
 
 				const channel = await client.channels.fetch(room.channelId).catch(() => null);
-				if (channel) return;
+				if (channel) {
+					// ①ᵇ The channel is here; is the game? A solo blackjack hand lives only in
+					// blackjackHandler's process-scoped Map, and this process started with that
+					// Map empty, so a "playing" row this boot holds no table for is a match
+					// SIGTERM already ended: no button on its board reaches a handler, and
+					// nothing inside the handler will ever finish it. Say so where the host will
+					// read it, take the buttons off the dead board, then close as abandoned.
+					// Abandoned rather than a loss, because no hand was settled and nothing is
+					// owed; and abandoned pays nothing, so a redeploy is not farmable for xp.
+					// Any other game's room is untouched: their state lives on the row.
+					if (room.game !== "solo-blackjack" || hasLiveBlackjackTable(room.channelId)) return;
+
+					await roomTrail.postMove(client, room, {
+						actorId: client.user?.id ?? room.hostId,
+						kind: "system",
+						text: gameRoomsCopy.trail.tableLostToRestart,
+					});
+					await disarmStaleBlackjackBoard(channel);
+					await finish(client, room, { abandoned: true });
+					lostTables++;
+					return;
+				}
 
 				// The channel is gone and the row still says the match is live. Nothing
 				// will ever finish it, so it would hold its host's one room slot (the
@@ -74,5 +104,6 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 	const { archived } = await sweepExpiredRooms(client).catch(() => ({ archived: 0, failed: 0 }));
 
 	if (abandoned > 0) console.log(`[game-rooms] boot recovery: ${abandoned} abandoned room(s) closed`);
-	return { abandoned, archived };
+	if (lostTables > 0) console.log(`[game-rooms] boot recovery: ${lostTables} solo blackjack table(s) lost to the restart, room(s) closed`);
+	return { abandoned, lostTables, archived };
 }

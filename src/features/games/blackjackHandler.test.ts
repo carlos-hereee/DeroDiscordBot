@@ -14,6 +14,7 @@ vi.mock("./gameXp.js", () => ({ awardBlackjackResult: mocks.awardBlackjackResult
 
 import {
 	startBlackjackTable,
+	hasLiveBlackjackTable,
 	_clearBlackjackGames,
 	_activeBlackjackGameCount,
 	SEATING_WINDOW_MS,
@@ -177,6 +178,19 @@ describe("one table per channel", () => {
 		await startBlackjackTable(c.channel, "g1", host, true);
 		c.board().end();
 		expect(_activeBlackjackGameCount()).toBe(0);
+	});
+
+	// The seam the boot recovery sweep reads. It must track the Map exactly: true only
+	// while a table is registered for the channel, false again the moment the collector's
+	// end handler drops the entry, or the sweep would close a live table or spare a dead one.
+	it("reports the channel's slot to the boot sweep, and clears when the collector ends", async () => {
+		const c = fakeChannel("chan-1");
+		expect(hasLiveBlackjackTable("chan-1")).toBe(false);
+		await startBlackjackTable(c.channel, "g1", host, true);
+		expect(hasLiveBlackjackTable("chan-1")).toBe(true);
+		expect(hasLiveBlackjackTable("chan-2")).toBe(false);
+		c.board().end();
+		expect(hasLiveBlackjackTable("chan-1")).toBe(false);
 	});
 });
 

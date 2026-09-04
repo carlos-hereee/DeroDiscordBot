@@ -6,6 +6,7 @@ import {
 	MessageFlags,
 	TextChannel,
 	type ButtonInteraction,
+	type Channel,
 	type ChatInputCommandInteraction,
 	type EmbedBuilder,
 	type Message,
@@ -42,14 +43,17 @@ import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
 // player their own hand ephemerally; there is nothing they can see that the
 // board does not already show them.
 //
-// ⚠️ KNOWN GAP: A SOLO ROOM'S TABLE STILL DIES ON RAILWAY SIGTERM. Solo blackjack
-// now opens through RoomProvisioner (a GameRoom row, a channel, the tier quota),
-// but the HAND state stays in the module-scoped `games` Map below, so a redeploy
-// mid-hand loses the table while the room row lives on until someone forfeits or
-// the boot sweep reaps it. Routing into a room gave the game a channel, not a
-// restart-survivable memory model; the boot recovery path for an in-memory table
-// is its own job, tracked in SACRED_FILES/2026-09/FUTURE_PLANS.md and
-// SACRED_FILES/TECH_DEBT.md. Do not bolt a partial recovery onto this file.
+// ⚠️ A SOLO ROOM'S TABLE STILL DIES ON RAILWAY SIGTERM, AND THAT IS CLOSED OUT
+// HONESTLY RATHER THAN RECOVERED. Solo blackjack opens through RoomProvisioner (a
+// GameRoom row, a channel, the tier quota), but the HAND state stays in the
+// module-scoped `games` Map below, so a redeploy mid-hand loses the table while
+// the room row says "playing". The boot recovery sweep (roomBootRecovery) asks
+// hasLiveBlackjackTable for every solo blackjack room it finds and, for a room this
+// process holds no table for, says so in the room, disarms the dead board and
+// finishes the room as abandoned: nothing was settled, so nothing is paid, and the
+// host's room slot is released. A resumable table means persisting the hand into
+// the room's `secret` the way battleship and hold em do, which is a rewrite of the
+// collector flow, not a patch. Do not bolt a partial recovery onto this Map.
 
 // A seating window long enough to notice and short enough that a table does not
 // hold a channel hostage waiting for a second player who is not coming.
@@ -63,6 +67,10 @@ const TABLE_TIMEOUT_MS = 10 * 60_000;
 // Seven is a real blackjack table. Five keeps the result embed inside a
 // comfortable field count and keeps the slowest hand tolerable for seat one.
 export const MAX_SEATS = 5;
+
+// How far back the boot sweep looks for a dead board in a solo room. A solo room's
+// scroll is the opener card, maybe an invite line, and the board, so this is generous.
+const STALE_BOARD_FETCH_LIMIT = 20;
 
 // Per starter, so one member cannot carpet a server with tables. Tables are
 // already one per channel, so this only gates how fast someone opens new ones.
@@ -108,6 +116,34 @@ export const _clearBlackjackGames = (): void => {
 	games.clear();
 };
 export const _activeBlackjackGameCount = (): number => games.size;
+
+// True while this channel holds a live table in THIS process. The boot recovery sweep
+// asks this for every solo blackjack room it finds: a room row that says "playing"
+// while this answers false is a table Railway's SIGTERM already destroyed, and
+// nothing inside this file will ever finish it.
+export const hasLiveBlackjackTable = (channelId: string): boolean => games.has(channelId);
+
+// Strip the buttons off a board whose table no longer exists, so a dead hand does not
+// sit in the room looking playable. Best effort by design: a solo room records no
+// board message id, so the board is found by its customId prefix in recent history,
+// and a miss (deleted, or scrolled past the window) costs nothing worse than a
+// button that answers "interaction failed".
+export async function disarmStaleBlackjackBoard(channel: Channel): Promise<void> {
+	if (!channel.isTextBased() || channel.isDMBased()) return;
+	const recent = await channel.messages.fetch({ limit: STALE_BOARD_FETCH_LIMIT }).catch(() => null);
+	if (!recent) return;
+	const prefix = `${PREFIX}:${channel.id}:`;
+	for (const message of recent.values()) {
+		if (message.author.id !== channel.client.user?.id) continue;
+		// Only action rows carry buttons; a components-v2 container is a different top
+		// level shape and is skipped by the narrowing rather than walked.
+		const armed = message.components
+			.flatMap((row) => (row.type === ComponentType.ActionRow ? row.components : []))
+			.some((component) => component.type === ComponentType.Button && component.customId?.startsWith(prefix) === true);
+		if (!armed) continue;
+		await message.edit({ components: [] }).catch(() => undefined);
+	}
+}
 
 // ── button rows ─────────────────────────────────────────────────────────────
 
