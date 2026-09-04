@@ -44,6 +44,11 @@ describe("arcadeRulesIntro", () => {
 		expect(grouped).toHaveLength(new Set(grouped).size);
 		expect(c.solo.map((g) => g.name)).toContain("🃏 Blackjack");
 		expect(c.party.map((g) => g.name)).toContain("🃏 Blackjack table");
+		// The board's two long-form games. The card and the board enumerate the same
+		// roster, or a member reads about a game the board cannot start, or starts one
+		// the card never explained.
+		expect(c.versus.map((g) => g.name)).toContain("🚢 Battleship");
+		expect(c.party.map((g) => g.name)).toContain("🃏 Texas hold em");
 	});
 
 	it("renders each group as one field rather than one field per game", () => {

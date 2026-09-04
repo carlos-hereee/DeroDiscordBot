@@ -574,10 +574,12 @@ export const rokCommanderCopy = {
 				{ name: "🪙 Coin Flip", how: "One coin decides it. No ties, ever." },
 				{ name: "🎲 Dice Roll", how: "Both roll a d20. Highest takes it, and a tie means nobody does." },
 				{ name: "✂️ Rock Paper Scissors", how: "Both choose in secret. I reveal together." },
+				{ name: "🚢 Battleship", how: "I place the fleets, you fire one shot a turn. Sink every ship first." },
 			],
 			party: [
 				{ name: "🪢 Hangman", how: "A word, six wrong guesses, and a whole channel shouting letters." },
 				{ name: "🃏 Blackjack table", how: "Up to five seats against my dealer. Everyone plays their own hand." },
+				{ name: "🃏 Texas hold em", how: "Up to six buy in with equal stacks. The blinds climb, and the last one holding chips takes the table." },
 			],
 
 			hostButtonLabel: "Host a game",
@@ -593,7 +595,8 @@ export const rokCommanderCopy = {
 			title: "⚔️ The Challenge Board",
 			description:
 				"This is where a match begins.\n\n" +
-				"Issue a challenge and it appears here for your opponent to accept. Once they do, I raise a room for the two of you and the match plays out inside it.\n\n" +
+				"Choose a game below. I post a card here, you decide whether the room is **Invite only** or **Open to all**, and once the players are in I raise a room and the match plays out inside it.\n\n" +
+				"You may hold one challenge at a time. Finish it and the next is yours.\n\n" +
 				"*A finished room is sealed, then cleared away. The record of it survives.*",
 		},
 

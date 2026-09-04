@@ -443,10 +443,12 @@ export const generalEventsCopy: IPluginCopy = {
 				{ name: "🪙 Coin Flip", how: "One coin decides it. No ties." },
 				{ name: "🎲 Dice Roll", how: "Both roll a d20. Highest wins, and a tie means nobody does." },
 				{ name: "✂️ Rock Paper Scissors", how: "Both players pick in secret, revealed together." },
+				{ name: "🚢 Battleship", how: "Fleets are placed for you, one shot a turn. Sink every ship first." },
 			],
 			party: [
 				{ name: "🪢 Hangman", how: "One word, six wrong guesses, everyone in the channel guessing." },
 				{ name: "🃏 Blackjack table", how: "Up to five seats against the dealer. Everyone plays their own hand." },
+				{ name: "🃏 Texas hold em", how: "Up to six buy in with equal stacks. Blinds climb, and the last player with chips wins." },
 			],
 
 			hostButtonLabel: "Host a game",
@@ -461,7 +463,8 @@ export const generalEventsCopy: IPluginCopy = {
 			title: "⚔️ Challenge board",
 			description:
 				"This is where a match starts.\n\n" +
-				"Issue a challenge and it shows up here for your opponent to accept. Once they do, a room is created for the two of you and the match plays out inside it.\n\n" +
+				"Pick a game below. A card is posted here, you choose whether the room is **Invite only** or **Open to all**, and once the players are in, a room is created and the match plays out inside it.\n\n" +
+				"You can hold one challenge at a time. Finish it and the next one is yours.\n\n" +
 				"*A finished room is locked, then cleared away. The record of the match is kept.*",
 		},
 

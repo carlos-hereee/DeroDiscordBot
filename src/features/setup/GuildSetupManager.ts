@@ -20,6 +20,7 @@ import type { ICopyConfig } from "@base/copy/getCopy.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
 import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
 import { buildArcadeHostRow } from "@features/games/arcadeHost.js";
+import { boardStartRows } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { buildMemberControlButtons, buildAdminControlButtons, buildIcebreakerButton, buildFortuneButton } from "@features/power-ups/PowerUps.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { buildDeroGifAttachment } from "@base/copy/brand.js";
@@ -769,6 +770,15 @@ export class GuildSetupManager {
 				// card is a pinned reference and a live board on top of it would bury
 				// what the member came to read.
 				return [buildArcadeHostRow()];
+			case "arcadeChallengesChannelId":
+				// The challenge board itself: one start button per head to head or
+				// cooperative game, chunked so no row exceeds Discord's five. This case
+				// is the ONLY thing that makes battleship, hold em and the co-op hangman
+				// room reachable; /mini-game only doors the three quick games. Because
+				// refreshIntroEmbeds re-resolves components on every boot, existing
+				// guilds get the board on their next boot rather than on a re-run of
+				// /setup.
+				return boardStartRows();
 			default:
 				// introductions + every other channel: intro embed only, no buttons.
 				return null;
@@ -1927,7 +1937,7 @@ export class GuildSetupManager {
 			// the destructure above is positional, which is exactly why every entry
 			// is named rather than indexed.
 			arcadeRulesChannel.send({ embeds: [ChannelContent.arcadeRulesIntro()] }),
-			arcadeChallengesChannel.send({ embeds: [ChannelContent.arcadeChallengesIntro()] }),
+			arcadeChallengesChannel.send({ embeds: [ChannelContent.arcadeChallengesIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeChallengesChannelId") ?? [] }),
 			// Standalone invite card in #command-center: short pitch + Dero gif + the
 			// Summon button. Its own message so the wide button is not crammed into
 			// the command guide's row. refreshIntroEmbeds maintains it on boot.

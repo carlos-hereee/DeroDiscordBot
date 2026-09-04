@@ -16,6 +16,7 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({
 }));
 
 import { GuildSetupManager } from "./GuildSetupManager.js";
+import { CHALLENGE_GAMES } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { ChannelContent } from "./ChannelContent.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
@@ -1421,5 +1422,29 @@ describe("GuildSetupManager.applyAdminRole", () => {
 
 		expect(created["ch-admin"].ReadMessageHistory).toBe(true);
 		expect(created["ch-arcaderules"].ReadMessageHistory).toBeUndefined();
+	});
+});
+
+// ── the ⚔️challenges board ──────────────────────────────────────────────────
+// The challenge board's start buttons ride the challenges channel's pinned intro.
+// Before this case existed nothing returned them, so battleship, hold em and the co-op
+// hangman room were built and unreachable. This pins the wiring and the one Discord
+// limit that would have sunk the obvious version: five components per action row.
+describe("resolveIntroComponents: the challenges channel carries the start board", () => {
+	const internals = GuildSetupManager as unknown as {
+		resolveIntroComponents(field: string): { toJSON(): { components: Array<{ custom_id?: string }> } }[] | null;
+	};
+
+	it("returns the board rows, none wider than Discord allows, covering every challenge game in order", () => {
+		const rows = internals.resolveIntroComponents("arcadeChallengesChannelId");
+		expect(rows).not.toBeNull();
+		const customIds = (rows ?? []).flatMap((row) => {
+			const { components } = row.toJSON();
+			expect(components.length).toBeLessThanOrEqual(5);
+			return components.map((component) => component.custom_id);
+		});
+		expect(customIds).toEqual(CHALLENGE_GAMES.map((game) => `gameroom:new:${game}`));
+		expect(customIds).toContain("gameroom:new:battleship");
+		expect(customIds).toContain("gameroom:new:holdem");
 	});
 });

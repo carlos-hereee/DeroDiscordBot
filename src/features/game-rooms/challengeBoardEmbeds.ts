@@ -63,18 +63,34 @@ export function boardIntroEmbed(): EmbedBuilder {
 	);
 }
 
-// One button per two-player game. Carries the SLUG rather than a roomId, because no
-// room exists until this is pressed.
-export function boardStartRow(): ActionRowBuilder<ButtonBuilder> {
-	return new ActionRowBuilder<ButtonBuilder>().addComponents(
-		...CHALLENGE_GAMES.map((game) =>
-			new ButtonBuilder()
-				.setCustomId(`${GAME_ROOM_PREFIX}:new:${game}`)
-				.setLabel(gameRoomsCopy.board.startButtonLabel(game))
-				.setEmoji(GAME_EMOJI[game] ?? "⚔️")
-				.setStyle(ButtonStyle.Primary)
-		)
-	);
+// How many start buttons share one row. Discord caps an action row at FIVE components
+// and rejects the whole send (50035) past that, which is what kept this board dark: six
+// games in one row never posted. Three per row keeps every row the same width and
+// splits the roster where it already divides, the three quick two-seat games on top
+// and the three long-form games below.
+const BOARD_BUTTONS_PER_ROW = 3;
+
+// One button per challenge game, chunked into rows. Carries the SLUG rather than a
+// roomId, because no room exists until this is pressed. Rides the pinned ⚔️challenges
+// intro: resolveIntroComponents in GuildSetupManager attaches these rows on first build
+// and on every boot's refresh, so a guild set up before the board existed gets it on
+// its next boot without a re-run of /setup.
+export function boardStartRows(): ActionRowBuilder<ButtonBuilder>[] {
+	const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+	for (let start = 0; start < CHALLENGE_GAMES.length; start += BOARD_BUTTONS_PER_ROW) {
+		rows.push(
+			new ActionRowBuilder<ButtonBuilder>().addComponents(
+				...CHALLENGE_GAMES.slice(start, start + BOARD_BUTTONS_PER_ROW).map((game) =>
+					new ButtonBuilder()
+						.setCustomId(`${GAME_ROOM_PREFIX}:new:${game}`)
+						.setLabel(gameRoomsCopy.board.startButtonLabel(game))
+						.setEmoji(GAME_EMOJI[game] ?? "⚔️")
+						.setStyle(ButtonStyle.Primary)
+				)
+			)
+		);
+	}
+	return rows;
 }
 
 export interface OpenerCardState {
