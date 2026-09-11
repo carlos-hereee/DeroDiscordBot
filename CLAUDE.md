@@ -136,18 +136,103 @@ Phase 1 shipped the pack architecture, schema fields, and lookup helpers. The fo
 - `TestReminderJob.ts` uses `Object.create(TextChannel.prototype)` inside tests to fake a TextChannel. If discord.js tightens its class internals this will need a `vi.mock("discord.js", ...)` swap.
 - The `_moduleAliases` block in `package.json` is runtime alias mapping for compiled JS. tsc-alias already rewrites aliases at build time, so the runtime mapping is likely redundant now. Low priority cleanup.
 
-## Dashboard signing contract
+## Platform to bot contract
 
-Inbound requests from the nexious-server plugin proxy carry HMAC-SHA256 signatures in `x-timestamp` and `x-signature` headers, verified by `src/api/middleware/verifySignature.ts`. The canonical string format and rollout sequence are documented in the sibling company-uno repo at `rok-commander-signing-rollout.md`. Keep the bot's `canonicalizeQuery` in lockstep with the server's copy or every proxied request will 401.
+**A byte identical copy of this section lives in the other repository:** `company-uno/nexious-server/CLAUDE.md` and `DeroDiscordBot/CLAUDE.md`. Neither copy is the original. A change to this contract changes code on both sides, both copies of this section, and the three format-pinning tests, in ONE session. A session that edits one side and stops has already broken the pair, and nothing in either repo will fail to compile to tell you.
 
-Outbound requests (Future A: bot → server) reuse the same secret and same canonical format in reverse. `src/utils/serverApi.ts` signs the request, the server's `verifyBotSignature` middleware verifies it. The canonicalization helpers are duplicated across both files, when changing one, change all three (bot inbound, bot outbound, server inbound) and the format-pinning test in `nexious-server/src/__tests__/features/signRequest.test.ts`.
+### Direction A: dashboard to bot
 
-Env vars:
-- `DASHBOARD_API_KEY`: legacy shared secret for `x-api-key`
-- `DASHBOARD_SIGNING_SECRET`: HMAC secret. Used in both directions (verify inbound, sign outbound). When unset, inbound verification transparently falls back to plain api key auth so the rollout can land one side at a time; outbound calls fail with `ServerNotConfiguredError`.
-- `REQUIRE_SIGNED_REQUESTS`: strict mode. When true, `verifySignature` rejects any unsigned `/api/*` request (no fallback to plain api-key auth). OFF by default so the rollout can land one side at a time. Flip on AFTER both sides sign every request, it closes the last path by which a caller holding only the shared api key could pass an arbitrary `?guildId=`.
-- `SERVER_BASE_URL` (alias `NEXIOUS_BASE_URL`): Heroku URL of the platform server. Required when `USE_REMOTE_EVENTS=true`. `serverApi` reads `SERVER_BASE_URL` first, then falls back to `NEXIOUS_BASE_URL`, so either name works; set one.
-- `USE_REMOTE_EVENTS`: feature flag. When true, `eventStore` routes reads/writes through `serverApi` instead of local Mongo. Off by default; flip on AFTER the F4 migration script has copied existing events into the platform DB.
+`nexious-server/src/features/plugin-proxy/forwardToBot.ts` forwards dashboard traffic for the two PROXY plugins, `rok-commander` and `general-events`, to `ROK_BOT_BASE_URL` + `/api/<path>`. Both entries point at the same bot process.
+
+**`ROK_BOT_PATH_PREFIXES` is the allowlist of FIRST path segments.** An unlisted segment is refused before any request leaves the server:
+
+```
+events · leaderboard · players · reminders · reminder-logs · schedule
+go-live-now · leaderboard-tracking · auto-heal · pairing · game-rooms
+```
+
+`general-events` allows those plus `streamer`. The two plugins share one bot process, so that one extra prefix is the whole difference between them.
+
+**⚠️ This is the failure mode that hides.** A route the bot serves but this list omits is simply unreachable, and it presents as a plugin feature that silently does nothing rather than as an error. `game-rooms` sat in exactly that state: the bot mounted `/api/game-rooms` and its CHANGELOG advertised it while the allowlist did not carry it, so the bot half looked finished on its own.
+
+**`ROK_BOT_PUBLIC_READ_PREFIXES`** is `events`, `leaderboard`, `leaderboard-tracking` and `schedule`: the subset a logged-out visitor may read by `appUid` alone. An entry here widens public access, so GUILD DATA NEVER GOES ON IT. `game-rooms` is deliberately excluded because room transcripts are guild data.
+
+**Two path rewrites**, applied in order, first match wins:
+
+| The client sends | The bot receives | Why |
+|---|---|---|
+| `PATCH events/:id/retire` | `DELETE events/:id` | The client keeps stable "retire" semantics while the bot soft deletes with `active: false`. **`fromMethod` pins it to PATCH**, and that pin is load bearing: without it any verb reached the DELETE, and GET was the dangerous one, because GET skips `requireUser` and `events` is a public-read prefix so the ownership check was skipped too. |
+| `reminder-logs/:id` | `reminders/:id` | A pure rename with no verb change, so no `fromMethod`. `reminder-logs` is not a public-read prefix, so the ownership check runs either way. |
+
+**`PLUGIN_REGISTRY` in `forwardToBot.ts` is hand mirrored** against `PROXY_PLUGIN_IDS` in `nexious-server/src/features/plugins/registry.ts`, `COPY_PACKS` in the bot (`DeroDiscordBot/src/base/copy/packs/`), and the client manifests in `nexious-client/src/features/plugin-modules/manifests/registry.ts`. The cross-import is deliberately not wired: `forwardToBot.ts` already imports `VALID_PLUGIN_IDS` from `registry.ts`, so the reverse edge would be a cycle. Nothing fails to compile when one of the four drifts.
+
+The bot mounts those routers in `DeroDiscordBot/src/api/server.ts` behind `verifySignature`. `/health` and `/api/health` are mounted BEFORE it and stay public for the Railway liveness probe and the dashboard's Test Connection. `/api/health/guild` sits AFTER it on purpose, so a prober cannot enumerate which guilds the bot holds configs for.
+
+### Direction B: bot to server
+
+The bot signs outbound calls in `DeroDiscordBot/src/utils/serverApi.ts`. The server verifies them in `nexious-server/src/api/middleware/auth/verifyBotSignature.ts`, which **never rejects on its own**: it sets `req.botVerified` to true or false and calls `next()` either way, and the ROUTE decides what that means.
+
+Bot callable server routes, with their mounts from `nexious-server/src/api/routes/index.ts`:
+
+| Mount | Routes | Gate |
+|---|---|---|
+| `/api/events/` | GET `/`, GET `/:eventId`, POST `/`, PATCH `/:eventId`, DELETE `/:eventId` | `verifyBotSignature` then `allowBotOrUser` |
+| `/api/plugin-access/` | GET `/guild`, GET `/game-rooms` | `verifyBotSignature` |
+| `/api/suggestion-box/` | POST `/` | `verifyBotSignature` then `requireBotVerified` |
+
+### Signing, both directions
+
+Headers: `x-api-key` (the legacy shared key, still sent and still checked), `x-timestamp` (epoch MILLISECONDS as a string), `x-signature` (lowercase hex HMAC-SHA256).
+
+The canonical string is four lines joined by `\n`:
+
+```
+<METHOD, uppercased>
+<path>?<query, keys sorted>     no "?" and no query at all when the query is empty
+<timestamp>
+<sha256 hex of the RAW body bytes>     the empty string when there is no body
+```
+
+**Hash the RAW bytes, never a re-stringified parse.** `nexious-server/src/server.ts` captures them with `express.json`'s `verify` hook onto `req.rawBody`, and the bot does the same. `JSON.parse` followed by `JSON.stringify` reorders keys and drops whitespace, which changes the hash and 401s every request. Note also that the body hash is a plain `sha256`, NOT an HMAC; only the finished canonical string is HMAC'd.
+
+**Replay window: 5 minutes**, on both sides and in both directions (`FIVE_MINUTES_MS` in `verifyBotSignature.ts`, `MAX_TIMESTAMP_SKEW_MS` in the bot's `verifySignature.ts`). The check is on the ABSOLUTE drift, so a timestamp implausibly far in the future is rejected too, not just a stale one.
+
+The canonicalization exists in three call sites rather than one, and they must agree byte for byte:
+
+- `nexious-server/src/features/plugin-proxy/signRequest.ts` exports `canonicalizeQuery`, `buildCanonicalString` and `signRequest`. `verifyBotSignature.ts` imports `buildCanonicalString` from it rather than keeping a fourth copy.
+- `DeroDiscordBot/src/utils/canonicalRequest.ts` exports `canonicalizeQuery`, `hashBody` and `buildCanonicalString`, shared by the bot's inbound `verifySignature` and its outbound `serverApi`.
+
+**Keep the bot's `canonicalizeQuery` in lockstep with the server's copy or every proxied request 401s.** Change one and you change all three call sites (bot inbound, bot outbound, server inbound), then re-run the three tests that pin the wire format:
+
+- `nexious-server/src/__tests__/features/signRequest.test.ts`
+- `nexious-server/src/__tests__/security/pluginProxy.verification.test.ts`
+- `DeroDiscordBot/src/api/middleware/verifySignature.test.ts`
+
+### Env pairs
+
+The same value under two different names on two different hosts. A mismatch is not a compile error anywhere, and the symptom is a 401 on every call.
+
+| Heroku (`nex-db`) | Railway (bot) | What it is |
+|---|---|---|
+| `ROK_BOT_API_KEY` | `DASHBOARD_API_KEY` | The legacy shared key, sent as `x-api-key`. |
+| `ROK_BOT_SIGNING_SECRET` | `DASHBOARD_SIGNING_SECRET` | The HMAC secret, used in BOTH directions. |
+| `ROK_BOT_BASE_URL` | | Points at the bot. |
+| | `SERVER_BASE_URL` (alias `NEXIOUS_BASE_URL`) | Points at the server. Required when `USE_REMOTE_EVENTS` is on. `serverApi` reads `SERVER_BASE_URL` first and falls back to the alias, so either name works; set one. |
+
+When the secret is unset each side DEGRADES rather than failing loudly, deliberately, so the rollout can land one side at a time: the proxy forwards with the api key alone and logs a warn per request, the bot's inbound verification falls back to plain api-key auth, and the bot's outbound calls throw `ServerNotConfiguredError`.
+
+**⚠️ The header comment in `verifyBotSignature.ts` says `BOT_SIGNING_SECRET`. The code reads `ROK_BOT_SIGNING_SECRET`. The code wins.**
+
+Two switches exist only on the bot:
+
+- `REQUIRE_SIGNED_REQUESTS`: strict mode. When true, `verifySignature` rejects any unsigned `/api/*` request with no fallback to plain api-key auth. Off by default. Flip it on only AFTER both sides sign every request; it closes the last path by which a caller holding only the shared api key could pass an arbitrary `?guildId=`.
+- `USE_REMOTE_EVENTS`: when true, `eventStore` routes reads and writes through `serverApi` instead of local Mongo. Off by default; flip it on only after the migration has copied existing events into the platform DB.
+
+### Change protocol
+
+- **A new bot route.** Ship the bot route and deploy Railway FIRST, then add its first path segment to `ROK_BOT_PATH_PREFIXES` and deploy the server. In that order the allowlist never points at a route that does not exist yet, and the bot is never serving a route nothing can reach.
+- **Secrets, verification or canonical format.** Follow `company-uno/TODO-PLANS/rok-commander-signing-rollout.md`, bot first.
+- **Any contract change is ONE session across both repos.** Code on both sides, both copies of this section, and all three tests green before the session ends.
 
 ## Operational Dependencies (Future A)
 
@@ -166,12 +251,12 @@ If the platform server is down, the safest user-visible posture is to communicat
 
 **Production:** `USE_REMOTE_EVENTS=false` on Railway. Bot reads from local Mongo. Safe rollback path is to leave it off.
 
-**Cutover:** follow `company-uno/cutover-smoke-test.md` for the staged sequence. Run `npm run smoke-test` against staging before each flag flip. The smoke test creates a canary event, exercises pause/PATCH/DELETE, and cleans up after itself.
+**Cutover:** follow `../company-uno/roadmaps/audits/cutover-smoke-test.md` for the staged sequence. Run `npm run smoke-test` against staging before each flag flip. The smoke test creates a canary event, exercises pause/PATCH/DELETE, and cleans up after itself.
 
 **Rollback:** flip `USE_REMOTE_EVENTS=false` and redeploy. Bot reverts to local Mongo on next boot. Migrated events in the server DB are not destroyed by rollback.
 
 ## Session continuity checklist
 1. Read this file.
-2. Read the testing strategy in the sibling `company-uno` repo at `rok-commander-testing-strategy.md` if test work is on the table.
-3. Remember that the dashboard lives in `company-uno/nexious-client/src/features/plugin-modules/` and has its own CLAUDE.md at the company-uno root.
-4. If touching API auth, read `company-uno/rok-commander-signing-rollout.md` first. The canonical string format must match the server byte for byte.
+2. Read the testing strategy in the sibling `company-uno` repo at `../company-uno/roadmaps/specs/rok-commander-testing-strategy.md` if test work is on the table.
+3. Remember that the dashboard lives in `../company-uno/nexious-client/src/features/plugin-modules/` and has its own CLAUDE.md at `../company-uno/nexious-client/CLAUDE.md`.
+4. If touching API auth, read `../company-uno/TODO-PLANS/rok-commander-signing-rollout.md` first. The canonical string format must match the server byte for byte.
