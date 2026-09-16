@@ -4,7 +4,6 @@ logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-CLAUDE.md
 
 # Runtime data
 pids
@@ -82,8 +81,24 @@ eng.traineddata
 # local scripts
 dist/
 
-.claude
-
 graphify-out
 
+# AI-authored docs never enter git. They may still sit in this folder on disk, where Claude Code reads
+# CLAUDE.md and .claude; the shared ledgers and plans live in ../company-uno/.
+CLAUDE.md
+CLAUDE.local.md
+.claude
+/docs/
 /readMePlans
+/roadmaps/
+/SACRED_FILES/
+/STATE.md
+/FUTURE_PLANS.md
+/FUTURE_PLANS-PART-*.md
+/HISTORICAL.md
+/TECH_DEBT.md
+/TECH_DEBT-PART-*.md
+/WIP.md
+/TODO-PLANS/
+/COMPLETED-PLANS/
+/PROPOSALS/
