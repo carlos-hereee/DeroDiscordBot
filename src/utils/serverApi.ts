@@ -16,7 +16,7 @@ import { createHmac } from "crypto";
 //   DASHBOARD_SIGNING_SECRET). No Discord types, pure HTTP.
 // How:
 //   ① Build the canonical string: METHOD\npath?sortedQuery\ntimestamp\nsha256(body).
-//      MUST match nexious-server/src/features/plugin-proxy/signRequest.ts byte-for-byte
+//      MUST match companyuno-server/nexious-server/src/features/plugin-proxy/signRequest.ts byte-for-byte
 //      because the server's verifyBotSignature recomputes the same string.
 //   ② HMAC-SHA256 with DASHBOARD_SIGNING_SECRET. Hex-encode for header transport.
 //   ③ fetch() the URL with x-timestamp + x-signature headers, plus the legacy

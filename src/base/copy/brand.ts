@@ -29,7 +29,7 @@ export const FOOTER = "Company Uno";
 // introductions embed image instead (see DERO_GIF_URL). Same value across every
 // pack, the bot presents as Dero regardless of voice.
 //
-// DEPLOY NOTE: these assets live in nexious-client/public/dero and only render
+// DEPLOY NOTE: these assets live in companyuno-client/nexious-client/public/dero and only render
 // once the web app is deployed with them. Until then companyuno.com/dero/* 200s
 // with the SPA's HTML (not the file), so Discord shows the name with no image.
 export const AUTHOR = {
