@@ -2,6 +2,7 @@ import { Client, Events, GuildMember, PermissionFlagsBits, TextChannel } from "d
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { ICEBREAKERS } from "./icebreakers.js";
+import { attachListenRow } from "@features/voice/listenButton.js";
 
 // ── new-member greeter (v1.6) ──────────────────────────────────────────────
 // What:  on guildMemberAdd, post a welcome in the guild's introductions channel
@@ -46,10 +47,15 @@ export async function welcomeNewMember(member: GuildMember): Promise<boolean> {
 		const question = pick(ICEBREAKERS);
 		if (!framing || !question) return false;
 
-		await channel.send({
+		const message = await channel.send({
 			content: framing(`<@${member.id}>`, question),
 			allowedMentions: { users: [member.id] },
 		});
+		// Dero's voice can read the welcome aloud. Added by an edit AFTER the send,
+		// fire and forget, so the voice config read can never delay or block the
+		// greeting; the edit touches components only, so the mention does not ping
+		// a second time.
+		void attachListenRow(member.guild.id, (components) => message.edit({ components }));
 		return true;
 	} catch (error) {
 		// Fire-and-forget on the join path: a greeting failure must never throw

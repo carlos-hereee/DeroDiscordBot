@@ -40,6 +40,7 @@ import { sweepHoldemClocks } from "@features/game-rooms/roomHoldemHandlers.js";
 import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/polls/PollDispatcher.js";
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
+import { registerListenHandlers } from "@features/voice/listenHandler.js";
 import { registerGreeter, ensureIntroChannelsWritable } from "@features/greeter/welcomeNewMember.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
@@ -312,6 +313,9 @@ process.on("uncaughtException", (err) => {
 	registerPollHandlers();
 	registerSelfDestructHandlers();
 	registerPowerUpHandlers();
+	// The Listen button on fortunes and welcomes. Registered here like the rest so
+	// a Listen row posted by an earlier deploy keeps answering.
+	registerListenHandlers();
 
 	// then register the interaction  listerner
 	client.on(Events.InteractionCreate, async (interaction) => {

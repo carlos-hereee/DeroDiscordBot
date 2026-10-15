@@ -11,6 +11,7 @@ import { fortuneCopy } from "./fortuneCopy.js";
 import { fortuneBuffStore } from "@db/stores/fortuneBuffStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { awardXp } from "@features/leveling/awardXp.js";
+import { attachListenRow } from "@features/voice/listenButton.js";
 
 // One reading per user every 10 seconds, SHARED across every entry point: the
 // /fortune slash command and the #command-center invite-card button both call
@@ -89,6 +90,16 @@ export async function respondWithFortune(
 
 	// Visibility was already locked in at deferReply, so editReply carries no flags.
 	await interaction.editReply(editOptions);
+
+	// ── Listen ──
+	// Dero's voice can read the reading aloud, but ONLY a reading with no typed
+	// question: the embed echoes the member's question word for word, and a Listen
+	// on it would let anyone put their own words in the owner's cloned voice
+	// (owner decision, 2026-10-14). Attached after the reply and fire and forget,
+	// so the voice config read can never delay or break the reading itself.
+	if (!question) {
+		void attachListenRow(interaction.guildId, (components) => interaction.editReply({ components }));
+	}
 	// Advance the pity streak: reset to 0 on a gold, increment otherwise.
 	await fortuneBuffStore.recordRoll(interaction.user.id, tier === "ultra");
 	cooldown.record(cooldownKey);

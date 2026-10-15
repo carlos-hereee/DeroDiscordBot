@@ -174,6 +174,16 @@ const enforceLevelingTier = (() => {
 	const raw = (process.env.ENFORCE_LEVELING_TIER ?? "").toLowerCase().trim();
 	return raw === "1" || raw === "true" || raw === "yes";
 })();
+
+// ── ElevenLabs API key (Dero voice) ──
+// What: the key every text to speech call sends as the xi-api-key header.
+// Who: read only by features/voice/elevenLabsTts.ts. Never logged, never echoed
+//   to Discord; /dero-config status reports only whether it is set.
+// When: empty (the default) means no speech call is ever sent: the provider
+//   refuses before fetch, so a guild that enabled voice without the key gets a
+//   plain "Dero cannot speak right now" instead of a 401 round trip.
+// Where: set on Railway and in the local .env by the owner, by hand.
+const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY || "";
 // CORS allow-list for the dashboard.
 // What: the Express `cors({ origin })` middleware accepts a string (single
 //   origin), an array (multiple origins), or a function. We want multiple
@@ -225,4 +235,5 @@ export {
 	playerActivityRetentionDays,
 	enforceGameRoomTier,
 	enforceLevelingTier,
+	elevenLabsApiKey,
 };

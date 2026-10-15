@@ -46,6 +46,12 @@ export const BOT_CONSTANTS = {
 		// /list-events: members seeing their own standing is the entire point.
 		"setup-level-system",
 		"xp",
+		// ── dero voice ──
+		// Same pairing as the two above: the builder's Administrator default hides
+		// the command, and this runtime gate holds even if a server re-grants it in
+		// its Integrations settings. /dero-config sets the cloned voice id and the
+		// monthly speech spend cap, so a hidden button alone is not a gate here.
+		"dero-config",
 	]),
 	// scheduler
 	SCHEDULER_CRON: "* * * * *", // every minute
@@ -175,6 +181,62 @@ export const BOT_CONSTANTS = {
 	// DIFFERENT winner, so the attempts need to cover a full table plus headroom
 	// rather than the usual one-retry-and-give-up.
 	HOLDEM_SEAT_CLAIM_ATTEMPTS: 8,
+
+	// ── dero voice ───────────────────────────────────────────────
+	// What:  every number and provider string the voice feature runs on: the
+	//        monthly spend cap, the /dero-config input bounds, the speech call's
+	//        limits, the Listen cooldowns and the clip cache bounds.
+	// Who:   features/voice/* and commands/admin/dero-config.ts. The Mongoose
+	//        default on DeroVoiceConfig.monthlyCapUsd reads the cap from here.
+	// When:  read at module load (cache bounds, cooldown windows) and per call
+	//        (text limits, timeout).
+	// Where: constants rather than env vars for the same reason as the blocks
+	//        above: a config typo must not be able to reprice speech. The one
+	//        per guild knob an admin owns (the cap) lives on DeroVoiceConfig, and
+	//        this default only seeds it.
+	//
+	// The default monthly speech budget per guild, in whole dollars, and the
+	// highest value /dero-config cap accepts. 0 is a valid cap and refuses every
+	// provider call, which makes it a second kill switch.
+	DERO_VOICE_DEFAULT_CAP_USD: 25,
+	DERO_VOICE_MAX_CAP_USD: 500,
+	// An ElevenLabs voice id is alphanumeric. These bounds are generous on both
+	// sides of today's 20 character ids so a format change does not lock an admin
+	// out, while a pasted sentence or URL is still refused.
+	DERO_VOICE_ID_MIN_LENGTH: 10,
+	DERO_VOICE_ID_MAX_LENGTH: 64,
+	// One speech call waits at most this long, then aborts. Past this the socket
+	// is stuck rather than slow, and the member is better served by a plain
+	// "try again" than by a reply that never comes.
+	DERO_VOICE_TTS_TIMEOUT_MS: 30_000,
+	// Input longer than this is refused BEFORE any provider call, so a bug that
+	// passes a whole channel history can never become a large bill.
+	DERO_VOICE_TTS_MAX_CHARS: 1500,
+	// Retries after a 5xx only. Never a loop: a provider outage should cost one
+	// extra call, not a stampede.
+	DERO_VOICE_TTS_MAX_RETRIES: 1,
+	// Listen reads at most this much of a post, cut at a sentence boundary.
+	DERO_VOICE_LISTEN_MAX_CHARS: 600,
+	// A fresh render costs money, so a member may start one every 15 seconds and a
+	// guild one every 3. A cache hit skips both, because a replay costs nothing.
+	DERO_VOICE_LISTEN_USER_COOLDOWN_MS: 15_000,
+	DERO_VOICE_LISTEN_GUILD_COOLDOWN_MS: 3_000,
+	// In memory clip cache bounds, whichever is reached first. A 600 character mp3
+	// is well under 1 MB, so 50 clips sit far below the byte bound in practice;
+	// the byte bound is the guard against a future long clip format.
+	DERO_VOICE_CLIP_CACHE_MAX_ENTRIES: 50,
+	DERO_VOICE_CLIP_CACHE_MAX_BYTES: 20 * 1024 * 1024, // 20 MB
+	// Provider wire values, confirmed against the ElevenLabs API reference on
+	// 2026-10-14: POST /v1/text-to-speech/{voice_id} with the xi-api-key header,
+	// the Flash v2.5 model, and output_format as a query parameter.
+	// mp3_44100_128 is the documented default and needs no paid tier; pcm_24000
+	// is raw 16 bit mono PCM at 24 kHz, the format Phase 3 resamples for a call.
+	DERO_VOICE_ELEVENLABS_BASE_URL: "https://api.elevenlabs.io",
+	DERO_VOICE_TTS_MODEL_ID: "eleven_flash_v2_5",
+	DERO_VOICE_OUTPUT_FORMATS: {
+		mp3: "mp3_44100_128",
+		pcm24k: "pcm_24000",
+	},
 
 	// ── leveling ──────────────────────────────────────────────────
 	// What:  every number the leveling system runs on: how often buffered xp is
