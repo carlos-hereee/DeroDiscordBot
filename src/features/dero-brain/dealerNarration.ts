@@ -2,12 +2,12 @@ import type { Client } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
+import { NO_PINGS } from "@utils/mentions.js";
 import { HAND_CATEGORIES, formatCard, type Card, type HandCategory } from "@features/games/holdemHand.js";
 import { handInProgress, whoActs, type ActionOutcome, type HoldemTable, type Street } from "@features/games/holdemTable.js";
 import { renderCallSpeech, type CallSpeechInput, type CallSpeechResult } from "@features/voice/callSpeech.js";
 import { voiceSessions, type VoiceSessionView } from "@features/voice/voiceSessions.js";
 import { deroBrainCopy, type DealerWinner } from "./deroBrainCopy.js";
-import { SAFE_MENTIONS } from "./executor.js";
 
 // ── dealerNarration ───────────────────────────────────────────────────────
 // What:  Dero as the dealer of a hold em table it opened: a few lines in the
@@ -318,7 +318,7 @@ export async function postDealerText(client: Client, channelId: string, text: st
 	try {
 		const channel = await client.channels.fetch(channelId).catch(() => null);
 		if (!channel || !channel.isSendable()) return;
-		await channel.send({ content: text, allowedMentions: SAFE_MENTIONS });
+		await channel.send({ content: text, allowedMentions: NO_PINGS });
 	}
 	catch (error) {
 		const code = (error as { code?: unknown } | null)?.code ?? "unknown";

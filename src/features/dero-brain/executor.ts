@@ -1,4 +1,5 @@
 import type { Guild, GuildMember, MessageMentionOptions } from "discord.js";
+import { NO_PINGS } from "@utils/mentions.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import { renderCallSpeech, type CallSpeechInput, type CallSpeechResult } from "@features/voice/callSpeech.js";
 import { voiceSessions, type VoiceSessionView } from "@features/voice/voiceSessions.js";
@@ -88,7 +89,9 @@ export interface ExecuteInput {
 
 // Every brain originated post goes out with no pings of any kind. The parser
 // already refuses mention text; this is the second wall for anything it missed.
-export const SAFE_MENTIONS: MessageMentionOptions = { parse: [], users: [], roles: [], repliedUser: false };
+// The shared NO_PINGS under the name the executor's callers and tests know, so
+// the two can never drift apart.
+export const SAFE_MENTIONS: MessageMentionOptions = NO_PINGS;
 
 const MASS_MENTION_GLOBAL = /@(everyone|here)/gi;
 const ZERO_WIDTH_SPACE = "​";
