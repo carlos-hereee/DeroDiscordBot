@@ -237,6 +237,30 @@ export const BOT_CONSTANTS = {
 		mp3: "mp3_44100_128",
 		pcm24k: "pcm_24000",
 	},
+	// ── dero voice calls (Phase 3a) ──
+	// A join waits this long for the connection to reach Ready, then gives up and
+	// tears the attempt down. The plan's budget; a healthy join takes a second or two.
+	DERO_VOICE_READY_TIMEOUT_MS: 20_000,
+	// After a disconnect, how long the connection gets to re-enter signalling or
+	// connecting on its own (a move, a voice server change) before the bot rejoins.
+	// The @discordjs/voice documented pattern uses 5 seconds.
+	DERO_VOICE_RECOVER_WINDOW_MS: 5_000,
+	// Rejoins after that window, then the session is destroyed and the control
+	// channel is told. Never a loop: three tries is the whole budget.
+	DERO_VOICE_MAX_RECONNECT_ATTEMPTS: 3,
+	// The first rejoin waits this long and each later one doubles it (2, 4, 8 s),
+	// so a flapping voice server is not hammered with gateway voice updates.
+	DERO_VOICE_RECONNECT_BACKOFF_MS: 2_000,
+	// A connection that stayed Ready this long earns a fresh reconnect budget.
+	// Without it, a link that reaches Ready and drops again every few seconds
+	// would rejoin forever, one "successful" attempt at a time.
+	DERO_VOICE_RECONNECT_STABLE_MS: 60_000,
+	// Clips waiting behind the one playing. Past this a lower priority clip is
+	// dropped, so a burst of Listen presses can never stack minutes of audio.
+	DERO_VOICE_SPEAKER_MAX_QUEUE: 5,
+	// Per guild, counted from every join ATTEMPT (not only a successful one),
+	// because each attempt costs gateway voice traffic whether or not it connects.
+	DERO_VOICE_JOIN_COOLDOWN_MS: 10_000,
 
 	// ── dero brain ───────────────────────────────────────────────
 	// What:  the limits of the link between the bot (the body) and the launcher's

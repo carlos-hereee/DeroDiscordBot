@@ -1,8 +1,17 @@
-import { SlashCommandBuilder, MessageFlags, type ChatInputCommandInteraction, type EmbedBuilder } from "discord.js";
+import {
+	SlashCommandBuilder,
+	MessageFlags,
+	PermissionFlagsBits,
+	type ChatInputCommandInteraction,
+	type EmbedBuilder,
+	type GuildMember,
+	type VoiceBasedChannel,
+} from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
+import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import { CooldownManager } from "@utils/cooldownManager.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { brainQueue } from "@features/dero-brain/brainQueue.js";
@@ -11,32 +20,47 @@ import { isAuthorizedSpeaker } from "@features/dero-brain/authorizer.js";
 import { executeActions, type ActionReport } from "@features/dero-brain/executor.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import type { BrainOutcome } from "@features/dero-brain/brainTypes.js";
+import { voiceSessions } from "@features/voice/voiceSessions.js";
+import { announceJoin, type GreetingOutcome } from "@features/voice/joinNotice.js";
+import { voiceCopy } from "@features/voice/voiceCopy.js";
 
 // ── /dero ─────────────────────────────────────────────────────────────────
-// What:  the text path to Dero's brain. `tell` hands an authorized member's task
-//        to the launcher's local Dero and carries out the typed actions it
-//        answers with; `status` says whether the brain is online.
+// What:  the text path to Dero's brain and Dero's way into a voice call. `tell`
+//        hands an authorized member's task to the launcher's local Dero and
+//        carries out the typed actions it answers with; `status` says whether
+//        the brain is online; `join` and `leave` bring Dero into the caller's
+//        voice channel and send it out again.
 // Who:   any member may run it. Only the guild owner and members holding an
-//        allowlisted role get a job made (the authorizer); everyone else is
-//        refused before the brain hears anything.
+//        allowlisted role get a job made, or move Dero in or out of a call (the
+//        authorizer); everyone else is refused before anything happens.
 // When:  on demand. A member may start one task every 10 seconds, counted only
-//        from a task the brain answered "ok".
-// Where: reads DeroVoiceConfig (the kill switch, the role and channel
-//        allowlists), enqueues on brainQueue, and executes through the
-//        executor, which re-checks everything against the live guild.
+//        from a task the brain answered "ok"; a guild may attempt one join
+//        every 10 seconds.
+// Where: reads DeroVoiceConfig (the kill switch, the role, channel and voice
+//        channel allowlists), enqueues on brainQueue, executes through the
+//        executor, and joins through voiceSessions (one call per guild).
 // How (tell): ① guild only; ② config exists and is enabled; ③ speaker
 //        authorized; ④ brain online; ⑤ cooldown; ⑥ the task's own bounds;
 //        ⑦ defer, private; ⑧ build and enqueue the job, wait for its outcome;
 //        ⑨ answer busy, timeout or not understood plainly, or execute and list
 //        what happened; ⑩ audit, fire and forget.
+// How (join): the gates in joinRefusal, in order; then the per guild
+//        cooldown; defer; join and wait for Ready; post the join notice and
+//        speak the greeting; one private line saying how it went.
 //
 // ⚠️ PRIVACY: the task text goes to the brain and nowhere else. It is never
-// logged, stored, or put in an error; the audit row carries its length.
+// logged, stored, or put in an error; the audit row carries its length. Dero
+// joins every call deafened in this phase: it speaks and hears nothing.
 
 const tellCopy = deroBrainCopy.tell;
+const callCopy = voiceCopy.call;
 const MS_PER_SECOND = 1000;
 
+// What the bot needs in a voice channel to be any use there.
+const BOT_VOICE_PERMISSIONS = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak];
+
 const tellCooldown = new CooldownManager(BOT_CONSTANTS.DERO_BRAIN_TELL_COOLDOWN_MS);
+const joinCooldown = new CooldownManager(BOT_CONSTANTS.DERO_VOICE_JOIN_COOLDOWN_MS);
 
 export const data = new SlashCommandBuilder()
 	.setName("dero")
@@ -54,7 +78,9 @@ export const data = new SlashCommandBuilder()
 					.setMaxLength(BOT_CONSTANTS.DERO_BRAIN_MAX_TASK_CHARS),
 			),
 	)
-	.addSubcommand((sub) => sub.setName("status").setDescription(deroBrainCopy.command.status));
+	.addSubcommand((sub) => sub.setName("status").setDescription(deroBrainCopy.command.status))
+	.addSubcommand((sub) => sub.setName("join").setDescription(deroBrainCopy.command.join))
+	.addSubcommand((sub) => sub.setName("leave").setDescription(deroBrainCopy.command.leave));
 
 // ── replies ──
 
@@ -199,14 +225,155 @@ async function status(interaction: ChatInputCommandInteraction): Promise<void> {
 	await interaction.reply({ embeds: [infoEmbed(deroBrainCopy.status.title, lines.join("\n"))], flags: MessageFlags.Ephemeral });
 }
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+// ── /dero join ──
+
+export type JoinGate = { ok: true; channel: VoiceBasedChannel; voiceId: string } | { ok: false; line: string };
+
+export interface JoinGateInput {
+	speaker: GuildMember;
+	guildOwnerId: string;
+	botMember: GuildMember | null;
+	config: IDeroVoiceConfig | null;
+	/** The voice channel Dero is already in for this guild, if any. */
+	sessionChannelId: string | null;
+}
+
+const refuseJoin = (line: string): JoinGate => ({ ok: false, line });
+
+/**
+ * The /dero join gates, in order, with nothing joined and nothing spent: the
+ * kill switch and a voice to speak with, an authorized speaker, the speaker in
+ * a voice channel, Dero not already in a call here, the channel on the voice
+ * allowlist, and the bot able to see, connect and speak there. Every refusal
+ * reuses the line that already says it, from the tell gates or the Listen copy.
+ */
+export function checkJoin({ speaker, guildOwnerId, botMember, config, sessionChannelId }: JoinGateInput): JoinGate {
+	if (!config) return refuseJoin(voiceCopy.listen.notSetUp);
+	if (!config.enabled) return refuseJoin(tellCopy.switchedOff);
+	if (!config.voiceId) return refuseJoin(voiceCopy.listen.notSetUp);
+	if (!isAuthorizedSpeaker({ member: speaker, guildOwnerId, voiceConfig: config })) return refuseJoin(tellCopy.notAuthorized);
+
+	// The speaker's own channel is the target, so "the speaker is in it" holds
+	// by construction and there is no channel option to spoof.
+	const channel = speaker.voice.channel;
+	if (!channel) return refuseJoin(callCopy.notInVoice);
+	// One call per guild: name where Dero already is rather than move it.
+	if (sessionChannelId) {
+		return refuseJoin(sessionChannelId === channel.id ? callCopy.alreadyHere(sessionChannelId) : callCopy.alreadyElsewhere(sessionChannelId));
+	}
+	if (!config.allowedVoiceChannelIds.includes(channel.id)) return refuseJoin(callCopy.channelNotAllowed);
+	if (!botMember || !channel.permissionsFor(botMember)?.has(BOT_VOICE_PERMISSIONS)) return refuseJoin(callCopy.botLacksPermission);
+	return { ok: true, channel, voiceId: config.voiceId };
+}
+
+async function join(interaction: ChatInputCommandInteraction): Promise<void> {
+	if (!interaction.inCachedGuild()) {
+		await refuse(interaction, tellCopy.notInGuild);
+		return;
+	}
+	const guild = interaction.guild;
+	const config = await deroVoiceConfigStore.findByGuildId(guild.id);
+	const gate = checkJoin({
+		speaker: interaction.member,
+		guildOwnerId: guild.ownerId,
+		botMember: guild.members.me,
+		config,
+		sessionChannelId: voiceSessions.get(guild.id)?.channelId ?? null,
+	});
+	if (!gate.ok) {
+		await refuse(interaction, gate.line);
+		return;
+	}
+
+	// Checked only after the gates, so a refused join never burns the window, and
+	// recorded on the ATTEMPT, because a join that never reaches Ready still cost
+	// gateway voice traffic.
+	const cooldown = joinCooldown.check(guild.id);
+	if (cooldown.onCooldown) {
+		await refuse(interaction, callCopy.joinCooldown(Math.ceil(cooldown.remainingMs / MS_PER_SECOND)));
+		return;
+	}
+	joinCooldown.record(guild.id);
+
+	// Ready can take up to 20 seconds, far past Discord's 3 second window.
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	const voiceChannelId = gate.channel.id;
 	try {
-		if (interaction.options.getSubcommand(true) === "tell") await tell(interaction);
-		else await status(interaction);
+		const outcome = await voiceSessions.join({ guild, channel: gate.channel, controlChannelId: interaction.channelId });
+		if (outcome.status === "alreadyInGuild") {
+			// Another join won the race between the gate and here.
+			await interaction.editReply({ embeds: [errorEmbed(callCopy.alreadyElsewhere(outcome.channelId))] });
+			return;
+		}
+		if (outcome.status === "failed") {
+			await interaction.editReply({ embeds: [errorEmbed(callCopy.connectFailed(voiceChannelId))] });
+			return;
+		}
+
+		const greeting: GreetingOutcome = await announceJoin({
+			guild,
+			controlChannelId: interaction.channelId,
+			voiceChannelId,
+			voiceId: gate.voiceId,
+			speaker: outcome.session.speaker,
+		});
+		await interaction.editReply({ embeds: [infoEmbed(callCopy.replyTitle, callCopy.joined[greeting](voiceChannelId))] });
 	}
 	catch (err) {
-		// Only reached before a deferral (tell catches its own after one), so a
-		// plain reply is still possible unless Discord already got one.
+		console.error(`[dero-voice] join command failed guild=${guild.id} channel=${voiceChannelId}`, err);
+		await interaction.editReply({ embeds: [errorEmbed(tellCopy.failed)] }).catch(() => undefined);
+	}
+}
+
+// ── /dero leave ──
+
+async function leave(interaction: ChatInputCommandInteraction): Promise<void> {
+	if (!interaction.inCachedGuild()) {
+		await refuse(interaction, tellCopy.notInGuild);
+		return;
+	}
+	const guild = interaction.guild;
+	const config = await deroVoiceConfigStore.findByGuildId(guild.id);
+	if (!config) {
+		await refuse(interaction, voiceCopy.listen.notSetUp);
+		return;
+	}
+	// The kill switch is NOT a gate here: sending Dero away is always safe, and a
+	// switched off guild is exactly where an authorized member may want it gone.
+	if (!isAuthorizedSpeaker({ member: interaction.member, guildOwnerId: guild.ownerId, voiceConfig: config })) {
+		await refuse(interaction, tellCopy.notAuthorized);
+		return;
+	}
+	const session = voiceSessions.get(guild.id);
+	if (!session) {
+		await refuse(interaction, callCopy.notInCall);
+		return;
+	}
+
+	voiceSessions.leave(guild.id);
+	await interaction.reply({ embeds: [infoEmbed(callCopy.replyTitle, callCopy.left(session.channelId))], flags: MessageFlags.Ephemeral });
+}
+
+async function runSubcommand(interaction: ChatInputCommandInteraction): Promise<void> {
+	switch (interaction.options.getSubcommand(true)) {
+		case "tell":
+			return tell(interaction);
+		case "join":
+			return join(interaction);
+		case "leave":
+			return leave(interaction);
+		default:
+			return status(interaction);
+	}
+}
+
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+	try {
+		await runSubcommand(interaction);
+	}
+	catch (err) {
+		// Only reached before a deferral (tell and join catch their own after
+		// one), so a plain reply is still possible unless Discord already got one.
 		console.error(`[dero] command failed guild=${interaction.guildId ?? "none"}`, err);
 		if (!interaction.replied && !interaction.deferred) {
 			await refuse(interaction, tellCopy.failed).catch(() => undefined);

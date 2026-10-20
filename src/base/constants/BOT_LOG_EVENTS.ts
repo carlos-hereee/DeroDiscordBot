@@ -120,6 +120,19 @@ export const BOT_LOG_EVENTS = {
 	// NEVER the member's task text or anything the brain wrote.
 	DERO_BRAIN_ACTION: "dero_brain_action",
 	DERO_BRAIN_REJECTED: "dero_brain_rejected",
+	// ── Dero voice call audit (Dero voice plan, Phase 3a) ──────────
+	// What:  the two bookends of one voice session: JOINED when the connection
+	//        first reached Ready, LEFT when the session ended for any reason.
+	// Who:   voiceSessions writes both through its injected audit dep. Nothing
+	//        reads them on a hot path.
+	// When:  once per session each. Fire and forget, like the brain rows.
+	// Where: paired on guildId and channelId they give time to Ready (the spike's
+	//        number), session length, reconnect count and why a session ended.
+	//
+	// ⚠️ PRIVACY: ids, durations, counts and reason codes only. Dero joins
+	// deafened in this phase, and no row ever carries audio or spoken text.
+	DERO_VOICE_JOINED: "dero_voice_joined",
+	DERO_VOICE_LEFT: "dero_voice_left",
 	// add more here as needed
 } as const;
 

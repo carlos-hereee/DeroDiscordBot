@@ -23,10 +23,12 @@ const NOT_AVAILABLE_YET: Record<Exclude<BrainActionType, "post_message">, string
 export const deroBrainCopy = {
 	// ── the /dero command itself ──
 	command: {
-		description: "Give Dero a task, or check whether Dero's brain is online",
+		description: "Give Dero a task, bring Dero into your voice call, or check whether Dero's brain is online",
 		tell: "Give Dero a short task, like posting a message in an allowed channel",
 		taskOption: "What you want Dero to do, in your own words",
 		status: "Show whether Dero's brain is online right now",
+		join: "Bring Dero into the voice channel you are in. Dero speaks there but does not listen",
+		leave: "Send Dero out of this server's voice call",
 	},
 
 	// ── /dero tell, before and after the brain answers ──

@@ -1,5 +1,13 @@
 import { MessageMentionOptions } from "discord.js";
 
+/**
+ * No pings of any kind: no @everyone or @here, no user, no role, and no reply
+ * ping. For bot posts that may quote a channel or member mention as plain text
+ * and must never notify anyone. Lives here, the shared region for mention
+ * options, so a feature never has to import another feature to get it.
+ */
+export const NO_PINGS: MessageMentionOptions = { parse: [], users: [], roles: [], repliedUser: false };
+
 // ── audience mention builder ─────────────────────────────────────────────
 // Single source of truth for the @mention `content` string AND its matching
 // `allowedMentions`. The two MUST agree: Discord only actually pings a role that

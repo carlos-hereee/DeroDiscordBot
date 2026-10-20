@@ -41,6 +41,7 @@ import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/p
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
 import { registerListenHandlers } from "@features/voice/listenHandler.js";
+import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { registerGreeter, ensureIntroChannelsWritable } from "@features/greeter/welcomeNewMember.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
@@ -132,6 +133,16 @@ async function gracefulShutdown(signal: string, exitCode = 0): Promise<void> {
 		await flushNow();
 	} catch (err) {
 		console.error(LOG_MESSAGES.leveling.shutdownFlushFailed, err);
+	}
+	// Still step ⓪: end every voice call while the gateway is up. Destroying a voice
+	// connection sends its "leave the channel" update through the gateway
+	// adapter, so after ③ it could only time out and leave Dero sitting in the
+	// channel until Discord noticed the process was gone. Synchronous: it only
+	// queues the leave and clears each session's timers.
+	try {
+		voiceSessions.leaveAll();
+	} catch (err) {
+		console.error("[shutdown] voice leaveAll failed", err);
 	}
 	// ① stop cron so no new reminder tick begins mid-teardown.
 	try {

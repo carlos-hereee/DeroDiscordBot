@@ -32,6 +32,53 @@ export const voiceCopy = {
 		truncated: "This post is long, so Dero read the first part.",
 	},
 
+	// ── voice calls: /dero join and /dero leave, and what Dero posts in text ──
+	// The refusals here are only the ones a call adds. /dero join reuses the
+	// lines that already fit word for word: deroBrainCopy.tell for the guild,
+	// kill switch and task list gates, and listen.notSetUp for a missing voice.
+	call: {
+		replyTitle: "🔊 Dero in voice",
+		notInVoice: "Join a voice channel first, then run /dero join.",
+		channelNotAllowed: "Dero is not allowed to join that voice channel. An admin can add it with /dero-config voicechannel add.",
+		botLacksPermission: "Dero needs permission to see, connect and speak in that voice channel.",
+		alreadyHere: (channelId: string): string => `Dero is already in <#${channelId}>.`,
+		alreadyElsewhere: (channelId: string): string =>
+			`Dero is already in <#${channelId}> in this server. Run /dero leave first.`,
+		joinCooldown: (seconds: number): string => `Give Dero a moment. Try /dero join again in ${seconds}s.`,
+		connectFailed: (channelId: string): string =>
+			`Dero could not connect to <#${channelId}>, so Dero is not in the call. Try again in a moment.`,
+		notInCall: "Dero is not in a voice call in this server.",
+		left: (channelId: string): string => `Dero left <#${channelId}>.`,
+
+		// The private reply to whoever ran /dero join, one per greeting outcome,
+		// so a silent Dero always says why it is silent.
+		joined: {
+			greeted: (channelId: string): string => `Dero joined <#${channelId}> and said hello.`,
+			capReached: (channelId: string): string =>
+				`Dero joined <#${channelId}> but stays quiet: this server's voice budget for the month is used up.`,
+			providerTrouble: (channelId: string): string =>
+				`Dero joined <#${channelId}> but could not find his voice just now, so Dero is in the call in silence.`,
+			// The speaker could not start the clip (an audio encoder fault), which is
+			// a bot problem rather than a budget or provider one.
+			playbackFailed: (channelId: string): string =>
+				`Dero joined <#${channelId}> but could not play sound in the call, so Dero is there in silence.`,
+		},
+
+		// The public line in the channel /dero join ran in. PRIVACY BY CONSTRUCTION:
+		// Dero joins deafened in this phase, and the notice says so in plain words
+		// before Dero makes a sound.
+		joinNotice: (channelId: string): string =>
+			`🔊 Dero joined <#${channelId}>. Dero can speak in this call but does not listen yet: nothing anyone says there is heard, recorded or transcribed. An allowed member can send Dero away with /dero leave.`,
+		// Spoken once per join, in the guild's voice. Rendered once and then
+		// replayed from the clip cache, so a rejoin costs nothing.
+		greeting: "Hello, I am Dero. I can talk in this call, but I am not listening yet.",
+
+		// Posted in the same channel when a session ends on its own.
+		reconnectFailed: (channelId: string, attempts: number): string =>
+			`Dero lost the connection to <#${channelId}> and could not get back in after ${attempts} tries, so Dero left the call.`,
+		removed: (channelId: string): string => `Dero was removed from <#${channelId}>, so the call has ended.`,
+	},
+
 	// ── /dero-config, admin facing ──
 	config: {
 		commandDescription: "Set up Dero's voice and the Listen button for this server",
