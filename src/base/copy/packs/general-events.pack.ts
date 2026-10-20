@@ -269,6 +269,10 @@ export const generalEventsCopy: IPluginCopy = {
 			// exactly; only the intro copy below differs in voice.
 			arcadeRules: "📋arcade-rules",
 			arcadeChallenges: "⚔️challenges",
+			// The two voice rooms, universal names for the same reason (mirrors
+			// rok-commander, 2026-10 item 235).
+			meetingVoice: "🏛️ Meeting Hall",
+			arcadeVoice: "🎮 Arcade Lounge",
 		},
 	},
 

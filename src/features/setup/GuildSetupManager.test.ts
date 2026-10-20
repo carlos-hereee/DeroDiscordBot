@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { TextChannel, DiscordAPIError, ChannelType, PermissionFlagsBits } from "discord.js";
+import { TextChannel, VoiceChannel, DiscordAPIError, ChannelType, PermissionFlagsBits } from "discord.js";
 import type { Client, Guild } from "discord.js";
 
 // mock the guild config store before importing the unit under test. the
@@ -53,6 +53,10 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 		gamesCategoryId: "games-cat-1",
 		arcadeRulesChannelId: "ch-arcaderules",
 		arcadeChallengesChannelId: "ch-arcadechallenges",
+		// The two voice rooms (2026-10 item 235), present for the same reason:
+		// a null id reads as "missing, rebuild too". Their own tests null them.
+		meetingVoiceChannelId: "ch-meetingvoice",
+		arcadeVoiceChannelId: "ch-arcadevoice",
 		scheduleMessageId: "msg-schedule",
 		adminRoleId: null,
 		memberRoleId: null,
@@ -131,6 +135,8 @@ function makeGuild(options: {
 		"games-cat-1": { id: "games-cat-1", type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } },
 		"ch-arcaderules": { id: "ch-arcaderules" },
 		"ch-arcadechallenges": { id: "ch-arcadechallenges" },
+		"ch-meetingvoice": { id: "ch-meetingvoice" },
+		"ch-arcadevoice": { id: "ch-arcadevoice" },
 		...(options.channelFetchMap ?? {}),
 	};
 	const create =
@@ -1446,5 +1452,374 @@ describe("resolveIntroComponents: the challenges channel carries the start board
 		expect(customIds).toEqual(CHALLENGE_GAMES.map((game) => `gameroom:new:${game}`));
 		expect(customIds).toContain("gameroom:new:battleship");
 		expect(customIds).toContain("gameroom:new:holdem");
+	});
+});
+
+// ── the two voice rooms (2026-10 item 235) ──────────────────────────────────
+// What:  pins the "voice" spec kind end to end: what a fresh install builds, how
+//        a forced rebuild and the boot repair sweep rebuild a room, adoption by
+//        name, the drift rename, the /setup grant, and the intro sweep leaving
+//        the rooms alone.
+// Why:   every path here used to assume a managed channel is a TextChannel. A
+//        voice room that slipped through one of them would either be built as a
+//        text channel, be adopted as the wrong kind, collect a bot intro, or log
+//        a wrong type warning on every boot, and none of that throws.
+// Owner decision D3 (member role only) is the posture asserted throughout:
+// @everyone sees a room but cannot connect or speak; the owner, the member role
+// and the admin role can; the bot can too, so a room an admin later allowlists
+// is joinable. Nothing here listens, and no room reaches the voice allowlist.
+describe("GuildSetupManager voice rooms", () => {
+	const packChannels = rokCommanderCopy.setup.channels;
+	const EVERYONE_ID = "everyone";
+	const OWNER_ID = "owner-1";
+	const BOT_ID = "bot-1";
+	const JOIN_AND_SPEAK = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak];
+
+	interface IOverwrite {
+		id: string;
+		allow?: bigint[];
+		deny?: bigint[];
+	}
+	interface ICreateCall {
+		name: string;
+		type: number;
+		parent?: string;
+		permissionOverwrites?: IOverwrite[];
+	}
+
+	// A created channel of the REAL kind for its type, so every instanceof check in
+	// the unit under test sees a voice room as a VoiceChannel. The send spy is what
+	// proves nothing was ever posted into a room.
+	function makeCreatedChannel(opts: { name: string; type: number }): unknown {
+		if (opts.type === ChannelType.GuildCategory) {
+			return { id: `cat-${opts.name}`, type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } };
+		}
+		const prototype = opts.type === ChannelType.GuildVoice ? VoiceChannel.prototype : TextChannel.prototype;
+		const created = Object.create(prototype) as { send: ReturnType<typeof vi.fn> };
+		Object.assign(created, {
+			id: `new-${opts.name}`,
+			name: opts.name,
+			guildId: "guild-1",
+			send: vi.fn().mockResolvedValue({ id: `msg-${opts.name}`, pin: vi.fn().mockResolvedValue(undefined) }),
+		});
+		return created;
+	}
+
+	function makeVoiceRoom(id: string, name: string): VoiceChannel & { setName: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> } {
+		const room = Object.create(VoiceChannel.prototype) as VoiceChannel & { setName: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> };
+		Object.assign(room, { id, name, setName: vi.fn().mockResolvedValue(undefined), send: vi.fn() });
+		return room;
+	}
+
+	function overwriteFor(call: ICreateCall | undefined, id: string): IOverwrite | undefined {
+		return (call?.permissionOverwrites ?? []).find((entry) => entry.id === id);
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		guildConfigMock.create.mockResolvedValue(undefined);
+		guildConfigMock.update.mockResolvedValue(undefined);
+	});
+
+	// ── create path ──────────────────────────────────────────────────────
+
+	async function runAutoSetup(stored: Record<string, unknown> | null, options: { force?: boolean } = {}) {
+		guildConfigMock.findByGuildId.mockResolvedValue(stored);
+		const created: Array<{ send: ReturnType<typeof vi.fn>; id: string }> = [];
+		const create = vi.fn(async (opts: { name: string; type: number }) => {
+			const channel = makeCreatedChannel(opts) as { send: ReturnType<typeof vi.fn>; id: string };
+			created.push(channel);
+			return channel;
+		});
+		const guild = {
+			id: "guild-1",
+			ownerId: OWNER_ID,
+			roles: { everyone: { id: EVERYONE_ID } },
+			client: { user: { id: BOT_ID } },
+			channels: { create, fetch: vi.fn().mockResolvedValue(null) },
+		} as unknown as Guild;
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID }, options);
+		const calls = create.mock.calls.map((call) => call[0] as ICreateCall);
+		const voiceCalls = calls.filter((call) => call.type === ChannelType.GuildVoice);
+		const voiceCreated = created.filter((channel) => channel instanceof VoiceChannel);
+		return { calls, voiceCalls, voiceCreated };
+	}
+
+	it("builds both rooms on a fresh install, as voice channels under their own categories", async () => {
+		const { voiceCalls } = await runAutoSetup(null);
+
+		expect(voiceCalls.map((call) => call.name).sort()).toEqual([packChannels.arcadeVoice, packChannels.meetingVoice].sort());
+		const parentOf = (name: string) => voiceCalls.find((call) => call.name === name)?.parent;
+		// The R2 guard for the voice rooms: both parents are CategoryChannel, so
+		// only this catches a room filed under the other category.
+		expect(parentOf(packChannels.meetingVoice)).toBe(`cat-${rokCommanderCopy.setup.categoryName}`);
+		expect(parentOf(packChannels.arcadeVoice)).toBe(`cat-${rokCommanderCopy.setup.gamesCategoryName}`);
+	});
+
+	it("gives a fresh room the member-role-only posture with no role grants yet", async () => {
+		const { voiceCalls } = await runAutoSetup(null);
+
+		for (const call of voiceCalls) {
+			expect(overwriteFor(call, EVERYONE_ID), `${call.name} @everyone`).toEqual({
+				id: EVERYONE_ID,
+				allow: [PermissionFlagsBits.ViewChannel],
+				deny: [PermissionFlagsBits.Connect, PermissionFlagsBits.Speak],
+			});
+			expect(overwriteFor(call, OWNER_ID), `${call.name} owner`).toEqual({ id: OWNER_ID, allow: JOIN_AND_SPEAK });
+			// The bot keeps its shared self overwrite AND can connect and speak, or the
+			// @everyone Connect deny would lock it out of a room an admin allowlists later.
+			const bot = overwriteFor(call, BOT_ID);
+			expect(bot?.allow).toContain(PermissionFlagsBits.ViewChannel);
+			expect(bot?.allow).toContain(PermissionFlagsBits.Connect);
+			expect(bot?.allow).toContain(PermissionFlagsBits.Speak);
+			// A fresh install knows no member or admin role yet: exactly three entries.
+			expect(call.permissionOverwrites, `${call.name} entry count`).toHaveLength(3);
+		}
+	});
+
+	it("persists both room ids, posts nothing into either, and gives neither an intro anchor", async () => {
+		const { voiceCreated } = await runAutoSetup(null);
+
+		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
+		expect(payload.meetingVoiceChannelId).toBe(`new-${packChannels.meetingVoice}`);
+		expect(payload.arcadeVoiceChannelId).toBe(`new-${packChannels.arcadeVoice}`);
+
+		expect(voiceCreated).toHaveLength(2);
+		for (const room of voiceCreated) expect(room.send, `${room.id} received a post`).not.toHaveBeenCalled();
+
+		const introIds = payload.introMessageIds as Record<string, unknown>;
+		expect(introIds).not.toHaveProperty("meetingVoiceChannelId");
+		expect(introIds).not.toHaveProperty("arcadeVoiceChannelId");
+	});
+
+	it("grants the stored member and admin roles when a forced rebuild rebuilds the rooms", async () => {
+		// A forced rebuild of a guild that already ran /setup must not lock its
+		// members out of the rebuilt rooms until /setup runs again.
+		const { voiceCalls } = await runAutoSetup(makeStoredConfig({ memberRoleId: "role-member", adminRoleId: "role-admin" }), { force: true });
+
+		expect(voiceCalls).toHaveLength(2);
+		for (const call of voiceCalls) {
+			expect(overwriteFor(call, "role-member"), `${call.name} member role`).toEqual({ id: "role-member", allow: JOIN_AND_SPEAK });
+			expect(overwriteFor(call, "role-admin"), `${call.name} admin role`).toEqual({
+				id: "role-admin",
+				allow: [...JOIN_AND_SPEAK, PermissionFlagsBits.SendMessages],
+			});
+		}
+	});
+
+	it("opens the room when the member role IS @everyone, without a second @everyone entry", async () => {
+		// The /setup role picker accepts @everyone as the member role. Two overwrites
+		// with one id would leave the Connect deny and the allow fighting each other.
+		const { voiceCalls } = await runAutoSetup(makeStoredConfig({ memberRoleId: EVERYONE_ID }), { force: true });
+
+		for (const call of voiceCalls) {
+			const everyoneEntries = (call.permissionOverwrites ?? []).filter((entry) => entry.id === EVERYONE_ID);
+			expect(everyoneEntries).toEqual([{ id: EVERYONE_ID, allow: JOIN_AND_SPEAK }]);
+		}
+	});
+
+	// ── boot repair sweep ───────────────────────────────────────────────
+
+	// Every text channel intact, so the only thing the sweep can repair is the room
+	// a test leaves missing. The schedule anchor resolves as ours (ownership probe)
+	// and the admin channel takes the repair notice.
+	const INTACT_TEXT = {
+		"ch-intro": { id: "ch-intro" },
+		"ch-commands": { id: "ch-commands" },
+		"ch-leaderboard": { id: "ch-leaderboard" },
+		"ch-schedule": { id: "ch-schedule" },
+		"ch-announcements": { id: "ch-announcements" },
+		"ch-admin": { id: "ch-admin" },
+	};
+
+	function makeSweepClient(): { client: Client; adminChannel: ReturnType<typeof makeAdminChannel> } {
+		const scheduleChannel = makeScheduleChannel(async () => ({ id: "msg-schedule", author: { id: BOT_ID } }));
+		const adminChannel = makeAdminChannel("ch-admin");
+		const client = makeClient({
+			selfId: BOT_ID,
+			fetchChannel: async (id) => {
+				if (id === "ch-schedule") return scheduleChannel;
+				if (id === "ch-admin") return adminChannel;
+				return null;
+			},
+		});
+		return { client, adminChannel };
+	}
+
+	async function runSweep(options: {
+		stored: Record<string, unknown>;
+		channelFetchMap?: Record<string, unknown>;
+		homebaseChildren?: unknown[];
+	}) {
+		guildConfigMock.findByGuildId.mockResolvedValue(options.stored);
+		const created: Array<{ send: ReturnType<typeof vi.fn> }> = [];
+		const createHandler = vi.fn(async (opts: unknown) => {
+			const channel = makeCreatedChannel(opts as { name: string; type: number }) as { send: ReturnType<typeof vi.fn> };
+			created.push(channel);
+			return channel;
+		});
+		const children = options.homebaseChildren ?? [];
+		const guild = makeGuild({
+			categoryId: {
+				id: "cat-1",
+				// The adopt-before-build scan runs Collection.find over the children.
+				children: { cache: { find: (predicate: (child: unknown) => boolean) => children.find((child) => predicate(child)) } },
+			},
+			channelFetchMap: { ...INTACT_TEXT, ...(options.channelFetchMap ?? {}) },
+			createHandler,
+		});
+		const { client, adminChannel } = makeSweepClient();
+		const result = await GuildSetupManager.ensureHomebase(client, guild);
+		const calls = createHandler.mock.calls.map((call) => call[0] as ICreateCall);
+		return { result, calls, created, adminChannel };
+	}
+
+	it("builds the Meeting Hall for a legacy row with a null id, as a voice room under the homebase, with no intro", async () => {
+		// Owner decision D1: every existing guild gets the rooms through this path.
+		const { result, calls, created } = await runSweep({
+			stored: makeStoredConfig({ meetingVoiceChannelId: null, memberRoleId: "role-member" }),
+		});
+
+		expect(result.action).toBe("repaired");
+		expect(result.repairedChannels).toEqual([packChannels.meetingVoice]);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]).toMatchObject({ name: packChannels.meetingVoice, type: ChannelType.GuildVoice, parent: "cat-1" });
+		// The stored member role reaches the rebuilt room's posture.
+		expect(overwriteFor(calls[0], "role-member")).toEqual({ id: "role-member", allow: JOIN_AND_SPEAK });
+		expect(created[0].send).not.toHaveBeenCalled();
+		// Exactly the room id: no introMessageIds key, because a room has no anchor.
+		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", { meetingVoiceChannelId: `new-${packChannels.meetingVoice}` });
+	});
+
+	it("rebuilds a deleted Arcade Lounge under the ARCADE category, never under the homebase", async () => {
+		const { calls } = await runSweep({
+			stored: makeStoredConfig(),
+			channelFetchMap: { "ch-arcadevoice": null },
+		});
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0]).toMatchObject({ name: packChannels.arcadeVoice, type: ChannelType.GuildVoice, parent: "games-cat-1" });
+	});
+
+	it("adopts an existing voice room with the expected name instead of building a second one", async () => {
+		const existingRoom = makeVoiceRoom("v-existing", packChannels.meetingVoice);
+		const { calls } = await runSweep({
+			stored: makeStoredConfig({ meetingVoiceChannelId: null }),
+			homebaseChildren: [existingRoom],
+		});
+
+		expect(calls).toHaveLength(0);
+		expect(existingRoom.send).not.toHaveBeenCalled();
+		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", { meetingVoiceChannelId: "v-existing" });
+	});
+
+	it("does NOT adopt a TEXT channel that merely carries the room's name", async () => {
+		// Adopting it would persist a text channel id under a voice field, and the
+		// sweep would never build the real room.
+		const impostor = Object.create(TextChannel.prototype) as TextChannel;
+		Object.assign(impostor, { id: "t-impostor", name: packChannels.meetingVoice });
+		const { calls } = await runSweep({
+			stored: makeStoredConfig({ meetingVoiceChannelId: null }),
+			homebaseChildren: [impostor],
+		});
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].type).toBe(ChannelType.GuildVoice);
+		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", { meetingVoiceChannelId: `new-${packChannels.meetingVoice}` });
+	});
+
+	// ── drift rename ────────────────────────────────────────────────────
+
+	async function runRename(stored: Record<string, unknown>, rooms: Record<string, unknown>) {
+		guildConfigMock.findByGuildId.mockResolvedValue(stored);
+		const client = makeClient({ selfId: BOT_ID, fetchChannel: async (id) => rooms[id] ?? null });
+		await GuildSetupManager.renameDriftedChannels(client, { id: "guild-1" } as unknown as Guild);
+	}
+
+	it("renames a drifted voice room back to its pack default", async () => {
+		const room = makeVoiceRoom("ch-meetingvoice", "old-hall");
+		await runRename(makeStoredConfig(), { "ch-meetingvoice": room });
+		expect(room.setName).toHaveBeenCalledWith(packChannels.meetingVoice);
+	});
+
+	it("keeps a /rename-channel override on a voice room, and writes nothing in steady state", async () => {
+		const renamed = makeVoiceRoom("ch-meetingvoice", "old-hall");
+		const settled = makeVoiceRoom("ch-arcadevoice", packChannels.arcadeVoice);
+		await runRename(makeStoredConfig({ channelNames: new Map([["meetingVoiceChannelId", "War Room"]]) }), {
+			"ch-meetingvoice": renamed,
+			"ch-arcadevoice": settled,
+		});
+		expect(renamed.setName).toHaveBeenCalledWith("War Room");
+		expect(settled.setName).not.toHaveBeenCalled();
+	});
+
+	// ── /setup admin grant ──────────────────────────────────────────────
+
+	it("grants the member role and then the admin role on both rooms", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig());
+		const grants: Record<string, Array<[string, Record<string, boolean>]>> = {};
+		const guild = {
+			id: "guild-1",
+			channels: {
+				fetch: vi.fn(async (id: string) => ({
+					id,
+					permissionOverwrites: {
+						create: vi.fn(async (roleId: string, perms: Record<string, boolean>) => {
+							(grants[id] ??= []).push([roleId, perms]);
+						}),
+					},
+					isTextBased: () => false,
+				})),
+			},
+		} as unknown as Guild;
+
+		await GuildSetupManager.applyAdminRole(guild, {
+			guildId: "guild-1",
+			adminRoleId: "role-admin",
+			memberRoleId: "role-member",
+			ownerId: OWNER_ID,
+		});
+
+		// Order is load bearing: create REPLACES, so an admin role that doubles as
+		// the member role must land last to keep the wider grant.
+		for (const id of ["ch-meetingvoice", "ch-arcadevoice"]) {
+			expect(grants[id], id).toEqual([
+				["role-member", { ViewChannel: true, Connect: true, Speak: true }],
+				["role-admin", { ViewChannel: true, Connect: true, Speak: true, SendMessages: true }],
+			]);
+		}
+		// The text channels still get the admin role only.
+		expect(grants["ch-announcements"]).toEqual([["role-admin", { ViewChannel: true, SendMessages: true }]]);
+	});
+
+	// ── intro sweep ─────────────────────────────────────────────────────
+
+	it("never fetches a voice room during the intro sweep, so it logs no wrong type warning", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ introMessageIds: {} }));
+		const client = makeClient({ selfId: BOT_ID, fetchChannel: async () => null });
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+		await GuildSetupManager.refreshIntroEmbeds(client, { id: "guild-1", ownerId: OWNER_ID, client: { user: { id: BOT_ID } } } as unknown as Guild);
+
+		const fetchedIds = (client.channels.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0]);
+		expect(fetchedIds).not.toContain("ch-meetingvoice");
+		expect(fetchedIds).not.toContain("ch-arcadevoice");
+		const warned = warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
+		expect(warned).not.toContain(packChannels.meetingVoice);
+		expect(warned).not.toContain(packChannels.arcadeVoice);
+		warnSpy.mockRestore();
+	});
+
+	it("resolves no intro for exactly the voice specs", () => {
+		// The intro sweep, the repair path and the anchor map all read "no intro"
+		// from this null, so it has to line up with the spec kind one for one.
+		const internals = GuildSetupManager as unknown as {
+			resolveIntroEmbed(field: string, guild: Guild, adminRoleId: string | null): unknown;
+		};
+		const guild = { ownerId: OWNER_ID } as unknown as Guild;
+		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+			const hasIntro = internals.resolveIntroEmbed(spec.configField, guild, null) !== null;
+			expect(hasIntro, spec.configField).toBe(spec.kind !== "voice");
+		}
 	});
 });

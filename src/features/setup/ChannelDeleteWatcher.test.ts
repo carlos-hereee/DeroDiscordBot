@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TextChannel, CategoryChannel, ChannelType, Events } from "discord.js";
+import { TextChannel, VoiceChannel, CategoryChannel, ChannelType, Events } from "discord.js";
 import type { Client, Guild } from "discord.js";
 
 // Mock the guild config store before importing the unit under test. Same
@@ -585,6 +585,9 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			// The two under 🎮 ARCADE GAMES. CHANNEL_SPECS now spans TWO categories.
 			"arcadeRulesChannelId",
 			"arcadeChallengesChannelId",
+			// The two voice rooms, one per category (2026-10 item 235).
+			"meetingVoiceChannelId",
+			"arcadeVoiceChannelId",
 		];
 		const actualFields = GuildSetupManager.CHANNEL_SPECS.map((s) => s.configField);
 		expect(actualFields.sort()).toEqual(expectedFields.sort());
@@ -600,8 +603,10 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 				.map((s) => s.configField)
 				.sort();
 
-		expect(byCategory("gamesCategoryId")).toEqual(["arcadeChallengesChannelId", "arcadeRulesChannelId"]);
-		expect(byCategory("categoryId")).toHaveLength(8);
+		expect(byCategory("gamesCategoryId")).toEqual(["arcadeChallengesChannelId", "arcadeRulesChannelId", "arcadeVoiceChannelId"]);
+		// Eight text channels plus the 🏛️ Meeting Hall voice room.
+		expect(byCategory("categoryId")).toHaveLength(9);
+		expect(byCategory("categoryId")).toContain("meetingVoiceChannelId");
 		// No spec may be left unfiled, which a typo in the union would otherwise
 		// produce silently.
 		expect(byCategory("categoryId").length + byCategory("gamesCategoryId").length).toBe(GuildSetupManager.CHANNEL_SPECS.length);
@@ -610,5 +615,85 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 	it("marks the admin channel and the admin command center as kind 'admin'", () => {
 		const adminEntries = GuildSetupManager.CHANNEL_SPECS.filter((s) => s.kind === "admin");
 		expect(adminEntries.map((s) => s.configField).sort()).toEqual(["adminChannelId", "adminCommandsChannelId"].sort());
+	});
+
+	it("marks exactly the two voice rooms as kind 'voice'", () => {
+		const voiceEntries = GuildSetupManager.CHANNEL_SPECS.filter((s) => s.kind === "voice");
+		expect(voiceEntries.map((s) => s.configField).sort()).toEqual(["arcadeVoiceChannelId", "meetingVoiceChannelId"]);
+	});
+});
+
+// ── the voice rooms, realtime half (2026-10 item 235) ──────────────────────
+// The watcher has no voice code of its own: it resolves the parent from the
+// spec's categoryField and hands off to repairOneChannel. These pin that a
+// deleted room comes back as a VOICE channel, under its own category, with
+// nothing posted into it and no intro anchor written.
+describe("ChannelDeleteWatcher, voice rooms", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		__resetRepairCooldownsForTests();
+		gameRoomMock.findByChannelId.mockResolvedValue(null);
+		guildConfigMock.update.mockResolvedValue(undefined);
+	});
+
+	const voiceConfig = () =>
+		makeStoredConfig({
+			gamesCategoryId: "games-cat-1",
+			meetingVoiceChannelId: "ch-meetingvoice",
+			arcadeVoiceChannelId: "ch-arcadevoice",
+			memberRoleId: "role-member",
+		});
+
+	async function deleteRoom(deletedId: string, name: string) {
+		guildConfigMock.findByGuildId.mockResolvedValue(voiceConfig());
+		const adminChannel = makeAdminChannel("ch-admin");
+		const captured = makeClientCapturing({
+			selfId: "bot-1",
+			channelFetchMap: { "ch-admin": adminChannel, "ch-schedule": makeScheduleChannel("bot-1") },
+		});
+		registerChannelDeleteWatcher(captured.client);
+
+		const createCalls: Array<{ name: string; type: number; parent?: string; permissionOverwrites?: Array<{ id: string }> }> = [];
+		const created: Array<{ send: ReturnType<typeof vi.fn> }> = [];
+		const guild = makeGuild({
+			categoryFetchMap: { "cat-1": makeCategory("cat-1"), "games-cat-1": makeCategory("games-cat-1") },
+			createHandler: async (opts) => {
+				const options = opts as { name: string; type: number; parent?: string };
+				createCalls.push(options);
+				const room = Object.create(VoiceChannel.prototype) as VoiceChannel & { send: ReturnType<typeof vi.fn> };
+				Object.assign(room, { id: `new-${options.name}`, send: vi.fn() });
+				created.push(room);
+				return room;
+			},
+		});
+
+		await captured.handler!({ id: deletedId, name, guild, type: ChannelType.GuildVoice });
+		return { createCalls, created, adminChannel };
+	}
+
+	it("rebuilds a deleted Meeting Hall as a voice room under the homebase, posting nothing into it", async () => {
+		const { createCalls, created, adminChannel } = await deleteRoom("ch-meetingvoice", rokCommanderCopy.setup.channels.meetingVoice);
+
+		expect(createCalls).toHaveLength(1);
+		expect(createCalls[0]).toMatchObject({
+			name: rokCommanderCopy.setup.channels.meetingVoice,
+			type: ChannelType.GuildVoice,
+			parent: "cat-1",
+		});
+		// The stored member role reaches the rebuilt room (owner decision D3).
+		expect(createCalls[0].permissionOverwrites?.map((entry) => entry.id)).toContain("role-member");
+		expect(created[0].send).not.toHaveBeenCalled();
+		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", {
+			meetingVoiceChannelId: `new-${rokCommanderCopy.setup.channels.meetingVoice}`,
+		});
+		// The admin channel still gets the usual restored notice.
+		expect(adminChannel.send).toHaveBeenCalledOnce();
+	});
+
+	it("rebuilds a deleted Arcade Lounge under the ARCADE category", async () => {
+		const { createCalls } = await deleteRoom("ch-arcadevoice", rokCommanderCopy.setup.channels.arcadeVoice);
+
+		expect(createCalls).toHaveLength(1);
+		expect(createCalls[0]).toMatchObject({ type: ChannelType.GuildVoice, parent: "games-cat-1" });
 	});
 });

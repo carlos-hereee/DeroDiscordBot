@@ -73,6 +73,31 @@ describe("GuildConfig declares the ARCADE GAMES category fields", () => {
 	});
 });
 
+// ── the two managed voice rooms (2026-10 item 235) ──
+// Same exposure as the arcade ids above: an undeclared path is stripped from the repair
+// sweep's $set in silence, the stored id reads back null on the next boot, and the sweep
+// then builds a SECOND room beside the first, on every boot, in every guild.
+describe("GuildConfig declares the two voice room ids", () => {
+	const VOICE_PATHS = ["meetingVoiceChannelId", "arcadeVoiceChannelId"];
+
+	it("round trips both ids and defaults them to null so legacy rows load", () => {
+		const doc = new GuildConfigModel({ ...baseRow, meetingVoiceChannelId: "v-meeting", arcadeVoiceChannelId: "v-lounge" });
+		const plain = doc.toObject() as Record<string, unknown>;
+		expect(plain.meetingVoiceChannelId).toBe("v-meeting");
+		expect(plain.arcadeVoiceChannelId).toBe("v-lounge");
+
+		const legacy = new GuildConfigModel(baseRow);
+		for (const path of VOICE_PATHS) expect(legacy.get(path), `${path} default`).toBeNull();
+	});
+
+	it("exposes each id as a real String schema path", () => {
+		for (const path of VOICE_PATHS) {
+			expect(GuildConfigModel.schema.path(path), `${path} is not declared`).toBeDefined();
+			expect(GuildConfigModel.schema.path(path).instance).toBe("String");
+		}
+	});
+});
+
 describe("GuildConfig declares the ARCADE GAMES intro anchors inside introMessageIds", () => {
 	it("round trips both anchor ids through the subdocument", () => {
 		// The failure this guards is not a missing id, it is an infinite repost: refreshIntroEmbeds

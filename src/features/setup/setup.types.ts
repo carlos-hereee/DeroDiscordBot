@@ -42,10 +42,15 @@ export interface ICreatedChannels {
 	gamesCategoryId: string;
 	arcadeRulesChannelId: string;
 	arcadeChallengesChannelId: string;
+	// ── the two voice rooms (2026-10 item 235), one under each category ──
+	meetingVoiceChannelId: string;
+	arcadeVoiceChannelId: string;
 }
 
 // live channel objects returned from createChannels
-// passed directly to populateChannels so we don't re-fetch from Discord
+// passed directly to populateChannels so we don't re-fetch from Discord.
+// The two voice rooms are absent on purpose: populateChannels posts nothing
+// to them, so only their ids (ICreatedChannels) travel on.
 export interface IChannelObjects {
 	introChannel: TextChannel;
 	commandsChannel: TextChannel;

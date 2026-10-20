@@ -73,6 +73,16 @@ const guildConfigSchema = new Schema(
 		arcadeRulesChannelId: { type: String, required: false, default: null },
 		arcadeChallengesChannelId: { type: String, required: false, default: null },
 
+		// ── the two managed VOICE rooms (2026-10 item 235) ──
+		// 🏛️ Meeting Hall under the homebase category and 🎮 Arcade Lounge under the
+		// arcade category. Plain voice channels: nothing listens in them, and they
+		// are deliberately NOT written to DeroVoiceConfig.allowedVoiceChannelIds.
+		// Nullable for the same reason as the arcade ids above, so legacy rows load
+		// and the boot sweep reads null as "missing, build it". They have no
+		// introMessageIds slot, because no intro is ever posted in a voice room.
+		meetingVoiceChannelId: { type: String, required: false, default: null },
+		arcadeVoiceChannelId: { type: String, required: false, default: null },
+
 		// id of the pinned message inside scheduleChannelId that ScheduleBoard
 		// keeps up to date. null until autoSetup finishes posting the intro,
 		// at which point this is populated and every subsequent refresh edits

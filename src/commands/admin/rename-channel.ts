@@ -5,6 +5,7 @@ import {
 	PermissionFlagsBits,
 	MessageFlags,
 	TextChannel,
+	VoiceChannel,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
@@ -60,6 +61,11 @@ export const SLOT_LABELS: ReadonlyArray<{ label: string; configField: string }> 
 	// honors a stored override across rebuilds.
 	{ label: "Arcade rules", configField: "arcadeRulesChannelId" },
 	{ label: "Challenge board", configField: "arcadeChallengesChannelId" },
+	// ── the two voice rooms (2026-10 item 235) ──
+	// Renameable like every other managed channel; the drift sweep and the
+	// repair path both honor the stored override for a voice room too.
+	{ label: "Meeting Hall voice room", configField: "meetingVoiceChannelId" },
+	{ label: "Arcade Lounge voice room", configField: "arcadeVoiceChannelId" },
 ];
 const VALID_SLOTS = new Set(SLOT_LABELS.map((s) => s.configField));
 
@@ -174,7 +180,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	}
 
 	const channel = await interaction.guild?.channels.fetch(channelId).catch(() => null);
-	if (!channel || !(channel instanceof TextChannel)) {
+	// The two voice rooms are the only managed slots that are not text channels.
+	if (!channel || !(channel instanceof TextChannel || channel instanceof VoiceChannel)) {
 		await interaction.reply({
 			embeds: [
 				errorEmbed("Could not find the live channel. It may have been deleted; let auto-heal rebuild it, then try again."),

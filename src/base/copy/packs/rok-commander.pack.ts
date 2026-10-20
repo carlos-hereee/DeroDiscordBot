@@ -332,6 +332,14 @@ export const rokCommanderCopy = {
 			// started, so a member who cannot see them cannot play at all.
 			arcadeRules: "📋arcade-rules",
 			arcadeChallenges: "⚔️challenges",
+			// ── the two VOICE rooms, one per managed category ───────────
+			// Plain voice channels, groundwork for a later meeting notes feature:
+			// nothing listens in either, and neither is on Dero's voice allowlist
+			// (that stays an admin choice via /dero-config). Spaces and capitals are
+			// deliberate, because Discord keeps them in a voice channel name, unlike a
+			// text channel name, which it lowercases and dashes. 2026-10 item 235.
+			meetingVoice: "🏛️ Meeting Hall",
+			arcadeVoice: "🎮 Arcade Lounge",
 		},
 	},
 

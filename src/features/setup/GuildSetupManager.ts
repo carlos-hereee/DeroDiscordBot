@@ -6,6 +6,7 @@ import {
 	GuildChannel,
 	Client,
 	TextChannel,
+	VoiceChannel,
 	DiscordAPIError,
 	ActionRowBuilder,
 	ButtonBuilder,
@@ -114,6 +115,56 @@ export class GuildSetupManager {
 		// is pure, and reaching in here would drag the stores and copy packs into it).
 		// This wrapper stays because every call site here has a Guild and not a bot id.
 		return buildBotSelfOverwrite(guild.client.user!.id);
+	}
+
+	// ── voice room overwrites (2026-10 item 235) ──────────────────
+	// The ONE posture both voice rooms get, from createChannels and from
+	// buildSingleChannel alike, so the create path and the repair path cannot
+	// drift (the text overwrites ARE duplicated between those two today; that is
+	// known debt and deliberately not copied a third time here).
+	//
+	// Owner decision D3, member role only: @everyone sees the room but cannot
+	// connect or speak, and the member role, the owner and the admin role can.
+	// Until /setup names a member role (a fresh install, or a legacy row with
+	// none) only the owner and the admin role can join, which is the intended
+	// reading of "members only" rather than a gap.
+	//
+	// The bot's own entry adds Connect and Speak on top of the shared self
+	// overwrite. Without them the @everyone Connect deny reaches the bot through
+	// its @everyone membership, and an admin who later allowlists a room through
+	// /dero-config would get a join that silently waits out its timeout. Holding
+	// the bit listens to nothing: these rooms are never added to the voice
+	// allowlist here, and hearing anyone is gated by the voice feature itself.
+	private static voiceOverwrites(
+		guild: Guild,
+		ownerId: string,
+		roles: { memberRoleId: string | null; adminRoleId: string | null }
+	): Array<{ id: string; allow: bigint[]; deny?: bigint[] }> {
+		const joinAndSpeak = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak];
+		const bot = GuildSetupManager.botSelfOverwrite(guild);
+		const overwrites: Array<{ id: string; allow: bigint[]; deny?: bigint[] }> = [
+			{
+				id: guild.roles.everyone.id,
+				allow: [PermissionFlagsBits.ViewChannel],
+				deny: [PermissionFlagsBits.Connect, PermissionFlagsBits.Speak],
+			},
+			{ id: bot.id, allow: [...bot.allow, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak] },
+			{ id: ownerId, allow: joinAndSpeak },
+		];
+
+		// Replace, never append, when an id is already present. The /setup role
+		// picker accepts @everyone as the member role, and that choice has to
+		// REPLACE the Connect deny above (opening the room) rather than sit beside
+		// it as a second overwrite with the same id. Likewise an admin role that
+		// doubles as the member role ends on the wider admin grant.
+		const grant = (id: string, allow: bigint[]): void => {
+			const index = overwrites.findIndex((entry) => entry.id === id);
+			if (index === -1) overwrites.push({ id, allow });
+			else overwrites[index] = { id, allow };
+		};
+		if (roles.memberRoleId) grant(roles.memberRoleId, joinAndSpeak);
+		if (roles.adminRoleId) grant(roles.adminRoleId, [...joinAndSpeak, PermissionFlagsBits.SendMessages]);
+		return overwrites;
 	}
 
 	// ── Phase 1: auto-construct on join / restart ─────────────
@@ -231,7 +282,12 @@ export class GuildSetupManager {
 		const gamesCategory = await GuildSetupManager.resolveOrCreateArcadeCategory(guild, storedArcadeId, config.ownerId);
 		if (!gamesCategory) return;
 
-		const { ids, objects } = await GuildSetupManager.createChannels(guild, category, gamesCategory, config);
+		// The voice rooms are the one posture that names a role (owner decision D3,
+		// member role only), so a forced rebuild of a guild that already ran /setup
+		// threads its stored roles through and the rebuilt rooms open to members at
+		// once instead of waiting for /setup to run again. Both null on a fresh install.
+		const storedRoles = { memberRoleId: existing?.memberRoleId ?? null, adminRoleId: existing?.adminRoleId ?? null };
+		const { ids, objects } = await GuildSetupManager.createChannels(guild, category, gamesCategory, config, storedRoles);
 		const { scheduleMessageId, introMessageIds } = await GuildSetupManager.populateChannels(objects);
 
 		// What: persist the freshly built channel ids.
@@ -282,6 +338,9 @@ export class GuildSetupManager {
 			gamesCategoryId: ids.gamesCategoryId,
 			arcadeRulesChannelId: ids.arcadeRulesChannelId,
 			arcadeChallengesChannelId: ids.arcadeChallengesChannelId,
+			// ── the two voice rooms (2026-10 item 235) ──
+			meetingVoiceChannelId: ids.meetingVoiceChannelId,
+			arcadeVoiceChannelId: ids.arcadeVoiceChannelId,
 			// v1.5.1 item 9: clear any previously-tracked permission failure
 			// so a guild that recovered from missing-permissions state stops
 			// being on the auto-leave countdown. Safe to set unconditionally
@@ -618,6 +677,11 @@ export class GuildSetupManager {
 		// from position in this array.
 		"arcadeRulesChannelId",
 		"arcadeChallengesChannelId",
+		// ── the two VOICE rooms, one under each category (2026-10 item 235) ──
+		// They widen the resolveIntroEmbed switch like every other field, and
+		// resolve to null there, because a voice room carries no intro.
+		"meetingVoiceChannelId",
+		"arcadeVoiceChannelId",
 	] as const;
 
 	// exported so ChannelDeleteWatcher can map a deleted channel id to its
@@ -625,7 +689,11 @@ export class GuildSetupManager {
 	static readonly CHANNEL_SPECS: Array<{
 		configField: (typeof GuildSetupManager.CHANNEL_FIELDS)[number];
 		displayName: string;
-		kind: "public" | "admin";
+		// "voice" builds a GuildVoice room with voiceOverwrites and no intro; the
+		// other two build text channels. One table for all three, so the repair
+		// sweep, the delete watcher, the drift rename, the admin grant and self
+		// destruct reach a voice room through the same walk as everything else.
+		kind: "public" | "admin" | "voice";
 		// ⚠️ REQUIRED ON PURPOSE, and that is the entire mitigation for risk R2.
 		// There are TWO managed categories now, and every consumer that builds or
 		// repairs a channel has to know which parent it belongs under. An optional
@@ -675,6 +743,16 @@ export class GuildSetupManager {
 		// distinction to avoid rebuilding a deleted room as a managed channel.
 		{ configField: "arcadeRulesChannelId", displayName: channels.arcadeRules, kind: "public", categoryField: "gamesCategoryId" },
 		{ configField: "arcadeChallengesChannelId", displayName: channels.arcadeChallenges, kind: "public", categoryField: "gamesCategoryId" },
+
+		// ── the two VOICE rooms (2026-10 item 235) ──
+		// ⚠️ THESE ARM THE BOOT REPAIR SWEEP for every existing guild, by the owner's
+		// decision D1: a legacy row loads both ids as null, the sweep reads null as
+		// case ③ "missing, build it", and both rooms appear on the next boot, the
+		// same way the arcade channels arrived. Each is filed under its own
+		// category, which only categoryField and the spec test can enforce.
+		// Plain voice channels, groundwork for meeting notes: nothing listens.
+		{ configField: "meetingVoiceChannelId", displayName: channels.meetingVoice, kind: "voice", categoryField: "categoryId" },
+		{ configField: "arcadeVoiceChannelId", displayName: channels.arcadeVoice, kind: "voice", categoryField: "gamesCategoryId" },
 	];
 
 	// ── intro content resolver ────────────────────────────────
@@ -683,7 +761,9 @@ export class GuildSetupManager {
 	//       guilds get the populated admin welcome instead of the placeholder.
 	// Who:  repairOneChannel. Also usable by the realtime watcher.
 	// How:   plain switch on configField so a future spec addition becomes
-	//        a compile error here until the case is added.
+	//        a compile error here until the case is added. null means the
+	//        channel carries no intro at all (the two voice rooms), and every
+	//        caller skips its intro work on null.
 	private static resolveIntroEmbed(
 		field: (typeof GuildSetupManager.CHANNEL_FIELDS)[number],
 		guild: Guild,
@@ -692,7 +772,7 @@ export class GuildSetupManager {
 		// refreshIntroEmbeds) pass it so a non-ROK guild renders neutral intros;
 		// undefined falls back to the rok-commander default (correct on first build).
 		guildConfig?: ICopyConfig | null
-	): EmbedBuilder {
+	): EmbedBuilder | null {
 		switch (field) {
 			case "introChannelId":
 				return ChannelContent.introduction(guildConfig);
@@ -730,6 +810,13 @@ export class GuildSetupManager {
 				return ChannelContent.arcadeRulesIntro(guildConfig);
 			case "arcadeChallengesChannelId":
 				return ChannelContent.arcadeChallengesIntro(guildConfig);
+			// ── the voice rooms ──
+			// No intro. A voice room's built in text chat is where people talk
+			// during a call, and a pinned bot card there would be the first thing
+			// every caller scrolls past; nothing in the plan calls for one.
+			case "meetingVoiceChannelId":
+			case "arcadeVoiceChannelId":
+				return null;
 		}
 	}
 
@@ -910,9 +997,12 @@ export class GuildSetupManager {
 	//        applied so the caller can pass it into postRepairNotices without
 	//        a second DB read. Callers must NOT reuse the `stored` they
 	//        passed in, fields will be stale.
-	// How:   ① buildSingleChannel with the spec's kind + the known adminRoleId.
+	// How:   ① buildSingleChannel with the spec's kind + the known adminRoleId
+	//           (and memberRoleId, which only a voice room reads).
 	//        ② fire-and-forget the intro embed. failures are logged and
-	//           swallowed because the channel is already functional.
+	//           swallowed because the channel is already functional. A voice
+	//           room has no intro, so it skips this step and its repair leaves
+	//           introMessageIds untouched.
 	//        ③ persist: { [configField]: newChannel.id } plus, for the
 	//           schedule channel, scheduleMessageId: null so ScheduleBoard
 	//           reposts a fresh pinned board on its next refresh.
@@ -923,7 +1013,7 @@ export class GuildSetupManager {
 		category: CategoryChannel,
 		spec: (typeof GuildSetupManager.CHANNEL_SPECS)[number],
 		stored: Record<string, unknown> & { adminRoleId?: string | null }
-	): Promise<{ newChannel: TextChannel; stored: typeof stored }> {
+	): Promise<{ newChannel: TextChannel | VoiceChannel; stored: typeof stored }> {
 		// ── adopt-before-build guard ───────────────────────────────
 		// What:  before creating a brand new channel, scan the category
 		//        for an existing text channel whose name matches this
@@ -964,43 +1054,95 @@ export class GuildSetupManager {
 				: (channelNamesRaw as Record<string, string> | undefined)?.[spec.configField];
 		const effectiveName = overrideName || spec.displayName;
 
+		// Adopt only a channel of the KIND this spec builds. A text channel an admin
+		// happened to name "🏛️ Meeting Hall" is not the voice room, and adopting it
+		// would persist a text channel id under a voice field.
+		const isExpectedType = (child: unknown): child is TextChannel | VoiceChannel =>
+			spec.kind === "voice" ? child instanceof VoiceChannel : child instanceof TextChannel;
 		const existingByName = category.children.cache.find(
-			(child): child is TextChannel => child instanceof TextChannel && child.name === effectiveName
+			(child): child is TextChannel | VoiceChannel => isExpectedType(child) && child.name === effectiveName
 		);
+		// Read defensively: the caller's row type carries an index signature, so
+		// a narrow here is cheaper than widening every caller's cast.
+		const memberRoleId = typeof stored.memberRoleId === "string" ? stored.memberRoleId : null;
 		const newChannel = existingByName
 			? existingByName
-			: await GuildSetupManager.buildSingleChannel(guild, category, effectiveName, spec.kind, stored.adminRoleId ?? null);
+			: await GuildSetupManager.buildSingleChannel(guild, category, effectiveName, spec.kind, stored.adminRoleId ?? null, memberRoleId);
 		if (existingByName) {
 			console.warn(LOG_MESSAGES.setup.channelAdopted(effectiveName, guild.id));
 		}
 
 		// ── intro message resolution ────────────────────────────────
-		// Two paths, merged:
-		//   A. Fresh build (!existingByName): post an intro embed,
-		//      capture the new message id. This is the historical
-		//      behavior, a newly created channel has no intro yet.
-		//   B. Adopted existing channel: scan the most recent messages
-		//      for a bot-authored embed that matches the spec's intro.
-		//      If found, reuse its id, DO NOT post a duplicate. If not
-		//      found (eg. the existing channel was emptied by an admin),
-		//      fall through to the same post-a-fresh-intro path as A so
-		//      the adopted channel still ends up with the pinned intro.
-		//
-		// Why the scan only looks at the latest ~20 messages: a stray
-		// intro embed further back in history is rare (bot is the only
-		// author in its own homebase channels) and the scan is cheap.
-		// If the adopted channel has 500 messages from a prior setup
-		// cycle, we accept that a very old intro won't be adopted, the
-		// fresh one we post beneath it is correct, and the historical
-		// one is just harmless scrollback. Most guilds hitting this
-		// branch have NO messages (the channel was just created but
-		// never had its id persisted).
-		let introMessageId: string | null = null;
-		const introEmbed = GuildSetupManager.resolveIntroEmbed(spec.configField, guild, stored.adminRoleId ?? null, stored as unknown as ICopyConfig);
+		// postOrAdoptRepairIntro carries the post or adopt rules. A null embed
+		// means this channel has no intro (a voice room) and nothing is posted.
+		const introEmbed =GuildSetupManager.resolveIntroEmbed(spec.configField, guild, stored.adminRoleId ?? null, stored as unknown as ICopyConfig);
+		const introMessageId = introEmbed
+			? await GuildSetupManager.postOrAdoptRepairIntro(guild, newChannel, spec, introEmbed, Boolean(existingByName))
+			: null;
+
+		// persist new ids. three pieces move together on a repair:
+		//   - spec.configField → new channel id
+		//   - introMessageIds[spec.configField] → new intro message id (or
+		//     null if the intro post failed; refreshIntroEmbeds will repost
+		//     on the next boot)
+		//   - scheduleMessageId → the fresh pinned board anchor if this was
+		//     the schedule channel, else left alone.
+		// The prior introMessageIds sub fields are preserved by merging onto
+		// whatever the caller passed in.
+		const priorIntroIds =
+			(stored.introMessageIds as Record<string, string | null> | undefined) ?? {};
+		const nextIntroIds: Record<string, string | null> = { ...priorIntroIds, [spec.configField]: introMessageId };
+
+		const update: Record<string, unknown> = { [spec.configField]: newChannel.id };
+		// A channel with no intro (a voice room) has no introMessageIds slot, so
+		// its repair leaves the map exactly as it was.
+		if (introEmbed) update.introMessageIds = nextIntroIds;
+		if (spec.configField === "scheduleChannelId") {
+			// scheduleMessageId tracks the pinned board anchor. on a schedule
+			// channel repair the newly posted intro IS the fresh anchor.
+			update.scheduleMessageId = introMessageId;
+		}
+		await guildConfigStore.update(guild.id, update);
+		console.warn(LOG_MESSAGES.setup.channelRepaired(spec.displayName, guild.id));
+
+		// merge so caller sees the fresh ids without a second round trip.
+		return { newChannel, stored: { ...stored, ...update } };
+	}
+
+	// ── repair intro, post or adopt ───────────────────────────
+	// The intro half of repairOneChannel, split out so a channel that carries no
+	// intro (a voice room) skips it with one guard instead of another nesting
+	// level. Returns the intro message id, or null when the post failed, which
+	// refreshIntroEmbeds treats as "repost on the next boot".
+	//
+	// Two paths, merged:
+	//   A. Fresh build (!adoptedExisting): post an intro embed, capture the new
+	//      message id. A newly created channel has no intro yet.
+	//   B. Adopted existing channel: scan the most recent messages for a
+	//      bot-authored embed that matches the spec's intro. If found, reuse its
+	//      id, DO NOT post a duplicate. If not found (eg. the existing channel was
+	//      emptied by an admin), fall through to the same post-a-fresh-intro path
+	//      as A so the adopted channel still ends up with its intro.
+	//
+	// Why the scan only looks at the latest ~20 messages: a stray intro embed
+	// further back in history is rare (bot is the only author in its own homebase
+	// channels) and the scan is cheap. If the adopted channel has 500 messages
+	// from a prior setup cycle, we accept that a very old intro won't be adopted,
+	// the fresh one we post beneath it is correct, and the historical one is just
+	// harmless scrollback. Most guilds hitting this branch have NO messages (the
+	// channel was just created but never had its id persisted).
+	private static async postOrAdoptRepairIntro(
+		guild: Guild,
+		channel: TextChannel | VoiceChannel,
+		spec: (typeof GuildSetupManager.CHANNEL_SPECS)[number],
+		introEmbed: EmbedBuilder,
+		adoptedExisting: boolean
+	): Promise<string | null> {
 		const introComponents = GuildSetupManager.resolveIntroComponents(spec.configField);
+		let introMessageId: string | null = null;
 
 		try {
-			if (existingByName) {
+			if (adoptedExisting) {
 				// Scan for an existing bot-authored intro embed with a
 				// matching title. Embed titles are stable identifiers
 				// for each intro (nextDecreeIntro → "🔜 Upcoming Events",
@@ -1009,7 +1151,7 @@ export class GuildSetupManager {
 				const selfId = guild.client.user?.id;
 				const targetTitle = introEmbed.data.title ?? null;
 
-				const recent = await newChannel.messages.fetch({ limit: 20 }).catch(() => null);
+				const recent = await channel.messages.fetch({ limit: 20 }).catch(() => null);
 				const existingIntro = recent?.find((msg) => {
 					if (!selfId || msg.author.id !== selfId) return false;
 					if (msg.embeds.length === 0) return false;
@@ -1036,7 +1178,7 @@ export class GuildSetupManager {
 			if (!introMessageId) {
 				// Fresh post path: either a brand new channel (path A
 				// above) or an adopted channel with no matching intro.
-				const introMessage = await newChannel.send({
+				const introMessage = await channel.send({
 					embeds: [introEmbed],
 					components: introComponents ?? [],
 				});
@@ -1047,34 +1189,7 @@ export class GuildSetupManager {
 		} catch (error) {
 			console.warn(LOG_MESSAGES.setup.channelRepairFailed(spec.displayName, guild.id), error);
 		}
-
-		// persist new ids. three pieces move together on a repair:
-		//   - spec.configField → new channel id
-		//   - introMessageIds[spec.configField] → new intro message id (or
-		//     null if the intro post failed; refreshIntroEmbeds will repost
-		//     on the next boot)
-		//   - scheduleMessageId → the fresh pinned board anchor if this was
-		//     the schedule channel, else left alone.
-		// The prior introMessageIds sub fields are preserved by merging onto
-		// whatever the caller passed in.
-		const priorIntroIds =
-			(stored.introMessageIds as Record<string, string | null> | undefined) ?? {};
-		const nextIntroIds: Record<string, string | null> = { ...priorIntroIds, [spec.configField]: introMessageId };
-
-		const update: Record<string, unknown> = {
-			[spec.configField]: newChannel.id,
-			introMessageIds: nextIntroIds,
-		};
-		if (spec.configField === "scheduleChannelId") {
-			// scheduleMessageId tracks the pinned board anchor. on a schedule
-			// channel repair the newly posted intro IS the fresh anchor.
-			update.scheduleMessageId = introMessageId;
-		}
-		await guildConfigStore.update(guild.id, update);
-		console.warn(LOG_MESSAGES.setup.channelRepaired(spec.displayName, guild.id));
-
-		// merge so caller sees the fresh ids without a second round trip.
-		return { newChannel, stored: { ...stored, ...update } };
+		return introMessageId;
 	}
 
 	// ── channel level self heal (boot sweep) ─────────────────
@@ -1282,7 +1397,9 @@ export class GuildSetupManager {
 			const storedId = ids[spec.configField];
 			if (!storedId) continue;
 			const channel = await client.channels.fetch(storedId).catch(() => null);
-			if (!(channel instanceof TextChannel)) continue;
+			// Both kinds rename the same way; the voice rooms are the only managed
+			// channels that are not text channels.
+			if (!(channel instanceof TextChannel || channel instanceof VoiceChannel)) continue;
 
 			// Mongoose Map (hydrated doc) or plain object (.lean()'d), probe both,
 			// same defensive read as repairOneChannel.
@@ -1323,9 +1440,23 @@ export class GuildSetupManager {
 		guild: Guild,
 		category: CategoryChannel,
 		name: string,
-		kind: "public" | "admin",
-		adminRoleId: string | null
-	): Promise<TextChannel> {
+		kind: "public" | "admin" | "voice",
+		adminRoleId: string | null,
+		// Read only by a voice room, the one kind whose posture names the member
+		// role (owner decision D3). The text kinds never grant it.
+		memberRoleId: string | null = null
+	): Promise<TextChannel | VoiceChannel> {
+		if (kind === "voice") {
+			// Same posture createChannels gives a fresh room, roles included, so a
+			// repaired room is indistinguishable from one /setup built.
+			return (await guild.channels.create({
+				name,
+				type: ChannelType.GuildVoice,
+				parent: category.id,
+				permissionOverwrites: GuildSetupManager.voiceOverwrites(guild, guild.ownerId, { memberRoleId, adminRoleId }),
+			})) as VoiceChannel;
+		}
+
 		// botSelfOverwrite must be in every shape, same reasoning as
 		// createChannels (which mints the initial six). Without it, a
 		// repaired public channel would silently fail to accept the bot's
@@ -1571,6 +1702,22 @@ export class GuildSetupManager {
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 			const channel = await fetchChannel(storedIds[spec.configField]);
 			if (spec.configField === "adminChannelId") adminChannel = channel;
+			if (spec.kind === "voice") {
+				// The voice rooms are the one place /setup grants the MEMBER role
+				// (owner decision D3), and this is when an existing room first opens
+				// to members. Member role first, admin role last: create REPLACES an
+				// overwrite, so an admin role that doubles as the member role has to
+				// land second to keep the wider grant, and a member role that IS
+				// @everyone replaces the room's Connect deny, opening it to all.
+				await channel?.permissionOverwrites.create(config.memberRoleId, { ViewChannel: true, Connect: true, Speak: true });
+				await channel?.permissionOverwrites.create(config.adminRoleId, {
+					ViewChannel: true,
+					Connect: true,
+					Speak: true,
+					SendMessages: true,
+				});
+				continue;
+			}
 			await channel?.permissionOverwrites.create(
 				config.adminRoleId,
 				spec.kind === "admin"
@@ -1652,8 +1799,12 @@ export class GuildSetupManager {
 		// stays a pure "build these channels under these parents" step and the
 		// 50013 handling lives in one place above.
 		gamesCategory: CategoryChannel,
-		config: ISetupConfig
+		config: ISetupConfig,
+		// Read only by the voice rooms' posture; see the call site in runAutoSetup.
+		storedRoles: { memberRoleId: string | null; adminRoleId: string | null }
 	): Promise<{ ids: ICreatedChannels; objects: IChannelObjects }> {
+		const voiceRoomOverwrites = GuildSetupManager.voiceOverwrites(guild, config.ownerId, storedRoles);
+
 		// public channels, owner can send, everyone else read-only.
 		// botSelfOverwrite required: @everyone deny SendMessages otherwise
 		// suppresses the bot's posts (intro embed, schedule board, reminders).
@@ -1713,6 +1864,8 @@ export class GuildSetupManager {
 			adminCommandsChannel,
 			arcadeRulesChannel,
 			arcadeChallengesChannel,
+			meetingVoiceChannel,
+			arcadeVoiceChannel,
 		] = await Promise.all([
 			guild.channels.create({
 				name: channels.intro,
@@ -1797,6 +1950,22 @@ export class GuildSetupManager {
 				parent: gamesCategory.id,
 				permissionOverwrites: publicOverwrites,
 			}),
+			// ── the two voice rooms, one per category (2026-10 item 235) ──
+			// Same parent rule as above: the meeting room is homebase, the lounge is
+			// arcade. Both take voiceOverwrites, the posture buildSingleChannel also
+			// uses on repair, so a rebuilt room matches a fresh one.
+			guild.channels.create({
+				name: channels.meetingVoice,
+				type: ChannelType.GuildVoice,
+				parent: category.id,
+				permissionOverwrites: voiceRoomOverwrites,
+			}),
+			guild.channels.create({
+				name: channels.arcadeVoice,
+				type: ChannelType.GuildVoice,
+				parent: gamesCategory.id,
+				permissionOverwrites: voiceRoomOverwrites,
+			}),
 		]);
 
 		return {
@@ -1813,6 +1982,8 @@ export class GuildSetupManager {
 				gamesCategoryId: gamesCategory.id,
 				arcadeRulesChannelId: arcadeRulesChannel.id,
 				arcadeChallengesChannelId: arcadeChallengesChannel.id,
+				meetingVoiceChannelId: meetingVoiceChannel.id,
+				arcadeVoiceChannelId: arcadeVoiceChannel.id,
 			},
 			objects: {
 				introChannel,
@@ -2053,7 +2224,17 @@ export class GuildSetupManager {
 			// Legacy rows load a null for any channel added after they were written.
 			// That is correct and self healing: the loop treats a null anchor as
 			// "post it once", then persists the new id.
-			...Object.fromEntries(GuildSetupManager.CHANNEL_FIELDS.map((field) => [field, storedIntroIds[field] ?? null])),
+			//
+			// Derived from the specs rather than CHANNEL_FIELDS only so the voice
+			// rooms stay out: they carry no intro, so they get no anchor slot, and
+			// introMessageIds has none for them in the schema either. Every other
+			// managed channel is still in, so the derivation keeps its guarantee.
+			...Object.fromEntries(
+				GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.kind !== "voice").map((spec) => [
+					spec.configField,
+					storedIntroIds[spec.configField] ?? null,
+				])
+			),
 			// The two FLAT keys stay explicit, because they are not a channel's own
 			// intro and so are deliberately absent from CHANNEL_FIELDS.
 			//
@@ -2072,6 +2253,13 @@ export class GuildSetupManager {
 			const channelId = stored[spec.configField] as string | null | undefined;
 			if (!channelId) continue;
 
+			// Resolved BEFORE the fetch so a channel with no intro (a voice room)
+			// is skipped quietly. Checked after the fetch instead, a voice room
+			// would fail the TextChannel test below and log a wrong type warning
+			// for every guild on every boot.
+			const embed = GuildSetupManager.resolveIntroEmbed(spec.configField, guild, stored.adminRoleId ?? null, stored as unknown as ICopyConfig);
+			if (!embed) continue;
+
 			const channel = await client.channels.fetch(channelId).catch(() => null);
 			if (!channel) {
 				console.warn(LOG_MESSAGES.setup.introRefreshChannelMissing(spec.displayName, guild.id));
@@ -2082,7 +2270,6 @@ export class GuildSetupManager {
 				continue;
 			}
 
-			const embed = GuildSetupManager.resolveIntroEmbed(spec.configField, guild, stored.adminRoleId ?? null, stored as unknown as ICopyConfig);
 			// Components (eg. the introductions channel's invite button)
 			// must be passed explicitly on send, omitting them would
 			// silently strip the invite button on every repost.

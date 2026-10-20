@@ -60,6 +60,9 @@ export const HOMEBASE_CHANNEL_FIELDS = [
 	// 🎮 ARCADE GAMES
 	"arcadeRulesChannelId",
 	"arcadeChallengesChannelId",
+	// The two voice rooms, one per category (2026-10 item 235)
+	"meetingVoiceChannelId",
+	"arcadeVoiceChannelId",
 ] as const;
 
 // Both managed categories, deleted last and in this order. Per-match ROOM
@@ -93,9 +96,9 @@ export async function showSelfDestructConfirm(interaction: SelfDestructEntry): P
 		[
 			"This DELETES **both** of the bot's categories and every channel in them, along with everything posted there.",
 			"",
-			"🪧 NOTICE BOARD: introductions, command center, leaderboard, event schedule, announcements, upcoming events, the admin channel, and the admin command center.",
+			"🪧 NOTICE BOARD: introductions, command center, leaderboard, event schedule, announcements, upcoming events, the admin channel, the admin command center, and the Meeting Hall voice room.",
 			"",
-			"🎮 ARCADE GAMES: the game rules card, the challenge board, and **any match currently in progress**.",
+			"🎮 ARCADE GAMES: the game rules card, the challenge board, the Arcade Lounge voice room, and **any match currently in progress**.",
 			"",
 			"It stays gone across restarts until you run `/setup` again. **This cannot be undone.**",
 		].join("\n"),
