@@ -197,7 +197,7 @@ describe("delivery", () => {
 
 	it("adds a line when the post was cut short", async () => {
 		const interaction = click();
-		await deliverClip(interaction, { bytes: AUDIO, format: "mp3", truncated: true });
+		await deliverClip(interaction, { guildId: "cut-guild", userId: "cut-user", voiceId: VOICE_ID, text: "A long post, cut.", truncated: true });
 		expect(lastReply(interaction).content).toBe(voiceCopy.listen.truncated);
 	});
 

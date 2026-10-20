@@ -30,6 +30,11 @@ export const voiceCopy = {
 		// Rides the clip when the post was longer than Listen reads, so the member
 		// knows the recording stops early on purpose.
 		truncated: "This post is long, so Dero read the first part.",
+		// When the clicker and Dero share a voice channel the post plays there, and
+		// the private reply only says where.
+		playingInCall: (channelId: string): string => `Playing in <#${channelId}> now.`,
+		callQueueFull: "Dero has too much to say in the call right now. Try Listen again in a moment.",
+		callEnded: "Dero left the call before this could play. Press Listen again for a private copy.",
 	},
 
 	// ── voice calls: /dero join and /dero leave, and what Dero posts in text ──
@@ -77,6 +82,14 @@ export const voiceCopy = {
 		reconnectFailed: (channelId: string, attempts: number): string =>
 			`Dero lost the connection to <#${channelId}> and could not get back in after ${attempts} tries, so Dero left the call.`,
 		removed: (channelId: string): string => `Dero was removed from <#${channelId}>, so the call has ended.`,
+		moved: (channelId: string): string => `Dero was moved out of <#${channelId}>, so the call has ended.`,
+		channelDeleted: "The voice channel Dero was in was deleted, so the call has ended.",
+		idleLeft: (channelId: string, minutes: number): string =>
+			`Dero left <#${channelId}> because no allowed member was in the call for ${minutes} minutes.`,
+		switchedOff: (channelId: string): string => `Dero's voice was switched off, so Dero left <#${channelId}>.`,
+
+		// One line of /dero status. The other half is notInCall above.
+		statusInCall: (channelId: string): string => `Dero is in a voice call in <#${channelId}>.`,
 	},
 
 	// ── /dero-config, admin facing ──
@@ -136,6 +149,8 @@ export const voiceCopy = {
 		disabledBody:
 			"No speech call is sent and Listen buttons stop answering. Every setting is kept, so enable brings it back exactly as it was.",
 		alreadyDisabled: "Dero's voice is already OFF. No change made.",
+		// Added under the disable or cap 0 reply when a live call ended with it.
+		leftCall: (channelId: string): string => `Dero also left the voice call in <#${channelId}>.`,
 
 		voiceInvalid: (min: number, max: number): string =>
 			`That does not look like a voice id. Paste the id from ElevenLabs: ${min} to ${max} letters and digits, nothing else.`,

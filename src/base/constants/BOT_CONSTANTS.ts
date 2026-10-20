@@ -261,6 +261,10 @@ export const BOT_CONSTANTS = {
 	// Per guild, counted from every join ATTEMPT (not only a successful one),
 	// because each attempt costs gateway voice traffic whether or not it connects.
 	DERO_VOICE_JOIN_COOLDOWN_MS: 10_000,
+	// Dero leaves this long after the last authorized member left its call (Phase
+	// 3a Part B). Long enough to survive a member's reconnect or a quick channel
+	// hop, short enough that an empty call does not keep a voice session open.
+	DERO_VOICE_IDLE_LEAVE_MS: 120_000,
 
 	// ── dero brain ───────────────────────────────────────────────
 	// What:  the limits of the link between the bot (the body) and the launcher's

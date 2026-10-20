@@ -28,8 +28,8 @@ import { voiceCopy } from "@features/voice/voiceCopy.js";
 // What:  the text path to Dero's brain and Dero's way into a voice call. `tell`
 //        hands an authorized member's task to the launcher's local Dero and
 //        carries out the typed actions it answers with; `status` says whether
-//        the brain is online; `join` and `leave` bring Dero into the caller's
-//        voice channel and send it out again.
+//        the brain is online and where Dero is in a call; `join` and `leave`
+//        bring Dero into the caller's voice channel and send it out again.
 // Who:   any member may run it. Only the guild owner and members holding an
 //        allowlisted role get a job made, or move Dero in or out of a call (the
 //        authorizer); everyone else is refused before anything happens.
@@ -211,6 +211,11 @@ async function tell(interaction: ChatInputCommandInteraction): Promise<void> {
 
 async function status(interaction: ChatInputCommandInteraction): Promise<void> {
 	const lines = [brainQueue.isBrainOnline() ? deroBrainCopy.status.online : deroBrainCopy.status.offline];
+
+	// Shown to every member: anyone in the server can already see Dero sitting
+	// in a voice channel, so where it is reveals nothing new.
+	const callChannelId = interaction.guildId ? voiceSessions.get(interaction.guildId)?.channelId : undefined;
+	lines.push(callChannelId ? callCopy.statusInCall(callChannelId) : callCopy.notInCall);
 
 	// Whether YOU may give tasks is shown only to members who may: a refused
 	// member learns that from /dero tell, and the list itself is never shown.

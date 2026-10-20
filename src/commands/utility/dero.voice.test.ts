@@ -110,7 +110,7 @@ describe("checkJoin, the /dero join gates", () => {
 
 let guildCounter = 0;
 
-function interactionFor(sub: "join" | "leave", options: { roles?: string[]; inVoice?: boolean; guildId?: string } = {}) {
+function interactionFor(sub: "join" | "leave" | "status", options: { roles?: string[]; inVoice?: boolean; guildId?: string } = {}) {
 	// A fresh guild per call unless a test pins one, so the module level join
 	// cooldown (keyed by guild) never leaks from one test into the next.
 	const guildId = options.guildId ?? `guild-${++guildCounter}`;
@@ -237,5 +237,20 @@ describe("/dero leave", () => {
 		await execute(interaction);
 		expect(textOf(reply)).toContain(call.notInCall);
 		expect(mocks.sessionLeave).not.toHaveBeenCalled();
+	});
+});
+
+describe("/dero status", () => {
+	it("says where Dero is in a call, to any member", async () => {
+		mocks.sessionGet.mockReturnValue({ channelId: VC });
+		const { interaction, reply } = interactionFor("status", { roles: [] });
+		await execute(interaction);
+		expect(textOf(reply)).toContain(call.statusInCall(VC));
+	});
+
+	it("says Dero is not in a call when there is none", async () => {
+		const { interaction, reply } = interactionFor("status");
+		await execute(interaction);
+		expect(textOf(reply)).toContain(call.notInCall);
 	});
 });

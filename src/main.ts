@@ -42,6 +42,7 @@ import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
 import { registerListenHandlers } from "@features/voice/listenHandler.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
+import { registerVoiceSessionWatchers } from "@features/voice/voiceSessionWatchers.js";
 import { registerGreeter, ensureIntroChannelsWritable } from "@features/greeter/welcomeNewMember.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
@@ -557,6 +558,13 @@ process.on("uncaughtException", (err) => {
 		// as abandoned), with a system line in the room saying why. Rides
 		// the same GuildMembers intent the greeter needs.
 		registerGameRoomMemberRemoveWatcher(client);
+
+		// ── Dero voice call watchers ──────────────────────────────
+		// Ends a call two minutes after the last member allowed to give Dero
+		// tasks left it, and at once when Dero is moved, kicked or its channel is
+		// deleted. A VoiceStateUpdate listener beside ActivityTracker's on
+		// purpose; see the header of voiceSessionWatchers.ts.
+		registerVoiceSessionWatchers(client);
 
 		// ── new-member greeter ────────────────────────────────────
 		// Attach the guildMemberAdd listener so new joins get welcomed (ping +

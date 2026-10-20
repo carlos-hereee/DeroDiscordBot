@@ -13,11 +13,12 @@ import type { BrainActionType } from "./brainTypes.js";
 //
 // House rule for every string below: no dashes in user-facing copy.
 
-// What each not yet built action says, so a stub never reads as a success.
-const NOT_AVAILABLE_YET: Record<Exclude<BrainActionType, "post_message">, string> = {
-	say: "Speaking in a voice call is not available yet, so Dero stayed quiet.",
+// The actions still to be built, one honest line each, so a stub never reads as
+// a success. `say` and `leave_voice` left this list when voice calls landed.
+export type NotYetAvailableAction = Exclude<BrainActionType, "post_message" | "say" | "leave_voice">;
+
+const NOT_AVAILABLE_YET: Record<NotYetAvailableAction, string> = {
 	open_holdem: "Opening a Hold'em table is not available yet, so no table was opened.",
-	leave_voice: "Leaving a voice call is not available yet, so nothing changed.",
 };
 
 export const deroBrainCopy = {
@@ -26,7 +27,7 @@ export const deroBrainCopy = {
 		description: "Give Dero a task, bring Dero into your voice call, or check whether Dero's brain is online",
 		tell: "Give Dero a short task, like posting a message in an allowed channel",
 		taskOption: "What you want Dero to do, in your own words",
-		status: "Show whether Dero's brain is online right now",
+		status: "Show whether Dero's brain is online and whether Dero is in a voice call",
 		join: "Bring Dero into the voice channel you are in. Dero speaks there but does not listen",
 		leave: "Send Dero out of this server's voice call",
 	},
@@ -61,7 +62,17 @@ export const deroBrainCopy = {
 		notAuthorized: "You can no longer give Dero tasks, so nothing was done.",
 		switchedOff: "Dero was switched off before the task ran, so nothing was done.",
 		sendFailed: "Dero could not post that message.",
-		notAvailableYet: (type: Exclude<BrainActionType, "post_message">): string => NOT_AVAILABLE_YET[type],
+		notAvailableYet: (type: NotYetAvailableAction): string => NOT_AVAILABLE_YET[type],
+
+		// say and leave_voice. "Left" reuses voiceCopy.call.left, the same line
+		// /dero leave answers with.
+		spoke: "Dero said it in the call.",
+		sayNoCall: "Dero is not in a voice call in this server, so nothing was said.",
+		sayNotSetUp: "Dero's voice is not set up in this server, so nothing was said.",
+		sayCapReached: "Dero's voice budget for the month is used up, so nothing was said.",
+		sayFailed: "Dero could not find his voice just now, so nothing was said.",
+		sayQueueFull: "Dero has too much to say in the call right now, so that line was dropped.",
+		leaveNoCall: "Dero is not in a voice call in this server, so there was nothing to leave.",
 	},
 
 	// ── /dero status ──

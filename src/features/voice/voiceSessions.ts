@@ -20,9 +20,14 @@ import { VoiceSpeaker } from "./voiceSpeaker.js";
 // What:  Dero's presence in voice: at most one call per guild, each with its
 //        connection, its speaker and the text channel it reports to.
 // Who:   /dero join and /dero leave; main.ts calls leaveAll() on shutdown.
-//        Later phases read get() to speak into a live call.
+//        get() is how Listen, the executor's `say` and `leave_voice`, and
+//        /dero status find a live call. voiceSessionWatchers ends a call that
+//        went idle or that Dero was moved or kicked out of, and /dero-config
+//        ends one for the kill switch.
 // When:  a session starts on join and lives until a leave, a shutdown, a failed
-//        Ready wait, a kick, or a reconnect budget that ran out.
+//        Ready wait, a kick or move, a deleted channel, an idle call, the kill
+//        switch, or a reconnect budget that ran out. end() posts the text line
+//        for every ending that has one (END_NOTICES).
 // Where: in memory by design. A Railway deploy ends every call, and Discord
 //        drops the bot from the channel on its own when the process dies, so
 //        there is nothing worth persisting.
@@ -59,7 +64,26 @@ export type SessionEndReason =
 	| "ready_timeout"
 	| "reconnect_failed"
 	| "removed"
+	| "moved"
+	| "channel_deleted"
+	| "idle"
+	| "switched_off"
 	| "destroyed";
+
+const MS_PER_MINUTE = 60_000;
+
+// The endings the control channel hears about in text, all from end() so no
+// path can forget its line. A leave a member asked for, a shutdown and a join
+// that never connected already answer whoever caused them, and a connection
+// destroyed by the library has no one to tell, so those post nothing.
+const END_NOTICES: Partial<Record<SessionEndReason, (channelId: string) => string>> = {
+	reconnect_failed: (channelId) => voiceCopy.call.reconnectFailed(channelId, BOT_CONSTANTS.DERO_VOICE_MAX_RECONNECT_ATTEMPTS),
+	removed: (channelId) => voiceCopy.call.removed(channelId),
+	moved: (channelId) => voiceCopy.call.moved(channelId),
+	channel_deleted: () => voiceCopy.call.channelDeleted,
+	idle: (channelId) => voiceCopy.call.idleLeft(channelId, BOT_CONSTANTS.DERO_VOICE_IDLE_LEAVE_MS / MS_PER_MINUTE),
+	switched_off: (channelId) => voiceCopy.call.switchedOff(channelId),
+};
 
 /** What callers may read about a live session. The speaker is the live object. */
 export interface VoiceSessionView {
@@ -220,6 +244,9 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 			durationMs: deps.now() - session.startedAt,
 			rejoins: session.rejoins,
 		});
+
+		const notice = END_NOTICES[reason];
+		if (notice) notify(session, notice(session.channelId));
 	}
 
 	function notify(session: LiveSession, line: string): void {
@@ -262,7 +289,6 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 			// ③
 			if (!selfRecovering && closeCode === CLOSE_CODE_DISCONNECTED) {
 				end(session, "removed");
-				notify(session, voiceCopy.call.removed(session.channelId));
 				return;
 			}
 
@@ -280,7 +306,6 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 
 			// ⑤
 			end(session, "reconnect_failed");
-			notify(session, voiceCopy.call.reconnectFailed(session.channelId, BOT_CONSTANTS.DERO_VOICE_MAX_RECONNECT_ATTEMPTS));
 		}
 		finally {
 			session.recovering = false;

@@ -1,8 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { ChannelType, type Guild, type GuildMember } from "discord.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
-import { executeActions, neutralizeMassMentions, SAFE_MENTIONS, type ExecutorDeps } from "./executor.js";
+import type { VoiceSessionView } from "@features/voice/voiceSessions.js";
+import { voiceCopy } from "@features/voice/voiceCopy.js";
+import { executeActions, neutralizeMassMentions, SAFE_MENTIONS, type ExecutorDeps, type ExecutorVoiceDeps } from "./executor.js";
 import { parseBrainResult } from "./parseBrainResult.js";
+import { deroBrainCopy } from "./deroBrainCopy.js";
 import type { BrainAction } from "./brainTypes.js";
 
 // ── executor ───────────────────────────────────────────────────────────────
@@ -178,10 +181,21 @@ describe("executeActions: post_message", () => {
 });
 
 describe("executeActions: the rest", () => {
-	it("answers say, open_holdem and leave_voice honestly as not available yet, with zero API calls", async () => {
-		const { reports, world } = await run([{ type: "say", text: "hi" }, { type: "open_holdem" }, { type: "leave_voice" }]);
-		expect(reports.map((entry) => entry.outcome)).toEqual(["not_available_yet", "not_available_yet", "not_available_yet"]);
-		expect(reports.every((entry) => entry.line.includes("not available yet"))).toBe(true);
+	it("answers open_holdem honestly as not available yet, with zero API calls", async () => {
+		const { reports, world } = await run([{ type: "open_holdem" }]);
+		expect(reports.map((entry) => entry.outcome)).toEqual(["not_available_yet"]);
+		expect(reports[0].line).toContain("not available yet");
+		expect(world.apiCalls()).toBe(0);
+	});
+
+	it("answers say and leave_voice with no call open plainly, with zero API calls", async () => {
+		const world = fakeWorld();
+		world.deps.voice = fakeVoice(null).voice;
+		const { reports } = await run([{ type: "say", text: "hi" }, { type: "leave_voice" }], world);
+		expect(reports).toEqual([
+			{ type: "say", outcome: "no_call", line: deroBrainCopy.result.sayNoCall },
+			{ type: "leave_voice", outcome: "no_call", line: deroBrainCopy.result.leaveNoCall },
+		]);
 		expect(world.apiCalls()).toBe(0);
 	});
 
@@ -203,6 +217,116 @@ describe("executeActions: the rest", () => {
 		world.fetchMember.mockResolvedValueOnce({ ...fakeMember(OWNER_ID, []) } as unknown as GuildMember);
 		const reports = await executeActions({ guild: world.guild, speakerId: OWNER_ID, actions: [post(GENERAL)], voiceConfig: CONFIG, deps: world.deps });
 		expect(reports[0].outcome).toBe("posted");
+	});
+});
+
+// ── say and leave_voice, against a fake open call ──
+
+const VOICE_CHANNEL = "200000000000000007";
+const PCM = Buffer.from([1, 2, 3, 4]);
+
+function fakeVoice(session: VoiceSessionView | null) {
+	const sessionIn = vi.fn((_guildId: string) => session);
+	const leave = vi.fn((_guildId: string) => session !== null);
+	const render = vi.fn(async () => ({ status: "ok" as const, pcm48kStereo: PCM, cached: false }));
+	const voice: ExecutorVoiceDeps = { sessionIn, leave, render };
+	return { voice, sessionIn, leave, render };
+}
+
+function openCall(speakResult = "playing") {
+	const speak = vi.fn(() => speakResult);
+	const session = { guildId: GUILD_ID, channelId: VOICE_CHANNEL, controlChannelId: GENERAL, status: "ready", speaker: { speak } };
+	return { session: session as unknown as VoiceSessionView, speak };
+}
+
+function worldWithCall(speakerRoles: string[] = [TASKER_ROLE], speakResult = "playing") {
+	const world = fakeWorld(speakerRoles);
+	const call = openCall(speakResult);
+	const fake = fakeVoice(call.session);
+	world.deps.voice = fake.voice;
+	return { world, ...fake, speak: call.speak };
+}
+
+describe("executeActions: say", () => {
+	it("renders the line in the guild's voice and queues it at brain priority", async () => {
+		const { world, render, speak } = worldWithCall();
+		const { reports } = await run([{ type: "say", text: "hello world" }], world);
+
+		expect(reports).toEqual([{ type: "say", outcome: "spoke", line: deroBrainCopy.result.spoke }]);
+		expect(render).toHaveBeenCalledWith({ guildId: GUILD_ID, voiceId: CONFIG.voiceId, text: "hello world" });
+		expect(speak).toHaveBeenCalledWith(PCM, "brain");
+		expect(world.fetchMember).toHaveBeenCalledTimes(1);
+		expect(world.sends()).toBe(0);
+	});
+
+	it("re-authorizes the speaker and renders nothing for one who lost the role", async () => {
+		const { world, render, speak } = worldWithCall([]);
+		const { reports } = await run([{ type: "say", text: "hello" }], world);
+		expect(reports[0].outcome).toBe("not_authorized");
+		expect(render).not.toHaveBeenCalled();
+		expect(speak).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["at the monthly cap", { status: "capReached" }, "cap_reached", deroBrainCopy.result.sayCapReached],
+		["when the provider fails", { status: "failed", kind: "providerDown" }, "voice_failed", deroBrainCopy.result.sayFailed],
+	])("stays quiet %s and says why", async (_label, result, outcome, line) => {
+		const { world, render, speak } = worldWithCall();
+		render.mockResolvedValueOnce(result as never);
+		const { reports } = await run([{ type: "say", text: "hello" }], world);
+		expect(reports[0]).toEqual({ type: "say", outcome, line });
+		expect(speak).not.toHaveBeenCalled();
+	});
+
+	it("says nothing without a voice id, with no render", async () => {
+		const { world, render } = worldWithCall();
+		const { reports } = await run([{ type: "say", text: "hello" }], world, { ...CONFIG, voiceId: null });
+		expect(reports[0].outcome).toBe("not_set_up");
+		expect(render).not.toHaveBeenCalled();
+	});
+
+	it("drops a line whose call ended while it rendered", async () => {
+		const { world, sessionIn, render, speak } = worldWithCall();
+		const live = sessionIn.getMockImplementation() as (guildId: string) => VoiceSessionView | null;
+		let ended = false;
+		sessionIn.mockImplementation((guildId: string) => (ended ? null : live(guildId)));
+		render.mockImplementationOnce(async () => {
+			ended = true;
+			return { status: "ok", pcm48kStereo: PCM, cached: false };
+		});
+		const { reports } = await run([{ type: "say", text: "hello" }], world);
+		expect(reports[0].outcome).toBe("no_call");
+		expect(speak).not.toHaveBeenCalled();
+	});
+
+	it("reports a full speaker queue", async () => {
+		const { world } = worldWithCall([TASKER_ROLE], "dropped");
+		const { reports } = await run([{ type: "say", text: "hello" }], world);
+		expect(reports[0]).toEqual({ type: "say", outcome: "queue_full", line: deroBrainCopy.result.sayQueueFull });
+	});
+
+	it("does nothing when voice was switched off before execution", async () => {
+		const { world, render } = worldWithCall();
+		const { reports } = await run([{ type: "say", text: "hello" }], world, { ...CONFIG, enabled: false });
+		expect(reports[0].outcome).toBe("switched_off");
+		expect(render).not.toHaveBeenCalled();
+		expect(world.apiCalls()).toBe(0);
+	});
+});
+
+describe("executeActions: leave_voice", () => {
+	it("ends the guild's call for an authorized speaker and names the channel", async () => {
+		const { world, leave } = worldWithCall();
+		const { reports } = await run([{ type: "leave_voice" }], world);
+		expect(leave).toHaveBeenCalledWith(GUILD_ID);
+		expect(reports).toEqual([{ type: "leave_voice", outcome: "left_call", line: voiceCopy.call.left(VOICE_CHANNEL) }]);
+	});
+
+	it("refuses a speaker who is not authorized and leaves the call alone", async () => {
+		const { world, leave } = worldWithCall([]);
+		const { reports } = await run([{ type: "leave_voice" }], world);
+		expect(reports[0].outcome).toBe("not_authorized");
+		expect(leave).not.toHaveBeenCalled();
 	});
 });
 

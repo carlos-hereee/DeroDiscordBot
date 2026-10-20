@@ -17,6 +17,7 @@ import { voiceCopy } from "@features/voice/voiceCopy.js";
 import { currentMonthCents } from "@features/voice/spendMeter.js";
 import { formatUsd } from "@features/voice/pricing.js";
 import { isTtsKeyConfigured } from "@features/voice/elevenLabsTts.js";
+import { voiceSessions } from "@features/voice/voiceSessions.js";
 
 // ── /dero-config ──────────────────────────────────────────────────────
 // What:  every per guild voice setting in one admin command: the kill switch,
@@ -35,7 +36,9 @@ import { isTtsKeyConfigured } from "@features/voice/elevenLabsTts.js";
 //        the subcommand group or subcommand; ④ one ephemeral embed reply.
 //
 // ⚠️ DISABLE NEVER DELETES. It flips `enabled` and nothing else, so enable
-// restores the guild exactly as it was, voice id, lists and cap included.
+// restores the guild exactly as it was, voice id, lists and cap included. It
+// (and a cap of 0) DOES end a live voice call at once: that is a session, not a
+// setting, and a kill switch that left Dero talking would not be one.
 
 const c = voiceCopy.config;
 const VOICE_ID_TAIL_LENGTH = 4;
@@ -160,10 +163,25 @@ async function enable(guildId: string, current: IDeroVoiceConfig | null): Promis
 	return info(c.enabledBody, c.enabledTitle);
 }
 
+// The kill switch ends this guild's live call, if there is one, and says so in
+// the admin's reply (the call's own channel gets its line from voiceSessions).
+// Called BEFORE the write, so the switch fails closed: a save that throws below
+// has still sent Dero out of the call.
+function endCallForKillSwitch(guildId: string): string | null {
+	const channelId = voiceSessions.get(guildId)?.channelId;
+	if (!channelId) return null;
+	voiceSessions.leave(guildId, "switched_off");
+	return c.leftCall(channelId);
+}
+
+const withLine = (body: string, line: string | null): string => (line ? `${body}\n\n${line}` : body);
+
 async function disable(guildId: string, current: IDeroVoiceConfig | null): Promise<EmbedBuilder> {
-	if (!current?.enabled) return info(c.alreadyDisabled);
+	// Even an "already off" disable ends a call, so the command always means "stop".
+	const leftCall = endCallForKillSwitch(guildId);
+	if (!current?.enabled) return info(withLine(c.alreadyDisabled, leftCall));
 	await deroVoiceConfigStore.upsert(guildId, { enabled: false });
-	return info(c.disabledBody, c.disabledTitle);
+	return info(withLine(c.disabledBody, leftCall), c.disabledTitle);
 }
 
 async function setVoice(guildId: string, current: IDeroVoiceConfig | null, rawId: string): Promise<EmbedBuilder> {
@@ -187,9 +205,11 @@ async function setListen(guildId: string, current: IDeroVoiceConfig | null, on: 
 async function setCap(guildId: string, current: IDeroVoiceConfig | null, dollars: number): Promise<EmbedBuilder> {
 	// Same reasoning as the voice id: the option's bounds are Discord's, this is ours.
 	const usd = Math.min(Math.max(Math.trunc(dollars), 0), BOT_CONSTANTS.DERO_VOICE_MAX_CAP_USD);
-	if ((current?.monthlyCapUsd ?? BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD) === usd) return info(c.capUnchanged(usd));
+	// A cap of 0 is the second kill switch, so it ends a live call the same way.
+	const leftCall = usd === 0 ? endCallForKillSwitch(guildId) : null;
+	if ((current?.monthlyCapUsd ?? BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD) === usd) return info(withLine(c.capUnchanged(usd), leftCall));
 	await deroVoiceConfigStore.upsert(guildId, { monthlyCapUsd: usd });
-	return info(c.capSet(usd));
+	return info(withLine(c.capSet(usd), leftCall));
 }
 
 async function editList(
