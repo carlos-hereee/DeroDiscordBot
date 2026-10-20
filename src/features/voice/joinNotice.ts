@@ -5,9 +5,12 @@ import { voiceCopy } from "./voiceCopy.js";
 import type { VoiceSpeaker } from "./voiceSpeaker.js";
 
 // ── join notice ────────────────────────────────────────────────────────────
-// What:  what Dero does the moment a call connects: a public line saying Dero is
-//        in the call and does not listen, then a short spoken hello. Also the
-//        one helper that posts any voice notice in text.
+// What:  what Dero does the moment a call connects: a public line saying, in
+//        plain words, that Dero is listening to members on the task list, that
+//        their speech goes to ElevenLabs to become text, that Dero keeps none of
+//        it, and how to stop it; then a short spoken hello. Also the one helper
+//        that posts any voice notice in text (the turn loop's text fallbacks
+//        included).
 // Who:   /dero join calls announceJoin after a join reaches Ready.
 //        voiceSessions posts its own "the call ended" lines through
 //        postVoiceNotice.
@@ -16,8 +19,8 @@ import type { VoiceSpeaker } from "./voiceSpeaker.js";
 // Where: posts in the channel /dero join ran in, never in the voice channel's
 //        own member chat unless that is where the command ran. Every post goes
 //        out with no pings of any kind.
-// How:   ① the notice first, so the text says what Dero is before Dero makes a
-//        sound; ② render the greeting through callSpeech (cache, then meter,
+// How:   ① the notice first, on EVERY join, so the text says what Dero hears
+//        before Dero makes a sound; ② render the greeting through callSpeech (cache, then meter,
 //        then provider); ③ queue it at brain priority, the highest, since it is
 //        Dero's own line. A refused or failed render leaves the join standing,
 //        silent, and the outcome tells the caller which line to show.

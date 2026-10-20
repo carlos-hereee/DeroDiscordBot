@@ -23,6 +23,8 @@ class FakeConnection extends EventEmitter {
 	rejoinCalls = 0;
 	destroyCalls = 0;
 	subscribed: unknown[] = [];
+	// Only handed to a registered listener factory; nothing here reads it.
+	receiver = { fake: "receiver" };
 
 	subscribe(player: unknown): object {
 		this.subscribed.push(player);
@@ -141,10 +143,10 @@ afterEach(() => {
 });
 
 describe("join", () => {
-	it("joins deafened, unmuted, with DAVE left at the library default", async () => {
+	it("joins undeafened (the listener decides who is heard), unmuted, with DAVE left at the library default", async () => {
 		await joined(rig);
 		const [options] = rig.joinChannel.mock.calls[0] as unknown as [Record<string, unknown>];
-		expect(options).toMatchObject({ guildId: "g1", channelId: "vc-g1", selfDeaf: true, selfMute: false });
+		expect(options).toMatchObject({ guildId: "g1", channelId: "vc-g1", selfDeaf: false, selfMute: false });
 		expect(options).not.toHaveProperty("daveEncryption");
 		expect(rig.connections[0].subscribed).toEqual([rig.speakers[0].player]);
 	});
@@ -347,5 +349,58 @@ describe("leave and leaveAll", () => {
 		expect(rig.sessions.get("g2")).toBeNull();
 		expect(rig.audit).toHaveBeenCalledWith("g2", BOT_LOG_EVENTS.DERO_VOICE_LEFT, expect.objectContaining({ reason: "shutdown" }));
 		expect(rig.sessions.leaveAll()).toBe(0);
+	});
+});
+
+describe("listening", () => {
+	function withListener(factory = vi.fn(() => ({ stop: vi.fn() }))) {
+		rig.sessions.useListener(factory);
+		return factory;
+	}
+
+	it("hears nothing when no listener factory was registered", async () => {
+		const connection = await joined(rig);
+		expect(rig.sessions.get("g1")).not.toBeNull();
+		expect(connection.listenerCount("stateChange")).toBeGreaterThan(0);
+	});
+
+	it("starts the listener once Ready, on the connection's receiver, the session's speaker and channels", async () => {
+		const factory = withListener();
+		const { outcome, connection } = startJoin(rig);
+		expect(factory).not.toHaveBeenCalled();
+		connection.setStatus(READY);
+		await outcome;
+		expect(factory).toHaveBeenCalledTimes(1);
+		expect(factory).toHaveBeenCalledWith(
+			expect.objectContaining({ channelId: "vc-g1", controlChannelId: "text-g1", speaker: rig.speakers[0], receiver: connection.receiver }),
+		);
+	});
+
+	it("never starts a listener for a join that did not reach Ready", async () => {
+		const factory = withListener();
+		const { outcome } = startJoin(rig);
+		await vi.advanceTimersByTimeAsync(20_000);
+		expect((await outcome).status).toBe("failed");
+		expect(factory).not.toHaveBeenCalled();
+	});
+
+	it("stops the listener before the speaker when the call ends, on every ending", async () => {
+		const order: string[] = [];
+		withListener(vi.fn(() => ({ stop: vi.fn(() => order.push("listener")) })));
+		await joined(rig);
+		rig.speakers[0].close.mockImplementation(() => order.push("speaker"));
+		rig.sessions.leave("g1");
+		expect(order).toEqual(["listener", "speaker"]);
+	});
+
+	it("keeps the call standing, speaking only, when the listener fails to start", async () => {
+		withListener(
+			vi.fn(() => {
+				throw new Error("receiver unavailable");
+			}),
+		);
+		await joined(rig);
+		expect(rig.sessions.get("g1")?.status).toBe("ready");
+		expect(rig.sessions.leave("g1")).toBe(true);
 	});
 });

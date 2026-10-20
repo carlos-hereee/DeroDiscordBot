@@ -29,7 +29,12 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 //        HIGHER priority clip, by dropping the newest of its lowest entries, so
 //        an equal clip is the one turned away; ④ every Idle (a clip ended or
 //        failed) starts the next. A clip already playing is never cut off by a
-//        newer one: interrupting is the next phase's barge in, not this one's.
+//        newer one; only stop() cuts it, which is how a member barges in.
+//        ⑤ every Idle after one of Dero's OWN lines (priority brain: the
+//        greeting, a brain `say`, a turn's answer) stamps lastOwnLineEndedAt,
+//        the start of the addressing rule's follow up window. A Listen reading
+//        or table narration is Dero reading, not Dero talking to someone, so
+//        neither opens the window.
 //
 // The player pauses itself when no connection is subscribed (a reconnect in
 // progress) rather than playing into nothing or stopping, so a clip resumes
@@ -54,6 +59,8 @@ export const SPEAKER_PLAYER_OPTIONS: CreateAudioPlayerOptions = {
 export interface VoiceSpeakerDeps {
 	createPlayer(): AudioPlayer;
 	createResource(pcm48kStereo: Buffer): AudioResource;
+	/** The clock for lastOwnLineEndedAt; the system clock when absent. */
+	now?(): number;
 }
 
 export const defaultVoiceSpeakerDeps: VoiceSpeakerDeps = {
@@ -80,6 +87,8 @@ export class VoiceSpeaker {
 	private readonly queue: QueuedClip[] = [];
 	private nextOrder = 0;
 	private closed = false;
+	private current: QueuedClip | null = null;
+	private ownLineEndedAt: number | null = null;
 
 	constructor(
 		private readonly deps: VoiceSpeakerDeps = defaultVoiceSpeakerDeps,
@@ -88,7 +97,12 @@ export class VoiceSpeaker {
 		this.player = deps.createPlayer();
 		// ④ A clip that ends and a clip that errors both land in Idle, so this one
 		// listener is what keeps the queue moving.
-		this.player.on(AudioPlayerStatus.Idle, () => this.playNext());
+		this.player.on(AudioPlayerStatus.Idle, () => {
+			// ⑤
+			if (this.current?.priority === "brain") this.ownLineEndedAt = this.deps.now?.() ?? Date.now();
+			this.current = null;
+			this.playNext();
+		});
 		// The message is the library's (a stream or encoder fault) and never holds
 		// audio. The Idle that follows an error plays the next clip.
 		this.player.on("error", (error) => console.warn(`[dero-voice] speaker error: ${error.message}`));
@@ -102,6 +116,11 @@ export class VoiceSpeaker {
 	/** How many clips wait behind the one playing. */
 	get queuedCount(): number {
 		return this.queue.length;
+	}
+
+	/** When Dero last finished (or was cut off in) one of its own lines, or null. */
+	get lastOwnLineEndedAt(): number | null {
+		return this.ownLineEndedAt;
 	}
 
 	/** Play a clip now, queue it, or drop it when the queue holds only clips that outrank or match it. */
@@ -164,6 +183,7 @@ export class VoiceSpeaker {
 	private start(clip: QueuedClip): boolean {
 		try {
 			this.player.play(this.deps.createResource(clip.pcm));
+			this.current = clip;
 			return true;
 		}
 		catch (error) {

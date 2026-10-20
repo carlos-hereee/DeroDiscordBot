@@ -7,7 +7,7 @@ import type { VoiceSpeaker } from "./voiceSpeaker.js";
 
 // ── join notice ────────────────────────────────────────────────────────────
 // What a successful join does: the public notice first, with no pings and the
-// plain "does not listen yet" line, then the greeting through the real call
+// plain truth about listening, then the greeting through the real call
 // speech path. Fakes: the spend meter, the provider, the channel and the
 // speaker. A refused or failed greeting leaves the join standing, in silence.
 
@@ -67,8 +67,12 @@ describe("announceJoin", () => {
 		expect(speak).toHaveBeenCalledWith(expect.any(Buffer), "brain");
 	});
 
-	it("says in the notice that Dero speaks but does not listen", () => {
-		expect(voiceCopy.call.joinNotice("vc-1")).toContain("does not listen yet");
+	it("says in plain words who Dero hears, where the speech goes, that nothing is kept, and how to stop it", () => {
+		const notice = voiceCopy.call.joinNotice("vc-1");
+		expect(notice).toContain("is listening, but only to members on Dero's task list");
+		expect(notice).toContain("sent to ElevenLabs and turned into text");
+		expect(notice).toContain("Dero records and keeps nothing");
+		expect(notice).toContain("/dero leave");
 	});
 
 	it("degrades to silence when the meter refuses, with zero provider calls", async () => {

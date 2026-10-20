@@ -158,3 +158,46 @@ describe("VoiceSpeaker", () => {
 		expect(drain()).toEqual(["first", "last"]);
 	});
 });
+
+describe("lastOwnLineEndedAt, the start of the follow up window", () => {
+	function speakerWithClock(now: () => number): VoiceSpeaker {
+		return new VoiceSpeaker({
+			createPlayer: () => player as unknown as AudioPlayer,
+			createResource: (pcm) => ({ label: pcm.toString() }) as unknown as AudioResource,
+			now,
+		});
+	}
+
+	it("is null until Dero finished one of its own lines", () => {
+		const speaker = speakerWithClock(() => 1000);
+		expect(speaker.lastOwnLineEndedAt).toBeNull();
+		speaker.speak(clip("own line"), "brain");
+		expect(speaker.lastOwnLineEndedAt).toBeNull();
+	});
+
+	it("is stamped when a brain line ends, and again when one is cut off by a barge in", () => {
+		let clock = 1000;
+		const speaker = speakerWithClock(() => clock);
+		speaker.speak(clip("own line"), "brain");
+		clock = 4000;
+		player.finish();
+		expect(speaker.lastOwnLineEndedAt).toBe(4000);
+
+		speaker.speak(clip("answer"), "brain");
+		clock = 9000;
+		speaker.stop();
+		expect(speaker.lastOwnLineEndedAt).toBe(9000);
+	});
+
+	it("is not moved by a Listen reading or table narration", () => {
+		let clock = 1000;
+		const speaker = speakerWithClock(() => clock);
+		speaker.speak(clip("a fortune"), "listen");
+		clock = 5000;
+		player.finish();
+		speaker.speak(clip("the flop"), "dealer");
+		clock = 7000;
+		player.finish();
+		expect(speaker.lastOwnLineEndedAt).toBeNull();
+	});
+});

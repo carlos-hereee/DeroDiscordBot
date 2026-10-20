@@ -69,14 +69,15 @@ export const voiceCopy = {
 				`Dero joined <#${channelId}> but could not play sound in the call, so Dero is there in silence.`,
 		},
 
-		// The public line in the channel /dero join ran in. PRIVACY BY CONSTRUCTION:
-		// Dero joins deafened in this phase, and the notice says so in plain words
-		// before Dero makes a sound.
+		// The public line in the channel /dero join ran in, posted on EVERY join
+		// before Dero makes a sound. It tells the truth about listening in plain
+		// words: who is heard (task list members only), where their speech goes
+		// (ElevenLabs, to become text), that nothing is kept, and how to stop it.
 		joinNotice: (channelId: string): string =>
-			`🔊 Dero joined <#${channelId}>. Dero can speak in this call but does not listen yet: nothing anyone says there is heard, recorded or transcribed. An allowed member can send Dero away with /dero leave.`,
+			`🔊 Dero joined <#${channelId}> and is listening, but only to members on Dero's task list. Their speech is sent to ElevenLabs and turned into text so Dero can understand tasks. Nobody else is heard, and Dero records and keeps nothing. Say "Dero" first to give a task. Anyone on the task list can stop this with /dero leave.`,
 		// Spoken once per join, in the guild's voice. Rendered once and then
 		// replayed from the clip cache, so a rejoin costs nothing.
-		greeting: "Hello, I am Dero. I can talk in this call, but I am not listening yet.",
+		greeting: "Hello, I am Dero. Say my name first when you want me to do something.",
 
 		// Posted in the same channel when a session ends on its own.
 		reconnectFailed: (channelId: string, attempts: number): string =>
@@ -90,6 +91,35 @@ export const voiceCopy = {
 
 		// One line of /dero status. The other half is notInCall above.
 		statusInCall: (channelId: string): string => `Dero is in a voice call in <#${channelId}>.`,
+		// Shown only to members on the task list, once there is a voice turn to
+		// measure: from the end of their speech to the start of Dero's answer.
+		statusLatency: (medianSeconds: string, slowestSeconds: string, turns: number): string =>
+			`Voice answers lately: median ${medianSeconds}s, slowest ${slowestSeconds}s, over the last ${turns} ${turns === 1 ? "turn" : "turns"}.`,
+	},
+
+	// ── a voice turn: what Dero SAYS in the call ──
+	// First person, short, and each rendered once and then replayed from the
+	// clip cache. Spoken at brain priority, so they also open the follow up
+	// window and a member can simply answer.
+	turn: {
+		spoken: {
+			brainOffline: "My brain is offline right now, so I cannot do that. Try again later.",
+			busy: "I am busy with something else. Ask me again in a minute.",
+			timeout: "That took me too long to think about. Please ask again.",
+			notUnderstood: "I did not understand that. Try saying it another way.",
+			notAllowed: "You are not on my task list, so I cannot do that.",
+			capReached: "My voice budget for this month is used up, so I cannot answer out loud.",
+			hearingTrouble: "Sorry, I could not hear that clearly. Please say it again.",
+		},
+		// Posted in the control channel instead, when the spoken line itself could
+		// not be rendered (the budget is gone or the provider is down). At most one
+		// every 30 seconds per server, like the spoken versions.
+		text: {
+			capReached:
+				"Dero's voice budget for the month is used up, so Dero cannot listen or answer in the call until an admin raises the cap or the month turns.",
+			hearingTrouble: "Dero could not turn that into text just now. Try again in a moment.",
+			voiceTrouble: "Dero could not speak his answer just now. Here is what happened:",
+		},
 	},
 
 	// ── /dero-config, admin facing ──

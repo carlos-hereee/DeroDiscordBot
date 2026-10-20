@@ -28,7 +28,7 @@ export const deroBrainCopy = {
 		tell: "Give Dero a short task, like posting a message in an allowed channel",
 		taskOption: "What you want Dero to do, in your own words",
 		status: "Show whether Dero's brain is online and whether Dero is in a voice call",
-		join: "Bring Dero into the voice channel you are in. Dero speaks there but does not listen",
+		join: "Bring Dero into your voice channel. Dero listens only to members on its task list",
 		leave: "Send Dero out of this server's voice call",
 	},
 

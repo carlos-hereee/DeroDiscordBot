@@ -1,6 +1,6 @@
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { elevenLabsApiKey } from "@utils/config.js";
-import { TtsError, type TtsClip, type TtsProvider, type TtsRequest } from "./ttsProvider.js";
+import { TtsError, type TtsClip, type TtsErrorKind, type TtsProvider, type TtsRequest } from "./ttsProvider.js";
 
 // ── ElevenLabs text to speech ──────────────────────────────────────────────
 // What:  the one place the bot calls ElevenLabs. Renders text in a stored voice
@@ -39,19 +39,34 @@ export interface ElevenLabsTtsOptions {
 	modelId?: string;
 }
 
-function statusToError(status: number): TtsError {
-	if (status === HTTP_UNAUTHORIZED || status === HTTP_FORBIDDEN) return new TtsError("auth", status);
-	if (status === HTTP_TOO_MANY_REQUESTS) return new TtsError("rateLimit", status);
-	if (status >= HTTP_SERVER_ERROR_MIN) return new TtsError("providerDown", status);
-	return new TtsError("rejected", status);
+/**
+ * The failure kind for an ElevenLabs HTTP status that is not ok. Shared with
+ * elevenLabsStt, so both directions of speech map a status the same way.
+ */
+export function failureKindForStatus(status: number): TtsErrorKind {
+	if (status === HTTP_UNAUTHORIZED || status === HTTP_FORBIDDEN) return "auth";
+	if (status === HTTP_TOO_MANY_REQUESTS) return "rateLimit";
+	if (status >= HTTP_SERVER_ERROR_MIN) return "providerDown";
+	return "rejected";
 }
 
-// AbortSignal.timeout rejects fetch (and a body read) with a DOMException named
-// TimeoutError; anything else thrown by fetch is a network failure.
-function thrownToError(error: unknown): TtsError {
+/**
+ * The failure kind for something fetch (or a body read) threw. AbortSignal.timeout
+ * rejects with a DOMException named TimeoutError; anything else is a network
+ * failure. Shared with elevenLabsStt.
+ */
+export function failureKindForThrown(error: unknown): TtsErrorKind {
 	const name = (error as { name?: string } | null)?.name;
-	if (name === "TimeoutError" || name === "AbortError") return new TtsError("timeout");
-	return new TtsError("providerDown");
+	if (name === "TimeoutError" || name === "AbortError") return "timeout";
+	return "providerDown";
+}
+
+function statusToError(status: number): TtsError {
+	return new TtsError(failureKindForStatus(status), status);
+}
+
+function thrownToError(error: unknown): TtsError {
+	return new TtsError(failureKindForThrown(error));
 }
 
 export function createElevenLabsTts(options: ElevenLabsTtsOptions): TtsProvider {

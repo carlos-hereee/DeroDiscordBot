@@ -6,8 +6,9 @@ import { usdToCents } from "./pricing.js";
 // ── spend meter ────────────────────────────────────────────────────────────
 // What:  reserve speech spend against a guild's monthly cap BEFORE a provider
 //        call, and give it back if the call fails.
-// Who:   listenHandler today; Phase 3's speaker and listener after it. Every
-//        paid provider call goes through tryReserve first, with no exceptions.
+// Who:   listenHandler and callSpeech for speech out, turnLoop for speech to
+//        text. Every paid provider call goes through tryReserve first, with no
+//        exceptions.
 // When:  only on a clip cache miss. A cache hit costs nothing and never touches
 //        the meter.
 // Where: the cap is read from DeroVoiceConfig at reservation time, so an admin
@@ -27,6 +28,8 @@ export interface SpendReservation {
 	month: string;
 	cents: number;
 	ttsChars: number;
+	// Present only on a speech to text reservation.
+	sttSeconds?: number;
 }
 
 export type ReserveResult = { status: "ok"; reservation: SpendReservation } | { status: "capReached" };
@@ -44,12 +47,18 @@ export function monthKey(now: Date): string {
 export async function tryReserve(
 	guildId: string,
 	cents: number,
-	options: { ttsChars?: number; now?: Date } = {}
+	options: { ttsChars?: number; sttSeconds?: number; now?: Date } = {}
 ): Promise<ReserveResult> {
 	const month = monthKey(options.now ?? new Date());
 	const config = await deroVoiceConfigStore.findByGuildId(guildId);
 	const capCents = usdToCents(config?.monthlyCapUsd ?? BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD);
-	const usage = { cents, ttsChars: options.ttsChars ?? 0 };
+	// sttSeconds rides along only when there is some, so a speech out
+	// reservation keeps exactly the shape it always had.
+	const usage = {
+		cents,
+		ttsChars: options.ttsChars ?? 0,
+		...(options.sttSeconds ? { sttSeconds: options.sttSeconds } : {}),
+	};
 
 	try {
 		await deroVoiceSpendStore.ensureMonth(guildId, month);
@@ -77,6 +86,7 @@ export async function refund(reservation: SpendReservation): Promise<void> {
 		await deroVoiceSpendStore.refund(reservation.guildId, reservation.month, {
 			cents: reservation.cents,
 			ttsChars: reservation.ttsChars,
+			...(reservation.sttSeconds ? { sttSeconds: reservation.sttSeconds } : {}),
 		});
 	}
 	catch (error) {

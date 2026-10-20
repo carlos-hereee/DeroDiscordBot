@@ -24,6 +24,8 @@ vi.mock("@features/dero-brain/brainJob.js", () => ({ buildJobInput: mocks.buildJ
 
 import { execute } from "./dero.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
+import { turnLatencyLog } from "@features/voice/turnLatency.js";
+import { voiceCopy } from "@features/voice/voiceCopy.js";
 
 const GUILD_ID = "g1";
 const OWNER_ID = "owner";
@@ -206,5 +208,22 @@ describe("/dero status", () => {
 		const paused = interactionFor({ sub: "status" });
 		await execute(paused.interaction);
 		expect(textOf(paused.reply)).toContain(deroBrainCopy.status.switchedOffForYou);
+	});
+});
+
+describe("/dero status, voice latency", () => {
+	it("shows the median and slowest voice answer only to members on the task list", async () => {
+		turnLatencyLog.record(GUILD_ID, 3000);
+		turnLatencyLog.record(GUILD_ID, 5000);
+		turnLatencyLog.record(GUILD_ID, 9000);
+		const line = voiceCopy.call.statusLatency("5.0", "9.0", 3);
+
+		const allowed = interactionFor({ sub: "status" });
+		await execute(allowed.interaction);
+		expect(textOf(allowed.reply)).toContain(line);
+
+		const stranger = interactionFor({ sub: "status", roles: [] });
+		await execute(stranger.interaction);
+		expect(textOf(stranger.reply)).not.toContain("Voice answers lately");
 	});
 });

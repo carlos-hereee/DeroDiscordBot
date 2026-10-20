@@ -266,6 +266,49 @@ export const BOT_CONSTANTS = {
 	// hop, short enough that an empty call does not keep a voice session open.
 	DERO_VOICE_IDLE_LEAVE_MS: 120_000,
 
+	// ── dero voice listening (Phase 3b) ──
+	// The addressing rule, the two knobs the owner tunes by editing them here. A
+	// transcript reaches the brain only when one of these names is among its
+	// first DERO_VOICE_NAME_WITHIN_WORDS words, or when the utterance ended
+	// within DERO_VOICE_FOLLOW_UP_WINDOW_MS of Dero finishing one of its own
+	// lines in that call. The extra spellings are how speech to text tends to
+	// hear "Dero"; anything else is transcribed and dropped.
+	DERO_VOICE_WAKE_NAMES: ["dero", "derro", "diro"],
+	DERO_VOICE_NAME_WITHIN_WORDS: 6,
+	DERO_VOICE_FOLLOW_UP_WINDOW_MS: 20_000,
+	// An utterance ends after this much silence from its speaker. Long enough to
+	// survive a breath mid sentence, short enough that Dero answers promptly.
+	DERO_VOICE_UTTERANCE_SILENCE_MS: 800,
+	// Audio outside these bounds is discarded before any provider call: under the
+	// minimum it is a cough or a click, over the maximum it is a monologue or a
+	// stuck microphone, and either way it is not a task.
+	DERO_VOICE_UTTERANCE_MIN_MS: 400,
+	DERO_VOICE_UTTERANCE_MAX_MS: 20_000,
+	// Per guild: at most this many speakers captured at once, one turn running,
+	// and this many utterances waiting behind it. Past either bound the newest
+	// is dropped, so a crowded call can never stack provider calls.
+	DERO_VOICE_MAX_CONCURRENT_CAPTURES: 3,
+	DERO_VOICE_MAX_WAITING_TURNS: 2,
+	// A positive operator check is trusted this long, so a member who pauses
+	// every few words does not cost a config read per phrase. A refusal is never
+	// cached: a role added mid call takes effect on the next phrase.
+	DERO_VOICE_AUTHORIZED_CACHE_MS: 60_000,
+	// One speech to text call waits at most this long. Never retried.
+	DERO_VOICE_STT_TIMEOUT_MS: 15_000,
+	// Provider wire values, confirmed against the ElevenLabs API reference on
+	// 2026-10-20: POST /v1/speech-to-text, multipart, xi-api-key header.
+	DERO_VOICE_STT_MODEL_ID: "scribe_v2",
+	// A transcript this short ("a", ".") is noise, not a task.
+	DERO_VOICE_MIN_TRANSCRIPT_CHARS: 2,
+	// Whatever Dero says on its own in a turn (a summary, a canned line) is cut
+	// at a sentence to this many characters, the same bound a brain `say` has.
+	DERO_VOICE_TURN_SPEECH_MAX_CHARS: 300,
+	// A speech provider failure or a spent budget is spoken at most once per
+	// guild in this window, so a broken provider is never a stream of apologies.
+	DERO_VOICE_TROUBLE_LINE_COOLDOWN_MS: 30_000,
+	// /dero status reports the median and the slowest of this many recent turns.
+	DERO_VOICE_LATENCY_SAMPLES: 50,
+
 	// ── dero brain ───────────────────────────────────────────────
 	// What:  the limits of the link between the bot (the body) and the launcher's
 	//        local Dero (the brain): how long a job may wait, how long one long

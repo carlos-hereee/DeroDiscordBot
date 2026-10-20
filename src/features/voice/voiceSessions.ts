@@ -8,6 +8,7 @@ import {
 	type DiscordGatewayAdapterCreator,
 	type VoiceConnection,
 	type VoiceConnectionState,
+	type VoiceReceiver,
 } from "@discordjs/voice";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
@@ -19,11 +20,12 @@ import { VoiceSpeaker } from "./voiceSpeaker.js";
 // ── voice sessions ─────────────────────────────────────────────────────────
 // What:  Dero's presence in voice: at most one call per guild, each with its
 //        connection, its speaker and the text channel it reports to.
-// Who:   /dero join and /dero leave; main.ts calls leaveAll() on shutdown.
-//        get() is how Listen, the executor's `say` and `leave_voice`, and
-//        /dero status find a live call. voiceSessionWatchers ends a call that
-//        went idle or that Dero was moved or kicked out of, and /dero-config
-//        ends one for the kill switch.
+// Who:   /dero join and /dero leave; main.ts calls leaveAll() on shutdown and
+//        hands over the listener factory with useListener(). get() is how
+//        Listen, the executor's `say` and `leave_voice`, and /dero status find
+//        a live call. voiceSessionWatchers ends a call that went idle or that
+//        Dero was moved or kicked out of, and /dero-config ends one for the
+//        kill switch.
 // When:  a session starts on join and lives until a leave, a shutdown, a failed
 //        Ready wait, a kick or move, a deleted channel, an idle call, the kill
 //        switch, or a reconnect budget that ran out. end() posts the text line
@@ -41,11 +43,16 @@ import { VoiceSpeaker } from "./voiceSpeaker.js";
 //        to 3 times with a doubling backoff, each with its own Ready wait.
 //        ⑤ out of budget: destroy and say so in text. Every wait listens to the
 //        session's AbortController, so ending a session clears its timers at
-//        once instead of leaving a 20 s wait to run out.
+//        once instead of leaving a 20 s wait to run out. ⑥ once Ready, the
+//        session starts its listener on the connection's receiver; ending the
+//        session stops it before anything else, so no capture outlives a call.
 //
-// ⚠️ PRIVACY BY CONSTRUCTION: every join is selfDeaf. Nothing is received,
-// decoded or transcribed in this phase. Log lines and audit rows carry ids,
-// status names, close codes, counts and durations, never audio or text.
+// ⚠️ PRIVACY: Dero joins undeafened so it can hear members on the task list,
+// and only through voiceListener, whose operator gate decides who is ever
+// subscribed to. The join notice says so on every join. With no listener
+// factory registered (tests, or a boot that skipped it) nothing is received
+// at all. Log lines and audit rows carry ids, status names, close codes,
+// counts and durations, never audio or text.
 //
 // ⚠️ DAVE end to end encryption stays ON. joinChannel never passes
 // `daveEncryption`, so the library default (true) applies. Do not add it.
@@ -84,6 +91,18 @@ const END_NOTICES: Partial<Record<SessionEndReason, (channelId: string) => strin
 	idle: (channelId) => voiceCopy.call.idleLeft(channelId, BOT_CONSTANTS.DERO_VOICE_IDLE_LEAVE_MS / MS_PER_MINUTE),
 	switched_off: (channelId) => voiceCopy.call.switchedOff(channelId),
 };
+
+/** What a listener gets to hear one call with. */
+export interface ListenStart {
+	guild: Guild;
+	channelId: string;
+	controlChannelId: string;
+	speaker: VoiceSpeaker;
+	receiver: VoiceReceiver;
+}
+
+/** Starts Dero's ears in a Ready call; voiceListener.startVoiceListener in production. */
+export type StartListening = (start: ListenStart) => { stop(): void };
 
 /** What callers may read about a live session. The speaker is the live object. */
 export interface VoiceSessionView {
@@ -161,6 +180,7 @@ interface LiveSession {
 	ended: boolean;
 	endReason: SessionEndReason | null;
 	abort: AbortController;
+	listener: { stop(): void } | null;
 }
 
 function closeCodeOf(state: VoiceConnectionState): number | null {
@@ -210,6 +230,10 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSessionDeps) {
 	const sessions = new Map<string, LiveSession>();
 	let dependencyReportLogged = false;
+	// Registered by main.ts rather than imported here: the listener reaches the
+	// executor through the turn loop, and the executor imports this module, so a
+	// static import would close a cycle that only works by accident of load order.
+	let startListening: StartListening | null = null;
 
 	// ── ending ──
 
@@ -220,6 +244,14 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 		session.abort.abort();
 		if (sessions.get(session.guildId) === session) sessions.delete(session.guildId);
 
+		// ⑥ the ears first, so no capture is still running when the mouth closes
+		try {
+			session.listener?.stop();
+		}
+		catch (error) {
+			console.warn(`[dero-voice] listener stop failed guild=${session.guildId}`, error);
+		}
+		session.listener = null;
 		try {
 			session.speaker.close();
 		}
@@ -355,6 +387,24 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 		}
 	}
 
+	// ⑥ A listener that fails to start leaves the call speaking only, which is
+	// the safe direction: Dero hears nothing rather than the wrong people.
+	function listen(session: LiveSession): void {
+		if (!startListening) return;
+		try {
+			session.listener = startListening({
+				guild: session.guild,
+				channelId: session.channelId,
+				controlChannelId: session.controlChannelId,
+				speaker: session.speaker,
+				receiver: session.connection.receiver,
+			});
+		}
+		catch (error) {
+			console.error(`[dero-voice] listener failed to start guild=${session.guildId}`, error);
+		}
+	}
+
 	// ── public surface ──
 
 	function get(guildId: string): VoiceSessionView | null {
@@ -368,15 +418,17 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 		logDependencyReportOnce();
 		const startedAt = deps.now();
 
-		// ① selfDeaf true: Dero hears nothing. selfMute false: the library defaults
-		// it to true, and a self muted bot shows the muted icon while it talks.
+		// ① selfDeaf false: Discord sends a deafened bot no audio at all, and Dero
+		// must hear members on the task list (the listener decides who). selfMute
+		// false: the library defaults it to true, and a self muted bot shows the
+		// muted icon while it talks.
 		let connection: VoiceConnection;
 		try {
 			connection = deps.joinChannel({
 				guildId: guild.id,
 				channelId: channel.id,
 				adapterCreator: guild.voiceAdapterCreator,
-				selfDeaf: true,
+				selfDeaf: false,
 				selfMute: false,
 			});
 		}
@@ -412,6 +464,7 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 			ended: false,
 			endReason: null,
 			abort: new AbortController(),
+			listener: null,
 		};
 		sessions.set(guild.id, session);
 		watch(session);
@@ -427,6 +480,7 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 		const readyMs = deps.now() - startedAt;
 		console.info(`[dero-voice] ready guild=${guild.id} channel=${channel.id} readyMs=${readyMs}`);
 		deps.audit(guild.id, BOT_LOG_EVENTS.DERO_VOICE_JOINED, { channelId: channel.id, readyMs });
+		listen(session);
 		return { status: "joined", session, readyMs };
 	}
 
@@ -445,7 +499,12 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 		return open.length;
 	}
 
-	return { get, join, leave, leaveAll };
+	/** Register how a Ready call starts listening. main.ts calls this once at boot. */
+	function useListener(factory: StartListening): void {
+		startListening = factory;
+	}
+
+	return { get, join, leave, leaveAll, useListener };
 }
 
 export type VoiceSessions = ReturnType<typeof createVoiceSessions>;

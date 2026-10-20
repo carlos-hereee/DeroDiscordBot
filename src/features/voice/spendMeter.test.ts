@@ -180,3 +180,26 @@ describe("currentMonthCents", () => {
 		expect(await currentMonthCents("g1", OCTOBER)).toBe(7);
 	});
 });
+
+describe("speech to text seconds", () => {
+	it("passes the seconds to the store on a speech to text reservation", async () => {
+		capUsd(25);
+		const reserved = await tryReserve("g1", 1, { sttSeconds: 4, now: OCTOBER });
+		expect(reserved).toEqual({ status: "ok", reservation: { guildId: "g1", month: "2026-10", cents: 1, ttsChars: 0, sttSeconds: 4 } });
+		expect(mocks.reserve).toHaveBeenCalledWith("g1", "2026-10", 2500, { cents: 1, ttsChars: 0, sttSeconds: 4 });
+	});
+
+	it("refunds the seconds with the cents when the transcription failed", async () => {
+		capUsd(25);
+		const reserved = await tryReserve("g1", 1, { sttSeconds: 4, now: OCTOBER });
+		if (reserved.status !== "ok") throw new Error("expected a reservation");
+		await refund(reserved.reservation);
+		expect(mocks.refund).toHaveBeenCalledWith("g1", "2026-10", { cents: 1, ttsChars: 0, sttSeconds: 4 });
+	});
+
+	it("leaves a speech out reservation exactly as it was, with no seconds field", async () => {
+		capUsd(25);
+		await tryReserve("g1", 2, { ttsChars: 300, now: OCTOBER });
+		expect(mocks.reserve).toHaveBeenCalledWith("g1", "2026-10", 2500, { cents: 2, ttsChars: 300 });
+	});
+});

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pcm24kMonoToPcm48kStereo } from "./resample.js";
+import { pcm24kMonoToPcm48kStereo, pcm48kStereoTo16kMono } from "./resample.js";
 
 // ── resample ───────────────────────────────────────────────────────────────
 // The converter is pure, so every promise is checked on exact bytes: the length
@@ -60,5 +60,61 @@ describe("pcm24kMonoToPcm48kStereo", () => {
 
 	it("rejects an odd byte length instead of playing a shifted stream", () => {
 		expect(() => pcm24kMonoToPcm48kStereo(Buffer.from([1, 2, 3]))).toThrow(RangeError);
+	});
+});
+
+// ── downsample, for speech to text ──
+
+function stereoPcm(frames: Array<[number, number]>): Buffer {
+	const buffer = Buffer.alloc(frames.length * 4);
+	frames.forEach(([left, right], index) => {
+		buffer.writeInt16LE(left, index * 4);
+		buffer.writeInt16LE(right, index * 4 + 2);
+	});
+	return buffer;
+}
+
+function monoSamples(buffer: Buffer): number[] {
+	const samples: number[] = [];
+	for (let offset = 0; offset < buffer.length; offset += 2) samples.push(buffer.readInt16LE(offset));
+	return samples;
+}
+
+describe("pcm48kStereoTo16kMono", () => {
+	it("makes one 16 bit mono sample from every three whole stereo frames", () => {
+		const twentyMsFrame = Buffer.alloc(960 * 4);
+		expect(pcm48kStereoTo16kMono(twentyMsFrame).length).toBe(320 * 2);
+	});
+
+	it("averages both channels and all three frames of a group", () => {
+		const input = stereoPcm([
+			[300, 600],
+			[900, 0],
+			[-300, 300],
+			[6, 6],
+			[6, 6],
+			[6, 6],
+		]);
+		// (300 + 600 + 900 + 0 - 300 + 300) / 6 = 300, then a flat 6
+		expect(monoSamples(pcm48kStereoTo16kMono(input))).toEqual([300, 6]);
+	});
+
+	it("floors a fractional average, negative values included", () => {
+		expect(monoSamples(pcm48kStereoTo16kMono(stereoPcm([[1, 0], [0, 0], [0, 0]])))).toEqual([0]);
+		expect(monoSamples(pcm48kStereoTo16kMono(stereoPcm([[-1, 0], [0, 0], [0, 0]])))).toEqual([-1]);
+	});
+
+	it("stays inside the 16 bit range at full scale", () => {
+		const loud = stereoPcm([[32767, 32767], [32767, 32767], [32767, 32767], [-32768, -32768], [-32768, -32768], [-32768, -32768]]);
+		expect(monoSamples(pcm48kStereoTo16kMono(loud))).toEqual([32767, -32768]);
+	});
+
+	it("drops a trailing group shorter than three frames", () => {
+		expect(monoSamples(pcm48kStereoTo16kMono(stereoPcm([[10, 10], [10, 10], [10, 10], [99, 99], [99, 99]])))).toEqual([10]);
+		expect(pcm48kStereoTo16kMono(Buffer.alloc(0)).length).toBe(0);
+	});
+
+	it("refuses input that is not whole stereo frames", () => {
+		expect(() => pcm48kStereoTo16kMono(Buffer.alloc(6))).toThrow(RangeError);
 	});
 });

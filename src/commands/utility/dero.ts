@@ -15,14 +15,14 @@ import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import { CooldownManager } from "@utils/cooldownManager.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { brainQueue } from "@features/dero-brain/brainQueue.js";
-import { buildJobInput } from "@features/dero-brain/brainJob.js";
+import { describeBrainTurn, runBrainTurn, type UnansweredReason } from "@features/dero-brain/brainTurn.js";
 import { isAuthorizedSpeaker } from "@features/dero-brain/authorizer.js";
-import { executeActions, type ActionReport } from "@features/dero-brain/executor.js";
+import type { ActionReport } from "@features/dero-brain/executor.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
-import type { BrainOutcome } from "@features/dero-brain/brainTypes.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { announceJoin, type GreetingOutcome } from "@features/voice/joinNotice.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
+import { turnLatencyLog } from "@features/voice/turnLatency.js";
 
 // ── /dero ─────────────────────────────────────────────────────────────────
 // What:  the text path to Dero's brain and Dero's way into a voice call. `tell`
@@ -41,20 +41,25 @@ import { voiceCopy } from "@features/voice/voiceCopy.js";
 //        executor, and joins through voiceSessions (one call per guild).
 // How (tell): ① guild only; ② config exists and is enabled; ③ speaker
 //        authorized; ④ brain online; ⑤ cooldown; ⑥ the task's own bounds;
-//        ⑦ defer, private; ⑧ build and enqueue the job, wait for its outcome;
-//        ⑨ answer busy, timeout or not understood plainly, or execute and list
-//        what happened; ⑩ audit, fire and forget.
+//        ⑦ defer, private; ⑧ runBrainTurn, the step the voice turn loop shares
+//        (build and enqueue the job, wait, execute an "ok" answer); ⑨ answer
+//        busy, timeout or not understood plainly, or list what happened;
+//        ⑩ audit, fire and forget.
 // How (join): the gates in joinRefusal, in order; then the per guild
 //        cooldown; defer; join and wait for Ready; post the join notice and
 //        speak the greeting; one private line saying how it went.
 //
 // ⚠️ PRIVACY: the task text goes to the brain and nowhere else. It is never
-// logged, stored, or put in an error; the audit row carries its length. Dero
-// joins every call deafened in this phase: it speaks and hears nothing.
+// logged, stored, or put in an error; the audit row carries its length. In a
+// call Dero hears only members on the task list (voiceListener), and the join
+// notice says so every time.
 
 const tellCopy = deroBrainCopy.tell;
 const callCopy = voiceCopy.call;
 const MS_PER_SECOND = 1000;
+const LATENCY_DECIMALS = 1;
+
+const toSeconds = (ms: number): string => (ms / MS_PER_SECOND).toFixed(LATENCY_DECIMALS);
 
 // What the bot needs in a voice channel to be any use there.
 const BOT_VOICE_PERMISSIONS = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak];
@@ -99,15 +104,14 @@ function auditAction(guildId: string, metadata: Record<string, unknown>): void {
 	});
 }
 
-// What the member is told when the brain did not answer "ok", and the outcome
-// code the audit row records for it. Called only for outcomes that are not an
-// "ok" result, so the last line is the brain's own "error".
-function unansweredReply(outcome: BrainOutcome): { line: string; code: string } {
-	if (outcome.kind === "timeout") return { line: tellCopy.timeout, code: "timeout" };
-	if (outcome.kind === "rejected") return { line: tellCopy.notUnderstood, code: `rejected:${outcome.reason}` };
-	if (outcome.result.status === "busy") return { line: tellCopy.busy, code: "busy" };
-	return { line: tellCopy.notUnderstood, code: "error" };
-}
+// What the member is told when the brain did not answer "ok". The voice turn
+// speaks its own lines for the same reasons (voiceCopy.turn).
+const UNANSWERED_LINES: Record<UnansweredReason, string> = {
+	offline: tellCopy.brainOffline,
+	busy: tellCopy.busy,
+	timeout: tellCopy.timeout,
+	notUnderstood: tellCopy.notUnderstood,
+};
 
 function reportLines(reports: ActionReport[]): string[] {
 	return reports.length > 0 ? reports.map((entry) => entry.line) : [tellCopy.nothingToDo];
@@ -172,34 +176,22 @@ async function tell(interaction: ChatInputCommandInteraction): Promise<void> {
 	const startedAt = Date.now();
 
 	try {
-		// ⑧
-		const job = buildJobInput({ guild, speaker, text: task, voiceConfig: config, source: "text" });
-		const { jobId, outcome: pendingOutcome } = brainQueue.enqueue(job);
-		const outcome = await pendingOutcome;
-		const audit = { jobId, speakerId: speaker.id, source: "text", taskChars: task.length, channels: job.channels.length };
+		// ⑧ the shared brain turn: job, wait, and on "ok" the executor runs
+		// against a fresh config read (the kill switch may have flipped meanwhile)
+		const turn = await runBrainTurn({ guild, speaker, text: task, source: "text", voiceConfig: config });
+		const audit = { ...describeBrainTurn(turn), speakerId: speaker.id, source: "text", taskChars: task.length };
 
 		// ⑨
-		if (outcome.kind !== "result" || outcome.result.status !== "ok") {
-			const unanswered = unansweredReply(outcome);
-			await interaction.editReply({ embeds: [errorEmbed(unanswered.line)] });
-			auditAction(guild.id, { ...audit, outcome: unanswered.code, durationMs: Date.now() - startedAt });
+		if (turn.status === "unanswered") {
+			await interaction.editReply({ embeds: [errorEmbed(UNANSWERED_LINES[turn.reason])] });
+			auditAction(guild.id, { ...audit, durationMs: Date.now() - startedAt });
 			return;
 		}
-
-		// The kill switch and the allowlists may have changed while the brain
-		// thought, so the executor gets a fresh read, not the one from step ②.
-		const freshConfig = await deroVoiceConfigStore.findByGuildId(guild.id);
-		const reports = await executeActions({ guild, speakerId: speaker.id, actions: outcome.result.actions, voiceConfig: freshConfig });
 		tellCooldown.record(cooldownKey);
-		await interaction.editReply({ embeds: [taskEmbed(reportLines(reports))] });
+		await interaction.editReply({ embeds: [taskEmbed(reportLines(turn.reports))] });
 
 		// ⑩
-		auditAction(guild.id, {
-			...audit,
-			outcome: "ok",
-			actions: reports.map((entry) => `${entry.type}:${entry.outcome}`),
-			durationMs: Date.now() - startedAt,
-		});
+		auditAction(guild.id, { ...audit, durationMs: Date.now() - startedAt });
 	}
 	catch (err) {
 		console.error(`[dero-brain] tell failed guild=${guild.id} user=${speaker.id}`, err);
@@ -224,7 +216,13 @@ async function status(interaction: ChatInputCommandInteraction): Promise<void> {
 		const authorized =
 			config !== null &&
 			isAuthorizedSpeaker({ member: interaction.member, guildOwnerId: interaction.guild.ownerId, voiceConfig: config });
-		if (authorized) lines.push(config.enabled ? deroBrainCopy.status.canTell : deroBrainCopy.status.switchedOffForYou);
+		if (authorized) {
+			lines.push(config.enabled ? deroBrainCopy.status.canTell : deroBrainCopy.status.switchedOffForYou);
+			// How fast Dero answers by voice here lately, for the people who talk
+			// to it. The owner reads these numbers at Gate B.
+			const latency = turnLatencyLog.summary(interaction.guild.id);
+			if (latency) lines.push(callCopy.statusLatency(toSeconds(latency.medianMs), toSeconds(latency.slowestMs), latency.count));
+		}
 	}
 
 	await interaction.reply({ embeds: [infoEmbed(deroBrainCopy.status.title, lines.join("\n"))], flags: MessageFlags.Ephemeral });

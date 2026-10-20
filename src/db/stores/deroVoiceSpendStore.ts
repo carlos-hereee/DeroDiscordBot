@@ -10,6 +10,8 @@ import { DeroVoiceSpend, type IDeroVoiceSpend } from "@db/models/DeroVoiceSpend.
 export interface ISpendUsage {
 	cents: number;
 	ttsChars: number;
+	// Absent for speech out, which meters characters only.
+	sttSeconds?: number;
 }
 
 export const deroVoiceSpendStore = {
@@ -30,7 +32,7 @@ export const deroVoiceSpendStore = {
 	async reserve(guildId: string, month: string, capCents: number, usage: ISpendUsage): Promise<IDeroVoiceSpend | null> {
 		return DeroVoiceSpend.findOneAndUpdate(
 			{ guildId, month, estimatedCents: { $lte: capCents - usage.cents } },
-			{ $inc: { estimatedCents: usage.cents, ttsChars: usage.ttsChars } },
+			{ $inc: { estimatedCents: usage.cents, ttsChars: usage.ttsChars, sttSeconds: usage.sttSeconds ?? 0 } },
 			{ new: true }
 		).lean<IDeroVoiceSpend>();
 	},
@@ -38,6 +40,9 @@ export const deroVoiceSpendStore = {
 	// Undo a reservation whose provider call failed: the same $inc, negated, on
 	// the month the reservation was taken in.
 	async refund(guildId: string, month: string, usage: ISpendUsage): Promise<void> {
-		await DeroVoiceSpend.updateOne({ guildId, month }, { $inc: { estimatedCents: -usage.cents, ttsChars: -usage.ttsChars } });
+		await DeroVoiceSpend.updateOne(
+			{ guildId, month },
+			{ $inc: { estimatedCents: -usage.cents, ttsChars: -usage.ttsChars, sttSeconds: -(usage.sttSeconds ?? 0) } }
+		);
 	},
 };

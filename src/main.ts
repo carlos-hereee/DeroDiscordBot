@@ -43,6 +43,7 @@ import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power
 import { registerListenHandlers } from "@features/voice/listenHandler.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { registerVoiceSessionWatchers } from "@features/voice/voiceSessionWatchers.js";
+import { startVoiceListener } from "@features/voice/voiceListener.js";
 import { registerGreeter, ensureIntroChannelsWritable } from "@features/greeter/welcomeNewMember.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
@@ -565,6 +566,11 @@ process.on("uncaughtException", (err) => {
 		// deleted. A VoiceStateUpdate listener beside ActivityTracker's on
 		// purpose; see the header of voiceSessionWatchers.ts.
 		registerVoiceSessionWatchers(client);
+		// Dero's ears: every call that reaches Ready starts a listener that hears
+		// ONLY members on the task list (the operator gate in voiceListener.ts).
+		// Handed over here rather than imported by voiceSessions, which would
+		// close an import cycle through the executor.
+		voiceSessions.useListener(startVoiceListener);
 
 		// ── new-member greeter ────────────────────────────────────
 		// Attach the guildMemberAdd listener so new joins get welcomed (ping +

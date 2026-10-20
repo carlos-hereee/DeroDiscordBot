@@ -129,10 +129,19 @@ export const BOT_LOG_EVENTS = {
 	// Where: paired on guildId and channelId they give time to Ready (the spike's
 	//        number), session length, reconnect count and why a session ended.
 	//
-	// ⚠️ PRIVACY: ids, durations, counts and reason codes only. Dero joins
-	// deafened in this phase, and no row ever carries audio or spoken text.
+	// ⚠️ PRIVACY: ids, durations, counts and reason codes only. No row ever
+	// carries audio or spoken text.
 	DERO_VOICE_JOINED: "dero_voice_joined",
 	DERO_VOICE_LEFT: "dero_voice_left",
+	// ── Dero voice turn audit (Dero voice plan, Phase 3b) ──────────
+	// What:  one row per utterance the turn loop transcribed: its outcome code,
+	//        the speaker id, the audio length, the transcript LENGTH, and the
+	//        four latency numbers the owner reads at Gate B.
+	// Who:   turnLoop, fire and forget. Nothing reads it on a hot path.
+	//
+	// ⚠️ PRIVACY: ids, milliseconds, byte and character counts and outcome codes
+	// only. Never the audio, never the transcript, never what Dero answered.
+	DERO_VOICE_TURN: "dero_voice_turn",
 	// add more here as needed
 } as const;
 
