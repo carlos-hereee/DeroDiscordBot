@@ -15,7 +15,7 @@ import {
 	battleshipRows,
 	rerollRow,
 } from "./roomBattleship.js";
-import { createTable as createHoldemTable } from "@features/games/holdemTable.js";
+import { createTable as createHoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
 import { pickWord } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
 import { roomTrail } from "./roomTrail.js";
@@ -130,6 +130,10 @@ export interface RoomOpenInput {
 	// the honest-looking result would be "you already have a room open" pointing at
 	// the very draft the member is trying to start.
 	existingRoomId?: string;
+	// The rules a hold em table opens with, set only by Dero's rules card (the host
+	// asked for a table and confirmed its terms). Absent everywhere else, which
+	// opens the standard table exactly as before. Ignored for every other game.
+	holdemTerms?: HoldemTerms;
 }
 
 export const RoomProvisioner = {
@@ -345,9 +349,9 @@ export const RoomProvisioner = {
 		// Hold em opens as a JOINING table rather than a dealt hand: the room's
 		// players are whoever buys in, which is not known until they do.
 		if (game === "holdem") {
-			const table = createHoldemTable();
+			const table = createHoldemTable(Date.now(), input.holdemTerms);
 			const boardMessage = await channel
-				.send({ embeds: [holdemTableEmbed(table, 0)], components: holdemJoiningRows(room.roomId, 0) })
+				.send({ embeds: [holdemTableEmbed(table, 0)], components: holdemJoiningRows(room.roomId, 0, table) })
 				.catch(() => null);
 			await gameRoomStore.update(guild.id, room.roomId, {
 				secret: { ...table, boardMessageId: boardMessage?.id ?? null } as never,

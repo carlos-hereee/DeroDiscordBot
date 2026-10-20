@@ -3,7 +3,14 @@ import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { formatCard } from "@features/games/holdemHand.js";
-import { whoActs, actionsFor, livePlayers, type HoldemTable } from "@features/games/holdemTable.js";
+import {
+	whoActs,
+	actionsFor,
+	livePlayers,
+	seatCapOf,
+	startingStackOf,
+	type HoldemTable,
+} from "@features/games/holdemTable.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
@@ -42,7 +49,7 @@ export function tableEmbed(table: HoldemTable, potTotal: number): EmbedBuilder {
 
 	const header =
 		table.status === "joining"
-			? gameRoomsCopy.holdem.joiningLine(table.seats.length)
+			? joiningHeader(table)
 			: table.status === "finished"
 			  ? gameRoomsCopy.holdem.finishedLine(table.winnerId)
 			  : gameRoomsCopy.holdem.handLine(table.handNumber, table.smallBlind, table.bigBlind);
@@ -54,6 +61,20 @@ export function tableEmbed(table: HoldemTable, potTotal: number): EmbedBuilder {
 		),
 		COLORS.ARCADE as ColorResolvable
 	);
+}
+
+// A table opened with terms says them while it waits for players, so nobody buys
+// in to a 5000 chip table thinking it is the standard 1000. A table without terms
+// keeps the line it always had.
+function joiningHeader(table: HoldemTable): string {
+	if (table.startingStack === undefined) return gameRoomsCopy.holdem.joiningLine(table.seats.length);
+	return gameRoomsCopy.holdem.joiningTermsLine({
+		seated: table.seats.length,
+		seatCap: seatCapOf(table),
+		stack: startingStackOf(table),
+		smallBlind: table.smallBlind,
+		bigBlind: table.bigBlind,
+	});
 }
 
 // ── the private peek (T16) ────────────────────────────────────────────
@@ -77,15 +98,19 @@ export function holeCardsEmbed(table: HoldemTable, viewerId: string): EmbedBuild
 }
 
 // ── controls ──────────────────────────────────────────────────────────
-export function joiningRows(roomId: string, seatCount: number): ActionRowBuilder<ButtonBuilder>[] {
+// `table` carries the buy in and the seat cap; without it (or for a table without
+// terms) both are the standard ones, which is what every caller got before terms.
+export function joiningRows(roomId: string, seatCount: number, table?: HoldemTable): ActionRowBuilder<ButtonBuilder>[] {
+	const stack = table ? startingStackOf(table) : BOT_CONSTANTS.HOLDEM_STARTING_STACK;
+	const seatCap = table ? seatCapOf(table) : BOT_CONSTANTS.HOLDEM_MAX_SEATS;
 	return [
 		new ActionRowBuilder<ButtonBuilder>().addComponents(
 			new ButtonBuilder()
 				.setCustomId(`${GAME_ROOM_PREFIX}:hjoin:${roomId}`)
-				.setLabel(gameRoomsCopy.holdem.buyInLabel(BOT_CONSTANTS.HOLDEM_STARTING_STACK))
+				.setLabel(gameRoomsCopy.holdem.buyInLabel(stack))
 				.setEmoji("🪙")
 				.setStyle(ButtonStyle.Success)
-				.setDisabled(seatCount >= BOT_CONSTANTS.HOLDEM_MAX_SEATS),
+				.setDisabled(seatCount >= seatCap),
 			new ButtonBuilder()
 				.setCustomId(`${GAME_ROOM_PREFIX}:hstart:${roomId}`)
 				.setLabel(gameRoomsCopy.holdem.startLabel)

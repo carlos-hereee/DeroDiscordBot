@@ -323,6 +323,9 @@ export const gameRoomsCopy = {
 
 		joiningLine: (seated: number): string =>
 			`Buy in to take a seat. ${seated} seated so far. Chips are for this table only and vanish when it ends.`,
+		// The joining line for a table opened with host defined terms (Dero's rules card).
+		joiningTermsLine: (terms: { seated: number; seatCap: number; stack: number; smallBlind: number; bigBlind: number }): string =>
+			`Buy in to take a seat. ${terms.seated} of ${terms.seatCap} seated so far. Everyone starts with ${terms.stack} chips, blinds start at ${terms.smallBlind} and ${terms.bigBlind}. Chips are for this table only and vanish when it ends.`,
 		handLine: (hand: number, small: number, big: number): string => `Hand ${hand} · blinds ${small}/${big}`,
 		finishedLine: (winnerId: string | null): string =>
 			winnerId ? `👑 <@${winnerId}> takes the tournament.` : "The tournament is over.",

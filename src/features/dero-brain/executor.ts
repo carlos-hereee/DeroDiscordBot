@@ -3,10 +3,12 @@ import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import { renderCallSpeech, type CallSpeechInput, type CallSpeechResult } from "@features/voice/callSpeech.js";
 import { voiceSessions, type VoiceSessionView } from "@features/voice/voiceSessions.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
-import type { BrainAction, BrainActionType, PostMessageAction, SayAction } from "./brainTypes.js";
+import type { BrainAction, BrainActionType, OpenHoldemAction, PostMessageAction, SayAction } from "./brainTypes.js";
 import { isAuthorizedSpeaker } from "./authorizer.js";
 import { checkPostableChannel, type ChannelRefusal } from "./channelGate.js";
 import { deroBrainCopy } from "./deroBrainCopy.js";
+import { describeTerms, describeTermsRefusal, resolveTerms } from "./holdemTerms.js";
+import { createHoldemRequest } from "./holdemRequests.js";
 
 // ── executor ──────────────────────────────────────────────────────────────
 // What:  carry out a parsed brain result in one guild, for one speaker, and
@@ -20,14 +22,19 @@ import { deroBrainCopy } from "./deroBrainCopy.js";
 //        `say` and `leave_voice` act only on the call already open in that
 //        guild; the brain can never make Dero join one.
 // How:   ① the kill switch, re-checked here because a job can wait 20 seconds;
-//        ② the honest stub: open_holdem answers "not available yet" and does
-//        nothing; ③ the pure checks first (a post's allowlist, whether a call
-//        is open), so a refused action costs zero Discord API calls; ④ the
-//        speaker re-fetched and re-authorized, only when an action survived ③
-//        (a role removed while the brain was thinking stops the action); ⑤ the
-//        channel gate against the live cache; ⑥ the send, with every ping
-//        disabled; ⑦ `say` renders through callSpeech (metered, cached) and
-//        queues at brain priority; `leave_voice` ends the call.
+//        ② open_holdem opens NOTHING: it makes a pending table request with the
+//        rules in effect and reports its id, and the caller shows the rules card
+//        (a private reply for /dero tell, a post in the call's channel for a
+//        voice turn); the card's buttons are the only way a table opens, and any
+//        channelId the brain sent is ignored, because the room's channel comes
+//        from the provisioner and the arcade category; ③ the pure checks first
+//        (a post's allowlist, whether a call is open), so a refused action costs
+//        zero Discord API calls; ④ the speaker re-fetched and re-authorized,
+//        only when an action survived ③ (a role removed while the brain was
+//        thinking stops the action); ⑤ the channel gate against the live
+//        cache; ⑥ the send, with every ping disabled; ⑦ `say` renders through
+//        callSpeech (metered, cached) and queues at brain priority;
+//        `leave_voice` ends the call.
 //
 // ⚠️ PRIVACY: a send failure logs ids and an error code, never the text, and a
 // spoken line is never logged or stored.
@@ -38,7 +45,8 @@ export type ActionOutcome =
 	| "not_authorized"
 	| "switched_off"
 	| "send_failed"
-	| "not_available_yet"
+	| "rules_card"
+	| "terms_refused"
 	| "spoke"
 	| "no_call"
 	| "not_set_up"
@@ -52,6 +60,8 @@ export interface ActionReport {
 	type: BrainActionType;
 	outcome: ActionOutcome;
 	line: string;
+	/** Set on a "rules_card" report: the pending table request the caller presents as the rules card. */
+	holdemRequestId?: string;
 }
 
 /** The voice calls the executor makes, injected so tests use a fake call. */
@@ -157,6 +167,17 @@ async function sayInCall(guild: Guild, action: SayAction, voiceId: string | null
 	return report(action.type, "spoke", deroBrainCopy.result.spoke);
 }
 
+// ② The pending request, or the bound the terms broke. The parser already holds
+// the brain to the same bounds, so a refusal here is a guard, not a live path.
+function makeRulesCard(guild: Guild, speakerId: string, action: OpenHoldemAction): ActionReport {
+	const resolved = resolveTerms({ maxSeats: action.maxSeats, startingStack: action.startingStack, bigBlind: action.bigBlind });
+	if (!resolved.ok) {
+		return report(action.type, "terms_refused", deroBrainCopy.result.holdemTermsRefused(describeTermsRefusal(resolved.reason)));
+	}
+	const request = createHoldemRequest({ guildId: guild.id, speakerId, terms: resolved.terms });
+	return { ...report(action.type, "rules_card", deroBrainCopy.result.holdemCard(describeTerms(resolved.terms))), holdemRequestId: request.id };
+}
+
 function leaveCall(guild: Guild, voice: ExecutorVoiceDeps): ActionReport {
 	const session = voice.sessionIn(guild.id);
 	if (!session) return report("leave_voice", "no_call", deroBrainCopy.result.leaveNoCall);
@@ -185,23 +206,19 @@ export async function executeActions({
 		(action): action is PostMessageAction => action.type === "post_message" && allowed.includes(action.channelId),
 	);
 	const callActionable = actions.some(isVoiceAction) && voice.sessionIn(guild.id) !== null;
+	const asksForTable = actions.some((action) => action.type === "open_holdem");
 
 	// ④ only fetched when an action survived ③, so a refused result costs no
 	// Discord call at all
 	let speaker: GuildMember | null = null;
 	let speakerAuthorized = false;
-	if (postable.length > 0 || callActionable) {
+	if (postable.length > 0 || callActionable || asksForTable) {
 		speaker = await deps.fetchMember(guild, speakerId);
 		speakerAuthorized = isAuthorizedSpeaker({ member: speaker, guildOwnerId: guild.ownerId, voiceConfig });
 	}
 
 	const reports: ActionReport[] = [];
 	for (const action of actions) {
-		// ② the honest stub: say what is missing, never fake a success
-		if (action.type === "open_holdem") {
-			reports.push(report(action.type, "not_available_yet", deroBrainCopy.result.notAvailableYet(action.type)));
-			continue;
-		}
 		if (action.type === "post_message" && !allowed.includes(action.channelId)) {
 			reports.push(report(action.type, "channel_not_allowed", REFUSAL_LINES.channel_not_allowed));
 			continue;
@@ -216,7 +233,8 @@ export async function executeActions({
 			reports.push(report(action.type, "not_authorized", deroBrainCopy.result.notAuthorized));
 			continue;
 		}
-		if (action.type === "say") reports.push(await sayInCall(guild, action, voiceConfig.voiceId, voice));
+		if (action.type === "open_holdem") reports.push(makeRulesCard(guild, speakerId, action));
+		else if (action.type === "say") reports.push(await sayInCall(guild, action, voiceConfig.voiceId, voice));
 		else if (action.type === "leave_voice") reports.push(leaveCall(guild, voice));
 		else reports.push(await sendPost(guild, speaker, action, allowed));
 	}

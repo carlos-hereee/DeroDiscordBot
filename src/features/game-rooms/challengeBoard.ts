@@ -19,6 +19,7 @@ import { openSoloRoom, describeSoloOpenFailure, readPrivateQuotaStatus } from ".
 import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
+import { buildInviteOptions, refilterInvitees } from "./invitePicker.js";
 import { openerCardEmbed, openerCardRows, isCooperativeGame, type OpenerCardState } from "./challengeBoardEmbeds.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -197,31 +198,12 @@ export async function chooseVisibility(interaction: ButtonInteraction, room: IGa
 }
 
 // ── the invite picker (F9's structural half) ──────────────────────────
-// ⚠️ A StringSelect THE BOT POPULATES, and that is the whole point. A UserSelect is
-// filled in by Discord from the guild's member list and will happily return a bot,
-// which would put "Dero" back on the opponent list through a component rather than
-// through a copy string. Here the bot builds every option itself and filters
-// `member.user.bot`, so a bot cannot appear no matter what the client sends back.
-// The handler re-checks anyway, because a customId and its values are user input.
+// ⚠️ A StringSelect THE BOT POPULATES, so a bot cannot appear no matter what the
+// client sends back; the option list and the server side re-filter both live in
+// invitePicker.ts, shared with Dero's hold em rules card.
 export async function openInvitePicker(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const guild = interaction.guild!;
-
-	// Cache first, then one fetch. A cold cache after a restart would otherwise show
-	// an almost empty picker in a busy guild.
-	let members = guild.members.cache;
-	if (members.size <= 1) members = await guild.members.fetch().catch(() => members);
-
-	const options = members
-		.filter((member) => !member.user.bot && member.id !== room.hostId)
-		.map((member) => ({
-			label: (member.displayName || member.user.username).slice(0, 100),
-			value: member.id,
-			description: `@${member.user.username}`.slice(0, 100),
-		}))
-		// Discord caps a select at 25 options, which is also GAME_ROOM_MAX_SPECTATORS.
-		// The two agreeing is deliberate rather than lucky: the picker cannot offer
-		// more members than a room could carry overwrites for.
-		.slice(0, BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS);
+	const options = await buildInviteOptions(guild, room.hostId);
 
 	if (options.length === 0) {
 		await interaction.reply({ content: gameRoomsCopy.board.pickerEmpty, flags: MessageFlags.Ephemeral });
@@ -262,15 +244,9 @@ export async function handleInviteSelect(interaction: StringSelectMenuInteractio
 	}
 
 	// ⚠️ RE-FILTER SERVER SIDE. The values arrive from the client, and a customId plus
-	// its payload are user input however the menu was built. Re-resolving each id
-	// against the guild and dropping bots means the structural guarantee above holds
-	// even against a hand-crafted interaction.
-	const picked: string[] = [];
-	for (const id of interaction.values.slice(0, BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS)) {
-		if (id === room.hostId) continue;
-		const member = interaction.guild.members.cache.get(id) ?? (await interaction.guild.members.fetch(id).catch(() => null));
-		if (member && !member.user.bot) picked.push(id);
-	}
+	// its payload are user input however the menu was built, so the structural
+	// guarantee above holds even against a hand-crafted interaction.
+	const picked = await refilterInvitees(interaction.guild, interaction.values, room.hostId);
 
 	const updated = (await gameRoomStore.update(guildId, roomId, { spectatorIds: picked })) ?? room;
 	await interaction.reply({ content: gameRoomsCopy.board.pickerSaved(picked.length), flags: MessageFlags.Ephemeral });

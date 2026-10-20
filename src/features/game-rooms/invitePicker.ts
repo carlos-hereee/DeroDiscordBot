@@ -1,0 +1,57 @@
+import type { Guild } from "discord.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+
+// ── invitePicker ──────────────────────────────────────────────────────
+// What:  the two halves of an invite list a host picks from: the options the
+//        BOT builds for a StringSelect, and the server side re-filter of what the
+//        client sends back.
+// Who:   the challenge board's invite picker and Dero's hold em rules card. One
+//        helper so the two cannot disagree about who may be invited.
+// When:  once when a picker is drawn, once per submission.
+// Where: reads the guild member cache, with one fetch when the cache is cold.
+// How:   ⚠️ A StringSelect THE BOT POPULATES, and that is the whole point. A
+//        UserSelect is filled in by Discord from the guild's member list and will
+//        happily return a bot, which would put "Dero" on an invite list through a
+//        component. Here the bot builds every option itself and filters
+//        `member.user.bot`, and the submission is re-checked against the guild,
+//        because a customId and its values are user input however the menu was
+//        built.
+
+export interface InviteOption {
+	label: string;
+	value: string;
+	description: string;
+}
+
+/** Every member the host could invite, bots and the host left out, at most one select's worth. */
+export async function buildInviteOptions(guild: Guild, hostId: string): Promise<InviteOption[]> {
+	// Cache first, then one fetch. A cold cache after a restart would otherwise show
+	// an almost empty picker in a busy guild.
+	let members = guild.members.cache;
+	if (members.size <= 1) members = await guild.members.fetch().catch(() => members);
+
+	return (
+		members
+			.filter((member) => !member.user.bot && member.id !== hostId)
+			.map((member) => ({
+				label: (member.displayName || member.user.username).slice(0, 100),
+				value: member.id,
+				description: `@${member.user.username}`.slice(0, 100),
+			}))
+			// Discord caps a select at 25 options, which is also GAME_ROOM_MAX_SPECTATORS.
+			// The two agreeing is deliberate rather than lucky: the picker cannot offer
+			// more members than a room could carry overwrites for.
+			.slice(0, BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS)
+	);
+}
+
+/** The submitted ids that are real, non bot members of this guild other than the host. */
+export async function refilterInvitees(guild: Guild, values: readonly string[], hostId: string): Promise<string[]> {
+	const picked: string[] = [];
+	for (const id of values.slice(0, BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS)) {
+		if (id === hostId) continue;
+		const member = guild.members.cache.get(id) ?? (await guild.members.fetch(id).catch(() => null));
+		if (member && !member.user.bot) picked.push(id);
+	}
+	return picked;
+}

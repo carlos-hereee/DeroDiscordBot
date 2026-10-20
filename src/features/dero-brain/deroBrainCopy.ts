@@ -1,4 +1,5 @@
-import type { BrainActionType } from "./brainTypes.js";
+import type { HandCategory } from "@features/games/holdemHand.js";
+import type { HoldemTerms } from "@features/games/holdemTable.js";
 
 // ── Dero brain user-facing copy ───────────────────────────────────────
 // Feature-local copy module, the sibling of voiceCopy.ts and gameRoomsCopy.ts,
@@ -13,13 +14,50 @@ import type { BrainActionType } from "./brainTypes.js";
 //
 // House rule for every string below: no dashes in user-facing copy.
 
-// The actions still to be built, one honest line each, so a stub never reads as
-// a success. `say` and `leave_voice` left this list when voice calls landed.
-export type NotYetAvailableAction = Exclude<BrainActionType, "post_message" | "say" | "leave_voice">;
+// The bounds a refusal names, passed in by holdemTerms so the numbers live only
+// in BOT_CONSTANTS.
+export interface TermsBounds {
+	minSeats: number;
+	maxSeats: number;
+	minStack: number;
+	maxStack: number;
+	minBigBlind: number;
+	stackToBigBlind: number;
+}
 
-const NOT_AVAILABLE_YET: Record<NotYetAvailableAction, string> = {
-	open_holdem: "Opening a Hold'em table is not available yet, so no table was opened.",
+const rulesSentence = (label: string, terms: HoldemTerms, everyHands: number): string =>
+	`${label}: up to ${terms.maxSeats} players, ${terms.startingStack} chips each, blinds ${terms.smallBlind} and ${terms.bigBlind}, and the blinds double every ${everyHands} hands.`;
+
+// How a hand's category reads after "wins 300", so speech never says "with pair".
+const HAND_PHRASES: Record<HandCategory, string> = {
+	"high card": "high card",
+	pair: "a pair",
+	"two pair": "two pair",
+	"three of a kind": "three of a kind",
+	straight: "a straight",
+	flush: "a flush",
+	"full house": "a full house",
+	"four of a kind": "four of a kind",
+	"straight flush": "a straight flush",
 };
+
+// Spoken card names. The board embed shows pips; a voice reading the pip aloud
+// would say nothing useful, so speech gets "the ace of spades".
+const RANK_WORDS: Record<number, string> = {
+	2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine",
+	10: "ten", 11: "jack", 12: "queen", 13: "king", 14: "ace",
+};
+const SUIT_WORDS: Record<string, string> = { s: "spades", h: "hearts", d: "diamonds", c: "clubs" };
+
+/** One winner of a settled hand, as the dealer reads it. */
+export interface DealerWinner {
+	name: string;
+	amount: number;
+	category: HandCategory | null;
+}
+
+const winnerPhrase = ({ name, amount, category }: DealerWinner): string =>
+	category ? `${name} wins ${amount} with ${HAND_PHRASES[category]}.` : `${name} wins ${amount}.`;
 
 export const deroBrainCopy = {
 	// ── the /dero command itself ──
@@ -62,7 +100,11 @@ export const deroBrainCopy = {
 		notAuthorized: "You can no longer give Dero tasks, so nothing was done.",
 		switchedOff: "Dero was switched off before the task ran, so nothing was done.",
 		sendFailed: "Dero could not post that message.",
-		notAvailableYet: (type: NotYetAvailableAction): string => NOT_AVAILABLE_YET[type],
+		// open_holdem. The question is also what Dero speaks in a call, so it names
+		// the choices in words rather than pointing at buttons by label.
+		holdemCard: (rules: string): string =>
+			`${rules} Do you want these rules or custom ones, and a public table or an invite only one? Choose on the rules card.`,
+		holdemTermsRefused: (refusal: string): string => `${refusal} No table card was made.`,
 
 		// say and leave_voice. "Left" reuses voiceCopy.call.left, the same line
 		// /dero leave answers with.
@@ -73,6 +115,71 @@ export const deroBrainCopy = {
 		sayFailed: "Dero could not find his voice just now, so nothing was said.",
 		sayQueueFull: "Dero has too much to say in the call right now, so that line was dropped.",
 		leaveNoCall: "Dero is not in a voice call in this server, so there was nothing to leave.",
+	},
+
+	// ── the hold em rules card (open_holdem) ──
+	holdem: {
+		standardRules: (terms: HoldemTerms, everyHands: number): string => rulesSentence("Standard rules", terms, everyHands),
+		customRules: (terms: HoldemTerms, everyHands: number): string => rulesSentence("Custom rules", terms, everyHands),
+		termsRefused: {
+			not_a_whole_number: (_bounds: TermsBounds): string => "Seats, the starting stack and the big blind must each be a whole number.",
+			seats_out_of_range: (b: TermsBounds): string => `A table seats ${b.minSeats} to ${b.maxSeats} players.`,
+			stack_out_of_range: (b: TermsBounds): string => `The starting stack must be between ${b.minStack} and ${b.maxStack} chips.`,
+			big_blind_too_small: (b: TermsBounds): string => `The big blind must be at least ${b.minBigBlind}.`,
+			big_blind_too_large: (b: TermsBounds): string =>
+				`The big blind can be at most ${b.stackToBigBlind === 10 ? "a tenth" : `1 in ${b.stackToBigBlind}`} of the starting stack. Name a smaller big blind or a bigger stack.`,
+		},
+
+		cardTitle: "🃏 A Texas Hold'em table",
+		chipsLine: "Chips exist only for this table and vanish when it ends.",
+		pickLine:
+			"Open a public table anyone can join, or pick who to invite below and open an invite only table. Change rules sets your own seats, stack and big blind.",
+		invited: (userIds: string[]): string => `Invited: ${userIds.map((id) => `<@${id}>`).join(", ")}`,
+		nobodyInvited: "Nobody is invited yet. An invite only table needs at least one member picked below.",
+		expires: (unixSeconds: number): string => `This card expires <t:${unixSeconds}:R>.`,
+		// The one deliberate mention on a card posted in a call's text channel.
+		forSpeaker: (userId: string): string => `<@${userId}>, here are the table rules you asked for.`,
+
+		openPublicLabel: "Open public table",
+		openInviteLabel: "Open invite only table",
+		changeRulesLabel: "Change rules",
+		cancelLabel: "Cancel",
+		pickerPlaceholder: "Pick who to invite",
+
+		modalTitle: "Your table rules",
+		seatsLabel: (min: number, max: number): string => `Seats (${min} to ${max})`,
+		stackLabel: (min: number, max: number): string => `Starting stack (${min} to ${max})`,
+		bigBlindLabel: (min: number): string => `Big blind (${min} up to a tenth of the stack)`,
+
+		expired: "This table request has expired. Ask Dero again for a new one.",
+		notYours: "Only the member who asked for this table can use this card.",
+		notAuthorized: "You can no longer give Dero tasks, so no table was opened.",
+		switchedOff: "Dero is switched off in this server right now, so no table was opened.",
+		pickInviteesFirst: "Pick at least one member to invite first, or open a public table.",
+		opened: (channelId: string): string => `The table is open in <#${channelId}>. Buy in there to take a seat, and Dero will deal.`,
+		openedSpoken: (channelName: string): string => `The table is open in ${channelName}. Buy in there to take a seat, and I will deal.`,
+		cancelled: "Table request cancelled. Nothing was opened.",
+		openFailed: (reason: string): string => `${reason} No table was opened.`,
+	},
+
+	// ── the dealer's narration (dealerNarration) ──
+	// `name` is a mention in text and a display name in speech; the text lines go
+	// out with every ping off, so a mention only renders the name.
+	dealer: {
+		handStart: (hand: number, small: number, big: number, buttonName: string): string =>
+			`Hand ${hand}. Blinds are ${small} and ${big}. ${buttonName} has the button.`,
+		handStartBlindsUp: (hand: number, small: number, big: number, buttonName: string): string =>
+			`Hand ${hand}. The blinds are up to ${small} and ${big}. ${buttonName} has the button.`,
+		flop: (cards: string): string => `The flop: ${cards}.`,
+		turn: (card: string): string => `The turn: ${card}.`,
+		river: (card: string): string => `The river: ${card}.`,
+		toAct: (name: string): string => `${name}, it is your turn.`,
+		result: (winners: DealerWinner[]): string => winners.map(winnerPhrase).join(" "),
+		tournamentWon: (name: string): string => `${name} wins the tournament.`,
+		spokenCard: (rank: number, suit: string): string => `the ${RANK_WORDS[rank] ?? String(rank)} of ${SUIT_WORDS[suit] ?? suit}`,
+		// "the two of clubs, the ten of hearts and the ace of spades"
+		spokenCards: (names: string[]): string =>
+			names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`,
 	},
 
 	// ── /dero status ──

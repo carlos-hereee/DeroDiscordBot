@@ -7,6 +7,7 @@ import { executeActions, neutralizeMassMentions, SAFE_MENTIONS, type ExecutorDep
 import { parseBrainResult } from "./parseBrainResult.js";
 import { deroBrainCopy } from "./deroBrainCopy.js";
 import type { BrainAction } from "./brainTypes.js";
+import { getHoldemRequest } from "./holdemRequests.js";
 
 // ── executor ───────────────────────────────────────────────────────────────
 // Two halves. The matrix: every reason a post_message is refused, the honest
@@ -181,11 +182,27 @@ describe("executeActions: post_message", () => {
 });
 
 describe("executeActions: the rest", () => {
-	it("answers open_holdem honestly as not available yet, with zero API calls", async () => {
-		const { reports, world } = await run([{ type: "open_holdem" }]);
-		expect(reports.map((entry) => entry.outcome)).toEqual(["not_available_yet"]);
-		expect(reports[0].line).toContain("not available yet");
-		expect(world.apiCalls()).toBe(0);
+	// Replaced in Phase 4 (owner approved): open_holdem is no longer a stub. It
+	// makes a pending rules card request and opens nothing; the card's buttons are
+	// the only way a table opens.
+	it("turns open_holdem into a rules card request, opens nothing and sends nothing", async () => {
+		const { reports, world } = await run([{ type: "open_holdem", maxSeats: 6, startingStack: 5000, bigBlind: 200 }]);
+		expect(reports).toHaveLength(1);
+		expect(reports[0]).toMatchObject({ type: "open_holdem", outcome: "rules_card" });
+		expect(reports[0].line).toContain("Custom rules: up to 6 players, 5000 chips each, blinds 100 and 200, and the blinds double every 6 hands.");
+		expect(getHoldemRequest(reports[0].holdemRequestId ?? "")).toMatchObject({
+			guildId: GUILD_ID,
+			speakerId: SPEAKER_ID,
+			visibility: "public",
+			terms: { maxSeats: 6, startingStack: 5000, smallBlind: 100, bigBlind: 200 },
+		});
+		expect(world.sends()).toBe(0);
+		expect(world.fetchMember).toHaveBeenCalledTimes(1);
+	});
+
+	it("refuses open_holdem from a member off the task list and makes no request", async () => {
+		const { reports } = await run([{ type: "open_holdem" }], fakeWorld([]));
+		expect(reports).toEqual([{ type: "open_holdem", outcome: "not_authorized", line: deroBrainCopy.result.notAuthorized }]);
 	});
 
 	it("answers say and leave_voice with no call open plainly, with zero API calls", async () => {

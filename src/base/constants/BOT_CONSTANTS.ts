@@ -356,6 +356,18 @@ export const BOT_CONSTANTS = {
 	HOLDEM_TERMS_MAX_STACK: 1_000_000,
 	HOLDEM_TERMS_MIN_BIG_BLIND: 2,
 	HOLDEM_TERMS_STACK_TO_BIG_BLIND: 10,
+	// The rules card (holdemRulesCard). A request lives two minutes, long enough
+	// to pick invitees or change the rules, short enough that a stale card cannot
+	// open a table nobody is waiting for.
+	DERO_HOLDEM_REQUEST_TTL_MS: 2 * 60_000,
+	// The dealer (dealerNarration). Text is the hand start and the result, so two
+	// lines per hand is the whole of it; speech caps at eight so a six seat hand
+	// cannot queue a minute of talking, dropping "your turn" lines first.
+	DERO_DEALER_TEXT_LINES_PER_HAND: 2,
+	DERO_DEALER_SPOKEN_LINES_PER_HAND: 8,
+	// A dealer entry whose table ended some other way (a forfeit, a deleted
+	// channel) is dropped after this, so the in memory map cannot grow forever.
+	DERO_DEALER_SESSION_MAX_AGE_MS: 12 * 60 * 60_000,
 
 	// ── leveling ──────────────────────────────────────────────────
 	// What:  every number the leveling system runs on: how often buffered xp is

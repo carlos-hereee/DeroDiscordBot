@@ -66,6 +66,24 @@ export interface HoldemTable {
 	winnerId: string | null;
 	// Busted players worst-first, so placement is derivable at the end.
 	bustOrder: string[];
+	// Host defined terms (a table Dero opened on request). ABSENT on every table made
+	// without terms, including every row stored before terms existed, which is why
+	// both are optional and every reader goes through startingStackOf and seatCapOf.
+	startingStack?: number;
+	maxSeats?: number;
+}
+
+/**
+ * The rules a table can be opened with. Validated by the caller (dero-brain's
+ * resolveTerms); the table only stores them. The blinds are the STARTING blinds:
+ * escalation doubles them on the usual schedule, exactly as it doubles the standard
+ * ones.
+ */
+export interface HoldemTerms {
+	startingStack: number;
+	maxSeats: number;
+	smallBlind: number;
+	bigBlind: number;
 }
 
 const seatOf = (table: HoldemTable, userId: string): TableSeat | undefined =>
@@ -77,7 +95,31 @@ export const livePlayers = (table: HoldemTable): TableSeat[] => table.seats.filt
 // Players still in the CURRENT HAND.
 export const inHand = (table: HoldemTable): TableSeat[] => livePlayers(table).filter((seat) => !seat.folded);
 
-export function createTable(now = Date.now()): HoldemTable {
+// The stack every buy in gets and the most seats the table takes. A table without
+// terms reads the standard constants, and the cap is clamped to HOLDEM_MAX_SEATS
+// whatever is stored, because the board's rows and embed are laid out for six.
+export const startingStackOf = (table: HoldemTable): number => table.startingStack ?? BOT_CONSTANTS.HOLDEM_STARTING_STACK;
+
+export const seatCapOf = (table: HoldemTable): number =>
+	Math.min(table.maxSeats ?? BOT_CONSTANTS.HOLDEM_MAX_SEATS, BOT_CONSTANTS.HOLDEM_MAX_SEATS);
+
+/**
+ * A fresh joining table. Without terms it is exactly the standard table; with terms
+ * it also carries the stack and seat cap, and opens at the given blinds. The terms
+ * keys are only ADDED when terms are passed, so a standard table stays the same
+ * object, key for key, as it was before terms existed.
+ */
+export function createTable(now = Date.now(), terms?: HoldemTerms): HoldemTable {
+	const table = createStandardTable(now);
+	if (!terms) return table;
+	table.startingStack = terms.startingStack;
+	table.maxSeats = terms.maxSeats;
+	table.smallBlind = terms.smallBlind;
+	table.bigBlind = terms.bigBlind;
+	return table;
+}
+
+function createStandardTable(now: number): HoldemTable {
 	return {
 		status: "joining",
 		seats: [],
@@ -104,12 +146,12 @@ export type JoinResult = { ok: true } | { ok: false; reason: "alreadySeated" | "
 export function joinTable(table: HoldemTable, userId: string, username: string): JoinResult {
 	if (table.status !== "joining") return { ok: false, reason: "started" };
 	if (seatOf(table, userId)) return { ok: false, reason: "alreadySeated" };
-	if (table.seats.length >= BOT_CONSTANTS.HOLDEM_MAX_SEATS) return { ok: false, reason: "tableFull" };
+	if (table.seats.length >= seatCapOf(table)) return { ok: false, reason: "tableFull" };
 
 	table.seats.push({
 		userId,
 		username,
-		stack: BOT_CONSTANTS.HOLDEM_STARTING_STACK,
+		stack: startingStackOf(table),
 		committed: 0,
 		totalCommitted: 0,
 		folded: false,

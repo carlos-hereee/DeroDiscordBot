@@ -15,6 +15,7 @@ import {
 } from "@features/dero-brain/brainTurn.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import type { ActionReport } from "@features/dero-brain/executor.js";
+import { presentRulesCardInCall, type PresentInCallInput } from "@features/dero-brain/holdemRulesCard.js";
 import { addressingOf } from "./addressing.js";
 import { renderCallSpeech, type CallSpeechInput, type CallSpeechResult } from "./callSpeech.js";
 import { elevenLabsStt } from "./elevenLabsStt.js";
@@ -47,7 +48,9 @@ import { wavFromPcm16kMono } from "./wavFile.js";
 //        or fails; ⑤ drop an empty or one character transcript; ⑥ the
 //        addressing rule, which drops everything not meant for Dero; ⑦ the
 //        speaker re-authorized against the fresh config; ⑧ runBrainTurn with
-//        source "voice", the text cut to 300 characters; ⑨ speak: the brain's
+//        source "voice", the text cut to 300 characters; a table the brain
+//        asked for gets its rules card posted in the call's text channel first,
+//        so the card is there when Dero asks about it; ⑨ speak: the brain's
 //        own `say` was already spoken by the executor, otherwise Dero speaks
 //        the executor's summary or the canned line for why there is no answer;
 //        ⑩ latency and one audit row.
@@ -93,6 +96,8 @@ export interface TurnLoopDeps {
 	latency: LatencyLog;
 	/** One per process, keyed by guild id, so a rejoin does not reset it. */
 	troubleCooldown: CooldownManager;
+	/** Post a hold em rules card in the call's text channel for the member who asked. */
+	presentHoldemCard(input: PresentInCallInput): Promise<boolean>;
 }
 
 export type SubmitResult = "started" | "queued" | "dropped";
@@ -137,6 +142,7 @@ export const defaultTurnLoopDeps: TurnLoopDeps = {
 	},
 	latency: turnLatencyLog,
 	troubleCooldown: sharedTroubleCooldown,
+	presentHoldemCard: (input) => presentRulesCardInCall(input),
 };
 
 /**
@@ -286,6 +292,11 @@ export function createTurnLoop(target: TurnTarget, deps: TurnLoopDeps = defaultT
 		// ⑧
 		const task = truncateAtSentence(heard.transcript, BOT_CONSTANTS.DERO_BRAIN_MAX_TASK_CHARS).text;
 		const turn = await deps.runTurn({ guild, speaker: member, text: task, source: "voice", voiceConfig: config });
+		if (turn.status === "answered") {
+			for (const entry of turn.reports) {
+				if (entry.holdemRequestId) await deps.presentHoldemCard({ guild, requestId: entry.holdemRequestId, controlChannelId: target.controlChannelId });
+			}
+		}
 		const brainAsked = turn.jobId !== null;
 		if (brainAsked) timings.transcriptToResultMs = turn.resultAt - heard.transcriptAt;
 

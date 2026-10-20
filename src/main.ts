@@ -41,6 +41,7 @@ import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/p
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
 import { registerListenHandlers } from "@features/voice/listenHandler.js";
+import { registerHoldemRulesCardHandlers } from "@features/dero-brain/holdemRulesCard.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { registerVoiceSessionWatchers } from "@features/voice/voiceSessionWatchers.js";
 import { startVoiceListener } from "@features/voice/voiceListener.js";
@@ -329,6 +330,10 @@ process.on("uncaughtException", (err) => {
 	// The Listen button on fortunes and welcomes. Registered here like the rest so
 	// a Listen row posted by an earlier deploy keeps answering.
 	registerListenHandlers();
+	// Dero's hold em rules card (Open public, Open invite only, Change rules,
+	// Cancel, the invite picker and the rules modal). A request lives in memory,
+	// so a card from before a restart answers "expired".
+	registerHoldemRulesCardHandlers();
 
 	// then register the interaction  listerner
 	client.on(Events.InteractionCreate, async (interaction) => {

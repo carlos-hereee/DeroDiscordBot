@@ -4,6 +4,7 @@ import {
 	PermissionFlagsBits,
 	type ChatInputCommandInteraction,
 	type EmbedBuilder,
+	type Guild,
 	type GuildMember,
 	type VoiceBasedChannel,
 } from "discord.js";
@@ -18,6 +19,7 @@ import { brainQueue } from "@features/dero-brain/brainQueue.js";
 import { describeBrainTurn, runBrainTurn, type UnansweredReason } from "@features/dero-brain/brainTurn.js";
 import { isAuthorizedSpeaker } from "@features/dero-brain/authorizer.js";
 import type { ActionReport } from "@features/dero-brain/executor.js";
+import { rulesCardFor } from "@features/dero-brain/holdemRulesCard.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { announceJoin, type GreetingOutcome } from "@features/voice/joinNotice.js";
@@ -117,6 +119,17 @@ function reportLines(reports: ActionReport[]): string[] {
 	return reports.length > 0 ? reports.map((entry) => entry.line) : [tellCopy.nothingToDo];
 }
 
+// A table request turns the private reply into its rules card: the card's
+// buttons are how the member answers it, so it replaces the deferred reply, and
+// any other action's line rides below it.
+async function answerPayload(guild: Guild, reports: ActionReport[]) {
+	const tableReport = reports.find((entry) => entry.holdemRequestId);
+	const card = tableReport?.holdemRequestId ? await rulesCardFor(guild, tableReport.holdemRequestId) : null;
+	if (!card) return { embeds: [taskEmbed(reportLines(reports))] };
+	const others = reports.filter((entry) => entry !== tableReport);
+	return { embeds: others.length > 0 ? [...card.embeds, taskEmbed(reportLines(others))] : card.embeds, components: card.components };
+}
+
 // ── /dero tell ──
 
 async function tell(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -188,7 +201,7 @@ async function tell(interaction: ChatInputCommandInteraction): Promise<void> {
 			return;
 		}
 		tellCooldown.record(cooldownKey);
-		await interaction.editReply({ embeds: [taskEmbed(reportLines(turn.reports))] });
+		await interaction.editReply(await answerPayload(guild, turn.reports));
 
 		// ⑩
 		auditAction(guild.id, { ...audit, durationMs: Date.now() - startedAt });

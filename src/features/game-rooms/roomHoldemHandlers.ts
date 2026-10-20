@@ -14,6 +14,8 @@ import {
 	type HoldemTable,
 } from "@features/games/holdemTable.js";
 import { awardXp } from "@features/leveling/awardXp.js";
+import { announceDealer, toPublicView } from "@features/dero-brain/dealerNarration.js";
+import { secureRandom } from "@utils/secureRng.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -36,6 +38,14 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // Where: the table lives on the room row, so a deploy mid-hand costs nothing. Its
 //        chips live NOWHERE ELSE, which is the whole of A9/R22.
 // How:   every path ends by persisting the table and redrawing one board message.
+//        The three paths that change a hand (a deal, an action, a clock fold) then
+//        hand a public view of the table before and after to announceDealer, fire
+//        and forget, which narrates only the tables Dero opened and deals.
+//
+// ⚠️ EVERY CALL THAT CAN REACH THE SHUFFLE PASSES secureRandom. The engine's own
+// default is the fast, predictable generator and stays that way for its tests;
+// the secure source is chosen here, and secureRng.test.ts fails any dealHand call
+// that leaves it out, and any mention of that default in this file.
 
 const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 
@@ -86,7 +96,7 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Prom
 		table.status === "finished"
 			? []
 			: table.status === "joining"
-			  ? joiningRows(room.roomId, table.seats.length)
+			  ? joiningRows(room.roomId, table.seats.length, table)
 			  : handInProgress(table)
 			    ? bettingRows(table, room.roomId, pot)
 			    : betweenHandsRows(room.roomId);
@@ -196,7 +206,8 @@ export async function handleDeal(interaction: ButtonInteraction, room: IGameRoom
 
 	const handNumberBefore = table.handNumber;
 	const blindsBefore = table.bigBlind;
-	dealHand(table);
+	const before = toPublicView(table);
+	dealHand(table, secureRandom);
 
 	// The claim. Discord delivers both halves of a double click as two independent
 	// interactions and each one re-reads the room, so both saw the same hand number
@@ -227,6 +238,7 @@ export async function handleDeal(interaction: ButtonInteraction, room: IGameRoom
 		text: gameRoomsCopy.holdem.handDealt(table.handNumber, table.smallBlind, table.bigBlind),
 	});
 	await redraw(interaction.client, room, table);
+	announceDealer({ client: interaction.client, roomId: room.roomId, before, after: toPublicView(table) });
 }
 
 // ── acting ────────────────────────────────────────────────────────────
@@ -279,7 +291,8 @@ export async function handleMove(interaction: ButtonInteraction, room: IGameRoom
 	const amount = aggressive ? resolveRaiseAmount(table, interaction.user.id, preset, currentPot(table)) : 0;
 
 	const readAt = table.lastActionAt;
-	const outcome = act(table, interaction.user.id, action, amount);
+	const before = toPublicView(table);
+	const outcome = act(table, interaction.user.id, action, amount, secureRandom);
 	if (!outcome.ok) {
 		// Says what actually happened. Answering an illegal action with "it is not your
 		// turn" is how the raise bug stayed invisible: the message blamed the player for
@@ -300,6 +313,7 @@ export async function handleMove(interaction: ButtonInteraction, room: IGameRoom
 
 	await interaction.deferUpdate();
 	await settleOutcome(interaction.client, room, table, outcome, interaction.user.id);
+	announceDealer({ client: interaction.client, roomId: room.roomId, before, after: toPublicView(table), outcome });
 }
 
 // Everything that happens after any action, whoever caused it. Shared by the
@@ -457,7 +471,8 @@ async function runHoldemClockSweep(client: Client, now: Date): Promise<HoldemClo
 
 			// Captured BEFORE forceFold, which stamps a new one through `act`.
 			const readAt = table.lastActionAt;
-			const outcome = forceFold(table);
+			const before = toPublicView(table);
+			const outcome = forceFold(table, secureRandom);
 			if (!outcome.ok || !outcome.userId) continue;
 
 			// ⚠️ THE PLAYER GETS THE BENEFIT OF THE DOUBT ON A TIE. This loop is
@@ -478,6 +493,7 @@ async function runHoldemClockSweep(client: Client, now: Date): Promise<HoldemClo
 				text: gameRoomsCopy.holdem.timedOut(outcome.userId, outcome.narration?.includes("checks") ? "checked" : "folded"),
 			});
 			await settleOutcome(client, room, table, outcome, outcome.userId);
+			announceDealer({ client, roomId: room.roomId, before, after: toPublicView(table), outcome });
 		} catch (error) {
 			// Per table. This runs on an interval with nobody watching, so a throw
 			// would stall every other table's clock too.
