@@ -54,6 +54,8 @@ export interface BrainQueue {
 	rejectResult(jobId: string, reason: string): SubmitStatus;
 	findDelivered(jobId: string): BrainJob | null;
 	isBrainOnline(now?: number): boolean;
+	/** Jobs not yet settled, waiting or with the brain. The soak sampler's queue depth. */
+	openJobCount(): number;
 }
 
 interface JobRecord {
@@ -184,6 +186,7 @@ export function createBrainQueue(options: BrainQueueOptions = {}): BrainQueue {
 		},
 		isBrainOnline: (now = clock.now()) =>
 			lastPollAt !== null && now - lastPollAt <= BOT_CONSTANTS.DERO_BRAIN_ONLINE_WINDOW_MS,
+		openJobCount: () => jobs.size,
 	};
 }
 

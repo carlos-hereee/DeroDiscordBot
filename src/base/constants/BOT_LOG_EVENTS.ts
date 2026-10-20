@@ -142,6 +142,15 @@ export const BOT_LOG_EVENTS = {
 	// ⚠️ PRIVACY: ids, milliseconds, byte and character counts and outcome codes
 	// only. Never the audio, never the transcript, never what Dero answered.
 	DERO_VOICE_TURN: "dero_voice_turn",
+	// ── Dero voice soak sample (Dero voice plan, Phase 5) ──────────
+	// What:  one row a minute while a call is open, written ONLY when the
+	//        DERO_VOICE_SAMPLER env value is 1: memory, calls, rejoins, queue
+	//        depth, finished turns, this month's speech spend and the latency
+	//        median, for the owner's 30 minute soak.
+	// Who:   soakSampler, fire and forget. The owner reads the rows after a soak.
+	//
+	// ⚠️ PRIVACY: numbers only. The guild id is the only id; no text, no audio.
+	DERO_VOICE_SAMPLE: "dero_voice_sample",
 	// add more here as needed
 } as const;
 

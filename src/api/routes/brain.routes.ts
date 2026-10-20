@@ -91,9 +91,10 @@ export function createBrainRouter({ queue = brainQueue }: BrainRouterDeps = {}):
 			res.status(204).end();
 			return;
 		}
-		console.info(
-			`[dero-brain] job delivered job=${job.jobId} guild=${job.guild.id} chars=${job.text.length} channels=${job.channels.length}`,
-		);
+		// The count is taken outside the log call so the task's own field never
+		// appears inside one; privacyTripwire.test.ts holds every entry point to that.
+		const taskChars = job.text.length;
+		console.info(`[dero-brain] job delivered job=${job.jobId} guild=${job.guild.id} chars=${taskChars} channels=${job.channels.length}`);
 		res.status(200).json(job);
 	});
 

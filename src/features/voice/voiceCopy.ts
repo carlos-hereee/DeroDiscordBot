@@ -73,8 +73,12 @@ export const voiceCopy = {
 		// before Dero makes a sound. It tells the truth about listening in plain
 		// words: who is heard (task list members only), where their speech goes
 		// (ElevenLabs, to become text), that nothing is kept, and how to stop it.
+		// "not recorded by Dero" rather than "not recorded": ElevenLabs keeps its
+		// own request logs unless the owner's plan turns them off, so the notice
+		// only promises what the bot itself controls. privacyProof.test.ts pins the
+		// words listening, speech to text, not recorded and /dero leave.
 		joinNotice: (channelId: string): string =>
-			`🔊 Dero joined <#${channelId}> and is listening, but only to members on Dero's task list. Their speech is sent to ElevenLabs and turned into text so Dero can understand tasks. Nobody else is heard, and Dero records and keeps nothing. Say "Dero" first to give a task. Anyone on the task list can stop this with /dero leave.`,
+			`🔊 Dero joined <#${channelId}> and is listening, but only to members on Dero's task list. Their speech is sent to ElevenLabs and turned into text (speech to text) so Dero can understand tasks. Nobody else is heard. The call is not recorded by Dero: Dero records and keeps nothing. Say "Dero" first to give a task. Anyone on the task list can stop this with /dero leave.`,
 		// Spoken once per join, in the guild's voice. Rendered once and then
 		// replayed from the clip cache, so a rejoin costs nothing.
 		greeting: "Hello, I am Dero. Say my name first when you want me to do something.",
@@ -135,9 +139,9 @@ export const voiceCopy = {
 			listenOption: "True shows Listen buttons, false hides them",
 			cap: "Set the monthly speech budget for this server, in whole dollars",
 			capOption: "Whole dollars per month. 0 refuses every speech call",
-			roleGroup: "Roles that may give Dero tasks (used from the next phase)",
-			channelGroup: "Text channels Dero may post in (used from the next phase)",
-			voiceChannelGroup: "Voice channels Dero may join (used in a later phase)",
+			roleGroup: "Roles that may give Dero tasks",
+			channelGroup: "Text channels Dero may post in for a task",
+			voiceChannelGroup: "Voice channels Dero may join",
 			add: "Add one to the list",
 			remove: "Remove one from the list",
 			roleOption: "The role",

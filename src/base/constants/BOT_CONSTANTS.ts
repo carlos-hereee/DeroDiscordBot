@@ -308,6 +308,10 @@ export const BOT_CONSTANTS = {
 	DERO_VOICE_TROUBLE_LINE_COOLDOWN_MS: 30_000,
 	// /dero status reports the median and the slowest of this many recent turns.
 	DERO_VOICE_LATENCY_SAMPLES: 50,
+	// The soak sampler (on only when DERO_VOICE_SAMPLER is 1) writes one row this
+	// often. A minute gives 30 points over the owner's 30 minute soak, enough to
+	// see memory drift, without a row per turn.
+	DERO_VOICE_SAMPLER_INTERVAL_MS: 60_000,
 
 	// ── dero brain ───────────────────────────────────────────────
 	// What:  the limits of the link between the bot (the body) and the launcher's

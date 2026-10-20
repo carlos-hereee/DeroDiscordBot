@@ -124,6 +124,15 @@ const UNANSWERED_SPOKEN: Record<UnansweredReason, string> = {
 
 const sharedTroubleCooldown = new CooldownManager(BOT_CONSTANTS.DERO_VOICE_TROUBLE_LINE_COOLDOWN_MS);
 
+// Every turn a loop ran to an outcome, across all calls in this process. Read
+// only by the soak sampler; a restart starts it from zero, like every call.
+let finishedTurns = 0;
+
+/** How many voice turns finished, whatever their outcome, since the process started. */
+export function finishedTurnCount(): number {
+	return finishedTurns;
+}
+
 export const defaultTurnLoopDeps: TurnLoopDeps = {
 	now: () => Date.now(),
 	loadConfig: (guildId) => deroVoiceConfigStore.findByGuildId(guildId),
@@ -172,8 +181,15 @@ export function createTurnLoop(target: TurnTarget, deps: TurnLoopDeps = defaultT
 	let closed = false;
 
 	// ── speaking ──
+	// A turn still running when its call ends (a leave, a kick, the kill switch)
+	// finishes QUIETLY, as close() promises: the task itself still runs, but no
+	// line is rendered or posted for a call that is gone. Without this guard the
+	// answer was still sent to text to speech after /dero-config disable, a paid
+	// provider call the kill switch exists to stop. "call_ended" is the audit
+	// delivery code for that case.
 
-	async function speakOwnLine(voiceId: string, line: string): Promise<SpeakResult | "capReached" | "failed"> {
+	async function speakOwnLine(voiceId: string, line: string): Promise<SpeakResult | "capReached" | "failed" | "call_ended"> {
+		if (closed) return "call_ended";
 		const text = truncateAtSentence(line, BOT_CONSTANTS.DERO_VOICE_TURN_SPEECH_MAX_CHARS).text;
 		if (!text) return "dropped";
 		const speech = await deps.render({ guildId: guild.id, voiceId, text });
@@ -185,6 +201,7 @@ export function createTurnLoop(target: TurnTarget, deps: TurnLoopDeps = defaultT
 	// Rate limited to one per guild per window, never retried. Returns how the
 	// line was delivered, for the audit row.
 	async function reportTrouble(kind: TroubleKind, voiceId: string): Promise<string> {
+		if (closed) return "call_ended";
 		const now = deps.now();
 		if (deps.troubleCooldown.check(guild.id, now).onCooldown) return "quiet";
 		deps.troubleCooldown.record(guild.id, now);
@@ -195,6 +212,7 @@ export function createTurnLoop(target: TurnTarget, deps: TurnLoopDeps = defaultT
 	}
 
 	async function postSilentAnswer(reports: ActionReport[]): Promise<string> {
+		if (closed) return "call_ended";
 		const now = deps.now();
 		if (deps.troubleCooldown.check(guild.id, now).onCooldown) return "quiet";
 		deps.troubleCooldown.record(guild.id, now);
@@ -347,6 +365,7 @@ export function createTurnLoop(target: TurnTarget, deps: TurnLoopDeps = defaultT
 			console.error(`[dero-voice] turn failed guild=${guild.id} speaker=${utterance.speakerId}`, error);
 			deps.audit(guild.id, { speakerId: utterance.speakerId, channelId: target.channelId, audioMs: utterance.durationMs, outcome: "failed" });
 		}
+		finishedTurns += 1;
 	}
 
 	async function drain(first: Utterance): Promise<void> {

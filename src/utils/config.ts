@@ -195,6 +195,14 @@ const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY || "";
 // Where: set by the owner in the bot's local .env and on Railway, and in the
 //   launcher's gitignored .env under the same name.
 const deroBrainKey = process.env.DERO_BRAIN_KEY || "";
+
+// ── Dero voice soak sampler ──
+// What: whether the soak sampler writes its one row a minute while a call is open.
+// Who: read only by main.ts, which starts features/voice/soakSampler.ts with it.
+// When: exactly "1" turns it on; anything else, unset included, leaves it off,
+//   so a typo can never leave a production bot writing a row every minute.
+// Where: set by the owner for the 30 minute soak, then unset.
+const deroVoiceSamplerEnabled = process.env.DERO_VOICE_SAMPLER === "1";
 // CORS allow-list for the dashboard.
 // What: the Express `cors({ origin })` middleware accepts a string (single
 //   origin), an array (multiple origins), or a function. We want multiple
@@ -248,4 +256,5 @@ export {
 	enforceLevelingTier,
 	elevenLabsApiKey,
 	deroBrainKey,
+	deroVoiceSamplerEnabled,
 };

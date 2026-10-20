@@ -159,9 +159,12 @@ async function tell(interaction: ChatInputCommandInteraction): Promise<void> {
 		return;
 	}
 
-	// ④
+	// ④ The one refusal after the authorizer that gets an audit row: an offline
+	// brain is the failure the owner most needs to count (R9), and it is the same
+	// "offline" outcome a voice turn records, so the two paths read alike.
 	if (!brainQueue.isBrainOnline()) {
 		await refuse(interaction, tellCopy.brainOffline);
+		auditAction(guild.id, { jobId: null, channels: 0, outcome: "offline", speakerId: speaker.id, source: "text" });
 		return;
 	}
 

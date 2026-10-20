@@ -1,5 +1,5 @@
 import { GatewayIntentBits, Collection, Events, MessageFlags, Client, Partials } from "discord.js";
-import { discordToken } from "@utils/config.js";
+import { deroVoiceSamplerEnabled, discordToken } from "@utils/config.js";
 import clientReady from "@commands/utility/ready.js";
 import fs from "fs";
 import path from "path";
@@ -45,6 +45,7 @@ import { registerHoldemRulesCardHandlers } from "@features/dero-brain/holdemRule
 import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { registerVoiceSessionWatchers } from "@features/voice/voiceSessionWatchers.js";
 import { startVoiceListener } from "@features/voice/voiceListener.js";
+import { startSoakSampler } from "@features/voice/soakSampler.js";
 import { registerGreeter, ensureIntroChannelsWritable } from "@features/greeter/welcomeNewMember.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
@@ -117,6 +118,8 @@ clientReady(client);
 // on the next boot). The shutdown sequence stops new work first, then tears
 // down in dependency order so an in-flight write has a chance to flush.
 let apiServer: Server | undefined;
+// The Dero voice soak sampler, or null when DERO_VOICE_SAMPLER is not 1.
+let soakSampler: { stop(): void } | null = null;
 let isShuttingDown = false;
 
 async function gracefulShutdown(signal: string, exitCode = 0): Promise<void> {
@@ -143,6 +146,7 @@ async function gracefulShutdown(signal: string, exitCode = 0): Promise<void> {
 	// channel until Discord noticed the process was gone. Synchronous: it only
 	// queues the leave and clears each session's timers.
 	try {
+		soakSampler?.stop();
 		voiceSessions.leaveAll();
 	} catch (err) {
 		console.error("[shutdown] voice leaveAll failed", err);
@@ -576,6 +580,9 @@ process.on("uncaughtException", (err) => {
 		// Handed over here rather than imported by voiceSessions, which would
 		// close an import cycle through the executor.
 		voiceSessions.useListener(startVoiceListener);
+		// The soak test's numbers: one audit row a minute while a call is open,
+		// and only when DERO_VOICE_SAMPLER is 1. Off, it arms no timer at all.
+		soakSampler = startSoakSampler(deroVoiceSamplerEnabled);
 
 		// ── new-member greeter ────────────────────────────────────
 		// Attach the guildMemberAdd listener so new joins get welcomed (ping +

@@ -186,7 +186,7 @@ export const deroBrainCopy = {
 	status: {
 		title: "🧠 Dero's brain",
 		online: "Dero's brain is **online**.",
-		offline: "Dero's brain is **offline** right now. It runs on its owner's computer, so tasks wait until it is back.",
+		offline: "Dero's brain is **offline** right now. It runs on its owner's computer, so Dero cannot take tasks until it is back.",
 		canTell: "You can give Dero tasks with /dero tell.",
 		switchedOffForYou: "You are on the task list, but Dero is switched off in this server right now.",
 	},

@@ -25,7 +25,7 @@ import { VoiceSpeaker } from "./voiceSpeaker.js";
 //        Listen, the executor's `say` and `leave_voice`, and /dero status find
 //        a live call. voiceSessionWatchers ends a call that went idle or that
 //        Dero was moved or kicked out of, and /dero-config ends one for the
-//        kill switch.
+//        kill switch. The soak sampler reads stats() and nothing else.
 // When:  a session starts on join and lives until a leave, a shutdown, a failed
 //        Ready wait, a kick or move, a deleted channel, an idle call, the kill
 //        switch, or a reconnect budget that ran out. end() posts the text line
@@ -229,6 +229,10 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 /** One guild's calls, at most one each. `voiceSessions` below is the process wide instance. */
 export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSessionDeps) {
 	const sessions = new Map<string, LiveSession>();
+	// Every rejoin this process attempted, across every call it ever held. Only
+	// the soak sampler reads it: a number that keeps climbing is the reconnect
+	// loop the bounded budget exists to prevent.
+	let rejoinsTotal = 0;
 	let dependencyReportLogged = false;
 	// Registered by main.ts rather than imported here: the listener reaches the
 	// executor through the turn loop, and the executor imports this module, so a
@@ -330,6 +334,7 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 				await sleep(backoffMs(session.reconnectAttempts), session.abort.signal);
 				if (session.ended) return;
 				session.rejoins += 1;
+				rejoinsTotal += 1;
 				console.info(`[dero-voice] rejoin guild=${session.guildId} attempt=${session.reconnectAttempts}`);
 				session.connection.rejoin();
 				if (await waitForReady(session)) return;
@@ -504,7 +509,12 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 		startListening = factory;
 	}
 
-	return { get, join, leave, leaveAll, useListener };
+	/** Counts for the soak sampler: open calls (oldest first, by guild) and every rejoin so far. */
+	function stats(): { guildIds: string[]; rejoinsTotal: number } {
+		return { guildIds: [...sessions.keys()], rejoinsTotal };
+	}
+
+	return { get, join, leave, leaveAll, useListener, stats };
 }
 
 export type VoiceSessions = ReturnType<typeof createVoiceSessions>;

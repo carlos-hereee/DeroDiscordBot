@@ -406,3 +406,66 @@ describe("injection set", () => {
 		expect(world.apiCalls()).toBe(0);
 	});
 });
+
+// ── injection set, Phase 5 additions ───────────────────────────────────────
+// The set above re-runs as written against the final executor. These are the
+// cases Phase 5 adds: hold em terms the brain made up, a channel the brain tried
+// to choose for a table, an extra key, a say carrying a mention or 5000
+// characters, and a speaker whose role was removed after the job was made.
+// A body the parser refuses makes ZERO Discord API calls. A body it accepts may
+// make exactly one, the fresh read of the speaker that IS the re-check, and
+// never a send, a render or a table.
+
+const PARSER_REFUSES: Array<[string, unknown]> = [
+	["an open_holdem with absurd terms", wrap([{ type: "open_holdem", maxSeats: 99, startingStack: 5, bigBlind: 10_000 }])],
+	["an open_holdem whose big blind outweighs its stack", wrap([{ type: "open_holdem", startingStack: 1000, bigBlind: 900 }])],
+	["an open_holdem carrying a channel name instead of an id", wrap([{ type: "open_holdem", channelId: "general" }])],
+	["an open_holdem with an extra key choosing a guild", wrap([{ type: "open_holdem", maxSeats: 6, guildId: OTHER_GUILD_ID }])],
+	["an open_holdem with an extra key choosing who is invited", wrap([{ type: "open_holdem", invitedIds: [OWNER_ID] }])],
+	["a say with a role mention", wrap([{ type: "say", text: `<@&${TASKER_ROLE}> everybody listen` }])],
+	["a say with a user mention", wrap([{ type: "say", text: `<@${OWNER_ID}> come here` }])],
+	["a say with @everyone", wrap([{ type: "say", text: "@everyone listen up" }])],
+	["a say of 5000 characters", wrap([{ type: "say", text: "a".repeat(5000) }])],
+];
+
+describe("injection set, Phase 5 additions", () => {
+	it.each(PARSER_REFUSES)("refuses %s at the parser, with zero Discord API calls", async (_label, body) => {
+		const { world, render, speak } = worldWithCall();
+		const parsed = parseBrainResult(body);
+		expect(parsed.ok).toBe(false);
+		expect(world.apiCalls()).toBe(0);
+		expect(render).not.toHaveBeenCalled();
+		expect(speak).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["not on the allowlist", NOT_LISTED],
+		["in another guild", FOREIGN],
+	])("ignores a channel id %s on open_holdem: a card request only, nothing sent anywhere", async (_label, channelId) => {
+		const world = fakeWorld();
+		const parsed = parseBrainResult(wrap([{ type: "open_holdem", channelId }]));
+		if (!parsed.ok) throw new Error(`parser refused: ${parsed.reason}`);
+		const reports = await executeActions({ guild: world.guild, speakerId: SPEAKER_ID, actions: parsed.value.actions, voiceConfig: CONFIG, deps: world.deps });
+
+		expect(reports[0]).toMatchObject({ outcome: "rules_card" });
+		// The card is the member's to answer; the brain's channel is not on it.
+		expect(getHoldemRequest(reports[0].holdemRequestId ?? "")).toMatchObject({ controlChannelId: null, speakerId: SPEAKER_ID });
+		expect(world.sends()).toBe(0);
+		expect(world.fetchMember).toHaveBeenCalledTimes(1);
+	});
+
+	it("stops every action of a speaker whose role was removed after the job was made", async () => {
+		// The job was made while the speaker held the role; the fresh read shows it gone.
+		const { world, render, speak } = worldWithCall([]);
+		const parsed = parseBrainResult(wrap([post(GENERAL), { type: "say", text: "hello" }, { type: "open_holdem" }]));
+		if (!parsed.ok) throw new Error(`parser refused: ${parsed.reason}`);
+		const reports = await executeActions({ guild: world.guild, speakerId: SPEAKER_ID, actions: parsed.value.actions, voiceConfig: CONFIG, deps: world.deps });
+
+		expect(reports.map((entry) => entry.outcome)).toEqual(["not_authorized", "not_authorized", "not_authorized"]);
+		expect(reports.every((entry) => entry.holdemRequestId === undefined)).toBe(true);
+		expect(world.sends()).toBe(0);
+		expect(world.fetchMember).toHaveBeenCalledTimes(1);
+		expect(render).not.toHaveBeenCalled();
+		expect(speak).not.toHaveBeenCalled();
+	});
+});

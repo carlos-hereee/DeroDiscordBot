@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 
@@ -165,5 +165,141 @@ describe("src/features/voice and src/features/dero-brain", () => {
 	it("never writes a file and never logs a transcript, text or audio", () => {
 		const violations = sourceFiles().flatMap((file) => violationsIn(file.source).map((violation) => `${relative(HERE, file.path)}: ${violation}`));
 		expect(violations).toEqual([]);
+	});
+});
+
+// ── Phase 5: past the two folders ──────────────────────────────────────────
+// What:  the same scanner, aimed wider. ① Every source file the two folders can
+//        reach through an import, anywhere in src, plus the four entry points
+//        that hand them a member's words (/dero, /dero-config and the two brain
+//        route files), is scanned for a file write; the entry points also get the
+//        logging scan the two folders already get. ② Every Mongoose model is
+//        scanned for a field named like audio, transcript or recording, because
+//        a schema field is how a store would start keeping them.
+// How:   the import graph is walked from the source text (relative paths and
+//        the seven tsconfig aliases, .js read as .ts); a package import ends the
+//        walk, since no package is ours to scan. Type only imports are followed
+//        too, which only ever widens the scan.
+
+const SRC = join(HERE, "..", "..");
+const ALIAS_DIRS: Record<string, string> = {
+	"@utils": "utils",
+	"@base": "base",
+	"@api": "api",
+	"@features": "features",
+	"@commands": "commands",
+	"@db": "db",
+	"@handlers": "handlers",
+};
+const IMPORT_SPECIFIER = /\bfrom\s*["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\bimport\s+["']([^"']+)["']/g;
+const ENTRY_POINTS = ["commands/utility/dero.ts", "commands/admin/dero-config.ts", "api/routes/brain.routes.ts", "api/middleware/verifyBrainSignature.ts"].map(
+	(path) => join(SRC, path),
+);
+// Wider than FS_WRITE above: every node:fs call that creates or changes a file.
+const FS_WRITE_ANY = /\b(writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|writeSync|copyFile|copyFileSync|cp|cpSync)\s*\(/;
+const SENSITIVE_FIELD = /audio|transcript|recording/i;
+const STRING_LITERAL = /(["'`])(?:\\.|(?!\1)[^\\])*\1/g;
+const FIELD_KEY = /([A-Za-z_$][\w$]*)\s*\??\s*:/g;
+
+function resolveSpecifier(fromFile: string, specifier: string): string | null {
+	let base: string;
+	if (specifier.startsWith(".")) base = join(dirname(fromFile), specifier);
+	else {
+		const alias = Object.keys(ALIAS_DIRS).find((prefix) => specifier.startsWith(`${prefix}/`));
+		if (!alias) return null;
+		base = join(SRC, ALIAS_DIRS[alias], specifier.slice(alias.length + 1));
+	}
+	const path = base.replace(/\.js$/, ".ts");
+	return existsSync(path) ? path : null;
+}
+
+function reachableSources(): string[] {
+	const roots = [...sourceFiles().map((file) => file.path), ...ENTRY_POINTS];
+	const seen = new Set(roots);
+	const pending = [...roots];
+	while (pending.length > 0) {
+		const file = pending.shift() as string;
+		for (const match of stripComments(readFileSync(file, "utf8")).matchAll(IMPORT_SPECIFIER)) {
+			const next = resolveSpecifier(file, match[1] ?? match[2] ?? match[3]);
+			if (next && !seen.has(next)) {
+				seen.add(next);
+				pending.push(next);
+			}
+		}
+	}
+	return [...seen];
+}
+
+// Strip comments, blank the text of every string literal, then read every
+// `name:` key: an interface field, a schema path, or a nested schema's key.
+function fieldNamesIn(source: string): string[] {
+	const code = stripComments(source).replace(STRING_LITERAL, '""');
+	return [...code.matchAll(FIELD_KEY)].map((match) => match[1]);
+}
+
+const relativeToSrc = (path: string): string => relative(SRC, path).split(sep).join("/");
+
+describe("the scanner, widened, has teeth", () => {
+	it.each([
+		["a sync write", "fs.writeFileSync(path, data);"],
+		["a copy", "await copyFile(from, to);"],
+		["a low level write", "writeSync(fd, buffer);"],
+	])("flags %s", (_label, fixture) => {
+		expect(FS_WRITE_ANY.test(stripComments(fixture))).toBe(true);
+	});
+
+	it("follows relative and alias imports to the files behind them", () => {
+		const resolved = resolveSpecifier(join(HERE, "turnLoop.ts"), "@features/dero-brain/brainTurn.js");
+		expect(resolved && relativeToSrc(resolved)).toBe("features/dero-brain/brainTurn.ts");
+		expect(resolveSpecifier(join(HERE, "turnLoop.ts"), "./wavFile.js")).toBe(join(HERE, "wavFile.ts"));
+		expect(resolveSpecifier(join(HERE, "turnLoop.ts"), "discord.js")).toBeNull();
+	});
+
+	it.each([
+		["a transcript path", "const schema = new mongoose.Schema({ transcript: { type: String } });"],
+		["an audio buffer field", "export interface IClip { audioBytes: Buffer }"],
+		["a recording flag", "{ recordingUrl: String }"],
+	])("flags %s in a model", (_label, fixture) => {
+		expect(fieldNamesIn(fixture).filter((name) => SENSITIVE_FIELD.test(name))).not.toEqual([]);
+	});
+
+	it("passes the word inside a string or a comment", () => {
+		const fixture = ["// transcript: never stored", 'const label = "audio: none";'].join("\n");
+		expect(fieldNamesIn(fixture).filter((name) => SENSITIVE_FIELD.test(name))).toEqual([]);
+	});
+});
+
+describe("every file the voice and brain code can reach", () => {
+	const reachable = reachableSources();
+
+	it("reaches well past the two folders, the entry points included", () => {
+		const names = reachable.map(relativeToSrc);
+		expect(names).toEqual(
+			expect.arrayContaining(["commands/utility/dero.ts", "api/routes/brain.routes.ts", "db/stores/botLogStore.ts", "features/game-rooms/RoomProvisioner.ts"]),
+		);
+		expect(reachable.length).toBeGreaterThan(sourceFiles().length + ENTRY_POINTS.length);
+	});
+
+	it("never writes a file", () => {
+		const writers = reachable.filter((path) => FS_WRITE_ANY.test(stripComments(readFileSync(path, "utf8")))).map(relativeToSrc);
+		expect(writers).toEqual([]);
+	});
+
+	it("never logs a transcript, text or audio in the entry points", () => {
+		const violations = ENTRY_POINTS.flatMap((path) =>
+			violationsIn(readFileSync(path, "utf8")).map((violation) => `${relativeToSrc(path)}: ${violation}`),
+		);
+		expect(violations).toEqual([]);
+	});
+});
+
+describe("every Mongoose model", () => {
+	it("has no field named like audio, transcript or recording", () => {
+		const models = join(SRC, "db", "models");
+		const fields = readdirSync(models)
+			.filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
+			.flatMap((name) => fieldNamesIn(readFileSync(join(models, name), "utf8")).map((field) => ({ model: name, field })));
+		expect(fields.length).toBeGreaterThan(50);
+		expect(fields.filter(({ field }) => SENSITIVE_FIELD.test(field))).toEqual([]);
 	});
 });
