@@ -184,6 +184,17 @@ const enforceLevelingTier = (() => {
 //   plain "Dero cannot speak right now" instead of a 401 round trip.
 // Where: set on Railway and in the local .env by the owner, by hand.
 const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY || "";
+
+// ── Dero brain key ──
+// What: the HMAC secret the launcher's local Dero signs every /brain request
+//   with. Its own secret, deliberately NOT DASHBOARD_SIGNING_SECRET: the brain
+//   is not dashboard traffic, and a leak of one must not open the other.
+// Who: read only by api/middleware/verifyBrainSignature.ts. Never logged.
+// When: empty (the default) or shorter than DERO_BRAIN_MIN_KEY_LENGTH means
+//   every /brain route answers 503. There is no api key fallback of any kind.
+// Where: set by the owner in the bot's local .env and on Railway, and in the
+//   launcher's gitignored .env under the same name.
+const deroBrainKey = process.env.DERO_BRAIN_KEY || "";
 // CORS allow-list for the dashboard.
 // What: the Express `cors({ origin })` middleware accepts a string (single
 //   origin), an array (multiple origins), or a function. We want multiple
@@ -236,4 +247,5 @@ export {
 	enforceGameRoomTier,
 	enforceLevelingTier,
 	elevenLabsApiKey,
+	deroBrainKey,
 };

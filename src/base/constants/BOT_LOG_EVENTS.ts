@@ -107,6 +107,19 @@ export const BOT_LOG_EVENTS = {
 	//        and poll keys there is nothing to namespace, the notice fires once
 	//        per guild for the life of the feature.
 	LEVELING_INTRO_SENT: "leveling_intro_sent",
+	// ── Dero brain audit (Dero voice plan, Phase 2a) ───────────────
+	// What:  one row per brain job the bot acted on (ACTION), and one row per
+	//        brain result the bot threw out whole (REJECTED).
+	// Who:   /dero tell writes ACTION after the executor ran; the /brain/result
+	//        route writes REJECTED when parseBrainResult refuses a body.
+	// When:  ACTION once per answered job, REJECTED once per refused body. Both
+	//        are fire and forget: a failed audit write never changes a reply.
+	// Where: AUDIT ONLY, never read on a hot path.
+	//
+	// ⚠️ PRIVACY: metadata carries ids, lengths, outcome codes and durations, and
+	// NEVER the member's task text or anything the brain wrote.
+	DERO_BRAIN_ACTION: "dero_brain_action",
+	DERO_BRAIN_REJECTED: "dero_brain_rejected",
 	// add more here as needed
 } as const;
 

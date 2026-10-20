@@ -238,6 +238,54 @@ export const BOT_CONSTANTS = {
 		pcm24k: "pcm_24000",
 	},
 
+	// ── dero brain ───────────────────────────────────────────────
+	// What:  the limits of the link between the bot (the body) and the launcher's
+	//        local Dero (the brain): how long a job may wait, how long one long
+	//        poll may hang, when the brain counts as offline, and the size of
+	//        everything that crosses the link in either direction.
+	// Who:   features/dero-brain/* (queue, parser, job builder, executor), the
+	//        /brain routes and their signature middleware, and /dero.
+	// When:  read per call. Never env vars: a typo in Railway must not be able to
+	//        widen what the brain may send or how long a member waits.
+	// Where: the launcher mirrors the job and result limits in its own contract
+	//        file in another repository. Change a limit here and that mirror
+	//        changes in the same session, or the launcher sends results the bot
+	//        rejects whole.
+	//
+	// A turn waits this long for the brain's answer, then the member is told it
+	// took too long. Twenty seconds is the plan's budget for a local model.
+	DERO_BRAIN_TURN_TIMEOUT_MS: 20_000,
+	// The longest one GET /brain/next may hang before answering 204. Kept under
+	// the usual 30 second proxy idle cut so Railway never kills a healthy poll.
+	DERO_BRAIN_MAX_POLL_WAIT_MS: 25_000,
+	// The brain counts as online while a poll arrived inside this window. One poll
+	// at most every 25 seconds plus reconnect slack, so a single slow round trip
+	// does not flap the status.
+	DERO_BRAIN_ONLINE_WINDOW_MS: 45_000,
+	// DERO_BRAIN_KEY shorter than this disables every /brain route (503). 32
+	// characters is the floor for an HMAC secret worth the name.
+	DERO_BRAIN_MIN_KEY_LENGTH: 32,
+	// A result body over this many bytes is refused before it is parsed. Three
+	// actions of at most 1900 characters fit with room to spare.
+	DERO_BRAIN_MAX_RESULT_BYTES: 16 * 1024,
+	DERO_BRAIN_MAX_TASK_CHARS: 300,
+	DERO_BRAIN_MAX_JOB_CHANNELS: 25,
+	DERO_BRAIN_MAX_ACTIONS: 3,
+	// Discord's message ceiling is 2000; the gap leaves room for mention
+	// neutralizing without a send ever failing on length.
+	DERO_BRAIN_POST_MAX_CHARS: 1900,
+	DERO_BRAIN_SAY_MAX_CHARS: 300,
+	// Per member, recorded only after a job the brain answered "ok".
+	DERO_BRAIN_TELL_COOLDOWN_MS: 10_000,
+	// Hold'em terms a request may carry (enforced from Phase 2 by the parser,
+	// used by the table from Phase 4). Seats reuse HOLDEM_MIN_SEATS and
+	// HOLDEM_MAX_SEATS; a big blind is at least 2 so the half blind is at least 1,
+	// and at most a tenth of the stack so a hand is never decided by the blinds.
+	HOLDEM_TERMS_MIN_STACK: 100,
+	HOLDEM_TERMS_MAX_STACK: 1_000_000,
+	HOLDEM_TERMS_MIN_BIG_BLIND: 2,
+	HOLDEM_TERMS_STACK_TO_BIG_BLIND: 10,
+
 	// ── leveling ──────────────────────────────────────────────────
 	// What:  every number the leveling system runs on: how often buffered xp is
 	//        flushed, how long the in-memory maps may hold an entry, how level up

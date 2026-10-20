@@ -15,6 +15,7 @@ import { createAutoHealRouter } from "./routes/autoHeal.routes.js";
 import { createPairingRouter } from "./routes/pairing.routes.js";
 import { createGameRoomsRouter } from "./routes/gameRooms.routes.js";
 import { createStreamerRouter } from "./routes/streamer.routes.js";
+import { brainBodyErrorHandler, createBrainRouter } from "./routes/brain.routes.js";
 import { dashboardOrigin, port } from "@utils/config.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
@@ -59,6 +60,16 @@ export function startApiServer(client: Client): Server {
 	const healthHandler = (_: express.Request, res: express.Response) => res.json({ status: "ok" });
 	app.get("/health", healthHandler);
 	app.get("/api/health", healthHandler);
+
+	// /brain, the launcher's local Dero (the brain) polling for tasks and
+	// answering them. Mounted BEFORE verifySignature on purpose: it is not
+	// dashboard traffic, it signs with its own DERO_BRAIN_KEY through
+	// verifyBrainSignature inside the router, and there is no api key fallback.
+	// It is never added to the server's ROK_BOT_PATH_PREFIXES, so the platform
+	// proxy cannot reach it. The error handler right after it answers bodies
+	// express.json refused, signature first.
+	app.use("/brain", createBrainRouter());
+	app.use("/brain", brainBodyErrorHandler);
 
 	// All /api routes below this point require a valid HMAC signature from the dashboard proxy.
 	// During the rollout window verifySignature falls back to plain API-key auth if signing
