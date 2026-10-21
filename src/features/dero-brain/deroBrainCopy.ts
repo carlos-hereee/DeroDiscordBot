@@ -77,9 +77,10 @@ export const deroBrainCopy = {
 		notSetUp: "Dero's tasks are not set up in this server yet.",
 		switchedOff: "Dero is switched off in this server right now.",
 		notAuthorized: "You are not on the list of members who can give Dero tasks.",
-		// R9: the brain is the owner's PC, so offline is a normal state and the
-		// reply says so plainly instead of promising it will be right back.
-		brainOffline: "Dero's brain is offline right now. It runs on its owner's computer, so try again later.",
+		// Offline is a normal state (2026-10 item 216, risk R9), so the reply says
+		// so instead of promising Dero will be right back. Owner decision
+		// 2026-10-21: member copy never says where the brain runs.
+		brainOffline: "Dero's brain is offline right now. Try again in a little while.",
 		emptyTask: "Tell Dero what to do in a few words.",
 		taskTooLong: (max: number): string => `That task is too long. Keep it under ${max} characters.`,
 		cooldown: (seconds: number): string => `Give Dero a moment. Try again in ${seconds}s.`,
@@ -186,7 +187,7 @@ export const deroBrainCopy = {
 	status: {
 		title: "🧠 Dero's brain",
 		online: "Dero's brain is **online**.",
-		offline: "Dero's brain is **offline** right now. It runs on its owner's computer, so Dero cannot take tasks until it is back.",
+		offline: "Dero's brain is **offline** right now, so Dero cannot take tasks until it is back.",
 		canTell: "You can give Dero tasks with /dero tell.",
 		switchedOffForYou: "You are on the task list, but Dero is switched off in this server right now.",
 	},

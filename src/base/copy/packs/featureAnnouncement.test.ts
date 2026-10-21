@@ -12,7 +12,9 @@ import { generalEventsCopy } from "./general-events.pack.js";
 // decision 2026-07-04, which the pack comments say nothing else catches); each
 // embed fits Discord's limits with the version the poster appends to the
 // title; no long dash; every slash command it names really exists; and the
-// voice part keeps its honest line about the brain (2026-10 item 216, risk R9).
+// copy stays professional (owner decision 2026-10-21): it never says where
+// Dero's brain runs or that Dero can be offline, and it never promises always
+// on voice either (2026-10 item 216, risk R9).
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMMANDS = join(HERE, "..", "..", "..", "commands");
@@ -23,6 +25,10 @@ const EMBED_DESCRIPTION_MAX = 4096;
 const LONGEST_VERSION_SUFFIX = " (v99.99.99)";
 const LONG_DASH = /[\u2013\u2014]/;
 const NAMED_COMMAND = /`\/([a-z][a-z-]*)/g;
+// Wording that tells a client the service depends on one person's machine.
+const UNPREPARED = /computer|\bPC\b|when it sleeps|when I am offline|is offline|my creator is online|honest word/i;
+// Wording that promises more than the service can keep.
+const OVERPROMISE = /always on|always available|24\/7|around the clock|any time, day or night/i;
 
 const PACKS = [
 	{ name: "rok-commander", copy: rokCommanderCopy },
@@ -62,9 +68,20 @@ describe("the release announcement", () => {
 		expect(named.filter((command) => !registeredCommands.has(command))).toEqual([]);
 	});
 
-	it.each(EMBEDS)("$label says plainly that tasks need Dero's brain on its creator's computer", ({ description }) => {
-		expect(description).toContain("my creator's own computer");
+	it.each(EMBEDS)("$label stays professional: nothing about where Dero runs or being offline", ({ title, description }) => {
+		expect(`${title}\n${description}`).not.toMatch(UNPREPARED);
 	});
+
+	it.each(EMBEDS)("$label promises no always on service", ({ title, description }) => {
+		expect(`${title}\n${description}`).not.toMatch(OVERPROMISE);
+	});
+
+	it.each(["the creator's computer is mentioned", "when it sleeps, I cannot", "Dero is offline", "Dero answers 24/7", "always available"])(
+		"the guard catches %j",
+		(fixture) => {
+			expect(UNPREPARED.test(fixture) || OVERPROMISE.test(fixture)).toBe(true);
+		},
+	);
 
 	it("promises voice only where it was switched on, and says it is off by default to admins", () => {
 		const { public: members, innerSanctum: admins } = rokCommanderCopy.featureAnnouncement;

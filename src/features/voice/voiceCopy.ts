@@ -134,7 +134,7 @@ export const voiceCopy = {
 			enable: "Turn Dero's voice on (needs a voice id first)",
 			disable: "Turn Dero's voice off. Every setting is kept",
 			voice: "Set the ElevenLabs voice id Dero speaks with",
-			voiceOption: "The voice id from your ElevenLabs voice library",
+			voiceOption: "The voice id Dero's creator sent you (request it through the Suggestion Box)",
 			listen: "Show or hide Listen buttons on fortunes and welcomes",
 			listenOption: "True shows Listen buttons, false hides them",
 			cap: "Set the monthly speech budget for this server, in whole dollars",
