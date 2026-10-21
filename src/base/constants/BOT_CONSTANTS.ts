@@ -197,8 +197,10 @@ export const BOT_CONSTANTS = {
 	//
 	// The default monthly speech budget per guild, in whole dollars, and the
 	// highest value /dero-config cap accepts. 0 is a valid cap and refuses every
-	// provider call, which makes it a second kill switch.
-	DERO_VOICE_DEFAULT_CAP_USD: 25,
+	// provider call, which makes it a second kill switch. $5 is the owner's
+	// decision (2026-10-21): every guild's speech bills the one ElevenLabs account,
+	// so the default is what a guild costs before an admin raises it.
+	DERO_VOICE_DEFAULT_CAP_USD: 5,
 	DERO_VOICE_MAX_CAP_USD: 500,
 	// An ElevenLabs voice id is alphanumeric. These bounds are generous on both
 	// sides of today's 20 character ids so a format change does not lock an admin

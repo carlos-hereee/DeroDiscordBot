@@ -99,7 +99,7 @@ describe("tryReserve against the cap", () => {
 
 	it("meters a guild with no config row against the default cap", async () => {
 		capUsd(null);
-		expect((await tryReserve("g1", 2500, { now: OCTOBER })).status).toBe("ok");
+		expect((await tryReserve("g1", 500, { now: OCTOBER })).status).toBe("ok");
 		expect((await tryReserve("g1", 1, { now: OCTOBER })).status).toBe("capReached");
 	});
 
