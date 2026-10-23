@@ -1,11 +1,28 @@
-import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type ColorResolvable } from "discord.js";
+import {
+	ActionRowBuilder,
+	AttachmentBuilder,
+	ButtonBuilder,
+	ButtonStyle,
+	EmbedBuilder,
+	StringSelectMenuBuilder,
+	type ColorResolvable,
+} from "discord.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import { BOARD, BOARD_SIZE, JAIL_BAIL, describeTile, isOwnableTile, ownableTileName } from "@features/games/monopolyBoard.js";
-import { listBuildOptions, type AuctionState, type MonopolySeat, type MonopolyState } from "@features/games/monopolyState.js";
+import { BOARD, BOARD_SIZE, JAIL_BAIL, describeTile, isOwnableTile, ownableTileName, type OwnableTile } from "@features/games/monopolyBoard.js";
+import {
+	listBuildOptions,
+	listMortgageOptions,
+	listUnmortgageOptions,
+	unmortgageCost,
+	type AuctionState,
+	type MonopolySeat,
+	type MonopolyState,
+	type MortgageOption,
+} from "@features/games/monopolyState.js";
 import { renderBoard } from "@features/games/monopolyRenderer.js";
-import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
+import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
 // ── roomMonopoly ─────────────────────────────────────────────────────
@@ -20,8 +37,8 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 //        only declines to offer what plainly is not (the engine still refuses).
 // How:   at most TWO rows: the turn row (whose widest form is jail's three) and the
 //        any time row (Build, Trade, Inventory), well inside Discord's five per row
-//        and the plan's four rows (risk M10). Mortgage controls are not on the
-//        board; they are Session 5b's inventory work. The board is a
+//        and the plan's four rows (risk M10). Mortgage controls live in the
+//        private Inventory peek rather than on the shared board. The board is a
 //        picture from monopolyRenderer when its art is on disk and the monospaced
 //        token map when it is not; everything else in the embed is the same text.
 
@@ -150,19 +167,57 @@ function seatMarker(state: MonopolyState, seat: MonopolySeat, index: number): st
 	return "•";
 }
 
-// The ids of every lot a seat owns, in board order, because that is the order
-// the board itself reads in.
-function lotsOwnedBy(state: MonopolyState, userId: string): string[] {
-	return BOARD.filter(isOwnableTile)
-		.filter((tile) => state.properties[tile.id]?.ownerId === userId)
-		.map((tile) => tile.id);
+// Every lot a seat owns, in board order, because that is the order the board
+// itself reads in.
+function lotsOwnedBy(state: MonopolyState, userId: string): OwnableTile[] {
+	return BOARD.filter(isOwnableTile).filter((tile) => state.properties[tile.id]?.ownerId === userId);
 }
 
 // ── the private peek ──────────────────────────────────────────────────
+// Discord's ceiling on options in one select. A seat can own 28 lots, so in that
+// corner the last few wait for a second pick; the slice keeps the select from throwing.
+const MAX_SELECT_OPTIONS = 25;
+
+/** The Inventory reply: the holdings embed, plus the mortgage controls when there is anything to mortgage or lift. */
+export interface MonopolyInventoryReply {
+	embeds: EmbedBuilder[];
+	components: ActionRowBuilder<StringSelectMenuBuilder>[];
+}
+
 /**
- * The Inventory reply: the viewer's OWN chips, lots and jail cards. Ephemeral at
- * the call site. Nothing here is secret (the board shows every balance), so this
- * is a convenience for reading your own lots by name, not a privacy surface.
+ * The Inventory reply for `viewerId`: their own chips, jail cards and every lot with
+ * what is on it, and two selects, one for each lot they could mortgage now and one
+ * for each mortgage they could lift now. Ephemeral at the call site. The selects
+ * list the engine's own option lists, so they never offer a move the engine would
+ * refuse; a finished match and a seat that is out get the embed alone.
+ */
+export function monopolyInventoryReply(state: MonopolyState, viewerId: string, roomId: string): MonopolyInventoryReply {
+	const embed = monopolyInventoryEmbed(state, viewerId);
+	const playing = state.phase !== "finished" && state.seats.some((seat) => seat.userId === viewerId && !seat.bankrupt);
+	if (!playing) return { embeds: [embed], components: [] };
+
+	const components: ActionRowBuilder<StringSelectMenuBuilder>[] = [];
+	const toMortgage = listMortgageOptions(state, viewerId);
+	if (toMortgage.length > 0) {
+		components.push(
+			mortgageSelect(roomId, "mmortgage", gameRoomsCopy.monopoly.mortgagePlaceholder, toMortgage, gameRoomsCopy.monopoly.mortgageOptionLabel)
+		);
+	}
+	const toLift = listUnmortgageOptions(state, viewerId);
+	if (toLift.length > 0) {
+		components.push(
+			mortgageSelect(roomId, "munmortgage", gameRoomsCopy.monopoly.unmortgagePlaceholder, toLift, gameRoomsCopy.monopoly.unmortgageOptionLabel)
+		);
+	}
+	if (components.length > 0) embed.setDescription(`${embed.data.description ?? ""}\n\n${gameRoomsCopy.monopoly.inventoryMortgageHint}`);
+	return { embeds: [embed], components };
+}
+
+/**
+ * The holdings embed alone: chips, jail cards, and each lot with its houses, hotel
+ * or mortgage (and what lifting it costs). Nothing here is secret (the board shows
+ * every balance), so this is a convenience for reading your own lots, not a
+ * privacy surface.
  */
 export function monopolyInventoryEmbed(state: MonopolyState, viewerId: string): EmbedBuilder {
 	const seat = state.seats.find((candidate) => candidate.userId === viewerId);
@@ -170,16 +225,38 @@ export function monopolyInventoryEmbed(state: MonopolyState, viewerId: string): 
 	if (!seat) return infoEmbed(gameRoomsCopy.monopoly.inventoryTitle, gameRoomsCopy.monopoly.notSeated, color);
 	if (seat.bankrupt) return infoEmbed(gameRoomsCopy.monopoly.inventoryTitle, gameRoomsCopy.monopoly.inventoryOut, color);
 
-	const lotNames = lotsOwnedBy(state, viewerId).map(ownableTileName);
+	const lots = lotsOwnedBy(state, viewerId);
+	const lotLines = lots.length > 0 ? [gameRoomsCopy.monopoly.inventoryLotsHeader, ...lots.map((tile) => lotLine(state, tile))] : [gameRoomsCopy.monopoly.inventoryNoLots];
 	return infoEmbed(
 		gameRoomsCopy.monopoly.inventoryTitle,
-		[
-			gameRoomsCopy.monopoly.inventoryChips(seat.chips),
-			gameRoomsCopy.monopoly.inventoryJailCards(seat.gojfCards),
-			gameRoomsCopy.monopoly.inventoryLots(lotNames),
-		].join("\n"),
+		[gameRoomsCopy.monopoly.inventoryChips(seat.chips), gameRoomsCopy.monopoly.inventoryJailCards(seat.gojfCards), "", ...lotLines].join("\n"),
 		color
 	);
+}
+
+// One lot and what is on it. A lot with buildings cannot be mortgaged and a
+// mortgaged one cannot be built on, so at most one of these applies at a time.
+function lotLine(state: MonopolyState, tile: OwnableTile): string {
+	const lot = state.properties[tile.id];
+	const details: string[] = [];
+	if (lot.hotel) details.push(gameRoomsCopy.monopoly.lotHotel);
+	else if (lot.houses > 0) details.push(gameRoomsCopy.monopoly.lotHouses(lot.houses));
+	if (lot.mortgaged) details.push(gameRoomsCopy.monopoly.lotMortgaged(unmortgageCost(tile)));
+	return gameRoomsCopy.monopoly.inventoryLotLine(tile.name, details);
+}
+
+function mortgageSelect(
+	roomId: string,
+	action: "mmortgage" | "munmortgage",
+	placeholder: string,
+	options: MortgageOption[],
+	label: (tileName: string, amount: number) => string
+): ActionRowBuilder<StringSelectMenuBuilder> {
+	const select = new StringSelectMenuBuilder()
+		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:${action}:${roomId}`)
+		.setPlaceholder(placeholder)
+		.addOptions(options.slice(0, MAX_SELECT_OPTIONS).map((option) => ({ label: label(option.name, option.amount), value: option.tileId })));
+	return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
 }
 
 // ── controls ──────────────────────────────────────────────────────────

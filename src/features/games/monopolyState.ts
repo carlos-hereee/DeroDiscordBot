@@ -148,10 +148,13 @@ export {
 	applyMortgage,
 	applyUnmortgage,
 	listBuildOptions,
+	listMortgageOptions,
+	listUnmortgageOptions,
 	nextBuildingKind,
 	unmortgageCost,
 	type BuildingKind,
 	type BuildOption,
+	type MortgageOption,
 } from "./monopolyBuildings.js";
 export { acceptTrade, describeTradeSide, openTrade, rejectTrade, tradableLots } from "./monopolyTrade.js";
 export { closeAuction, openAuction, placeBid } from "./monopolyAuction.js";

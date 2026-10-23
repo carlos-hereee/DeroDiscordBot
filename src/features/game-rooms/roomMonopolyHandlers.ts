@@ -24,7 +24,7 @@ import { awardMultiPlayerResult } from "@features/games/gameXp.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { auctionClosesAt, monopolyBoardEmbed, monopolyControlsRow, monopolyInventoryEmbed } from "./roomMonopoly.js";
+import { auctionClosesAt, monopolyBoardEmbed, monopolyControlsRow, monopolyInventoryReply } from "./roomMonopoly.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { RoomMoveKind } from "./roomTypes.js";
 
@@ -321,15 +321,15 @@ export async function handleMjail(interaction: ButtonInteraction, room: IGameRoo
 }
 
 // ── the private peek ──────────────────────────────────────────────────
-// No defer and no write: it reads the row the router loaded and answers at once,
-// and an ephemeral reply is the whole of it.
+// No defer and no write: it reads the row the router loaded and answers at once.
+// Its mortgage selects are answered in roomMonopolyMortgage.
 export async function handleMinventory(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const state = monopolyStateOf(room);
 	if (!state) {
 		await interaction.reply({ content: gameRoomsCopy.monopoly.noBoard, ...PRIVATE });
 		return;
 	}
-	await interaction.reply({ embeds: [monopolyInventoryEmbed(state, interaction.user.id)], ...PRIVATE });
+	await interaction.reply({ ...monopolyInventoryReply(state, interaction.user.id, room.roomId), ...PRIVATE });
 }
 
 export const roomMonopolyHandlers = {

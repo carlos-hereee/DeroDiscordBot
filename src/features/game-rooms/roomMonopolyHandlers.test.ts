@@ -409,4 +409,15 @@ describe("handleMinventory", () => {
 		expect(interaction.deferUpdate).not.toHaveBeenCalled();
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
+
+	it("carries the mortgage select when the clicker has a lot to mortgage", async () => {
+		const state = freshMatch();
+		state.properties["reader-dock"].ownerId = B;
+		const interaction = makeInteraction(B);
+
+		await handleMinventory(interaction, makeRoom(state));
+
+		const payload = interaction.reply.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id: string }[] } }[] };
+		expect(payload.components.map((row) => row.toJSON().components[0].custom_id)).toEqual(["gameroomSelect:mmortgage:room-1"]);
+	});
 });

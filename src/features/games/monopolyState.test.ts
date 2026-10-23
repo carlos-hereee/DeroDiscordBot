@@ -34,6 +34,8 @@ import {
 	closeAuction,
 	createInitialState,
 	listBuildOptions,
+	listMortgageOptions,
+	listUnmortgageOptions,
 	nextBuildingKind,
 	openTrade,
 	placeBid,
@@ -949,6 +951,53 @@ describe("listBuildOptions", () => {
 	it("names the next building a lot takes: houses up to four, then the hotel", () => {
 		expect(nextBuildingKind({ ownerId: ALICE, houses: 3, hotel: false, mortgaged: false })).toBe("house");
 		expect(nextBuildingKind({ ownerId: ALICE, houses: MAX_HOUSES_PER_LOT, hotel: false, mortgaged: false })).toBe("hotel");
+	});
+});
+
+describe("listMortgageOptions and listUnmortgageOptions", () => {
+	// Alice owns the brown group and Reader Dock, which is mortgaged.
+	const holdings = (): MonopolyState => {
+		const state = newMatch();
+		giveTiles(state, ALICE, ...COLOR_GROUPS.brown, "reader-dock");
+		state.properties["reader-dock"].mortgaged = true;
+		return state;
+	};
+
+	it("lists what each lot would pay or cost, in board order", () => {
+		const state = holdings();
+		expect(listMortgageOptions(state, ALICE)).toEqual([
+			{ tileId: "vermillion-alley", name: "Vermillion Alley", amount: tile("vermillion-alley").mortgage },
+			{ tileId: "burnt-umber-row", name: "Burnt Umber Row", amount: tile("burnt-umber-row").mortgage },
+		]);
+		expect(listUnmortgageOptions(state, ALICE)).toEqual([
+			{ tileId: "reader-dock", name: "Reader Dock", amount: unmortgageCost(tile("reader-dock")) },
+		]);
+	});
+
+	it("offers exactly the moves the actions would accept, so the peek and the engine agree", () => {
+		const state = holdings();
+		state.properties["burnt-umber-row"].houses = 1;
+		state.seats[0].chips = unmortgageCost(tile("reader-dock")) - 1;
+		for (const option of listMortgageOptions(state, ALICE)) expect(applyMortgage(state, ALICE, option.tileId).ok).toBe(true);
+		for (const owned of OWNABLE_TILES.filter((candidate) => state.properties[candidate.id].ownerId === ALICE)) {
+			const offered = listMortgageOptions(state, ALICE).some((option) => option.tileId === owned.id);
+			expect(offered).toBe(applyMortgage(state, ALICE, owned.id).ok);
+		}
+		// A group with buildings mortgages nothing, and an unaffordable lift is left out.
+		expect(listMortgageOptions(state, ALICE)).toEqual([]);
+		expect(listUnmortgageOptions(state, ALICE)).toEqual([]);
+	});
+
+	it("does not depend on the turn, the standard rule, but offers nothing to a seat that is out or once the match is over", () => {
+		const offTurn = holdings();
+		offTurn.activeSeatIndex = 1;
+		expect(listMortgageOptions(offTurn, ALICE)).toHaveLength(2);
+		const out = holdings();
+		out.seats[0].bankrupt = true;
+		expect(listMortgageOptions(out, ALICE)).toEqual([]);
+		const over = holdings();
+		over.phase = "finished";
+		expect(listUnmortgageOptions(over, ALICE)).toEqual([]);
 	});
 });
 

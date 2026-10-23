@@ -3,6 +3,7 @@ import {
 	BUILDING_RESALE_DIVISOR,
 	COLOR_GROUPS,
 	MAX_HOUSES_PER_LOT,
+	OWNABLE_TILES,
 	UNMORTGAGE_INTEREST_PERCENT,
 	findOwnableTile,
 	type OwnableTile,
@@ -15,8 +16,9 @@ import { activeSeatOf, cloneState, completeAction, guardActiveTurn, mentionPlaye
 // ── monopolyBuildings ───────────────────────────────────────────────────────
 // What:  what an owner does with lots between rolls: mortgage one for cash, lift
 //        a mortgage, and build houses and hotels on a complete color group.
-// Who:   the room's build picker and mortgage controls, through the re-exports in
-//        monopolyState; listBuildOptions is what the picker offers. unmortgageCost is also what the board embed shows, so the
+// Who:   the room's build picker and the inventory peek's mortgage controls,
+//        through the re-exports in monopolyState; listBuildOptions,
+//        listMortgageOptions and listUnmortgageOptions are what they offer. unmortgageCost is also what the board embed shows, so the
 //        price on the button and the charge cannot disagree (rule 17). The
 //        building helpers below are shared with monopolyBankruptcy (selling back
 //        and mortgaging to cover a debt) and monopolyTrade (which lots may move).
@@ -78,15 +80,33 @@ function findOwnedTile(state: MonopolyState, ownerId: string, tileId: TileId): O
 
 // ── mortgage ────────────────────────────────────────────────────────────────
 
+// Every rule a mortgage must pass, shared by applyMortgage and listMortgageOptions
+// so the room's mortgage picker and the action cannot disagree (rule 17).
+function checkMortgage(state: MonopolyState, ownerId: string, tileId: TileId): OwnedTile {
+	const owned = findOwnedTile(state, ownerId, tileId);
+	if (!owned.ok) return owned;
+	const { tile } = owned;
+	if (state.properties[tile.id].mortgaged) return { ok: false, reason: `${tile.name} is already mortgaged.` };
+	if (groupHasBuildings(state, tile)) return { ok: false, reason: `${tile.name} cannot be mortgaged while its color group has buildings.` };
+	return owned;
+}
+
+// Every rule lifting a mortgage must pass, shared the same way with listUnmortgageOptions.
+function checkUnmortgage(state: MonopolyState, ownerId: string, tileId: TileId): OwnedTile {
+	const owned = findOwnedTile(state, ownerId, tileId);
+	if (!owned.ok) return owned;
+	const { seat, tile } = owned;
+	if (!state.properties[tile.id].mortgaged) return { ok: false, reason: `${tile.name} is not mortgaged.` };
+	const cost = unmortgageCost(tile);
+	if (seat.chips < cost) return { ok: false, reason: `You need $${cost} to lift the mortgage on ${tile.name}.` };
+	return owned;
+}
+
 /** The owner mortgages an unimproved lot and takes its mortgage value from the bank. */
 export function applyMortgage(state: MonopolyState, ownerId: string, tileId: TileId): MonopolyResult {
-	const owned = findOwnedTile(state, ownerId, tileId);
-	if (!owned.ok) return rejectAction(owned.reason);
-	const { seatIndex, tile } = owned;
-	if (state.properties[tile.id].mortgaged) return rejectAction(`${tile.name} is already mortgaged.`);
-	if (groupHasBuildings(state, tile)) {
-		return rejectAction(`${tile.name} cannot be mortgaged while its color group has buildings.`);
-	}
+	const check = checkMortgage(state, ownerId, tileId);
+	if (!check.ok) return rejectAction(check.reason);
+	const { seatIndex, tile } = check;
 
 	const next = cloneState(state);
 	next.properties[tile.id].mortgaged = true;
@@ -96,17 +116,48 @@ export function applyMortgage(state: MonopolyState, ownerId: string, tileId: Til
 
 /** The owner pays the mortgage value plus interest and the lot charges rent again. */
 export function applyUnmortgage(state: MonopolyState, ownerId: string, tileId: TileId): MonopolyResult {
-	const owned = findOwnedTile(state, ownerId, tileId);
-	if (!owned.ok) return rejectAction(owned.reason);
-	const { seat, seatIndex, tile } = owned;
-	if (!state.properties[tile.id].mortgaged) return rejectAction(`${tile.name} is not mortgaged.`);
+	const check = checkUnmortgage(state, ownerId, tileId);
+	if (!check.ok) return rejectAction(check.reason);
+	const { seatIndex, tile } = check;
 	const cost = unmortgageCost(tile);
-	if (seat.chips < cost) return rejectAction(`You need $${cost} to lift the mortgage on ${tile.name}.`);
 
 	const next = cloneState(state);
 	next.properties[tile.id].mortgaged = false;
 	next.seats[seatIndex].chips -= cost;
 	return completeAction(next, ownerId, [`${mentionPlayer(ownerId)} paid $${cost} to lift the mortgage on ${tile.name}.`]);
+}
+
+/** One mortgage move a seat could make right now: the lot, and the chips it would get or pay. */
+export interface MortgageOption {
+	tileId: TileId;
+	name: string;
+	amount: number;
+}
+
+/**
+ * Every lot `ownerId` could mortgage right now, in board order, with what the bank
+ * would pay for it. Any seat still in the match may mortgage at any time (the
+ * standard rule), so unlike building this does not depend on the turn.
+ */
+export function listMortgageOptions(state: MonopolyState, ownerId: string): MortgageOption[] {
+	return OWNABLE_TILES.filter((tile) => checkMortgage(state, ownerId, tile.id).ok).map((tile) => ({
+		tileId: tile.id,
+		name: tile.name,
+		amount: tile.mortgage,
+	}));
+}
+
+/**
+ * Every mortgaged lot `ownerId` could lift right now, in board order, with what it
+ * would cost. A lot the seat cannot afford to lift is left out, the same as the
+ * action would refuse it.
+ */
+export function listUnmortgageOptions(state: MonopolyState, ownerId: string): MortgageOption[] {
+	return OWNABLE_TILES.filter((tile) => checkUnmortgage(state, ownerId, tile.id).ok).map((tile) => ({
+		tileId: tile.id,
+		name: tile.name,
+		amount: unmortgageCost(tile),
+	}));
 }
 
 // ── build ───────────────────────────────────────────────────────────────────

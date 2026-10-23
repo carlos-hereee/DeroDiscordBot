@@ -523,9 +523,23 @@ export const gameRoomsCopy = {
 		inventoryTitle: "🏠 Your holdings",
 		inventoryChips: (chips: number): string => `Chips: **$${chips}**`,
 		inventoryJailCards: (count: number): string => `Get Out of Jail Free cards: **${count}**`,
-		inventoryLots: (names: string[]): string =>
-			names.length ? `Lots: ${names.join(", ")}` : "Lots: none yet.",
+		inventoryLotsHeader: "**Lots:**",
+		inventoryNoLots: "Lots: none yet.",
+		// One lot per line, with what is on it, so a player can see what a mortgage or
+		// a build would touch before choosing. Parentheses rather than dashes (rule 1).
+		inventoryLotLine: (tileName: string, details: string[]): string =>
+			details.length > 0 ? `• ${tileName} (${details.join(", ")})` : `• ${tileName}`,
+		lotHouses: (count: number): string => (count === 1 ? "1 house" : `${count} houses`),
+		lotHotel: "hotel",
+		lotMortgaged: (liftCost: number): string => `mortgaged, $${liftCost} to lift`,
 		inventoryOut: "You are out of this match.",
+		// Under the lot list when the peek offers mortgage controls.
+		inventoryMortgageHint:
+			"A mortgaged lot charges no rent. A lot whose color group has buildings cannot be mortgaged until they are sold.",
+		mortgagePlaceholder: "Mortgage a lot for cash",
+		mortgageOptionLabel: (tileName: string, amount: number): string => `${tileName}: get $${amount}`,
+		unmortgagePlaceholder: "Lift a mortgage",
+		unmortgageOptionLabel: (tileName: string, cost: number): string => `${tileName}: pay $${cost}`,
 
 		// ── refusals ──
 		notSeated: "You are not in this match.",

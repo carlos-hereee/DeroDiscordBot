@@ -8,7 +8,7 @@ vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn() }))
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
 import { renderBoard } from "@features/games/monopolyRenderer.js";
-import { monopolyBoardEmbed, monopolyControlsRow, monopolyInventoryEmbed } from "./roomMonopoly.js";
+import { monopolyBoardEmbed, monopolyControlsRow, monopolyInventoryEmbed, monopolyInventoryReply } from "./roomMonopoly.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
 // ── roomMonopoly ─────────────────────────────────────────────────────
@@ -248,7 +248,7 @@ describe("monopolyControlsRow", () => {
 });
 
 describe("monopolyInventoryEmbed", () => {
-	it("shows the viewer their own chips, jail cards and lots by name", () => {
+	it("shows the viewer their own chips, jail cards and lots by name, in board order", () => {
 		const state = freshMatch();
 		state.properties["burnt-umber-row"].ownerId = A;
 		state.properties["vermillion-alley"].ownerId = A;
@@ -258,8 +258,28 @@ describe("monopolyInventoryEmbed", () => {
 		const description = monopolyInventoryEmbed(state, A).data.description ?? "";
 		expect(description).toContain(gameRoomsCopy.monopoly.inventoryChips(1500));
 		expect(description).toContain(gameRoomsCopy.monopoly.inventoryJailCards(1));
-		expect(description).toContain("Lots: Vermillion Alley, Burnt Umber Row");
+		expect(description).toContain(`${gameRoomsCopy.monopoly.inventoryLotsHeader}\n• Vermillion Alley\n• Burnt Umber Row`);
 		expect(description).not.toContain("Reader Dock");
+	});
+
+	it("says what is on each lot: its houses, its hotel, or its mortgage and what lifting it costs", () => {
+		const state = freshMatch();
+		for (const id of ["vermillion-alley", "burnt-umber-row", "reader-dock", "petal-court"]) state.properties[id].ownerId = A;
+		state.properties["vermillion-alley"].houses = 2;
+		state.properties["burnt-umber-row"].houses = 1;
+		state.properties["petal-court"].hotel = true;
+		state.properties["reader-dock"].mortgaged = true;
+
+		const description = monopolyInventoryEmbed(state, A).data.description ?? "";
+		expect(description).toContain("• Vermillion Alley (2 houses)");
+		expect(description).toContain("• Burnt Umber Row (1 house)");
+		expect(description).toContain("• Petal Court (hotel)");
+		// Reader Dock mortgages for $50; lifting it costs that plus 10 percent.
+		expect(description).toContain("• Reader Dock (mortgaged, $55 to lift)");
+	});
+
+	it("says so when the viewer owns nothing yet", () => {
+		expect(monopolyInventoryEmbed(freshMatch(), A).data.description).toContain(gameRoomsCopy.monopoly.inventoryNoLots);
 	});
 
 	it("says so for a viewer with no seat, and for a seat that is out", () => {
@@ -267,5 +287,52 @@ describe("monopolyInventoryEmbed", () => {
 		expect(monopolyInventoryEmbed(state, "stranger").data.description).toBe(gameRoomsCopy.monopoly.notSeated);
 		state.seats[1].bankrupt = true;
 		expect(monopolyInventoryEmbed(state, B).data.description).toBe(gameRoomsCopy.monopoly.inventoryOut);
+	});
+});
+
+describe("monopolyInventoryReply", () => {
+	type SelectJson = { custom_id: string; options: { label: string; value: string }[] };
+	const selectsOf = (reply: ReturnType<typeof monopolyInventoryReply>): SelectJson[] =>
+		reply.components.map((row) => row.toJSON().components[0] as unknown as SelectJson);
+
+	// A owns Reader Dock (mortgaged) and the brown group, unimproved.
+	function holdings(): MonopolyState {
+		const state = freshMatch();
+		for (const id of ["vermillion-alley", "burnt-umber-row", "reader-dock"]) state.properties[id].ownerId = A;
+		state.properties["reader-dock"].mortgaged = true;
+		return state;
+	}
+
+	it("offers a select for each lot the viewer could mortgage and one for each mortgage they could lift", () => {
+		const [mortgage, lift] = selectsOf(monopolyInventoryReply(holdings(), A, ROOM));
+		expect(mortgage.custom_id).toBe(`gameroomSelect:mmortgage:${ROOM}`);
+		expect(mortgage.options).toEqual([
+			{ label: gameRoomsCopy.monopoly.mortgageOptionLabel("Vermillion Alley", 30), value: "vermillion-alley" },
+			{ label: gameRoomsCopy.monopoly.mortgageOptionLabel("Burnt Umber Row", 30), value: "burnt-umber-row" },
+		]);
+		expect(lift.custom_id).toBe(`gameroomSelect:munmortgage:${ROOM}`);
+		expect(lift.options).toEqual([{ label: gameRoomsCopy.monopoly.unmortgageOptionLabel("Reader Dock", 55), value: "reader-dock" }]);
+	});
+
+	it("explains mortgages under the lots when it offers them", () => {
+		const reply = monopolyInventoryReply(holdings(), A, ROOM);
+		expect(reply.embeds[0].data.description).toContain(gameRoomsCopy.monopoly.inventoryMortgageHint);
+	});
+
+	it("leaves out a lot whose group has buildings, and a mortgage the viewer cannot afford to lift", () => {
+		const state = holdings();
+		state.properties["vermillion-alley"].houses = 1;
+		state.seats[0].chips = 54;
+		expect(monopolyInventoryReply(state, A, ROOM).components).toEqual([]);
+	});
+
+	it("offers no controls to a viewer with nothing to mortgage, a seat that is out, or once the match is over", () => {
+		expect(monopolyInventoryReply(freshMatch(), A, ROOM).components).toEqual([]);
+		const out = holdings();
+		out.seats[0].bankrupt = true;
+		expect(monopolyInventoryReply(out, A, ROOM).components).toEqual([]);
+		const over = holdings();
+		over.phase = "finished";
+		expect(monopolyInventoryReply(over, A, ROOM).components).toEqual([]);
 	});
 });

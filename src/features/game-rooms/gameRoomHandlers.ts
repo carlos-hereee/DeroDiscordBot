@@ -23,6 +23,7 @@ import { roomBattleshipHandlers } from "./roomBattleshipHandlers.js";
 import { roomHoldemHandlers } from "./roomHoldemHandlers.js";
 import { roomMonopolyHandlers } from "./roomMonopolyHandlers.js";
 import { roomMonopolyBuild } from "./roomMonopolyBuild.js";
+import { roomMonopolyMortgage } from "./roomMonopolyMortgage.js";
 import { roomMonopolyTrade } from "./roomMonopolyTrade.js";
 import { roomMonopolyAuction } from "./roomMonopolyAuction.js";
 import type { GameSlug } from "./roomTypes.js";
@@ -270,6 +271,8 @@ export function registerGameRoomHandlers(): void {
 		if (action === "bscol" || action === "bsrow") return roomBattleshipHandlers.handleAimSelect(interaction);
 		if (action === "mtradeWith") return roomMonopolyTrade.handleTradePartnerSelect(interaction);
 		if (action === "mbuild") return roomMonopolyBuild.handleBuildSelect(interaction);
+		if (action === "mmortgage") return roomMonopolyMortgage.handleMortgageSelect(interaction);
+		if (action === "munmortgage") return roomMonopolyMortgage.handleUnmortgageSelect(interaction);
 		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
 	});
 	// Hangman's two modals and Monopoly's two. Same sub-routing shape, and each
