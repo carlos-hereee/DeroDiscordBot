@@ -127,7 +127,9 @@ export async function handleReaction(
 			guildId,
 			userId: recipient.userId,
 			username: member?.displayName ?? recipient.fallbackName,
-			amount: rollXp(settings.reaction.min, settings.reaction.max, multiplier),
+			// A flat REACTION_XP rather than a range (the 1.7.0 test fixes, item 5);
+			// rollXp still applies the multiplier and its floor of 1.
+			amount: rollXp(BOT_CONSTANTS.LEVELING.REACTION_XP, BOT_CONSTANTS.LEVELING.REACTION_XP, multiplier),
 			source: "reaction",
 			// Only the member who actually reacted has their "reactions given"
 			// counter moved. The author was reacted TO, which is not the same act,

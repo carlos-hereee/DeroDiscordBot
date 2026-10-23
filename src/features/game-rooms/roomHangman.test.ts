@@ -14,8 +14,11 @@ vi.mock("@features/games/hangmanBoard.js", () => ({
 
 import {
 	hangmanRow,
+	hangmanCategoryRow,
 	openAuthoringModal,
 	handleAuthoringModal,
+	handleCategorySelect,
+	startSoloHangmanRound,
 	openGuessModal,
 	handleGuessModal,
 } from "./roomHangman.js";
@@ -23,7 +26,8 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail, resolveRoomChannel } from "./roomTrail.js";
 import { playingBoardPicture } from "@features/games/hangmanBoard.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { GAME_ROOM_PREFIX, GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
+import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX, GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
+import { HANGMAN_CATEGORIES, HANGMAN_ENTRIES, HANGMAN_WORD_BANK } from "@features/games/hangmanWords.js";
 import { HANGMAN_HINT_MAX } from "@features/games/hangmanAuthoring.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -546,3 +550,141 @@ describe("the refusal itself", () => {
 // reaching for is already covered better by "writes nothing when it refuses",
 // which proves no trail post happens at all. A test that cannot go red is the
 // vacuous-guard antipattern this codebase has already been bitten by once.
+
+// ── letting Dero pick (the 1.7.0 test fixes, item 12) ─────────────────
+// The host's other way to start a round: a category select beside the authoring
+// button. It must start the round through the SAME three steps the modal takes
+// (secret, opener swap, first card), or guessers are left with no control again.
+function makeCategorySelect(userId: string, value = "realm", customId = `${GAME_ROOM_SELECT_PREFIX}:hcategory:room-1`) {
+	return {
+		customId,
+		guildId: "guild-1",
+		user: { id: userId },
+		client: {},
+		values: [value],
+		reply: vi.fn().mockResolvedValue(undefined),
+	} as unknown as Parameters<typeof handleCategorySelect>[0];
+}
+
+describe("hangmanCategoryRow", () => {
+	it("offers all ten categories on the customId handleCategorySelect parses", () => {
+		const [select] = hangmanCategoryRow({ roomId: "room-1" }).toJSON().components as unknown as {
+			custom_id: string;
+			options: { value: string; label: string }[];
+		}[];
+
+		expect(select.custom_id).toBe(`${GAME_ROOM_SELECT_PREFIX}:hcategory:room-1`);
+		expect(select.options.map((option) => option.value)).toEqual([...HANGMAN_CATEGORIES]);
+		expect(select.options.find((option) => option.value === "realm")?.label).toBe("Dero's realm");
+	});
+});
+
+describe("handleCategorySelect, the gate", () => {
+	it("refuses anybody who is not the host, and writes nothing", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeUnwordedRoom());
+		const interaction = makeCategorySelect(GUESSER);
+
+		await handleCategorySelect(interaction);
+
+		expect(replyOf(interaction).content).toBe(gameRoomsCopy.errors.notYours);
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("refuses a room that already has its word", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		const interaction = makeCategorySelect(HOST);
+
+		await handleCategorySelect(interaction);
+
+		expect(replyOf(interaction).content).toBe(gameRoomsCopy.hangman.wordAlreadySet);
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("refuses a category the bank does not have", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeUnwordedRoom());
+
+		await handleCategorySelect(makeCategorySelect(HOST, "weapons"));
+
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("refuses a solo room, which seeds its own word", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeUnwordedRoom({ game: "solo-hangman" } as Partial<IGameRoom>));
+
+		await handleCategorySelect(makeCategorySelect(HOST));
+
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+});
+
+describe("handleCategorySelect, starting the round", () => {
+	beforeEach(() => storeMock.findByRoomId.mockResolvedValue(makeUnwordedRoom()));
+
+	it("stores a word and hint from the chosen shelf with NO author, so the host may guess", async () => {
+		await handleCategorySelect(makeCategorySelect(HOST, "space"));
+
+		const secret = savedSecret() as { word: string; hint: string; authoredBy: string | null };
+		expect(HANGMAN_WORD_BANK.space).toContainEqual({ word: secret.word, hint: secret.hint });
+		expect(secret.authoredBy).toBeNull();
+	});
+
+	it("swaps the opener to the guess button and posts the first gallows card", async () => {
+		await handleCategorySelect(makeCategorySelect(HOST));
+
+		const { components } = openerEdit.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id: string }[] } }[] };
+		// One row: the guess button replaces both the author button and this select.
+		expect(components).toHaveLength(1);
+		expect(components[0].toJSON().components[0].custom_id).toBe(`${GAME_ROOM_PREFIX}:move:room-1`);
+		expect(channelSend).toHaveBeenCalledOnce();
+		expect(boardMock.mock.calls[0][1]).toBe(gameRoomsCopy.hangman.boardDescription(null));
+	});
+
+	it("tells the host the shelf privately and the room the hint publicly, never the word", async () => {
+		const interaction = makeCategorySelect(HOST, "realm");
+
+		await handleCategorySelect(interaction);
+
+		const { word, hint } = savedSecret() as { word: string; hint: string };
+		const confirmation = replyOf(interaction);
+		const opener = trailMock.postMove.mock.calls[0][2] as { text: string };
+		expect(confirmation.flags).toBe(MessageFlags.Ephemeral);
+		expect(confirmation.content).toBe(gameRoomsCopy.hangman.categoryPicked("Dero's realm"));
+		expect(opener.text).toBe(gameRoomsCopy.hangman.categoryOpener(HOST, "Dero's realm", hint));
+		expect(confirmation.content).not.toMatch(new RegExp(word, "i"));
+		expect(opener.text).not.toMatch(new RegExp(`\b${word}\b`, "i"));
+	});
+
+	it("lets the host guess the word Dero picked", async () => {
+		await handleCategorySelect(makeCategorySelect(HOST));
+		const picked = makeRoom(null);
+		(picked.secret as unknown as Record<string, unknown>).word = (savedSecret() as { word: string }).word;
+		const interaction = makeButton(HOST);
+
+		await openGuessModal(interaction, picked);
+
+		expect(interaction.showModal).toHaveBeenCalledOnce();
+	});
+});
+
+// ── the solo seed ─────────────────────────────────────────────────────
+describe("startSoloHangmanRound", () => {
+	const soloRoom = { guildId: "guild-1", roomId: "room-1", channelId: "ch-1", openerMessageId: "opener-1", hostId: HOST };
+
+	it("stores a bank word WITH its hint and no author", async () => {
+		await startSoloHangmanRound({} as never, soloRoom);
+
+		const secret = savedSecret() as { word: string; hint: string; authoredBy: string | null };
+		expect(HANGMAN_ENTRIES).toContainEqual(expect.objectContaining({ word: secret.word, hint: secret.hint }));
+		expect(secret.hint.length).toBeGreaterThan(0);
+		expect(secret.authoredBy).toBeNull();
+	});
+
+	it("shows the hint in the opening line and posts the first gallows card", async () => {
+		await startSoloHangmanRound({} as never, soloRoom);
+
+		const { hint } = savedSecret() as { hint: string };
+		expect((trailMock.postMove.mock.calls[0][2] as { text: string }).text).toBe(gameRoomsCopy.hangman.soloOpener(hint));
+		expect(channelSend).toHaveBeenCalledOnce();
+		expect(boardMock.mock.calls[0][0]).toMatchObject({ wrong: 0 });
+	});
+});

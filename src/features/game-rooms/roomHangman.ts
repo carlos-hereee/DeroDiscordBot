@@ -4,11 +4,13 @@ import {
 	ButtonStyle,
 	MessageFlags,
 	ModalBuilder,
+	StringSelectMenuBuilder,
 	TextInputBuilder,
 	TextInputStyle,
 	type ButtonInteraction,
 	type Client,
 	type ModalSubmitInteraction,
+	type StringSelectMenuInteraction,
 } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import {
@@ -30,19 +32,28 @@ import { awardMultiPlayerResult } from "@features/games/gameXp.js";
 import { resolveGameAsset } from "@features/games/gamesAssets.js";
 import { hangmanCardView, renderHangmanCard } from "@features/games/hangmanRenderer.js";
 import { playingBoardPicture } from "@features/games/hangmanBoard.js";
+import {
+	HANGMAN_CATEGORIES,
+	isHangmanCategory,
+	pickWord,
+	pickWordFromCategory,
+	type PickedHangmanWord,
+} from "@features/games/hangmanWords.js";
 import { withRenderFallback } from "@features/renderer/index.js";
 import { roomTrail, resolveRoomChannel } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { GAME_ROOM_PREFIX, GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
+import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX, GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { RoomSecret } from "./roomTypes.js";
 
 // ── roomHangman ──────────────────────────────────────────────────────
-// What:  hangman played inside a room: the host authors a word behind a modal, and
-//        every letter anyone plays becomes its own attributed message.
+// What:  hangman played inside a room: the host authors a word behind a modal or
+//        lets Dero draw one from a category, and every letter anyone plays becomes
+//        its own attributed message.
 // Who:   the `gameroom:move` button (guess), the `gameroom:author` button (set the
-//        word), and the two `gameroomModal:` submits.
+//        word), the `gameroomSelect:hcategory` select (Dero picks), the two
+//        `gameroomModal:` submits, and RoomProvisioner's solo seed.
 // When:  once per room, from the host's first press to the result card.
 // Where: the ROOM ROW carries the word. It is written once, read on every guess,
 //        and rendered exactly once, in the result card. Nothing else in this file
@@ -53,8 +64,14 @@ import type { RoomSecret } from "./roomTypes.js";
 //
 // ⚠️ RISK R12, AND IT IS THE WHOLE POINT OF THE FEATURE. `secret.word` reaches
 // Discord in exactly ONE place: the result line, posted after the round is over.
-// Search this file for `.word` and there should be two hits, the authoring write
-// and that render. If a third appears, the word is leaking.
+// Search this file for `.word` and every hit should be a write into a secret
+// (the modal's validated word, a bank pick) or that render. Anything else means
+// the word is leaking.
+
+// The room as the round's start needs it: where to write, where to post, and the
+// pinned opener to swap. A subset of IGameRoom so the provisioner can start a solo
+// round from the ids it holds without re-reading the row it just wrote.
+type HangmanRoomRef = Pick<IGameRoom, "guildId" | "roomId" | "channelId" | "openerMessageId" | "hostId">;
 
 // The round's live state is rebuilt from the row on every interaction rather than
 // cached in a Map, because a Map is what died on every Railway deploy in the old
@@ -65,7 +82,7 @@ interface HangmanSecret extends RoomSecret {
 	wrong?: number;
 }
 
-function rehydrate(room: IGameRoom): HangmanState | null {
+function rehydrate(room: Pick<IGameRoom, "secret">): HangmanState | null {
 	const secret = room.secret as HangmanSecret | null;
 	if (!secret?.word) return null;
 
@@ -117,6 +134,22 @@ export function hangmanRow(room: Pick<IGameRoom, "roomId">, hasWord: boolean): A
 			.setCustomId(`${GAME_ROOM_PREFIX}:forfeit:${room.roomId}`)
 			.setLabel("Give up")
 			.setStyle(ButtonStyle.Secondary)
+	);
+}
+
+// The host's other way to start: let Dero draw a word from one of the bank's ten
+// categories. Its own row because Discord gives a select menu a whole action row to
+// itself, so it sits directly under the authoring button. Rides the opener only
+// until a word exists: swapOpenerToGuessing replaces both rows with the guess row.
+export function hangmanCategoryRow(room: Pick<IGameRoom, "roomId">): ActionRowBuilder<StringSelectMenuBuilder> {
+	const labels = gameRoomsCopy.hangman.categoryLabels;
+	return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+		new StringSelectMenuBuilder()
+			.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:hcategory:${room.roomId}`)
+			.setPlaceholder(gameRoomsCopy.hangman.categoryPlaceholder)
+			.setMinValues(1)
+			.setMaxValues(1)
+			.addOptions(HANGMAN_CATEGORIES.map((category) => ({ label: labels[category], value: category })))
 	);
 }
 
@@ -211,36 +244,133 @@ export async function handleAuthoringModal(interaction: ModalSubmitInteraction):
 		guessedLetters: [],
 		wrong: 0,
 	};
-	await gameRoomStore.update(guildId, roomId, { secret: secret as never });
-	const authoredRoom = { ...room, secret } as IGameRoom;
 
-	// ⚠️ THE HINT, NEVER THE WORD. The host knows the word already; echoing it buys
-	// nothing and puts it one mis-click from a public channel.
-	await interaction.reply({
-		content: gameRoomsCopy.hangman.authored(result.hint, result.extraHints.length),
-		flags: MessageFlags.Ephemeral,
+	await startRoomHangmanRound(
+		interaction.client,
+		room,
+		secret,
+		{ actorId: interaction.user.id, text: gameRoomsCopy.hangman.opener(interaction.user.id, result.hint) },
+		// ⚠️ THE HINT, NEVER THE WORD. The host knows the word already; echoing it buys
+		// nothing and puts it one mis-click from a public channel.
+		() =>
+			interaction.reply({
+				content: gameRoomsCopy.hangman.authored(result.hint, result.extraHints.length),
+				flags: MessageFlags.Ephemeral,
+			})
+	);
+}
+
+// ── letting Dero pick ─────────────────────────────────────────────────
+// The category select's submit (the 1.7.0 test fixes, item 12). Dero draws a random
+// word and its hint from the chosen shelf, and the round starts through the same
+// path the modal uses. authoredBy stays null, which is what lets the host past the
+// host-cannot-guess gate: they never saw this word.
+export async function handleCategorySelect(interaction: StringSelectMenuInteraction): Promise<void> {
+	const [prefix, action, roomId] = interaction.customId.split(":");
+	if (prefix !== GAME_ROOM_SELECT_PREFIX || action !== "hcategory" || !roomId) return;
+
+	const guildId = interaction.guildId;
+	if (!guildId) return;
+
+	// Guild scoped like every room read (invariant 2): the roomId rides a customId
+	// anyone can replay.
+	const room = await gameRoomStore.findByRoomId(guildId, roomId);
+	if (!room || room.status !== "playing" || room.game !== "hangman") {
+		await interaction.reply({ content: gameRoomsCopy.errors.notFound, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	// Re-gated here: the router does not gate selects, and a select's customId and
+	// values are user input whoever built the menu. Host only, like the modal.
+	if (room.hostId !== interaction.user.id) {
+		await interaction.reply({ content: gameRoomsCopy.errors.notYours, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	if ((room.secret as HangmanSecret | null)?.word) {
+		await interaction.reply({ content: gameRoomsCopy.hangman.wordAlreadySet, flags: MessageFlags.Ephemeral });
+		return;
+	}
+
+	const category = interaction.values[0] ?? "";
+	if (!isHangmanCategory(category)) {
+		await interaction.reply({ content: gameRoomsCopy.errors.notFound, flags: MessageFlags.Ephemeral });
+		return;
+	}
+
+	const pick = pickWordFromCategory(category);
+	const label = gameRoomsCopy.hangman.categoryLabels[category];
+	await startRoomHangmanRound(
+		interaction.client,
+		room,
+		bankSecret(pick),
+		{ actorId: interaction.user.id, text: gameRoomsCopy.hangman.categoryOpener(interaction.user.id, label, pick.hint) },
+		() => interaction.reply({ content: gameRoomsCopy.hangman.categoryPicked(label), flags: MessageFlags.Ephemeral })
+	);
+}
+
+/**
+ * Seed a SOLO hangman room with a word and hint from the whole bank and start it.
+ * Called once by RoomProvisioner right after the opener is posted. The host is the
+ * guesser, which a bank word's null author already allows.
+ */
+export async function startSoloHangmanRound(client: Client, room: HangmanRoomRef): Promise<void> {
+	const pick = pickWord();
+	await startRoomHangmanRound(client, room, bankSecret(pick), {
+		actorId: room.hostId,
+		text: gameRoomsCopy.hangman.soloOpener(pick.hint),
 	});
+}
 
-	// The public line carries the hint and tells the room the round has started. It
-	// is text only; the two steps after it are what actually let anyone play.
-	await roomTrail.postMove(interaction.client, room, {
-		actorId: interaction.user.id,
-		kind: "system",
-		text: gameRoomsCopy.hangman.opener(interaction.user.id, result.hint),
-	});
-
-	await swapOpenerToGuessing(interaction.client, authoredRoom);
-	const state = rehydrate(authoredRoom);
-	if (state) await postGallowsCard(interaction.client, authoredRoom, state);
+// A secret for a word Dero drew from the bank: its hint, no extra hints, and no
+// author, so nobody is barred from guessing.
+function bankSecret(pick: PickedHangmanWord): HangmanSecret {
+	return {
+		word: pick.word,
+		hint: pick.hint,
+		extraHints: [],
+		revealedHints: 0,
+		authoredBy: null,
+		guessedLetters: [],
+		wrong: 0,
+	};
 }
 
 // ── starting the round ────────────────────────────────────────────────
+/**
+ * Store the round's word, then make the room playable. THE ONE PATH every room
+ * hangman round starts through: the host's modal, the category select and the solo
+ * seed all call it, so none of them can forget a step and leave guessers without a
+ * control again.
+ *
+ * ① write the secret (the only write of a word), ② acknowledge the person who
+ * started it, if anyone did, ③ post the public line with the hint, ④ swap the
+ * pinned opener to the guess button, ⑤ post the first gallows card. Steps ④ and ⑤
+ * are cosmetic and swallow their own failures, because the word is already stored.
+ */
+async function startRoomHangmanRound(
+	client: Client,
+	room: HangmanRoomRef,
+	secret: HangmanSecret,
+	announcement: { actorId: string; text: string },
+	acknowledge?: () => Promise<unknown>
+): Promise<void> {
+	await gameRoomStore.update(room.guildId, room.roomId, { secret: secret as never });
+	if (acknowledge) await acknowledge();
+
+	// Text only; the two steps after it are what actually let anyone play.
+	await roomTrail.postMove(client, room, { actorId: announcement.actorId, kind: "system", text: announcement.text });
+
+	await swapOpenerToGuessing(client, room);
+	const state = rehydrate({ secret });
+	if (state) await postGallowsCard(client, room, state);
+}
+
 // The pinned opener the provisioner posted still carries the host's authoring
-// button, which has nothing left to do once a word exists, and it is the only
-// control in the channel. Without this edit the guessers have no way to play.
-// Fire and forget after the primary write (house rule 7): the word is stored, so a
-// failed edit is logged rather than thrown back at the host's modal.
-async function swapOpenerToGuessing(client: Client, room: IGameRoom): Promise<void> {
+// button and the category select, which have nothing left to do once a word exists,
+// and they are the only controls in the channel. Without this edit the guessers have
+// no way to play. A solo opener already carries the guess button, so there the edit
+// is a harmless repeat. Fire and forget after the primary write (house rule 7): the
+// word is stored, so a failed edit is logged rather than thrown back at the host.
+async function swapOpenerToGuessing(client: Client, room: HangmanRoomRef): Promise<void> {
 	if (!room.openerMessageId) return;
 	try {
 		const channel = await resolveRoomChannel(client, room.channelId);
@@ -260,7 +390,7 @@ async function swapOpenerToGuessing(client: Client, room: IGameRoom): Promise<vo
 // The round's last guess posts no card, because the result card from
 // roomLifecycle.finish carries the ending's gallows. Cosmetic, so a failure is
 // logged and swallowed: the row is the truth and the next guess draws again.
-async function postGallowsCard(client: Client, room: IGameRoom, state: HangmanState): Promise<void> {
+async function postGallowsCard(client: Client, room: Pick<IGameRoom, "roomId" | "channelId">, state: HangmanState): Promise<void> {
 	try {
 		const channel = await resolveRoomChannel(client, room.channelId);
 		if (!channel) return;

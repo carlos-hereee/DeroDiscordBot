@@ -1,4 +1,5 @@
 import { Events, type Client, type Message } from "discord.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { awardXp } from "./awardXp.js";
 import { getLevelingConfig, peekLevelingConfig, type GuildLevelingContext } from "./levelingConfig.js";
@@ -95,8 +96,11 @@ export async function handleMessage(message: Message): Promise<void> {
 	}
 
 	// ── ⑨ the roll ──
+	// A flat MESSAGE_XP rather than a range (the 1.7.0 test fixes, item 5), still
+	// through rollXp so the multiplier and its floor of 1 behave exactly as before.
+	const { MESSAGE_XP } = BOT_CONSTANTS.LEVELING;
 	const multiplier = combinedMultiplier(settings, roleIds, channelIds);
-	const amount = rollXp(settings.message.min, settings.message.max, multiplier);
+	const amount = rollXp(MESSAGE_XP, MESSAGE_XP, multiplier);
 
 	// ── ⑩ stage it ──
 	// source "message" is the only buffered source. awardXp decides that, not this

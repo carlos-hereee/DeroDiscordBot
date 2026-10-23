@@ -164,8 +164,8 @@ describe("the word bank", () => {
 	});
 
 	it("picks inside the bank at both rng boundaries", () => {
-		expect(pickWord(() => 0)).toBe(HANGMAN_WORDS[0]);
-		expect(pickWord(() => 0.9999999)).toBe(HANGMAN_WORDS[HANGMAN_WORDS.length - 1]);
+		expect(pickWord(() => 0).word).toBe(HANGMAN_WORDS[0]);
+		expect(pickWord(() => 0.9999999).word).toBe(HANGMAN_WORDS[HANGMAN_WORDS.length - 1]);
 	});
 });
 

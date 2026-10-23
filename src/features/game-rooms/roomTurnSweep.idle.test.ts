@@ -15,7 +15,9 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // What:  any room in a non terminal status with no action for 30 minutes is finished
 //        as abandoned, so no forgotten draft or match holds its host's one room slot.
 // How:   the store and the lifecycle are mocked; what is under test is which rooms
-//        the sweep decides are idle, read from each game's own stamp.
+//        the sweep decides are idle, read from each game's own stamp. The default
+//        room is a coin flip, a game the sweep covers; hangman and Monopoly in play
+//        are exempt and have their own cases below.
 
 const storeMock = gameRoomStore as unknown as { findNonTerminal: ReturnType<typeof vi.fn> };
 const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
@@ -29,7 +31,7 @@ function makeRoom(overrides: Partial<IGameRoom>): IGameRoom {
 	return {
 		roomId: "room-1",
 		guildId: "guild-1",
-		game: "hangman",
+		game: "coinflip",
 		status: "playing",
 		playerIds: ["host"],
 		channelId: "ch-1",
@@ -113,6 +115,25 @@ describe("sweepIdleRooms", () => {
 
 		expect(await sweepIdleRooms(client, NOW)).toEqual({ roomsAbandoned: 0 });
 		expect(finishMock).not.toHaveBeenCalled();
+	});
+
+	// The owner's decision of 2026-10-23: hangman has no clock, hosted or solo, so a
+	// round in play sits as long as its players like. Paired with the draft case so the
+	// exemption cannot quietly widen to unanswered challenges.
+	it.each(["hangman", "solo-hangman"] as const)("leaves a %s round in play alone however long it idles", async (game) => {
+		storeMock.findNonTerminal.mockResolvedValue([makeRoom({ game, updatedAt: ago(600) })]);
+
+		expect(await sweepIdleRooms(client, NOW)).toEqual({ roomsAbandoned: 0 });
+		expect(finishMock).not.toHaveBeenCalled();
+	});
+
+	it("still sweeps a hangman DRAFT nobody answered", async () => {
+		const draft = makeRoom({ game: "hangman", status: "draft", channelId: null, startedAt: null, updatedAt: ago(45) });
+		storeMock.findNonTerminal.mockResolvedValue([draft]);
+
+		await sweepIdleRooms(client, NOW);
+
+		expect(finishMock).toHaveBeenCalledWith(client, draft, { abandoned: true, now: NOW });
 	});
 
 	it("does not count a room another path already finished in the same tick", async () => {

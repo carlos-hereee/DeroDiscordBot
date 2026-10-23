@@ -7,7 +7,7 @@ import { buildRoomChannelName, resolveRoomChannelName } from "./roomNaming.js";
 import { buildRoomOverwrites } from "./roomPermissions.js";
 import { roomOpenerEmbed, roomOpenerLogo } from "./gameRoomsEmbeds.js";
 import { roomMoveRow } from "./roomGames.js";
-import { hangmanRow } from "./roomHangman.js";
+import { hangmanRow, hangmanCategoryRow, startSoloHangmanRound } from "./roomHangman.js";
 import {
 	startMatch as startBattleshipMatch,
 	deserializeMatch,
@@ -15,11 +15,9 @@ import {
 	rerollRow,
 } from "./roomBattleship.js";
 import { createTable as createHoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
-import { pickWord } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
 import { createInitialState as createMonopolyState } from "@features/games/monopolyState.js";
 import { monopolyBoardEmbed, monopolyControlsRow } from "./roomMonopoly.js";
-import { roomTrail } from "./roomTrail.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
@@ -92,6 +90,17 @@ const inflightOpens = new Map<string, Promise<RoomOpenResult>>();
 // here: it rides the trail plus the pinned guess control, like room hangman.
 // monopoly rides its own board message too, edited after every move.
 const SELF_BOARDED_GAMES: readonly GameSlug[] = ["battleship", "holdem", "monopoly", "solo-blackjack"];
+
+// The controls a room's pinned opener carries, for every game that is not self boarded.
+// Hangman opens on the AUTHORING control plus the category select: there is no word
+// yet, and offering "guess a letter" before one exists would be a button whose only
+// answer is "not yet". The solo form is the opposite: its word is seeded from the bank
+// right after, so it opens straight on the GUESS control and never shows authoring.
+function openerControls(game: GameSlug, roomId: string) {
+	if (game === "hangman") return [hangmanRow({ roomId }, false), hangmanCategoryRow({ roomId })];
+	if (game === "solo-hangman") return [hangmanRow({ roomId }, true)];
+	return [roomMoveRow({ roomId, game })];
+}
 
 // Test seam, and the reason this is not just a module-local: a leaked entry would make
 // every later open by that host return the previous result forever.
@@ -323,22 +332,7 @@ export const RoomProvisioner = {
 			.send({
 				embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility, inviteCode, logo?.ref)],
 				...(logo ? { files: [logo.attachment] } : {}),
-				// Hangman opens with the AUTHORING control, not a guess control: there
-				// is no word yet, and offering "guess a letter" before one exists would
-				// be a button whose only possible answer is "not yet". The solo form is
-				// the opposite: its word is seeded from the bank below, so it opens
-				// straight on the GUESS control and never shows authoring at all.
-				...(SELF_BOARDED_GAMES.includes(game)
-					? {}
-					: {
-							components: [
-								game === "hangman"
-									? hangmanRow({ roomId: room.roomId }, false)
-									: game === "solo-hangman"
-									  ? hangmanRow({ roomId: room.roomId }, true)
-									  : roomMoveRow({ roomId: room.roomId, game }),
-							],
-					  }),
+				...(SELF_BOARDED_GAMES.includes(game) ? {} : { components: openerControls(game, room.roomId) }),
 			})
 			.catch(() => null);
 		await opener?.pin().catch(() => undefined);
@@ -392,27 +386,19 @@ export const RoomProvisioner = {
 		}
 
 		// Solo hangman is seeded HERE rather than authored: the host is the guesser, so
-		// the word comes from the bundled bank with no author and no hint (the same
-		// shape the old channel hangman used). authoredBy null is what lets the host
-		// past roomHangman's host-cannot-guess gate, which keys on the AUTHOR, not the
-		// host. Seeded after the opener so a click racing the seed reads as "waiting
-		// for the word" for a moment rather than erroring.
+		// the word and its hint come from the bundled bank with no author. authoredBy
+		// null is what lets the host past roomHangman's host-cannot-guess gate, which
+		// keys on the AUTHOR, not the host. Seeded after the opener so a click racing
+		// the seed reads as "waiting for the word" for a moment rather than erroring.
+		// It starts through the same path a hosted round does, which also posts the
+		// first gallows card.
 		if (game === "solo-hangman") {
-			await gameRoomStore.update(guild.id, room.roomId, {
-				secret: {
-					word: pickWord(),
-					hint: "",
-					extraHints: [],
-					revealedHints: 0,
-					authoredBy: null,
-					guessedLetters: [],
-					wrong: 0,
-				} as never,
-			});
-			await roomTrail.postMove(guild.client, { guildId: guild.id, roomId: room.roomId, channelId: channel.id }, {
-				actorId: hostId,
-				kind: "system",
-				text: gameRoomsCopy.hangman.soloOpener,
+			await startSoloHangmanRound(guild.client, {
+				guildId: guild.id,
+				roomId: room.roomId,
+				channelId: channel.id,
+				openerMessageId: opener?.id ?? null,
+				hostId,
 			});
 		}
 

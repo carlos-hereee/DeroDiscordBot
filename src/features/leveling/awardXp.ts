@@ -2,11 +2,13 @@ import type { Client } from "discord.js";
 import type { AnyBulkWriteOperation } from "mongoose";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { xpPeriodStore } from "@db/stores/xpPeriodStore.js";
+import { xpDailyStore } from "@db/stores/xpDailyStore.js";
 import type { IXpPeriod } from "@db/models/XpPeriod.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { checkLevelingAccess } from "@features/entitlements/levelingAccess.js";
 import { getLevelingConfig } from "./levelingConfig.js";
 import { periodKeysFor } from "./levelPeriod.js";
+import { dailyCapDayKey, grantedUnderCap, isDailyCappedSource } from "./dailyXpCap.js";
 import { stage } from "./xpWriter.js";
 import { handleLevelCrossing } from "./levelUpAnnouncer.js";
 import type { GameOutcome, LevelingGameSlug, LifetimeCounter, XpSource } from "./levelingTypes.js";
@@ -27,8 +29,9 @@ import type { GameOutcome, LevelingGameSlug, LifetimeCounter, XpSource } from ".
 // Where: the entitlement seam is checked HERE rather than at each call site,
 //        because this is the only path, so gating here gates the feature by
 //        construction and there is no second route to forget.
-// How:   ① entitlement and config, ② "message" stages into the buffer while
-//        every other source writes through, ③ the crossing goes to the announcer.
+// How:   ① entitlement and config, ② the daily cap trims a message, reaction or
+//        soloLuck award, ③ "message" stages into the buffer while every other
+//        source writes through, ④ the crossing goes to the announcer.
 //
 // ⚠️ IT NEVER THROWS. Every failure is logged and swallowed. An award happens
 // after a successful primary write, inside collector callbacks with no caller
@@ -65,14 +68,14 @@ const OUTCOME_FIELD: Record<GameOutcome, string> = {
 
 export async function awardXp(input: AwardXpInput): Promise<void> {
 	try {
-		const amount = Number.isFinite(input.amount) && input.amount > 0 ? Math.floor(input.amount) : 0;
+		const offered = Number.isFinite(input.amount) && input.amount > 0 ? Math.floor(input.amount) : 0;
 		const counters = input.counters ?? {};
 		const hasCounters = Object.values(counters).some((value) => (value ?? 0) > 0);
 
 		// Nothing to write. A zero award with no counters and no game record is a
 		// no op rather than an empty database round trip, which matters because
 		// callers are encouraged to call unconditionally and let this decide.
-		if (amount === 0 && !hasCounters && !input.game) return;
+		if (offered === 0 && !hasCounters && !input.game) return;
 		if (!input.guildId || !input.userId) return;
 
 		// Fails OPEN and, with ENFORCE_LEVELING_TIER unset (production today),
@@ -86,9 +89,19 @@ export async function awardXp(input: AwardXpInput): Promise<void> {
 		// nowhere to announce, so this is a silent bail rather than an error.
 		if (!context || !context.settings.enabled) return;
 
-		const { week, month } = periodKeysFor(new Date(), context.weekStart);
+		const now = new Date();
+		const { week, month } = periodKeysFor(now, context.weekStart);
 
-		// ── ② the fork ──
+		// ── ② the daily cap ──
+		// Applied HERE, before the fork, so buffered message XP and write through
+		// reaction and soloLuck XP are trimmed by the same counter and cannot
+		// disagree about what is left today. The cap limits XP only: counters and a
+		// game record still land, because they count what a member did rather than
+		// what they were paid.
+		const amount = isDailyCappedSource(input.source) && offered > 0 ? await claimUnderDailyCap(input, offered, now) : offered;
+		if (amount === 0 && !hasCounters && !input.game) return;
+
+		// ── ③ the fork ──
 		// "message" is buffered because it arrives faster than a database round
 		// trip. Everything else writes through immediately, because a game result or
 		// an admin correction should be visible on the very next /account rather
@@ -179,6 +192,27 @@ async function writeThrough(
 		newTotalXp: doc.totalXp ?? 0,
 		sourceChannelId: input.channelId ?? null,
 	});
+}
+
+// How much of a capped award may pay today. The day's counter in XpDaily moves by
+// the whole offered amount and the grant is worked out from the count that comes
+// back (dailyXpCap.ts says why the order matters). The counter lives in Mongo
+// rather than in memory so a restart mid day keeps everyone's count. A failed
+// read throws into awardXp's own catch and the award is dropped, which loses at
+// most a few XP but never lets a member past the cap.
+//
+// The retry is the same duplicate key race incrementWithRetry below handles:
+// two first awards of the day upserting a missing row at once.
+async function claimUnderDailyCap(input: AwardXpInput, offered: number, now: Date): Promise<number> {
+	const day = dailyCapDayKey(now);
+	let totalAfter: number;
+	try {
+		totalAfter = await xpDailyStore.incrementAndReturn(input.guildId, input.userId, day, offered);
+	} catch (error) {
+		if ((error as { code?: number })?.code !== 11000) throw error;
+		totalAfter = await xpDailyStore.incrementAndReturn(input.guildId, input.userId, day, offered);
+	}
+	return grantedUnderCap(offered, totalAfter);
 }
 
 // Two concurrent upserts on the same MISSING key can both attempt an insert and

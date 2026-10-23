@@ -69,6 +69,39 @@ export function awardTwoPlayerResult(result: TwoPlayerResult): void {
 	}
 }
 
+interface SoloLuckPayout {
+	client: Client;
+	guildId: string | null;
+	channelId?: string | null;
+	user: User;
+	won: boolean;
+}
+
+// The solo luck payout (the 1.7.0 test fixes, item 14): a coin flip, dice roll or
+// rps against Dero. A win pays SOLO_LUCK_WIN_XP and a loss or a tie pays
+// SOLO_LUCK_OTHER_XP, as source "soloLuck", which puts it inside the daily cap.
+//
+// ⚠️ NO `game` AND NO `outcome`, deliberately. A per game record would move
+// games.coinflip.won and its siblings, which feed the Coin Caller, Dice Roller,
+// Strategist, Contender and Champion achievements, and their tier XP is NOT capped.
+// A member flipping against Dero a few hundred times would then walk straight past
+// the daily cap on achievement bonuses. The record stays a record of matches
+// against members.
+export function awardSoloLuckResult(result: SoloLuckPayout): void {
+	if (!result.guildId) return;
+
+	const { SOLO_LUCK_WIN_XP, SOLO_LUCK_OTHER_XP } = BOT_CONSTANTS.LEVELING;
+	void awardXp({
+		client: result.client,
+		guildId: result.guildId,
+		userId: result.user.id,
+		username: result.user.globalName ?? result.user.username,
+		amount: result.won ? SOLO_LUCK_WIN_XP : SOLO_LUCK_OTHER_XP,
+		source: "soloLuck",
+		channelId: result.channelId ?? null,
+	});
+}
+
 interface MultiPlayerResult {
 	client: Client;
 	guildId: string | null;

@@ -9,7 +9,10 @@ import type { ButtonInteraction, TextChannel } from "discord.js";
 // leaks its map entry.
 
 // Fixed word so the board and the win path are deterministic.
-vi.mock("./hangmanWords.js", () => ({ HANGMAN_WORDS: ["castle"], pickWord: () => "castle" }));
+vi.mock("./hangmanWords.js", () => ({
+	HANGMAN_WORDS: ["castle"],
+	pickWord: () => ({ word: "castle", hint: "Stone fortress where the king lives", category: "realm" }),
+}));
 
 // Every board edit waits on a REAL hangman card render (2026-10 item 243 Phase 3),
 // and the PNG encode finishes on the native thread pool, not in a microtask. The
@@ -30,25 +33,28 @@ vi.mock("./hangmanRenderer.js", async (importOriginal) => {
 	};
 });
 
-import { startHangmanRound, _clearHangmanRounds, _activeHangmanRoundCount, HANGMAN_ROUND_TIMEOUT_MS } from "./hangmanHandler.js";
+import { startHangmanRound, _clearHangmanRounds, _activeHangmanRoundCount } from "./hangmanHandler.js";
 
 interface Board {
 	edit: ReturnType<typeof vi.fn>;
 	collect: (click: unknown) => void;
 	end: () => void;
 	stopped: () => boolean;
+	collectorOptions: () => Record<string, unknown> | undefined;
 }
 
 function fakeChannel(id: string, opts: { failSend?: boolean } = {}): { channel: TextChannel; send: ReturnType<typeof vi.fn>; board: () => Board } {
 	let collectHandler: ((click: unknown) => void) | undefined;
 	let endHandler: (() => void) | undefined;
 	let stopped = false;
+	let collectorOptions: Record<string, unknown> | undefined;
 	const edit = vi.fn(async () => undefined);
 
 	const message = {
 		id: `${id}-board`,
 		edit,
-		createMessageComponentCollector: () => {
+		createMessageComponentCollector: (options: Record<string, unknown>) => {
+			collectorOptions = options;
 			const collector = {
 				on(event: string, callback: (arg?: unknown) => void) {
 					if (event === "collect") collectHandler = callback as (click: unknown) => void;
@@ -77,6 +83,7 @@ function fakeChannel(id: string, opts: { failSend?: boolean } = {}): { channel: 
 			collect: (click: unknown) => collectHandler?.(click),
 			end: () => endHandler?.(),
 			stopped: () => stopped,
+			collectorOptions: () => collectorOptions,
 		}),
 	};
 }
@@ -280,9 +287,9 @@ describe("ending a round", () => {
 		expect(_activeHangmanRoundCount()).toBe(0);
 	});
 
-	it("cleans up when the round window closes with nobody finishing", async () => {
+	it("cleans up when Discord ends the collector with nobody finishing", async () => {
 		// The collector's end handler is the ONE cleanup path, reached by stop()
-		// and by the time limit alike, so an abandoned board frees its channel.
+		// and by Discord closing the collector (the board deleted) alike.
 		const c = fakeChannel("chan-13");
 		await startHangmanRound(c.channel, "starter-1");
 		expect(_activeHangmanRoundCount()).toBe(1);
@@ -306,7 +313,15 @@ describe("ending a round", () => {
 		expect(await startHangmanRound(again.channel, "starter-2")).toBe("started");
 	});
 
-	it("declares a round window long enough to actually play", () => {
-		expect(HANGMAN_ROUND_TIMEOUT_MS).toBeGreaterThanOrEqual(5 * 60_000);
+	// The owner's decision of 2026-10-23: hangman is not a race, so a round has no
+	// clock at all. A `time` or `idle` on the collector would end an unfinished round.
+	it("runs the round with no clock, so only a win or a loss ends it", async () => {
+		const c = fakeChannel("chan-15");
+		await startHangmanRound(c.channel, "starter-1");
+
+		const options = c.board().collectorOptions();
+		expect(options).toBeDefined();
+		expect(options).not.toHaveProperty("time");
+		expect(options).not.toHaveProperty("idle");
 	});
 });

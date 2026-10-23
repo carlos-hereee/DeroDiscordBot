@@ -41,7 +41,7 @@ export const gamesCopy = {
 	},
 
 	coinFlip: {
-		subcommandDescription: "Challenge a member. One coin, one winner, no ties",
+		subcommandDescription: "Flip against a member or against Dero. One coin, one winner, no ties",
 		label: "a coin flip",
 		// ── result embed ──
 		// The mentions here never ping: this embed is the payoff, and pinging both
@@ -52,7 +52,7 @@ export const gamesCopy = {
 	},
 
 	diceRoll: {
-		subcommandDescription: "Challenge a member to a d20 roll. Highest wins, ties are possible",
+		subcommandDescription: "Roll a d20 against a member or against Dero. Highest wins, ties are possible",
 		label: "a dice roll",
 		resultTitle: "🎲 The dice have spoken",
 		diceLine: (challengerId: string, challengerRoll: number, opponentId: string, opponentRoll: number): string =>
@@ -60,7 +60,7 @@ export const gamesCopy = {
 	},
 
 	rps: {
-		subcommandDescription: "Challenge a member to rock paper scissors",
+		subcommandDescription: "Play rock paper scissors against a member or against Dero",
 		opponentOptionDescription: "The member you want to challenge",
 		label: "rock paper scissors",
 
@@ -98,6 +98,38 @@ export const gamesCopy = {
 		timeoutOneSided: (readyId: string, stalledId: string): string =>
 			`<@${readyId}> threw in time. <@${stalledId}> never did, so the round is void.`,
 		timeoutNeither: "Neither player threw in time. The round is void.",
+	},
+
+	// ── solo luck against Dero (the 1.7.0 test fixes, item 14) ──
+	// A coin flip, dice roll or rps against Dero himself, played inline with no room.
+	// Dero speaks here in his kingdom voice, because he is the opponent and the
+	// result line is his to deliver. The XP line states the rule rather than a
+	// payout, because the daily cap may already have spent a member's allowance and
+	// a "+3 XP" the member never received would be a lie.
+	soloLuck: {
+		// The option every one of the three subcommands gains. A STRING choice, not a
+		// user option: Dero is offered by the bot, never picked from a member list.
+		againstOptionDescription: "Challenge a member on the board, or play Dero right here",
+		againstMemberLabel: "A member, on the challenge board",
+		againstDeroLabel: "Dero, right here and now",
+		throwOptionDescription: "Your throw, when you play Dero",
+		throwNeeded: "Pick your throw to face Dero: run it again with the throw option set to rock, paper or scissors.",
+
+		coinTitle: "🪙 Dero flips a royal coin",
+		coinLine: (memberId: string, face: string): string =>
+			`Heads for <@${memberId}>, tails for Dero. The coin lands on **${face}**.`,
+		diceTitle: "🎲 Dice at Dero's table",
+		diceLine: (memberId: string, memberRoll: number, deroRoll: number): string =>
+			`<@${memberId}> rolled **${memberRoll}**\nDero rolled **${deroRoll}**`,
+		rpsTitle: "🪨 📄 ✂️ A duel of hands with Dero",
+		rpsLine: (memberId: string, memberThrow: string, deroThrow: string): string =>
+			`<@${memberId}> threw **${memberThrow}**\nDero threw **${deroThrow}**`,
+
+		memberWins: (memberId: string): string => `\n\n👑 <@${memberId}> wins. The kingdom cheers your name.`,
+		deroWins: "\n\n🛡️ Dero takes this one. The castle keeps its gold today.",
+		tie: "\n\n⚖️ Even ground. Neither crown moves. Try your luck again.",
+		xpRule: (winXp: number, otherXp: number, cap: number): string =>
+			`A win pays ${winXp} XP and any other result ${otherXp}, inside the ${cap} XP daily limit.`,
 	},
 
 	// ── monopoly (2026-10 item 241) ──

@@ -2,6 +2,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { STARTING_CHIPS } from "@features/games/monopolyBoard.js";
 import type { BuildingKind } from "@features/games/monopolyState.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
+import type { HangmanCategory } from "@features/games/hangmanWords.js";
 
 // ── game rooms user-facing copy ──────────────────────────────────────
 // Feature-local copy module, the exact sibling of gamesCopy.ts and fortuneCopy.ts,
@@ -267,9 +268,41 @@ export const gameRoomsCopy = {
 		authorButtonLabel: "Set the word",
 		guessButtonLabel: "Guess a letter",
 
-		// The solo form's opener: the word comes from the bundled bank (no author and no
-		// hint), so the line says so instead of pointing at a host who is the guesser.
-		soloOpener: "Dero picked a word from the word bank. Guess a letter.",
+		// The solo form's opener: the word and its hint come from the bundled bank (no
+		// author), so the line says so instead of pointing at a host who is the guesser.
+		soloOpener: (hint: string): string =>
+			["Dero picked a word from the word bank.", "", `**Hint:** ${hint}`, "", "Guess a letter."].join("\n"),
+
+		// ── letting Dero pick (the 1.7.0 test fixes, item 12) ──
+		// The select beside the host's authoring button. A word Dero draws has no
+		// author, so the host never saw it and guesses with everyone else.
+		categoryPlaceholder: "Or let Dero pick a word from a category",
+		categoryLabels: {
+			animals: "Animals",
+			food: "Food",
+			places: "Places",
+			objects: "Objects",
+			nature: "Nature",
+			jobs: "Jobs",
+			sports: "Sports",
+			music: "Music",
+			space: "Space",
+			realm: "Dero's realm",
+		} satisfies Record<HangmanCategory, string>,
+		// Ephemeral to the host. Names the shelf, never the word (risk R12).
+		categoryPicked: (categoryLabel: string): string =>
+			`Dero drew a word from ${categoryLabel}. You have not seen it either, so you guess too.`,
+		categoryOpener: (hostId: string, categoryLabel: string, hint: string): string =>
+			[
+				`<@${hostId}> asked Dero for a word from **${categoryLabel}**.`,
+				"",
+				`**Hint:** ${hint}`,
+				"",
+				"Everyone guesses, the host included.",
+			].join("\n"),
+		// A pick that arrives after a word already exists, from a second click or a
+		// host who authored one in the modal first.
+		wordAlreadySet: "This round already has its word.",
 
 		modalTitle: "Set the word",
 		wordLabel: "The word",

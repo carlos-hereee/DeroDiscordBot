@@ -56,7 +56,7 @@ function buildMessage(options: Options = {}): Message {
 
 const settings = (overrides: Record<string, unknown> = {}) => ({
 	enabled: true,
-	message: { enabled: true, min: 20, max: 20, cooldownSeconds: 60 },
+	message: { enabled: true, cooldownSeconds: 60 },
 	restrictionMode: "exclude",
 	restrictedChannels: [],
 	restrictedRoles: [],
@@ -139,7 +139,7 @@ describe("the enabled gates", () => {
 
 	it("writes nothing when message xp specifically is off", async () => {
 		mocks.getLevelingConfig.mockResolvedValue(
-			context({ message: { enabled: false, min: 20, max: 20, cooldownSeconds: 60 } })
+			context({ message: { enabled: false, cooldownSeconds: 60 } })
 		);
 		await handleMessage(buildMessage());
 		expect(mocks.awardXp).not.toHaveBeenCalled();
@@ -194,16 +194,24 @@ describe("restrictions", () => {
 describe("multipliers", () => {
 	const amountOf = (): number => (mocks.awardXp.mock.calls[0][0] as { amount: number }).amount;
 
+	// A message pays a flat MESSAGE_XP of 1 (the 1.7.0 test fixes, item 5), so each
+	// multiplier below lands on 1 times itself.
+	it("pays exactly 1 XP with no multiplier, ignoring a range stored before the change", async () => {
+		mocks.getLevelingConfig.mockResolvedValue(context({ message: { enabled: true, min: 20, max: 40, cooldownSeconds: 60 } }));
+		await handleMessage(buildMessage());
+		expect(amountOf()).toBe(1);
+	});
+
 	it("applies a role multiplier", async () => {
 		mocks.getLevelingConfig.mockResolvedValue(context({ roleMultipliers: [{ id: "role-vip", multiplier: 2 }] }));
 		await handleMessage(buildMessage({ roleIds: ["role-vip"] }));
-		expect(amountOf()).toBe(40);
+		expect(amountOf()).toBe(2);
 	});
 
 	it("applies a channel multiplier", async () => {
 		mocks.getLevelingConfig.mockResolvedValue(context({ channelMultipliers: [{ id: "c-general", multiplier: 3 }] }));
 		await handleMessage(buildMessage());
-		expect(amountOf()).toBe(60);
+		expect(amountOf()).toBe(3);
 	});
 
 	it("takes the highest when stacking is off", async () => {
@@ -215,7 +223,7 @@ describe("multipliers", () => {
 			})
 		);
 		await handleMessage(buildMessage({ roleIds: ["role-vip"] }));
-		expect(amountOf()).toBe(60);
+		expect(amountOf()).toBe(3);
 	});
 
 	it("multiplies role and channel together when stacking is on", async () => {
@@ -227,7 +235,7 @@ describe("multipliers", () => {
 			})
 		);
 		await handleMessage(buildMessage({ roleIds: ["role-vip"] }));
-		expect(amountOf()).toBe(120);
+		expect(amountOf()).toBe(6);
 	});
 });
 

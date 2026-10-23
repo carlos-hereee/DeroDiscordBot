@@ -50,7 +50,12 @@ export type LevelingGameSlug = (typeof LEVELING_GAME_SLUGS)[number];
 // and it is what the achievement engine reads to avoid re-entering itself (an
 // unlock grants xp, which could level a member up, which would re-evaluate the
 // unlock). See the recursion note in achievementEngine when Phase 4 lands.
-export const XP_SOURCES = ["message", "reaction", "voice", "game", "gameRoom", "achievement", "admin"] as const;
+//
+// "soloLuck" is a coin flip, dice roll or rps played against Dero rather than a
+// member. It is its own source, not "game", because it sits inside the daily cap
+// (BOT_CONSTANTS.LEVELING.DAILY_CAPPED_SOURCES) where a match against a member
+// does not.
+export const XP_SOURCES = ["message", "reaction", "voice", "game", "gameRoom", "achievement", "admin", "soloLuck"] as const;
 export type XpSource = (typeof XP_SOURCES)[number];
 
 // ── How a round ended for one member ──

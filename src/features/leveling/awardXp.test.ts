@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Client } from "discord.js";
 
 // ── awardXp ────────────────────────────────────────────────────────────────
@@ -14,6 +14,12 @@ const mocks = vi.hoisted(() => ({
 	handleLevelCrossing: vi.fn(),
 	incrementAndReturn: vi.fn(),
 	periodBulkWrite: vi.fn(),
+	// The XpDaily counter as an in memory fake keyed the way the real unique index
+	// is, so the cap tests below read real arithmetic. It lives in vi.hoisted, OUTSIDE
+	// the awardXp module, which is what lets the restart test throw awardXp's module
+	// away and keep the count: the store is the memory, awardXp holds none.
+	dailyCounts: new Map<string, number>(),
+	dailyIncrement: vi.fn(),
 }));
 
 vi.mock("@features/entitlements/levelingAccess.js", () => ({ checkLevelingAccess: mocks.checkLevelingAccess }));
@@ -24,6 +30,7 @@ vi.mock("@db/stores/memberLevelStore.js", () => ({
 	memberLevelStore: { incrementAndReturn: mocks.incrementAndReturn },
 }));
 vi.mock("@db/stores/xpPeriodStore.js", () => ({ xpPeriodStore: { bulkWrite: mocks.periodBulkWrite } }));
+vi.mock("@db/stores/xpDailyStore.js", () => ({ xpDailyStore: { incrementAndReturn: mocks.dailyIncrement } }));
 
 import { awardXp, type AwardXpInput } from "./awardXp.js";
 
@@ -51,6 +58,13 @@ beforeEach(() => {
 	mocks.handleLevelCrossing.mockReset().mockResolvedValue(undefined);
 	mocks.incrementAndReturn.mockReset().mockResolvedValue({ totalXp: 175 });
 	mocks.periodBulkWrite.mockReset().mockResolvedValue(null);
+	mocks.dailyCounts.clear();
+	mocks.dailyIncrement.mockReset().mockImplementation(async (guildId: string, userId: string, day: string, amount: number) => {
+		const key = `${guildId}:${userId}:${day}`;
+		const next = (mocks.dailyCounts.get(key) ?? 0) + amount;
+		mocks.dailyCounts.set(key, next);
+		return next;
+	});
 });
 
 describe("it never throws", () => {
@@ -247,5 +261,122 @@ describe("the duplicate key retry", () => {
 		mocks.incrementAndReturn.mockRejectedValue(new Error("something else entirely"));
 		await expect(awardXp(input())).resolves.toBeUndefined();
 		expect(mocks.incrementAndReturn).toHaveBeenCalledTimes(1);
+	});
+});
+
+// ── the daily cap (the 1.7.0 test fixes, item 5) ───────────────────────────
+// 50 XP a member a server a Central day, shared by message, reaction and soloLuck.
+// Every case drives the real awardXp against the in memory XpDaily fake above, so
+// what is pinned is the arithmetic and the wiring together, not a mocked answer.
+describe("the daily cap", () => {
+	const stagedXp = (call: number): number => (mocks.stage.mock.calls[call][0] as { xp: number }).xp;
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("pays only what is left: 49 then 2 gives 1, then nothing", async () => {
+		await awardXp(input({ source: "message", amount: 49 }));
+		await awardXp(input({ source: "reaction", amount: 2 }));
+		await awardXp(input({ source: "soloLuck", amount: 3 }));
+
+		expect(stagedXp(0)).toBe(49);
+		// The reaction wrote through with the trimmed amount, not the offered one.
+		expect(mocks.incrementAndReturn).toHaveBeenCalledTimes(1);
+		expect(incrementsOf()).toEqual({ totalXp: 1 });
+		// At zero remaining with nothing else to record, awardXp writes nothing at all.
+		expect(mocks.stage).toHaveBeenCalledTimes(1);
+	});
+
+	it("shares one allowance across the three capped sources, buffered or not", async () => {
+		await awardXp(input({ source: "soloLuck", amount: 30 }));
+		await awardXp(input({ source: "message", amount: 30 }));
+
+		expect(stagedXp(0)).toBe(20);
+	});
+
+	it("keeps counting a message at the cap, because the counter is not pay", async () => {
+		await awardXp(input({ source: "message", amount: 50 }));
+		await awardXp(input({ source: "message", amount: 1, counters: { messages: 1 } }));
+
+		expect(mocks.stage).toHaveBeenCalledTimes(2);
+		expect(mocks.stage.mock.calls[1][0]).toMatchObject({ xp: 0, counters: { messages: 1 } });
+	});
+
+	it("counts per member and per server", async () => {
+		await awardXp(input({ source: "message", amount: 50 }));
+		await awardXp(input({ source: "message", amount: 5, userId: "u2" }));
+		await awardXp(input({ source: "message", amount: 5, guildId: "g2" }));
+
+		expect(stagedXp(1)).toBe(5);
+		expect(stagedXp(2)).toBe(5);
+	});
+
+	it("resets at midnight Central, not at midnight UTC", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		// 18:59 Central on 23 October: fill the day.
+		vi.setSystemTime(new Date("2026-10-23T23:59:00Z"));
+		await awardXp(input({ source: "message", amount: 50 }));
+		// 19:30 Central, past UTC midnight but the SAME Central day: still capped.
+		vi.setSystemTime(new Date("2026-10-24T00:30:00Z"));
+		await awardXp(input({ source: "message", amount: 5 }));
+		// 00:10 Central on 24 October: a new day, a fresh 50.
+		vi.setSystemTime(new Date("2026-10-24T05:10:00Z"));
+		await awardXp(input({ source: "message", amount: 5 }));
+
+		expect(mocks.stage).toHaveBeenCalledTimes(2);
+		expect(stagedXp(1)).toBe(5);
+		expect(mocks.dailyIncrement.mock.calls.map((call) => call[2])).toEqual(["2026-10-23", "2026-10-23", "2026-10-24"]);
+	});
+
+	it("survives a restart, because the count is the store's and not awardXp's", async () => {
+		await awardXp(input({ source: "message", amount: 49 }));
+
+		// A fresh awardXp module is a fresh process as far as awardXp can tell: any
+		// count it had kept in memory is gone. Only the store keeps the 49.
+		vi.resetModules();
+		const { awardXp: awardXpAfterRestart } = await import("./awardXp.js");
+		await awardXpAfterRestart(input({ source: "message", amount: 2 }));
+
+		expect(stagedXp(1)).toBe(1);
+	});
+
+	it.each(["voice", "game", "gameRoom", "achievement", "admin"] as const)(
+		"pays %s in full past the cap and never touches the counter",
+		async (source) => {
+			await awardXp(input({ source: "message", amount: 50 }));
+			mocks.dailyIncrement.mockClear();
+
+			await awardXp(input({ source, amount: 120 }));
+
+			expect(mocks.dailyIncrement).not.toHaveBeenCalled();
+			const paid =
+				source === "achievement" ? stagedXp(1) : (mocks.incrementAndReturn.mock.calls[0][3] as { totalXp: number }).totalXp;
+			expect(paid).toBe(120);
+		}
+	);
+
+	it("writes soloLuck through rather than staging it", async () => {
+		await awardXp(input({ source: "soloLuck", amount: 3 }));
+
+		expect(mocks.stage).not.toHaveBeenCalled();
+		expect(incrementsOf()).toEqual({ totalXp: 3 });
+	});
+
+	it("retries the counter once on a duplicate key race", async () => {
+		const duplicate = Object.assign(new Error("E11000 duplicate key"), { code: 11000 });
+		mocks.dailyIncrement.mockRejectedValueOnce(duplicate);
+
+		await awardXp(input({ source: "message", amount: 4 }));
+
+		expect(mocks.dailyIncrement).toHaveBeenCalledTimes(2);
+		expect(stagedXp(0)).toBe(4);
+	});
+
+	it("drops the award rather than paying past the cap when the counter cannot be read", async () => {
+		mocks.dailyIncrement.mockRejectedValue(new Error("mongo is down"));
+
+		await expect(awardXp(input({ source: "reaction", amount: 1 }))).resolves.toBeUndefined();
+		expect(mocks.incrementAndReturn).not.toHaveBeenCalled();
 	});
 });

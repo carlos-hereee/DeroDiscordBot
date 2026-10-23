@@ -33,7 +33,10 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 //        button for the "post a round to the command center" path. Both go
 //        through startHangmanRound so the two entry points cannot drift, the
 //        same shape /fortune and its invite card button already use.
-// When:  a round lives until it is won, lost, or the round window closes.
+// When:  a round lives until it is won or lost. There is NO round clock, by the
+//        owner's decision on 2026-10-23: hangman is a relaxed game the channel
+//        plays together, not a race. A board nobody finishes stays open until a
+//        deploy clears the in memory round (or anyone plays it out).
 // Where: the board is a channel.send() message, NOT an interaction reply, and
 //        that is load bearing. An interaction token dies after 15 minutes, so a
 //        board built on editReply would become uneditable mid round; a plain
@@ -43,12 +46,9 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 //        scored by the pure hangmanState and the board is redrawn, ⑤ the
 //        collector's end handler is the single cleanup path.
 
-// Long enough that a channel can wander off and come back, short enough that an
-// abandoned board cleans itself up instead of sitting live until a redeploy.
-export const HANGMAN_ROUND_TIMEOUT_MS = 15 * 60_000;
-
-// How long a guesser has inside the modal once it opens. Generous: a modal that
-// times out costs the round nothing.
+// How long a guesser has inside the modal once it opens. Not a game clock: it only
+// bounds the wait for one modal submit, and a modal that times out costs the round
+// nothing.
 const HANGMAN_MODAL_WINDOW_MS = 120_000;
 
 // Per starter, so one member cannot carpet the server with boards. Rounds are
@@ -87,7 +87,7 @@ interface HangmanRound {
 // channel plays it together. Process-scoped and single-process, the same accepted
 // v1 tradeoff the other two games make: a round open when Railway redeploys is
 // lost. Deleted unconditionally in the collector's end handler, which fires on a
-// win, a loss, and a timeout alike.
+// win, a loss, and Discord ending the collector alike.
 const hangmanRounds = new Map<string, HangmanRound>();
 
 // Test seams, matching earlyAccess.ts' `_clearEarlyAccessCache` convention.
@@ -105,7 +105,7 @@ export async function startHangmanRound(channel: TextChannel, starterId: string)
 	if (hangmanRounds.has(channel.id)) return "alreadyRunning";
 	const round: HangmanRound = {
 		starterId,
-		state: createHangmanState(pickWord()),
+		state: createHangmanState(pickWord().word),
 		// The starter counts as a participant from the outset: they opened the
 		// round, which is participation even if they never guess a letter.
 		participants: new Set<string>([starterId]),
@@ -123,12 +123,13 @@ export async function startHangmanRound(channel: TextChannel, starterId: string)
 			allowedMentions: { parse: [] },
 		});
 
-		// ③ Route every Guess click. No `max`: a public board takes many clicks,
-		// and the window is the round's own lifetime.
+		// ③ Route every Guess click. No `max`: a public board takes many clicks. And
+		// no `time` or `idle`: hangman has no clock (owner decision, 2026-10-23), so the
+		// collector lives until the round is won or lost, or Discord ends it because
+		// the board message is gone.
 		const collector = board.createMessageComponentCollector({
 			componentType: ComponentType.Button,
 			filter: (i) => i.customId === guessCustomId(channel.id),
-			time: HANGMAN_ROUND_TIMEOUT_MS,
 		});
 		round.stop = () => collector.stop();
 
@@ -136,8 +137,9 @@ export async function startHangmanRound(channel: TextChannel, starterId: string)
 			void onGuessClick(click as ButtonInteraction, channel.id, board);
 		});
 
-		// ⑤ The single cleanup path. Fires on stop() AND on the time limit, so
-		// there is no exit that leaves the map entry behind.
+		// ⑤ The single cleanup path. Fires on stop() AND when Discord ends the
+		// collector (the board was deleted), so there is no exit that leaves the map
+		// entry behind.
 		collector.on("end", () => {
 			void finishRound(channel.id, board);
 		});
@@ -284,7 +286,7 @@ async function onGuessClick(click: ButtonInteraction, channelId: string, board: 
 		.catch(() => null);
 	if (!submit) return;
 
-	// Re-read the round: the board could have been won, lost or expired while this
+	// Re-read the round: the board could have been won, lost or deleted while this
 	// member sat in the modal.
 	const live = hangmanRounds.get(channelId);
 	if (!live) {
@@ -382,8 +384,9 @@ async function finishRound(channelId: string, board: Message): Promise<void> {
 	hangmanRounds.delete(channelId);
 	if (!round) return;
 
-	// A won or lost round already drew its own ending, and already awarded. Only
-	// an expiry is left, so this is the one path that still owes an award.
+	// A won or lost round already drew its own ending, and already awarded. With no
+	// round clock, the only ending left is Discord closing the collector (the board
+	// was deleted), so this is the one path that still owes an award.
 	if (round.state.status !== "playing") return;
 
 	const picture = await boardPicture(hangmanCardView(round.state, "expired"), resolveGameAsset("hangmanLose"), (ref) =>

@@ -1,3 +1,10 @@
+// ── the owner's time zone ──
+// Every bot clock that means a human calendar (the Monday digest, the daily XP cap's
+// day) runs in Central time, the owner's zone, rather than the Railway host's UTC.
+// One string so the digest and the cap can never disagree about which day it is.
+// The render analytics digest keeps its own copy of the same zone (DIGEST_TIME_ZONE).
+const CENTRAL_TIME_ZONE = "America/Chicago";
+
 export const BOT_CONSTANTS = {
 	// reminder
 	DEFAULT_REMINDER_OFFSETS: [30, 15], // minutes before event to send reminders
@@ -176,6 +183,8 @@ export const BOT_CONSTANTS = {
 	// every live turn clock here (battleship's 10 minute turn, Hold'em's 30 seconds),
 	// so a slow game is never cut off mid turn. Monopoly is exempt: its seats get the
 	// day above, which its opener promises, and that sweep already ends every match.
+	// A hangman room in play is exempt too (owner decision, 2026-10-23): hangman has no
+	// clock, and its host frees the slot with Give up. A hangman draft is still swept.
 	// Checked on the same 5 minute room sweep, so the close lands up to 5 minutes later.
 	GAME_ROOM_IDLE_ABANDON_MS: 30 * 60_000, // 30 minutes
 	// How long a Monopoly auction takes sealed bids, from the pass that opened it
@@ -433,7 +442,7 @@ export const BOT_CONSTANTS = {
 	//        same reason the GAME_ROOM_ numbers above are: these are the knobs an
 	//        operator would turn, and a config typo must not be able to silently
 	//        reprice a guild's progression. The per-guild knobs that DO belong to
-	//        an admin (cooldowns, xp ranges, multipliers, the curve) live on
+	//        an admin (cooldowns, multipliers, the curve) live on
 	//        GuildConfig.leveling instead.
 	LEVELING: {
 		// How often staged message xp is written. Buffered xp is lost on a hard
@@ -496,7 +505,7 @@ export const BOT_CONSTANTS = {
 		// ended for every guild whatever its weekStart. node-cron reads the timezone,
 		// so the send tracks daylight saving rather than drifting an hour twice a year.
 		WEEKLY_DIGEST_CRON: "0 9 * * 1",
-		WEEKLY_DIGEST_TIMEZONE: "America/Chicago",
+		WEEKLY_DIGEST_TIMEZONE: CENTRAL_TIME_ZONE,
 		// Only the most active members of the week hear from Dero, at most this
 		// many per guild. A DM nobody asked for is the fastest way for a bot to be
 		// reported as spam, so the digest is a reward for the top of the week rather
@@ -528,6 +537,45 @@ export const BOT_CONSTANTS = {
 		XP_PERIOD_RETENTION_SECONDS: 400 * 24 * 60 * 60,
 
 		// ── what each source pays ──
+		// Messages and reactions pay a flat 1 XP each, the owner's decision of
+		// 2026-10-23 (the 1.7.0 test fixes, item 5). The old per guild 15 to 40 and
+		// 10 to 25 ranges let a chatty member outpace every game in the arcade, and
+		// the four rate options that set them are gone from /setup-level-system.
+		// Role and channel multipliers still apply on top, floored, so a 2x role
+		// earns 2.
+		MESSAGE_XP: 1,
+		REACTION_XP: 1,
+
+		// ── the daily cap (2026-10-23, the 1.7.0 test fixes, item 5) ──
+		// The most XP one member can earn in one server in one day from the passive
+		// and luck sources below combined. 50 is the owner's number: a member who
+		// chats all day still levels, but the leaderboard stays a measure of being
+		// present rather than of typing fastest.
+		DAILY_XP_CAP: 50,
+		// The sources the cap covers, and ONLY these. They are the ones a member can
+		// repeat without anybody else taking part: a message, a reaction, a solo luck
+		// game against Dero. Voice is gated by approved channels and a member count,
+		// a game against another member needs that member, and achievement and admin
+		// awards are one offs, so all of those pay in full.
+		DAILY_CAPPED_SOURCES: ["message", "reaction", "soloLuck"],
+		// The cap's day is the calendar day in Central time, so it resets at
+		// midnight where the owner lives rather than at UTC midnight, which falls in
+		// the early evening in Central time.
+		DAILY_CAP_TIME_ZONE: CENTRAL_TIME_ZONE,
+		// How long an XpDaily row survives. Only today's row is ever read, so three
+		// days covers a day boundary in any zone plus slack for a clock skewed host,
+		// while keeping the collection to a few rows per active member.
+		XP_DAILY_RETENTION_SECONDS: 3 * 24 * 60 * 60,
+
+		// ── solo luck games against Dero (2026-10-23, the 1.7.0 test fixes, item 14) ──
+		// Deliberately tiny next to GAME_WIN_XP: a coin flip against Dero takes a
+		// second and needs nobody else, so it pays like a message rather than like a
+		// match, and both amounts count toward DAILY_XP_CAP.
+		SOLO_LUCK_WIN_XP: 3,
+		// A loss or a tie. Paid so trying is never worth nothing, and kept below the
+		// win so winning is still the point.
+		SOLO_LUCK_OTHER_XP: 1,
+
 		// Per game amounts. A game played in its own GAME ROOM pays more than the
 		// same game played in a channel, because a match with its own channel is a
 		// bigger commitment than a one message duel.

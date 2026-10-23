@@ -172,6 +172,11 @@ const guildConfigSchema = new Schema(
 				message: {
 					type: {
 						enabled: { type: Boolean, required: false, default: true },
+						// ⚠️ DEAD FIELDS, here and in `reaction` below: a message and a
+						// reaction pay a flat BOT_CONSTANTS.LEVELING.MESSAGE_XP and
+						// REACTION_XP since the 1.7.0 test fixes (item 5), and nothing
+						// reads or writes min or max. They stay so rows written before
+						// load unchanged; dropping them needs a migration for no benefit.
 						min: { type: Number, required: false, default: 15 },
 						max: { type: Number, required: false, default: 40 },
 						// 60 seconds is the category's floor and the single most

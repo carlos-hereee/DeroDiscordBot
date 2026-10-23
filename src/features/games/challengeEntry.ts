@@ -1,11 +1,15 @@
-import { type ChatInputCommandInteraction } from "discord.js";
+import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
 import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
+import { playSoloLuck } from "./soloLuck.js";
+import { RPS_CHOICES, type RpsChoice } from "./rpsWinner.js";
+import { gamesCopy } from "./gamesCopy.js";
 
 // ── challengeEntry ─────────────────────────────────────────────────────────
 // What:  the slash-command doorway into the challenge board, for the three head to
 //        head games and Monopoly.
 // Who:   MINI_GAME_HANDLERS in src/commands/fun/mini-game.ts.
-// When:  on /mini-game coin-flip, dice-roll, rps or monopoly.
+// When:  on /mini-game coin-flip, dice-roll, rps or monopoly. The three luck games
+//        hand a round against Dero to soloLuck instead (see `against` below).
 // Where: the SAME function the board's own buttons call, deliberately. Two ways to
 //        start a match that did not share a code path would be two places to
 //        enforce the one-room-per-host rule, two places to check entitlement, and
@@ -22,18 +26,51 @@ import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 // and rpsWinner, are unchanged and are now called from
 // @features/game-rooms/roomGames.ts.
 
+// ── against Dero (the 1.7.0 test fixes, item 14) ──
+// The three luck games carry an optional `against` choice. Its default, a member,
+// is the challenge path exactly as it was; "dero" plays a solo round inline through
+// soloLuck instead. ⚠️ HAND KEPT PAIR: the option names and the "dero" value are
+// declared in the builder in src/commands/fun/mini-game.ts, and its suite mocks this
+// module wholesale, so the builder cannot import them from here.
+const AGAINST_OPTION = "against";
+const AGAINST_DERO = "dero";
+const THROW_OPTION = "throw";
+
+const playsDero = (interaction: ChatInputCommandInteraction): boolean =>
+	interaction.options.getString(AGAINST_OPTION) === AGAINST_DERO;
+
 // startChallengeDraft returns the draft row for the rematch path's benefit; the slash
 // doorway has no use for it, so each wrapper discards it back to void.
 export const runCoinFlip = async (interaction: ChatInputCommandInteraction): Promise<void> => {
+	if (playsDero(interaction)) {
+		await playSoloLuck(interaction, { game: "coinflip" });
+		return;
+	}
 	await startChallengeDraft(interaction, "coinflip");
 };
 
 export const runDiceRoll = async (interaction: ChatInputCommandInteraction): Promise<void> => {
+	if (playsDero(interaction)) {
+		await playSoloLuck(interaction, { game: "diceroll" });
+		return;
+	}
 	await startChallengeDraft(interaction, "diceroll");
 };
 
 export const runRps = async (interaction: ChatInputCommandInteraction): Promise<void> => {
-	await startChallengeDraft(interaction, "rps");
+	if (!playsDero(interaction)) {
+		await startChallengeDraft(interaction, "rps");
+		return;
+	}
+	// Discord cannot make `throw` required only when `against` is Dero, so a member
+	// who left it blank is told how to fix it rather than given a throw they did not
+	// choose. Discord validates the value against the builder's choices.
+	const memberThrow = interaction.options.getString(THROW_OPTION) as RpsChoice | null;
+	if (!memberThrow || !RPS_CHOICES.includes(memberThrow)) {
+		await interaction.reply({ content: gamesCopy.soloLuck.throwNeeded, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	await playSoloLuck(interaction, { game: "rps", memberThrow });
 };
 
 // The same card the board's Monopoly button posts: visibility, the auction toggle,

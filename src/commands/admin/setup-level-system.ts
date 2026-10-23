@@ -49,7 +49,8 @@ import { levelingCopy } from "@features/leveling/levelingCopy.js";
 // from SlashCommandBuilder, so an explicit annotation would not compile. Never
 // cast to any, never cast to SlashCommandBuilder. See mini-game.ts.
 
-const LIMITS = BOT_CONSTANTS.LEVELING.LIMITS;
+const LEVELING = BOT_CONSTANTS.LEVELING;
+const LIMITS = LEVELING.LIMITS;
 
 export const data = new SlashCommandBuilder()
 	.setName("setup-level-system")
@@ -68,21 +69,13 @@ export const data = new SlashCommandBuilder()
 	.addSubcommand((sub) =>
 		sub
 			.setName("rates")
-			.setDescription("Set how much XP each source pays and how often")
-			.addIntegerOption((option) =>
-				option.setName("message-min").setDescription("Lowest XP per message").setRequired(false)
-			)
-			.addIntegerOption((option) =>
-				option.setName("message-max").setDescription("Highest XP per message").setRequired(false)
-			)
+			// ⚠️ NO PER MESSAGE OR PER REACTION AMOUNT. Both pay a flat 1 XP inside the
+			// daily cap (BOT_CONSTANTS.LEVELING, the 1.7.0 test fixes, item 5), so the
+			// message-min, message-max, reaction-min and reaction-max options are gone
+			// and only how OFTEN they pay is a guild's to set.
+			.setDescription("Set how often messages and reactions pay, and what voice pays")
 			.addIntegerOption((option) =>
 				option.setName("message-cooldown").setDescription("Seconds between message awards").setRequired(false)
-			)
-			.addIntegerOption((option) =>
-				option.setName("reaction-min").setDescription("Lowest XP per reaction").setRequired(false)
-			)
-			.addIntegerOption((option) =>
-				option.setName("reaction-max").setDescription("Highest XP per reaction").setRequired(false)
 			)
 			.addIntegerOption((option) =>
 				option.setName("reaction-cooldown").setDescription("Seconds between reaction awards").setRequired(false)
@@ -298,8 +291,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		}
 
 		case "rates": {
-			applyClampedInt(interaction, "message-min", "leveling.message.min", LIMITS.MIN_XP, LIMITS.MAX_XP, patch, notes);
-			applyClampedInt(interaction, "message-max", "leveling.message.max", LIMITS.MIN_XP, LIMITS.MAX_XP, patch, notes);
 			applyClampedInt(
 				interaction,
 				"message-cooldown",
@@ -309,8 +300,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 				patch,
 				notes
 			);
-			applyClampedInt(interaction, "reaction-min", "leveling.reaction.min", LIMITS.MIN_XP, LIMITS.MAX_XP, patch, notes);
-			applyClampedInt(interaction, "reaction-max", "leveling.reaction.max", LIMITS.MIN_XP, LIMITS.MAX_XP, patch, notes);
 			applyClampedInt(
 				interaction,
 				"reaction-cooldown",
@@ -332,20 +321,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 			const awards = interaction.options.getString("reaction-awards");
 			if (awards) patch["leveling.reaction.awards"] = awards;
-
-			// A max below its min would make every roll collapse to the min, so it is
-			// corrected here rather than left to surprise somebody later. Resolved
-			// against the PATCHED values so setting both in one go behaves.
-			reconcileRange(patch, settings.message.min, settings.message.max, "leveling.message.min", "leveling.message.max", notes, "message");
-			reconcileRange(
-				patch,
-				settings.reaction.min,
-				settings.reaction.max,
-				"leveling.reaction.min",
-				"leveling.reaction.max",
-				notes,
-				"reaction"
-			);
 			break;
 		}
 
@@ -585,8 +560,9 @@ function buildPreview(
 		`**Curve** ${settings.curve}, multiplier ${settings.curveMultiplier}${settings.maxLevel ? `, capped at level ${settings.maxLevel}` : ""}`,
 		`**Milestones** ${settings.milestoneMode === "prime" ? "prime levels (2, 3, 5, 7, 11, ...)" : `every ${settings.milestoneEveryN} levels`}`,
 		"",
-		`**Messages** ${settings.message.enabled ? `${settings.message.min} to ${settings.message.max} XP every ${settings.message.cooldownSeconds}s` : "off"}`,
-		`**Reactions** ${settings.reaction.enabled ? `${settings.reaction.min} to ${settings.reaction.max} XP every ${settings.reaction.cooldownSeconds}s, pays the ${settings.reaction.awards}` : "off"}`,
+		`**Messages** ${settings.message.enabled ? `${LEVELING.MESSAGE_XP} XP every ${settings.message.cooldownSeconds}s` : "off"}`,
+		`**Reactions** ${settings.reaction.enabled ? `${LEVELING.REACTION_XP} XP every ${settings.reaction.cooldownSeconds}s, pays the ${settings.reaction.awards}` : "off"}`,
+		`**Daily cap** messages, reactions and solo games against Dero pay at most ${LEVELING.DAILY_XP_CAP} XP a member a day, resetting at midnight Central`,
 		`**Voice** ${settings.voice.perMinute} XP per minute, ${settings.voice.minMembers}+ members, decays after ${settings.voice.decayAfterMinutes} minutes`,
 		"",
 		`**XP is earned in ${earning} of ${total} text channels** (mode: ${settings.restrictionMode})`,
@@ -627,24 +603,6 @@ function applyClampedInt(
 	const used = clamp(given, low, high);
 	patch[path] = used;
 	if (used !== given) notes.push(noteClamped(optionName, given, used));
-}
-
-// A max below its min collapses every roll to the min, which reads as the range
-// being ignored. Corrected against the values that will actually be stored.
-function reconcileRange(
-	patch: Record<string, unknown>,
-	currentMin: number,
-	currentMax: number,
-	minPath: string,
-	maxPath: string,
-	notes: string[],
-	label: string
-): void {
-	const min = (patch[minPath] as number | undefined) ?? currentMin;
-	const max = (patch[maxPath] as number | undefined) ?? currentMax;
-	if (max >= min) return;
-	patch[maxPath] = min;
-	notes.push(`The ${label} maximum was below its minimum, so both are now ${min}.`);
 }
 
 // Returns the new list, or null when neither option was given, so the caller can

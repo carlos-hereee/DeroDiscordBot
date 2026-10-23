@@ -1,4 +1,9 @@
-import { SlashCommandBuilder, MessageFlags, type ChatInputCommandInteraction } from "discord.js";
+import {
+	SlashCommandBuilder,
+	MessageFlags,
+	type ChatInputCommandInteraction,
+	type SlashCommandStringOption,
+} from "discord.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { gamesCopy } from "@features/games/gamesCopy.js";
 import { fortuneCopy } from "@features/fortune/fortuneCopy.js";
@@ -25,6 +30,18 @@ import { runFortune } from "@features/games/fortuneHandler.js";
 // /secret-code is deliberately NOT part of this command. Redeeming a code is a
 // persistent account action that happens to buff the fortune subcommand, not a
 // game, so it stays its own top level command at src/commands/fun/secret-code.ts.
+
+// The `against` choice the three luck games share. Optional, defaulting to a member,
+// so /mini-game coin-flip with nothing else still opens a challenge as it always did.
+const againstOption = (option: SlashCommandStringOption): SlashCommandStringOption =>
+	option
+		.setName("against")
+		.setDescription(gamesCopy.soloLuck.againstOptionDescription)
+		.setRequired(false)
+		.addChoices(
+			{ name: gamesCopy.soloLuck.againstMemberLabel, value: "member" },
+			{ name: gamesCopy.soloLuck.againstDeroLabel, value: "dero" }
+		);
 
 // ── the command builder ────────────────────────────────────────────────────
 // `data` is deliberately UNANNOTATED. Calling .addSubcommand() narrows the
@@ -60,9 +77,38 @@ export const data = new SlashCommandBuilder()
 	// bot-populated StringSelect (which cannot contain a bot) or by pressing Join
 	// (which a bot cannot do). The rejection is structural now, so the string is
 	// gone. Do NOT add a user option back to any game.
-	.addSubcommand((sub) => sub.setName("coin-flip").setDescription(gamesCopy.coinFlip.subcommandDescription))
-	.addSubcommand((sub) => sub.setName("dice-roll").setDescription(gamesCopy.diceRoll.subcommandDescription))
-	.addSubcommand((sub) => sub.setName("rps").setDescription(gamesCopy.rps.subcommandDescription))
+	//
+	// The one option they DO carry is `against`, a STRING choice between a member (the
+	// default, the challenge board) and Dero (a solo round played inline, the 1.7.0 test
+	// fixes, item 14). Dero is offered by the bot as a fixed choice, never picked from a
+	// member list, so this is not the user option the note above forbids. ⚠️ HAND KEPT
+	// PAIR: the option names and the "dero" value are read in
+	// src/features/games/challengeEntry.ts.
+	.addSubcommand((sub) =>
+		sub.setName("coin-flip").setDescription(gamesCopy.coinFlip.subcommandDescription).addStringOption(againstOption)
+	)
+	.addSubcommand((sub) =>
+		sub.setName("dice-roll").setDescription(gamesCopy.diceRoll.subcommandDescription).addStringOption(againstOption)
+	)
+	.addSubcommand((sub) =>
+		sub
+			.setName("rps")
+			.setDescription(gamesCopy.rps.subcommandDescription)
+			.addStringOption(againstOption)
+			// Read only when `against` is Dero; a member's throw against another member is
+			// still made in secret inside the room.
+			.addStringOption((option) =>
+				option
+					.setName("throw")
+					.setDescription(gamesCopy.soloLuck.throwOptionDescription)
+					.setRequired(false)
+					.addChoices(
+						{ name: gamesCopy.rps.rockLabel, value: "rock" },
+						{ name: gamesCopy.rps.paperLabel, value: "paper" },
+						{ name: gamesCopy.rps.scissorsLabel, value: "scissors" }
+					)
+			)
+	)
 	// Monopoly seats the whole pool (two to six), so like the three above it opens a
 	// card on ⚔️challenges and carries no option: who plays is gathered on the card.
 	.addSubcommand((sub) => sub.setName("monopoly").setDescription(gamesCopy.monopoly.subcommandDescription))

@@ -38,17 +38,18 @@ import type { WeekStart } from "@features/leaderboard/leaderboardWindow.js";
 // invalidate() below is the exact path for making a change visible instantly.
 const CONFIG_TTL_MS = 30_000;
 
+// ⚠️ NO min OR max FOR MESSAGES OR REACTIONS. Both pay BOT_CONSTANTS.LEVELING
+// MESSAGE_XP and REACTION_XP (1 each) since the 1.7.0 test fixes (item 5), so the
+// stored leveling.message.min/max and leveling.reaction.min/max are deliberately
+// never read. A guild that set a range before keeps the values in Mongo; they are
+// dead and nothing writes them any more.
 export interface LevelingMessageSettings {
 	enabled: boolean;
-	min: number;
-	max: number;
 	cooldownSeconds: number;
 }
 
 export interface LevelingReactionSettings {
 	enabled: boolean;
-	min: number;
-	max: number;
 	cooldownSeconds: number;
 	awards: "reactor" | "author" | "both";
 }
@@ -181,14 +182,10 @@ export function normalizeLevelingSettings(raw: unknown): LevelingSettings {
 
 		message: {
 			enabled: bool(message.enabled, true),
-			min: Math.max(1, num(message.min, 15)),
-			max: Math.max(1, num(message.max, 40)),
 			cooldownSeconds: cooldown(message.cooldownSeconds, 60),
 		},
 		reaction: {
 			enabled: bool(reaction.enabled, true),
-			min: Math.max(1, num(reaction.min, 10)),
-			max: Math.max(1, num(reaction.max, 25)),
 			cooldownSeconds: cooldown(reaction.cooldownSeconds, 300),
 			awards: oneOf(reaction.awards, ["reactor", "author", "both"] as const, "reactor"),
 		},

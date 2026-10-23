@@ -1,6 +1,8 @@
-import { EmbedBuilder } from "discord.js";
+import { EmbedBuilder, type ColorResolvable } from "discord.js";
 import { AUTHOR, COLORS } from "@base/copy/brand.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { gamesCopy } from "./gamesCopy.js";
+import type { SoloLuckResult } from "./soloLuck.js";
 import type { VersusResult } from "./versusResolve.js";
 import type { RpsChoice, RpsOutcome } from "./rpsWinner.js";
 import { handValue, type BlackjackTable, type Card, type HandOutcome, type SeatResult, type Suit } from "./blackjackState.js";
@@ -93,6 +95,44 @@ export function buildRpsRevealEmbed(
 		.setColor(COLORS.GAME_RPS)
 		.setDescription(`${c.revealLine(challengerId, challengerChoice, opponentId, opponentChoice)}${verdict}`)
 		.setImage(imageRef);
+}
+
+// ── buildSoloLuckEmbed ─────────────────────────────────────────────────────
+// The one public message a solo round against Dero posts (the 1.7.0 test fixes,
+// item 14). No image: the luck games' art is not on disk yet and the stand in is
+// Dero's portrait, which the author line already shows, so attaching it on every
+// flip would upload the same picture twice per press. The footer states the XP
+// rule, never a payout, because the daily cap may have spent it already.
+export function buildSoloLuckEmbed(memberId: string, result: SoloLuckResult): EmbedBuilder {
+	const c = gamesCopy.soloLuck;
+	const verdicts: Record<SoloLuckResult["outcome"], string> = { won: c.memberWins(memberId), lost: c.deroWins, tie: c.tie };
+	const verdict = verdicts[result.outcome];
+	const { SOLO_LUCK_WIN_XP, SOLO_LUCK_OTHER_XP, DAILY_XP_CAP } = BOT_CONSTANTS.LEVELING;
+
+	return base()
+		.setTitle(SOLO_LUCK_TITLES[result.game])
+		.setColor(SOLO_LUCK_COLORS[result.game])
+		.setDescription(`${soloLuckBody(memberId, result)}${verdict}`)
+		.setFooter({ text: `${c.xpRule(SOLO_LUCK_WIN_XP, SOLO_LUCK_OTHER_XP, DAILY_XP_CAP)} ${gamesCopy.footer}` });
+}
+
+const SOLO_LUCK_TITLES: Record<SoloLuckResult["game"], string> = {
+	coinflip: gamesCopy.soloLuck.coinTitle,
+	diceroll: gamesCopy.soloLuck.diceTitle,
+	rps: gamesCopy.soloLuck.rpsTitle,
+};
+
+const SOLO_LUCK_COLORS: Record<SoloLuckResult["game"], ColorResolvable> = {
+	coinflip: COLORS.GAME_COINFLIP,
+	diceroll: COLORS.GAME_DICEROLL,
+	rps: COLORS.GAME_RPS,
+};
+
+function soloLuckBody(memberId: string, result: SoloLuckResult): string {
+	const c = gamesCopy.soloLuck;
+	if (result.game === "coinflip") return c.coinLine(memberId, result.face);
+	if (result.game === "diceroll") return c.diceLine(memberId, result.memberRoll, result.deroRoll);
+	return c.rpsLine(memberId, result.memberThrow, result.deroThrow);
 }
 
 // ── buildHangmanBoardEmbed ─────────────────────────────────────────────────

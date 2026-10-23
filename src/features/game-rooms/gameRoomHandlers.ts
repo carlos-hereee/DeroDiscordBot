@@ -18,7 +18,13 @@ import { roomTrail } from "./roomTrail.js";
 import { challengeBoard } from "./challengeBoard.js";
 import { CHALLENGE_GAMES } from "./challengeBoardEmbeds.js";
 import { runRoomMove, handleRpsSelect } from "./roomGames.js";
-import { openAuthoringModal, openGuessModal, handleAuthoringModal, handleGuessModal } from "./roomHangman.js";
+import {
+	openAuthoringModal,
+	openGuessModal,
+	handleAuthoringModal,
+	handleGuessModal,
+	handleCategorySelect,
+} from "./roomHangman.js";
 import { roomBattleshipHandlers } from "./roomBattleshipHandlers.js";
 import { roomHoldemHandlers } from "./roomHoldemHandlers.js";
 import { roomMonopolyHandlers } from "./roomMonopolyHandlers.js";
@@ -276,6 +282,8 @@ export function registerGameRoomHandlers(): void {
 		if (action === "invite") return challengeBoard.handleInviteSelect(interaction);
 		if (action === "opponent") return challengeBoard.handleOpponentSelect(interaction);
 		if (action === "rps") return handleRpsSelect(interaction);
+		// Hangman: the host lets Dero draw the word from a category.
+		if (action === "hcategory") return handleCategorySelect(interaction);
 		// Battleship's two aim selects share one handler, which reads which half of
 		// the coordinate it was given off the action name.
 		if (action === "bscol" || action === "bsrow") return roomBattleshipHandlers.handleAimSelect(interaction);

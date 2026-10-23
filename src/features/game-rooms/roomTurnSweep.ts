@@ -250,6 +250,12 @@ function lastRoomActionAt(room: IGameRoom): number {
 	return stamp ? new Date(stamp).getTime() : 0;
 }
 
+// A hosted or solo hangman room past its draft, whether or not its word is set yet.
+// See the exemption note on sweepIdleRooms below.
+function isHangmanRoundInPlay(room: IGameRoom): boolean {
+	return room.status === "playing" && (room.game === "hangman" || room.game === "solo-hangman");
+}
+
 /**
  * Finish as abandoned every room in a non terminal status whose last action is
  * older than GAME_ROOM_IDLE_ABANDON_MS. roomLifecycle.finish is the claim, so a room
@@ -259,6 +265,11 @@ function lastRoomActionAt(room: IGameRoom): number {
  * ⚠️ MONOPOLY IS EXEMPT. Its opener tells players a seat has a day on the clock, and
  * sweepMonopolyIdle above already forfeits one idle seat per day until one is left,
  * so a Monopoly room cannot strand its host's slot either.
+ *
+ * ⚠️ A HANGMAN ROUND IN PLAY IS EXEMPT TOO, hosted or solo, by the owner's decision of
+ * 2026-10-23: hangman is a relaxed game, not a race, so it has no clock. Its host
+ * still frees the slot with Give up, and a hangman DRAFT is still swept, because an
+ * unanswered challenge is not a round anybody is playing.
  */
 export async function sweepIdleRooms(client: Client, now: Date = new Date()): Promise<IdleRoomSummary> {
 	const rooms = await gameRoomStore.findNonTerminal();
@@ -267,6 +278,7 @@ export async function sweepIdleRooms(client: Client, now: Date = new Date()): Pr
 	await mapWithConcurrency(rooms, BOT_CONSTANTS.SCHEDULER_GUILD_CONCURRENCY, async (room) => {
 		try {
 			if (room.game === "monopoly") return;
+			if (isHangmanRoundInPlay(room)) return;
 			if (now.getTime() - lastRoomActionAt(room) < BOT_CONSTANTS.GAME_ROOM_IDLE_ABANDON_MS) return;
 			const ended = await roomLifecycle.finish(client, room, { abandoned: true, now });
 			if (ended) roomsAbandoned++;

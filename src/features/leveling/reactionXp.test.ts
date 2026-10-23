@@ -59,11 +59,9 @@ const settings = (overrides: Record<string, unknown> = {}) => ({
 	stackMultipliers: false,
 	...overrides,
 	// Merged LAST and field by field, so a case overriding one reaction setting
-	// does not silently drop the other four.
+	// does not silently drop the other two.
 	reaction: {
 		enabled: true,
-		min: 10,
-		max: 10,
 		cooldownSeconds: 300,
 		awards: "reactor",
 		...((overrides.reaction as Record<string, unknown>) ?? {}),

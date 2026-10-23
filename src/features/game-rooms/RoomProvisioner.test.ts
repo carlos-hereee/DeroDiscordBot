@@ -258,13 +258,14 @@ describe("RoomProvisioner.open, solo rooms", () => {
 		const input = makeInput({ game: "solo-hangman", visibility: "solo", playerIds: [] });
 		await RoomProvisioner.open(input);
 
-		// The bank seed: a real word, authoredBy null so the host may guess it, and
-		// no hint because the bank carries none.
+		// The bank seed: a real word, authoredBy null so the host may guess it, and the
+		// hint the bank carries beside it (the 1.7.0 test fixes, item 12).
 		const seed = storeMock.update.mock.calls.find(
 			(call) => (call[2] as { secret?: { word?: string } })?.secret?.word
 		)?.[2] as { secret: { word: string; authoredBy: string | null; hint: string } };
 		expect(seed.secret.word).toMatch(/^[a-z]+$/);
 		expect(seed.secret.authoredBy).toBeNull();
+		expect(seed.secret.hint.length).toBeGreaterThan(0);
 
 		// No invite for a room only one member can ever see.
 		const channel = await createdChannelOf(input.guild);
@@ -276,6 +277,18 @@ describe("RoomProvisioner.open, solo rooms", () => {
 			expect.objectContaining({ inviteCode: null })
 		);
 		warnSpy.mockRestore();
+	});
+
+	it("opens a hosted hangman room on the author button AND the category select", async () => {
+		const input = makeInput();
+		await RoomProvisioner.open(input);
+
+		const channel = await createdChannelOf(input.guild);
+		const opener = channel.send.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id: string }[] } }[] };
+		expect(opener.components.map((row) => row.toJSON().components[0].custom_id)).toEqual([
+			"gameroom:author:room-1",
+			"gameroomSelect:hcategory:room-1",
+		]);
 	});
 
 	it("gives solo-blackjack a bare opener: its board message is not the opener's job", async () => {
