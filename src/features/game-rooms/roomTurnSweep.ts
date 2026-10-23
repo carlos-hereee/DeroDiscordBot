@@ -5,6 +5,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { expireTurn } from "@features/games/battleshipState.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { applyDebtDefault, applyForfeit, waitingDebt } from "@features/games/monopolyState.js";
+import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -114,7 +115,11 @@ export async function sweepBattleshipTurns(client: Client, now: Date = new Date(
 			}
 
 			matchesForfeited++;
-			await roomLifecycle.finish(client, room, { winnerId: result.winnerId });
+			const claimed = await roomLifecycle.finish(client, room, { winnerId: result.winnerId });
+			// A turn timeout forfeit IS rated, by owner decision (2026-10 item 244): the
+			// player who stopped taking turns lost a match they started. Once, by the call
+			// that won finish's claim; fire and forget.
+			if (claimed && result.winnerId) void recordMatchRatings(room, [result.winnerId, loserId]);
 
 			// The win still pays, because the opponent turning up and the other player
 			// not is exactly the behaviour being rewarded. No sink bonus is involved:

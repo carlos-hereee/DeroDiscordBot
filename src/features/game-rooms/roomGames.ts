@@ -12,6 +12,7 @@ import { resolveVersus, type VersusFlip } from "@features/games/versusResolve.js
 import { resolveGameAsset, type GameAssetKey } from "@features/games/gamesAssets.js";
 import { scoreRps, RPS_CHOICES, type RpsChoice } from "@features/games/rpsWinner.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
+import { recordLuckResult } from "@features/ratings/luckStats.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -148,6 +149,10 @@ async function runVersusMove(interaction: ButtonInteraction, room: IGameRoom): P
 		opponent: { id: opponentId } as never,
 		winner: result.winner,
 	});
+
+	// The luck board's tally (2026-10 item 244), behind the same claim as the award
+	// above so a double press counts once. A dice tie records nothing. Fire and forget.
+	void recordLuckResult({ guildId: room.guildId, game: room.game, playerIds: [challengerId, opponentId], winnerId });
 }
 
 // ── rock paper scissors ───────────────────────────────────────────────
@@ -261,7 +266,11 @@ export async function handleRpsSelect(interaction: StringSelectMenuInteraction):
 		outcome === "tie"
 			? "rpsTie"
 			: (`rps${(outcome === "challenger" ? picks[challengerId] : picks[opponentId]).replace(/^./, (c) => c.toUpperCase())}` as GameAssetKey);
-	await roomLifecycle.finish(interaction.client, room, { winnerId, art: resolveGameAsset(rpsArt) });
+	const ended = await roomLifecycle.finish(interaction.client, room, { winnerId, art: resolveGameAsset(rpsArt) });
+
+	// The luck board's tally (2026-10 item 244), only from the reveal that won finish's
+	// claim, so the match counts once. A tie records nothing. Fire and forget.
+	if (ended) void recordLuckResult({ guildId: room.guildId, game: room.game, playerIds: [challengerId, opponentId], winnerId });
 
 	awardTwoPlayerResult({
 		client: interaction.client,

@@ -39,6 +39,7 @@
 		"mongodb": "^6.18.0",
 		"mongoose": "^8.17.1",
 		"node-cron": "^4.2.1",
+		"openskill": "^5.0.1",
 		"opusscript": "^0.0.8",
 		"uuid": "^11.1.0"
 	},

@@ -4,6 +4,7 @@ import { placeFleet } from "@features/games/battleshipState.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { recordMatchRatings, twoPlayerFinishingOrder } from "@features/ratings/recordMatchRatings.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -185,7 +186,10 @@ export async function handleFire(interaction: ButtonInteraction, room: IGameRoom
 
 	// The result card shows the final board with the last sinking on it, when it draws.
 	const finalBoard = await battleshipBoardCard(outcome.state, sinking);
-	await roomLifecycle.finish(interaction.client, room, { winnerId: interaction.user.id, ...(finalBoard ? { art: finalBoard } : {}) });
+	const claimed = await roomLifecycle.finish(interaction.client, room, { winnerId: interaction.user.id, ...(finalBoard ? { art: finalBoard } : {}) });
+	// Rated once, by the shot that won finish's claim: the shooter first, the other
+	// player second (2026-10 item 244). Fire and forget, never awaited.
+	if (claimed) void recordMatchRatings(room, twoPlayerFinishingOrder(room.playerIds, interaction.user.id));
 
 	const [a, b] = room.playerIds;
 	awardTwoPlayerResult({

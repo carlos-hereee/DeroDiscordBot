@@ -1,5 +1,6 @@
 import type { IEmbedField, IPluginCopy } from "../types.js";
 import { COLORS, FOOTER, AUTHOR } from "../brand.js";
+import { rokCommanderCopy } from "./rok-commander.pack.js";
 
 // ── general-events copy pack (streamer-plugin spec Phase 2 scaffold) ─────
 // What:  the plain-English / streamer-tone alternative to rok-commander.
@@ -713,4 +714,9 @@ export const generalEventsCopy: IPluginCopy = {
 		saved: (title: string) => `✅ **${title}** scheduled. The bot will post reminders before it starts.`,
 		saveFailed: "Could not schedule the stream. Try again.",
 	},
+
+	// Hold'em hand names are poker's own vocabulary and read the same in every voice,
+	// so this pack points at the rok-commander words instead of keeping a second copy
+	// that could drift from them.
+	holdemHands: rokCommanderCopy.holdemHands,
 };

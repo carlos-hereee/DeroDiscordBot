@@ -1,4 +1,4 @@
-import type { IEmbedField } from "../types.js";
+import type { IEmbedField, IRankName } from "../types.js";
 import { COLORS, FOOTER, AUTHOR } from "../brand.js";
 
 // ── ROK Commander copy pack ───────────────────────────────────────────────
@@ -909,5 +909,46 @@ export const rokCommanderCopy = {
 		timedOut: "Timed out. Run the command again when ready.",
 		saved: (title: string) => `✅ **${title}** scheduled. The bot will post reminders before it starts.`,
 		saveFailed: "Could not schedule the stream. Try again.",
+	},
+
+	// ── Hold'em hand names (2026-10 item 244) ─────────────────────
+	// How a winning showdown hand reads to members ("pair of aces", "aces full",
+	// "ace high flush"). The month's counts store a stable key built from
+	// HAND_CATEGORIES and RANK_LABELS (features/games/holdemHand.ts), and
+	// features/ratings/gameResultCounts.ts phrases it with these words, so a wording
+	// change here never splits a month's counts. Poker's own vocabulary, so it reads
+	// the same in every voice; the general-events pack reuses this object.
+	holdemHands: {
+		// Keyed by the rank's RANK_LABELS label, so the numeric rank table stays the one in holdemHand.ts.
+		rankNames: {
+			"2": { one: "two", many: "twos" },
+			"3": { one: "three", many: "threes" },
+			"4": { one: "four", many: "fours" },
+			"5": { one: "five", many: "fives" },
+			"6": { one: "six", many: "sixes" },
+			"7": { one: "seven", many: "sevens" },
+			"8": { one: "eight", many: "eights" },
+			"9": { one: "nine", many: "nines" },
+			"10": { one: "ten", many: "tens" },
+			J: { one: "jack", many: "jacks" },
+			Q: { one: "queen", many: "queens" },
+			K: { one: "king", many: "kings" },
+			A: { one: "ace", many: "aces" },
+		},
+		// One phrase per hand category, given the hand's top rank: the pair, the trips
+		// of a full house, the high card of a straight or flush.
+		byCategory: {
+			"high card": (rank: IRankName) => `${rank.one} high`,
+			pair: (rank: IRankName) => `pair of ${rank.many}`,
+			"two pair": (rank: IRankName) => `${rank.many} up`,
+			"three of a kind": (rank: IRankName) => `three ${rank.many}`,
+			straight: (rank: IRankName) => `${rank.one} high straight`,
+			flush: (rank: IRankName) => `${rank.one} high flush`,
+			"full house": (rank: IRankName) => `${rank.many} full`,
+			"four of a kind": (rank: IRankName) => `four ${rank.many}`,
+			"straight flush": (rank: IRankName) => `${rank.one} high straight flush`,
+		},
+		// The ace high straight flush has a name of its own, and every player knows it.
+		royalFlush: "royal flush",
 	},
 };

@@ -17,6 +17,9 @@ import {
 } from "@features/games/holdemTable.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { announceDealer, toPublicView } from "@features/dero-brain/dealerNarration.js";
+import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
+import { recordShowdownHand } from "@features/ratings/gameResultCounts.js";
+import { isRatedHoldemSession } from "@features/ratings/ratingEngine.js";
 import { secureRandom } from "@utils/secureRng.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
@@ -354,6 +357,10 @@ async function settleOutcome(
 					text: gameRoomsCopy.holdem.showdownLine(shown.userId, shown.hand),
 				});
 			}
+			// The winning hand, counted for the monthly post (2026-10 item 244). Once per
+			// showdown, because only the action that won the table's compare and swap gets
+			// here. Fire and forget: a count never holds up the table.
+			void recordShowdownHand({ guildId: room.guildId, table, shownUserIds: outcome.showdown.map((shown) => shown.userId) });
 		}
 		for (const award of outcome.awards ?? []) {
 			if (award.amount <= 0) continue;
@@ -390,7 +397,13 @@ async function settleOutcome(
 
 	if (outcome.tournamentOver) {
 		await payPlacements(client, room, table);
-		await roomLifecycle.finish(client, room, { winnerId: table.winnerId });
+		const claimed = await roomLifecycle.finish(client, room, { winnerId: table.winnerId });
+		// One rating update per finished session, by finishing order: the winner, then the
+		// reverse bust order (a seat that left counts as a bust, since leaveTable records
+		// it in bustOrder). Only the call that won finish's claim rates, so a racing clock
+		// fold cannot rate the session twice. A session under 10 dealt hands is recorded
+		// unrated (2026-10 item 244).
+		if (claimed) void recordMatchRatings(room, placements(table), [], { rated: isRatedHoldemSession(table.handNumber) });
 		return;
 	}
 

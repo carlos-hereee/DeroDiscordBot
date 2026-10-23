@@ -26,6 +26,13 @@ export interface IEmbedField {
 	value: string;
 }
 
+// A card rank in words, one and many ("ace", "aces"), for the Hold'em hand names
+// in `holdemHands`. Keyed in the pack by the rank's RANK_LABELS label.
+export interface IRankName {
+	one: string;
+	many: string;
+}
+
 // The structural contract every copy pack must satisfy. Derived from the
 // rok-commander pack so adding a new key to that pack automatically widens
 // the shape every other pack must implement. If a key is too rok-specific

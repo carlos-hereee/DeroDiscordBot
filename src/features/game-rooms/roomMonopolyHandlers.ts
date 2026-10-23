@@ -24,6 +24,7 @@ import {
 import { awardMultiPlayerResult } from "@features/games/gameXp.js";
 import { monopolyWinnerView, renderWinnerCard } from "@features/games/monopolyRenderer.js";
 import { withRenderFallback } from "@features/renderer/index.js";
+import { monopolyFinishingOrder, recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -173,6 +174,10 @@ async function finishMonopolyMatch(client: Client, room: IGameRoom, state: Monop
 	);
 	const claimed = await roomLifecycle.finish(client, room, { winnerId: state.winnerId, ...(winnerCard ? { art: winnerCard } : {}) });
 	if (!claimed) return;
+
+	// The winner first, then the seats in reverse elimination order; a seat forfeited
+	// for a day's inactivity counts as a bankruptcy (2026-10 item 244). Fire and forget.
+	void recordMatchRatings(room, monopolyFinishingOrder(state));
 
 	awardMultiPlayerResult({
 		client,

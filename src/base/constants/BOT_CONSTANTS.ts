@@ -626,6 +626,27 @@ export const BOT_CONSTANTS = {
 		DIGEST_TIME_ZONE: "America/Chicago",
 	},
 
+	// ── arcade ratings (2026-10 item 244) ─────────────────────────
+	// OpenSkill ratings for Hold'em, Battleship and Monopoly, luck stats for the
+	// three luck games and Hold'em hand counts, read by features/ratings/. Every
+	// number below is an owner decision of 2026-10-23 (2026-10 item 244).
+	RATINGS: {
+		// Owner decision 2026-10-23 (2026-10 item 244): the display rating a brand new player reads, since a fresh OpenSkill ordinal is 0.
+		DISPLAY_BASE: 1000,
+		// Owner decision 2026-10-23 (2026-10 item 244): display points per ordinal point (ordinal = mu minus 3 sigma).
+		DISPLAY_SCALE: 40,
+		// Owner decision 2026-10-23 (2026-10 item 244): a rating is marked provisional until the player has this many rated games.
+		PROVISIONAL_GAMES: 10,
+		// Owner decision 2026-10-23 (2026-10 item 244): a Hold'em session with fewer dealt hands is recorded but never rated, so "deal, bust, repeat" farms nothing.
+		HOLDEM_MIN_RATED_HANDS: 10,
+		// Owner decision 2026-10-23 (2026-10 item 244): a luck score is shown only from this many decided games, below which it is noise.
+		LUCK_MIN_DECIDED: 20,
+		// Owner decision 2026-10-23 (2026-10 item 244): the host's Close band admits joiners within this many display points.
+		BAND_CLOSE: 150,
+		// Owner decision 2026-10-23 (2026-10 item 244): the host's Tight band admits joiners within this many display points.
+		BAND_TIGHT: 75,
+	},
+
 	// ── invite URL provenance ─────────────────────────────────────
 	// The actual OAuth install URL is composed in @utils/config as
 	// `botInviteLink` so dev and prod each serve their own client id.
