@@ -13,6 +13,7 @@ import { createScheduleRouter } from "./routes/schedule.routes.js";
 import { createLeaderboardTrackingRouter } from "./routes/leaderboardTracking.routes.js";
 import { createAutoHealRouter } from "./routes/autoHeal.routes.js";
 import { createPairingRouter } from "./routes/pairing.routes.js";
+import { createPlatformAnalyticsRouter } from "./routes/platformAnalytics.routes.js";
 import { createGameRoomsRouter } from "./routes/gameRooms.routes.js";
 import { createStreamerRouter } from "./routes/streamer.routes.js";
 import { brainBodyErrorHandler, createBrainRouter } from "./routes/brain.routes.js";
@@ -131,6 +132,12 @@ export function startApiServer(client: Client): Server {
 	// platform does not yet know the guildId at redemption time. Still
 	// behind verifySignature because the signed proxy is the only caller.
 	app.use("/api/pairing", createPairingRouter());
+	// /api/platform/render-analytics, the platform wide render analytics report
+	// for Dero's Castle (2026-10 item 244). Like pairing it takes no ?guildId=,
+	// because the rows belong to no guild. Its one caller is the server's own
+	// botApiClient, never the plugin proxy, so "platform" stays off the server's
+	// ROK_BOT_PATH_PREFIXES allowlist.
+	app.use("/api/platform/render-analytics", createPlatformAnalyticsRouter());
 
 	// Return the Server handle so main.ts can close it during graceful shutdown
 	// (stop accepting new requests before the Discord client and Mongo connection

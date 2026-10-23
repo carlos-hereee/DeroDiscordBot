@@ -597,6 +597,10 @@ export const BOT_CONSTANTS = {
 		LONG_TAIL_HIT_RATE: 0.1,
 		// Owner decision 2026-10-23 (2026-10 item 244): suggest growing the memory tier when S3 hits pass this share of all hits.
 		GROW_MEMORY_S3_SHARE: 0.3,
+		// Owner decision 2026-10-23 (2026-10 item 244): the month to date digest DMs the owner every Monday at 9:15 am.
+		DIGEST_CRON: "15 9 * * 1",
+		// The digest cron reads in the owner's own zone, not the Railway host clock (UTC), so 9:15 stays 9:15 across daylight saving.
+		DIGEST_TIME_ZONE: "America/Chicago",
 	},
 
 	// ── invite URL provenance ─────────────────────────────────────

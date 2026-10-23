@@ -20,6 +20,7 @@ import { noteFailure as noteServerFailure, noteSuccess as noteServerSuccess } fr
 import { mapWithConcurrency } from "@utils/mapWithConcurrency.js";
 import { activityStore } from "@db/stores/activityStore.js";
 import { playerActivityRetentionDays } from "@utils/config.js";
+import { sendRenderAnalyticsDigest } from "@features/renderer/renderAnalyticsDigest.js";
 
 // ── resolveOverride ────────────────────────────────────────────────
 // What:  given an event + an original occurrence (the cron-computed fire
@@ -226,6 +227,22 @@ export function startScheduler(client: Client): void {
 				console.error("[game-rooms] archive sweep tick failed", err);
 			}
 		})
+	);
+
+	// ── weekly render analytics digest (2026-10 item 244) ──
+	// The owner's Monday month to date DM. The timezone option pins it to the
+	// owner's clock instead of the host's, and sendRenderAnalyticsDigest never
+	// throws, so the void here drops nothing but a promise that always resolves.
+	// Registered unconditionally: the owner id and the kill switch are checked
+	// at fire time, so each skipped Monday leaves one log line saying why.
+	scheduledTasks.push(
+		cron.schedule(
+			BOT_CONSTANTS.RENDER_ANALYTICS.DIGEST_CRON,
+			() => {
+				void sendRenderAnalyticsDigest(client);
+			},
+			{ timezone: BOT_CONSTANTS.RENDER_ANALYTICS.DIGEST_TIME_ZONE }
+		)
 	);
 
 	scheduledTasks.push(cron.schedule(BOT_CONSTANTS.SCHEDULER_CRON, async () => {

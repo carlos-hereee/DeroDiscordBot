@@ -61,4 +61,5 @@ export const renderAnalyticsCopy = {
 	topLine: (rank: number, row: { surface: string; version: number; keyHash: string; hits: number }) =>
 		`${rank}. \`${row.surface}\` v${row.version} \`${row.keyHash}\`: ${row.hits} hits`,
 	truncatedNote: "(cut to fit Discord's limit)",
+	digestTitle: "Weekly render digest, this month to date",
 };
