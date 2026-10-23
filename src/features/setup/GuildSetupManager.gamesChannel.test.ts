@@ -16,7 +16,9 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({
 import { GuildSetupManager } from "./GuildSetupManager.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
-import { boardStartRows, CHALLENGE_GAMES } from "@features/game-rooms/challengeBoardEmbeds.js";
+import { boardStartRows, CHALLENGE_GAMES, openerCardRows } from "@features/game-rooms/challengeBoardEmbeds.js";
+import { buildArcadeHostRow } from "@features/games/arcadeHost.js";
+import { ChannelContent } from "./ChannelContent.js";
 
 // ── 🕹️games reaches an EXISTING guild on boot (2026-10 item 245 Phase 4a) ────
 // What:  a seeded guild that ran /setup before the games channel existed boots through
@@ -107,7 +109,10 @@ function makeChannel(id: string, name: string, seed: FakeMessage[] = []) {
 		send,
 		messages: {
 			fetch: vi.fn(async (arg: unknown) => {
-				if (typeof arg !== "string") return { find: (test: (message: FakeMessage) => boolean) => [...messages.values()].reverse().find(test) };
+				if (typeof arg !== "string") {
+					const newestFirst = [...messages.values()].reverse();
+					return { find: (test: (message: FakeMessage) => boolean) => newestFirst.find(test), values: () => newestFirst.values() };
+				}
 				const message = messages.get(arg);
 				if (!message) throw unknownMessage();
 				return message;
@@ -152,7 +157,7 @@ function legacyRow(overrides: Record<string, unknown> = {}): Record<string, unkn
 	};
 }
 
-function makeWorld(row: Record<string, unknown>, options: { challengesSeed?: FakeMessage[]; gamesChildren?: unknown[] } = {}) {
+function makeWorld(row: Record<string, unknown>, options: { challengesSeed?: FakeMessage[]; rulesSeed?: FakeMessage[]; gamesChildren?: unknown[] } = {}) {
 	// ── the stored row, read and written like the real store ──
 	let stored: Record<string, unknown> = { ...row };
 	configMock.findByGuildId.mockImplementation(async () => ({ ...stored, introMessageIds: { ...((stored.introMessageIds as object) ?? {}) } }));
@@ -164,10 +169,12 @@ function makeWorld(row: Record<string, unknown>, options: { challengesSeed?: Fak
 	const schedule = makeChannel("ch-schedule", "📅event-schedule", [makeMessage("msg-schedule", {})]);
 	const admin = makeChannel("ch-admin", "🔒inner-sanctum");
 	const challenges = makeChannel("ch-arcadechallenges", "⚔️challenges", options.challengesSeed ?? []);
+	const rules = makeChannel("ch-arcaderules", "📋arcade-rules", options.rulesSeed ?? []);
 	const clientChannels = new Map<string, unknown>([
 		["ch-schedule", schedule.channel],
 		["ch-admin", admin.channel],
 		["ch-arcadechallenges", challenges.channel],
+		["ch-arcaderules", rules.channel],
 	]);
 
 	// ── the guild side: both categories, every older channel, and create ──
@@ -209,7 +216,7 @@ function makeWorld(row: Record<string, unknown>, options: { challengesSeed?: Fak
 		await GuildSetupManager.refreshIntroEmbeds(client, guild);
 	};
 
-	return { boot, create, created, admin, challenges, readStored: () => stored };
+	return { boot, create, created, admin, challenges, rules, readStored: () => stored };
 }
 
 type CreateCall = { name: string; type: number; parent?: string; permissionOverwrites?: Array<{ id: string; allow?: bigint[]; deny?: bigint[] }> };
@@ -264,6 +271,7 @@ describe("🕹️games on an existing guild's boot", () => {
 			games: world.created[0].send.mock.calls.length,
 			admin: world.admin.send.mock.calls.length,
 			challenges: world.challenges.send.mock.calls.length,
+			rules: world.rules.send.mock.calls.length,
 		};
 
 		await world.boot();
@@ -272,6 +280,7 @@ describe("🕹️games on an existing guild's boot", () => {
 		expect(world.created[0].send.mock.calls.length).toBe(sendsAfterFirstBoot.games);
 		expect(world.admin.send.mock.calls.length).toBe(sendsAfterFirstBoot.admin);
 		expect(world.challenges.send.mock.calls.length).toBe(sendsAfterFirstBoot.challenges);
+		expect(world.rules.send.mock.calls.length).toBe(sendsAfterFirstBoot.rules);
 		for (const message of world.created[0].messages.values()) expect(message.edit).not.toHaveBeenCalled();
 	});
 
@@ -309,10 +318,11 @@ describe("🕹️games on an existing guild's boot", () => {
 		]);
 	});
 
-	it("moves the Challenge Board out of ⚔️challenges without deleting or editing the old intro", async () => {
-		// The old ⚔️challenges intro carried the start buttons. The intro sweep's rule is
-		// never edit, never delete: it posts the new one line intro beneath the old one,
-		// with no buttons, and the board appears in 🕹️games instead.
+	it("moves the Challenge Board out of ⚔️challenges, stripping the old intro's buttons and deleting nothing", async () => {
+		// The old ⚔️challenges intro carried the start buttons. The intro sweep posts the
+		// new one line intro beneath it with no buttons, and the board appears in 🕹️games.
+		// The old intro keeps its copy and loses only its buttons (owner decision, Phase 4a),
+		// so ⚔️challenges no longer holds a second working board.
 		const oldIntro = makeMessage("old-challenges", {
 			embeds: [{ data: { title: "⚔️ The Challenge Board", description: "The old board copy." } }],
 			components: boardStartRows(),
@@ -326,10 +336,93 @@ describe("🕹️games on an existing guild's boot", () => {
 		expect(titleOf(world.challenges.send.mock.calls[0])).toBe(rokCommanderCopy.channelContent.arcadeChallenges.title);
 		expect(posted.components).toEqual([]);
 		expect(oldIntro.delete).not.toHaveBeenCalled();
-		expect(oldIntro.edit).not.toHaveBeenCalled();
+		// Components only: no embed and no file in the edit, so the old copy stays.
+		expect(oldIntro.edit).toHaveBeenCalledOnce();
+		expect(oldIntro.edit).toHaveBeenCalledWith({ components: [] });
+		expect(oldIntro.embeds).toEqual([{ title: "⚔️ The Challenge Board", description: "The old board copy." }]);
 		expect(world.readStored().introMessageIds).toMatchObject({ arcadeChallengesChannelId: "ch-arcadechallenges-msg-1" });
 
 		const board = [...world.created[0].messages.values()][1];
 		expect(customIdsOf(board.components)).toEqual(CHALLENGE_GAMES.map((game) => `gameroom:new:${game}`));
+	});
+
+	it("strips the Host a game row from the superseded 📋arcade-rules intro and keeps its copy", async () => {
+		const oldRules = makeMessage("old-rules", {
+			embeds: [{ data: { title: "📋 The Rules of the Arena", description: "The old rules with a roster." } }],
+			components: [buildArcadeHostRow()],
+		});
+		const world = makeWorld(legacyRow({ introMessageIds: { arcadeRulesChannelId: "old-rules" } }), { rulesSeed: [oldRules] });
+
+		await world.boot();
+
+		// The new rules card carries only the ballot button.
+		const posted = world.rules.send.mock.calls[0][0] as SendOptions;
+		expect(customIdsOf(posted.components ?? [])).toEqual(["game_request:open"]);
+		expect(oldRules.edit).toHaveBeenCalledWith({ components: [] });
+		expect(oldRules.embeds).toEqual([{ title: "📋 The Rules of the Arena", description: "The old rules with a roster." }]);
+		expect(oldRules.delete).not.toHaveBeenCalled();
+	});
+
+	it("leaves a challenge card's own buttons alone, and strips an older superseded intro in the same window", async () => {
+		// A live challenge card carries Join, Start and Cancel, which are not moved
+		// controls, so it must come through untouched. An intro superseded on an EARLIER
+		// copy change, no longer tracked, still carries the board and is stripped too.
+		const olderIntro = makeMessage("older-challenges", {
+			embeds: [{ data: { title: "⚔️ The Challenge Board", description: "An even older board copy." } }],
+			components: boardStartRows(),
+		});
+		const card = makeMessage("challenge-card", {
+			embeds: [{ data: { title: "Coin Flip challenge", description: "Open to all" } }],
+			components: openerCardRows("room-1", { game: "coinflip", hostId: "host-1", visibility: "public", pool: [] }),
+		});
+		const oldIntro = makeMessage("old-challenges", {
+			embeds: [{ data: { title: "⚔️ The Challenge Board", description: "The old board copy." } }],
+			components: boardStartRows(),
+		});
+		const world = makeWorld(legacyRow({ introMessageIds: { arcadeChallengesChannelId: "old-challenges" } }), {
+			challengesSeed: [olderIntro, card, oldIntro],
+		});
+
+		await world.boot();
+
+		expect(oldIntro.edit).toHaveBeenCalledWith({ components: [] });
+		expect(olderIntro.edit).toHaveBeenCalledWith({ components: [] });
+		expect(card.edit).not.toHaveBeenCalled();
+		expect(customIdsOf(card.components)).toContain("gameroom:join:room-1");
+	});
+
+	it("strips the tracked old intro when the sweep adopts a new intro already posted", async () => {
+		// A boot that posted the new intro and died before persisting its id leaves both
+		// behind; the next sweep adopts the new one and still strips the old one.
+		const oldIntro = makeMessage("old-challenges", {
+			embeds: [{ data: { title: "⚔️ The Challenge Board", description: "The old board copy." } }],
+			components: boardStartRows(),
+		});
+		const newIntro = makeMessage("new-challenges", { embeds: [ChannelContent.arcadeChallengesIntro()], components: [] });
+		const world = makeWorld(legacyRow({ introMessageIds: { arcadeChallengesChannelId: "old-challenges" } }), {
+			challengesSeed: [oldIntro, newIntro],
+		});
+
+		await world.boot();
+
+		expect(world.challenges.send).not.toHaveBeenCalled();
+		expect(world.readStored().introMessageIds).toMatchObject({ arcadeChallengesChannelId: "new-challenges" });
+		expect(oldIntro.edit).toHaveBeenCalledWith({ components: [] });
+		expect(newIntro.edit).not.toHaveBeenCalled();
+	});
+
+	it("strips nothing on a second boot, once the old intros are bare", async () => {
+		const oldIntro = makeMessage("old-challenges", {
+			embeds: [{ data: { title: "⚔️ The Challenge Board", description: "The old board copy." } }],
+			components: boardStartRows(),
+		});
+		const world = makeWorld(legacyRow({ introMessageIds: { arcadeChallengesChannelId: "old-challenges" } }), { challengesSeed: [oldIntro] });
+		await world.boot();
+		expect(oldIntro.edit).toHaveBeenCalledOnce();
+
+		await world.boot();
+
+		expect(oldIntro.edit).toHaveBeenCalledOnce();
+		expect(world.challenges.send).toHaveBeenCalledOnce();
 	});
 });

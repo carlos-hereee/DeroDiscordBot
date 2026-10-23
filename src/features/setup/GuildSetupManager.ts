@@ -911,6 +911,63 @@ export class GuildSetupManager {
 		return { embeds: [ChannelContent.arcadeGamesBoard(guildConfig)], components: boardStartRows() };
 	}
 
+	// ── the controls that moved to 🕹️games ─────────────────────────
+	// What:  strip the Host a game row and the Challenge Board's start buttons off the
+	//        SUPERSEDED intros in 📋arcade-rules and ⚔️challenges, the two channels that
+	//        carried them until 2026-10 item 245 Phase 4a. Only the buttons go: the edit
+	//        names no embed and no file, so the old copy stays exactly as it was posted,
+	//        and nothing is deleted (the owner's never delete rule for intro channels).
+	// Who:   refreshIntroEmbeds, at the one moment it supersedes an intro there: when it
+	//        posts the new intro, or adopts a matching one, in place of the tracked one.
+	// Why:   the intro sweep reposts on a copy change and leaves the old message in
+	//        history, so without this an existing guild kept a second, working Challenge
+	//        Board in ⚔️challenges beside the one in 🕹️games.
+	// How:   a candidate is the tracked old intro plus every bot message in the window
+	//        the adopt scan already fetched, so this costs no extra read. A message is
+	//        stripped only when one of its customIds is a moved control, derived from the
+	//        builders themselves: a challenge card's Join, Start and Cancel and the open
+	//        blackjack table's buttons are other customIds, so they are never touched.
+	private static readonly CHANNELS_WITH_MOVED_CONTROLS: ReadonlyArray<(typeof GuildSetupManager.CHANNEL_FIELDS)[number]> = [
+		"arcadeRulesChannelId",
+		"arcadeChallengesChannelId",
+	];
+
+	private static async stripMovedArcadeControls(
+		field: (typeof GuildSetupManager.CHANNEL_FIELDS)[number],
+		candidates: ReadonlyArray<Message | null | undefined>,
+		options: { keepId: string; selfId: string | undefined; guildId: string }
+	): Promise<number> {
+		if (!GuildSetupManager.CHANNELS_WITH_MOVED_CONTROLS.includes(field)) return 0;
+
+		const movedIds = new Set(GuildSetupManager.customIdsOf([buildArcadeHostRow(), ...boardStartRows()]));
+		const seen = new Set<string>();
+		let stripped = 0;
+		for (const message of candidates) {
+			if (!message || message.id === options.keepId || seen.has(message.id)) continue;
+			seen.add(message.id);
+			if (options.selfId && message.author.id !== options.selfId) continue;
+			if (!GuildSetupManager.customIdsOf(message.components).some((id) => movedIds.has(id))) continue;
+			try {
+				await message.edit({ components: [] });
+				stripped += 1;
+			} catch (error) {
+				// Fire and forget: a failed strip leaves an old button that still works,
+				// which is untidy, not broken. The new intro is already in place.
+				console.warn(LOG_MESSAGES.setup.introRefreshEditFailed("superseded arcade intro", options.guildId), error);
+			}
+		}
+		return stripped;
+	}
+
+	// Every customId on a set of rows, read through toJSON so a builder and a fetched
+	// message's rows read the same way (the shape componentsAreEquivalent compares).
+	private static customIdsOf(rows: ReadonlyArray<{ toJSON(): unknown }>): string[] {
+		return rows.flatMap((row) => {
+			const json = row.toJSON() as { components?: Array<{ custom_id?: string }> };
+			return (json.components ?? []).flatMap((component) => (component.custom_id ? [component.custom_id] : []));
+		});
+	}
+
 	// ── maintainGamesBoard ────────────────────────────────────────
 	// What:  keep 🕹️games' second message, the Challenge Board, present and current,
 	//        and hand back the id to persist on introMessageIds.arcadeGamesBoardId.
@@ -2491,6 +2548,9 @@ export class GuildSetupManager {
 			// boots where nothing actually changed.
 			//
 			// Schedule channel is the only exception (handled above).
+			// One narrow exception to "never edit" since 2026-10 item 245 Phase 4a, by the
+			// owner's decision: a superseded intro in 📋arcade-rules or ⚔️challenges loses
+			// the buttons that moved to 🕹️games (stripMovedArcadeControls). Its copy stays.
 
 			// Which channels should have their intro pinned at all?
 			// These are the channels where the intro is a permanent
@@ -2573,6 +2633,11 @@ export class GuildSetupManager {
 				nextIntroIds[spec.configField] = existingMatch.id;
 				needsPersist = true;
 				edited += 1;
+				edited += await GuildSetupManager.stripMovedArcadeControls(spec.configField, [storedMessage, ...(recent?.values() ?? [])], {
+					keepId: existingMatch.id,
+					selfId,
+					guildId: guild.id,
+				});
 				continue;
 			}
 
@@ -2605,6 +2670,11 @@ export class GuildSetupManager {
 				needsPersist = true;
 				reposted += 1;
 				if (spec.configField === "arcadeGamesChannelId") gamesIntroPosted = true;
+				edited += await GuildSetupManager.stripMovedArcadeControls(spec.configField, [storedMessage, ...(recent?.values() ?? [])], {
+					keepId: message.id,
+					selfId,
+					guildId: guild.id,
+				});
 			} catch (error) {
 				// Post failure is the one place we MUST skip and retry
 				// next boot. Do not delete anything, do not fall back
