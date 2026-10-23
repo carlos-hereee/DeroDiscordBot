@@ -524,6 +524,27 @@ export const generalEventsCopy: IPluginCopy = {
 				"⚠️ The category and its channels are required for me to work. " +
 				"Please do not delete them.",
 		},
+
+		// Member role gating, key for key with rok-commander's, plain voice. Posted
+		// once per guild by CommunityGatingAnnouncement; see the comment there.
+		gatingAnnouncement: {
+			member: {
+				title: "🔒 Channels Now Need the Member Role",
+				description: (memberRoleId: string) =>
+					`This server's channels are now open to members with <@&${memberRoleId}>, which you get by finishing Discord's Onboarding. ` +
+					"Without it, only the introductions channel is visible.\n\n" +
+					"You can read this, so you already have it. If someone tells you the channels disappeared, they can open **Channels & Roles** at the top of the channel list and choose **Retake Onboarding**.\n\n" +
+					"Nothing else changed. Levels, records and matches are all where you left them.",
+			},
+			admin: {
+				title: "🔒 The Member Role Now Gates the Channels",
+				description: (memberRoleId: string) =>
+					`This server is a Discord Community, so the member role you chose in \`/setup\`, <@&${memberRoleId}>, now decides who sees my channels. ` +
+					"Without it a member sees only the introductions channel. With it they see every public channel and both voice rooms. The admin channels are unchanged.\n\n" +
+					`**Check one thing now:** your server's Onboarding must give new members <@&${memberRoleId}>, or every newcomer stops at introductions. You set that in Server Settings, under Onboarding.\n\n` +
+					"Members who already hold the role see no change. Anyone who lost sight of a channel can open **Channels & Roles** and choose **Retake Onboarding**.",
+			},
+		},
 	},
 
 	// The game request ballot, key for key with rok-commander's, plain voice.
@@ -806,4 +827,9 @@ export const generalEventsCopy: IPluginCopy = {
 			footer: "See your own with /rating me.",
 		},
 	},
+
+	// The arcade's host controls read the same in every voice, like the rest of the
+	// arcade's cards, so this pack points at the rok-commander words rather than
+	// keeping a second copy that could drift from them.
+	arcadeHostControls: rokCommanderCopy.arcadeHostControls,
 };

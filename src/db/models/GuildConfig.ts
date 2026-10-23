@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { v4 } from "uuid";
+import { CHALLENGE_REACHES } from "@features/game-rooms/roomTypes.js";
 
 const Schema = mongoose.Schema;
 
@@ -713,6 +714,19 @@ const guildConfigSchema = new Schema(
 		// How:   default TRUE, an owner decision, so every legacy row is opted in
 		//        with no backfill and an admin who wants quiet turns it off.
 		arcadeMonthlyPost: { type: Boolean, required: false, default: true },
+
+		// ── challenge reach (2026-10 item 244 Phase 4) ──────────────────
+		// What:  the CEILING on who a host's challenge may reach: "invite-only"
+		//        allows invite rooms only, "server" adds public rooms, "network"
+		//        is stored now for Phase 5's network tables and reads like
+		//        "server" until they exist.
+		// Who:   written by /dero-config arcade reach; read by the challenge
+		//        card (which choices it offers) and by every room open through
+		//        RoomProvisioner.checkRoomAdmission (the refusal that counts).
+		// When:  read on every visibility choice and every room open.
+		// How:   default "server", today's behavior, so a legacy row needs no
+		//        backfill. The list lives in game-rooms/roomTypes.ts.
+		challengeReach: { type: String, required: false, enum: [...CHALLENGE_REACHES], default: "server" },
 	},
 	{ timestamps: true }
 );

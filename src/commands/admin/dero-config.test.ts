@@ -229,3 +229,37 @@ describe("a failed write", () => {
 		error.mockRestore();
 	});
 });
+
+describe("arcade reach (2026-10 item 244 Phase 4)", () => {
+	it("carries the reach as a required string with exactly the three reaches as choices", () => {
+		const arcade = (data.toJSON().options ?? []).find((option) => option.name === "arcade") as
+			| { options?: { name: string; options?: { name: string; required?: boolean; choices?: { value: string }[] }[] }[] }
+			| undefined;
+		const reach = arcade?.options?.find((sub) => sub.name === "reach");
+		expect(reach?.options?.[0]).toMatchObject({ name: "mode", required: true });
+		expect(reach?.options?.[0].choices?.map((choice) => choice.value)).toEqual(["invite-only", "server", "network"]);
+	});
+
+	it("stores a new reach and says what hosts may now open", async () => {
+		const text = await replyText({ group: "arcade", sub: "reach", id: "invite-only" });
+		expect(mocks.guildConfigUpdate).toHaveBeenCalledWith("g1", { challengeReach: "invite-only" });
+		expect(text).toContain("Challenge reach: **Invite only**");
+	});
+
+	it("reads a row that never stored a reach as Server, and writes nothing when it is unchanged", async () => {
+		expect(await replyText({ group: "arcade", sub: "reach", id: "server" })).toContain("already **Server**");
+		expect(mocks.guildConfigUpdate).not.toHaveBeenCalled();
+	});
+
+	it("accepts and stores Network now, saying it allows what Server does until network tables arrive", async () => {
+		const text = await replyText({ group: "arcade", sub: "reach", id: "network" });
+		expect(mocks.guildConfigUpdate).toHaveBeenCalledWith("g1", { challengeReach: "network" });
+		expect(text).toContain("the same as Server");
+	});
+
+	it("refuses an unknown reach rather than reading it as a default, and writes nothing", async () => {
+		mocks.guildConfig.mockResolvedValue({ guildId: "g1", challengeReach: "invite-only" });
+		expect(await replyText({ group: "arcade", sub: "reach", id: "everywhere" })).toContain("That is not a challenge reach");
+		expect(mocks.guildConfigUpdate).not.toHaveBeenCalled();
+	});
+});

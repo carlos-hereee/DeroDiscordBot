@@ -12,6 +12,7 @@ import { basename } from "node:path";
 import { gameAssetPath, type GameAssetKey } from "@features/games/gamesAssets.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
+import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
@@ -139,6 +140,31 @@ export function roomArchiveRow(roomId: string): ActionRowBuilder<ButtonBuilder> 
 			.setCustomId(`${GAME_ROOM_PREFIX}:archive:${roomId}`)
 			.setLabel(gameRoomsCopy.result.archiveButtonLabel)
 			.setEmoji("🗄️")
+			.setStyle(ButtonStyle.Secondary)
+	);
+}
+
+// ── the pinned opener's host row (2026-10 item 244 Phase 4) ──
+/**
+ * The games whose host may remove a player in the middle of a match: Hold'em (the seat
+ * leaves the table), Battleship (the match ends unrated, as abandoned) and Monopoly (the
+ * seat goes out through the forfeit path). The other games resolve in a press or two,
+ * or are played together against the host's word, so there is nothing to remove from.
+ */
+export const REMOVABLE_IN_PLAY_GAMES: readonly GameSlug[] = ["holdem", "battleship", "monopoly"];
+
+/**
+ * The host's Remove a player button for a room's pinned opener, or null for a game with
+ * no removal in play. Rendered for everyone like Archive now and gated in the handler,
+ * for the reason the result card's row explains; it opens the host's private picker.
+ */
+export function roomHostRow(game: GameSlug, roomId: string): ActionRowBuilder<ButtonBuilder> | null {
+	if (!REMOVABLE_IN_PLAY_GAMES.includes(game)) return null;
+	return new ActionRowBuilder<ButtonBuilder>().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`${GAME_ROOM_PREFIX}:kick:${roomId}`)
+			.setLabel(rokCommanderCopy.arcadeHostControls.kick.buttonLabel)
+			.setEmoji("🚫")
 			.setStyle(ButtonStyle.Secondary)
 	);
 }

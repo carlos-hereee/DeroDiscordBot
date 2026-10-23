@@ -14,6 +14,8 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 }));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: vi.fn() } }));
 vi.mock("@features/entitlements/gameRoomAccess.js", () => ({ checkGameRoomAccess: vi.fn() }));
+// The challenge reach read a public open makes (2026-10 item 244 Phase 4); no config reads as "server".
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn().mockResolvedValue(null) } }));
 
 import { RoomProvisioner, _clearInflightOpens, type RoomOpenInput } from "./RoomProvisioner.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -81,7 +83,7 @@ describe("RoomProvisioner.open with holdemTerms", () => {
 		expect(result.ok).toBe(true);
 		expect(storedTable()).toMatchObject({ status: "joining", startingStack: 5000, maxSeats: 6, smallBlind: 100, bigBlind: 200 });
 
-		const board = send.mock.calls.map((call) => call[0]).find((payload) => payload.components?.length) as {
+		const board = send.mock.calls.map((call) => call[0]).find((payload) => payload.embeds?.[0]?.data.title === gameRoomsCopy.holdem.tableTitle) as {
 			embeds: { data: { description?: string } }[];
 			components: { toJSON(): { components: { label?: string }[] } }[];
 		};
@@ -96,7 +98,7 @@ describe("RoomProvisioner.open with holdemTerms", () => {
 		expect(table).not.toHaveProperty("startingStack");
 		expect(table).not.toHaveProperty("maxSeats");
 		expect(table).toMatchObject({ smallBlind: 10, bigBlind: 20 });
-		const board = send.mock.calls.map((call) => call[0]).find((payload) => payload.components?.length) as {
+		const board = send.mock.calls.map((call) => call[0]).find((payload) => payload.embeds?.[0]?.data.title === gameRoomsCopy.holdem.tableTitle) as {
 			embeds: { data: { description?: string } }[];
 		};
 		expect(board.embeds[0].data.description).toContain(gameRoomsCopy.holdem.joiningLine(0));

@@ -40,8 +40,15 @@ import {
 } from "./challengeBoardEmbeds.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import { challengeCardView, renderChallengeCard } from "./challengeCardRenderer.js";
+import { isWithinReach, readChallengeReach } from "./challengeReach.js";
+import { isKicked, judgeJoin } from "./joinGate.js";
 import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
+import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+
+// The host controls' words are shared by every pack (2026-10 item 244 Phase 4), so
+// the default pack is the right one for every guild.
+const hostWords = rokCommanderCopy.arcadeHostControls;
 
 // ── challengeBoard ───────────────────────────────────────────────────
 // What:  the ⚔️challenges flow: start a challenge, choose who can see it, gather
@@ -90,8 +97,23 @@ function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState> = {})
 		pool: room.spectatorIds ?? [],
 		monopolyAuctions: room.monopolyAuctions ?? false,
 		monopolyReferee: room.monopolyReferee ?? false,
+		// The host's say over who joins (2026-10 item 244 Phase 4), off the draft row.
+		hostControls: {
+			ratingBand: room.ratingBand ?? "any",
+			requireApproval: room.requireApproval ?? false,
+			pendingJoinCount: (room.pendingJoinIds ?? []).length,
+		},
 		...overrides,
 	};
+}
+
+/**
+ * Re-render a draft's card from its row, for the host controls (hostControls.ts) that
+ * change a draft without going through this file's own handlers. Only ever called
+ * after the visibility step, which is the only step that offers those controls.
+ */
+export async function refreshDraftCard(guild: Guild, room: IGameRoom): Promise<void> {
+	await refreshCard(guild, room, cardStateFor(room, { visibility: room.visibility, pool: room.spectatorIds ?? [] }));
 }
 
 // Re-render the opener card for a room's current state. Cosmetic, so a failure is
@@ -206,7 +228,11 @@ export async function startChallengeDraft(
 		return null;
 	}
 
-	const state = cardStateFor(room, { visibility: null, pool: room.spectatorIds ?? [] });
+	// The server's challenge reach decides whether Open to all is offered at all; the
+	// choice is still refused server side (chooseVisibility, checkRoomAdmission), since a
+	// card posted before an admin narrowed the reach still carries the button.
+	const allowPublic = isWithinReach(await readChallengeReach(guildId), "public");
+	const state = cardStateFor(room, { visibility: null, pool: room.spectatorIds ?? [], allowPublic });
 	const logo = roomOpenerLogo(game);
 	const card = await channel
 		.send({
@@ -269,6 +295,16 @@ export async function chooseMonopolyDraftSetting(
 // ── the visibility chooser ────────────────────────────────────────────
 export async function chooseVisibility(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
 	const visibility: RoomVisibility = choice === "public" ? "public" : "invite";
+
+	// ⚠️ THE REACH CEILING, REFUSED AT THE CHOICE (2026-10 item 244 Phase 4). The card
+	// leaves Open to all off when the server is invite only, but a card posted before the
+	// admin changed the setting still has the button, and a hidden button is a suggestion,
+	// not a gate. checkRoomAdmission refuses the open again, for every other way in.
+	if (!isWithinReach(await readChallengeReach(room.guildId), visibility)) {
+		await interaction.reply({ content: hostWords.reach.publicRefused, flags: MessageFlags.Ephemeral });
+		return;
+	}
+
 	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { visibility })) ?? room;
 
 	await interaction.deferUpdate();
@@ -294,7 +330,8 @@ export async function chooseVisibility(interaction: ButtonInteraction, room: IGa
 // invitePicker.ts, shared with Dero's hold em rules card.
 export async function openInvitePicker(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const guild = interaction.guild!;
-	const options = await buildInviteOptions(guild, room.hostId);
+	// A member the host removed is never offered again (2026-10 item 244 Phase 4).
+	const options = await buildInviteOptions(guild, room.hostId, room.kickedIds ?? []);
 
 	if (options.length === 0) {
 		await interaction.reply({ content: gameRoomsCopy.board.pickerEmpty, flags: MessageFlags.Ephemeral });
@@ -336,8 +373,10 @@ export async function handleInviteSelect(interaction: StringSelectMenuInteractio
 
 	// ⚠️ RE-FILTER SERVER SIDE. The values arrive from the client, and a customId plus
 	// its payload are user input however the menu was built, so the structural
-	// guarantee above holds even against a hand-crafted interaction.
-	const picked = await refilterInvitees(interaction.guild, interaction.values, room.hostId);
+	// guarantee above holds even against a hand-crafted interaction. Members the host
+	// removed are filtered out here too, from the row read just above, so a picker
+	// opened before a removal cannot invite them back.
+	const picked = await refilterInvitees(interaction.guild, interaction.values, room.hostId, room.kickedIds ?? []);
 
 	const updated = (await gameRoomStore.update(guildId, roomId, { spectatorIds: picked })) ?? room;
 	await interaction.reply({ content: gameRoomsCopy.board.pickerSaved(picked.length), flags: MessageFlags.Ephemeral });
@@ -359,6 +398,10 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 		await interaction.reply({ content: gameRoomsCopy.board.alreadyJoined, flags: MessageFlags.Ephemeral });
 		return;
 	}
+	if ((room.pendingJoinIds ?? []).includes(actorId)) {
+		await interaction.reply({ content: hostWords.approval.alreadyAsked, flags: MessageFlags.Ephemeral });
+		return;
+	}
 	if ((room.spectatorIds ?? []).length >= BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS) {
 		await interaction.reply({
 			content: gameRoomsCopy.board.poolFull(BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS),
@@ -367,9 +410,28 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 		return;
 	}
 
+	// The host's say (2026-10 item 244 Phase 4): a removed member is refused, a rating
+	// outside the band is refused, and a host who approves each joiner gets a request.
+	const verdict = await judgeJoin(room, actorId, { alreadyApproved: false });
+	if (verdict.kind === "refuse") {
+		const refusal = verdict.reason === "kicked" ? hostWords.kick.refusedRejoin : hostWords.band.refused(gameRoomsCopy.gameLabel(room.game));
+		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	if (verdict.kind === "ask") {
+		await askHostToJoin(interaction, room);
+		return;
+	}
+
 	// $addToSet, so two members clicking in the same tick both land and a double click
-	// is a no-op rather than a duplicate entry.
-	const updated = (await gameRoomStore.addPoolMember(room.guildId, room.roomId, actorId)) ?? room;
+	// is a no-op rather than a duplicate entry. Null means the host removed this member
+	// in the moment since the read above (the store's kickedIds filter).
+	const added = await gameRoomStore.addPoolMember(room.guildId, room.roomId, actorId);
+	if (!added && isKicked((await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? room, actorId)) {
+		await interaction.reply({ content: hostWords.kick.refusedRejoin, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	const updated = added ?? room;
 
 	await interaction.deferUpdate();
 	await refreshCard(
@@ -377,6 +439,22 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 		updated,
 		cardStateFor(updated, { visibility: updated.visibility, pool: updated.spectatorIds ?? [] })
 	);
+}
+
+// The host approves each joiner (2026-10 item 244 Phase 4): the member goes on the
+// waiting list instead of the pool, answered from the host's Requests panel, and the
+// card's waiting count moves. A null from the store means the write did not apply:
+// the host removed this member, or the draft ended, a moment after the read.
+async function askHostToJoin(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	const updated = await gameRoomStore.addPendingJoin(room.guildId, room.roomId, interaction.user.id);
+	if (!updated) {
+		const fresh = (await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? room;
+		const refusal = isKicked(fresh, interaction.user.id) ? hostWords.kick.refusedRejoin : gameRoomsCopy.board.draftGone;
+		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	await interaction.reply({ content: hostWords.approval.asked, flags: MessageFlags.Ephemeral });
+	await refreshDraftCard(interaction.guild!, updated);
 }
 
 // ── start the match ───────────────────────────────────────────────────
@@ -459,8 +537,10 @@ export async function handleOpponentSelect(interaction: StringSelectMenuInteract
 		return;
 	}
 
+	// A member the host removed after this picker opened is out of the pool by now, so
+	// the pool check refuses them; isKicked says so outright rather than leaning on it.
 	const chosen = interaction.values[0];
-	if (!chosen || !(room.spectatorIds ?? []).includes(chosen)) {
+	if (!chosen || !(room.spectatorIds ?? []).includes(chosen) || isKicked(room, chosen)) {
 		await interaction.reply({ content: gameRoomsCopy.board.poolEmpty, flags: MessageFlags.Ephemeral });
 		return;
 	}
@@ -684,6 +764,12 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 			// them: Monopoly's referee in particular is read off the ROW on every move.
 			monopolyAuctions: finished.monopolyAuctions ?? false,
 			monopolyReferee: finished.monopolyReferee ?? false,
+			// And the host controls (2026-10 item 244 Phase 4), above all who was removed:
+			// the rematch plays in the SAME channel, so a member removed from it stays
+			// removed, and a public Hold'em rematch's Buy in refuses them like the first.
+			ratingBand: finished.ratingBand ?? "any",
+			requireApproval: finished.requireApproval ?? false,
+			kickedIds: finished.kickedIds ?? [],
 		});
 	} catch (error) {
 		// Almost certainly the partial unique index catching a room the presser opened

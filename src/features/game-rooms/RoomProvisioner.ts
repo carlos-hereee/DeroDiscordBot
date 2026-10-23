@@ -5,7 +5,7 @@ import { gameRoomCreatedEvent } from "@base/constants/BOT_LOG_EVENTS.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { buildRoomChannelName, resolveRoomChannelName } from "./roomNaming.js";
 import { buildRoomOverwrites } from "./roomPermissions.js";
-import { roomOpenerEmbed, roomOpenerLogo } from "./gameRoomsEmbeds.js";
+import { roomHostRow, roomOpenerEmbed, roomOpenerLogo } from "./gameRoomsEmbeds.js";
 import { roomMoveRow } from "./roomGames.js";
 import { hangmanRow, hangmanCategoryRow, startSoloHangmanRound } from "./roomHangman.js";
 import {
@@ -20,7 +20,9 @@ import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from
 import { createInitialState as createMonopolyState } from "@features/games/monopolyState.js";
 import { monopolyBoardEmbed, monopolyControlsRow } from "./roomMonopoly.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
+import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { isWithinReach, readChallengeReach } from "./challengeReach.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -78,7 +80,8 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 const inflightOpens = new Map<string, Promise<RoomOpenResult>>();
 
 // Games whose controls ride their OWN board message, the one that gets edited every
-// turn. Their pinned opener stays a plain card.
+// turn. Their pinned opener carries none of the game's controls, only the host's
+// Remove a player for the games that allow one in play (openerComponents).
 //
 // ⚠️ A GAME MISSING FROM THIS LIST GETS A DEAD BUTTON, which is what hold em shipped
 // with: it was neither "battleship" nor "hangman", so the opener fell through to
@@ -105,6 +108,17 @@ function openerControls(game: GameSlug, roomId: string) {
 	return [roomMoveRow({ roomId, game })];
 }
 
+// The pinned opener's components. A self boarded game keeps its controls on its own
+// board, so its opener carries only the host's Remove a player row (2026-10 item 244
+// Phase 4) when the game allows a removal in play, and nothing otherwise. The opener
+// is pinned, which is why the host's control lives there: it stays one click away
+// however far the trail has scrolled, and it is the same place in every game.
+function openerComponents(game: GameSlug, roomId: string) {
+	if (!SELF_BOARDED_GAMES.includes(game)) return { components: openerControls(game, roomId) };
+	const hostRow = roomHostRow(game, roomId);
+	return hostRow ? { components: [hostRow] } : {};
+}
+
 // Test seam, and the reason this is not just a module-local: a leaked entry would make
 // every later open by that host return the previous result forever.
 export const _clearInflightOpens = (): void => inflightOpens.clear();
@@ -119,6 +133,9 @@ export type RoomOpenResult =
 	// The tier-gated PRIVATE ceiling (invite + solo). Carries the numbers so the copy
 	// can say which limit on which plan, not just "no".
 	| { ok: false; reason: "privateQuotaHit"; quota: number; tier: string }
+	// A public room in a server whose challenge reach is invite only (2026-10 item 244
+	// Phase 4). Every door into a room ends here, so this is the refusal that counts.
+	| { ok: false; reason: "outsideReach" }
 	| { ok: false; reason: "missingPermissions" }
 	| { ok: false; reason: "createFailed" };
 
@@ -292,6 +309,14 @@ export interface RoomAdmissionInput {
 export async function checkRoomAdmission(input: RoomAdmissionInput): Promise<RoomOpenFailure | null> {
 	const { guild, hostId, visibility } = input;
 
+	// ⓪ The server's challenge reach (2026-10 item 244 Phase 4): an invite only server
+	// opens no public room, by the board, a rematch or Dero's rules card alike. First,
+	// because it is the one refusal no amount of waiting fixes. Read only for a public
+	// room, so an invite or solo open costs no extra read.
+	if (visibility === "public" && !isWithinReach(await readChallengeReach(guild.id), visibility)) {
+		return { ok: false, reason: "outsideReach" };
+	}
+
 	// ① F11, the friendly half. The partial unique index is the real enforcement and
 	// would throw a duplicate key on create; checking first is what turns that into a
 	// jump link to the room the host already has.
@@ -423,7 +448,7 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 		.send({
 			embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility, inviteCode, logo?.ref)],
 			...(logo ? { files: [logo.attachment] } : {}),
-			...(SELF_BOARDED_GAMES.includes(game) ? {} : { components: openerControls(game, room.roomId) }),
+			...openerComponents(game, room.roomId),
 		})
 		.catch(() => null);
 	await opener?.pin().catch(() => undefined);
@@ -538,6 +563,9 @@ export function describeRoomOpenFailure(result: RoomOpenFailure): string {
 			return gameRoomsCopy.errors.guildFull();
 		case "privateQuotaHit":
 			return gameRoomsCopy.errors.privateQuotaHit(result.quota, gameRoomsCopy.tierName(result.tier));
+		case "outsideReach":
+			// Both packs share the host control words, so the default pack is right here.
+			return rokCommanderCopy.arcadeHostControls.reach.publicRefused;
 		case "missingPermissions":
 			return gameRoomsCopy.errors.missingPermissions;
 		case "createFailed":

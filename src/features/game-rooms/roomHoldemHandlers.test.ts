@@ -156,8 +156,10 @@ describe("buying in", () => {
 		];
 		expect(extra.$addToSet.playerIds).toBe("newcomer");
 		// And the write is CONDITIONAL on the seat count it read, which is what makes
-		// the loser of that race write nothing at all.
-		expect(expected).toEqual({ "secret.seats": { $size: 0 } });
+		// the loser of that race write nothing at all, and on the buyer not being
+		// removed by the host, which is what keeps a member removed after this read
+		// off the table (2026-10 item 244 Phase 4).
+		expect(expected).toEqual({ "secret.seats": { $size: 0 }, kickedIds: { $ne: "newcomer" } });
 	});
 
 	it("re-reads and seats the loser of a race rather than overwriting the winner", async () => {

@@ -23,6 +23,9 @@ vi.mock("@db/stores/botLogStore.js", () => ({
 vi.mock("@features/entitlements/gameRoomAccess.js", () => ({
 	checkGameRoomAccess: vi.fn(),
 }));
+// The server's challenge reach (2026-10 item 244 Phase 4), read on a public open. No
+// config reads as "server", today's behavior, so only the reach cases set one.
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 
 import { RoomProvisioner, _clearInflightOpens, describeRoomOpenFailure, type RoomOpenInput } from "./RoomProvisioner.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -30,6 +33,8 @@ import { botLogStore } from "@db/stores/botLogStore.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { HANGMAN_WORD_BANK } from "@features/games/hangmanWords.js";
+import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 
 const storeMock = gameRoomStore as unknown as {
 	findOpenByHost: ReturnType<typeof vi.fn>;
@@ -468,5 +473,30 @@ describe("RoomProvisioner.open, the in-flight guard", () => {
 		await Promise.all([RoomProvisioner.open(hostA), RoomProvisioner.open(hostB)]);
 
 		expect(storeMock.create).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe("RoomProvisioner.open, the server's challenge reach (2026-10 item 244 Phase 4)", () => {
+	const configMock = guildConfigStore.findByGuildId as unknown as ReturnType<typeof vi.fn>;
+
+	it("refuses a public room in an invite only server before any channel exists, with words to show", async () => {
+		configMock.mockResolvedValue({ challengeReach: "invite-only" });
+		const input = makeInput({ visibility: "public" });
+
+		const result = await RoomProvisioner.open(input);
+
+		expect(result).toEqual({ ok: false, reason: "outsideReach" });
+		expect(input.guild.channels.create).not.toHaveBeenCalled();
+		expect(describeRoomOpenFailure(result as never)).toBe(rokCommanderCopy.arcadeHostControls.reach.publicRefused);
+	});
+
+	it("still opens an invite room there, and a public room at Server and Network reach", async () => {
+		configMock.mockResolvedValue({ challengeReach: "invite-only" });
+		expect((await RoomProvisioner.open(makeInput({ visibility: "invite" }))).ok).toBe(true);
+		for (const challengeReach of ["server", "network"]) {
+			_clearInflightOpens();
+			configMock.mockResolvedValue({ challengeReach });
+			expect((await RoomProvisioner.open(makeInput({ visibility: "public" }))).ok).toBe(true);
+		}
 	});
 });

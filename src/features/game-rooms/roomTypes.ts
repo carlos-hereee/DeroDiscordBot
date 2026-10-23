@@ -65,6 +65,26 @@ export type RoomStatus = (typeof ROOM_STATUSES)[number];
 //        quietly evaporates with no error anywhere, which is why there is exactly one copy.
 export const NON_TERMINAL_ROOM_STATUSES = ["draft", "open", "playing"] as const;
 
+// ── How wide a host's rating band is (2026-10 item 244 Phase 4) ──
+// "any" admits everyone; "close" and "tight" admit a joiner whose display rating sits
+// within BOT_CONSTANTS.RATINGS.BAND_CLOSE or BAND_TIGHT of the host's. Declared HERE,
+// in the dependency free vocabulary, rather than in features/ratings/ratingEngine.ts,
+// because the GameRoom model needs the list for its enum validator and a model must
+// not load the rating library to get it. ratingEngine re-exports it, so the band
+// math and the stored value read one list.
+export const RATING_BANDS = ["any", "close", "tight"] as const;
+export type RatingBand = (typeof RATING_BANDS)[number];
+
+// ── How far a server lets its challenges reach (2026-10 item 244 Phase 4) ──
+// A CEILING on the visibility a host may pick, set by an admin on GuildConfig:
+// "invite-only" allows invite rooms only, "server" adds public rooms (the behavior
+// every server had before the setting existed, so it is the default), and "network"
+// is stored now for the network tables of Phase 5, which until then reads exactly
+// like "server". Here for the same reason as RATING_BANDS: the GuildConfig model
+// needs the list for its enum validator.
+export const CHALLENGE_REACHES = ["invite-only", "server", "network"] as const;
+export type ChallengeReach = (typeof CHALLENGE_REACHES)[number];
+
 // ── A single entry in the append-only scroll ──
 // `kind` drives how the trail renders the entry, never whether it is recorded. `meta` is
 // persisted for the future dashboard but never rendered into Discord, so a handler can stash

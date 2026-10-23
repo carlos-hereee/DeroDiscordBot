@@ -2,6 +2,7 @@ import { GameRoom, type IGameRoom } from "@db/models/GameRoom.js";
 import {
 	NON_TERMINAL_ROOM_STATUSES,
 	type GameSlug,
+	type RatingBand,
 	type RoomMove,
 	type RoomStatus,
 	type RoomVisibility,
@@ -42,7 +43,16 @@ interface ICreateGameRoom {
 	// challenge sets them on its draft with the card's toggles instead.
 	monopolyAuctions?: boolean;
 	monopolyReferee?: boolean;
+	// The host controls, carried from the finished room by a rematch in the same
+	// channel, so a member removed from that channel stays removed. A board challenge
+	// sets them on its draft with the card's controls instead.
+	ratingBand?: RatingBand;
+	requireApproval?: boolean;
+	kickedIds?: string[];
 }
+
+// Where an accepted join request lands: the draft's pool, or a live room's players.
+export type AdmittedJoinField = "spectatorIds" | "playerIds";
 
 export const gameRoomStore = {
 	// Insert a new draft room.
@@ -67,6 +77,9 @@ export const gameRoomStore = {
 			channelId: input.channelId ?? null,
 			monopolyAuctions: input.monopolyAuctions ?? false,
 			monopolyReferee: input.monopolyReferee ?? false,
+			ratingBand: input.ratingBand ?? "any",
+			requireApproval: input.requireApproval ?? false,
+			kickedIds: input.kickedIds ?? [],
 			status: "draft",
 		});
 	},
@@ -239,8 +252,70 @@ export const gameRoomStore = {
 	// the host promotes one member into playerIds and everyone else is already in the
 	// right field. See the challenge board for why one mechanism serves both
 	// visibilities.
+	//
+	// ⚠️ THE kickedIds FILTER IS THE NO-REJOIN GUARANTEE, not a tidiness check. The
+	// caller checks kickedIds on the row it read, but a kick can land between that read
+	// and this write; matching `$ne` here means a removed member can never be written
+	// back into the pool, and the null return is the caller's honest refusal. `$ne`
+	// also matches a row written before kickedIds existed.
 	async addPoolMember(guildId: string, roomId: string, userId: string) {
-		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $addToSet: { spectatorIds: userId } }, { new: true });
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, kickedIds: { $ne: userId } },
+			{ $addToSet: { spectatorIds: userId } },
+			{ new: true }
+		);
+	},
+
+	// ── the host controls (2026-10 item 244 Phase 4) ──
+	// Each is one atomic write over the arrays it touches, for the reason addPoolMember
+	// is: several members press Join in the same tick, and a read-modify-write would
+	// drop all but the last. Each filters on kickedIds the same way, so a removed member
+	// can never be written back in. A null return means the write did not apply.
+
+	// A join the host must answer first.
+	async addPendingJoin(guildId: string, roomId: string, userId: string) {
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] }, kickedIds: { $ne: userId } },
+			{ $addToSet: { pendingJoinIds: userId } },
+			{ new: true }
+		);
+	},
+
+	// The host accepted one request: it leaves the waiting list and lands in `into`,
+	// in ONE write, so a member is never in both or in neither. Matching on
+	// pendingJoinIds makes a second accept of the same request a no-op.
+	async admitPendingJoin(guildId: string, roomId: string, userId: string, into: AdmittedJoinField) {
+		return GameRoom.findOneAndUpdate(
+			{
+				guildId,
+				roomId,
+				status: { $in: [...NON_TERMINAL_ROOM_STATUSES] },
+				pendingJoinIds: userId,
+				kickedIds: { $ne: userId },
+			},
+			{ $pull: { pendingJoinIds: userId }, $addToSet: { [into]: userId } },
+			{ new: true }
+		);
+	},
+
+	// The host declined these requests. A declined member may ask again; a removed one may not.
+	async declinePendingJoins(guildId: string, roomId: string, userIds: readonly string[]) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $pull: { pendingJoinIds: { $in: [...userIds] } } }, { new: true });
+	},
+
+	// The host removed a member: out of every list that lets them in, and onto
+	// kickedIds for good, in one write. The status filter keeps a finished room's
+	// record as it ended, and the hostId filter means the host can never remove
+	// themselves, whatever a forged select sends.
+	async removeMember(guildId: string, roomId: string, userId: string) {
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] }, hostId: { $ne: userId } },
+			{
+				$pull: { playerIds: userId, spectatorIds: userId, pendingJoinIds: userId },
+				$addToSet: { kickedIds: userId },
+			},
+			{ new: true }
+		);
 	},
 
 	// Append one entry to the transcript.

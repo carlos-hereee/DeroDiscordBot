@@ -32,11 +32,14 @@ import { roomMonopolyBuild } from "./roomMonopolyBuild.js";
 import { roomMonopolyMortgage } from "./roomMonopolyMortgage.js";
 import { roomMonopolyTrade } from "./roomMonopolyTrade.js";
 import { roomMonopolyAuction } from "./roomMonopolyAuction.js";
+import { hostControls } from "./hostControls.js";
 import type { GameSlug } from "./roomTypes.js";
 
 // The actions that only make sense while a draft is still a draft. Listed once so
-// the status refusal below cannot drift from the routing switch.
-const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "cancel", "auctions", "referee"]);
+// the status refusal below cannot drift from the routing switch. `requests` and `kick`
+// are host controls too but are NOT here: they also work in a live room, and each
+// refuses by the room's status itself.
+const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "cancel", "auctions", "referee", "approval"]);
 
 // ── gameRoomHandlers ─────────────────────────────────────────────────
 // What:  routes every `gameroom:` button to its action, after proving the clicker is
@@ -148,6 +151,20 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			// On the result card of a finished room. rematchFromRoom refuses by status
 			// and enforces the one-rematch-per-room rule itself.
 			await challengeBoard.rematchFromRoom(interaction, room);
+			return;
+
+		// ── the host controls (2026-10 item 244 Phase 4) ──
+		case "approval":
+			await hostControls.toggleApproval(interaction, room, parsed.arg ?? "");
+			return;
+		case "requests":
+			await hostControls.openJoinRequests(interaction, room);
+			return;
+		case "kick":
+			await hostControls.openRemovePicker(interaction, room);
+			return;
+		case "hseats":
+			await roomHoldemHandlers.handleSeatsToggle(interaction, room, parsed.arg ?? "");
 			return;
 
 		// ── in the room ──
@@ -284,6 +301,11 @@ export function registerGameRoomHandlers(): void {
 		const action = interaction.customId.split(":")[1];
 		if (action === "invite") return challengeBoard.handleInviteSelect(interaction);
 		if (action === "opponent") return challengeBoard.handleOpponentSelect(interaction);
+		// The host controls: the card's band, the Requests panel's answers, and the
+		// Remove a player picker. Each re-gates the host (or an admin) itself.
+		if (action === "band") return hostControls.handleBandSelect(interaction);
+		if (action === "accept" || action === "decline") return hostControls.handleJoinRequestSelect(interaction);
+		if (action === "kick") return hostControls.handleRemoveSelect(interaction);
 		if (action === "rps") return handleRpsSelect(interaction);
 		// Hangman: the host lets Dero draw the word from a category.
 		if (action === "hcategory") return handleCategorySelect(interaction);

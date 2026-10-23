@@ -247,6 +247,13 @@ export const BOT_CONSTANTS = {
 	// DIFFERENT winner, so the attempts need to cover a full table plus headroom
 	// rather than the usual one-retry-and-give-up.
 	HOLDEM_SEAT_CLAIM_ATTEMPTS: 8,
+	// How many times the host's Remove a player re-reads and retries taking the seat
+	// out of a live Hold'em table or Monopoly board when a move beat it (2026-10 item
+	// 244 Phase 4). The removal from the room row has already landed by then, so a
+	// seat left behind would sit in a match its player can no longer press anything
+	// in; a few retries cover a burst of moves, and past them the host is told to
+	// press again rather than the bot looping against a busy table.
+	GAME_ROOM_KICK_ATTEMPTS: 4,
 
 	// ── dero voice ───────────────────────────────────────────────
 	// What:  every number and provider string the voice feature runs on: the

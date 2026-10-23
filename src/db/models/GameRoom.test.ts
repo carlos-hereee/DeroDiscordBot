@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { GameRoom } from "./GameRoom.js";
-import { GAME_SLUGS, NON_TERMINAL_ROOM_STATUSES, ROOM_STATUSES, ROOM_VISIBILITIES } from "@features/game-rooms/roomTypes.js";
+import { GAME_SLUGS, NON_TERMINAL_ROOM_STATUSES, RATING_BANDS, ROOM_STATUSES, ROOM_VISIBILITIES } from "@features/game-rooms/roomTypes.js";
 
 // ── GameRoom index and enum declarations ──────────────────────────────────
 // SCOPE NOTE, read this before adding to the file. These are SCHEMA assertions, not store
@@ -104,5 +104,34 @@ describe("GameRoom archive safety", () => {
 		// that is still playing has archiveAt null, so no filter bug can reach a live game.
 		expect(GameRoom.schema.path("archiveAt").options.default).toBe(null);
 		expect(GameRoom.schema.path("endedAt").options.default).toBe(null);
+	});
+});
+
+describe("GameRoom host controls (2026-10 item 244 Phase 4)", () => {
+	it("defaults every control to the open door an older row reads as", () => {
+		const room = new GameRoom({ guildId: "guild-1", game: "holdem", hostId: "host-1" });
+		expect(room.ratingBand).toBe("any");
+		expect(room.requireApproval).toBe(false);
+		expect([...room.pendingJoinIds]).toEqual([]);
+		expect([...room.kickedIds]).toEqual([]);
+		expect(room.seatsOpen).toBe(false);
+	});
+
+	it("accepts exactly the rating bands the rating engine reads", () => {
+		expect((GameRoom.schema.path("ratingBand") as unknown as { enumValues: string[] }).enumValues).toEqual([...RATING_BANDS]);
+	});
+
+	it("adds no index, so the one open room per host index is the same index it was", () => {
+		const declared = indexes.map(([fields]) => JSON.stringify(fields)).sort();
+		expect(declared).toEqual(
+			[{ roomId: 1 }, { guildId: 1, status: 1 }, { guildId: 1, hostId: 1 }, { status: 1, archiveAt: 1 }, { guildId: 1, playerIds: 1, endedAt: -1 }]
+				.map((fields) => JSON.stringify(fields))
+				.sort()
+		);
+		expect(findIndex({ guildId: 1, hostId: 1 })?.[1]).toEqual({
+			unique: true,
+			partialFilterExpression: { status: { $in: [...NON_TERMINAL_ROOM_STATUSES] } },
+			background: true,
+		});
 	});
 });

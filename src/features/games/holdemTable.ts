@@ -93,6 +93,18 @@ export interface HoldemTable {
 	// both are optional and every reader goes through startingStackOf and seatCapOf.
 	startingStack?: number;
 	maxSeats?: number;
+	// Late joiners who claimed a free seat while the host had seats open (2026-10 item
+	// 244 Phase 4), waiting for the next deal. ⚠️ NOT SEATS. Nothing that reads the
+	// hand, the pots, the blinds, the button or the bust order looks here, and the
+	// only code that turns one into a seat is seatLatePlayers at the top of dealHand,
+	// before the next hand exists. Absent on every table stored before it existed.
+	pendingSeats?: PendingSeat[];
+}
+
+/** A late joiner holding a seat for the next deal, with the name its seat will carry. */
+export interface PendingSeat {
+	userId: string;
+	username: string;
 }
 
 /**
@@ -170,17 +182,100 @@ export function joinTable(table: HoldemTable, userId: string, username: string):
 	if (seatOf(table, userId)) return { ok: false, reason: "alreadySeated" };
 	if (table.seats.length >= seatCapOf(table)) return { ok: false, reason: "tableFull" };
 
-	table.seats.push({
-		userId,
-		username,
-		stack: startingStackOf(table),
-		committed: 0,
-		totalCommitted: 0,
-		folded: false,
-		allIn: false,
-		out: false,
-	});
+	table.seats.push(freshSeat(userId, username, startingStackOf(table)));
 	return { ok: true };
+}
+
+// A seat as it is before its first hand. Shared by the buy in and the late seat, so a
+// player who sat down mid tournament starts from exactly the seat a first buyer gets.
+function freshSeat(userId: string, username: string, stack: number): TableSeat {
+	return { userId, username, stack, committed: 0, totalCommitted: 0, folded: false, allIn: false, out: false };
+}
+
+// ── late seats (2026-10 item 244 Phase 4) ─────────────────────────────
+export type LateSeatResult = { ok: true } | { ok: false; reason: "notPlaying" | "alreadySeated" | "alreadyWaiting" | "tableFull" };
+
+/**
+ * Claim a free seat at a tournament already under way, the Take a seat button's
+ * engine half. The seat waits in `pendingSeats` and is dealt in at the start of the
+ * next hand with the table's starting stack (seatLatePlayers); this never touches a
+ * seat, a hand or a pot.
+ *
+ * A player who already has a seat entry is refused even when it is `out`: that entry
+ * is what their bust order place hangs on, and a second entry for one player would
+ * leave seatOf finding the dead one. Coming back after busting would be a rebuy,
+ * which a tournament does not have. A free seat counts the players still in plus
+ * those already waiting, against the table's seat cap.
+ *
+ * Moves the action stamp, which is the table's compare and swap version, so a move
+ * that read the table before this claim loses its write instead of writing the
+ * waiting list away; the turn clock is carried over (restampKeepingClock), so the
+ * player on the clock keeps the time they had.
+ */
+export function requestLateSeat(table: HoldemTable, userId: string, username: string, now: number = Date.now()): LateSeatResult {
+	if (table.status !== "playing") return { ok: false, reason: "notPlaying" };
+	if (seatOf(table, userId)) return { ok: false, reason: "alreadySeated" };
+	const waiting = table.pendingSeats ?? [];
+	if (waiting.some((entry) => entry.userId === userId)) return { ok: false, reason: "alreadyWaiting" };
+	if (!hasLateSeatFree(table)) return { ok: false, reason: "tableFull" };
+
+	table.pendingSeats = [...waiting, { userId, username }];
+	restampKeepingClock(table, now);
+	return { ok: true };
+}
+
+/** True while a late joiner could still claim a seat: the players still in plus those waiting are under the seat cap. */
+export function hasLateSeatFree(table: HoldemTable): boolean {
+	return livePlayers(table).length + (table.pendingSeats ?? []).length < seatCapOf(table);
+}
+
+/** Drop a waiting late seat, the host removing its player. Answers whether one was waiting. */
+export function withdrawLateSeat(table: HoldemTable, userId: string, now: number = Date.now()): boolean {
+	const waiting = table.pendingSeats ?? [];
+	if (!waiting.some((entry) => entry.userId === userId)) return false;
+	table.pendingSeats = waiting.filter((entry) => entry.userId !== userId);
+	restampKeepingClock(table, now);
+	return true;
+}
+
+// ⚠️ THE ONE PLACE A SEAT JOINS A RUNNING TOURNAMENT, and dealHand calls it first,
+// while no hand exists: the last hand has settled (its commitments are zeroed, its
+// busts recorded and the button passed), and the next has not been dealt. So the new
+// seat is in livePlayers before the deal, the blinds, the betting round and the pots
+// are built, and it is an ordinary seat for every one of them. It is appended to the
+// END of the seat array, which leaves every existing seat at its live index, so the
+// button (an index into the live seats) stays on the seat it was passed to. The
+// handInProgress guard is the backstop: a hand still live is never touched, and the
+// late seat waits for the next deal instead.
+function seatLatePlayers(table: HoldemTable): string[] {
+	const waiting = table.pendingSeats ?? [];
+	if (waiting.length === 0 || handInProgress(table)) return [];
+
+	const seated: string[] = [];
+	const stillWaiting: PendingSeat[] = [];
+	for (const entry of waiting) {
+		if (seatOf(table, entry.userId)) continue;
+		// Cannot happen while requestLateSeat holds the cap, since busts only free seats;
+		// a seat that would not fit waits for the next deal rather than vanishing.
+		if (livePlayers(table).length >= seatCapOf(table)) {
+			stillWaiting.push(entry);
+			continue;
+		}
+		table.seats.push(freshSeat(entry.userId, entry.username, startingStackOf(table)));
+		seated.push(entry.userId);
+	}
+	table.pendingSeats = stillWaiting;
+	return seated;
+}
+
+// Move the action stamp without restarting the clock on whoever is to act. The
+// stamp is the table's compare and swap version, so moving it makes a write racing
+// on the old one lose; the turn prompt is carried over to the new stamp, so the
+// player on the clock keeps the time they had rather than a fresh clock because
+// somebody else changed something off their seat.
+function restampKeepingClock(table: HoldemTable, now: number): void {
+	table.turnPrompt = { stamp: now, shownAt: clockStartOf(table) };
+	table.lastActionAt = now;
 }
 
 // ── dealing ───────────────────────────────────────────────────────────
@@ -191,6 +286,9 @@ export function joinTable(table: HoldemTable, userId: string, username: string):
 // Answers what the deal set off: a seat sitting out that the action reaches at once
 // is folded right away (see foldSeatsSittingOut), and that can end the hand.
 export function dealHand(table: HoldemTable, rng: () => number = Math.random): ActionOutcome {
+	// Before ANYTHING about the new hand is read, so a late seat is part of the whole
+	// of it: see seatLatePlayers for why this is the only safe moment.
+	const lateSeated = seatLatePlayers(table);
 	const players = livePlayers(table);
 	if (players.length < BOT_CONSTANTS.HOLDEM_MIN_SEATS) {
 		finishTournament(table);
@@ -235,7 +333,10 @@ export function dealHand(table: HoldemTable, rng: () => number = Math.random): A
 	table.betting = postBlinds(toBettingSeats(order), smallBlindSeat, table.smallBlind, table.bigBlind);
 	writeBack(table);
 	table.lastActionAt = Date.now();
-	return foldSeatsSittingOut(table, rng, { ok: true });
+	// Attached AFTER the sit out folds, whose merge rebuilds the outcome from each fold
+	// and would otherwise drop the late seats a deal made.
+	const outcome = foldSeatsSittingOut(table, rng, { ok: true });
+	return lateSeated.length > 0 ? { ...outcome, lateSeated } : outcome;
 }
 
 // The live seats in play order starting AT the button. Dealing and the blinds are
@@ -317,6 +418,9 @@ export interface ActionOutcome {
 	// Seats folded because they sit out, in the order the action reached them. NOT in
 	// `narration`: the room posts its own line for each.
 	sittingOutFolds?: string[];
+	// Set on a deal that seated late joiners, in the order they sat down, so the room
+	// can name them and give them the playersOnly gate in the deal's own write.
+	lateSeated?: string[];
 }
 
 /**
@@ -648,8 +752,7 @@ export function returnToTable(table: HoldemTable, userId: string, now: number = 
 	if (!seat.sittingOut) return { ok: false, reason: "notSittingOut" };
 	seat.sittingOut = false;
 	seat.timeoutsInRow = 0;
-	table.turnPrompt = { stamp: now, shownAt: clockStartOf(table) };
-	table.lastActionAt = now;
+	restampKeepingClock(table, now);
 	return { ok: true };
 }
 

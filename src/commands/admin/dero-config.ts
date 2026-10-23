@@ -19,17 +19,19 @@ import { isTtsKeyConfigured } from "@features/voice/elevenLabsTts.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
 import { ratingsCopy } from "@features/ratings/ratingsCopy.js";
+import { asChallengeReach, isChallengeReach } from "@features/game-rooms/challengeReach.js";
+import { CHALLENGE_REACHES, type ChallengeReach } from "@features/game-rooms/roomTypes.js";
 
 // ── /dero-config ──────────────────────────────────────────────────────
 // What:  every per guild voice setting in one admin command: the kill switch,
 //        Listen on or off, the monthly cap, and the three allowlists later
 //        phases authorize against. The voice itself is not a setting: Dero
 //        speaks with DERO_DEFAULT_VOICE_ID, so enable works straight away.
-//        The `arcade` group holds the arcade settings (2026-10 item 244): today
-//        the monthly arcade post switch, stored on GuildConfig rather than
-//        DeroVoiceConfig because it has nothing to do with the voice. Item 245
-//        Phase 4b (the command merge) has not run yet, so this group is a new
-//        name that phase must fold into its command layout.
+//        The `arcade` group holds the arcade settings (2026-10 item 244): the
+//        monthly arcade post switch and the challenge reach (Phase 4), stored on
+//        GuildConfig rather than DeroVoiceConfig because neither has anything to
+//        do with the voice. Item 245 Phase 4b (the command merge) has not run
+//        yet, so this group is a new name that phase must fold into its layout.
 // Who:   server admins, gated at runtime by ADMIN_COMMANDS in main.ts (guild
 //        owner or the bot's admin role). It carries no Discord default
 //        permission, which would hide it from that admin role.
@@ -37,7 +39,8 @@ import { ratingsCopy } from "@features/ratings/ratingsCopy.js";
 //        reply, so repeating a command never reads as a fake change.
 // Where: writes DeroVoiceConfig through deroVoiceConfigStore. Read by the Listen
 //        button and handler and by the spend meter. The arcade group writes
-//        GuildConfig.arcadeMonthlyPost, read by features/ratings/monthlyArcadePost.ts.
+//        GuildConfig.arcadeMonthlyPost, read by features/ratings/monthlyArcadePost.ts,
+//        and GuildConfig.challengeReach, read by features/game-rooms/challengeReach.ts.
 // How:   ① guild gate (rejects DM use); ② setup gate (a guild that never ran
 //        /setup has no admin role for the runtime gate to check); ③ dispatch on
 //        the subcommand group or subcommand; ④ one ephemeral embed reply.
@@ -128,6 +131,20 @@ export const data = new SlashCommandBuilder()
 					.setDescription(ratingsCopy.config.monthlyPost)
 					// A boolean like `listen`, so the two on and off switches in this command read the same.
 					.addBooleanOption((option) => option.setName("enabled").setDescription(ratingsCopy.config.monthlyPostOption).setRequired(true))
+			)
+			.addSubcommand((sub) =>
+				sub
+					.setName("reach")
+					.setDescription(ratingsCopy.config.reach)
+					// Fixed choices, so Discord offers exactly the three reaches; the handler
+					// still narrows the value, since a choice is the client's suggestion.
+					.addStringOption((option) =>
+						option
+							.setName("mode")
+							.setDescription(ratingsCopy.config.reachOption)
+							.setRequired(true)
+							.addChoices(...CHALLENGE_REACHES.map((reach) => ({ name: ratingsCopy.config.reachName(reach), value: reach })))
+					)
 			)
 	);
 
@@ -226,6 +243,24 @@ async function setMonthlyPost(guildId: string, storedValue: boolean | null | und
 	return info(ratingsCopy.config.monthlyPostSet(on), title);
 }
 
+// The same idempotent shape for the challenge reach (2026-10 item 244 Phase 4). A row
+// that never stored it reads as "server", the schema's default and today's behavior.
+// Rooms already playing are untouched; the next open, choice or rematch reads the new value.
+async function setChallengeReach(guildId: string, storedValue: unknown, reach: ChallengeReach): Promise<EmbedBuilder> {
+	const title = ratingsCopy.config.title;
+	if (asChallengeReach(storedValue) === reach) return info(ratingsCopy.config.reachUnchanged(reach), title);
+	await guildConfigStore.update(guildId, { challengeReach: reach });
+	return info(ratingsCopy.config.reachSet(reach), title);
+}
+
+// The submitted mode is checked rather than trusted: Discord offers only the fixed
+// choices, but an interaction's values are user input, and an unknown one is refused
+// rather than read as a default that would quietly widen the reach.
+async function setReachFromOption(guildId: string, storedValue: unknown, mode: string): Promise<EmbedBuilder> {
+	if (!isChallengeReach(mode)) return errorEmbed(ratingsCopy.config.reachUnknown);
+	return setChallengeReach(guildId, storedValue, mode);
+}
+
 function isListKind(group: string | null): group is ListKind {
 	return group === "role" || group === "channel" || group === "voicechannel";
 }
@@ -250,7 +285,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		const group = interaction.options.getSubcommandGroup(false);
 		const sub = interaction.options.getSubcommand(true);
 		if (group === "arcade") {
-			const embed = await setMonthlyPost(guildId, guildConfig.arcadeMonthlyPost, interaction.options.getBoolean("enabled", true));
+			const embed =
+				sub === "reach"
+					? await setReachFromOption(guildId, guildConfig.challengeReach, interaction.options.getString("mode", true))
+					: await setMonthlyPost(guildId, guildConfig.arcadeMonthlyPost, interaction.options.getBoolean("enabled", true));
 			await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 			return;
 		}

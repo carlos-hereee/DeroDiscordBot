@@ -14,6 +14,8 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 }));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: vi.fn() } }));
 vi.mock("@features/entitlements/gameRoomAccess.js", () => ({ checkGameRoomAccess: vi.fn() }));
+// The challenge reach read a public open makes (2026-10 item 244 Phase 4); no config reads as "server".
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn().mockResolvedValue(null) } }));
 // The board picture. Mocked so the first board is the text map unless a case hands
 // the renderer a picture, whatever art is on disk where the suite runs.
 vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn() }));
@@ -126,14 +128,17 @@ describe("RoomProvisioner.open for monopoly", () => {
 		expect(storedState().boardMessageId).toBe("message-2");
 	});
 
-	it("takes the self boarded path: the pinned opener carries the rules and no controls", async () => {
+	it("takes the self boarded path: the pinned opener carries the rules and only the host's Remove a player", async () => {
 		const { guild, send } = makeGuild();
 		await RoomProvisioner.open(input(guild));
 
 		const opener = sentPayloads(send)[0];
 		expect(opener.embeds[0].data.title).toBe(gameRoomsCopy.opener.title("monopoly"));
 		expect(opener.embeds[0].data.description).toContain(gameRoomsCopy.monopoly.openerRules());
-		expect(opener).not.toHaveProperty("components");
+		// The game's own controls stay on its board; the opener carries the one host
+		// control that belongs to the room rather than the turn (2026-10 item 244 Phase 4).
+		const ids = (opener.components ?? []).flatMap((row) => row.toJSON().components.map((button) => button.custom_id));
+		expect(ids).toEqual(["gameroom:kick:room-1"]);
 	});
 
 	it("still stores the match when the board post fails, with no message id to edit", async () => {

@@ -13,6 +13,7 @@ import { ownableTileName } from "@features/games/monopolyBoard.js";
 import {
 	applyBuy,
 	applyEndTurn,
+	applyForfeit,
 	applyJailChoice,
 	applyPayDebt,
 	applyRoll,
@@ -21,6 +22,7 @@ import {
 	type MonopolyResult,
 	type MonopolyState,
 } from "@features/games/monopolyState.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { awardMultiPlayerResult } from "@features/games/gameXp.js";
 import { monopolyWinnerView, renderBoard, renderWinnerCard } from "@features/games/monopolyRenderer.js";
 import { withRenderFallback } from "@features/renderer/index.js";
@@ -185,8 +187,10 @@ async function finishMonopolyMatch(client: Client, room: IGameRoom, state: Monop
 	if (!claimed) return;
 
 	// The winner first, then the seats in reverse elimination order; a seat forfeited
-	// for a day's inactivity counts as a bankruptcy (2026-10 item 244). Fire and forget.
-	void recordMatchRatings(room, monopolyFinishingOrder(state));
+	// for a day's inactivity counts as a bankruptcy (2026-10 item 244). A seat the host
+	// removed went out through the same forfeit, and is excluded so their result never
+	// moves a rating (Phase 4). Fire and forget.
+	void recordMatchRatings(room, monopolyFinishingOrder(state), room.kickedIds ?? []);
 
 	awardMultiPlayerResult({
 		client,
@@ -260,6 +264,29 @@ export async function commitMonopolyMove(
 	// player pressed for.
 	await applyMonopolyOutcome(client, fresh, result.state, { actorId, kind: "guess", lines: result.trailLines });
 	return { ok: true, state: result.state };
+}
+
+// ── the host removing a seat (2026-10 item 244 Phase 4) ───────────────
+/** How taking a removed player out of the match went: done, nothing to take, or still seated after every retry. */
+export type MatchRemoval = "removed" | "notInMatch" | "busy";
+
+/**
+ * Take a seat the host removed out of the match through the forfeit path, the same one
+ * the idle sweep uses: its holdings go back to the bank, a deal it was part of is called
+ * off, and the last seat standing wins. The finish that may follow excludes the seat
+ * from the ratings, because the removal wrote kickedIds onto the row before this runs
+ * and commitMonopolyMove re-reads that row.
+ *
+ * A lost compare and swap (a move landed first) is retried up to GAME_ROOM_KICK_ATTEMPTS
+ * times; any other refusal means the seat is already out or was never seated.
+ */
+export async function removeFromMonopolyMatch(client: Client, room: IGameRoom, userId: string, actorId: string): Promise<MatchRemoval> {
+	for (let attempt = 0; attempt < BOT_CONSTANTS.GAME_ROOM_KICK_ATTEMPTS; attempt++) {
+		const outcome = await commitMonopolyMove(client, room, actorId, (state) => applyForfeit(state, userId), { onTurnOnly: false });
+		if (outcome.ok) return "removed";
+		if (outcome.reason !== gameRoomsCopy.monopoly.boardBusy) return "notInMatch";
+	}
+	return "busy";
 }
 
 // ── the button path ───────────────────────────────────────────────────

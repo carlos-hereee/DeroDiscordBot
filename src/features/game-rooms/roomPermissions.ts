@@ -8,7 +8,9 @@ import type { RoomVisibility } from "./roomTypes.js";
 // Who:   RoomProvisioner.open (phase "playing"), and roomLifecycle.applyRoomPhase with
 //        channel.permissionOverwrites.set: "finished" from finish, and "playing" again
 //        when a rematch takes a finished room's channel over for its own players.
-// When:  twice per room, and never again. A room's membership is fixed at open.
+// When:  twice per room, and never again. A room's membership is fixed at open, with
+//        one exception that never calls this: the host removing a member deletes that
+//        member's own overwrite and nothing else (hostControls, 2026-10 item 244 Phase 4).
 // Where: PURE. It takes ids and returns an array; it never touches a Guild, a channel,
 //        a store or the network. That is what makes the matrix testable, and the matrix
 //        is the single thing in this feature that is genuinely hard to verify by hand:

@@ -10,15 +10,20 @@ import {
 	leaveTable,
 	endTable,
 	returnToTable,
+	requestLateSeat,
+	withdrawLateSeat,
 	handInProgress,
 	clockStartOf,
 	presentPlayers,
 	placements,
+	startingStackOf,
 	whoActs,
 	type ActionOutcome,
 	type HoldemTable,
+	type LateSeatResult,
 	type ReturnResult,
 } from "@features/games/holdemTable.js";
+import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { announceDealer, toPublicView, type PublicView } from "@features/dero-brain/dealerNarration.js";
 import { holdemLiveView, renderHoldemLiveCard } from "@features/dero-brain/dealerShowdownRenderer.js";
@@ -30,6 +35,7 @@ import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isClockExpired, roomDrawingKey, withDrawingPause } from "./drawingPause.js";
+import { judgeJoin } from "./joinGate.js";
 import {
 	tableEmbed,
 	holeCardsEmbed,
@@ -38,6 +44,7 @@ import {
 	bettingRows,
 	aggressiveActionFor,
 	resolveRaiseAmount,
+	tableHostStateOf,
 } from "./roomHoldem.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -45,6 +52,9 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // What:  every hold em interaction: buying in, dealing, acting, peeking at your
 //        own cards, leaving or ending the table, coming back from sitting out, and
 //        the clock that folds for a player who vanished and deals the next hand.
+//        Plus the table half of the host controls (2026-10 item 244 Phase 4): the
+//        join gate on Buy in, late seats while the host has seats open, the seat
+//        toggle, and taking a removed player off the table.
 // Who:   routed from gameRoomHandlers; main.ts runs the clock on its own interval.
 // When:  many times per tournament.
 // Where: the table lives on the room row, so a deploy mid-hand costs nothing. Its
@@ -61,6 +71,10 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // that leaves it out, and any mention of that default in this file.
 
 const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
+
+// The host controls' words, shared by every pack (see roomHoldem.ts), so the default
+// pack serves every guild without a config read on the table's hot path.
+const hostWords = rokCommanderCopy.arcadeHostControls;
 
 const tableOf = (room: IGameRoom): HoldemTable | null => (room.secret as HoldemTable | null) ?? null;
 
@@ -102,6 +116,11 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Prom
 	if (!message) return;
 
 	const pot = currentPot(table);
+	// The host controls the rows show (2026-10 item 244 Phase 4) come from the row this
+	// redraw was handed. A row read a moment before a toggle can draw the old label
+	// until the next redraw; the press itself is safe either way, because each toggle
+	// button carries the value it sets and the handler re-reads the room.
+	const host = tableHostStateOf(room);
 	// Four states, not three. The one that was missing is BETWEEN hands: the
 	// tournament is still "playing" but the last hand has settled, so there is nothing
 	// to act on and the host needs the deal control back. Falling through to
@@ -111,10 +130,10 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Prom
 		table.status === "finished"
 			? []
 			: table.status === "joining"
-			  ? joiningRows(room.roomId, table.seats.length, table)
+			  ? joiningRows(room.roomId, table.seats.length, table, host)
 			  : handInProgress(table)
-			    ? bettingRows(table, room.roomId, pot)
-			    : betweenHandsRows(room.roomId, table);
+			    ? bettingRows(table, room.roomId, pot, host)
+			    : betweenHandsRows(room.roomId, table, host);
 
 	await withDrawingPause({
 		gameKey: roomDrawingKey(room),
@@ -180,75 +199,179 @@ function clockLine(table: HoldemTable): string | null {
 // Next hand still deals, and the idle sweep closes a table nobody comes back to.
 const canDealItself = (table: HoldemTable): boolean => presentPlayers(table).length >= BOT_CONSTANTS.HOLDEM_MIN_SEATS;
 
-// ── buying in ─────────────────────────────────────────────────────────
+// ── buying in, and taking a late seat ─────────────────────────────────
+// One button for both (`hjoin`): Buy in while the table is joining, Take a seat once
+// it plays and the host has seats open (2026-10 item 244 Phase 4). Both are a member
+// asking for a seat, so both pass the host's join gate first, in this one handler.
 export async function handleBuyIn(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
-	const username =
-		interaction.guild?.members.cache.get(interaction.user.id)?.displayName ??
-		interaction.user.globalName ??
-		interaction.user.username;
+	const userId = interaction.user.id;
 
-	// ⚠️ COMPARE AND SWAP WITH A RETRY, because buying in is the one hold em write two
-	// people genuinely race rather than a theoretical one: the table opens with ZERO
-	// seats and a public room offers Buy in to everybody at once. Both readers saw the
-	// same seat list, so the plain write this replaces let the second one erase the
-	// first player's seat AND their thousand chips, after the trail had already
-	// announced them to the channel. The dropped player then failed the playersOnly
-	// gate on every later control with "this is not your match", and once the host
-	// dealt, joinTable refused them for good.
-	//
-	// Matching on the seat COUNT the caller read means the loser writes nothing,
-	// re-reads, and seats themselves on top of the winner's table instead of over it.
-	// playerIds rides the same write as an $addToSet so a seat and the permission that
-	// follows it can never disagree.
-	let current: IGameRoom = room;
-	let seated: { table: HoldemTable; count: number } | null = null;
-	let refusal: string | null = null;
-
-	for (let attempt = 0; attempt < BOT_CONSTANTS.HOLDEM_SEAT_CLAIM_ATTEMPTS && !seated && !refusal; attempt++) {
-		const table = tableOf(current);
-		if (!table) {
-			refusal = gameRoomsCopy.holdem.tournamentOver;
-			break;
-		}
-
-		const result = joinTable(table, interaction.user.id, username);
-		if (!result.ok) {
-			refusal =
-				result.reason === "alreadySeated"
-					? gameRoomsCopy.holdem.alreadySeated
-					: result.reason === "tableFull"
-					  ? gameRoomsCopy.holdem.tableFull
-					  : gameRoomsCopy.holdem.alreadyStarted;
-			break;
-		}
-
-		const written = await gameRoomStore.updateSecretIf(
-			current.guildId,
-			current.roomId,
-			{ "secret.seats": { $size: table.seats.length - 1 } },
-			table,
-			{ $addToSet: { playerIds: interaction.user.id } }
-		);
-		if (written) {
-			seated = { table, count: table.seats.length };
-			break;
-		}
-
-		current = (await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? current;
+	// ① The host's say over who sits down. A member the room already let in (the
+	// challenge's pool, an invitee, an accepted request) is in playerIds and passed
+	// the band and the host's answer on the way in, so they are not asked twice.
+	const verdict = await judgeJoin(room, userId, { alreadyApproved: room.playerIds.includes(userId) });
+	if (verdict.kind === "refuse") {
+		await interaction.reply({ content: joinRefusalText(room, verdict.reason), ...PRIVATE });
+		return;
 	}
-
-	if (!seated) {
-		await interaction.reply({ content: refusal ?? gameRoomsCopy.holdem.tableBusy, ...PRIVATE });
+	if (verdict.kind === "ask") {
+		await askHostForSeat(interaction, room);
 		return;
 	}
 
-	await interaction.deferUpdate();
-	await roomTrail.postMove(interaction.client, room, {
-		actorId: interaction.user.id,
+	// ② The seat itself.
+	const claim = await claimSeat(room, userId, memberDisplayName(interaction));
+	if (!claim.ok) {
+		await interaction.reply({ content: claim.refusal, ...PRIVATE });
+		return;
+	}
+	if (claim.late) {
+		await interaction.reply({ content: hostWords.seats.heldReply(startingStackOf(claim.table)), ...PRIVATE });
+	} else {
+		await interaction.deferUpdate();
+	}
+	await announceSeat(interaction.client, claim.room, claim, userId);
+}
+
+const memberDisplayName = (interaction: ButtonInteraction): string =>
+	interaction.guild?.members.cache.get(interaction.user.id)?.displayName ?? interaction.user.globalName ?? interaction.user.username;
+
+function joinRefusalText(room: IGameRoom, reason: "kicked" | "outsideBand"): string {
+	return reason === "kicked" ? hostWords.kick.refusedRejoin : hostWords.band.refused(gameRoomsCopy.gameLabel(room.game));
+}
+
+// The host approves each joiner and this member is not yet in: the request goes on
+// the room's waiting list for the host's Requests button, and the board redraws so
+// the button's count moves. The filter on kickedIds refuses a member removed in the
+// moment between the gate above and this write.
+async function askHostForSeat(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	if ((room.pendingJoinIds ?? []).includes(interaction.user.id)) {
+		await interaction.reply({ content: hostWords.approval.alreadyAsked, ...PRIVATE });
+		return;
+	}
+	const updated = await gameRoomStore.addPendingJoin(room.guildId, room.roomId, interaction.user.id);
+	if (!updated) {
+		await interaction.reply({ content: hostWords.kick.refusedRejoin, ...PRIVATE });
+		return;
+	}
+	await interaction.reply({ content: hostWords.approval.asked, ...PRIVATE });
+	const table = tableOf(updated);
+	if (table) await redraw(interaction.client, updated, table);
+}
+
+/** A seat that landed, the room it landed in, and whether it waits for the next deal. */
+type SeatClaim = { ok: true; room: IGameRoom; table: HoldemTable; late: boolean } | { ok: false; refusal: string };
+
+// One attempt at a seat against one read of the table: landed, refused for good, or
+// lost a race to another write (so re-read and go again).
+type SeatAttempt = { outcome: "landed"; table: HoldemTable } | { outcome: "refused"; refusal: string } | { outcome: "lost" };
+
+/**
+ * Take a seat for `userId`: a buy in while the table is joining, a late seat while it
+ * plays with the host's seats open. Shared by the member's own press and the host
+ * accepting their request, so an accepted request seats a player exactly the way a
+ * press would. Writes nothing to the trail; announceSeat does that.
+ */
+export async function claimSeat(room: IGameRoom, userId: string, username: string): Promise<SeatClaim> {
+	let current: IGameRoom = room;
+	for (let attempt = 0; attempt < BOT_CONSTANTS.HOLDEM_SEAT_CLAIM_ATTEMPTS; attempt++) {
+		const table = tableOf(current);
+		if (!table || table.status === "finished") return { ok: false, refusal: gameRoomsCopy.holdem.tournamentOver };
+
+		const late = table.status === "playing";
+		const result = late ? await tryLateSeat(current, table, userId, username) : await tryBuyIn(current, table, userId, username);
+		if (result.outcome === "landed") return { ok: true, room: current, table: result.table, late };
+		if (result.outcome === "refused") return { ok: false, refusal: result.refusal };
+
+		current = (await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? current;
+	}
+	return { ok: false, refusal: gameRoomsCopy.holdem.tableBusy };
+}
+
+// ⚠️ COMPARE AND SWAP WITH A RETRY, because buying in is the one hold em write two
+// people genuinely race rather than a theoretical one: the table opens with ZERO
+// seats and a public room offers Buy in to everybody at once. Both readers saw the
+// same seat list, so the plain write this replaces let the second one erase the
+// first player's seat AND their thousand chips, after the trail had already
+// announced them to the channel. The dropped player then failed the playersOnly
+// gate on every later control with "this is not your match", and once the host
+// dealt, joinTable refused them for good.
+//
+// Matching on the seat COUNT the caller read means the loser writes nothing,
+// re-reads, and seats themselves on top of the winner's table instead of over it.
+// playerIds rides the same write as an $addToSet so a seat and the permission that
+// follows it can never disagree. The kickedIds match is the no-rejoin guarantee: a
+// member the host removed after this read cannot be written back onto the table.
+async function tryBuyIn(room: IGameRoom, table: HoldemTable, userId: string, username: string): Promise<SeatAttempt> {
+	const result = joinTable(table, userId, username);
+	if (!result.ok) {
+		const refusal =
+			result.reason === "alreadySeated"
+				? gameRoomsCopy.holdem.alreadySeated
+				: result.reason === "tableFull"
+				  ? gameRoomsCopy.holdem.tableFull
+				  : gameRoomsCopy.holdem.alreadyStarted;
+		return { outcome: "refused", refusal };
+	}
+	const written = await gameRoomStore.updateSecretIf(
+		room.guildId,
+		room.roomId,
+		{ "secret.seats": { $size: table.seats.length - 1 }, kickedIds: { $ne: userId } },
+		table,
+		{ $addToSet: { playerIds: userId } }
+	);
+	return written ? { outcome: "landed", table } : { outcome: "lost" };
+}
+
+const LATE_SEAT_REFUSALS: Record<Exclude<LateSeatResult, { ok: true }>["reason"], string> = {
+	notPlaying: hostWords.seats.notPlaying,
+	alreadySeated: hostWords.seats.alreadyPlayed,
+	alreadyWaiting: hostWords.seats.alreadyWaiting,
+	tableFull: gameRoomsCopy.holdem.tableFull,
+};
+
+// A seat mid tournament: it WAITS in the table's pendingSeats and the next deal seats
+// it (holdemTable.seatLatePlayers), so nothing here can put a seat into a hand. The
+// write matches the action stamp, which requestLateSeat moves, so a move racing it
+// loses instead of writing the waiting list away; seatsOpen, so a Close seats that
+// landed since this read refuses; and kickedIds, the no-rejoin guarantee. playerIds is
+// NOT added here: the deal that seats the player adds it, so a waiting player cannot
+// press a player's control before they have a seat to press it from.
+async function tryLateSeat(room: IGameRoom, table: HoldemTable, userId: string, username: string): Promise<SeatAttempt> {
+	if (!room.seatsOpen) return { outcome: "refused", refusal: hostWords.seats.closedRefused };
+	const readAt = table.lastActionAt;
+	const result = requestLateSeat(table, userId, username);
+	if (!result.ok) return { outcome: "refused", refusal: LATE_SEAT_REFUSALS[result.reason] };
+	const written = await gameRoomStore.updateSecretIf(
+		room.guildId,
+		room.roomId,
+		{ "secret.lastActionAt": readAt, seatsOpen: true, kickedIds: { $ne: userId } },
+		table
+	);
+	return written ? { outcome: "landed", table } : { outcome: "lost" };
+}
+
+// The trail line and the redraw for a seat that landed: bought in now, or held for
+// the next deal.
+async function announceSeat(client: Client, room: IGameRoom, claim: Extract<SeatClaim, { ok: true }>, userId: string): Promise<void> {
+	await roomTrail.postMove(client, room, {
+		actorId: userId,
 		kind: "join",
-		text: gameRoomsCopy.holdem.seatTaken(interaction.user.id, seated.count),
+		text: claim.late ? hostWords.seats.heldLine(userId) : gameRoomsCopy.holdem.seatTaken(userId, claim.table.seats.length),
 	});
-	await redraw(interaction.client, room, seated.table);
+	await redraw(client, room, claim.table);
+}
+
+/**
+ * Seat a member the host just accepted, the way their own press would have. Answers
+ * null once seated (or held for the next deal), or the table's reason they were not,
+ * for the host's summary. The accept already put them in playerIds.
+ */
+export async function seatAcceptedPlayer(client: Client, room: IGameRoom, userId: string, username: string): Promise<string | null> {
+	const claim = await claimSeat(room, userId, username);
+	if (!claim.ok) return claim.refusal;
+	await announceSeat(client, claim.room, claim, userId);
+	return null;
 }
 
 // ── dealing ───────────────────────────────────────────────────────────
@@ -303,19 +426,40 @@ interface ClaimedDeal {
 // The action stamp is matched too, because the clock decides against a read taken
 // seconds earlier: a leave or an I'm back between hands moves the stamp and not the
 // hand number, and a deal from the older read would write that seat straight back.
+//
+// The deal is also where a late seat becomes a seat (dealHand seats the waiting list
+// before anything about the hand exists), so its write carries those players into
+// playerIds in the same claim, and the playersOnly gate opens for them exactly when
+// they have cards to play. A waiting seat whose player the host removed is dropped
+// first, a backstop for a removal that raced this read.
 async function claimDeal(room: IGameRoom, table: HoldemTable): Promise<ClaimedDeal | null> {
 	const expected = { "secret.handNumber": table.handNumber, "secret.lastActionAt": table.lastActionAt };
 	const blindsBefore = table.bigBlind;
 	const before = toPublicView(table);
+	dropRemovedLateSeats(table, room);
 	const outcome = dealHand(table, secureRandom);
-	const written = await gameRoomStore.updateSecretIf(room.guildId, room.roomId, expected, table);
+	const lateSeated = outcome.lateSeated ?? [];
+	const written =
+		lateSeated.length > 0
+			? await gameRoomStore.updateSecretIf(room.guildId, room.roomId, expected, table, { $addToSet: { playerIds: { $each: lateSeated } } })
+			: await gameRoomStore.updateSecretIf(room.guildId, room.roomId, expected, table);
 	return written ? { before, blindsBefore, outcome } : null;
+}
+
+function dropRemovedLateSeats(table: HoldemTable, room: IGameRoom): void {
+	const removed = new Set(room.kickedIds ?? []);
+	if (removed.size === 0 || !table.pendingSeats?.length) return;
+	table.pendingSeats = table.pendingSeats.filter((entry) => !removed.has(entry.userId));
 }
 
 // Everything after a deal landed, whoever dealt it: the blinds and deal lines, then
 // the same settle path an action takes, which posts any sit out folds the deal set
 // off, settles a hand they ended, and redraws the board.
 async function announceDeal(client: Client, room: IGameRoom, table: HoldemTable, deal: ClaimedDeal, actorId: string): Promise<void> {
+	// The late seats first: they sat down before the cards went round.
+	for (const userId of deal.outcome.lateSeated ?? []) {
+		await roomTrail.postMove(client, room, { actorId: userId, kind: "join", text: hostWords.seats.seatedLine(userId, startingStackOf(table)) });
+	}
 	if (table.bigBlind !== deal.blindsBefore) {
 		await roomTrail.postMove(client, room, {
 			actorId,
@@ -492,8 +636,11 @@ async function settleOutcome(
 		// reverse bust order (a seat that left counts as a bust, since leaveTable records
 		// it in bustOrder). Only the call that won finish's claim rates, so a racing clock
 		// fold cannot rate the session twice. A session under 10 dealt hands is recorded
-		// unrated (2026-10 item 244).
-		if (claimed) void recordMatchRatings(room, placements(table), [], { rated: isRatedHoldemSession(table.handNumber) });
+		// unrated (2026-10 item 244). A player the host removed sits in that bust order
+		// too (removal is a leave), and is excluded, so their result never moves a rating;
+		// the removal writes kickedIds before it touches the table, so the room a removal
+		// itself finishes always carries them.
+		if (claimed) void recordMatchRatings(room, placements(table), room.kickedIds ?? [], { rated: isRatedHoldemSession(table.handNumber) });
 		return;
 	}
 
@@ -617,7 +764,7 @@ export async function handleEndTable(interaction: ButtonInteraction, room: IGame
 	// Ranked by the standings endTable answered: chips first, then the reverse bust
 	// order. Only the press that won finish's claim records it, and a table ended before
 	// its first deal records nothing, because no match was played. Fire and forget.
-	if (claimed && table.handNumber > 0) void recordMatchRatings(room, order, [], { rated: isRatedHoldemSession(table.handNumber) });
+	if (claimed && table.handNumber > 0) void recordMatchRatings(room, order, room.kickedIds ?? [], { rated: isRatedHoldemSession(table.handNumber) });
 }
 
 // ── coming back ───────────────────────────────────────────────────────
@@ -657,6 +804,88 @@ export async function handleImBack(interaction: ButtonInteraction, room: IGameRo
 		text: gameRoomsCopy.holdem.backAtTable(interaction.user.id),
 	});
 	await redraw(interaction.client, room, table);
+}
+
+// ── the host's seat controls (2026-10 item 244 Phase 4) ───────────────
+/**
+ * Open seats or Close seats, the host's toggle while a tournament runs. `choice` is
+ * the value the press SETS ("on" or "off"), so a stale board's button does what its
+ * label said. Routed hostOnly with the admin override. Closing stops new late seats
+ * only: a seat already held keeps its promise and is dealt in at the next hand.
+ */
+export async function handleSeatsToggle(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
+	if (choice !== "on" && choice !== "off") {
+		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, ...PRIVATE });
+		return;
+	}
+	const table = tableOf(room);
+	if (!table || table.status !== "playing") {
+		const refusal = table?.status === "joining" ? hostWords.seats.notPlaying : gameRoomsCopy.holdem.tournamentOver;
+		await interaction.reply({ content: refusal, ...PRIVATE });
+		return;
+	}
+	const open = choice === "on";
+	if ((room.seatsOpen ?? false) === open) {
+		await interaction.reply({ content: open ? hostWords.seats.alreadyOpen : hostWords.seats.alreadyClosed, ...PRIVATE });
+		return;
+	}
+
+	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { seatsOpen: open })) ?? room;
+	await interaction.deferUpdate();
+	await roomTrail.postMove(interaction.client, updated, {
+		actorId: interaction.user.id,
+		kind: "system",
+		text: open ? hostWords.seats.openedLine(interaction.user.id) : hostWords.seats.closedLine(interaction.user.id),
+	});
+	await redraw(interaction.client, updated, tableOf(updated) ?? table);
+}
+
+/** How taking a removed player off the table went: done, nothing to take, or still held after every retry. */
+export type TableRemoval = "removed" | "notAtTable" | "busy";
+
+/**
+ * Take a player the host removed off the table: a waiting late seat is dropped, and
+ * a seat is given up exactly the way Leave table gives it up (a live hand folded, the
+ * seat out in the bust order, its stack gone with it, since chips die with the
+ * table). The same settle path a leave takes then pays a hand the fold ended, or ends
+ * the tournament when one player is left.
+ *
+ * `room` must be the row AFTER the removal was written (hostControls writes kickedIds
+ * first), so a removal that ends the tournament rates it without the removed player.
+ * Retries a lost compare and swap up to GAME_ROOM_KICK_ATTEMPTS times; "busy" means
+ * every attempt lost to a move, and the host is told to press again.
+ */
+export async function removeFromTable(client: Client, room: IGameRoom, userId: string, actorId: string): Promise<TableRemoval> {
+	let current = room;
+	for (let attempt = 0; attempt < BOT_CONSTANTS.GAME_ROOM_KICK_ATTEMPTS; attempt++) {
+		const table = tableOf(current);
+		if (!table || table.status === "finished") return "notAtTable";
+
+		const readAt = table.lastActionAt;
+		const seatsRead = table.seats.length;
+		const before = toPublicView(table);
+		const withdrewLateSeat = withdrawLateSeat(table, userId);
+		const outcome = withdrewLateSeat ? null : leaveTable(table, userId, secureRandom);
+		if (outcome && !outcome.ok) return "notAtTable";
+
+		if (await persistLeaveOrEnd(current, table, readAt, seatsRead)) {
+			if (!outcome) {
+				await redraw(client, current, table);
+				return "removed";
+			}
+			await settleOutcome(client, current, table, outcome, actorId);
+			if (outcome.foldedHand) announceDealer({ client, roomId: current.roomId, before, after: toPublicView(table), outcome });
+			return "removed";
+		}
+		current = (await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? current;
+	}
+	return "busy";
+}
+
+/** Redraw a room's table from its row, for a host control that changed only the room (a request answered). */
+export async function redrawTable(client: Client, room: IGameRoom): Promise<void> {
+	const table = tableOf(room);
+	if (table) await redraw(client, room, table);
 }
 
 // ── the private peek ──────────────────────────────────────────────────
@@ -792,6 +1021,7 @@ export const roomHoldemHandlers = {
 	handleLeaveTable,
 	handleEndTable,
 	handleImBack,
+	handleSeatsToggle,
 	sweepHoldemClocks,
 };
 

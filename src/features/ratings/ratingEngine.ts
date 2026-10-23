@@ -1,5 +1,6 @@
 import { ordinal, rate, rating } from "openskill";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import type { RatingBand } from "@features/game-rooms/roomTypes.js";
 
 // ── ratingEngine ─────────────────────────────────────────────────────
 // The arcade's rating math, and nothing else (2026-10 item 244): a fresh rating,
@@ -28,8 +29,9 @@ export type RatedGame = (typeof RATED_GAMES)[number];
 export const LUCK_GAMES = ["coinflip", "diceroll", "rps"] as const;
 export type LuckGame = (typeof LUCK_GAMES)[number];
 
-export const RATING_BANDS = ["any", "close", "tight"] as const;
-export type RatingBand = (typeof RATING_BANDS)[number];
+// The band list lives in the game rooms vocabulary, where the GameRoom model reads it
+// for its enum; re-exported so the band math and the stored value share one list.
+export { RATING_BANDS, type RatingBand } from "@features/game-rooms/roomTypes.js";
 
 /** One player's skill estimate in one game: the mean and its uncertainty. */
 export interface SkillRating {
@@ -47,6 +49,11 @@ const BAND_WIDTHS: Record<Exclude<RatingBand, "any">, number> = {
 	close: LIMITS.BAND_CLOSE,
 	tight: LIMITS.BAND_TIGHT,
 };
+
+/** How many display points either side of the host a band admits, or null for Any, which admits everyone. */
+export function bandWidth(band: RatingBand): number | null {
+	return band === "any" ? null : BAND_WIDTHS[band];
+}
 
 export const isRatedGame = (game: string): game is RatedGame => (RATED_GAMES as readonly string[]).includes(game);
 

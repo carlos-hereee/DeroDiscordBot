@@ -343,3 +343,19 @@ describe("the control case: strict mode really is on", () => {
 		expect(doc.get("introMessageIds.definitelyNotAnAnchor")).toBeUndefined();
 	});
 });
+
+describe("GuildConfig declares the challenge reach (2026-10 item 244 Phase 4)", () => {
+	it("defaults to server on every legacy row, today's behavior, with no backfill", () => {
+		expect(new GuildConfigModel(baseRow).get("challengeReach")).toBe("server");
+	});
+
+	it("round trips an admin's invite only rather than dropping it", () => {
+		const doc = new GuildConfigModel({ ...baseRow, challengeReach: "invite-only" });
+		expect((doc.toObject() as Record<string, unknown>).challengeReach).toBe("invite-only");
+	});
+
+	it("refuses a value outside the three reaches at validation", () => {
+		const doc = new GuildConfigModel({ ...baseRow, challengeReach: "everywhere" });
+		expect(doc.validateSync()?.errors.challengeReach).toBeDefined();
+	});
+});

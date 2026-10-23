@@ -4,9 +4,11 @@ import { v4 } from "uuid";
 import {
 	GAME_SLUGS,
 	NON_TERMINAL_ROOM_STATUSES,
+	RATING_BANDS,
 	ROOM_STATUSES,
 	ROOM_VISIBILITIES,
 	type GameSlug,
+	type RatingBand,
 	type RoomMove,
 	type RoomSecret,
 	type RoomStatus,
@@ -70,6 +72,23 @@ export interface IGameRoom {
 	// Set on the DRAFT by the card's toggle like the auction choice, but unlike it,
 	// read on EVERY move (roomMonopolyReferee), because the match state never copies it.
 	monopolyReferee: boolean;
+	// ── the host's say over who joins (2026-10 item 244 Phase 4) ──
+	// Set on the draft by the challenge card's host controls and read on every join,
+	// on the card and, for Hold'em, at the table's Buy in and Take a seat. Each
+	// defaults to the behavior a room had before the controls existed, so an older
+	// row reads as an open door: any band, no approval, nobody removed.
+	// The rating band a joiner's rating in this game must fit (ratingEngine.fitsBand).
+	ratingBand: RatingBand;
+	// True turns a join into a request in pendingJoinIds that the host accepts or declines.
+	requireApproval: boolean;
+	// Members waiting on the host's answer. Never also in the pool or playerIds.
+	pendingJoinIds: string[];
+	// Members the host removed. They can never rejoin THIS room, by any button or
+	// select, and a match they were removed from never moves their rating.
+	kickedIds: string[];
+	// Hold'em only: while true, a joiner may claim a free seat mid tournament and is
+	// dealt in at the start of the next hand. The host's Open seats and Close seats.
+	seatsOpen: boolean;
 	// Hangman's hidden word and hint stack. Null for duel and rps, which have no secret.
 	secret: RoomSecret | null;
 	moves: RoomMove[];
@@ -132,6 +151,14 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		monopolyAuctions: { type: Boolean, default: false },
 		// Off by default for the same reason: an older row reads as no referee.
 		monopolyReferee: { type: Boolean, default: false },
+		// The host controls. Every default is the open door a room had before them, so
+		// no older row needs a backfill.
+		ratingBand: { type: String, enum: [...RATING_BANDS], default: "any" },
+		requireApproval: { type: Boolean, default: false },
+		pendingJoinIds: { type: [String], default: [] },
+		// No index: a lookup always arrives with its roomId, and the arrays stay small.
+		kickedIds: { type: [String], default: [] },
+		seatsOpen: { type: Boolean, default: false },
 		// Mixed rather than a typed subdocument: only hangman populates it, its shape will grow
 		// as other games gain hidden state, and a strict subschema here would silently drop the
 		// next game's fields the way GuildConfig.schedulePaused was dropped before it was declared.

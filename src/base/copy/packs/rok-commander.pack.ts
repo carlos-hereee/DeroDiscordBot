@@ -688,6 +688,35 @@ export const rokCommanderCopy = {
 				"Do not delete them. " +
 				"Without them I cannot serve this alliance.",
 		},
+
+		// ── member role gating (2026-10 item 247 Phase 1) ──────────────
+		// Posted once per guild by CommunityGatingAnnouncement, the first boot the
+		// member role gates a Community server's channels: admin first, in
+		// #inner-sanctum, then members, in #announcements. Each description takes
+		// the member role's id so the post names the role; it is sent with
+		// allowedMentions parse [], so the mention notifies nobody. The member post
+		// is read only by members who already hold the role (#announcements is one
+		// of the gated channels), so it speaks to them about the comrades who do not.
+		gatingAnnouncement: {
+			member: {
+				title: "🛡️ The Halls Now Know Their Own",
+				description: (memberRoleId: string) =>
+					"Warriors.\n\n" +
+					`The halls of this realm now open only to those who bear <@&${memberRoleId}>, and Discord's Onboarding is how a warrior earns it. ` +
+					"Until then, only the introductions chamber stands open to them.\n\n" +
+					"You read this, so you already bear it. If a comrade says the halls went dark, tell them to open **Channels & Roles** at the top of the channel list and choose **Retake Onboarding**.\n\n" +
+					"Nothing else has changed. Your renown, your records and your matches stand where you left them.",
+			},
+			admin: {
+				title: "🔐 The Member Role Now Guards the Halls",
+				description: (memberRoleId: string) =>
+					"Those who hold the reins.\n\n" +
+					`This server runs as a Discord Community, so the member role you named in \`/setup\`, <@&${memberRoleId}>, now decides who sees my channels. ` +
+					"Without it a member sees only the introductions channel. With it they see every public channel and both voice rooms. The admin channels are unchanged.\n\n" +
+					`**Check one thing now:** your server's Onboarding must give new members <@&${memberRoleId}>, or every newcomer stops at introductions. You set that in Server Settings, under Onboarding.\n\n` +
+					"Members who already hold the role see no change. Anyone who lost sight of a channel can open **Channels & Roles** and choose **Retake Onboarding**.",
+			},
+		},
 	},
 
 	// ── the game request ballot (2026-10 item 245 Phase 4a) ─────────────
@@ -1063,6 +1092,92 @@ export const rokCommanderCopy = {
 			luckDetail: (score: string, wins: number, decided: number) => `${score} above even, ${wins} of ${decided} won`,
 			luckEmpty: (minimum: number) => `Nobody reached ${minimum} decided games of chance.`,
 			footer: "Ask for your own with /rating me.",
+		},
+	},
+
+	// ── arcade host controls (2026-10 item 244 Phase 4) ───────────
+	// What members read from a host's say over who joins: the challenge card's band,
+	// approval and Remove a player controls, the refusals a joiner gets, and Hold'em's
+	// open seats. Written plain, like the rest of the arcade's cards (gameRoomsCopy),
+	// because a button label reads the same in every voice; the general-events pack
+	// reuses this object rather than keeping a second copy that could drift. Game
+	// names come from gameRoomsCopy.gameLabel, so they are not repeated here.
+	arcadeHostControls: {
+		// The server's challenge reach (an admin's /dero-config arcade reach).
+		reach: {
+			publicRefused: "This server allows invite only challenges. Choose Invite only, or ask an admin about the server's challenge reach.",
+		},
+		// The host's rating band, for the rated games only.
+		band: {
+			placeholder: "Rating band",
+			options: {
+				any: { label: "Any rating", description: "Anyone may join" },
+				close: { label: "Close", description: (width: number) => `Ratings within ${width} of the host's` },
+				tight: { label: "Tight", description: (width: number) => `Ratings within ${width} of the host's` },
+			},
+			cardLine: (label: string, width: number | null) =>
+				width === null ? `Rating band: **${label}**, anyone may join.` : `Rating band: **${label}**, ratings within ${width} of the host's may join.`,
+			// A joiner still settling (fewer than 10 rated games) fits any band, and so does
+			// everyone at a table whose host is still settling, which is why this names only
+			// a settled rating.
+			refused: (game: string) =>
+				`Your ${game} rating is outside the band this host set. Look for another challenge, or one open to any rating.`,
+		},
+		// The host approving each joiner.
+		approval: {
+			toggleLabel: (enabled: boolean) => (enabled ? "Stop approving joiners" : "Approve each joiner"),
+			cardLine: (waiting: number) =>
+				waiting === 0
+					? "The host approves each joiner. Nobody is waiting."
+					: `The host approves each joiner. ${waiting} waiting for an answer.`,
+			asked: "Your request to join is with the host. You are in as soon as they accept it.",
+			alreadyAsked: "Your request is already with the host.",
+			requestsLabel: (waiting: number) => `Requests (${waiting})`,
+			requestsEmpty: "Nobody is waiting for an answer.",
+			requestsPrompt: "Accept or decline the members who asked to join. A declined member may ask again.",
+			acceptPlaceholder: "Accept",
+			declinePlaceholder: "Decline",
+			accepted: (count: number) => (count === 1 ? "Accepted 1 member." : `Accepted ${count} members.`),
+			declined: (count: number) => (count === 1 ? "Declined 1 member." : `Declined ${count} members.`),
+			// Said beside an accepted Hold'em player whose seat could not be taken yet; the
+			// reason that follows is the table's own refusal.
+			acceptedNotSeated: (userId: string, reason: string) => `<@${userId}> is accepted but not seated: ${reason}`,
+			// The pool reached its member cap before every accepted member fit.
+			poolFull: (max: number) => `The challenge reached ${max} members, so the rest stay waiting.`,
+		},
+		// The host removing a member, before the match or during it.
+		kick: {
+			buttonLabel: "Remove a player",
+			placeholder: "Choose who to remove",
+			prompt: "Choose who to remove. A removed member cannot rejoin this room, and a match they were removed from never moves their rating.",
+			empty: "There is nobody to remove.",
+			removed: (userId: string) => `Removed <@${userId}>. They cannot rejoin this room.`,
+			// `byId` is whoever pressed: the host, or an admin using the override.
+			trailLine: (byId: string, userId: string) => `🚫 <@${byId}> removed <@${userId}> from the room.`,
+			// The room row has let the member go, but the live table or board was busy and
+			// still holds their seat. A second press finishes the job, since it retries the seat.
+			seatStillHeld: (userId: string) => `<@${userId}> is out of the room, but the table was busy and still holds their seat. Press Remove a player again.`,
+			gone: "That member is no longer in this room.",
+			refusedRejoin: "The host removed you from this room, so you cannot join it again.",
+		},
+		// Hold'em's open seats: late joiners dealt in at the next hand.
+		seats: {
+			openLabel: "Open seats",
+			closeLabel: "Close seats",
+			takeLabel: "Take a seat",
+			openedLine: (hostId: string) => `🪑 <@${hostId}> opened the empty seats. A new player is dealt in at the start of the next hand.`,
+			closedLine: (hostId: string) => `🪑 <@${hostId}> closed the seats.`,
+			alreadyOpen: "The seats are already open.",
+			alreadyClosed: "The seats are already closed.",
+			closedRefused: "The seats at this table are closed.",
+			notPlaying: "Seats open once the first hand is dealt. Until then, buy in.",
+			alreadyPlayed: "You already played at this table, and a tournament has no buying back in.",
+			alreadyWaiting: "Your seat is already waiting for the next hand.",
+			heldReply: (stack: number) => `Your seat is held. You are dealt in at the start of the next hand with ${stack} chips.`,
+			heldLine: (userId: string) => `🪑 <@${userId}> takes a seat for the next hand.`,
+			seatedLine: (userId: string, stack: number) => `🪑 <@${userId}> sits down with ${stack} chips.`,
+			// Under the seats on the table card while somebody waits for the deal.
+			waitingLine: (userIds: readonly string[]) => `🪑 Dealt in next hand: ${userIds.map((userId) => `<@${userId}>`).join(", ")}`,
 		},
 	},
 };

@@ -1,17 +1,35 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type ColorResolvable } from "discord.js";
+import {
+	ActionRowBuilder,
+	ButtonBuilder,
+	ButtonStyle,
+	EmbedBuilder,
+	StringSelectMenuBuilder,
+	type ColorResolvable,
+	type MessageActionRowComponentBuilder,
+} from "discord.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
+import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { bandWidth, isRatedGame } from "@features/ratings/ratingEngine.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
-import type { GameSlug, RoomVisibility } from "./roomTypes.js";
+import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
+import { RATING_BANDS, type GameSlug, type RatingBand, type RoomVisibility } from "./roomTypes.js";
+
+// The host controls' words are shared by every pack, so the default pack is the right
+// one here and the card stays a pure function of its state.
+const hostWords = rokCommanderCopy.arcadeHostControls;
+
+type CardRow = ActionRowBuilder<MessageActionRowComponentBuilder>;
 
 // ── challengeBoardEmbeds ─────────────────────────────────────────────
 // What:  the pinned ⚔️challenges intro, and the opener card that is edited in place
 //        as one challenge moves from "choosing visibility" to "under way".
 // Who:   challengeBoard.ts.
 // When:  the intro once per boot (refreshIntroEmbeds keeps it current); the card on
-//        every state change of a draft.
+//        every state change of a draft, including the host's controls (2026-10 item
+//        244 Phase 4: the reach capped visibility step, the band, approval and Remove
+//        a player), which render only when the caller passes the draft's host state.
 // How:   ONE card, edited, rather than a new message per step. A challenge that
 //        posted a fresh message for each of visibility, join and start would bury
 //        the channel it lives in, and ⚔️challenges is meant to be scannable.
@@ -119,6 +137,21 @@ export interface OpenerCardState {
 	// Terminal states. When either is set the card stops offering controls.
 	cancelled?: boolean;
 	startedChannelId?: string | null;
+	// False when the server's challenge reach is invite only (2026-10 item 244 Phase 4),
+	// which drops Open to all from the visibility step. Absent offers both, the card
+	// as it was; the choice is refused server side either way, since a stale card
+	// still carries the button.
+	allowPublic?: boolean;
+	// The host's say over who joins (Phase 4), read off the draft row. Absent renders
+	// the card exactly as it was before the controls existed.
+	hostControls?: DraftHostControls;
+}
+
+/** The draft's host controls the card shows: the band, approval, and how many wait for an answer. */
+export interface DraftHostControls {
+	ratingBand: RatingBand;
+	requireApproval: boolean;
+	pendingJoinCount: number;
 }
 
 // How many pool members the card names before it summarises the rest. Well under the
@@ -154,6 +187,7 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 		lines.push("", gameRoomsCopy.board.cardMonopolyAuctions(state.monopolyAuctions ?? false));
 		lines.push(gameRoomsCopy.board.cardMonopolyReferee(state.monopolyReferee ?? false));
 	}
+	lines.push(...hostControlLines(state));
 
 	const embed = infoEmbed(
 		gameRoomsCopy.board.cardTitle(state.game),
@@ -165,10 +199,87 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 	return embed;
 }
 
+// ── the host's controls on the card (2026-10 item 244 Phase 4) ────────
+// The band and the approval only bite on an Open to all challenge: an invite only host
+// picks every member by hand, so there is no stranger to band or approve. Removing a
+// member applies to both, since an invited member can be removed too.
+const showsJoinControls = (state: OpenerCardState): boolean => state.visibility === "public" && Boolean(state.hostControls);
+const showsBand = (state: OpenerCardState): boolean => showsJoinControls(state) && isRatedGame(state.game);
+
+const BAND_LABELS: Record<RatingBand, string> = {
+	any: hostWords.band.options.any.label,
+	close: hostWords.band.options.close.label,
+	tight: hostWords.band.options.tight.label,
+};
+
+// The band and approval lines under the pool, while the card still gathers.
+function hostControlLines(state: OpenerCardState): string[] {
+	const controls = state.hostControls;
+	if (!controls || state.cancelled || state.startedChannelId || !showsJoinControls(state)) return [];
+	const lines: string[] = [""];
+	if (showsBand(state)) lines.push(hostWords.band.cardLine(BAND_LABELS[controls.ratingBand], bandWidth(controls.ratingBand)));
+	if (controls.requireApproval) lines.push(hostWords.approval.cardLine(controls.pendingJoinCount));
+	return lines.length > 1 ? lines : [];
+}
+
+// The host's row: Approve each joiner and Requests on an open challenge, then Remove a
+// player. The approval toggle's arg is the value the press SETS, like the Monopoly
+// toggles, so a stale card does what its label says. Requests shows while approval is
+// on or somebody still waits after it was turned off. Remove a player opens a private
+// picker (hostControls) rather than listing names here, because the card is public
+// and a picker of names belongs to the one person who may use it.
+function hostControlRow(roomId: string, state: OpenerCardState, controls: DraftHostControls): CardRow {
+	const buttons: ButtonBuilder[] = [];
+	if (showsJoinControls(state)) {
+		buttons.push(
+			new ButtonBuilder()
+				.setCustomId(`${GAME_ROOM_PREFIX}:approval:${roomId}:${controls.requireApproval ? "off" : "on"}`)
+				.setLabel(hostWords.approval.toggleLabel(controls.requireApproval))
+				.setEmoji("✋")
+				.setStyle(ButtonStyle.Secondary)
+		);
+		if (controls.requireApproval || controls.pendingJoinCount > 0) {
+			buttons.push(
+				new ButtonBuilder()
+					.setCustomId(`${GAME_ROOM_PREFIX}:requests:${roomId}`)
+					.setLabel(hostWords.approval.requestsLabel(controls.pendingJoinCount))
+					.setEmoji("📨")
+					.setStyle(ButtonStyle.Secondary)
+			);
+		}
+	}
+	buttons.push(
+		new ButtonBuilder()
+			.setCustomId(`${GAME_ROOM_PREFIX}:kick:${roomId}`)
+			.setLabel(hostWords.kick.buttonLabel)
+			.setEmoji("🚫")
+			.setStyle(ButtonStyle.Secondary)
+			// A hint only: the picker answers honestly when there is nobody to remove.
+			.setDisabled(state.pool.length === 0 && controls.pendingJoinCount === 0)
+	);
+	return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(...buttons);
+}
+
+// The band select, on rated games only, with the current band as its default so the
+// card shows the choice in force. A select rather than three buttons because it costs
+// one row however many bands there are.
+function bandSelectRow(roomId: string, band: RatingBand): CardRow {
+	const describe = (option: RatingBand): string => {
+		if (option === "any") return hostWords.band.options.any.description;
+		const width = bandWidth(option) ?? 0;
+		return option === "close" ? hostWords.band.options.close.description(width) : hostWords.band.options.tight.description(width);
+	};
+	const select = new StringSelectMenuBuilder()
+		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:band:${roomId}`)
+		.setPlaceholder(hostWords.band.placeholder)
+		.addOptions(RATING_BANDS.map((option) => ({ label: BAND_LABELS[option], value: option, description: describe(option), default: option === band })));
+	return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(select);
+}
+
 // The card's controls for the current state. Returns an empty array once the draft is
 // terminal, which is what strips the buttons off a finished card rather than leaving
 // dead controls a member can still press.
-export function openerCardRows(roomId: string, state: OpenerCardState): ActionRowBuilder<ButtonBuilder>[] {
+export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[] {
 	if (state.cancelled || state.startedChannelId) return [];
 
 	const cancel = new ButtonBuilder()
@@ -176,20 +287,27 @@ export function openerCardRows(roomId: string, state: OpenerCardState): ActionRo
 		.setLabel(gameRoomsCopy.board.cancelLabel)
 		.setStyle(ButtonStyle.Secondary);
 
-	// Step 1: the host has not chosen who can see the room yet.
+	// Step 1: the host has not chosen who can see the room yet. Open to all is left off
+	// when the server's challenge reach is invite only.
 	if (!state.visibility) {
+		const openToAll =
+			state.allowPublic === false
+				? []
+				: [
+						new ButtonBuilder()
+							.setCustomId(`${GAME_ROOM_PREFIX}:vis:${roomId}:public`)
+							.setLabel(gameRoomsCopy.board.visibilityOpenLabel)
+							.setEmoji("🌐")
+							.setStyle(ButtonStyle.Primary),
+				  ];
 		return [
-			new ActionRowBuilder<ButtonBuilder>().addComponents(
+			new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
 				new ButtonBuilder()
 					.setCustomId(`${GAME_ROOM_PREFIX}:vis:${roomId}:invite`)
 					.setLabel(gameRoomsCopy.board.visibilityInviteLabel)
 					.setEmoji("🔒")
 					.setStyle(ButtonStyle.Secondary),
-				new ButtonBuilder()
-					.setCustomId(`${GAME_ROOM_PREFIX}:vis:${roomId}:public`)
-					.setLabel(gameRoomsCopy.board.visibilityOpenLabel)
-					.setEmoji("🌐")
-					.setStyle(ButtonStyle.Primary),
+				...openToAll,
 				cancel
 			),
 		];
@@ -226,12 +344,22 @@ export function openerCardRows(roomId: string, state: OpenerCardState): ActionRo
 	// Monopoly's choices sit beside Start because they have to be made before the match
 	// is seeded. That makes five buttons, Discord's cap for one row, so a sixth Monopoly
 	// setting needs a second row.
-	if (state.game === "monopoly") {
-		const auctions = draftSettingToggle(roomId, "auctions", state.monopolyAuctions ?? false, gameRoomsCopy.board.monopolyAuctionsToggleLabel, "🔨");
-		const referee = draftSettingToggle(roomId, "referee", state.monopolyReferee ?? false, gameRoomsCopy.board.monopolyRefereeToggleLabel, "🎙️");
-		return [new ActionRowBuilder<ButtonBuilder>().addComponents(gather, start, auctions, referee, cancel)];
-	}
-	return [new ActionRowBuilder<ButtonBuilder>().addComponents(gather, start, cancel)];
+	const gatherRow =
+		state.game === "monopoly"
+			? new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
+					gather,
+					start,
+					draftSettingToggle(roomId, "auctions", state.monopolyAuctions ?? false, gameRoomsCopy.board.monopolyAuctionsToggleLabel, "🔨"),
+					draftSettingToggle(roomId, "referee", state.monopolyReferee ?? false, gameRoomsCopy.board.monopolyRefereeToggleLabel, "🎙️"),
+					cancel
+			  )
+			: new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(gather, start, cancel);
+
+	// The host's controls ride their own rows below, so the gather row keeps its shape
+	// (and Monopoly keeps all five of its slots). Three rows at most, inside Discord's five.
+	const controls = state.hostControls;
+	if (!controls) return [gatherRow];
+	return [gatherRow, hostControlRow(roomId, state, controls), ...(showsBand(state) ? [bandSelectRow(roomId, controls.ratingBand)] : [])];
 }
 
 /** The card actions that switch a Monopoly draft setting; challengeBoard maps each to its row field. */

@@ -24,8 +24,8 @@ export const GAME_ROOM_MODAL_PREFIX = "gameroomModal";
 // customId shape: `gameroom:<action>:<tail>[:<arg>]`.
 //
 // `tail` is a roomId for every action except `new`, which carries a game slug because
-// no room exists yet at that point. `arg` is used by `vis`, `auctions`, `referee`, `hmove`,
-// `mbuy`, `mjail`, `mtradeAccept`, `mtradeReject` and `mauction`.
+// no room exists yet at that point. `arg` is used by `vis`, `auctions`, `referee`, `approval`,
+// `hmove`, `hseats`, `mbuy`, `mjail`, `mtradeAccept`, `mtradeReject` and `mauction`.
 //
 // ⚠️ EVERY ENTRY HERE HAS A BUTTON THAT EMITS IT AND A BRANCH THAT ANSWERS IT. Phase 3
 // deliberately declared only archive and forfeit for that reason, and Phase 4 adds the
@@ -54,6 +54,19 @@ export const GAME_ROOM_ACTIONS = {
 	// Monopoly drafts only: the host makes Dero the match's voice referee, or not, the
 	// same shape and the same gate as `auctions`.
 	referee: { hostOnly: true, playersOnly: false },
+
+	// ── the host controls (2026-10 item 244 Phase 4) ──
+	// Every one is the host's, with the router's admin override, and each is re-checked
+	// on the select or reply it opens, since those are reachable without the button.
+	// Turn approval of each joiner on or off, with the value to set in the arg. A draft
+	// control, like `vis`.
+	approval: { hostOnly: true, playersOnly: false },
+	// Open the private answer panel for the members waiting on approval. On the draft
+	// card and on a Hold'em table, so it is not a draft only control.
+	requests: { hostOnly: true, playersOnly: false },
+	// Open the private picker to remove a member: from the draft's pool before the
+	// start, from a Hold'em, Battleship or Monopoly room during play.
+	kick: { hostOnly: true, playersOnly: false },
 
 	// ── in the room (Phase 3, plus the game controls Phase 4 adds) ──
 	// Delete the room's channel now rather than waiting out the archive window.
@@ -105,6 +118,10 @@ export const GAME_ROOM_ACTIONS = {
 	// I'm back, for a seat that sits out after two timeouts in a row. playersOnly,
 	// and the handler also requires that the clicker's own seat is sitting out.
 	hback: { hostOnly: false, playersOnly: true },
+	// Open seats or Close seats while the tournament runs (2026-10 item 244 Phase 4),
+	// with the value to set in the arg. The host's call, like dealing. A late joiner
+	// takes a seat through `hjoin`, the same door as Buy in.
+	hseats: { hostOnly: true, playersOnly: false },
 
 	// ── monopoly (2026-10 item 241) ──
 	// Every one is playersOnly and none is hostOnly: the host is just another seat,
