@@ -20,7 +20,7 @@ const CARA = "cara";
 const NOW = 1_000;
 const LATER = 2_000;
 const SEED = 241;
-const LOT = "cinder-row";
+const LOT = "burnt-umber-row";
 
 function expectOk(result: MonopolyResult): { state: MonopolyState; trailLines: string[] } {
 	if (!result.ok) throw new Error(`expected ok, got refusal: ${result.reason}`);
@@ -32,7 +32,7 @@ function expectRefusal(result: MonopolyResult, reason: string | RegExp): void {
 	expect(result.reason).toMatch(reason);
 }
 
-// Alice is standing on Cinder Row, for sale, as a roll would have left her.
+// Alice is standing on Burnt Umber Row, for sale, as a roll would have left her.
 function offeringLot(auctionsEnabled: boolean = true, players: string[] = [ALICE, BOB, CARA]): MonopolyState {
 	const state = createInitialState(players, { auctionsEnabled }, NOW, SEED);
 	state.seats[0].position = boardIndexOf(LOT);
@@ -57,7 +57,7 @@ describe("openAuction", () => {
 		expect(state.phase).toBe("in-auction");
 		expect(state.pendingAuction).toEqual({ tileId: LOT, bids: {}, roundOpenedAt: LATER, skippedBy: ALICE });
 		expect(state.properties[LOT].ownerId).toBeNull();
-		expect(trailLines).toEqual(["<@alice> passed on Cinder Row, and it goes up for auction."]);
+		expect(trailLines).toEqual(["<@alice> passed on Burnt Umber Row, and it goes up for auction."]);
 	});
 
 	it("is the same round when opened directly", () => {
@@ -79,13 +79,13 @@ describe("openAuction", () => {
 
 	it("refuses outside a buy, and for a lot the seat is not standing on", () => {
 		expectRefusal(openAuction({ ...offeringLot(), phase: "post-roll" }, LOT, ALICE), "There is nothing to auction right now.");
-		expectRefusal(openAuction(offeringLot(), "mudlark-lane", ALICE), "Only the lot you are standing on can go to auction.");
+		expectRefusal(openAuction(offeringLot(), "vermillion-alley", ALICE), "Only the lot you are standing on can go to auction.");
 	});
 
 	it("refuses a lot that already has an owner", () => {
 		const owned = offeringLot();
 		owned.properties[LOT].ownerId = BOB;
-		expectRefusal(openAuction(owned, LOT, ALICE), "Cinder Row already has an owner.");
+		expectRefusal(openAuction(owned, LOT, ALICE), "Burnt Umber Row already has an owner.");
 	});
 
 	it("falls back to a plain pass when a hand built state awaits a buy off any lot", () => {
@@ -100,7 +100,7 @@ describe("openAuction", () => {
 describe("placeBid", () => {
 	it("tracks a sealed bid from every seat still playing, the last bid counting", () => {
 		const { state, trailLines } = expectOk(placeBid(auctioning(), BOB, 70));
-		expect(trailLines).toEqual(["<@bob> placed a bid on Cinder Row."]);
+		expect(trailLines).toEqual(["<@bob> placed a bid on Burnt Umber Row."]);
 		const all = bidAll(state, { [ALICE]: 40, [CARA]: 90, [BOB]: 95 });
 		expect(all.pendingAuction?.bids).toEqual({ [ALICE]: 40, [BOB]: 95, [CARA]: 90 });
 		expect(state.pendingAuction?.bids).toEqual({ [BOB]: 70 });
@@ -134,7 +134,7 @@ describe("closeAuction", () => {
 		expect(state.seats.map((seat) => seat.chips)).toEqual([STARTING_CHIPS, STARTING_CHIPS - 95, STARTING_CHIPS]);
 		expect(state.pendingAuction).toBeNull();
 		expect(state.phase).toBe("post-roll");
-		expect(trailLines).toEqual(["<@bob> won Cinder Row at auction for $95."]);
+		expect(trailLines).toEqual(["<@bob> won Burnt Umber Row at auction for $95."]);
 		expect(state.log.at(-1)?.userId).toBe(ALICE);
 	});
 
@@ -142,7 +142,7 @@ describe("closeAuction", () => {
 		const { state, trailLines } = expectOk(closeAuction(auctioning()));
 		expect(state.properties[LOT].ownerId).toBeNull();
 		expect(state.phase).toBe("post-roll");
-		expect(trailLines).toEqual(["Nobody bid on Cinder Row, so it stays with the bank."]);
+		expect(trailLines).toEqual(["Nobody bid on Burnt Umber Row, so it stays with the bank."]);
 	});
 
 	it("breaks a tie by turn order from the seat on the clock", () => {
@@ -191,7 +191,7 @@ describe("a seat leaving mid auction", () => {
 		expect(state.properties[LOT].ownerId).toBeNull();
 		expect(state.phase).toBe("pre-roll");
 		expect(state.activeSeatIndex).toBe(1);
-		expect(trailLines).toContain("The auction for Cinder Row is called off, and the lot stays with the bank.");
+		expect(trailLines).toContain("The auction for Burnt Umber Row is called off, and the lot stays with the bank.");
 	});
 
 	it("clears the auction when the last rival leaves and the match ends", () => {

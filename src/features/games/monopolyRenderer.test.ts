@@ -197,8 +197,8 @@ describe("renderBoard", () => {
 	it("draws each built lot's houses on its tile, under the tokens, and a hotel alone", async () => {
 		const state = threeSeatMatch();
 		// Position 1 is the first brown lot, 39 the last dark blue one.
-		state.properties["mudlark-lane"] = { ownerId: A, houses: 3, hotel: false, mortgaged: false };
-		state.properties["sapphire-keep"] = { ownerId: B, houses: 0, hotel: true, mortgaged: false };
+		state.properties["vermillion-alley"] = { ownerId: A, houses: 3, hotel: false, mortgaged: false };
+		state.properties["postern-lane"] = { ownerId: B, houses: 0, hotel: true, mortgaged: false };
 		await renderBoard(state, NOW);
 
 		const drawn = placements();

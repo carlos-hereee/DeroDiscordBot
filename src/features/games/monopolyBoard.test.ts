@@ -84,7 +84,11 @@ describe("monopolyBoard, names and ids", () => {
 	});
 
 	it("borrows no street name from the trademarked board", () => {
-		const banned = /boardwalk|park place|marvin|avenue|reading railroad|short line|electric company|water works/i;
+		// Every street, railroad and utility the US board prints, rather than generic
+		// words like "avenue": the owner's art puts a Market Avenue on square 18, and a
+		// generic word is not what makes a name the trademarked board's.
+		const banned =
+			/mediterranean|baltic|oriental|vermont|connecticut|st\.? charles|states avenue|virginia|st\.? james|tennessee|new york avenue|kentucky|indiana|illinois|atlantic|ventnor|marvin|pacific|north carolina|pennsylvania|park place|boardwalk|reading railroad|b\.? ?& ?o|short line|electric company|water works/i;
 		for (const tile of OWNABLE_TILES) expect(tile.name).not.toMatch(banned);
 	});
 });
@@ -133,17 +137,17 @@ describe("monopolyBoard, standard values", () => {
 
 describe("monopolyBoard, lookups", () => {
 	it("finds an ownable tile by id and returns undefined for an unknown one", () => {
-		expect(findOwnableTile("vermillion-alley")?.name).toBe("Vermillion Alley");
+		expect(findOwnableTile("traders-pass")?.name).toBe("Trader's Pass");
 		expect(findOwnableTile("not-a-tile")).toBeUndefined();
 	});
 
 	it("finds a tile's board position and throws on an id the board does not have", () => {
-		expect(boardIndexOf("sapphire-keep")).toBe(BOARD_SIZE - 1);
+		expect(boardIndexOf("postern-lane")).toBe(BOARD_SIZE - 1);
 		expect(() => boardIndexOf("not-a-tile")).toThrow(/no tile not-a-tile/);
 	});
 
 	it("names an ownable tile by id and throws on an id the board does not have", () => {
-		expect(ownableTileName("cinder-row")).toBe("Cinder Row");
+		expect(ownableTileName("burnt-umber-row")).toBe("Burnt Umber Row");
 		expect(() => ownableTileName("not-a-tile")).toThrow(/no tile not-a-tile/);
 	});
 
@@ -154,7 +158,7 @@ describe("monopolyBoard, lookups", () => {
 	});
 
 	it("describes ownable tiles by name and special tiles by their label", () => {
-		expect(describeTile(BOARD[1])).toBe("Mudlark Lane");
+		expect(describeTile(BOARD[1])).toBe("Vermillion Alley");
 		expect(describeTile(BOARD[GO_INDEX])).toBe("GO");
 		expect(describeTile(BOARD[2])).toBe("Community Chest");
 		expect(describeTile(BOARD[4])).toBe("Tax");

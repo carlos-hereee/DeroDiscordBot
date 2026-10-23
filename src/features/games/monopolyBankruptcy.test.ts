@@ -55,11 +55,11 @@ const debt = (state: MonopolyState, debtorId: string, creditorId: string, amount
 	amount,
 });
 
-// Brown with houses on both lots: Mudlark Lane at two, Cinder Row at three.
+// Brown with houses on both lots: Vermillion Alley at two, Burnt Umber Row at three.
 function builtBrown(state: MonopolyState, ownerId: string): void {
-	giveTiles(state, ownerId, "mudlark-lane", "cinder-row");
-	state.properties["mudlark-lane"].houses = 2;
-	state.properties["cinder-row"].houses = 3;
+	giveTiles(state, ownerId, "vermillion-alley", "burnt-umber-row");
+	state.properties["vermillion-alley"].houses = 2;
+	state.properties["burnt-umber-row"].houses = 3;
 	state.bank.houses -= 5;
 }
 
@@ -96,10 +96,10 @@ describe("resolveDebt", () => {
 	it("never mutates the state it is given", () => {
 		const state = newMatch();
 		state.seats[0].chips = 10;
-		giveTiles(state, ALICE, "skyrail-station");
+		giveTiles(state, ALICE, "rail-one");
 		expectOk(resolveDebt(state, ALICE, BOB, 50, NOW));
 		expect(state.seats[0].chips).toBe(10);
-		expect(state.properties["skyrail-station"].mortgaged).toBe(false);
+		expect(state.properties["rail-one"].mortgaged).toBe(false);
 	});
 });
 
@@ -109,15 +109,15 @@ describe("raising cash before bankruptcy", () => {
 	it("mortgages in board order only until the debt is covered, so mortgaging alone avoids bankruptcy", () => {
 		const state = newMatch();
 		state.seats[0].chips = 20;
-		giveTiles(state, ALICE, "teal-ridge", "skyrail-station", "lumen-works");
+		giveTiles(state, ALICE, "reader-dock", "rail-one", "electric-utility");
 		const { state: next, trailLines } = expectOk(resolveDebt(state, ALICE, BOB, 150, NOW));
 		expect(next.seats[0]).toMatchObject({ bankrupt: false, chips: 20 + 100 + 50 - 150 });
-		expect(next.properties["skyrail-station"].mortgaged).toBe(true);
-		expect(next.properties["teal-ridge"].mortgaged).toBe(true);
-		expect(next.properties["lumen-works"].mortgaged).toBe(false);
+		expect(next.properties["rail-one"].mortgaged).toBe(true);
+		expect(next.properties["reader-dock"].mortgaged).toBe(true);
+		expect(next.properties["electric-utility"].mortgaged).toBe(false);
 		expect(trailLines).toEqual([
-			"<@alice> mortgaged Skyrail Station for $100 to cover the debt.",
-			"<@alice> mortgaged Teal Ridge for $50 to cover the debt.",
+			"<@alice> mortgaged Rail One for $100 to cover the debt.",
+			"<@alice> mortgaged Reader Dock for $50 to cover the debt.",
 			"<@alice> paid <@bob> $150.",
 		]);
 	});
@@ -126,10 +126,10 @@ describe("raising cash before bankruptcy", () => {
 		const state = newMatch();
 		state.seats[0].chips = 0;
 		builtBrown(state, ALICE);
-		giveTiles(state, ALICE, "skyrail-station");
+		giveTiles(state, ALICE, "rail-one");
 		const { state: next } = expectOk(resolveDebt(state, ALICE, BOB, 100, NOW));
-		expect(next.properties["skyrail-station"].mortgaged).toBe(true);
-		expect([next.properties["mudlark-lane"].houses, next.properties["cinder-row"].houses]).toEqual([2, 3]);
+		expect(next.properties["rail-one"].mortgaged).toBe(true);
+		expect([next.properties["vermillion-alley"].houses, next.properties["burnt-umber-row"].houses]).toEqual([2, 3]);
 	});
 
 	it("sells houses from the tallest lot first, then mortgages the group once it is bare", () => {
@@ -139,12 +139,12 @@ describe("raising cash before bankruptcy", () => {
 		// Five houses sell for $25 each ($125), then one lot mortgages for $30.
 		const { state: next, trailLines } = expectOk(resolveDebt(state, ALICE, BOB, 150, NOW));
 		expect(trailLines.slice(0, 2)).toEqual([
-			"<@alice> sold a house on Cinder Row back to the bank for $25.",
-			"<@alice> sold a house on Mudlark Lane back to the bank for $25.",
+			"<@alice> sold a house on Burnt Umber Row back to the bank for $25.",
+			"<@alice> sold a house on Vermillion Alley back to the bank for $25.",
 		]);
-		expect(trailLines).toContain("<@alice> mortgaged Mudlark Lane for $30 to cover the debt.");
-		expect(next.properties["mudlark-lane"]).toMatchObject({ houses: 0, mortgaged: true });
-		expect(next.properties["cinder-row"]).toMatchObject({ houses: 0, mortgaged: false });
+		expect(trailLines).toContain("<@alice> mortgaged Vermillion Alley for $30 to cover the debt.");
+		expect(next.properties["vermillion-alley"]).toMatchObject({ houses: 0, mortgaged: true });
+		expect(next.properties["burnt-umber-row"]).toMatchObject({ houses: 0, mortgaged: false });
 		expect(next.bank.houses).toBe(BANK_HOUSES);
 		expect(next.seats[0]).toMatchObject({ bankrupt: false, chips: 125 + 30 - 150 });
 	});
@@ -152,29 +152,29 @@ describe("raising cash before bankruptcy", () => {
 	it("sells a hotel back for the four houses it replaced when the bank has them", () => {
 		const state = newMatch();
 		state.seats[0].chips = 0;
-		giveTiles(state, ALICE, "mudlark-lane", "cinder-row");
-		state.properties["mudlark-lane"].houses = 4;
-		state.properties["cinder-row"].hotel = true;
+		giveTiles(state, ALICE, "vermillion-alley", "burnt-umber-row");
+		state.properties["vermillion-alley"].houses = 4;
+		state.properties["burnt-umber-row"].hotel = true;
 		state.bank.houses -= 4;
 		state.bank.hotels -= 1;
 		const { state: next, trailLines } = expectOk(resolveDebt(state, ALICE, BOB, 25, NOW));
-		expect(trailLines[0]).toBe("<@alice> sold the hotel on Cinder Row back to the bank for $25.");
-		expect(next.properties["cinder-row"]).toMatchObject({ hotel: false, houses: 4 });
+		expect(trailLines[0]).toBe("<@alice> sold the hotel on Burnt Umber Row back to the bank for $25.");
+		expect(next.properties["burnt-umber-row"]).toMatchObject({ hotel: false, houses: 4 });
 		expect(next.bank).toEqual({ houses: BANK_HOUSES - 8, hotels: BANK_HOTELS });
 	});
 
 	it("tears a hotel down to bare ground when the bank has no houses to give back", () => {
 		const state = newMatch();
 		state.seats[0].chips = 0;
-		giveTiles(state, ALICE, "mudlark-lane", "cinder-row");
-		state.properties["mudlark-lane"].hotel = true;
-		state.properties["cinder-row"].hotel = true;
+		giveTiles(state, ALICE, "vermillion-alley", "burnt-umber-row");
+		state.properties["vermillion-alley"].hotel = true;
+		state.properties["burnt-umber-row"].hotel = true;
 		state.bank.houses = 3;
 		state.bank.hotels -= 2;
 		const { state: next, trailLines } = expectOk(resolveDebt(state, ALICE, BOB, 100, NOW));
-		expect(trailLines[0]).toBe("<@alice> sold the hotel on Mudlark Lane and, with no houses left in the bank, every rung under it for $125.");
-		expect(next.properties["mudlark-lane"]).toMatchObject({ hotel: false, houses: 0 });
-		expect(next.properties["cinder-row"].hotel).toBe(true);
+		expect(trailLines[0]).toBe("<@alice> sold the hotel on Vermillion Alley and, with no houses left in the bank, every rung under it for $125.");
+		expect(next.properties["vermillion-alley"]).toMatchObject({ hotel: false, houses: 0 });
+		expect(next.properties["burnt-umber-row"].hotel).toBe(true);
 		expect(next.bank).toEqual({ houses: 3, hotels: BANK_HOTELS - 1 });
 		expect(next.seats[0].chips).toBe(25);
 	});
@@ -189,18 +189,18 @@ describe("bankruptcy", () => {
 		state.seats[0].gojfCards = 1;
 		state.chanceDeck = state.chanceDeck.filter((id) => id !== "chance-jail-free");
 		builtBrown(state, ALICE);
-		giveTiles(state, ALICE, "skyrail-station");
-		state.properties["skyrail-station"].mortgaged = true;
+		giveTiles(state, ALICE, "rail-one");
+		state.properties["rail-one"].mortgaged = true;
 		const { state: next, trailLines } = expectOk(resolveDebt(state, ALICE, BOB, 1000, NOW));
 
 		// $40 plus five houses sold back at $25 each reaches Bob; the lots move as
-		// they stood, Mudlark Lane and Cinder Row unmortgaged and the station still
+		// they stood, Vermillion Alley and Burnt Umber Row unmortgaged and the station still
 		// mortgaged.
 		expect(seatOf(next, BOB)).toMatchObject({ chips: STARTING_CHIPS + 40 + 125, gojfCards: 1 });
 		expect(seatOf(next, ALICE)).toMatchObject({ bankrupt: true, bankruptedAt: 1, chips: 0, gojfCards: 0 });
-		expect(next.properties["mudlark-lane"]).toEqual({ ownerId: BOB, houses: 0, hotel: false, mortgaged: false });
-		expect(next.properties["cinder-row"]).toEqual({ ownerId: BOB, houses: 0, hotel: false, mortgaged: false });
-		expect(next.properties["skyrail-station"]).toMatchObject({ ownerId: BOB, mortgaged: true });
+		expect(next.properties["vermillion-alley"]).toEqual({ ownerId: BOB, houses: 0, hotel: false, mortgaged: false });
+		expect(next.properties["burnt-umber-row"]).toEqual({ ownerId: BOB, houses: 0, hotel: false, mortgaged: false });
+		expect(next.properties["rail-one"]).toMatchObject({ ownerId: BOB, mortgaged: true });
 		expect(next.bank.houses).toBe(BANK_HOUSES);
 		// The jail card changed hands without rejoining a pile.
 		expect(next.chanceDeck).not.toContain("chance-jail-free");
@@ -220,11 +220,11 @@ describe("bankruptcy", () => {
 		state.seats[0].gojfCards = 1;
 		state.chestDeck = state.chestDeck.filter((id) => id !== "chest-jail-free");
 		builtBrown(state, ALICE);
-		giveTiles(state, ALICE, "skyrail-station");
-		state.properties["skyrail-station"].mortgaged = true;
+		giveTiles(state, ALICE, "rail-one");
+		state.properties["rail-one"].mortgaged = true;
 		const { state: next, trailLines } = expectOk(resolveDebt(state, ALICE, BANK_CREDITOR, 1000, NOW));
 
-		for (const id of ["mudlark-lane", "cinder-row", "skyrail-station"]) {
+		for (const id of ["vermillion-alley", "burnt-umber-row", "rail-one"]) {
 			expect(next.properties[id]).toEqual({ ownerId: null, houses: 0, hotel: false, mortgaged: false });
 		}
 		expect(seatOf(next, ALICE)).toMatchObject({ bankrupt: true, chips: 0, gojfCards: 0 });
@@ -254,11 +254,11 @@ describe("bankruptcy", () => {
 // ── rent on a roll ──────────────────────────────────────────────────────────
 
 describe("rent the roller cannot cover from chips", () => {
-	// Bob owns Teal Ridge with a hotel ($550). A 2 and 4 from GO lands on it.
+	// Bob owns Reader Dock with a hotel ($550). A 2 and 4 from GO lands on it.
 	function hotelRent(): MonopolyState {
 		const state = newMatch();
-		giveTiles(state, BOB, "teal-ridge", "frost-hollow", "skyglass-terrace");
-		state.properties["teal-ridge"].hotel = true;
+		giveTiles(state, BOB, "reader-dock", "teal-vale", "teal-ridge");
+		state.properties["reader-dock"].hotel = true;
 		state.bank.hotels -= 1;
 		return state;
 	}
@@ -266,14 +266,14 @@ describe("rent the roller cannot cover from chips", () => {
 	it("raises cash and keeps the roller playing when its lots cover the rent", () => {
 		const state = hotelRent();
 		state.seats[0].chips = 500;
-		giveTiles(state, ALICE, "skyrail-station");
+		giveTiles(state, ALICE, "rail-one");
 		const { state: next, trailLines } = expectOk(applyRoll(state, diceRng(2, 4), NOW));
 		expect(seatOf(next, ALICE)).toMatchObject({ bankrupt: false, chips: 500 + 100 - 550 });
 		expect(seatOf(next, BOB).chips).toBe(STARTING_CHIPS + 550);
 		expect(next.phase).toBe("post-roll");
 		expect(next.activeSeatIndex).toBe(0);
 		expect(trailLines.slice(-2)).toEqual([
-			"<@alice> mortgaged Skyrail Station for $100 to cover the debt.",
+			"<@alice> mortgaged Rail One for $100 to cover the debt.",
 			"<@alice> paid $550 rent to <@bob>.",
 		]);
 	});
@@ -281,14 +281,14 @@ describe("rent the roller cannot cover from chips", () => {
 	it("bankrupts the roller to the owner when nothing covers it, and the turn passes", () => {
 		const state = hotelRent();
 		state.seats[0].chips = 300;
-		giveTiles(state, ALICE, "mudlark-lane");
+		giveTiles(state, ALICE, "vermillion-alley");
 		const { state: next } = expectOk(applyRoll(state, diceRng(2, 4), NOW));
 		expect(seatOf(next, ALICE).bankrupt).toBe(true);
 		expect(seatOf(next, BOB).chips).toBe(STARTING_CHIPS + 300);
-		expect(next.properties["mudlark-lane"]).toMatchObject({ ownerId: BOB, mortgaged: false });
+		expect(next.properties["vermillion-alley"]).toMatchObject({ ownerId: BOB, mortgaged: false });
 		expect(next.phase).toBe("pre-roll");
 		expect(next.activeSeatIndex).toBe(1);
-		expect(boardIndexOf("teal-ridge")).toBe(6);
+		expect(boardIndexOf("reader-dock")).toBe(6);
 	});
 });
 
@@ -301,7 +301,7 @@ describe("settleDebts", () => {
 		// see that B is owed money and settle A before judging B.
 		const state = newMatch();
 		state.seats[0].chips = 200;
-		giveTiles(state, ALICE, "skyrail-station");
+		giveTiles(state, ALICE, "rail-one");
 		state.seats[1].chips = 100;
 		const lines = settleDebts(state, [debt(state, BOB, CARA, 350), debt(state, ALICE, BOB, 500)], NOW);
 
@@ -309,18 +309,18 @@ describe("settleDebts", () => {
 		expect(seatOf(state, BOB)).toMatchObject({ bankrupt: false, chips: 100 + 200 + 100 - 350 });
 		expect(seatOf(state, CARA).chips).toBe(STARTING_CHIPS + 350);
 		// Bob covered the last $100 by mortgaging the station he took from Alice.
-		expect(state.properties["skyrail-station"]).toMatchObject({ ownerId: BOB, mortgaged: true });
+		expect(state.properties["rail-one"]).toMatchObject({ ownerId: BOB, mortgaged: true });
 		expect(lines.at(-1)).toBe("<@bob> paid <@cara> $350.");
 	});
 
 	it("pays a debt the chips cover before forcing one that needs a sale", () => {
 		const state = newMatch();
 		state.seats[1].chips = 0;
-		giveTiles(state, BOB, "skyrail-station");
+		giveTiles(state, BOB, "rail-one");
 		const lines = settleDebts(state, [debt(state, BOB, CARA, 50), debt(state, ALICE, BOB, 60)], NOW);
 		expect(lines[0]).toBe("<@alice> paid <@bob> $60.");
 		expect(seatOf(state, BOB).chips).toBe(10);
-		expect(state.properties["skyrail-station"].mortgaged).toBe(false);
+		expect(state.properties["rail-one"].mortgaged).toBe(false);
 	});
 
 	it("writes off what a bankrupt debtor still owes instead of charging it twice", () => {
@@ -338,11 +338,11 @@ describe("settleDebts", () => {
 		const state = newMatch();
 		state.seats[0].chips = 40;
 		state.seats[1].chips = 100;
-		giveTiles(state, BOB, "mudlark-lane");
+		giveTiles(state, BOB, "vermillion-alley");
 		const lines = settleDebts(state, [debt(state, ALICE, BOB, 50), debt(state, BOB, ALICE, 500)], NOW);
 		expect(seatOf(state, ALICE).bankrupt).toBe(true);
 		expect(seatOf(state, BOB).bankrupt).toBe(true);
-		expect(state.properties["mudlark-lane"].ownerId).toBeNull();
+		expect(state.properties["vermillion-alley"].ownerId).toBeNull();
 		expect(lines).toContain("<@bob> is out of the match, and their holdings return to the bank.");
 		expect(state.winnerId).toBe(CARA);
 	});

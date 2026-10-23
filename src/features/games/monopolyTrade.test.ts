@@ -34,20 +34,20 @@ function expectRefusal(result: MonopolyResult, reason: string | RegExp): void {
 
 const NOTHING = { properties: [], chips: 0, gojf: 0 };
 
-// Alice offers Teal Ridge, $100 and her jail card for Bob's Mudlark Lane and
-// Cinder Row and his $50.
+// Alice offers Reader Dock, $100 and her jail card for Bob's Vermillion Alley and
+// Burnt Umber Row and his $50.
 function aliceAndBob(): { state: MonopolyState; proposal: TradeProposal } {
 	const state = newMatch();
-	state.properties["teal-ridge"].ownerId = ALICE;
-	state.properties["mudlark-lane"].ownerId = BOB;
-	state.properties["cinder-row"].ownerId = BOB;
-	state.properties["cinder-row"].mortgaged = true;
+	state.properties["reader-dock"].ownerId = ALICE;
+	state.properties["vermillion-alley"].ownerId = BOB;
+	state.properties["burnt-umber-row"].ownerId = BOB;
+	state.properties["burnt-umber-row"].mortgaged = true;
 	state.seats[0].gojfCards = 1;
 	const proposal: TradeProposal = {
 		initiatorId: ALICE,
 		counterpartyId: BOB,
-		offer: { properties: ["teal-ridge"], chips: 100, gojf: 1 },
-		request: { properties: ["mudlark-lane", "cinder-row"], chips: 50, gojf: 0 },
+		offer: { properties: ["reader-dock"], chips: 100, gojf: 1 },
+		request: { properties: ["vermillion-alley", "burnt-umber-row"], chips: 50, gojf: 0 },
 		openedAt: NOW,
 	};
 	return { state, proposal };
@@ -63,7 +63,7 @@ describe("openTrade", () => {
 		const { state: next, trailLines } = expectOk(openTrade(state, proposal));
 		expect(next.pendingTrade).toEqual(proposal);
 		expect(next.pendingTrade).not.toBe(proposal);
-		expect(next.properties["teal-ridge"].ownerId).toBe(ALICE);
+		expect(next.properties["reader-dock"].ownerId).toBe(ALICE);
 		expect(next.seats.map((seat) => seat.chips)).toEqual([STARTING_CHIPS, STARTING_CHIPS, STARTING_CHIPS]);
 		expect(next.phase).toBe("pre-roll");
 		expect(trailLines).toEqual(["<@alice> offered <@bob> a trade."]);
@@ -109,26 +109,26 @@ describe("openTrade", () => {
 	it("refuses a lot listed twice, a lot not on the board and a lot the side does not own", () => {
 		const { state, proposal } = aliceAndBob();
 		const offer = (properties: string[]) => withTerms(proposal, { offer: { ...proposal.offer, properties } });
-		expectRefusal(openTrade(state, offer(["teal-ridge", "teal-ridge"])), "A lot can only be listed once in a trade.");
+		expectRefusal(openTrade(state, offer(["reader-dock", "reader-dock"])), "A lot can only be listed once in a trade.");
 		expectRefusal(openTrade(state, offer(["moon-base"])), "That is not a lot on this board.");
-		expectRefusal(openTrade(state, offer(["mudlark-lane"])), "<@alice> does not own Mudlark Lane.");
+		expectRefusal(openTrade(state, offer(["vermillion-alley"])), "<@alice> does not own Vermillion Alley.");
 	});
 
 	it("refuses a lot whose color group has buildings, even a bare lot of that group", () => {
 		const { state, proposal } = aliceAndBob();
-		state.properties["mudlark-lane"].houses = 1;
-		expectRefusal(openTrade(state, proposal), "Mudlark Lane cannot be traded while its color group has buildings.");
-		state.properties["mudlark-lane"].houses = 0;
-		state.properties["cinder-row"].hotel = true;
-		expectRefusal(openTrade(state, proposal), "Mudlark Lane cannot be traded while its color group has buildings.");
+		state.properties["vermillion-alley"].houses = 1;
+		expectRefusal(openTrade(state, proposal), "Vermillion Alley cannot be traded while its color group has buildings.");
+		state.properties["vermillion-alley"].houses = 0;
+		state.properties["burnt-umber-row"].hotel = true;
+		expectRefusal(openTrade(state, proposal), "Vermillion Alley cannot be traded while its color group has buildings.");
 	});
 
 	it("trades a transport, which has no color group to block it", () => {
 		const state = newMatch();
-		state.properties["skyrail-station"].ownerId = BOB;
-		const proposal = { initiatorId: ALICE, counterpartyId: BOB, offer: { ...NOTHING, chips: 300 }, request: { ...NOTHING, properties: ["skyrail-station"] }, openedAt: NOW };
+		state.properties["rail-one"].ownerId = BOB;
+		const proposal = { initiatorId: ALICE, counterpartyId: BOB, offer: { ...NOTHING, chips: 300 }, request: { ...NOTHING, properties: ["rail-one"] }, openedAt: NOW };
 		const open = expectOk(openTrade(state, proposal)).state;
-		expect(expectOk(acceptTrade(open)).state.properties["skyrail-station"].ownerId).toBe(ALICE);
+		expect(expectOk(acceptTrade(open)).state.properties["rail-one"].ownerId).toBe(ALICE);
 	});
 });
 
@@ -143,30 +143,30 @@ describe("acceptTrade", () => {
 	it("moves every item both ways in one step and clears the trade", () => {
 		const open = openAliceAndBob();
 		const { state, trailLines } = expectOk(acceptTrade(open, BOB));
-		expect(state.properties["teal-ridge"].ownerId).toBe(BOB);
-		expect(state.properties["mudlark-lane"].ownerId).toBe(ALICE);
+		expect(state.properties["reader-dock"].ownerId).toBe(BOB);
+		expect(state.properties["vermillion-alley"].ownerId).toBe(ALICE);
 		// A mortgaged lot moves still mortgaged, with no interest charged.
-		expect(state.properties["cinder-row"]).toMatchObject({ ownerId: ALICE, mortgaged: true });
+		expect(state.properties["burnt-umber-row"]).toMatchObject({ ownerId: ALICE, mortgaged: true });
 		expect(state.seats[0]).toMatchObject({ chips: STARTING_CHIPS - 100 + 50, gojfCards: 0 });
 		expect(state.seats[1]).toMatchObject({ chips: STARTING_CHIPS + 100 - 50, gojfCards: 1 });
 		expect(state.seats[2].chips).toBe(STARTING_CHIPS);
 		expect(state.pendingTrade).toBeNull();
 		expect(trailLines).toEqual([
 			"<@bob> accepted the trade from <@alice>.",
-			"<@alice> gave Teal Ridge, $100 and 1 Get Out of Jail Free card.",
-			"<@bob> gave Mudlark Lane, Cinder Row and $50.",
+			"<@alice> gave Reader Dock, $100 and 1 Get Out of Jail Free card.",
+			"<@bob> gave Vermillion Alley, Burnt Umber Row and $50.",
 		]);
 		// The input state is untouched, so a failed persist can simply drop the result.
 		expect(open.pendingTrade).not.toBeNull();
-		expect(open.properties["teal-ridge"].ownerId).toBe(ALICE);
+		expect(open.properties["reader-dock"].ownerId).toBe(ALICE);
 	});
 
 	it("names a single item, and nothing for a side that gives nothing", () => {
 		const state = newMatch();
-		state.properties["teal-ridge"].ownerId = ALICE;
-		const gift = { initiatorId: ALICE, counterpartyId: BOB, offer: { ...NOTHING, properties: ["teal-ridge"] }, request: NOTHING, openedAt: NOW };
+		state.properties["reader-dock"].ownerId = ALICE;
+		const gift = { initiatorId: ALICE, counterpartyId: BOB, offer: { ...NOTHING, properties: ["reader-dock"] }, request: NOTHING, openedAt: NOW };
 		const { trailLines } = expectOk(acceptTrade(expectOk(openTrade(state, gift)).state));
-		expect(trailLines.slice(1)).toEqual(["<@alice> gave Teal Ridge.", "<@bob> gave nothing."]);
+		expect(trailLines.slice(1)).toEqual(["<@alice> gave Reader Dock.", "<@bob> gave nothing."]);
 	});
 
 	it("refuses with no open trade, or from anyone but the counterparty", () => {
@@ -181,11 +181,11 @@ describe("acceptTrade", () => {
 		const result = acceptTrade(open, BOB);
 		expectRefusal(result, "This trade can no longer go through. <@alice> does not have $100.");
 		expect(open.pendingTrade).not.toBeNull();
-		expect(open.properties["teal-ridge"].ownerId).toBe(ALICE);
+		expect(open.properties["reader-dock"].ownerId).toBe(ALICE);
 
 		const built = openAliceAndBob();
-		built.properties["mudlark-lane"].houses = 1;
-		expectRefusal(acceptTrade(built), /Mudlark Lane cannot be traded/);
+		built.properties["vermillion-alley"].houses = 1;
+		expectRefusal(acceptTrade(built), /Vermillion Alley cannot be traded/);
 	});
 });
 
@@ -201,7 +201,7 @@ describe("rejectTrade", () => {
 		const open = openAliceAndBob();
 		const { state, trailLines } = expectOk(rejectTrade(open));
 		expect(state.pendingTrade).toBeNull();
-		expect(state.properties["teal-ridge"].ownerId).toBe(ALICE);
+		expect(state.properties["reader-dock"].ownerId).toBe(ALICE);
 		expect(state.seats.map((seat) => [seat.chips, seat.gojfCards])).toEqual(open.seats.map((seat) => [seat.chips, seat.gojfCards]));
 		expect(trailLines).toEqual(["<@bob> turned down the trade from <@alice>."]);
 		expect(expectOk(rejectTrade(open, BOB)).trailLines).toEqual(trailLines);
@@ -234,8 +234,8 @@ describe("a party leaving the match", () => {
 
 	it("clears an open trade when the match ends", () => {
 		const state = newMatch([ALICE, BOB]);
-		state.properties["teal-ridge"].ownerId = ALICE;
-		const gift = { initiatorId: ALICE, counterpartyId: BOB, offer: { ...NOTHING, properties: ["teal-ridge"] }, request: NOTHING, openedAt: NOW };
+		state.properties["reader-dock"].ownerId = ALICE;
+		const gift = { initiatorId: ALICE, counterpartyId: BOB, offer: { ...NOTHING, properties: ["reader-dock"] }, request: NOTHING, openedAt: NOW };
 		const open = expectOk(openTrade(state, gift)).state;
 		const { state: over } = expectOk(applyForfeit(open, ALICE, NOW));
 		expect(over.phase).toBe("finished");

@@ -57,11 +57,11 @@ describe("monopolyBoardEmbed", () => {
 	it("puts a lone token's seat number on its tile and counts owned lots", async () => {
 		const state = freshMatch();
 		state.seats[1].position = 3;
-		state.properties["cinder-row"].ownerId = B;
+		state.properties["burnt-umber-row"].ownerId = B;
 
 		const description = await descriptionOf(state);
 		expect(description).toContain(" 0  1 · · 2 · · · · · ·");
-		expect(description).toContain(`<@${B}> · $1500 · 1 lot · on Cinder Row`);
+		expect(description).toContain(`<@${B}> · $1500 · 1 lot · on Burnt Umber Row`);
 	});
 
 	it("shows the last trail line and tags jailed and bankrupt seats", async () => {
@@ -143,11 +143,11 @@ describe("monopolyControlsRow", () => {
 
 		const [row] = rowsJson(state, A);
 		expect(row.map((button) => button.custom_id)).toEqual([
-			`gameroom:mbuy:${ROOM}:cinder-row`,
+			`gameroom:mbuy:${ROOM}:burnt-umber-row`,
 			`gameroom:mskip:${ROOM}`,
 			`gameroom:minventory:${ROOM}`,
 		]);
-		expect(row[0]).toMatchObject({ label: "Buy Cinder Row for $60", disabled: false });
+		expect(row[0]).toMatchObject({ label: "Buy Burnt Umber Row for $60", disabled: false });
 	});
 
 	it("greys Buy when the seat cannot afford the lot", () => {
@@ -198,16 +198,16 @@ describe("monopolyControlsRow", () => {
 describe("monopolyInventoryEmbed", () => {
 	it("shows the viewer their own chips, jail cards and lots by name", () => {
 		const state = freshMatch();
-		state.properties["cinder-row"].ownerId = A;
-		state.properties["mudlark-lane"].ownerId = A;
-		state.properties["teal-ridge"].ownerId = B;
+		state.properties["burnt-umber-row"].ownerId = A;
+		state.properties["vermillion-alley"].ownerId = A;
+		state.properties["reader-dock"].ownerId = B;
 		state.seats[0].gojfCards = 1;
 
 		const description = monopolyInventoryEmbed(state, A).data.description ?? "";
 		expect(description).toContain(gameRoomsCopy.monopoly.inventoryChips(1500));
 		expect(description).toContain(gameRoomsCopy.monopoly.inventoryJailCards(1));
-		expect(description).toContain("Lots: Mudlark Lane, Cinder Row");
-		expect(description).not.toContain("Teal Ridge");
+		expect(description).toContain("Lots: Vermillion Alley, Burnt Umber Row");
+		expect(description).not.toContain("Reader Dock");
 	});
 
 	it("says so for a viewer with no seat, and for a seat that is out", () => {

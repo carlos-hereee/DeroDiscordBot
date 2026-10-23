@@ -47,7 +47,7 @@ const renderMock = renderBoard as unknown as ReturnType<typeof vi.fn>;
 const A = "player-a";
 const B = "player-b";
 // rollDie is floor(rng * 6) + 1, so these land a 1 and a 2: three steps, onto
-// Cinder Row, an unowned lot, with no doubles.
+// Burnt Umber Row, an unowned lot, with no doubles.
 const ROLL_ONE = 0;
 const ROLL_TWO = 0.2;
 
@@ -163,7 +163,7 @@ describe("handleMroll", () => {
 
 		const payload = boardMessage.edit.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id?: string }[] } }[] };
 		const ids = payload.components.flatMap((row) => row.toJSON().components.map((button) => button.custom_id));
-		expect(ids).toEqual(["gameroom:mbuy:room-1:cinder-row", "gameroom:mskip:room-1", "gameroom:minventory:room-1"]);
+		expect(ids).toEqual(["gameroom:mbuy:room-1:burnt-umber-row", "gameroom:mskip:room-1", "gameroom:minventory:room-1"]);
 	});
 
 	it("swaps the board picture on a redraw rather than stacking one per move", async () => {
@@ -239,7 +239,7 @@ describe("handleMroll", () => {
 });
 
 describe("handleMbuy, handleMskip and handleMend", () => {
-	const onCinderRow = (): MonopolyState => {
+	const onBurntUmberRow = (): MonopolyState => {
 		const state = freshMatch();
 		state.phase = "awaiting-buy-or-skip";
 		state.rolledThisTurn = true;
@@ -248,37 +248,37 @@ describe("handleMbuy, handleMskip and handleMend", () => {
 	};
 
 	it("buys the lot on the button", async () => {
-		const room = seed(onCinderRow());
+		const room = seed(onBurntUmberRow());
 
-		await handleMbuy(makeInteraction(A), room, "cinder-row");
+		await handleMbuy(makeInteraction(A), room, "burnt-umber-row");
 
-		expect(persisted().properties["cinder-row"].ownerId).toBe(A);
+		expect(persisted().properties["burnt-umber-row"].ownerId).toBe(A);
 		expect(persisted().seats[0].chips).toBe(1440);
-		expect(trailTexts()).toEqual([`<@${A}> bought Cinder Row for $60.`]);
+		expect(trailTexts()).toEqual([`<@${A}> bought Burnt Umber Row for $60.`]);
 	});
 
 	it("passes the engine's own refusal through for a stale Buy button", async () => {
-		const room = seed(onCinderRow());
+		const room = seed(onBurntUmberRow());
 		const interaction = makeInteraction(A);
 
-		await handleMbuy(interaction, room, "mudlark-lane");
+		await handleMbuy(interaction, room, "vermillion-alley");
 
 		expect(followUpText(interaction)).toBe("You can only buy the tile you are standing on.");
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	it("skips the lot, which stays with the bank because auctions are off", async () => {
-		const room = seed(onCinderRow());
+		const room = seed(onBurntUmberRow());
 
 		await handleMskip(makeInteraction(A), room);
 
 		expect(persisted().phase).toBe("post-roll");
-		expect(persisted().properties["cinder-row"].ownerId).toBeNull();
+		expect(persisted().properties["burnt-umber-row"].ownerId).toBeNull();
 		expect(persisted().pendingAuction).toBeNull();
 	});
 
 	it("ends the turn and hands the clock on", async () => {
-		const state = onCinderRow();
+		const state = onBurntUmberRow();
 		state.phase = "post-roll";
 		const room = seed(state);
 

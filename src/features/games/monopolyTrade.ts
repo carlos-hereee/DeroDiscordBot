@@ -152,7 +152,7 @@ function moveTradeSide(state: MonopolyState, giver: MonopolySeat, receiver: Mono
 	receiver.gojfCards += side.gojf;
 }
 
-// "Teal Ridge, $100 and 1 Get Out of Jail Free card", or "nothing".
+// "Reader Dock, $100 and 1 Get Out of Jail Free card", or "nothing".
 function describeTradeSide(side: TradeSide): string {
 	const items = side.properties.map(ownableTileName);
 	if (side.chips > 0) items.push(`$${side.chips}`);

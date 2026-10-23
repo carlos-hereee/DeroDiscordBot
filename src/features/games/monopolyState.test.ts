@@ -182,7 +182,7 @@ describe("applyRoll", () => {
 	it("offers an unowned lot for sale", () => {
 		const { state, trailLines } = rollFrom(newMatch(), 0, 1, 2);
 		expect(state.phase).toBe("awaiting-buy-or-skip");
-		expect(trailLines.at(-1)).toBe("Cinder Row is for sale for $60.");
+		expect(trailLines.at(-1)).toBe("Burnt Umber Row is for sale for $60.");
 	});
 
 	it("keeps the turn open after doubles", () => {
@@ -256,7 +256,7 @@ describe("applyRoll", () => {
 describe("rent on landing", () => {
 	it("charges base rent to the owner of a lone lot", () => {
 		const state = newMatch();
-		giveTiles(state, BOB, "teal-ridge");
+		giveTiles(state, BOB, "reader-dock");
 		const { state: next, trailLines } = rollFrom(state, 0, 2, 4);
 		expect(next.seats[0].chips).toBe(STARTING_CHIPS - 6);
 		expect(next.seats[1].chips).toBe(STARTING_CHIPS + 6);
@@ -265,39 +265,39 @@ describe("rent on landing", () => {
 
 	it("doubles base rent when the owner holds the whole group", () => {
 		const state = newMatch();
-		giveTiles(state, BOB, "teal-ridge", "frost-hollow", "skyglass-terrace");
+		giveTiles(state, BOB, "reader-dock", "teal-vale", "teal-ridge");
 		expect(rollFrom(state, 0, 2, 4).state.seats[1].chips).toBe(STARTING_CHIPS + 12);
 	});
 
 	it("charges nothing on your own lot or a mortgaged lot", () => {
 		const own = newMatch();
-		giveTiles(own, ALICE, "teal-ridge");
-		expect(rollFrom(own, 0, 2, 4).trailLines.at(-1)).toBe("<@alice> already owns Teal Ridge.");
+		giveTiles(own, ALICE, "reader-dock");
+		expect(rollFrom(own, 0, 2, 4).trailLines.at(-1)).toBe("<@alice> already owns Reader Dock.");
 
 		const mortgaged = newMatch();
-		giveTiles(mortgaged, BOB, "teal-ridge");
-		mortgaged.properties["teal-ridge"].mortgaged = true;
+		giveTiles(mortgaged, BOB, "reader-dock");
+		mortgaged.properties["reader-dock"].mortgaged = true;
 		const mortgagedRoll = rollFrom(mortgaged, 0, 2, 4);
 		expect(mortgagedRoll.state.seats[0].chips).toBe(STARTING_CHIPS);
-		expect(mortgagedRoll.trailLines.at(-1)).toBe("Teal Ridge is mortgaged, so no rent is due.");
+		expect(mortgagedRoll.trailLines.at(-1)).toBe("Reader Dock is mortgaged, so no rent is due.");
 	});
 
 	it("reads houses and the hotel from the rent table", () => {
 		const state = newMatch();
-		const teal = tile("teal-ridge");
+		const teal = tile("reader-dock");
 		expect(calculateRent(state, teal)).toBe(0);
-		giveTiles(state, BOB, "teal-ridge");
-		state.properties["teal-ridge"].houses = 2;
+		giveTiles(state, BOB, "reader-dock");
+		state.properties["reader-dock"].houses = 2;
 		expect(calculateRent(state, teal)).toBe(90);
-		state.properties["teal-ridge"].hotel = true;
+		state.properties["reader-dock"].hotel = true;
 		expect(calculateRent(state, teal)).toBe(550);
-		state.properties["teal-ridge"].mortgaged = true;
+		state.properties["reader-dock"].mortgaged = true;
 		expect(calculateRent(state, teal)).toBe(0);
 	});
 
 	it("bankrupts a seat that cannot cover rent to the owner, who takes every chip", () => {
 		const state = newMatch();
-		giveTiles(state, BOB, "teal-ridge", "frost-hollow", "skyglass-terrace");
+		giveTiles(state, BOB, "reader-dock", "teal-vale", "teal-ridge");
 		state.seats[0].chips = 4;
 		const { state: next, trailLines } = rollFrom(state, 0, 2, 4);
 		expect(next.seats[1].chips).toBe(STARTING_CHIPS + 4);
@@ -323,37 +323,37 @@ describe("rent on landing", () => {
 // ── buy and skip ────────────────────────────────────────────────────────────
 
 describe("applyBuy and applySkip", () => {
-	const awaitingCinderRow = (): MonopolyState => rollFrom(newMatch(), 0, 1, 2).state;
+	const awaitingBurntUmberRow = (): MonopolyState => rollFrom(newMatch(), 0, 1, 2).state;
 
 	it("buys the lot for sale at list price", () => {
-		const { state, trailLines } = expectOk(applyBuy(awaitingCinderRow(), ALICE, "cinder-row"));
-		expect(state.properties["cinder-row"].ownerId).toBe(ALICE);
+		const { state, trailLines } = expectOk(applyBuy(awaitingBurntUmberRow(), ALICE, "burnt-umber-row"));
+		expect(state.properties["burnt-umber-row"].ownerId).toBe(ALICE);
 		expect(state.seats[0].chips).toBe(STARTING_CHIPS - 60);
 		expect(state.phase).toBe("post-roll");
-		expect(trailLines).toEqual(["<@alice> bought Cinder Row for $60."]);
+		expect(trailLines).toEqual(["<@alice> bought Burnt Umber Row for $60."]);
 	});
 
 	it("refuses another player, the wrong tile, a short purse and the wrong phase", () => {
-		expectRefusal(applyBuy(awaitingCinderRow(), BOB, "cinder-row"), "It is not your turn.");
-		expectRefusal(applyBuy(awaitingCinderRow(), ALICE, "teal-ridge"), "You can only buy the tile you are standing on.");
-		const broke = awaitingCinderRow();
+		expectRefusal(applyBuy(awaitingBurntUmberRow(), BOB, "burnt-umber-row"), "It is not your turn.");
+		expectRefusal(applyBuy(awaitingBurntUmberRow(), ALICE, "reader-dock"), "You can only buy the tile you are standing on.");
+		const broke = awaitingBurntUmberRow();
 		broke.seats[0].chips = 59;
-		expectRefusal(applyBuy(broke, ALICE, "cinder-row"), "You need $60 to buy Cinder Row.");
-		expectRefusal(applyBuy(newMatch(), ALICE, "cinder-row"), "There is nothing to buy right now.");
-		const finished = awaitingCinderRow();
+		expectRefusal(applyBuy(broke, ALICE, "burnt-umber-row"), "You need $60 to buy Burnt Umber Row.");
+		expectRefusal(applyBuy(newMatch(), ALICE, "burnt-umber-row"), "There is nothing to buy right now.");
+		const finished = awaitingBurntUmberRow();
 		finished.phase = "finished";
-		expectRefusal(applyBuy(finished, ALICE, "cinder-row"), "The match is already over.");
+		expectRefusal(applyBuy(finished, ALICE, "burnt-umber-row"), "The match is already over.");
 	});
 
 	it("passes on the lot and leaves it with the bank", () => {
-		const { state, trailLines } = expectOk(applySkip(awaitingCinderRow(), ALICE));
-		expect(state.properties["cinder-row"].ownerId).toBeNull();
+		const { state, trailLines } = expectOk(applySkip(awaitingBurntUmberRow(), ALICE));
+		expect(state.properties["burnt-umber-row"].ownerId).toBeNull();
 		expect(state.phase).toBe("post-roll");
-		expect(trailLines).toEqual(["<@alice> passed on Cinder Row."]);
+		expect(trailLines).toEqual(["<@alice> passed on Burnt Umber Row."]);
 	});
 
 	it("refuses a skip from another player or with nothing for sale", () => {
-		expectRefusal(applySkip(awaitingCinderRow(), BOB), "It is not your turn.");
+		expectRefusal(applySkip(awaitingBurntUmberRow(), BOB), "It is not your turn.");
 		expectRefusal(applySkip(newMatch(), ALICE), "There is nothing to pass on right now.");
 	});
 });
@@ -465,11 +465,11 @@ describe("applyJailChoice", () => {
 	it("mortgages to cover the forced bail and still moves", () => {
 		const state = jailedMatch();
 		Object.assign(state.seats[0], { jailTurnsRemaining: 1, chips: 10 });
-		giveTiles(state, ALICE, "skyrail-station");
+		giveTiles(state, ALICE, "rail-one");
 		const { state: next, trailLines } = expectOk(applyJailChoice(state, "roll", diceRng(1, 2)));
 		expect(next.seats[0]).toMatchObject({ bankrupt: false, inJail: false, position: 13, chips: 10 + 100 - JAIL_BAIL });
-		expect(next.properties["skyrail-station"].mortgaged).toBe(true);
-		expect(trailLines).toContain("<@alice> mortgaged Skyrail Station for $100 to cover the debt.");
+		expect(next.properties["rail-one"].mortgaged).toBe(true);
+		expect(trailLines).toContain("<@alice> mortgaged Rail One for $100 to cover the debt.");
 		expect(trailLines).toContain("<@alice> used the last try, pays $50 bail and moves.");
 	});
 
@@ -489,14 +489,14 @@ describe("applyJailChoice", () => {
 describe("applyForfeit", () => {
 	it("returns lots and buildings to the bank and leaves an off turn clock alone", () => {
 		const state = newMatch([ALICE, BOB, CARA]);
-		giveTiles(state, BOB, "teal-ridge", "frost-hollow");
-		state.properties["teal-ridge"].houses = 3;
-		state.properties["frost-hollow"].hotel = true;
+		giveTiles(state, BOB, "reader-dock", "teal-vale");
+		state.properties["reader-dock"].houses = 3;
+		state.properties["teal-vale"].hotel = true;
 		state.seats[1].gojfCards = 1;
 		const { state: next, trailLines } = expectOk(applyForfeit(state, BOB, LATER));
 		expect(next.seats[1]).toMatchObject({ bankrupt: true, bankruptedAt: 1, chips: 0, gojfCards: 0 });
-		expect(next.properties["teal-ridge"]).toEqual({ ownerId: null, houses: 0, hotel: false, mortgaged: false });
-		expect(next.properties["frost-hollow"].ownerId).toBeNull();
+		expect(next.properties["reader-dock"]).toEqual({ ownerId: null, houses: 0, hotel: false, mortgaged: false });
+		expect(next.properties["teal-vale"].ownerId).toBeNull();
 		expect(next.bank).toEqual({ houses: BANK_HOUSES + 3, hotels: BANK_HOTELS + 1 });
 		expect(next.activeSeatIndex).toBe(0);
 		expect(next.phase).toBe("pre-roll");
@@ -531,35 +531,35 @@ describe("applyForfeit", () => {
 // ── transport and utility rent ──────────────────────────────────────────────
 
 describe("transport and utility rent", () => {
-	const TRANSPORTS = ["skyrail-station", "ferry-landing", "caravan-depot", "airship-dock"];
+	const TRANSPORTS = ["rail-one", "rail-two", "rail-three", "rail-four"];
 
 	it("charges 25, 50, 100 and 200 by transports owned, mortgaged ones still counting", () => {
 		const state = newMatch();
 		const expected = [25, 50, 100, 200];
 		TRANSPORTS.forEach((id, owned) => {
 			giveTiles(state, BOB, id);
-			expect(calculateRent(state, tile("skyrail-station"))).toBe(expected[owned]);
+			expect(calculateRent(state, tile("rail-one"))).toBe(expected[owned]);
 		});
-		state.properties["airship-dock"].mortgaged = true;
-		expect(calculateRent(state, tile("skyrail-station"))).toBe(200);
-		expect(calculateRent(state, tile("airship-dock"))).toBe(0);
-		expect(calculateRent(state, tile("skyrail-station"), true)).toBe(400);
+		state.properties["rail-four"].mortgaged = true;
+		expect(calculateRent(state, tile("rail-one"))).toBe(200);
+		expect(calculateRent(state, tile("rail-four"))).toBe(0);
+		expect(calculateRent(state, tile("rail-one"), true)).toBe(400);
 	});
 
 	it("charges 4 or 10 times the dice on a utility, 10 times on a card, and 0 before any roll", () => {
 		const state = newMatch();
-		giveTiles(state, BOB, "lumen-works");
-		expect(calculateRent(state, tile("lumen-works"))).toBe(0);
+		giveTiles(state, BOB, "electric-utility");
+		expect(calculateRent(state, tile("electric-utility"))).toBe(0);
 		state.diceRoll = [3, 4];
-		expect(calculateRent(state, tile("lumen-works"))).toBe(28);
-		expect(calculateRent(state, tile("lumen-works"), true)).toBe(70);
-		giveTiles(state, BOB, "aqueduct-works");
-		expect(calculateRent(state, tile("lumen-works"))).toBe(70);
+		expect(calculateRent(state, tile("electric-utility"))).toBe(28);
+		expect(calculateRent(state, tile("electric-utility"), true)).toBe(70);
+		giveTiles(state, BOB, "water-utility");
+		expect(calculateRent(state, tile("electric-utility"))).toBe(70);
 	});
 
 	it("charges transport rent on a landing", () => {
 		const state = newMatch();
-		giveTiles(state, BOB, "skyrail-station");
+		giveTiles(state, BOB, "rail-one");
 		const { state: next, trailLines } = rollFrom(state, 0, 2, 3);
 		expect(next.seats[1].chips).toBe(STARTING_CHIPS + 25);
 		expect(trailLines.at(-1)).toBe("<@alice> paid $25 rent to <@bob>.");
@@ -567,7 +567,7 @@ describe("transport and utility rent", () => {
 
 	it("charges utility rent from the roll that landed", () => {
 		const state = newMatch();
-		giveTiles(state, BOB, "lumen-works", "aqueduct-works");
+		giveTiles(state, BOB, "electric-utility", "water-utility");
 		expect(rollFrom(state, 7, 2, 3).state.seats[0].chips).toBe(STARTING_CHIPS - 50);
 	});
 });
@@ -632,11 +632,11 @@ describe("Chance and Community Chest", () => {
 
 	it("advances onto an owned lot and pays its owner the rent", () => {
 		const state = newMatch();
-		giveTiles(state, BOB, "sapphire-keep");
-		const { state: next, trailLines } = drawChance(state, "chance-sapphire-keep", 29);
+		giveTiles(state, BOB, "postern-lane");
+		const { state: next, trailLines } = drawChance(state, "chance-postern-lane", 29);
 		expect(next.seats[0].position).toBe(39);
 		expect(next.seats.map((seat) => seat.chips)).toEqual([STARTING_CHIPS - 50, STARTING_CHIPS + 50]);
-		expect(trailLines.slice(-2)).toEqual(["<@alice> landed on Sapphire Keep.", "<@alice> paid $50 rent to <@bob>."]);
+		expect(trailLines.slice(-2)).toEqual(["<@alice> landed on Postern Lane.", "<@alice> paid $50 rent to <@bob>."]);
 	});
 
 	it("advances to GO and collects the salary", () => {
@@ -646,7 +646,7 @@ describe("Chance and Community Chest", () => {
 	});
 
 	it("pays the salary when an advance wraps the board, and offers the lot it reaches", () => {
-		const { state } = drawChance(newMatch(), "chance-rosequartz-court", 15);
+		const { state } = drawChance(newMatch(), "chance-rose-hollow", 15);
 		expect(state.seats[0]).toMatchObject({ position: 11, chips: STARTING_CHIPS + GO_SALARY });
 		expect(state.phase).toBe("awaiting-buy-or-skip");
 	});
@@ -657,7 +657,7 @@ describe("Chance and Community Chest", () => {
 		expect(unowned.state.phase).toBe("awaiting-buy-or-skip");
 
 		const owned = newMatch();
-		giveTiles(owned, BOB, "ferry-landing");
+		giveTiles(owned, BOB, "rail-two");
 		expect(drawChance(owned, "chance-nearest-transport-2").state.seats[1].chips).toBe(STARTING_CHIPS + 50);
 	});
 
@@ -668,7 +668,7 @@ describe("Chance and Community Chest", () => {
 
 	it("advances to the nearest utility and charges ten times the dice", () => {
 		const state = newMatch();
-		giveTiles(state, BOB, "lumen-works");
+		giveTiles(state, BOB, "electric-utility");
 		const { state: next } = drawChance(state, "chance-nearest-utility");
 		expect(next.seats[0].position).toBe(12);
 		expect(next.seats[1].chips).toBe(STARTING_CHIPS + 70);
@@ -719,9 +719,9 @@ describe("Chance and Community Chest", () => {
 
 	it("charges repairs per house and per hotel, and nothing without buildings", () => {
 		const state = newMatch();
-		giveTiles(state, ALICE, "teal-ridge", "frost-hollow", "skyglass-terrace");
-		state.properties["teal-ridge"].houses = 2;
-		state.properties["frost-hollow"].hotel = true;
+		giveTiles(state, ALICE, "reader-dock", "teal-vale", "teal-ridge");
+		state.properties["reader-dock"].houses = 2;
+		state.properties["teal-vale"].hotel = true;
 		const { state: next, trailLines } = drawChance(state, "chance-repairs");
 		expect(next.seats[0].chips).toBe(STARTING_CHIPS - (2 * 25 + 100));
 		expect(trailLines.at(-1)).toBe("<@alice> paid $150 in repairs.");
@@ -750,58 +750,58 @@ describe("applyMortgage and applyUnmortgage", () => {
 	};
 
 	it("mortgages for the board value and lifts it for that plus ten percent", () => {
-		const mortgaged = expectOk(applyMortgage(owning("teal-ridge"), ALICE, "teal-ridge"));
+		const mortgaged = expectOk(applyMortgage(owning("reader-dock"), ALICE, "reader-dock"));
 		expect(mortgaged.state.seats[0].chips).toBe(STARTING_CHIPS + 50);
-		expect(mortgaged.state.properties["teal-ridge"].mortgaged).toBe(true);
-		expect(mortgaged.trailLines).toEqual(["<@alice> mortgaged Teal Ridge for $50."]);
+		expect(mortgaged.state.properties["reader-dock"].mortgaged).toBe(true);
+		expect(mortgaged.trailLines).toEqual(["<@alice> mortgaged Reader Dock for $50."]);
 
-		expect(unmortgageCost(tile("teal-ridge"))).toBe(55);
-		const lifted = expectOk(applyUnmortgage(mortgaged.state, ALICE, "teal-ridge"));
+		expect(unmortgageCost(tile("reader-dock"))).toBe(55);
+		const lifted = expectOk(applyUnmortgage(mortgaged.state, ALICE, "reader-dock"));
 		expect(lifted.state.seats[0].chips).toBe(STARTING_CHIPS - 5);
-		expect(lifted.state.properties["teal-ridge"].mortgaged).toBe(false);
-		expect(lifted.trailLines).toEqual(["<@alice> paid $55 to lift the mortgage on Teal Ridge."]);
+		expect(lifted.state.properties["reader-dock"].mortgaged).toBe(false);
+		expect(lifted.trailLines).toEqual(["<@alice> paid $55 to lift the mortgage on Reader Dock."]);
 	});
 
 	it("rounds the interest up to a whole chip", () => {
-		expect(unmortgageCost(tile("midnight-crown"))).toBe(175 + 18);
+		expect(unmortgageCost(tile("jade-reach"))).toBe(175 + 18);
 	});
 
 	it("lets a seat mortgage off its turn, and a transport needs no group check", () => {
 		const state = newMatch();
-		giveTiles(state, BOB, "skyrail-station");
-		const { state: next } = expectOk(applyMortgage(state, BOB, "skyrail-station"));
+		giveTiles(state, BOB, "rail-one");
+		const { state: next } = expectOk(applyMortgage(state, BOB, "rail-one"));
 		expect(next.seats[1].chips).toBe(STARTING_CHIPS + 100);
 		expect(next.activeSeatIndex).toBe(0);
 	});
 
 	it("refuses while any lot in the color group has buildings", () => {
-		const housed = owning("mudlark-lane", "cinder-row");
-		housed.properties["mudlark-lane"].houses = 1;
-		expectRefusal(applyMortgage(housed, ALICE, "cinder-row"), "Cinder Row cannot be mortgaged while its color group has buildings.");
-		const hotel = owning("mudlark-lane", "cinder-row");
-		hotel.properties["mudlark-lane"].hotel = true;
-		expectRefusal(applyMortgage(hotel, ALICE, "mudlark-lane"), /cannot be mortgaged while its color group has buildings/);
+		const housed = owning("vermillion-alley", "burnt-umber-row");
+		housed.properties["vermillion-alley"].houses = 1;
+		expectRefusal(applyMortgage(housed, ALICE, "burnt-umber-row"), "Burnt Umber Row cannot be mortgaged while its color group has buildings.");
+		const hotel = owning("vermillion-alley", "burnt-umber-row");
+		hotel.properties["vermillion-alley"].hotel = true;
+		expectRefusal(applyMortgage(hotel, ALICE, "vermillion-alley"), /cannot be mortgaged while its color group has buildings/);
 	});
 
 	it("refuses a finished match, a stranger, a seat out of the match, an unknown lot and a lot owned by another", () => {
-		const finished = owning("teal-ridge");
+		const finished = owning("reader-dock");
 		finished.phase = "finished";
-		expectRefusal(applyMortgage(finished, ALICE, "teal-ridge"), "The match is already over.");
-		expectRefusal(applyUnmortgage(finished, ALICE, "teal-ridge"), "The match is already over.");
-		expectRefusal(applyMortgage(owning("teal-ridge"), "nobody", "teal-ridge"), "You are not playing in this match.");
-		const out = owning("teal-ridge");
+		expectRefusal(applyMortgage(finished, ALICE, "reader-dock"), "The match is already over.");
+		expectRefusal(applyUnmortgage(finished, ALICE, "reader-dock"), "The match is already over.");
+		expectRefusal(applyMortgage(owning("reader-dock"), "nobody", "reader-dock"), "You are not playing in this match.");
+		const out = owning("reader-dock");
 		out.seats[0].bankrupt = true;
-		expectRefusal(applyMortgage(out, ALICE, "teal-ridge"), "You are not playing in this match.");
+		expectRefusal(applyMortgage(out, ALICE, "reader-dock"), "You are not playing in this match.");
 		expectRefusal(applyMortgage(owning(), ALICE, "nowhere"), "That is not a lot on this board.");
-		expectRefusal(applyMortgage(owning(), ALICE, "teal-ridge"), "You do not own Teal Ridge.");
+		expectRefusal(applyMortgage(owning(), ALICE, "reader-dock"), "You do not own Reader Dock.");
 	});
 
 	it("refuses a second mortgage, lifting one that is not there, and a lift the seat cannot afford", () => {
-		const mortgaged = expectOk(applyMortgage(owning("teal-ridge"), ALICE, "teal-ridge")).state;
-		expectRefusal(applyMortgage(mortgaged, ALICE, "teal-ridge"), "Teal Ridge is already mortgaged.");
-		expectRefusal(applyUnmortgage(owning("teal-ridge"), ALICE, "teal-ridge"), "Teal Ridge is not mortgaged.");
+		const mortgaged = expectOk(applyMortgage(owning("reader-dock"), ALICE, "reader-dock")).state;
+		expectRefusal(applyMortgage(mortgaged, ALICE, "reader-dock"), "Reader Dock is already mortgaged.");
+		expectRefusal(applyUnmortgage(owning("reader-dock"), ALICE, "reader-dock"), "Reader Dock is not mortgaged.");
 		mortgaged.seats[0].chips = 54;
-		expectRefusal(applyUnmortgage(mortgaged, ALICE, "teal-ridge"), "You need $55 to lift the mortgage on Teal Ridge.");
+		expectRefusal(applyUnmortgage(mortgaged, ALICE, "reader-dock"), "You need $55 to lift the mortgage on Reader Dock.");
 	});
 });
 
@@ -820,86 +820,86 @@ describe("applyBuild", () => {
 		for (const id of BROWN) state.properties[id].houses = houses;
 		state.bank.houses = BANK_HOUSES - houses * BROWN.length;
 	};
-	const mudlark = tile("mudlark-lane") as PropertyTile;
+	const vermillionAlley = tile("vermillion-alley") as PropertyTile;
 
 	it("builds a house from the bank's stock at the board's house cost", () => {
-		const { state, trailLines } = expectOk(applyBuild(brownMatch(), ALICE, "mudlark-lane", "house"));
-		expect(state.properties["mudlark-lane"].houses).toBe(1);
+		const { state, trailLines } = expectOk(applyBuild(brownMatch(), ALICE, "vermillion-alley", "house"));
+		expect(state.properties["vermillion-alley"].houses).toBe(1);
 		expect(state.bank.houses).toBe(BANK_HOUSES - 1);
-		expect(state.seats[0].chips).toBe(STARTING_CHIPS - mudlark.houseCost);
-		expect(trailLines).toEqual(["<@alice> built a house on Mudlark Lane for $50."]);
-		expect(calculateRent(state, mudlark)).toBe(mudlark.rents[1]);
+		expect(state.seats[0].chips).toBe(STARTING_CHIPS - vermillionAlley.houseCost);
+		expect(trailLines).toEqual(["<@alice> built a house on Vermillion Alley for $50."]);
+		expect(calculateRent(state, vermillionAlley)).toBe(vermillionAlley.rents[1]);
 	});
 
 	it("builds evenly across the group", () => {
-		const one = build(brownMatch(), "mudlark-lane");
-		expectRefusal(applyBuild(one, ALICE, "mudlark-lane", "house"), "Build evenly: the other lots in the brown group need more buildings first.");
-		const two = build(build(one, "cinder-row"), "mudlark-lane");
-		expect(two.properties["mudlark-lane"].houses).toBe(2);
+		const one = build(brownMatch(), "vermillion-alley");
+		expectRefusal(applyBuild(one, ALICE, "vermillion-alley", "house"), "Build evenly: the other lots in the brown group need more buildings first.");
+		const two = build(build(one, "burnt-umber-row"), "vermillion-alley");
+		expect(two.properties["vermillion-alley"].houses).toBe(2);
 	});
 
 	it("trades four houses for a hotel and charges hotel rent", () => {
 		const state = brownMatch();
 		setHouses(state, MAX_HOUSES_PER_LOT);
-		const { state: next, trailLines } = expectOk(applyBuild(state, ALICE, "mudlark-lane", "hotel"));
-		expect(next.properties["mudlark-lane"]).toMatchObject({ houses: 0, hotel: true });
+		const { state: next, trailLines } = expectOk(applyBuild(state, ALICE, "vermillion-alley", "hotel"));
+		expect(next.properties["vermillion-alley"]).toMatchObject({ houses: 0, hotel: true });
 		expect(next.bank).toEqual({ houses: BANK_HOUSES - MAX_HOUSES_PER_LOT, hotels: BANK_HOTELS - 1 });
-		expect(next.seats[0].chips).toBe(STARTING_CHIPS - mudlark.houseCost);
-		expect(trailLines).toEqual(["<@alice> built a hotel on Mudlark Lane for $50."]);
-		expect(calculateRent(next, mudlark)).toBe(mudlark.rents[5]);
+		expect(next.seats[0].chips).toBe(STARTING_CHIPS - vermillionAlley.houseCost);
+		expect(trailLines).toEqual(["<@alice> built a hotel on Vermillion Alley for $50."]);
+		expect(calculateRent(next, vermillionAlley)).toBe(vermillionAlley.rents[5]);
 
-		expectRefusal(applyBuild(next, ALICE, "mudlark-lane", "house"), "Mudlark Lane already has a hotel.");
-		expect(build(next, "cinder-row", "hotel").properties["cinder-row"].hotel).toBe(true);
+		expectRefusal(applyBuild(next, ALICE, "vermillion-alley", "house"), "Vermillion Alley already has a hotel.");
+		expect(build(next, "burnt-umber-row", "hotel").properties["burnt-umber-row"].hotel).toBe(true);
 	});
 
 	it("refuses a fifth house, a hotel before four houses, and a hotel on an uneven group", () => {
 		const full = brownMatch();
 		setHouses(full, MAX_HOUSES_PER_LOT);
-		expectRefusal(applyBuild(full, ALICE, "mudlark-lane", "house"), "Mudlark Lane has 4 houses, so a hotel comes next.");
-		expectRefusal(applyBuild(brownMatch(), ALICE, "mudlark-lane", "hotel"), "Mudlark Lane needs 4 houses before a hotel.");
+		expectRefusal(applyBuild(full, ALICE, "vermillion-alley", "house"), "Vermillion Alley has 4 houses, so a hotel comes next.");
+		expectRefusal(applyBuild(brownMatch(), ALICE, "vermillion-alley", "hotel"), "Vermillion Alley needs 4 houses before a hotel.");
 		const uneven = brownMatch();
 		setHouses(uneven, MAX_HOUSES_PER_LOT);
-		uneven.properties["cinder-row"].houses = MAX_HOUSES_PER_LOT - 1;
-		expectRefusal(applyBuild(uneven, ALICE, "mudlark-lane", "hotel"), /Build evenly/);
+		uneven.properties["burnt-umber-row"].houses = MAX_HOUSES_PER_LOT - 1;
+		expectRefusal(applyBuild(uneven, ALICE, "vermillion-alley", "hotel"), /Build evenly/);
 	});
 
 	it("refuses when the bank is out of houses or hotels", () => {
 		const noHouses = brownMatch();
 		noHouses.bank.houses = 0;
-		expectRefusal(applyBuild(noHouses, ALICE, "mudlark-lane", "house"), "The bank has no houses left.");
+		expectRefusal(applyBuild(noHouses, ALICE, "vermillion-alley", "house"), "The bank has no houses left.");
 		const noHotels = brownMatch();
 		setHouses(noHotels, MAX_HOUSES_PER_LOT);
 		noHotels.bank.hotels = 0;
-		expectRefusal(applyBuild(noHotels, ALICE, "mudlark-lane", "hotel"), "The bank has no hotels left.");
+		expectRefusal(applyBuild(noHotels, ALICE, "vermillion-alley", "hotel"), "The bank has no hotels left.");
 	});
 
 	it("refuses the wrong player, a finished match, after the roll, and a tile that takes no buildings", () => {
-		expectRefusal(applyBuild(brownMatch(), BOB, "mudlark-lane", "house"), "It is not your turn.");
+		expectRefusal(applyBuild(brownMatch(), BOB, "vermillion-alley", "house"), "It is not your turn.");
 		const finished = brownMatch();
 		finished.phase = "finished";
-		expectRefusal(applyBuild(finished, ALICE, "mudlark-lane", "house"), "The match is already over.");
+		expectRefusal(applyBuild(finished, ALICE, "vermillion-alley", "house"), "The match is already over.");
 		const rolled = brownMatch();
 		rolled.phase = "post-roll";
-		expectRefusal(applyBuild(rolled, ALICE, "mudlark-lane", "house"), "Build before you roll.");
+		expectRefusal(applyBuild(rolled, ALICE, "vermillion-alley", "house"), "Build before you roll.");
 		const transport = brownMatch();
-		giveTiles(transport, ALICE, "skyrail-station");
-		expectRefusal(applyBuild(transport, ALICE, "skyrail-station", "house"), "Only color lots take buildings.");
+		giveTiles(transport, ALICE, "rail-one");
+		expectRefusal(applyBuild(transport, ALICE, "rail-one", "house"), "Only color lots take buildings.");
 		expectRefusal(applyBuild(brownMatch(), ALICE, "nowhere", "house"), "Only color lots take buildings.");
 	});
 
 	it("refuses a lot owned by another, an incomplete group, a mortgaged group and a short purse", () => {
 		const others = brownMatch();
-		giveTiles(others, BOB, "teal-ridge");
-		expectRefusal(applyBuild(others, ALICE, "teal-ridge", "house"), "You do not own Teal Ridge.");
+		giveTiles(others, BOB, "reader-dock");
+		expectRefusal(applyBuild(others, ALICE, "reader-dock", "house"), "You do not own Reader Dock.");
 		const split = brownMatch();
-		giveTiles(split, BOB, "cinder-row");
-		expectRefusal(applyBuild(split, ALICE, "mudlark-lane", "house"), "You need every lot in the brown group to build.");
+		giveTiles(split, BOB, "burnt-umber-row");
+		expectRefusal(applyBuild(split, ALICE, "vermillion-alley", "house"), "You need every lot in the brown group to build.");
 		const mortgaged = brownMatch();
-		mortgaged.properties["cinder-row"].mortgaged = true;
-		expectRefusal(applyBuild(mortgaged, ALICE, "mudlark-lane", "house"), "Lift every mortgage in the brown group before building.");
+		mortgaged.properties["burnt-umber-row"].mortgaged = true;
+		expectRefusal(applyBuild(mortgaged, ALICE, "vermillion-alley", "house"), "Lift every mortgage in the brown group before building.");
 		const broke = brownMatch();
-		broke.seats[0].chips = mudlark.houseCost - 1;
-		expectRefusal(applyBuild(broke, ALICE, "mudlark-lane", "house"), "You need $50 to build on Mudlark Lane.");
+		broke.seats[0].chips = vermillionAlley.houseCost - 1;
+		expectRefusal(applyBuild(broke, ALICE, "vermillion-alley", "house"), "You need $50 to build on Vermillion Alley.");
 	});
 });
 

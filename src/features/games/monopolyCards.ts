@@ -62,10 +62,10 @@ export interface CardDraw {
 // ── decks ────────────────────────────────────────────────────────────────────
 
 export const CHANCE_DECK: readonly MonopolyCard[] = [
-	{ id: "chance-sapphire-keep", kind: "advance", destination: boardIndexOf("sapphire-keep"), title: "Summons to Sapphire Keep", flavor: "Dero found a banquet at the Keep and saved you a seat." },
+	{ id: "chance-postern-lane", kind: "advance", destination: boardIndexOf("postern-lane"), title: "Summons to Postern Lane", flavor: "Dero found a banquet on Postern Lane and saved you a seat." },
 	{ id: "chance-go", kind: "advance", destination: GO_INDEX, title: "Ring the Starting Bell", flavor: "Dero rings the bell and waves you all the way home." },
-	{ id: "chance-crimson-gate", kind: "advance", destination: boardIndexOf("crimson-gate"), title: "March on Crimson Gate", flavor: "The gate captain wants a word, and Dero will not say about what." },
-	{ id: "chance-rosequartz-court", kind: "advance", destination: boardIndexOf("rosequartz-court"), title: "Audience at Rosequartz Court", flavor: "The court jesters asked for you by name." },
+	{ id: "chance-crimson-boulevard", kind: "advance", destination: boardIndexOf("crimson-boulevard"), title: "March on Crimson Boulevard", flavor: "A shopkeeper on the boulevard wants a word, and Dero will not say about what." },
+	{ id: "chance-rose-hollow", kind: "advance", destination: boardIndexOf("rose-hollow"), title: "Stroll to Rose Hollow", flavor: "The Rose Hollow gardeners asked for you by name." },
 	{ id: "chance-nearest-transport-1", kind: "advance-nearest", target: "railroad", boostedRent: true, title: "Catch the Next Ride", flavor: "Dero hails whatever is leaving soonest and shoves you aboard." },
 	{ id: "chance-nearest-transport-2", kind: "advance-nearest", target: "railroad", boostedRent: true, title: "Hitch a Lift", flavor: "A driver owes Dero a favor, and you are the favor." },
 	{ id: "chance-nearest-utility", kind: "advance-nearest", target: "utility", boostedRent: true, title: "Follow the Cable", flavor: "Dero tripped over a cable. Follow it to whatever it powers." },
@@ -75,7 +75,7 @@ export const CHANCE_DECK: readonly MonopolyCard[] = [
 	{ id: "chance-jail", kind: "go-to-jail", title: "Caught Red Handed", flavor: "The watch caught you holding Dero's snack stash." },
 	{ id: "chance-repairs", kind: "repairs", perHouse: 25, perHotel: 100, title: "Storm Season", flavor: "A storm rattled every roof you own." },
 	{ id: "chance-speeding", kind: "pay", amount: 15, title: "Cart Speeding Fine", flavor: "Racing Dero's cart through the market was frowned upon." },
-	{ id: "chance-skyrail", kind: "advance", destination: boardIndexOf("skyrail-station"), title: "Ride the Skyrail", flavor: "Dero bought you a ticket and lost the return half." },
+	{ id: "chance-rail-one", kind: "advance", destination: boardIndexOf("rail-one"), title: "Ride Rail One", flavor: "Dero bought you a ticket and lost the return half." },
 	{ id: "chance-chairman", kind: "pay-each", amount: 50, title: "Elected Arcade Chair", flavor: "The arcade made you its chair, and every rival expects a gift." },
 	{ id: "chance-loan", kind: "collect", amount: 150, title: "Forge Loan Matures", flavor: "Your loan to the smiths came back with interest." },
 ];
