@@ -16,7 +16,8 @@ import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features
 import { FORTUNE_SCENE_AVATAR_SIZE, renderFortuneScene } from "./fortuneSceneRenderer.js";
 
 // One reading per user every 10 seconds, SHARED across every entry point: the
-// /fortune slash command and the #command-center invite-card button both call
+// /mini-game fortune subcommand and the Fortune buttons on the #command-center
+// guide and its Summon Dero card all call
 // respondWithFortune, so a user cannot bypass the gate by alternating between
 // them. Module-scope Map persists for the life of the process.
 const FORTUNE_COOLDOWN_MS = 10_000;

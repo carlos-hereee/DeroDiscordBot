@@ -33,7 +33,7 @@ const EVERYONE_WORD = "everyone";
 // ② tokens
 const USER_OR_ROLE_MENTION = /<@[!&]?\d+>/g;
 const CHANNEL_MENTION = /<#\d+>/g;
-// </fortune:123> renders as "/fortune"; speak the command name.
+// </account:123> renders as "/account"; speak the command name.
 const SLASH_COMMAND_MENTION = /<\/([\w -]+):\d+>/g;
 const CUSTOM_EMOJI = /<a?:\w+:\d+>/g;
 const DISCORD_TIMESTAMP = /<t:-?\d+(?::[tTdDfFR])?>/g;

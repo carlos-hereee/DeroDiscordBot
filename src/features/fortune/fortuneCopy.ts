@@ -1,7 +1,7 @@
-// ── /fortune user-facing copy ─────────────────────────────────────────────
+// ── fortune user-facing copy ─────────────────────────────────────────────
 // Feature-local copy module. Centralizes every string the command shows so none
 // is hardcoded in the handler, WITHOUT threading through the pluginId copy packs
-// (the fortune command is not a platform plugin, master plan v3). If it ever
+// (the fortune reading is not a platform plugin, master plan v3). If it ever
 // graduates into a real plugin, this content moves into the pack + copyOverrides
 // system so it becomes per-guild voiceable and admin-editable.
 

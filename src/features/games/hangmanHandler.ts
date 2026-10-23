@@ -32,7 +32,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 // Who:   MINI_GAME_HANDLERS for the slash path, and PowerUps' admin dashboard
 //        button for the "post a round to the command center" path. Both go
 //        through startHangmanRound so the two entry points cannot drift, the
-//        same shape /fortune and its invite card button already use.
+//        same shape /mini-game fortune and its Fortune buttons already use.
 // When:  a round lives until it is won or lost. There is NO round clock, by the
 //        owner's decision on 2026-10-23: hangman is a relaxed game the channel
 //        plays together, not a race. A board nobody finishes stays open until a

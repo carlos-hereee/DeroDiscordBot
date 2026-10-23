@@ -1,7 +1,8 @@
 // ── CooldownManager ───────────────────────────────────────────────────────
 // Generic in-memory per-key cooldown. The bot had per-guild and per-guild+event
 // cooldowns inlined in individual route handlers but no reusable per-user
-// helper; /fortune needs one, so it is extracted here for reuse. State is a
+// helper; the fortune reading needed one first, so it is extracted here for
+// reuse, and games, voice and /dero now share it. State is a
 // plain Map at instance scope, fine for a single-process bot; it would only
 // need Redis if the bot ever ran multiple processes.
 //

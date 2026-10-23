@@ -94,7 +94,7 @@ export const COLORS = {
 	// brand indigo bar. Available for Dero-led or default embeds; the
 	// per-type colors above keep their meaning and are unchanged.
 	DERO: "#4f46e5",
-	// /fortune command (a plain bot command, not a platform plugin). The common
+	// /mini-game fortune (a plain bot command, not a platform plugin). The common
 	// reading reuses the Dero brand indigo; the rare "ultra" reading uses the
 	// Dero ultra-gold accent (the web --dero-ultra-halo) so the special tier
 	// reads as the top rung of the brand's default→activation→ultra ladder.

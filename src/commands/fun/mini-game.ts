@@ -135,8 +135,8 @@ export const data = new SlashCommandBuilder()
 		sub
 			// The absorbed /fortune. Option names, types, requiredness, and the 200
 			// character cap are copied verbatim from the shipped command, and the
-			// descriptions are READ from fortuneCopy rather than retyped, so the two
-			// cannot drift while both exist. A member who used /fortune yesterday must
+			// descriptions are READ from fortuneCopy rather than retyped, so the option
+			// text cannot drift from it. A member who used the retired /fortune must
 			// get an identical experience here.
 			.setName("fortune")
 			.setDescription(fortuneCopy.commandDescription)

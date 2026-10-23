@@ -256,8 +256,8 @@ async function runFireGreeting(interaction: ButtonInteraction): Promise<void> {
 async function runFortune(interaction: ButtonInteraction): Promise<void> {
 	// A quick personal reading, always ephemeral so it never clutters the
 	// read-only #command-center guide. A button cannot take text input without a
-	// modal, so the button gives a no-question reading; /fortune is the path for a
-	// custom question. All reading logic (kill-switch, cooldown, roll, embed) is
+	// modal, so the button gives a no-question reading; /mini-game fortune is the
+	// path for a custom question. All reading logic (kill-switch, cooldown, roll, embed) is
 	// shared with the slash command via respondWithFortune, and the cooldown Map
 	// is shared too, so alternating button and command cannot bypass the gate.
 	await respondWithFortune(interaction, { isPrivate: true });

@@ -12,8 +12,8 @@ export const FORTUNE_ORB_REF = `attachment://${FORTUNE_ORB_FILE}`;
 // ── buildFortuneEmbed ──────────────────────────────────────────────────────
 // A self-contained fortune embed. It does NOT reuse embedBuilder.base() on
 // purpose: base() resolves branding through getPluginCopy(guildConfig), which
-// couples a caller to the pluginId copy-pack system. /fortune is a plain
-// command (not a plugin), so it pulls the Dero author + colors straight from
+// couples a caller to the pluginId copy-pack system. The fortune reading is a
+// plain bot feature (not a plugin), so it pulls the Dero author + colors straight from
 // brand.ts, exactly the "non pack-aware call site" path brand.ts documents.
 //
 // orbRef, when passed, sets the embed's main image to the attached orb animation.
