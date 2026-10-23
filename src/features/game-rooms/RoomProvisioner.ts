@@ -373,8 +373,15 @@ export const RoomProvisioner = {
 		// the host's choice and the auction controls in together.
 		if (game === "monopoly") {
 			const state = createMonopolyState(playerIds, { auctionsEnabled: false });
+			// The board picture, when its art is on disk, rides the same message as the
+			// embed whose image points at it; with no art it is the text map alone.
+			const { embed, attachment } = await monopolyBoardEmbed(state);
 			const boardMessage = await channel
-				.send({ embeds: [monopolyBoardEmbed(state)], components: monopolyControlsRow(state, state.seats[0].userId, room.roomId) })
+				.send({
+					embeds: [embed],
+					components: monopolyControlsRow(state, state.seats[0].userId, room.roomId),
+					files: attachment ? [attachment] : [],
+				})
 				.catch(() => null);
 			await gameRoomStore.update(guild.id, room.roomId, {
 				// `secret` is a Mongoose Mixed field and IGameRoom types it as hangman's

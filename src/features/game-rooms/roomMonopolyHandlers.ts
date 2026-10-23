@@ -95,8 +95,19 @@ export async function redrawMonopolyBoard(client: Client, room: IGameRoom, state
 	// Rendered for the seat on the clock, because the board is one shared message
 	// and that seat is the only one whose buttons do anything.
 	const activeId = state.seats[state.activeSeatIndex].userId;
+	const { embed, attachment } = await monopolyBoardEmbed(state);
 	await message
-		.edit({ embeds: [monopolyBoardEmbed(state)], components: monopolyControlsRow(state, activeId, room.roomId) })
+		.edit({
+			embeds: [embed],
+			components: monopolyControlsRow(state, activeId, room.roomId),
+			// ⚠️ `attachments: []` IS LOAD BEARING. An edit keeps the message's existing
+			// files unless told otherwise, so without it every move would stack one more
+			// board picture on the message, and a redraw that fell back to text would
+			// leave the last picture hanging under the embed. It must be a fresh array
+			// per call: discord.js pushes the new upload into the one it is given.
+			attachments: [],
+			files: attachment ? [attachment] : [],
+		})
 		.catch((error) => console.warn("[game-rooms] failed to redraw the monopoly board", error));
 }
 

@@ -7,8 +7,9 @@ import { buildDeroImageAttachment, DERO_IMAGE_REF } from "@base/copy/brand.js";
 // What:  the single declaration of every image the games can show, plus a
 //        resolver that falls back to the bundled Dero avatar whenever the real
 //        file is not on disk yet.
-// Who:   gamesEmbeds.ts and each game's handler. Nothing else should build a
-//        path into assets/games/ by hand.
+// Who:   gamesEmbeds.ts, each game's handler, and monopolyRenderer (which reads
+//        pixels through gameAssetPath). Nothing else should build a path into
+//        assets/games/ by hand.
 // When:  once per embed render. existsSync is a stat, cheap enough per
 //        interaction and far cheaper than shipping a broken image reference.
 // Where: files live under assets/games/, which deploys WITH the bot on Railway
@@ -70,9 +71,32 @@ export const GAME_ASSET_FILES = {
 	hangmanStage6: "hangman/stage-6.png",
 	hangmanWin: "hangman/win.png",
 	hangmanLose: "hangman/lose.png",
+
+	// ── monopoly board renderer (2026-10 item 241 Phase 5a, declared, not yet rendered) ──
+	// The board base, the six seat tokens, the house and the hotel are what
+	// monopolyRenderer composites; until every one of those is on disk the board
+	// stays the text map. The jail stamp is drawn when present and skipped when not.
+	// The card backs and the winner and bankrupt banners are declared now so the
+	// owner's art drop has a home; nothing renders them until Phase 5b.
+	monopolyBoardBase: "monopoly/board-base.png",
+	monopolyToken1: "monopoly/token-1.png",
+	monopolyToken2: "monopoly/token-2.png",
+	monopolyToken3: "monopoly/token-3.png",
+	monopolyToken4: "monopoly/token-4.png",
+	monopolyToken5: "monopoly/token-5.png",
+	monopolyToken6: "monopoly/token-6.png",
+	monopolyHouse: "monopoly/house.png",
+	monopolyHotel: "monopoly/hotel.png",
+	monopolyChanceBack: "monopoly/chance-back.png",
+	monopolyChestBack: "monopoly/chest-back.png",
+	monopolyJailStamp: "monopoly/jail-stamp.png",
+	monopolyWinner: "monopoly/winner.png",
+	monopolyBankrupt: "monopoly/bankrupt.png",
 } as const satisfies Record<string, string>;
 
 export type GameAssetKey = keyof typeof GAME_ASSET_FILES;
+
+const ALL_GAME_ASSET_KEYS = Object.keys(GAME_ASSET_FILES) as GameAssetKey[];
 
 export interface ResolvedGameAsset {
 	// Attach this to the SAME message that carries the embed, or the reference
@@ -89,11 +113,21 @@ export function hangmanStageKey(wrongGuesses: number): GameAssetKey {
 	return `hangmanStage${clamped}` as GameAssetKey;
 }
 
+/**
+ * The absolute path of a slot's art, or null while the file is not on disk. For a
+ * caller that reads the pixels itself (monopolyRenderer) rather than attaching the
+ * file whole, so it still never builds a path into assets/games/ by hand.
+ */
+export function gameAssetPath(key: GameAssetKey): string | null {
+	const absolute = join(process.cwd(), "assets", GAMES_ASSET_DIR, GAME_ASSET_FILES[key]);
+	return existsSync(absolute) ? absolute : null;
+}
+
 export function resolveGameAsset(key: GameAssetKey): ResolvedGameAsset {
 	const relative = GAME_ASSET_FILES[key];
-	const absolute = join(process.cwd(), "assets", GAMES_ASSET_DIR, relative);
+	const absolute = gameAssetPath(key);
 
-	if (!existsSync(absolute)) {
+	if (!absolute) {
 		// Placeholder path. The Dero avatar is the 85 KB still PNG, already the
 		// house choice for a per message thumbnail (the 2.8 MB gif is reserved for
 		// post once surfaces), so this is cheap to re-upload per game.
@@ -106,11 +140,11 @@ export function resolveGameAsset(key: GameAssetKey): ResolvedGameAsset {
 	return { attachment: new AttachmentBuilder(absolute, { name }), ref: `attachment://${name}` };
 }
 
-// Which slots still have no real art. Not called on any hot path: this exists so
-// the owner can confirm a drop-in landed, and so a test can assert the manifest
-// stays honest.
-export function missingGameAssets(): string[] {
-	return Object.values(GAME_ASSET_FILES).filter(
-		(relative) => !existsSync(join(process.cwd(), "assets", GAMES_ASSET_DIR, relative))
-	);
+// Which slots still have no real art, as paths relative to assets/games/. With no
+// argument it checks the whole manifest; a caller that owns a subset (the Monopoly
+// renderer's boot line, its availability check) passes just those keys. Not called
+// on any hot path: this exists so the owner can confirm a drop-in landed, and so a
+// test can assert the manifest stays honest.
+export function missingGameAssets(keys: readonly GameAssetKey[] = ALL_GAME_ASSET_KEYS): string[] {
+	return keys.filter((key) => gameAssetPath(key) === null).map((key) => GAME_ASSET_FILES[key]);
 }

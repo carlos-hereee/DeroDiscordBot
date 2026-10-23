@@ -27,6 +27,7 @@
 	"license": "ISC",
 	"dependencies": {
 		"@discordjs/voice": "^0.19.2",
+		"@napi-rs/canvas": "^1.0.10",
 		"cors": "^2.8.6",
 		"discord.js": "^14.25.1",
 		"dotenv": "^17.2.1",

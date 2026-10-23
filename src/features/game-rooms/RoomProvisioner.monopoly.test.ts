@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { CategoryChannel, Guild } from "discord.js";
+import { AttachmentBuilder, type CategoryChannel, type Guild } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: {
@@ -14,8 +14,12 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 }));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: vi.fn() } }));
 vi.mock("@features/entitlements/gameRoomAccess.js", () => ({ checkGameRoomAccess: vi.fn() }));
+// The board picture. Mocked so the first board is the text map unless a case hands
+// the renderer a picture, whatever art is on disk where the suite runs.
+vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn() }));
 
 import { RoomProvisioner, _clearInflightOpens, type RoomOpenInput } from "./RoomProvisioner.js";
+import { renderBoard } from "@features/games/monopolyRenderer.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
@@ -28,10 +32,12 @@ import type { MonopolyState } from "@features/games/monopolyState.js";
 // message while the pinned opener stays a plain card (the self boarded path).
 
 const storeMock = gameRoomStore as unknown as Record<string, ReturnType<typeof vi.fn>>;
+const renderMock = renderBoard as unknown as ReturnType<typeof vi.fn>;
 
 type SentPayload = {
-	embeds: { data: { title?: string; description?: string } }[];
+	embeds: { data: { title?: string; description?: string; image?: { url: string } } }[];
 	components?: { toJSON(): { components: { custom_id?: string }[] } }[];
+	files?: AttachmentBuilder[];
 };
 
 function makeGuild() {
@@ -76,7 +82,11 @@ beforeEach(() => {
 	storeMock.update.mockResolvedValue(undefined);
 	(botLogStore.log as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 	(checkGameRoomAccess as ReturnType<typeof vi.fn>).mockResolvedValue({ allowed: true, privateQuota: Number.POSITIVE_INFINITY });
+	renderMock.mockResolvedValue(null);
 });
+
+const boardPayload = (send: ReturnType<typeof vi.fn>) =>
+	sentPayloads(send).find((payload) => payload.embeds[0]?.data.title === gameRoomsCopy.monopoly.boardTitle);
 
 describe("RoomProvisioner.open for monopoly", () => {
 	it("provisions the room and stores a fresh match, seated in player order, on the row", async () => {
@@ -133,5 +143,29 @@ describe("RoomProvisioner.open for monopoly", () => {
 
 		expect(storedState().seats).toHaveLength(3);
 		expect(storedState().boardMessageId).toBeNull();
+	});
+
+	it("attaches the board picture to the first board when the renderer has one", async () => {
+		const attachment = new AttachmentBuilder(Buffer.from("png"), { name: "monopoly-board-1.png" });
+		renderMock.mockResolvedValue({ attachment, ref: "attachment://monopoly-board-1.png" });
+		const { guild, send } = makeGuild();
+
+		await RoomProvisioner.open(input(guild));
+
+		// The picture is of the match about to be stored, seated in player order.
+		expect(renderMock).toHaveBeenCalledWith(expect.objectContaining({ phase: "pre-roll", activeSeatIndex: 0 }));
+		const board = boardPayload(send);
+		expect(board?.files).toEqual([attachment]);
+		expect(board?.embeds[0].data.image?.url).toBe("attachment://monopoly-board-1.png");
+	});
+
+	it("posts the text board with no file when the renderer has no picture", async () => {
+		const { guild, send } = makeGuild();
+		await RoomProvisioner.open(input(guild));
+
+		const board = boardPayload(send);
+		expect(board?.files).toEqual([]);
+		expect(board?.embeds[0].data.image).toBeUndefined();
+		expect(board?.embeds[0].data.description).toContain(gameRoomsCopy.monopoly.boardMapLabel);
 	});
 });

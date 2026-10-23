@@ -1,8 +1,9 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type ColorResolvable } from "discord.js";
+import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type ColorResolvable } from "discord.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { BOARD, BOARD_SIZE, JAIL_BAIL, describeTile, isOwnableTile, ownableTileName } from "@features/games/monopolyBoard.js";
 import type { MonopolySeat, MonopolyState } from "@features/games/monopolyState.js";
+import { renderBoard } from "@features/games/monopolyRenderer.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
@@ -19,16 +20,36 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 // How:   ONE row, because the active seat never has more than four things it can
 //        do in Phase 4 (the jail row is the widest), well inside Discord's five per
 //        row. Build, trade, mortgage and auction controls are Phase 5 and are
-//        deliberately absent, rather than rendered disabled.
+//        deliberately absent, rather than rendered disabled. The board is a
+//        picture from monopolyRenderer when its art is on disk and the monospaced
+//        token map when it is not; everything else in the embed is the same text.
 
 // Tiles per line of the token map. Ten is one side of the board, so each line of
 // the map is one side and the line labels (0, 10, 20, 30) are the four corners.
 const MAP_TILES_PER_LINE = 10;
 
 // ── the public board ──────────────────────────────────────────────────
-/** The board message's embed: whose turn, what they can do, the token map, the seats, and the last move. */
-export function monopolyBoardEmbed(state: MonopolyState): EmbedBuilder {
+/** The board message's embed plus the picture it shows, which the caller attaches to the SAME message. */
+export interface MonopolyBoardMessage {
+	embed: EmbedBuilder;
+	// Null when the board is the text map: no art, no canvas library, or a render
+	// that failed. Attach it to the message that carries `embed`, or the embed's
+	// image ref has nothing to resolve against and Discord shows an empty slot.
+	attachment: AttachmentBuilder | null;
+}
+
+/**
+ * The board message's embed: whose turn, what they can do, the board (a rendered
+ * picture, or the token map when there is none), the seats, and the last move.
+ */
+export async function monopolyBoardEmbed(state: MonopolyState): Promise<MonopolyBoardMessage> {
 	const lastMove = state.log[state.log.length - 1]?.text ?? gameRoomsCopy.monopoly.noMovesYet;
+	const picture = await renderBoard(state);
+
+	// The picture REPLACES the token map rather than joining it, because the two
+	// show the same positions. The seat lines stay either way: they name every
+	// seat's tile in words, so nobody has to read the picture to play.
+	const board = picture ? [] : ["", gameRoomsCopy.monopoly.boardMapLabel, tokenMap(state)];
 
 	// The last move is the bottom line of the DESCRIPTION rather than the embed's
 	// footer, for two reasons: a footer is plain text, so the mention every engine
@@ -36,16 +57,16 @@ export function monopolyBoardEmbed(state: MonopolyState): EmbedBuilder {
 	// Dero brand line that every embed shares.
 	const description = [
 		...statusLines(state),
-		"",
-		gameRoomsCopy.monopoly.boardMapLabel,
-		tokenMap(state),
+		...board,
 		"",
 		state.seats.map((seat, index) => seatLine(state, seat, index)).join("\n"),
 		"",
 		`**${gameRoomsCopy.monopoly.lastMoveLabel}** ${lastMove}`,
 	];
 
-	return infoEmbed(gameRoomsCopy.monopoly.boardTitle, description.join("\n"), COLORS.ARCADE as ColorResolvable);
+	const embed = infoEmbed(gameRoomsCopy.monopoly.boardTitle, description.join("\n"), COLORS.ARCADE as ColorResolvable);
+	if (!picture) return { embed, attachment: null };
+	return { embed: embed.setImage(picture.ref), attachment: picture.attachment };
 }
 
 // Who is on the clock and what they can do, or who won.

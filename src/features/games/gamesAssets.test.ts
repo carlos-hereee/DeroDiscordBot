@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { DERO_IMAGE_REF } from "@base/copy/brand.js";
-import { GAME_ASSET_FILES, resolveGameAsset, hangmanStageKey, missingGameAssets, type GameAssetKey } from "./gamesAssets.js";
+import { GAME_ASSET_FILES, gameAssetPath, resolveGameAsset, hangmanStageKey, missingGameAssets, type GameAssetKey } from "./gamesAssets.js";
 
 // ── gamesAssets ────────────────────────────────────────────────────────────
 // The manifest is the owner's art checklist as much as it is code, so these
@@ -26,6 +26,14 @@ describe("the asset manifest", () => {
 		for (let stage = 0; stage <= 6; stage++) {
 			expect(GAME_ASSET_FILES[`hangmanStage${stage}` as GameAssetKey]).toBeDefined();
 		}
+	});
+
+	it("declares the fourteen Monopoly slots, all PNGs in the monopoly folder", () => {
+		// The board base, six tokens, house, hotel, two card backs, the jail stamp and
+		// the winner and bankrupt banners: the owner's asset spec, one slot per file.
+		const monopoly = (Object.keys(GAME_ASSET_FILES) as GameAssetKey[]).filter((key) => key.startsWith("monopoly"));
+		expect(monopoly).toHaveLength(14);
+		for (const key of monopoly) expect(GAME_ASSET_FILES[key]).toMatch(/^monopoly\/[a-z0-9-]+\.png$/);
 	});
 });
 
@@ -67,5 +75,12 @@ describe("missingGameAssets", () => {
 		for (const missing of missingGameAssets()) {
 			expect(declared.has(missing)).toBe(true);
 		}
+	});
+
+	it("checks only the slots it is handed, and agrees with gameAssetPath about each", () => {
+		// challenge.gif has never been drawn, so it is the one slot every checkout lacks.
+		expect(gameAssetPath("challenge")).toBeNull();
+		expect(missingGameAssets(["challenge"])).toEqual(["challenge.gif"]);
+		expect(missingGameAssets([])).toEqual([]);
 	});
 });

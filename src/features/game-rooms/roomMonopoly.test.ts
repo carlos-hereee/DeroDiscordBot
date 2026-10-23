@@ -1,5 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { AttachmentBuilder } from "discord.js";
+
+// The board picture. Mocked so these cases pin the embed with and without one,
+// whatever art happens to be on disk where the suite runs.
+vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn() }));
+
 import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
+import { renderBoard } from "@features/games/monopolyRenderer.js";
 import { monopolyBoardEmbed, monopolyControlsRow, monopolyInventoryEmbed } from "./roomMonopoly.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
@@ -17,16 +24,27 @@ const MAX_ROWS = 4;
 
 const freshMatch = (): MonopolyState => createInitialState([A, B], { auctionsEnabled: false }, 0, 1);
 
+const renderMock = renderBoard as unknown as ReturnType<typeof vi.fn>;
+const PICTURE_REF = "attachment://monopoly-board-1.png";
+
+const descriptionOf = async (state: MonopolyState): Promise<string> => (await monopolyBoardEmbed(state)).embed.data.description ?? "";
+
+beforeEach(() => {
+	renderMock.mockReset();
+	// No picture unless a case asks for one: the text board is the default.
+	renderMock.mockResolvedValue(null);
+});
+
 const rowsJson = (state: MonopolyState, viewerId: string) =>
 	monopolyControlsRow(state, viewerId, ROOM).map((row) => row.toJSON().components as Array<{ custom_id?: string; label?: string; disabled?: boolean }>);
 
 const customIdsOf = (state: MonopolyState, viewerId: string) => rowsJson(state, viewerId).flat().map((button) => button.custom_id);
 
 describe("monopolyBoardEmbed", () => {
-	it("renders a fresh match: whose turn, the prompt, every seat and the token map", () => {
-		const description = monopolyBoardEmbed(freshMatch()).data.description ?? "";
+	it("renders a fresh match: whose turn, the prompt, every seat and the token map", async () => {
+		const description = await descriptionOf(freshMatch());
 
-		expect(monopolyBoardEmbed(freshMatch()).data.title).toBe(gameRoomsCopy.monopoly.boardTitle);
+		expect((await monopolyBoardEmbed(freshMatch())).embed.data.title).toBe(gameRoomsCopy.monopoly.boardTitle);
 		expect(description).toContain(gameRoomsCopy.monopoly.onTheClock(A));
 		expect(description).toContain(gameRoomsCopy.monopoly.rollPrompt);
 		expect(description).toContain(`<@${A}> · $1500 · 0 lots · on GO`);
@@ -36,34 +54,60 @@ describe("monopolyBoardEmbed", () => {
 		expect(description).toContain(`**${gameRoomsCopy.monopoly.lastMoveLabel}** ${gameRoomsCopy.monopoly.noMovesYet}`);
 	});
 
-	it("puts a lone token's seat number on its tile and counts owned lots", () => {
+	it("puts a lone token's seat number on its tile and counts owned lots", async () => {
 		const state = freshMatch();
 		state.seats[1].position = 3;
 		state.properties["cinder-row"].ownerId = B;
 
-		const description = monopolyBoardEmbed(state).data.description ?? "";
+		const description = await descriptionOf(state);
 		expect(description).toContain(" 0  1 · · 2 · · · · · ·");
 		expect(description).toContain(`<@${B}> · $1500 · 1 lot · on Cinder Row`);
 	});
 
-	it("shows the last trail line and tags jailed and bankrupt seats", () => {
+	it("shows the last trail line and tags jailed and bankrupt seats", async () => {
 		const state = freshMatch();
 		state.log.push({ userId: A, text: `<@${A}> rolled 1 and 2.` });
 		state.seats[0].inJail = true;
 		state.seats[1].bankrupt = true;
 
-		const description = monopolyBoardEmbed(state).data.description ?? "";
+		const description = await descriptionOf(state);
 		expect(description).toContain(`<@${A}> rolled 1 and 2.`);
 		expect(description).toContain(`(${gameRoomsCopy.monopoly.inJailTag})`);
 		expect(description).toContain(`(${gameRoomsCopy.monopoly.outTag})`);
 		expect(description).toContain(gameRoomsCopy.monopoly.jailPrompt);
 	});
 
-	it("names the winner once the match is finished", () => {
+	it("names the winner once the match is finished", async () => {
 		const state = freshMatch();
 		state.phase = "finished";
 		state.winnerId = B;
-		expect(monopolyBoardEmbed(state).data.description).toContain(gameRoomsCopy.monopoly.finishedLine(B));
+		expect(await descriptionOf(state)).toContain(gameRoomsCopy.monopoly.finishedLine(B));
+	});
+
+	it("returns no attachment and keeps the token map when there is no board picture", async () => {
+		const board = await monopolyBoardEmbed(freshMatch());
+		expect(board.attachment).toBeNull();
+		expect(board.embed.data.image).toBeUndefined();
+		expect(board.embed.data.description).toContain(gameRoomsCopy.monopoly.boardMapLabel);
+	});
+
+	it("shows the rendered picture in place of the token map, and keeps every seat line", async () => {
+		const attachment = new AttachmentBuilder(Buffer.from("png"), { name: "monopoly-board-1.png" });
+		renderMock.mockResolvedValue({ attachment, ref: PICTURE_REF });
+		const state = freshMatch();
+
+		const board = await monopolyBoardEmbed(state);
+
+		expect(renderMock).toHaveBeenCalledWith(state);
+		expect(board.attachment).toBe(attachment);
+		expect(board.embed.data.image?.url).toBe(PICTURE_REF);
+		const description = board.embed.data.description ?? "";
+		expect(description).not.toContain(gameRoomsCopy.monopoly.boardMapLabel);
+		expect(description).not.toContain("```");
+		// The seat lines name every tile in words, so the picture is never the only
+		// place a position can be read.
+		expect(description).toContain(`<@${A}> · $1500 · 0 lots · on GO`);
+		expect(description).toContain(gameRoomsCopy.monopoly.onTheClock(A));
 	});
 });
 

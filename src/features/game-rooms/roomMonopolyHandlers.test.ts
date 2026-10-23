@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TextChannel, type ButtonInteraction, type Client } from "discord.js";
+import { AttachmentBuilder, TextChannel, type ButtonInteraction, type Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: {
@@ -14,7 +14,11 @@ vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 // The dice. Mocked so a test names the exact roll it needs.
 vi.mock("@utils/secureRng.js", () => ({ secureRandom: vi.fn() }));
+// The board picture. Mocked so every redraw here is the text board unless a case
+// hands it a picture, whatever art is on disk where the suite runs.
+vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn() }));
 
+import { renderBoard } from "@features/games/monopolyRenderer.js";
 import { handleMroll, handleMbuy, handleMskip, handleMend, handleMjail, handleMinventory, turnFingerprint } from "./roomMonopolyHandlers.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
@@ -38,6 +42,7 @@ const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
 const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
 const awardMock = awardMultiPlayerResult as unknown as ReturnType<typeof vi.fn>;
 const diceMock = secureRandom as unknown as ReturnType<typeof vi.fn>;
+const renderMock = renderBoard as unknown as ReturnType<typeof vi.fn>;
 
 const A = "player-a";
 const B = "player-b";
@@ -109,6 +114,7 @@ beforeEach(() => {
 	postMoveMock.mockResolvedValue(true);
 	finishMock.mockResolvedValue(true);
 	diceMock.mockReturnValueOnce(ROLL_ONE).mockReturnValueOnce(ROLL_TWO);
+	renderMock.mockResolvedValue(null);
 });
 
 describe("handleMroll", () => {
@@ -158,6 +164,39 @@ describe("handleMroll", () => {
 		const payload = boardMessage.edit.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id?: string }[] } }[] };
 		const ids = payload.components.flatMap((row) => row.toJSON().components.map((button) => button.custom_id));
 		expect(ids).toEqual(["gameroom:mbuy:room-1:cinder-row", "gameroom:mskip:room-1", "gameroom:minventory:room-1"]);
+	});
+
+	it("swaps the board picture on a redraw rather than stacking one per move", async () => {
+		const attachment = new AttachmentBuilder(Buffer.from("png"), { name: "monopoly-board-7.png" });
+		renderMock.mockResolvedValue({ attachment, ref: "attachment://monopoly-board-7.png" });
+		const room = seed(freshMatch());
+		const boardMessage = makeBoardMessage();
+
+		await handleMroll(makeInteraction(A, makeClient(boardMessage)), room);
+
+		const payload = boardMessage.edit.mock.calls[0][0] as {
+			attachments: unknown[];
+			files: AttachmentBuilder[];
+			embeds: { data: { image?: { url: string } } }[];
+		};
+		// The board drawn is the state just persisted, not the one read before the move.
+		expect(renderMock).toHaveBeenCalledWith(persisted());
+		expect(payload.files).toEqual([attachment]);
+		expect(payload.embeds[0].data.image?.url).toBe("attachment://monopoly-board-7.png");
+		// `attachments: []` drops the previous move's picture from the message.
+		expect(payload.attachments).toEqual([]);
+	});
+
+	it("clears the last picture when a redraw falls back to the text board", async () => {
+		const room = seed(freshMatch());
+		const boardMessage = makeBoardMessage();
+
+		await handleMroll(makeInteraction(A, makeClient(boardMessage)), room);
+
+		const payload = boardMessage.edit.mock.calls[0][0] as { attachments: unknown[]; files: unknown[]; embeds: { data: { image?: unknown } }[] };
+		expect(payload.files).toEqual([]);
+		expect(payload.attachments).toEqual([]);
+		expect(payload.embeds[0].data.image).toBeUndefined();
 	});
 
 	it("refuses a seat that is not on the clock, ephemerally, and writes nothing", async () => {

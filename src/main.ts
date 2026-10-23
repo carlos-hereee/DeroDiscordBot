@@ -37,6 +37,7 @@ import { registerGameRoomHandlers } from "@features/game-rooms/gameRoomHandlers.
 import { registerGameRoomMemberRemoveWatcher } from "@features/game-rooms/guildMemberRemoveWatcher.js";
 import { recoverGameRoomsOnBoot } from "@features/game-rooms/roomBootRecovery.js";
 import { sweepHoldemClocks } from "@features/game-rooms/roomHoldemHandlers.js";
+import { logMonopolyRendererStatus } from "@features/games/monopolyRenderer.js";
 import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/polls/PollDispatcher.js";
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
@@ -568,6 +569,9 @@ process.on("uncaughtException", (err) => {
 		// as abandoned), with a system line in the room saying why. Rides
 		// the same GuildMembers intent the greeter needs.
 		registerGameRoomMemberRemoveWatcher(client);
+		// One line saying whether Monopoly boards render as pictures on this host
+		// and which of the owner's art files are still missing from assets/games.
+		logMonopolyRendererStatus();
 
 		// ── Dero voice call watchers ──────────────────────────────
 		// Ends a call two minutes after the last member allowed to give Dero
