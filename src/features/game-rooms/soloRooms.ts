@@ -1,4 +1,4 @@
-import { ChannelType, type CategoryChannel, type Guild } from "discord.js";
+import { ChannelType, type CategoryChannel, type Guild, type TextChannel } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
@@ -6,11 +6,14 @@ import { startBlackjackTable } from "@features/games/blackjackHandler.js";
 import { RoomProvisioner, describeRoomOpenFailure, type RoomOpenResult } from "./RoomProvisioner.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── soloRooms ────────────────────────────────────────────────────────
 // What:  the one-player path into a room: "Host Hangman" and "Play Blackjack" on the
-//        arcade rules card, and a rematch pressed on a finished solo room.
-// Who:   arcadeHost (the buttons) and challengeBoard.rematchFromRoom.
+//        arcade rules card. A rematch of a finished solo room does not come through
+//        here (it plays on in the same channel), but it deals its blackjack table
+//        through startSoloBlackjackBoard below.
+// Who:   arcadeHost (the buttons), and challengeBoard.rematchFromRoom for the table.
 // When:  once per press, same cadence as the challenge board's start.
 // Where: routes through RoomProvisioner like every other room, ON PURPOSE. The old
 //        inline forms never touched the provisioner, so they held no room slot, dodged
@@ -29,13 +32,7 @@ export interface SoloHost {
 
 export type SoloOpenResult = RoomOpenResult | { ok: false; reason: "noArcadeCategory" };
 
-export async function openSoloRoom(
-	guild: Guild,
-	game: SoloGameSlug,
-	host: SoloHost,
-	// Set by the rematch path so the new room and the idempotency marker are one write.
-	rematchedFromRoomId: string | null = null
-): Promise<SoloOpenResult> {
+export async function openSoloRoom(guild: Guild, game: SoloGameSlug, host: SoloHost): Promise<SoloOpenResult> {
 	const stored = await guildConfigStore.findByGuildId(guild.id);
 	const config = stored as unknown as { gamesCategoryId?: string | null; adminRoleId?: string | null } | null;
 
@@ -55,31 +52,39 @@ export async function openSoloRoom(
 		spectatorIds: [],
 		visibility: "solo",
 		adminRoleId: config?.adminRoleId ?? null,
-		rematchedFromRoomId,
 	});
 	if (!result.ok) return result;
 
-	// Solo blackjack rides its own edited board message, posted into the room the way
-	// the inline form posted into ⚔️challenges. The roomId rides the in-memory game so
-	// the settle path can close the room through roomLifecycle.finish.
-	if (game === "solo-blackjack") {
-		const started = await startBlackjackTable(
-			result.channel,
-			guild.id,
-			{ userId: host.userId, username: host.displayName },
-			true,
-			result.room.roomId
-		);
-		if (started !== "started") {
-			// The room exists and its board does not, so the host would hold their one
-			// room slot on a channel with nothing to play. Close it out rather than
-			// stranding them; abandoned, because no hand was ever dealt.
-			await roomLifecycle.finish(guild.client, result.room, { abandoned: true });
-			return { ok: false, reason: "createFailed" };
-		}
+	if (game === "solo-blackjack" && !(await startSoloBlackjackBoard(guild, result.room, result.channel, host))) {
+		return { ok: false, reason: "createFailed" };
 	}
 
 	return result;
+}
+
+/**
+ * Deal a solo blackjack room's table into its channel. Returns false, with the room
+ * already closed, when the table could not start.
+ *
+ * Solo blackjack rides its own edited board message, posted into the room the way the
+ * inline form posted into ⚔️challenges. The roomId rides the in-memory game so the
+ * settle path can close the room through roomLifecycle.finish. Shared by a fresh solo
+ * room and a rematch in the same channel, so both deal the same table the same way.
+ */
+export async function startSoloBlackjackBoard(
+	guild: Guild,
+	room: IGameRoom,
+	channel: TextChannel,
+	host: SoloHost
+): Promise<boolean> {
+	const started = await startBlackjackTable(channel, guild.id, { userId: host.userId, username: host.displayName }, true, room.roomId);
+	if (started === "started") return true;
+
+	// The room exists and its board does not, so the host would hold their one room
+	// slot on a channel with nothing to play. Close it out rather than stranding them;
+	// abandoned, because no hand was ever dealt.
+	await roomLifecycle.finish(guild.client, room, { abandoned: true });
+	return false;
 }
 
 // The solo counterpart of describeRoomOpenFailure, covering the one extra reason this

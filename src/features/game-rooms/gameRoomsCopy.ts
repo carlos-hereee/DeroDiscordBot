@@ -98,6 +98,10 @@ export const gameRoomsCopy = {
 		},
 		archiveButtonLabel: "Archive now",
 		rematchButtonLabel: "Rematch",
+		// Replaces the archive notice on the finished room's result card once a rematch
+		// takes the channel over: the room no longer disappears, and the line answers
+		// "who started this" for everyone scrolling back.
+		rematchStarted: (presserId: string): string => `🔁 <@${presserId}> started a rematch. The next match is below.`,
 	},
 
 	// ── ephemeral replies from the provisioner ──
@@ -130,7 +134,7 @@ export const gameRoomsCopy = {
 		notYours: "Only the host or an admin can do that.",
 		// One rematch per finished room, ever. Without this the still clickable button
 		// on a scrolled back result card would spawn a room per press.
-		rematchAlreadyOffered: "Someone already offered a rematch from this room. Head to the challenge board.",
+		rematchAlreadyOffered: "Someone already started a rematch from this room.",
 	},
 
 	// ── the challenge board (Phase 4) ──
@@ -180,9 +184,6 @@ export const gameRoomsCopy = {
 				cancelled: "CALLED OFF",
 			},
 		},
-
-		// The rematch presser's ephemeral confirmation, pointing at the fresh card.
-		rematchOffered: (channelId: string): string => `Rematch card is up in <#${channelId}>.`,
 
 		// The quota status line a host sees when choosing a private form, so the
 		// ceiling is visible BEFORE the refusal would be. Rendered only while the
@@ -704,9 +705,5 @@ export const gameRoomsCopy = {
 		// The boot sweep's line for a solo blackjack room whose hand did not survive a redeploy.
 		// Says plainly that no result was settled, so nobody reads the closed room as a loss.
 		tableLostToRestart: "Dero restarted mid hand and this table was lost. No hand was settled, so nothing was paid or lost. Dero is closing the room.",
-		// Posted on the FINISHED room when a rematch opens: the one line that connects
-		// the two rooms in the transcript, so a returning player scrolling back does
-		// not think the button silently did nothing.
-		rematchOpened: (channelId: string): string => `The rematch is up in <#${channelId}>.`,
 	},
 } as const;

@@ -23,10 +23,11 @@ export interface RoomSweepSummary {
 // Delete every expired room's channel and close its row.
 //
 // ⚠️ THE SAFETY PROPERTY IS IN THE QUERY, NOT HERE. findExpiredArchives filters on
-// status "finished" AND a non-null archiveAt in the past, and archiveAt is written by
-// roomLifecycle.finish and by nothing else. That single-writer property is what makes
-// this loop safe to point at a delete: a live match has a null archiveAt and is
-// therefore unreachable from this function no matter what the clock says (risk R3).
+// status "finished" AND a non-null archiveAt in the past, and archiveAt is stamped by
+// roomLifecycle.finish and by nothing else (roomLifecycle.releaseChannel only ever clears
+// it, when a rematch takes a finished room's channel over). That single-writer property
+// is what makes this loop safe to point at a delete: a live match has a null archiveAt
+// and is therefore unreachable from this function no matter what the clock says (risk R3).
 export async function sweepExpiredRooms(client: Client, now: Date = new Date()): Promise<RoomSweepSummary> {
 	const expired = await gameRoomStore.findExpiredArchives(now);
 	if (expired.length === 0) return { archived: 0, failed: 0 };

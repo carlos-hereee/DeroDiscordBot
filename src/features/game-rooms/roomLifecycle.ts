@@ -5,21 +5,25 @@ import { botLogStore } from "@db/stores/botLogStore.js";
 import { gameRoomArchivedEvent } from "@base/constants/BOT_LOG_EVENTS.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { awardXp } from "@features/leveling/awardXp.js";
-import { buildRoomOverwrites } from "./roomPermissions.js";
+import { buildRoomOverwrites, type RoomPhase } from "./roomPermissions.js";
 import { roomResultEmbed, roomArchiveRow } from "./gameRoomsEmbeds.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomLifecycle ────────────────────────────────────────────────────
-// What:  the two terminal transitions of a room. `finish` ends the match, locks the
-//        channel and starts the archive clock; `archiveNow` and `archiveRoom` delete
-//        the channel and close the row.
+// What:  the terminal transitions of a room. `finish` ends the match, locks the
+//        channel and starts the archive clock; `releaseChannel` hands a finished room's
+//        channel to the rematch that plays on in it; `archiveNow` and `archiveRoom`
+//        delete the channel and close the row.
 // Who:   finish is called by whatever ended the match (a game's win condition, the
-//        forfeit control, the boot recovery sweep). archiveNow is the button;
+//        forfeit control, the boot recovery sweep). releaseChannel is called by the
+//        Rematch button (challengeBoard.rematchFromRoom). archiveNow is the button;
 //        archiveRoom is what the cron sweep calls.
 // When:  once per room each, at most.
-// Where: `archiveAt` is stamped HERE and nowhere else. That single-writer property is
-//        exactly what makes the sweep safe: a room that is still playing has a null
-//        archiveAt, so no filter bug in the sweep can reach a live match (risk R3).
+// Where: `archiveAt` is written HERE and nowhere else: stamped by finish, and cleared
+//        to null by releaseChannel, the only other writer, which never writes a date.
+//        That property is exactly what makes the sweep safe: a room that is still
+//        playing has a null archiveAt, so no filter bug in the sweep can reach a live
+//        match (risk R3).
 // How:   persist before locking, and share one delete path between the button and the
 //        cron. Both choices are explained where they happen.
 
@@ -91,24 +95,8 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	// whether Discord still had a channel to decorate.
 	if (!channel) return true;
 
-	// ② Lock it. `set` REPLACES the whole overwrite array rather than merging, which is
-	// what guarantees no stale SendMessages allow survives from the playing phase; a
-	// per-entry edit would leave whichever entries this code forgot to mention.
-	const config = await guildConfigStore.findByGuildId(room.guildId).catch(() => null);
-	await channel.permissionOverwrites
-		.set(
-			buildRoomOverwrites({
-				everyoneRoleId: channel.guild.roles.everyone.id,
-				botId: client.user!.id,
-				hostId: room.hostId,
-				playerIds: room.playerIds,
-				spectatorIds: room.spectatorIds,
-				visibility: room.visibility,
-				phase: "finished",
-				adminRoleId: (config as { adminRoleId?: string | null } | null)?.adminRoleId ?? null,
-			})
-		)
-		.catch((error) => console.error("[game-rooms] failed to lock finished room", { roomId: room.roomId, error }));
+	// ② Lock it.
+	await applyRoomPhase(client, channel, room, "finished");
 
 	// ③ The result card, carrying Archive now. Posted after the lock so the last message
 	// in the channel is the outcome rather than a move, and it lands at all only because
@@ -124,6 +112,59 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 		.catch((error) => console.error("[game-rooms] failed to post result card", { roomId: room.roomId, error }));
 
 	return true;
+}
+
+/**
+ * Replace a room channel's whole permission overwrite set with the matrix for one
+ * phase: "finished" is finish's lock, "playing" is the unlock a rematch in the same
+ * channel needs, because the finished room left its @everyone SendMessages deny behind.
+ *
+ * `set` REPLACES the whole overwrite array rather than merging, which is what
+ * guarantees no stale entry survives from the previous phase; a per-entry edit would
+ * leave whichever entries this code forgot to mention. Logs and resolves on failure:
+ * both callers run after their row write, and a failed overwrite must not undo it.
+ */
+export async function applyRoomPhase(
+	client: Client,
+	channel: TextChannel,
+	room: Pick<IGameRoom, "roomId" | "guildId" | "hostId" | "playerIds" | "spectatorIds" | "visibility">,
+	phase: RoomPhase
+): Promise<void> {
+	const config = await guildConfigStore.findByGuildId(room.guildId).catch(() => null);
+	await channel.permissionOverwrites
+		.set(
+			buildRoomOverwrites({
+				everyoneRoleId: channel.guild.roles.everyone.id,
+				botId: client.user!.id,
+				hostId: room.hostId,
+				playerIds: room.playerIds,
+				spectatorIds: room.spectatorIds,
+				visibility: room.visibility,
+				phase,
+				adminRoleId: (config as { adminRoleId?: string | null } | null)?.adminRoleId ?? null,
+			})
+		)
+		.catch((error) => console.error(`[game-rooms] failed to set the ${phase} overwrites`, { roomId: room.roomId, error }));
+}
+
+// ── the channel handover (a rematch in the same channel) ─────────────
+// What:  a FINISHED room stops pointing at its channel and its archive clock is
+//        cleared, so the rematch row that now owns the channel is the only row the
+//        archive sweep, ChannelDeleteWatcher and the in-room handlers can find there.
+//        The finished row keeps its transcript; only the channel moves on.
+// Who:   challengeBoard.rematchFromRoom, AFTER it has created the rematch row already
+//        pointing at the same channel.
+// When:  once per finished room, at most: the store's filter is the claim.
+// Where: ⚠️ THE ONLY WRITER OF archiveAt BESIDES finish, AND IT ONLY EVER WRITES NULL.
+//        Clearing a clock can never put a live match in the sweep's reach, which is
+//        why this second writer keeps the single-writer property's guarantee intact.
+// How:   one conditional write on status "finished" and the expected channel id.
+//        Returns false when the claim was lost (another rematch took the channel, or the
+//        sweep archived the room first); the caller then undoes its own new row.
+export async function releaseChannel(room: Pick<IGameRoom, "guildId" | "roomId" | "channelId">): Promise<boolean> {
+	if (!room.channelId) return false;
+	const released = await gameRoomStore.releaseChannel(room.guildId, room.roomId, room.channelId);
+	return released !== null;
 }
 
 // ── the room-rate top up ──────────────────────────────────────────────
@@ -248,4 +289,4 @@ export async function archiveNow(
 	return { ok: true };
 }
 
-export const roomLifecycle = { finish, archiveNow, archiveRoom };
+export const roomLifecycle = { finish, applyRoomPhase, releaseChannel, archiveNow, archiveRoom };

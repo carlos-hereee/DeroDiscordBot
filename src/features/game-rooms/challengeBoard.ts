@@ -6,6 +6,7 @@ import {
 	TextChannel,
 	type ButtonInteraction,
 	type CategoryChannel,
+	type EmbedBuilder,
 	type Guild,
 	type MessageEditOptions,
 	type StringSelectMenuInteraction,
@@ -16,9 +17,17 @@ import { errorEmbed } from "@utils/embedBuilder.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { MAX_SEATS as MONOPOLY_MAX_SEATS } from "@features/games/monopolyBoard.js";
 import { checkGameRoomAccess, gameRoomUpgradeEmbed } from "@features/entitlements/gameRoomAccess.js";
-import { RoomProvisioner, describeRoomOpenFailure } from "./RoomProvisioner.js";
-import { openSoloRoom, describeSoloOpenFailure, readPrivateQuotaStatus } from "./soloRooms.js";
-import { roomTrail } from "./roomTrail.js";
+import {
+	RoomProvisioner,
+	checkRoomAdmission,
+	describeRoomOpenFailure,
+	resolveRoomSeats,
+	seedRoom,
+} from "./RoomProvisioner.js";
+import { readPrivateQuotaStatus, startSoloBlackjackBoard } from "./soloRooms.js";
+import { resolveRoomChannel } from "./roomTrail.js";
+import { roomLifecycle } from "./roomLifecycle.js";
+import { rematchedResultEmbed, roomResultEmbed } from "./gameRoomsEmbeds.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { buildInviteOptions, refilterInvitees } from "./invitePicker.js";
@@ -42,7 +51,9 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // When:  from the first press to the moment the room's channel exists.
 // Where: the draft GameRoom row IS the state. Nothing about a challenge lives in
 //        memory, which is what makes a challenge survive the Railway deploy that
-//        would have killed the old in-memory challengeFlow mid-handshake.
+//        would have killed the old in-memory challengeFlow mid-handshake. The Rematch
+//        button lives here too, but never touches the board: a rematch plays on in the
+//        finished room's own channel (see its section at the end).
 // How:   ONE card, edited in place at every step, and ONE pool mechanism for both
 //        visibilities. See the pool note below; it is the decision that keeps this
 //        file from being two parallel flows.
@@ -135,21 +146,13 @@ async function editOpenerCard(guild: Guild, roomId: string, message: EditableCar
 	}
 }
 
-// A rematch's head start: the finished room's other players pre-fill the pool, and
-// the finished room's id rides the row as the one-rematch-per-room idempotency key.
-export interface ChallengeDraftSeed {
-	spectatorIds: string[];
-	rematchedFromRoomId: string;
-}
-
 // ── start a challenge ─────────────────────────────────────────────────
 // Reached from the board's per-game buttons AND from /mini-game, so the two cannot
 // drift into different rules about who may start what. Returns the draft row when one
 // was created, or null when the press was refused (the refusal has already replied).
 export async function startChallengeDraft(
 	interaction: ButtonInteraction | { guild: Guild | null; guildId: string | null; user: { id: string }; reply: ButtonInteraction["reply"] },
-	game: GameSlug,
-	seed?: ChallengeDraftSeed
+	game: GameSlug
 ): Promise<IGameRoom | null> {
 	const guild = interaction.guild;
 	const guildId = interaction.guildId;
@@ -190,10 +193,6 @@ export async function startChallengeDraft(
 			game,
 			hostId: interaction.user.id,
 			visibility: "invite",
-			// A rematch arrives with the finished table already in the pool, so the
-			// host only re-confirms who plays rather than re-gathering everyone.
-			spectatorIds: seed?.spectatorIds,
-			rematchedFromRoomId: seed?.rematchedFromRoomId ?? null,
 		});
 	} catch (error) {
 		// Almost certainly the unique index catching a double click that outran the
@@ -218,9 +217,7 @@ export async function startChallengeDraft(
 
 	await gameRoomStore.update(guildId, room.roomId, { boardMessageId: card.id });
 	await interaction.reply({
-		content: seed
-			? gameRoomsCopy.board.rematchOffered(channel.id)
-			: gameRoomsCopy.board.cardStarted(channel.id).replace("The match is under way in", "Your challenge card is in"),
+		content: gameRoomsCopy.board.cardStarted(channel.id).replace("The match is under way in", "Your challenge card is in"),
 		flags: MessageFlags.Ephemeral,
 	});
 	// The card went up as text so the press was answered inside Discord's three
@@ -529,79 +526,171 @@ async function provisionFromDraft(
 	);
 }
 
-// ── rematch ───────────────────────────────────────────────────────────
-// Pressed on a FINISHED room's result card. The board path opens a fresh challenge
-// card (visibility resets, the host chooses again) with the finished table already in
-// the pool; the solo path skips the board and provisions a new solo room directly.
-// One rematch per finished room, ever: the card stays clickable for the whole archive
-// window, and rematchedFromRoomId is what stops a press per scroll-back.
+// ── rematch: the next match in the same channel ──────────────────────
+// What:  pressed on a FINISHED room's result card, it starts the next match of the same
+//        game IN THE SAME CHANNEL. A new GameRoom row takes the channel over; the
+//        finished row keeps its transcript and lets the channel go.
+// Who:   any player of the finished room (GAME_ROOM_ACTIONS.rematch is playersOnly). The
+//        presser hosts the rematch, and every player of the finished match is seated
+//        again with the same visibility and spectators. Solo rooms included.
+// When:  at most once per finished room. findByRematchedFrom answers a scrolled back
+//        press; the release in takeOverChannel is the atomic claim when two players
+//        press in the same moment.
+// Where: ⚠️ THE ORDER OF THE TWO ROW WRITES IS THE SAFETY PROPERTY. The new row is
+//        created ALREADY POINTING AT THE CHANNEL, and only then does the finished row let
+//        it go. A crash between the two leaves two rows on one channel, which the
+//        finished row's archive clock and the idle sweep both clean up. The reverse order
+//        would leave a moment where NO row points at the channel, and a crash there
+//        strands a locked channel nothing will ever delete.
+// How:   ① refuse, writing nothing, on status, an earlier rematch, a vanished channel or
+//        the presser's admission (their one room, the guild cap, the private ceiling);
+//        ② take the channel over; ③ say on the result card who started it; ④ unlock the
+//        channel for the new players; ⑤ seed the match through the provisioner's own
+//        seeding, exactly as a first match is seeded.
 export async function rematchFromRoom(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	const check = await checkRematch(interaction, room);
+	if (!check.ok) {
+		await interaction.reply({ ...check.reply, flags: MessageFlags.Ephemeral });
+		return;
+	}
+
+	// Everything below writes rows and talks to Discord several times over, which can
+	// run past the three second interaction window. Deferring the UPDATE (rather than a
+	// reply) is what lets ③ edit the result card the button lives on.
+	await interaction.deferUpdate();
+	try {
+		const failure = await playRematchInPlace(interaction, room, check.channel);
+		if (failure) await interaction.followUp({ content: failure, flags: MessageFlags.Ephemeral });
+	} catch (error) {
+		// A Mongo or Discord failure mid way. Whatever was written is safe to leave (see
+		// Where above): a new row that never reached "playing" is a draft the idle sweep
+		// closes, and its channel is archived through it.
+		console.error("[game-rooms] rematch failed", { guildId: room.guildId, roomId: room.roomId, error });
+		await interaction.followUp({ content: gameRoomsCopy.errors.createFailed, flags: MessageFlags.Ephemeral }).catch(() => undefined);
+	}
+}
+
+type RematchCheck =
+	| { ok: true; channel: TextChannel }
+	| { ok: false; reply: { content: string } | { embeds: EmbedBuilder[] } };
+
+// ① Every reason to refuse a rematch, checked before anything is written. On success it
+// hands back the channel the rematch will play in.
+async function checkRematch(interaction: ButtonInteraction, room: IGameRoom): Promise<RematchCheck> {
 	// The result card only exists on a finished room, but its buttons live as long as
 	// the message: refuse by STATUS, exactly like the board controls.
-	if (room.status !== "finished") {
-		await interaction.reply({ content: gameRoomsCopy.errors.notFound, flags: MessageFlags.Ephemeral });
-		return;
+	if (room.status !== "finished") return { ok: false, reply: { content: gameRoomsCopy.errors.notFound } };
+
+	// Solo visibility belongs to the two solo games only; any other game with it is a
+	// row no current path writes, and seeding it would open the wrong thing.
+	if (room.visibility === "solo" && room.game !== "solo-hangman" && room.game !== "solo-blackjack") {
+		return { ok: false, reply: { content: gameRoomsCopy.errors.notFound } };
 	}
 
-	const already = await gameRoomStore.findByRematchedFrom(room.guildId, room.roomId);
-	if (already) {
-		await interaction.reply({ content: gameRoomsCopy.errors.rematchAlreadyOffered, flags: MessageFlags.Ephemeral });
-		return;
+	if (await gameRoomStore.findByRematchedFrom(room.guildId, room.roomId)) {
+		return { ok: false, reply: { content: gameRoomsCopy.errors.rematchAlreadyOffered } };
 	}
 
-	// ── solo: no challenge board, straight to a new room ──
-	// The gate on this path is the private tier quota inside the provisioner; running
-	// out of private slots on a solo rematch is an honest refusal, not a silent one.
-	if (room.visibility === "solo") {
-		if (room.game !== "solo-hangman" && room.game !== "solo-blackjack") {
-			await interaction.reply({ content: gameRoomsCopy.errors.notFound, flags: MessageFlags.Ephemeral });
-			return;
-		}
-		const guild = interaction.guild!;
-		const member = guild.members.cache.get(interaction.user.id);
-		const result = await openSoloRoom(
-			guild,
-			room.game,
-			{
-				userId: interaction.user.id,
-				displayName: member?.displayName ?? interaction.user.globalName ?? interaction.user.username,
-			},
-			room.roomId
-		);
-		if (!result.ok) {
-			await interaction.reply({ embeds: [errorEmbed(describeSoloOpenFailure(result))], flags: MessageFlags.Ephemeral });
-			return;
-		}
-		await interaction.reply({ content: gameRoomsCopy.board.cardStarted(result.channel.id), flags: MessageFlags.Ephemeral });
-		// The connecting line in the finished room's transcript (announcement 4e).
-		await roomTrail.postMove(interaction.client, room, {
-			actorId: interaction.user.id,
-			kind: "system",
-			text: gameRoomsCopy.trail.rematchOpened(result.channel.id),
-		});
-		return;
-	}
+	// The channel is what a rematch plays in, so a room whose channel is gone (archived,
+	// or deleted by an admin a moment ago) has nothing to rematch in.
+	const channel = await resolveRoomChannel(interaction.client, room.channelId);
+	if (!channel) return { ok: false, reply: { content: gameRoomsCopy.errors.notFound } };
 
-	// ── board games: a fresh challenge card, presser as host ──
-	// The OTHER players from the finished room pre-fill the pool, so the invite list
-	// already has them; nobody is auto promoted, the host still presses Start.
-	const others = room.playerIds.filter((id) => id !== interaction.user.id);
-	const draft = await startChallengeDraft(interaction, room.game, {
-		spectatorIds: others,
-		rematchedFromRoomId: room.roomId,
+	const admission = await checkRoomAdmission({ guild: interaction.guild!, hostId: interaction.user.id, visibility: room.visibility });
+	if (admission) return { ok: false, reply: { embeds: [errorEmbed(describeRoomOpenFailure(admission))] } };
+
+	return { ok: true, channel };
+}
+
+// ② to ⑤. Returns the sentence to tell the presser when the rematch could not start,
+// or null once the new match is playable.
+async function playRematchInPlace(interaction: ButtonInteraction, finished: IGameRoom, channel: TextChannel): Promise<string | null> {
+	const guild = interaction.guild!;
+	const hostId = interaction.user.id;
+
+	const takeover = await takeOverChannel(finished, hostId, channel.id);
+	if (!takeover.ok) {
+		return takeover.reason === "alreadyHosting" ? gameRoomsCopy.errors.alreadyHosting(null) : gameRoomsCopy.errors.rematchAlreadyOffered;
+	}
+	const next = takeover.room;
+
+	// ③ The finished room's result card now says who started the rematch, in place of
+	// the archive notice that is no longer true, and drops its buttons: the finished
+	// row owns no channel to archive and has spent its one rematch. Cosmetic, so a
+	// failed edit is logged and the rematch carries on.
+	await interaction
+		.editReply({ embeds: [rematchedResultEmbed(interaction.message.embeds[0] ?? roomResultEmbed(finished.winnerId), hostId)], components: [] })
+		.catch((error) => console.warn("[game-rooms] failed to mark the result card rematched", { roomId: finished.roomId, error }));
+
+	// ④ The finished room left an @everyone SendMessages deny behind; the new match gets
+	// the playing matrix for its own players. The finished opener is unpinned so the
+	// pinned card in the channel is always the live match's.
+	await roomLifecycle.applyRoomPhase(interaction.client, channel, next, "playing");
+	if (finished.openerMessageId) await channel.messages.unpin(finished.openerMessageId).catch(() => undefined);
+
+	// ⑤ Seeded exactly as RoomProvisioner seeds a first match of this game. A rematch
+	// opens a standard hold em table, the same as a board challenge does: a table's
+	// custom terms come only from Dero's rules card.
+	const started = await seedRoom({
+		guild,
+		channel,
+		room: next,
+		game: next.game,
+		hostId,
+		playerIds: next.playerIds,
+		visibility: next.visibility,
+		monopolyAuctions: next.monopolyAuctions,
 	});
-	if (!draft) return;
 
-	// The connecting line in the finished room's transcript (announcement 4e), posted
-	// after the card exists so the link never points at a rematch that failed to open.
-	const channel = await resolveChallengesChannel(interaction.guild!);
-	if (channel) {
-		await roomTrail.postMove(interaction.client, room, {
-			actorId: interaction.user.id,
-			kind: "system",
-			text: gameRoomsCopy.trail.rematchOpened(channel.id),
-		});
+	if (next.game === "solo-blackjack") {
+		const member = guild.members.cache.get(hostId);
+		const displayName = member?.displayName ?? interaction.user.globalName ?? interaction.user.username;
+		if (!(await startSoloBlackjackBoard(guild, started, channel, { userId: hostId, displayName }))) {
+			return gameRoomsCopy.errors.createFailed;
+		}
 	}
+	return null;
+}
+
+type ChannelTakeover = { ok: true; room: IGameRoom } | { ok: false; reason: "alreadyHosting" | "rematchTaken" };
+
+// ② The two row writes, in the order the header above explains: the new row is born on
+// the channel, then the finished row releases it. The new row is a "draft" until
+// seedRoom moves it to "playing", like every room before its match is seeded.
+async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: string): Promise<ChannelTakeover> {
+	const { playerIds, spectatorIds } = resolveRoomSeats(finished.visibility, hostId, finished.playerIds, finished.spectatorIds);
+
+	let next: IGameRoom;
+	try {
+		next = await gameRoomStore.create({
+			guildId: finished.guildId,
+			game: finished.game,
+			hostId,
+			visibility: finished.visibility,
+			playerIds,
+			spectatorIds,
+			channelId,
+			rematchedFromRoomId: finished.roomId,
+			// The same match settings as the game it rematches. Nothing else carries
+			// them: Monopoly's referee in particular is read off the ROW on every move.
+			monopolyAuctions: finished.monopolyAuctions ?? false,
+			monopolyReferee: finished.monopolyReferee ?? false,
+		});
+	} catch (error) {
+		// Almost certainly the partial unique index catching a room the presser opened
+		// after findRematchRefusal looked. Nothing was written, so nothing to undo.
+		console.error("[game-rooms] rematch row create failed", { guildId: finished.guildId, hostId, error });
+		return { ok: false, reason: "alreadyHosting" };
+	}
+
+	if (!(await roomLifecycle.releaseChannel(finished))) {
+		// The claim was lost: another player's rematch took the channel first, or the
+		// sweep archived the room a moment ago. This row must not stay on the channel, so
+		// it is archived, which frees the presser's host slot and clears its channelId.
+		await gameRoomStore.markArchived(next.guildId, next.roomId);
+		return { ok: false, reason: "rematchTaken" };
+	}
+	return { ok: true, room: next };
 }
 
 // ── cancel ────────────────────────────────────────────────────────────

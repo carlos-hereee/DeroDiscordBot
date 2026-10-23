@@ -1,4 +1,13 @@
-import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type ColorResolvable } from "discord.js";
+import {
+	ActionRowBuilder,
+	AttachmentBuilder,
+	ButtonBuilder,
+	ButtonStyle,
+	EmbedBuilder,
+	type APIEmbed,
+	type ColorResolvable,
+	type JSONEncodable,
+} from "discord.js";
 import { basename } from "node:path";
 import { gameAssetPath, type GameAssetKey } from "@features/games/gamesAssets.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
@@ -10,7 +19,8 @@ import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 // ── gameRoomsEmbeds ──────────────────────────────────────────────────
 // What:  every embed and button row a room renders: the pinned opener card and the
 //        result card that closes it.
-// Who:   RoomProvisioner (opener) and roomLifecycle (result).
+// Who:   RoomProvisioner (opener), roomLifecycle (result), and the Rematch button
+//        (the result card's rematched form).
 // When:  once each per room.
 // Where: colors come from @base/copy/brand directly rather than through
 //        getPluginCopy, matching gamesCopy and fortuneCopy: game rooms are a bot
@@ -84,6 +94,24 @@ export function roomResultEmbed(winnerId: string | null, abandoned = false, imag
 
 	if (imageRef) embed.setImage(imageRef);
 	return embed;
+}
+
+/**
+ * The finished room's result card once a rematch has taken its channel over: the same
+ * title, outcome and picture, with the archive notice swapped for who started the
+ * rematch, because the channel no longer disappears on the archive clock.
+ *
+ * Rebuilt from the POSTED card rather than from the row, because the row does not
+ * record whether the ending was an abandonment and the posted outcome line already
+ * says so. The image reference survives `from`, and the message keeps its attachment
+ * as long as the edit does not pass `attachments`.
+ */
+export function rematchedResultEmbed(posted: JSONEncodable<APIEmbed> | APIEmbed, presserId: string): EmbedBuilder {
+	const embed = EmbedBuilder.from(posted);
+	const notice = gameRoomsCopy.result.archiveNotice();
+	const kept = (embed.data.description ?? "").split("\n").filter((line) => line !== notice);
+	while (kept.length > 0 && kept[kept.length - 1] === "") kept.pop();
+	return embed.setDescription([...kept, "", gameRoomsCopy.result.rematchStarted(presserId)].join("\n"));
 }
 
 // ── the result card's row: Rematch, then Archive now ──

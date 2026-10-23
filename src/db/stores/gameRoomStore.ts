@@ -34,6 +34,14 @@ interface ICreateGameRoom {
 	// Set at create when this room is a rematch of a finished one, so the button's
 	// idempotency check and the row are born in the same write with no race window.
 	rematchedFromRoomId?: string | null;
+	// Set at create only by a rematch in the same channel, whose row takes over a
+	// channel that already exists. Born pointing at it so the channel always has a row
+	// that will archive it, whichever write a crash lands between.
+	channelId?: string | null;
+	// Monopoly's match settings, carried from the finished room by a rematch. A board
+	// challenge sets them on its draft with the card's toggles instead.
+	monopolyAuctions?: boolean;
+	monopolyReferee?: boolean;
 }
 
 export const gameRoomStore = {
@@ -56,6 +64,9 @@ export const gameRoomStore = {
 			spectatorIds: input.spectatorIds ?? [],
 			boardMessageId: input.boardMessageId ?? null,
 			rematchedFromRoomId: input.rematchedFromRoomId ?? null,
+			channelId: input.channelId ?? null,
+			monopolyAuctions: input.monopolyAuctions ?? false,
+			monopolyReferee: input.monopolyReferee ?? false,
 			status: "draft",
 		});
 	},
@@ -253,8 +264,9 @@ export const gameRoomStore = {
 	//
 	// archiveAt is computed by roomLifecycle.finish and passed in, never derived here: the store
 	// stays thin, and keeping the arithmetic in one feature module is what guarantees archiveAt
-	// is stamped by exactly one code path. That single-writer property is what makes the sweep
-	// safe, because a room that is still playing has archiveAt null and no filter bug can reach it.
+	// is stamped by exactly one code path (releaseChannel below only ever clears it). That
+	// single-writer property is what makes the sweep safe, because a room that is still playing
+	// has archiveAt null and no filter bug can reach it.
 	//
 	// ⚠️ THE STATUS FILTER IS A CLAIM, NOT A TIDINESS CHECK, and it is the ONE write that makes
 	// finishing idempotent. findOneAndUpdate is atomic, so the first caller to match a
@@ -282,6 +294,24 @@ export const gameRoomStore = {
 					archiveAt: outcome.archiveAt,
 				},
 			},
+			{ new: true }
+		);
+	},
+
+	// A finished room hands its channel to the rematch that now plays in it: the row keeps its
+	// transcript and stops pointing at the channel, and its archive clock is cleared so the
+	// sweep never deletes a channel a live match is using. Called only by
+	// roomLifecycle.releaseChannel, which is why the null write here does not break the
+	// single-writer rule on archiveAt above.
+	//
+	// ⚠️ THE FILTER IS THE ONE-REMATCH CLAIM. Matching on status "finished" AND the channel
+	// the caller expects means exactly one rematch can take the channel: a second presser, or
+	// a sweep that archived the room a moment earlier, gets null back and must undo its own
+	// row. Returns the released row, or null when the claim was lost.
+	async releaseChannel(guildId: string, roomId: string, channelId: string) {
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, status: "finished", channelId },
+			{ $set: { channelId: null, archiveAt: null } },
 			{ new: true }
 		);
 	},

@@ -43,7 +43,9 @@ export interface IGameRoom {
 	spectatorIds: string[];
 	visibility: RoomVisibility;
 	// Null until RoomProvisioner creates the channel, and meaningful again only until the
-	// sweep deletes it. A non-null channelId does NOT prove the channel still exists.
+	// sweep deletes it, or until a rematch takes the channel over and this FINISHED row
+	// releases it (roomLifecycle.releaseChannel), after which only the rematch row points
+	// at the channel. A non-null channelId does NOT prove the channel still exists.
 	channelId: string | null;
 	// The pinned opener card inside the room.
 	openerMessageId: string | null;
@@ -75,7 +77,10 @@ export interface IGameRoom {
 	startedAt: Date | null;
 	endedAt: Date | null;
 	// The moment the sweep may delete this room's channel. See the index note below: this is
-	// written by roomLifecycle.finish and by nothing else, which is what makes the sweep safe.
+	// stamped by roomLifecycle.finish and by nothing else, which is what makes the sweep safe.
+	// roomLifecycle.releaseChannel is the one other writer, and it only ever clears it to
+	// null when a rematch takes the channel over, so the finished row stays "finished" with
+	// no clock and no channel for good.
 	archiveAt: Date | null;
 	// Stamped by the schema's timestamps option on every write, which is what the idle
 	// sweep reads as a room's last action for every game but Hold'em.

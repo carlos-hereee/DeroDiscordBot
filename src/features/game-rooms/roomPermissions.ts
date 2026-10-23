@@ -5,8 +5,9 @@ import type { RoomVisibility } from "./roomTypes.js";
 // ── roomPermissions ──────────────────────────────────────────────────
 // What:  the complete permission overwrite array for one game room channel, for one
 //        phase of its life.
-// Who:   RoomProvisioner.open (phase "playing") and roomLifecycle.finish (phase
-//        "finished", applied with channel.permissionOverwrites.set).
+// Who:   RoomProvisioner.open (phase "playing"), and roomLifecycle.applyRoomPhase with
+//        channel.permissionOverwrites.set: "finished" from finish, and "playing" again
+//        when a rematch takes a finished room's channel over for its own players.
 // When:  twice per room, and never again. A room's membership is fixed at open.
 // Where: PURE. It takes ids and returns an array; it never touches a Guild, a channel,
 //        a store or the network. That is what makes the matrix testable, and the matrix

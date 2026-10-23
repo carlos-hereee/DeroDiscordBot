@@ -27,6 +27,8 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // What:  turns an agreed match into a live Discord channel plus the GameRoom row that
 //        outlives it.
 // Who:   the challenge board (Phase 4) and the owner-only debug command (Phase 3).
+//        Its admission check and its seeding are exported for the one room that does
+//        NOT get a new channel: a rematch, which plays on in the finished room's.
 // When:  once per room, on the host pressing Start.
 // Where: the ONLY place a room channel is created. Everything downstream (the trail,
 //        the lifecycle, the sweep) assumes a room's channel and row were born together
@@ -119,6 +121,8 @@ export type RoomOpenResult =
 	| { ok: false; reason: "missingPermissions" }
 	| { ok: false; reason: "createFailed" };
 
+export type RoomOpenFailure = Exclude<RoomOpenResult, { ok: true }>;
+
 export interface RoomOpenInput {
 	guild: Guild;
 	category: CategoryChannel;
@@ -129,11 +133,6 @@ export interface RoomOpenInput {
 	spectatorIds?: string[];
 	visibility: RoomVisibility;
 	adminRoleId?: string | null;
-	// The finished room this open is a rematch of, threaded into the row at create so
-	// the rematch button's idempotency check has no race window. Solo rematches are
-	// the only path that reaches the provisioner with it; board rematches carry it on
-	// their draft row instead.
-	rematchedFromRoomId?: string | null;
 	// Set when a DRAFT row already exists, which is the challenge board's path: the
 	// row was created the moment the host pressed Start a challenge, and this call is
 	// promoting it rather than opening from nothing. Without this the insert below
@@ -177,55 +176,11 @@ export const RoomProvisioner = {
 	async openUnguarded(input: RoomOpenInput): Promise<RoomOpenResult> {
 		const { guild, category, game, hostId, visibility } = input;
 
-		// ① F11, the friendly half. The partial unique index is the real enforcement and
-		// would throw a duplicate key on create; checking first is what turns that into a
-		// jump link to the room the host already has.
-		//
-		// Skipped entirely when adopting a draft: the host's one open room IS the draft
-		// being promoted, so this check would refuse the very thing it is protecting.
-		if (!input.existingRoomId) {
-			const existing = await gameRoomStore.findOpenByHost(guild.id, hostId);
-			if (existing) {
-				return { ok: false, reason: "alreadyHosting", existingChannelId: existing.channelId };
-			}
-		}
+		// ① ② The host's one room, the guild cap and the private ceiling, in that order.
+		const refusal = await checkRoomAdmission({ guild, hostId, visibility, existingRoomId: input.existingRoomId });
+		if (refusal) return refusal;
 
-		// ② The guild cap. Counting ROWS rather than the category's children stays correct
-		// when an admin deletes a room channel by hand, which counting channels would not.
-		const openCount = await gameRoomStore.countOpenInGuild(guild.id);
-		if (openCount >= BOT_CONSTANTS.GAME_ROOM_MAX_PER_GUILD) {
-			return { ok: false, reason: "guildFull" };
-		}
-
-		// ②ᵇ The tier-gated PRIVATE ceiling: "invite" and "solo" rooms count, "public"
-		// never does. The decision is the same cached, fail-open answer the challenge
-		// board reads; while ENFORCE_GAME_ROOM_TIER is unset (production today) the
-		// quota is Infinity and this whole block costs zero I/O beyond the flag read.
-		if (visibility !== "public") {
-			const decision = await checkGameRoomAccess(guild.id, hostId);
-			if (Number.isFinite(decision.privateQuota)) {
-				const privateOpen = await gameRoomStore.countOpenInGuildByVisibility(guild.id, ["invite", "solo"]);
-				// An adopted draft already sits in that count with this very visibility
-				// (chooseVisibility wrote it), so promoting it must not read as opening a
-				// room BEYOND the one it already is. Fresh opens have no row yet.
-				const alreadyCounted = input.existingRoomId ? 1 : 0;
-				if (privateOpen - alreadyCounted >= decision.privateQuota) {
-					return {
-						ok: false,
-						reason: "privateQuotaHit",
-						quota: decision.privateQuota,
-						tier: decision.tierKey ?? "unsubscribed",
-					};
-				}
-			}
-		}
-
-		// A solo room seats the host and NOBODY else, structurally: extra players and
-		// spectators are dropped here the way a public room's spectators are dropped in
-		// provisionFromDraft, so a caller cannot smuggle a second seat or a watcher into
-		// a one-player room.
-		const playerIds = visibility === "solo" ? [hostId] : Array.from(new Set([hostId, ...input.playerIds]));
-		const spectatorIds = visibility === "solo" ? [] : input.spectatorIds ?? [];
+		const { playerIds, spectatorIds } = resolveRoomSeats(visibility, hostId, input.playerIds, input.spectatorIds);
 
 		// ③ The name. Collisions are ordinary rather than exceptional: a finished room
 		// keeps its channel for the whole archive window, so a host playing twice in an
@@ -283,7 +238,6 @@ export const RoomProvisioner = {
 					visibility,
 					playerIds,
 					spectatorIds,
-					rematchedFromRoomId: input.rematchedFromRoomId ?? null,
 				});
 			}
 		} catch (error) {
@@ -296,147 +250,277 @@ export const RoomProvisioner = {
 			return { ok: false, reason: "createFailed" };
 		}
 
-		// ⑤ᵃ Mint the room's invite link, best effort, before the opener composes so the
-		// URL can ride the opener's LAST line. maxAge/maxUses 0 keeps the link alive for
-		// the whole archive window; unique:true stops Discord handing back somebody
-		// else's cached invite for the channel.
-		//
-		// ⚠️ A GUILD INVITE, NOT A ROOM GRANT. The link brings a stranger into the
-		// SERVER pointing at this channel; it does not touch the permission overwrites,
-		// so an invite-only room stays hidden from whoever used it. The opener copy
-		// carries the caveat that makes that honest (see gameRoomsCopy.opener).
-		//
-		// Fire and forget in spirit (house rule 7): the members can already see the
-		// channel, so a failed mint (typically 50013 when the bot's CreateInstantInvite
-		// bit is missing) logs and degrades to a room without a link, never a failed open.
-		// Solo rooms mint nothing: the room admits exactly one member and a share link
-		// for a channel nobody else can ever see would be a lie in URL form.
-		let inviteCode: string | null = null;
-		if (visibility !== "solo") {
-			try {
-				const invite = await channel.createInvite({ maxAge: 0, maxUses: 0, unique: true, reason: `game room ${room.roomId}` });
-				inviteCode = invite?.code ?? null;
-			} catch (error) {
-				console.error("[game-rooms] failed to mint invite", { guildId: guild.id, roomId: room.roomId, error });
-			}
-		}
-
-		// ⑤ Move to "playing" and record the ids that only exist now. Two writes rather
-		// than one because create() owns the shape of a new row and this owns the
-		// transition; folding them would put lifecycle logic into the store.
-		// The opener carries the game's own controls, so a player never has to find a
-		// command to take their turn. Pinned below, which is what keeps it reachable
-		// once the trail has scrolled past it.
-		const logo = roomOpenerLogo(game);
-		const opener = await channel
-			.send({
-				embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility, inviteCode, logo?.ref)],
-				...(logo ? { files: [logo.attachment] } : {}),
-				...(SELF_BOARDED_GAMES.includes(game) ? {} : { components: openerControls(game, room.roomId) }),
-			})
-			.catch(() => null);
-		await opener?.pin().catch(() => undefined);
-
-		const started = await gameRoomStore.setStatus(guild.id, room.roomId, "playing", {
-			channelId: channel.id,
-			openerMessageId: opener?.id ?? null,
-			inviteCode,
-			startedAt: new Date(),
+		// ⑤ ⑥ Make the room playable: invite, opener, the move to "playing", the game's
+		// own state, and the audit line.
+		const started = await seedRoom({
+			guild,
+			channel,
+			room,
+			game,
+			hostId,
+			playerIds,
+			visibility,
+			holdemTerms: input.holdemTerms,
+			monopolyAuctions: input.monopolyAuctions,
 		});
 
-		// Battleship needs a MATCH, not just a room: two fleets laid out and a board
-		// message to edit every turn. Done here rather than lazily on the first click
-		// so both players see the grid the moment the channel appears, and so the
-		// fleets exist before anyone can press Fire.
-		// Hold em opens as a JOINING table rather than a dealt hand: the room's
-		// players are whoever buys in, which is not known until they do.
-		if (game === "holdem") {
-			const table = createHoldemTable(Date.now(), input.holdemTerms);
-			const boardMessage = await channel
-				.send({ embeds: [holdemTableEmbed(table, 0)], components: holdemJoiningRows(room.roomId, 0, table) })
-				.catch(() => null);
-			await gameRoomStore.update(guild.id, room.roomId, {
-				secret: { ...table, boardMessageId: boardMessage?.id ?? null } as never,
-			});
-		}
-
-		// Monopoly opens straight on the first seat's roll: every player is already
-		// known (the whole pool, which challengeBoard.startMatch capped at six), so
-		// unlike hold em there is no joining phase. The board is posted before the
-		// state is persisted so the stored state can carry the message id it edits.
-		// Auctions follow the host's choice on the challenge card; with them on, a pass
-		// opens a sealed bid round that roomMonopolyAuction runs and closes.
-		if (game === "monopoly") {
-			const state = createMonopolyState(playerIds, { auctionsEnabled: input.monopolyAuctions ?? false });
-			// The board picture, when its art is on disk, rides the same message as the
-			// embed whose image points at it; with no art it is the text map alone.
-			const { embed, attachment } = await monopolyBoardEmbed(state);
-			const boardMessage = await channel
-				.send({
-					embeds: [embed],
-					components: monopolyControlsRow(state, state.seats[0].userId, room.roomId),
-					files: attachment ? [attachment] : [],
-				})
-				.catch(() => null);
-			await gameRoomStore.update(guild.id, room.roomId, {
-				// `secret` is a Mongoose Mixed field and IGameRoom types it as hangman's
-				// RoomSecret, so another game's state needs the cast to be stored there.
-				secret: { ...state, boardMessageId: boardMessage?.id ?? null } as never,
-			});
-		}
-
-		// Solo hangman is seeded HERE rather than authored: the host is the guesser, so
-		// the word and its hint come from the bundled bank with no author. authoredBy
-		// null is what lets the host past roomHangman's host-cannot-guess gate, which
-		// keys on the AUTHOR, not the host. Seeded after the opener so a click racing
-		// the seed reads as "waiting for the word" for a moment rather than erroring.
-		// It starts through the same path a hosted round does, which also posts the
-		// first gallows card.
-		if (game === "solo-hangman") {
-			await startSoloHangmanRound(guild.client, {
-				guildId: guild.id,
-				roomId: room.roomId,
-				channelId: channel.id,
-				openerMessageId: opener?.id ?? null,
-				hostId,
-			});
-		}
-
-		if (game === "battleship") {
-			const usernames = Object.fromEntries(
-				playerIds.map((id) => [id, guild.members.cache.get(id)?.displayName ?? id])
-			);
-			const match = startBattleshipMatch(started ?? room, usernames);
-			const boardMessage = await channel
-				.send(await battleshipBoardMessage(deserializeMatch(match), room.roomId))
-				.catch(() => null);
-			// The reroll offer rides its own message so it can be ignored without
-			// cluttering the board that gets edited thirty times.
-			await channel.send({ components: [rerollRow(room.roomId)] }).catch(() => undefined);
-			await gameRoomStore.update(guild.id, room.roomId, {
-				secret: { ...match, boardMessageId: boardMessage?.id ?? null } as never,
-			});
-		}
-
-		// ⑥ Fire and forget, per house rule 7: an audit write that failed must never take
-		// down a room the members can already see and play in.
-		botLogStore
-			.log(guild.id, gameRoomCreatedEvent(room.roomId), {
-				game,
-				hostId,
-				visibility,
-				channelId: channel.id,
-				playerCount: playerIds.length,
-			})
-			.catch((error) => console.error("[game-rooms] botLog for room create failed", error));
-
-		return { ok: true, room: started ?? room, channel };
+		return { ok: true, room: started, channel };
 	},
 };
 
+export interface RoomAdmissionInput {
+	guild: Guild;
+	hostId: string;
+	visibility: RoomVisibility;
+	// Set when promoting an existing draft; see RoomOpenInput.existingRoomId.
+	existingRoomId?: string;
+}
+
+/**
+ * Whether a new live room may open for this host, or the reason it may not. Returns
+ * null when the room may open. Writes nothing, so a refusal leaves no trace.
+ *
+ * Shared by the provisioner and a rematch in the same channel, because a rematch is a
+ * new live room too: it holds a host slot, counts against the guild cap and counts
+ * against the private tier ceiling exactly like a room that brings its own channel.
+ */
+export async function checkRoomAdmission(input: RoomAdmissionInput): Promise<RoomOpenFailure | null> {
+	const { guild, hostId, visibility } = input;
+
+	// ① F11, the friendly half. The partial unique index is the real enforcement and
+	// would throw a duplicate key on create; checking first is what turns that into a
+	// jump link to the room the host already has.
+	//
+	// Skipped entirely when adopting a draft: the host's one open room IS the draft
+	// being promoted, so this check would refuse the very thing it is protecting.
+	if (!input.existingRoomId) {
+		const existing = await gameRoomStore.findOpenByHost(guild.id, hostId);
+		if (existing) {
+			return { ok: false, reason: "alreadyHosting", existingChannelId: existing.channelId };
+		}
+	}
+
+	// ② The guild cap. Counting ROWS rather than the category's children stays correct
+	// when an admin deletes a room channel by hand, which counting channels would not.
+	const openCount = await gameRoomStore.countOpenInGuild(guild.id);
+	if (openCount >= BOT_CONSTANTS.GAME_ROOM_MAX_PER_GUILD) {
+		return { ok: false, reason: "guildFull" };
+	}
+
+	// ②ᵇ The tier-gated PRIVATE ceiling: "invite" and "solo" rooms count, "public"
+	// never does. The decision is the same cached, fail-open answer the challenge
+	// board reads; while ENFORCE_GAME_ROOM_TIER is unset (production today) the
+	// quota is Infinity and this whole block costs zero I/O beyond the flag read.
+	if (visibility !== "public") {
+		const decision = await checkGameRoomAccess(guild.id, hostId);
+		if (Number.isFinite(decision.privateQuota)) {
+			const privateOpen = await gameRoomStore.countOpenInGuildByVisibility(guild.id, ["invite", "solo"]);
+			// An adopted draft already sits in that count with this very visibility
+			// (chooseVisibility wrote it), so promoting it must not read as opening a
+			// room BEYOND the one it already is. Fresh opens have no row yet.
+			const alreadyCounted = input.existingRoomId ? 1 : 0;
+			if (privateOpen - alreadyCounted >= decision.privateQuota) {
+				return {
+					ok: false,
+					reason: "privateQuotaHit",
+					quota: decision.privateQuota,
+					tier: decision.tierKey ?? "unsubscribed",
+				};
+			}
+		}
+	}
+
+	return null;
+}
+
+/**
+ * Who plays and who watches in a room of this visibility. The host is always a player.
+ *
+ * A solo room seats the host and NOBODY else, structurally: extra players and
+ * spectators are dropped here the way a public room's spectators are dropped in
+ * provisionFromDraft, so a caller cannot smuggle a second seat or a watcher into a
+ * one-player room.
+ */
+export function resolveRoomSeats(
+	visibility: RoomVisibility,
+	hostId: string,
+	playerIds: string[],
+	spectatorIds: string[] = []
+): { playerIds: string[]; spectatorIds: string[] } {
+	if (visibility === "solo") return { playerIds: [hostId], spectatorIds: [] };
+	return { playerIds: Array.from(new Set([hostId, ...playerIds])), spectatorIds };
+}
+
+export interface RoomSeedInput {
+	guild: Guild;
+	// The room's channel, already carrying the "playing" overwrites.
+	channel: TextChannel;
+	// The room's row, which must not be "playing" yet: this moves it there.
+	room: IGameRoom;
+	game: GameSlug;
+	hostId: string;
+	playerIds: string[];
+	visibility: RoomVisibility;
+	holdemTerms?: HoldemTerms;
+	monopolyAuctions?: boolean;
+}
+
+// ── seeding: from a channel and a row to a playable match ─────────────
+// What:  everything a room needs between "its channel and row exist" and "the players
+//        can play": the invite link, the pinned opener with the game's controls, the
+//        move to "playing", and the game's own starting state.
+// Who:   RoomProvisioner.openUnguarded for a first match in a new channel, and
+//        challengeBoard.rematchFromRoom for a rematch in the channel the finished room
+//        handed over. ONE function, so a rematch can never open a game differently
+//        from how a first match opens it.
+// When:  once per room, right after its row exists and its channel is writable.
+// How:   ⑤ᵃ invite, ⑤ opener and status, then the per game state, then ⑥ the audit
+//        line. Solo blackjack's table is NOT here: soloRooms.startSoloBlackjackBoard
+//        posts it, because a table that fails to start closes the room, and that is
+//        the solo path's decision rather than the provisioner's.
+export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
+	const { guild, channel, room, game, hostId, playerIds, visibility } = input;
+
+	// ⑤ᵃ Mint the room's invite link, best effort, before the opener composes so the
+	// URL can ride the opener's LAST line. maxAge/maxUses 0 keeps the link alive for
+	// the whole archive window; unique:true stops Discord handing back somebody
+	// else's cached invite for the channel.
+	//
+	// ⚠️ A GUILD INVITE, NOT A ROOM GRANT. The link brings a stranger into the
+	// SERVER pointing at this channel; it does not touch the permission overwrites,
+	// so an invite-only room stays hidden from whoever used it. The opener copy
+	// carries the caveat that makes that honest (see gameRoomsCopy.opener).
+	//
+	// Fire and forget in spirit (house rule 7): the members can already see the
+	// channel, so a failed mint (typically 50013 when the bot's CreateInstantInvite
+	// bit is missing) logs and degrades to a room without a link, never a failed open.
+	// Solo rooms mint nothing: the room admits exactly one member and a share link
+	// for a channel nobody else can ever see would be a lie in URL form.
+	let inviteCode: string | null = null;
+	if (visibility !== "solo") {
+		try {
+			const invite = await channel.createInvite({ maxAge: 0, maxUses: 0, unique: true, reason: `game room ${room.roomId}` });
+			inviteCode = invite?.code ?? null;
+		} catch (error) {
+			console.error("[game-rooms] failed to mint invite", { guildId: guild.id, roomId: room.roomId, error });
+		}
+	}
+
+	// ⑤ Move to "playing" and record the ids that only exist now. Two writes rather
+	// than one because create() owns the shape of a new row and this owns the
+	// transition; folding them would put lifecycle logic into the store.
+	// The opener carries the game's own controls, so a player never has to find a
+	// command to take their turn. Pinned below, which is what keeps it reachable
+	// once the trail has scrolled past it.
+	const logo = roomOpenerLogo(game);
+	const opener = await channel
+		.send({
+			embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility, inviteCode, logo?.ref)],
+			...(logo ? { files: [logo.attachment] } : {}),
+			...(SELF_BOARDED_GAMES.includes(game) ? {} : { components: openerControls(game, room.roomId) }),
+		})
+		.catch(() => null);
+	await opener?.pin().catch(() => undefined);
+
+	const started = await gameRoomStore.setStatus(guild.id, room.roomId, "playing", {
+		channelId: channel.id,
+		openerMessageId: opener?.id ?? null,
+		inviteCode,
+		startedAt: new Date(),
+	});
+
+	// Battleship needs a MATCH, not just a room: two fleets laid out and a board
+	// message to edit every turn. Done here rather than lazily on the first click
+	// so both players see the grid the moment the channel appears, and so the
+	// fleets exist before anyone can press Fire.
+	// Hold em opens as a JOINING table rather than a dealt hand: the room's
+	// players are whoever buys in, which is not known until they do.
+	if (game === "holdem") {
+		const table = createHoldemTable(Date.now(), input.holdemTerms);
+		const boardMessage = await channel
+			.send({ embeds: [holdemTableEmbed(table, 0)], components: holdemJoiningRows(room.roomId, 0, table) })
+			.catch(() => null);
+		await gameRoomStore.update(guild.id, room.roomId, {
+			secret: { ...table, boardMessageId: boardMessage?.id ?? null } as never,
+		});
+	}
+
+	// Monopoly opens straight on the first seat's roll: every player is already
+	// known (the whole pool, which challengeBoard.startMatch capped at six), so
+	// unlike hold em there is no joining phase. The board is posted before the
+	// state is persisted so the stored state can carry the message id it edits.
+	// Auctions follow the host's choice on the challenge card; with them on, a pass
+	// opens a sealed bid round that roomMonopolyAuction runs and closes.
+	if (game === "monopoly") {
+		const state = createMonopolyState(playerIds, { auctionsEnabled: input.monopolyAuctions ?? false });
+		// The board picture, when its art is on disk, rides the same message as the
+		// embed whose image points at it; with no art it is the text map alone.
+		const { embed, attachment } = await monopolyBoardEmbed(state);
+		const boardMessage = await channel
+			.send({
+				embeds: [embed],
+				components: monopolyControlsRow(state, state.seats[0].userId, room.roomId),
+				files: attachment ? [attachment] : [],
+			})
+			.catch(() => null);
+		await gameRoomStore.update(guild.id, room.roomId, {
+			// `secret` is a Mongoose Mixed field and IGameRoom types it as hangman's
+			// RoomSecret, so another game's state needs the cast to be stored there.
+			secret: { ...state, boardMessageId: boardMessage?.id ?? null } as never,
+		});
+	}
+
+	// Solo hangman is seeded HERE rather than authored: the host is the guesser, so
+	// the word and its hint come from the bundled bank with no author. authoredBy
+	// null is what lets the host past roomHangman's host-cannot-guess gate, which
+	// keys on the AUTHOR, not the host. Seeded after the opener so a click racing
+	// the seed reads as "waiting for the word" for a moment rather than erroring.
+	// It starts through the same path a hosted round does, which also posts the
+	// first gallows card.
+	if (game === "solo-hangman") {
+		await startSoloHangmanRound(guild.client, {
+			guildId: guild.id,
+			roomId: room.roomId,
+			channelId: channel.id,
+			openerMessageId: opener?.id ?? null,
+			hostId,
+		});
+	}
+
+	if (game === "battleship") {
+		const usernames = Object.fromEntries(
+			playerIds.map((id) => [id, guild.members.cache.get(id)?.displayName ?? id])
+		);
+		const match = startBattleshipMatch(started ?? room, usernames);
+		const boardMessage = await channel
+			.send(await battleshipBoardMessage(deserializeMatch(match), room.roomId))
+			.catch(() => null);
+		// The reroll offer rides its own message so it can be ignored without
+		// cluttering the board that gets edited thirty times.
+		await channel.send({ components: [rerollRow(room.roomId)] }).catch(() => undefined);
+		await gameRoomStore.update(guild.id, room.roomId, {
+			secret: { ...match, boardMessageId: boardMessage?.id ?? null } as never,
+		});
+	}
+
+	// ⑥ Fire and forget, per house rule 7: an audit write that failed must never take
+	// down a room the members can already see and play in.
+	botLogStore
+		.log(guild.id, gameRoomCreatedEvent(room.roomId), {
+			game,
+			hostId,
+			visibility,
+			channelId: channel.id,
+			playerCount: playerIds.length,
+		})
+		.catch((error) => console.error("[game-rooms] botLog for room create failed", error));
+
+	return started ?? room;
+}
+
 // Render a failure into the one sentence the member should read. Kept beside the
 // provisioner so a new reason cannot be added without a string to go with it.
-export function describeRoomOpenFailure(result: Exclude<RoomOpenResult, { ok: true }>): string {
+export function describeRoomOpenFailure(result: RoomOpenFailure): string {
 	switch (result.reason) {
 		case "alreadyHosting":
 			return gameRoomsCopy.errors.alreadyHosting(result.existingChannelId);
