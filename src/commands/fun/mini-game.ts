@@ -2,7 +2,7 @@ import { SlashCommandBuilder, MessageFlags, type ChatInputCommandInteraction } f
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { gamesCopy } from "@features/games/gamesCopy.js";
 import { fortuneCopy } from "@features/fortune/fortuneCopy.js";
-import { runCoinFlip, runDiceRoll, runRps } from "@features/games/challengeEntry.js";
+import { runCoinFlip, runDiceRoll, runMonopoly, runRps } from "@features/games/challengeEntry.js";
 import { runHangman } from "@features/games/hangmanHandler.js";
 import { runBlackjack } from "@features/games/blackjackHandler.js";
 import { runFortune } from "@features/games/fortuneHandler.js";
@@ -63,6 +63,9 @@ export const data = new SlashCommandBuilder()
 	.addSubcommand((sub) => sub.setName("coin-flip").setDescription(gamesCopy.coinFlip.subcommandDescription))
 	.addSubcommand((sub) => sub.setName("dice-roll").setDescription(gamesCopy.diceRoll.subcommandDescription))
 	.addSubcommand((sub) => sub.setName("rps").setDescription(gamesCopy.rps.subcommandDescription))
+	// Monopoly seats the whole pool (two to six), so like the three above it opens a
+	// card on ⚔️challenges and carries no option: who plays is gathered on the card.
+	.addSubcommand((sub) => sub.setName("monopoly").setDescription(gamesCopy.monopoly.subcommandDescription))
 	.addSubcommand((sub) => sub.setName("hangman").setDescription(gamesCopy.hangman.subcommandDescription))
 	.addSubcommand((sub) =>
 		sub
@@ -118,6 +121,7 @@ export const MINI_GAME_HANDLERS = {
 	"coin-flip": runCoinFlip,
 	"dice-roll": runDiceRoll,
 	rps: runRps,
+	monopoly: runMonopoly,
 	hangman: runHangman,
 	blackjack: runBlackjack,
 	fortune: runFortune,

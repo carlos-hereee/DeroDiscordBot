@@ -3,9 +3,9 @@ import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 
 // ── challengeEntry ─────────────────────────────────────────────────────────
 // What:  the slash-command doorway into the challenge board, for the three head to
-//        head games.
+//        head games and Monopoly.
 // Who:   MINI_GAME_HANDLERS in src/commands/fun/mini-game.ts.
-// When:  on /mini-game coin-flip, dice-roll or rps.
+// When:  on /mini-game coin-flip, dice-roll, rps or monopoly.
 // Where: the SAME function the board's own buttons call, deliberately. Two ways to
 //        start a match that did not share a code path would be two places to
 //        enforce the one-room-per-host rule, two places to check entitlement, and
@@ -34,4 +34,10 @@ export const runDiceRoll = async (interaction: ChatInputCommandInteraction): Pro
 
 export const runRps = async (interaction: ChatInputCommandInteraction): Promise<void> => {
 	await startChallengeDraft(interaction, "rps");
+};
+
+// The same card the board's Monopoly button posts: visibility, the auction toggle,
+// the pool and Start all happen on it, so the doorway adds nothing of its own.
+export const runMonopoly = async (interaction: ChatInputCommandInteraction): Promise<void> => {
+	await startChallengeDraft(interaction, "monopoly");
 };

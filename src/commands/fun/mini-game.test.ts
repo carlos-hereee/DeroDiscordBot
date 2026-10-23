@@ -13,6 +13,7 @@ const handlers = vi.hoisted(() => ({
 	runCoinFlip: vi.fn(async () => undefined),
 	runDiceRoll: vi.fn(async () => undefined),
 	runRps: vi.fn(async () => undefined),
+	runMonopoly: vi.fn(async () => undefined),
 	runHangman: vi.fn(async () => undefined),
 	runBlackjack: vi.fn(async () => undefined),
 	runFortune: vi.fn(async () => undefined),
@@ -26,6 +27,7 @@ vi.mock("@features/games/challengeEntry.js", () => ({
 	runCoinFlip: handlers.runCoinFlip,
 	runDiceRoll: handlers.runDiceRoll,
 	runRps: handlers.runRps,
+	runMonopoly: handlers.runMonopoly,
 }));
 vi.mock("@features/games/hangmanHandler.js", () => ({ runHangman: handlers.runHangman }));
 vi.mock("@features/games/blackjackHandler.js", () => ({ runBlackjack: handlers.runBlackjack }));
@@ -34,7 +36,7 @@ vi.mock("@features/games/fortuneHandler.js", () => ({ runFortune: handlers.runFo
 import { data, execute, MINI_GAME_HANDLERS } from "./mini-game.js";
 
 // Declaration order, which the builder shape assertion below depends on.
-const SUBCOMMANDS = ["coin-flip", "dice-roll", "rps", "hangman", "blackjack", "fortune"] as const;
+const SUBCOMMANDS = ["coin-flip", "dice-roll", "rps", "monopoly", "hangman", "blackjack", "fortune"] as const;
 
 function fakeInteraction(subcommand: string): { interaction: ChatInputCommandInteraction; reply: ReturnType<typeof vi.fn> } {
 	const reply = vi.fn(async () => undefined);
@@ -126,6 +128,7 @@ describe("/mini-game execute routing", () => {
 		["coin-flip", "runCoinFlip"],
 		["dice-roll", "runDiceRoll"],
 		["rps", "runRps"],
+		["monopoly", "runMonopoly"],
 		["hangman", "runHangman"],
 		["fortune", "runFortune"],
 	] as const)("routes %s to its own handler and no other", async (subcommand, expectedKey) => {

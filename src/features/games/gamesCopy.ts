@@ -100,6 +100,13 @@ export const gamesCopy = {
 		timeoutNeither: "Neither player threw in time. The round is void.",
 	},
 
+	// ── monopoly (2026-10 item 241) ──
+	// Only the doorway's line lives here: everything a match shows is in the game
+	// rooms pack (gameRoomsCopy.monopoly), because the match itself runs in a room.
+	monopoly: {
+		subcommandDescription: "Start a Monopoly challenge for 2 to 6 players on the challenge board",
+	},
+
 	hangman: {
 		subcommandDescription: "Start a hangman round anyone in this channel can play",
 		label: "hangman",
