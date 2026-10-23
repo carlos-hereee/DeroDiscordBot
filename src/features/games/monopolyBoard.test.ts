@@ -8,6 +8,8 @@ import {
 	GO_TO_JAIL_INDEX,
 	JAIL_INDEX,
 	OWNABLE_TILES,
+	boardIndexOf,
+	boardIndicesOfKind,
 	describeTile,
 	findOwnableTile,
 	isOwnableTile,
@@ -132,6 +134,17 @@ describe("monopolyBoard, lookups", () => {
 	it("finds an ownable tile by id and returns undefined for an unknown one", () => {
 		expect(findOwnableTile("vermillion-alley")?.name).toBe("Vermillion Alley");
 		expect(findOwnableTile("not-a-tile")).toBeUndefined();
+	});
+
+	it("finds a tile's board position and throws on an id the board does not have", () => {
+		expect(boardIndexOf("sapphire-keep")).toBe(BOARD_SIZE - 1);
+		expect(() => boardIndexOf("not-a-tile")).toThrow(/no tile not-a-tile/);
+	});
+
+	it("lists the positions of every tile of a kind, in board order", () => {
+		expect(boardIndicesOfKind("railroad")).toEqual([5, 15, 25, 35]);
+		expect(boardIndicesOfKind("utility")).toEqual([12, 28]);
+		expect(boardIndicesOfKind("chance")).toEqual([7, 22, 36]);
 	});
 
 	it("describes ownable tiles by name and special tiles by their label", () => {

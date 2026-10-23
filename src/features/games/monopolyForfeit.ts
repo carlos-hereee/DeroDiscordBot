@@ -1,3 +1,4 @@
+import { returnJailCards } from "./monopolyCards.js";
 import type { MonopolyResult, MonopolySeat, MonopolyState } from "./monopolyState.js";
 import {
 	activeSeatOf,
@@ -49,8 +50,9 @@ export function forfeitSeat(state: MonopolyState, seat: MonopolySeat, now: numbe
 	seat.chips = 0;
 	seat.inJail = false;
 	seat.jailTurnsRemaining = 0;
-	// The cards have no ids until the Phase 2 decks exist, so they cannot be
-	// routed to a discard pile yet; zeroing the count is the whole return for now.
+	// Held jail cards rejoin their own decks rather than vanishing with the seat,
+	// or the two decks would each be a card short for the rest of the match.
+	returnJailCards(state, seat.gojfCards);
 	seat.gojfCards = 0;
 	returnHoldingsToBank(state, userId);
 
@@ -73,7 +75,7 @@ export function forfeitSeat(state: MonopolyState, seat: MonopolySeat, now: numbe
 }
 
 // Buildings go back into the bank's stock rather than vanishing, because the
-// 32 houses and 12 hotels are a shared supply the Phase 2 build rule draws on.
+// 32 houses and 12 hotels are a shared supply the build rule draws on.
 function returnHoldingsToBank(state: MonopolyState, userId: string): void {
 	for (const [tileId, property] of Object.entries(state.properties)) {
 		if (property.ownerId !== userId) continue;

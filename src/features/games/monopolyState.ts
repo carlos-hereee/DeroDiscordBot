@@ -12,6 +12,7 @@ import {
 	isOwnableTile,
 	type TileId,
 } from "./monopolyBoard.js";
+import { shuffleStartingDecks } from "./monopolyCards.js";
 import { jailActiveSeat, moveAndLand, rollDice } from "./monopolyLanding.js";
 import {
 	activeSeatOf,
@@ -23,13 +24,14 @@ import {
 	passTurn,
 	rejectAction,
 } from "./monopolySeats.js";
+import { createRandomSeed } from "@utils/seededRng.js";
 
 // ── monopolyState ───────────────────────────────────────────────────────────
 // What:  the Dero Arcade Monopoly match as a pure state machine, and the public
 //        door to it. The persisted types, the initial state, and the turn
-//        actions: roll, buy, skip and end turn. Jail and forfeit live in their own
-//        modules (rule 18 split) and are re-exported here, so callers import one
-//        file.
+//        actions: roll, buy, skip and end turn. Jail, forfeit, and the mortgage
+//        and build actions live in their own modules (rule 18 split) and are
+//        re-exported here, so callers import one file.
 // Who:   the Phase 4 room handlers (roomMonopolyHandlers), the idle sweep, and the
 //        Vitest suite. Nothing here imports discord.js or touches the GameRoom row.
 // When:  once per button press. Every apply function takes a state and returns a
@@ -42,15 +44,16 @@ import {
 //        monopolySeats and monopolyLanding, and finishes through completeAction,
 //        which is the one place trail lines reach the log.
 //
-// Phase 1 scope (2026-10 item 241): color rent, taxes, jail, passing GO and
-// forfeit. Cards, transport and utility rent, buildings and mortgages are Phase
-// 2; auctions, trades and bankruptcy that pays a creditor everything are Phase 3.
+// Scope through Phase 2 of 2026-10 item 241: every rent, taxes, jail, passing
+// GO, forfeit, the Chance and Community Chest decks, mortgages and buildings.
+// Auctions, trades and bankruptcy that pays a creditor everything are Phase 3.
 
 // ── persisted types (master plan Section 5, plus winnerId) ──────────────────
 
 export type { TileId, ColorGroup } from "./monopolyBoard.js";
 
-// Card ids arrive with the decks in Phase 2; the decks are empty until then.
+// A card's id in monopolyCards. The piles below store ids, never card text, so a
+// stored match cannot carry wording that drifted from the deck definitions.
 export type CardId = string;
 
 export type MonopolyPhase = "pre-roll" | "post-roll" | "awaiting-buy-or-skip" | "in-auction" | "in-trade" | "finished";
@@ -133,22 +136,31 @@ export type MonopolyResult = { ok: true; state: MonopolyState; trailLines: strin
 export { applyJailChoice } from "./monopolyJail.js";
 export { applyForfeit } from "./monopolyForfeit.js";
 export { calculateRent } from "./monopolyLanding.js";
+export { applyBuild, applyMortgage, applyUnmortgage, unmortgageCost, type BuildingKind } from "./monopolyBuildings.js";
 
 // ── initial state ───────────────────────────────────────────────────────────
 
 /**
  * A fresh match: every seat on GO with the starting chips, every ownable tile
- * with the bank, the first seat on the clock. Throws on a seat list the room
- * layer should never have produced (wrong size or a repeated player), because
- * that is a caller bug, not a move a player can make.
+ * with the bank, both card decks shuffled from `seed`, the first seat on the
+ * clock. The seed comes last so a Phase 1 caller passing (players, settings,
+ * now) still works; a test passes one to pin the deck order. Throws on a seat
+ * list the room layer should never have produced (wrong size or a repeated
+ * player), because that is a caller bug, not a move a player can make.
  */
-export function createInitialState(playerIds: string[], settings: MonopolySettings, now: number = Date.now()): MonopolyState {
+export function createInitialState(
+	playerIds: string[],
+	settings: MonopolySettings,
+	now: number = Date.now(),
+	seed: number = createRandomSeed()
+): MonopolyState {
 	if (playerIds.length < MIN_SEATS || playerIds.length > MAX_SEATS) {
 		throw new Error(`Monopoly needs ${MIN_SEATS} to ${MAX_SEATS} players, got ${playerIds.length}`);
 	}
 	if (new Set(playerIds).size !== playerIds.length) {
 		throw new Error("Monopoly cannot seat the same player twice");
 	}
+	const decks = shuffleStartingDecks(seed);
 
 	return {
 		version: 1,
@@ -159,8 +171,8 @@ export function createInitialState(playerIds: string[], settings: MonopolySettin
 		rolledThisTurn: false,
 		bank: { houses: BANK_HOUSES, hotels: BANK_HOTELS },
 		properties: Object.fromEntries(OWNABLE_TILES.map((tile) => [tile.id, createBankProperty()])),
-		chanceDeck: [],
-		chestDeck: [],
+		chanceDeck: decks.chance,
+		chestDeck: decks.chest,
 		chanceDiscard: [],
 		chestDiscard: [],
 		pendingTrade: null,

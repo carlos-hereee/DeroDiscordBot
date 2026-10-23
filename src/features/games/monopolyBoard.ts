@@ -39,6 +39,23 @@ export const MAX_SEATS = 6;
 export const COMPLETE_GROUP_RENT_MULTIPLIER = 2;
 // rents[0] is the bare lot, rents[1..4] are one to four houses, rents[5] the hotel.
 export const HOTEL_RENT_INDEX = 5;
+// A lot takes up to four houses; the next build is a hotel that hands all four
+// houses back to the bank.
+export const MAX_HOUSES_PER_LOT = 4;
+// Transport rent by how many of the four transports the owner holds: one, two,
+// three or four.
+export const RAILROAD_RENTS: readonly number[] = [25, 50, 100, 200];
+// Utility rent is the dice total times this, by how many of the two utilities
+// the owner holds: one or two.
+export const UTILITY_DICE_MULTIPLIERS: readonly number[] = [4, 10];
+// The Chance cards that send a player to the nearest transport or utility charge
+// more than a plain landing: twice the transport rent, or ten times the dice
+// whatever the owner holds.
+export const CARD_RAILROAD_RENT_MULTIPLIER = 2;
+export const CARD_UTILITY_DICE_MULTIPLIER = 10;
+// Lifting a mortgage costs the mortgage value plus this much interest, in whole
+// percent so the math stays in integers (30 * 0.1 is not exactly 3 in floats).
+export const UNMORTGAGE_INTEREST_PERCENT = 10;
 
 // ── types ────────────────────────────────────────────────────────────────────
 
@@ -170,6 +187,22 @@ const OWNABLE_BY_ID = new Map<TileId, OwnableTile>(OWNABLE_TILES.map((tile) => [
 
 /** The ownable tile with this id, or undefined for an id the board does not have. */
 export const findOwnableTile = (tileId: TileId): OwnableTile | undefined => OWNABLE_BY_ID.get(tileId);
+
+/**
+ * The board position of an ownable tile. The card decks resolve their advance
+ * destinations through this at load, so a card can never point at a position
+ * that drifted from the tile it names. Throws on an unknown id, which is a typo
+ * in a card definition, not a move a player can make.
+ */
+export function boardIndexOf(tileId: TileId): number {
+	const index = BOARD.findIndex((tile) => isOwnableTile(tile) && tile.id === tileId);
+	if (index === -1) throw new Error(`The Monopoly board has no tile ${tileId}`);
+	return index;
+}
+
+/** Every board position holding a tile of this kind, in board order. */
+export const boardIndicesOfKind = (kind: MonopolyTile["kind"]): number[] =>
+	BOARD.flatMap((tile, index) => (tile.kind === kind ? [index] : []));
 
 // Built from the board rather than typed out, so a group can never list a tile
 // the board does not hold or miss one it does.

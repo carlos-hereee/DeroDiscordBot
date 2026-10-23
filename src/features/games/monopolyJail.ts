@@ -1,4 +1,5 @@
 import { JAIL_BAIL } from "./monopolyBoard.js";
+import { returnJailCards } from "./monopolyCards.js";
 import { chargeSeat, moveAndLand, rollDice } from "./monopolyLanding.js";
 import type { JailChoice, MonopolyResult, MonopolySeat, MonopolyState } from "./monopolyState.js";
 import { activeSeatOf, cloneState, completeAction, guardActiveTurn, mentionPlayer, rejectAction } from "./monopolySeats.js";
@@ -51,6 +52,8 @@ function spendJailCard(state: MonopolyState): MonopolyResult {
 
 	const next = cloneState(state);
 	const seat = activeSeatOf(next);
+	// A spent card goes back to the bottom of its own deck, so it can be drawn again.
+	returnJailCards(next, 1);
 	seat.gojfCards -= 1;
 	releaseFromJail(seat);
 	return completeAction(next, seat.userId, [`${mentionPlayer(seat.userId)} used a Get Out of Jail Free card and is free to roll.`]);

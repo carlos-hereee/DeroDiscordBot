@@ -242,8 +242,9 @@ export function freshDeck(): Card[] {
 }
 
 // Fisher-Yates, rng injected so production takes Math.random and a test can pin a
-// deal. Returns a NEW array; the input is untouched.
-export function shuffle(deck: Card[], rng: () => number = Math.random): Card[] {
+// deal. Returns a NEW array; the input is untouched. Generic because the Monopoly
+// card decks (monopolyCards) shuffle with it too, rather than keeping a second copy.
+export function shuffle<T>(deck: readonly T[], rng: () => number = Math.random): T[] {
 	const out = [...deck];
 	for (let index = out.length - 1; index > 0; index--) {
 		const swap = Math.floor(rng() * (index + 1));

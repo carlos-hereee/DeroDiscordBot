@@ -10,23 +10,32 @@ import {
 	JAIL_SENTENCE_TURNS,
 	OWNABLE_TILES,
 	STARTING_CHIPS,
+	MAX_HOUSES_PER_LOT,
+	COLOR_GROUPS,
 	findOwnableTile,
 	isOwnableTile,
 	type OwnableTile,
+	type PropertyTile,
 } from "./monopolyBoard.js";
+import { CHANCE_DECK, CHEST_DECK, heldJailCardIds, type CardDeckKind } from "./monopolyCards.js";
 import { LOG_ENTRY_LIMIT } from "./monopolySeats.js";
 import {
+	applyBuild,
 	applyBuy,
 	applyEndTurn,
 	applyForfeit,
 	applyJailChoice,
+	applyMortgage,
 	applyRoll,
 	applySkip,
+	applyUnmortgage,
 	calculateRent,
 	createInitialState,
+	unmortgageCost,
 	type MonopolyResult,
 	type MonopolyState,
 } from "./monopolyState.js";
+import { createSeededRng } from "@utils/seededRng.js";
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
@@ -35,9 +44,11 @@ const BOB = "bob";
 const CARA = "cara";
 const NOW = 1_000;
 const LATER = 2_000;
+// Pins both deck orders, so a roll onto a card lane draws the same card every run.
+const SEED = 241;
 
 const newMatch = (players: string[] = [ALICE, BOB]): MonopolyState =>
-	createInitialState(players, { auctionsEnabled: false }, NOW);
+	createInitialState(players, { auctionsEnabled: false }, NOW, SEED);
 
 // An rng that makes resolveVersus land on the given die faces, in order. A face
 // f on a six sided die comes from any rng value in [(f - 1) / 6, f / 6), so the
@@ -74,6 +85,13 @@ const rollFrom = (state: MonopolyState, position: number, ...faces: number[]) =>
 	return expectOk(applyRoll(state, diceRng(...faces), LATER));
 };
 
+// Moves a card to the top of its draw pile, so the next landing on that deck's
+// lane draws it.
+function stackDeck(state: MonopolyState, deckKind: CardDeckKind, cardId: string): void {
+	const key = deckKind === "chance" ? "chanceDeck" : "chestDeck";
+	state[key] = [cardId, ...state[key].filter((id) => id !== cardId)];
+}
+
 // ── initial state ───────────────────────────────────────────────────────────
 
 describe("createInitialState", () => {
@@ -93,7 +111,9 @@ describe("createInitialState", () => {
 		for (const property of Object.values(state.properties)) {
 			expect(property).toEqual({ ownerId: null, houses: 0, hotel: false, mortgaged: false });
 		}
-		expect([state.chanceDeck, state.chestDeck, state.chanceDiscard, state.chestDiscard]).toEqual([[], [], [], []]);
+		expect([...state.chanceDeck].sort()).toEqual(CHANCE_DECK.map((card) => card.id).sort());
+		expect([...state.chestDeck].sort()).toEqual(CHEST_DECK.map((card) => card.id).sort());
+		expect([state.chanceDiscard, state.chestDiscard]).toEqual([[], []]);
 		expect(state).toMatchObject({
 			activeSeatIndex: 0,
 			diceRoll: null,
@@ -116,10 +136,17 @@ describe("createInitialState", () => {
 		expect(() => newMatch([ALICE, ALICE])).toThrow(/same player twice/);
 	});
 
-	it("defaults the clock to now", () => {
+	it("defaults the clock to now and the seed to a fresh one", () => {
 		const before = Date.now();
 		const state = createInitialState([ALICE, BOB], { auctionsEnabled: false });
 		expect(state.turnStartedAt).toBeGreaterThanOrEqual(before);
+		expect(state.chanceDeck).toHaveLength(CHANCE_DECK.length);
+	});
+
+	it("shuffles both decks the same way for the same seed", () => {
+		const again = newMatch();
+		expect(again.chanceDeck).toEqual(newMatch().chanceDeck);
+		expect(createInitialState([ALICE, BOB], { auctionsEnabled: false }, NOW, SEED + 1).chanceDeck).not.toEqual(again.chanceDeck);
 	});
 });
 
@@ -128,6 +155,7 @@ describe("createInitialState", () => {
 describe("applyRoll", () => {
 	it("moves the token, closes the roll, and leaves the input untouched", () => {
 		const state = newMatch();
+		stackDeck(state, "chance", "chance-dividend");
 		const { state: next, trailLines } = rollFrom(structuredClone(state), 0, 3, 4);
 		expect(next.seats[0].position).toBe(7);
 		expect(next.diceRoll).toEqual([3, 4]);
@@ -136,7 +164,8 @@ describe("applyRoll", () => {
 		expect(trailLines).toEqual([
 			"<@alice> rolled 3 and 4.",
 			"<@alice> landed on Chance.",
-			"The card decks are not in play yet, so nothing happens.",
+			"<@alice> drew Guild Dividend. Your shares in the Dero Trading Guild paid out.",
+			"<@alice> collected $50 from the bank.",
 		]);
 		expect(state.seats[0].position).toBe(0);
 	});
@@ -236,7 +265,7 @@ describe("rent on landing", () => {
 		expect(rollFrom(state, 0, 2, 4).state.seats[1].chips).toBe(STARTING_CHIPS + 12);
 	});
 
-	it("charges nothing on your own lot, a mortgaged lot, or a transport for now", () => {
+	it("charges nothing on your own lot or a mortgaged lot", () => {
 		const own = newMatch();
 		giveTiles(own, ALICE, "teal-ridge");
 		expect(rollFrom(own, 0, 2, 4).trailLines.at(-1)).toBe("<@alice> already owns Teal Ridge.");
@@ -247,10 +276,6 @@ describe("rent on landing", () => {
 		const mortgagedRoll = rollFrom(mortgaged, 0, 2, 4);
 		expect(mortgagedRoll.state.seats[0].chips).toBe(STARTING_CHIPS);
 		expect(mortgagedRoll.trailLines.at(-1)).toBe("Teal Ridge is mortgaged, so no rent is due.");
-
-		const transport = newMatch();
-		giveTiles(transport, BOB, "skyrail-station");
-		expect(rollFrom(transport, 0, 2, 3).trailLines.at(-1)).toBe("No rent is charged on Skyrail Station yet.");
 	});
 
 	it("reads houses and the hotel from the rent table", () => {
@@ -487,6 +512,380 @@ describe("applyForfeit", () => {
 	});
 });
 
+// ── transport and utility rent ──────────────────────────────────────────────
+
+describe("transport and utility rent", () => {
+	const TRANSPORTS = ["skyrail-station", "ferry-landing", "caravan-depot", "airship-dock"];
+
+	it("charges 25, 50, 100 and 200 by transports owned, mortgaged ones still counting", () => {
+		const state = newMatch();
+		const expected = [25, 50, 100, 200];
+		TRANSPORTS.forEach((id, owned) => {
+			giveTiles(state, BOB, id);
+			expect(calculateRent(state, tile("skyrail-station"))).toBe(expected[owned]);
+		});
+		state.properties["airship-dock"].mortgaged = true;
+		expect(calculateRent(state, tile("skyrail-station"))).toBe(200);
+		expect(calculateRent(state, tile("airship-dock"))).toBe(0);
+		expect(calculateRent(state, tile("skyrail-station"), true)).toBe(400);
+	});
+
+	it("charges 4 or 10 times the dice on a utility, 10 times on a card, and 0 before any roll", () => {
+		const state = newMatch();
+		giveTiles(state, BOB, "lumen-works");
+		expect(calculateRent(state, tile("lumen-works"))).toBe(0);
+		state.diceRoll = [3, 4];
+		expect(calculateRent(state, tile("lumen-works"))).toBe(28);
+		expect(calculateRent(state, tile("lumen-works"), true)).toBe(70);
+		giveTiles(state, BOB, "aqueduct-works");
+		expect(calculateRent(state, tile("lumen-works"))).toBe(70);
+	});
+
+	it("charges transport rent on a landing", () => {
+		const state = newMatch();
+		giveTiles(state, BOB, "skyrail-station");
+		const { state: next, trailLines } = rollFrom(state, 0, 2, 3);
+		expect(next.seats[1].chips).toBe(STARTING_CHIPS + 25);
+		expect(trailLines.at(-1)).toBe("<@alice> paid $25 rent to <@bob>.");
+	});
+
+	it("charges utility rent from the roll that landed", () => {
+		const state = newMatch();
+		giveTiles(state, BOB, "lumen-works", "aqueduct-works");
+		expect(rollFrom(state, 7, 2, 3).state.seats[0].chips).toBe(STARTING_CHIPS - 50);
+	});
+});
+
+// ── cards ───────────────────────────────────────────────────────────────────
+
+describe("Chance and Community Chest", () => {
+	// A 3 and 4 reaches Chance from 0, 15 and 29 (lanes 7, 22, 36) and Community
+	// Chest from 10 and 26 (lanes 17 and 33). Not doubles, so the roll closes.
+	const drawChance = (state: MonopolyState, cardId: string, from: number = 0) => {
+		stackDeck(state, "chance", cardId);
+		return rollFrom(state, from, 3, 4);
+	};
+	const drawChest = (state: MonopolyState, cardId: string, from: number = 10) => {
+		stackDeck(state, "chest", cardId);
+		return rollFrom(state, from, 3, 4);
+	};
+
+	it("pays the bank and sends the card to the bottom of its discard", () => {
+		const { state, trailLines } = drawChance(newMatch(), "chance-speeding");
+		expect(state.seats[0].chips).toBe(STARTING_CHIPS - 15);
+		expect(state.chanceDiscard.at(-1)).toBe("chance-speeding");
+		expect(state.chanceDeck).not.toContain("chance-speeding");
+		expect(trailLines.at(-1)).toBe("<@alice> paid $15 to the bank.");
+	});
+
+	it("forfeits a seat that cannot cover a card's charge", () => {
+		const state = newMatch();
+		state.seats[0].chips = 10;
+		const { state: next, trailLines } = drawChance(state, "chance-speeding");
+		expect(next.winnerId).toBe(BOB);
+		expect(trailLines).toContain("<@alice> could cover only $10 of $15.");
+	});
+
+	it("collects from each rival, and a rival who cannot pay forfeits", () => {
+		const { state, trailLines } = drawChest(newMatch([ALICE, BOB, CARA]), "chest-hatching-day");
+		expect(state.seats.map((seat) => seat.chips)).toEqual([STARTING_CHIPS + 20, STARTING_CHIPS - 10, STARTING_CHIPS - 10]);
+		expect(trailLines.slice(-2)).toEqual(["<@bob> paid <@alice> $10.", "<@cara> paid <@alice> $10."]);
+
+		const poor = newMatch([ALICE, BOB, CARA]);
+		poor.seats[2].chips = 4;
+		const short = drawChest(poor, "chest-hatching-day");
+		expect(short.state.seats[0].chips).toBe(STARTING_CHIPS + 14);
+		expect(short.state.seats[2].bankrupt).toBe(true);
+		expect(short.state.activeSeatIndex).toBe(0);
+	});
+
+	it("pays each rival, and stops at the first payment the seat cannot cover", () => {
+		const { state } = drawChance(newMatch([ALICE, BOB, CARA]), "chance-chairman");
+		expect(state.seats.map((seat) => seat.chips)).toEqual([STARTING_CHIPS - 100, STARTING_CHIPS + 50, STARTING_CHIPS + 50]);
+
+		const poor = newMatch([ALICE, BOB, CARA]);
+		poor.seats[0].chips = 60;
+		const { state: next, trailLines } = drawChance(poor, "chance-chairman");
+		expect(next.seats.map((seat) => seat.chips)).toEqual([0, STARTING_CHIPS + 50, STARTING_CHIPS + 10]);
+		expect(next.seats[0].bankrupt).toBe(true);
+		expect(next.activeSeatIndex).toBe(1);
+		expect(trailLines).toContain("<@alice> paid <@bob> $50.");
+		expect(trailLines).toContain("<@alice> could cover only $10 of $50.");
+	});
+
+	it("advances onto an owned lot and pays its owner the rent", () => {
+		const state = newMatch();
+		giveTiles(state, BOB, "sapphire-keep");
+		const { state: next, trailLines } = drawChance(state, "chance-sapphire-keep", 29);
+		expect(next.seats[0].position).toBe(39);
+		expect(next.seats.map((seat) => seat.chips)).toEqual([STARTING_CHIPS - 50, STARTING_CHIPS + 50]);
+		expect(trailLines.slice(-2)).toEqual(["<@alice> landed on Sapphire Keep.", "<@alice> paid $50 rent to <@bob>."]);
+	});
+
+	it("advances to GO and collects the salary", () => {
+		const { state, trailLines } = drawChance(newMatch(), "chance-go");
+		expect(state.seats[0]).toMatchObject({ position: 0, chips: STARTING_CHIPS + GO_SALARY });
+		expect(trailLines).toContain("<@alice> passed GO and collected $200.");
+	});
+
+	it("pays the salary when an advance wraps the board, and offers the lot it reaches", () => {
+		const { state } = drawChance(newMatch(), "chance-rosequartz-court", 15);
+		expect(state.seats[0]).toMatchObject({ position: 11, chips: STARTING_CHIPS + GO_SALARY });
+		expect(state.phase).toBe("awaiting-buy-or-skip");
+	});
+
+	it("advances to the nearest transport: for sale when unowned, twice the rent when owned", () => {
+		const unowned = drawChance(newMatch(), "chance-nearest-transport-1");
+		expect(unowned.state.seats[0].position).toBe(15);
+		expect(unowned.state.phase).toBe("awaiting-buy-or-skip");
+
+		const owned = newMatch();
+		giveTiles(owned, BOB, "ferry-landing");
+		expect(drawChance(owned, "chance-nearest-transport-2").state.seats[1].chips).toBe(STARTING_CHIPS + 50);
+	});
+
+	it("wraps round GO to reach the nearest transport from the last Chance lane", () => {
+		const { state } = drawChance(newMatch(), "chance-nearest-transport-1", 29);
+		expect(state.seats[0]).toMatchObject({ position: 5, chips: STARTING_CHIPS + GO_SALARY });
+	});
+
+	it("advances to the nearest utility and charges ten times the dice", () => {
+		const state = newMatch();
+		giveTiles(state, BOB, "lumen-works");
+		const { state: next } = drawChance(state, "chance-nearest-utility");
+		expect(next.seats[0].position).toBe(12);
+		expect(next.seats[1].chips).toBe(STARTING_CHIPS + 70);
+	});
+
+	it("goes back three without the salary and resolves the tile it reaches", () => {
+		const { state, trailLines } = drawChance(newMatch(), "chance-go-back");
+		expect(state.seats[0]).toMatchObject({ position: 4, chips: STARTING_CHIPS - 200 });
+		expect(trailLines.at(-1)).toBe("<@alice> paid $200 in tax.");
+	});
+
+	it("draws again when going back three from the last Chance lane reaches a Chest lane", () => {
+		const state = newMatch();
+		stackDeck(state, "chest", "chest-bank-error");
+		const { state: next, trailLines } = drawChance(state, "chance-go-back", 29);
+		expect(next.seats[0]).toMatchObject({ position: 33, chips: STARTING_CHIPS + 200 });
+		expect(trailLines).toContain("<@alice> landed on Community Chest.");
+		expect(trailLines.at(-1)).toBe("<@alice> collected $200 from the bank.");
+	});
+
+	it("sends the drawer to jail", () => {
+		const { state, trailLines } = drawChest(newMatch(), "chest-jail");
+		expect(state.seats[0]).toMatchObject({ position: JAIL_INDEX, inJail: true });
+		expect(state.phase).toBe("post-roll");
+		expect(trailLines.at(-1)).toBe("<@alice> goes straight to Jail.");
+	});
+
+	it("hands over a jail card that leaves the deck and returns to it when used", () => {
+		const { state } = drawChest(newMatch(), "chest-jail-free");
+		expect(state.seats[0].gojfCards).toBe(1);
+		expect(heldJailCardIds(state)).toEqual(["chest-jail-free"]);
+		expect([...state.chestDeck, ...state.chestDiscard]).not.toContain("chest-jail-free");
+
+		Object.assign(state.seats[0], { position: JAIL_INDEX, inJail: true, jailTurnsRemaining: JAIL_SENTENCE_TURNS });
+		Object.assign(state, { phase: "pre-roll", rolledThisTurn: false });
+		const { state: freed } = expectOk(applyJailChoice(state, "card"));
+		expect(freed.seats[0].gojfCards).toBe(0);
+		expect(freed.chestDiscard.at(-1)).toBe("chest-jail-free");
+		expect(heldJailCardIds(freed)).toEqual([]);
+	});
+
+	it("returns a forfeiting seat's jail cards to their decks", () => {
+		const { state } = drawChance(newMatch([ALICE, BOB, CARA]), "chance-jail-free");
+		const { state: next } = expectOk(applyForfeit(state, ALICE));
+		expect(next.seats[0].gojfCards).toBe(0);
+		expect(next.chanceDiscard.at(-1)).toBe("chance-jail-free");
+	});
+
+	it("charges repairs per house and per hotel, and nothing without buildings", () => {
+		const state = newMatch();
+		giveTiles(state, ALICE, "teal-ridge", "frost-hollow", "skyglass-terrace");
+		state.properties["teal-ridge"].houses = 2;
+		state.properties["frost-hollow"].hotel = true;
+		const { state: next, trailLines } = drawChance(state, "chance-repairs");
+		expect(next.seats[0].chips).toBe(STARTING_CHIPS - (2 * 25 + 100));
+		expect(trailLines.at(-1)).toBe("<@alice> paid $150 in repairs.");
+
+		const bare = drawChest(newMatch(), "chest-road-levy", 26);
+		expect(bare.state.seats[0].chips).toBe(STARTING_CHIPS);
+		expect(bare.trailLines.at(-1)).toBe("<@alice> owns no buildings, so there is nothing to repair.");
+	});
+
+	it("starts the deck on the first draw of a match stored before the decks existed", () => {
+		const legacy = newMatch();
+		Object.assign(legacy, { chanceDeck: [], chestDeck: [], chanceDiscard: [], chestDiscard: [] });
+		const { state, trailLines } = rollFrom(legacy, 0, 3, 4);
+		expect(trailLines[2]).toMatch(/^<@alice> drew /);
+		expect(state.chanceDeck.length + state.chanceDiscard.length + state.seats[0].gojfCards).toBe(CHANCE_DECK.length);
+	});
+});
+
+// ── mortgages ───────────────────────────────────────────────────────────────
+
+describe("applyMortgage and applyUnmortgage", () => {
+	const owning = (...ids: string[]): MonopolyState => {
+		const state = newMatch();
+		giveTiles(state, ALICE, ...ids);
+		return state;
+	};
+
+	it("mortgages for the board value and lifts it for that plus ten percent", () => {
+		const mortgaged = expectOk(applyMortgage(owning("teal-ridge"), ALICE, "teal-ridge"));
+		expect(mortgaged.state.seats[0].chips).toBe(STARTING_CHIPS + 50);
+		expect(mortgaged.state.properties["teal-ridge"].mortgaged).toBe(true);
+		expect(mortgaged.trailLines).toEqual(["<@alice> mortgaged Teal Ridge for $50."]);
+
+		expect(unmortgageCost(tile("teal-ridge"))).toBe(55);
+		const lifted = expectOk(applyUnmortgage(mortgaged.state, ALICE, "teal-ridge"));
+		expect(lifted.state.seats[0].chips).toBe(STARTING_CHIPS - 5);
+		expect(lifted.state.properties["teal-ridge"].mortgaged).toBe(false);
+		expect(lifted.trailLines).toEqual(["<@alice> paid $55 to lift the mortgage on Teal Ridge."]);
+	});
+
+	it("rounds the interest up to a whole chip", () => {
+		expect(unmortgageCost(tile("midnight-crown"))).toBe(175 + 18);
+	});
+
+	it("lets a seat mortgage off its turn, and a transport needs no group check", () => {
+		const state = newMatch();
+		giveTiles(state, BOB, "skyrail-station");
+		const { state: next } = expectOk(applyMortgage(state, BOB, "skyrail-station"));
+		expect(next.seats[1].chips).toBe(STARTING_CHIPS + 100);
+		expect(next.activeSeatIndex).toBe(0);
+	});
+
+	it("refuses while any lot in the color group has buildings", () => {
+		const housed = owning("mudlark-lane", "cinder-row");
+		housed.properties["mudlark-lane"].houses = 1;
+		expectRefusal(applyMortgage(housed, ALICE, "cinder-row"), "Cinder Row cannot be mortgaged while its color group has buildings.");
+		const hotel = owning("mudlark-lane", "cinder-row");
+		hotel.properties["mudlark-lane"].hotel = true;
+		expectRefusal(applyMortgage(hotel, ALICE, "mudlark-lane"), /cannot be mortgaged while its color group has buildings/);
+	});
+
+	it("refuses a finished match, a stranger, a seat out of the match, an unknown lot and a lot owned by another", () => {
+		const finished = owning("teal-ridge");
+		finished.phase = "finished";
+		expectRefusal(applyMortgage(finished, ALICE, "teal-ridge"), "The match is already over.");
+		expectRefusal(applyUnmortgage(finished, ALICE, "teal-ridge"), "The match is already over.");
+		expectRefusal(applyMortgage(owning("teal-ridge"), "nobody", "teal-ridge"), "You are not playing in this match.");
+		const out = owning("teal-ridge");
+		out.seats[0].bankrupt = true;
+		expectRefusal(applyMortgage(out, ALICE, "teal-ridge"), "You are not playing in this match.");
+		expectRefusal(applyMortgage(owning(), ALICE, "nowhere"), "That is not a lot on this board.");
+		expectRefusal(applyMortgage(owning(), ALICE, "teal-ridge"), "You do not own Teal Ridge.");
+	});
+
+	it("refuses a second mortgage, lifting one that is not there, and a lift the seat cannot afford", () => {
+		const mortgaged = expectOk(applyMortgage(owning("teal-ridge"), ALICE, "teal-ridge")).state;
+		expectRefusal(applyMortgage(mortgaged, ALICE, "teal-ridge"), "Teal Ridge is already mortgaged.");
+		expectRefusal(applyUnmortgage(owning("teal-ridge"), ALICE, "teal-ridge"), "Teal Ridge is not mortgaged.");
+		mortgaged.seats[0].chips = 54;
+		expectRefusal(applyUnmortgage(mortgaged, ALICE, "teal-ridge"), "You need $55 to lift the mortgage on Teal Ridge.");
+	});
+});
+
+// ── buildings ───────────────────────────────────────────────────────────────
+
+describe("applyBuild", () => {
+	const BROWN = COLOR_GROUPS.brown;
+	const brownMatch = (): MonopolyState => {
+		const state = newMatch();
+		giveTiles(state, ALICE, ...BROWN);
+		return state;
+	};
+	const build = (state: MonopolyState, tileId: string, kind: "house" | "hotel" = "house"): MonopolyState =>
+		expectOk(applyBuild(state, ALICE, tileId, kind)).state;
+	const setHouses = (state: MonopolyState, houses: number): void => {
+		for (const id of BROWN) state.properties[id].houses = houses;
+		state.bank.houses = BANK_HOUSES - houses * BROWN.length;
+	};
+	const mudlark = tile("mudlark-lane") as PropertyTile;
+
+	it("builds a house from the bank's stock at the board's house cost", () => {
+		const { state, trailLines } = expectOk(applyBuild(brownMatch(), ALICE, "mudlark-lane", "house"));
+		expect(state.properties["mudlark-lane"].houses).toBe(1);
+		expect(state.bank.houses).toBe(BANK_HOUSES - 1);
+		expect(state.seats[0].chips).toBe(STARTING_CHIPS - mudlark.houseCost);
+		expect(trailLines).toEqual(["<@alice> built a house on Mudlark Lane for $50."]);
+		expect(calculateRent(state, mudlark)).toBe(mudlark.rents[1]);
+	});
+
+	it("builds evenly across the group", () => {
+		const one = build(brownMatch(), "mudlark-lane");
+		expectRefusal(applyBuild(one, ALICE, "mudlark-lane", "house"), "Build evenly: the other lots in the brown group need more buildings first.");
+		const two = build(build(one, "cinder-row"), "mudlark-lane");
+		expect(two.properties["mudlark-lane"].houses).toBe(2);
+	});
+
+	it("trades four houses for a hotel and charges hotel rent", () => {
+		const state = brownMatch();
+		setHouses(state, MAX_HOUSES_PER_LOT);
+		const { state: next, trailLines } = expectOk(applyBuild(state, ALICE, "mudlark-lane", "hotel"));
+		expect(next.properties["mudlark-lane"]).toMatchObject({ houses: 0, hotel: true });
+		expect(next.bank).toEqual({ houses: BANK_HOUSES - MAX_HOUSES_PER_LOT, hotels: BANK_HOTELS - 1 });
+		expect(next.seats[0].chips).toBe(STARTING_CHIPS - mudlark.houseCost);
+		expect(trailLines).toEqual(["<@alice> built a hotel on Mudlark Lane for $50."]);
+		expect(calculateRent(next, mudlark)).toBe(mudlark.rents[5]);
+
+		expectRefusal(applyBuild(next, ALICE, "mudlark-lane", "house"), "Mudlark Lane already has a hotel.");
+		expect(build(next, "cinder-row", "hotel").properties["cinder-row"].hotel).toBe(true);
+	});
+
+	it("refuses a fifth house, a hotel before four houses, and a hotel on an uneven group", () => {
+		const full = brownMatch();
+		setHouses(full, MAX_HOUSES_PER_LOT);
+		expectRefusal(applyBuild(full, ALICE, "mudlark-lane", "house"), "Mudlark Lane has 4 houses, so a hotel comes next.");
+		expectRefusal(applyBuild(brownMatch(), ALICE, "mudlark-lane", "hotel"), "Mudlark Lane needs 4 houses before a hotel.");
+		const uneven = brownMatch();
+		setHouses(uneven, MAX_HOUSES_PER_LOT);
+		uneven.properties["cinder-row"].houses = MAX_HOUSES_PER_LOT - 1;
+		expectRefusal(applyBuild(uneven, ALICE, "mudlark-lane", "hotel"), /Build evenly/);
+	});
+
+	it("refuses when the bank is out of houses or hotels", () => {
+		const noHouses = brownMatch();
+		noHouses.bank.houses = 0;
+		expectRefusal(applyBuild(noHouses, ALICE, "mudlark-lane", "house"), "The bank has no houses left.");
+		const noHotels = brownMatch();
+		setHouses(noHotels, MAX_HOUSES_PER_LOT);
+		noHotels.bank.hotels = 0;
+		expectRefusal(applyBuild(noHotels, ALICE, "mudlark-lane", "hotel"), "The bank has no hotels left.");
+	});
+
+	it("refuses the wrong player, a finished match, after the roll, and a tile that takes no buildings", () => {
+		expectRefusal(applyBuild(brownMatch(), BOB, "mudlark-lane", "house"), "It is not your turn.");
+		const finished = brownMatch();
+		finished.phase = "finished";
+		expectRefusal(applyBuild(finished, ALICE, "mudlark-lane", "house"), "The match is already over.");
+		const rolled = brownMatch();
+		rolled.phase = "post-roll";
+		expectRefusal(applyBuild(rolled, ALICE, "mudlark-lane", "house"), "Build before you roll.");
+		const transport = brownMatch();
+		giveTiles(transport, ALICE, "skyrail-station");
+		expectRefusal(applyBuild(transport, ALICE, "skyrail-station", "house"), "Only color lots take buildings.");
+		expectRefusal(applyBuild(brownMatch(), ALICE, "nowhere", "house"), "Only color lots take buildings.");
+	});
+
+	it("refuses a lot owned by another, an incomplete group, a mortgaged group and a short purse", () => {
+		const others = brownMatch();
+		giveTiles(others, BOB, "teal-ridge");
+		expectRefusal(applyBuild(others, ALICE, "teal-ridge", "house"), "You do not own Teal Ridge.");
+		const split = brownMatch();
+		giveTiles(split, BOB, "cinder-row");
+		expectRefusal(applyBuild(split, ALICE, "mudlark-lane", "house"), "You need every lot in the brown group to build.");
+		const mortgaged = brownMatch();
+		mortgaged.properties["cinder-row"].mortgaged = true;
+		expectRefusal(applyBuild(mortgaged, ALICE, "mudlark-lane", "house"), "Lift every mortgage in the brown group before building.");
+		const broke = brownMatch();
+		broke.seats[0].chips = mudlark.houseCost - 1;
+		expectRefusal(applyBuild(broke, ALICE, "mudlark-lane", "house"), "You need $50 to build on Mudlark Lane.");
+	});
+});
+
 // ── log ─────────────────────────────────────────────────────────────────────
 
 describe("trail log", () => {
@@ -504,25 +903,24 @@ describe("trail log", () => {
 
 // ── a whole match ───────────────────────────────────────────────────────────
 
-// A seeded generator (mulberry32) so the 50 turn match is the same match on
-// every run. It drives only the fixture; the engine still rolls through
-// resolveVersus.
-function seededRng(seed: number): () => number {
-	let value = seed;
-	return () => {
-		value = (value + 0x6d2b79f5) | 0;
-		let mixed = Math.imul(value ^ (value >>> 15), 1 | value);
-		mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
-		return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
-	};
+// A runaway guard on one seat's turn. Doubles, buys, builds and jail add
+// actions, but a legal turn never comes near this.
+const ACTIONS_PER_TURN_LIMIT = 60;
+
+// How the fixture's greedy player handles its lots before each roll. These are
+// tuned only so a seeded match exercises mortgages, lifts and hotels; they are
+// not a strategy anyone should copy.
+const LOW_CASH = 150;
+const RICH_CASH = 800;
+const BUILD_RESERVE = 300;
+
+interface MatchTally {
+	mortgages: number;
+	unmortgages: number;
+	hotels: number;
 }
 
-const MATCH_TURNS = 50;
-// Doubles and buys add actions within a turn; this is a runaway guard, far above
-// what 50 turns can take.
-const ACTION_LIMIT = MATCH_TURNS * 20;
-
-// Every invariant a legal state keeps, checked after each action.
+// Every invariant a legal state keeps, checked after each turn.
 function assertConsistent(state: MonopolyState): void {
 	for (const seat of state.seats) {
 		expect(seat.chips).toBeGreaterThanOrEqual(0);
@@ -530,18 +928,79 @@ function assertConsistent(state: MonopolyState): void {
 		expect(seat.position).toBeLessThan(BOARD_SIZE);
 	}
 	const seated = new Set(state.seats.filter((seat) => !seat.bankrupt).map((seat) => seat.userId));
+	let placedHouses = 0;
+	let placedHotels = 0;
 	for (const property of Object.values(state.properties)) {
 		if (property.ownerId !== null) expect(seated.has(property.ownerId)).toBe(true);
+		if (property.houses > 0 || property.hotel) expect(property.mortgaged).toBe(false);
+		placedHouses += property.houses;
+		if (property.hotel) placedHotels += 1;
 	}
+	// The bank's buildings are only ever moved, never made or lost.
+	expect(state.bank.houses + placedHouses).toBe(BANK_HOUSES);
+	expect(state.bank.hotels + placedHotels).toBe(BANK_HOTELS);
+	// Every card is in a pile or in a hand, and the hands match what is missing.
+	let heldCards = 0;
+	for (const seat of state.seats) heldCards += seat.gojfCards;
+	expect(heldJailCardIds(state)).toHaveLength(heldCards);
+	const piled = state.chanceDeck.length + state.chanceDiscard.length + state.chestDeck.length + state.chestDiscard.length;
+	expect(piled + heldCards).toBe(CHANCE_DECK.length + CHEST_DECK.length);
 	if (state.phase !== "finished") expect(state.seats[state.activeSeatIndex].bankrupt).toBe(false);
 }
 
-// One seat's whole turn, played the way a greedy player would: get out of jail
-// by bail when it can, buy everything it can afford, roll again on doubles.
-function playTurn(state: MonopolyState, rng: () => number): { state: MonopolyState; actions: number } {
+// Mortgages the first lot it can when cash runs low, and lifts the first
+// mortgage it can afford when cash runs high.
+function adjustMortgages(state: MonopolyState, userId: string, tally: MatchTally): MonopolyState {
+	const chips = state.seats[state.activeSeatIndex].chips;
+	for (const lot of OWNABLE_TILES) {
+		if (state.properties[lot.id].ownerId !== userId) continue;
+		if (chips < LOW_CASH) {
+			const mortgaged = applyMortgage(state, userId, lot.id);
+			if (mortgaged.ok) {
+				tally.mortgages++;
+				return mortgaged.state;
+			}
+		}
+		if (chips > RICH_CASH) {
+			const lifted = applyUnmortgage(state, userId, lot.id);
+			if (lifted.ok) {
+				tally.unmortgages++;
+				return lifted.state;
+			}
+		}
+	}
+	return state;
+}
+
+// Builds every house and hotel the engine allows while the purse stays above
+// the reserve. The engine's refusals are the rules; the fixture only asks.
+function buildWhileAffordable(state: MonopolyState, userId: string, tally: MatchTally): MonopolyState {
+	let current = state;
+	let builtThisPass = true;
+	while (builtThisPass) {
+		builtThisPass = false;
+		for (const lot of OWNABLE_TILES) {
+			if (lot.kind !== "property") continue;
+			if (current.seats[current.activeSeatIndex].chips - lot.houseCost < BUILD_RESERVE) continue;
+			for (const kind of ["house", "hotel"] as const) {
+				const built = applyBuild(current, userId, lot.id, kind);
+				if (!built.ok) continue;
+				current = built.state;
+				builtThisPass = true;
+				if (kind === "hotel") tally.hotels++;
+			}
+		}
+	}
+	return current;
+}
+
+// One seat's whole turn, played the way a greedy player would: manage its lots
+// before each roll, get out of jail by bail when it can, buy everything it can
+// afford, roll again on doubles.
+function playTurn(state: MonopolyState, rng: () => number, tally: MatchTally): { state: MonopolyState; actions: number } {
 	let current = state;
 	let actions = 0;
-	while (current.phase !== "finished" && actions < ACTION_LIMIT) {
+	while (current.phase !== "finished" && actions < ACTIONS_PER_TURN_LIMIT) {
 		const seat = current.seats[current.activeSeatIndex];
 		actions++;
 		if (current.phase === "post-roll") return { state: expectOk(applyEndTurn(current, NOW)).state, actions };
@@ -549,8 +1008,9 @@ function playTurn(state: MonopolyState, rng: () => number): { state: MonopolySta
 			current = expectOk(buyOrSkip(current, seat.userId)).state;
 			continue;
 		}
+		current = buildWhileAffordable(adjustMortgages(current, seat.userId, tally), seat.userId, tally);
 		if (seat.inJail) {
-			const choice = seat.chips >= JAIL_BAIL ? "bail" : "roll";
+			const choice = current.seats[current.activeSeatIndex].chips >= JAIL_BAIL ? "bail" : "roll";
 			current = expectOk(applyJailChoice(current, choice, rng, NOW)).state;
 			continue;
 		}
@@ -569,24 +1029,28 @@ function buyOrSkip(state: MonopolyState, userId: string): MonopolyResult {
 	return applySkip(state, userId);
 }
 
+// Plays up to `turns` turns from a seed that fixes both the dice and the decks,
+// checking every invariant after each turn.
+function playMatch(players: string[], turns: number, seed: number): { state: MonopolyState; tally: MatchTally } {
+	const rng = createSeededRng(seed);
+	let state = createInitialState(players, { auctionsEnabled: false }, NOW, seed);
+	const tally: MatchTally = { mortgages: 0, unmortgages: 0, hotels: 0 };
+	for (let turn = 0; turn < turns && state.phase !== "finished"; turn++) {
+		const played = playTurn(state, rng, tally);
+		expect(played.actions).toBeLessThan(ACTIONS_PER_TURN_LIMIT);
+		state = played.state;
+		assertConsistent(state);
+	}
+	return { state, tally };
+}
+
 describe("a 50 turn two player match", () => {
 	it("plays to completion with one seat out and a winner", () => {
-		const rng = seededRng(241);
-		let state = newMatch();
-		let turns = 0;
-		let actions = 0;
-		while (turns < MATCH_TURNS && state.phase !== "finished") {
-			const played = playTurn(state, rng);
-			state = played.state;
-			actions += played.actions;
-			turns++;
-			assertConsistent(state);
-		}
-		expect(actions).toBeLessThan(ACTION_LIMIT);
+		let { state } = playMatch([ALICE, BOB], 50, SEED);
 
-		// Phase 1 has no bankruptcy flow, so a long match usually ends with both
-		// seats solvent. The poorer seat then concedes, which is the forfeit path
-		// the idle sweep and an admin both use.
+		// Until Phase 3's bankruptcy flow a long match can end with both seats
+		// solvent. The poorer seat then concedes, which is the forfeit path the idle
+		// sweep and an admin both use.
 		if (state.phase !== "finished") {
 			const poorer = [...state.seats].sort((left, right) => left.chips - right.chips)[0];
 			state = expectOk(applyForfeit(state, poorer.userId)).state;
@@ -599,3 +1063,22 @@ describe("a 50 turn two player match", () => {
 		expect(Object.values(state.properties).some((property) => property.ownerId === state.winnerId)).toBe(true);
 	});
 });
+
+// Picked from a scan of seeds 1 to 400 as one where the match mortgages, lifts
+// a mortgage, builds hotels and plays to a finish inside 100 turns. A change to
+// the engine's rules or the decks can move that; if this fails on the tally or
+// the finish alone, rescan for a seed rather than loosening the assertions.
+const THREE_PLAYER_SEED = 16;
+
+describe("a 100 turn three player match", () => {
+	it("plays through mortgages and hotel builds to a winner without throwing", () => {
+		const { state, tally } = playMatch([ALICE, BOB, CARA], 100, THREE_PLAYER_SEED);
+		expect(tally.mortgages).toBeGreaterThanOrEqual(1);
+		expect(tally.unmortgages).toBeGreaterThanOrEqual(1);
+		expect(tally.hotels).toBeGreaterThanOrEqual(1);
+		expect(state.phase).toBe("finished");
+		expect(state.seats.filter((seat) => seat.bankrupt)).toHaveLength(2);
+		expect(state.winnerId).toBe(state.seats.find((seat) => !seat.bankrupt)?.userId);
+	});
+});
+
