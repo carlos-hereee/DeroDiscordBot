@@ -1,5 +1,5 @@
 import { AttachmentBuilder } from "discord.js";
-import type { Image, SKRSContext2D } from "@napi-rs/canvas";
+import { canvasModule, type CanvasModule, type Image, type SKRSContext2D } from "@features/renderer/canvasModule.js";
 import { BOARD, BOARD_SIZE, MAX_SEATS } from "./monopolyBoard.js";
 import type { MonopolyState } from "./monopolyState.js";
 import { GAME_ASSET_FILES, gameAssetPath, missingGameAssets, type GameAssetKey, type ResolvedGameAsset } from "./gamesAssets.js";
@@ -22,19 +22,12 @@ import { GAME_ASSET_FILES, gameAssetPath, missingGameAssets, type GameAssetKey, 
 //        ④ encode a PNG and hand back an attachment plus the ref an embed's
 //        setImage points at.
 //
-// ⚠️ THE CANVAS LIBRARY IS LOADED WITH A CAUGHT DYNAMIC IMPORT, NEVER A STATIC ONE.
-// @napi-rs/canvas is a native binary picked per platform from optional
-// dependencies; a static import of a binary the host lacks throws at module load
-// and takes the whole bot down with it (the same trap @discordjs/voice's davey
-// binary sets). Caught, a missing binary costs the board picture and nothing else.
+// ⚠️ THE CANVAS LIBRARY COMES FROM THE SHARED LOADER, NEVER A STATIC IMPORT.
+// features/renderer/canvasModule.ts loads @napi-rs/canvas with a caught dynamic
+// import and answers null when the native binary is missing, so a host without
+// it loses the board picture and nothing else. Its header explains the trap.
 
-type CanvasModule = typeof import("@napi-rs/canvas");
 type Point = readonly [number, number];
-
-const canvasModule: CanvasModule | null = await import("@napi-rs/canvas").catch((error: unknown) => {
-	console.warn("[monopoly-renderer] @napi-rs/canvas did not load, so Monopoly boards stay text", error);
-	return null;
-});
 
 // ── board geometry ────────────────────────────────────────────────────
 // The width and height of board-base.png in its own pixels. BOARD_PIXEL_COORDS

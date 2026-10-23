@@ -203,6 +203,46 @@ const deroBrainKey = process.env.DERO_BRAIN_KEY || "";
 //   so a typo can never leave a production bot writing a row every minute.
 // Where: set by the owner for the 30 minute soak, then unset.
 const deroVoiceSamplerEnabled = process.env.DERO_VOICE_SAMPLER === "1";
+
+// ── Rendered card store on S3 (2026-10 item 243) ──
+// What: the bot's own IAM key, bucket and region for the rendered card cache,
+//   plus the switch that turns that S3 tier on. The key is the BOT's, not
+//   nexious-server's: it may write only under discord-bot/ on the shared
+//   Company Uno bucket, so a leak of one never opens the other.
+// Who: the credentials, bucket and region are read only by utils/aws/index.ts;
+//   the switch only by features/renderer/s3.ts. None of them is ever logged.
+// When: off (the default, and every dev session) means no S3 call is ever sent;
+//   cards render on demand behind the in-memory cache.
+// Where: set by the owner on Railway; the bucket and region are the same values
+//   as nexious-server's AWS_BUCKET_NAME and AWS_REGION.
+// How: the same explicit string comparison as the flags above. The switch reads
+//   as on only when all four values are set as well, and a switch that is on
+//   with a value missing warns once at boot, naming the missing variables (never
+//   a value), so a half configured env degrades to the memory cache instead of
+//   failing every upload.
+const discordBotAwsAccessKey = process.env.DISCORD_BOT_AWS_ACCESS_KEY || "";
+const discordBotAwsSecretKey = process.env.DISCORD_BOT_AWS_SECRET_KEY || "";
+const discordBotAwsBucketName = process.env.DISCORD_BOT_AWS_BUCKET_NAME || "";
+const discordBotAwsRegion = process.env.DISCORD_BOT_AWS_REGION || "";
+const discordBotS3Enabled = (() => {
+	const raw = (process.env.DISCORD_BOT_S3_ENABLED ?? "").toLowerCase().trim();
+	if (raw !== "1" && raw !== "true" && raw !== "yes") return false;
+	const required = {
+		DISCORD_BOT_AWS_ACCESS_KEY: discordBotAwsAccessKey,
+		DISCORD_BOT_AWS_SECRET_KEY: discordBotAwsSecretKey,
+		DISCORD_BOT_AWS_BUCKET_NAME: discordBotAwsBucketName,
+		DISCORD_BOT_AWS_REGION: discordBotAwsRegion,
+	};
+	const missing = Object.entries(required)
+		.filter(([, value]) => !value)
+		.map(([name]) => name);
+	if (missing.length === 0) return true;
+	console.warn(
+		`[config] DISCORD_BOT_S3_ENABLED is on but these are not set: ${missing.join(", ")}. ` +
+		"Rendered cards stay in the memory cache and nothing is written to S3 until they are set and the bot restarts.",
+	);
+	return false;
+})();
 // CORS allow-list for the dashboard.
 // What: the Express `cors({ origin })` middleware accepts a string (single
 //   origin), an array (multiple origins), or a function. We want multiple
@@ -257,4 +297,9 @@ export {
 	elevenLabsApiKey,
 	deroBrainKey,
 	deroVoiceSamplerEnabled,
+	discordBotAwsAccessKey,
+	discordBotAwsSecretKey,
+	discordBotAwsBucketName,
+	discordBotAwsRegion,
+	discordBotS3Enabled,
 };

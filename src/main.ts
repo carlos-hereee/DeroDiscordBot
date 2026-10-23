@@ -38,6 +38,7 @@ import { registerGameRoomMemberRemoveWatcher } from "@features/game-rooms/guildM
 import { recoverGameRoomsOnBoot } from "@features/game-rooms/roomBootRecovery.js";
 import { sweepHoldemClocks } from "@features/game-rooms/roomHoldemHandlers.js";
 import { logMonopolyRendererStatus } from "@features/games/monopolyRenderer.js";
+import { logCanvasRendererStatus } from "@features/renderer/index.js";
 import { sweepMonopolyAuctions } from "@features/game-rooms/roomMonopolyAuction.js";
 import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/polls/PollDispatcher.js";
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
@@ -570,6 +571,9 @@ process.on("uncaughtException", (err) => {
 		// as abandoned), with a system line in the room saying why. Rides
 		// the same GuildMembers intent the greeter needs.
 		registerGameRoomMemberRemoveWatcher(client);
+		// One line saying whether cards render as pictures on this host, with which
+		// fonts, and whether the S3 card cache is on. Registers the bundled fonts.
+		logCanvasRendererStatus();
 		// One line saying whether Monopoly boards render as pictures on this host
 		// and which of the owner's art files are still missing from assets/games.
 		logMonopolyRendererStatus();
