@@ -1,12 +1,9 @@
 import type { Client } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
-import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import { NO_PINGS } from "@utils/mentions.js";
 import { HAND_CATEGORIES, formatCard, type Card, type HandCategory } from "@features/games/holdemHand.js";
 import { handInProgress, whoActs, type ActionOutcome, type HoldemTable, type Street } from "@features/games/holdemTable.js";
-import { renderCallSpeech, type CallSpeechInput, type CallSpeechResult } from "@features/voice/callSpeech.js";
-import { voiceSessions, type VoiceSessionView } from "@features/voice/voiceSessions.js";
+import { defaultCallAnnouncerDeps, speakInCall, type CallAnnouncerDeps } from "@features/voice/callAnnouncer.js";
 import { deroBrainCopy, type DealerWinner } from "./deroBrainCopy.js";
 
 // ── dealerNarration ───────────────────────────────────────────────────────
@@ -302,11 +299,8 @@ export function _clearDealerTables(): void {
 
 // ── ④ delivery ──
 
-/** The calls delivery makes, injected so tests use fakes. */
-export interface DealerDeps {
-	sessionIn(guildId: string): VoiceSessionView | null;
-	loadConfig(guildId: string): Promise<IDeroVoiceConfig | null>;
-	render(input: CallSpeechInput): Promise<CallSpeechResult>;
+/** The calls delivery makes, injected so tests use fakes. The speech half is the call announcer's. */
+export interface DealerDeps extends CallAnnouncerDeps {
 	postText(client: Client, channelId: string, text: string): Promise<void>;
 }
 
@@ -327,30 +321,15 @@ export async function postDealerText(client: Client, channelId: string, text: st
 }
 
 export const defaultDealerDeps: DealerDeps = {
-	sessionIn: (guildId) => voiceSessions.get(guildId),
-	loadConfig: (guildId) => deroVoiceConfigStore.findByGuildId(guildId),
-	render: renderCallSpeech,
+	...defaultCallAnnouncerDeps,
 	postText: postDealerText,
 };
 
-// One clip per announcement, at dealer priority (below Dero's own answers and
-// Listen). The call, the kill switch and the voice are all re-checked here,
-// because a hand outlives any one of them.
-async function speakLines(session: DealerSession, spoken: string[], deps: DealerDeps): Promise<void> {
-	const call = deps.sessionIn(session.guildId);
-	if (!call) return;
-	const config = await deps.loadConfig(session.guildId);
-	if (!config?.enabled || !config.voiceId || config.guildId !== session.guildId) return;
-	const speech = await deps.render({ guildId: session.guildId, voiceId: config.voiceId, text: spoken.join(" ") });
-	if (speech.status !== "ok") return;
-	// The call can end during the render; a line for a call that is gone is dropped.
-	if (deps.sessionIn(session.guildId) !== call) return;
-	call.speaker.speak(speech.pcm48kStereo, "dealer");
-}
-
+// One clip per announcement. The call announcer re-checks the call, the kill
+// switch and the voice, because a hand outlives any one of them.
 async function deliver(client: Client, session: DealerSession, text: DealerLine[], spoken: DealerLine[], deps: DealerDeps): Promise<void> {
 	for (const line of text) await deps.postText(client, session.channelId, line.text);
-	if (session.voice && spoken.length > 0) await speakLines(session, spoken.map((line) => line.spoken), deps);
+	if (session.voice && spoken.length > 0) await speakInCall(session.guildId, spoken.map((line) => line.spoken).join(" "), deps);
 }
 
 export interface AnnounceInput {

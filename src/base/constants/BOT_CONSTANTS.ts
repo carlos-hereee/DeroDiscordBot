@@ -163,6 +163,12 @@ export const BOT_CONSTANTS = {
 	// the hold em clock below: on the 5 minute room sweep a 60 second round would
 	// close anywhere inside five minutes. At 10 seconds a round runs 60 to 70.
 	MONOPOLY_AUCTION_TICK_MS: 10_000,
+	// The smallest rent the voice referee says out loud (Session 5c, key moments only).
+	// $200 is GO's salary and the rent of all four rails, so a rent this big costs a
+	// player at least a full lap's pay. Unbuilt lots charge $2 to $100 and utilities at
+	// most $120, so a lower bar would have Dero announce routine rent on most turns; a
+	// higher one would leave four rails and the second house on most lots unspoken.
+	MONOPOLY_REFEREE_BIG_RENT: 200,
 
 	// ── hold em ──────────────────────────────────────────────────
 	// ⚠️ CHIPS ARE PER TOURNAMENT AND DIE WITH THE TABLE (A9, R22). There is no

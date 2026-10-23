@@ -30,7 +30,7 @@ import type { GameSlug } from "./roomTypes.js";
 
 // The actions that only make sense while a draft is still a draft. Listed once so
 // the status refusal below cannot drift from the routing switch.
-const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "cancel", "auctions"]);
+const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "cancel", "auctions", "referee"]);
 
 // ── gameRoomHandlers ─────────────────────────────────────────────────
 // What:  routes every `gameroom:` button to its action, after proving the clicker is
@@ -135,7 +135,8 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			await challengeBoard.cancelDraft(interaction, room);
 			return;
 		case "auctions":
-			await challengeBoard.chooseMonopolyAuctions(interaction, room, parsed.arg ?? "");
+		case "referee":
+			await challengeBoard.chooseMonopolyDraftSetting(interaction, room, parsed.action, parsed.arg ?? "");
 			return;
 		case "rematch":
 			// On the result card of a finished room. rematchFromRoom refuses by status

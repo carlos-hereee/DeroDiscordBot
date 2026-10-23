@@ -21,7 +21,13 @@ import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { buildInviteOptions, refilterInvitees } from "./invitePicker.js";
-import { openerCardEmbed, openerCardRows, isCooperativeGame, type OpenerCardState } from "./challengeBoardEmbeds.js";
+import {
+	openerCardEmbed,
+	openerCardRows,
+	isCooperativeGame,
+	type MonopolyDraftSettingAction,
+	type OpenerCardState,
+} from "./challengeBoardEmbeds.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -69,6 +75,7 @@ function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState> = {})
 		visibility: overrides.visibility ?? null,
 		pool: room.spectatorIds ?? [],
 		monopolyAuctions: room.monopolyAuctions ?? false,
+		monopolyReferee: room.monopolyReferee ?? false,
 		...overrides,
 	};
 }
@@ -177,18 +184,32 @@ export async function startChallengeDraft(
 	return room;
 }
 
-// ── Monopoly's auction choice ─────────────────────────────────────────
+// ── Monopoly's draft settings ─────────────────────────────────────────
 // The host decides at open whether a lot a player passes on goes to auction (master
-// plan Section 1). The choice lives on the draft row, which the provisioner adopts,
-// so it reaches the match without a second copy anywhere.
-export async function chooseMonopolyAuctions(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
+// plan Section 1) and whether Dero referees the match out loud (Session 5c). Both
+// live on the draft row, which the provisioner adopts, so each reaches the match
+// without a second copy anywhere. One handler for both, keyed by the card action
+// that carries it, so the two toggles cannot drift into different rules.
+const MONOPOLY_DRAFT_SETTINGS = {
+	auctions: "monopolyAuctions",
+	referee: "monopolyReferee",
+} as const satisfies Record<MonopolyDraftSettingAction, keyof IGameRoom>;
+
+export async function chooseMonopolyDraftSetting(
+	interaction: ButtonInteraction,
+	room: IGameRoom,
+	action: MonopolyDraftSettingAction,
+	choice: string
+): Promise<void> {
 	// The arg is user input like the rest of a customId: anything but the two values
 	// a card renders is a retired or forged control.
 	if (room.game !== "monopoly" || (choice !== "on" && choice !== "off")) {
-		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
+		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
 		return;
 	}
-	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { monopolyAuctions: choice === "on" })) ?? room;
+	const patch: Partial<IGameRoom> = {};
+	patch[MONOPOLY_DRAFT_SETTINGS[action]] = choice === "on";
+	const updated = (await gameRoomStore.update(room.guildId, room.roomId, patch)) ?? room;
 
 	await interaction.deferUpdate();
 	await refreshCard(interaction.guild!, updated, cardStateFor(updated, { visibility: updated.visibility, pool: updated.spectatorIds ?? [] }));
@@ -558,5 +579,5 @@ export const challengeBoard = {
 	handleOpponentSelect,
 	cancelDraft,
 	rematchFromRoom,
-	chooseMonopolyAuctions,
+	chooseMonopolyDraftSetting,
 };

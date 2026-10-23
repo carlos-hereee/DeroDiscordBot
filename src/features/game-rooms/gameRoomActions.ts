@@ -24,8 +24,8 @@ export const GAME_ROOM_MODAL_PREFIX = "gameroomModal";
 // customId shape: `gameroom:<action>:<tail>[:<arg>]`.
 //
 // `tail` is a roomId for every action except `new`, which carries a game slug because
-// no room exists yet at that point. `arg` is used by `vis`, `auctions`, `hmove`, `mbuy`,
-// `mjail`, `mtradeAccept`, `mtradeReject` and `mauction`.
+// no room exists yet at that point. `arg` is used by `vis`, `auctions`, `referee`, `hmove`,
+// `mbuy`, `mjail`, `mtradeAccept`, `mtradeReject` and `mauction`.
 //
 // ⚠️ EVERY ENTRY HERE HAS A BUTTON THAT EMITS IT AND A BRANCH THAT ANSWERS IT. Phase 3
 // deliberately declared only archive and forfeit for that reason, and Phase 4 adds the
@@ -51,6 +51,9 @@ export const GAME_ROOM_ACTIONS = {
 	// Monopoly drafts only: the host turns auctions on or off for the match, with the
 	// value to set in the arg. hostOnly for the same reason as `vis`: it is their draft.
 	auctions: { hostOnly: true, playersOnly: false },
+	// Monopoly drafts only: the host makes Dero the match's voice referee, or not, the
+	// same shape and the same gate as `auctions`.
+	referee: { hostOnly: true, playersOnly: false },
 
 	// ── in the room (Phase 3, plus the game controls Phase 4 adds) ──
 	// Delete the room's channel now rather than waiting out the archive window.

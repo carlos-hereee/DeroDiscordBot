@@ -189,6 +189,15 @@ export const gameRoomsCopy = {
 		// The toggle names the state it SWITCHES TO, so the press does what it says.
 		monopolyAuctionsToggleLabel: (enabled: boolean): string => (enabled ? "Turn auctions off" : "Turn auctions on"),
 
+		// ── Monopoly's voice referee (2026-10 item 241, Session 5c) ──
+		// Dero only speaks into a call somebody started, so the "on" line says how one
+		// starts; /dero join is gated to the members the server lets call Dero.
+		cardMonopolyReferee: (enabled: boolean): string =>
+			enabled
+				? "Voice referee is **on**: Dero calls the key moments out loud while it is in a voice call with a player. Someone allowed to call Dero starts one with `/dero join`."
+				: "Voice referee is **off**: the match plays in text only.",
+		monopolyRefereeToggleLabel: (enabled: boolean): string => (enabled ? "Turn referee off" : "Turn referee on"),
+
 		// ── the invite picker ──
 		pickerPlaceholder: "Choose who to invite",
 		pickerPrompt: [
@@ -578,6 +587,11 @@ export const gameRoomsCopy = {
 		// which is the engine's next line, rather than forfeited to the bank.
 		idleDebtDefault: (userId: string): string =>
 			`⏳ <@${userId}> left a debt unpaid for ${monopolyIdleHours()} hours, so Dero settles it the only way left.`,
+
+		// ── the voice referee (Session 5c) ──
+		// Spoken in place of a player whose display name cannot be found (they left the
+		// server), because Dero must never read a raw mention or snowflake aloud.
+		refereeUnknownPlayer: "a player",
 	},
 
 	// ── the move trail ──

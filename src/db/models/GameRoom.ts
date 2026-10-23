@@ -64,6 +64,10 @@ export interface IGameRoom {
 	// by the card's toggle and read once, when the provisioner seeds the match, which then
 	// carries it in its own settings; nothing reads this field after the match starts.
 	monopolyAuctions: boolean;
+	// Monopoly only: whether the host opened the match with Dero as its voice referee.
+	// Set on the DRAFT by the card's toggle like the auction choice, but unlike it,
+	// read on EVERY move (roomMonopolyReferee), because the match state never copies it.
+	monopolyReferee: boolean;
 	// Hangman's hidden word and hint stack. Null for duel and rps, which have no secret.
 	secret: RoomSecret | null;
 	moves: RoomMove[];
@@ -117,6 +121,8 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		rematchedFromRoomId: { type: String, default: null },
 		// Off by default, so a row written before the field existed reads as auctions off.
 		monopolyAuctions: { type: Boolean, default: false },
+		// Off by default for the same reason: an older row reads as no referee.
+		monopolyReferee: { type: Boolean, default: false },
 		// Mixed rather than a typed subdocument: only hangman populates it, its shape will grow
 		// as other games gain hidden state, and a strict subschema here would silently drop the
 		// next game's fields the way GuildConfig.schedulePaused was dropped before it was declared.

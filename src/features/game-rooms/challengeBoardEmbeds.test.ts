@@ -73,7 +73,35 @@ describe("the opener card's Monopoly auction toggle", () => {
 	it("shows neither before the visibility step, nor on another game's card, nor once the match has started", () => {
 		for (const state of [card({ visibility: null }), card({ game: "rps" }), card({ startedChannelId: "ch-1" })]) {
 			expect(buttonsOf(state).some((button) => button.id?.includes(":auctions:"))).toBe(false);
+			expect(buttonsOf(state).some((button) => button.id?.includes(":referee:"))).toBe(false);
 			expect(openerCardEmbed(state).data.description ?? "").not.toContain("Auctions are");
+			expect(openerCardEmbed(state).data.description ?? "").not.toContain("Voice referee is");
 		}
+	});
+
+	// ── the voice referee toggle (Session 5c) ──
+	it("lays the row out as Gather, Start, Auctions, Referee, Cancel: exactly Discord's five", () => {
+		const rows = openerCardRows("room-1", card());
+		expect(rows).toHaveLength(1);
+		expect(buttonsOf(card()).map((button) => button.id?.split(":")[1])).toEqual(["join", "start", "auctions", "referee", "cancel"]);
+		expect(rows[0].toJSON().components).toHaveLength(DISCORD_COMPONENTS_PER_ROW);
+	});
+
+	it("offers the referee toggle naming the value a press switches to", () => {
+		expect(buttonsOf(card())).toContainEqual({
+			id: `${GAME_ROOM_PREFIX}:referee:room-1:on`,
+			label: gameRoomsCopy.board.monopolyRefereeToggleLabel(false),
+		});
+		expect(buttonsOf(card({ monopolyReferee: true }))).toContainEqual({
+			id: `${GAME_ROOM_PREFIX}:referee:room-1:off`,
+			label: gameRoomsCopy.board.monopolyRefereeToggleLabel(true),
+		});
+	});
+
+	it("says on the card whether Dero referees, and how a call starts when it does", () => {
+		expect(openerCardEmbed(card()).data.description).toContain(gameRoomsCopy.board.cardMonopolyReferee(false));
+		const on = openerCardEmbed(card({ monopolyReferee: true })).data.description ?? "";
+		expect(on).toContain(gameRoomsCopy.board.cardMonopolyReferee(true));
+		expect(on).toContain("/dero join");
 	});
 });

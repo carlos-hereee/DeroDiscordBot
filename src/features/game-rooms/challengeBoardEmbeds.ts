@@ -102,9 +102,10 @@ export interface OpenerCardState {
 	hostId: string;
 	visibility: RoomVisibility | null;
 	pool: string[];
-	// Monopoly only: the host's auction choice, shown on the card and switched by its
-	// toggle. Ignored for every other game.
+	// Monopoly only: the host's auction and voice referee choices, each shown on the
+	// card and switched by its own toggle. Ignored for every other game.
 	monopolyAuctions?: boolean;
+	monopolyReferee?: boolean;
 	// Terminal states. When either is set the card stops offering controls.
 	cancelled?: boolean;
 	startedChannelId?: string | null;
@@ -131,10 +132,11 @@ export function openerCardEmbed(state: OpenerCardState): EmbedBuilder {
 		lines.push(gameRoomsCopy.board.cardOpenToAll(state.hostId));
 		lines.push("", gameRoomsCopy.board.cardPool(state.pool, POOL_NAMES_SHOWN));
 	}
-	// The auction choice is shown once the host is past the visibility step, the same
-	// step that offers its toggle, so the line and the button appear together.
+	// The Monopoly choices are shown once the host is past the visibility step, the
+	// same step that offers their toggles, so each line and its button appear together.
 	if (state.game === "monopoly" && state.visibility && !state.cancelled && !state.startedChannelId) {
 		lines.push("", gameRoomsCopy.board.cardMonopolyAuctions(state.monopolyAuctions ?? false));
+		lines.push(gameRoomsCopy.board.cardMonopolyReferee(state.monopolyReferee ?? false));
 	}
 
 	return infoEmbed(
@@ -202,17 +204,32 @@ export function openerCardRows(roomId: string, state: OpenerCardState): ActionRo
 		.setEmoji("⚔️")
 		.setStyle(ButtonStyle.Primary);
 
-	// Monopoly's auction choice sits beside Start because it has to be made before the
-	// match is seeded; the arg is the value the press SETS, so a stale card's button
-	// cannot flip the choice back the wrong way.
+	// Monopoly's choices sit beside Start because they have to be made before the match
+	// is seeded. That makes five buttons, Discord's cap for one row, so a sixth Monopoly
+	// setting needs a second row.
 	if (state.game === "monopoly") {
-		const enabled = state.monopolyAuctions ?? false;
-		const toggle = new ButtonBuilder()
-			.setCustomId(`${GAME_ROOM_PREFIX}:auctions:${roomId}:${enabled ? "off" : "on"}`)
-			.setLabel(gameRoomsCopy.board.monopolyAuctionsToggleLabel(enabled))
-			.setEmoji("🔨")
-			.setStyle(ButtonStyle.Secondary);
-		return [new ActionRowBuilder<ButtonBuilder>().addComponents(gather, start, toggle, cancel)];
+		const auctions = draftSettingToggle(roomId, "auctions", state.monopolyAuctions ?? false, gameRoomsCopy.board.monopolyAuctionsToggleLabel, "🔨");
+		const referee = draftSettingToggle(roomId, "referee", state.monopolyReferee ?? false, gameRoomsCopy.board.monopolyRefereeToggleLabel, "🎙️");
+		return [new ActionRowBuilder<ButtonBuilder>().addComponents(gather, start, auctions, referee, cancel)];
 	}
 	return [new ActionRowBuilder<ButtonBuilder>().addComponents(gather, start, cancel)];
+}
+
+/** The card actions that switch a Monopoly draft setting; challengeBoard maps each to its row field. */
+export type MonopolyDraftSettingAction = "auctions" | "referee";
+
+// One on or off draft setting. The arg is the value the press SETS, so a stale card's
+// button cannot flip the choice back the wrong way, and the label names that value.
+function draftSettingToggle(
+	roomId: string,
+	action: MonopolyDraftSettingAction,
+	enabled: boolean,
+	label: (enabled: boolean) => string,
+	emoji: string
+): ButtonBuilder {
+	return new ButtonBuilder()
+		.setCustomId(`${GAME_ROOM_PREFIX}:${action}:${roomId}:${enabled ? "off" : "on"}`)
+		.setLabel(label(enabled))
+		.setEmoji(emoji)
+		.setStyle(ButtonStyle.Secondary);
 }

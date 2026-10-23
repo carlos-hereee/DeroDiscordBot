@@ -17,8 +17,11 @@ vi.mock("@utils/secureRng.js", () => ({ secureRandom: vi.fn() }));
 // The board picture. Mocked so every redraw here is the text board unless a case
 // hands it a picture, whatever art is on disk where the suite runs.
 vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn() }));
+// The voice referee has its own suite; here only its call from the shared tail matters.
+vi.mock("./roomMonopolyReferee.js", () => ({ announceReferee: vi.fn() }));
 
 import { renderBoard } from "@features/games/monopolyRenderer.js";
+import { announceReferee } from "./roomMonopolyReferee.js";
 import { handleMroll, handleMbuy, handleMskip, handleMend, handleMjail, handleMinventory, handleMpaydebt, turnFingerprint } from "./roomMonopolyHandlers.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
@@ -143,6 +146,20 @@ describe("handleMroll", () => {
 		expect(readAt).toBeLessThan(writeAt);
 		expect(writeAt).toBeLessThan(editAt);
 		expect(editAt).toBeLessThan(trailAt);
+	});
+
+	it("hands the move's trail lines to the voice referee once the trail is posted", async () => {
+		const room = seed(freshMatch());
+		const refereeMock = announceReferee as unknown as ReturnType<typeof vi.fn>;
+
+		await handleMroll(makeInteraction(A), room);
+
+		expect(refereeMock).toHaveBeenCalledOnce();
+		const [input] = refereeMock.mock.calls[0] as [{ room: IGameRoom; state: MonopolyState; lines: string[] }];
+		expect(input.room).toBe(room);
+		expect(input.state).toEqual(persisted());
+		expect(input.lines).toEqual(trailTexts());
+		expect(refereeMock.mock.invocationCallOrder[0]).toBeGreaterThan(postMoveMock.mock.invocationCallOrder.at(-1)!);
 	});
 
 	it("persists only against the turn it read, so a double click cannot roll twice", async () => {

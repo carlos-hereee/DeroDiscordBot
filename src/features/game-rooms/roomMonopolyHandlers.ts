@@ -26,6 +26,7 @@ import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { auctionClosesAt, monopolyBoardEmbed, monopolyControlsRow, monopolyInventoryReply } from "./roomMonopoly.js";
+import { announceReferee } from "./roomMonopolyReferee.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { RoomMoveKind } from "./roomTypes.js";
 
@@ -128,9 +129,10 @@ export async function redrawMonopolyBoard(client: Client, room: IGameRoom, state
 
 /**
  * Everything after a move has been PERSISTED, whoever caused it: redraw, post each
- * trail line, then finish and pay if the match just ended. The button path and the
- * idle sweep both end here so a forfeit for inactivity reads like any other move;
- * the sweep puts its own "out for inactivity" line ahead of the engine's in `lines`.
+ * trail line, hand them to the voice referee, then finish and pay if the match just
+ * ended. The button path and the idle sweep both end here so a forfeit for
+ * inactivity reads like any other move; the sweep puts its own "out for inactivity"
+ * line ahead of the engine's in `lines`.
  */
 export async function applyMonopolyOutcome(
 	client: Client,
@@ -142,6 +144,9 @@ export async function applyMonopolyOutcome(
 	for (const text of trail.lines) {
 		await roomTrail.postMove(client, room, { actorId: trail.actorId, kind: trail.kind, text });
 	}
+	// Voice only, for a room whose host turned the referee on. Fire and forget, so a
+	// slow render never holds up the finish below or the next press.
+	announceReferee({ client, room, state, lines: trail.lines });
 	if (state.phase === "finished") await finishMonopolyMatch(client, room, state);
 }
 
