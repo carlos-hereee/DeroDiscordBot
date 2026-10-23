@@ -1,4 +1,5 @@
 import {
+	BOARD,
 	BUILDING_RESALE_DIVISOR,
 	COLOR_GROUPS,
 	MAX_HOUSES_PER_LOT,
@@ -14,8 +15,8 @@ import { activeSeatOf, cloneState, completeAction, guardActiveTurn, mentionPlaye
 // ── monopolyBuildings ───────────────────────────────────────────────────────
 // What:  what an owner does with lots between rolls: mortgage one for cash, lift
 //        a mortgage, and build houses and hotels on a complete color group.
-// Who:   the Phase 4 build and mortgage buttons, through the re-exports in
-//        monopolyState. unmortgageCost is also what the board embed shows, so the
+// Who:   the room's build picker and mortgage controls, through the re-exports in
+//        monopolyState; listBuildOptions is what the picker offers. unmortgageCost is also what the board embed shows, so the
 //        price on the button and the charge cannot disagree (rule 17). The
 //        building helpers below are shared with monopolyBankruptcy (selling back
 //        and mortgaging to cover a debt) and monopolyTrade (which lots may move).
@@ -139,6 +140,35 @@ export function applyBuild(state: MonopolyState, ownerId: string, tileId: TileId
 	property.hotel = true;
 	return completeAction(next, ownerId, [`${mentionPlayer(ownerId)} built a hotel on ${tile.name} for $${tile.houseCost}.`]);
 }
+
+/** One build the active seat could make right now: the lot, what goes on it next, and what it costs. */
+export interface BuildOption {
+	tileId: TileId;
+	name: string;
+	kind: BuildingKind;
+	cost: number;
+}
+
+/**
+ * Every lot `ownerId` could build on at this moment, in board order, with the
+ * building that would go up next (a hotel once a lot has four houses). Built on
+ * the same rule check applyBuild runs, so the room's Build picker can never offer
+ * a lot the build would then refuse (rule 17). Empty off turn and after the roll.
+ */
+export function listBuildOptions(state: MonopolyState, ownerId: string): BuildOption[] {
+	if (guardActiveTurn(state, ownerId) || state.phase !== "pre-roll") return [];
+	const options: BuildOption[] = [];
+	for (const tile of BOARD) {
+		if (tile.kind !== "property") continue;
+		const kind = nextBuildingKind(state.properties[tile.id]);
+		if (checkBuildRules(state, ownerId, tile, kind) !== null) continue;
+		options.push({ tileId: tile.id, name: tile.name, kind, cost: tile.houseCost });
+	}
+	return options;
+}
+
+/** The building a lot takes next: houses up to four, then the hotel. */
+export const nextBuildingKind = (property: PropertyState): BuildingKind => (property.houses >= MAX_HOUSES_PER_LOT ? "hotel" : "house");
 
 // Every build rule in the order a player would want to hear about it, or null
 // when the build is legal.

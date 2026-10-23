@@ -52,8 +52,9 @@ export function guardActiveTurn(state: MonopolyState, actorId?: string): string 
 	return null;
 }
 
-/** Records the trail lines on the state's log and wraps them as a successful result. */
+/** Bumps the state's revision, records the trail lines on its log, and wraps them as a successful result. */
 export function completeAction(state: MonopolyState, actorId: string, trailLines: string[]): MonopolyResult {
+	state.revision += 1;
 	state.log.push(...trailLines.map((text) => ({ userId: actorId, text })));
 	state.log = state.log.slice(-LOG_ENTRY_LIMIT);
 	return { ok: true, state, trailLines };

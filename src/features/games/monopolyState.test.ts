@@ -33,6 +33,8 @@ import {
 	calculateRent,
 	closeAuction,
 	createInitialState,
+	listBuildOptions,
+	nextBuildingKind,
 	openTrade,
 	placeBid,
 	unmortgageCost,
@@ -904,6 +906,63 @@ describe("applyBuild", () => {
 });
 
 // ── log ─────────────────────────────────────────────────────────────────────
+
+describe("listBuildOptions", () => {
+	const brownMatch = (): MonopolyState => {
+		const state = newMatch();
+		giveTiles(state, ALICE, ...COLOR_GROUPS.brown);
+		return state;
+	};
+
+	it("offers every lot of a whole, unmortgaged group, in board order, with a house at the board's cost", () => {
+		expect(listBuildOptions(brownMatch(), ALICE)).toEqual([
+			{ tileId: "vermillion-alley", name: "Vermillion Alley", kind: "house", cost: 50 },
+			{ tileId: "burnt-umber-row", name: "Burnt Umber Row", kind: "house", cost: 50 },
+		]);
+	});
+
+	it("offers exactly the builds applyBuild would accept, so the picker and the build agree", () => {
+		// One house on Vermillion Alley: even building now allows only Burnt Umber Row.
+		const one = expectOk(applyBuild(brownMatch(), ALICE, "vermillion-alley", "house")).state;
+		const options = listBuildOptions(one, ALICE);
+		expect(options.map((option) => option.tileId)).toEqual(["burnt-umber-row"]);
+		for (const option of options) expect(applyBuild(one, ALICE, option.tileId, option.kind).ok).toBe(true);
+	});
+
+	it("offers the hotel once a lot has four houses", () => {
+		const state = brownMatch();
+		for (const id of COLOR_GROUPS.brown) state.properties[id].houses = MAX_HOUSES_PER_LOT;
+		state.bank.houses = BANK_HOUSES - MAX_HOUSES_PER_LOT * COLOR_GROUPS.brown.length;
+		expect(listBuildOptions(state, ALICE).map((option) => option.kind)).toEqual(["hotel", "hotel"]);
+	});
+
+	it("offers nothing off turn, after the roll, or for a part of a group", () => {
+		expect(listBuildOptions(brownMatch(), BOB)).toEqual([]);
+		const rolled = brownMatch();
+		rolled.phase = "post-roll";
+		expect(listBuildOptions(rolled, ALICE)).toEqual([]);
+		const partial = newMatch();
+		giveTiles(partial, ALICE, "vermillion-alley");
+		expect(listBuildOptions(partial, ALICE)).toEqual([]);
+	});
+
+	it("names the next building a lot takes: houses up to four, then the hotel", () => {
+		expect(nextBuildingKind({ ownerId: ALICE, houses: 3, hotel: false, mortgaged: false })).toBe("house");
+		expect(nextBuildingKind({ ownerId: ALICE, houses: MAX_HOUSES_PER_LOT, hotel: false, mortgaged: false })).toBe("hotel");
+	});
+});
+
+describe("revision", () => {
+	it("starts at 0 and rises by one with every action that lands, and not with a refusal", () => {
+		const fresh = newMatch();
+		expect(fresh.revision).toBe(0);
+		const rolled = rollFrom(fresh, 0, 1, 2).state;
+		expect(rolled.revision).toBe(1);
+		expectRefusal(applyEndTurn(fresh), /./);
+		expect(fresh.revision).toBe(0);
+		expect(expectOk(applySkip(rolled, ALICE)).state.revision).toBe(2);
+	});
+});
 
 describe("trail log", () => {
 	it("records trail lines with their actor and keeps only the recent tail", () => {

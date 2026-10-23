@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TextChannel } from "discord.js";
+import { ChannelType, TextChannel } from "discord.js";
 import type { ButtonInteraction, StringSelectMenuInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
@@ -18,7 +18,8 @@ vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, des
 vi.mock("./soloRooms.js", () => ({ openSoloRoom: vi.fn(), describeSoloOpenFailure: () => "solo nope" }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 
-import { openInvitePicker, handleInviteSelect, joinChallenge, startMatch, rematchFromRoom } from "./challengeBoard.js";
+import { openInvitePicker, handleInviteSelect, joinChallenge, startMatch, rematchFromRoom, chooseMonopolyAuctions } from "./challengeBoard.js";
+import { RoomProvisioner } from "./RoomProvisioner.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { roomTrail } from "./roomTrail.js";
@@ -308,5 +309,49 @@ describe("starting the match", () => {
 
 		expect(interaction.reply).not.toHaveBeenCalled();
 		expect(interaction.deferReply).toHaveBeenCalledOnce();
+	});
+});
+
+// ── Monopoly's auction choice ─────────────────────────────────────────
+// The host turns auctions on or off on the draft card; the choice rides the draft
+// row, which the provisioner adopts, so it is read once when the match is seeded.
+describe("the Monopoly auction toggle", () => {
+	const members = makeMembers([{ id: HOST, bot: false, name: "Host" }]);
+	const openMock = RoomProvisioner.open as unknown as ReturnType<typeof vi.fn>;
+
+	it("stores the value the press names on the draft and acknowledges without a new message", async () => {
+		const interaction = makeButton(HOST, members);
+		await chooseMonopolyAuctions(interaction, makeRoom({ game: "monopoly", visibility: "public" }), "on");
+
+		expect(storeMock.update).toHaveBeenCalledWith("guild-1", "room-1", { monopolyAuctions: true });
+		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+		expect(interaction.reply).not.toHaveBeenCalled();
+	});
+
+	it("turns them back off", async () => {
+		await chooseMonopolyAuctions(makeButton(HOST, members), makeRoom({ game: "monopoly", monopolyAuctions: true }), "off");
+		expect(storeMock.update).toHaveBeenCalledWith("guild-1", "room-1", { monopolyAuctions: false });
+	});
+
+	it("refuses the toggle on another game's draft, or with a value no card renders, and writes nothing", async () => {
+		for (const [game, choice] of [["rps", "on"], ["monopoly", "maybe"]] as const) {
+			const interaction = makeButton(HOST, members);
+			await chooseMonopolyAuctions(interaction, makeRoom({ game }), choice);
+			expect(interaction.reply).toHaveBeenCalledOnce();
+		}
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("carries the host's choice from the draft into the match it opens", async () => {
+		configMock.findByGuildId.mockResolvedValue({ gamesCategoryId: "arcade-cat", adminRoleId: null });
+		openMock.mockResolvedValue({ ok: false, reason: "channel-failed" });
+		const interaction = makeButton(HOST, members);
+		Object.assign(interaction.guild as object, {
+			channels: { fetch: vi.fn(async () => ({ id: "arcade-cat", type: ChannelType.GuildCategory })) },
+		});
+
+		await startMatch(interaction, makeRoom({ game: "monopoly", spectatorIds: ["a"], monopolyAuctions: true }));
+
+		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ game: "monopoly", monopolyAuctions: true }));
 	});
 });

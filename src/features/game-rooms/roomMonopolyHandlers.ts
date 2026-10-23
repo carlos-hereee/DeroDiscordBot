@@ -1,7 +1,15 @@
-import { MessageFlags, TextChannel, type ButtonInteraction, type Client } from "discord.js";
+import {
+	MessageFlags,
+	TextChannel,
+	type ButtonInteraction,
+	type Client,
+	type ModalSubmitInteraction,
+	type StringSelectMenuInteraction,
+} from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { secureRandom } from "@utils/secureRng.js";
+import { ownableTileName } from "@features/games/monopolyBoard.js";
 import {
 	applyBuy,
 	applyEndTurn,
@@ -16,7 +24,7 @@ import { awardMultiPlayerResult } from "@features/games/gameXp.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { monopolyBoardEmbed, monopolyControlsRow, monopolyInventoryEmbed } from "./roomMonopoly.js";
+import { auctionClosesAt, monopolyBoardEmbed, monopolyControlsRow, monopolyInventoryEmbed } from "./roomMonopoly.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { RoomMoveKind } from "./roomTypes.js";
 
@@ -24,8 +32,10 @@ import type { RoomMoveKind } from "./roomTypes.js";
 // What:  every Monopoly button: roll, buy, skip, end turn, the three ways out of
 //        jail, and the private Inventory peek. Plus the shared tail (persist,
 //        redraw, trail, finish) the idle sweep in roomTurnSweep reuses.
-// Who:   routed from gameRoomHandlers after its playersOnly gate; the sweep calls
-//        applyMonopolyOutcome directly.
+// Who:   routed from gameRoomHandlers after its playersOnly gate; the idle sweep
+//        calls applyMonopolyOutcome directly, and the trade, auction and build
+//        modules (roomMonopolyTrade, roomMonopolyAuction, roomMonopolyBuild) commit
+//        their moves through commitMonopolyMove.
 // When:  once per press, for a match that can run for days.
 // Where: the match lives on the room row's `secret`, so a deploy between two
 //        presses costs nothing. The engine (features/games/monopolyState) decides
@@ -56,15 +66,19 @@ export function monopolyStateOf(room: IGameRoom | null): MonopolyState | null {
 // learned: `secret` is one Mixed field, so an unconditional write lets a double
 // click (or the idle sweep racing a press) land twice, the second replacing the
 // first wholesale after both had posted their trail lines. Here that is two rolls
-// in one turn. Every Phase 4 action moves at least one of these fields (a roll
-// moves the phase, the doubles streak or the jail flag; buy and skip the phase; end
-// turn the phase or the active seat; bail and card the jail flag; a forfeit the
-// active seat or the phase), so matching all of them is a version stamp over the
-// whole match without adding a field to the engine's state.
+// in one turn.
+//
+// `revision` is the stamp that matters: the engine bumps it on every action that
+// lands. The turn fields alone were enough while only the seat on the clock could
+// move, but a trade, a bid or an accept comes from ANY seat and leaves them all as
+// they were, so without the revision a roll computed from a read taken before an
+// accepted trade would write the pre-trade lots and chips back over it. The turn
+// fields stay as a second check that costs nothing.
 export function turnFingerprint(state: MonopolyState): Record<string, unknown> {
 	const index = state.activeSeatIndex;
 	const seat = state.seats[index];
 	return {
+		"secret.revision": state.revision,
 		"secret.phase": state.phase,
 		"secret.activeSeatIndex": index,
 		"secret.doublesStreak": state.doublesStreak,
@@ -152,62 +166,83 @@ async function finishMonopolyMatch(client: Client, room: IGameRoom, state: Monop
 	});
 }
 
-// Display names for the award, through one bulk fetch into the cache. A member who
-// left the server gets no name (undefined, never the snowflake) for the reason
-// gameXp's participants type explains.
-async function resolveParticipants(client: Client, guildId: string, userIds: string[]) {
+/**
+ * Display names for seats, through one bulk fetch into the cache: the XP award
+ * and the trade partner picker both read them. A member who left the server gets
+ * no name (undefined, never the snowflake) for the reason gameXp's participants
+ * type explains, and the caller supplies its own fallback.
+ */
+export async function resolveParticipants(client: Client, guildId: string, userIds: string[]) {
 	const guild = await client.guilds.fetch(guildId).catch(() => null);
 	await guild?.members.fetch({ user: userIds }).catch(() => null);
 	return userIds.map((userId) => ({ userId, username: guild?.members.cache.get(userId)?.displayName }));
 }
 
-// ── the button path ───────────────────────────────────────────────────
-type MonopolyAction = (state: MonopolyState, actorId: string) => MonopolyResult;
+// ── committing a move ─────────────────────────────────────────────────
+/** One player's move against the stored match: the engine action, already bound to its arguments. */
+export type MonopolyMove = (state: MonopolyState, actorId: string) => MonopolyResult;
 
+export type CommitOutcome = { ok: true; state: MonopolyState } | { ok: false; reason: string };
+
+/**
+ * Steps ② to ⑧ for any interaction that has ALREADY been acknowledged: re-read,
+ * guard, apply, persist by compare and swap, then redraw, trail and finish. The
+ * caller acknowledged in whatever way its interaction needs (a button defers an
+ * update, a modal defers an ephemeral reply) and reports a refusal the same way.
+ * `onTurnOnly` is for the actions that belong to the seat on the clock; a trade,
+ * a bid or an answer to a trade comes from any seat still in the match.
+ */
+export async function commitMonopolyMove(
+	client: Client,
+	room: IGameRoom,
+	actorId: string,
+	move: MonopolyMove,
+	options: { onTurnOnly: boolean }
+): Promise<CommitOutcome> {
+	// ② Re-read rather than trust the row the router loaded: it is a few hundred
+	// milliseconds older, and a stale read only loses the compare and swap below.
+	const fresh = (await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? room;
+	const state = monopolyStateOf(fresh);
+	if (!state) return { ok: false, reason: gameRoomsCopy.monopoly.noBoard };
+	if (state.phase === "finished") return { ok: false, reason: gameRoomsCopy.monopoly.matchOver };
+
+	// ③ The engine's roll, end turn and jail actions take no actor (they act for
+	// whoever is on the clock), so the clicker is checked here. playersOnly upstream
+	// only proved they are at the table, not that it is their turn.
+	if (options.onTurnOnly && state.seats[state.activeSeatIndex].userId !== actorId) {
+		return { ok: false, reason: gameRoomsCopy.monopoly.notYourTurn };
+	}
+
+	// ④ The engine's own refusal text is already written for the player.
+	const result = move(state, actorId);
+	if (!result.ok) return { ok: false, reason: result.reason };
+
+	// ⑤ Claim it BEFORE announcing it. The loser of a double click says nothing to
+	// the channel, rather than posting a trail line for a move that never landed.
+	const written = await persistIfUnchanged(fresh, state, result.state);
+	if (!written) return { ok: false, reason: gameRoomsCopy.monopoly.boardBusy };
+
+	// ⑥ ⑦ ⑧ Redraw, then the trail, then the ending. "guess" is the trail kind every
+	// player made move uses (hold em's narration too); "system" is for lines no
+	// player pressed for.
+	await applyMonopolyOutcome(client, fresh, result.state, { actorId, kind: "guess", lines: result.trailLines });
+	return { ok: true, state: result.state };
+}
+
+// ── the button path ───────────────────────────────────────────────────
 async function refuse(interaction: ButtonInteraction, reason: string): Promise<void> {
 	// followUp, not reply: every refusal below comes after the deferUpdate, and a
 	// deferred interaction has spent its one reply.
 	await interaction.followUp({ embeds: [errorEmbed(reason)], ...PRIVATE });
 }
 
-async function runMonopolyAction(interaction: ButtonInteraction, room: IGameRoom, action: MonopolyAction): Promise<void> {
-	// ① Acknowledge FIRST (risk M1). The read and the compare and swap below are two
-	// Mongo round trips, and Discord voids an interaction not acknowledged within
-	// three seconds, which on a slow Atlas moment would fail a move that landed.
+async function runMonopolyAction(interaction: ButtonInteraction, room: IGameRoom, move: MonopolyMove): Promise<void> {
+	// ① Acknowledge FIRST (risk M1). The read and the compare and swap are two Mongo
+	// round trips, and Discord voids an interaction not acknowledged within three
+	// seconds, which on a slow Atlas moment would fail a move that landed.
 	await interaction.deferUpdate();
-
-	// ② Re-read rather than trust the row the router loaded: it is a few hundred
-	// milliseconds older, and a stale read only loses the compare and swap below.
-	const fresh = (await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? room;
-	const state = monopolyStateOf(fresh);
-	if (!state) return refuse(interaction, gameRoomsCopy.monopoly.noBoard);
-	if (state.phase === "finished") return refuse(interaction, gameRoomsCopy.monopoly.matchOver);
-
-	// ③ The engine's roll, end turn and jail actions take no actor (they act for
-	// whoever is on the clock), so the clicker is checked here. playersOnly upstream
-	// only proved they are at the table, not that it is their turn.
-	const actorId = interaction.user.id;
-	if (state.seats[state.activeSeatIndex].userId !== actorId) {
-		return refuse(interaction, gameRoomsCopy.monopoly.notYourTurn);
-	}
-
-	// ④ The engine's own refusal text is already written for the player.
-	const result = action(state, actorId);
-	if (!result.ok) return refuse(interaction, result.reason);
-
-	// ⑤ Claim it BEFORE announcing it. The loser of a double click says nothing to
-	// the channel, rather than posting a trail line for a move that never landed.
-	const written = await persistIfUnchanged(fresh, state, result.state);
-	if (!written) return refuse(interaction, gameRoomsCopy.monopoly.boardBusy);
-
-	// ⑥ ⑦ ⑧ Redraw, then the trail, then the ending. "guess" is the trail kind every
-	// player made move uses (hold em's narration too); "system" is for lines no
-	// player pressed for.
-	await applyMonopolyOutcome(interaction.client, fresh, result.state, {
-		actorId,
-		kind: "guess",
-		lines: result.trailLines,
-	});
+	const outcome = await commitMonopolyMove(interaction.client, room, interaction.user.id, move, { onTurnOnly: true });
+	if (!outcome.ok) await refuse(interaction, outcome.reason);
 }
 
 /** Roll the dice. secureRandom, because the dice decide who pays whom. */
@@ -218,8 +253,56 @@ export const handleMroll = (interaction: ButtonInteraction, room: IGameRoom): Pr
 export const handleMbuy = (interaction: ButtonInteraction, room: IGameRoom, tileId: string): Promise<void> =>
 	runMonopolyAction(interaction, room, (state, actorId) => applyBuy(state, actorId, tileId));
 
+/**
+ * Pass on the lot. In a match with auctions on, the engine opens the auction
+ * itself, and the trail gets one more line saying the clock is running, since the
+ * engine keeps no timer and so says nothing about one.
+ */
 export const handleMskip = (interaction: ButtonInteraction, room: IGameRoom): Promise<void> =>
-	runMonopolyAction(interaction, room, (state, actorId) => applySkip(state, actorId));
+	runMonopolyAction(interaction, room, (state, actorId) => withAuctionNotice(applySkip(state, actorId)));
+
+function withAuctionNotice(result: MonopolyResult): MonopolyResult {
+	const auction = result.ok ? result.state.pendingAuction : null;
+	if (!result.ok || !auction) return result;
+	const notice = gameRoomsCopy.monopoly.auctionOpened(ownableTileName(auction.tileId), auctionClosesAt(auction));
+	return { ...result, trailLines: [...result.trailLines, notice] };
+}
+
+// ── shared by the select and modal paths ──────────────────────────────
+/**
+ * The room a Monopoly select or modal submit belongs to, loaded inside the
+ * clicker's guild and gated to its players, or null once the refusal has been
+ * replied. Re-gated here because a select's customId and a modal submit are both
+ * reachable without the button that led to them.
+ */
+export async function loadSeatedRoom(
+	interaction: StringSelectMenuInteraction | ModalSubmitInteraction,
+	roomId: string | undefined
+): Promise<IGameRoom | null> {
+	const guildId = interaction.guildId;
+	const room = guildId && roomId ? await gameRoomStore.findByRoomId(guildId, roomId) : null;
+	if (!room || room.status !== "playing") {
+		await interaction.reply({ content: gameRoomsCopy.monopoly.matchOver, ...PRIVATE });
+		return null;
+	}
+	if (!room.playerIds.includes(interaction.user.id)) {
+		await interaction.reply({ content: gameRoomsCopy.errors.notYours, ...PRIVATE });
+		return null;
+	}
+	return room;
+}
+
+// Digits only, at most nine of them: a chip count, a bid or a jail card count. A
+// cap rather than a parse of anything Number accepts, because "1e3", "0x10" and
+// " 12.0" are all numbers to JavaScript and none is what a player typed a count as.
+const WHOLE_COUNT = /^\d{1,9}$/;
+
+/** A typed count of chips or cards: blank reads as 0, anything but plain digits as null. */
+export function parseWholeCount(text: string): number | null {
+	const trimmed = text.trim();
+	if (trimmed === "") return 0;
+	return WHOLE_COUNT.test(trimmed) ? Number(trimmed) : null;
+}
 
 export const handleMend = (interaction: ButtonInteraction, room: IGameRoom): Promise<void> =>
 	runMonopolyAction(interaction, room, (state) => applyEndTurn(state));

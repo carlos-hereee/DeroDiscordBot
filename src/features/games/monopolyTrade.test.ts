@@ -4,8 +4,10 @@ import {
 	acceptTrade,
 	applyForfeit,
 	createInitialState,
+	describeTradeSide,
 	openTrade,
 	rejectTrade,
+	tradableLots,
 	type MonopolyResult,
 	type MonopolyState,
 	type TradeProposal,
@@ -240,5 +242,35 @@ describe("a party leaving the match", () => {
 		const { state: over } = expectOk(applyForfeit(open, ALICE, NOW));
 		expect(over.phase).toBe("finished");
 		expect(over.pendingTrade).toBeNull();
+	});
+});
+
+describe("tradableLots", () => {
+	it("lists the lots a seat owns that a trade could move, in board order", () => {
+		const { state } = aliceAndBob();
+		expect(tradableLots(state, BOB).map((tile) => tile.id)).toEqual(["vermillion-alley", "burnt-umber-row"]);
+		expect(tradableLots(state, ALICE).map((tile) => tile.id)).toEqual(["reader-dock"]);
+	});
+
+	it("leaves out a lot whose color group has buildings, the same rule openTrade checks", () => {
+		const { state } = aliceAndBob();
+		state.properties["burnt-umber-row"].mortgaged = false;
+		state.properties["vermillion-alley"].houses = 1;
+		expect(tradableLots(state, BOB)).toEqual([]);
+	});
+
+	it("lists nothing for a seat that is out of the match or not in it", () => {
+		const { state } = aliceAndBob();
+		state.seats[1].bankrupt = true;
+		expect(tradableLots(state, BOB)).toEqual([]);
+		expect(tradableLots(state, "stranger")).toEqual([]);
+	});
+});
+
+describe("describeTradeSide", () => {
+	it("names lots, chips and jail cards in one line, and says nothing for an empty side", () => {
+		expect(describeTradeSide({ properties: ["reader-dock"], chips: 100, gojf: 1 })).toBe("Reader Dock, $100 and 1 Get Out of Jail Free card");
+		expect(describeTradeSide({ properties: [], chips: 50, gojf: 0 })).toBe("$50");
+		expect(describeTradeSide(NOTHING)).toBe("nothing");
 	});
 });

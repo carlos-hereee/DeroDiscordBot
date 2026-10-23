@@ -1,5 +1,6 @@
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { STARTING_CHIPS } from "@features/games/monopolyBoard.js";
+import type { BuildingKind } from "@features/games/monopolyState.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 
 // ── game rooms user-facing copy ──────────────────────────────────────
@@ -16,6 +17,10 @@ import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 // reads, so the opener's promise and the forfeit line can never name a different
 // number from the clock that enforces it.
 const monopolyIdleHours = (): number => Math.round(BOT_CONSTANTS.GAME_ROOM_MONOPOLY_IDLE_MS / (60 * 60 * 1000));
+const monopolyAuctionSeconds = (): number => Math.round(BOT_CONSTANTS.MONOPOLY_AUCTION_ROUND_MS / 1000);
+// Discord's relative timestamp ("in 45 seconds"), which every reader sees in their
+// own clock and which ticks down on its own.
+const discordRelativeTime = (epochMs: number): string => `<t:${Math.floor(epochMs / 1000)}:R>`;
 
 // Human labels for the slugs. Kept here rather than derived from the slug because
 // "coinflip" is not a phrase anyone writes, and a room's cards are read by members
@@ -173,6 +178,16 @@ export const gameRoomsCopy = {
 		joinLabel: "Join",
 		startLabel: "Start the match",
 		cancelLabel: "Call it off",
+
+		// ── Monopoly's auction choice (2026-10 item 241) ──
+		// The card line says what the setting MEANS, since "auctions" alone does not
+		// tell a host what happens to a lot nobody buys.
+		cardMonopolyAuctions: (enabled: boolean): string =>
+			enabled
+				? `Auctions are **on**: a lot a player passes on goes to a ${monopolyAuctionSeconds()} second sealed bid.`
+				: "Auctions are **off**: a lot a player passes on stays with the bank.",
+		// The toggle names the state it SWITCHES TO, so the press does what it says.
+		monopolyAuctionsToggleLabel: (enabled: boolean): string => (enabled ? "Turn auctions off" : "Turn auctions on"),
 
 		// ── the invite picker ──
 		pickerPlaceholder: "Choose who to invite",
@@ -416,8 +431,11 @@ export const gameRoomsCopy = {
 		jailPrompt: "In Jail: pay bail, use a card, or roll for doubles.",
 		buyPrompt: (tileName: string, price: number): string => `Buy ${tileName} for $${price}, or skip it.`,
 		endTurnPrompt: "End your turn when you are ready.",
-		// The two phases no Phase 4 control reaches. Said plainly rather than left
-		// blank, so a board that ever shows it reads as waiting rather than broken.
+		auctionPrompt: (tileName: string, closesAt: number): string =>
+			`${tileName} is up for auction. Everyone still playing may place one sealed bid; it closes ${discordRelativeTime(closesAt)}.`,
+		// "in-trade", the one phase nothing enters (a trade never moves the phase).
+		// Said plainly rather than left blank, so a board that ever shows it reads as
+		// waiting rather than broken.
 		waitingPrompt: "Waiting on the table.",
 
 		// The seat list. Parentheses and middle dots rather than dashes (house rule 1).
@@ -437,6 +455,69 @@ export const gameRoomsCopy = {
 		useCardLabel: "Use card",
 		jailRollLabel: "Roll for doubles",
 		inventoryLabel: "Inventory",
+		buildLabel: "Build",
+		tradeLabel: "Trade",
+		// While an offer waits, the same button opens it for the two players in it.
+		tradeOpenLabel: "Trade offer open",
+		bidLabel: (tileName: string): string => `Bid on ${tileName}`,
+
+		// ── the auction (Session 5b) ──
+		// The trail line after the engine's "goes up for auction". Public, so it says
+		// nothing about any bid; bids stay sealed until the close names the winner.
+		auctionOpened: (tileName: string, closesAt: number): string =>
+			`🔨 Sealed bids on ${tileName} close ${discordRelativeTime(closesAt)}. Everyone still playing may bid once; a second bid replaces the first.`,
+		bidModalTitle: "Place a sealed bid",
+		// A modal label holds at most 45 characters; the longest lot name keeps this under 40.
+		bidAmountLabel: (tileName: string): string => `Your bid on ${tileName}, in chips`,
+		bidAmountPlaceholder: (chips: number): string => `Nobody sees it until the close. You have $${chips}.`,
+		bidPlaced: (amount: number, tileName: string, closesAt: number): string =>
+			`Your sealed bid of $${amount} on ${tileName} is in. It closes ${discordRelativeTime(closesAt)}, and a new bid replaces this one.`,
+		bidNotANumber: "A bid is a whole number of chips, like 120.",
+		noAuction: "There is no auction open right now.",
+		auctionOver: "That auction has already closed.",
+
+		// ── the build picker (Session 5b) ──
+		buildPickerPrompt: "Pick a lot to build on. Each pick builds one house, or the hotel once a lot has four houses.",
+		buildPickerPlaceholder: "Choose a lot",
+		buildOptionLabel: (tileName: string, kind: BuildingKind, cost: number): string => `${tileName}: a ${kind} for $${cost}`,
+		buildPickerAgain: "Built. Pick another lot, or dismiss this message.",
+		buildPickerDone: "Built. There is nothing else you can build right now.",
+		nothingToBuild:
+			"Nothing to build right now. Building needs a whole color group with no mortgages in it, chips for the next building, and your turn before you roll.",
+
+		// ── trades (Session 5b) ──
+		// Every trade surface below is EPHEMERAL to the two players in it. The public
+		// trail says only who offered whom (risk M6): the terms stay private until the
+		// trade is accepted, when the engine's trail lines say what moved.
+		tradePartnerPrompt: "Who do you want to trade with?",
+		tradePartnerPlaceholder: "Choose a player",
+		noTradePartners: "There is nobody left in the match to trade with.",
+		tradeModalTitle: "Make a trade offer",
+		giveLotsLabel: "Lots you give",
+		wantLotsLabel: "Lots you want",
+		lotsPlaceholder: "None",
+		giveChipsLabel: "Chips you give",
+		wantChipsLabel: "Chips you want",
+		chipsPlaceholder: "0",
+		jailCardsLabel: "Jail cards: you give, you want",
+		jailCardsPlaceholder: "0, 0",
+		tradeNotANumber: "Chips and jail cards are whole numbers, zero or more. Jail cards take two, like 1, 0.",
+		tradeSent: (partnerId: string): string =>
+			`Your offer is with <@${partnerId}>. They answer it from the Trade button on the board, and you can withdraw it from the same button.`,
+		tradeOfferTitle: "🤝 Trade offer",
+		tradeOfferToYou: (initiatorId: string): string => `<@${initiatorId}> offers you a trade.`,
+		tradeOfferFromYou: (counterpartyId: string): string => `Your offer to <@${counterpartyId}> is waiting for an answer.`,
+		tradeYouGet: (items: string): string => `**You get:** ${items}`,
+		tradeYouGive: (items: string): string => `**You give:** ${items}`,
+		tradeBetweenOthers: (initiatorId: string, counterpartyId: string): string =>
+			`A trade between <@${initiatorId}> and <@${counterpartyId}> is waiting for an answer. One trade can be open at a time.`,
+		acceptTradeLabel: "Accept",
+		declineTradeLabel: "Decline",
+		withdrawTradeLabel: "Withdraw",
+		tradeGone: "That offer has already been answered or withdrawn.",
+		tradeAccepted: "Trade accepted. The board shows what moved.",
+		tradeDeclined: "Trade declined.",
+		tradeWithdrawn: "Offer withdrawn.",
 
 		// ── the private peek ──
 		inventoryTitle: "🏠 Your holdings",

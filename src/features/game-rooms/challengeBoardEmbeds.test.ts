@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { boardStartRows, CHALLENGE_GAMES, isCooperativeGame } from "./challengeBoardEmbeds.js";
+import { boardStartRows, CHALLENGE_GAMES, isCooperativeGame, openerCardEmbed, openerCardRows, type OpenerCardState } from "./challengeBoardEmbeds.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
 // Discord's hard cap on components per action row. Six buttons in one row is what kept
 // this board dark: a send past the cap fails with 50035 and nothing posts, so the
@@ -30,5 +31,49 @@ describe("boardStartRows", () => {
 	it("reaches monopoly, which seats the whole pool rather than one chosen opponent", () => {
 		expect(customIds).toContain(`${GAME_ROOM_PREFIX}:new:monopoly`);
 		expect(isCooperativeGame("monopoly")).toBe(true);
+	});
+});
+
+// ── Monopoly's auction choice on the opener card ──
+describe("the opener card's Monopoly auction toggle", () => {
+	const card = (overrides: Partial<OpenerCardState> = {}): OpenerCardState => ({
+		game: "monopoly",
+		hostId: "host-1",
+		visibility: "public",
+		pool: [],
+		...overrides,
+	});
+	const buttonsOf = (state: OpenerCardState) =>
+		openerCardRows("room-1", state).flatMap((row) =>
+			row.toJSON().components.map((button) => ({
+				id: "custom_id" in button ? button.custom_id : undefined,
+				label: "label" in button ? button.label : undefined,
+			}))
+		);
+
+	it("offers the toggle beside Start, naming the value a press switches to", () => {
+		expect(buttonsOf(card())).toContainEqual({
+			id: `${GAME_ROOM_PREFIX}:auctions:room-1:on`,
+			label: gameRoomsCopy.board.monopolyAuctionsToggleLabel(false),
+		});
+		expect(buttonsOf(card({ monopolyAuctions: true }))).toContainEqual({
+			id: `${GAME_ROOM_PREFIX}:auctions:room-1:off`,
+			label: gameRoomsCopy.board.monopolyAuctionsToggleLabel(true),
+		});
+		for (const row of openerCardRows("room-1", card())) {
+			expect(row.toJSON().components.length).toBeLessThanOrEqual(DISCORD_COMPONENTS_PER_ROW);
+		}
+	});
+
+	it("says on the card what the current choice means", () => {
+		expect(openerCardEmbed(card()).data.description).toContain(gameRoomsCopy.board.cardMonopolyAuctions(false));
+		expect(openerCardEmbed(card({ monopolyAuctions: true })).data.description).toContain(gameRoomsCopy.board.cardMonopolyAuctions(true));
+	});
+
+	it("shows neither before the visibility step, nor on another game's card, nor once the match has started", () => {
+		for (const state of [card({ visibility: null }), card({ game: "rps" }), card({ startedChannelId: "ch-1" })]) {
+			expect(buttonsOf(state).some((button) => button.id?.includes(":auctions:"))).toBe(false);
+			expect(openerCardEmbed(state).data.description ?? "").not.toContain("Auctions are");
+		}
 	});
 });

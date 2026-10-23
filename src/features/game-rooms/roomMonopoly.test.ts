@@ -5,6 +5,7 @@ import { AttachmentBuilder } from "discord.js";
 // whatever art happens to be on disk where the suite runs.
 vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn() }));
 
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
 import { renderBoard } from "@features/games/monopolyRenderer.js";
 import { monopolyBoardEmbed, monopolyControlsRow, monopolyInventoryEmbed } from "./roomMonopoly.js";
@@ -37,8 +38,6 @@ beforeEach(() => {
 
 const rowsJson = (state: MonopolyState, viewerId: string) =>
 	monopolyControlsRow(state, viewerId, ROOM).map((row) => row.toJSON().components as Array<{ custom_id?: string; label?: string; disabled?: boolean }>);
-
-const customIdsOf = (state: MonopolyState, viewerId: string) => rowsJson(state, viewerId).flat().map((button) => button.custom_id);
 
 describe("monopolyBoardEmbed", () => {
 	it("renders a fresh match: whose turn, the prompt, every seat and the token map", async () => {
@@ -84,6 +83,15 @@ describe("monopolyBoardEmbed", () => {
 		expect(await descriptionOf(state)).toContain(gameRoomsCopy.monopoly.finishedLine(B));
 	});
 
+	it("names the lot up for auction and when its round closes", async () => {
+		const state = freshMatch();
+		state.phase = "in-auction";
+		state.pendingAuction = { tileId: "burnt-umber-row", bids: {}, roundOpenedAt: 1_000_000, skippedBy: A };
+		expect(await descriptionOf(state)).toContain(
+			gameRoomsCopy.monopoly.auctionPrompt("Burnt Umber Row", 1_000_000 + BOT_CONSTANTS.MONOPOLY_AUCTION_ROUND_MS)
+		);
+	});
+
 	it("returns no attachment and keeps the token map when there is no board picture", async () => {
 		const board = await monopolyBoardEmbed(freshMatch());
 		expect(board.attachment).toBeNull();
@@ -112,12 +120,23 @@ describe("monopolyBoardEmbed", () => {
 });
 
 describe("monopolyControlsRow", () => {
-	it("offers the active seat Roll and Inventory before the roll", () => {
-		expect(customIdsOf(freshMatch(), A)).toEqual([`gameroom:mroll:${ROOM}`, `gameroom:minventory:${ROOM}`]);
+	const idsByRow = (state: MonopolyState, viewerId: string) => rowsJson(state, viewerId).map((row) => row.map((button) => button.custom_id));
+	const ANY_TIME = [`gameroom:mtrade:${ROOM}`, `gameroom:minventory:${ROOM}`];
+
+	// A owns the whole brown group, unimproved, so a house is legal on either lot.
+	const brownOwner = (): MonopolyState => {
+		const state = freshMatch();
+		state.properties["vermillion-alley"].ownerId = A;
+		state.properties["burnt-umber-row"].ownerId = A;
+		return state;
+	};
+
+	it("offers the active seat Roll, then Trade and Inventory, before the roll", () => {
+		expect(idsByRow(freshMatch(), A)).toEqual([[`gameroom:mroll:${ROOM}`], ANY_TIME]);
 	});
 
-	it("offers a viewer who is not on the clock Inventory only", () => {
-		expect(customIdsOf(freshMatch(), B)).toEqual([`gameroom:minventory:${ROOM}`]);
+	it("offers a viewer who is not on the clock Trade and Inventory only", () => {
+		expect(idsByRow(freshMatch(), B)).toEqual([ANY_TIME]);
 	});
 
 	it("offers a jailed seat the three ways out, greying the card it does not hold", () => {
@@ -125,15 +144,11 @@ describe("monopolyControlsRow", () => {
 		state.seats[0].inJail = true;
 		state.seats[0].jailTurnsRemaining = 3;
 
-		const [row] = rowsJson(state, A);
-		expect(row.map((button) => button.custom_id)).toEqual([
-			`gameroom:mjail:${ROOM}:bail`,
-			`gameroom:mjail:${ROOM}:card`,
-			`gameroom:mjail:${ROOM}:roll`,
-			`gameroom:minventory:${ROOM}`,
-		]);
+		const [row, anyTime] = rowsJson(state, A);
+		expect(row.map((button) => button.custom_id)).toEqual([`gameroom:mjail:${ROOM}:bail`, `gameroom:mjail:${ROOM}:card`, `gameroom:mjail:${ROOM}:roll`]);
 		expect(row[0]).toMatchObject({ label: gameRoomsCopy.monopoly.bailLabel(50), disabled: false });
 		expect(row[1]).toMatchObject({ label: gameRoomsCopy.monopoly.useCardLabel, disabled: true });
+		expect(anyTime.map((button) => button.custom_id)).toEqual(ANY_TIME);
 	});
 
 	it("offers Buy with the lot and price on it, and Skip, on a lot for sale", () => {
@@ -142,11 +157,7 @@ describe("monopolyControlsRow", () => {
 		state.seats[0].position = 3;
 
 		const [row] = rowsJson(state, A);
-		expect(row.map((button) => button.custom_id)).toEqual([
-			`gameroom:mbuy:${ROOM}:burnt-umber-row`,
-			`gameroom:mskip:${ROOM}`,
-			`gameroom:minventory:${ROOM}`,
-		]);
+		expect(row.map((button) => button.custom_id)).toEqual([`gameroom:mbuy:${ROOM}:burnt-umber-row`, `gameroom:mskip:${ROOM}`]);
 		expect(row[0]).toMatchObject({ label: "Buy Burnt Umber Row for $60", disabled: false });
 	});
 
@@ -161,7 +172,7 @@ describe("monopolyControlsRow", () => {
 	it("offers End turn after the roll", () => {
 		const state = freshMatch();
 		state.phase = "post-roll";
-		expect(customIdsOf(state, A)).toEqual([`gameroom:mend:${ROOM}`, `gameroom:minventory:${ROOM}`]);
+		expect(idsByRow(state, A)).toEqual([[`gameroom:mend:${ROOM}`], ANY_TIME]);
 	});
 
 	it("offers nothing once the match is finished", () => {
@@ -170,25 +181,66 @@ describe("monopolyControlsRow", () => {
 		expect(monopolyControlsRow(state, A, ROOM)).toEqual([]);
 	});
 
-	it("falls back to Inventory alone in a phase Phase 4 has no control for", () => {
-		const state = freshMatch();
-		state.phase = "in-auction";
-		expect(customIdsOf(state, A)).toEqual([`gameroom:minventory:${ROOM}`]);
+	it("offers Build to the seat on the clock before its roll when a build would go through, and nowhere else", () => {
+		const state = brownOwner();
+		expect(idsByRow(state, A)[1]).toEqual([`gameroom:mbuild:${ROOM}`, ...ANY_TIME]);
+		// Off turn, and after the roll, the engine would refuse, so the button is absent.
+		expect(idsByRow(state, B)).toEqual([ANY_TIME]);
+		state.phase = "post-roll";
+		expect(idsByRow(state, A)[1]).toEqual(ANY_TIME);
 	});
 
-	it("never renders build, trade, mortgage or auction controls, and stays inside Discord's caps", () => {
+	it("leaves Build off when the seat owns only part of a color group", () => {
+		const state = freshMatch();
+		state.properties["vermillion-alley"].ownerId = A;
+		expect(idsByRow(state, A)[1]).toEqual(ANY_TIME);
+	});
+
+	it("labels Trade as an open offer while one waits", () => {
+		const state = freshMatch();
+		state.pendingTrade = {
+			initiatorId: A,
+			counterpartyId: B,
+			offer: { properties: [], chips: 10, gojf: 0 },
+			request: { properties: [], chips: 0, gojf: 0 },
+			openedAt: 5,
+		};
+		const anyTime = rowsJson(state, B)[0];
+		expect(anyTime[0]).toMatchObject({ custom_id: `gameroom:mtrade:${ROOM}`, label: gameRoomsCopy.monopoly.tradeOpenLabel });
+	});
+
+	it("offers EVERY seat the bid button during an auction, with the round it belongs to", () => {
+		const state = freshMatch();
+		state.phase = "in-auction";
+		state.pendingAuction = { tileId: "burnt-umber-row", bids: {}, roundOpenedAt: 1_234, skippedBy: A };
+
+		for (const viewer of [A, B]) {
+			const [turn] = rowsJson(state, viewer);
+			expect(turn).toEqual([expect.objectContaining({ custom_id: `gameroom:mauction:${ROOM}:1234`, label: gameRoomsCopy.monopoly.bidLabel("Burnt Umber Row") })]);
+		}
+	});
+
+	it("offers no turn control in an auction phase with no auction recorded", () => {
+		const state = freshMatch();
+		state.phase = "in-auction";
+		expect(idsByRow(state, A)).toEqual([ANY_TIME]);
+	});
+
+	it("stays inside Discord's caps and emits only Monopoly actions, in every phase", () => {
 		const phases: MonopolyState["phase"][] = ["pre-roll", "awaiting-buy-or-skip", "post-roll", "in-auction", "in-trade"];
 		for (const phase of phases) {
 			for (const inJail of [false, true]) {
-				const state = freshMatch();
+				// The widest board there is: Build on offer AND in jail AND an auction recorded.
+				const state = brownOwner();
 				state.phase = phase;
 				state.seats[0].inJail = inJail;
 				state.seats[0].position = 3;
+				state.pendingAuction = phase === "in-auction" ? { tileId: "reader-dock", bids: {}, roundOpenedAt: 1, skippedBy: A } : null;
 				const rows = rowsJson(state, A);
 				expect(rows.length).toBeLessThanOrEqual(MAX_ROWS);
 				for (const row of rows) expect(row.length).toBeLessThanOrEqual(DISCORD_COMPONENTS_PER_ROW);
 				for (const id of rows.flat().map((button) => button.custom_id ?? "")) {
-					expect(id).toMatch(/^gameroom:(mroll|mbuy|mskip|mend|mjail|minventory):/);
+					expect(id).toMatch(/^gameroom:(mroll|mbuy|mskip|mend|mjail|minventory|mbuild|mtrade|mauction):/);
 				}
 			}
 		}

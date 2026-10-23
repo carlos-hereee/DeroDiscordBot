@@ -155,6 +155,14 @@ export const BOT_CONSTANTS = {
 	// sleep. Checked on the same 5 minute room sweep, so the real forfeit lands
 	// within five minutes after this.
 	GAME_ROOM_MONOPOLY_IDLE_MS: 24 * 60 * 60 * 1000, // 24 hours
+	// How long a Monopoly auction takes sealed bids, from the pass that opened it
+	// (master plan Section 1). Long enough for every seat to see the board and type
+	// a number; short enough that the seller's turn is not held for long.
+	MONOPOLY_AUCTION_ROUND_MS: 60_000,
+	// How often expired auctions are closed. Its own interval for the same reason as
+	// the hold em clock below: on the 5 minute room sweep a 60 second round would
+	// close anywhere inside five minutes. At 10 seconds a round runs 60 to 70.
+	MONOPOLY_AUCTION_TICK_MS: 10_000,
 
 	// ── hold em ──────────────────────────────────────────────────
 	// ⚠️ CHIPS ARE PER TOURNAMENT AND DIE WITH THE TABLE (A9, R22). There is no

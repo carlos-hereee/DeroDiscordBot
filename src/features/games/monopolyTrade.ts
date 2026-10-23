@@ -1,4 +1,4 @@
-import { findOwnableTile, ownableTileName, type TileId } from "./monopolyBoard.js";
+import { OWNABLE_TILES, findOwnableTile, ownableTileName, type OwnableTile, type TileId } from "./monopolyBoard.js";
 import { groupHasBuildings } from "./monopolyBuildings.js";
 import type { MonopolyResult, MonopolySeat, MonopolyState, TradeProposal } from "./monopolyState.js";
 import { cloneState, completeAction, countNoun, mentionPlayer, rejectAction } from "./monopolySeats.js";
@@ -140,6 +140,17 @@ function validateLot(state: MonopolyState, giver: MonopolySeat, tileId: TileId):
 
 const isWholeCount = (value: number): boolean => Number.isInteger(value) && value >= 0;
 
+/**
+ * Every lot `userId` owns that a trade could move right now, in board order. The
+ * room's trade modal lists exactly these, using the same lot rule the trade
+ * itself checks, so the modal never offers a lot the engine would refuse.
+ */
+export function tradableLots(state: MonopolyState, userId: string): OwnableTile[] {
+	const seat = state.seats.find((candidate) => candidate.userId === userId && !candidate.bankrupt);
+	if (!seat) return [];
+	return OWNABLE_TILES.filter((tile) => validateLot(state, seat, tile.id) === null);
+}
+
 // ── moving ──────────────────────────────────────────────────────────────────
 
 // Jail cards move as a count: which physical card a seat holds is derived from
@@ -152,8 +163,12 @@ function moveTradeSide(state: MonopolyState, giver: MonopolySeat, receiver: Mono
 	receiver.gojfCards += side.gojf;
 }
 
-// "Reader Dock, $100 and 1 Get Out of Jail Free card", or "nothing".
-function describeTradeSide(side: TradeSide): string {
+/**
+ * One side of a trade in words: "Reader Dock, $100 and 1 Get Out of Jail Free
+ * card", or "nothing". Shared by the accepted trade's trail lines and the room's
+ * private review of an open offer, so the two can never describe it differently.
+ */
+export function describeTradeSide(side: TradeSide): string {
 	const items = side.properties.map(ownableTileName);
 	if (side.chips > 0) items.push(`$${side.chips}`);
 	if (side.gojf > 0) items.push(countNoun(side.gojf, "Get Out of Jail Free card"));

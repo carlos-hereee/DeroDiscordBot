@@ -1,8 +1,9 @@
 import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type ColorResolvable } from "discord.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { BOARD, BOARD_SIZE, JAIL_BAIL, describeTile, isOwnableTile, ownableTileName } from "@features/games/monopolyBoard.js";
-import type { MonopolySeat, MonopolyState } from "@features/games/monopolyState.js";
+import { listBuildOptions, type AuctionState, type MonopolySeat, type MonopolyState } from "@features/games/monopolyState.js";
 import { renderBoard } from "@features/games/monopolyRenderer.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -17,10 +18,10 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 // Where: pure rendering over the engine's MonopolyState. Nothing here reads the
 //        row or calls the engine's actions; it does not decide what is legal, it
 //        only declines to offer what plainly is not (the engine still refuses).
-// How:   ONE row, because the active seat never has more than four things it can
-//        do in Phase 4 (the jail row is the widest), well inside Discord's five per
-//        row. Build, trade, mortgage and auction controls are Phase 5 and are
-//        deliberately absent, rather than rendered disabled. The board is a
+// How:   at most TWO rows: the turn row (whose widest form is jail's three) and the
+//        any time row (Build, Trade, Inventory), well inside Discord's five per row
+//        and the plan's four rows (risk M10). Mortgage controls are not on the
+//        board; they are Session 5b's inventory work. The board is a
 //        picture from monopolyRenderer when its art is on disk and the monospaced
 //        token map when it is not; everything else in the embed is the same text.
 
@@ -89,10 +90,21 @@ function turnPrompt(state: MonopolyState, active: MonopolySeat): string {
 		}
 		case "post-roll":
 			return gameRoomsCopy.monopoly.endTurnPrompt;
+		case "in-auction":
+			return state.pendingAuction
+				? gameRoomsCopy.monopoly.auctionPrompt(ownableTileName(state.pendingAuction.tileId), auctionClosesAt(state.pendingAuction))
+				: gameRoomsCopy.monopoly.waitingPrompt;
 		default:
 			return gameRoomsCopy.monopoly.waitingPrompt;
 	}
 }
+
+/**
+ * When an auction round stops taking bids, in epoch milliseconds. One helper for
+ * the board prompt, the opening notice, the bid modal and the closing sweep, so no
+ * two of them can disagree about when a round ends (rule 17).
+ */
+export const auctionClosesAt = (auction: AuctionState): number => auction.roundOpenedAt + BOT_CONSTANTS.MONOPOLY_AUCTION_ROUND_MS;
 
 // A monospaced map of the 40 tiles, one board side per line. Seat numbers rather
 // than emoji tokens, because an emoji renders wider than a monospaced cell in a
@@ -172,31 +184,59 @@ export function monopolyInventoryEmbed(state: MonopolyState, viewerId: string): 
 
 // ── controls ──────────────────────────────────────────────────────────
 /**
- * The board message's buttons for `viewerId`. The board is ONE shared message, so
- * the room renders it for the seat on the clock; a viewer who is not that seat
- * gets Inventory only, and a finished match gets no row at all. Every button is
- * still re-checked in its handler, because a rendered button is a hint.
+ * The board message's buttons for `viewerId`, in at most two rows: the turn row
+ * (what the seat on the clock does next, or the bid button every seat shares
+ * during an auction), then the any time row (Build for the seat on the clock when
+ * it can build, Trade and Inventory for everyone). The board is ONE shared
+ * message, so the room renders it for the seat on the clock. A finished match
+ * gets no rows at all. Every button is still re-checked in its handler, because a
+ * rendered button is a hint.
  */
 export function monopolyControlsRow(state: MonopolyState, viewerId: string, roomId: string): ActionRowBuilder<ButtonBuilder>[] {
 	if (state.phase === "finished") return [];
 
-	const inventory = button(roomId, "minventory", gameRoomsCopy.monopoly.inventoryLabel, ButtonStyle.Secondary, "🎒");
 	const active = state.seats[state.activeSeatIndex];
-	if (active.userId !== viewerId) return [row(inventory)];
+	const turn = turnButtons(state, active, viewerId, roomId);
+	const anyTime = anyTimeButtons(state, active, viewerId, roomId);
+	return turn.length > 0 ? [row(...turn), row(...anyTime)] : [row(...anyTime)];
+}
+
+function turnButtons(state: MonopolyState, active: MonopolySeat, viewerId: string, roomId: string): ButtonBuilder[] {
+	// The one turn control that is not the active seat's: every seat still playing
+	// bids. The round's opening time rides the arg so a bid button from an earlier
+	// auction cannot open the modal for a later one.
+	if (state.phase === "in-auction" && state.pendingAuction) {
+		const { tileId, roundOpenedAt } = state.pendingAuction;
+		return [button(roomId, "mauction", gameRoomsCopy.monopoly.bidLabel(ownableTileName(tileId)), ButtonStyle.Primary, "🔨", String(roundOpenedAt))];
+	}
+	if (active.userId !== viewerId) return [];
 
 	switch (state.phase) {
 		case "pre-roll":
-			return active.inJail ? [row(...jailButtons(active, roomId), inventory)] : [row(rollButton(roomId), inventory)];
+			return active.inJail ? jailButtons(active, roomId) : [rollButton(roomId)];
 		case "awaiting-buy-or-skip":
-			return [row(...buyOrSkipButtons(active, roomId), inventory)];
+			return buyOrSkipButtons(active, roomId);
 		case "post-roll":
-			return [row(button(roomId, "mend", gameRoomsCopy.monopoly.endTurnLabel, ButtonStyle.Primary, "✅"), inventory)];
+			return [button(roomId, "mend", gameRoomsCopy.monopoly.endTurnLabel, ButtonStyle.Primary, "✅")];
 		default:
-			// "in-auction" and "in-trade" have no Phase 4 control. Neither is
-			// reachable yet (every Phase 4 match opens with auctions off and nothing
-			// opens a trade), so Inventory alone is the honest row if one ever is.
-			return [row(inventory)];
+			// "in-trade" is never entered (a trade does not move the phase), so no
+			// turn control is the honest row if it ever were.
+			return [];
 	}
+}
+
+// Build is offered only when the build would go through for at least one lot, from
+// the same rule check the build runs (listBuildOptions), so the button and the
+// action cannot disagree. Trade and Inventory are for any seat at any time.
+function anyTimeButtons(state: MonopolyState, active: MonopolySeat, viewerId: string, roomId: string): ButtonBuilder[] {
+	const buttons: ButtonBuilder[] = [];
+	if (active.userId === viewerId && listBuildOptions(state, viewerId).length > 0) {
+		buttons.push(button(roomId, "mbuild", gameRoomsCopy.monopoly.buildLabel, ButtonStyle.Success, "🏗️"));
+	}
+	const tradeLabel = state.pendingTrade ? gameRoomsCopy.monopoly.tradeOpenLabel : gameRoomsCopy.monopoly.tradeLabel;
+	buttons.push(button(roomId, "mtrade", tradeLabel, ButtonStyle.Secondary, "🤝"));
+	buttons.push(button(roomId, "minventory", gameRoomsCopy.monopoly.inventoryLabel, ButtonStyle.Secondary, "🎒"));
+	return buttons;
 }
 
 const rollButton = (roomId: string): ButtonBuilder =>

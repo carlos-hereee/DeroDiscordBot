@@ -17,13 +17,15 @@ export const GAME_ROOM_PREFIX = "gameroom";
 export const GAME_ROOM_SELECT_PREFIX = "gameroomSelect";
 
 // The modal prefix, registered separately again because the registry keys each
-// component type in its own map. Used by hangman's authoring and guess modals.
+// component type in its own map. Used by hangman's authoring and guess modals and by
+// Monopoly's trade and sealed bid modals.
 export const GAME_ROOM_MODAL_PREFIX = "gameroomModal";
 
 // customId shape: `gameroom:<action>:<tail>[:<arg>]`.
 //
 // `tail` is a roomId for every action except `new`, which carries a game slug because
-// no room exists yet at that point. `arg` is used by `vis`, `hmove`, `mbuy` and `mjail`.
+// no room exists yet at that point. `arg` is used by `vis`, `auctions`, `hmove`, `mbuy`,
+// `mjail`, `mtradeAccept`, `mtradeReject` and `mauction`.
 //
 // ⚠️ EVERY ENTRY HERE HAS A BUTTON THAT EMITS IT AND A BRANCH THAT ANSWERS IT. Phase 3
 // deliberately declared only archive and forfeit for that reason, and Phase 4 adds the
@@ -46,6 +48,9 @@ export const GAME_ROOM_ACTIONS = {
 	start: { hostOnly: true, playersOnly: false },
 	// Host abandons the draft before it becomes a room.
 	cancel: { hostOnly: true, playersOnly: false },
+	// Monopoly drafts only: the host turns auctions on or off for the match, with the
+	// value to set in the arg. hostOnly for the same reason as `vis`: it is their draft.
+	auctions: { hostOnly: true, playersOnly: false },
 
 	// ── in the room (Phase 3, plus the game controls Phase 4 adds) ──
 	// Delete the room's channel now rather than waiting out the archive window.
@@ -102,8 +107,24 @@ export const GAME_ROOM_ACTIONS = {
 	mend: { hostOnly: false, playersOnly: true },
 	// Get out of jail: pay bail, use a card, or roll for doubles, with the choice in the arg.
 	mjail: { hostOnly: false, playersOnly: true },
-	// The private peek at your own seat: chips, lots and jail cards, ephemeral.
+	// The private peek at your own seat: chips, lots and jail cards, ephemeral. The
+	// plan's Session 5b `mcards` peek is this one; a second action would be a
+	// duplicate of it (rule 19).
 	minventory: { hostOnly: false, playersOnly: true },
+	// Open the private build picker. Building is the seat on the clock's, before its
+	// roll; the picker and the build both check that.
+	mbuild: { hostOnly: false, playersOnly: true },
+	// Start a trade, or review the open one. Any seat still in the match may trade at
+	// any time (the standard rule), so the handler does NOT require the turn.
+	mtrade: { hostOnly: false, playersOnly: true },
+	// Answer the open trade: accept is the counterparty's, reject is either party's
+	// (declining, or withdrawing an offer). The arg is the trade's openedAt, so an
+	// answer button from an older offer cannot settle a newer one.
+	mtradeAccept: { hostOnly: false, playersOnly: true },
+	mtradeReject: { hostOnly: false, playersOnly: true },
+	// Open the sealed bid modal while a lot is up for auction. Every seat still in
+	// the match may bid, so the turn is not required either.
+	mauction: { hostOnly: false, playersOnly: true },
 } as const satisfies Record<string, { hostOnly: boolean; playersOnly: boolean }>;
 
 export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;
@@ -112,7 +133,7 @@ export interface ParsedGameRoomCustomId {
 	action: GameRoomAction;
 	// The roomId for every action but `new`, where it is the game slug instead.
 	tail: string;
-	// Present on `vis`, `hmove`, `mbuy` and `mjail`. Undefined elsewhere.
+	// Present on the actions the customId comment above lists. Undefined elsewhere.
 	arg?: string;
 }
 

@@ -102,6 +102,9 @@ export interface OpenerCardState {
 	hostId: string;
 	visibility: RoomVisibility | null;
 	pool: string[];
+	// Monopoly only: the host's auction choice, shown on the card and switched by its
+	// toggle. Ignored for every other game.
+	monopolyAuctions?: boolean;
 	// Terminal states. When either is set the card stops offering controls.
 	cancelled?: boolean;
 	startedChannelId?: string | null;
@@ -127,6 +130,11 @@ export function openerCardEmbed(state: OpenerCardState): EmbedBuilder {
 	} else {
 		lines.push(gameRoomsCopy.board.cardOpenToAll(state.hostId));
 		lines.push("", gameRoomsCopy.board.cardPool(state.pool, POOL_NAMES_SHOWN));
+	}
+	// The auction choice is shown once the host is past the visibility step, the same
+	// step that offers its toggle, so the line and the button appear together.
+	if (state.game === "monopoly" && state.visibility && !state.cancelled && !state.startedChannelId) {
+		lines.push("", gameRoomsCopy.board.cardMonopolyAuctions(state.monopolyAuctions ?? false));
 	}
 
 	return infoEmbed(
@@ -188,15 +196,23 @@ export function openerCardRows(roomId: string, state: OpenerCardState): ActionRo
 					// Disabling at the cap beats letting a press fail.
 					.setDisabled(state.pool.length >= BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS);
 
-	return [
-		new ActionRowBuilder<ButtonBuilder>().addComponents(
-			gather,
-			new ButtonBuilder()
-				.setCustomId(`${GAME_ROOM_PREFIX}:start:${roomId}`)
-				.setLabel(gameRoomsCopy.board.startLabel)
-				.setEmoji("⚔️")
-				.setStyle(ButtonStyle.Primary),
-			cancel
-		),
-	];
+	const start = new ButtonBuilder()
+		.setCustomId(`${GAME_ROOM_PREFIX}:start:${roomId}`)
+		.setLabel(gameRoomsCopy.board.startLabel)
+		.setEmoji("⚔️")
+		.setStyle(ButtonStyle.Primary);
+
+	// Monopoly's auction choice sits beside Start because it has to be made before the
+	// match is seeded; the arg is the value the press SETS, so a stale card's button
+	// cannot flip the choice back the wrong way.
+	if (state.game === "monopoly") {
+		const enabled = state.monopolyAuctions ?? false;
+		const toggle = new ButtonBuilder()
+			.setCustomId(`${GAME_ROOM_PREFIX}:auctions:${roomId}:${enabled ? "off" : "on"}`)
+			.setLabel(gameRoomsCopy.board.monopolyAuctionsToggleLabel(enabled))
+			.setEmoji("🔨")
+			.setStyle(ButtonStyle.Secondary);
+		return [new ActionRowBuilder<ButtonBuilder>().addComponents(gather, start, toggle, cancel)];
+	}
+	return [new ActionRowBuilder<ButtonBuilder>().addComponents(gather, start, cancel)];
 }

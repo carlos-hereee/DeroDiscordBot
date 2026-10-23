@@ -60,6 +60,10 @@ export interface IGameRoom {
 	// scrolled-back second press would spawn a room per click. Queried by
 	// findByRematchedFrom, rarely enough that it carries no index.
 	rematchedFromRoomId: string | null;
+	// Monopoly only: whether the host opened the match with auctions on. Set on the DRAFT
+	// by the card's toggle and read once, when the provisioner seeds the match, which then
+	// carries it in its own settings; nothing reads this field after the match starts.
+	monopolyAuctions: boolean;
 	// Hangman's hidden word and hint stack. Null for duel and rps, which have no secret.
 	secret: RoomSecret | null;
 	moves: RoomMove[];
@@ -111,6 +115,8 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		boardMessageId: { type: String, default: null },
 		status: { type: String, required: true, enum: [...ROOM_STATUSES], default: "draft" },
 		rematchedFromRoomId: { type: String, default: null },
+		// Off by default, so a row written before the field existed reads as auctions off.
+		monopolyAuctions: { type: Boolean, default: false },
 		// Mixed rather than a typed subdocument: only hangman populates it, its shape will grow
 		// as other games gain hidden state, and a strict subschema here would silently drop the
 		// next game's fields the way GuildConfig.schedulePaused was dropped before it was declared.

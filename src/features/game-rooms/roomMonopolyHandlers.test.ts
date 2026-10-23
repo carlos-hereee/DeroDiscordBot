@@ -25,6 +25,7 @@ import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { awardMultiPlayerResult } from "@features/games/gameXp.js";
 import { secureRandom } from "@utils/secureRng.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -155,6 +156,15 @@ describe("handleMroll", () => {
 		expect(expected).toEqual(turnFingerprint(read));
 	});
 
+	// ⚠️ An off turn move (a trade, a bid) leaves every turn field as it was, so only
+	// the revision tells a roll computed from an older read that the match moved on.
+	it("fingerprints the match's revision, so an off turn move in between makes a stale write lose", () => {
+		const read = freshMatch();
+		const afterTrade = { ...read, revision: read.revision + 1 };
+		expect(turnFingerprint(read)["secret.revision"]).toBe(read.revision);
+		expect(turnFingerprint(afterTrade)).not.toEqual(turnFingerprint(read));
+	});
+
 	it("redraws the board with the next control for the seat on the clock", async () => {
 		const room = seed(freshMatch());
 		const boardMessage = makeBoardMessage();
@@ -163,7 +173,7 @@ describe("handleMroll", () => {
 
 		const payload = boardMessage.edit.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id?: string }[] } }[] };
 		const ids = payload.components.flatMap((row) => row.toJSON().components.map((button) => button.custom_id));
-		expect(ids).toEqual(["gameroom:mbuy:room-1:burnt-umber-row", "gameroom:mskip:room-1", "gameroom:minventory:room-1"]);
+		expect(ids).toEqual(["gameroom:mbuy:room-1:burnt-umber-row", "gameroom:mskip:room-1", "gameroom:mtrade:room-1", "gameroom:minventory:room-1"]);
 	});
 
 	it("swaps the board picture on a redraw rather than stacking one per move", async () => {
@@ -275,6 +285,22 @@ describe("handleMbuy, handleMskip and handleMend", () => {
 		expect(persisted().phase).toBe("post-roll");
 		expect(persisted().properties["burnt-umber-row"].ownerId).toBeNull();
 		expect(persisted().pendingAuction).toBeNull();
+	});
+
+	it("opens a sealed bid round when the host turned auctions on, and tells the table when it closes", async () => {
+		const state = onBurntUmberRow();
+		state.settings.auctionsEnabled = true;
+		const room = seed(state);
+
+		await handleMskip(makeInteraction(A), room);
+
+		const auction = persisted().pendingAuction;
+		expect(persisted().phase).toBe("in-auction");
+		expect(auction?.tileId).toBe("burnt-umber-row");
+		expect(trailTexts()).toEqual([
+			`<@${A}> passed on Burnt Umber Row, and it goes up for auction.`,
+			gameRoomsCopy.monopoly.auctionOpened("Burnt Umber Row", (auction?.roundOpenedAt ?? 0) + BOT_CONSTANTS.MONOPOLY_AUCTION_ROUND_MS),
+		]);
 	});
 
 	it("ends the turn and hands the clock on", async () => {

@@ -22,11 +22,14 @@ import { openAuthoringModal, openGuessModal, handleAuthoringModal, handleGuessMo
 import { roomBattleshipHandlers } from "./roomBattleshipHandlers.js";
 import { roomHoldemHandlers } from "./roomHoldemHandlers.js";
 import { roomMonopolyHandlers } from "./roomMonopolyHandlers.js";
+import { roomMonopolyBuild } from "./roomMonopolyBuild.js";
+import { roomMonopolyTrade } from "./roomMonopolyTrade.js";
+import { roomMonopolyAuction } from "./roomMonopolyAuction.js";
 import type { GameSlug } from "./roomTypes.js";
 
 // The actions that only make sense while a draft is still a draft. Listed once so
 // the status refusal below cannot drift from the routing switch.
-const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "cancel"]);
+const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "cancel", "auctions"]);
 
 // ── gameRoomHandlers ─────────────────────────────────────────────────
 // What:  routes every `gameroom:` button to its action, after proving the clicker is
@@ -130,6 +133,9 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		case "cancel":
 			await challengeBoard.cancelDraft(interaction, room);
 			return;
+		case "auctions":
+			await challengeBoard.chooseMonopolyAuctions(interaction, room, parsed.arg ?? "");
+			return;
 		case "rematch":
 			// On the result card of a finished room. rematchFromRoom refuses by status
 			// and enforces the one-rematch-per-room rule itself.
@@ -172,6 +178,23 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			return;
 		case "minventory":
 			await roomMonopolyHandlers.handleMinventory(interaction, room);
+			return;
+		case "mbuild":
+			await roomMonopolyBuild.handleMbuild(interaction, room);
+			return;
+		// Trades and bids come from ANY seat still in the match, so these handlers
+		// check that, not the turn.
+		case "mtrade":
+			await roomMonopolyTrade.handleMtrade(interaction, room);
+			return;
+		case "mtradeAccept":
+			await roomMonopolyTrade.handleMtradeAccept(interaction, room, parsed.arg ?? "");
+			return;
+		case "mtradeReject":
+			await roomMonopolyTrade.handleMtradeReject(interaction, room, parsed.arg ?? "");
+			return;
+		case "mauction":
+			await roomMonopolyAuction.handleMauction(interaction, room, parsed.arg ?? "");
 			return;
 		case "board":
 			await roomBattleshipHandlers.handleViewBoard(interaction, room);
@@ -245,14 +268,19 @@ export function registerGameRoomHandlers(): void {
 		// Battleship's two aim selects share one handler, which reads which half of
 		// the coordinate it was given off the action name.
 		if (action === "bscol" || action === "bsrow") return roomBattleshipHandlers.handleAimSelect(interaction);
+		if (action === "mtradeWith") return roomMonopolyTrade.handleTradePartnerSelect(interaction);
+		if (action === "mbuild") return roomMonopolyBuild.handleBuildSelect(interaction);
 		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
 	});
-	// Hangman's two modals. Same sub-routing shape, and each sub-handler re-gates the
-	// actor: a modal submit is reachable without the button that opened it.
+	// Hangman's two modals and Monopoly's two. Same sub-routing shape, and each
+	// sub-handler re-gates the actor: a modal submit is reachable without the button
+	// that opened it.
 	registerModal(GAME_ROOM_MODAL_PREFIX, async (interaction) => {
 		const action = interaction.customId.split(":")[1];
 		if (action === "word") return handleAuthoringModal(interaction);
 		if (action === "guess") return handleGuessModal(interaction);
+		if (action === "mtrade") return roomMonopolyTrade.handleTradeModal(interaction);
+		if (action === "mbid") return roomMonopolyAuction.handleBidModal(interaction);
 		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
 	});
 }

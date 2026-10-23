@@ -38,6 +38,7 @@ import { registerGameRoomMemberRemoveWatcher } from "@features/game-rooms/guildM
 import { recoverGameRoomsOnBoot } from "@features/game-rooms/roomBootRecovery.js";
 import { sweepHoldemClocks } from "@features/game-rooms/roomHoldemHandlers.js";
 import { logMonopolyRendererStatus } from "@features/games/monopolyRenderer.js";
+import { sweepMonopolyAuctions } from "@features/game-rooms/roomMonopolyAuction.js";
 import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/polls/PollDispatcher.js";
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
@@ -830,6 +831,14 @@ process.on("uncaughtException", (err) => {
 		setInterval(() => {
 			void sweepHoldemClocks(client).catch((error) => console.error("[game-rooms] hold em clock tick failed", error));
 		}, BOT_CONSTANTS.HOLDEM_CLOCK_TICK_MS).unref();
+
+		// ── monopoly auction clock ─────────────────────────────────
+		// Closes each sealed bid round once its 60 seconds are up. Its own interval
+		// for the hold em clock's reason: the 5 minute room cron would close a 60
+		// second round anywhere inside five minutes. A no-op when no auction is open.
+		setInterval(() => {
+			void sweepMonopolyAuctions(client).catch((error) => console.error("[game-rooms] monopoly auction tick failed", error));
+		}, BOT_CONSTANTS.MONOPOLY_AUCTION_TICK_MS).unref();
 
 		// ── feature announcement sweep ─────────────────────────────
 		// What: once-per-version broadcast to every setup-complete guild.

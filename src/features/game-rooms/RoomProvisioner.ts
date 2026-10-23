@@ -137,6 +137,10 @@ export interface RoomOpenInput {
 	// asked for a table and confirmed its terms). Absent everywhere else, which
 	// opens the standard table exactly as before. Ignored for every other game.
 	holdemTerms?: HoldemTerms;
+	// Whether a Monopoly match opens with auctions on: the host's choice on the
+	// challenge card, carried from the draft row. Absent means off. Ignored for every
+	// other game.
+	monopolyAuctions?: boolean;
 }
 
 export const RoomProvisioner = {
@@ -365,14 +369,10 @@ export const RoomProvisioner = {
 		// known (the whole pool, which challengeBoard.startMatch capped at six), so
 		// unlike hold em there is no joining phase. The board is posted before the
 		// state is persisted so the stored state can carry the message id it edits.
-		//
-		// ⚠️ AUCTIONS ARE OFF FOR EVERY MATCH UNTIL PHASE 5, whatever a host would pick.
-		// applySkip opens an auction itself when they are on and moves the phase to
-		// "in-auction", and Phase 4 renders no bid or close control, so the first pass
-		// on a lot would strand the match with no button that moves it. Phase 5 brings
-		// the host's choice and the auction controls in together.
+		// Auctions follow the host's choice on the challenge card; with them on, a pass
+		// opens a sealed bid round that roomMonopolyAuction runs and closes.
 		if (game === "monopoly") {
-			const state = createMonopolyState(playerIds, { auctionsEnabled: false });
+			const state = createMonopolyState(playerIds, { auctionsEnabled: input.monopolyAuctions ?? false });
 			// The board picture, when its art is on disk, rides the same message as the
 			// embed whose image points at it; with no art it is the text map alone.
 			const { embed, attachment } = await monopolyBoardEmbed(state);

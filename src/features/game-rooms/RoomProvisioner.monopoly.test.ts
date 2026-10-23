@@ -101,12 +101,16 @@ describe("RoomProvisioner.open for monopoly", () => {
 		expect(state.activeSeatIndex).toBe(0);
 	});
 
-	// ⚠️ AUCTIONS ARE OFF IN PHASE 4. applySkip opens an auction when they are on, and
-	// no Phase 4 control can bid on or close one, so a single pass would strand the match.
-	it("opens every Phase 4 match with auctions off", async () => {
+	it("opens with auctions off when the host did not turn them on", async () => {
 		const { guild } = makeGuild();
 		await RoomProvisioner.open(input(guild));
 		expect(storedState().settings.auctionsEnabled).toBe(false);
+	});
+
+	it("opens with auctions on when the host turned them on at the challenge card", async () => {
+		const { guild } = makeGuild();
+		await RoomProvisioner.open({ ...input(guild), monopolyAuctions: true });
+		expect(storedState().settings.auctionsEnabled).toBe(true);
 	});
 
 	it("posts the board with the first seat's Roll control and stores that message id", async () => {
@@ -116,7 +120,7 @@ describe("RoomProvisioner.open for monopoly", () => {
 		const board = sentPayloads(send).find((payload) => payload.embeds[0]?.data.title === gameRoomsCopy.monopoly.boardTitle);
 		expect(board).toBeDefined();
 		const ids = (board?.components ?? []).flatMap((row) => row.toJSON().components.map((button) => button.custom_id));
-		expect(ids).toEqual(["gameroom:mroll:room-1", "gameroom:minventory:room-1"]);
+		expect(ids).toEqual(["gameroom:mroll:room-1", "gameroom:mtrade:room-1", "gameroom:minventory:room-1"]);
 		expect(board?.embeds[0].data.description).toContain(gameRoomsCopy.monopoly.onTheClock("host-1"));
 		// The opener is message-1, the board message-2.
 		expect(storedState().boardMessageId).toBe("message-2");

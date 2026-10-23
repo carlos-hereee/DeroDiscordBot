@@ -74,6 +74,11 @@ export interface MonopolyLogEntry {
 
 export interface MonopolyState {
 	version: 1; // for future state migrations
+	// How many actions have landed. completeAction bumps it, so the room layer's
+	// compare and swap can tell that ANY move happened between its read and its
+	// write, including the off turn ones (a trade, a bid) that leave every turn
+	// field as it was.
+	revision: number;
 	seats: MonopolySeat[]; // seat order = turn order
 	activeSeatIndex: number; // who is on the clock
 	diceRoll: [number, number] | null; // last roll, null before first roll
@@ -138,8 +143,17 @@ export type MonopolyResult = { ok: true; state: MonopolyState; trailLines: strin
 export { applyJailChoice } from "./monopolyJail.js";
 export { applyForfeit } from "./monopolyForfeit.js";
 export { calculateRent } from "./monopolyLanding.js";
-export { applyBuild, applyMortgage, applyUnmortgage, unmortgageCost, type BuildingKind } from "./monopolyBuildings.js";
-export { acceptTrade, openTrade, rejectTrade } from "./monopolyTrade.js";
+export {
+	applyBuild,
+	applyMortgage,
+	applyUnmortgage,
+	listBuildOptions,
+	nextBuildingKind,
+	unmortgageCost,
+	type BuildingKind,
+	type BuildOption,
+} from "./monopolyBuildings.js";
+export { acceptTrade, describeTradeSide, openTrade, rejectTrade, tradableLots } from "./monopolyTrade.js";
 export { closeAuction, openAuction, placeBid } from "./monopolyAuction.js";
 export { BANK_CREDITOR, resolveDebt } from "./monopolyBankruptcy.js";
 
@@ -169,6 +183,7 @@ export function createInitialState(
 
 	return {
 		version: 1,
+		revision: 0,
 		seats: playerIds.map(createSeat),
 		activeSeatIndex: 0,
 		diceRoll: null,

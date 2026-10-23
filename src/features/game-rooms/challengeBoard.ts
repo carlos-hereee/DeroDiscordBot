@@ -68,6 +68,7 @@ function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState> = {})
 		// caller that knows whether the chooser has been answered.
 		visibility: overrides.visibility ?? null,
 		pool: room.spectatorIds ?? [],
+		monopolyAuctions: room.monopolyAuctions ?? false,
 		...overrides,
 	};
 }
@@ -174,6 +175,23 @@ export async function startChallengeDraft(
 		flags: MessageFlags.Ephemeral,
 	});
 	return room;
+}
+
+// ── Monopoly's auction choice ─────────────────────────────────────────
+// The host decides at open whether a lot a player passes on goes to auction (master
+// plan Section 1). The choice lives on the draft row, which the provisioner adopts,
+// so it reaches the match without a second copy anywhere.
+export async function chooseMonopolyAuctions(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
+	// The arg is user input like the rest of a customId: anything but the two values
+	// a card renders is a retired or forged control.
+	if (room.game !== "monopoly" || (choice !== "on" && choice !== "off")) {
+		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
+		return;
+	}
+	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { monopolyAuctions: choice === "on" })) ?? room;
+
+	await interaction.deferUpdate();
+	await refreshCard(interaction.guild!, updated, cardStateFor(updated, { visibility: updated.visibility, pool: updated.spectatorIds ?? [] }));
 }
 
 // ── the visibility chooser ────────────────────────────────────────────
@@ -429,6 +447,7 @@ async function provisionFromDraft(
 		// The draft row already exists, so the provisioner must adopt it rather than
 		// insert a second one and collide with the unique index.
 		existingRoomId: room.roomId,
+		monopolyAuctions: room.monopolyAuctions ?? false,
 	});
 
 	if (!result.ok) {
@@ -539,4 +558,5 @@ export const challengeBoard = {
 	handleOpponentSelect,
 	cancelDraft,
 	rematchFromRoom,
+	chooseMonopolyAuctions,
 };
