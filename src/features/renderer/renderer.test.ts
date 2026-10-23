@@ -21,7 +21,16 @@ vi.mock("@utils/aws/index.js", () => ({
 	getObjectBytes: vi.fn(async () => null),
 }));
 
+// Render analytics is mocked so this file never queues a Mongo write; what it
+// counts is pinned in renderAnalytics.test.ts, and here only that renderCard
+// reports the right outcome and survives a reporter that throws.
+vi.mock("./renderAnalytics.js", () => ({
+	recordCardLookup: vi.fn(),
+	recordAvatarLookup: vi.fn(),
+}));
+
 import { getObjectBytes, putObject } from "@utils/aws/index.js";
+import { recordCardLookup } from "./renderAnalytics.js";
 import { COLORS } from "@base/copy/brand.js";
 import { canvasModule, importCanvasModule, type CanvasModule, type Image, type SKRSContext2D } from "./canvasModule.js";
 import { LruCache } from "./lruCache.js";
@@ -274,7 +283,7 @@ describe("card cache", () => {
 		expect(CARD_CACHE_CAPACITY).toBe(100);
 		expect(cachedCardCount()).toBe(CARD_CACHE_CAPACITY);
 		await expect(readCachedCard("card-0")).resolves.toBeNull();
-		await expect(readCachedCard(`card-${CARD_CACHE_CAPACITY}`)).resolves.toEqual(Buffer.from(`png-${CARD_CACHE_CAPACITY}`));
+		await expect(readCachedCard(`card-${CARD_CACHE_CAPACITY}`)).resolves.toEqual({ bytes: Buffer.from(`png-${CARD_CACHE_CAPACITY}`), tier: "memory" });
 	});
 
 	it("never calls S3 in either direction while the switch is off", async () => {
@@ -289,8 +298,8 @@ describe("card cache", () => {
 		s3Switch.enabled = true;
 		getMock.mockResolvedValueOnce(Buffer.from("stored-png"));
 
-		await expect(readCachedCard("card-a")).resolves.toEqual(Buffer.from("stored-png"));
-		await expect(readCachedCard("card-a")).resolves.toEqual(Buffer.from("stored-png"));
+		await expect(readCachedCard("card-a")).resolves.toEqual({ bytes: Buffer.from("stored-png"), tier: "s3" });
+		await expect(readCachedCard("card-a")).resolves.toEqual({ bytes: Buffer.from("stored-png"), tier: "memory" });
 		expect(getMock).toHaveBeenCalledTimes(1);
 	});
 
@@ -658,6 +667,45 @@ describe("renderCard smoke", () => {
 
 		await expect(renderCard(unhashable)).resolves.toBeNull();
 		expect(unhashable.draw).not.toHaveBeenCalled();
+		expect(warn).toHaveBeenCalled();
+	});
+
+	it("records a first render as drawn and a repeat as a memory hit (2026-10 item 244)", async () => {
+		const recordMock = vi.mocked(recordCardLookup);
+		recordMock.mockClear();
+		const request = helloCard();
+		const key = cardRenderKey(request);
+
+		const first = attachmentBytes((await renderCard(request)) as RenderPayload);
+		await renderCard(request);
+
+		expect(recordMock).toHaveBeenCalledTimes(2);
+		expect(recordMock.mock.calls[0][0]).toEqual({ kind: "smoke", version: 1, key, outcome: "drawn", bytes: first.length });
+		expect(recordMock.mock.calls[1][0]).toEqual({ kind: "smoke", version: 1, key, outcome: "memory", bytes: first.length });
+	});
+
+	it("records a card served from S3 as an s3 hit", async () => {
+		const stored = attachmentBytes((await renderCard(helloCard())) as RenderPayload);
+		clearCardCache();
+		getMock.mockResolvedValueOnce(stored);
+		const recordMock = vi.mocked(recordCardLookup);
+		recordMock.mockClear();
+
+		await renderCard(helloCard());
+
+		expect(recordMock).toHaveBeenCalledWith(expect.objectContaining({ outcome: "s3", bytes: stored.length }));
+	});
+
+	it("still answers the card when recording the lookup throws", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		vi.mocked(recordCardLookup).mockImplementationOnce(() => {
+			throw new Error("analytics exploded");
+		});
+
+		const payload = await renderCard(helloCard());
+
+		expect(payload).not.toBeNull();
+		expect(isPng(attachmentBytes(payload as RenderPayload))).toBe(true);
 		expect(warn).toHaveBeenCalled();
 	});
 

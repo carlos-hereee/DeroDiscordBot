@@ -31,6 +31,14 @@ vi.mock("./gamesAssets.js", async (importOriginal) => {
 	};
 });
 
+// Render analytics, stubbed. The vi.resetModules case below imports the renderer
+// again, which would register the RenderAnalytics model a second time and make
+// Mongoose throw; nothing in this file counts lookups (2026-10 item 244).
+vi.mock("@features/renderer/renderAnalytics.js", () => ({
+	recordCardLookup: vi.fn(),
+	recordAvatarLookup: vi.fn(),
+}));
+
 import * as canvas from "@napi-rs/canvas";
 import { BOARD_PIXEL_COORDS, clearRenderCache, isRendererAvailable, logMonopolyRendererStatus, renderBoard } from "./monopolyRenderer.js";
 import { GAME_ASSET_FILES, gameAssetPath, missingGameAssets, type GameAssetKey } from "./gamesAssets.js";

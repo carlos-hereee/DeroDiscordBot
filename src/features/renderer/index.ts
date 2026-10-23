@@ -4,6 +4,7 @@ import { readCachedCard, storeCard } from "./cardCache.js";
 import type { RenderPayload } from "./fallback.js";
 import { encodeGif } from "./gif.js";
 import { missingRendererFonts, registerRendererFonts, RENDERER_FONT_FAMILY } from "./fonts.js";
+import { recordCardLookup, type CardLookup } from "./renderAnalytics.js";
 import { buildRenderKey, hashRenderInput, isRenderStoreEnabled, type RenderFormat } from "./s3.js";
 
 // ── canvas renderer ──────────────────────────────────────────────────
@@ -18,7 +19,8 @@ import { buildRenderKey, hashRenderInput, isRenderStoreEnabled, type RenderForma
 // key from the kind, the version and a hash of the input and the canvas size;
 // ③ a cached card (memory, then S3) skips the draw; ④ otherwise draw and encode a
 // PNG, or every frame and one GIF for a request with an animation; ⑤ keep it in memory and upload it in the background, unless it was drawn
-// with a stand in (see DrawOutcome); ⑥ answer the attachment and its ref.
+// with a stand in (see DrawOutcome); ⑥ count the lookup for render analytics,
+// never awaited (2026-10 item 244); ⑦ answer the attachment and its ref.
 
 export type { RenderPayload } from "./fallback.js";
 export { isRenderPayload, withRenderFallback } from "./fallback.js";
@@ -106,12 +108,27 @@ export async function renderCard<Input>(request: CardRenderRequest<Input>): Prom
 		const inputHash = cardInputHash(request);
 		const format = cardFormat(request);
 		const key = buildRenderKey(request.kind, request.version, inputHash, format);
-		const bytes = (await readCachedCard(key)) ?? (await drawCard(canvasModule, request, key));
+		const cached = await readCachedCard(key);
+		const bytes = cached ? cached.bytes : await drawCard(canvasModule, request, key);
+		// A stand in that was drawn but not cached still counts as drawn: it cost a draw.
+		countLookup({ kind: request.kind, version: request.version, key, outcome: cached ? cached.tier : "drawn", bytes: bytes.length });
 		const name = `${request.kind}-${inputHash.slice(0, ATTACHMENT_HASH_LENGTH)}.${format}`;
 		return { attachment: new AttachmentBuilder(bytes, { name }), ref: `attachment://${name}` };
 	} catch (error) {
 		console.warn(`[canvas-renderer] the ${request.kind} card failed to render, so its surface posts the text embed`, error);
 		return null;
+	}
+}
+
+// recordCardLookup already catches everything and defers its write; this guard
+// is the second wall, because the card is ready by now and a counting bug must
+// never turn it into a text embed (bot rule 7, 2026-10 item 244 risk R1).
+function countLookup(lookup: CardLookup): void {
+	try {
+		recordCardLookup(lookup);
+	}
+	catch (error) {
+		console.warn(`[render-analytics] counting the ${lookup.kind} card failed; the card still posts`, error);
 	}
 }
 

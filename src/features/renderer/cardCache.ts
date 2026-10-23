@@ -5,7 +5,8 @@ import { readStoredRender, writeStoredRender } from "./s3.js";
 // The two tier cache in front of every rendered card: the last 100 PNGs in
 // memory, then S3 when DISCORD_BOT_S3_ENABLED is on. With S3 off the memory tier
 // still runs, so a dev session repeats a card for free without any S3 traffic.
-// It stores bytes and never draws; renderCard is its only caller.
+// It stores bytes and never draws; renderCard is its only caller, and
+// renderAnalytics reads its size for the memory tier report.
 
 // 2026-10 item 243 Assumptions: 100 card entries. A card PNG is tens to a few
 // hundred KB, so a full cache stays in the tens of MB on Railway's dyno.
@@ -13,13 +14,22 @@ export const CARD_CACHE_CAPACITY = 100;
 
 const memory = new LruCache<string, Buffer>(CARD_CACHE_CAPACITY);
 
-/** The stored PNG for a render key, from memory first and then S3, or null when the card has to be drawn. Never throws. */
-export async function readCachedCard(key: string): Promise<Buffer | null> {
+/** Which tier served a cached card. renderAnalytics counts the two apart to size the memory tier. */
+export type CacheTier = "memory" | "s3";
+
+export interface CachedCard {
+	bytes: Buffer;
+	tier: CacheTier;
+}
+
+/** The stored PNG for a render key and the tier that served it, from memory first and then S3, or null when the card has to be drawn. Never throws. */
+export async function readCachedCard(key: string): Promise<CachedCard | null> {
 	const inMemory = memory.get(key);
-	if (inMemory) return inMemory;
+	if (inMemory) return { bytes: inMemory, tier: "memory" };
 	const stored = await readStoredRender(key);
-	if (stored) memory.set(key, stored);
-	return stored;
+	if (!stored) return null;
+	memory.set(key, stored);
+	return { bytes: stored, tier: "s3" };
 }
 
 /**

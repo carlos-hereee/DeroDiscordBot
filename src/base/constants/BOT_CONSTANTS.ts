@@ -576,6 +576,29 @@ export const BOT_CONSTANTS = {
 	//        that grants permission to mention.
 	PINGABLE: new Set<string>(["reminder.fire", "stream.goLive"]),
 
+	// ── render analytics (2026-10 item 244) ───────────────────────
+	// Counts every rendered card and avatar cache lookup per UTC month, read by
+	// features/renderer/renderAnalytics.ts and /render-analytics. Every number
+	// below is an owner decision of 2026-10-23 (2026-10 item 244).
+	RENDER_ANALYTICS: {
+		// Owner decision 2026-10-23 (2026-10 item 244): at most this many upserts in flight; beyond it an event is dropped and counted, so a slow Mongo cannot grow memory without bound.
+		MAX_PENDING_WRITES: 500,
+		// Owner decision 2026-10-23 (2026-10 item 244): drops and failures log as one summary line at most this often, never per event.
+		SUMMARY_INTERVAL_MS: 60_000,
+		// Owner decision 2026-10-23 (2026-10 item 244): a row expires 13 months (395 days) after its last lookup, enough for a year over year view.
+		RETENTION_SECONDS: 395 * 24 * 60 * 60,
+		// Owner decision 2026-10-23 (2026-10 item 244): how many keys /render-analytics top10 lists.
+		TOP_N: 10,
+		// Owner decision 2026-10-23 (2026-10 item 244): a surface earns a sizing hint only after this many renders (hits plus draws) in the period.
+		SIZING_MIN_RENDERS: 50,
+		// Owner decision 2026-10-23 (2026-10 item 244): a surface above this hit rate is "evergreen".
+		EVERGREEN_HIT_RATE: 0.9,
+		// Owner decision 2026-10-23 (2026-10 item 244): a surface below this hit rate is "long tail".
+		LONG_TAIL_HIT_RATE: 0.1,
+		// Owner decision 2026-10-23 (2026-10 item 244): suggest growing the memory tier when S3 hits pass this share of all hits.
+		GROW_MEMORY_S3_SHARE: 0.3,
+	},
+
 	// ── invite URL provenance ─────────────────────────────────────
 	// The actual OAuth install URL is composed in @utils/config as
 	// `botInviteLink` so dev and prod each serve their own client id.

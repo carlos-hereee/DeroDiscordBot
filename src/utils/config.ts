@@ -253,6 +253,19 @@ const discordBotS3Enabled = (() => {
 	);
 	return false;
 })();
+// ── Render analytics kill switch (2026-10 item 244) ──
+// What: whether features/renderer/renderAnalytics.ts counts card and avatar
+//   cache lookups into the RenderAnalytics collection.
+// Who: read only by renderAnalytics.ts.
+// When: ON by default, the opposite of the flags above, because counting is the
+//   feature and it writes no user data. "false", "0" or "no" turns it off, and
+//   every record call then returns at once and writes nothing.
+// Where: the rollback for risk R1 in the item 244 plan: set it off on Railway
+//   and restart if a slow Mongo ever shows up in render latency.
+const renderAnalyticsEnabled = (() => {
+	const raw = (process.env.RENDER_ANALYTICS_ENABLED ?? "").toLowerCase().trim();
+	return raw !== "false" && raw !== "0" && raw !== "no";
+})();
 // CORS allow-list for the dashboard.
 // What: the Express `cors({ origin })` middleware accepts a string (single
 //   origin), an array (multiple origins), or a function. We want multiple
@@ -313,4 +326,5 @@ export {
 	discordBotAwsBucketName,
 	discordBotAwsRegion,
 	discordBotS3Enabled,
+	renderAnalyticsEnabled,
 };

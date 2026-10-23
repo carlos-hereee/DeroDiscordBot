@@ -2,6 +2,7 @@ import { get as httpsGet } from "node:https";
 import type { ImageSize } from "discord.js";
 import { canvasModule, type Image } from "./canvasModule.js";
 import { LruCache } from "./lruCache.js";
+import { recordAvatarLookup } from "./renderAnalytics.js";
 
 // ── avatarCache ──────────────────────────────────────────────────────
 // Fetches a member's Discord avatar and decodes it into a canvas Image, keeping
@@ -10,7 +11,8 @@ import { LruCache } from "./lruCache.js";
 // account's 404, a CDN outage, a canvas library that did not load) and never
 // throws; the card renderer draws its placeholder instead. Card renderers call
 // fetchAvatar. Nothing here touches S3: a rendered card is cached whole, by
-// cardCache, so its avatars never need storing on their own.
+// cardCache, so its avatars never need storing on their own. The shared
+// instance reports each lookup to renderAnalytics by size, never by user.
 
 // 2026-10 item 243 Assumptions: 500 avatar entries, which bounds memory on
 // Railway's dyno. A 256 pixel avatar can decode to as much as 256 KB of pixels,
@@ -46,11 +48,23 @@ export interface AvatarRequest {
 type AvatarDownloader = (url: string) => Promise<Buffer | null>;
 type AvatarDecoder = (bytes: Buffer) => Promise<Image>;
 
+/**
+ * One avatar lookup as render analytics counts it: the size asked for, and
+ * whether memory (or a download already in flight) answered or a download was
+ * attempted. Deliberately no user id, so nothing downstream can store one.
+ */
+export interface AvatarLookup {
+	size: ImageSize;
+	outcome: "memory" | "fetched";
+}
+
 export interface AvatarCacheOptions {
 	download: AvatarDownloader;
 	/** Null when the canvas library did not load: every fetch then answers null without downloading. */
 	decode: AvatarDecoder | null;
 	capacity?: number;
+	/** Told about every lookup. The shared instance counts them for render analytics; a test cache leaves it out. */
+	onLookup?: (lookup: AvatarLookup) => void;
 }
 
 export interface AvatarCache {
@@ -69,11 +83,22 @@ export function avatarCacheKey({ userId, avatarHash, size }: Pick<AvatarRequest,
  * instance behind fetchAvatar; a test builds its own with fakes, so it can count
  * downloads without the network.
  */
-export function createAvatarCache({ download, decode, capacity = AVATAR_CACHE_CAPACITY }: AvatarCacheOptions): AvatarCache {
+export function createAvatarCache({ download, decode, capacity = AVATAR_CACHE_CAPACITY, onLookup }: AvatarCacheOptions): AvatarCache {
 	const images = new LruCache<string, Image>(capacity);
 	// Two cards asking for the same face at once share one download rather than
 	// racing two. Bounded by how many renders are in flight, so it needs no cap.
 	const inFlight = new Map<string, Promise<Image | null>>();
+
+	// A counting hook must never cost a member their face on a card, so a throw
+	// from it is swallowed here rather than reaching the render.
+	const notifyLookup = (size: ImageSize, outcome: AvatarLookup["outcome"]): void => {
+		try {
+			onLookup?.({ size, outcome });
+		}
+		catch (error) {
+			console.warn("[canvas-renderer] the avatar lookup hook threw; the avatar still loads", error);
+		}
+	};
 
 	return {
 		get size() {
@@ -86,13 +111,20 @@ export function createAvatarCache({ download, decode, capacity = AVATAR_CACHE_CA
 			if (!decode) return Promise.resolve(null);
 			const key = avatarCacheKey(request);
 			const cached = images.get(key);
-			if (cached) return Promise.resolve(cached);
+			if (cached) {
+				notifyLookup(request.size, "memory");
+				return Promise.resolve(cached);
+			}
+			// Sharing a download already in flight costs nothing extra, so it counts as a memory hit.
 			const pending = inFlight.get(key);
-			if (pending) return pending;
+			if (pending) {
+				notifyLookup(request.size, "memory");
+				return pending;
+			}
 
 			// A miss (null) is not cached: a CDN blip should cost one placeholder,
 			// not a placeholder until this entry happens to be evicted.
-			const loading = loadAvatar(request, download, decode)
+			const loading = loadAvatar(request, download, decode, () => notifyLookup(request.size, "fetched"))
 				.then((image) => {
 					if (image) images.set(key, image);
 					return image;
@@ -104,11 +136,19 @@ export function createAvatarCache({ download, decode, capacity = AVATAR_CACHE_CA
 	};
 }
 
-async function loadAvatar(request: AvatarRequest, download: AvatarDownloader, decode: AvatarDecoder): Promise<Image | null> {
+// onDownloadAttempt runs only past the URL check: a refused URL never reaches
+// the network, so it is not a download for render analytics to count.
+async function loadAvatar(
+	request: AvatarRequest,
+	download: AvatarDownloader,
+	decode: AvatarDecoder,
+	onDownloadAttempt: () => void
+): Promise<Image | null> {
 	if (!isDiscordAvatarUrl(request.url)) {
 		console.warn(`[canvas-renderer] refused the avatar URL for user ${request.userId}: it is not an avatar route on Discord's CDN`);
 		return null;
 	}
+	onDownloadAttempt();
 	try {
 		const bytes = await download(request.url);
 		return bytes ? await decode(bytes) : null;
@@ -161,9 +201,13 @@ function downloadOverHttps(url: string): Promise<Buffer | null> {
 // no longer change (the import binding itself is not narrowed inside a closure).
 const loadedCanvas = canvasModule;
 
+// The only instance that reports to render analytics. The arrow defers the read
+// of recordAvatarLookup to call time, because renderAnalytics imports this
+// module back (for cachedAvatarCount) and the two load as a cycle.
 const sharedAvatarCache = createAvatarCache({
 	download: downloadOverHttps,
 	decode: loadedCanvas ? (bytes) => loadedCanvas.loadImage(bytes) : null,
+	onLookup: (lookup) => recordAvatarLookup(lookup),
 });
 
 /**
@@ -181,6 +225,11 @@ export function avatarRequestFor(
 /** A member's avatar as a canvas Image, from memory when it was fetched before, or null when it cannot be had. Never throws. */
 export function fetchAvatar(request: AvatarRequest): Promise<Image | null> {
 	return sharedAvatarCache.fetch(request);
+}
+
+/** How many avatars the shared cache holds, for the memory tier line of the render analytics report. */
+export function cachedAvatarCount(): number {
+	return sharedAvatarCache.size;
 }
 
 /** Forget every cached avatar, so a test can start from an empty cache. */
