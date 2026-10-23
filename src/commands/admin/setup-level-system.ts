@@ -24,9 +24,9 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 //        and why this command invalidates that cache on every write.
 // Where: writes GuildConfig.leveling only. It creates NOTHING.
 //
-// ⚠️ THE NAME BREAKS THE REPO'S configure-* FAMILY ON PURPOSE (the owner's
-// decision). Every sibling is configure-something (configure-leaderboard-
-// tracking, configure-auto-heal, configure-rok-reminders). This one is
+// ⚠️ THE NAME BREAKS THE REPO'S configure FAMILY ON PURPOSE (the owner's
+// decision). Its siblings are /configure (auto-heal, leaderboard-tracking,
+// week-start) and /configure-kvk-season. This one is
 // setup-level-system so that an admin typing "/setup" in the picker sees the
 // homebase builder AND the leveling setup side by side, which is exactly the
 // moment they are most likely to want it. Do not "correct" it back.

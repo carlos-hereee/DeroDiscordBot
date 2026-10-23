@@ -3,9 +3,11 @@
 //        "9:30 am", "19:30") and converting (date + time + IANA
 //        timezone) tuples to UTC Dates suitable for storage in the
 //        event firstOccurrence column.
-// Who:   slash commands that take human-typed times from streamers
-//        (configure-stream-schedule today, plus any future command
-//        that wants the same input surface). Never read the user's
+// Who:   the flows that take human-typed times from streamers
+//        (/stream setup in features/schedule/configureStreamSchedule.ts
+//        and the decree edits in features/schedule/decreeEditHandlers.ts,
+//        plus any future command that wants the same input surface).
+//        Never read the user's
 //        Discord locale directly, we ask them to declare a timezone
 //        explicitly so two streamers in different rooms don't get
 //        ambiguous schedules.
@@ -27,13 +29,13 @@
 
 // ── parseFlexibleTime ─────────────────────────────────────────
 // What:  parse a human time string into 24h { hour, minute }.
-// Who:   configure-stream-schedule (today). Any future streamer
+// Who:   /stream setup and the decree edits. Any future streamer
 //        command that wants "Friday 7pm" / "Friday 19:00" semantics
 //        should reuse this rather than re-rolling its own regex.
 // When:  per slash command submission, before the confirmation embed.
 // Where: paired with the time-utc option in the command, but no
 //        longer assumes UTC, see the timezone option pattern in
-//        configure-stream-schedule. The function itself is timezone-
+//        /stream setup. The function itself is timezone-
 //        agnostic; conversion happens in localTimeToUtc.
 // How:   single regex captures (hour)(:minute)?(am|pm)?. Cases:
 //          - "7pm"      → 19:00
@@ -131,9 +133,10 @@ export function dateInTimezone(
 // What:  given a wall-clock instant in a timezone (year, month,
 //        day, hour, minute), return the UTC Date that represents
 //        that instant. Inverse of dateInTimezone.
-// Who:   configure-stream-schedule when persisting firstOccurrence
-//        to the events store. The store column is a Date that
-//        downstream scheduler/board logic treats as UTC.
+// Who:   /stream setup when persisting firstOccurrence to the
+//        events store, and the decree edits when they move one
+//        occurrence. The store column is a Date that downstream
+//        scheduler/board logic treats as UTC.
 // When:  once per slash command submission.
 // Where: this is the timezone math the bot has avoided until now.
 //        firstOccurrence stays UTC in the DB; this helper is the
@@ -175,7 +178,7 @@ export function localTimeToUtc(
 // What:  given a target day-of-week + time-of-day + timezone,
 //        compute the UTC instant of the next occurrence (now or
 //        in the future).
-// Who:   configure-stream-schedule. Replaces nextOccurrenceUtc
+// Who:   /stream setup. Replaces nextOccurrenceUtc
 //        which assumed UTC for both the cadence math and the
 //        clock anchor. Without this, "Friday 7pm" entered by a
 //        Tokyo user would have been interpreted as Friday 7pm UTC,
@@ -258,7 +261,7 @@ export function isValidTimezone(timezone: string): boolean {
 //        autocomplete. Players cluster heavily in NA + EU + a few
 //        APAC zones; the long tail of Intl.supportedValuesOf is
 //        too noisy to be the default ranking.
-// Who:   configure-stream-schedule autocomplete. Falls through to
+// Who:   /stream setup's timezone autocomplete. Falls through to
 //        Intl.supportedValuesOf for users who type something not
 //        in this list.
 // Where: "UTC" first because it's the safe default if a streamer
@@ -311,7 +314,8 @@ export const COMMON_TIMEZONES = [
 // What:  return up to `limit` timezone names matching the user's
 //        typed-so-far string, ranked by COMMON_TIMEZONES first
 //        then the full Intl.supportedValuesOf list.
-// Who:   the autocomplete handler in configure-stream-schedule.
+// Who:   timezoneChoices in features/schedule/configureStreamSchedule.ts,
+//        which answers /stream setup's timezone autocomplete.
 // When:  per keystroke, Discord's autocomplete fires every time
 //        the user changes the input.
 // Where: keep the full-list fallback inside this helper so the

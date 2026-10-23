@@ -39,7 +39,7 @@ import { avatarRequestFor, isRenderPayload, withRenderFallback, type AvatarReque
 //
 // ⚠️ NO NEW DISCORD CHANNEL. Reusing leaderboardChannelId is a deliberate cost
 // decision: a levels channel would need a CHANNEL_SPECS entry, a SLOT_LABELS
-// entry in rename-channel.ts, a rename path, and a backfill for every existing
+// entry in features/setup/renameChannel.ts, a rename path, and a backfill for every existing
 // guild, and GuildSetupManager.createChannels has ZERO test coverage today. All
 // of that to separate two things that are both standings.
 //

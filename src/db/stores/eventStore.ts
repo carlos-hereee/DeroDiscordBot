@@ -91,9 +91,9 @@ export const eventStore = {
 	},
 
 	// ── create ──
-	// data shape varies between callers (configure-stream-schedule, announce-stream,
-	// GuildEventManager, configure-rok-reminders), they all build the document fields
-	// inline before calling. Accept the union here; remote mode requires guildId on
+	// data shape varies between callers (/stream setup, /stream announce,
+	// GuildEventManager for /configure-kvk-season, and POST /api/events), they all
+	// build the document fields inline before calling. Accept the union here; remote mode requires guildId on
 	// the input (callers all pass it today).
 	async create(data: {
 		guildId: string;

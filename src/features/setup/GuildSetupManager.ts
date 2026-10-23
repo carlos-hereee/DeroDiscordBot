@@ -837,12 +837,13 @@ export class GuildSetupManager {
 	//        (both the edit-in-place and repost paths must pass components or
 	//        Discord silently drops them).
 	// When:  called per spec during the intro sweep.
-	// Where: the powerup-prefixed buttons (toggle pings, say hello, refresh) keep
-	//        their customIds so PowerUps.handlePowerUpButton still routes them;
-	//        suggestion-box / invite / self-destruct each expose a bare button
-	//        factory so all of a channel's buttons fit in ONE ActionRow.
-	// How:   compose the ActionRow(s) per channel (command-center uses two rows so
-	//        the wide invite button sits on its own line). null means "no buttons."
+	// Where: the powerup-prefixed buttons (the three /account views, toggle pings,
+	//        fortune, refresh standings, post hangman) keep their customIds so
+	//        PowerUps.handlePowerUpButton routes them; suggestion box and self
+	//        destruct come from bare button factories so they share those rows.
+	// How:   compose the ActionRow(s) per channel: #command-center takes two rows
+	//        (the /account views, then the rest), the admin guide its command rows
+	//        above the control row. null means "no buttons."
 	private static resolveIntroComponents(
 		field: (typeof GuildSetupManager.CHANNEL_FIELDS)[number],
 		// Pack selector for the rows whose labels live in the copy packs (the rules

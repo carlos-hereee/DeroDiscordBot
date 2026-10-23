@@ -33,9 +33,9 @@ import { COLORS } from "@base/copy/brand.js";
 
 const BUTTON_PREFIX = "lb-ch-del";
 
-// Exported so the configure-leaderboard-tracking command can build the
-// matching customId. Centralizing the prefix here means the slash command
-// file does not need to know the format string, it just calls this helper.
+// Exported so /configure leaderboard-tracking (configureLeaderboardTracking.ts)
+// can build the matching customId. Centralizing the prefix here means that
+// handler does not need to know the format string, it just calls this helper.
 export function buildLeaderboardChannelDeleteCustomId(guildId: string): string {
 	return `${BUTTON_PREFIX}:${guildId}`;
 }
