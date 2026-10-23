@@ -540,6 +540,21 @@ export const gameRoomsCopy = {
 		mortgageOptionLabel: (tileName: string, amount: number): string => `${tileName}: get $${amount}`,
 		unmortgagePlaceholder: "Lift a mortgage",
 		unmortgageOptionLabel: (tileName: string, cost: number): string => `${tileName}: pay $${cost}`,
+		sellPlaceholder: "Sell a building back to the bank",
+		sellOptionLabel: (tileName: string, kind: BuildingKind, amount: number): string => `${tileName}: sell the ${kind} for $${amount}`,
+
+		// ── a held debt (Session 5b) ──
+		// The board's prompt while the match waits on a debt. It names who must act,
+		// because the debtor is not always the seat on the clock (a card can charge a rival).
+		debtPrompt: (debtorId: string, creditor: string, amount: number, chips: number): string =>
+			`<@${debtorId}> owes ${creditor} $${amount} and has $${chips}. They raise the rest by mortgaging or selling from Inventory, then press Pay.`,
+		bankCreditor: "the bank",
+		payDebtLabel: (amount: number): string => `Pay $${amount}`,
+		// At the top of the debtor's own peek, so the controls below read as the way out.
+		inventoryDebtLine: (amount: number, creditor: string, shortBy: number): string =>
+			shortBy > 0
+				? `⚠️ You owe ${creditor} $${amount}. Raise $${shortBy} more below, then press Pay on the board.`
+				: `⚠️ You owe ${creditor} $${amount}, and you have it. Press Pay on the board.`,
 
 		// ── refusals ──
 		notSeated: "You are not in this match.",
@@ -559,6 +574,10 @@ export const gameRoomsCopy = {
 		// so this one only says why.
 		idleForfeit: (userId: string): string =>
 			`⏳ <@${userId}> stayed on the clock for ${monopolyIdleHours()} hours without a move, so Dero forfeits their seat.`,
+		// The sweep's line for a debtor who never paid: bankrupt to whoever they owed,
+		// which is the engine's next line, rather than forfeited to the bank.
+		idleDebtDefault: (userId: string): string =>
+			`⏳ <@${userId}> left a debt unpaid for ${monopolyIdleHours()} hours, so Dero settles it the only way left.`,
 	},
 
 	// ── the move trail ──

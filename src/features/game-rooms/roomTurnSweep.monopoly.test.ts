@@ -138,4 +138,23 @@ describe("sweepMonopolyIdle", () => {
 		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
+	it("declares a debtor who left a held debt for a day bankrupt to whoever they owed, rather than forfeiting the seat on the clock", async () => {
+		// B owes A $100 from a card on A's turn, could cover it with Rail One, and never paid.
+		const room = makeRoom([A, B], 25);
+		const state = room.secret as unknown as MonopolyState;
+		state.phase = "awaiting-debt";
+		state.seats[1].chips = 0;
+		state.properties["rail-one"].ownerId = B;
+		state.pendingDebt = { debts: [{ debtorId: B, creditorId: A, amount: 100 }], resumePhase: "post-roll", moveAfter: null };
+		storeMock.findPlayingByGame.mockResolvedValue([room]);
+
+		const summary = await sweepMonopolyIdle(client, NOW);
+
+		expect(summary).toEqual({ seatsForfeited: 1, matchesFinished: 1 });
+		expect(persisted().seats[1].bankrupt).toBe(true);
+		expect(persisted().properties["rail-one"].ownerId).toBe(A);
+		expect(trailTexts()[0]).toBe(gameRoomsCopy.monopoly.idleDebtDefault(B));
+		expect(trailTexts()[1]).toBe(`<@${B}> never paid the $100 they owed and is bankrupt.`);
+		expect(postMoveMock.mock.calls[0][2]).toMatchObject({ actorId: B, kind: "system" });
+	});
 });

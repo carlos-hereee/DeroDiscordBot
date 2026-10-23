@@ -68,15 +68,17 @@ export function removeFromMatch(state: MonopolyState, seat: MonopolySeat, now: n
 	seat.inJail = false;
 	seat.jailTurnsRemaining = 0;
 
-	const lines = [exitLine, ...callOffDealsOf(state, userId)];
+	const lines = [exitLine, ...callOffDealsOf(state, userId), ...writeOffHeldDebtsOf(state, userId)];
 	const remaining = solventSeats(state);
 	if (remaining.length === 1) {
 		state.phase = "finished";
 		state.winnerId = remaining[0].userId;
 		// An auction on the winner's own turn has no rival left to outbid, and a
 		// finished match takes no more actions to close it. (A trade never needs
-		// this: one of its two parties is always the seat that just left.)
+		// this: one of its two parties is always the seat that just left.) A held
+		// debt is the same: nobody is left to collect it.
 		state.pendingAuction = null;
+		state.pendingDebt = null;
 		lines.push(`${mentionPlayer(remaining[0].userId)} wins the match.`);
 		return lines;
 	}
@@ -86,8 +88,31 @@ export function removeFromMatch(state: MonopolyState, seat: MonopolySeat, now: n
 	if (activeSeatOf(state).userId === userId) {
 		passTurn(state, now);
 		lines.push(`It is now ${mentionPlayer(activeSeatOf(state).userId)}'s turn.`);
+		// A debt still held for another seat keeps the match waiting, now from the
+		// start of the new seat's turn.
+		if (state.pendingDebt) {
+			state.pendingDebt.resumePhase = state.phase;
+			state.phase = "awaiting-debt";
+		}
 	}
 	return lines;
+}
+
+// A seat that leaves while the match waits on a debt (an admin forfeit, say) owes
+// nothing from then on: its debts come off the hold, the same write off a bankrupt
+// debtor gets. With nothing left held, the turn goes back to where it paused. When
+// it was the debtor being waited on, a forced bail's move goes with it, and the
+// next debtor in the batch is waited on instead.
+function writeOffHeldDebtsOf(state: MonopolyState, userId: string): string[] {
+	const hold = state.pendingDebt;
+	if (!hold || !hold.debts.some((debt) => debt.debtorId === userId)) return [];
+	if (hold.debts[0].debtorId === userId) hold.moveAfter = null;
+	hold.debts = hold.debts.filter((debt) => debt.debtorId !== userId);
+	if (hold.debts.length === 0) {
+		state.pendingDebt = null;
+		state.phase = hold.resumePhase;
+	}
+	return [`What ${mentionPlayer(userId)} still owed is written off.`];
 }
 
 // A trade names lots and chips the leaving seat no longer has, so it cannot be

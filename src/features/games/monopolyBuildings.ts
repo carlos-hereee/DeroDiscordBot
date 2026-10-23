@@ -15,19 +15,19 @@ import { activeSeatOf, cloneState, completeAction, guardActiveTurn, mentionPlaye
 
 // ── monopolyBuildings ───────────────────────────────────────────────────────
 // What:  what an owner does with lots between rolls: mortgage one for cash, lift
-//        a mortgage, and build houses and hotels on a complete color group.
-// Who:   the room's build picker and the inventory peek's mortgage controls,
-//        through the re-exports in monopolyState; listBuildOptions,
-//        listMortgageOptions and listUnmortgageOptions are what they offer. unmortgageCost is also what the board embed shows, so the
-//        price on the button and the charge cannot disagree (rule 17). The
-//        building helpers below are shared with monopolyBankruptcy (selling back
-//        and mortgaging to cover a debt) and monopolyTrade (which lots may move).
-// When:  mortgages at any point in a live match, by any seat still in it, which
-//        is the standard rule. Building only on the owner's own turn before the
-//        roll, per Section 1 of the plan.
+//        a mortgage, sell a building back to the bank, and build houses and
+//        hotels on a complete color group.
+// Who:   the room's build picker and the inventory peek's mortgage and sell
+//        controls, through the re-exports in monopolyState. The list functions
+//        (listBuildOptions, listMortgageOptions, listUnmortgageOptions,
+//        listSellOptions) share their rule checks with the actions, so a control
+//        never offers a move the engine would refuse (rule 17). The building
+//        helpers are shared with monopolyBankruptcy (the forced sale before a
+//        bankruptcy) and monopolyTrade (which lots may move).
+// When:  mortgages and sales at any point in a live match, by any seat still in
+//        it, which is the standard rule. Building only on the owner's own turn
+//        before the roll, per Section 1 of the plan.
 // Where: split out of monopolyState (rule 18) along the "owner's holdings" seam.
-//        Selling buildings back and the forced mortgage before bankruptcy live in
-//        monopolyBankruptcy, because they only ever happen to cover a debt.
 // How:   every value (price, mortgage, house cost) comes from monopolyBoard;
 //        the bank's house and hotel stock lives on the state and is the supply a
 //        build draws from.
@@ -158,6 +158,91 @@ export function listUnmortgageOptions(state: MonopolyState, ownerId: string): Mo
 		name: tile.name,
 		amount: unmortgageCost(tile),
 	}));
+}
+
+// ── sell ────────────────────────────────────────────────────────────────────
+
+/**
+ * Sells one rung of buildings on `tile` back to the bank, mutating `state` (the
+ * caller's clone), and returns the trail line. A house goes for half its cost. A
+ * hotel goes for half its cost too and hands the four houses it replaced back to
+ * the lot when the bank has them; when it does not, the standard house shortage
+ * rule tears the lot down to bare ground and pays for all five rungs at once.
+ * Shared by the player's own sale and the forced sale at bankruptcy.
+ */
+export function sellBuildingRung(state: MonopolyState, seat: MonopolySeat, tile: PropertyTile): string {
+	const property = state.properties[tile.id];
+	const player = mentionPlayer(seat.userId);
+	const unitPrice = buildingSaleValue(tile);
+	if (!property.hotel) {
+		property.houses -= 1;
+		state.bank.houses += 1;
+		seat.chips += unitPrice;
+		return `${player} sold a house on ${tile.name} back to the bank for $${unitPrice}.`;
+	}
+	state.bank.hotels += 1;
+	property.hotel = false;
+	if (state.bank.houses >= MAX_HOUSES_PER_LOT) {
+		state.bank.houses -= MAX_HOUSES_PER_LOT;
+		property.houses = MAX_HOUSES_PER_LOT;
+		seat.chips += unitPrice;
+		return `${player} sold the hotel on ${tile.name} back to the bank for $${unitPrice}.`;
+	}
+	const teardown = unitPrice * (MAX_HOUSES_PER_LOT + 1);
+	seat.chips += teardown;
+	return `${player} sold the hotel on ${tile.name} and, with no houses left in the bank, every rung under it for $${teardown}.`;
+}
+
+// What a sale of the next rung on this lot pays: the teardown price for a hotel
+// the bank has no houses to give back for, otherwise one rung.
+function rungSaleValue(state: MonopolyState, tile: PropertyTile): number {
+	const unitPrice = buildingSaleValue(tile);
+	const tearsDown = state.properties[tile.id].hotel && state.bank.houses < MAX_HOUSES_PER_LOT;
+	return tearsDown ? unitPrice * (MAX_HOUSES_PER_LOT + 1) : unitPrice;
+}
+
+type SellCheck = { ok: true; seatIndex: number; tile: PropertyTile } | { ok: false; reason: string };
+
+// Every rule a sale must pass, shared by applySellBuilding and listSellOptions.
+// Selling runs the even building rule backwards: a lot may only drop a rung while
+// it is the tallest in its group.
+function checkSell(state: MonopolyState, ownerId: string, tileId: TileId): SellCheck {
+	const owned = findOwnedTile(state, ownerId, tileId);
+	if (!owned.ok) return owned;
+	const { seatIndex, tile } = owned;
+	if (tile.kind !== "property" || !hasBuildings(state.properties[tile.id])) return { ok: false, reason: `${tile.name} has no buildings to sell.` };
+	const tallest = Math.max(...COLOR_GROUPS[tile.group].map((id) => buildingLevel(state.properties[id])));
+	if (buildingLevel(state.properties[tile.id]) < tallest) {
+		return { ok: false, reason: `Sell evenly: the other lots in the ${tile.group} group have more buildings.` };
+	}
+	return { ok: true, seatIndex, tile };
+}
+
+/** The owner sells one house, or its hotel, on a lot back to the bank at half what it cost. Any seat still playing, at any time. */
+export function applySellBuilding(state: MonopolyState, ownerId: string, tileId: TileId): MonopolyResult {
+	const check = checkSell(state, ownerId, tileId);
+	if (!check.ok) return rejectAction(check.reason);
+	const next = cloneState(state);
+	return completeAction(next, ownerId, [sellBuildingRung(next, next.seats[check.seatIndex], check.tile)]);
+}
+
+/** One building a seat could sell right now: the lot, whether it is a house or the hotel, and what the bank pays. */
+export interface SellOption {
+	tileId: TileId;
+	name: string;
+	kind: BuildingKind;
+	amount: number;
+}
+
+/** Every lot `ownerId` could sell a building from right now, in board order, with what the sale pays. */
+export function listSellOptions(state: MonopolyState, ownerId: string): SellOption[] {
+	const options: SellOption[] = [];
+	for (const tile of BOARD) {
+		if (tile.kind !== "property" || !checkSell(state, ownerId, tile.id).ok) continue;
+		const kind: BuildingKind = state.properties[tile.id].hotel ? "hotel" : "house";
+		options.push({ tileId: tile.id, name: tile.name, kind, amount: rungSaleValue(state, tile) });
+	}
+	return options;
 }
 
 // ── build ───────────────────────────────────────────────────────────────────

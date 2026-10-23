@@ -30,16 +30,20 @@ import {
 	applySkip,
 	applyUnmortgage,
 	acceptTrade,
+	applyPayDebt,
+	applySellBuilding,
 	calculateRent,
 	closeAuction,
 	createInitialState,
 	listBuildOptions,
 	listMortgageOptions,
+	listSellOptions,
 	listUnmortgageOptions,
 	nextBuildingKind,
 	openTrade,
 	placeBid,
 	unmortgageCost,
+	waitingDebt,
 	type MonopolyResult,
 	type MonopolyState,
 } from "./monopolyState.js";
@@ -466,15 +470,22 @@ describe("applyJailChoice", () => {
 		expect(trailLines).toContain("<@alice> cannot cover $50, even by selling and mortgaging everything, and is bankrupt.");
 	});
 
-	it("mortgages to cover the forced bail and still moves", () => {
+	it("holds a forced bail the seat can cover, and moves only once it is paid", () => {
 		const state = jailedMatch();
 		Object.assign(state.seats[0], { jailTurnsRemaining: 1, chips: 10 });
 		giveTiles(state, ALICE, "rail-one");
-		const { state: next, trailLines } = expectOk(applyJailChoice(state, "roll", diceRng(1, 2)));
+
+		const { state: held } = expectOk(applyJailChoice(state, "roll", diceRng(1, 2)));
+		expect(held.phase).toBe("awaiting-debt");
+		expect(held.pendingDebt).toMatchObject({ debts: [{ debtorId: ALICE, amount: JAIL_BAIL }], moveAfter: 3 });
+		// Still in the cell: the standard rules pay the bail first, then move.
+		expect(held.seats[0]).toMatchObject({ inJail: true, position: JAIL_INDEX });
+
+		const mortgaged = expectOk(applyMortgage(held, ALICE, "rail-one")).state;
+		const { state: next, trailLines } = expectOk(applyPayDebt(mortgaged, ALICE));
 		expect(next.seats[0]).toMatchObject({ bankrupt: false, inJail: false, position: 13, chips: 10 + 100 - JAIL_BAIL });
-		expect(next.properties["rail-one"].mortgaged).toBe(true);
-		expect(trailLines).toContain("<@alice> mortgaged Rail One for $100 to cover the debt.");
-		expect(trailLines).toContain("<@alice> used the last try, pays $50 bail and moves.");
+		expect(next.pendingDebt).toBeNull();
+		expect(trailLines[0]).toBe("<@alice> used the last try, pays $50 bail and moves.");
 	});
 
 	it("refuses a free seat, a closed turn and a finished match", () => {
@@ -1001,6 +1012,71 @@ describe("listMortgageOptions and listUnmortgageOptions", () => {
 	});
 });
 
+describe("applySellBuilding and listSellOptions", () => {
+	// Brown with houses: Vermillion Alley at two, Burnt Umber Row at three.
+	const builtBrown = (): MonopolyState => {
+		const state = newMatch();
+		giveTiles(state, ALICE, ...COLOR_GROUPS.brown);
+		state.properties["vermillion-alley"].houses = 2;
+		state.properties["burnt-umber-row"].houses = 3;
+		state.bank.houses = BANK_HOUSES - 5;
+		return state;
+	};
+
+	it("sells a house back to the bank at half its cost, off turn too", () => {
+		const state = builtBrown();
+		state.activeSeatIndex = 1;
+		const { state: next, trailLines } = expectOk(applySellBuilding(state, ALICE, "burnt-umber-row"));
+		expect(next.properties["burnt-umber-row"].houses).toBe(2);
+		expect(next.bank.houses).toBe(BANK_HOUSES - 4);
+		expect(next.seats[0].chips).toBe(STARTING_CHIPS + 25);
+		expect(trailLines).toEqual(["<@alice> sold a house on Burnt Umber Row back to the bank for $25."]);
+	});
+
+	it("sells evenly: only from the tallest lot in the group", () => {
+		expectRefusal(applySellBuilding(builtBrown(), ALICE, "vermillion-alley"), "Sell evenly: the other lots in the brown group have more buildings.");
+		expect(listSellOptions(builtBrown(), ALICE)).toEqual([{ tileId: "burnt-umber-row", name: "Burnt Umber Row", kind: "house", amount: 25 }]);
+	});
+
+	it("sells a hotel back for the four houses it replaced when the bank has them", () => {
+		const state = newMatch();
+		giveTiles(state, ALICE, ...COLOR_GROUPS.brown);
+		state.properties["vermillion-alley"].houses = 4;
+		state.properties["burnt-umber-row"].hotel = true;
+		state.bank.houses = BANK_HOUSES - 4;
+		state.bank.hotels = BANK_HOTELS - 1;
+		expect(listSellOptions(state, ALICE)).toEqual([{ tileId: "burnt-umber-row", name: "Burnt Umber Row", kind: "hotel", amount: 25 }]);
+		const { state: next, trailLines } = expectOk(applySellBuilding(state, ALICE, "burnt-umber-row"));
+		expect(trailLines[0]).toBe("<@alice> sold the hotel on Burnt Umber Row back to the bank for $25.");
+		expect(next.properties["burnt-umber-row"]).toMatchObject({ hotel: false, houses: 4 });
+		expect(next.bank).toEqual({ houses: BANK_HOUSES - 8, hotels: BANK_HOTELS });
+	});
+
+	it("tears a hotel down to bare ground when the bank has no houses to give back, and prices the option that way", () => {
+		const state = newMatch();
+		giveTiles(state, ALICE, ...COLOR_GROUPS.brown);
+		state.properties["vermillion-alley"].hotel = true;
+		state.properties["burnt-umber-row"].hotel = true;
+		state.bank.houses = 3;
+		state.bank.hotels = BANK_HOTELS - 2;
+		expect(listSellOptions(state, ALICE).map((option) => option.amount)).toEqual([125, 125]);
+		const { state: next, trailLines } = expectOk(applySellBuilding(state, ALICE, "vermillion-alley"));
+		expect(trailLines[0]).toBe("<@alice> sold the hotel on Vermillion Alley and, with no houses left in the bank, every rung under it for $125.");
+		expect(next.properties["vermillion-alley"]).toMatchObject({ hotel: false, houses: 0 });
+		expect(next.bank).toEqual({ houses: 3, hotels: BANK_HOTELS - 1 });
+		expect(next.seats[0].chips).toBe(STARTING_CHIPS + 125);
+	});
+
+	it("refuses a bare lot, a lot of someone else's, and a lot that takes no buildings", () => {
+		const state = builtBrown();
+		giveTiles(state, ALICE, "rail-one");
+		giveTiles(state, BOB, "reader-dock");
+		expectRefusal(applySellBuilding(state, ALICE, "rail-one"), "Rail One has no buildings to sell.");
+		expectRefusal(applySellBuilding(state, ALICE, "reader-dock"), "You do not own Reader Dock.");
+		expect(listSellOptions(newMatch(), ALICE)).toEqual([]);
+	});
+});
+
 describe("revision", () => {
 	it("starts at 0 and rises by one with every action that lands, and not with a refusal", () => {
 		const fresh = newMatch();
@@ -1084,9 +1160,10 @@ function assertConsistent(state: MonopolyState): void {
 	const piled = state.chanceDeck.length + state.chanceDiscard.length + state.chestDeck.length + state.chestDiscard.length;
 	expect(piled + heldCards).toBe(CHANCE_DECK.length + CHEST_DECK.length);
 	if (state.phase !== "finished") expect(state.seats[state.activeSeatIndex].bankrupt).toBe(false);
-	// Every trade and auction the driver opens resolves inside the turn.
+	// Every trade, auction and held debt the driver meets resolves inside the turn.
 	expect(state.pendingTrade).toBeNull();
 	expect(state.pendingAuction).toBeNull();
+	expect(state.pendingDebt).toBeNull();
 }
 
 // Mortgages the first lot it can when cash runs low, and lifts the first
@@ -1174,6 +1251,31 @@ function runAuction(state: MonopolyState, tally: MatchTally): MonopolyState {
 	return current;
 }
 
+// Raises cash for the held debt the way the engine did on its own before the debt
+// prompt existed (mortgages first, in board order, then the tallest building, the
+// first in board order on a tie) and pays it, so the seeded matches below play
+// out exactly as they did then. Not counted in the tally, which only ever counted
+// the driver's own mortgages.
+function settleHeldDebt(state: MonopolyState): MonopolyState {
+	const debt = waitingDebt(state);
+	if (!debt) throw new Error("settleHeldDebt needs a held debt");
+	const level = (current: MonopolyState, tileId: string): number =>
+		current.properties[tileId].hotel ? MAX_HOUSES_PER_LOT + 1 : current.properties[tileId].houses;
+	let current = state;
+	while ((current.seats.find((seat) => seat.userId === debt.debtorId)?.chips ?? 0) < debt.amount) {
+		const mortgage = listMortgageOptions(current, debt.debtorId)[0];
+		if (mortgage) {
+			current = expectOk(applyMortgage(current, debt.debtorId, mortgage.tileId)).state;
+			continue;
+		}
+		const sales = listSellOptions(current, debt.debtorId);
+		if (sales.length === 0) break;
+		const tallest = sales.reduce((best, option) => (level(current, option.tileId) > level(current, best.tileId) ? option : best));
+		current = expectOk(applySellBuilding(current, debt.debtorId, tallest.tileId)).state;
+	}
+	return expectOk(applyPayDebt(current, debt.debtorId, NOW)).state;
+}
+
 // One seat's whole turn, played the way a greedy player would: manage its lots
 // before each roll, get out of jail by bail when it can, buy everything it can
 // afford, roll again on doubles. With trading on it buys its way into whole
@@ -1191,6 +1293,10 @@ function playTurn(state: MonopolyState, rng: () => number, tally: MatchTally, op
 		}
 		if (current.phase === "in-auction") {
 			current = runAuction(current, tally);
+			continue;
+		}
+		if (current.phase === "awaiting-debt") {
+			current = settleHeldDebt(current);
 			continue;
 		}
 		if (options.trading) current = tradeForGroup(current, seat.userId, tally);

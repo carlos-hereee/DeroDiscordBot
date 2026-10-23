@@ -12,14 +12,16 @@ import { COLORS } from "@base/copy/brand.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { BOARD, BOARD_SIZE, JAIL_BAIL, describeTile, isOwnableTile, ownableTileName, type OwnableTile } from "@features/games/monopolyBoard.js";
 import {
+	BANK_CREDITOR,
 	listBuildOptions,
 	listMortgageOptions,
+	listSellOptions,
 	listUnmortgageOptions,
 	unmortgageCost,
+	waitingDebt,
 	type AuctionState,
 	type MonopolySeat,
 	type MonopolyState,
-	type MortgageOption,
 } from "@features/games/monopolyState.js";
 import { renderBoard } from "@features/games/monopolyRenderer.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
@@ -111,10 +113,24 @@ function turnPrompt(state: MonopolyState, active: MonopolySeat): string {
 			return state.pendingAuction
 				? gameRoomsCopy.monopoly.auctionPrompt(ownableTileName(state.pendingAuction.tileId), auctionClosesAt(state.pendingAuction))
 				: gameRoomsCopy.monopoly.waitingPrompt;
+		case "awaiting-debt":
+			return debtPrompt(state);
 		default:
 			return gameRoomsCopy.monopoly.waitingPrompt;
 	}
 }
+
+// Who owes what to whom, and how far short they are, while the match waits on a debt.
+function debtPrompt(state: MonopolyState): string {
+	const debt = waitingDebt(state);
+	const debtor = debt ? state.seats.find((seat) => seat.userId === debt.debtorId) : undefined;
+	if (!debt || !debtor) return gameRoomsCopy.monopoly.waitingPrompt;
+	return gameRoomsCopy.monopoly.debtPrompt(debt.debtorId, creditorLabel(debt.creditorId), debt.amount, debtor.chips);
+}
+
+// A debt's payee as the copy names it: a mention for a player, "the bank" otherwise.
+const creditorLabel = (creditorId: string): string =>
+	creditorId === BANK_CREDITOR ? gameRoomsCopy.monopoly.bankCreditor : `<@${creditorId}>`;
 
 /**
  * When an auction round stops taking bids, in epoch milliseconds. One helper for
@@ -178,39 +194,55 @@ function lotsOwnedBy(state: MonopolyState, userId: string): OwnableTile[] {
 // corner the last few wait for a second pick; the slice keeps the select from throwing.
 const MAX_SELECT_OPTIONS = 25;
 
-/** The Inventory reply: the holdings embed, plus the mortgage controls when there is anything to mortgage or lift. */
+/** The Inventory reply: the holdings embed, plus the controls for anything there is to mortgage, lift or sell. */
 export interface MonopolyInventoryReply {
 	embeds: EmbedBuilder[];
 	components: ActionRowBuilder<StringSelectMenuBuilder>[];
 }
 
+// One select option: what the player reads, and the tile id the handler gets.
+type HoldingsOption = { label: string; value: string };
+
 /**
  * The Inventory reply for `viewerId`: their own chips, jail cards and every lot with
- * what is on it, and two selects, one for each lot they could mortgage now and one
- * for each mortgage they could lift now. Ephemeral at the call site. The selects
+ * what is on it, and up to three selects: each lot they could mortgage now, each
+ * mortgage they could lift now, and each building they could sell back now. These
+ * are also how a seat raises cash for a held debt, so a debtor's own peek opens with
+ * what they owe and how far short they are. Ephemeral at the call site. The selects
  * list the engine's own option lists, so they never offer a move the engine would
  * refuse; a finished match and a seat that is out get the embed alone.
  */
 export function monopolyInventoryReply(state: MonopolyState, viewerId: string, roomId: string): MonopolyInventoryReply {
 	const embed = monopolyInventoryEmbed(state, viewerId);
-	const playing = state.phase !== "finished" && state.seats.some((seat) => seat.userId === viewerId && !seat.bankrupt);
-	if (!playing) return { embeds: [embed], components: [] };
+	const seat = state.seats.find((candidate) => candidate.userId === viewerId && !candidate.bankrupt);
+	if (state.phase === "finished" || !seat) return { embeds: [embed], components: [] };
 
-	const components: ActionRowBuilder<StringSelectMenuBuilder>[] = [];
-	const toMortgage = listMortgageOptions(state, viewerId);
-	if (toMortgage.length > 0) {
-		components.push(
-			mortgageSelect(roomId, "mmortgage", gameRoomsCopy.monopoly.mortgagePlaceholder, toMortgage, gameRoomsCopy.monopoly.mortgageOptionLabel)
-		);
-	}
-	const toLift = listUnmortgageOptions(state, viewerId);
-	if (toLift.length > 0) {
-		components.push(
-			mortgageSelect(roomId, "munmortgage", gameRoomsCopy.monopoly.unmortgagePlaceholder, toLift, gameRoomsCopy.monopoly.unmortgageOptionLabel)
-		);
-	}
-	if (components.length > 0) embed.setDescription(`${embed.data.description ?? ""}\n\n${gameRoomsCopy.monopoly.inventoryMortgageHint}`);
-	return { embeds: [embed], components };
+	const mortgage = listMortgageOptions(state, viewerId).map((option) => ({
+		label: gameRoomsCopy.monopoly.mortgageOptionLabel(option.name, option.amount),
+		value: option.tileId,
+	}));
+	const lift = listUnmortgageOptions(state, viewerId).map((option) => ({
+		label: gameRoomsCopy.monopoly.unmortgageOptionLabel(option.name, option.amount),
+		value: option.tileId,
+	}));
+	const sell = listSellOptions(state, viewerId).map((option) => ({
+		label: gameRoomsCopy.monopoly.sellOptionLabel(option.name, option.kind, option.amount),
+		value: option.tileId,
+	}));
+	const components = [
+		holdingsSelect(roomId, "mmortgage", gameRoomsCopy.monopoly.mortgagePlaceholder, mortgage),
+		holdingsSelect(roomId, "munmortgage", gameRoomsCopy.monopoly.unmortgagePlaceholder, lift),
+		holdingsSelect(roomId, "msell", gameRoomsCopy.monopoly.sellPlaceholder, sell),
+	].filter((select): select is ActionRowBuilder<StringSelectMenuBuilder> => select !== null);
+
+	const debt = waitingDebt(state);
+	const owes = debt?.debtorId === viewerId ? debt : null;
+	const description = [
+		...(owes ? [gameRoomsCopy.monopoly.inventoryDebtLine(owes.amount, creditorLabel(owes.creditorId), Math.max(0, owes.amount - seat.chips)), ""] : []),
+		embed.data.description ?? "",
+		...(components.length > 0 ? ["", gameRoomsCopy.monopoly.inventoryMortgageHint] : []),
+	];
+	return { embeds: [embed.setDescription(description.join("\n"))], components };
 }
 
 /**
@@ -245,17 +277,19 @@ function lotLine(state: MonopolyState, tile: OwnableTile): string {
 	return gameRoomsCopy.monopoly.inventoryLotLine(tile.name, details);
 }
 
-function mortgageSelect(
+// One of the peek's selects, or null when it would have no options: a select
+// needs at least one, and an empty one would only be a control that does nothing.
+function holdingsSelect(
 	roomId: string,
-	action: "mmortgage" | "munmortgage",
+	action: "mmortgage" | "munmortgage" | "msell",
 	placeholder: string,
-	options: MortgageOption[],
-	label: (tileName: string, amount: number) => string
-): ActionRowBuilder<StringSelectMenuBuilder> {
+	options: HoldingsOption[]
+): ActionRowBuilder<StringSelectMenuBuilder> | null {
+	if (options.length === 0) return null;
 	const select = new StringSelectMenuBuilder()
 		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:${action}:${roomId}`)
 		.setPlaceholder(placeholder)
-		.addOptions(options.slice(0, MAX_SELECT_OPTIONS).map((option) => ({ label: label(option.name, option.amount), value: option.tileId })));
+		.addOptions(options.slice(0, MAX_SELECT_OPTIONS));
 	return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
 }
 
@@ -286,6 +320,12 @@ function turnButtons(state: MonopolyState, active: MonopolySeat, viewerId: strin
 		const { tileId, roundOpenedAt } = state.pendingAuction;
 		return [button(roomId, "mauction", gameRoomsCopy.monopoly.bidLabel(ownableTileName(tileId)), ButtonStyle.Primary, "🔨", String(roundOpenedAt))];
 	}
+	// Pay is shown to every viewer for the same reason: the debtor may not be the
+	// seat on the clock. The prompt above names who it is, and the engine refuses
+	// anyone else. Never greyed out, because a debtor who can no longer cover the
+	// debt settles it by pressing Pay too (the engine then declares the bankruptcy).
+	const debt = waitingDebt(state);
+	if (debt) return [button(roomId, "mpaydebt", gameRoomsCopy.monopoly.payDebtLabel(debt.amount), ButtonStyle.Danger, "💸")];
 	if (active.userId !== viewerId) return [];
 
 	switch (state.phase) {

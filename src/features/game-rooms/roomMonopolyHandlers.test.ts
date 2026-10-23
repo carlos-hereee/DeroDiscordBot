@@ -19,7 +19,7 @@ vi.mock("@utils/secureRng.js", () => ({ secureRandom: vi.fn() }));
 vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn() }));
 
 import { renderBoard } from "@features/games/monopolyRenderer.js";
-import { handleMroll, handleMbuy, handleMskip, handleMend, handleMjail, handleMinventory, turnFingerprint } from "./roomMonopolyHandlers.js";
+import { handleMroll, handleMbuy, handleMskip, handleMend, handleMjail, handleMinventory, handleMpaydebt, turnFingerprint } from "./roomMonopolyHandlers.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
@@ -322,6 +322,44 @@ describe("handleMbuy, handleMskip and handleMend", () => {
 
 		expect(followUpText(interaction)).toBe("Finish your roll before ending the turn.");
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+	});
+});
+
+describe("handleMpaydebt", () => {
+	// B owes the bank $50 from a card on A's turn, holds $30 and Rail One.
+	const bobOwes = (): MonopolyState => {
+		const state = freshMatch();
+		state.phase = "awaiting-debt";
+		state.seats[1].chips = 30;
+		state.properties["rail-one"].ownerId = B;
+		state.pendingDebt = { debts: [{ debtorId: B, creditorId: "bank", amount: 50 }], resumePhase: "post-roll", moveAfter: null };
+		return state;
+	};
+
+	it("lets the debtor pay off turn once it has the chips, and the turn resumes", async () => {
+		const state = bobOwes();
+		state.seats[1].chips = 60;
+		const room = seed(state);
+
+		await handleMpaydebt(makeInteraction(B), room);
+
+		expect(persisted()).toMatchObject({ phase: "post-roll", pendingDebt: null });
+		expect(persisted().seats[1].chips).toBe(10);
+	});
+
+	it("refuses the debtor while mortgaging could still raise the rest, saying how much", async () => {
+		const room = seed(bobOwes());
+		const interaction = makeInteraction(B);
+		await handleMpaydebt(interaction, room);
+		expect(followUpText(interaction)).toBe("You need $20 more. Mortgage lots or sell buildings from Inventory, then pay.");
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+	});
+
+	it("refuses anyone but the debtor, even the seat on the clock", async () => {
+		const room = seed(bobOwes());
+		const interaction = makeInteraction(A);
+		await handleMpaydebt(interaction, room);
+		expect(followUpText(interaction)).toBe(`Only <@${B}> can pay this debt.`);
 	});
 });
 

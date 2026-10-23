@@ -125,6 +125,9 @@ export const GAME_ROOM_ACTIONS = {
 	// Open the sealed bid modal while a lot is up for auction. Every seat still in
 	// the match may bid, so the turn is not required either.
 	mauction: { hostOnly: false, playersOnly: true },
+	// Pay the debt the match is waiting on. The debtor need not be the seat on the
+	// clock (a card can charge a rival), so the engine checks the payer, not the turn.
+	mpaydebt: { hostOnly: false, playersOnly: true },
 } as const satisfies Record<string, { hostOnly: boolean; playersOnly: boolean }>;
 
 export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;

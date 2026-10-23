@@ -220,6 +220,19 @@ describe("monopolyControlsRow", () => {
 		}
 	});
 
+	it("offers EVERY seat the Pay button while the match waits on a debt, priced, and the prompt names the debtor", async () => {
+		const state = freshMatch();
+		state.phase = "awaiting-debt";
+		state.seats[1].chips = 30;
+		state.pendingDebt = { debts: [{ debtorId: B, creditorId: "bank", amount: 50 }], resumePhase: "post-roll", moveAfter: null };
+
+		for (const viewer of [A, B]) {
+			const [turn] = rowsJson(state, viewer);
+			expect(turn).toEqual([expect.objectContaining({ custom_id: `gameroom:mpaydebt:${ROOM}`, label: gameRoomsCopy.monopoly.payDebtLabel(50) })]);
+		}
+		expect(await descriptionOf(state)).toContain(gameRoomsCopy.monopoly.debtPrompt(B, gameRoomsCopy.monopoly.bankCreditor, 50, 30));
+	});
+
 	it("offers no turn control in an auction phase with no auction recorded", () => {
 		const state = freshMatch();
 		state.phase = "in-auction";
@@ -319,11 +332,25 @@ describe("monopolyInventoryReply", () => {
 		expect(reply.embeds[0].data.description).toContain(gameRoomsCopy.monopoly.inventoryMortgageHint);
 	});
 
-	it("leaves out a lot whose group has buildings, and a mortgage the viewer cannot afford to lift", () => {
+	it("leaves out a lot whose group has buildings and a mortgage the viewer cannot afford, and offers the house for sale instead", () => {
 		const state = holdings();
 		state.properties["vermillion-alley"].houses = 1;
 		state.seats[0].chips = 54;
-		expect(monopolyInventoryReply(state, A, ROOM).components).toEqual([]);
+		const selects = selectsOf(monopolyInventoryReply(state, A, ROOM));
+		expect(selects.map((select) => select.custom_id)).toEqual([`gameroomSelect:msell:${ROOM}`]);
+		expect(selects[0].options).toEqual([{ label: gameRoomsCopy.monopoly.sellOptionLabel("Vermillion Alley", "house", 25), value: "vermillion-alley" }]);
+	});
+
+	it("opens the debtor's own peek with what they owe and how much more they need", () => {
+		const state = holdings();
+		state.seats[0].chips = 20;
+		state.phase = "awaiting-debt";
+		state.pendingDebt = { debts: [{ debtorId: A, creditorId: B, amount: 100 }], resumePhase: "post-roll", moveAfter: null };
+
+		const description = monopolyInventoryReply(state, A, ROOM).embeds[0].data.description ?? "";
+		expect(description.startsWith(gameRoomsCopy.monopoly.inventoryDebtLine(100, `<@${B}>`, 80))).toBe(true);
+		// Only the debtor sees it.
+		expect(monopolyInventoryReply(state, B, ROOM).embeds[0].data.description).not.toContain("You owe");
 	});
 
 	it("offers no controls to a viewer with nothing to mortgage, a seat that is out, or once the match is over", () => {

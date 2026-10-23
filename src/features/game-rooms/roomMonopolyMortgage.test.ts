@@ -7,7 +7,7 @@ vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn(async () => null) }));
 
-import { handleMortgageSelect, handleUnmortgageSelect } from "./roomMonopolyMortgage.js";
+import { handleMortgageSelect, handleSellSelect, handleUnmortgageSelect } from "./roomMonopolyMortgage.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
 import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
@@ -50,7 +50,7 @@ function seed(state: MonopolyState): void {
 
 const persisted = (): MonopolyState => storeMock.updateSecretIf.mock.calls[0][3] as MonopolyState;
 
-function makeSelect(action: "mmortgage" | "munmortgage", userId: string, value: string) {
+function makeSelect(action: "mmortgage" | "munmortgage" | "msell", userId: string, value: string) {
 	return {
 		customId: `gameroomSelect:${action}:room-1`,
 		guildId: "guild-1",
@@ -121,5 +121,21 @@ describe("mortgaging from the Inventory peek", () => {
 		await handleMortgageSelect(interaction);
 		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.errors.notYours }));
 		expect(interaction.deferUpdate).not.toHaveBeenCalled();
+	});
+	it("sells a house back to the bank and redraws the peek with the new options", async () => {
+		const state = holdings();
+		state.properties["burnt-umber-row"].ownerId = B;
+		state.properties["vermillion-alley"].houses = 1;
+		state.bank.houses -= 1;
+		seed(state);
+		const interaction = makeSelect("msell", B, "vermillion-alley");
+
+		await handleSellSelect(interaction);
+
+		expect(persisted().properties["vermillion-alley"].houses).toBe(0);
+		expect(persisted().seats[1].chips).toBe(1525);
+		const peek = interaction.editReply.mock.calls[0][0] as PeekPayload;
+		expect(selectOptions(peek, "msell")).toEqual([]);
+		expect(selectOptions(peek, "mmortgage")).toEqual(["vermillion-alley", "burnt-umber-row"]);
 	});
 });

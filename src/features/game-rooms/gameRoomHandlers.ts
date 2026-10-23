@@ -197,6 +197,9 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		case "mauction":
 			await roomMonopolyAuction.handleMauction(interaction, room, parsed.arg ?? "");
 			return;
+		case "mpaydebt":
+			await roomMonopolyHandlers.handleMpaydebt(interaction, room);
+			return;
 		case "board":
 			await roomBattleshipHandlers.handleViewBoard(interaction, room);
 			return;
@@ -273,6 +276,7 @@ export function registerGameRoomHandlers(): void {
 		if (action === "mbuild") return roomMonopolyBuild.handleBuildSelect(interaction);
 		if (action === "mmortgage") return roomMonopolyMortgage.handleMortgageSelect(interaction);
 		if (action === "munmortgage") return roomMonopolyMortgage.handleUnmortgageSelect(interaction);
+		if (action === "msell") return roomMonopolyMortgage.handleSellSelect(interaction);
 		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
 	});
 	// Hangman's two modals and Monopoly's two. Same sub-routing shape, and each

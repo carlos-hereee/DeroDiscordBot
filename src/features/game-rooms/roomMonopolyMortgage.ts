@@ -1,34 +1,39 @@
 import { MessageFlags, type StringSelectMenuInteraction } from "discord.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
-import { applyMortgage, applyUnmortgage, type MonopolyResult, type MonopolyState } from "@features/games/monopolyState.js";
+import { applyMortgage, applySellBuilding, applyUnmortgage, type MonopolyResult, type MonopolyState } from "@features/games/monopolyState.js";
 import { monopolyInventoryReply } from "./roomMonopoly.js";
 import { commitMonopolyMove, loadSeatedRoom } from "./roomMonopolyHandlers.js";
 
 // ── roomMonopolyMortgage ─────────────────────────────────────────────
-// What:  the two selects in the private Inventory peek: mortgage a lot for cash,
-//        and lift a mortgage.
-// Who:   gameRoomHandlers routes the `mmortgage` and `munmortgage` selects here;
-//        the peek itself is roomMonopoly.monopolyInventoryReply.
+// What:  the selects in the private Inventory peek: mortgage a lot for cash, lift a
+//        mortgage, and sell a building back to the bank. They are also how a seat
+//        raises cash for a debt the match is holding for it.
+// Who:   gameRoomHandlers routes the `mmortgage`, `munmortgage` and `msell`
+//        selects here; the peek itself is roomMonopoly.monopolyInventoryReply.
 // When:  any time in a live match, by any seat still in it, on or off its turn
-//        (the standard rule), so neither requires the turn.
-// Where: the engine's applyMortgage and applyUnmortgage decide every rule; the
-//        move commits through the same compare and swap as any other, so a
-//        mortgage can never be lost under a concurrent roll.
+//        (the standard rule), so none requires the turn.
+// Where: the engine's applyMortgage, applyUnmortgage and applySellBuilding
+//        decide every rule; the move commits through the same compare and swap
+//        as any other, so a mortgage or sale can never be lost under a
+//        concurrent roll.
 // How:   acknowledge the press on the peek, commit, then redraw the peek in place
 //        from the state just written, so the new balance and the refreshed
 //        options are what the player sees next.
 
 const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 
-type MortgageAction = (state: MonopolyState, ownerId: string, tileId: string) => MonopolyResult;
+type HoldingsAction = (state: MonopolyState, ownerId: string, tileId: string) => MonopolyResult;
 
 /** A pick from the peek's "Mortgage a lot" select. */
-export const handleMortgageSelect = (interaction: StringSelectMenuInteraction): Promise<void> => runMortgageSelect(interaction, applyMortgage);
+export const handleMortgageSelect = (interaction: StringSelectMenuInteraction): Promise<void> => runHoldingsSelect(interaction, applyMortgage);
 
 /** A pick from the peek's "Lift a mortgage" select. */
-export const handleUnmortgageSelect = (interaction: StringSelectMenuInteraction): Promise<void> => runMortgageSelect(interaction, applyUnmortgage);
+export const handleUnmortgageSelect = (interaction: StringSelectMenuInteraction): Promise<void> => runHoldingsSelect(interaction, applyUnmortgage);
 
-async function runMortgageSelect(interaction: StringSelectMenuInteraction, action: MortgageAction): Promise<void> {
+/** A pick from the peek's "Sell a building" select: one house, or the hotel, back to the bank. */
+export const handleSellSelect = (interaction: StringSelectMenuInteraction): Promise<void> => runHoldingsSelect(interaction, applySellBuilding);
+
+async function runHoldingsSelect(interaction: StringSelectMenuInteraction, action: HoldingsAction): Promise<void> {
 	const [, , roomId] = interaction.customId.split(":");
 	const room = await loadSeatedRoom(interaction, roomId);
 	if (!room) return;
@@ -47,4 +52,4 @@ async function runMortgageSelect(interaction: StringSelectMenuInteraction, actio
 	await interaction.editReply(monopolyInventoryReply(outcome.state, interaction.user.id, room.roomId));
 }
 
-export const roomMonopolyMortgage = { handleMortgageSelect, handleUnmortgageSelect };
+export const roomMonopolyMortgage = { handleMortgageSelect, handleUnmortgageSelect, handleSellSelect };

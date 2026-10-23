@@ -58,7 +58,7 @@ export type { TileId, ColorGroup } from "./monopolyBoard.js";
 // stored match cannot carry wording that drifted from the deck definitions.
 export type CardId = string;
 
-export type MonopolyPhase = "pre-roll" | "post-roll" | "awaiting-buy-or-skip" | "in-auction" | "in-trade" | "finished";
+export type MonopolyPhase = "pre-roll" | "post-roll" | "awaiting-buy-or-skip" | "in-auction" | "in-trade" | "awaiting-debt" | "finished";
 
 export type JailChoice = "bail" | "card" | "roll";
 
@@ -95,6 +95,9 @@ export interface MonopolyState {
 	chestDiscard: CardId[];
 	pendingTrade: TradeProposal | null; // one at a time
 	pendingAuction: AuctionState | null; // one at a time
+	// A debt the debtor can cover by mortgaging or selling but not from chips, held
+	// while the debtor chooses what to raise cash from (phase "awaiting-debt").
+	pendingDebt: DebtHold | null;
 	phase: MonopolyPhase;
 	settings: MonopolySettings;
 	turnStartedAt: number; // ms epoch, for the idle sweep
@@ -131,6 +134,30 @@ export interface TradeProposal {
 	openedAt: number;
 }
 
+/** One debt as the stored match keeps it: ids rather than seats, so it survives a write. */
+export interface PendingDebt {
+	debtorId: string;
+	// A seat's user id, or BANK_CREDITOR.
+	creditorId: string;
+	amount: number;
+	// The trail line for the debt paid in full, worded by whatever charged it.
+	paidLine?: string;
+}
+
+/**
+ * The debts a match is waiting on. `debts[0]` waits on its debtor's Pay; any
+ * others fell due in the same batch (a card can charge several seats) and settle,
+ * or wait in turn, once it is paid.
+ */
+export interface DebtHold {
+	debts: PendingDebt[];
+	// The phase the turn returns to once every debt here is settled.
+	resumePhase: MonopolyPhase;
+	// Forced bail only: the dice total the jailed seat moves once its bail is paid,
+	// because the standard rules pay the bail and THEN move.
+	moveAfter: number | null;
+}
+
 export interface AuctionState {
 	tileId: TileId;
 	bids: Record<string, number>; // userId -> last bid
@@ -147,15 +174,19 @@ export {
 	applyBuild,
 	applyMortgage,
 	applyUnmortgage,
+	applySellBuilding,
 	listBuildOptions,
 	listMortgageOptions,
+	listSellOptions,
 	listUnmortgageOptions,
 	nextBuildingKind,
 	unmortgageCost,
 	type BuildingKind,
 	type BuildOption,
 	type MortgageOption,
+	type SellOption,
 } from "./monopolyBuildings.js";
+export { applyDebtDefault, applyPayDebt, waitingDebt } from "./monopolyDebts.js";
 export { acceptTrade, describeTradeSide, openTrade, rejectTrade, tradableLots } from "./monopolyTrade.js";
 export { closeAuction, openAuction, placeBid } from "./monopolyAuction.js";
 export { BANK_CREDITOR, resolveDebt } from "./monopolyBankruptcy.js";
@@ -200,6 +231,7 @@ export function createInitialState(
 		chestDiscard: [],
 		pendingTrade: null,
 		pendingAuction: null,
+		pendingDebt: null,
 		phase: "pre-roll",
 		settings: { auctionsEnabled: settings.auctionsEnabled },
 		turnStartedAt: now,

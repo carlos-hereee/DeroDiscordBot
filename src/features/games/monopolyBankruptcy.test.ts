@@ -3,6 +3,8 @@ import { BANK_HOTELS, BANK_HOUSES, STARTING_CHIPS, boardIndexOf } from "./monopo
 import { settleDebt, settleDebts, type MonopolyDebt } from "./monopolyBankruptcy.js";
 import {
 	BANK_CREDITOR,
+	applyMortgage,
+	applyPayDebt,
 	applyRoll,
 	createInitialState,
 	resolveDebt,
@@ -103,80 +105,46 @@ describe("resolveDebt", () => {
 	});
 });
 
-// ── raising cash ────────────────────────────────────────────────────────────
+// ── holding a debt ──────────────────────────────────────────────────────────
 
-describe("raising cash before bankruptcy", () => {
-	it("mortgages in board order only until the debt is covered, so mortgaging alone avoids bankruptcy", () => {
+describe("holding a debt the seat can cover", () => {
+	const owesBob150 = (): MonopolyState => {
 		const state = newMatch();
 		state.seats[0].chips = 20;
 		giveTiles(state, ALICE, "reader-dock", "rail-one", "electric-utility");
-		const { state: next, trailLines } = expectOk(resolveDebt(state, ALICE, BOB, 150, NOW));
-		expect(next.seats[0]).toMatchObject({ bankrupt: false, chips: 20 + 100 + 50 - 150 });
-		expect(next.properties["rail-one"].mortgaged).toBe(true);
-		expect(next.properties["reader-dock"].mortgaged).toBe(true);
-		expect(next.properties["electric-utility"].mortgaged).toBe(false);
+		return state;
+	};
+
+	it("holds a debt mortgaging could cover, rather than mortgaging for it, and pauses the turn where it stood", () => {
+		const { state: next, trailLines } = expectOk(resolveDebt(owesBob150(), ALICE, BOB, 150, NOW));
+
+		expect(next.phase).toBe("awaiting-debt");
+		expect(next.pendingDebt).toEqual({ debts: [{ debtorId: ALICE, creditorId: BOB, amount: 150 }], resumePhase: "pre-roll", moveAfter: null });
+		// The seat chooses what to raise cash from, so nothing is mortgaged for it.
+		expect(seatOf(next, ALICE)).toMatchObject({ bankrupt: false, chips: 20 });
+		for (const id of ["reader-dock", "rail-one", "electric-utility"]) expect(next.properties[id].mortgaged).toBe(false);
 		expect(trailLines).toEqual([
-			"<@alice> mortgaged Rail One for $100 to cover the debt.",
-			"<@alice> mortgaged Reader Dock for $50 to cover the debt.",
-			"<@alice> paid <@bob> $150.",
+			"<@alice> owes <@bob> $150 and has $20, so they need to mortgage lots or sell buildings to raise the rest, then pay.",
 		]);
 	});
 
-	it("mortgages lots outside a built group before selling any building", () => {
+	it("counts the buildings a seat could sell toward what it could raise, and bankrupts only past that", () => {
 		const state = newMatch();
 		state.seats[0].chips = 0;
 		builtBrown(state, ALICE);
-		giveTiles(state, ALICE, "rail-one");
-		const { state: next } = expectOk(resolveDebt(state, ALICE, BOB, 100, NOW));
-		expect(next.properties["rail-one"].mortgaged).toBe(true);
-		expect([next.properties["vermillion-alley"].houses, next.properties["burnt-umber-row"].houses]).toEqual([2, 3]);
+		// Five houses sell back for $25 each and the two lots mortgage for $30 each: $185.
+		expect(expectOk(resolveDebt(state, ALICE, BOB, 185, NOW)).state.phase).toBe("awaiting-debt");
+		expect(seatOf(expectOk(resolveDebt(state, ALICE, BOB, 186, NOW)).state, ALICE).bankrupt).toBe(true);
 	});
 
-	it("sells houses from the tallest lot first, then mortgages the group once it is bare", () => {
-		const state = newMatch();
-		state.seats[0].chips = 0;
-		builtBrown(state, ALICE);
-		// Five houses sell for $25 each ($125), then one lot mortgages for $30.
-		const { state: next, trailLines } = expectOk(resolveDebt(state, ALICE, BOB, 150, NOW));
-		expect(trailLines.slice(0, 2)).toEqual([
-			"<@alice> sold a house on Burnt Umber Row back to the bank for $25.",
-			"<@alice> sold a house on Vermillion Alley back to the bank for $25.",
-		]);
-		expect(trailLines).toContain("<@alice> mortgaged Vermillion Alley for $30 to cover the debt.");
-		expect(next.properties["vermillion-alley"]).toMatchObject({ houses: 0, mortgaged: true });
-		expect(next.properties["burnt-umber-row"]).toMatchObject({ houses: 0, mortgaged: false });
-		expect(next.bank.houses).toBe(BANK_HOUSES);
-		expect(next.seats[0]).toMatchObject({ bankrupt: false, chips: 125 + 30 - 150 });
+	it("refuses a new charge while a debt is held", () => {
+		const held = expectOk(resolveDebt(owesBob150(), ALICE, BOB, 150, NOW)).state;
+		expectRefusal(resolveDebt(held, CARA, BOB, 10), "The match is already waiting on a debt.");
 	});
 
-	it("sells a hotel back for the four houses it replaced when the bank has them", () => {
-		const state = newMatch();
-		state.seats[0].chips = 0;
-		giveTiles(state, ALICE, "vermillion-alley", "burnt-umber-row");
-		state.properties["vermillion-alley"].houses = 4;
-		state.properties["burnt-umber-row"].hotel = true;
-		state.bank.houses -= 4;
-		state.bank.hotels -= 1;
-		const { state: next, trailLines } = expectOk(resolveDebt(state, ALICE, BOB, 25, NOW));
-		expect(trailLines[0]).toBe("<@alice> sold the hotel on Burnt Umber Row back to the bank for $25.");
-		expect(next.properties["burnt-umber-row"]).toMatchObject({ hotel: false, houses: 4 });
-		expect(next.bank).toEqual({ houses: BANK_HOUSES - 8, hotels: BANK_HOTELS });
-	});
-
-	it("tears a hotel down to bare ground when the bank has no houses to give back", () => {
-		const state = newMatch();
-		state.seats[0].chips = 0;
-		giveTiles(state, ALICE, "vermillion-alley", "burnt-umber-row");
-		state.properties["vermillion-alley"].hotel = true;
-		state.properties["burnt-umber-row"].hotel = true;
-		state.bank.houses = 3;
-		state.bank.hotels -= 2;
-		const { state: next, trailLines } = expectOk(resolveDebt(state, ALICE, BOB, 100, NOW));
-		expect(trailLines[0]).toBe("<@alice> sold the hotel on Vermillion Alley and, with no houses left in the bank, every rung under it for $125.");
-		expect(next.properties["vermillion-alley"]).toMatchObject({ hotel: false, houses: 0 });
-		expect(next.properties["burnt-umber-row"].hotel).toBe(true);
-		expect(next.bank).toEqual({ houses: 3, hotels: BANK_HOTELS - 1 });
-		expect(next.seats[0].chips).toBe(25);
+	it("names the bank as the payee of a debt owed to it", () => {
+		const { trailLines } = expectOk(resolveDebt(owesBob150(), ALICE, BANK_CREDITOR, 150, NOW));
+		expect(trailLines[0]).toMatch(/^<@alice> owes the bank \$150 and has \$20/);
 	});
 });
 
@@ -263,19 +231,23 @@ describe("rent the roller cannot cover from chips", () => {
 		return state;
 	}
 
-	it("raises cash and keeps the roller playing when its lots cover the rent", () => {
+	it("holds rent the roller's lots could cover, and the turn carries on once it mortgages and pays", () => {
 		const state = hotelRent();
 		state.seats[0].chips = 500;
 		giveTiles(state, ALICE, "rail-one");
-		const { state: next, trailLines } = expectOk(applyRoll(state, diceRng(2, 4), NOW));
-		expect(seatOf(next, ALICE)).toMatchObject({ bankrupt: false, chips: 500 + 100 - 550 });
-		expect(seatOf(next, BOB).chips).toBe(STARTING_CHIPS + 550);
-		expect(next.phase).toBe("post-roll");
-		expect(next.activeSeatIndex).toBe(0);
-		expect(trailLines.slice(-2)).toEqual([
-			"<@alice> mortgaged Rail One for $100 to cover the debt.",
-			"<@alice> paid $550 rent to <@bob>.",
-		]);
+
+		const { state: held, trailLines } = expectOk(applyRoll(state, diceRng(2, 4), NOW));
+		expect(held.phase).toBe("awaiting-debt");
+		// The roll was not doubles, so the turn resumes after the roll.
+		expect(held.pendingDebt?.resumePhase).toBe("post-roll");
+		expect(trailLines.at(-1)).toMatch(/^<@alice> owes <@bob> \$550 and has \$500/);
+
+		const mortgaged = expectOk(applyMortgage(held, ALICE, "rail-one")).state;
+		const { state: paid, trailLines: paidLines } = expectOk(applyPayDebt(mortgaged, ALICE, NOW));
+		expect(seatOf(paid, ALICE)).toMatchObject({ bankrupt: false, chips: 500 + 100 - 550 });
+		expect(seatOf(paid, BOB).chips).toBe(STARTING_CHIPS + 550);
+		expect(paid).toMatchObject({ phase: "post-roll", pendingDebt: null, activeSeatIndex: 0 });
+		expect(paidLines).toEqual(["<@alice> paid $550 rent to <@bob>."]);
 	});
 
 	it("bankrupts the roller to the owner when nothing covers it, and the turn passes", () => {
@@ -305,12 +277,17 @@ describe("settleDebts", () => {
 		state.seats[1].chips = 100;
 		const lines = settleDebts(state, [debt(state, BOB, CARA, 350), debt(state, ALICE, BOB, 500)], NOW);
 
+		// Alice could never cover $500, so she is bankrupt to Bob at once. Bob then
+		// holds $300 and the station he took, which is enough once mortgaged, so his
+		// debt is held for him to choose.
 		expect(seatOf(state, ALICE).bankrupt).toBe(true);
-		expect(seatOf(state, BOB)).toMatchObject({ bankrupt: false, chips: 100 + 200 + 100 - 350 });
-		expect(seatOf(state, CARA).chips).toBe(STARTING_CHIPS + 350);
-		// Bob covered the last $100 by mortgaging the station he took from Alice.
-		expect(state.properties["rail-one"]).toMatchObject({ ownerId: BOB, mortgaged: true });
-		expect(lines.at(-1)).toBe("<@bob> paid <@cara> $350.");
+		expect(state.properties["rail-one"]).toMatchObject({ ownerId: BOB, mortgaged: false });
+		expect(state.pendingDebt?.debts).toEqual([{ debtorId: BOB, creditorId: CARA, amount: 350 }]);
+		expect(lines.at(-1)).toMatch(/^<@bob> owes <@cara> \$350 and has \$300/);
+
+		const paid = expectOk(applyPayDebt(expectOk(applyMortgage(state, BOB, "rail-one")).state, BOB, NOW)).state;
+		expect(seatOf(paid, BOB)).toMatchObject({ bankrupt: false, chips: 100 + 200 + 100 - 350 });
+		expect(seatOf(paid, CARA).chips).toBe(STARTING_CHIPS + 350);
 	});
 
 	it("pays a debt the chips cover before forcing one that needs a sale", () => {
@@ -359,13 +336,19 @@ describe("settleDebts", () => {
 });
 
 describe("settleDebt", () => {
-	it("says whether the debtor paid in full", () => {
+	it("says whether the debt was paid, held for the debtor, or a bankruptcy", () => {
 		const paid = newMatch();
-		expect(settleDebt(paid, debt(paid, ALICE, BOB, 10), NOW).paid).toBe(true);
+		expect(settleDebt(paid, debt(paid, ALICE, BOB, 10), NOW).status).toBe("paid");
+
+		const held = newMatch();
+		held.seats[0].chips = 0;
+		giveTiles(held, ALICE, "rail-one");
+		expect(settleDebt(held, debt(held, ALICE, BOB, 50), NOW).status).toBe("held");
+
 		const broke = newMatch();
 		broke.seats[0].chips = 0;
 		const outcome = settleDebt(broke, { ...debt(broke, ALICE, BANK_CREDITOR, 10), paidLine: "unused" }, NOW);
-		expect(outcome.paid).toBe(false);
+		expect(outcome.status).toBe("bankrupt");
 		expect(outcome.lines).not.toContain("unused");
 	});
 });

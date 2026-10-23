@@ -84,9 +84,11 @@ function rollFromJail(state: MonopolyState, rng: () => number, now: number): Mon
 		return completeAction(next, seat.userId, lines);
 	}
 
-	// The last try missed, so bail is no longer optional. A seat short of chips
-	// raises cash for it first; one that still cannot cover it is bankrupt to the
-	// bank and never moves.
+	// The last try missed, so bail is no longer optional. A seat short of chips that
+	// could cover it by mortgaging and selling is held to raise the cash, and the
+	// move waits on the hold (monopolyDebts makes it once the bail is paid); one that
+	// cannot cover it at all is bankrupt to the bank and never moves.
+	const steps = firstDie + secondDie;
 	const bail = settleDebt(next, {
 		debtor: seat,
 		creditorId: BANK_CREDITOR,
@@ -94,14 +96,16 @@ function rollFromJail(state: MonopolyState, rng: () => number, now: number): Mon
 		paidLine: `${mentionPlayer(seat.userId)} used the last try, pays $${JAIL_BAIL} bail and moves.`,
 	}, now);
 	lines.push(...bail.lines);
-	if (!bail.paid) return completeAction(next, seat.userId, lines);
+	if (bail.status === "held" && next.pendingDebt) next.pendingDebt.moveAfter = steps;
+	if (bail.status !== "paid") return completeAction(next, seat.userId, lines);
 
 	releaseFromJail(seat);
-	lines.push(...moveAndLand(next, seat, firstDie + secondDie, now));
+	lines.push(...moveAndLand(next, seat, steps, now));
 	return completeAction(next, seat.userId, lines);
 }
 
-function releaseFromJail(seat: MonopolySeat): void {
+/** Frees a seat from jail. Also how monopolyDebts frees a seat whose forced bail was held and then paid. */
+export function releaseFromJail(seat: MonopolySeat): void {
 	seat.inJail = false;
 	seat.jailTurnsRemaining = 0;
 }

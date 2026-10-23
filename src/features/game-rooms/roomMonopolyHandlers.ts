@@ -14,6 +14,7 @@ import {
 	applyBuy,
 	applyEndTurn,
 	applyJailChoice,
+	applyPayDebt,
 	applyRoll,
 	applySkip,
 	type JailChoice,
@@ -236,12 +237,17 @@ async function refuse(interaction: ButtonInteraction, reason: string): Promise<v
 	await interaction.followUp({ embeds: [errorEmbed(reason)], ...PRIVATE });
 }
 
-async function runMonopolyAction(interaction: ButtonInteraction, room: IGameRoom, move: MonopolyMove): Promise<void> {
+async function runMonopolyAction(
+	interaction: ButtonInteraction,
+	room: IGameRoom,
+	move: MonopolyMove,
+	options: { onTurnOnly: boolean } = { onTurnOnly: true }
+): Promise<void> {
 	// ① Acknowledge FIRST (risk M1). The read and the compare and swap are two Mongo
 	// round trips, and Discord voids an interaction not acknowledged within three
 	// seconds, which on a slow Atlas moment would fail a move that landed.
 	await interaction.deferUpdate();
-	const outcome = await commitMonopolyMove(interaction.client, room, interaction.user.id, move, { onTurnOnly: true });
+	const outcome = await commitMonopolyMove(interaction.client, room, interaction.user.id, move, options);
 	if (!outcome.ok) await refuse(interaction, outcome.reason);
 }
 
@@ -307,6 +313,14 @@ export function parseWholeCount(text: string): number | null {
 export const handleMend = (interaction: ButtonInteraction, room: IGameRoom): Promise<void> =>
 	runMonopolyAction(interaction, room, (state) => applyEndTurn(state));
 
+/**
+ * Pay the debt the match is waiting on. Not turn bound: the debtor may be a rival
+ * a card charged. The engine refuses anyone but the debtor, and refuses the debtor
+ * while mortgaging or selling could still raise the rest.
+ */
+export const handleMpaydebt = (interaction: ButtonInteraction, room: IGameRoom): Promise<void> =>
+	runMonopolyAction(interaction, room, (state, actorId) => applyPayDebt(state, actorId), { onTurnOnly: false });
+
 /** The three jail buttons share this handler; the choice rides the customId's arg. */
 export async function handleMjail(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
 	// The arg is user controlled (a customId anyone can replay), so it is matched
@@ -339,4 +353,5 @@ export const roomMonopolyHandlers = {
 	handleMend,
 	handleMjail,
 	handleMinventory,
+	handleMpaydebt,
 };

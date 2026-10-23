@@ -4,7 +4,7 @@ import { mapWithConcurrency } from "@utils/mapWithConcurrency.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { expireTurn } from "@features/games/battleshipState.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
-import { applyForfeit } from "@features/games/monopolyState.js";
+import { applyDebtDefault, applyForfeit, waitingDebt } from "@features/games/monopolyState.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -181,10 +181,18 @@ export async function sweepMonopolyIdle(client: Client, now: Date = new Date()):
 			const idleFor = now.getTime() - monopolyLastActivityAt(room, state.turnStartedAt);
 			if (idleFor < BOT_CONSTANTS.GAME_ROOM_MONOPOLY_IDLE_MS) return;
 
-			// Captured BEFORE the forfeit, which hands the clock on.
-			const idleId = state.seats[state.activeSeatIndex].userId;
-			const result = applyForfeit(state, idleId, now.getTime());
+			// The seat holding the match up: the debtor while it waits on a debt (who may
+			// not be the seat on the clock, since a card can charge a rival), otherwise the
+			// seat on the clock. Captured BEFORE the move, which hands the clock on.
+			//
+			// A debtor who never pays is bankrupt to whoever they owed (applyDebtDefault),
+			// not forfeited to the bank: the creditor is owed that money, and the rules
+			// give a player creditor everything a debtor who cannot pay holds.
+			const debt = waitingDebt(state);
+			const idleId = debt?.debtorId ?? state.seats[state.activeSeatIndex].userId;
+			const result = debt ? applyDebtDefault(state, now.getTime()) : applyForfeit(state, idleId, now.getTime());
 			if (!result.ok) return;
+			const reason = debt ? gameRoomsCopy.monopoly.idleDebtDefault(idleId) : gameRoomsCopy.monopoly.idleForfeit(idleId);
 
 			// ⚠️ THE PLAYER WINS A TIE. A move that landed after this sweep read the row
 			// changes the turn, so the compare and swap finds nothing and the seat that
@@ -197,7 +205,7 @@ export async function sweepMonopolyIdle(client: Client, now: Date = new Date()):
 			await applyMonopolyOutcome(client, room, result.state, {
 				actorId: idleId,
 				kind: "system",
-				lines: [gameRoomsCopy.monopoly.idleForfeit(idleId), ...result.trailLines],
+				lines: [reason, ...result.trailLines],
 			});
 		} catch (error) {
 			// Isolated per ROOM, for the same reason as the battleship sweep above.
