@@ -128,6 +128,16 @@ describe("multi player results (hangman)", () => {
 		expect(awards().every((award) => award.amount === GAME_PLAY_XP)).toBe(true);
 	});
 
+	// Monopoly's shape: one winner, and everyone else went bankrupt or was forfeited,
+	// which is a loss and not an assist. The xp is the same; only the record differs.
+	it("records every other participant as lost when the game says they lost", async () => {
+		awardMultiPlayerResult({ client, guildId: "g1", game: "monopoly", participants, winnerId: "solver", nonWinnerOutcome: "lost" });
+
+		expect(awardFor("solver")).toMatchObject({ outcome: "won", amount: GAME_PLAY_XP + GAME_WIN_XP, game: "monopoly" });
+		expect(awardFor("helper1")).toMatchObject({ outcome: "lost", amount: GAME_PLAY_XP });
+		expect(awardFor("helper2")).toMatchObject({ outcome: "lost", amount: GAME_PLAY_XP });
+	});
+
 	it("still pays everyone who showed up on a loss", async () => {
 		// Showing up is the behavior being rewarded, so a lost round is not a zero.
 		round(null);

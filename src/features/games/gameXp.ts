@@ -75,10 +75,18 @@ interface MultiPlayerResult {
 	channelId?: string | null;
 	game: LevelingGameSlug;
 	// Everyone who took part, resolved to an id and a display name by the caller,
-	// which is the only place that knows how to look them up.
-	participants: Array<{ userId: string; username: string }>;
+	// which is the only place that knows how to look them up. A name the caller
+	// could not resolve is left undefined rather than filled with the snowflake:
+	// awardXp then records the result and skips the name write, where a raw id
+	// would overwrite the member's real name on /account and /levels.
+	participants: Array<{ userId: string; username?: string }>;
 	// The member who finished it, when somebody did. Null on a loss or an expiry.
 	winnerId: string | null;
+	// What everyone but the winner records when there IS a winner. "assist" is the
+	// hangman reading (the room solved it together) and stays the default; Monopoly
+	// passes "lost", because a seat that went bankrupt did not help the last one
+	// standing win.
+	nonWinnerOutcome?: Extract<GameOutcome, "assist" | "lost">;
 }
 
 // The hangman shape, and the reason the ASSIST outcome exists at all: a public
@@ -88,14 +96,17 @@ interface MultiPlayerResult {
 //
 // On a loss or an expiry nobody assisted anybody, so every participant takes the
 // play xp and a "lost". Showing up is the behavior being rewarded either way.
+// A game whose other players genuinely lost (Monopoly) says so with
+// nonWinnerOutcome; the xp is the same either way, only the record differs.
 export function awardMultiPlayerResult(result: MultiPlayerResult): void {
 	if (!result.guildId) return;
 
 	const { GAME_PLAY_XP, GAME_WIN_XP } = BOT_CONSTANTS.LEVELING;
+	const nonWinnerOutcome = result.nonWinnerOutcome ?? "assist";
 
 	for (const participant of result.participants) {
 		const isWinner = result.winnerId !== null && participant.userId === result.winnerId;
-		const assisted = result.winnerId !== null && !isWinner;
+		const beatenByWinner = result.winnerId !== null && !isWinner;
 
 		void awardXp({
 			client: result.client,
@@ -105,7 +116,7 @@ export function awardMultiPlayerResult(result: MultiPlayerResult): void {
 			amount: GAME_PLAY_XP + (isWinner ? GAME_WIN_XP : 0),
 			source: "game",
 			game: result.game,
-			outcome: isWinner ? "won" : assisted ? "assist" : "lost",
+			outcome: isWinner ? "won" : beatenByWinner ? nonWinnerOutcome : "lost",
 			channelId: result.channelId ?? null,
 		});
 	}

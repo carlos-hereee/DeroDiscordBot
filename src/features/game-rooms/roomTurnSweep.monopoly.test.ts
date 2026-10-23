@@ -1,0 +1,141 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { Client } from "discord.js";
+
+vi.mock("@db/stores/gameRoomStore.js", () => ({
+	gameRoomStore: { findPlayingByGame: vi.fn(), updateSecretIf: vi.fn() },
+}));
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
+vi.mock("@features/games/gameXp.js", () => ({ awardTwoPlayerResult: vi.fn(), awardMultiPlayerResult: vi.fn() }));
+
+import { sweepMonopolyIdle } from "./roomTurnSweep.js";
+import { turnFingerprint } from "./roomMonopolyHandlers.js";
+import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { roomTrail } from "./roomTrail.js";
+import { roomLifecycle } from "./roomLifecycle.js";
+import { awardMultiPlayerResult } from "@features/games/gameXp.js";
+import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import type { IGameRoom } from "@db/models/GameRoom.js";
+
+// ── sweepMonopolyIdle ────────────────────────────────────────────────
+// A seat that sits on the clock for a day is forfeited and the turn passes; the
+// forfeit that leaves one seat finishes the match and pays it. A seat inside its
+// day, or one that has been acting all along, is left alone.
+
+const storeMock = gameRoomStore as unknown as {
+	findPlayingByGame: ReturnType<typeof vi.fn>;
+	updateSecretIf: ReturnType<typeof vi.fn>;
+};
+const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
+const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
+const awardMock = awardMultiPlayerResult as unknown as ReturnType<typeof vi.fn>;
+
+const NOW = new Date("2026-10-23T12:00:00.000Z");
+const HOUR = 60 * 60 * 1000;
+const A = "player-a";
+const B = "player-b";
+const C = "player-c";
+
+const client = {
+	channels: { fetch: vi.fn().mockResolvedValue(null) },
+	guilds: { fetch: vi.fn().mockResolvedValue(null) },
+} as unknown as Client;
+
+function makeRoom(players: string[], turnIdleHours: number, lastMoveHoursAgo: number | null = turnIdleHours): IGameRoom {
+	const state = createInitialState(players, { auctionsEnabled: false }, NOW.getTime() - turnIdleHours * HOUR, 1);
+	return {
+		roomId: "room-1",
+		guildId: "guild-1",
+		game: "monopoly",
+		status: "playing",
+		playerIds: players,
+		channelId: "ch-1",
+		startedAt: new Date(NOW.getTime() - turnIdleHours * HOUR),
+		moves:
+			lastMoveHoursAgo === null
+				? []
+				: [{ actorId: A, at: new Date(NOW.getTime() - lastMoveHoursAgo * HOUR), kind: "guess", text: "rolled" }],
+		secret: state,
+	} as unknown as IGameRoom;
+}
+
+const persisted = (): MonopolyState => storeMock.updateSecretIf.mock.calls[0][3] as MonopolyState;
+const trailTexts = (): string[] => postMoveMock.mock.calls.map((call) => (call[2] as { text: string }).text);
+
+beforeEach(() => {
+	vi.clearAllMocks();
+	storeMock.updateSecretIf.mockResolvedValue({} as never);
+	postMoveMock.mockResolvedValue(true);
+	finishMock.mockResolvedValue(true);
+	vi.spyOn(console, "log").mockImplementation(() => undefined);
+});
+
+describe("sweepMonopolyIdle", () => {
+	it("does nothing when no Monopoly match is live", async () => {
+		storeMock.findPlayingByGame.mockResolvedValue([]);
+		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
+		expect(storeMock.findPlayingByGame).toHaveBeenCalledWith("monopoly");
+	});
+
+	it("forfeits the seat on the clock after 25 idle hours and passes the turn", async () => {
+		const room = makeRoom([A, B, C], 25);
+		storeMock.findPlayingByGame.mockResolvedValue([room]);
+
+		const summary = await sweepMonopolyIdle(client, NOW);
+
+		expect(summary).toEqual({ seatsForfeited: 1, matchesFinished: 0 });
+		expect(persisted().seats[0].bankrupt).toBe(true);
+		expect(persisted().activeSeatIndex).toBe(1);
+		// The compare and swap is against the turn the sweep read.
+		expect(storeMock.updateSecretIf.mock.calls[0][2]).toEqual(turnFingerprint(room.secret as unknown as MonopolyState));
+		expect(trailTexts()[0]).toBe(gameRoomsCopy.monopoly.idleForfeit(A));
+		expect(postMoveMock.mock.calls[0][2]).toMatchObject({ actorId: A, kind: "system" });
+		expect(finishMock).not.toHaveBeenCalled();
+	});
+
+	it("finishes a two seat match and records the result when the forfeit leaves one seat", async () => {
+		const room = makeRoom([A, B], 25);
+		storeMock.findPlayingByGame.mockResolvedValue([room]);
+
+		const summary = await sweepMonopolyIdle(client, NOW);
+
+		expect(summary).toEqual({ seatsForfeited: 1, matchesFinished: 1 });
+		expect(persisted()).toMatchObject({ phase: "finished", winnerId: B });
+		expect(finishMock).toHaveBeenCalledWith(client, room, { winnerId: B });
+		expect(awardMock).toHaveBeenCalledWith(expect.objectContaining({ game: "monopoly", winnerId: B, nonWinnerOutcome: "lost" }));
+	});
+
+	it("leaves a seat alone inside its 24 hours", async () => {
+		storeMock.findPlayingByGame.mockResolvedValue([makeRoom([A, B], 23)]);
+
+		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+		expect(postMoveMock).not.toHaveBeenCalled();
+	});
+
+	it("leaves alone a seat whose turn began a day ago but which moved an hour ago", async () => {
+		storeMock.findPlayingByGame.mockResolvedValue([makeRoom([A, B], 25, 1)]);
+
+		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
+	});
+
+	it("gives the player the tie: a move that landed after the read wins and nothing is posted", async () => {
+		storeMock.findPlayingByGame.mockResolvedValue([makeRoom([A, B], 25)]);
+		storeMock.updateSecretIf.mockResolvedValue(null);
+
+		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
+		expect(postMoveMock).not.toHaveBeenCalled();
+		expect(finishMock).not.toHaveBeenCalled();
+	});
+
+	it("skips a row with no board and a match that already finished", async () => {
+		const unseeded = { ...makeRoom([A, B], 25), secret: null } as unknown as IGameRoom;
+		const finished = makeRoom([A, B], 25);
+		(finished.secret as unknown as MonopolyState).phase = "finished";
+		storeMock.findPlayingByGame.mockResolvedValue([unseeded, finished]);
+
+		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+	});
+});

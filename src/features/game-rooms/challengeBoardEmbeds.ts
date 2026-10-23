@@ -32,6 +32,7 @@ export const CHALLENGE_GAMES: readonly GameSlug[] = [
 	"hangman",
 	"battleship",
 	"holdem",
+	"monopoly",
 ] as const;
 
 // Games whose whole pool plays rather than one chosen opponent. Declared as a set
@@ -41,8 +42,10 @@ export const CHALLENGE_GAMES: readonly GameSlug[] = [
 // ⚠️ HOLD EM IS COOPERATIVE ONLY IN THE NARROW SENSE THIS SET MEANS. It is fiercely
 // competitive at the table, but the board's question is "does the host pick ONE
 // opponent, or does the whole pool play?", and a poker tournament seats everyone.
-// A better name would be MULTI_PLAYER_GAMES; the set is what matters.
-export const COOPERATIVE_GAMES: readonly GameSlug[] = ["hangman", "holdem"] as const;
+// A better name would be MULTI_PLAYER_GAMES; the set is what matters. Monopoly is
+// here for the same reason: two to six players share one board, so nobody is singled
+// out, and challengeBoard.startMatch caps the pool at the board's six seats.
+export const COOPERATIVE_GAMES: readonly GameSlug[] = ["hangman", "holdem", "monopoly"] as const;
 
 export const isCooperativeGame = (game: GameSlug): boolean => COOPERATIVE_GAMES.includes(game);
 
@@ -53,6 +56,7 @@ const GAME_EMOJI: Record<string, string> = {
 	hangman: "🪢",
 	battleship: "🚢",
 	holdem: "🃏",
+	monopoly: "🏠",
 };
 
 export function boardIntroEmbed(): EmbedBuilder {
@@ -65,9 +69,9 @@ export function boardIntroEmbed(): EmbedBuilder {
 
 // How many start buttons share one row. Discord caps an action row at FIVE components
 // and rejects the whole send (50035) past that, which is what kept this board dark: six
-// games in one row never posted. Three per row keeps every row the same width and
-// splits the roster where it already divides, the three quick two-seat games on top
-// and the three long-form games below.
+// games in one row never posted. Three per row splits the roster where it already
+// divides, the three quick two-seat games on top and the long-form games below, which
+// spill onto a third row once there are more than three of them.
 const BOARD_BUTTONS_PER_ROW = 3;
 
 // One button per challenge game, chunked into rows. Carries the SLUG rather than a

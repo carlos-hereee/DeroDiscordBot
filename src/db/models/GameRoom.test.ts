@@ -81,6 +81,8 @@ describe("GameRoom enums stay in step with roomTypes", () => {
 
 	it("accepts exactly the declared game slugs", () => {
 		expect(enumOf("game")).toEqual([...GAME_SLUGS]);
+		// A Monopoly row would fail validation on create without this.
+		expect(enumOf("game")).toContain("monopoly");
 	});
 
 	it("accepts exactly the declared statuses and defaults to draft", () => {

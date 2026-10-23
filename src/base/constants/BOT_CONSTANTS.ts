@@ -148,6 +148,14 @@ export const BOT_CONSTANTS = {
 	// that matters is that a walked-away match terminates at all.
 	GAME_ROOM_TURN_TIMEOUT_MS: 10 * 60_000, // 10 minutes
 
+	// How long a Monopoly seat may sit on the clock before the idle sweep forfeits
+	// it (2026-10 item 241). Its own constant rather than the battleship budget
+	// above, because a Monopoly match is played across days by people who check in
+	// between other things: ten minutes would forfeit every seat that went to
+	// sleep. Checked on the same 5 minute room sweep, so the real forfeit lands
+	// within five minutes after this.
+	GAME_ROOM_MONOPOLY_IDLE_MS: 24 * 60 * 60 * 1000, // 24 hours
+
 	// ── hold em ──────────────────────────────────────────────────
 	// ⚠️ CHIPS ARE PER TOURNAMENT AND DIE WITH THE TABLE (A9, R22). There is no
 	// persistent balance anywhere, and there must never be one: a balance that

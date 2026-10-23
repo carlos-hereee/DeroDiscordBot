@@ -35,11 +35,13 @@
 // so it has no record. It is counted by MemberLevel.fortuneReadings instead,
 // which is what backs the hidden dero-knows achievement.
 //
-// The last three are declared from Phase 1 even though their games land in
-// phases 6 to 8. A Mongoose Map needs no migration to gain a key, so declaring
-// them early costs nothing and means the /account renderer, the achievement
-// definitions and the award API all speak one closed union from day one.
-export const LEVELING_GAME_SLUGS = ["coinflip", "diceroll", "rps", "hangman", "blackjack", "battleship", "holdem"] as const;
+// A slug may be declared here before its game is playable. A Mongoose Map needs
+// no migration to gain a key, so adding one costs nothing and means the
+// /account renderer, the achievement definitions and the award API all speak
+// one closed union. Monopoly records one result per match, at its end: the last
+// seat standing wins and every other seat loses (gameXp.awardMultiPlayerResult
+// with nonWinnerOutcome "lost").
+export const LEVELING_GAME_SLUGS = ["coinflip", "diceroll", "rps", "hangman", "blackjack", "battleship", "holdem", "monopoly"] as const;
 export type LevelingGameSlug = (typeof LEVELING_GAME_SLUGS)[number];
 
 // ── Where an award came from ──

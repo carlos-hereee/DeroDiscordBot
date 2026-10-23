@@ -21,6 +21,7 @@ import { runRoomMove, handleRpsSelect } from "./roomGames.js";
 import { openAuthoringModal, openGuessModal, handleAuthoringModal, handleGuessModal } from "./roomHangman.js";
 import { roomBattleshipHandlers } from "./roomBattleshipHandlers.js";
 import { roomHoldemHandlers } from "./roomHoldemHandlers.js";
+import { roomMonopolyHandlers } from "./roomMonopolyHandlers.js";
 import type { GameSlug } from "./roomTypes.js";
 
 // The actions that only make sense while a draft is still a draft. Listed once so
@@ -150,6 +151,27 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			return;
 		case "hcards":
 			await roomHoldemHandlers.handleShowCards(interaction, room);
+			return;
+		// ── monopoly ──
+		// Each handler re-checks that the clicker is the seat on the clock; the
+		// playersOnly gate above only proved they are at the table.
+		case "mroll":
+			await roomMonopolyHandlers.handleMroll(interaction, room);
+			return;
+		case "mbuy":
+			await roomMonopolyHandlers.handleMbuy(interaction, room, parsed.arg ?? "");
+			return;
+		case "mskip":
+			await roomMonopolyHandlers.handleMskip(interaction, room);
+			return;
+		case "mend":
+			await roomMonopolyHandlers.handleMend(interaction, room);
+			return;
+		case "mjail":
+			await roomMonopolyHandlers.handleMjail(interaction, room, parsed.arg ?? "");
+			return;
+		case "minventory":
+			await roomMonopolyHandlers.handleMinventory(interaction, room);
 			return;
 		case "board":
 			await roomBattleshipHandlers.handleViewBoard(interaction, room);

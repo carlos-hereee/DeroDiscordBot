@@ -18,6 +18,8 @@ import {
 import { createTable as createHoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
 import { pickWord } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
+import { createInitialState as createMonopolyState } from "@features/games/monopolyState.js";
+import { monopolyBoardEmbed, monopolyControlsRow } from "./roomMonopoly.js";
 import { roomTrail } from "./roomTrail.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -89,7 +91,8 @@ const inflightOpens = new Map<string, Promise<RoomOpenResult>>();
 // board message (posted by startBlackjackTable after the room opens), so its opener
 // stays a plain card exactly like battleship's and hold em's. solo-hangman is NOT
 // here: it rides the trail plus the pinned guess control, like room hangman.
-const SELF_BOARDED_GAMES: readonly GameSlug[] = ["battleship", "holdem", "solo-blackjack"];
+// monopoly rides its own board message too, edited after every move.
+const SELF_BOARDED_GAMES: readonly GameSlug[] = ["battleship", "holdem", "monopoly", "solo-blackjack"];
 
 // Test seam, and the reason this is not just a module-local: a leaked entry would make
 // every later open by that host return the previous result forever.
@@ -355,6 +358,28 @@ export const RoomProvisioner = {
 				.catch(() => null);
 			await gameRoomStore.update(guild.id, room.roomId, {
 				secret: { ...table, boardMessageId: boardMessage?.id ?? null } as never,
+			});
+		}
+
+		// Monopoly opens straight on the first seat's roll: every player is already
+		// known (the whole pool, which challengeBoard.startMatch capped at six), so
+		// unlike hold em there is no joining phase. The board is posted before the
+		// state is persisted so the stored state can carry the message id it edits.
+		//
+		// ⚠️ AUCTIONS ARE OFF FOR EVERY MATCH UNTIL PHASE 5, whatever a host would pick.
+		// applySkip opens an auction itself when they are on and moves the phase to
+		// "in-auction", and Phase 4 renders no bid or close control, so the first pass
+		// on a lot would strand the match with no button that moves it. Phase 5 brings
+		// the host's choice and the auction controls in together.
+		if (game === "monopoly") {
+			const state = createMonopolyState(playerIds, { auctionsEnabled: false });
+			const boardMessage = await channel
+				.send({ embeds: [monopolyBoardEmbed(state)], components: monopolyControlsRow(state, state.seats[0].userId, room.roomId) })
+				.catch(() => null);
+			await gameRoomStore.update(guild.id, room.roomId, {
+				// `secret` is a Mongoose Mixed field and IGameRoom types it as hangman's
+				// RoomSecret, so another game's state needs the cast to be stored there.
+				secret: { ...state, boardMessageId: boardMessage?.id ?? null } as never,
 			});
 		}
 

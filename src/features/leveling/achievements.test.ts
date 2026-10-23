@@ -114,6 +114,10 @@ describe("the shape of every track", () => {
 			expect(LEVELING_GAME_SLUGS as readonly string[], `${achievement.id} metric`).toContain(slug);
 		}
 	});
+
+	it("declares monopoly, so a finished match records on /account", () => {
+		expect(LEVELING_GAME_SLUGS).toContain("monopoly");
+	});
 });
 
 describe("the three hidden tracks", () => {

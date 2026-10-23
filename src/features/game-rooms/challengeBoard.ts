@@ -13,6 +13,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { MAX_SEATS as MONOPOLY_MAX_SEATS } from "@features/games/monopolyBoard.js";
 import { checkGameRoomAccess, gameRoomUpgradeEmbed } from "@features/entitlements/gameRoomAccess.js";
 import { RoomProvisioner, describeRoomOpenFailure } from "./RoomProvisioner.js";
 import { openSoloRoom, describeSoloOpenFailure, readPrivateQuotaStatus } from "./soloRooms.js";
@@ -293,6 +294,19 @@ export async function startMatch(interaction: ButtonInteraction, room: IGameRoom
 	const pool = room.spectatorIds ?? [];
 	if (pool.length === 0) {
 		await interaction.reply({ content: gameRoomsCopy.board.poolEmpty, flags: MessageFlags.Ephemeral });
+		return;
+	}
+
+	// Monopoly seats the host plus the whole pool, and its board has six seats while
+	// the pool can grow to GAME_ROOM_MAX_SPECTATORS. Refused HERE, before any channel
+	// exists, because the engine throws on a seventh seat and the provisioner only
+	// builds the match after the channel is already up, which would strand a room
+	// with no board in it.
+	if (room.game === "monopoly" && pool.length + 1 > MONOPOLY_MAX_SEATS) {
+		await interaction.reply({
+			content: gameRoomsCopy.monopoly.tooManyPlayers(MONOPOLY_MAX_SEATS, pool.length),
+			flags: MessageFlags.Ephemeral,
+		});
 		return;
 	}
 

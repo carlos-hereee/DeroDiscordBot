@@ -1,4 +1,5 @@
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { STARTING_CHIPS } from "@features/games/monopolyBoard.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 
 // ── game rooms user-facing copy ──────────────────────────────────────
@@ -11,6 +12,11 @@ import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 //
 // House rule for every string below: no dashes in user-facing copy.
 
+// The Monopoly idle budget in whole hours, derived from the one constant the sweep
+// reads, so the opener's promise and the forfeit line can never name a different
+// number from the clock that enforces it.
+const monopolyIdleHours = (): number => Math.round(BOT_CONSTANTS.GAME_ROOM_MONOPOLY_IDLE_MS / (60 * 60 * 1000));
+
 // Human labels for the slugs. Kept here rather than derived from the slug because
 // "coinflip" is not a phrase anyone writes, and a room's cards are read by members
 // who never see the slug.
@@ -21,6 +27,7 @@ const GAME_LABELS: Record<GameSlug, string> = {
 	rps: "Rock paper scissors",
 	battleship: "Battleship",
 	holdem: "Texas hold em",
+	monopoly: "Monopoly",
 	"solo-hangman": "Hangman (solo)",
 	"solo-blackjack": "Blackjack (solo)",
 };
@@ -384,6 +391,79 @@ export const gameRoomsCopy = {
 		// ⚠️ FORCE FOLD, NEVER PAUSE. Said out loud so the table knows why a player's
 		// turn passed without them doing anything.
 		timedOut: (userId: string, action: string): string => `⏳ <@${userId}> ran out of time and ${action}.`,
+	},
+
+	// ── monopoly in a room (2026-10 item 241) ──
+	// The engine composes its own trail lines (rolls, rent, cards), so this pack
+	// holds only what the room layer adds around them: the board, the buttons,
+	// the private peek and the refusals.
+	monopoly: {
+		boardTitle: "🏠 Monopoly",
+		// The rules in a few sentences, on the pinned opener, because the board
+		// message that gets edited every turn has no room for them.
+		openerRules: (): string =>
+			[
+				`Everyone starts on GO with $${STARTING_CHIPS}. Roll, buy what you land on, and collect rent from anyone who lands on yours. The last player standing wins.`,
+				"",
+				`A player who stays on the clock for ${monopolyIdleHours()} hours without a move is out of the match.`,
+			].join("\n"),
+
+		onTheClock: (userId: string): string => `<@${userId}> is on the clock.`,
+		finishedLine: (winnerId: string | null): string =>
+			winnerId ? `👑 <@${winnerId}> wins the match.` : "The match is over.",
+		// What the player on the clock can do now, one line under whose turn it is.
+		rollPrompt: "Roll the dice.",
+		jailPrompt: "In Jail: pay bail, use a card, or roll for doubles.",
+		buyPrompt: (tileName: string, price: number): string => `Buy ${tileName} for $${price}, or skip it.`,
+		endTurnPrompt: "End your turn when you are ready.",
+		// The two phases no Phase 4 control reaches. Said plainly rather than left
+		// blank, so a board that ever shows it reads as waiting rather than broken.
+		waitingPrompt: "Waiting on the table.",
+
+		// The seat list. Parentheses and middle dots rather than dashes (house rule 1).
+		seatLine: (seatNumber: number, userId: string, chips: number, lotCount: number, tileName: string): string =>
+			`**${seatNumber}.** <@${userId}> · $${chips} · ${lotCount} ${lotCount === 1 ? "lot" : "lots"} · on ${tileName}`,
+		inJailTag: "in Jail",
+		outTag: "out",
+		boardMapLabel: "Board (tile number, then a seat number where a token stands; + is two or more):",
+		lastMoveLabel: "Last move:",
+		noMovesYet: "No moves yet.",
+
+		rollLabel: "Roll",
+		buyLabel: (tileName: string, price: number): string => `Buy ${tileName} for $${price}`,
+		skipLabel: "Skip",
+		endTurnLabel: "End turn",
+		bailLabel: (bail: number): string => `Pay bail ($${bail})`,
+		useCardLabel: "Use card",
+		jailRollLabel: "Roll for doubles",
+		inventoryLabel: "Inventory",
+
+		// ── the private peek ──
+		inventoryTitle: "🏠 Your holdings",
+		inventoryChips: (chips: number): string => `Chips: **$${chips}**`,
+		inventoryJailCards: (count: number): string => `Get Out of Jail Free cards: **${count}**`,
+		inventoryLots: (names: string[]): string =>
+			names.length ? `Lots: ${names.join(", ")}` : "Lots: none yet.",
+		inventoryOut: "You are out of this match.",
+
+		// ── refusals ──
+		notSeated: "You are not in this match.",
+		notYourTurn: "It is not your turn.",
+		matchOver: "This match is already over.",
+		noBoard: "This match has no board yet. Try again in a moment.",
+		// Somebody else's write landed first. Ordinary, so the copy is not an apology.
+		boardBusy: "The board just changed. Try that again.",
+		// The challenge board's start refusal. The pool is everyone who joined; the host
+		// is the extra seat, which is why the copy says "counting you".
+		tooManyPlayers: (maxSeats: number, joined: number): string =>
+			`Monopoly seats at most ${maxSeats} players, counting you, and ${joined} have joined. Call this one off and start a new challenge with fewer.`,
+
+		// ── the idle sweep ──
+		// Public, so the table knows why a seat left without anyone pressing anything.
+		// The engine's own forfeit line follows it and says where the holdings went,
+		// so this one only says why.
+		idleForfeit: (userId: string): string =>
+			`⏳ <@${userId}> stayed on the clock for ${monopolyIdleHours()} hours without a move, so Dero forfeits their seat.`,
 	},
 
 	// ── the move trail ──

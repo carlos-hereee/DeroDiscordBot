@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { boardStartRows, CHALLENGE_GAMES } from "./challengeBoardEmbeds.js";
+import { boardStartRows, CHALLENGE_GAMES, isCooperativeGame } from "./challengeBoardEmbeds.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 
 // Discord's hard cap on components per action row. Six buttons in one row is what kept
@@ -25,5 +25,10 @@ describe("boardStartRows", () => {
 	it("reaches battleship and hold em, which no slash command doors", () => {
 		expect(customIds).toContain(`${GAME_ROOM_PREFIX}:new:battleship`);
 		expect(customIds).toContain(`${GAME_ROOM_PREFIX}:new:holdem`);
+	});
+
+	it("reaches monopoly, which seats the whole pool rather than one chosen opponent", () => {
+		expect(customIds).toContain(`${GAME_ROOM_PREFIX}:new:monopoly`);
+		expect(isCooperativeGame("monopoly")).toBe(true);
 	});
 });

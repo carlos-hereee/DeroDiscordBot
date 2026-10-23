@@ -23,6 +23,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { roomTrail } from "./roomTrail.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 const storeMock = gameRoomStore as unknown as {
@@ -286,5 +287,26 @@ describe("starting the match", () => {
 			components?: unknown[];
 		};
 		expect(payload.components).toHaveLength(1);
+	});
+
+	// Monopoly seats the host plus the whole pool, and the board has six seats. The
+	// refusal has to come HERE, before a channel exists, because the engine throws on
+	// a seventh seat and the provisioner only builds the match once the channel is up.
+	it("refuses a Monopoly pool that would seat more than six, before anything is built", async () => {
+		const interaction = makeButton(HOST, members);
+		await startMatch(interaction, makeRoom({ game: "monopoly", spectatorIds: ["a", "b", "c", "d", "e", "f"] }));
+
+		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
+		expect(reply.content).toBe(gameRoomsCopy.monopoly.tooManyPlayers(6, 6));
+		expect(interaction.deferReply).not.toHaveBeenCalled();
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("starts a Monopoly pool of five, which seats six with the host, without asking who plays", async () => {
+		const interaction = makeButton(HOST, members);
+		await startMatch(interaction, makeRoom({ game: "monopoly", spectatorIds: ["a", "b", "c", "d", "e"] }));
+
+		expect(interaction.reply).not.toHaveBeenCalled();
+		expect(interaction.deferReply).toHaveBeenCalledOnce();
 	});
 });

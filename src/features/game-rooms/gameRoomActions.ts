@@ -23,7 +23,7 @@ export const GAME_ROOM_MODAL_PREFIX = "gameroomModal";
 // customId shape: `gameroom:<action>:<tail>[:<arg>]`.
 //
 // `tail` is a roomId for every action except `new`, which carries a game slug because
-// no room exists yet at that point. `arg` is used only by `vis`.
+// no room exists yet at that point. `arg` is used by `vis`, `hmove`, `mbuy` and `mjail`.
 //
 // ⚠️ EVERY ENTRY HERE HAS A BUTTON THAT EMITS IT AND A BRANCH THAT ANSWERS IT. Phase 3
 // deliberately declared only archive and forfeit for that reason, and Phase 4 adds the
@@ -86,6 +86,24 @@ export const GAME_ROOM_ACTIONS = {
 	hmove: { hostOnly: false, playersOnly: true },
 	// The private peek at your own two cards.
 	hcards: { hostOnly: false, playersOnly: true },
+
+	// ── monopoly (2026-10 item 241) ──
+	// Every one is playersOnly and none is hostOnly: the host is just another seat,
+	// and the handler still checks the clicker is the seat on the clock, because
+	// playersOnly only proves they are at the table.
+	// Roll the dice for your turn.
+	mroll: { hostOnly: false, playersOnly: true },
+	// Buy the unowned lot you landed on, at list price. The lot id rides the arg so a
+	// stale Buy button from an earlier landing cannot buy a lot you are no longer on.
+	mbuy: { hostOnly: false, playersOnly: true },
+	// Pass on the lot you landed on; it stays with the bank.
+	mskip: { hostOnly: false, playersOnly: true },
+	// End your turn and hand the clock on.
+	mend: { hostOnly: false, playersOnly: true },
+	// Get out of jail: pay bail, use a card, or roll for doubles, with the choice in the arg.
+	mjail: { hostOnly: false, playersOnly: true },
+	// The private peek at your own seat: chips, lots and jail cards, ephemeral.
+	minventory: { hostOnly: false, playersOnly: true },
 } as const satisfies Record<string, { hostOnly: boolean; playersOnly: boolean }>;
 
 export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;
@@ -94,7 +112,7 @@ export interface ParsedGameRoomCustomId {
 	action: GameRoomAction;
 	// The roomId for every action but `new`, where it is the game slug instead.
 	tail: string;
-	// Present only on `vis`. Undefined elsewhere.
+	// Present on `vis`, `hmove`, `mbuy` and `mjail`. Undefined elsewhere.
 	arg?: string;
 }
 

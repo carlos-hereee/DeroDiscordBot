@@ -13,7 +13,7 @@ import { refreshAllSchedules, refreshSchedule } from "@features/schedule/Schedul
 import { refreshAllLeaderboards } from "@features/leaderboard/LeaderboardBoard.js";
 import { refreshAllLevelsBoards } from "@features/leveling/LevelsBoard.js";
 import { sweepExpiredRooms } from "@features/game-rooms/roomArchiveSweep.js";
-import { sweepBattleshipTurns } from "@features/game-rooms/roomTurnSweep.js";
+import { sweepBattleshipTurns, sweepMonopolyIdle } from "@features/game-rooms/roomTurnSweep.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { getOutboundLatencyStats } from "@utils/serverApi.js";
 import { noteFailure as noteServerFailure, noteSuccess as noteServerSuccess } from "./serverHealthNotifier.js";
@@ -207,7 +207,7 @@ export function startScheduler(client: Client): void {
 	scheduledTasks.push(
 		cron.schedule(BOT_CONSTANTS.GAME_ROOM_SWEEP_CRON, async () => {
 			try {
-				// Two sweeps on ONE tick, in this order and not two crons. The turn
+				// The sweeps share ONE tick, in this order and not one cron each. A turn
 				// sweep can FINISH a match, which stamps archiveAt; running it first
 				// would then let the archive sweep consider a room that has been
 				// finished for zero seconds, and its four hour window means it is not
@@ -216,6 +216,9 @@ export function startScheduler(client: Client): void {
 				// tick across every guild to save a casual player five minutes.
 				await sweepExpiredRooms(client);
 				await sweepBattleshipTurns(client);
+				// Monopoly's budget is a day, so a 5 minute tick is more than fine
+				// enough, and riding this one costs no extra cron.
+				await sweepMonopolyIdle(client);
 			} catch (err) {
 				// sweepExpiredRooms already isolates per room, so reaching this means the
 				// QUERY itself failed. Log and let the next tick retry; the rooms are

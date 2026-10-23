@@ -25,11 +25,12 @@ export function roomOpenerEmbed(
 	visibility: RoomVisibility,
 	inviteCode?: string | null
 ): EmbedBuilder {
-	return infoEmbed(
-		gameRoomsCopy.opener.title(game),
-		gameRoomsCopy.opener.description(hostId, playerIds, visibility, inviteCode),
-		COLORS.ARCADE as ColorResolvable
-	);
+	const description = gameRoomsCopy.opener.description(hostId, playerIds, visibility, inviteCode);
+	// Monopoly's rules ride the pinned opener because its board message, edited
+	// every move, has no room left for them, and a match that runs for days is
+	// joined mid way by people who never saw the start.
+	const body = game === "monopoly" ? [description, "", gameRoomsCopy.monopoly.openerRules()].join("\n") : description;
+	return infoEmbed(gameRoomsCopy.opener.title(game), body, COLORS.ARCADE as ColorResolvable);
 }
 
 // The card that closes a room. `winnerId` null covers every drawn, forfeited or
