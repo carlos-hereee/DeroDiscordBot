@@ -149,6 +149,15 @@ export const gamesCopy = {
 		lostDescription: (word: string): string => `The word was **${word.toUpperCase()}**. Nobody got there.`,
 		expiredTitle: "🪢 Round expired",
 		expiredDescription: (word: string): string => `Nobody finished it in time. The word was **${word.toUpperCase()}**.`,
+
+		// ── the canvas card (2026-10 item 243 Phase 3) ──
+		// Words drawn INTO the card's pixels, so none takes a mention. The word itself
+		// is never here: the card draws only the letters already guessed.
+		cardMisses: "MISSES",
+		cardAttemptsLeft: (remaining: number): string => `${remaining} ${remaining === 1 ? "ATTEMPT" : "ATTEMPTS"} LEFT`,
+		cardSolved: "SOLVED",
+		cardLost: "OUT OF ATTEMPTS",
+		cardExpired: "ROUND EXPIRED",
 	},
 
 	// ── blackjack ──
@@ -214,6 +223,13 @@ export const gamesCopy = {
 		outcomeLose: "Lose",
 		bustNote: "bust",
 		doubledNote: "doubled",
+		// ── the canvas result card (2026-10 item 243 Phase 3) ──
+		// The XP is what the HAND paid (gameXp.blackjackHandXp), which is the award
+		// this table makes; a solo room's own top up lands when the room closes.
+		cardDealer: "DEALER",
+		cardHandXp: (xp: number): string => `+${xp} XP`,
+		cardDoubled: "DOUBLED",
+		cardMoreHands: (count: number): string => `and ${count} more ${count === 1 ? "hand" : "hands"}`,
 		// Stated on the result card because doubling is the one action whose cost is
 		// invisible in the cards themselves.
 		doubledLostAll: "A doubled hand that loses pays nothing at all.",

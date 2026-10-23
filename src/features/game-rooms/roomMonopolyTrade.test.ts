@@ -5,13 +5,21 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: v
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
-vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn(async () => null) }));
+// The cards answer null unless a case hands one back, so every other case reads the
+// text offer exactly as it posts when the trade card does not draw.
+vi.mock("@features/games/monopolyRenderer.js", () => ({
+	renderBoard: vi.fn(async () => null),
+	renderTradeCard: vi.fn(async () => null),
+	monopolyTradeView: vi.fn(() => ({})),
+}));
 
 import { handleMtrade, handleTradePartnerSelect, handleTradeModal, handleMtradeAccept, handleMtradeReject } from "./roomMonopolyTrade.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
 import { createInitialState, type MonopolyState, type TradeProposal } from "@features/games/monopolyState.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { renderTradeCard } from "@features/games/monopolyRenderer.js";
+import { AttachmentBuilder } from "discord.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomMonopolyTrade ────────────────────────────────────────────────
@@ -258,6 +266,25 @@ describe("the Trade button with an offer open", () => {
 		expect(review.embeds?.[0].data.description).toContain(gameRoomsCopy.monopoly.tradeYouGet("Reader Dock and $100"));
 		expect(review.embeds?.[0].data.description).toContain(gameRoomsCopy.monopoly.tradeYouGive("Vermillion Alley"));
 		expect(answerIds(review)).toEqual([`gameroom:mtradeAccept:room-1:${OPENED_AT}`, `gameroom:mtradeReject:room-1:${OPENED_AT}`]);
+	});
+
+	it("puts the trade card in the review's image slot when it draws, and keeps the terms as text", async () => {
+		const attachment = new AttachmentBuilder(Buffer.from("png"), { name: "monopoly-trade-abc.png" });
+		vi.mocked(renderTradeCard).mockResolvedValueOnce({ attachment, ref: "attachment://monopoly-trade-abc.png" });
+		const interaction = makeButton(B);
+		await handleMtrade(interaction, withOffer());
+
+		const review = interaction.reply.mock.calls[0][0] as Review & { files?: unknown[]; embeds: { data: { image?: { url: string } } }[] };
+		expect(review.files).toEqual([attachment]);
+		expect(review.embeds[0].data.image?.url).toBe("attachment://monopoly-trade-abc.png");
+		expect(review.embeds[0].data.description).toContain(gameRoomsCopy.monopoly.tradeYouGet("Reader Dock and $100"));
+		expect(interaction.reply.mock.calls[0][0]).toMatchObject({ flags: 64 });
+	});
+
+	it("posts the text review with no file when the trade card does not draw", async () => {
+		const interaction = makeButton(B);
+		await handleMtrade(interaction, withOffer());
+		expect((interaction.reply.mock.calls[0][0] as { files?: unknown[] }).files).toBeUndefined();
 	});
 
 	it("shows the initiator the terms from their side with Withdraw", async () => {

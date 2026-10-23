@@ -7,7 +7,13 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
-vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn(async () => null) }));
+// The auction card answers null unless a case hands one back, so the other cases
+// read the confirmation exactly as it posts when the card does not draw.
+vi.mock("@features/games/monopolyRenderer.js", () => ({
+	renderBoard: vi.fn(async () => null),
+	renderAuctionCard: vi.fn(async () => null),
+	monopolyAuctionView: vi.fn(() => ({})),
+}));
 
 import { handleMauction, handleBidModal, sweepMonopolyAuctions } from "./roomMonopolyAuction.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -15,6 +21,8 @@ import { roomTrail } from "./roomTrail.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { renderAuctionCard } from "@features/games/monopolyRenderer.js";
+import { AttachmentBuilder } from "discord.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomMonopolyAuction ──────────────────────────────────────────────
@@ -136,6 +144,18 @@ describe("a sealed bid", () => {
 		expect(interaction.editReply).toHaveBeenCalledWith({ content: gameRoomsCopy.monopoly.bidPlaced(150, "Burnt Umber Row", CLOSES) });
 		expect(trailTexts()).toEqual([`<@${B}> placed a bid on Burnt Umber Row.`]);
 		for (const text of trailTexts()) expect(text).not.toContain("150");
+	});
+
+	it("attaches the auction card to the private confirmation when it draws", async () => {
+		seed(auctionMatch());
+		const attachment = new AttachmentBuilder(Buffer.from("png"), { name: "monopoly-auction-abc.png" });
+		vi.mocked(renderAuctionCard).mockResolvedValueOnce({ attachment, ref: "attachment://monopoly-auction-abc.png" });
+		const interaction = makeBid(B, "150");
+
+		await handleBidModal(interaction);
+
+		expect(interaction.deferReply).toHaveBeenCalledWith({ flags: 64 });
+		expect(interaction.editReply).toHaveBeenCalledWith({ content: gameRoomsCopy.monopoly.bidPlaced(150, "Burnt Umber Row", CLOSES), files: [attachment] });
 	});
 
 	it("refuses text that is not a whole number before touching the match", async () => {

@@ -1,7 +1,7 @@
 import { COLORS } from "@base/copy/brand.js";
-import { canvasColor, drawText, fillCircle, renderCard, type AvatarRequest, type DrawOutcome, type RenderPayload, type Rect } from "@features/renderer/index.js";
+import { canvasColor, drawCardBackground, drawText, fillCircle, renderCard, type AvatarRequest, type DrawOutcome, type RenderPayload, type Rect } from "@features/renderer/index.js";
 import type { SKRSContext2D } from "@features/renderer/canvasModule.js";
-import { drawCardBackground, drawDeroPose, drawMemberFace, tierColor, tierToken } from "./levelingCardParts.js";
+import { drawDeroPose, drawMemberFace, tierColor, tierToken } from "./levelingCardParts.js";
 import { levelingCopy } from "./levelingCopy.js";
 import type { AchievementUnlockView } from "./levelingEmbeds.js";
 

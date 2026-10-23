@@ -11,10 +11,11 @@ import {
 	fire,
 	deserializeMatch,
 	serializeMatch,
-	publicBoardEmbed,
-	privateBoardEmbed,
-	battleshipRows,
+	battleshipBoardCard,
+	battleshipBoardMessage,
+	privateBoardReply,
 	PRIVATE,
+	type BattleshipSinking,
 	type StoredBattleship,
 } from "./roomBattleship.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -40,7 +41,12 @@ async function persist(room: IGameRoom, stored: StoredBattleship) {
 
 // Redraw the one public board message. Cosmetic, so a failure is logged and
 // swallowed: the row is the truth and the next turn will catch up.
-async function refreshBoard(interaction: ButtonInteraction, room: IGameRoom, stored: StoredBattleship): Promise<void> {
+async function refreshBoard(
+	interaction: ButtonInteraction,
+	room: IGameRoom,
+	stored: StoredBattleship,
+	sinking: BattleshipSinking | null = null
+): Promise<void> {
 	if (!stored.boardMessageId || !room.channelId) return;
 	const channel = await interaction.client.channels.fetch(room.channelId).catch(() => null);
 	if (!(channel instanceof TextChannel)) return;
@@ -48,8 +54,10 @@ async function refreshBoard(interaction: ButtonInteraction, room: IGameRoom, sto
 	if (!message) return;
 
 	const state = deserializeMatch(stored);
+	const board = await battleshipBoardMessage(state, room.roomId, sinking);
+	// `attachments: []` drops the last turn's picture, which an edit otherwise keeps.
 	await message
-		.edit({ embeds: [publicBoardEmbed(state)], components: battleshipRows(room.roomId, state) })
+		.edit({ ...board, attachments: [] })
 		.catch((error) => console.warn("[game-rooms] failed to redraw the battleship board", error));
 }
 
@@ -140,7 +148,9 @@ export async function handleFire(interaction: ButtonInteraction, room: IGameRoom
 		meta: { sunk: outcome.sunk ?? null },
 	});
 
-	await refreshBoard(interaction, room, next);
+	// A shot that sank a ship redraws with the sinking reveal on the card.
+	const sinking = outcome.sunk ? { shooterId: interaction.user.id, ship: outcome.sunk } : null;
+	await refreshBoard(interaction, room, next, sinking);
 
 	// ── the per sink bonus ──
 	// ⚠️ AWARDED WITHOUT `game`, DELIBERATELY. awardXp increments
@@ -169,7 +179,9 @@ export async function handleFire(interaction: ButtonInteraction, room: IGameRoom
 
 	if (!outcome.won) return;
 
-	await roomLifecycle.finish(interaction.client, room, { winnerId: interaction.user.id });
+	// The result card shows the final board with the last sinking on it, when it draws.
+	const finalBoard = await battleshipBoardCard(outcome.state, sinking);
+	await roomLifecycle.finish(interaction.client, room, { winnerId: interaction.user.id, ...(finalBoard ? { art: finalBoard } : {}) });
 
 	const [a, b] = room.playerIds;
 	awardTwoPlayerResult({
@@ -195,7 +207,7 @@ export async function handleViewBoard(interaction: ButtonInteraction, room: IGam
 		return;
 	}
 	await interaction.reply({
-		embeds: [privateBoardEmbed(deserializeMatch(stored), interaction.user.id)],
+		...(await privateBoardReply(deserializeMatch(stored), interaction.user.id)),
 		...PRIVATE,
 	});
 }

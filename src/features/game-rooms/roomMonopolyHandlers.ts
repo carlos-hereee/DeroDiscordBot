@@ -22,6 +22,8 @@ import {
 	type MonopolyState,
 } from "@features/games/monopolyState.js";
 import { awardMultiPlayerResult } from "@features/games/gameXp.js";
+import { monopolyWinnerView, renderWinnerCard } from "@features/games/monopolyRenderer.js";
+import { withRenderFallback } from "@features/renderer/index.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -157,8 +159,19 @@ export async function applyMonopolyOutcome(
 // paying regardless would pay the table twice if the sweep and a press both
 // reached the end. One award per match, at its end, per the plan: the last seat
 // standing wins and every other seat (bankrupt or forfeited) records a loss.
+//
+// The names are resolved BEFORE the claim, because the winner card on the result
+// (2026-10 item 243 Phase 3) needs them and finish posts the result. A press that
+// loses the claim spends one member fetch for nothing, which is cheaper than a
+// second result card. No card means the result posts without art, as it did.
 async function finishMonopolyMatch(client: Client, room: IGameRoom, state: MonopolyState): Promise<void> {
-	const claimed = await roomLifecycle.finish(client, room, { winnerId: state.winnerId });
+	const participants = await resolveParticipants(client, room.guildId, state.seats.map((seat) => seat.userId));
+	const names = new Map(participants.flatMap(({ userId, username }) => (username ? [[userId, username] as const] : [])));
+	const winnerCard = await withRenderFallback(
+		() => renderWinnerCard(monopolyWinnerView(state, names)),
+		() => null
+	);
+	const claimed = await roomLifecycle.finish(client, room, { winnerId: state.winnerId, ...(winnerCard ? { art: winnerCard } : {}) });
 	if (!claimed) return;
 
 	awardMultiPlayerResult({
@@ -166,7 +179,7 @@ async function finishMonopolyMatch(client: Client, room: IGameRoom, state: Monop
 		guildId: room.guildId,
 		channelId: room.channelId,
 		game: "monopoly",
-		participants: await resolveParticipants(client, room.guildId, state.seats.map((seat) => seat.userId)),
+		participants,
 		winnerId: state.winnerId,
 		nonWinnerOutcome: "lost",
 	});

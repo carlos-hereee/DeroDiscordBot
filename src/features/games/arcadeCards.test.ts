@@ -1,0 +1,312 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { RenderPayload } from "@features/renderer/index.js";
+
+// ── the arcade cards (2026-10 item 243 Phase 3) ────────────────────────────
+// One describe per surface: hangman, blackjack, battleship, the three Monopoly
+// cards and the hold em showdown. Each seeds a fixed game state, builds the
+// card's view from it the way the handler does, and checks the card comes back
+// as a real PNG drawn by the real canvas library. One file rather than five so
+// the byte readers are written once without a helper module in src/, which
+// tsconfig would compile into the deploy; the leveling cards made the same call.
+//
+// Beside the pixels, each secret the games keep gets a case: the hangman card
+// never sees the word, the public battleship card never sees an unfired ship,
+// and the private fleet, the trade and the sealed bid never enter the cache.
+// S3 is switched off, so nothing reaches the network.
+
+// The real config with S3 forced off: the dealer's module pulls in the voice
+// config as well, so a mock holding only the S3 switch would not load.
+vi.mock("@utils/config.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("@utils/config.js")>()), discordBotS3Enabled: false }));
+vi.mock("@utils/aws/index.js", () => ({ putObject: vi.fn(), getObjectBytes: vi.fn(async () => null) }));
+
+// The battleship renderer stays real; `fail` stands in for a host where its cards
+// do not draw, so the room's message helpers can be read on both paths.
+const battleshipSwitch = vi.hoisted(() => ({ fail: false }));
+vi.mock("./battleshipRenderer.js", async (importOriginal) => {
+	const real = await importOriginal<typeof import("./battleshipRenderer.js")>();
+	return {
+		...real,
+		renderBattleshipBoardCard: (view: Parameters<typeof real.renderBattleshipBoardCard>[0]) =>
+			battleshipSwitch.fail ? Promise.resolve(null) : real.renderBattleshipBoardCard(view),
+		renderBattleshipFleetCard: (view: Parameters<typeof real.renderBattleshipFleetCard>[0]) =>
+			battleshipSwitch.fail ? Promise.resolve(null) : real.renderBattleshipFleetCard(view),
+	};
+});
+
+import { cachedCardCount, clearCardCache } from "@features/renderer/cardCache.js";
+import { createHangmanState, applyGuess } from "./hangmanState.js";
+import { hangmanCardView, renderHangmanCard } from "./hangmanRenderer.js";
+import { settle, type BlackjackTable, type Card as BlackjackCard, type Hand } from "./blackjackState.js";
+import { blackjackResultView, renderBlackjackResultCard } from "./blackjackRenderer.js";
+import { blackjackHandXp } from "./gameXp.js";
+import { applyShot, createMatch, formatCoord, type BattleshipState } from "./battleshipState.js";
+import { renderBattleshipBoardCard } from "./battleshipRenderer.js";
+import { battleshipBoardMessage, battleshipBoardView, privateBoardReply } from "@features/game-rooms/roomBattleship.js";
+import { OWNABLE_TILES } from "./monopolyBoard.js";
+import { createInitialState } from "./monopolyState.js";
+import {
+	monopolyAuctionView,
+	monopolyTradeView,
+	monopolyWinnerView,
+	renderAuctionCard,
+	renderTradeCard,
+	renderWinnerCard,
+} from "./monopolyRenderer.js";
+import { act, actionsFor, createTable, dealHand, handInProgress, joinTable, whoActs } from "./holdemTable.js";
+import { toPublicResult, toPublicView } from "@features/dero-brain/dealerNarration.js";
+import { dealerShowdownView, renderDealerShowdownCard } from "@features/dero-brain/dealerShowdownRenderer.js";
+
+// ── reading the bytes ──
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function attachmentBytes(payload: RenderPayload | null): Buffer {
+	if (!payload) throw new Error("expected a rendered card, got null");
+	const bytes = payload.attachment.attachment;
+	if (!Buffer.isBuffer(bytes)) throw new Error("expected the rendered card to be attached as a Buffer");
+	return bytes;
+}
+
+// A PNG's IHDR holds width and height big endian at bytes 16 and 20.
+function pngSize(payload: RenderPayload | null): { width: number; height: number } {
+	const bytes = attachmentBytes(payload);
+	expect(bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)).toBe(true);
+	return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
+function seededRng(seed: number): () => number {
+	let state = seed;
+	return () => {
+		state = (state * 1664525 + 1013904223) % 4294967296;
+		return state / 4294967296;
+	};
+}
+
+beforeEach(() => {
+	clearCardCache();
+	battleshipSwitch.fail = false;
+});
+
+// ── hangman ──
+describe("hangmanRenderer", () => {
+	it("draws every gallows stage from the empty frame to the full figure", async () => {
+		const state = createHangmanState("castle");
+		for (let wrong = 0; wrong <= 6; wrong += 1) {
+			const card = await renderHangmanCard({ ...hangmanCardView(state), wrong });
+			expect(pngSize(card)).toEqual({ width: 960, height: 420 });
+		}
+	});
+
+	it("draws all three endings", async () => {
+		const state = createHangmanState("castle");
+		for (const ending of ["solved", "lost", "expired"] as const) {
+			expect(pngSize(await renderHangmanCard(hangmanCardView(state, ending))).width).toBe(960);
+		}
+	});
+
+	it("hands the card only the guessed letters, never the word", () => {
+		const state = createHangmanState("castle");
+		applyGuess(state, "c");
+		applyGuess(state, "z");
+		const view = hangmanCardView(state);
+		expect(view.revealed).toEqual(["c", null, null, null, null, null]);
+		expect(view.misses).toEqual(["z"]);
+		expect(JSON.stringify(view)).not.toContain("castle");
+	});
+});
+
+// ── blackjack ──
+const card = (rank: BlackjackCard["rank"], suit: BlackjackCard["suit"]): BlackjackCard => ({ rank, suit });
+const hand = (cards: BlackjackCard[], overrides: Partial<Hand> = {}): Hand => ({ cards, status: "stood", doubled: false, fromSplit: false, ...overrides });
+
+function settledTable(): BlackjackTable {
+	return {
+		seats: [
+			{ userId: "u1", username: "Silent Warrior", hands: [hand([card("10", "H"), card("9", "S")])], activeHand: 0 },
+			{
+				userId: "u2",
+				username: "Iron Duke",
+				hands: [hand([card("A", "D"), card("K", "C")], { status: "blackjack" }), hand([card("8", "H"), card("8", "C"), card("9", "D")], { status: "bust", doubled: true, fromSplit: true })],
+				activeHand: 1,
+			},
+		],
+		dealer: hand([card("10", "S"), card("8", "D")]),
+		shoe: [],
+		phase: "settled",
+		turn: 2,
+		hitsSoft17: false,
+	};
+}
+
+describe("blackjackRenderer", () => {
+	it("builds one row per hand with the embed's totals and the XP each hand paid", () => {
+		const table = settledTable();
+		const results = settle(table);
+		const view = blackjackResultView(table, results);
+		expect(view.dealer.total).toBe("18");
+		expect(view.hands.map((row) => [row.name, row.outcome, row.total])).toEqual([
+			["Silent Warrior", "win", "19"],
+			["Iron Duke", "blackjack", "soft 21"],
+			["Iron Duke", "lose", "25"],
+		]);
+		expect(view.hands.map((row) => row.xp)).toEqual([blackjackHandXp("win", false), blackjackHandXp("blackjack", false), blackjackHandXp("lose", true)]);
+		expect(view.hands[1].label).not.toBeNull();
+		expect(view.hands[0].label).toBeNull();
+	});
+
+	it("draws the result card, taller for each hand at the table", async () => {
+		const table = settledTable();
+		const view = blackjackResultView(table, settle(table));
+		const three = pngSize(await renderBlackjackResultCard(view));
+		const one = pngSize(await renderBlackjackResultCard({ ...view, hands: view.hands.slice(0, 1) }));
+		expect(three.width).toBe(960);
+		expect(three.height).toBeGreaterThan(one.height);
+	});
+});
+
+// ── battleship ──
+// Fires every cell of player two's destroyer from player one, with player two
+// missing in between, so the match has a miss, two hits and one sunk ship.
+function matchWithASinking(): BattleshipState {
+	const state = createMatch(
+		[
+			{ userId: "a", username: "Admiral A" },
+			{ userId: "b", username: "Admiral B" },
+		],
+		seededRng(3)
+	);
+	const destroyer = state.players[1].ships.find((ship) => ship.name === "destroyer")!;
+	const occupied = new Set(state.players[0].ships.flatMap((ship) => ship.cells.map((cell) => `${cell.x},${cell.y}`)));
+	const misses = [];
+	for (let y = 0; y < 10 && misses.length < destroyer.cells.length; y += 1) {
+		for (let x = 0; x < 10 && misses.length < destroyer.cells.length; x += 1) if (!occupied.has(`${x},${y}`)) misses.push({ x, y });
+	}
+	destroyer.cells.forEach((cell, index) => {
+		applyShot(state, "a", cell);
+		applyShot(state, "b", misses[index]);
+	});
+	return state;
+}
+
+describe("battleshipRenderer", () => {
+	it("draws the public board with the sinking called out", async () => {
+		const state = matchWithASinking();
+		const view = battleshipBoardView(state, { shooterId: "a", ship: "destroyer" });
+		expect(view.sinking).toMatchObject({ sectionIndex: 0, ship: "destroyer" });
+		expect(view.sections[0].sunk.map((ship) => ship.name)).toEqual(["destroyer"]);
+		expect(pngSize(await renderBattleshipBoardCard(view))).toEqual({ width: 1000, height: 600 });
+	});
+
+	it("never puts an unfired ship cell into the public view", () => {
+		const state = matchWithASinking();
+		const view = battleshipBoardView(state);
+		view.sections.forEach((section, index) => {
+			const target = state.players[1 - index];
+			for (const ship of target.ships) {
+				for (const cell of ship.cells) {
+					const fired = target.shots.has(`${cell.x},${cell.y}`);
+					if (!fired) expect(section.grid[cell.y][cell.x], `unfired ${formatCoord(cell)}`).toBe("unknown");
+				}
+			}
+			for (const ship of section.sunk) for (const cell of ship.cells) expect(target.shots.has(`${cell.x},${cell.y}`)).toBe(true);
+		});
+	});
+
+	it("posts the board message with the card, or the emoji grids when it does not draw", async () => {
+		const state = matchWithASinking();
+		const drawn = await battleshipBoardMessage(state, "room-1");
+		expect(drawn.files).toHaveLength(1);
+		expect(drawn.embeds[0].data.image?.url).toBe(`attachment://${drawn.files[0].name}`);
+		expect(drawn.embeds[0].data.description).not.toContain("🌊");
+
+		battleshipSwitch.fail = true;
+		const fallback = await battleshipBoardMessage(state, "room-1");
+		expect(fallback.files).toEqual([]);
+		expect(fallback.embeds[0].data.image).toBeUndefined();
+		expect(fallback.embeds[0].data.description).toContain("🌊");
+	});
+
+	it("sends the private fleet as a card that is never cached, or the emoji grid when it does not draw", async () => {
+		const state = matchWithASinking();
+		const drawn = await privateBoardReply(state, "b");
+		expect(drawn.files).toHaveLength(1);
+		expect(cachedCardCount()).toBe(0);
+
+		battleshipSwitch.fail = true;
+		const fallback = await privateBoardReply(state, "b");
+		expect(fallback.files).toEqual([]);
+		expect(fallback.embeds[0].data.description).toContain("🚢");
+	});
+});
+
+// ── monopoly ──
+describe("monopoly cards", () => {
+	const [first, second, third] = OWNABLE_TILES;
+
+	it("draws the trade card and never caches it, since the terms are private until accepted", async () => {
+		const view = monopolyTradeView({ properties: [first.id, second.id], chips: 100, gojf: 1 }, { properties: [third.id], chips: 0, gojf: 0 });
+		expect(view.youGet.lots.map((lot) => lot.name)).toEqual([first.name, second.name]);
+		expect(pngSize(await renderTradeCard(view))).toEqual({ width: 960, height: 440 });
+		expect(cachedCardCount()).toBe(0);
+	});
+
+	it("draws an empty side as nothing, and a long side with the overflow line", async () => {
+		const many = OWNABLE_TILES.slice(0, 9).map((tile) => tile.id);
+		const view = monopolyTradeView({ properties: many, chips: 50, gojf: 0 }, { properties: [], chips: 0, gojf: 0 });
+		expect(pngSize(await renderTradeCard(view)).width).toBe(960);
+	});
+
+	it("draws the auction card and never caches it, since the bid is sealed", async () => {
+		const view = monopolyAuctionView({ tileId: first.id, bids: {}, roundOpenedAt: 1, skippedBy: "a" }, 120);
+		expect(view.lot).toMatchObject({ name: first.name, price: first.price });
+		expect(pngSize(await renderAuctionCard(view))).toEqual({ width: 960, height: 340 });
+		expect(cachedCardCount()).toBe(0);
+	});
+
+	it("draws the winner card with every seat's standing, and caches it", async () => {
+		const state = createInitialState(["a", "b", "c"], { auctionsEnabled: false }, 1_000, 1);
+		state.properties[first.id] = { ...state.properties[first.id], ownerId: "a" };
+		state.seats[2].bankrupt = true;
+		state.winnerId = "a";
+		const view = monopolyWinnerView(state, new Map([["a", "Lady Ledger"], ["b", "Baron Bricks"]]));
+		expect(view.winner).toBe("Lady Ledger");
+		expect(view.standings.map((standing) => [standing.name, standing.lots, standing.bankrupt])).toEqual([
+			["Lady Ledger", 1, false],
+			["Baron Bricks", 0, false],
+			["Seat 3", 0, true],
+		]);
+		expect(pngSize(await renderWinnerCard(view)).width).toBe(960);
+		expect(cachedCardCount()).toBe(1);
+	});
+});
+
+// ── hold em ──
+describe("dealerShowdownRenderer", () => {
+	function playedToShowdown() {
+		const table = createTable(5, { maxSeats: 6, startingStack: 5000, smallBlind: 100, bigBlind: 200 });
+		for (let index = 0; index < 3; index += 1) joinTable(table, `p${index}`, `Player ${index}`);
+		table.status = "playing";
+		const rng = seededRng(11);
+		dealHand(table, rng);
+		let outcome: ReturnType<typeof act> | undefined;
+		for (let guard = 0; handInProgress(table) && guard < 100; guard += 1) {
+			const actor = whoActs(table)!;
+			const legal = actionsFor(table, actor).map((entry) => entry.action);
+			outcome = act(table, actor, legal.includes("check") ? "check" : "call", 0, rng);
+		}
+		return { view: toPublicView(table), result: toPublicResult(outcome)! };
+	}
+
+	it("builds the showdown from the public view: the board, the pot paid and every seat", () => {
+		const { view, result } = playedToShowdown();
+		const showdown = dealerShowdownView(view, result);
+		expect(showdown.board).toHaveLength(5);
+		expect(showdown.pot).toBe(result.winners.reduce((total, winner) => total + winner.amount, 0));
+		expect(showdown.winnerLines).toHaveLength(result.winners.length);
+		expect(showdown.seats.map((seat) => seat.name)).toEqual(["Player 0", "Player 1", "Player 2"]);
+	});
+
+	it("draws the showdown card, one strip row per seat", async () => {
+		const { view, result } = playedToShowdown();
+		expect(pngSize(await renderDealerShowdownCard(dealerShowdownView(view, result)))).toEqual({ width: 960, height: 260 + 3 * 56 + 40 });
+	});
+});

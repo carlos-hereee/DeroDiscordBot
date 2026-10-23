@@ -1,7 +1,10 @@
-import { AttachmentBuilder } from "discord.js";
+import { AttachmentBuilder, type ColorResolvable } from "discord.js";
+import { COLORS } from "@base/copy/brand.js";
 import { canvasModule, type CanvasModule, type Image, type SKRSContext2D } from "@features/renderer/canvasModule.js";
-import { BOARD, BOARD_SIZE, MAX_SEATS } from "./monopolyBoard.js";
-import type { MonopolyState } from "./monopolyState.js";
+import { canvasColor, drawCardBackground, drawPanel, drawPill, drawText, renderCard, type RenderPayload } from "@features/renderer/index.js";
+import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
+import { BOARD, BOARD_SIZE, MAX_SEATS, findOwnableTile, ownableTileName, type ColorGroup, type TileId } from "./monopolyBoard.js";
+import type { AuctionState, MonopolyState, TradeProposal } from "./monopolyState.js";
 import { GAME_ASSET_FILES, gameAssetPath, missingGameAssets, type GameAssetKey, type ResolvedGameAsset } from "./gamesAssets.js";
 
 // ── monopolyRenderer ─────────────────────────────────────────────────
@@ -21,6 +24,11 @@ import { GAME_ASSET_FILES, gameAssetPath, missingGameAssets, type GameAssetKey, 
 //        in that seat's fixed slot on its tile, then the jail stamp over it,
 //        ④ encode a PNG and hand back an attachment plus the ref an embed's
 //        setImage points at.
+//
+// The three cards (2026-10 item 243 Phase 3) are a separate drawing on the shared
+// card pipeline rather than on the board art: the trade card on the private offer
+// review, the auction card on a bidder's sealed bid confirmation, and the winner
+// card on the room's result. See "the cards" at the end of this file.
 //
 // ⚠️ THE CANVAS LIBRARY COMES FROM THE SHARED LOADER, NEVER A STATIC IMPORT.
 // features/renderer/canvasModule.ts loads @napi-rs/canvas with a caught dynamic
@@ -278,4 +286,289 @@ async function loadArt(canvas: CanvasModule, key: GameAssetKey): Promise<Image> 
 	const image = await loadOptionalArt(canvas, key);
 	if (!image) throw new Error(`Monopoly art ${GAME_ASSET_FILES[key]} disappeared from assets/games during a render`);
 	return image;
+}
+
+// ── the cards ─────────────────────────────────────────────────────────
+// Trade, auction and winner, each through renderCard and each wrapped by its
+// caller in withRenderFallback, so the text reply or the plain result card
+// posts whenever one does not draw. The trade and auction cards are NEVER
+// cached: a trade's terms stay private until it is accepted (risk M6) and a bid
+// stays sealed until its round closes, and a cached card would hold either one
+// under a content addressed S3 key that outlives the secret.
+
+/** One lot as the cards show it: its name, and its color group (null for a railroad or a utility). */
+export interface MonopolyLotView {
+	name: string;
+	group: ColorGroup | null;
+}
+
+/** One side of a trade: what changes hands from one player. */
+export interface MonopolyTradeSideView {
+	lots: MonopolyLotView[];
+	chips: number;
+	jailCards: number;
+}
+
+/** The trade card's view, from the side of the player looking at it. */
+export interface MonopolyTradeView {
+	youGet: MonopolyTradeSideView;
+	youGive: MonopolyTradeSideView;
+}
+
+export interface MonopolyAuctionView {
+	lot: MonopolyLotView & { price: number };
+	bid: number;
+}
+
+export interface MonopolyStandingView {
+	name: string;
+	chips: number;
+	lots: number;
+	bankrupt: boolean;
+	isWinner: boolean;
+}
+
+export interface MonopolyWinnerView {
+	/** The winner's display name, or null for a match that ended without one. */
+	winner: string | null;
+	standings: MonopolyStandingView[];
+}
+
+export function monopolyLotView(tileId: TileId): MonopolyLotView {
+	const tile = findOwnableTile(tileId);
+	return { name: ownableTileName(tileId), group: tile?.kind === "property" ? tile.group : null };
+}
+
+const tradeSideView = (side: TradeProposal["offer"]): MonopolyTradeSideView => ({
+	lots: side.properties.map(monopolyLotView),
+	chips: side.chips,
+	jailCards: side.gojf,
+});
+
+/** The trade card's view of an open offer, as the viewer would receive and give it. */
+export function monopolyTradeView(youGet: TradeProposal["offer"], youGive: TradeProposal["offer"]): MonopolyTradeView {
+	return { youGet: tradeSideView(youGet), youGive: tradeSideView(youGive) };
+}
+
+/** The auction card's view of the lot on the block and the bid just placed. */
+export function monopolyAuctionView(auction: AuctionState, bid: number): MonopolyAuctionView {
+	return { lot: { ...monopolyLotView(auction.tileId), price: findOwnableTile(auction.tileId)?.price ?? 0 }, bid };
+}
+
+/**
+ * The winner card's view of a finished match. `names` maps a seat's user id to
+ * its display name; a seat with none (a member who left) reads as its seat number.
+ */
+export function monopolyWinnerView(state: MonopolyState, names: ReadonlyMap<string, string>): MonopolyWinnerView {
+	const nameOf = (userId: string, index: number): string => names.get(userId) ?? gameRoomsCopy.monopoly.cardSeat(index);
+	const lotsHeld = (userId: string): number => Object.values(state.properties).filter((lot) => lot.ownerId === userId).length;
+	const winnerIndex = state.seats.findIndex((seat) => seat.userId === state.winnerId);
+	return {
+		winner: winnerIndex >= 0 ? nameOf(state.seats[winnerIndex].userId, winnerIndex) : null,
+		standings: state.seats.map((seat, index) => ({
+			name: nameOf(seat.userId, index),
+			chips: seat.chips,
+			lots: lotsHeld(seat.userId),
+			bankrupt: seat.bankrupt,
+			isWinner: seat.userId === state.winnerId,
+		})),
+	};
+}
+
+// Bump whenever a card's drawing changes, or members keep seeing cached cards.
+const MONOPOLY_CARD_VERSION = 1;
+const CARD_WIDTH = 960;
+const CARD_PADDING = 40;
+const TRADE_CARD_HEIGHT = 440;
+const AUCTION_CARD_HEIGHT = 340;
+const STANDING_ROW_HEIGHT = 64;
+const WINNER_HEADER_HEIGHT = 200;
+// A side lists this many items before it says how many more there are.
+const MAX_TRADE_ITEMS = 6;
+const TRADE_ITEM_HEIGHT = 44;
+const SWATCH_SIZE = 22;
+
+const GROUP_COLORS: Record<ColorGroup, ColorResolvable> = {
+	brown: COLORS.MONOPOLY_BROWN,
+	"light-blue": COLORS.MONOPOLY_LIGHT_BLUE,
+	pink: COLORS.MONOPOLY_PINK,
+	orange: COLORS.MONOPOLY_ORANGE,
+	red: COLORS.MONOPOLY_RED,
+	yellow: COLORS.MONOPOLY_YELLOW,
+	green: COLORS.MONOPOLY_GREEN,
+	"dark-blue": COLORS.MONOPOLY_DARK_BLUE,
+};
+
+// A railroad or a utility belongs to no color group, so it takes the muted ink.
+const lotColor = (lot: MonopolyLotView): string => canvasColor(lot.group ? GROUP_COLORS[lot.group] : COLORS.CARD_TEXT_MUTED);
+
+/** The trade card for the private offer review, or null when the text offer should post alone. Never throws. */
+export function renderTradeCard(view: MonopolyTradeView): Promise<RenderPayload | null> {
+	return renderCard({
+		kind: "monopoly-trade",
+		version: MONOPOLY_CARD_VERSION,
+		input: view,
+		width: CARD_WIDTH,
+		height: TRADE_CARD_HEIGHT,
+		draw: (context, input) => {
+			drawTradeCard(context, input);
+			return { cacheable: false };
+		},
+	});
+}
+
+/** The auction card for a bidder's sealed bid confirmation, or null when the text line should post alone. Never throws. */
+export function renderAuctionCard(view: MonopolyAuctionView): Promise<RenderPayload | null> {
+	return renderCard({
+		kind: "monopoly-auction",
+		version: MONOPOLY_CARD_VERSION,
+		input: view,
+		width: CARD_WIDTH,
+		height: AUCTION_CARD_HEIGHT,
+		draw: (context, input) => {
+			drawAuctionCard(context, input);
+			return { cacheable: false };
+		},
+	});
+}
+
+/** The winner card for a finished match's result, or null when the result card should post without it. Never throws. */
+export function renderWinnerCard(view: MonopolyWinnerView): Promise<RenderPayload | null> {
+	return renderCard({
+		kind: "monopoly-winner",
+		version: MONOPOLY_CARD_VERSION,
+		input: view,
+		width: CARD_WIDTH,
+		height: WINNER_HEADER_HEIGHT + view.standings.length * STANDING_ROW_HEIGHT + CARD_PADDING,
+		draw: drawWinnerCard,
+	});
+}
+
+// ── trade ──
+function drawTradeCard(context: SKRSContext2D, view: MonopolyTradeView): void {
+	drawCardBackground(context, COLORS.ARCADE, CARD_WIDTH / 2, 0, CARD_WIDTH * 0.6);
+	const columnWidth = (CARD_WIDTH - CARD_PADDING * 3) / 2;
+	drawTradeSide(context, gameRoomsCopy.monopoly.cardYouGet, view.youGet, CARD_PADDING, columnWidth);
+	drawTradeSide(context, gameRoomsCopy.monopoly.cardYouGive, view.youGive, CARD_PADDING * 2 + columnWidth, columnWidth);
+}
+
+interface TradeItem {
+	label: string;
+	swatch: string | null;
+}
+
+function tradeItems(side: MonopolyTradeSideView): TradeItem[] {
+	const copy = gameRoomsCopy.monopoly;
+	const items: TradeItem[] = side.lots.map((lot) => ({ label: lot.name, swatch: lotColor(lot) }));
+	if (side.chips > 0) items.push({ label: copy.cardChips(side.chips), swatch: null });
+	if (side.jailCards > 0) items.push({ label: copy.cardJailCards(side.jailCards), swatch: null });
+	if (items.length === 0) items.push({ label: copy.cardNothing, swatch: null });
+	return items;
+}
+
+function drawTradeSide(context: SKRSContext2D, heading: string, side: MonopolyTradeSideView, left: number, width: number): void {
+	const top = CARD_PADDING;
+	drawPanel(context, { x: left, y: top, width, height: TRADE_CARD_HEIGHT - CARD_PADDING * 2, radius: 20, fill: canvasColor(COLORS.CARD_PANEL) });
+	drawText(context, heading, { x: left + 24, y: top + 44, size: 22, weight: "bold", color: canvasColor(COLORS.CARD_TEXT_SECONDARY) });
+
+	const items = tradeItems(side);
+	// One slot is given up to the "and N more" line when the list overflows.
+	const shown = items.length > MAX_TRADE_ITEMS ? items.slice(0, MAX_TRADE_ITEMS - 1) : items;
+	shown.forEach((item, index) => {
+		const middle = top + 96 + index * TRADE_ITEM_HEIGHT;
+		const textLeft = item.swatch ? left + 24 + SWATCH_SIZE + 14 : left + 24;
+		if (item.swatch) drawPanel(context, { x: left + 24, y: middle - SWATCH_SIZE / 2, width: SWATCH_SIZE, height: SWATCH_SIZE, radius: 5, fill: item.swatch });
+		drawText(context, item.label, { x: textLeft, y: middle, size: 22, color: canvasColor(COLORS.CARD_TEXT), baseline: "middle", maxWidth: left + width - 24 - textLeft });
+	});
+	const hidden = items.length - shown.length;
+	if (hidden <= 0) return;
+	drawText(context, gameRoomsCopy.monopoly.cardMoreLots(hidden), {
+		x: left + 24,
+		y: top + 96 + shown.length * TRADE_ITEM_HEIGHT,
+		size: 20,
+		color: canvasColor(COLORS.CARD_TEXT_MUTED),
+		baseline: "middle",
+	});
+}
+
+// ── auction ──
+function drawAuctionCard(context: SKRSContext2D, view: MonopolyAuctionView): void {
+	drawCardBackground(context, COLORS.ARCADE, CARD_WIDTH * 0.75, AUCTION_CARD_HEIGHT / 2, CARD_WIDTH * 0.5);
+	const deed = { x: CARD_PADDING, y: CARD_PADDING, width: 380, height: AUCTION_CARD_HEIGHT - CARD_PADDING * 2 };
+	drawPanel(context, { ...deed, radius: 20, fill: canvasColor(COLORS.CARD_PANEL) });
+	// The deed's color band, as a printed title deed has across its top.
+	drawPanel(context, { x: deed.x, y: deed.y, width: deed.width, height: 72, radius: 20, fill: lotColor(view.lot) });
+	drawText(context, view.lot.name, {
+		x: deed.x + deed.width / 2,
+		y: deed.y + 140,
+		size: 30,
+		weight: "bold",
+		color: canvasColor(COLORS.CARD_TEXT),
+		align: "center",
+		baseline: "middle",
+		maxWidth: deed.width - 40,
+	});
+	drawText(context, gameRoomsCopy.monopoly.cardListPrice(view.lot.price), {
+		x: deed.x + deed.width / 2,
+		y: deed.y + 196,
+		size: 22,
+		color: canvasColor(COLORS.CARD_TEXT_SECONDARY),
+		align: "center",
+		baseline: "middle",
+	});
+
+	const right = deed.x + deed.width + 48;
+	drawPill(context, { x: right, y: 90, width: 220, height: 48, fill: canvasColor(COLORS.ARCADE), label: gameRoomsCopy.monopoly.cardAuction });
+	drawText(context, gameRoomsCopy.monopoly.cardYourBid(view.bid), {
+		x: right,
+		y: 210,
+		size: 36,
+		weight: "bold",
+		color: canvasColor(COLORS.CARD_TEXT),
+		baseline: "middle",
+		maxWidth: CARD_WIDTH - right - CARD_PADDING,
+	});
+}
+
+// ── winner ──
+function drawWinnerCard(context: SKRSContext2D, view: MonopolyWinnerView): void {
+	drawCardBackground(context, COLORS.MONOPOLY_YELLOW, CARD_WIDTH / 2, 0, CARD_WIDTH * 0.6);
+	const copy = gameRoomsCopy.monopoly;
+	drawPill(context, {
+		x: CARD_PADDING,
+		y: CARD_PADDING,
+		width: 180,
+		height: 44,
+		fill: canvasColor(COLORS.MONOPOLY_YELLOW),
+		label: copy.cardWinner,
+		labelColor: canvasColor(COLORS.CARD_BACKGROUND),
+	});
+	drawText(context, view.winner ?? copy.cardNoWinner, {
+		x: CARD_PADDING,
+		y: 140,
+		size: 44,
+		weight: "bold",
+		color: canvasColor(COLORS.CARD_TEXT),
+		baseline: "middle",
+		maxWidth: CARD_WIDTH - CARD_PADDING * 2,
+	});
+	view.standings.forEach((standing, index) => drawStanding(context, standing, WINNER_HEADER_HEIGHT + index * STANDING_ROW_HEIGHT));
+}
+
+function drawStanding(context: SKRSContext2D, standing: MonopolyStandingView, top: number): void {
+	const copy = gameRoomsCopy.monopoly;
+	const height = STANDING_ROW_HEIGHT - 10;
+	drawPanel(context, {
+		x: CARD_PADDING,
+		y: top,
+		width: CARD_WIDTH - CARD_PADDING * 2,
+		height,
+		radius: 14,
+		fill: canvasColor(standing.isWinner ? COLORS.CARD_NESTED : COLORS.CARD_PANEL),
+	});
+	const middle = top + height / 2;
+	const ink = canvasColor(standing.bankrupt ? COLORS.CARD_TEXT_MUTED : COLORS.CARD_TEXT);
+	drawText(context, standing.name, { x: CARD_PADDING + 24, y: middle, size: 24, weight: "bold", color: ink, baseline: "middle", maxWidth: 420 });
+	const holdings = standing.bankrupt ? copy.cardBankrupt : `${copy.cardChips(standing.chips)}   ${copy.cardLots(standing.lots)}`;
+	drawText(context, holdings, { x: CARD_WIDTH - CARD_PADDING - 24, y: middle, size: 22, color: ink, align: "right", baseline: "middle" });
 }

@@ -8,15 +8,19 @@ import {
 	TextChannel,
 	TextInputBuilder,
 	TextInputStyle,
+	type AttachmentBuilder,
 	type ButtonInteraction,
 	type ChatInputCommandInteraction,
+	type EmbedBuilder,
 	type Message,
 } from "discord.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { CooldownManager } from "@utils/cooldownManager.js";
+import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { gamesCopy } from "./gamesCopy.js";
-import { resolveGameAsset, hangmanStageKey } from "./gamesAssets.js";
+import { resolveGameAsset, hangmanStageKey, type ResolvedGameAsset } from "./gamesAssets.js";
 import { buildHangmanBoardEmbed, buildHangmanEndEmbed } from "./gamesEmbeds.js";
+import { hangmanCardView, renderHangmanCard, type HangmanCardView } from "./hangmanRenderer.js";
 import { pickWord } from "./hangmanWords.js";
 import {
 	createHangmanState,
@@ -121,11 +125,10 @@ export async function startHangmanRound(channel: TextChannel, starterId: string)
 	try {
 		// ② Post the board. Nothing is clickable until the collector is wired
 		// below, and the gap is one tick, so a click cannot arrive early.
-		const art = resolveGameAsset(hangmanStageKey(0));
+		const picture = await boardPicture(hangmanCardView(round.state), resolveGameAsset(hangmanStageKey(0)), (ref) => boardEmbed(round, ref));
 		const board = await channel.send({
-			embeds: [boardEmbed(round, art.ref)],
+			...picture,
 			components: [guessRow(channel.id)],
-			files: [art.attachment],
 			allowedMentions: { parse: [] },
 		});
 
@@ -230,6 +233,24 @@ function guessRow(channelId: string): ActionRowBuilder<ButtonBuilder> {
 			.setEmoji("🔤")
 			.setStyle(ButtonStyle.Primary)
 	);
+}
+
+// ── the board's picture (2026-10 item 243 Phase 3) ──
+// The hangman card in the image slot when it draws, and the gallows art (the
+// Dero stand in while that art is not on disk) when it does not, under the same
+// embed either way. One helper for the board and all three endings, so no edit
+// can attach one picture and point its embed at the other.
+async function boardPicture(
+	view: HangmanCardView,
+	art: ResolvedGameAsset,
+	embedFor: (imageRef: string) => EmbedBuilder
+): Promise<{ embeds: EmbedBuilder[]; files: AttachmentBuilder[] }> {
+	const card = await withRenderFallback(
+		() => renderHangmanCard(view),
+		() => embedFor(art.ref)
+	);
+	if (isRenderPayload(card)) return { embeds: [embedFor(card.ref)], files: [card.attachment] };
+	return { embeds: [card], files: [art.attachment] };
 }
 
 function boardEmbed(round: HangmanRound, imageRef: string) {
@@ -339,32 +360,34 @@ async function renderBoard(board: Message, round: HangmanRound, channelId: strin
 	const c = gamesCopy.hangman;
 
 	if (round.state.status === "playing") {
-		// The gallows frame IS the miss count, so the art follows the state with no
+		// The gallows frame IS the miss count, so the picture follows the state with no
 		// bookkeeping. files is passed on every edit rather than only when the frame
-		// changes: correctness over saving an 85 KB re-upload a handful of times per
-		// round, since an edit that drops its attachment renders an empty image slot.
-		const art = resolveGameAsset(hangmanStageKey(round.state.wrong));
+		// changes: correctness over saving a re-upload a handful of times per round,
+		// since an edit that drops its attachment renders an empty image slot.
+		// `attachments: []` drops the previous frame, which an edit otherwise keeps,
+		// so the board never stacks one picture per guess under its embed.
+		const picture = await boardPicture(hangmanCardView(round.state), resolveGameAsset(hangmanStageKey(round.state.wrong)), (ref) => boardEmbed(round, ref));
 		await board
-			.edit({ embeds: [boardEmbed(round, art.ref)], components: [guessRow(channelId)], files: [art.attachment] })
+			.edit({ ...picture, components: [guessRow(channelId)], attachments: [] })
 			.catch(swallow("hangman board update"));
 		return;
 	}
 
 	const won = round.state.status === "won";
-	const art = resolveGameAsset(won ? "hangmanWin" : "hangmanLose");
+	const picture = await boardPicture(hangmanCardView(round.state, won ? "solved" : "lost"), resolveGameAsset(won ? "hangmanWin" : "hangmanLose"), (ref) =>
+		buildHangmanEndEmbed(
+			won ? c.wonTitle : c.lostTitle,
+			won ? c.wonDescription(round.state.word, actorId) : c.lostDescription(round.state.word),
+			ref
+		)
+	);
 	await board
 		.edit({
-			embeds: [
-				buildHangmanEndEmbed(
-					won ? c.wonTitle : c.lostTitle,
-					won ? c.wonDescription(round.state.word, actorId) : c.lostDescription(round.state.word),
-					art.ref
-				),
-			],
+			...picture,
 			// Drop the button so a late clicker gets a finished board rather than a
 			// modal for a round that no longer exists.
 			components: [],
-			files: [art.attachment],
+			attachments: [],
 			allowedMentions: { parse: [] },
 		})
 		.catch(swallow("hangman end board"));
@@ -394,20 +417,10 @@ async function finishRound(channelId: string, board: Message): Promise<void> {
 	// an expiry is left, so this is the one path that still owes an award.
 	if (round.state.status !== "playing") return;
 
-	const art = resolveGameAsset("hangmanLose");
-	await board
-		.edit({
-			embeds: [
-				buildHangmanEndEmbed(
-					gamesCopy.hangman.expiredTitle,
-					gamesCopy.hangman.expiredDescription(round.state.word),
-					art.ref
-				),
-			],
-			components: [],
-			files: [art.attachment],
-		})
-		.catch(swallow("hangman expiry board"));
+	const picture = await boardPicture(hangmanCardView(round.state, "expired"), resolveGameAsset("hangmanLose"), (ref) =>
+		buildHangmanEndEmbed(gamesCopy.hangman.expiredTitle, gamesCopy.hangman.expiredDescription(round.state.word), ref)
+	);
+	await board.edit({ ...picture, components: [], attachments: [] }).catch(swallow("hangman expiry board"));
 
 	// Nobody solved it, so nobody wins, but everyone who guessed still played and
 	// showing up is the behavior being rewarded.

@@ -11,8 +11,7 @@ import { hangmanRow } from "./roomHangman.js";
 import {
 	startMatch as startBattleshipMatch,
 	deserializeMatch,
-	publicBoardEmbed,
-	battleshipRows,
+	battleshipBoardMessage,
 	rerollRow,
 } from "./roomBattleship.js";
 import { createTable as createHoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
@@ -421,10 +420,7 @@ export const RoomProvisioner = {
 			);
 			const match = startBattleshipMatch(started ?? room, usernames);
 			const boardMessage = await channel
-				.send({
-					embeds: [publicBoardEmbed(deserializeMatch(match))],
-					components: battleshipRows(room.roomId, deserializeMatch(match)),
-				})
+				.send(await battleshipBoardMessage(deserializeMatch(match), room.roomId))
 				.catch(() => null);
 			// The reroll offer rides its own message so it can be ignored without
 			// cluttering the board that gets edited thirty times.

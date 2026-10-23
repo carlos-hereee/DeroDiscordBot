@@ -5,6 +5,7 @@ import {
 	ComponentType,
 	MessageFlags,
 	TextChannel,
+	type AttachmentBuilder,
 	type ButtonInteraction,
 	type Channel,
 	type ChatInputCommandInteraction,
@@ -14,9 +15,11 @@ import {
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { CooldownManager } from "@utils/cooldownManager.js";
+import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { gamesCopy } from "./gamesCopy.js";
+import { blackjackResultView, renderBlackjackResultCard } from "./blackjackRenderer.js";
 import { buildBlackjackResultEmbed, buildBlackjackSeatingEmbed, buildBlackjackTableEmbed } from "./gamesEmbeds.js";
-import { applyAction, createTable, legalActions, playDealer, settle, type BlackjackAction, type BlackjackTable } from "./blackjackState.js";
+import { applyAction, createTable, legalActions, playDealer, settle, type BlackjackAction, type BlackjackTable, type SeatResult } from "./blackjackState.js";
 import { awardBlackjackResult } from "./gameXp.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
@@ -281,7 +284,7 @@ export async function startBlackjackTable(
 			settledOnDeal = result !== null;
 
 			board = await channel.send({
-				embeds: [result ?? embed],
+				...(result ? await resultMessage(result) : { embeds: [embed] }),
 				components: result ? [] : [actionRow(channel.id, table)],
 				allowedMentions: { parse: [] },
 			});
@@ -413,7 +416,7 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 	if (game.table.phase === "dealer") {
 		const result = settleGame(game, channelId, click.client);
 		if (result) {
-			await click.update({ embeds: [result], components: [] });
+			await click.update({ ...(await resultMessage(result)), components: [] });
 			game.stop();
 			return;
 		}
@@ -454,7 +457,7 @@ async function dealInto(game: BlackjackGame, channelId: string, click: ButtonInt
 	if (table.phase === "dealer") {
 		const result = settleGame(game, channelId, click.client);
 		if (result) {
-			await click.update({ embeds: [result], components: [] });
+			await click.update({ ...(await resultMessage(result)), components: [] });
 			game.stop();
 			return;
 		}
@@ -481,7 +484,7 @@ async function closeSeating(channelId: string, board: Message): Promise<void> {
 	if (table.phase === "dealer") {
 		const result = settleGame(game, channelId, board.client);
 		if (result) {
-			await board.edit({ embeds: [result], components: [] }).catch(() => undefined);
+			await board.edit({ ...(await resultMessage(result)), components: [] }).catch(() => undefined);
 			game.stop();
 			return;
 		}
@@ -491,10 +494,32 @@ async function closeSeating(channelId: string, board: Message): Promise<void> {
 
 // ── settlement ──────────────────────────────────────────────────────────────
 
-// Plays the dealer, pays everyone, and returns the result embed. Returns null if
-// this table has already settled, which is the guard that stops a double click
-// or a timeout racing the last action from paying twice.
-function settleGame(game: BlackjackGame, channelId: string, client: Message["client"]): EmbedBuilder | null {
+// What a settle hands its caller: the result embed, and the settled table and
+// seat results the result card is drawn from.
+interface SettledTable {
+	embed: EmbedBuilder;
+	table: BlackjackTable;
+	results: SeatResult[];
+}
+
+// The result as a message: the rendered card in the embed's image slot when it
+// draws (2026-10 item 243 Phase 3), the result embed alone when it does not.
+// The view is built INSIDE the render function, so a view that throws costs the
+// picture and not the result. A board that carried no file before gets one here,
+// and nothing needs dropping, so no `attachments: []` is passed.
+async function resultMessage(settled: SettledTable): Promise<{ embeds: EmbedBuilder[]; files?: AttachmentBuilder[] }> {
+	const card = await withRenderFallback(
+		() => renderBlackjackResultCard(blackjackResultView(settled.table, settled.results)),
+		() => settled.embed
+	);
+	if (isRenderPayload(card)) return { embeds: [settled.embed.setImage(card.ref)], files: [card.attachment] };
+	return { embeds: [card] };
+}
+
+// Plays the dealer, pays everyone, and returns the result embed with the table it
+// settled. Returns null if this table has already settled, which is the guard that
+// stops a double click or a timeout racing the last action from paying twice.
+function settleGame(game: BlackjackGame, channelId: string, client: Message["client"]): SettledTable | null {
 	if (!game.table || game.settled) return null;
 	// ⚠️ Claimed synchronously, before anything awaits. Everything below is
 	// in-process and pure until the award, which is itself fire and forget.
@@ -535,5 +560,5 @@ function settleGame(game: BlackjackGame, channelId: string, client: Message["cli
 	}
 
 	const anyDoubledLoss = results.some((seat) => seat.hands.some((outcome, index) => outcome === "lose" && seat.doubled[index]));
-	return buildBlackjackResultEmbed(game.table, results, anyDoubledLoss);
+	return { embed: buildBlackjackResultEmbed(game.table, results, anyDoubledLoss), table: game.table, results };
 }

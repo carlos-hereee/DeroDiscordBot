@@ -1,6 +1,7 @@
 import { COLORS } from "@base/copy/brand.js";
 import {
 	canvasColor,
+	drawCardBackground,
 	drawPill,
 	drawText,
 	fillCircle,
@@ -14,7 +15,7 @@ import {
 	type Rect,
 } from "@features/renderer/index.js";
 import type { SKRSContext2D } from "@features/renderer/canvasModule.js";
-import { drawCardBackground, drawDeroPose, drawMemberFace } from "./levelingCardParts.js";
+import { drawDeroPose, drawMemberFace } from "./levelingCardParts.js";
 import { levelingCopy } from "./levelingCopy.js";
 import type { LevelUpView } from "./levelingEmbeds.js";
 import { isMilestone } from "./primeLevels.js";

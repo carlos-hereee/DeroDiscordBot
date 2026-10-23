@@ -102,7 +102,8 @@ describe("sweepMonopolyIdle", () => {
 
 		expect(summary).toEqual({ seatsForfeited: 1, matchesFinished: 1 });
 		expect(persisted()).toMatchObject({ phase: "finished", winnerId: B });
-		expect(finishMock).toHaveBeenCalledWith(client, room, { winnerId: B });
+		// objectContaining because the winner card (2026-10 item 243) rides along as `art` when it draws.
+		expect(finishMock).toHaveBeenCalledWith(client, room, expect.objectContaining({ winnerId: B }));
 		expect(awardMock).toHaveBeenCalledWith(expect.objectContaining({ game: "monopoly", winnerId: B, nonWinnerOutcome: "lost" }));
 	});
 

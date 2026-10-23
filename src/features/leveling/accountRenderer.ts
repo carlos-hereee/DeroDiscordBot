@@ -1,7 +1,7 @@
 import { COLORS } from "@base/copy/brand.js";
-import { canvasColor, drawBarSegment, drawPanel, drawPill, drawText, fillCircle, renderCard, type AvatarRequest, type DrawOutcome, type RenderPayload, type Rect } from "@features/renderer/index.js";
+import { canvasColor, drawBarSegment, drawCardBackground, drawPanel, drawPill, drawText, fillCircle, renderCard, type AvatarRequest, type DrawOutcome, type RenderPayload, type Rect } from "@features/renderer/index.js";
 import type { SKRSContext2D } from "@features/renderer/canvasModule.js";
-import { drawCardBackground, drawDeroPose, drawMemberFace, tierColor } from "./levelingCardParts.js";
+import { drawDeroPose, drawMemberFace, tierColor } from "./levelingCardParts.js";
 import { levelingCopy } from "./levelingCopy.js";
 import type { AccountView } from "./levelingEmbeds.js";
 

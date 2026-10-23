@@ -130,8 +130,9 @@ export function awardMultiPlayerResult(result: MultiPlayerResult): void {
 // nothing, so six seats can all win, all lose, or any mixture, at once.
 
 // What one hand is worth. Split out so the arithmetic is readable in isolation
-// and so the doubling asymmetry is stated exactly once.
-function blackjackHandXp(outcome: HandOutcome, doubled: boolean): number {
+// and so the doubling asymmetry is stated exactly once. Exported because the
+// blackjack result card prints this figure, and it must be the one paid.
+export function blackjackHandXp(outcome: HandOutcome, doubled: boolean): number {
 	const { GAME_PLAY_XP, GAME_WIN_XP, GAME_TIE_XP, BLACKJACK_NATURAL_XP, BLACKJACK_DOUBLE_WIN_MULTIPLIER } = BOT_CONSTANTS.LEVELING;
 
 	// Doubling raises the WIN BONUS and nothing else. See the constant's own note:

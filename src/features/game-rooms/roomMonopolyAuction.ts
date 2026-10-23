@@ -12,6 +12,8 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { ownableTileName } from "@features/games/monopolyBoard.js";
 import { closeAuction, placeBid, type AuctionState, type MonopolyResult, type MonopolyState } from "@features/games/monopolyState.js";
+import { monopolyAuctionView, renderAuctionCard } from "@features/games/monopolyRenderer.js";
+import { withRenderFallback } from "@features/renderer/index.js";
 import { GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { auctionClosesAt } from "./roomMonopoly.js";
@@ -106,7 +108,17 @@ export async function handleBidModal(interaction: ModalSubmitInteraction): Promi
 		await interaction.editReply({ embeds: [errorEmbed(outcome.ok ? gameRoomsCopy.monopoly.auctionOver : outcome.reason)] });
 		return;
 	}
-	await interaction.editReply({ content: gameRoomsCopy.monopoly.bidPlaced(amount, ownableTileName(auction.tileId), auctionClosesAt(auction)) });
+	// The auction card rides the confirmation when it draws (2026-10 item 243 Phase 3).
+	// This reply is ephemeral and the card never cached, because it shows the sealed
+	// bid; the line alone is the fallback, the reply as it was before the card.
+	const card = await withRenderFallback(
+		() => renderAuctionCard(monopolyAuctionView(auction, amount)),
+		() => null
+	);
+	await interaction.editReply({
+		content: gameRoomsCopy.monopoly.bidPlaced(amount, ownableTileName(auction.tileId), auctionClosesAt(auction)),
+		...(card ? { files: [card.attachment] } : {}),
+	});
 }
 
 // A bid counts only for the round the modal was opened on, and only before that

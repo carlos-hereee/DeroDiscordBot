@@ -5,6 +5,7 @@ import {
 	EmbedBuilder,
 	MessageFlags,
 	StringSelectMenuBuilder,
+	type AttachmentBuilder,
 	type ColorResolvable,
 } from "discord.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
@@ -18,12 +19,20 @@ import {
 	opponentView,
 	ownView,
 	shipsRemaining,
+	sunkShips,
 	formatCoord,
 	type BattleshipState,
 	type Coord,
 	type PlayerBoard,
 	type Ship,
 } from "@features/games/battleshipState.js";
+import {
+	renderBattleshipBoardCard,
+	renderBattleshipFleetCard,
+	type BattleshipBoardView,
+	type BattleshipFleetView,
+} from "@features/games/battleshipRenderer.js";
+import { isRenderPayload, withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -143,15 +152,15 @@ function renderGrid(rows: string[][]): string {
 
 // The PUBLIC board: what the room may see. Built from opponentView for BOTH
 // players, so neither player's unfired ships are readable by anyone, including the
-// opponent and including a spectator scrolling back.
-export function publicBoardEmbed(state: BattleshipState): EmbedBuilder {
+// opponent and including a spectator scrolling back. With `imageRef` the rendered
+// card carries the grids, so the description keeps only the headline lines.
+export function publicBoardEmbed(state: BattleshipState, imageRef?: string): EmbedBuilder {
 	const [first, second] = state.players;
 	const section = (viewer: PlayerBoard, target: PlayerBoard): string => {
+		const heading = `**${viewer.username}** firing on **${target.username}** (${shipsRemaining(state, target.userId)} ships left)`;
+		if (imageRef) return heading;
 		const grid = opponentView(state, viewer.userId).map((row) => row.map((cell) => CELL[cell]));
-		return [
-			`**${viewer.username}** firing on **${target.username}** (${shipsRemaining(state, target.userId)} ships left)`,
-			renderGrid(grid),
-		].join("\n");
+		return [heading, renderGrid(grid)].join("\n");
 	};
 
 	const turnLine =
@@ -159,32 +168,135 @@ export function publicBoardEmbed(state: BattleshipState): EmbedBuilder {
 			? gameRoomsCopy.battleship.finished(state.winnerId)
 			: gameRoomsCopy.battleship.turnLine(state.players[state.turn].userId);
 
-	return infoEmbed(
+	const embed = infoEmbed(
 		gameRoomsCopy.battleship.boardTitle,
 		[turnLine, "", section(first, second), "", section(second, first)].join("\n"),
 		COLORS.ARCADE as ColorResolvable
 	);
+	return imageRef ? embed.setImage(imageRef) : embed;
 }
 
 // The PRIVATE board: the viewer's own fleet, with their opponent's shots on it.
 // Reachable ONLY as an ephemeral reply to the viewer's own click (T16, R20, Q8).
 // No private channels and no DMs: a channel per player costs two channels per match
 // against a 500 channel server cap, on top of the room's own.
-export function privateBoardEmbed(state: BattleshipState, viewerId: string): EmbedBuilder {
+export function privateBoardEmbed(state: BattleshipState, viewerId: string, imageRef?: string): EmbedBuilder {
+	const fleetLine = gameRoomsCopy.battleship.fleetLine(afloatShipNames(state, viewerId));
+	if (imageRef) {
+		return infoEmbed(gameRoomsCopy.battleship.ownBoardTitle, fleetLine, COLORS.ARCADE as ColorResolvable).setImage(imageRef);
+	}
 	const grid = ownView(state, viewerId).map((row) =>
 		row.map((cell) => (cell.hit ? CELL.hit : cell.ship ? CELL.ship : cell.miss ? CELL.miss : CELL.unknown))
 	);
-	const afloat = FLEET.filter((ship) => {
-		const board = state.players.find((player) => player.userId === viewerId);
+	return infoEmbed(gameRoomsCopy.battleship.ownBoardTitle, [renderGrid(grid), "", fleetLine].join("\n"), COLORS.ARCADE as ColorResolvable);
+}
+
+// The viewer's ships still afloat, in fleet order. One helper for the private embed
+// and the private card, so the two can never list a different fleet.
+function afloatShipNames(state: BattleshipState, viewerId: string): string[] {
+	const board = state.players.find((player) => player.userId === viewerId);
+	return FLEET.filter((ship) => {
 		const own = board?.ships.find((candidate) => candidate.name === ship.name);
 		return own ? own.hits.size < own.cells.length : false;
-	});
+	}).map((ship) => ship.name);
+}
 
-	return infoEmbed(
-		gameRoomsCopy.battleship.ownBoardTitle,
-		[renderGrid(grid), "", gameRoomsCopy.battleship.fleetLine(afloat.map((ship) => ship.name))].join("\n"),
-		COLORS.ARCADE as ColorResolvable
+// ── the cards (2026-10 item 243 Phase 3) ──────────────────────────────
+// The rendered board and the rendered private fleet, each behind
+// withRenderFallback with the emoji grid embed as its fallback. Views are built
+// INSIDE the render function, so a view that throws costs the picture, not the turn.
+
+/** The shot a board redraw follows, when it sank a ship: the sinking reveal. */
+export interface BattleshipSinking {
+	shooterId: string;
+	ship: string;
+}
+
+/** The public board card's view: opponentView and sunkShips for both sides, never a ship's unfired cell. */
+export function battleshipBoardView(state: BattleshipState, sinking: BattleshipSinking | null = null): BattleshipBoardView {
+	const copy = gameRoomsCopy.battleship;
+	const [first, second] = state.players;
+	const section = (viewer: PlayerBoard, target: PlayerBoard) => ({
+		title: copy.cardFiringOn(viewer.username, target.username),
+		shipsLeft: copy.cardShipsLeft(shipsRemaining(state, target.userId)),
+		grid: opponentView(state, viewer.userId),
+		sunk: sunkShips(state, viewer.userId),
+	});
+	const nameOf = (userId: string | null): string => state.players.find((player) => player.userId === userId)?.username ?? "";
+	const shooterIndex = sinking ? state.players.findIndex((player) => player.userId === sinking.shooterId) : -1;
+	return {
+		headline: boardHeadline(state, nameOf),
+		sections: [section(first, second), section(second, first)],
+		sinking:
+			sinking && shooterIndex >= 0
+				? { sectionIndex: shooterIndex, ship: sinking.ship, line: copy.cardSank(nameOf(sinking.shooterId), sinking.ship) }
+				: null,
+	};
+}
+
+function boardHeadline(state: BattleshipState, nameOf: (userId: string | null) => string): string {
+	const copy = gameRoomsCopy.battleship;
+	if (state.status !== "finished") return copy.cardTurn(state.players[state.turn].username);
+	return state.winnerId ? copy.cardWinner(nameOf(state.winnerId)) : copy.cardOver;
+}
+
+function battleshipFleetView(state: BattleshipState, viewerId: string): BattleshipFleetView {
+	return {
+		title: gameRoomsCopy.battleship.cardOwnTitle,
+		fleetLine: gameRoomsCopy.battleship.fleetLine(afloatShipNames(state, viewerId)),
+		grid: ownView(state, viewerId),
+	};
+}
+
+export interface BattleshipBoardMessage {
+	embeds: EmbedBuilder[];
+	components: ActionRowBuilder<never>[];
+	files: AttachmentBuilder[];
+}
+
+/**
+ * The public board message: the rendered board when it draws, the emoji grid
+ * embed when it does not, and the controls either way. Shared by the first post,
+ * every redraw after a shot and the turn sweep's redraw. An edit must pass
+ * `attachments: []` beside it, or the previous turn's picture stays on the message.
+ */
+export async function battleshipBoardMessage(
+	state: BattleshipState,
+	roomId: string,
+	sinking: BattleshipSinking | null = null
+): Promise<BattleshipBoardMessage> {
+	const card = await battleshipBoardCard(state, sinking);
+	return {
+		embeds: [publicBoardEmbed(state, card?.ref)],
+		components: battleshipRows(roomId, state),
+		files: card ? [card.attachment] : [],
+	};
+}
+
+/**
+ * The rendered public board alone, or null when it did not draw. The fallback is
+ * null because both callers already hold the text: the board message builds the
+ * emoji grid embed itself, and a result card without art is the room's own.
+ */
+export async function battleshipBoardCard(state: BattleshipState, sinking: BattleshipSinking | null = null): Promise<RenderPayload | null> {
+	return withRenderFallback(
+		() => renderBattleshipBoardCard(battleshipBoardView(state, sinking)),
+		() => null
 	);
+}
+
+/**
+ * The private board reply: the rendered fleet when it draws, the emoji grid when
+ * it does not. ⚠️ EPHEMERAL ONLY, like privateBoardEmbed: this is the one picture
+ * of a whole fleet, and the renderer never caches it.
+ */
+export async function privateBoardReply(state: BattleshipState, viewerId: string): Promise<{ embeds: EmbedBuilder[]; files: AttachmentBuilder[] }> {
+	const card = await withRenderFallback(
+		() => renderBattleshipFleetCard(battleshipFleetView(state, viewerId)),
+		() => privateBoardEmbed(state, viewerId)
+	);
+	if (isRenderPayload(card)) return { embeds: [privateBoardEmbed(state, viewerId, card.ref)], files: [card.attachment] };
+	return { embeds: [card], files: [] };
 }
 
 // ── controls ──────────────────────────────────────────────────────────

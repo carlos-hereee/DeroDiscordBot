@@ -8,6 +8,7 @@ import {
 	StringSelectMenuBuilder,
 	TextInputBuilder,
 	TextInputStyle,
+	type AttachmentBuilder,
 	type ButtonInteraction,
 	type ColorResolvable,
 	type EmbedBuilder,
@@ -17,6 +18,8 @@ import {
 } from "discord.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
+import { monopolyTradeView, renderTradeCard } from "@features/games/monopolyRenderer.js";
+import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import type { OwnableTile } from "@features/games/monopolyBoard.js";
 import {
 	acceptTrade,
@@ -98,7 +101,7 @@ export async function handleMtrade(interaction: ButtonInteraction, room: IGameRo
 		return;
 	}
 	if (state.pendingTrade) {
-		await interaction.reply({ ...openOfferReply(room.roomId, state.pendingTrade, actorId), ...PRIVATE });
+		await interaction.reply({ ...(await openOfferReply(room.roomId, state.pendingTrade, actorId)), ...PRIVATE });
 		return;
 	}
 
@@ -142,7 +145,7 @@ export async function handleTradePartnerSelect(interaction: StringSelectMenuInte
 		return;
 	}
 	if (state.pendingTrade) {
-		await interaction.reply({ ...openOfferReply(room.roomId, state.pendingTrade, initiatorId), ...PRIVATE });
+		await interaction.reply({ ...(await openOfferReply(room.roomId, state.pendingTrade, initiatorId)), ...PRIVATE });
 		return;
 	}
 	if (!isStillPlaying(state, initiatorId) || !isStillPlaying(state, partnerId) || partnerId === initiatorId) {
@@ -269,10 +272,14 @@ const selectValues = (fields: ModalSubmitFields, customId: string): string[] =>
 // What the Trade button shows while an offer is open: the terms and the answers to
 // the counterparty, the terms and Withdraw to the initiator, and to anyone else
 // only that an offer is waiting, never its terms.
-function openOfferReply(roomId: string, trade: TradeProposal, viewerId: string): { content?: string; embeds?: EmbedBuilder[]; components?: ActionRowBuilder<ButtonBuilder>[] } {
+async function openOfferReply(
+	roomId: string,
+	trade: TradeProposal,
+	viewerId: string
+): Promise<{ content?: string; embeds?: EmbedBuilder[]; files?: AttachmentBuilder[]; components?: ActionRowBuilder<ButtonBuilder>[] }> {
 	if (viewerId === trade.counterpartyId) {
 		return {
-			embeds: [offerEmbed(gameRoomsCopy.monopoly.tradeOfferToYou(trade.initiatorId), trade.offer, trade.request)],
+			...(await offerMessage(gameRoomsCopy.monopoly.tradeOfferToYou(trade.initiatorId), trade.offer, trade.request)),
 			components: [
 				answerRow(
 					answerButton(roomId, "mtradeAccept", trade, gameRoomsCopy.monopoly.acceptTradeLabel, ButtonStyle.Success),
@@ -283,11 +290,28 @@ function openOfferReply(roomId: string, trade: TradeProposal, viewerId: string):
 	}
 	if (viewerId === trade.initiatorId) {
 		return {
-			embeds: [offerEmbed(gameRoomsCopy.monopoly.tradeOfferFromYou(trade.counterpartyId), trade.request, trade.offer)],
+			...(await offerMessage(gameRoomsCopy.monopoly.tradeOfferFromYou(trade.counterpartyId), trade.request, trade.offer)),
 			components: [answerRow(answerButton(roomId, "mtradeReject", trade, gameRoomsCopy.monopoly.withdrawTradeLabel, ButtonStyle.Secondary))],
 		};
 	}
 	return { content: gameRoomsCopy.monopoly.tradeBetweenOthers(trade.initiatorId, trade.counterpartyId) };
+}
+
+// The offer as a message: the trade card in the embed's image slot when it draws
+// (2026-10 item 243 Phase 3), the text terms alone when it does not. Both replies
+// that use it are ephemeral, which is what keeps the terms off the channel (M6),
+// and the card itself is never cached.
+async function offerMessage(
+	headline: string,
+	youGet: TradeProposal["offer"],
+	youGive: TradeProposal["offer"]
+): Promise<{ embeds: EmbedBuilder[]; files?: AttachmentBuilder[] }> {
+	const card = await withRenderFallback(
+		() => renderTradeCard(monopolyTradeView(youGet, youGive)),
+		() => offerEmbed(headline, youGet, youGive)
+	);
+	if (isRenderPayload(card)) return { embeds: [offerEmbed(headline, youGet, youGive).setImage(card.ref)], files: [card.attachment] };
+	return { embeds: [card] };
 }
 
 // The terms from the viewer's side: what they would receive, then what they would hand over.

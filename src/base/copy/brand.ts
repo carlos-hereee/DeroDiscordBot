@@ -172,4 +172,34 @@ export const COLORS = {
 	ACHIEVEMENT_SILVER: "#cbd5e1",
 	ACHIEVEMENT_GOLD: "#ffd23a",
 	ACHIEVEMENT_DIAMOND: "#c7d2fe",
+	// ── arcade cards (2026-10 item 243 Phase 3) ──
+	// A playing card's stock and its two inks, shared by blackjack and the hold em
+	// dealer. The black ink is a near black slate rather than pure black so it
+	// matches the card sheet behind it.
+	PLAYING_CARD_FACE: "#f8fafc",
+	PLAYING_CARD_RED: "#dc2626",
+	PLAYING_CARD_BLACK: "#0f172a",
+	// How a hand or a round came out, on any game card. Lighter than the embed
+	// greens and reds above because they sit on the dark card sheet, not in an
+	// embed's side stripe.
+	CARD_OUTCOME_WIN: "#4ade80",
+	CARD_OUTCOME_LOSE: "#f87171",
+	// The battleship grid. The water is a navy, not a cyan, because teal and cyan
+	// read as "AI or live" on the platform; a hit is the coin flip's orange and a
+	// sunk hull the reminder red, so a sinking reads hotter than a hit.
+	BATTLESHIP_WATER: "#1e3a8a",
+	BATTLESHIP_MISS: "#64748b",
+	BATTLESHIP_HIT: "#f97316",
+	BATTLESHIP_SUNK: "#dc2626",
+	// The eight Monopoly color groups, on the trade, auction and winner cards. The
+	// classic board's hues, except light blue, which is a plain sky blue rather
+	// than the board's cyan for the same teal and cyan rule as the water above.
+	MONOPOLY_BROWN: "#92400e",
+	MONOPOLY_LIGHT_BLUE: "#93c5fd",
+	MONOPOLY_PINK: "#db2777",
+	MONOPOLY_ORANGE: "#ea580c",
+	MONOPOLY_RED: "#dc2626",
+	MONOPOLY_YELLOW: "#facc15",
+	MONOPOLY_GREEN: "#16a34a",
+	MONOPOLY_DARK_BLUE: "#1d4ed8",
 } satisfies Record<string, ColorResolvable>;

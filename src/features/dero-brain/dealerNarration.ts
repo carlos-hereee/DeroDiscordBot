@@ -4,7 +4,9 @@ import { NO_PINGS } from "@utils/mentions.js";
 import { HAND_CATEGORIES, formatCard, type Card, type HandCategory } from "@features/games/holdemHand.js";
 import { handInProgress, whoActs, type ActionOutcome, type HoldemTable, type Street } from "@features/games/holdemTable.js";
 import { defaultCallAnnouncerDeps, speakInCall, type CallAnnouncerDeps } from "@features/voice/callAnnouncer.js";
+import { withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
 import { deroBrainCopy, type DealerWinner } from "./deroBrainCopy.js";
+import { dealerShowdownView, renderDealerShowdownCard, type DealerShowdownView } from "./dealerShowdownRenderer.js";
 
 // ── dealerNarration ───────────────────────────────────────────────────────
 // What:  Dero as the dealer of a hold em table it opened: a few lines in the
@@ -24,7 +26,9 @@ import { deroBrainCopy, type DealerWinner } from "./deroBrainCopy.js";
 //        ② narrate compares two views and returns ordered lines; ③ the text
 //        lines and the spoken lines are picked against their per hand caps;
 //        ④ delivery is chained per table, so lines leave in the order the hand
-//        happened even when one render is slow.
+//        happened even when one render is slow. The result line carries the
+//        showdown card (dealerShowdownRenderer) when it draws, and posts alone
+//        when it does not.
 //
 // ⚠️ A PLAYER'S PRIVATE CARDS NEVER REACH THIS FILE. toPublicView is the only
 // function here that reads a table, it names every field it copies, and the
@@ -301,18 +305,20 @@ export function _clearDealerTables(): void {
 
 /** The calls delivery makes, injected so tests use fakes. The speech half is the call announcer's. */
 export interface DealerDeps extends CallAnnouncerDeps {
-	postText(client: Client, channelId: string, text: string): Promise<void>;
+	/** `card` rides only the result line, and only when the showdown card drew. */
+	postText(client: Client, channelId: string, text: string, card?: RenderPayload): Promise<void>;
 }
 
 /**
- * Post one dealer line in a room's text channel with every ping off. Commentary,
- * so it never goes through roomTrail and never enters the transcript.
+ * Post one dealer line in a room's text channel with every ping off, with the
+ * showdown card attached when one is given. Commentary, so it never goes
+ * through roomTrail and never enters the transcript.
  */
-export async function postDealerText(client: Client, channelId: string, text: string): Promise<void> {
+export async function postDealerText(client: Client, channelId: string, text: string, card?: RenderPayload): Promise<void> {
 	try {
 		const channel = await client.channels.fetch(channelId).catch(() => null);
 		if (!channel || !channel.isSendable()) return;
-		await channel.send({ content: text, allowedMentions: NO_PINGS });
+		await channel.send({ content: text, allowedMentions: NO_PINGS, ...(card ? { files: [card.attachment] } : {}) });
 	}
 	catch (error) {
 		const code = (error as { code?: unknown } | null)?.code ?? "unknown";
@@ -327,9 +333,31 @@ export const defaultDealerDeps: DealerDeps = {
 
 // One clip per announcement. The call announcer re-checks the call, the kill
 // switch and the voice, because a hand outlives any one of them.
-async function deliver(client: Client, session: DealerSession, text: DealerLine[], spoken: DealerLine[], deps: DealerDeps): Promise<void> {
-	for (const line of text) await deps.postText(client, session.channelId, line.text);
+async function deliver(
+	client: Client,
+	session: DealerSession,
+	text: DealerLine[],
+	spoken: DealerLine[],
+	showdown: DealerShowdownView | null,
+	deps: DealerDeps
+): Promise<void> {
+	for (const line of text) {
+		const card = line.kind === "result" && showdown ? await showdownCard(showdown) : null;
+		// The card is passed only when there is one, so a line without one makes
+		// exactly the call it always made.
+		if (card) await deps.postText(client, session.channelId, line.text, card);
+		else await deps.postText(client, session.channelId, line.text);
+	}
 	if (session.voice && spoken.length > 0) await speakInCall(session.guildId, spoken.map((line) => line.spoken).join(" "), deps);
+}
+
+// The card, or null so the result line posts alone: the line IS this surface's
+// fallback, the text the dealer posted before there was a card.
+function showdownCard(view: DealerShowdownView): Promise<RenderPayload | null> {
+	return withRenderFallback(
+		() => renderDealerShowdownCard(view),
+		() => null
+	);
 }
 
 export interface AnnounceInput {
@@ -357,7 +385,9 @@ export function announceDealer({ client, roomId, before, after, outcome }: Annou
 			session.spokenThisHand = 0;
 			session.lastTurnUserId = null;
 		}
-		const lines = narrate(before, after, toPublicResult(outcome), { lastTurnUserId: session.lastTurnUserId });
+		const result = toPublicResult(outcome);
+		const lines = narrate(before, after, result, { lastTurnUserId: session.lastTurnUserId });
+		const showdown = result && result.winners.length > 0 ? dealerShowdownView(after, result) : null;
 
 		// The counters move NOW, synchronously, so two announcements in quick
 		// succession are capped against each other rather than both against zero.
@@ -369,7 +399,7 @@ export function announceDealer({ client, roomId, before, after, outcome }: Annou
 		if (turnLine) session.lastTurnUserId = after.actingUserId;
 
 		session.chain = session.chain
-			.then(() => deliver(client, session, text, spoken, deps))
+			.then(() => deliver(client, session, text, spoken, showdown, deps))
 			.catch((error) => console.error(`[dero-dealer] narration failed room=${roomId}`, error));
 
 		if (after.status === "finished") dealerSessions.delete(roomId);

@@ -343,6 +343,17 @@ export const gameRoomsCopy = {
 		hit: (shooterId: string, coord: string): string => `💥 <@${shooterId}> fired on **${coord}**. Hit.`,
 		sank: (shooterId: string, coord: string, ship: string): string =>
 			`🔥 <@${shooterId}> fired on **${coord}** and sank the **${ship}**.`,
+
+		// ── the canvas cards (2026-10 item 243 Phase 3) ──
+		// Drawn into pixels, so names arrive as display names, never mentions. The
+		// private card reuses fleetLine above, which already names nobody.
+		cardFiringOn: (shooter: string, target: string): string => `${shooter} firing on ${target}`,
+		cardShipsLeft: (count: number): string => `${count} ${count === 1 ? "ship" : "ships"} left`,
+		cardTurn: (name: string): string => `${name} to fire`,
+		cardWinner: (name: string): string => `${name} sank the fleet`,
+		cardOver: "The match is over",
+		cardSank: (shooter: string, ship: string): string => `${shooter} sank the ${ship.toUpperCase()}`,
+		cardOwnTitle: "YOUR OWN WATERS",
 	},
 
 	// ── hold em in a room (Phase 8) ──
@@ -518,6 +529,22 @@ export const gameRoomsCopy = {
 		tradeOfferFromYou: (counterpartyId: string): string => `Your offer to <@${counterpartyId}> is waiting for an answer.`,
 		tradeYouGet: (items: string): string => `**You get:** ${items}`,
 		tradeYouGive: (items: string): string => `**You give:** ${items}`,
+		// ── the canvas cards (2026-10 item 243 Phase 3) ──
+		// Trade, auction and winner. Drawn into pixels, so nothing takes a mention.
+		cardYouGet: "YOU GET",
+		cardYouGive: "YOU GIVE",
+		cardChips: (amount: number): string => `$${amount.toLocaleString()}`,
+		cardJailCards: (count: number): string => `${count} Get Out of Jail Free ${count === 1 ? "card" : "cards"}`,
+		cardNothing: "Nothing",
+		cardMoreLots: (count: number): string => `and ${count} more`,
+		cardAuction: "AUCTION",
+		cardListPrice: (price: number): string => `List price $${price.toLocaleString()}`,
+		cardYourBid: (amount: number): string => `Your sealed bid $${amount.toLocaleString()}`,
+		cardWinner: "WINNER",
+		cardNoWinner: "The match is over",
+		cardLots: (count: number): string => `${count} ${count === 1 ? "lot" : "lots"}`,
+		cardBankrupt: "Bankrupt",
+		cardSeat: (index: number): string => `Seat ${index + 1}`,
 		tradeBetweenOthers: (initiatorId: string, counterpartyId: string): string =>
 			`A trade between <@${initiatorId}> and <@${counterpartyId}> is waiting for an answer. One trade can be open at a time.`,
 		acceptTradeLabel: "Accept",

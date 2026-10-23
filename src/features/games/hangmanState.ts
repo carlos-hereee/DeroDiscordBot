@@ -137,7 +137,20 @@ export function isSolved(state: HangmanState): boolean {
 // character is space separated so a run of blanks is countable at a glance
 // rather than an unreadable smear.
 export function maskedWord(state: HangmanState): string {
-	return [...state.word].map((character) => (state.guessed.has(character) ? character.toUpperCase() : "\\_")).join(" ");
+	return revealedLetters(state)
+		.map((letter) => (letter === null ? "\\_" : letter.toUpperCase()))
+		.join(" ");
+}
+
+/**
+ * The mask as data: each letter of the word that has been guessed, and null for
+ * each that has not. The one rule for what a board may show, read by maskedWord
+ * and by the hangman card, so the card can never draw a letter the text hides.
+ * Its output is safe to hash into a card's cache key because it holds no letter
+ * the room has not already seen.
+ */
+export function revealedLetters(state: HangmanState): Array<string | null> {
+	return [...state.word].map((character) => (state.guessed.has(character) ? character : null));
 }
 
 // Misses only, in guess order, for the board's "tried and failed" line. Hits are

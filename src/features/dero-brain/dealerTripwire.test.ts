@@ -25,6 +25,7 @@ const PHASE_FOUR_FILES = [
 	"commands/utility/dero.holdem.test.ts",
 	"features/dero-brain/dealerNarration.ts",
 	"features/dero-brain/dealerNarration.test.ts",
+	"features/dero-brain/dealerShowdownRenderer.ts",
 	"features/dero-brain/dealerTripwire.test.ts",
 	"features/dero-brain/holdemRequests.ts",
 	"features/dero-brain/holdemRulesCard.ts",

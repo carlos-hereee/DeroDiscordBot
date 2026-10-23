@@ -27,6 +27,8 @@ import {
 } from "@features/games/hangmanState.js";
 import { awardMultiPlayerResult } from "@features/games/gameXp.js";
 import { resolveGameAsset } from "@features/games/gamesAssets.js";
+import { hangmanCardView, renderHangmanCard } from "@features/games/hangmanRenderer.js";
+import { withRenderFallback } from "@features/renderer/index.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -346,9 +348,15 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	// message in the room that carries art at all. A move card stays text and embed
 	// (R8): a round can run to thirty of them, and re-uploading a PNG per move is
 	// bandwidth and a rate limit for nothing.
+	// The hangman end card when it draws (2026-10 item 243 Phase 3), the gallows art
+	// or its Dero stand in when it does not. The card takes revealedLetters, never the
+	// word, so this line adds no third read of it.
 	await roomLifecycle.finish(interaction.client, room, {
 		winnerId: null,
-		art: resolveGameAsset(won ? "hangmanWin" : "hangmanLose"),
+		art: await withRenderFallback(
+			() => renderHangmanCard(hangmanCardView(state, won ? "solved" : "lost")),
+			() => resolveGameAsset(won ? "hangmanWin" : "hangmanLose")
+		),
 	});
 
 	// The host is excluded from the award list: they set the word, so they were never

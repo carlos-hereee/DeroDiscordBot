@@ -309,6 +309,26 @@ describe("announceDealer", () => {
 		for (const text of spoken) expect(text).toContain("Player 2, it is your turn.");
 	});
 
+	it("attaches the showdown card to the result line, and only to it (2026-10 item 243)", async () => {
+		const { deps } = fakeDeps();
+		registerDealerTable({ roomId: "room-1", guildId: "g1", channelId: "room-ch", voice: false });
+		const table = sixPlayerTable();
+		dealHand(table, seededRng(7));
+		let before = toPublicView(table);
+		let outcome: ReturnType<typeof act> | undefined;
+		while (handInProgress(table)) {
+			before = toPublicView(table);
+			outcome = act(table, whoActs(table)!, "fold");
+		}
+		announceDealer({ client, roomId: "room-1", before, after: toPublicView(table), outcome }, deps);
+		await vi.waitFor(() => expect(deps.postText).toHaveBeenCalled());
+
+		const calls = (deps.postText as ReturnType<typeof vi.fn>).mock.calls;
+		const resultCall = calls.find((call) => call.length === 4);
+		expect(resultCall?.[3]).toMatchObject({ ref: expect.stringMatching(/^attachment:\/\/holdem-showdown-[0-9a-f]{12}\.png$/) });
+		for (const call of calls.filter((entry) => entry !== resultCall)) expect(call).toHaveLength(3);
+	});
+
 	it("forgets the table once the tournament is over", async () => {
 		const { deps } = fakeDeps();
 		registerDealerTable({ roomId: "room-1", guildId: "g1", channelId: "room-ch", voice: false });

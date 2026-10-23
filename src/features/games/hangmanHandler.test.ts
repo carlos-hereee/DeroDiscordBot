@@ -11,6 +11,25 @@ import type { ButtonInteraction, TextChannel } from "discord.js";
 // Fixed word so the board and the win path are deterministic.
 vi.mock("./hangmanWords.js", () => ({ HANGMAN_WORDS: ["castle"], pickWord: () => "castle" }));
 
+// Every board edit waits on a REAL hangman card render (2026-10 item 243 Phase 3),
+// and the PNG encode finishes on the native thread pool, not in a microtask. The
+// renderer stays real; this only records each render in flight so flush() below
+// can wait for it instead of guessing a number of ticks.
+const renders = vi.hoisted(() => ({ inFlight: new Set<Promise<unknown>>(), fail: false }));
+vi.mock("./hangmanRenderer.js", async (importOriginal) => {
+	const real = await importOriginal<typeof import("./hangmanRenderer.js")>();
+	return {
+		...real,
+		renderHangmanCard: (view: Parameters<typeof real.renderHangmanCard>[0]) => {
+			// `fail` stands in for a host where the card does not draw.
+			const render = renders.fail ? Promise.resolve(null) : real.renderHangmanCard(view);
+			renders.inFlight.add(render);
+			void render.finally(() => renders.inFlight.delete(render));
+			return render;
+		},
+	};
+});
+
 import { startHangmanRound, _clearHangmanRounds, _activeHangmanRoundCount, HANGMAN_ROUND_TIMEOUT_MS } from "./hangmanHandler.js";
 
 interface Board {
@@ -86,16 +105,47 @@ function fakeClick(letter: string | null, userId = "guesser-1"): ButtonInteracti
 	return click as unknown as ButtonInteraction & { showModal: ReturnType<typeof vi.fn> };
 }
 
+// Drains the microtasks, then waits out any card render they started, and repeats
+// until a pass starts none: a guess reaches its render only after the modal
+// submit's own microtasks, and the board edit only after the render.
+const MAX_FLUSH_PASSES = 10;
 const flush = async (): Promise<void> => {
-	for (let i = 0; i < 8; i++) await Promise.resolve();
+	for (let pass = 0; pass < MAX_FLUSH_PASSES; pass++) {
+		for (let i = 0; i < 8; i++) await Promise.resolve();
+		if (renders.inFlight.size === 0) return;
+		await Promise.allSettled([...renders.inFlight]);
+	}
 };
 
 beforeEach(() => {
 	_clearHangmanRounds();
+	renders.fail = false;
 });
 
 afterEach(() => {
 	_clearHangmanRounds();
+});
+
+describe("the board's picture (2026-10 item 243)", () => {
+	type Posted = { embeds: { data: { image?: { url: string } } }[]; files: { name: string }[] };
+
+	it("carries the hangman card, and points the embed's image at it", async () => {
+		const c = fakeChannel("chan-card");
+		await startHangmanRound(c.channel, "starter-1");
+		const payload = c.send.mock.calls[0][0] as Posted;
+		expect(payload.files[0].name).toMatch(/^hangman-[0-9a-f]{12}\.png$/);
+		expect(payload.embeds[0].data.image?.url).toBe(`attachment://${payload.files[0].name}`);
+	});
+
+	it("falls back to the gallows art, under the same embed, when the card does not draw", async () => {
+		renders.fail = true;
+		const c = fakeChannel("chan-art");
+		await startHangmanRound(c.channel, "starter-1");
+		const payload = c.send.mock.calls[0][0] as Posted;
+		expect(payload.files).toHaveLength(1);
+		expect(payload.files[0].name).not.toMatch(/^hangman-/);
+		expect(payload.embeds[0].data.image?.url).toBe(`attachment://${payload.files[0].name}`);
+	});
 });
 
 describe("startHangmanRound", () => {

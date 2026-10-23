@@ -11,8 +11,7 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import {
 	deserializeMatch,
 	serializeMatch,
-	publicBoardEmbed,
-	battleshipRows,
+	battleshipBoardMessage,
 	type StoredBattleship,
 } from "./roomBattleship.js";
 import { applyMonopolyOutcome, monopolyStateOf, persistIfUnchanged } from "./roomMonopolyHandlers.js";
@@ -61,8 +60,9 @@ async function redrawBoard(client: Client, room: IGameRoom, stored: StoredBattle
 	if (!message) return;
 
 	const state = deserializeMatch(stored);
+	// `attachments: []` drops the last turn's picture, which an edit otherwise keeps.
 	await message
-		.edit({ embeds: [publicBoardEmbed(state)], components: battleshipRows(room.roomId, state) })
+		.edit({ ...(await battleshipBoardMessage(state, room.roomId)), attachments: [] })
 		.catch((error) => console.warn("[game-rooms] turn sweep failed to redraw the board", error));
 }
 

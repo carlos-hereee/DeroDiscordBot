@@ -181,6 +181,17 @@ export const deroBrainCopy = {
 		// "the two of clubs, the ten of hearts and the ace of spades"
 		spokenCards: (names: string[]): string =>
 			names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`,
+		// ── the showdown card (2026-10 item 243 Phase 3) ──
+		// Drawn into pixels, so names arrive as display names. A winner's line on the
+		// card is `result` above for that one winner, so card and text never disagree.
+		cardHand: (hand: number): string => `HAND ${hand}`,
+		cardPot: (pot: number): string => `POT ${pot.toLocaleString()}`,
+		cardStack: (chips: number): string => `${chips.toLocaleString()} chips`,
+		cardFolded: "Folded",
+		cardAllIn: "All in",
+		cardOut: "Out",
+		cardButton: "Button",
+		cardInHand: "In the hand",
 	},
 
 	// ── /dero status ──

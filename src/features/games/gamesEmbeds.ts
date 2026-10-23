@@ -161,7 +161,8 @@ export function renderHand(cards: Card[]): string {
 // "18" or "soft 17". The soft marker is not decoration: it is the difference
 // between a hand that can take a card safely and one that cannot, and a player
 // who cannot see it is being asked to do the ace arithmetic in their head.
-function renderTotal(cards: Card[]): string {
+// Exported for the blackjack result card, so the card and this embed print one total.
+export function renderTotal(cards: Card[]): string {
 	const { total, soft } = handValue(cards);
 	return soft ? gamesCopy.blackjack.softTotal(total) : String(total);
 }

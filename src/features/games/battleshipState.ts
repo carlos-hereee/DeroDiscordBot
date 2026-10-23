@@ -298,6 +298,26 @@ export function ownView(state: BattleshipState, viewerId: string): OwnCellView[]
 	return grid;
 }
 
+/** A ship the viewer has sunk: its name and every cell it covered. */
+export interface SunkShipView {
+	name: ShipName;
+	cells: Coord[];
+}
+
+// The ships the viewer has SUNK on the other board, named, for the card's
+// sinking reveal. It reads ship cells, which opponentView never does, and stays
+// on the safe side of the same boundary for one reason: a ship is listed only
+// once every one of its cells has been hit, so every cell it returns is a cell
+// the viewer already fired on and opponentView already shows as sunk. A ship
+// with even one cell unhit never appears, so this cannot place an afloat hull.
+export function sunkShips(state: BattleshipState, viewerId: string): SunkShipView[] {
+	const target = state.players.find((player) => player.userId !== viewerId);
+	if (!target) return [];
+	return target.ships
+		.filter((ship) => ship.hits.size === ship.cells.length)
+		.map((ship) => ({ name: ship.name, cells: ship.cells.map((cell) => ({ x: cell.x, y: cell.y })) }));
+}
+
 // How many of a player's ships are still afloat, for the board's headline.
 // Derived rather than tracked so it cannot drift from the hits themselves.
 export function shipsRemaining(state: BattleshipState, userId: string): number {
