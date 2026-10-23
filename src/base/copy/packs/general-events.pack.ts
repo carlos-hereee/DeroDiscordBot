@@ -761,6 +761,7 @@ export const generalEventsCopy: IPluginCopy = {
 		},
 		monthlyPost: {
 			title: (month: string) => `📜 The arcade in ${month}`,
+			titleSoFar: (month: string) => `📜 The arcade in ${month}, so far`,
 			handsHeading: "Top winning hands",
 			handsDetail: (count: number) => `won ${count} ${count === 1 ? "showdown" : "showdowns"}`,
 			handsEmpty: "No Hold'em hand reached a showdown.",

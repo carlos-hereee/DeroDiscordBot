@@ -230,3 +230,44 @@ describe("runMonthlyArcadePost", () => {
 		expect(mocks.renderCard.mock.calls[0][0].title).toBe("📜 The arcade in December 2026");
 	});
 });
+
+describe("the hand triggered preview (ARCADE_MONTHLY_POST_RUN_ON_BOOT)", () => {
+	// 23 October 2026: a test guild wants to see the post now, with October so far.
+	const MID_OCTOBER = new Date("2026-10-23T17:00:00Z");
+
+	it("posts the current month so far, titled as such, and never reads or writes the claim", async () => {
+		const { client, channel } = rig();
+
+		const outcomes = await runMonthlyArcadePost(client, MID_OCTOBER, { preview: true });
+
+		expect(outcomes).toEqual([{ guildId: "g1", status: "posted", usedCard: false }]);
+		expect(mocks.topWinningHands).toHaveBeenCalledWith(expect.objectContaining({ month: "2026-10" }));
+		expect(mocks.topRatedInGuild).toHaveBeenCalledWith(
+			expect.objectContaining({ finishedBetween: { start: new Date("2026-10-01T00:00:00Z"), end: new Date("2026-11-01T00:00:00Z") } })
+		);
+		expect(sentPayload(channel).embeds[0].data.title).toBe("📜 The arcade in October 2026, so far");
+		// No claim either way, so the real post on 1 November still goes out.
+		expect(mocks.botLogHas).not.toHaveBeenCalled();
+		expect(mocks.botLogLog).not.toHaveBeenCalled();
+	});
+
+	it("posts again on a second boot, because it claims nothing", async () => {
+		const { client, channel } = rig();
+		await runMonthlyArcadePost(client, MID_OCTOBER, { preview: true });
+		await runMonthlyArcadePost(client, MID_OCTOBER, { preview: true });
+		expect(channel.send).toHaveBeenCalledTimes(2);
+	});
+
+	it("still honors the admin's off switch and a month with nothing to show", async () => {
+		const { client, channel } = rig(["off", "empty"]);
+		mocks.findByGuildId.mockImplementation(async (guildId: string) => config({ arcadeMonthlyPost: guildId !== "off" }));
+		mocks.topWinningHands.mockResolvedValue([]);
+		mocks.topRatedInGuild.mockResolvedValue([]);
+		mocks.luckBoardInGuild.mockResolvedValue([]);
+
+		const statuses = (await runMonthlyArcadePost(client, MID_OCTOBER, { preview: true })).map((outcome) => outcome.status);
+
+		expect(statuses).toEqual(["off", "nothing-to-show"]);
+		expect(channel.send).not.toHaveBeenCalled();
+	});
+});

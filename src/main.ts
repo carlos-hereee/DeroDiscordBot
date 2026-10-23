@@ -1,5 +1,5 @@
 import { GatewayIntentBits, Collection, Events, MessageFlags, Client, Partials } from "discord.js";
-import { deroVoiceSamplerEnabled, discordToken, weeklyDigestRunOnBoot } from "@utils/config.js";
+import { arcadeMonthlyPostRunOnBoot, deroVoiceSamplerEnabled, discordToken, weeklyDigestRunOnBoot } from "@utils/config.js";
 import clientReady from "@commands/utility/ready.js";
 import fs from "fs";
 import path from "path";
@@ -51,6 +51,7 @@ import { startVoiceListener } from "@features/voice/voiceListener.js";
 import { startSoakSampler } from "@features/voice/soakSampler.js";
 import { registerGreeter, ensureIntroChannelsWritable } from "@features/greeter/welcomeNewMember.js";
 import { runWeeklyDigest, startWeeklyDigest } from "@features/leveling/weeklyDigest.js";
+import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
 import { registerMessageXp } from "@features/leveling/messageXp.js";
@@ -558,6 +559,15 @@ process.on("uncaughtException", (err) => {
 		// trigger for the test guild; the per week claim keeps it from repeating.
 		weeklyDigest = startWeeklyDigest(client);
 		if (weeklyDigestRunOnBoot) void runWeeklyDigest(client);
+		// The monthly arcade post's own cron lives in startScheduler. With
+		// ARCADE_MONTHLY_POST_RUN_ON_BOOT=1 one PREVIEW of the current month also
+		// posts now, the owner's hand trigger for the test guild (2026-10 item 244).
+		// It claims nothing, so it repeats on every boot while the flag is set; the
+		// warning makes a flag left on Railway visible in the first log lines.
+		if (arcadeMonthlyPostRunOnBoot) {
+			console.warn("[arcade-monthly] ARCADE_MONTHLY_POST_RUN_ON_BOOT is on: posting a preview of this month now, and again on every boot until it is unset.");
+			void runMonthlyArcadePost(client, new Date(), { preview: true });
+		}
 
 		// ── outage watcher ────────────────────────────────────────
 		// Polls serverApi reachability state every 60s. DMs the platform

@@ -214,6 +214,17 @@ const deroVoiceSamplerEnabled = process.env.DERO_VOICE_SAMPLER === "1";
 // Where: set by the owner for the test guild check, then unset.
 const weeklyDigestRunOnBoot = process.env.WEEKLY_DIGEST_RUN_ON_BOOT === "1";
 
+// ── Monthly arcade post hand trigger (2026-10 item 244 Phase 3b) ──
+// What: posts a PREVIEW of the current UTC month so far at boot, in every
+//   opted in server's leaderboard channel, on top of the 1st of the month cron.
+// Who: read only by main.ts.
+// When: exactly "1" turns it on, the same rule as the trigger above.
+// Where: set by the owner for the test guild check, then unset. ⚠️ Unlike the
+//   weekly digest's trigger it claims nothing (owner decision 2026-10-23), so the
+//   real post on the 1st still goes out, which also means EVERY boot with this
+//   left on posts the preview again. Never leave it set on Railway.
+const arcadeMonthlyPostRunOnBoot = process.env.ARCADE_MONTHLY_POST_RUN_ON_BOOT === "1";
+
 // ── Rendered card store on S3 (2026-10 item 243) ──
 // What: the bot's own IAM key, bucket and region for the rendered card cache,
 //   plus the switch that turns that S3 tier on. The key is the BOT's, not
@@ -321,6 +332,7 @@ export {
 	deroBrainKey,
 	deroVoiceSamplerEnabled,
 	weeklyDigestRunOnBoot,
+	arcadeMonthlyPostRunOnBoot,
 	discordBotAwsAccessKey,
 	discordBotAwsSecretKey,
 	discordBotAwsBucketName,

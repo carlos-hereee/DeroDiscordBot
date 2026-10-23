@@ -997,6 +997,8 @@ export const rokCommanderCopy = {
 		// ── the monthly arcade post, on the 1st in the leaderboard channel ──
 		monthlyPost: {
 			title: (month: string) => `📜 The arcade in ${month}`,
+			// The hand triggered preview of a month still under way, so it never reads as the month's final word.
+			titleSoFar: (month: string) => `📜 The arcade in ${month}, so far`,
 			handsHeading: "Top winning hands",
 			handsDetail: (count: number) => `won ${count} ${count === 1 ? "showdown" : "showdowns"}`,
 			handsEmpty: "No Hold'em hand reached a showdown.",

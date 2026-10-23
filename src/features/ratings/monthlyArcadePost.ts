@@ -8,7 +8,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
-import { previousUtcMonth, type UtcMonth } from "@utils/utcMonthKey.js";
+import { currentUtcMonth, previousUtcMonth, type UtcMonth } from "@utils/utcMonthKey.js";
 import { renderArcadeMonthlyCard, type ArcadeMonthlySection, type ArcadeMonthlyView } from "./arcadeMonthlyRenderer.js";
 import { memberNameResolver } from "./memberNames.js";
 import { formatLuckScore, formatRating, luckBoardInGuild, topRatedInGuild, topWinningHands, type NameResolver, type RatedPlayer } from "./ratingBoards.js";
@@ -21,7 +21,9 @@ import { RATED_GAMES, type RatedGame } from "./ratingEngine.js";
 // channel as a rendered card with a text embed fallback.
 //
 // Who:   ReminderScheduler.startScheduler fires runMonthlyArcadePost on
-//        BOT_CONSTANTS.RATINGS.MONTHLY_POST_CRON in America/Chicago.
+//        BOT_CONSTANTS.RATINGS.MONTHLY_POST_CRON in America/Chicago. main.ts runs
+//        one PREVIEW pass at boot when ARCADE_MONTHLY_POST_RUN_ON_BOOT is 1, the
+//        owner's hand trigger for a test guild (see MonthlyPostOptions).
 // When:  a guild is skipped when /dero-config arcade monthly-post is off, when it
 //        has no config or its homebase is gone, when its leaderboard channel cannot
 //        be reached, and when the month left nothing to show (no showdown, no rated
@@ -57,21 +59,37 @@ export interface MonthlyViewQuery {
 	month: UtcMonth;
 	copy: IPluginCopy;
 	resolveNames: NameResolver;
+	/** True for a month still under way, which the title says, so a preview never reads as the month's final word. */
+	soFar?: boolean;
 }
 
-/** One pass over every guild the bot is in, posting the month before `now`. Never throws. */
-export async function runMonthlyArcadePost(client: Client, now: Date = new Date()): Promise<MonthlyPostOutcome[]> {
-	const month = previousUtcMonth(now);
+export interface MonthlyPostOptions {
+	/**
+	 * The owner's hand trigger (ARCADE_MONTHLY_POST_RUN_ON_BOOT): post the CURRENT
+	 * UTC month so far, titled as such, and neither read nor write the month's
+	 * BotLog claim, so a test guild can see the post today and the real post on the
+	 * 1st still goes out. Every other skip (the admin's off switch, no channel,
+	 * nothing to show) still applies.
+	 */
+	preview?: boolean;
+}
+
+/** One pass over every guild the bot is in, posting the month before `now` (or, as a preview, the month `now` falls in). Never throws. */
+export async function runMonthlyArcadePost(client: Client, now: Date = new Date(), options: MonthlyPostOptions = {}): Promise<MonthlyPostOutcome[]> {
+	const preview = options.preview ?? false;
+	const month = preview ? currentUtcMonth(now) : previousUtcMonth(now);
 	const outcomes: MonthlyPostOutcome[] = [];
 	for (const guild of client.guilds.cache.values()) {
-		const outcome = await postGuildMonth(client, guild, month);
+		const outcome = await postGuildMonth(client, guild, month, preview);
 		outcomes.push(outcome);
-		if (outcome.status === "posted") console.log(`[arcade-monthly] guild=${guild.id} month=${month.key} card=${outcome.usedCard}`);
+		if (outcome.status === "posted") {
+			console.log(`[arcade-monthly] guild=${guild.id} month=${month.key} card=${outcome.usedCard} preview=${preview}`);
+		}
 	}
 	return outcomes;
 }
 
-async function postGuildMonth(client: Client, guild: Guild, month: UtcMonth): Promise<MonthlyPostOutcome> {
+async function postGuildMonth(client: Client, guild: Guild, month: UtcMonth, preview: boolean): Promise<MonthlyPostOutcome> {
 	const outcome = (status: MonthlyPostStatus, usedCard?: boolean): MonthlyPostOutcome => ({ guildId: guild.id, status, usedCard });
 	try {
 		// ①
@@ -80,9 +98,9 @@ async function postGuildMonth(client: Client, guild: Guild, month: UtcMonth): Pr
 		if (config.arcadeMonthlyPost === false) return outcome("off");
 		if (!config.leaderboardChannelId) return outcome("no-channel");
 
-		// ②
+		// ② A preview never looks at the claim: it is not the month's post.
 		const event = arcadeMonthlyPostEvent(month.key);
-		if (await botLogStore.has(guild.id, event)) return outcome("already-posted");
+		if (!preview && (await botLogStore.has(guild.id, event))) return outcome("already-posted");
 
 		// ③
 		const view = await buildArcadeMonthlyView({
@@ -91,6 +109,7 @@ async function postGuildMonth(client: Client, guild: Guild, month: UtcMonth): Pr
 			month,
 			copy: getPluginCopy(config),
 			resolveNames: memberNameResolver(guild),
+			soFar: preview,
 		});
 		if (!view) return outcome("nothing-to-show");
 
@@ -102,8 +121,10 @@ async function postGuildMonth(client: Client, guild: Guild, month: UtcMonth): Pr
 		}
 
 		// ⑤ Claimed BEFORE the send, the weekly digest's rule: a crash after this costs
-		// the server its post, and nothing can ever post the same month twice.
-		await botLogStore.log(guild.id, event, { month: month.key });
+		// the server its post, and nothing can ever post the same month twice. A
+		// preview claims nothing, or the real post on the 1st would find its month
+		// taken and stay silent.
+		if (!preview) await botLogStore.log(guild.id, event, { month: month.key });
 
 		// ⑥
 		const card = await withRenderFallback(
@@ -159,8 +180,9 @@ export async function buildArcadeMonthlyView(query: MonthlyViewQuery): Promise<A
 		},
 	];
 
+	const monthLabel = MONTH_LABEL.format(query.month.start);
 	return {
-		title: post.title(MONTH_LABEL.format(query.month.start)),
+		title: query.soFar ? post.titleSoFar(monthLabel) : post.title(monthLabel),
 		guildName: query.guildName,
 		sections,
 		note: topRated.some(({ player }) => player.provisional) ? words.provisionalNote : "",
