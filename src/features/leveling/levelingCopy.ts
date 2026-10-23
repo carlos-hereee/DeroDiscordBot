@@ -163,6 +163,24 @@ export const levelingCopy = {
 		hiddenNote: "Some achievements stay hidden until you earn them.",
 	},
 
+	// ── the canvas cards (2026-10 item 243 Phase 2) ──
+	// Words drawn INTO a card's pixels. They read identically in both voices like
+	// the labels above, and a card cannot carry a mention, so nothing here takes
+	// an id. Uppercase is set here rather than by the renderer, so what the copy
+	// says is exactly what the card shows.
+	cards: {
+		levelBadge: (level: number): string => `LEVEL ${level}`,
+		primeLevel: "PRIME LEVEL",
+		milestoneLevel: "MILESTONE LEVEL",
+		rankOf: (rank: number, size: number): string => `#${rank.toLocaleString()} of ${size.toLocaleString()}`,
+		unranked: "Not ranked yet",
+		xpProgress: (into: number, span: number): string => `${into.toLocaleString()} / ${span.toLocaleString()} XP`,
+		record: "Record",
+		presence: "Presence",
+		winLoss: (won: number, lost: number, drawn: number): string => `${won}W  ${lost}L  ${drawn}D`,
+		moreUnlocks: (count: number): string => `and ${count} more`,
+	},
+
 	// ── errors and refusals ──
 	errors: {
 		disabled: "Leveling is turned off in this server.",

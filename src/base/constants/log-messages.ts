@@ -369,6 +369,10 @@ export const LOG_MESSAGES = {
 		boardStaleAuthor: (messageId: string, guildId: string) =>
 			`[leveling] levelsMessageId ${messageId} in guild ${guildId} is not authored by this bot. skipping, ScheduleBoard owns homebase recovery.`,
 		boardPostFailed: (guildId: string) => `[leveling] failed to post the levels board for guild ${guildId}:`,
+		boardAvatarsFailed: (guildId: string) =>
+			`[leveling] could not fetch the levels board members for guild ${guildId}, so their faces draw as placeholders:`,
+		announceMemberMissing: (userId: string, guildId: string) =>
+			`[leveling] could not fetch member ${userId} in guild ${guildId} for a card, so it draws a placeholder face:`,
 		hourlyRefreshFailed: "[leveling] hourly refreshAllLevelsBoards failed:",
 		voiceSweepFailed: (guildId: string) => `[leveling] voice sweep failed for guild ${guildId}:`,
 		achievementFailed: (guildId: string, userId: string) =>

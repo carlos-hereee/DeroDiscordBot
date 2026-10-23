@@ -1,4 +1,4 @@
-import { PermissionFlagsBits, TextChannel, type Client } from "discord.js";
+import { PermissionFlagsBits, TextChannel, type Client, type Guild, type GuildMember } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
@@ -9,11 +9,14 @@ import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { levelFromTotalXp, xpIntoLevel } from "./levelCurve.js";
 import { isMilestone } from "./primeLevels.js";
 import { levelingCopy } from "./levelingCopy.js";
-import { buildCombinedLevelUpEmbed, buildLevelUpEmbed } from "./levelingEmbeds.js";
+import { buildCombinedLevelUpEmbed, buildLevelUpEmbed, type AchievementUnlockEntry, type AchievementUnlockView, type LevelUpView } from "./levelingEmbeds.js";
 import { getLevelingConfig, type GuildLevelingContext } from "./levelingConfig.js";
 import { scheduleLevelsBoardRefresh } from "./LevelsBoard.js";
 import { reconcileRewards } from "./roleRewards.js";
-import { buildAchievementUnlockEmbed } from "./levelingEmbeds.js";
+import { buildAchievementUnlockCardEmbed, buildAchievementUnlockEmbed } from "./levelingEmbeds.js";
+import { LEVEL_UP_AVATAR_SIZE, renderLevelUpCard } from "./levelUpRenderer.js";
+import { ACHIEVEMENT_UNLOCK_AVATAR_SIZE, renderAchievementUnlockCard } from "./achievementUnlockRenderer.js";
+import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 
 // ── levelUpAnnouncer ───────────────────────────────────────────────────────
 // Decides that a level was crossed, claims the right to say so exactly once, and
@@ -63,8 +66,9 @@ export interface LevelCrossingInput {
 	client: Client;
 	guildId: string;
 	userId: string;
-	// Optional, mirroring AwardXpInput. Nothing in this file reads it; the announcement
-	// addresses the member by mention, which needs only the id.
+	// Optional, mirroring AwardXpInput. The text announcement addresses the member
+	// by mention, which needs only the id; the milestone card cannot draw a
+	// mention, so it draws this name when the member is not in the guild cache.
 	username?: string;
 	oldTotalXp: number;
 	newTotalXp: number;
@@ -80,6 +84,8 @@ interface QueuedLevelUp {
 	xpIntoLevel: number;
 	// Populated by Phase 4's role rewards. Renders the {earned:...} block.
 	earnedRoleId: string | null;
+	// The stored username, the milestone card's name when no member is found.
+	username: string | null;
 }
 
 // ── handleLevelCrossing ────────────────────────────────────────────────────
@@ -135,6 +141,7 @@ export async function handleLevelCrossing(input: LevelCrossingInput): Promise<vo
 			milestone,
 			xpIntoLevel: xpIntoLevel(input.newTotalXp, settings.curve, settings.curveMultiplier, settings.maxLevel),
 			earnedRoleId,
+			username: input.username ?? null,
 		});
 
 		// The standings moved, so nudge the pinned board. Coalesced per guild, so a
@@ -261,17 +268,25 @@ async function sendMilestoneCard(
 	context: GuildLevelingContext | null
 ): Promise<void> {
 	assertNotPingable();
-	const attachment = buildDeroImageAttachment();
+	const member = await resolveCardMember(queue.channel.guild, event.userId);
+	const view: LevelUpView = {
+		description: renderLine(event, queue, context),
+		level: event.level,
+		milestone: true,
+		imageRef: DERO_IMAGE_REF,
+		displayName: member?.displayName ?? event.username,
+		avatar: member ? avatarRequestFor(member.user, LEVEL_UP_AVATAR_SIZE) : null,
+	};
+	// The rendered card takes the image slot when it draws (a GIF on a prime
+	// level); otherwise the embed keeps Dero's bundled still, exactly as before.
+	const card = await withRenderFallback(
+		() => renderLevelUpCard(view),
+		() => buildLevelUpEmbed(view)
+	);
 	const message = await queue.channel.send({
-		embeds: [
-			buildLevelUpEmbed({
-				description: renderLine(event, queue, context),
-				level: event.level,
-				milestone: true,
-				imageRef: DERO_IMAGE_REF,
-			}),
-		],
-		files: [attachment],
+		...(isRenderPayload(card)
+			? { embeds: [buildLevelUpEmbed({ ...view, imageRef: card.ref })], files: [card.attachment] }
+			: { embeds: [card], files: [buildDeroImageAttachment()] }),
 		allowedMentions: NO_MENTIONS,
 	});
 
@@ -294,6 +309,18 @@ async function addReaction(
 	await message.react(emoji).catch((error: unknown) => {
 		console.warn(LOG_MESSAGES.leveling.reactionFailed(guildId), error);
 	});
+}
+
+// The member a card draws, from the guild cache or one fetch. Null when they
+// cannot be found (they left between the xp and the announcement), and the card
+// then draws its placeholder face; never throws, since a card is decoration.
+async function resolveCardMember(guild: Guild, userId: string): Promise<GuildMember | null> {
+	try {
+		return guild.members.cache.get(userId) ?? (await guild.members.fetch(userId));
+	} catch (error) {
+		console.warn(LOG_MESSAGES.leveling.announceMemberMissing(userId, guild.id), error);
+		return null;
+	}
 }
 
 // ── rendering ──────────────────────────────────────────────────────────────
@@ -434,7 +461,9 @@ export async function announceAchievements(
 	client: Client,
 	guildId: string,
 	userId: string,
-	unlocks: readonly { id: string; tier: string; earnedBy: string }[]
+	unlocks: readonly AchievementUnlockEntry[],
+	// The stored username, which the unlock card draws when no member is found.
+	username?: string
 ): Promise<void> {
 	try {
 		if (unlocks.length === 0) return;
@@ -455,8 +484,21 @@ export async function announceAchievements(
 		}
 
 		assertNotPingable();
+		const member = await resolveCardMember(channel.guild, userId);
+		const view: AchievementUnlockView = {
+			userId,
+			displayName: member?.displayName ?? username ?? "",
+			avatar: member ? avatarRequestFor(member.user, ACHIEVEMENT_UNLOCK_AVATAR_SIZE) : null,
+			unlocks,
+		};
+		const card = await withRenderFallback(
+			() => renderAchievementUnlockCard(view),
+			() => buildAchievementUnlockEmbed(userId, unlocks)
+		);
 		await channel.send({
-			embeds: [buildAchievementUnlockEmbed(userId, unlocks)],
+			...(isRenderPayload(card)
+				? { embeds: [buildAchievementUnlockCardEmbed(userId, unlocks.length, card.ref)], files: [card.attachment] }
+				: { embeds: [card] }),
 			allowedMentions: NO_MENTIONS,
 		});
 	} catch (error) {

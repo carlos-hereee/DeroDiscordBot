@@ -8,8 +8,10 @@ import { periodKeysFor } from "@features/leveling/levelPeriod.js";
 import { getLevelingConfig } from "@features/leveling/levelingConfig.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import { reconcileRewards } from "@features/leveling/roleRewards.js";
-import { buildAccountEmbed, type AccountView } from "@features/leveling/levelingEmbeds.js";
+import { buildAccountCardEmbed, buildAccountEmbed, type AccountView } from "@features/leveling/levelingEmbeds.js";
+import { ACCOUNT_AVATAR_SIZE, renderAccountCard } from "@features/leveling/accountRenderer.js";
 import { LEVELING_GAME_SLUGS, type IGameRecord } from "@features/leveling/levelingTypes.js";
+import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 
 // ── /account ───────────────────────────────────────────────────────────────
 // What:  a member's full leveling profile: level and progress, standing, the
@@ -110,9 +112,20 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		voiceMinutes: record?.voiceMinutes ?? 0,
 		games: readGames(record?.games),
 		unlocked: record?.unlocked ?? [],
+		avatar: avatarRequestFor(target, ACCOUNT_AVATAR_SIZE),
 	};
 
-	await interaction.editReply({ embeds: [buildAccountEmbed(view)] });
+	// The card when it renders, the text profile when it does not (no canvas
+	// library on the host, a draw that threw). Either way one reply.
+	const profile = await withRenderFallback(
+		() => renderAccountCard(view),
+		() => buildAccountEmbed(view)
+	);
+	if (isRenderPayload(profile)) {
+		await interaction.editReply({ embeds: [buildAccountCardEmbed(view, profile.ref)], files: [profile.attachment] });
+	} else {
+		await interaction.editReply({ embeds: [profile] });
+	}
 
 	// ── reward role reconciliation, as a SIDE EFFECT of viewing a profile ──
 	// Fire and forget, and deliberately after the reply: a role write must never

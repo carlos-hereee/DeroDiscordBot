@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { PermissionFlagsBits, TextChannel } from "discord.js";
+import { AttachmentBuilder, PermissionFlagsBits, TextChannel } from "discord.js";
 import type { Client } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
 	claimAnnouncement: vi.fn(),
 	botLogHas: vi.fn(),
 	botLogLog: vi.fn(),
+	renderLevelUpCard: vi.fn(),
+	renderAchievementUnlockCard: vi.fn(),
 }));
 
 vi.mock("./levelingConfig.js", () => ({ getLevelingConfig: mocks.getLevelingConfig }));
@@ -24,12 +26,21 @@ vi.mock("@db/stores/memberLevelStore.js", () => ({
 vi.mock("@db/stores/botLogStore.js", () => ({
 	botLogStore: { has: mocks.botLogHas, log: mocks.botLogLog },
 }));
+// Both card renderers answer null by default, so every case above the "rendered
+// cards" describe pins the EMBED path, the fallback members get whenever a card
+// cannot be drawn. That describe swaps cards in.
+vi.mock("./levelUpRenderer.js", () => ({ LEVEL_UP_AVATAR_SIZE: 128, renderLevelUpCard: mocks.renderLevelUpCard }));
+vi.mock("./achievementUnlockRenderer.js", () => ({
+	ACHIEVEMENT_UNLOCK_AVATAR_SIZE: 128,
+	renderAchievementUnlockCard: mocks.renderAchievementUnlockCard,
+}));
 
 import {
 	_clearAdminNoticeGuard,
 	_clearAnnouncerQueues,
 	_drainAnnouncerNow,
 	_queuedChannels,
+	announceAchievements,
 	applyTemplate,
 	handleLevelCrossing,
 } from "./levelUpAnnouncer.js";
@@ -58,7 +69,15 @@ function harness(options: { missingPermission?: bigint } = {}): Harness {
 			name: "The Kingdom",
 			members: {
 				me: { id: "bot" },
-				cache: new Map([["u1", { displayName: "Silent" }]]),
+				cache: new Map([
+					[
+						"u1",
+						{
+							displayName: "Silent",
+							user: { id: "u1", avatar: "a1", displayAvatarURL: () => "https://cdn.discordapp.com/avatars/1/a1.png?size=128" },
+						},
+					],
+				]),
 			},
 		},
 		permissionsFor: () => ({
@@ -108,6 +127,8 @@ beforeEach(() => {
 	mocks.claimAnnouncement.mockReset().mockResolvedValue(true);
 	mocks.botLogHas.mockReset().mockResolvedValue(true);
 	mocks.botLogLog.mockReset().mockResolvedValue(undefined);
+	mocks.renderLevelUpCard.mockReset().mockResolvedValue(null);
+	mocks.renderAchievementUnlockCard.mockReset().mockResolvedValue(null);
 });
 
 describe("⚠️ THE NEVER PING INVARIANT", () => {
@@ -445,5 +466,85 @@ describe("applyTemplate", () => {
 		// A typo in an owner's override should read as a typo, not silently remove a
 		// word and leave them wondering what happened.
 		expect(applyTemplate("hello {user.rank}", event, templateContext)).toBe("hello {user.rank}");
+	});
+});
+
+describe("the rendered cards and their fallbacks (2026-10 item 243 Phase 2)", () => {
+	type CardPayload = { embeds: Array<{ data: { image?: { url: string }; description?: string } }>; files?: AttachmentBuilder[]; allowedMentions: unknown };
+	const card = (name: string) => {
+		const attachment = new AttachmentBuilder(Buffer.from("img"), { name });
+		return { attachment, ref: `attachment://${name}` };
+	};
+	const UNLOCKS = [{ id: "chatterbox", tier: "bronze", earnedBy: "sent 53 messages" }];
+
+	it("posts the milestone EMBED with Dero's bundled still when the level up renderer answers null", async () => {
+		const { client, send } = harness();
+		await cross(client, TO_LEVEL_2, TO_LEVEL_3);
+		await _drainAnnouncerNow(CHANNEL_ID);
+
+		const payload = payloads(send)[0] as unknown as CardPayload;
+		expect(payload.files?.[0]?.name).toBe("dero-avatar-512.png");
+		expect(payload.embeds[0].data.image?.url).toBe("attachment://dero-avatar-512.png");
+	});
+
+	it("posts the milestone card in the embed's image slot, keeping the congratulations and the never ping pin", async () => {
+		const rendered = card("level-up-abc.gif");
+		mocks.renderLevelUpCard.mockResolvedValue(rendered);
+		const { client, send, react } = harness();
+
+		await cross(client, TO_LEVEL_2, TO_LEVEL_3);
+		await _drainAnnouncerNow(CHANNEL_ID);
+
+		const payload = payloads(send)[0] as unknown as CardPayload;
+		expect(payload.files).toEqual([rendered.attachment]);
+		expect(payload.embeds[0].data.image?.url).toBe(rendered.ref);
+		expect(payload.embeds[0].data.description).toContain("level 3");
+		expect(payload.allowedMentions).toEqual({ parse: [], roles: [], users: [] });
+		expect(react).toHaveBeenCalledWith("🎉");
+		expect(mocks.renderLevelUpCard).toHaveBeenCalledWith(
+			expect.objectContaining({ level: 3, milestone: true, displayName: "Silent", avatar: expect.objectContaining({ userId: "u1", size: 128 }) })
+		);
+	});
+
+	it("never renders a card for an ordinary level", async () => {
+		const { client } = harness();
+		await cross(client, TO_LEVEL_3, TO_LEVEL_4);
+		await _drainAnnouncerNow(CHANNEL_ID);
+		expect(mocks.renderLevelUpCard).not.toHaveBeenCalled();
+	});
+
+	it("posts the unlock EMBED, with no files, when the unlock renderer answers null", async () => {
+		const { client, send } = harness();
+
+		await announceAchievements(client, "g1", "u1", UNLOCKS, "Silent");
+
+		const payload = payloads(send)[0] as unknown as CardPayload;
+		expect(payload.files).toBeUndefined();
+		expect(payload.embeds[0].data.description).toContain("chatterbox");
+		expect(payload.embeds[0].data.image).toBeUndefined();
+	});
+
+	it("posts the unlock medallion card, the mention line staying in text", async () => {
+		const rendered = card("achievement-unlock-abc.png");
+		mocks.renderAchievementUnlockCard.mockResolvedValue(rendered);
+		const { client, send } = harness();
+
+		await announceAchievements(client, "g1", "u1", UNLOCKS, "Silent");
+
+		const payload = payloads(send)[0] as unknown as CardPayload;
+		expect(payload.files).toEqual([rendered.attachment]);
+		expect(payload.embeds[0].data.image?.url).toBe(rendered.ref);
+		expect(payload.embeds[0].data.description).toContain("<@u1>");
+		expect(payload.allowedMentions).toEqual({ parse: [], roles: [], users: [] });
+	});
+
+	it("draws the stored username when the member cannot be fetched", async () => {
+		vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const { client } = harness();
+
+		// u2 is not in the harness cache and the harness guild cannot fetch.
+		await announceAchievements(client, "g1", "u2", UNLOCKS, "Gone Member");
+
+		expect(mocks.renderAchievementUnlockCard).toHaveBeenCalledWith(expect.objectContaining({ userId: "u2", displayName: "Gone Member", avatar: null }));
 	});
 });

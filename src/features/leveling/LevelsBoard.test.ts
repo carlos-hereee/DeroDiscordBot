@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { DiscordAPIError, TextChannel } from "discord.js";
+import { AttachmentBuilder, DiscordAPIError, TextChannel } from "discord.js";
 import type { Client } from "discord.js";
 
 // ── LevelsBoard ────────────────────────────────────────────────────────────
@@ -13,12 +13,20 @@ const mocks = vi.hoisted(() => ({
 	topByTotalXp: vi.fn(),
 	findByGuildId: vi.fn(),
 	update: vi.fn(),
+	renderLevelsBoardCard: vi.fn(),
 }));
 
 vi.mock("./levelingConfig.js", () => ({ getLevelingConfig: mocks.getLevelingConfig }));
 vi.mock("@db/stores/memberLevelStore.js", () => ({ memberLevelStore: { topByTotalXp: mocks.topByTotalXp } }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update },
+}));
+// The card renderer answers null by default, so every case above the "rendered
+// card" describe pins the TEXT board, which is the fallback path members get
+// whenever the card cannot be drawn. That describe swaps a card in.
+vi.mock("./levelsBoardRenderer.js", () => ({
+	LEVELS_BOARD_AVATAR_SIZE: 64,
+	renderLevelsBoardCard: mocks.renderLevelsBoardCard,
 }));
 
 import { _clearLevelsBoardTimers, refreshLevelsBoard, scheduleLevelsBoardRefresh } from "./LevelsBoard.js";
@@ -53,7 +61,7 @@ function harness(): Harness {
 		client: { user: { id: BOT_ID } },
 	});
 
-	const client = { channels: { fetch: async () => channel } } as unknown as Client;
+	const client = { channels: { fetch: async () => channel }, guilds: { cache: new Map() } } as unknown as Client;
 	return { client, send, edit, fetchMessage };
 }
 
@@ -74,6 +82,7 @@ beforeEach(() => {
 	mocks.topByTotalXp.mockReset().mockResolvedValue([{ userId: "u1", username: "Silent", totalXp: 964 }]);
 	mocks.findByGuildId.mockReset().mockResolvedValue({ levelsMessageId: null });
 	mocks.update.mockReset().mockResolvedValue(undefined);
+	mocks.renderLevelsBoardCard.mockReset().mockResolvedValue(null);
 });
 
 describe("it never disturbs the participation board", () => {
@@ -247,5 +256,68 @@ describe("the coalescing throttle", () => {
 		// timer rather than three.
 		expect(mocks.topByTotalXp).not.toHaveBeenCalled();
 		_clearLevelsBoardTimers();
+	});
+});
+
+describe("the rendered card and its fallback (2026-10 item 243 Phase 2)", () => {
+	type BoardPayload = { embeds: Array<{ data: { image?: { url: string }; fields?: unknown[]; description?: string } }>; files: unknown[]; attachments?: unknown[] };
+	const card = () => {
+		const attachment = new AttachmentBuilder(Buffer.from("png"), { name: "levels-board-abc.png" });
+		return { attachment, ref: "attachment://levels-board-abc.png" };
+	};
+
+	it("posts the TEXT board with no files when the renderer answers null", async () => {
+		const { client, send } = harness();
+
+		await refreshLevelsBoard(client, "g1");
+
+		const payload = send.mock.calls[0][0] as BoardPayload;
+		expect(payload.files).toEqual([]);
+		expect(payload.embeds[0].data.fields?.length).toBe(1);
+		expect(payload.embeds[0].data.image).toBeUndefined();
+	});
+
+	it("posts the TEXT board when the renderer throws", async () => {
+		vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		mocks.renderLevelsBoardCard.mockRejectedValue(new Error("draw failed"));
+		const { client, send } = harness();
+
+		await refreshLevelsBoard(client, "g1");
+
+		const payload = send.mock.calls[0][0] as BoardPayload;
+		expect(payload.files).toEqual([]);
+		expect(payload.embeds[0].data.fields?.length).toBe(1);
+	});
+
+	it("posts the card as an attachment the embed points at, keeping the subtitle", async () => {
+		const rendered = card();
+		mocks.renderLevelsBoardCard.mockResolvedValue(rendered);
+		const { client, send } = harness();
+
+		await refreshLevelsBoard(client, "g1");
+
+		const payload = send.mock.calls[0][0] as BoardPayload;
+		expect(payload.files).toEqual([rendered.attachment]);
+		expect(payload.embeds[0].data.image?.url).toBe(rendered.ref);
+		// The "which question this board answers" line survives on the card path.
+		expect(payload.embeds[0].data.description).toBeTruthy();
+		expect(mocks.renderLevelsBoardCard).toHaveBeenCalledWith("All time", [expect.objectContaining({ userId: "u1", level: 5, avatar: null })]);
+	});
+
+	it("drops the previous card on an edit, whichever path this refresh took", async () => {
+		mocks.findByGuildId.mockResolvedValue({ levelsMessageId: "msg-1" });
+		const { client, edit } = harness();
+
+		mocks.renderLevelsBoardCard.mockResolvedValue(card());
+		await refreshLevelsBoard(client, "g1");
+		mocks.renderLevelsBoardCard.mockResolvedValue(null);
+		await refreshLevelsBoard(client, "g1");
+
+		const [withCard, withText] = edit.mock.calls.map((call) => call[0] as BoardPayload);
+		expect(withCard.attachments).toEqual([]);
+		expect(withCard.files).toHaveLength(1);
+		// A text refresh after a card must not leave the old card hanging as a loose file.
+		expect(withText.attachments).toEqual([]);
+		expect(withText.files).toEqual([]);
 	});
 });

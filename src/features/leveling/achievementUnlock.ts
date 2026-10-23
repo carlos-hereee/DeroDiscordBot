@@ -77,7 +77,7 @@ export async function runAchievementPass(
 		if (newly.some((unlock) => unlock.roleId)) {
 			void reconcileRewards(client, guildId, member.userId, level);
 		}
-		void announceAchievements(client, guildId, member.userId, newly);
+		void announceAchievements(client, guildId, member.userId, newly, member.username);
 	} catch (error) {
 		console.error(LOG_MESSAGES.leveling.achievementFailed(guildId, member.userId), error);
 	}

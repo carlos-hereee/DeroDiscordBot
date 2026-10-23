@@ -3,8 +3,9 @@ import type { Image, SKRSContext2D } from "./canvasModule.js";
 import { rendererFont, type RendererFontWeight } from "./fonts.js";
 
 // ── primitives ───────────────────────────────────────────────────────
-// The drawing pieces every card composes from: a circular crop, a pill, one bar
-// of a horizontal bar chart, a radial gradient wash, and Inter text. Each draws
+// The drawing pieces every card composes from: a circular crop, a filled circle,
+// a rounded panel, an aspect fitted image, a pill, one bar of a horizontal bar
+// chart, a radial gradient wash, and Inter text. Each draws
 // onto the context it is handed and leaves that context's state as it found it.
 // None loads an image, a font or the canvas library, and none decides layout.
 // Card renderers (2026-10 item 243 Phases 2 to 4) call them inside renderCard's
@@ -27,6 +28,16 @@ export function canvasColor(color: ColorResolvable): string {
 	return `#${resolveColor(color).toString(16).padStart(6, "0")}`;
 }
 
+/**
+ * A `#rrggbb` color at an opacity from 0 to 1, as `#rrggbbaa`: the fading stop
+ * of a glow. Takes a token through canvasColor first, so a glow is always a
+ * brand color made transparent, never a new hex.
+ */
+export function withAlpha(color: ColorResolvable, alpha: number): string {
+	const byte = Math.round(clampRatio(alpha) * 255);
+	return `${canvasColor(color)}${byte.toString(16).padStart(2, "0")}`;
+}
+
 /** Draws `image` cropped to a circle of `diameter` centred on (centerX, centerY): the avatar shape. */
 export function drawCircularImage(context: SKRSContext2D, image: Image, centerX: number, centerY: number, diameter: number): void {
 	const radius = diameter / 2;
@@ -37,6 +48,50 @@ export function drawCircularImage(context: SKRSContext2D, image: Image, centerX:
 	context.clip();
 	context.drawImage(image, centerX - radius, centerY - radius, diameter, diameter);
 	context.restore();
+}
+
+/** A filled circle of `diameter` centred on (centerX, centerY): the avatar placeholder, a medallion, a dot. */
+export function fillCircle(context: SKRSContext2D, centerX: number, centerY: number, diameter: number, fill: string): void {
+	context.save();
+	context.beginPath();
+	context.arc(centerX, centerY, diameter / 2, 0, Math.PI * 2);
+	context.closePath();
+	context.fillStyle = fill;
+	context.fill();
+	context.restore();
+}
+
+export interface PanelOptions extends Rect {
+	fill: string;
+	radius: number;
+}
+
+/**
+ * A filled rectangle with rounded corners: a card's panel or a row inside it.
+ * Separate from drawPill because a pill is always fully rounded, and a panel
+ * with a radius of half its height would read as a button.
+ */
+export function drawPanel(context: SKRSContext2D, { x, y, width, height, fill, radius }: PanelOptions): void {
+	context.save();
+	context.beginPath();
+	context.roundRect(x, y, width, height, Math.min(radius, width / 2, height / 2));
+	context.fillStyle = fill;
+	context.fill();
+	context.restore();
+}
+
+/**
+ * Draws `image` as large as fits inside `box`, keeping its aspect ratio and
+ * centring it: the way a mascot or a piece of art sits in its slot. A stretched
+ * Dero is the failure this exists to stop, since art arrives in more than one
+ * shape (a square figure, a wide strip of tier variants).
+ */
+export function drawImageContained(context: SKRSContext2D, image: Image, box: Rect): void {
+	if (image.width <= 0 || image.height <= 0) return;
+	const scale = Math.min(box.width / image.width, box.height / image.height);
+	const width = image.width * scale;
+	const height = image.height * scale;
+	context.drawImage(image, box.x + (box.width - width) / 2, box.y + (box.height - height) / 2, width, height);
 }
 
 export interface PillOptions extends Rect {

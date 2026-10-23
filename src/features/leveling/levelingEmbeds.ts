@@ -1,5 +1,6 @@
 import { EmbedBuilder } from "discord.js";
 import { AUTHOR, COLORS, FOOTER } from "@base/copy/brand.js";
+import type { AvatarRequest } from "@features/renderer/index.js";
 import { levelingCopy } from "./levelingCopy.js";
 import type { IAchievementUnlock, IGameRecord } from "./levelingTypes.js";
 
@@ -14,6 +15,11 @@ import type { IAchievementUnlock, IGameRecord } from "./levelingTypes.js";
 // Every builder here takes a VIEW MODEL rather than a Mongoose document. That
 // keeps them pure and renderable in a test without a database, and it is what
 // stops embed code from quietly growing a store import.
+//
+// The same view models feed the canvas cards of 2026-10 item 243 Phase 2
+// (accountRenderer and its three siblings). The card only fields (an avatar
+// request, a display name) are optional, so these builders never read them and
+// every fallback embed renders exactly as it did before the cards existed.
 
 // Every embed in this feature carries the same Dero author and footer, so the
 // shared spine lives in one place and a new builder cannot forget it.
@@ -51,8 +57,13 @@ export interface LevelUpView {
 	description: string;
 	level: number;
 	milestone: boolean;
-	// attachment:// reference for the bundled Dero art, or null to render flat.
+	// attachment:// reference for the bundled Dero art or the rendered card, or
+	// null to render flat.
 	imageRef?: string | null;
+	// Card only. The name and face the level up card draws; a mention cannot be
+	// drawn, so the card cannot use the description.
+	displayName?: string | null;
+	avatar?: AvatarRequest | null;
 }
 
 export function buildLevelUpEmbed(view: LevelUpView): EmbedBuilder {
@@ -118,6 +129,8 @@ export interface AccountView {
 	// played are omitted rather than rendered as a row of zeros.
 	games: Array<{ slug: string; record: IGameRecord }>;
 	unlocked: IAchievementUnlock[];
+	// Card only: the avatar the account card draws. The embed keeps avatarUrl.
+	avatar?: AvatarRequest | null;
 }
 
 function ratio(won: number, lost: number): string {
@@ -211,6 +224,15 @@ export function buildAccountEmbed(view: AccountView): EmbedBuilder {
 	return embed;
 }
 
+/**
+ * The /account message when its card rendered: the member's name over the card,
+ * which carries the profile itself. Title and color match buildAccountEmbed, so
+ * only the body changes between the card and the text profile.
+ */
+export function buildAccountCardEmbed(view: Pick<AccountView, "displayName">, imageRef: string): EmbedBuilder {
+	return base().setTitle(view.displayName).setColor(COLORS.ACCOUNT).setImage(imageRef);
+}
+
 // ── the levels standings board ──────────────────────────────────────────────
 // A SECOND pinned message in the leaderboard channel, beside the participation
 // board. The subtitle is not decoration: two boards in one channel answering
@@ -221,13 +243,26 @@ export interface LevelsBoardEntry {
 	username: string;
 	level: number;
 	xp: number;
+	// Card only: the face beside the row on the board card.
+	avatar?: AvatarRequest | null;
 }
 
-export function buildLevelsBoardEmbed(windowLabel: string, entries: LevelsBoardEntry[]): EmbedBuilder {
-	const embed = base()
+// The title, color and "which question this board answers" subtitle, shared by
+// the text board and the card board so the two can never answer differently.
+function levelsBoardSpine(windowLabel: string): EmbedBuilder {
+	return base()
 		.setTitle(`${levelingCopy.board.title} • ${windowLabel}`)
 		.setColor(COLORS.LEVELS_BOARD)
 		.setDescription(levelingCopy.boardSubtitles.levels);
+}
+
+/** The board message when its card rendered: the same spine, with the standings drawn on the card. */
+export function buildLevelsBoardCardEmbed(windowLabel: string, imageRef: string): EmbedBuilder {
+	return levelsBoardSpine(windowLabel).setImage(imageRef);
+}
+
+export function buildLevelsBoardEmbed(windowLabel: string, entries: LevelsBoardEntry[]): EmbedBuilder {
+	const embed = levelsBoardSpine(windowLabel);
 
 	if (entries.length === 0) return embed.addFields({ name: windowLabel, value: levelingCopy.board.emptyState });
 
@@ -247,13 +282,37 @@ export function buildLevelsBoardEmbed(windowLabel: string, entries: LevelsBoardE
 // Posted once per pass, listing every tier crossed in that pass. A member who
 // jumps from nothing to gold gets one message naming all three rather than three
 // messages, which is the same reasoning behind the level up coalescing.
-export function buildAchievementUnlockEmbed(
-	userId: string,
-	unlocks: readonly { id: string; tier: string; earnedBy: string }[]
-): EmbedBuilder {
+export interface AchievementUnlockEntry {
+	id: string;
+	tier: string;
+	earnedBy: string;
+}
+
+/** The unlock card's view: who earned it (a name and a face, since a mention cannot be drawn) and what. */
+export interface AchievementUnlockView {
+	userId: string;
+	displayName: string;
+	avatar: AvatarRequest | null;
+	unlocks: readonly AchievementUnlockEntry[];
+}
+
+function achievementUnlockSpine(unlockCount: number): EmbedBuilder {
 	return base()
-		.setTitle(unlocks.length === 1 ? levelingCopy.achievements.unlockedOne : levelingCopy.achievements.unlockedMany)
-		.setColor(COLORS.ACHIEVEMENT)
+		.setTitle(unlockCount === 1 ? levelingCopy.achievements.unlockedOne : levelingCopy.achievements.unlockedMany)
+		.setColor(COLORS.ACHIEVEMENT);
+}
+
+/**
+ * The unlock message when its medallion card rendered. The "<@id> earned:" line
+ * stays in text, because only text can name the member as a mention; the card
+ * carries the tiers and what earned them.
+ */
+export function buildAchievementUnlockCardEmbed(userId: string, unlockCount: number, imageRef: string): EmbedBuilder {
+	return achievementUnlockSpine(unlockCount).setDescription(levelingCopy.achievements.unlockedBy(userId)).setImage(imageRef);
+}
+
+export function buildAchievementUnlockEmbed(userId: string, unlocks: readonly AchievementUnlockEntry[]): EmbedBuilder {
+	return achievementUnlockSpine(unlocks.length)
 		.setDescription(
 			[
 				levelingCopy.achievements.unlockedBy(userId),

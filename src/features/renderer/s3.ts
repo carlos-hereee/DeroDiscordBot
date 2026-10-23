@@ -17,7 +17,15 @@ export const RENDER_KEY_PREFIX = "discord-bot/renders";
 const RENDER_KIND_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const RENDER_HASH_PATTERN = /^[a-f0-9]{64}$/;
 
-const RENDER_CONTENT_TYPE = "image/png";
+/** The file formats a rendered card can be stored as. Every card is a PNG except an animated one. */
+export type RenderFormat = "png" | "gif";
+
+// Keyed by the extension the key ends in, so the write never has to be told the
+// format a second time and cannot store a GIF under a PNG content type.
+const RENDER_CONTENT_TYPES: Record<RenderFormat, string> = {
+	png: "image/png",
+	gif: "image/gif",
+};
 // Every key carries its renderer's version and a hash of its input, so the bytes
 // behind a key never change and may be cached for good (a year is the HTTP max).
 const RENDER_CACHE_CONTROL = "public, max-age=31536000, immutable";
@@ -32,17 +40,17 @@ export function isRenderStoreEnabled(): boolean {
 }
 
 /**
- * The full S3 key for one rendered card: `discord-bot/renders/<kind>/<version>/<inputHash>.png`.
+ * The full S3 key for one rendered card: `discord-bot/renders/<kind>/<version>/<inputHash>.<format>`.
  * `version` is the integer each renderer bakes in and bumps whenever its drawing
  * changes, which moves every card it draws to new keys and so retires the old
  * cache without deleting anything. Throws on a malformed part, which is a bug in
  * the calling renderer rather than a runtime condition.
  */
-export function buildRenderKey(kind: string, version: number, inputHash: string): string {
+export function buildRenderKey(kind: string, version: number, inputHash: string, format: RenderFormat = "png"): string {
 	if (!RENDER_KIND_PATTERN.test(kind)) throw new Error(`Render kind "${kind}" must be a lowercase slug such as "level-up"`);
 	if (!Number.isSafeInteger(version) || version < 1) throw new Error(`Render version for "${kind}" must be a positive integer, got ${version}`);
 	if (!RENDER_HASH_PATTERN.test(inputHash)) throw new Error(`Render input hash for "${kind}" must be 64 lowercase hex characters`);
-	return `${RENDER_KEY_PREFIX}/${kind}/${version}/${inputHash}.png`;
+	return `${RENDER_KEY_PREFIX}/${kind}/${version}/${inputHash}.${format}`;
 }
 
 /**
@@ -86,7 +94,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return prototype === Object.prototype || prototype === null;
 }
 
-/** A stored card's PNG, or null on a miss, with S3 switched off, or when the read fails or runs past its budget. Never throws. */
+/** A stored card's bytes, or null on a miss, with S3 switched off, or when the read fails or runs past its budget. Never throws. */
 export async function readStoredRender(key: string): Promise<Buffer | null> {
 	if (!isRenderStoreEnabled()) return null;
 	try {
@@ -97,12 +105,18 @@ export async function readStoredRender(key: string): Promise<Buffer | null> {
 	}
 }
 
-/** Stores a freshly drawn card's PNG. Never throws: a failed upload only means the next request draws it again. */
-export async function writeStoredRender(key: string, png: Buffer): Promise<void> {
+/** Stores a freshly drawn card's bytes. Never throws: a failed upload only means the next request draws it again. */
+export async function writeStoredRender(key: string, bytes: Buffer): Promise<void> {
 	if (!isRenderStoreEnabled()) return;
 	try {
-		await putObject({ key, body: png, contentType: RENDER_CONTENT_TYPE, cacheControl: RENDER_CACHE_CONTROL });
+		await putObject({ key, body: bytes, contentType: contentTypeOf(key), cacheControl: RENDER_CACHE_CONTROL });
 	} catch (error) {
 		console.warn(`[canvas-renderer] the S3 write of ${key} failed; the card was still posted and its next request draws it again`, error);
 	}
+}
+
+// buildRenderKey is the only writer of keys, so every key ends in a known
+// extension; anything else is stored as a PNG, the format every card had first.
+function contentTypeOf(key: string): string {
+	return key.endsWith(".gif") ? RENDER_CONTENT_TYPES.gif : RENDER_CONTENT_TYPES.png;
 }

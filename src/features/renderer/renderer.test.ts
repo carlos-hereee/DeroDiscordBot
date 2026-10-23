@@ -30,8 +30,9 @@ import { CARD_CACHE_CAPACITY, cachedCardCount, clearCardCache, readCachedCard, s
 import { buildRenderKey, hashRenderInput, RENDER_KEY_PREFIX, RENDER_S3_READ_TIMEOUT_MS } from "./s3.js";
 import { isRenderPayload, withRenderFallback, type RenderPayload } from "./fallback.js";
 import { registerRendererFonts, rendererFont, RENDERER_FONT_FAMILY } from "./fonts.js";
-import { canvasColor, drawBarSegment, drawCircularImage, drawPill, drawText, fillRadialGradient } from "./primitives.js";
-import { cardRenderKey, logCanvasRendererStatus, renderCard, type CardRenderRequest } from "./index.js";
+import { canvasColor, drawBarSegment, drawCircularImage, drawImageContained, drawPanel, drawPill, drawText, fillCircle, fillRadialGradient, withAlpha } from "./primitives.js";
+import { encodeGif } from "./gif.js";
+import { cardRenderKey, logCanvasRendererStatus, renderCard, type CardFrame, type CardRenderRequest, type DrawOutcome } from "./index.js";
 
 // ── canvas renderer pipeline ─────────────────────────────────────────
 // Pins the pieces every card surface of 2026-10 item 243 builds on: the two LRU
@@ -743,6 +744,124 @@ describe("when the canvas library does not load", () => {
 			"[canvas-renderer] unavailable (@napi-rs/canvas did not load); every card surface posts its text embed"
 		);
 		vi.doUnmock("@napi-rs/canvas");
+	});
+});
+
+describe("animated cards (2026-10 item 243 Phase 2)", () => {
+	type PulseInput = { level: number };
+	const GIF_SIGNATURE = Buffer.from("GIF89a", "ascii");
+
+	const pulseCard = (draw = vi.fn((_context: SKRSContext2D, _input: PulseInput, _frame: CardFrame): DrawOutcome => undefined)): CardRenderRequest<PulseInput> => ({
+		kind: "pulse",
+		version: 1,
+		input: { level: 11 },
+		width: 120,
+		height: 60,
+		animation: { frameCount: 4, frameDelayMs: 90 },
+		draw: (context, input, frame) => {
+			// A disc that moves each frame, inside a rounded sheet with see through corners.
+			drawPanel(context, { x: 0, y: 0, width: 120, height: 60, radius: 20, fill: canvasColor(COLORS.CARD_BACKGROUND) });
+			fillCircle(context, 20 + frame.index * 25, 30, 20, canvasColor(COLORS.LEVEL_MILESTONE));
+			return draw(context, input, frame);
+		},
+	});
+
+	beforeEach(() => {
+		clearCardCache();
+		s3Switch.enabled = true;
+		putMock.mockReset();
+		putMock.mockResolvedValue(undefined);
+		getMock.mockReset();
+		getMock.mockResolvedValue(null);
+	});
+
+	it("draws every frame, answers a looping GIF, and stores it under a .gif key as image/gif", async () => {
+		const draw = vi.fn((): DrawOutcome => undefined);
+		const request = pulseCard(draw);
+
+		const payload = await renderCard(request);
+
+		const gif = attachmentBytes(payload as RenderPayload);
+		expect(gif.subarray(0, GIF_SIGNATURE.length).equals(GIF_SIGNATURE)).toBe(true);
+		expect(gif.readUInt16LE(6)).toBe(120);
+		expect(gif.readUInt16LE(8)).toBe(60);
+		expect(draw.mock.calls.map((call) => call[2])).toEqual([0, 1, 2, 3].map((index) => ({ index, count: 4 })));
+		expect(payload?.ref).toMatch(/^attachment:\/\/pulse-[a-f0-9]{12}\.gif$/);
+		expect(cardRenderKey(request)).toMatch(/\.gif$/);
+		await vi.waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(expect.objectContaining({ key: cardRenderKey(request), contentType: "image/gif" }));
+	});
+
+	it("never shares a key with the same input drawn as a still PNG", () => {
+		const animated = pulseCard();
+		const { animation: _animation, ...still } = animated;
+		expect(cardRenderKey(animated)).not.toBe(cardRenderKey(still));
+		expect(cardRenderKey(still)).toMatch(/\.png$/);
+	});
+
+	it("posts but never caches a GIF when any one frame drew a stand in", async () => {
+		const draw = vi.fn((_context: SKRSContext2D, _input: PulseInput, frame: CardFrame): DrawOutcome => (frame.index === 2 ? { cacheable: false } : undefined));
+
+		const payload = await renderCard(pulseCard(draw));
+
+		expect(payload).not.toBeNull();
+		expect(cachedCardCount()).toBe(0);
+		expect(putMock).not.toHaveBeenCalled();
+	});
+
+	it("keeps the rounded corners transparent in the GIF rather than black", () => {
+		const context = blankContext(40, 40);
+		drawPanel(context, { x: 0, y: 0, width: 40, height: 40, radius: 16, fill: "#ffffff" });
+		const rgba = context.getImageData(0, 0, 40, 40).data;
+
+		const gif = encodeGif({ width: 40, height: 40, frames: [rgba], frameDelayMs: 90 });
+
+		// The graphic control extension (0x21 0xf9) carries the transparency flag
+		// in bit 0 of its packed byte, three bytes in.
+		const control = gif.indexOf(Buffer.from([0x21, 0xf9]));
+		expect(control).toBeGreaterThan(0);
+		expect(gif[control + 3] & 0x01).toBe(1);
+	});
+
+	it("refuses a frame of the wrong size, which renderCard turns into the text embed", () => {
+		expect(() => encodeGif({ width: 10, height: 10, frames: [new Uint8ClampedArray(12)], frameDelayMs: 90 })).toThrow(/expected 400/);
+		expect(() => encodeGif({ width: 10, height: 10, frames: [], frameDelayMs: 90 })).toThrow(/no frames/);
+	});
+});
+
+describe("Phase 2 primitives", () => {
+	it("fillCircle paints a disc and leaves the corners clear", () => {
+		const context = blankContext(40, 40);
+		fillCircle(context, 20, 20, 30, "#ff0000");
+		expect(pixelAt(context, 20, 20)).toEqual([255, 0, 0, 255]);
+		expect(pixelAt(context, 1, 1)[3]).toBe(0);
+	});
+
+	it("drawPanel rounds its corners and never past half its shorter side", () => {
+		const context = blankContext(100, 40);
+		drawPanel(context, { x: 0, y: 0, width: 100, height: 40, radius: 500, fill: "#00ff00" });
+		expect(pixelAt(context, 50, 20)).toEqual([0, 255, 0, 255]);
+		expect(pixelAt(context, 0, 0)[3]).toBe(0);
+	});
+
+	it("drawImageContained keeps the aspect ratio and centres the image in its box", () => {
+		const source = blankContext(100, 50);
+		source.fillStyle = "#0000ff";
+		source.fillRect(0, 0, 100, 50);
+		const context = blankContext(100, 100);
+
+		drawImageContained(context, source.canvas as unknown as Image, { x: 0, y: 0, width: 100, height: 100 });
+
+		// A 2:1 image in a square box fills the middle half, top and bottom clear.
+		expect(pixelAt(context, 50, 50)).toEqual([0, 0, 255, 255]);
+		expect(pixelAt(context, 50, 10)[3]).toBe(0);
+		expect(pixelAt(context, 50, 90)[3]).toBe(0);
+	});
+
+	it("withAlpha turns a brand token into #rrggbbaa", () => {
+		expect(withAlpha("#4f46e5", 1)).toBe("#4f46e5ff");
+		expect(withAlpha("#4f46e5", 0)).toBe("#4f46e500");
+		expect(withAlpha(COLORS.DERO, 2)).toBe("#4f46e5ff");
 	});
 });
 

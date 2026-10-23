@@ -166,6 +166,18 @@ const sharedAvatarCache = createAvatarCache({
 	decode: loadedCanvas ? (bytes) => loadedCanvas.loadImage(bytes) : null,
 });
 
+/**
+ * The avatar request for one Discord user at one size, as a card's view model
+ * carries it: plain data, so it hashes into the card key and a new upload (a new
+ * avatar hash, a new URL) draws a new card. The CDN shape stays in discord.js.
+ */
+export function avatarRequestFor(
+	user: { id: string; avatar: string | null; displayAvatarURL(options: { extension: "png"; size: ImageSize }): string },
+	size: ImageSize
+): AvatarRequest {
+	return { userId: user.id, avatarHash: user.avatar, size, url: user.displayAvatarURL({ extension: "png", size }) };
+}
+
 /** A member's avatar as a canvas Image, from memory when it was fetched before, or null when it cannot be had. Never throws. */
 export function fetchAvatar(request: AvatarRequest): Promise<Image | null> {
 	return sharedAvatarCache.fetch(request);

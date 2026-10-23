@@ -1,12 +1,14 @@
-import { Client, DiscordAPIError, Message, TextChannel } from "discord.js";
+import { AttachmentBuilder, Client, DiscordAPIError, EmbedBuilder, Message, TextChannel } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { levelFromTotalXp } from "./levelCurve.js";
 import { levelingCopy } from "./levelingCopy.js";
-import { buildLevelsBoardEmbed, type LevelsBoardEntry } from "./levelingEmbeds.js";
+import { buildLevelsBoardCardEmbed, buildLevelsBoardEmbed, type LevelsBoardEntry } from "./levelingEmbeds.js";
 import { getLevelingConfig } from "./levelingConfig.js";
+import { LEVELS_BOARD_AVATAR_SIZE, renderLevelsBoardCard } from "./levelsBoardRenderer.js";
+import { avatarRequestFor, isRenderPayload, withRenderFallback, type AvatarRequest } from "@features/renderer/index.js";
 
 // ── LevelsBoard ────────────────────────────────────────────────────────────
 // A SECOND self-refreshing message in the guild's leaderboard channel, beside
@@ -74,6 +76,7 @@ export async function refreshLevelsBoard(client: Client, guildId: string): Promi
 
 		const settings = context.settings;
 		const rows = await memberLevelStore.topByTotalXp(guildId, 10);
+		const avatars = await resolveBoardAvatars(client, guildId, rows.map((row) => row.userId));
 		const entries: LevelsBoardEntry[] = rows.map((row) => ({
 			userId: row.userId,
 			username: row.username,
@@ -81,11 +84,20 @@ export async function refreshLevelsBoard(client: Client, guildId: string): Promi
 			// curve change the way a cached level field would.
 			level: levelFromTotalXp(row.totalXp, settings.curve, settings.curveMultiplier, settings.maxLevel),
 			xp: row.totalXp,
+			avatar: avatars.get(row.userId) ?? null,
 		}));
 
-		const embed = buildLevelsBoardEmbed(levelingCopy.board.allTime, entries);
+		// The card when it renders, the text board when it does not.
+		const windowLabel = levelingCopy.board.allTime;
+		const board = await withRenderFallback(
+			() => renderLevelsBoardCard(windowLabel, entries),
+			() => buildLevelsBoardEmbed(windowLabel, entries)
+		);
+		const message: BoardMessage = isRenderPayload(board)
+			? { embeds: [buildLevelsBoardCardEmbed(windowLabel, board.ref)], files: [board.attachment] }
+			: { embeds: [board], files: [] };
 		const config = await guildConfigStore.findByGuildId(guildId);
-		await postOrEdit(channel, (config?.levelsMessageId as string | null) ?? null, embed, guildId);
+		await postOrEdit(channel, (config?.levelsMessageId as string | null) ?? null, message, guildId);
 	} catch (error) {
 		console.error(LOG_MESSAGES.leveling.boardPostFailed(guildId), error);
 	}
@@ -99,6 +111,31 @@ export async function refreshAllLevelsBoards(client: Client): Promise<void> {
 	for (const [guildId] of client.guilds.cache) {
 		await refreshLevelsBoard(client, guildId);
 	}
+}
+
+// The board's faces, for the members still in the guild. Members missing from
+// the cache are fetched in one gateway request rather than one REST call each,
+// and a member who left simply draws the placeholder. Never throws: a board
+// without faces is still a board.
+async function resolveBoardAvatars(client: Client, guildId: string, userIds: readonly string[]): Promise<Map<string, AvatarRequest>> {
+	const avatars = new Map<string, AvatarRequest>();
+	try {
+		const guild = client.guilds.cache.get(guildId);
+		if (!guild || userIds.length === 0) return avatars;
+		const uncached = userIds.filter((userId) => !guild.members.cache.has(userId));
+		if (uncached.length > 0) {
+			await guild.members.fetch({ user: [...uncached] }).catch((error: unknown) => {
+				console.warn(LOG_MESSAGES.leveling.boardAvatarsFailed(guildId), error);
+			});
+		}
+		for (const userId of userIds) {
+			const member = guild.members.cache.get(userId);
+			if (member) avatars.set(userId, avatarRequestFor(member.user, LEVELS_BOARD_AVATAR_SIZE));
+		}
+	} catch (error) {
+		console.warn(LOG_MESSAGES.leveling.boardAvatarsFailed(guildId), error);
+	}
+	return avatars;
 }
 
 // ── the coalescing throttle ────────────────────────────────────────────────
@@ -141,12 +178,16 @@ export const _clearLevelsBoardTimers = (): void => {
 //     persisting the new id.
 //   • any OTHER error returns without posting, so the next trigger retries
 //     rather than this one duplicating the board.
-async function postOrEdit(
-	channel: TextChannel,
-	existingMessageId: string | null,
-	embed: ReturnType<typeof buildLevelsBoardEmbed>,
-	guildId: string
-): Promise<void> {
+//
+// An edit always sends `attachments: []` beside the new files. Without it the
+// previous card stays attached under the new one, and a board that falls back to
+// text would keep showing a stale card as a loose file.
+interface BoardMessage {
+	embeds: EmbedBuilder[];
+	files: AttachmentBuilder[];
+}
+
+async function postOrEdit(channel: TextChannel, existingMessageId: string | null, board: BoardMessage, guildId: string): Promise<void> {
 	const selfId = channel.client.user?.id;
 
 	if (existingMessageId) {
@@ -156,7 +197,7 @@ async function postOrEdit(
 				console.warn(LOG_MESSAGES.leveling.boardStaleAuthor(existingMessageId, guildId));
 				return;
 			}
-			await existing.edit({ embeds: [embed] });
+			await existing.edit({ embeds: board.embeds, files: board.files, attachments: [] });
 			return;
 		} catch (error) {
 			if (error instanceof DiscordAPIError && (error.code === 10008 || error.code === 10003)) {
@@ -175,7 +216,7 @@ async function postOrEdit(
 
 	let message: Message;
 	try {
-		message = await channel.send({ embeds: [embed] });
+		message = await channel.send({ embeds: board.embeds, files: board.files });
 	} catch (error) {
 		console.error(LOG_MESSAGES.leveling.boardPostFailed(guildId), error);
 		return;

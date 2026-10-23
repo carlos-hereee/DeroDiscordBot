@@ -16,7 +16,7 @@
 // to name the package at all.
 
 export type CanvasModule = typeof import("@napi-rs/canvas");
-export type { Image, SKRSContext2D } from "@napi-rs/canvas";
+export type { Canvas, Image, SKRSContext2D } from "@napi-rs/canvas";
 
 type CanvasLoader = () => Promise<CanvasModule>;
 

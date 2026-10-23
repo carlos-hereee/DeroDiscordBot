@@ -150,4 +150,26 @@ export const COLORS = {
 	// participation vs presence over time), so color is the first thing telling
 	// a member which one they are scrolling past.
 	LEVELS_BOARD: "#0d9488",
+	// ── rendered cards (2026-10 item 243) ──
+	// The canvas cards' own surfaces, which embeds never use. They are the
+	// platform's dark mode tokens (page, panel, nested block, primary, secondary
+	// and muted text) so a card reads as Company Uno rather than as a second look.
+	// A card still takes its ACCENT from the surface's embed color above, which
+	// keeps a card and its fallback embed on the same hue.
+	CARD_BACKGROUND: "#0b1120",
+	CARD_PANEL: "#111c2e",
+	CARD_NESTED: "#18233a",
+	CARD_TEXT: "#f8fafc",
+	CARD_TEXT_SECONDARY: "#94a3b8",
+	CARD_TEXT_MUTED: "#7c8ba1",
+	// The four achievement tier metals on the unlock medallion. Separate keys
+	// because ACHIEVEMENT above is one embed color for every tier. Gold borrows
+	// FORTUNE_ULTRA's value on purpose: two golds would flatten the brand's top
+	// rung, so the gold tier IS that rung rather than a third gold beside it.
+	// Diamond is a pale indigo ice, not a cyan, because teal and cyan read as
+	// "AI or live" on the platform.
+	ACHIEVEMENT_BRONZE: "#cd7f32",
+	ACHIEVEMENT_SILVER: "#cbd5e1",
+	ACHIEVEMENT_GOLD: "#ffd23a",
+	ACHIEVEMENT_DIAMOND: "#c7d2fe",
 } satisfies Record<string, ColorResolvable>;
