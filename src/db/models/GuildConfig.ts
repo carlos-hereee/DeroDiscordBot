@@ -687,6 +687,17 @@ const guildConfigSchema = new Schema(
 		// How:   plain Boolean, default false so every existing/legacy row loads
 		//        as "not destroyed" and behaves exactly as before.
 		homebaseDestroyed: { type: Boolean, required: false, default: false },
+
+		// ── monthly arcade post (2026-10 item 244 Phase 3b) ─────────────
+		// What:  whether last month's arcade post (top winning Hold'em hands, the
+		//        top rated player per rated game, the luckiest player) goes to this
+		//        server's leaderboard channel on the 1st.
+		// Who:   written by /dero-config arcade monthly-post; read by
+		//        features/ratings/monthlyArcadePost.ts at post time.
+		// When:  read once a month per guild.
+		// How:   default TRUE, an owner decision, so every legacy row is opted in
+		//        with no backfill and an admin who wants quiet turns it off.
+		arcadeMonthlyPost: { type: Boolean, required: false, default: true },
 	},
 	{ timestamps: true }
 );

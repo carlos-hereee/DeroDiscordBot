@@ -115,6 +115,13 @@ export const BOT_LOG_EVENTS = {
 	//        of a run can cost a guild some of its digests but can never DM a
 	//        member the same week twice.
 	WEEKLY_DIGEST_SENT_PREFIX: "weekly_digest_sent",
+	// ── the monthly arcade post (2026-10 item 244 Phase 3b) ────────
+	// What:  per-guild, per-month log that last month's arcade post went out.
+	// Who:   monthlyArcadePost claims it BEFORE it sends, the weekly digest's rule.
+	// When:  once per guild per UTC month key ("2026-10").
+	// How:   claimed first, so a restart or two bot processes overlapping on a
+	//        deploy can cost a server its post but never post it twice.
+	ARCADE_MONTHLY_POST_PREFIX: "arcade_monthly_post",
 	// ── Dero brain audit (Dero voice plan, Phase 2a) ───────────────
 	// What:  one row per brain job the bot acted on (ACTION), and one row per
 	//        brain result the bot threw out whole (REJECTED).
@@ -180,3 +187,6 @@ export const gameRoomArchivedEvent = (roomId: string): string => `${BOT_LOG_EVEN
 
 // Compose the per-week weekly digest event key, the same shape as the keys above.
 export const weeklyDigestSentEvent = (period: string): string => `${BOT_LOG_EVENTS.WEEKLY_DIGEST_SENT_PREFIX}:${period}`;
+
+// Compose the per-month arcade post event key, the same shape as the weekly digest's.
+export const arcadeMonthlyPostEvent = (month: string): string => `${BOT_LOG_EVENTS.ARCADE_MONTHLY_POST_PREFIX}:${month}`;

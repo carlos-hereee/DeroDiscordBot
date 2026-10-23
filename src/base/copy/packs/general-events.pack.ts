@@ -340,6 +340,8 @@ export const generalEventsCopy: IPluginCopy = {
 						"Your profile: level, server rank, your win/loss record in every game, and your achievements.",
 						"`/levels`",
 						"See who is most active in the server, this week, this month, or all time.",
+						"`/rating`",
+						"Your arcade rating in Hold'em, Battleship and Monopoly, the server's best, and the luckiest players.",
 						"`/achievements`",
 						"What you have unlocked and what is closest. A few stay hidden until you earn them.",
 					].join("\n"),
@@ -719,4 +721,56 @@ export const generalEventsCopy: IPluginCopy = {
 	// so this pack points at the rok-commander words instead of keeping a second copy
 	// that could drift from them.
 	holdemHands: rokCommanderCopy.holdemHands,
+
+	// ── arcade ratings (2026-10 item 244 Phase 3b) ────────────────
+	// The same surfaces as the rok-commander pack's arcadeRatings, in the streamer
+	// voice. "Rating", never Elo, in this voice too.
+	arcadeRatings: {
+		// Never read at runtime: Discord registers one command for every server, from
+		// the default pack. Present because every pack carries the same shape.
+		command: {
+			description: "Arcade ratings: yours, this server's best, and the luckiest players",
+			me: "Your rating in each rated game",
+			board: "The best rated players of one game in this server",
+			luck: "This month's luckiest players at coin flip, dice and rock paper scissors",
+			gameOption: "Which rated game",
+		},
+		provisionalMark: "?",
+		provisionalNote: "A ? means the rating is still settling: fewer than 10 rated games.",
+		notInGuild: "Ratings belong to a server. Run this inside one, not in a DM.",
+		readFailed: "Could not load the ratings right now. Try again in a moment.",
+		me: {
+			title: (name: string) => `⚔️ ${name}'s arcade ratings`,
+			rated: (game: string, rating: string, ratedGames: number) =>
+				`**${game}**: ${rating}, from ${ratedGames} rated ${ratedGames === 1 ? "match" : "matches"}`,
+			unrated: (game: string) => `**${game}**: no rated match yet`,
+			footer: "Only games of skill are rated. Games of chance count toward the luck board instead.",
+		},
+		board: {
+			title: (game: string) => `🏆 ${game} ratings in this server`,
+			row: (place: number, name: string, rating: string) => `${place}. **${name}**: ${rating}`,
+			empty: "Nobody in this server has a rating in this game yet. Finish a match to be the first.",
+		},
+		luck: {
+			title: "🍀 Luckiest players this month",
+			description:
+				"Coin flip, dice roll and rock paper scissors, scored by wins above an even split. Ties do not count.",
+			row: (place: number, name: string, score: string, wins: number, decided: number) =>
+				`${place}. **${name}**: ${score} (${wins} of ${decided} won)`,
+			empty: (minimum: number) => `Nobody has ${minimum} decided games of chance this month yet.`,
+		},
+		monthlyPost: {
+			title: (month: string) => `📜 The arcade in ${month}`,
+			handsHeading: "Top winning hands",
+			handsDetail: (count: number) => `won ${count} ${count === 1 ? "showdown" : "showdowns"}`,
+			handsEmpty: "No Hold'em hand reached a showdown.",
+			ratedHeading: "Top rated",
+			ratedDetail: (game: string, rating: string) => `${game}, rated ${rating}`,
+			ratedEmpty: "No rated match was finished.",
+			luckHeading: "Luckiest",
+			luckDetail: (score: string, wins: number, decided: number) => `${score} above even, ${wins} of ${decided} won`,
+			luckEmpty: (minimum: number) => `Nobody reached ${minimum} decided games of chance.`,
+			footer: "See your own with /rating me.",
+		},
+	},
 };

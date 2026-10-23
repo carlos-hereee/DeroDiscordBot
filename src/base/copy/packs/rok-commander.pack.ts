@@ -434,6 +434,8 @@ export const rokCommanderCopy = {
 						"Your renown: level, rank in the realm, your record in every game, and the honors you hold.",
 						"`/levels`",
 						"See which warriors are most present in this realm, this week, this month, or all time.",
+						"`/rating`",
+						"Your arcade rating in Hold'em, Battleship and Monopoly, this realm's finest, and the luckiest hands.",
 						"`/achievements`",
 						"The honors you have claimed, and the ones within reach. Some stay secret until earned.",
 					].join("\n"),
@@ -950,5 +952,61 @@ export const rokCommanderCopy = {
 		},
 		// The ace high straight flush has a name of its own, and every player knows it.
 		royalFlush: "royal flush",
+	},
+
+	// ── arcade ratings (2026-10 item 244 Phase 3b) ────────────────
+	// What members read from /rating and from the monthly arcade post. Members
+	// call it a "rating", never Elo: it is OpenSkill, and the word promises
+	// nothing about the math. Game names come from gameRoomsCopy.gameLabel, the
+	// one place a game slug becomes words, so they are not repeated here.
+	arcadeRatings: {
+		// The slash command's descriptions. Discord registers one set for every server,
+		// so /rating reads these from this default pack rather than per guild.
+		command: {
+			description: "Arcade ratings: yours, this realm's finest, and fortune's favorites",
+			me: "Your rating in each rated game",
+			board: "The finest rated warriors of one game in this realm",
+			luck: "This month's luckiest warriors at coin flip, dice and rock paper scissors",
+			gameOption: "Which rated game",
+		},
+		// Appended to a rating under 10 rated games, so an early number never reads as settled.
+		provisionalMark: "?",
+		provisionalNote: "A ? marks a rating still settling, earned in fewer than 10 rated games.",
+		notInGuild: "Ratings are kept within a realm. Ask me inside a server, not a DM.",
+		readFailed: "The ratings scrolls would not open just now. Try again in a moment.",
+		me: {
+			title: (name: string) => `⚔️ ${name}'s arcade ratings`,
+			rated: (game: string, rating: string, ratedGames: number) =>
+				`**${game}**: ${rating}, from ${ratedGames} rated ${ratedGames === 1 ? "match" : "matches"}`,
+			unrated: (game: string) => `**${game}**: no rated match yet`,
+			footer: "Only games of skill are rated. Games of chance feed the luck board instead.",
+		},
+		board: {
+			title: (game: string) => `🏆 ${game} ratings in this realm`,
+			row: (place: number, name: string, rating: string) => `${place}. **${name}**: ${rating}`,
+			empty: "No warrior of this realm holds a rating in this game yet. Finish a match and claim the first.",
+		},
+		luck: {
+			title: "🍀 The luckiest warriors this month",
+			description:
+				"Coin flip, dice roll and rock paper scissors, scored by wins above an even split. A tie decides nothing and counts for nothing.",
+			row: (place: number, name: string, score: string, wins: number, decided: number) =>
+				`${place}. **${name}**: ${score} (${wins} of ${decided} won)`,
+			empty: (minimum: number) => `No warrior has ${minimum} decided games of chance this month yet. Fortune is still deciding.`,
+		},
+		// ── the monthly arcade post, on the 1st in the leaderboard channel ──
+		monthlyPost: {
+			title: (month: string) => `📜 The arcade in ${month}`,
+			handsHeading: "Top winning hands",
+			handsDetail: (count: number) => `won ${count} ${count === 1 ? "showdown" : "showdowns"}`,
+			handsEmpty: "No Hold'em hand reached a showdown.",
+			ratedHeading: "Top rated",
+			ratedDetail: (game: string, rating: string) => `${game}, rated ${rating}`,
+			ratedEmpty: "No rated match was finished.",
+			luckHeading: "Luckiest",
+			luckDetail: (score: string, wins: number, decided: number) => `${score} above even, ${wins} of ${decided} won`,
+			luckEmpty: (minimum: number) => `Nobody reached ${minimum} decided games of chance.`,
+			footer: "Ask for your own with /rating me.",
+		},
 	},
 };

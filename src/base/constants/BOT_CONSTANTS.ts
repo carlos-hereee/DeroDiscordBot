@@ -1,6 +1,6 @@
 // ── the owner's time zone ──
 // Every bot clock that means a human calendar (the Monday digest, the daily XP cap's
-// day) runs in Central time, the owner's zone, rather than the Railway host's UTC.
+// day, the monthly arcade post) runs in Central time, the owner's zone, rather than the Railway host's UTC.
 // One string so the digest and the cap can never disagree about which day it is.
 // The render analytics digest keeps its own copy of the same zone (DIGEST_TIME_ZONE).
 const CENTRAL_TIME_ZONE = "America/Chicago";
@@ -693,6 +693,14 @@ export const BOT_CONSTANTS = {
 		BAND_CLOSE: 150,
 		// Owner decision 2026-10-23 (2026-10 item 244): the host's Tight band admits joiners within this many display points.
 		BAND_TIGHT: 75,
+		// How many players /rating board and /rating luck list, the same ten /levels shows.
+		BOARD_SIZE: 10,
+		// Owner decision 2026-10-23 (2026-10 item 244): the monthly arcade post names the top three winning Hold'em hands.
+		MONTHLY_TOP_HANDS: 3,
+		// Owner decision 2026-10-23 (2026-10 item 244): each server's last month posts on the 1st at 9:05 am.
+		MONTHLY_POST_CRON: "5 9 1 * *",
+		// The post cron reads in the owner's zone, not the Railway host clock (UTC), so 9:05 stays 9:05 across daylight saving.
+		MONTHLY_POST_TIME_ZONE: CENTRAL_TIME_ZONE,
 	},
 
 	// ── invite URL provenance ─────────────────────────────────────

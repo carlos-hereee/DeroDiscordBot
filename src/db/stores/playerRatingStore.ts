@@ -4,8 +4,9 @@ import { PlayerRating, type IPlayerRating } from "@db/models/PlayerRating.js";
 // ── Player rating store ──
 // Every DB touch for PlayerRating. Thin on purpose: features/ratings decides the
 // finishing order, the OpenSkill update and the display number. The store reads the
-// players of one match in one query and writes one player's new rating as a single
-// upsert, so a first rated game creates the row and every later one moves it.
+// players of one match (or of one server's board) in one query, reads one player's
+// every game for /rating me, and writes one player's new rating as a single upsert,
+// so a first rated game creates the row and every later one moves it.
 
 export interface IRatingWrite {
 	mu: number;
@@ -19,6 +20,11 @@ export const playerRatingStore = {
 	async findForPlayers(userIds: readonly string[], game: string): Promise<IPlayerRating[]> {
 		if (userIds.length === 0) return [];
 		return PlayerRating.find({ userId: { $in: [...userIds] }, game }).lean<IPlayerRating[]>();
+	},
+
+	/** Every game one player holds a rating in; a game they never had a rated result in is absent. */
+	async findAllForPlayer(userId: string): Promise<IPlayerRating[]> {
+		return PlayerRating.find({ userId }).lean<IPlayerRating[]>();
 	},
 
 	// One rated game for one player: the new estimate is SET (it was computed from the

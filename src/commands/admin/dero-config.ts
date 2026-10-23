@@ -18,19 +18,26 @@ import { formatUsd } from "@features/voice/pricing.js";
 import { isTtsKeyConfigured } from "@features/voice/elevenLabsTts.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
+import { ratingsCopy } from "@features/ratings/ratingsCopy.js";
 
 // ── /dero-config ──────────────────────────────────────────────────────
 // What:  every per guild voice setting in one admin command: the kill switch,
 //        Listen on or off, the monthly cap, and the three allowlists later
 //        phases authorize against. The voice itself is not a setting: Dero
 //        speaks with DERO_DEFAULT_VOICE_ID, so enable works straight away.
+//        The `arcade` group holds the arcade settings (2026-10 item 244): today
+//        the monthly arcade post switch, stored on GuildConfig rather than
+//        DeroVoiceConfig because it has nothing to do with the voice. Item 245
+//        Phase 4b (the command merge) has not run yet, so this group is a new
+//        name that phase must fold into its command layout.
 // Who:   server admins, gated at runtime by ADMIN_COMMANDS in main.ts (guild
 //        owner or the bot's admin role). It carries no Discord default
 //        permission, which would hide it from that admin role.
 // When:  on demand. Every write is idempotent with an explicit "already X"
 //        reply, so repeating a command never reads as a fake change.
 // Where: writes DeroVoiceConfig through deroVoiceConfigStore. Read by the Listen
-//        button and handler and by the spend meter.
+//        button and handler and by the spend meter. The arcade group writes
+//        GuildConfig.arcadeMonthlyPost, read by features/ratings/monthlyArcadePost.ts.
 // How:   ① guild gate (rejects DM use); ② setup gate (a guild that never ran
 //        /setup has no admin role for the runtime gate to check); ③ dispatch on
 //        the subcommand group or subcommand; ④ one ephemeral embed reply.
@@ -110,7 +117,19 @@ export const data = new SlashCommandBuilder()
 	)
 	.addSubcommandGroup(listGroup("role", c.sub.roleGroup))
 	.addSubcommandGroup(listGroup("channel", c.sub.channelGroup))
-	.addSubcommandGroup(listGroup("voicechannel", c.sub.voiceChannelGroup));
+	.addSubcommandGroup(listGroup("voicechannel", c.sub.voiceChannelGroup))
+	.addSubcommandGroup((group) =>
+		group
+			.setName("arcade")
+			.setDescription(ratingsCopy.config.group)
+			.addSubcommand((sub) =>
+				sub
+					.setName("monthly-post")
+					.setDescription(ratingsCopy.config.monthlyPost)
+					// A boolean like `listen`, so the two on and off switches in this command read the same.
+					.addBooleanOption((option) => option.setName("enabled").setDescription(ratingsCopy.config.monthlyPostOption).setRequired(true))
+			)
+	);
 
 // ── handlers, one per subcommand ──
 
@@ -198,6 +217,15 @@ async function editList(
 	return info(c.listRemoved(mention), list.title);
 }
 
+// Same idempotent shape as the voice switches: an unchanged value says so and writes nothing.
+// A row that never stored the field reads as ON, the schema's default.
+async function setMonthlyPost(guildId: string, storedValue: boolean | null | undefined, on: boolean): Promise<EmbedBuilder> {
+	const title = ratingsCopy.config.title;
+	if ((storedValue ?? true) === on) return info(ratingsCopy.config.monthlyPostUnchanged(on), title);
+	await guildConfigStore.update(guildId, { arcadeMonthlyPost: on });
+	return info(ratingsCopy.config.monthlyPostSet(on), title);
+}
+
 function isListKind(group: string | null): group is ListKind {
 	return group === "role" || group === "channel" || group === "voicechannel";
 }
@@ -218,10 +246,15 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	}
 
 	try {
-		// ③ dispatch
-		const current = await deroVoiceConfigStore.findByGuildId(guildId);
+		// ③ dispatch. The arcade group needs only the GuildConfig the setup gate already read.
 		const group = interaction.options.getSubcommandGroup(false);
 		const sub = interaction.options.getSubcommand(true);
+		if (group === "arcade") {
+			const embed = await setMonthlyPost(guildId, guildConfig.arcadeMonthlyPost, interaction.options.getBoolean("enabled", true));
+			await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+			return;
+		}
+		const current = await deroVoiceConfigStore.findByGuildId(guildId);
 
 		let embed: EmbedBuilder;
 		if (isListKind(group)) {

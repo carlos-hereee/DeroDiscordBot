@@ -288,6 +288,20 @@ describe("GuildConfig declares the LEVELING subtree", () => {
 	});
 });
 
+describe("GuildConfig declares the monthly arcade post switch (2026-10 item 244 Phase 3b)", () => {
+	it("defaults to ON on every legacy row, with no backfill", () => {
+		// The owner's default: a server hears about its month unless an admin turns it off.
+		expect(new GuildConfigModel(baseRow).get("arcadeMonthlyPost")).toBe(true);
+	});
+
+	it("round trips an admin's OFF rather than dropping it, and is a real Boolean path", () => {
+		const doc = new GuildConfigModel({ ...baseRow, arcadeMonthlyPost: false });
+		expect(doc.get("arcadeMonthlyPost")).toBe(false);
+		expect((doc.toObject() as Record<string, unknown>).arcadeMonthlyPost).toBe(false);
+		expect(GuildConfigModel.schema.path("arcadeMonthlyPost")?.instance).toBe("Boolean");
+	});
+});
+
 describe("the control case: strict mode really is on", () => {
 	// Without this, every assertion above could pass for the wrong reason. If strict mode were
 	// off, an undeclared field would round trip happily and the tests would be measuring nothing.

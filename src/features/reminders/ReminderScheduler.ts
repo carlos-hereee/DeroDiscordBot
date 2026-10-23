@@ -21,6 +21,7 @@ import { mapWithConcurrency } from "@utils/mapWithConcurrency.js";
 import { activityStore } from "@db/stores/activityStore.js";
 import { playerActivityRetentionDays } from "@utils/config.js";
 import { sendRenderAnalyticsDigest } from "@features/renderer/renderAnalyticsDigest.js";
+import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
 
 // ── resolveOverride ────────────────────────────────────────────────
 // What:  given an event + an original occurrence (the cron-computed fire
@@ -245,6 +246,21 @@ export function startScheduler(client: Client): void {
 				void sendRenderAnalyticsDigest(client);
 			},
 			{ timezone: BOT_CONSTANTS.RENDER_ANALYTICS.DIGEST_TIME_ZONE }
+		)
+	);
+
+	// ── monthly arcade post (2026-10 item 244 Phase 3b) ──
+	// Last month's arcade highlights in each opted in server's leaderboard channel,
+	// on the 1st in the owner's zone rather than the host's. runMonthlyArcadePost
+	// never throws and claims each server's month before it posts, so the void
+	// drops nothing and a second process on a deploy cannot post a month twice.
+	scheduledTasks.push(
+		cron.schedule(
+			BOT_CONSTANTS.RATINGS.MONTHLY_POST_CRON,
+			() => {
+				void runMonthlyArcadePost(client);
+			},
+			{ timezone: BOT_CONSTANTS.RATINGS.MONTHLY_POST_TIME_ZONE }
 		)
 	);
 

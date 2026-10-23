@@ -8,6 +8,7 @@ import type { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 
 const mocks = vi.hoisted(() => ({
 	guildConfig: vi.fn(),
+	guildConfigUpdate: vi.fn(),
 	findByGuildId: vi.fn(),
 	upsert: vi.fn(),
 	addToList: vi.fn(),
@@ -15,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 	currentMonthCents: vi.fn(),
 }));
 
-vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.guildConfig } }));
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.guildConfig, update: mocks.guildConfigUpdate } }));
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({
 	deroVoiceConfigStore: {
 		findByGuildId: mocks.findByGuildId,
@@ -71,6 +72,7 @@ async function replyText(options: Options, guildId: string | null = "g1"): Promi
 
 beforeEach(() => {
 	mocks.guildConfig.mockReset().mockResolvedValue({ guildId: "g1" });
+	mocks.guildConfigUpdate.mockReset().mockResolvedValue({ guildId: "g1" });
 	mocks.findByGuildId.mockReset().mockResolvedValue(STORED);
 	mocks.upsert.mockReset().mockResolvedValue(STORED);
 	mocks.addToList.mockReset().mockResolvedValue(STORED);
@@ -91,7 +93,38 @@ describe("the builder", () => {
 		const json = data.toJSON();
 		expect(json.default_member_permissions).toBeUndefined();
 		const names = (json.options ?? []).map((option) => option.name);
-		expect(names).toEqual(["status", "enable", "disable", "listen", "cap", "role", "channel", "voicechannel"]);
+		expect(names).toEqual(["status", "enable", "disable", "listen", "cap", "role", "channel", "voicechannel", "arcade"]);
+	});
+
+	it("carries the arcade group's monthly-post switch as a required boolean, like listen", () => {
+		const arcade = (data.toJSON().options ?? []).find((option) => option.name === "arcade") as
+			| { options?: Array<{ name: string; options?: Array<{ name: string; type: number; required?: boolean }> }> }
+			| undefined;
+		const monthlyPost = arcade?.options?.find((sub) => sub.name === "monthly-post");
+		// 5 is Discord's BOOLEAN option type.
+		expect(monthlyPost?.options).toEqual([expect.objectContaining({ name: "enabled", type: 5, required: true })]);
+	});
+});
+
+describe("arcade monthly-post (2026-10 item 244 Phase 3b)", () => {
+	it("turns the post off on GuildConfig and never reads the voice config", async () => {
+		const text = await replyText({ group: "arcade", sub: "monthly-post", enabled: false });
+		expect(mocks.guildConfigUpdate).toHaveBeenCalledWith("g1", { arcadeMonthlyPost: false });
+		expect(mocks.findByGuildId).not.toHaveBeenCalled();
+		expect(text).toContain("Monthly arcade post: **OFF**");
+	});
+
+	it("reads a row that never stored the switch as ON, so turning it on changes nothing", async () => {
+		expect(await replyText({ group: "arcade", sub: "monthly-post", enabled: true })).toContain("already **ON**");
+		expect(mocks.guildConfigUpdate).not.toHaveBeenCalled();
+	});
+
+	it("turns it back on, and repeats an OFF idempotently", async () => {
+		mocks.guildConfig.mockResolvedValue({ guildId: "g1", arcadeMonthlyPost: false });
+		expect(await replyText({ group: "arcade", sub: "monthly-post", enabled: true })).toContain("Monthly arcade post: **ON**");
+		expect(mocks.guildConfigUpdate).toHaveBeenCalledWith("g1", { arcadeMonthlyPost: true });
+		expect(await replyText({ group: "arcade", sub: "monthly-post", enabled: false })).toContain("already **OFF**");
+		expect(mocks.guildConfigUpdate).toHaveBeenCalledTimes(1);
 	});
 });
 
