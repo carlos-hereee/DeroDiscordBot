@@ -54,6 +54,14 @@ export const generalEventsCopy: IPluginCopy = {
 			(user: string, q: string) => `🙌 Glad you're here, ${user}. ${q}`,
 			(user: string, q: string) => `☕ Welcome aboard, ${user}. ${q}`,
 		] as Array<(user: string, q: string) => string>,
+		// The welcome card under the greeting, neutral voice. See the
+		// rok-commander pack's greeter.card comment.
+		card: {
+			kicker: "NEW MEMBER",
+			title: (name: string) => `Welcome, ${name}`,
+			subtitle: (guildName: string) => `Glad you found ${guildName}`,
+			memberCount: (count: number) => `Member number ${count.toLocaleString("en-US")}`,
+		},
 	},
 
 	listEvents: {

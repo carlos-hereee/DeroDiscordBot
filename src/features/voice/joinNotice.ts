@@ -1,7 +1,9 @@
-import type { Guild } from "discord.js";
+import type { AttachmentBuilder, Guild } from "discord.js";
 import { NO_PINGS } from "@utils/mentions.js";
+import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { renderCallSpeech } from "./callSpeech.js";
 import { voiceCopy } from "./voiceCopy.js";
+import { renderVoicePresenceCard } from "./voicePresenceRenderer.js";
 import type { VoiceSpeaker } from "./voiceSpeaker.js";
 
 // ── join notice ────────────────────────────────────────────────────────────
@@ -20,7 +22,8 @@ import type { VoiceSpeaker } from "./voiceSpeaker.js";
 //        own member chat unless that is where the command ran. Every post goes
 //        out with no pings of any kind.
 // How:   ① the notice first, on EVERY join, so the text says what Dero hears
-//        before Dero makes a sound; ② render the greeting through callSpeech (cache, then meter,
+//        before Dero makes a sound, with the JOINED presence card under it when
+//        the card draws (the line alone when it does not); ② render the greeting through callSpeech (cache, then meter,
 //        then provider); ③ queue it at brain priority, the highest, since it is
 //        Dero's own line. A refused or failed render leaves the join standing,
 //        silent, and the outcome tells the caller which line to show.
@@ -38,15 +41,18 @@ export interface AnnounceJoinInput {
 	speaker: VoiceSpeaker;
 }
 
-/** Post one voice line in a guild text channel with every ping off. Never throws. */
-export async function postVoiceNotice(guild: Guild, channelId: string, line: string): Promise<void> {
+/**
+ * Post one voice line in a guild text channel with every ping off, and any
+ * files under it (the join notice's presence card). Never throws.
+ */
+export async function postVoiceNotice(guild: Guild, channelId: string, line: string, files: AttachmentBuilder[] = []): Promise<void> {
 	try {
 		const channel = guild.channels.cache.get(channelId);
 		if (!channel || !channel.isSendable()) {
 			console.warn(`[dero-voice] notice skipped guild=${guild.id} channel=${channelId} reason=unavailable`);
 			return;
 		}
-		await channel.send({ content: line, allowedMentions: NO_PINGS });
+		await channel.send({ content: line, allowedMentions: NO_PINGS, ...(files.length > 0 ? { files } : {}) });
 	}
 	catch (error) {
 		const code = (error as { code?: unknown } | null)?.code ?? "unknown";
@@ -65,8 +71,9 @@ async function greet(guildId: string, voiceId: string, speaker: VoiceSpeaker): P
 
 /** The join's public notice, then its spoken hello. Returns how the hello went. */
 export async function announceJoin({ guild, controlChannelId, voiceChannelId, voiceId, speaker }: AnnounceJoinInput): Promise<GreetingOutcome> {
-	// ①
-	await postVoiceNotice(guild, controlChannelId, voiceCopy.call.joinNotice(voiceChannelId));
+	// ① The notice's text is the privacy promise, so it posts whether or not the
+	// card draws; the card only rides under it.
+	await postVoiceNotice(guild, controlChannelId, voiceCopy.call.joinNotice(voiceChannelId), await joinedCardFiles(guild, voiceChannelId));
 	try {
 		return await greet(guild.id, voiceId, speaker);
 	}
@@ -75,4 +82,16 @@ export async function announceJoin({ guild, controlChannelId, voiceChannelId, vo
 		console.warn(`[dero-voice] greeting failed guild=${guild.id}`, error);
 		return "playbackFailed";
 	}
+}
+
+// The JOINED presence card as the notice's files, or none when the card does not
+// draw. The channel's name comes from the guild cache, since a card cannot draw
+// the channel mention the line itself uses.
+async function joinedCardFiles(guild: Guild, voiceChannelId: string): Promise<AttachmentBuilder[]> {
+	const channelName = guild.channels.cache.get(voiceChannelId)?.name ?? "";
+	const card = await withRenderFallback(
+		() => renderVoicePresenceCard({ state: "joined", channelName }),
+		() => null
+	);
+	return isRenderPayload(card) ? [card.attachment] : [];
 }

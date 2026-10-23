@@ -1,4 +1,4 @@
-import { EmbedBuilder } from "discord.js";
+import { EmbedBuilder, type HexColorString } from "discord.js";
 import { AUTHOR, COLORS, FOOTER } from "@base/copy/brand.js";
 import type { AvatarRequest } from "@features/renderer/index.js";
 import { levelingCopy } from "./levelingCopy.js";
@@ -320,6 +320,55 @@ export function buildAchievementUnlockEmbed(userId: string, unlocks: readonly Ac
 				...unlocks.map((unlock) => levelingCopy.achievements.unlockLine(unlock.id, unlock.tier, unlock.earnedBy)),
 			].join("\n")
 		);
+}
+
+// ── role unlock (2026-10 item 243 Phase 4) ─────────────────────────────────
+// One builder for both shapes of the message: with the card's ref it carries
+// the card as its image, without one it is the text fallback on its own. The
+// mention line is the same either way, since only text can name a member.
+export interface RoleUnlockView {
+	userId: string;
+	roleId: string;
+	/** The role's name as plain text, because a card cannot draw a role mention. */
+	roleName: string;
+	/** The role's own color, or LEVEL_MILESTONE's when the role has none. */
+	roleColor: HexColorString;
+	level: number;
+	displayName: string;
+	avatar: AvatarRequest | null;
+}
+
+export function buildRoleUnlockEmbed(view: RoleUnlockView, imageRef?: string): EmbedBuilder {
+	const embed = base()
+		.setTitle(levelingCopy.roleUnlock.title)
+		.setColor(view.roleColor)
+		.setDescription(levelingCopy.roleUnlock.unlockedBy(view.userId, view.roleId, view.level));
+	if (imageRef) embed.setImage(imageRef);
+	return embed;
+}
+
+// ── weekly digest (2026-10 item 243 Phase 4) ───────────────────────────────
+// A member's own week, sent to them as a direct message. Plain data, so the
+// card and this text fallback read the same numbers.
+export interface WeeklyDigestView {
+	guildName: string;
+	displayName: string;
+	avatar: AvatarRequest | null;
+	weekXp: number;
+	weekRank: number;
+	activeMembers: number;
+	level: number;
+}
+
+export function buildWeeklyDigestEmbed(view: WeeklyDigestView, imageRef?: string): EmbedBuilder {
+	const copy = levelingCopy.weeklyDigest;
+	const embed = base()
+		.setTitle(copy.title(view.guildName))
+		.setColor(COLORS.ACCOUNT)
+		.setDescription([copy.xpLine(view.weekXp), copy.rankLine(view.weekRank, view.activeMembers), copy.levelLine(view.level)].join("\n"))
+		.setFooter({ text: copy.footer });
+	if (imageRef) embed.setImage(imageRef);
+	return embed;
 }
 
 // ── achievements ────────────────────────────────────────────────────────────

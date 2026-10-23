@@ -1,5 +1,5 @@
 import { GatewayIntentBits, Collection, Events, MessageFlags, Client, Partials } from "discord.js";
-import { deroVoiceSamplerEnabled, discordToken } from "@utils/config.js";
+import { deroVoiceSamplerEnabled, discordToken, weeklyDigestRunOnBoot } from "@utils/config.js";
 import clientReady from "@commands/utility/ready.js";
 import fs from "fs";
 import path from "path";
@@ -50,6 +50,7 @@ import { registerVoiceSessionWatchers } from "@features/voice/voiceSessionWatche
 import { startVoiceListener } from "@features/voice/voiceListener.js";
 import { startSoakSampler } from "@features/voice/soakSampler.js";
 import { registerGreeter, ensureIntroChannelsWritable } from "@features/greeter/welcomeNewMember.js";
+import { runWeeklyDigest, startWeeklyDigest } from "@features/leveling/weeklyDigest.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
 import { registerMessageXp } from "@features/leveling/messageXp.js";
@@ -123,6 +124,8 @@ clientReady(client);
 let apiServer: Server | undefined;
 // The Dero voice soak sampler, or null when DERO_VOICE_SAMPLER is not 1.
 let soakSampler: { stop(): void } | null = null;
+// The weekly digest cron, or null before ClientReady has started it.
+let weeklyDigest: { stop(): void } | null = null;
 let isShuttingDown = false;
 
 async function gracefulShutdown(signal: string, exitCode = 0): Promise<void> {
@@ -156,6 +159,7 @@ async function gracefulShutdown(signal: string, exitCode = 0): Promise<void> {
 	}
 	// ① stop cron so no new reminder tick begins mid-teardown.
 	try {
+		weeklyDigest?.stop();
 		stopScheduler();
 	} catch (err) {
 		console.error("[shutdown] stopScheduler failed", err);
@@ -546,6 +550,14 @@ process.on("uncaughtException", (err) => {
 		registerMessageXp(client);
 		registerReactionXp(client);
 		startVoiceSweep(client);
+		// The weekly digest DM (2026-10 item 243 Phase 4): Monday 9 am Central, the
+		// most active members of each guild get their own week as a card. Its own
+		// cron rather than a passenger on ReminderScheduler's, since it paces its
+		// DMs over minutes and the reminder tick has a 60 second budget. With
+		// WEEKLY_DIGEST_RUN_ON_BOOT=1 one pass also runs now, the owner's hand
+		// trigger for the test guild; the per week claim keeps it from repeating.
+		weeklyDigest = startWeeklyDigest(client);
+		if (weeklyDigestRunOnBoot) void runWeeklyDigest(client);
 
 		// ── outage watcher ────────────────────────────────────────
 		// Polls serverApi reachability state every 60s. DMs the platform

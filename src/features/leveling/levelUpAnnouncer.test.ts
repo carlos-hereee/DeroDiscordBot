@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 	botLogLog: vi.fn(),
 	renderLevelUpCard: vi.fn(),
 	renderAchievementUnlockCard: vi.fn(),
+	renderRoleUnlockCard: vi.fn(),
 }));
 
 vi.mock("./levelingConfig.js", () => ({ getLevelingConfig: mocks.getLevelingConfig }));
@@ -30,6 +31,7 @@ vi.mock("@db/stores/botLogStore.js", () => ({
 // cards" describe pins the EMBED path, the fallback members get whenever a card
 // cannot be drawn. That describe swaps cards in.
 vi.mock("./levelUpRenderer.js", () => ({ LEVEL_UP_AVATAR_SIZE: 128, renderLevelUpCard: mocks.renderLevelUpCard }));
+vi.mock("./roleUnlockRenderer.js", () => ({ ROLE_UNLOCK_AVATAR_SIZE: 256, renderRoleUnlockCard: mocks.renderRoleUnlockCard }));
 vi.mock("./achievementUnlockRenderer.js", () => ({
 	ACHIEVEMENT_UNLOCK_AVATAR_SIZE: 128,
 	renderAchievementUnlockCard: mocks.renderAchievementUnlockCard,
@@ -41,6 +43,7 @@ import {
 	_drainAnnouncerNow,
 	_queuedChannels,
 	announceAchievements,
+	announceRoleUnlock,
 	applyTemplate,
 	handleLevelCrossing,
 } from "./levelUpAnnouncer.js";
@@ -67,6 +70,14 @@ function harness(options: { missingPermission?: bigint } = {}): Harness {
 		guild: {
 			id: "g1",
 			name: "The Kingdom",
+			// The two reward roles the role unlock cases draw: one with a color, and
+			// one with none, which Discord reports as 0 and "#000000".
+			roles: {
+				cache: new Map([
+					["role-knight", { name: "Knight", color: 0xe11d48, hexColor: "#e11d48" }],
+					["role-plain", { name: "Plain", color: 0, hexColor: "#000000" }],
+				]),
+			},
 			members: {
 				me: { id: "bot" },
 				cache: new Map([
@@ -129,6 +140,7 @@ beforeEach(() => {
 	mocks.botLogLog.mockReset().mockResolvedValue(undefined);
 	mocks.renderLevelUpCard.mockReset().mockResolvedValue(null);
 	mocks.renderAchievementUnlockCard.mockReset().mockResolvedValue(null);
+	mocks.renderRoleUnlockCard.mockReset().mockResolvedValue(null);
 });
 
 describe("⚠️ THE NEVER PING INVARIANT", () => {
@@ -546,5 +558,50 @@ describe("the rendered cards and their fallbacks (2026-10 item 243 Phase 2)", ()
 		await announceAchievements(client, "g1", "u2", UNLOCKS, "Gone Member");
 
 		expect(mocks.renderAchievementUnlockCard).toHaveBeenCalledWith(expect.objectContaining({ userId: "u2", displayName: "Gone Member", avatar: null }));
+	});
+});
+
+// ── the role unlock card (2026-10 item 243 Phase 4) ────────────────────────
+describe("announceRoleUnlock", () => {
+	type UnlockPayload = { embeds: Array<{ data: { image?: { url: string }; description?: string } }>; files?: AttachmentBuilder[]; allowedMentions: unknown };
+
+	it("posts the role unlock EMBED, with no files and no pings, when the card answers null", async () => {
+		const { client, send } = harness();
+
+		await announceRoleUnlock(client, "g1", "u1", "role-knight", 10);
+
+		const payload = payloads(send)[0] as unknown as UnlockPayload;
+		expect(payload.files).toBeUndefined();
+		expect(payload.embeds[0].data.image).toBeUndefined();
+		expect(payload.embeds[0].data.description).toContain("<@&role-knight>");
+		expect(payload.allowedMentions).toEqual({ parse: [], roles: [], users: [] });
+	});
+
+	it("posts the card with the role's name, color and level when it draws", async () => {
+		const attachment = new AttachmentBuilder(Buffer.from("img"), { name: "role-unlock-abc.png" });
+		mocks.renderRoleUnlockCard.mockResolvedValue({ attachment, ref: "attachment://role-unlock-abc.png" });
+		const { client, send } = harness();
+
+		await announceRoleUnlock(client, "g1", "u1", "role-knight", 10);
+
+		expect(mocks.renderRoleUnlockCard).toHaveBeenCalledWith(
+			expect.objectContaining({ roleName: "Knight", roleColor: "#e11d48", level: 10, displayName: "Silent", avatar: expect.objectContaining({ userId: "u1", size: 256 }) })
+		);
+		const payload = payloads(send)[0] as unknown as UnlockPayload;
+		expect(payload.files).toEqual([attachment]);
+		expect(payload.embeds[0].data.image?.url).toBe("attachment://role-unlock-abc.png");
+	});
+
+	it("rings a colorless role in the milestone violet rather than black", async () => {
+		const { client } = harness();
+		await announceRoleUnlock(client, "g1", "u1", "role-plain", 5);
+		expect(mocks.renderRoleUnlockCard).toHaveBeenCalledWith(expect.objectContaining({ roleColor: "#a855f7" }));
+	});
+
+	it("stays quiet when the guild switched announcements off", async () => {
+		mocks.getLevelingConfig.mockResolvedValue(context({ announceMode: "off" }));
+		const { client, send } = harness();
+		await announceRoleUnlock(client, "g1", "u1", "role-knight", 10);
+		expect(send).not.toHaveBeenCalled();
 	});
 });

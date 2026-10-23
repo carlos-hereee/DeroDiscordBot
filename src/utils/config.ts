@@ -204,6 +204,16 @@ const deroBrainKey = process.env.DERO_BRAIN_KEY || "";
 // Where: set by the owner for the 30 minute soak, then unset.
 const deroVoiceSamplerEnabled = process.env.DERO_VOICE_SAMPLER === "1";
 
+// ── Weekly digest hand trigger (2026-10 item 243 Phase 4) ──
+// What: runs the weekly digest once at boot, for the week that ended most
+//   recently, on top of its Monday 9 am Central cron.
+// Who: read only by main.ts.
+// When: exactly "1" turns it on, the same rule as the sampler above. The digest
+//   claims each guild's week before sending, so a boot with this left on sends
+//   nothing twice.
+// Where: set by the owner for the test guild check, then unset.
+const weeklyDigestRunOnBoot = process.env.WEEKLY_DIGEST_RUN_ON_BOOT === "1";
+
 // ── Rendered card store on S3 (2026-10 item 243) ──
 // What: the bot's own IAM key, bucket and region for the rendered card cache,
 //   plus the switch that turns that S3 tier on. The key is the BOT's, not
@@ -297,6 +307,7 @@ export {
 	elevenLabsApiKey,
 	deroBrainKey,
 	deroVoiceSamplerEnabled,
+	weeklyDigestRunOnBoot,
 	discordBotAwsAccessKey,
 	discordBotAwsSecretKey,
 	discordBotAwsBucketName,

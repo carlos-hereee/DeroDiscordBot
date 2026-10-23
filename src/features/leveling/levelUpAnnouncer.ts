@@ -1,8 +1,8 @@
-import { PermissionFlagsBits, TextChannel, type Client, type Guild, type GuildMember } from "discord.js";
+import { PermissionFlagsBits, TextChannel, type Client, type Guild, type GuildMember, type HexColorString } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
-import { buildDeroImageAttachment, DERO_IMAGE_REF } from "@base/copy/brand.js";
+import { buildDeroImageAttachment, COLORS, DERO_IMAGE_REF } from "@base/copy/brand.js";
 import { getCopyOverride } from "@base/copy/getCopy.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
@@ -13,10 +13,11 @@ import { buildCombinedLevelUpEmbed, buildLevelUpEmbed, type AchievementUnlockEnt
 import { getLevelingConfig, type GuildLevelingContext } from "./levelingConfig.js";
 import { scheduleLevelsBoardRefresh } from "./LevelsBoard.js";
 import { reconcileRewards } from "./roleRewards.js";
-import { buildAchievementUnlockCardEmbed, buildAchievementUnlockEmbed } from "./levelingEmbeds.js";
+import { buildAchievementUnlockCardEmbed, buildAchievementUnlockEmbed, buildRoleUnlockEmbed, type RoleUnlockView } from "./levelingEmbeds.js";
 import { LEVEL_UP_AVATAR_SIZE, renderLevelUpCard } from "./levelUpRenderer.js";
 import { ACHIEVEMENT_UNLOCK_AVATAR_SIZE, renderAchievementUnlockCard } from "./achievementUnlockRenderer.js";
-import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
+import { ROLE_UNLOCK_AVATAR_SIZE, renderRoleUnlockCard } from "./roleUnlockRenderer.js";
+import { avatarRequestFor, canvasColor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 
 // ── levelUpAnnouncer ───────────────────────────────────────────────────────
 // Decides that a level was crossed, claims the right to say so exactly once, and
@@ -499,6 +500,58 @@ export async function announceAchievements(
 			...(isRenderPayload(card)
 				? { embeds: [buildAchievementUnlockCardEmbed(userId, unlocks.length, card.ref)], files: [card.attachment] }
 				: { embeds: [card] }),
+			allowedMentions: NO_MENTIONS,
+		});
+	} catch (error) {
+		console.error(LOG_MESSAGES.leveling.announceFailed(guildId), error);
+	}
+}
+
+// ── announceRoleUnlock (2026-10 item 243 Phase 4) ──────────────────────────
+// The role unlock card, posted once per member and role: roleRewards calls this
+// only when a role landed that the member did not already hold, which is what
+// "first application" means. It posts through this module for the same reason
+// achievements do, one never ping assertion and one permission precheck for
+// every leveling send. Same gates as an achievement: only announceMode "off"
+// silences it, since a role is not a level.
+//
+// Never throws. It runs after the role write succeeded, so a failure here must
+// not reach roleRewards (convention 7).
+export async function announceRoleUnlock(client: Client, guildId: string, userId: string, roleId: string, level: number): Promise<void> {
+	try {
+		const context = await getLevelingConfig(guildId);
+		if (!context || context.homebaseDestroyed) return;
+		if (!context.settings.enabled || context.settings.announceMode === "off") return;
+
+		const channel = await resolveAnnounceChannel(client, guildId, context, null);
+		if (!channel) return;
+		const missing = missingPermissions(channel);
+		if (missing.length > 0) {
+			console.warn(LOG_MESSAGES.leveling.announceMissingPermissions(channel.id, guildId, missing.join(", ")));
+			return;
+		}
+		const role = channel.guild.roles.cache.get(roleId);
+		if (!role) return;
+
+		assertNotPingable();
+		const member = await resolveCardMember(channel.guild, userId);
+		const view: RoleUnlockView = {
+			userId,
+			roleId,
+			roleName: role.name,
+			// A role with no color reports 0 and "#000000", which would ring the face
+			// in black on a near black sheet.
+			roleColor: role.color === 0 ? (canvasColor(COLORS.LEVEL_MILESTONE) as HexColorString) : role.hexColor,
+			level,
+			displayName: member?.displayName ?? "",
+			avatar: member ? avatarRequestFor(member.user, ROLE_UNLOCK_AVATAR_SIZE) : null,
+		};
+		const card = await withRenderFallback(
+			() => renderRoleUnlockCard(view),
+			() => buildRoleUnlockEmbed(view)
+		);
+		await channel.send({
+			...(isRenderPayload(card) ? { embeds: [buildRoleUnlockEmbed(view, card.ref)], files: [card.attachment] } : { embeds: [card] }),
 			allowedMentions: NO_MENTIONS,
 		});
 	} catch (error) {

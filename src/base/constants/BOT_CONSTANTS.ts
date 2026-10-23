@@ -468,6 +468,23 @@ export const BOT_CONSTANTS = {
 		// busy burst. Same shape as scheduleLeaderboardRefresh.
 		ANNOUNCE_COALESCE_MS: 15_000,
 
+		// ── the weekly digest DM (2026-10 item 243 Phase 4) ──
+		// Monday at 9 am Central, the owner's chosen slot, so the week it recaps has
+		// ended for every guild whatever its weekStart. node-cron reads the timezone,
+		// so the send tracks daylight saving rather than drifting an hour twice a year.
+		WEEKLY_DIGEST_CRON: "0 9 * * 1",
+		WEEKLY_DIGEST_TIMEZONE: "America/Chicago",
+		// Only the most active members of the week hear from Dero, at most this
+		// many per guild. A DM nobody asked for is the fastest way for a bot to be
+		// reported as spam, so the digest is a reward for the top of the week rather
+		// than a broadcast to everyone who said one word.
+		WEEKLY_DIGEST_MAX_MEMBERS: 25,
+		// The pause between two digest DMs. Discord rate limits opening DM channels
+		// and flags a bot that opens many at once, so the run is paced: 25 members
+		// in ten guilds is about six minutes, well inside the hour before the next
+		// cron anything could collide with.
+		WEEKLY_DIGEST_DM_SPACING_MS: 1_500,
+
 		// Above this many level ups in one window, send ONE combined message
 		// instead of that many separate ones. This is what keeps a live
 		// #announcements channel readable, and it is also the per-channel 429

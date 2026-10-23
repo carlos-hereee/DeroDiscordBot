@@ -26,6 +26,7 @@ export { avatarRequestFor, fetchAvatar, type AvatarRequest } from "./avatarCache
 export { buildRenderKey, hashRenderInput, type RenderFormat } from "./s3.js";
 export { loadDeroArt, logDeroArtStatus, DERO_ART_FILES, type DeroArt, type DeroArtSlot } from "./deroArt.js";
 export * from "./primitives.js";
+export { drawDeroPose, drawMemberFace } from "./cardParts.js";
 
 /**
  * What a draw function may answer. Nothing, for a card drawn exactly as meant.

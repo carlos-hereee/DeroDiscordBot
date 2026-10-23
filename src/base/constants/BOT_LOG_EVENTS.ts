@@ -107,6 +107,14 @@ export const BOT_LOG_EVENTS = {
 	//        and poll keys there is nothing to namespace, the notice fires once
 	//        per guild for the life of the feature.
 	LEVELING_INTRO_SENT: "leveling_intro_sent",
+	// ── the weekly digest (2026-10 item 243 Phase 4) ───────────────
+	// What:  per-guild, per-week log that the weekly digest DMs went out.
+	// Who:   weeklyDigest claims it BEFORE the first DM for a guild and week.
+	// When:  once per guild per week key ("2026-W43").
+	// How:   claimed first rather than logged after, so a restart in the middle
+	//        of a run can cost a guild some of its digests but can never DM a
+	//        member the same week twice.
+	WEEKLY_DIGEST_SENT_PREFIX: "weekly_digest_sent",
 	// ── Dero brain audit (Dero voice plan, Phase 2a) ───────────────
 	// What:  one row per brain job the bot acted on (ACTION), and one row per
 	//        brain result the bot threw out whole (REJECTED).
@@ -169,3 +177,6 @@ export const pollSentEvent = (pollId: string): string => `${BOT_LOG_EVENTS.POLL_
 export const gameRoomCreatedEvent = (roomId: string): string => `${BOT_LOG_EVENTS.GAME_ROOM_CREATED_PREFIX}:${roomId}`;
 
 export const gameRoomArchivedEvent = (roomId: string): string => `${BOT_LOG_EVENTS.GAME_ROOM_ARCHIVED_PREFIX}:${roomId}`;
+
+// Compose the per-week weekly digest event key, the same shape as the keys above.
+export const weeklyDigestSentEvent = (period: string): string => `${BOT_LOG_EVENTS.WEEKLY_DIGEST_SENT_PREFIX}:${period}`;

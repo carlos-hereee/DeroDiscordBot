@@ -163,6 +163,22 @@ export const gameRoomsCopy = {
 		},
 		cardCancelled: (hostId: string): string => `<@${hostId}> called off the challenge.`,
 		cardStarted: (channelId: string): string => `The match is under way in <#${channelId}>.`,
+		// Words drawn into the challenge card's picture (2026-10 item 243 Phase 4).
+		// A picture cannot carry a mention, so it names nobody by id; the embed
+		// text above it still does.
+		cardImage: {
+			kicker: (game: GameSlug): string => `${(GAME_LABELS[game] ?? game).toUpperCase()} CHALLENGE`,
+			versus: "VS",
+			waiting: "Waiting for challengers",
+			more: (count: number): string => `+${count} more`,
+			status: {
+				choosing: "SETTING UP",
+				invite: "INVITE ONLY",
+				open: "OPEN TO ALL",
+				started: "UNDER WAY",
+				cancelled: "CALLED OFF",
+			},
+		},
 
 		// The rematch presser's ephemeral confirmation, pointing at the fresh card.
 		rematchOffered: (channelId: string): string => `Rematch card is up in <#${channelId}>.`,

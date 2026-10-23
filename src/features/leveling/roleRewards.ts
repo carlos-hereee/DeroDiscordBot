@@ -2,6 +2,10 @@ import { DiscordAPIError, PermissionFlagsBits, type Client, type GuildMember, ty
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getLevelingConfig, invalidateLevelingConfig } from "./levelingConfig.js";
+// A runtime only cycle (levelUpAnnouncer imports reconcileRewards from here):
+// both sides call the other inside a function body, never at module load, so
+// ESM resolves it, and the unlock card keeps the announcer's one send path.
+import { announceRoleUnlock } from "./levelUpAnnouncer.js";
 
 // ── roleRewards ────────────────────────────────────────────────────────────
 // Grant a Discord role when a member reaches a level.
@@ -190,6 +194,12 @@ export async function reconcileRewards(
 		// ⚠️ ONE atomic PATCH. The audit reason is what an admin sees in the server's
 		// audit log, so it names the level rather than saying "bot".
 		await member.roles.set(nextRoles, `Level ${level}`);
+		// The role unlock card (2026-10 item 243 Phase 4), posted only AFTER the
+		// write succeeded and only for a role the member did not hold before, so a
+		// member sees it once per role whichever path applied it (a level up,
+		// /account, an achievement). Fire and forget: it never throws, and the
+		// level up path must not wait on a card before composing its own line.
+		if (newlyEarned) void announceRoleUnlock(client, guildId, userId, newlyEarned, level);
 		return newlyEarned;
 	} catch (error) {
 		await handleGrantError(error, guildId);

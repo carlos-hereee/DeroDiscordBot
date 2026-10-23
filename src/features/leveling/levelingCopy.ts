@@ -179,6 +179,37 @@ export const levelingCopy = {
 		presence: "Presence",
 		winLoss: (won: number, lost: number, drawn: number): string => `${won}W  ${lost}L  ${drawn}D`,
 		moreUnlocks: (count: number): string => `and ${count} more`,
+		// ── platform cards (2026-10 item 243 Phase 4) ──
+		roleUnlocked: "ROLE UNLOCKED",
+		unlockedAtLevel: (level: number): string => `Unlocked at level ${level}`,
+		weekRecap: "YOUR WEEK",
+		weekXp: (xp: number): string => `${xp.toLocaleString()} XP`,
+		weekXpLabel: "earned this week",
+		weekRank: (rank: number, active: number): string => `#${rank.toLocaleString()} of ${active.toLocaleString()}`,
+		weekRankLabel: "this week's standing",
+		levelLabel: "current level",
+	},
+
+	// ── role unlock (2026-10 item 243 Phase 4) ──
+	// Posted once, the first time a reward role lands on a member. The mentions
+	// sit inside an embed, which never pings, and the send carries no mentions
+	// besides.
+	roleUnlock: {
+		title: "Role unlocked",
+		unlockedBy: (userId: string, roleId: string, level: number): string =>
+			`<@${userId}> unlocked <@&${roleId}> at level ${level}.`,
+	},
+
+	// ── the weekly digest DM (2026-10 item 243 Phase 4) ──
+	// A direct message, so nothing here takes a mention: a role or channel
+	// mention renders as raw text outside its server. The guild is named instead.
+	weeklyDigest: {
+		title: (guildName: string): string => `Your week in ${guildName}`,
+		xpLine: (xp: number): string => `You earned **${xp.toLocaleString()} XP** this week.`,
+		rankLine: (rank: number, active: number): string =>
+			`That puts you **#${rank.toLocaleString()}** of ${active.toLocaleString()} active members.`,
+		levelLine: (level: number): string => `You are level **${level}**. Keep showing up.`,
+		footer: "Sent once a week to the members who were active. An admin can turn leveling announcements off.",
 	},
 
 	// ── errors and refusals ──

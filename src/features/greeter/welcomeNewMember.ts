@@ -3,6 +3,9 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { ICEBREAKERS } from "./icebreakers.js";
 import { attachListenRow } from "@features/voice/listenButton.js";
+import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
+import type { IPluginCopy } from "@base/copy/types.js";
+import { renderWelcomeCard, WELCOME_AVATAR_SIZE, type WelcomeCardView } from "./welcomeCardRenderer.js";
 
 // ── new-member greeter (v1.6) ──────────────────────────────────────────────
 // What:  on guildMemberAdd, post a welcome in the guild's introductions channel
@@ -19,6 +22,8 @@ import { attachListenRow } from "@features/voice/listenButton.js";
 //        embed) so the mention actually notifies, Discord does not fire a
 //        notification for a mention inside an embed description. allowedMentions
 //        is scoped to the one joining member so nothing else can be pinged.
+//        The welcome card (2026-10 item 243 Phase 4) rides the same message as
+//        a file under the text; when it does not draw, the text posts alone.
 
 // Uniform random pick. Math.random is fine in bot runtime (the no-random rule
 // only applies to resumable Workflow scripts, not the bot itself).
@@ -43,13 +48,22 @@ export async function welcomeNewMember(member: GuildMember): Promise<boolean> {
 		const channel = await member.client.channels.fetch(config.introChannelId).catch(() => null);
 		if (!(channel instanceof TextChannel)) return false;
 
-		const framing = pick(getPluginCopy(config).greeter.framings);
+		const copy = getPluginCopy(config);
+		const framing = pick(copy.greeter.framings);
 		const question = pick(ICEBREAKERS);
 		if (!framing || !question) return false;
 
+		// Drawn BEFORE the send, so the card arrives with the ping rather than as
+		// a second notification. Both callers can wait: the join path is fire and
+		// forget and the admin button deferred its reply first.
+		const card = await withRenderFallback(
+			() => renderWelcomeCard(welcomeCardView(member, copy.greeter.card)),
+			() => null
+		);
 		const message = await channel.send({
 			content: framing(`<@${member.id}>`, question),
 			allowedMentions: { users: [member.id] },
+			...(isRenderPayload(card) ? { files: [card.attachment] } : {}),
 		});
 		// Dero's voice can read the welcome aloud. Added by an edit AFTER the send,
 		// fire and forget, so the voice config read can never delay or block the
@@ -63,6 +77,20 @@ export async function welcomeNewMember(member: GuildMember): Promise<boolean> {
 		console.error(`[greeter] failed to welcome ${member.id} in guild ${member.guild?.id}`, error);
 		return false;
 	}
+}
+
+// The welcome card's view of one newcomer, in the guild pack's voice. The member
+// count is the guild's own, which already includes the newcomer.
+export function welcomeCardView(member: GuildMember, copy: IPluginCopy["greeter"]["card"]): WelcomeCardView {
+	const count = member.guild.memberCount;
+	return {
+		kicker: copy.kicker,
+		title: copy.title(member.displayName),
+		subtitle: copy.subtitle(member.guild.name),
+		memberCount: Number.isFinite(count) && count > 0 ? copy.memberCount(count) : null,
+		displayName: member.displayName,
+		avatar: avatarRequestFor(member.user, WELCOME_AVATAR_SIZE),
+	};
 }
 
 // ── boot: make existing guilds' introductions channels member-writable ──────

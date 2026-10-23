@@ -50,6 +50,15 @@ export const rokCommanderCopy = {
 			(user: string, q: string) => `🏰 Welcome to the kingdom, ${user}. ${q}`,
 			(user: string, q: string) => `🐉 A fresh face in the ranks. Welcome, ${user}. Most pressing question of the day: ${q}`,
 		] as Array<(user: string, q: string) => string>,
+		// The welcome card under the greeting (2026-10 item 243 Phase 4). The
+		// card cannot draw a mention, so it names the member and the realm in
+		// plain text; the ping stays in the message content above it.
+		card: {
+			kicker: "A NEW SOUL ARRIVES",
+			title: (name: string) => `Welcome, ${name}`,
+			subtitle: (guildName: string) => `The gates of ${guildName} swing open`,
+			memberCount: (count: number) => `Warrior number ${count.toLocaleString("en-US")}`,
+		},
 	},
 
 	listEvents: {

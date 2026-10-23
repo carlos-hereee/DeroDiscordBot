@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ChannelType, TextChannel } from "discord.js";
+import { AttachmentBuilder, ChannelType, TextChannel } from "discord.js";
 import type { ButtonInteraction, StringSelectMenuInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
@@ -17,6 +17,11 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGui
 vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, describeRoomOpenFailure: () => "nope" }));
 vi.mock("./soloRooms.js", () => ({ openSoloRoom: vi.fn(), describeSoloOpenFailure: () => "solo nope" }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+// The opener card's picture (2026-10 item 243 Phase 4). The renderer answers null
+// unless a case says otherwise, so every case written before the picture still
+// sees the text card alone; the view is a fixed fake so no case needs avatars.
+const cardMocks = vi.hoisted(() => ({ renderChallengeCard: vi.fn(), challengeCardView: vi.fn() }));
+vi.mock("./challengeCardRenderer.js", () => cardMocks);
 
 import { openInvitePicker, handleInviteSelect, joinChallenge, startMatch, rematchFromRoom, chooseMonopolyDraftSetting } from "./challengeBoard.js";
 import { RoomProvisioner } from "./RoomProvisioner.js";
@@ -105,6 +110,8 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
 	storeMock.addPoolMember.mockResolvedValue(undefined);
+	cardMocks.renderChallengeCard.mockResolvedValue(null);
+	cardMocks.challengeCardView.mockResolvedValue({ game: "rps", status: "open", host: { name: "Host", avatar: null }, challengers: [], hiddenCount: 0 });
 });
 
 // ⚠️ F9's STRUCTURAL HALF. The picker is a StringSelect the BOT populates, which is
@@ -370,5 +377,69 @@ describe("the Monopoly auction toggle", () => {
 		await startMatch(interaction, makeRoom({ game: "monopoly", spectatorIds: ["a"], monopolyAuctions: true }));
 
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ game: "monopoly", monopolyAuctions: true }));
+	});
+});
+
+describe("the opener card's picture", () => {
+	const members = makeMembers([{ id: HOST, bot: false, name: "Host" }]);
+	type CardEdit = { embeds: Array<{ data: { image?: { url: string } } }>; files: unknown[]; attachments: unknown[] };
+
+	// A board the refresh can reach: the stored challenges channel, and the card
+	// message inside it whose edits each case reads.
+	function rigBoard(userId: string) {
+		const edit = vi.fn().mockResolvedValue(undefined);
+		const channel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, {
+			id: "chal-1",
+			messages: { fetch: vi.fn().mockResolvedValue({ edit }) },
+		});
+		configMock.findByGuildId.mockResolvedValue({ arcadeChallengesChannelId: "chal-1" });
+		const interaction = makeButton(userId, members);
+		Object.assign(interaction.guild as object, { channels: { fetch: vi.fn().mockResolvedValue(channel) } });
+		return { interaction, edit };
+	}
+	const boardRoom = () => makeRoom({ visibility: "public", boardMessageId: "card-1" });
+
+	it("edits the card with the faces as its image when the picture draws", async () => {
+		const attachment = new AttachmentBuilder(Buffer.from("png"), { name: "challenge-abc.png" });
+		cardMocks.renderChallengeCard.mockResolvedValue({ attachment, ref: "attachment://challenge-abc.png" });
+		const { interaction, edit } = rigBoard("joiner-2");
+
+		await joinChallenge(interaction, boardRoom());
+
+		const payload = edit.mock.calls[0][0] as CardEdit;
+		expect(payload.embeds[0].data.image?.url).toBe("attachment://challenge-abc.png");
+		expect(payload.files).toEqual([attachment]);
+		expect(payload.attachments).toEqual([]);
+	});
+
+	it("edits the text card alone, dropping any earlier picture, when the picture does not draw", async () => {
+		cardMocks.renderChallengeCard.mockRejectedValue(new Error("simulated renderer failure"));
+		vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const { interaction, edit } = rigBoard("joiner-2");
+
+		await joinChallenge(interaction, boardRoom());
+
+		const payload = edit.mock.calls[0][0] as CardEdit;
+		expect(payload.embeds[0].data.image).toBeUndefined();
+		expect(payload.files).toEqual([]);
+		expect(payload.attachments).toEqual([]);
+	});
+
+	it("drops a slow render once a newer edit has started, so the newer pool wins", async () => {
+		let releaseFirst: (value: null) => void = () => undefined;
+		cardMocks.renderChallengeCard
+			.mockImplementationOnce(() => new Promise((resolve) => (releaseFirst = resolve)))
+			.mockResolvedValueOnce(null);
+		const first = rigBoard("joiner-2");
+		const second = rigBoard("joiner-3");
+
+		const firstJoin = joinChallenge(first.interaction, boardRoom());
+		await vi.waitFor(() => expect(cardMocks.renderChallengeCard).toHaveBeenCalledTimes(1));
+		await joinChallenge(second.interaction, boardRoom());
+		releaseFirst(null);
+		await firstJoin;
+
+		expect(second.edit).toHaveBeenCalledTimes(1);
+		expect(first.edit).not.toHaveBeenCalled();
 	});
 });

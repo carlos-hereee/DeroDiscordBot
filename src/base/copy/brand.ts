@@ -202,4 +202,12 @@ export const COLORS = {
 	MONOPOLY_YELLOW: "#facc15",
 	MONOPOLY_GREEN: "#16a34a",
 	MONOPOLY_DARK_BLUE: "#1d4ed8",
+	// ── platform cards (2026-10 item 243 Phase 4) ──
+	// Dero's voice presence card. Live in a call is exactly the "AI or live" case
+	// the platform reserves teal for, so the listening and speaking states take
+	// the platform teal and a brighter teal beside it; the plain "joined" state
+	// keeps the Dero indigo above. Neither is a leveling color, so the leveling
+	// teal conflict in TECH_DEBT does not reach these.
+	VOICE_LISTENING: "#14b8a6",
+	VOICE_SPEAKING: "#2dd4bf",
 } satisfies Record<string, ColorResolvable>;

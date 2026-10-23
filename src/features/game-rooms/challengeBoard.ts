@@ -7,6 +7,7 @@ import {
 	type ButtonInteraction,
 	type CategoryChannel,
 	type Guild,
+	type MessageEditOptions,
 	type StringSelectMenuInteraction,
 } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -29,6 +30,8 @@ import {
 	type OpenerCardState,
 } from "./challengeBoardEmbeds.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
+import { challengeCardView, renderChallengeCard } from "./challengeCardRenderer.js";
+import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── challengeBoard ───────────────────────────────────────────────────
@@ -88,9 +91,48 @@ async function refreshCard(guild: Guild, room: IGameRoom, state: OpenerCardState
 	if (!channel) return;
 	const message = await channel.messages.fetch(room.boardMessageId).catch(() => null);
 	if (!message) return;
-	await message
-		.edit({ embeds: [openerCardEmbed(state)], components: openerCardRows(room.roomId, state) })
-		.catch((error) => console.warn("[game-rooms] failed to refresh the opener card", error));
+	await editOpenerCard(guild, room.roomId, message, state);
+}
+
+// ── the opener card's picture (2026-10 item 243 Phase 4) ──────────────
+// Every card edit draws the host's and the joiners' faces and sends them with the
+// text in ONE edit, so the picture and the pool line never disagree on screen.
+// When the picture does not draw, the edit carries the text card alone, exactly
+// as before. `attachments: []` drops the previous picture rather than letting it
+// pile up as a loose file under the card on every edit.
+//
+// ⚠️ LATEST WINS. A render takes longer than a text edit (a cold avatar fetch can
+// take seconds), so two joins close together could otherwise land out of order
+// and leave the card showing the older pool. Each edit takes a generation number
+// for its room, and an edit that finishes rendering after a newer one started is
+// dropped: the newer one carries the newer state.
+const cardGenerations = new Map<string, number>();
+
+type EditableCard = { edit(options: MessageEditOptions): Promise<unknown> };
+
+async function editOpenerCard(guild: Guild, roomId: string, message: EditableCard, state: OpenerCardState): Promise<void> {
+	const generation = (cardGenerations.get(roomId) ?? 0) + 1;
+	cardGenerations.set(roomId, generation);
+	const picture = await withRenderFallback(
+		async () => renderChallengeCard(await challengeCardView(guild, state)),
+		() => null
+	);
+	if (cardGenerations.get(roomId) !== generation) return;
+	// A cancelled or started card is never edited again, so its counter can go.
+	if (state.cancelled || state.startedChannelId) cardGenerations.delete(roomId);
+	const card = isRenderPayload(picture) ? picture : null;
+	// Cosmetic, so a failure is logged and swallowed: the draft row is the truth
+	// and the next edit will catch up.
+	try {
+		await message.edit({
+			embeds: [openerCardEmbed(state, card?.ref)],
+			components: openerCardRows(roomId, state),
+			files: card ? [card.attachment] : [],
+			attachments: [],
+		});
+	} catch (error) {
+		console.warn("[game-rooms] failed to refresh the opener card", error);
+	}
 }
 
 // A rematch's head start: the finished room's other players pre-fill the pool, and
@@ -181,6 +223,9 @@ export async function startChallengeDraft(
 			: gameRoomsCopy.board.cardStarted(channel.id).replace("The match is under way in", "Your challenge card is in"),
 		flags: MessageFlags.Ephemeral,
 	});
+	// The card went up as text so the press was answered inside Discord's three
+	// second window; its picture follows in a second edit once it has drawn.
+	void editOpenerCard(guild, room.roomId, card, state);
 	return room;
 }
 

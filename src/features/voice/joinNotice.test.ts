@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Guild } from "discord.js";
+import { AttachmentBuilder, type Guild } from "discord.js";
 import { NO_PINGS } from "@utils/mentions.js";
 import { TtsError } from "./ttsProvider.js";
 import { voiceCopy } from "./voiceCopy.js";
@@ -15,10 +15,15 @@ const mocks = vi.hoisted(() => ({
 	tryReserve: vi.fn(),
 	refund: vi.fn(),
 	synthesize: vi.fn(),
+	renderVoicePresenceCard: vi.fn(),
 }));
 
 vi.mock("./spendMeter.js", () => ({ tryReserve: mocks.tryReserve, refund: mocks.refund }));
 vi.mock("./elevenLabsTts.js", () => ({ elevenLabsTts: { modelId: "test-model", synthesize: mocks.synthesize } }));
+// The JOINED presence card (2026-10 item 243 Phase 4). Null by default, so every
+// case below sees the notice exactly as it was before the card existed; the
+// presence card describe switches it on.
+vi.mock("./voicePresenceRenderer.js", () => ({ renderVoicePresenceCard: mocks.renderVoicePresenceCard }));
 
 import { announceJoin, postVoiceNotice } from "./joinNotice.js";
 
@@ -50,6 +55,7 @@ beforeEach(() => {
 	vi.spyOn(console, "warn").mockImplementation(() => undefined);
 	mocks.tryReserve.mockReset().mockResolvedValue({ status: "ok", reservation: RESERVATION });
 	mocks.refund.mockReset().mockResolvedValue(undefined);
+	mocks.renderVoicePresenceCard.mockReset().mockResolvedValue(null);
 	mocks.synthesize.mockReset().mockImplementation(async () => {
 		order.push("render");
 		return { bytes: PCM_24K, format: "pcm24k" };
@@ -117,5 +123,28 @@ describe("postVoiceNotice", () => {
 	it("skips a channel that is not in the guild's cache", async () => {
 		const guild = { id: "g1", channels: { cache: new Map() } } as unknown as Guild;
 		await expect(postVoiceNotice(guild, "missing", "line")).resolves.toBeUndefined();
+	});
+});
+
+describe("announceJoin's presence card", () => {
+	it("posts the JOINED card under the notice, named for the voice channel", async () => {
+		const attachment = new AttachmentBuilder(Buffer.from("png"), { name: "voice-presence.png" });
+		mocks.renderVoicePresenceCard.mockResolvedValue({ attachment, ref: "attachment://voice-presence.png" });
+		const { input, send } = rig();
+		(input.guild.channels.cache as Map<string, unknown>).set("vc-1", { name: "War Council" });
+
+		await announceJoin(input);
+
+		expect(mocks.renderVoicePresenceCard).toHaveBeenCalledWith({ state: "joined", channelName: "War Council" });
+		expect(send).toHaveBeenCalledWith({ content: voiceCopy.call.joinNotice("vc-1"), allowedMentions: NO_PINGS, files: [attachment] });
+	});
+
+	it("posts the notice alone, the privacy promise intact, when the card does not draw", async () => {
+		mocks.renderVoicePresenceCard.mockRejectedValue(new Error("simulated renderer failure"));
+		const { input, send } = rig();
+
+		expect(await announceJoin(input)).toBe("greeted");
+
+		expect(send).toHaveBeenCalledWith({ content: voiceCopy.call.joinNotice("vc-1"), allowedMentions: NO_PINGS });
 	});
 });

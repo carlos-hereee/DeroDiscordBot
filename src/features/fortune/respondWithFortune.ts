@@ -12,6 +12,8 @@ import { fortuneBuffStore } from "@db/stores/fortuneBuffStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { attachListenRow } from "@features/voice/listenButton.js";
+import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
+import { FORTUNE_SCENE_AVATAR_SIZE, renderFortuneScene } from "./fortuneSceneRenderer.js";
 
 // One reading per user every 10 seconds, SHARED across every entry point: the
 // /fortune slash command and the #command-center invite-card button both call
@@ -68,12 +70,28 @@ export async function respondWithFortune(
 	const pity = dryStreak >= PITY_THRESHOLD;
 	const { tier, verdict, flavor } = rollFortune(Math.random, pity ? 1 : weight);
 
-	// Attach the matching orb animation if it has been rendered (the file is named by
-	// the verdict's slug, foldered by tier). A missing file falls back to a text-only
-	// reading, so the command never breaks on an unrendered verdict.
+	// The scene card (the asker, the orb with this verdict, Dero's hand) takes the
+	// image slot when it draws (2026-10 item 243 Phase 4). When it does not, the
+	// reading falls back to exactly what it was before: the matching orb animation
+	// if it has been rendered (the file is named by the verdict's slug, foldered by
+	// tier), or a text-only reading when that file is missing too, so the command
+	// never breaks on an unrendered verdict.
+	const scene = await withRenderFallback(
+		() =>
+			renderFortuneScene({
+				tier,
+				verdict,
+				displayName: interaction.user.globalName ?? interaction.user.username,
+				avatar: avatarRequestFor(interaction.user, FORTUNE_SCENE_AVATAR_SIZE),
+			}),
+		() => null
+	);
 	const orbPath = join(process.cwd(), "assets", "fortune", "orbs", tier, `${verdictSlug(verdict)}.gif`);
-	const hasOrb = existsSync(orbPath);
-	const embed = buildFortuneEmbed(flavor, tier, question, hasOrb ? FORTUNE_ORB_REF : undefined);
+	const hasOrb = !isRenderPayload(scene) && existsSync(orbPath);
+	let imageRef: string | undefined;
+	if (isRenderPayload(scene)) imageRef = scene.ref;
+	else if (hasOrb) imageRef = FORTUNE_ORB_REF;
+	const embed = buildFortuneEmbed(flavor, tier, question, imageRef);
 
 	const editOptions: InteractionEditReplyOptions = {
 		embeds: [embed],
@@ -81,9 +99,11 @@ export async function respondWithFortune(
 		// guarantees an echoed question can never smuggle a mass ping.
 		allowedMentions: { parse: [] },
 	};
-	// Attach the orb (the embed image) and, on ultra, the bundled Dero avatar its
-	// thumbnail points at. Both must ride the same reply for the references to resolve.
+	// Attach the scene or the orb (the embed image) and, on ultra, the bundled Dero
+	// avatar its thumbnail points at. All must ride the same reply for the
+	// references to resolve.
 	const files: AttachmentBuilder[] = [];
+	if (isRenderPayload(scene)) files.push(scene.attachment);
 	if (hasOrb) files.push(new AttachmentBuilder(orbPath, { name: FORTUNE_ORB_FILE }));
 	if (tier === "ultra") files.push(buildDeroImageAttachment());
 	if (files.length > 0) editOptions.files = files;

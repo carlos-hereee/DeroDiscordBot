@@ -101,6 +101,25 @@ export const voiceCopy = {
 			`Voice answers lately: median ${medianSeconds}s, slowest ${slowestSeconds}s, over the last ${turns} ${turns === 1 ? "turn" : "turns"}.`,
 	},
 
+	// ── the voice presence card (2026-10 item 243 Phase 4) ──
+	// What the card drawn on the join notice and on /dero status says. The state
+	// labels are short because they sit in a pill; the detail lines restate the
+	// join notice's promise in a few words, never a wider one.
+	presence: {
+		state: {
+			joined: "JOINED",
+			listening: "LISTENING",
+			speaking: "SPEAKING",
+		},
+		title: (channelName: string): string => `Dero is in ${channelName}`,
+		detail: {
+			joined: "Dero just joined the call and says hello.",
+			listening: "Listening only to members on the task list.",
+			speaking: "Speaking in the call right now.",
+		},
+		footer: "Dero records and keeps nothing. Stop it with /dero leave.",
+	},
+
 	// ── a voice turn: what Dero SAYS in the call ──
 	// First person, short, and each rendered once and then replayed from the
 	// clip cache. Spoken at brain priority, so they also open the follow up

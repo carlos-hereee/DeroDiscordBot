@@ -8,13 +8,16 @@ import type { Client, GuildMember, Role } from "discord.js";
 // reward that never lands looks exactly like a reward nobody earned. So the
 // refusals and the error taxonomy get the coverage, not the happy path.
 
-const mocks = vi.hoisted(() => ({ getLevelingConfig: vi.fn(), invalidate: vi.fn(), update: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getLevelingConfig: vi.fn(), invalidate: vi.fn(), update: vi.fn(), announceRoleUnlock: vi.fn() }));
 
 vi.mock("./levelingConfig.js", () => ({
 	getLevelingConfig: mocks.getLevelingConfig,
 	invalidateLevelingConfig: mocks.invalidate,
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { update: mocks.update } }));
+// The role unlock card's sender (2026-10 item 243 Phase 4). Mocked so a case here
+// asserts WHEN it is asked to post, never what the announcer then does.
+vi.mock("./levelUpAnnouncer.js", () => ({ announceRoleUnlock: mocks.announceRoleUnlock }));
 
 import { _clearRewardReports, computeDesiredRoles, reconcileRewards, refuseReason } from "./roleRewards.js";
 
@@ -181,6 +184,7 @@ beforeEach(() => {
 	mocks.getLevelingConfig.mockReset().mockResolvedValue(context());
 	mocks.invalidate.mockReset();
 	mocks.update.mockReset().mockResolvedValue(undefined);
+	mocks.announceRoleUnlock.mockReset().mockResolvedValue(undefined);
 });
 
 describe("reconcileRewards applies ONE atomic write", () => {
@@ -233,6 +237,33 @@ describe("reconcileRewards applies ONE atomic write", () => {
 		const { client, rolesSet, warn } = harness();
 		await reconcileRewards(client, "g1", "u1", 20);
 		expect(rolesSet).not.toHaveBeenCalled();
+		warn.mockRestore();
+	});
+});
+
+describe("the role unlock card is asked for on FIRST application only", () => {
+	it("asks once, for the newly gained role and the level, after the write lands", async () => {
+		const { client, rolesSet, warn } = harness({ memberRoles: ["role-member", "role-bronze"] });
+		await reconcileRewards(client, "g1", "u1", 10);
+		expect(mocks.announceRoleUnlock).toHaveBeenCalledTimes(1);
+		expect(mocks.announceRoleUnlock).toHaveBeenCalledWith(client, "g1", "u1", "role-silver", 10);
+		expect(rolesSet.mock.invocationCallOrder[0]).toBeLessThan(mocks.announceRoleUnlock.mock.invocationCallOrder[0]);
+		warn.mockRestore();
+	});
+
+	it("does not ask when the member already holds every reward they qualify for", async () => {
+		const { client, warn } = harness({ memberRoles: ["role-member", "role-bronze"] });
+		await reconcileRewards(client, "g1", "u1", 5);
+		expect(mocks.announceRoleUnlock).not.toHaveBeenCalled();
+		warn.mockRestore();
+	});
+
+	it("does not ask when the write failed, since no role landed", async () => {
+		const { client, rolesSet, warn } = harness({ memberRoles: ["role-member"] });
+		rolesSet.mockRejectedValue(new Error("simulated 50013"));
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		await reconcileRewards(client, "g1", "u1", 10);
+		expect(mocks.announceRoleUnlock).not.toHaveBeenCalled();
 		warn.mockRestore();
 	});
 });

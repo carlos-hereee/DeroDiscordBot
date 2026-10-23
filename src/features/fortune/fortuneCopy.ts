@@ -23,6 +23,13 @@ export const fortuneCopy = {
 
 	cooldownMessage: (seconds: number): string =>
 		`Dero needs a moment to recharge his crystal ball. Try again in ${seconds}s.`,
+
+	// Words drawn into the fortune scene card (2026-10 item 243 Phase 4). The
+	// verdict itself comes from fortunes.ts, so only the frame is here.
+	scene: {
+		askedBy: "A reading for",
+		ultraBadge: "ULTRA",
+	},
 };
 
 // ── /secret-code user-facing copy ──────────────────────────────────────────

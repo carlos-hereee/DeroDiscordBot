@@ -116,7 +116,10 @@ export interface OpenerCardState {
 // remainder rather than silently dropping it.
 const POOL_NAMES_SHOWN = 8;
 
-export function openerCardEmbed(state: OpenerCardState): EmbedBuilder {
+// imageRef, when passed, is the challenge card's picture (the host's and the
+// joiners' faces, 2026-10 item 243 Phase 4), attached to the same message by
+// challengeBoard.
+export function openerCardEmbed(state: OpenerCardState, imageRef?: string): EmbedBuilder {
 	const lines: string[] = [];
 
 	if (state.cancelled) {
@@ -139,11 +142,13 @@ export function openerCardEmbed(state: OpenerCardState): EmbedBuilder {
 		lines.push(gameRoomsCopy.board.cardMonopolyReferee(state.monopolyReferee ?? false));
 	}
 
-	return infoEmbed(
+	const embed = infoEmbed(
 		gameRoomsCopy.board.cardTitle(state.game),
 		lines.join("\n"),
 		COLORS.ARCADE as ColorResolvable
 	);
+	if (imageRef) embed.setImage(imageRef);
+	return embed;
 }
 
 // The card's controls for the current state. Returns an empty array once the draft is

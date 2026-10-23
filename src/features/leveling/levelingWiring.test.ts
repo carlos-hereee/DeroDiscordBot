@@ -98,6 +98,9 @@ describe("the rest of the leveling graph loads", () => {
 		"./roleRewards.js",
 		"./achievements.js",
 		"./achievementEngine.js",
+		"./roleUnlockRenderer.js",
+		"./weeklyDigestRenderer.js",
+		"./weeklyDigest.js",
 	])("%s evaluates without throwing", async (specifier) => {
 		await expect(import(specifier)).resolves.toBeDefined();
 	}, GRAPH_LOAD_TIMEOUT_MS);

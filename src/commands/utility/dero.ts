@@ -25,6 +25,8 @@ import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { announceJoin, type GreetingOutcome } from "@features/voice/joinNotice.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
 import { turnLatencyLog } from "@features/voice/turnLatency.js";
+import { liveVoicePresenceState, renderVoicePresenceCard } from "@features/voice/voicePresenceRenderer.js";
+import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 
 // ── /dero ─────────────────────────────────────────────────────────────────
 // What:  the text path to Dero's brain and Dero's way into a voice call. `tell`
@@ -222,7 +224,8 @@ async function status(interaction: ChatInputCommandInteraction): Promise<void> {
 
 	// Shown to every member: anyone in the server can already see Dero sitting
 	// in a voice channel, so where it is reveals nothing new.
-	const callChannelId = interaction.guildId ? voiceSessions.get(interaction.guildId)?.channelId : undefined;
+	const call = interaction.guildId ? voiceSessions.get(interaction.guildId) : null;
+	const callChannelId = call?.channelId;
 	lines.push(callChannelId ? callCopy.statusInCall(callChannelId) : callCopy.notInCall);
 
 	// Whether YOU may give tasks is shown only to members who may: a refused
@@ -241,7 +244,26 @@ async function status(interaction: ChatInputCommandInteraction): Promise<void> {
 		}
 	}
 
-	await interaction.reply({ embeds: [infoEmbed(deroBrainCopy.status.title, lines.join("\n"))], flags: MessageFlags.Ephemeral });
+	const embed = infoEmbed(deroBrainCopy.status.title, lines.join("\n"));
+	// A live call also gets its presence card, LISTENING or SPEAKING as the speaker
+	// is right now; the embed alone when Dero is not in a call or the card does not
+	// draw. The card reads only the speaker's playing flag, never what is said.
+	const card = call
+		? await withRenderFallback(
+				() =>
+					renderVoicePresenceCard({
+						state: liveVoicePresenceState(call.speaker.status),
+						channelName: interaction.guild?.channels.cache.get(call.channelId)?.name ?? "",
+					}),
+				() => null
+			)
+		: null;
+	if (isRenderPayload(card)) {
+		embed.setImage(card.ref);
+		await interaction.reply({ embeds: [embed], files: [card.attachment], flags: MessageFlags.Ephemeral });
+		return;
+	}
+	await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 // ── /dero join ──
