@@ -14,7 +14,9 @@ import { generalEventsCopy } from "./general-events.pack.js";
 // title; no long dash; every slash command it names really exists; and the
 // copy stays professional (owner decision 2026-10-21): it never says where
 // Dero's brain runs or that Dero can be offline, and it never promises always
-// on voice either (2026-10 item 216, risk R9).
+// on voice either (2026-10 item 216, risk R9). Monopoly rides this release
+// (2026-10 item 241), so both embeds name it and its voice referee, and the
+// referee is promised only behind the host's toggle and a call Dero is already in.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMMANDS = join(HERE, "..", "..", "..", "commands");
@@ -87,5 +89,18 @@ describe("the release announcement", () => {
 		const { public: members, innerSanctum: admins } = rokCommanderCopy.featureAnnouncement;
 		expect(members.description).toContain("Where your keepers switch it on");
 		expect(admins.description).toContain("My voice is switched off here");
+	});
+
+	it.each(EMBEDS)("$label names Monopoly and its voice referee", ({ description }) => {
+		expect(description).toContain("Monopoly");
+		expect(description).toContain("voice referee");
+	});
+
+	it("gives members Monopoly's doorway, and ties the referee to the host's toggle and a call Dero is already in", () => {
+		const { public: members, innerSanctum: admins } = rokCommanderCopy.featureAnnouncement;
+		expect(members.description).toContain("`/mini-game monopoly`");
+		expect(members.description).toContain("turns on the voice referee at its challenge card");
+		expect(members.description).toContain("while I sit in a call with one of its players");
+		expect(admins.description).toContain("it speaks only into a call someone has already brought me into");
 	});
 });
