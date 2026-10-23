@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { MessageFlags, PermissionFlagsBits, type ChatInputCommandInteraction } from "discord.js";
+import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
 
 // ── /render-analytics ─────────────────────────────────────────────────────
 // Pins the owner gate (2026-10 item 244): the rows are platform wide, so only
@@ -119,10 +119,12 @@ describe("/render-analytics owner gate", () => {
 });
 
 describe("/render-analytics builder", () => {
-	it("declares only top10, hidden behind the Administrator default", () => {
+	// No Discord default: the platform owner check in execute is the whole gate, and the
+	// admin command pin test allows a default only on /setup and /self-destruct.
+	it("declares only top10, with no Discord default permission", () => {
 		const json = data.toJSON() as { default_member_permissions?: string; options?: Array<{ name: string }> };
 		expect((json.options ?? []).map((option) => option.name)).toEqual([...RENDER_ANALYTICS_SUBCOMMANDS]);
-		expect(BigInt(json.default_member_permissions ?? "0") & PermissionFlagsBits.Administrator).toBe(PermissionFlagsBits.Administrator);
+		expect(json.default_member_permissions).toBeUndefined();
 	});
 
 	it("is not in BOT_CONSTANTS.ADMIN_COMMANDS", () => {

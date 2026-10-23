@@ -1,7 +1,6 @@
 import {
 	SlashCommandBuilder,
 	ChatInputCommandInteraction,
-	PermissionFlagsBits,
 	MessageFlags,
 } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
@@ -19,8 +18,7 @@ const c = rokCommanderCopy.continueAllSchedules;
 
 export const data = new SlashCommandBuilder()
 	.setName("continue-all-schedules")
-	.setDescription("Resume every paused schedule on this server at once")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+	.setDescription("Resume every paused schedule on this server at once");
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
 	const guildId = interaction.guildId;

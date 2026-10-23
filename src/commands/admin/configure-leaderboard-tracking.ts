@@ -1,7 +1,6 @@
 import {
 	SlashCommandBuilder,
 	ChatInputCommandInteraction,
-	PermissionFlagsBits,
 	MessageFlags,
 	ActionRowBuilder,
 	ButtonBuilder,
@@ -35,7 +34,6 @@ import { buildLeaderboardChannelDeleteCustomId } from "@features/leaderboard/lea
 export const data = new SlashCommandBuilder()
 	.setName("configure-leaderboard-tracking")
 	.setDescription("Toggle whether the bot records participation (reactions + voice joins)")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addBooleanOption((option) =>
 		option
 			.setName("enabled")

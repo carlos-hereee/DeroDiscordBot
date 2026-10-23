@@ -1,4 +1,4 @@
-import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder, type ChatInputCommandInteraction } from "discord.js";
+import { MessageFlags, SlashCommandBuilder, type ChatInputCommandInteraction } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { creatorId } from "@utils/config.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
@@ -15,9 +15,9 @@ import { renderAnalyticsCopy } from "@features/renderer/renderAnalyticsCopy.js";
 //        per surface totals, the memory tier, and the most served cards.
 // Who:   the platform owner ONLY (CREATOR_DISCORD_ID). The rows are platform
 //        wide, so a guild admin seeing them would see every other server's
-//        traffic. The Administrator default only hides it from members' pickers;
-//        the owner check in execute is the real gate, and an empty creatorId
-//        refuses everyone.
+//        traffic. It carries no Discord default permission, so it shows in every
+//        member's picker; the owner check in execute is the whole gate, and an
+//        empty creatorId refuses everyone.
 // Where: deliberately NOT in BOT_CONSTANTS.ADMIN_COMMANDS: that runtime gate
 //        requires a /setup config in the guild, and the owner must be able to
 //        run this from any server the bot is in. It reads only; it never writes.
@@ -35,7 +35,6 @@ const copy = renderAnalyticsCopy;
 export const data = new SlashCommandBuilder()
 	.setName("render-analytics")
 	.setDescription(copy.command.description)
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addSubcommand((sub) =>
 		sub
 			.setName("top10")

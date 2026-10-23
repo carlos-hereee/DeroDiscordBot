@@ -50,10 +50,8 @@ export type HangmanAuthoringRejection =
 	| "wordDenied"
 	| "hintMissing"
 	| "hintTooLong"
-	| "hintContainsWord"
 	| "tooManyExtraHints"
-	| "extraHintTooLong"
-	| "extraHintContainsWord";
+	| "extraHintTooLong";
 
 export type HangmanAuthoringResult =
 	| { ok: true; word: string; hint: string; extraHints: string[] }
@@ -65,26 +63,6 @@ export type HangmanAuthoringResult =
 // rather than silently repaired into a different word.
 function normalise(raw: string): string {
 	return raw.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-// ⚠️ A HINT MAY NOT GIVE THE WORD AWAY, AND THE OBVIOUS CHECK MISSES HALF OF IT.
-// Two directions, both needed:
-//   ① the hint CONTAINS the word. Catches "the answer is planet" and also
-//      "planetary", since that token contains "planet" outright.
-//   ② a hint token is contained BY the word. Catches "plan" for "planet", which
-//      direction ① cannot see: "plan" does not contain "planet". A four letter
-//      prefix of a six letter word hands over most of the mask in order, which is
-//      the same leak wearing a shorter coat.
-// Tokens shorter than HANGMAN_MIN_DISTINCT are ignored in direction ②, because at
-// one or two letters almost any hint would collide with almost any word and every
-// hint would be refused.
-function mentionsWord(text: string, word: string): boolean {
-	const normalised = normalise(text);
-	if (normalised.includes(word)) return true;
-
-	return normalised
-		.split(/[^a-z]+/)
-		.some((token) => token.length >= HANGMAN_MIN_DISTINCT && word.includes(token));
 }
 
 export function validateHangmanAuthoring(
@@ -106,7 +84,9 @@ export function validateHangmanAuthoring(
 	const hint = rawHint.trim().replace(/\s+/g, " ");
 	if (!hint) return { ok: false, reason: "hintMissing" };
 	if (hint.length > HANGMAN_HINT_MAX) return { ok: false, reason: "hintTooLong" };
-	if (mentionsWord(hint, word)) return { ok: false, reason: "hintContainsWord" };
+	// Nothing checks whether a hint gives the word away. The hint is the host's to
+	// write (the owner's call in the 1.7.0 test fixes plan, item 12), and a guard that
+	// second guesses it refused hints the host meant.
 
 	// Blank lines are dropped rather than counted: a host who leaves a trailing
 	// newline in the paragraph box has not written a fourth hint.
@@ -115,7 +95,6 @@ export function validateHangmanAuthoring(
 	if (extraHints.length > HANGMAN_MAX_EXTRA_HINTS) return { ok: false, reason: "tooManyExtraHints" };
 	for (const extra of extraHints) {
 		if (extra.length > HANGMAN_HINT_MAX) return { ok: false, reason: "extraHintTooLong" };
-		if (mentionsWord(extra, word)) return { ok: false, reason: "extraHintContainsWord" };
 	}
 
 	return { ok: true, word, hint, extraHints };

@@ -103,19 +103,21 @@ export function buildRpsRevealEmbed(
 //
 // The masked word arrives already escaped by hangmanState.maskedWord: a bare
 // underscore is markdown for italics in Discord, so an unescaped mask renders as
-// slanted nothing instead of blanks.
+// slanted nothing instead of blanks. `description` is the caller's line under the
+// title, because a channel round (anyone guesses) and a game room (everyone but
+// the word's author guesses) say different things about who plays.
 export function buildHangmanBoardEmbed(
 	masked: string,
 	misses: string[],
 	attemptsLeft: number,
-	starterId: string,
+	description: string,
 	imageRef: string
 ): EmbedBuilder {
 	const c = gamesCopy.hangman;
 	return base()
 		.setTitle(c.boardTitle)
 		.setColor(COLORS.GAME_HANGMAN)
-		.setDescription(c.startedBy(starterId))
+		.setDescription(description)
 		.addFields(
 			{ name: c.wordLabel, value: masked, inline: false },
 			{ name: c.missesLabel, value: misses.length ? misses.map((l) => l.toUpperCase()).join(" ") : c.noMisses, inline: true },

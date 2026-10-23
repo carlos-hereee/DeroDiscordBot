@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits, MessageFlags } from "discord.js";
+import { SlashCommandBuilder, ChatInputCommandInteraction, MessageFlags } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
@@ -32,7 +32,6 @@ const BOUNDARY_LABEL: Record<WeekStart, string> = {
 export const data = new SlashCommandBuilder()
 	.setName("configure-leaderboard-week-start")
 	.setDescription("Set which day the leaderboard's \"this week\" window starts on")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addStringOption((option) =>
 		option
 			.setName("start")

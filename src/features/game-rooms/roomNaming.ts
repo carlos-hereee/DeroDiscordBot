@@ -1,16 +1,19 @@
+import { GAME_EMOJI } from "./challengeBoardEmbeds.js";
 import type { GameSlug } from "./roomTypes.js";
 
 // ── roomNaming ───────────────────────────────────────────────────────
 // What:  turns a game slug plus a host's display name into a legal, readable Discord
-//        channel name, and resolves a collision when that name is already taken.
+//        channel name led by the game's emoji, and resolves a collision when that name
+//        is already taken.
 // Who:   RoomProvisioner.open, immediately before guild.channels.create.
 // When:  once per room opened.
-// Where: PURE. No discord.js, no store, no I/O. That is the whole point: the ugly cases
+// Where: PURE functions: no store and no I/O. That is the whole point: the ugly cases
 //        here (a display name that is entirely emoji, a host who opens a second room
 //        while the first is still cooling off) are exactly the ones nobody can reproduce
-//        by hand in a guild, so they have to be reachable from a unit test.
+//        by hand in a guild, so they have to be reachable from a unit test. The one
+//        import is GAME_EMOJI, the board's own map, so there is no second emoji table.
 // How:   slugify to Discord's safe alphabet, cap the host segment, join, cap the whole,
-//        and hand collisions a numeric suffix.
+//        prefix the emoji, and hand collisions a numeric suffix.
 
 // Discord allows 100 characters. The 10 character gap is deliberate headroom for the
 // collision suffix, so a maximally long name can still grow a "-2" without being
@@ -56,13 +59,17 @@ function resolveHostSegment(hostDisplayName: string, hostId: string): string {
 	return `player${hostId.slice(-4)}`;
 }
 
-// The room's channel name before collision resolution: "<game>-<host>".
+// The room's channel name before collision resolution: "<emoji><game>-<host>", the same
+// emoji first shape as the arcade's fixed channels (📋arcade-rules, ⚔️challenges).
 //
-// The game slug leads so a channel list groups by game when sorted alphabetically, which
-// is how a member scanning 🎮 ARCADE GAMES actually reads it.
+// The game's emoji and slug lead so a channel list groups by game when sorted, which is
+// how a member scanning 🎮 ARCADE GAMES actually reads it. The emoji is added AFTER the
+// slug is built, because slugify keeps only [a-z0-9] and would strip it, and its length
+// comes off the cap so the whole name still fits the 90 character budget.
 export function buildRoomChannelName(game: GameSlug, hostDisplayName: string, hostId: string): string {
+	const emoji = GAME_EMOJI[game];
 	const host = resolveHostSegment(hostDisplayName, hostId);
-	return trimHyphens(`${game}-${host}`.slice(0, CHANNEL_NAME_MAX));
+	return `${emoji}${trimHyphens(`${game}-${host}`.slice(0, CHANNEL_NAME_MAX - emoji.length))}`;
 }
 
 // ── collision resolution ──────────────────────────────────────────────

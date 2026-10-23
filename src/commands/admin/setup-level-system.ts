@@ -34,15 +34,10 @@ import { levelingCopy } from "@features/leveling/levelingCopy.js";
 // reads "setup" and expects provisioning will otherwise wonder why no channel
 // appeared.
 //
-// ⚠️ ADMIN GATING IS TWO INDEPENDENT MECHANISMS AND BOTH ARE NEEDED.
-//   ① .setDefaultMemberPermissions(Administrator) is what actually HIDES the
-//      command in a non-admin's picker. It is a Discord-side filter.
-//   ② BOT_CONSTANTS.ADMIN_COMMANDS is the runtime gate in main.ts, checked
-//      against interaction.commandName, which catches anyone who reaches the
-//      command anyway (an admin permission overwrite, a stale client).
-// Neither is a substitute for the other, and note that configure-leaderboard-
-// tracking is an admin command that is NOT in ADMIN_COMMANDS, so that Set is
-// not the definition of "admin command".
+// ⚠️ ADMIN GATING IS BOT_CONSTANTS.ADMIN_COMMANDS AND NOTHING ELSE. The runtime gate
+// in main.ts, checked against interaction.commandName, admits the server owner and
+// the /setup admin role. There is deliberately no Discord default permission on the
+// builder: it would hide the command from that admin role (see the note on the set).
 //
 // ⚠️ SUBCOMMANDS, NOT 25 TOP LEVEL OPTIONS. Discord caps a command at 25 options
 // AND forbids a command from carrying both subcommands and top level options, so
@@ -59,7 +54,6 @@ const LIMITS = BOT_CONSTANTS.LEVELING.LIMITS;
 export const data = new SlashCommandBuilder()
 	.setName("setup-level-system")
 	.setDescription("Configure XP and levels for this server. Writes settings only, creates no channels or roles.")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addSubcommand((sub) =>
 		sub
 			.setName("show")

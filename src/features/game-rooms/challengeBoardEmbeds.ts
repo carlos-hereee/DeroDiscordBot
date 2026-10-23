@@ -49,7 +49,15 @@ export const COOPERATIVE_GAMES: readonly GameSlug[] = ["hangman", "holdem", "mon
 
 export const isCooperativeGame = (game: GameSlug): boolean => COOPERATIVE_GAMES.includes(game);
 
-const GAME_EMOJI: Record<string, string> = {
+/**
+ * Every game's one emoji: the board's start buttons and the front of each room's
+ * channel name (roomNaming) both read it, so a room and the button that opened it
+ * can never disagree. A solo form shares its game's emoji, and solo blackjack takes
+ * the card the arcade's Play Blackjack button already shows. Each is a single code
+ * point with no variation selector, so the name Discord stores is the one the
+ * collision check compares against.
+ */
+export const GAME_EMOJI: Record<GameSlug, string> = {
 	coinflip: "🪙",
 	diceroll: "🎲",
 	rps: "✊",
@@ -57,6 +65,8 @@ const GAME_EMOJI: Record<string, string> = {
 	battleship: "🚢",
 	holdem: "🃏",
 	monopoly: "🏠",
+	"solo-hangman": "🪢",
+	"solo-blackjack": "🃏",
 };
 
 export function boardIntroEmbed(): EmbedBuilder {
@@ -88,7 +98,7 @@ export function boardStartRows(): ActionRowBuilder<ButtonBuilder>[] {
 					new ButtonBuilder()
 						.setCustomId(`${GAME_ROOM_PREFIX}:new:${game}`)
 						.setLabel(gameRoomsCopy.board.startButtonLabel(game))
-						.setEmoji(GAME_EMOJI[game] ?? "⚔️")
+						.setEmoji(GAME_EMOJI[game])
 						.setStyle(ButtonStyle.Primary)
 				)
 			)

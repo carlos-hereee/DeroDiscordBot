@@ -2,7 +2,6 @@ import {
 	SlashCommandBuilder,
 	ChatInputCommandInteraction,
 	AutocompleteInteraction,
-	PermissionFlagsBits,
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
@@ -96,7 +95,6 @@ const DAY_LABEL: Record<number, string> = {
 export const data = new SlashCommandBuilder()
 	.setName("configure-stream-schedule")
 	.setDescription("Set up a weekly stream / event reminder on a fixed day and time")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addStringOption((option) =>
 		option.setName("name").setDescription("Short label for this schedule (e.g. Friday Night Stream)").setRequired(true).setMaxLength(80)
 	)

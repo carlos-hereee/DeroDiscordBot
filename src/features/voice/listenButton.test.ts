@@ -21,14 +21,18 @@ beforeEach(() => {
 });
 
 describe("listenRefusal", () => {
-	it("is null only when voice is on, Listen is on and a voice id is set", () => {
+	it("is null only when voice is on and Listen is on", () => {
 		expect(listenRefusal(READY)).toBeNull();
+	});
+
+	// A stored null voice id reads as Dero's default voice, so it is no reason to refuse.
+	it("is null for a row that stored no voice id", () => {
+		expect(listenRefusal({ ...READY, voiceId: null })).toBeNull();
 	});
 
 	it("names each reason", () => {
 		expect(listenRefusal(null)).toBe("notSetUp");
 		expect(listenRefusal({ ...READY, enabled: false })).toBe("voiceOff");
-		expect(listenRefusal({ ...READY, voiceId: null })).toBe("notSetUp");
 		expect(listenRefusal({ ...READY, listenEnabled: false })).toBe("listenOff");
 	});
 });

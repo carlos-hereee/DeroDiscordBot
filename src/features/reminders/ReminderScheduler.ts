@@ -13,7 +13,7 @@ import { refreshAllSchedules, refreshSchedule } from "@features/schedule/Schedul
 import { refreshAllLeaderboards } from "@features/leaderboard/LeaderboardBoard.js";
 import { refreshAllLevelsBoards } from "@features/leveling/LevelsBoard.js";
 import { sweepExpiredRooms } from "@features/game-rooms/roomArchiveSweep.js";
-import { sweepBattleshipTurns, sweepMonopolyIdle } from "@features/game-rooms/roomTurnSweep.js";
+import { sweepBattleshipTurns, sweepMonopolyIdle, sweepIdleRooms } from "@features/game-rooms/roomTurnSweep.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { getOutboundLatencyStats } from "@utils/serverApi.js";
 import { noteFailure as noteServerFailure, noteSuccess as noteServerSuccess } from "./serverHealthNotifier.js";
@@ -220,6 +220,9 @@ export function startScheduler(client: Client): void {
 				// Monopoly's budget is a day, so a 5 minute tick is more than fine
 				// enough, and riding this one costs no extra cron.
 				await sweepMonopolyIdle(client);
+				// Last, so a match the turn sweeps just ended is already off the non
+				// terminal list this one reads, and keeps its own winner.
+				await sweepIdleRooms(client);
 			} catch (err) {
 				// sweepExpiredRooms already isolates per room, so reaching this means the
 				// QUERY itself failed. Log and let the next tick retry; the rooms are

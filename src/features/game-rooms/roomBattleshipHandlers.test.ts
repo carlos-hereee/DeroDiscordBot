@@ -13,6 +13,7 @@ import { handleFire, handleViewBoard, handleReroll, handleAimSelect } from "./ro
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
+import { roomTrail } from "./roomTrail.js";
 import { startMatch, deserializeMatch, serializeMatch, type StoredBattleship } from "./roomBattleship.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -55,6 +56,7 @@ function makeInteraction(userId: string): ButtonInteraction {
 		user: { id: userId, username: "a", globalName: "A" },
 		client: { channels: { fetch: vi.fn().mockResolvedValue(null) } },
 		reply: vi.fn().mockResolvedValue(undefined),
+		deferUpdate: vi.fn().mockResolvedValue(undefined),
 	} as unknown as ButtonInteraction;
 }
 
@@ -88,6 +90,20 @@ describe("firing", () => {
 		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
 		expect(reply.content).toMatch(/column and a row/i);
 		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("posts the shot line once, publicly, and acknowledges the shooter without a private copy", async () => {
+		const interaction = makeInteraction(A);
+		await handleFire(interaction, makeRoom(aimedAt(freshMatch(), A, 0, 0)));
+
+		expect(interaction.reply).not.toHaveBeenCalled();
+		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+		expect(roomTrail.postMove).toHaveBeenCalledOnce();
+		expect(roomTrail.postMove).toHaveBeenCalledWith(
+			interaction.client,
+			expect.objectContaining({ roomId: "room-1" }),
+			expect.objectContaining({ actorId: A, kind: "guess", text: expect.stringMatching(/\S/) }),
+		);
 	});
 
 	it("clears the shooter's aim after firing, so a stray press cannot re-fire it", async () => {

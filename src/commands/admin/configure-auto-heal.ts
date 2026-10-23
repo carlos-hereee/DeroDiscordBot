@@ -1,7 +1,6 @@
 import {
 	SlashCommandBuilder,
 	ChatInputCommandInteraction,
-	PermissionFlagsBits,
 	MessageFlags,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -32,7 +31,6 @@ import { COLORS } from "@base/copy/brand.js";
 export const data = new SlashCommandBuilder()
 	.setName("configure-auto-heal")
 	.setDescription("Toggle whether the bot rebuilds missing homebase channels automatically")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addBooleanOption((option) =>
 		option
 			.setName("enabled")

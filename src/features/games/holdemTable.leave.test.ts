@@ -1,0 +1,213 @@
+import { describe, it, expect } from "vitest";
+import {
+	createTable,
+	joinTable,
+	dealHand,
+	act,
+	whoActs,
+	actionsFor,
+	livePlayers,
+	handInProgress,
+	leaveTable,
+	endTable,
+	standings,
+	type HoldemTable,
+} from "./holdemTable.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+
+// ── leaving and ending a table ─────────────────────────────────────────────
+// What:  the engine half of the Leave table and End table buttons.
+// Where: the owner's 1.7.0 test run found a Hold'em table nobody could leave and
+//        no host could end, which held the host's one room slot. Every case below
+//        pairs the way out with the chips it must not create or lose.
+
+function seededRng(seed = 11): () => number {
+	let state = seed;
+	return () => {
+		state = (state * 1664525 + 1013904223) % 4294967296;
+		return state / 4294967296;
+	};
+}
+
+function tableWith(count: number, seed = 11): HoldemTable {
+	const table = createTable();
+	for (let index = 0; index < count; index++) joinTable(table, `p${index}`, `Player ${index}`);
+	table.status = "playing";
+	dealHand(table, seededRng(seed));
+	return table;
+}
+
+// Fold everyone but one, so the hand settles and the table sits between hands.
+function betweenHands(count: number): HoldemTable {
+	const table = tableWith(count);
+	while (handInProgress(table)) act(table, whoActs(table)!, "fold");
+	return table;
+}
+
+// Check or call every turn to the end of the hand. Bounded, so a table that stopped
+// offering either action fails the test instead of hanging it.
+function playItOut(table: HoldemTable): void {
+	for (let turn = 0; turn < 50 && handInProgress(table); turn++) {
+		const userId = whoActs(table)!;
+		const legal = actionsFor(table, userId).map((entry) => entry.action);
+		act(table, userId, legal.includes("check") ? "check" : "call");
+	}
+}
+
+const seatOf = (table: HoldemTable, userId: string) => table.seats.find((seat) => seat.userId === userId)!;
+const liveChips = (table: HoldemTable) =>
+	livePlayers(table).reduce((sum, seat) => sum + seat.stack + seat.totalCommitted, 0);
+const buttonHolder = (table: HoldemTable) => {
+	const live = livePlayers(table);
+	return live[table.buttonIndex % live.length].userId;
+};
+
+const START = BOT_CONSTANTS.HOLDEM_STARTING_STACK;
+
+describe("leaving before the first deal", () => {
+	it("removes the seat, so the place is free for the next buyer", () => {
+		const table = createTable();
+		joinTable(table, "a", "A");
+		joinTable(table, "b", "B");
+
+		expect(leaveTable(table, "a")).toEqual({ ok: true, foldedHand: false });
+		expect(table.seats.map((seat) => seat.userId)).toEqual(["b"]);
+		expect(table.status).toBe("joining");
+		expect(joinTable(table, "a", "A")).toEqual({ ok: true });
+	});
+});
+
+describe("leaving a live hand", () => {
+	it("folds a seat that is not on the clock and leaves the clock where it was", () => {
+		const table = tableWith(3);
+		const acting = whoActs(table)!;
+		const leaver = table.seats.find((seat) => seat.userId !== acting)!.userId;
+
+		const outcome = leaveTable(table, leaver);
+
+		expect(outcome).toMatchObject({ ok: true, foldedHand: true });
+		expect(outcome.narration).toBeUndefined();
+		expect(seatOf(table, leaver)).toMatchObject({ out: true, folded: true, stack: 0 });
+		expect(whoActs(table)).toBe(acting);
+		expect(handInProgress(table)).toBe(true);
+	});
+
+	it("folds the seat on the clock through the engine, which passes the clock on", () => {
+		const table = tableWith(3);
+		const leaver = whoActs(table)!;
+
+		leaveTable(table, leaver);
+
+		expect(seatOf(table, leaver)).toMatchObject({ out: true, folded: true });
+		expect(whoActs(table)).not.toBe(leaver);
+		expect(whoActs(table)).not.toBeNull();
+	});
+
+	it("ends the hand and the tournament heads up, and the pot goes to the seat that stayed", () => {
+		const table = tableWith(2);
+		const leaver = table.seats[0].userId;
+		const stayer = table.seats[1].userId;
+		const potBefore = table.seats.reduce((sum, seat) => sum + seat.totalCommitted, 0);
+		const stayerBefore = seatOf(table, stayer).stack;
+
+		const outcome = leaveTable(table, leaver);
+
+		expect(outcome).toMatchObject({ ok: true, handOver: true, tournamentOver: true });
+		expect(table.status).toBe("finished");
+		expect(table.winnerId).toBe(stayer);
+		expect(seatOf(table, stayer).stack).toBe(stayerBefore + potBefore);
+		expect(seatOf(table, leaver).stack).toBe(0);
+	});
+
+	it("never hands chips back to a seat that left, however the hand ends", () => {
+		const table = tableWith(3);
+		const acting = whoActs(table)!;
+		const leaver = table.seats.find((seat) => seat.userId !== acting)!.userId;
+		leaveTable(table, leaver);
+
+		playItOut(table);
+
+		expect(handInProgress(table)).toBe(false);
+
+		expect(seatOf(table, leaver).stack).toBe(0);
+		expect(livePlayers(table).map((seat) => seat.userId)).not.toContain(leaver);
+	});
+});
+
+describe("leaving between hands", () => {
+	it("marks the seat out in finishing order and keeps the button on the seat that holds it", () => {
+		const table = betweenHands(4);
+		const holder = buttonHolder(table);
+		const live = livePlayers(table);
+		const leaver = live.find((seat) => seat.userId !== holder)!.userId;
+
+		const outcome = leaveTable(table, leaver);
+
+		expect(outcome).toMatchObject({ ok: true, foldedHand: false });
+		expect(table.bustOrder).toEqual([leaver]);
+		expect(buttonHolder(table)).toBe(holder);
+		expect(table.status).toBe("playing");
+	});
+
+	it("ends the tournament when only one seat is left", () => {
+		const table = betweenHands(2);
+		const [leaver, stayer] = table.seats.map((seat) => seat.userId);
+
+		const outcome = leaveTable(table, leaver);
+
+		expect(outcome).toMatchObject({ ok: true, tournamentOver: true });
+		expect(table.winnerId).toBe(stayer);
+	});
+
+	it("refuses a second leave from the same player, and any leave once the table is over", () => {
+		const table = betweenHands(3);
+		const leaver = table.seats[0].userId;
+		leaveTable(table, leaver);
+
+		expect(leaveTable(table, leaver)).toEqual({ ok: false, reason: "notSeated" });
+		expect(leaveTable(table, "stranger")).toEqual({ ok: false, reason: "notSeated" });
+
+		endTable(table);
+		expect(leaveTable(table, table.seats[1].userId)).toEqual({ ok: false, reason: "closed" });
+	});
+});
+
+describe("ending the table", () => {
+	it("calls off a running hand, so every chip goes back to the seat that put it in", () => {
+		const table = tableWith(3);
+		const before = liveChips(table);
+
+		const order = endTable(table);
+
+		expect(table.status).toBe("finished");
+		expect(table.betting).toBeNull();
+		expect(table.seats.every((seat) => seat.totalCommitted === 0)).toBe(true);
+		expect(liveChips(table)).toBe(before);
+		expect(table.seats.map((seat) => seat.stack)).toEqual([START, START, START]);
+		expect(order).toHaveLength(3);
+		expect(table.winnerId).toBe(order[0]);
+	});
+
+	it("ranks the seats still in by chips, then the seats that are out, last one out first", () => {
+		const table = betweenHands(4);
+		const [first, second] = livePlayers(table).map((seat) => seat.userId);
+		leaveTable(table, first);
+		leaveTable(table, second);
+
+		const stillIn = livePlayers(table)
+			.sort((a, b) => b.stack - a.stack)
+			.map((seat) => seat.userId);
+		expect(standings(table)).toEqual([...stillIn, second, first]);
+	});
+
+	it("has no winner when no hand was ever dealt", () => {
+		const table = createTable();
+		joinTable(table, "a", "A");
+		joinTable(table, "b", "B");
+
+		endTable(table);
+
+		expect(table.status).toBe("finished");
+		expect(table.winnerId).toBeNull();
+	});
+});

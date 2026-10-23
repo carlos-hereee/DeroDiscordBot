@@ -3,6 +3,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { CooldownManager } from "@utils/cooldownManager.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
+import { resolveDeroVoiceId } from "./deroVoiceId.js";
 import { LISTEN_PREFIX, listenRefusal } from "./listenButton.js";
 import { prepareListenText } from "./listenText.js";
 import { clipCache, clipKey } from "./clipCache.js";
@@ -232,8 +233,7 @@ export async function handleListen(interaction: ButtonInteraction): Promise<void
 		// ② gate on the guild's config, re-read on every click
 		const config = guildId ? await deroVoiceConfigStore.findByGuildId(guildId) : null;
 		const refusal = listenRefusal(config);
-		const voiceId = config?.voiceId;
-		if (!guildId || refusal || !voiceId) {
+		if (!guildId || !config || refusal) {
 			const reason = refusal ?? "notSetUp";
 			await replyPlain(interaction, voiceCopy.listen[reason]);
 			audit(guildId, userId, chars, reason);
@@ -253,7 +253,7 @@ export async function handleListen(interaction: ButtonInteraction): Promise<void
 		const { outcome, delivery } = await deliverClip(interaction, {
 			guildId,
 			userId,
-			voiceId,
+			voiceId: resolveDeroVoiceId(config),
 			text: prepared.text,
 			truncated: prepared.truncated,
 		});

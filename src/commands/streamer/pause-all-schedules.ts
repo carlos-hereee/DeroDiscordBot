@@ -1,7 +1,6 @@
 import {
 	SlashCommandBuilder,
 	ChatInputCommandInteraction,
-	PermissionFlagsBits,
 	MessageFlags,
 } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
@@ -21,7 +20,6 @@ const c = rokCommanderCopy.pauseAllSchedules;
 export const data = new SlashCommandBuilder()
 	.setName("pause-all-schedules")
 	.setDescription("Pause every recurring schedule on this server at once")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addIntegerOption((option) =>
 		option
 			.setName("days")

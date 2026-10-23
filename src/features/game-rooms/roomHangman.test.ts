@@ -2,10 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MessageFlags, type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn() } }));
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() }, resolveRoomChannel: vi.fn() }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 vi.mock("@features/games/gamesAssets.js", () => ({ resolveGameAsset: vi.fn(() => null) }));
+// The gallows card's drawing is the shared board module's business and is covered with
+// the channel game; here only WHEN a card is posted is under test.
+vi.mock("@features/games/hangmanBoard.js", () => ({
+	playingBoardPicture: vi.fn(async () => ({ embeds: [], files: [] })),
+}));
 
 import {
 	hangmanRow,
@@ -15,7 +20,8 @@ import {
 	handleGuessModal,
 } from "./roomHangman.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
-import { roomTrail } from "./roomTrail.js";
+import { roomTrail, resolveRoomChannel } from "./roomTrail.js";
+import { playingBoardPicture } from "@features/games/hangmanBoard.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
 import { HANGMAN_HINT_MAX } from "@features/games/hangmanAuthoring.js";
@@ -48,8 +54,6 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 const HOST = "host-1";
 const GUESSER = "guesser-1";
 const WORD = "planet";
-// Chosen so neither leak direction trips: it does not contain "planet", and none of
-// its tokens of three characters or more is contained BY "planet".
 const HINT = "it goes around a star";
 
 const storeMock = gameRoomStore as unknown as {
@@ -57,6 +61,14 @@ const storeMock = gameRoomStore as unknown as {
 	findByRoomId: ReturnType<typeof vi.fn>;
 };
 const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn> };
+const resolveChannelMock = resolveRoomChannel as unknown as ReturnType<typeof vi.fn>;
+const boardMock = playingBoardPicture as unknown as ReturnType<typeof vi.fn>;
+
+// The room channel the opener lives in and the gallows cards land in. Rebuilt per test
+// so every assertion reads only what that test caused.
+let openerEdit: ReturnType<typeof vi.fn>;
+let channelSend: ReturnType<typeof vi.fn>;
+let openerFetch: ReturnType<typeof vi.fn>;
 
 // A room mid-round: the host has authored, nobody has guessed yet. `authoredBy` is
 // what the gate reads, and it is written by the authoring modal in real life.
@@ -92,6 +104,7 @@ function makeUnwordedRoom(overrides: Partial<IGameRoom> = {}): IGameRoom {
 		hostId: HOST,
 		playerIds: [HOST, GUESSER],
 		channelId: "ch-1",
+		openerMessageId: "opener-1",
 		secret: null,
 		...overrides,
 	} as unknown as IGameRoom;
@@ -161,6 +174,10 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
 	trailMock.postMove.mockResolvedValue(undefined);
+	openerEdit = vi.fn().mockResolvedValue(undefined);
+	channelSend = vi.fn().mockResolvedValue(undefined);
+	openerFetch = vi.fn().mockResolvedValue({ edit: openerEdit });
+	resolveChannelMock.mockResolvedValue({ messages: { fetch: openerFetch }, send: channelSend });
 });
 
 // ── the control contract ──────────────────────────────────────────────
@@ -296,10 +313,8 @@ describe("handleAuthoringModal, validation wiring", () => {
 			["wordTooFewDistinct", { word: "aaaa" }],
 			["hintMissing", { hint: "" }],
 			["hintTooLong", { hint: longText }],
-			["hintContainsWord", { hint: `the answer is ${WORD}` }],
 			["tooManyExtraHints", { extraHints: "one1\ntwo2\nthree3\nfour4" }],
 			["extraHintTooLong", { extraHints: longText }],
-			["extraHintContainsWord", { extraHints: `it is a ${WORD}` }],
 		];
 
 		const seen = new Map<string, string>();
@@ -318,16 +333,91 @@ describe("handleAuthoringModal, validation wiring", () => {
 		expect(seen.size).toBe(cases.length);
 	});
 
-	// Both directions of the leak check, because the obvious one misses half of it:
-	// "plan" does not CONTAIN "planet", it is contained BY it, and a four letter
-	// prefix hands over most of the mask in order.
+	// The hint is the host's to write, giveaways included, so a hint naming the word
+	// or a piece of it is stored like any other.
 	it.each([
 		["the hint contains the word", `the answer is ${WORD}`],
 		["a hint token is contained by the word", "plan"],
-	])("refuses when %s", async (_label, hint) => {
+	])("accepts a hint when %s", async (_label, hint) => {
 		await handleAuthoringModal(makeAuthorSubmit(HOST, { hint }));
 
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.update).toHaveBeenCalledOnce();
+		expect(savedSecret().hint).toBe(hint);
+	});
+});
+
+// ── the round starts ──────────────────────────────────────────────────
+// The provisioner's opener carries only the host's authoring button. Before this
+// swap existed a word could be set and nobody but the host had a control.
+describe("handleAuthoringModal, starting the round", () => {
+	beforeEach(() => storeMock.findByRoomId.mockResolvedValue(makeUnwordedRoom()));
+
+	it("swaps the pinned opener from the author button to the guess button", async () => {
+		await handleAuthoringModal(makeAuthorSubmit(HOST));
+
+		expect(openerFetch).toHaveBeenCalledWith("opener-1");
+		expect(openerEdit).toHaveBeenCalledOnce();
+		const { components } = openerEdit.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id: string }[] } }[] };
+		expect(components[0].toJSON().components[0].custom_id).toBe(`${GAME_ROOM_PREFIX}:move:room-1`);
+	});
+
+	it("posts the first gallows card for the new word, naming the author and not the word", async () => {
+		await handleAuthoringModal(makeAuthorSubmit(HOST));
+
+		expect(channelSend).toHaveBeenCalledOnce();
+		const [state, description] = boardMock.mock.calls[0] as [{ wrong: number }, string];
+		expect(state.wrong).toBe(0);
+		expect(description).toBe(gameRoomsCopy.hangman.boardDescription(HOST));
+		expect(description).not.toMatch(new RegExp(WORD, "i"));
+	});
+
+	it("still confirms to the host when the opener cannot be edited", async () => {
+		openerFetch.mockRejectedValue(new Error("Unknown Message"));
+		const interaction = makeAuthorSubmit(HOST);
+
+		await handleAuthoringModal(interaction);
+
+		expect(replyOf(interaction).content).toContain(HINT);
+		expect(channelSend).toHaveBeenCalledOnce();
+	});
+
+	it("touches neither the opener nor the channel when the word is refused", async () => {
+		await handleAuthoringModal(makeAuthorSubmit(HOST, { word: "ice cream" }));
+
+		expect(openerEdit).not.toHaveBeenCalled();
+		expect(channelSend).not.toHaveBeenCalled();
+	});
+});
+
+// ── a card per guess ──────────────────────────────────────────────────
+describe("handleGuessModal, the gallows card", () => {
+	it("posts a card after a guess that leaves the round open", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+
+		await handleGuessModal(makeSubmit(GUESSER, "z"));
+
+		expect(channelSend).toHaveBeenCalledOnce();
+		const [state] = boardMock.mock.calls[0] as [{ wrong: number }];
+		expect(state.wrong).toBe(1);
+	});
+
+	it("posts no playing card on the guess that ends the round, because the result card carries it", async () => {
+		const room = makeRoom();
+		(room.secret as { guessedLetters: string[] }).guessedLetters = ["p", "l", "a", "n", "e"];
+		storeMock.findByRoomId.mockResolvedValue(room);
+
+		await handleGuessModal(makeSubmit(GUESSER, "t"));
+
+		expect(boardMock).not.toHaveBeenCalled();
+		expect(channelSend).not.toHaveBeenCalled();
+	});
+
+	it("posts nothing for a refused guess", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+
+		await handleGuessModal(makeSubmit(HOST));
+
+		expect(channelSend).not.toHaveBeenCalled();
 	});
 });
 

@@ -160,6 +160,12 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		case "hcards":
 			await roomHoldemHandlers.handleShowCards(interaction, room);
 			return;
+		case "hleave":
+			await roomHoldemHandlers.handleLeaveTable(interaction, room);
+			return;
+		case "hend":
+			await roomHoldemHandlers.handleEndTable(interaction, room);
+			return;
 		// ── monopoly ──
 		// Each handler re-checks that the clicker is the seat on the clock; the
 		// playersOnly gate above only proved they are at the table.

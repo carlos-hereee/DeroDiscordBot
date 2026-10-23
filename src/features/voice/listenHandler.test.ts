@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { MessageFlags, type AttachmentBuilder, type ButtonInteraction } from "discord.js";
 import { TtsError } from "./ttsProvider.js";
 import { voiceCopy } from "./voiceCopy.js";
@@ -85,12 +86,13 @@ describe("the gates before any spend", () => {
 		expect(mocks.synthesize).not.toHaveBeenCalled();
 	});
 
-	it("refuses when no voice is set, or the guild never set voice up", async () => {
+	it("reads a post in Dero's default voice when the row stored no voice id", async () => {
 		mocks.findByGuildId.mockResolvedValue({ ...READY, voiceId: null });
-		const noVoice = click();
-		await handleListen(noVoice);
-		expect(lastReply(noVoice)).toEqual({ content: voiceCopy.listen.notSetUp });
+		await handleListen(click({ guildId: "default-voice-guild", userId: "default-voice-user", content: "Hello there." }));
+		expect(mocks.synthesize).toHaveBeenCalledWith({ voiceId: BOT_CONSTANTS.DERO_DEFAULT_VOICE_ID, text: "Hello there.", format: "mp3" });
+	});
 
+	it("refuses when the guild never set voice up", async () => {
 		mocks.findByGuildId.mockResolvedValue(null);
 		const noRow = click();
 		await handleListen(noRow);

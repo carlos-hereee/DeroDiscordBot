@@ -2,7 +2,6 @@ import {
 	SlashCommandBuilder,
 	ChatInputCommandInteraction,
 	AutocompleteInteraction,
-	PermissionFlagsBits,
 	MessageFlags,
 	TextChannel,
 	VoiceChannel,
@@ -18,8 +17,9 @@ import { COLORS } from "@base/copy/brand.js";
 //        repairMissingChannels and ChannelDeleteWatcher would restore
 //        the pack default (eg "homebase-leaderboard") whenever a
 //        channel got deleted and re-created.
-// Who:   server admins. Permission-gated to Administrator like the rest
-//        of the /configure-* family.
+// Who:   server admins: gated by BOT_CONSTANTS.ADMIN_COMMANDS in main.ts (the
+//        server owner or the /setup admin role), like the rest of the
+//        /configure-* family.
 // When:  on demand. Idempotent, running with the same name twice is a
 //        no-op write (we still emit a "no change made" reply rather
 //        than a silent success so the admin gets clear feedback).
@@ -72,7 +72,6 @@ const VALID_SLOTS = new Set(SLOT_LABELS.map((s) => s.configField));
 export const data = new SlashCommandBuilder()
 	.setName("rename-channel")
 	.setDescription("Rename a bot-managed channel so the new name persists across rebuilds")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addStringOption((option) =>
 		option.setName("slot").setDescription("Which channel slot to rename").setRequired(true).setAutocomplete(true)
 	)

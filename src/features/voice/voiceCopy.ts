@@ -40,7 +40,8 @@ export const voiceCopy = {
 	// ── voice calls: /dero join and /dero leave, and what Dero posts in text ──
 	// The refusals here are only the ones a call adds. /dero join reuses the
 	// lines that already fit word for word: deroBrainCopy.tell for the guild,
-	// kill switch and task list gates, and listen.notSetUp for a missing voice.
+	// kill switch and task list gates, and listen.notSetUp for a guild with no
+	// voice settings at all.
 	call: {
 		replyTitle: "🔊 Dero in voice",
 		notInVoice: "Join a voice channel first, then run /dero join.",
@@ -150,10 +151,8 @@ export const voiceCopy = {
 		commandDescription: "Set up Dero's voice and the Listen button for this server",
 		sub: {
 			status: "Show this server's voice settings and this month's speech spend",
-			enable: "Turn Dero's voice on (needs a voice id first)",
+			enable: "Turn Dero's voice on",
 			disable: "Turn Dero's voice off. Every setting is kept",
-			voice: "Set the ElevenLabs voice id Dero speaks with",
-			voiceOption: "The voice id Dero's creator sent you (request it through the Suggestion Box)",
 			listen: "Show or hide Listen buttons on fortunes and welcomes",
 			listenOption: "True shows Listen buttons, false hides them",
 			cap: "Set the monthly speech budget for this server, in whole dollars",
@@ -175,7 +174,9 @@ export const voiceCopy = {
 		statusTitle: "🔊 Dero voice settings",
 		statusBody: (status: {
 			enabled: boolean;
-			voiceIdTail: string | null;
+			voiceIdTail: string;
+			// True when the guild speaks with DERO_DEFAULT_VOICE_ID, which is George.
+			isDefaultVoice: boolean;
 			listenEnabled: boolean;
 			keyConfigured: boolean;
 			roles: number;
@@ -186,7 +187,9 @@ export const voiceCopy = {
 		}): string =>
 			[
 				`Voice: **${onOff(status.enabled)}**`,
-				`Voice id: ${status.voiceIdTail ? `set, ending in \`${status.voiceIdTail}\`` : "not set"}`,
+				status.isDefaultVoice
+					? `Speaking voice: George, id ending in \`${status.voiceIdTail}\``
+					: `Speaking voice: id ending in \`${status.voiceIdTail}\``,
 				`Listen buttons: **${onOff(status.listenEnabled)}**`,
 				`Speech key on the bot: ${status.keyConfigured ? "configured" : "missing, so no speech call is sent"}`,
 				`Allowed roles: ${status.roles} · text channels: ${status.channels} · voice channels: ${status.voiceChannels}`,
@@ -197,18 +200,12 @@ export const voiceCopy = {
 		enabledBody:
 			"Listen buttons appear on new fortunes and welcomes while Listen is on. Posts made before now keep no button.",
 		alreadyEnabled: "Dero's voice is already ON. No change made.",
-		enableNeedsVoice: "Set a voice first with /dero-config voice, then run enable again.",
 		disabledTitle: "🔇 Dero's voice is OFF",
 		disabledBody:
 			"No speech call is sent and Listen buttons stop answering. Every setting is kept, so enable brings it back exactly as it was.",
 		alreadyDisabled: "Dero's voice is already OFF. No change made.",
 		// Added under the disable or cap 0 reply when a live call ended with it.
 		leftCall: (channelId: string): string => `Dero also left the voice call in <#${channelId}>.`,
-
-		voiceInvalid: (min: number, max: number): string =>
-			`That does not look like a voice id. Paste the id from ElevenLabs: ${min} to ${max} letters and digits, nothing else.`,
-		voiceSet: (tail: string): string => `Voice id saved, ending in \`${tail}\`.`,
-		voiceUnchanged: (tail: string): string => `That voice id (ending in \`${tail}\`) is already set. No change made.`,
 
 		listenSet: (on: boolean): string => `Listen buttons are now **${onOff(on)}**.`,
 		listenUnchanged: (on: boolean): string => `Listen buttons are already **${onOff(on)}**. No change made.`,

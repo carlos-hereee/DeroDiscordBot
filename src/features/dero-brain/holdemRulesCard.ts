@@ -20,6 +20,7 @@ import {
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
+import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -285,10 +286,9 @@ function playersFor(request: HoldemRequest, visibility: HoldemVisibilityChoice):
 // Spoken after a voice ask's table opens. Fire and forget: the card already says it.
 function speakOpened(gate: PassedGate, channelName: string, deps: RulesCardDeps): void {
 	const call = deps.sessionIn(gate.guild.id);
-	const voiceId = gate.config.voiceId;
-	if (!call || !voiceId) return;
+	if (!call) return;
 	deps
-		.render({ guildId: gate.guild.id, voiceId, text: cardCopy.openedSpoken(channelName) })
+		.render({ guildId: gate.guild.id, voiceId: resolveDeroVoiceId(gate.config), text: cardCopy.openedSpoken(channelName) })
 		.then((speech) => {
 			if (speech.status === "ok" && deps.sessionIn(gate.guild.id) === call) call.speaker.speak(speech.pcm48kStereo, "brain");
 		})

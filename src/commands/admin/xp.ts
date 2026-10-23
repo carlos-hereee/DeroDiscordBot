@@ -5,7 +5,6 @@ import {
 	ButtonStyle,
 	ComponentType,
 	MessageFlags,
-	PermissionFlagsBits,
 	SlashCommandBuilder,
 	type ChatInputCommandInteraction,
 	type User,
@@ -23,9 +22,9 @@ import { levelingCopy } from "@features/leveling/levelingCopy.js";
 // ── /xp ────────────────────────────────────────────────────────────────────
 // What:  admin correction of a member's xp, plus the two reset paths and a
 //        full data export.
-// Who:   admins only, gated BOTH ways (setDefaultMemberPermissions to hide it in
-//        the picker, and BOT_CONSTANTS.ADMIN_COMMANDS for the runtime gate in
-//        main.ts). Neither is a substitute for the other.
+// Who:   admins only, gated by BOT_CONSTANTS.ADMIN_COMMANDS in main.ts (the server
+//        owner or the /setup admin role). No Discord default permission, which
+//        would hide it from that admin role (see the note on the set).
 // When:  rarely, and every destructive branch asks first.
 // Where: writes MemberLevel and XpPeriod through their stores. It never touches
 //        PlayerActivity or anything the participation leaderboard reads.
@@ -73,7 +72,6 @@ const EXPORT_ROW_CAP = 5000;
 export const data = new SlashCommandBuilder()
 	.setName("xp")
 	.setDescription("Correct, reset or export this server's XP data")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addSubcommand((sub) =>
 		sub
 			.setName("add")

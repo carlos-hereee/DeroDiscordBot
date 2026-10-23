@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 
 // ── /dero-config ───────────────────────────────────────────────────────────
-// The admin command's promises: a voice id is validated by the bot rather than
-// only by Discord's option bounds, enable refuses without a voice, disable never
-// deletes, every write is idempotent, and no reply ever shows a whole voice id.
+// The admin command's promises: there is no voice step (Dero speaks with
+// DERO_DEFAULT_VOICE_ID, so enable works straight away), disable never deletes,
+// every write is idempotent, and no reply ever shows a whole voice id.
 
 const mocks = vi.hoisted(() => ({
 	guildConfig: vi.fn(),
@@ -27,7 +27,8 @@ vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({
 vi.mock("@features/voice/spendMeter.js", () => ({ currentMonthCents: mocks.currentMonthCents }));
 vi.mock("@features/voice/elevenLabsTts.js", () => ({ isTtsKeyConfigured: () => true }));
 
-import { execute, isValidVoiceId, voiceIdTail, data } from "./dero-config.js";
+import { execute, voiceIdTail, data } from "./dero-config.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 const VOICE_ID = "abcDEF1234567890wxyz";
 const STORED = {
@@ -77,28 +78,20 @@ beforeEach(() => {
 	mocks.currentMonthCents.mockReset().mockResolvedValue(312);
 });
 
-describe("voice id rules", () => {
-	it("accepts 10 to 64 letters and digits only", () => {
-		expect(isValidVoiceId(VOICE_ID)).toBe(true);
-		expect(isValidVoiceId("a".repeat(10))).toBe(true);
-		expect(isValidVoiceId("a".repeat(64))).toBe(true);
-		expect(isValidVoiceId("a".repeat(9))).toBe(false);
-		expect(isValidVoiceId("a".repeat(65))).toBe(false);
-		expect(isValidVoiceId("abc def 1234")).toBe(false);
-		expect(isValidVoiceId("https://elevenlabs.io/x")).toBe(false);
-	});
-
+describe("the voice id tail", () => {
 	it("shows only the last four characters", () => {
 		expect(voiceIdTail(VOICE_ID)).toBe("wxyz");
 	});
 });
 
 describe("the builder", () => {
-	it("defaults to Administrator and carries every subcommand and group", () => {
+	// No default permission: it would hide the command from the /setup admin role,
+	// and ADMIN_COMMANDS in main.ts is the gate. No voice subcommand: the voice is not a setting.
+	it("carries no default permission, no voice subcommand, and every other subcommand and group", () => {
 		const json = data.toJSON();
-		expect(json.default_member_permissions).toBe("8");
+		expect(json.default_member_permissions).toBeUndefined();
 		const names = (json.options ?? []).map((option) => option.name);
-		expect(names).toEqual(["status", "enable", "disable", "voice", "listen", "cap", "role", "channel", "voicechannel"]);
+		expect(names).toEqual(["status", "enable", "disable", "listen", "cap", "role", "channel", "voicechannel"]);
 	});
 });
 
@@ -115,13 +108,14 @@ describe("gates", () => {
 });
 
 describe("enable and disable", () => {
-	it("refuses to enable with no voice set, and writes nothing", async () => {
+	it("enables straight away on a row that stored no voice id, because Dero speaks with the default", async () => {
 		mocks.findByGuildId.mockResolvedValue({ ...STORED, voiceId: null });
-		expect(await replyText({ sub: "enable" })).toContain("Set a voice first");
-		expect(mocks.upsert).not.toHaveBeenCalled();
+		expect(await replyText({ sub: "enable" })).toContain("voice is ON");
+		expect(mocks.upsert).toHaveBeenCalledWith("g1", { enabled: true });
 	});
 
-	it("enables when a voice is set", async () => {
+	it("enables a guild that never touched /dero-config before", async () => {
+		mocks.findByGuildId.mockResolvedValue(null);
 		await replyText({ sub: "enable" });
 		expect(mocks.upsert).toHaveBeenCalledWith("g1", { enabled: true });
 	});
@@ -141,24 +135,7 @@ describe("enable and disable", () => {
 	});
 });
 
-describe("voice, listen and cap", () => {
-	it("refuses a malformed voice id and writes nothing", async () => {
-		expect(await replyText({ sub: "voice", id: "not a voice id!" })).toContain("does not look like a voice id");
-		expect(mocks.upsert).not.toHaveBeenCalled();
-	});
-
-	it("saves a new voice id and shows only its tail", async () => {
-		const text = await replyText({ sub: "voice", id: "zyxWVU0987654321abcd" });
-		expect(mocks.upsert).toHaveBeenCalledWith("g1", { voiceId: "zyxWVU0987654321abcd" });
-		expect(text).toContain("abcd");
-		expect(text).not.toContain("zyxWVU0987654321abcd");
-	});
-
-	it("does not rewrite the same voice id", async () => {
-		expect(await replyText({ sub: "voice", id: VOICE_ID })).toContain("already set");
-		expect(mocks.upsert).not.toHaveBeenCalled();
-	});
-
+describe("listen and cap", () => {
 	it("sets Listen and the cap, idempotently", async () => {
 		await replyText({ sub: "listen", enabled: false });
 		expect(mocks.upsert).toHaveBeenCalledWith("g1", { listenEnabled: false });
@@ -197,10 +174,17 @@ describe("status", () => {
 	it("shows state, list sizes and spend against the cap, and only the voice id's tail", async () => {
 		const text = await replyText({ sub: "status" });
 		expect(text).toContain("Voice: **OFF**");
-		expect(text).toContain("ending in `wxyz`");
+		expect(text).toContain("Speaking voice: id ending in `wxyz`");
 		expect(text).not.toContain(VOICE_ID);
 		expect(text).toContain("Allowed roles: 1");
 		expect(text).toContain("$3.12 of a $25 cap");
+	});
+
+	it("names George, by tail only, for a row that stored no voice id", async () => {
+		mocks.findByGuildId.mockResolvedValue({ ...STORED, voiceId: null });
+		const text = await replyText({ sub: "status" });
+		expect(text).toContain(`Speaking voice: George, id ending in \`${voiceIdTail(BOT_CONSTANTS.DERO_DEFAULT_VOICE_ID)}\``);
+		expect(text).not.toContain(BOT_CONSTANTS.DERO_DEFAULT_VOICE_ID);
 	});
 });
 

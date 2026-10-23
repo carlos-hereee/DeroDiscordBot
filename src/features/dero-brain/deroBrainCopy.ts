@@ -111,7 +111,6 @@ export const deroBrainCopy = {
 		// /dero leave answers with.
 		spoke: "Dero said it in the call.",
 		sayNoCall: "Dero is not in a voice call in this server, so nothing was said.",
-		sayNotSetUp: "Dero's voice is not set up in this server, so nothing was said.",
 		sayCapReached: "Dero's voice budget for the month is used up, so nothing was said.",
 		sayFailed: "Dero could not find his voice just now, so nothing was said.",
 		sayQueueFull: "Dero has too much to say in the call right now, so that line was dropped.",

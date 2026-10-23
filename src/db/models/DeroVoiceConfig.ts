@@ -4,7 +4,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 // ── DeroVoiceConfig ──
 // What:  one row per guild holding everything Dero's voice needs: the kill
-//        switch, the cloned voice id, whether Listen buttons appear, the three
+//        switch, the voice id, whether Listen buttons appear, the three
 //        allowlists later phases authorize against, and the monthly spend cap.
 // Who:   written by /dero-config. Read by the Listen button and handler, and by
 //        the spend meter for the cap.
@@ -15,14 +15,15 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 //        the voice feature can be dropped or reshaped without touching it.
 //
 // ⚠️ `enabled` SHIPS FALSE. It is the kill switch, and a guild hears nothing
-// until an admin sets a voice and turns it on. Disabling never clears the other
-// fields, so turning voice back on restores the guild exactly as it was.
+// until an admin turns it on. Disabling never clears the other fields, so
+// turning voice back on restores the guild exactly as it was.
 
 export interface IDeroVoiceConfig {
 	guildId: string;
 	enabled: boolean;
-	// The ElevenLabs voice id of the owner's own clone. Only the id is stored;
-	// the voice itself lives in the owner's ElevenLabs account.
+	// The ElevenLabs voice id Dero speaks with. New rows get DERO_DEFAULT_VOICE_ID;
+	// rows saved before that default carry null, so read it through
+	// resolveDeroVoiceId (features/voice/deroVoiceId.ts), never directly.
 	voiceId: string | null;
 	listenEnabled: boolean;
 	// Roles allowed to give Dero tasks (Phase 2 onward). Ids, never names.
@@ -40,7 +41,7 @@ const deroVoiceConfigSchema = new mongoose.Schema<IDeroVoiceConfig>(
 	{
 		guildId: { type: String, required: true, unique: true },
 		enabled: { type: Boolean, default: false },
-		voiceId: { type: String, default: null },
+		voiceId: { type: String, default: BOT_CONSTANTS.DERO_DEFAULT_VOICE_ID },
 		listenEnabled: { type: Boolean, default: true },
 		allowedRoleIds: { type: [String], default: [] },
 		allowedChannelIds: { type: [String], default: [] },

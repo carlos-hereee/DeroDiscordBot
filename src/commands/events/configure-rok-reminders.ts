@@ -1,7 +1,6 @@
 import {
 	SlashCommandBuilder,
 	ChatInputCommandInteraction,
-	PermissionFlagsBits,
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
@@ -22,7 +21,6 @@ const { configureReminders } = rokCommanderCopy;
 export const data = new SlashCommandBuilder()
 	.setName("configure-kvk-season")
 	.setDescription("ROK  specific command with prebuilt event reminders for the game")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 
 	// ── season ───────────────────────────────────────────────
 	.addIntegerOption((option) =>

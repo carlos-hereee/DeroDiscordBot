@@ -8,28 +8,19 @@ import {
 	TextChannel,
 	TextInputBuilder,
 	TextInputStyle,
-	type AttachmentBuilder,
 	type ButtonInteraction,
 	type ChatInputCommandInteraction,
-	type EmbedBuilder,
 	type Message,
 } from "discord.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { CooldownManager } from "@utils/cooldownManager.js";
-import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { gamesCopy } from "./gamesCopy.js";
-import { resolveGameAsset, hangmanStageKey, type ResolvedGameAsset } from "./gamesAssets.js";
-import { buildHangmanBoardEmbed, buildHangmanEndEmbed } from "./gamesEmbeds.js";
-import { hangmanCardView, renderHangmanCard, type HangmanCardView } from "./hangmanRenderer.js";
+import { resolveGameAsset } from "./gamesAssets.js";
+import { buildHangmanEndEmbed } from "./gamesEmbeds.js";
+import { hangmanCardView } from "./hangmanRenderer.js";
+import { boardPicture, playingBoardPicture } from "./hangmanBoard.js";
 import { pickWord } from "./hangmanWords.js";
-import {
-	createHangmanState,
-	applyGuess,
-	maskedWord,
-	wrongLetters,
-	remainingAttempts,
-	type HangmanState,
-} from "./hangmanState.js";
+import { createHangmanState, applyGuess, type HangmanState } from "./hangmanState.js";
 import { awardMultiPlayerResult } from "./gameXp.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 
@@ -125,7 +116,7 @@ export async function startHangmanRound(channel: TextChannel, starterId: string)
 	try {
 		// ② Post the board. Nothing is clickable until the collector is wired
 		// below, and the gap is one tick, so a click cannot arrive early.
-		const picture = await boardPicture(hangmanCardView(round.state), resolveGameAsset(hangmanStageKey(0)), (ref) => boardEmbed(round, ref));
+		const picture = await roundBoardPicture(round);
 		const board = await channel.send({
 			...picture,
 			components: [guessRow(channel.id)],
@@ -235,32 +226,10 @@ function guessRow(channelId: string): ActionRowBuilder<ButtonBuilder> {
 	);
 }
 
-// ── the board's picture (2026-10 item 243 Phase 3) ──
-// The hangman card in the image slot when it draws, and the gallows art (the
-// Dero stand in while that art is not on disk) when it does not, under the same
-// embed either way. One helper for the board and all three endings, so no edit
-// can attach one picture and point its embed at the other.
-async function boardPicture(
-	view: HangmanCardView,
-	art: ResolvedGameAsset,
-	embedFor: (imageRef: string) => EmbedBuilder
-): Promise<{ embeds: EmbedBuilder[]; files: AttachmentBuilder[] }> {
-	const card = await withRenderFallback(
-		() => renderHangmanCard(view),
-		() => embedFor(art.ref)
-	);
-	if (isRenderPayload(card)) return { embeds: [embedFor(card.ref)], files: [card.attachment] };
-	return { embeds: [card], files: [art.attachment] };
-}
-
-function boardEmbed(round: HangmanRound, imageRef: string) {
-	return buildHangmanBoardEmbed(
-		maskedWord(round.state),
-		wrongLetters(round.state),
-		remainingAttempts(round.state),
-		round.starterId,
-		imageRef
-	);
+// The board while the round is live, from the shared hangmanBoard module that game
+// rooms draw with too. The endings below build their own embeds on boardPicture.
+function roundBoardPicture(round: HangmanRound) {
+	return playingBoardPicture(round.state, gamesCopy.hangman.startedBy(round.starterId));
 }
 
 // The alphabet is 26 letters and a message caps at 25 buttons, a select at 25
@@ -366,7 +335,7 @@ async function renderBoard(board: Message, round: HangmanRound, channelId: strin
 		// since an edit that drops its attachment renders an empty image slot.
 		// `attachments: []` drops the previous frame, which an edit otherwise keeps,
 		// so the board never stacks one picture per guess under its embed.
-		const picture = await boardPicture(hangmanCardView(round.state), resolveGameAsset(hangmanStageKey(round.state.wrong)), (ref) => boardEmbed(round, ref));
+		const picture = await roundBoardPicture(round);
 		await board
 			.edit({ ...picture, components: [guessRow(channelId)], attachments: [] })
 			.catch(swallow("hangman board update"));

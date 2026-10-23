@@ -26,8 +26,9 @@ export interface RoomMoveInput {
 
 // Resolve the room's channel, or null when it is gone. A non-null channelId does NOT
 // prove the channel still exists: an admin can delete a room channel at any moment,
-// and the row outlives the channel by design.
-async function resolveRoomChannel(client: Client, channelId: string | null): Promise<TextChannel | null> {
+// and the row outlives the channel by design. Exported for the room surfaces that
+// post or edit something other than a move (hangman's opener and gallows card).
+export async function resolveRoomChannel(client: Client, channelId: string | null): Promise<TextChannel | null> {
 	if (!channelId) return null;
 	const channel = await client.channels.fetch(channelId).catch(() => null);
 	if (!channel || !channel.isTextBased() || channel.isDMBased()) return null;

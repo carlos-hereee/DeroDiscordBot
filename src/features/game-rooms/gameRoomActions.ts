@@ -94,6 +94,13 @@ export const GAME_ROOM_ACTIONS = {
 	hmove: { hostOnly: false, playersOnly: true },
 	// The private peek at your own two cards.
 	hcards: { hostOnly: false, playersOnly: true },
+	// Leave the table for good: a live hand is folded and the seat is given up.
+	// playersOnly, and the handler also requires a seat, because an invite room's
+	// playerIds carries invitees who never bought in.
+	hleave: { hostOnly: false, playersOnly: true },
+	// End the whole table now on the standings as they are. The host's call, like
+	// dealing, with the router's usual admin override for clearing a stuck table.
+	hend: { hostOnly: true, playersOnly: false },
 
 	// ── monopoly (2026-10 item 241) ──
 	// Every one is playersOnly and none is hostOnly: the host is just another seat,

@@ -1,6 +1,7 @@
 import type { Guild, GuildMember, MessageMentionOptions } from "discord.js";
 import { NO_PINGS } from "@utils/mentions.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
+import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
 import { renderCallSpeech, type CallSpeechInput, type CallSpeechResult } from "@features/voice/callSpeech.js";
 import { voiceSessions, type VoiceSessionView } from "@features/voice/voiceSessions.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
@@ -50,7 +51,6 @@ export type ActionOutcome =
 	| "terms_refused"
 	| "spoke"
 	| "no_call"
-	| "not_set_up"
 	| "cap_reached"
 	| "voice_failed"
 	| "queue_full"
@@ -153,10 +153,9 @@ async function sendPost(
 }
 
 // ⑦ say: render, then queue only if the call it was rendered for is still open.
-async function sayInCall(guild: Guild, action: SayAction, voiceId: string | null, voice: ExecutorVoiceDeps): Promise<ActionReport> {
+async function sayInCall(guild: Guild, action: SayAction, voiceId: string, voice: ExecutorVoiceDeps): Promise<ActionReport> {
 	const session = voice.sessionIn(guild.id);
 	if (!session) return report(action.type, "no_call", deroBrainCopy.result.sayNoCall);
-	if (!voiceId) return report(action.type, "not_set_up", deroBrainCopy.result.sayNotSetUp);
 
 	const speech = await voice.render({ guildId: guild.id, voiceId, text: action.text });
 	if (speech.status === "capReached") return report(action.type, "cap_reached", deroBrainCopy.result.sayCapReached);
@@ -237,7 +236,7 @@ export async function executeActions({
 			continue;
 		}
 		if (action.type === "open_holdem") reports.push(makeRulesCard(guild, speakerId, action));
-		else if (action.type === "say") reports.push(await sayInCall(guild, action, voiceConfig.voiceId, voice));
+		else if (action.type === "say") reports.push(await sayInCall(guild, action, resolveDeroVoiceId(voiceConfig), voice));
 		else if (action.type === "leave_voice") reports.push(leaveCall(guild, voice));
 		else reports.push(await sendPost(guild, speaker, action, allowed));
 	}

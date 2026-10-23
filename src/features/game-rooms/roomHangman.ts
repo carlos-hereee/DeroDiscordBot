@@ -7,6 +7,7 @@ import {
 	TextInputBuilder,
 	TextInputStyle,
 	type ButtonInteraction,
+	type Client,
 	type ModalSubmitInteraction,
 } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -28,8 +29,9 @@ import {
 import { awardMultiPlayerResult } from "@features/games/gameXp.js";
 import { resolveGameAsset } from "@features/games/gamesAssets.js";
 import { hangmanCardView, renderHangmanCard } from "@features/games/hangmanRenderer.js";
+import { playingBoardPicture } from "@features/games/hangmanBoard.js";
 import { withRenderFallback } from "@features/renderer/index.js";
-import { roomTrail } from "./roomTrail.js";
+import { roomTrail, resolveRoomChannel } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
@@ -166,10 +168,8 @@ const REJECTION_COPY: Record<HangmanAuthoringRejection, string> = {
 	wordDenied: "Pick a different word. A half revealed version of that one would read badly on the board.",
 	hintMissing: "A hint is required. The room is playing your word, not reading your mind.",
 	hintTooLong: `Keep the hint under ${HANGMAN_HINT_MAX} characters.`,
-	hintContainsWord: "That hint gives the word away. Say something true about it instead.",
 	tooManyExtraHints: "Three extra hints at most, one per line.",
 	extraHintTooLong: `Keep each extra hint under ${HANGMAN_HINT_MAX} characters.`,
-	extraHintContainsWord: "One of those extra hints gives the word away.",
 };
 
 export async function handleAuthoringModal(interaction: ModalSubmitInteraction): Promise<void> {
@@ -212,6 +212,7 @@ export async function handleAuthoringModal(interaction: ModalSubmitInteraction):
 		wrong: 0,
 	};
 	await gameRoomStore.update(guildId, roomId, { secret: secret as never });
+	const authoredRoom = { ...room, secret } as IGameRoom;
 
 	// ⚠️ THE HINT, NEVER THE WORD. The host knows the word already; echoing it buys
 	// nothing and puts it one mis-click from a public channel.
@@ -220,13 +221,54 @@ export async function handleAuthoringModal(interaction: ModalSubmitInteraction):
 		flags: MessageFlags.Ephemeral,
 	});
 
-	// The public opener carries the hint and swaps the control from authoring to
-	// guessing, which is what tells the room it has started.
+	// The public line carries the hint and tells the room the round has started. It
+	// is text only; the two steps after it are what actually let anyone play.
 	await roomTrail.postMove(interaction.client, room, {
 		actorId: interaction.user.id,
 		kind: "system",
 		text: gameRoomsCopy.hangman.opener(interaction.user.id, result.hint),
 	});
+
+	await swapOpenerToGuessing(interaction.client, authoredRoom);
+	const state = rehydrate(authoredRoom);
+	if (state) await postGallowsCard(interaction.client, authoredRoom, state);
+}
+
+// ── starting the round ────────────────────────────────────────────────
+// The pinned opener the provisioner posted still carries the host's authoring
+// button, which has nothing left to do once a word exists, and it is the only
+// control in the channel. Without this edit the guessers have no way to play.
+// Fire and forget after the primary write (house rule 7): the word is stored, so a
+// failed edit is logged rather than thrown back at the host's modal.
+async function swapOpenerToGuessing(client: Client, room: IGameRoom): Promise<void> {
+	if (!room.openerMessageId) return;
+	try {
+		const channel = await resolveRoomChannel(client, room.channelId);
+		if (!channel) return;
+		const opener = await channel.messages.fetch(room.openerMessageId);
+		// Components only: an edit that names no files keeps the opener's logo and embed.
+		await opener.edit({ components: [hangmanRow(room, true)] });
+	} catch (error) {
+		console.warn("[game-rooms] could not swap the hangman opener to the guess button", { roomId: room.roomId, error });
+	}
+}
+
+// ── the gallows card ──────────────────────────────────────────────────
+// A new message after the word is set and after every guess that leaves the round
+// open, drawn by the same boardPicture the channel game uses. It is NOT a move: the
+// trail line above it stays the text transcript, and this card never enters it.
+// The round's last guess posts no card, because the result card from
+// roomLifecycle.finish carries the ending's gallows. Cosmetic, so a failure is
+// logged and swallowed: the row is the truth and the next guess draws again.
+async function postGallowsCard(client: Client, room: IGameRoom, state: HangmanState): Promise<void> {
+	try {
+		const channel = await resolveRoomChannel(client, room.channelId);
+		if (!channel) return;
+		const picture = await playingBoardPicture(state, gameRoomsCopy.hangman.boardDescription(state.authoredBy));
+		await channel.send({ ...picture, allowedMentions: { parse: [] } });
+	} catch (error) {
+		console.warn("[game-rooms] could not post the hangman gallows card", { roomId: room.roomId, error });
+	}
 }
 
 // ── guessing ──────────────────────────────────────────────────────────
@@ -308,8 +350,9 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	const mask = maskedWord(state);
 	const remaining = remainingAttempts(state);
 
-	// ⚠️ A NEW MESSAGE PER MOVE, never an edit, and never a files attachment (R8).
-	// The scroll IS the history, which is the entire reason this game earns a room.
+	// ⚠️ A NEW MESSAGE PER MOVE, never an edit, and the move line never carries a
+	// file (R8). The scroll IS the history, which is the entire reason this game
+	// earns a room; the picture rides its own gallows card below.
 	await roomTrail.postMove(interaction.client, room, {
 		actorId: interaction.user.id,
 		kind: "guess",
@@ -332,7 +375,10 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 
 	const won = outcome.status === "hit" && outcome.solved;
 	const lost = outcome.status === "miss" && outcome.lost;
-	if (!won && !lost) return;
+	if (!won && !lost) {
+		await postGallowsCard(interaction.client, room, state);
+		return;
+	}
 
 	// ⚠️ THE ONLY PLACE THE WORD IS EVER RENDERED, and it is after the round is over.
 	await roomTrail.postMove(interaction.client, room, {
@@ -344,13 +390,10 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	// A hangman room has no single winner: the guessers win or lose together, and the
 	// host is not competing. winnerId stays null and the XP hook takes the whole
 	// participant list.
-	// ⚠️ THE RESULT CARD CARRIES THE GALLOWS (plan task 5.7), and it is the ONLY
-	// message in the room that carries art at all. A move card stays text and embed
-	// (R8): a round can run to thirty of them, and re-uploading a PNG per move is
-	// bandwidth and a rate limit for nothing.
-	// The hangman end card when it draws (2026-10 item 243 Phase 3), the gallows art
-	// or its Dero stand in when it does not. The card takes revealedLetters, never the
-	// word, so this line adds no third read of it.
+	// The result card carries the ending's gallows, which is why the final guess
+	// posted no playing card above. The hangman end card when it draws (2026-10
+	// item 243 Phase 3), the gallows art or its Dero stand in when it does not. The
+	// card takes revealedLetters, never the word, so this line adds no third read of it.
 	await roomLifecycle.finish(interaction.client, room, {
 		winnerId: null,
 		art: await withRenderFallback(

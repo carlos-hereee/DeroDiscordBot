@@ -80,12 +80,14 @@ describe("/xp declares exactly the subcommands it handles", () => {
 	});
 });
 
-describe("the admin commands are gated BOTH ways", () => {
+// The runtime gate is the one gate. A Discord default would hide these from the
+// /setup admin role, which is exactly who they are for (see ADMIN_COMMANDS).
+describe("the admin commands are gated at runtime and visible to the admin role", () => {
 	it.each([
 		["xp", xpData],
 		["setup-level-system", setupData],
-	])("%s hides itself in the picker AND is in the runtime gate", (name, builder) => {
-		expect(hasAdminDefault(builder), `${name} is missing setDefaultMemberPermissions`).toBe(true);
+	])("%s is in the runtime gate and hides behind no Discord default", (name, builder) => {
+		expect(hasAdminDefault(builder), `${name} must not carry setDefaultMemberPermissions`).toBe(false);
 		expect(BOT_CONSTANTS.ADMIN_COMMANDS.has(name), `${name} is missing from ADMIN_COMMANDS`).toBe(true);
 	});
 });

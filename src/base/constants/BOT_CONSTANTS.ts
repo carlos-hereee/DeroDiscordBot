@@ -22,35 +22,49 @@ export const BOT_CONSTANTS = {
 	],
 
 	// ── admin commands that require role check ────────────────────
-	// /list-events and /leaderboard are deliberately NOT in this set,
-	// both are read-only and were moved to the public #command-center
-	// when the public/admin command guide split landed on 2026-04-24.
-	// Mortals seeing their rank and what's scheduled is the whole point.
-	// New admin streamer commands (configure-stream-schedule,
-	// pause-schedule, continue-schedule, go-live-soon, announce-stream)
-	// are gated because they write state.
+	// ⚠️ THIS SET IS THE ONE GATE ON AN ADMIN COMMAND, AND EVERY ADMIN COMMAND IS IN
+	// IT. main.ts checks it on every slash command: the server owner always passes,
+	// otherwise the member must hold the role /setup stored as GuildConfig.adminRoleId.
+	// No admin command carries a Discord default permission (setDefaultMemberPermissions).
+	// That flag only HIDES a command from members without Discord's own Administrator
+	// permission, so it hid these from the very /setup admin role this set admits, and
+	// it was never a gate anyway: a server can re-grant a command in its Integrations
+	// settings. Every admin command therefore shows in every member's picker, and this
+	// set refuses everyone who is not an admin. BOT_CONSTANTS.adminCommands.test.ts
+	// loads every command and fails when one carries a default without being here.
+	//
+	// Deliberately NOT in the set:
+	//   /setup and /self-destruct are server owner only through their own inline checks
+	//   (commands/admin/setup.ts, features/setup/selfDestruct.ts) and keep their default
+	//   as a picker courtesy; main.ts skips /setup, which runs before an admin role exists.
+	//   /render-analytics is platform owner only (its execute checks CREATOR_DISCORD_ID),
+	//   and this gate would demand a /setup config in whatever server the owner uses.
+	//   /list-events, /leaderboard, /account, /levels and the games are member commands:
+	//   members seeing what is scheduled and where they stand is the whole point.
 	ADMIN_COMMANDS: new Set<string>([
+		// ── events ──
 		"configure-kvk-season",
 		"delete-event",
+		// ── streamer schedules ──
 		"configure-stream-schedule",
 		"pause-schedule",
 		"continue-schedule",
+		"pause-all-schedules",
+		"continue-all-schedules",
 		"go-live-soon",
 		"announce-stream",
+		// ── channels and server switches ──
+		"channels",
+		"rename-channel",
+		"configure-auto-heal",
+		"configure-leaderboard-tracking",
+		"configure-leaderboard-week-start",
 		// ── leveling ──
-		// Both of these ALSO carry .setDefaultMemberPermissions(Administrator) on
-		// their builders. The two mechanisms are independent and both are needed:
-		// the builder flag is what HIDES a command in a non-admin's picker, and
-		// this Set is the runtime gate that catches anyone who reaches it anyway.
-		// /account and /levels are deliberately in NEITHER, like /leaderboard and
-		// /list-events: members seeing their own standing is the entire point.
 		"setup-level-system",
 		"xp",
 		// ── dero voice ──
-		// Same pairing as the two above: the builder's Administrator default hides
-		// the command, and this runtime gate holds even if a server re-grants it in
-		// its Integrations settings. /dero-config sets the cloned voice id and the
-		// monthly speech spend cap, so a hidden button alone is not a gate here.
+		// /dero-config is the voice kill switch, the monthly speech spend cap and the
+		// lists of who may give Dero tasks.
 		"dero-config",
 	]),
 	// scheduler
@@ -155,6 +169,15 @@ export const BOT_CONSTANTS = {
 	// sleep. Checked on the same 5 minute room sweep, so the real forfeit lands
 	// within five minutes after this.
 	GAME_ROOM_MONOPOLY_IDLE_MS: 24 * 60 * 60 * 1000, // 24 hours
+	// Any room in a non terminal status with no action for this long is finished as
+	// abandoned by sweepIdleRooms, so a forgotten draft or match can never hold its
+	// host's one room slot (the partial unique index) for good. 30 minutes is the
+	// owner's number from the 1.7.0 test run (test fixes plan, item 13). It sits above
+	// every live turn clock here (battleship's 10 minute turn, Hold'em's 30 seconds),
+	// so a slow game is never cut off mid turn. Monopoly is exempt: its seats get the
+	// day above, which its opener promises, and that sweep already ends every match.
+	// Checked on the same 5 minute room sweep, so the close lands up to 5 minutes later.
+	GAME_ROOM_IDLE_ABANDON_MS: 30 * 60_000, // 30 minutes
 	// How long a Monopoly auction takes sealed bids, from the pass that opened it
 	// (master plan Section 1). Long enough for every seat to see the board and type
 	// a number; short enough that the seller's turn is not held for long.
@@ -224,11 +247,11 @@ export const BOT_CONSTANTS = {
 	// so the default is what a guild costs before an admin raises it.
 	DERO_VOICE_DEFAULT_CAP_USD: 5,
 	DERO_VOICE_MAX_CAP_USD: 500,
-	// An ElevenLabs voice id is alphanumeric. These bounds are generous on both
-	// sides of today's 20 character ids so a format change does not lock an admin
-	// out, while a pasted sentence or URL is still refused.
-	DERO_VOICE_ID_MIN_LENGTH: 10,
-	DERO_VOICE_ID_MAX_LENGTH: 64,
+	// Dero's one speaking voice, the ElevenLabs premade voice "George". The owner
+	// picked it (1.7.0 test fixes plan, item 6) so a guild needs no voice id step
+	// before /dero-config enable. DeroVoiceConfig defaults to it, and every reader
+	// goes through resolveDeroVoiceId so rows that stored a null get it too.
+	DERO_DEFAULT_VOICE_ID: "JBFqnCBsd6RMkjVDRZzb",
 	// One speech call waits at most this long, then aborts. Past this the socket
 	// is stuck rather than slow, and the member is better served by a plain
 	// "try again" than by a reply that never comes.

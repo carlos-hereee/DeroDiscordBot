@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { PermissionFlagsBits, type ChatInputCommandInteraction, type EmbedBuilder, type GuildMember } from "discord.js";
 
 // ── /dero join and /dero leave ─────────────────────────────────────────────
@@ -80,7 +81,6 @@ describe("checkJoin, the /dero join gates", () => {
 	it.each([
 		["with no config", { config: null }, voiceCopy.listen.notSetUp],
 		["when the kill switch is off", { config: configWith({ enabled: false }) }, deroBrainCopy.tell.switchedOff],
-		["with no voice id", { config: configWith({ voiceId: null }) }, voiceCopy.listen.notSetUp],
 		["for a member who is not authorized", { speaker: memberFor("g1", { roles: [], channel: voiceChannel(VC).channel }) }, deroBrainCopy.tell.notAuthorized],
 		["for a member who is not in a voice channel", { speaker: memberFor("g1") }, call.notInVoice],
 		["when Dero is already in another channel", { sessionChannelId: "vc-other" }, call.alreadyElsewhere("vc-other")],
@@ -95,6 +95,13 @@ describe("checkJoin, the /dero join gates", () => {
 	it("lets the guild owner through without a role", () => {
 		const gate = checkJoin(gateInput({ speaker: memberFor("g1", { id: OWNER_ID, roles: [], channel: voiceChannel(VC).channel }) }));
 		expect(gate.ok).toBe(true);
+	});
+
+	// Rows saved before the default voice existed store null, which must not refuse.
+	it("joins with Dero's default voice when the row stored no voice id", () => {
+		const { channel } = voiceChannel(VC);
+		const gate = checkJoin(gateInput({ speaker: memberFor("g1", { channel }), config: configWith({ voiceId: null }) }));
+		expect(gate).toEqual({ ok: true, channel, voiceId: BOT_CONSTANTS.DERO_DEFAULT_VOICE_ID });
 	});
 
 	it("passes the speaker's own channel and checks view, connect and speak for the bot", () => {

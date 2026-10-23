@@ -7,6 +7,8 @@ import {
 	dealHand,
 	act,
 	forceFold,
+	leaveTable,
+	endTable,
 	handInProgress,
 	placements,
 	whoActs,
@@ -32,7 +34,8 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomHoldemHandlers ───────────────────────────────────────────────
 // What:  every hold em interaction: buying in, dealing, acting, peeking at your
-//        own cards, and the clock that folds for a player who vanished.
+//        own cards, leaving or ending the table, and the clock that folds for a
+//        player who vanished.
 // Who:   routed from gameRoomHandlers.
 // When:  many times per tournament.
 // Where: the table lives on the room row, so a deploy mid-hand costs nothing. Its
@@ -419,6 +422,92 @@ async function payPlacements(client: Client, room: IGameRoom, table: HoldemTable
 	}
 }
 
+// ── leaving and ending ────────────────────────────────────────────────
+// Both writes are a compare and swap on the action stamp AND the seat count. The
+// stamp catches a racing action or clock fold; the count catches a racing buy in,
+// which moves no stamp, so a leave or an end can never erase a seat that landed
+// between this handler's read and its write.
+function persistLeaveOrEnd(room: IGameRoom, table: HoldemTable, readAt: number, seatsRead: number) {
+	return gameRoomStore.updateSecretIf(
+		room.guildId,
+		room.roomId,
+		{ "secret.lastActionAt": readAt, "secret.seats": { $size: seatsRead } },
+		table
+	);
+}
+
+export async function handleLeaveTable(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	const table = tableOf(room);
+	if (!table || table.status === "finished") {
+		await interaction.reply({ content: gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
+		return;
+	}
+
+	const readAt = table.lastActionAt;
+	const seatsRead = table.seats.length;
+	const before = toPublicView(table);
+	const outcome = leaveTable(table, interaction.user.id, secureRandom);
+	if (!outcome.ok) {
+		await interaction.reply({ content: gameRoomsCopy.holdem.notSeated, ...PRIVATE });
+		return;
+	}
+
+	const written = await persistLeaveOrEnd(room, table, readAt, seatsRead);
+	if (!written) {
+		await interaction.reply({ content: gameRoomsCopy.holdem.tableBusy, ...PRIVATE });
+		return;
+	}
+
+	await interaction.deferUpdate();
+	await roomTrail.postMove(interaction.client, room, {
+		actorId: interaction.user.id,
+		kind: "system",
+		text: gameRoomsCopy.holdem.leftTable(interaction.user.id, outcome.foldedHand ?? false),
+	});
+	// The same settle path a fold takes, so a leave that ends the hand pays the pot and
+	// one that leaves a single seat ends the tournament exactly the way a bust does.
+	await settleOutcome(interaction.client, room, table, outcome, interaction.user.id);
+	if (outcome.foldedHand) {
+		announceDealer({ client: interaction.client, roomId: room.roomId, before, after: toPublicView(table), outcome });
+	}
+}
+
+// ⚠️ NO PLACEMENT XP ON AN ENDED TABLE. payPlacements prizes a tournament that was
+// played out to its last bust; an ended table was not, and paying its standings
+// would turn "deal one hand, press End" into a prize that skips the game. The hands
+// that were played already paid their per hand XP as they settled.
+export async function handleEndTable(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	const table = tableOf(room);
+	if (!table || table.status === "finished") {
+		await interaction.reply({ content: gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
+		return;
+	}
+
+	const readAt = table.lastActionAt;
+	const seatsRead = table.seats.length;
+	const order = endTable(table);
+	const written = await persistLeaveOrEnd(room, table, readAt, seatsRead);
+	if (!written) {
+		await interaction.reply({ content: gameRoomsCopy.holdem.tableBusy, ...PRIVATE });
+		return;
+	}
+
+	await interaction.deferUpdate();
+	const standings = order.map((userId) => {
+		const seat = table.seats.find((entry) => entry.userId === userId);
+		return { userId, stack: seat && !seat.out ? seat.stack : null };
+	});
+	await roomTrail.postMove(interaction.client, room, {
+		actorId: interaction.user.id,
+		kind: "system",
+		text: gameRoomsCopy.holdem.tableEnded(interaction.user.id, standings, table.handNumber > 0),
+	});
+	// Redrawn before the finish so the board loses its controls; the result card that
+	// finish posts is the room's last word.
+	await redraw(interaction.client, room, table);
+	await roomLifecycle.finish(interaction.client, room, { winnerId: table.winnerId });
+}
+
 // ── the private peek ──────────────────────────────────────────────────
 export async function handleShowCards(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const table = tableOf(room);
@@ -508,7 +597,15 @@ async function runHoldemClockSweep(client: Client, now: Date): Promise<HoldemClo
 	return { forced };
 }
 
-export const roomHoldemHandlers = { handleBuyIn, handleDeal, handleMove, handleShowCards, sweepHoldemClocks };
+export const roomHoldemHandlers = {
+	handleBuyIn,
+	handleDeal,
+	handleMove,
+	handleShowCards,
+	handleLeaveTable,
+	handleEndTable,
+	sweepHoldemClocks,
+};
 
 // Rendering helpers the provisioner needs to post the first board.
 export { tableEmbed, joiningRows, currentPot };

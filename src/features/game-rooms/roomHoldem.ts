@@ -24,7 +24,8 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 //        never pushed and never a DM. Grep this file for `holeCards` and there is
 //        exactly one hit, in the private builder.
 // How:   three rows, because Discord caps a message at five and a betting table
-//        needs room to breathe: the actions, the raise presets, and the card peek.
+//        needs room to breathe: the actions, the raise presets, and the card peek
+//        beside Leave table and End table.
 
 // ── the public table ──────────────────────────────────────────────────
 export function tableEmbed(table: HoldemTable, potTotal: number): EmbedBuilder {
@@ -98,6 +99,24 @@ export function holeCardsEmbed(table: HoldemTable, viewerId: string): EmbedBuild
 }
 
 // ── controls ──────────────────────────────────────────────────────────
+// Leave table and End table ride every live state's last row, so no state of the
+// table can hold a seated player, or the host's one room slot, with no way out.
+// Leave is any seated player's and End is the host's; gameRoomActions gates both.
+function tableExitButtons(roomId: string): ButtonBuilder[] {
+	return [
+		new ButtonBuilder()
+			.setCustomId(`${GAME_ROOM_PREFIX}:hleave:${roomId}`)
+			.setLabel(gameRoomsCopy.holdem.leaveLabel)
+			.setEmoji("🚪")
+			.setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder()
+			.setCustomId(`${GAME_ROOM_PREFIX}:hend:${roomId}`)
+			.setLabel(gameRoomsCopy.holdem.endLabel)
+			.setEmoji("🏁")
+			.setStyle(ButtonStyle.Danger),
+	];
+}
+
 // `table` carries the buy in and the seat cap; without it (or for a table without
 // terms) both are the standard ones, which is what every caller got before terms.
 export function joiningRows(roomId: string, seatCount: number, table?: HoldemTable): ActionRowBuilder<ButtonBuilder>[] {
@@ -116,7 +135,8 @@ export function joiningRows(roomId: string, seatCount: number, table?: HoldemTab
 				.setLabel(gameRoomsCopy.holdem.startLabel)
 				.setEmoji("🃏")
 				.setStyle(ButtonStyle.Primary)
-				.setDisabled(seatCount < BOT_CONSTANTS.HOLDEM_MIN_SEATS)
+				.setDisabled(seatCount < BOT_CONSTANTS.HOLDEM_MIN_SEATS),
+			...tableExitButtons(roomId)
 		),
 	];
 }
@@ -142,7 +162,8 @@ export function betweenHandsRows(roomId: string): ActionRowBuilder<ButtonBuilder
 				.setCustomId(`${GAME_ROOM_PREFIX}:hcards:${roomId}`)
 				.setLabel(gameRoomsCopy.holdem.showCardsLabel)
 				.setEmoji("🂠")
-				.setStyle(ButtonStyle.Secondary)
+				.setStyle(ButtonStyle.Secondary),
+			...tableExitButtons(roomId)
 		),
 	];
 }
@@ -207,7 +228,8 @@ export function bettingRows(table: HoldemTable, roomId: string, potTotal: number
 				.setCustomId(`${GAME_ROOM_PREFIX}:hcards:${roomId}`)
 				.setLabel(gameRoomsCopy.holdem.showCardsLabel)
 				.setEmoji("🂠")
-				.setStyle(ButtonStyle.Secondary)
+				.setStyle(ButtonStyle.Secondary),
+			...tableExitButtons(roomId)
 		)
 	);
 

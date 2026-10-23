@@ -537,3 +537,112 @@ export function placements(table: HoldemTable): string[] {
 	const winner = table.winnerId ? [table.winnerId] : [];
 	return [...winner, ...[...table.bustOrder].reverse()];
 }
+
+// ── leaving and ending a table ────────────────────────────────────────
+export interface LeaveOutcome extends ActionOutcome {
+	// True when the player still held cards in a live hand, which leaving folded.
+	foldedHand?: boolean;
+}
+
+/**
+ * Take a player off the table for good, the Leave table button's engine half.
+ *
+ * Before the first deal the seat is simply removed, which frees it for the next
+ * buyer. Once the tournament runs the seat stays in the array marked out, exactly
+ * like a bust, so finishing order survives (see TableSeat.out); a live hand is
+ * folded first, so the chips already in the pot stay there. The player's stack
+ * leaves with them: chips die with the table (A9), so there is nothing to cash out
+ * to. When one seat is left the tournament ends the way a final bust ends it.
+ * `narration` is never set, because the caller posts its own one line for the leave.
+ */
+export function leaveTable(table: HoldemTable, userId: string, rng: () => number = Math.random): LeaveOutcome {
+	if (table.status === "finished") return { ok: false, reason: "closed" };
+	const seat = seatOf(table, userId);
+	if (!seat || seat.out) return { ok: false, reason: "notSeated" };
+
+	if (table.status === "joining") {
+		table.seats = table.seats.filter((entry) => entry.userId !== userId);
+		table.lastActionAt = Date.now();
+		return { ok: true, foldedHand: false };
+	}
+
+	const holdsCards = handInProgress(table) && !seat.folded;
+	keepButtonOnItsSeat(table, seat);
+	// Out BEFORE the fold, so the fold's own checks (one player left in the hand, one
+	// player left in the tournament) already count this seat as gone.
+	seat.out = true;
+	table.bustOrder.push(userId);
+
+	let outcome: ActionOutcome = { ok: true };
+	if (holdsCards) outcome = whoActs(table) === userId ? act(table, userId, "fold", 0, rng) : foldOutOfTurn(table, userId, rng);
+	else table.lastActionAt = Date.now();
+
+	// After the fold, because settling a hand can hand an uncalled bet back to this
+	// seat, and the betting round's copy is zeroed too so the next writeBack cannot
+	// put the chips back on a player who has gone.
+	seat.stack = 0;
+	const bettingSeat = table.betting?.seats.find((entry) => entry.userId === userId);
+	if (bettingSeat) bettingSeat.stack = 0;
+
+	if (!outcome.tournamentOver && table.status === "playing" && livePlayers(table).length <= 1) {
+		finishTournament(table);
+		outcome = { ...outcome, tournamentOver: true };
+	}
+	return { ...outcome, narration: undefined, foldedHand: holdsCards };
+}
+
+// buttonIndex counts LIVE seats, so a seat going out before the button would slide
+// the button one seat on. Moving the index back keeps it on the player who holds it;
+// when the leaver is the button, the same index now names the next seat, which is
+// where the button would pass anyway.
+function keepButtonOnItsSeat(table: HoldemTable, leaving: TableSeat): void {
+	const live = livePlayers(table);
+	const buttonAt = table.buttonIndex % live.length;
+	const leavingAt = live.indexOf(leaving);
+	table.buttonIndex = leavingAt < buttonAt ? buttonAt - 1 : buttonAt;
+}
+
+// A leave can come from a seat that is not on the clock, which the betting engine's
+// applyAction refuses by design. Folding the seat in place is safe because the round
+// only closes on an action by the player to act, and that player has not acted yet.
+function foldOutOfTurn(table: HoldemTable, userId: string, rng: () => number): ActionOutcome {
+	const bettingSeat = table.betting?.seats.find((entry) => entry.userId === userId);
+	if (bettingSeat) bettingSeat.folded = true;
+	const seat = seatOf(table, userId);
+	if (seat) seat.folded = true;
+	table.lastActionAt = Date.now();
+	if (inHand(table).length <= 1) return settleHand(table, false, rng);
+	return { ok: true };
+}
+
+/**
+ * The finishing order right now, best first: every seat still in, most chips first
+ * (ties keep seat order, since sort is stable), then every seat that is out, last
+ * one out first. Meaningful between hands, when stacks are the whole truth; endTable
+ * calls any running hand off before it reads this.
+ */
+export function standings(table: HoldemTable): string[] {
+	const stillIn = [...livePlayers(table)].sort((a, b) => b.stack - a.stack).map((seat) => seat.userId);
+	return [...stillIn, ...[...table.bustOrder].reverse()];
+}
+
+/**
+ * End the table now, the host's End table button. A running hand is called off, so
+ * every chip a seat still in put into it goes back to that seat, and the standings
+ * are read from the stacks that leaves. A seat that left mid hand forfeited its
+ * chips when it folded, so nothing comes back to it. A table ended before its first
+ * deal had nothing played, so it has no winner. Returns the standings, best first.
+ */
+export function endTable(table: HoldemTable): string[] {
+	for (const seat of table.seats) {
+		if (!seat.out) seat.stack += seat.totalCommitted;
+		seat.committed = 0;
+		seat.totalCommitted = 0;
+	}
+	const order = standings(table);
+	table.status = "finished";
+	table.betting = null;
+	table.winnerId = table.handNumber > 0 ? (order[0] ?? null) : null;
+	table.lastActionAt = Date.now();
+	return order;
+}

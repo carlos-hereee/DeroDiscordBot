@@ -77,6 +77,10 @@ export interface IGameRoom {
 	// The moment the sweep may delete this room's channel. See the index note below: this is
 	// written by roomLifecycle.finish and by nothing else, which is what makes the sweep safe.
 	archiveAt: Date | null;
+	// Stamped by the schema's timestamps option on every write, which is what the idle
+	// sweep reads as a room's last action for every game but Hold'em.
+	createdAt?: Date;
+	updatedAt?: Date;
 }
 
 // One entry in the append-only scroll. _id is disabled because these are a transcript, not

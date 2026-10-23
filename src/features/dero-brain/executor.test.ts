@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { ChannelType, type Guild, type GuildMember } from "discord.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import type { VoiceSessionView } from "@features/voice/voiceSessions.js";
@@ -295,11 +296,10 @@ describe("executeActions: say", () => {
 		expect(speak).not.toHaveBeenCalled();
 	});
 
-	it("says nothing without a voice id, with no render", async () => {
+	it("speaks in Dero's default voice when the row stored no voice id", async () => {
 		const { world, render } = worldWithCall();
-		const { reports } = await run([{ type: "say", text: "hello" }], world, { ...CONFIG, voiceId: null });
-		expect(reports[0].outcome).toBe("not_set_up");
-		expect(render).not.toHaveBeenCalled();
+		await run([{ type: "say", text: "hello" }], world, { ...CONFIG, voiceId: null });
+		expect(render).toHaveBeenCalledWith({ guildId: GUILD_ID, voiceId: BOT_CONSTANTS.DERO_DEFAULT_VOICE_ID, text: "hello" });
 	});
 
 	it("drops a line whose call ended while it rendered", async () => {

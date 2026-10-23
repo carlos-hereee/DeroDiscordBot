@@ -23,13 +23,13 @@ export type ListenRefusal = "notSetUp" | "voiceOff" | "listenOff";
 
 /**
  * Why Listen is unavailable in a guild, or null when it is available. A guild
- * with no config row has never set voice up. ONE helper drives both the
- * button's presence and the handler's refusal (house rule 17).
+ * with no config row has never set voice up. A stored null voice id is not a
+ * refusal: it reads as Dero's default voice (resolveDeroVoiceId). ONE helper
+ * drives both the button's presence and the handler's refusal (house rule 17).
  */
-export function listenRefusal(config: Pick<IDeroVoiceConfig, "enabled" | "listenEnabled" | "voiceId"> | null): ListenRefusal | null {
+export function listenRefusal(config: Pick<IDeroVoiceConfig, "enabled" | "listenEnabled"> | null): ListenRefusal | null {
 	if (!config) return "notSetUp";
 	if (!config.enabled) return "voiceOff";
-	if (!config.voiceId) return "notSetUp";
 	if (!config.listenEnabled) return "listenOff";
 	return null;
 }
@@ -41,8 +41,8 @@ export function buildListenRow(): ActionRowBuilder<ButtonBuilder> {
 }
 
 /**
- * The Listen row when the guild's voice is enabled, Listen is on and a voice id
- * is set; otherwise null, so a guild without voice never sees a dead button.
+ * The Listen row when the guild's voice is enabled and Listen is on; otherwise
+ * null, so a guild without voice never sees a dead button.
  */
 export async function maybeListenRow(guildId: string | null): Promise<ActionRowBuilder<ButtonBuilder> | null> {
 	if (!guildId) return null;

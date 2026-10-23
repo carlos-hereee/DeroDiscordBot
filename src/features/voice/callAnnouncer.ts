@@ -1,6 +1,7 @@
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import { renderCallSpeech, type CallSpeechInput, type CallSpeechResult } from "./callSpeech.js";
+import { resolveDeroVoiceId } from "./deroVoiceId.js";
 import { voiceSessions, type VoiceSessionView } from "./voiceSessions.js";
 
 // ── callAnnouncer ──────────────────────────────────────────────────────────
@@ -14,7 +15,7 @@ import { voiceSessions, type VoiceSessionView } from "./voiceSessions.js";
 // Where: it does not decide WHAT to say or WHETHER a game wants speech; the
 //        caller does. It only re-checks what can change between two moves of a
 //        long game: the call, the guild's voice switch and its voice.
-// How:   ① the call; ② the voice config, enabled and voiced for this guild;
+// How:   ① the call; ② the voice config, enabled for this guild;
 //        ③ render through renderCallSpeech, whose monthly spend cap returns
 //        capReached, which is silence here; ④ the call again, since it can end
 //        during the render, then hand the clip to the call's speaker.
@@ -39,9 +40,9 @@ export async function speakInCall(guildId: string, text: string, deps: CallAnnou
 	if (!call) return;
 	// ② The guild id check guards a config store that ever answers for the wrong guild.
 	const config = await deps.loadConfig(guildId);
-	if (!config?.enabled || !config.voiceId || config.guildId !== guildId) return;
+	if (!config?.enabled || config.guildId !== guildId) return;
 	// ③
-	const speech = await deps.render({ guildId, voiceId: config.voiceId, text });
+	const speech = await deps.render({ guildId, voiceId: resolveDeroVoiceId(config), text });
 	if (speech.status !== "ok") return;
 	// ④ A line for a call that is gone is dropped rather than played into the next one.
 	if (deps.sessionIn(guildId) !== call) return;

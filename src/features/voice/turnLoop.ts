@@ -4,6 +4,7 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
+import { resolveDeroVoiceId } from "./deroVoiceId.js";
 import { CooldownManager } from "@utils/cooldownManager.js";
 import { isAuthorizedSpeaker } from "@features/dero-brain/authorizer.js";
 import {
@@ -259,12 +260,12 @@ export function createTurnLoop(target: TurnTarget, deps: TurnLoopDeps = defaultT
 
 		// ①
 		const config = await deps.loadConfig(guild.id);
-		if (!config || !config.enabled || !config.voiceId || config.guildId !== guild.id) {
+		if (!config || !config.enabled || config.guildId !== guild.id) {
 			utterance.pcm48kStereo = EMPTY_AUDIO;
 			finish("switched_off");
 			return;
 		}
-		const voiceId = config.voiceId;
+		const voiceId = resolveDeroVoiceId(config);
 
 		// ② ③ ④
 		const heard = await transcribeUtterance(utterance);

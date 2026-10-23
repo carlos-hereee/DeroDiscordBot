@@ -16,7 +16,20 @@ vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 
-import { handleBuyIn, handleDeal, handleShowCards, handleMove, sweepHoldemClocks } from "./roomHoldemHandlers.js";
+import {
+	handleBuyIn,
+	handleDeal,
+	handleShowCards,
+	handleMove,
+	handleLeaveTable,
+	handleEndTable,
+	sweepHoldemClocks,
+	currentPot,
+} from "./roomHoldemHandlers.js";
+import { joiningRows, bettingRows, betweenHandsRows } from "./roomHoldem.js";
+import { GAME_ROOM_ACTIONS } from "./gameRoomActions.js";
+import { roomTrail } from "./roomTrail.js";
+import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { act, createTable, joinTable, dealHand, whoActs, type HoldemTable } from "@features/games/holdemTable.js";
@@ -430,5 +443,128 @@ describe("the turn clock defers to a real action", () => {
 		storeMock.updateSecretIf.mockResolvedValue(null);
 
 		expect(await sweepHoldemClocks(client)).toEqual({ forced: 0 });
+	});
+});
+
+// ── leaving and ending (the 1.7.0 test run's stuck table) ──────────────
+describe("leaving and ending the table", () => {
+	const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn> };
+	const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
+	const hostedRoom = (table: HoldemTable): IGameRoom => ({ ...makeRoom(table), hostId: "p0" }) as IGameRoom;
+	const customIdsOf = (rows: { toJSON(): { components: { custom_id?: string }[] } }[]) =>
+		rows.flatMap((row) => row.toJSON().components.map((component) => component.custom_id));
+
+	it("puts Leave table and End table on every live state of the board", () => {
+		const exits = ["gameroom:hleave:room-1", "gameroom:hend:room-1"];
+		const joining = createTable();
+		joinTable(joining, "p0", "P");
+		const dealt = dealtTable(3);
+
+		expect(customIdsOf(joiningRows("room-1", 1, joining))).toEqual(expect.arrayContaining(exits));
+		expect(customIdsOf(bettingRows(dealt, "room-1", currentPot(dealt)))).toEqual(expect.arrayContaining(exits));
+		expect(customIdsOf(betweenHandsRows("room-1"))).toEqual(expect.arrayContaining(exits));
+	});
+
+	it("gates Leave to the room's players and End to its host", () => {
+		expect(GAME_ROOM_ACTIONS.hleave).toEqual({ hostOnly: false, playersOnly: true });
+		expect(GAME_ROOM_ACTIONS.hend).toEqual({ hostOnly: true, playersOnly: false });
+	});
+
+	it("folds a leaver's live hand, posts one line for the leave, and ends a heads up tournament as a bust would", async () => {
+		const table = dealtTable(2);
+		const interaction = makeInteraction("p0");
+
+		await handleLeaveTable(interaction, hostedRoom(table));
+
+		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+		const lines = trailMock.postMove.mock.calls.map((call) => (call[2] as { text: string }).text);
+		expect(lines[0]).toBe(gameRoomsCopy.holdem.leftTable("p0", true));
+		expect(lines.filter((line) => line.includes("left the table"))).toHaveLength(1);
+		expect(finishMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), { winnerId: "p1" });
+		expect(awardXpMock).toHaveBeenCalledWith(expect.objectContaining({ userId: "p1", game: "holdem", outcome: "won" }));
+	});
+
+	it("frees a seat before the first deal without ending anything", async () => {
+		const table = createTable();
+		joinTable(table, "p0", "P0");
+		joinTable(table, "p1", "P1");
+
+		await handleLeaveTable(makeInteraction("p1"), hostedRoom(table));
+
+		const written = storeMock.updateSecretIf.mock.calls[0][3] as HoldemTable;
+		expect(written.seats.map((seat) => seat.userId)).toEqual(["p0"]);
+		expect(trailMock.postMove.mock.calls[0][2]).toMatchObject({ text: gameRoomsCopy.holdem.leftTable("p1", false) });
+		expect(finishMock).not.toHaveBeenCalled();
+	});
+
+	it("guards the write on both the action stamp and the seat count, so a racing buy in survives", async () => {
+		const table = createTable();
+		joinTable(table, "p0", "P0");
+		joinTable(table, "p1", "P1");
+		const readAt = table.lastActionAt;
+
+		await handleLeaveTable(makeInteraction("p1"), hostedRoom(table));
+
+		expect(storeMock.updateSecretIf.mock.calls[0][2]).toEqual({
+			"secret.lastActionAt": readAt,
+			"secret.seats": { $size: 2 },
+		});
+	});
+
+	it("refuses a member with no seat and writes nothing", async () => {
+		const interaction = makeInteraction("invitee");
+
+		await handleLeaveTable(interaction, hostedRoom(dealtTable(3)));
+
+		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.holdem.notSeated }));
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+	});
+
+	it("says nothing in the room when somebody else's write landed first", async () => {
+		storeMock.updateSecretIf.mockResolvedValue(null);
+		const interaction = makeInteraction("p0");
+
+		await handleLeaveTable(interaction, hostedRoom(dealtTable(3)));
+
+		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.holdem.tableBusy }));
+		expect(trailMock.postMove).not.toHaveBeenCalled();
+	});
+
+	it("ends a running table on the standings, with the chip leader as the winner and no placement prize", async () => {
+		const table = dealtTable(3);
+		const interaction = makeInteraction("p0");
+
+		await handleEndTable(interaction, hostedRoom(table));
+
+		const ended = storeMock.updateSecretIf.mock.calls[0][3] as HoldemTable;
+		expect(ended.status).toBe("finished");
+		const text = (trailMock.postMove.mock.calls[0][2] as { text: string }).text;
+		expect(text).toContain("Final standings");
+		expect(finishMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), { winnerId: ended.winnerId });
+		expect(ended.winnerId).not.toBeNull();
+		expect(awardXpMock).not.toHaveBeenCalledWith(expect.objectContaining({ game: "holdem" }));
+	});
+
+	it("ends a table that never dealt with no winner", async () => {
+		const table = createTable();
+		joinTable(table, "p0", "P0");
+
+		await handleEndTable(makeInteraction("p0"), hostedRoom(table));
+
+		expect(trailMock.postMove.mock.calls[0][2]).toMatchObject({
+			text: gameRoomsCopy.holdem.tableEnded("p0", [], false),
+		});
+		expect(finishMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), { winnerId: null });
+	});
+
+	it("refuses to end a table that is already over", async () => {
+		const table = dealtTable(2);
+		table.status = "finished";
+		const interaction = makeInteraction("p0");
+
+		await handleEndTable(interaction, hostedRoom(table));
+
+		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.holdem.tournamentOver }));
+		expect(finishMock).not.toHaveBeenCalled();
 	});
 });

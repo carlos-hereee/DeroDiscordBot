@@ -13,6 +13,7 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
+import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
 import { CooldownManager } from "@utils/cooldownManager.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { brainQueue } from "@features/dero-brain/brainQueue.js";
@@ -283,7 +284,7 @@ const refuseJoin = (line: string): JoinGate => ({ ok: false, line });
 
 /**
  * The /dero join gates, in order, with nothing joined and nothing spent: the
- * kill switch and a voice to speak with, an authorized speaker, the speaker in
+ * kill switch, an authorized speaker, the speaker in
  * a voice channel, Dero not already in a call here, the channel on the voice
  * allowlist, and the bot able to see, connect and speak there. Every refusal
  * reuses the line that already says it, from the tell gates or the Listen copy.
@@ -291,7 +292,6 @@ const refuseJoin = (line: string): JoinGate => ({ ok: false, line });
 export function checkJoin({ speaker, guildOwnerId, botMember, config, sessionChannelId }: JoinGateInput): JoinGate {
 	if (!config) return refuseJoin(voiceCopy.listen.notSetUp);
 	if (!config.enabled) return refuseJoin(tellCopy.switchedOff);
-	if (!config.voiceId) return refuseJoin(voiceCopy.listen.notSetUp);
 	if (!isAuthorizedSpeaker({ member: speaker, guildOwnerId, voiceConfig: config })) return refuseJoin(tellCopy.notAuthorized);
 
 	// The speaker's own channel is the target, so "the speaker is in it" holds
@@ -304,7 +304,7 @@ export function checkJoin({ speaker, guildOwnerId, botMember, config, sessionCha
 	}
 	if (!config.allowedVoiceChannelIds.includes(channel.id)) return refuseJoin(callCopy.channelNotAllowed);
 	if (!botMember || !channel.permissionsFor(botMember)?.has(BOT_VOICE_PERMISSIONS)) return refuseJoin(callCopy.botLacksPermission);
-	return { ok: true, channel, voiceId: config.voiceId };
+	return { ok: true, channel, voiceId: resolveDeroVoiceId(config) };
 }
 
 async function join(interaction: ChatInputCommandInteraction): Promise<void> {

@@ -12,7 +12,7 @@ export type DeroVoiceListField = "allowedRoleIds" | "allowedChannelIds" | "allow
 
 // The scalar fields /dero-config sets. Never guildId (the key) or the arrays
 // (those go through addToList and removeFromList so concurrent edits merge).
-export type DeroVoiceConfigPatch = Partial<Pick<IDeroVoiceConfig, "enabled" | "voiceId" | "listenEnabled" | "monthlyCapUsd">>;
+export type DeroVoiceConfigPatch = Partial<Pick<IDeroVoiceConfig, "enabled" | "listenEnabled" | "monthlyCapUsd">>;
 
 export const deroVoiceConfigStore = {
 	async findByGuildId(guildId: string): Promise<IDeroVoiceConfig | null> {

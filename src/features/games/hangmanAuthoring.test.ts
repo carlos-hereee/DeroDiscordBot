@@ -63,21 +63,14 @@ describe("the hint", () => {
 		});
 	});
 
-	// ⚠️ BOTH DIRECTIONS. Writing the word into its own hint is the obvious break;
-	// hiding it inside a longer token, or handing over a prefix of it, are the two
-	// dodges that a naive substring check misses one of.
+	// The host owns the hint, giveaways included, so nothing here may refuse one for
+	// naming the word or a piece of it.
 	it.each([
 		["the word outright", "the answer is planet"],
 		["the word inside a longer token", "something planetary"],
 		["a prefix of the word", "make a plan"],
-	])("refuses a hint carrying %s", (_label, hint) => {
-		expect(validateHangmanAuthoring("planet", hint)).toEqual({ ok: false, reason: "hintContainsWord" });
-	});
-
-	it("does not refuse an innocent short token that happens to share a letter", () => {
-		// Two letter tokens are ignored in the prefix direction, because at that
-		// length almost every hint would collide with almost every word.
-		expect(validateHangmanAuthoring("planet", "it is up in the sky").ok).toBe(true);
+	])("accepts a hint carrying %s", (_label, hint) => {
+		expect(validateHangmanAuthoring("planet", hint)).toEqual({ ok: true, word: "planet", hint, extraHints: [] });
 	});
 });
 
@@ -91,10 +84,12 @@ describe("the extra hints", () => {
 		expect(ok("planet", "a body in the sky", ["a", "b", "c", "d"])).toEqual({ ok: false, reason: "tooManyExtraHints" });
 	});
 
-	it("applies the same leak rule as the main hint", () => {
+	it("accepts an extra hint that names the word, like the main hint", () => {
 		expect(ok("planet", "a body in the sky", ["it is a planet"])).toEqual({
-			ok: false,
-			reason: "extraHintContainsWord",
+			ok: true,
+			word: "planet",
+			hint: "a body in the sky",
+			extraHints: ["it is a planet"],
 		});
 	});
 
@@ -129,7 +124,7 @@ describe("no rejection ever carries the word", () => {
 	it.each([
 		["plan3t", "a body in the sky"],
 		["ab", "a body in the sky"],
-		["planet", "the answer is planet"],
+		["planet", "x".repeat(HANGMAN_HINT_MAX + 1)],
 	])("keeps %s out of its own rejection", (word, hint) => {
 		const result = validateHangmanAuthoring(word, hint);
 		expect(result.ok).toBe(false);

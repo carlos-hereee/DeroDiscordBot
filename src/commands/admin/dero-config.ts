@@ -2,7 +2,6 @@ import {
 	SlashCommandBuilder,
 	SlashCommandSubcommandGroupBuilder,
 	ChatInputCommandInteraction,
-	PermissionFlagsBits,
 	MessageFlags,
 	ChannelType,
 	type EmbedBuilder,
@@ -18,15 +17,16 @@ import { currentMonthCents } from "@features/voice/spendMeter.js";
 import { formatUsd } from "@features/voice/pricing.js";
 import { isTtsKeyConfigured } from "@features/voice/elevenLabsTts.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
+import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
 
 // ── /dero-config ──────────────────────────────────────────────────────
 // What:  every per guild voice setting in one admin command: the kill switch,
-//        the cloned voice id, Listen on or off, the monthly cap, and the three
-//        allowlists later phases authorize against.
-// Who:   server admins. Hidden from everyone else by the Administrator default
-//        permission AND gated at runtime by ADMIN_COMMANDS in main.ts (guild
-//        owner or the bot's admin role), because a server can re-grant a
-//        command's default permission in its Integrations settings.
+//        Listen on or off, the monthly cap, and the three allowlists later
+//        phases authorize against. The voice itself is not a setting: Dero
+//        speaks with DERO_DEFAULT_VOICE_ID, so enable works straight away.
+// Who:   server admins, gated at runtime by ADMIN_COMMANDS in main.ts (guild
+//        owner or the bot's admin role). It carries no Discord default
+//        permission, which would hide it from that admin role.
 // When:  on demand. Every write is idempotent with an explicit "already X"
 //        reply, so repeating a command never reads as a fake change.
 // Where: writes DeroVoiceConfig through deroVoiceConfigStore. Read by the Listen
@@ -36,15 +36,12 @@ import { voiceSessions } from "@features/voice/voiceSessions.js";
 //        the subcommand group or subcommand; ④ one ephemeral embed reply.
 //
 // ⚠️ DISABLE NEVER DELETES. It flips `enabled` and nothing else, so enable
-// restores the guild exactly as it was, voice id, lists and cap included. It
+// restores the guild exactly as it was, lists and cap included. It
 // (and a cap of 0) DOES end a live voice call at once: that is a session, not a
 // setting, and a kill switch that left Dero talking would not be one.
 
 const c = voiceCopy.config;
 const VOICE_ID_TAIL_LENGTH = 4;
-const VOICE_ID_PATTERN = new RegExp(
-	`^[A-Za-z0-9]{${BOT_CONSTANTS.DERO_VOICE_ID_MIN_LENGTH},${BOT_CONSTANTS.DERO_VOICE_ID_MAX_LENGTH}}$`
-);
 
 type ListKind = "role" | "channel" | "voicechannel";
 
@@ -60,11 +57,6 @@ const LISTS: Record<ListKind, { field: DeroVoiceListField; option: string; menti
 	channel: { field: "allowedChannelIds", option: "channel", mention: (id) => `<#${id}>`, title: c.listTitle.channels },
 	voicechannel: { field: "allowedVoiceChannelIds", option: "channel", mention: (id) => `<#${id}>`, title: c.listTitle.voiceChannels },
 };
-
-/** An ElevenLabs voice id: letters and digits only, within the length bounds. */
-export function isValidVoiceId(id: string): boolean {
-	return VOICE_ID_PATTERN.test(id);
-}
 
 /** The last characters of a voice id, the only part any reply ever shows. */
 export function voiceIdTail(id: string): string {
@@ -94,23 +86,9 @@ function listGroup(kind: ListKind, description: string): SlashCommandSubcommandG
 export const data = new SlashCommandBuilder()
 	.setName("dero-config")
 	.setDescription(c.commandDescription)
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addSubcommand((sub) => sub.setName("status").setDescription(c.sub.status))
 	.addSubcommand((sub) => sub.setName("enable").setDescription(c.sub.enable))
 	.addSubcommand((sub) => sub.setName("disable").setDescription(c.sub.disable))
-	.addSubcommand((sub) =>
-		sub
-			.setName("voice")
-			.setDescription(c.sub.voice)
-			.addStringOption((option) =>
-				option
-					.setName("id")
-					.setDescription(c.sub.voiceOption)
-					.setRequired(true)
-					.setMinLength(BOT_CONSTANTS.DERO_VOICE_ID_MIN_LENGTH)
-					.setMaxLength(BOT_CONSTANTS.DERO_VOICE_ID_MAX_LENGTH)
-			)
-	)
 	.addSubcommand((sub) =>
 		sub
 			.setName("listen")
@@ -140,10 +118,12 @@ const info = (body: string, title: string = c.statusTitle): EmbedBuilder => info
 
 async function status(guildId: string, current: IDeroVoiceConfig | null): Promise<EmbedBuilder> {
 	const spentCents = await currentMonthCents(guildId);
+	const voiceId = resolveDeroVoiceId(current);
 	return info(
 		c.statusBody({
 			enabled: current?.enabled ?? false,
-			voiceIdTail: current?.voiceId ? voiceIdTail(current.voiceId) : null,
+			voiceIdTail: voiceIdTail(voiceId),
+			isDefaultVoice: voiceId === BOT_CONSTANTS.DERO_DEFAULT_VOICE_ID,
 			listenEnabled: current?.listenEnabled ?? true,
 			keyConfigured: isTtsKeyConfigured(),
 			roles: current?.allowedRoleIds.length ?? 0,
@@ -157,8 +137,6 @@ async function status(guildId: string, current: IDeroVoiceConfig | null): Promis
 
 async function enable(guildId: string, current: IDeroVoiceConfig | null): Promise<EmbedBuilder> {
 	if (current?.enabled) return info(c.alreadyEnabled);
-	// Turning voice on with nothing to speak in would only produce refusals.
-	if (!current?.voiceId) return errorEmbed(c.enableNeedsVoice);
 	await deroVoiceConfigStore.upsert(guildId, { enabled: true });
 	return info(c.enabledBody, c.enabledTitle);
 }
@@ -184,18 +162,6 @@ async function disable(guildId: string, current: IDeroVoiceConfig | null): Promi
 	return info(withLine(c.disabledBody, leftCall), c.disabledTitle);
 }
 
-async function setVoice(guildId: string, current: IDeroVoiceConfig | null, rawId: string): Promise<EmbedBuilder> {
-	const id = rawId.trim();
-	// The option's length bounds are a hint Discord enforces in its client; this
-	// check is the gate.
-	if (!isValidVoiceId(id)) {
-		return errorEmbed(c.voiceInvalid(BOT_CONSTANTS.DERO_VOICE_ID_MIN_LENGTH, BOT_CONSTANTS.DERO_VOICE_ID_MAX_LENGTH));
-	}
-	if (current?.voiceId === id) return info(c.voiceUnchanged(voiceIdTail(id)));
-	await deroVoiceConfigStore.upsert(guildId, { voiceId: id });
-	return info(c.voiceSet(voiceIdTail(id)));
-}
-
 async function setListen(guildId: string, current: IDeroVoiceConfig | null, on: boolean): Promise<EmbedBuilder> {
 	if ((current?.listenEnabled ?? true) === on) return info(c.listenUnchanged(on));
 	await deroVoiceConfigStore.upsert(guildId, { listenEnabled: on });
@@ -203,7 +169,7 @@ async function setListen(guildId: string, current: IDeroVoiceConfig | null, on: 
 }
 
 async function setCap(guildId: string, current: IDeroVoiceConfig | null, dollars: number): Promise<EmbedBuilder> {
-	// Same reasoning as the voice id: the option's bounds are Discord's, this is ours.
+	// The option's bounds are a hint Discord enforces in its client; this clamp is the gate.
 	const usd = Math.min(Math.max(Math.trunc(dollars), 0), BOT_CONSTANTS.DERO_VOICE_MAX_CAP_USD);
 	// A cap of 0 is the second kill switch, so it ends a live call the same way.
 	const leftCall = usd === 0 ? endCallForKillSwitch(guildId) : null;
@@ -267,7 +233,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		}
 		else if (sub === "enable") embed = await enable(guildId, current);
 		else if (sub === "disable") embed = await disable(guildId, current);
-		else if (sub === "voice") embed = await setVoice(guildId, current, interaction.options.getString("id", true));
 		else if (sub === "listen") embed = await setListen(guildId, current, interaction.options.getBoolean("enabled", true));
 		else if (sub === "cap") embed = await setCap(guildId, current, interaction.options.getInteger("dollars", true));
 		else embed = await status(guildId, current);

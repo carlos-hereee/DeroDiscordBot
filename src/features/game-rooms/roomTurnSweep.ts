@@ -16,10 +16,12 @@ import {
 } from "./roomBattleship.js";
 import { applyMonopolyOutcome, monopolyStateOf, persistIfUnchanged } from "./roomMonopolyHandlers.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import type { HoldemTable } from "@features/games/holdemTable.js";
 
 // ── roomTurnSweep ────────────────────────────────────────────────────
 // What:  forfeits a battleship turn nobody took, and the MATCH after two in a row;
-//        and forfeits a Monopoly seat that sat on the clock for a day.
+//        forfeits a Monopoly seat that sat on the clock for a day; and finishes any
+//        room, draft or match, that saw no action for GAME_ROOM_IDLE_ABANDON_MS.
 // Who:   the 5 minute room cron, beside the archive sweep.
 // When:  every tick, over every live battleship and Monopoly match in every guild.
 // Where: ⚠️ THIS IS THE THING THAT MAKES AN ABANDONED MATCH TERMINATE AT ALL, and
@@ -221,4 +223,58 @@ export async function sweepMonopolyIdle(client: Client, now: Date = new Date()):
 		console.log(`[game-rooms] monopoly idle sweep: ${seatsForfeited} seat(s) forfeited, ${matchesFinished} match(es) finished`);
 	}
 	return { seatsForfeited, matchesFinished };
+}
+
+// ── every room: the idle sweep ────────────────────────────────────────
+export interface IdleRoomSummary {
+	roomsAbandoned: number;
+}
+
+// When a room last saw an action, from what each game already stamps.
+//   ① Hold em: the table's lastActionAt, the version stamp every engine mutation moves
+//      (a deal, an action, a clock fold, a leave). A buy in moves no stamp but posts a
+//      trail line, so the later of the two counts.
+//   ② Every other game, and every draft: the row's updatedAt. Each action writes the
+//      row (a trail line, an aim or an rps pick in the secret, a change to the draft),
+//      and the schema's timestamps stamp every write, so it is the latest of them all.
+//      createdAt covers a row that was never written again.
+function lastRoomActionAt(room: IGameRoom): number {
+	const table = room.game === "holdem" ? (room.secret as HoldemTable | null) : null;
+	if (table?.lastActionAt) return Math.max(table.lastActionAt, lastActivityAt(room));
+	const stamp = room.updatedAt ?? room.createdAt;
+	return stamp ? new Date(stamp).getTime() : 0;
+}
+
+/**
+ * Finish as abandoned every room in a non terminal status whose last action is
+ * older than GAME_ROOM_IDLE_ABANDON_MS. roomLifecycle.finish is the claim, so a room
+ * another path finished in the same tick is skipped, and `abandoned` pays nobody,
+ * which is also why an abandoned room is never rated.
+ *
+ * ⚠️ MONOPOLY IS EXEMPT. Its opener tells players a seat has a day on the clock, and
+ * sweepMonopolyIdle above already forfeits one idle seat per day until one is left,
+ * so a Monopoly room cannot strand its host's slot either.
+ */
+export async function sweepIdleRooms(client: Client, now: Date = new Date()): Promise<IdleRoomSummary> {
+	const rooms = await gameRoomStore.findNonTerminal();
+	let roomsAbandoned = 0;
+
+	await mapWithConcurrency(rooms, BOT_CONSTANTS.SCHEDULER_GUILD_CONCURRENCY, async (room) => {
+		try {
+			if (room.game === "monopoly") return;
+			if (now.getTime() - lastRoomActionAt(room) < BOT_CONSTANTS.GAME_ROOM_IDLE_ABANDON_MS) return;
+			const ended = await roomLifecycle.finish(client, room, { abandoned: true, now });
+			if (ended) roomsAbandoned++;
+		} catch (error) {
+			// Isolated per ROOM, for the same reason as the battleship sweep above.
+			console.error("[game-rooms] idle sweep failed for one room", {
+				guildId: room.guildId,
+				roomId: room.roomId,
+				error,
+			});
+		}
+	});
+
+	if (roomsAbandoned > 0) console.log(`[game-rooms] idle sweep: ${roomsAbandoned} room(s) finished as abandoned`);
+	return { roomsAbandoned };
 }

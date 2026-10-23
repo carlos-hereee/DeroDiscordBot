@@ -1,7 +1,6 @@
 import {
 	SlashCommandBuilder,
 	ChatInputCommandInteraction,
-	PermissionFlagsBits,
 	MessageFlags,
 } from "discord.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
@@ -37,7 +36,6 @@ const c = rokCommanderCopy.goLiveSoon;
 export const data = new SlashCommandBuilder()
 	.setName("go-live-soon")
 	.setDescription("Post a quick going-live announcement (one-shot, no recurring reminder)")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addStringOption((option) =>
 		option
 			.setName("when")

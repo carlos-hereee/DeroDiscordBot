@@ -292,6 +292,12 @@ export const gameRoomsCopy = {
 		hostCannotGuess: "You set the word, so you do not get to guess it.",
 		opener: (hostId: string, hint: string): string =>
 			[`<@${hostId}> set the word.`, "", `**Hint:** ${hint}`, "", "Everyone else: guess a letter."].join("\n"),
+		// The line under the title on each gallows card. A solo round has no author,
+		// because Dero drew its word from the bank.
+		boardDescription: (authorId: string | null): string =>
+			authorId
+				? `<@${authorId}> set the word. Everyone else guesses with the button on the pinned opener.`
+				: "Dero picked this word from the word bank.",
 
 		guessModalTitle: "Guess a letter",
 		guessLabel: "One letter",
@@ -405,6 +411,8 @@ export const gameRoomsCopy = {
 		halfPotLabel: (amount: number): string => `Half pot (${amount})`,
 		potLabelButton: (amount: number): string => `Pot (${amount})`,
 		showCardsLabel: "Show my cards",
+		leaveLabel: "Leave table",
+		endLabel: "End table",
 
 		yourCardsTitle: "🂠 Your hand",
 		noCardsYet: "You have no cards. Wait for the next deal.",
@@ -442,6 +450,21 @@ export const gameRoomsCopy = {
 		// ⚠️ FORCE FOLD, NEVER PAUSE. Said out loud so the table knows why a player's
 		// turn passed without them doing anything.
 		timedOut: (userId: string, action: string): string => `⏳ <@${userId}> ran out of time and ${action}.`,
+		// One line per leave, whether or not it folded a hand. A leave that ends the
+		// hand or the tournament still posts that hand's usual lines after this one.
+		leftTable: (userId: string, foldedHand: boolean): string =>
+			foldedHand ? `🚪 <@${userId}> folded and left the table.` : `🚪 <@${userId}> left the table.`,
+		// The host's End table line. `standings` is best first; a stack of null marks a
+		// seat that was already out. Before the first deal there is nothing to rank.
+		tableEnded: (hostId: string, standings: { userId: string; stack: number | null }[], anyHandDealt: boolean): string =>
+			anyHandDealt
+				? [
+						`🏁 <@${hostId}> ended the table. Final standings:`,
+						...standings.map(
+							(entry, index) => `${index + 1}. <@${entry.userId}> (${entry.stack === null ? "out" : entry.stack})`
+						),
+				  ].join("\n")
+				: `🏁 <@${hostId}> ended the table before the first deal.`,
 	},
 
 	// ── monopoly in a room (2026-10 item 241) ──

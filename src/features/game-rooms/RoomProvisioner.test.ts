@@ -115,7 +115,7 @@ describe("RoomProvisioner.open, happy path", () => {
 		expect(result.ok).toBe(true);
 		const createMock = input.guild.channels.create as unknown as ReturnType<typeof vi.fn>;
 		const opts = createMock.mock.calls[0][0] as { name: string; parent: string; permissionOverwrites: unknown[] };
-		expect(opts.name).toBe("hangman-qwerty");
+		expect(opts.name).toBe("🪢hangman-qwerty");
 		expect(opts.parent).toBe("arcade-cat");
 
 		// The row's channelId is written on the SAME transition that marks it playing,
@@ -155,11 +155,11 @@ describe("RoomProvisioner.open, happy path", () => {
 	});
 
 	it("sidesteps a name already taken by the host's cooling-off room", async () => {
-		const input = makeInput({ category: makeCategory(["hangman-qwerty"]) });
+		const input = makeInput({ category: makeCategory(["🪢hangman-qwerty"]) });
 		await RoomProvisioner.open(input);
 
 		const createMock = input.guild.channels.create as unknown as ReturnType<typeof vi.fn>;
-		expect((createMock.mock.calls[0][0] as { name: string }).name).toBe("hangman-qwerty-2");
+		expect((createMock.mock.calls[0][0] as { name: string }).name).toBe("🪢hangman-qwerty-2");
 	});
 });
 

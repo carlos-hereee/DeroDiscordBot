@@ -2,7 +2,6 @@ import {
 	SlashCommandBuilder,
 	ChatInputCommandInteraction,
 	AutocompleteInteraction,
-	PermissionFlagsBits,
 	MessageFlags,
 } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
@@ -33,7 +32,6 @@ const c = rokCommanderCopy.pauseSchedule;
 export const data = new SlashCommandBuilder()
 	.setName("continue-schedule")
 	.setDescription("Resume a paused recurring event")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addStringOption((option) =>
 		option.setName("name").setDescription("Which schedule to resume").setRequired(true).setAutocomplete(true)
 	);

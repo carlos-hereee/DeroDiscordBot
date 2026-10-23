@@ -1,7 +1,6 @@
 import {
 	SlashCommandBuilder,
 	ChatInputCommandInteraction,
-	PermissionFlagsBits,
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
@@ -43,7 +42,6 @@ const c = rokCommanderCopy.announceStream;
 export const data = new SlashCommandBuilder()
 	.setName("announce-stream")
 	.setDescription("Schedule a one-off stream announcement at a specific future date/time")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addStringOption((option) =>
 		option.setName("title").setDescription("Stream title (e.g. Charity Stream, Patch Day)").setRequired(true).setMaxLength(80)
 	)

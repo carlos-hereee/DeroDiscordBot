@@ -137,7 +137,11 @@ export async function handleFire(interaction: ButtonInteraction, room: IGameRoom
 	const next = serializeMatch(outcome.state, { pending, boardMessageId: stored.boardMessageId });
 	await persist(room, next);
 
-	await interaction.reply({ content: outcome.message, ...PRIVATE });
+	// A silent acknowledgement, not a reply: the trail line below already tells the
+	// shooter and everyone watching what the shot did, so a private copy of the same
+	// sentence only doubled it. Without some acknowledgement Discord shows the shooter
+	// "interaction failed" after three seconds.
+	await interaction.deferUpdate();
 
 	// The narration is a MOVE: it belongs in the transcript that is the product, and
 	// it names only a coordinate that has now been fired on, never an unfired one.

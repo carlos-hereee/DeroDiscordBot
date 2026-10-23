@@ -2,7 +2,6 @@ import {
 	SlashCommandBuilder,
 	ChatInputCommandInteraction,
 	AutocompleteInteraction,
-	PermissionFlagsBits,
 	TextChannel,
 	EmbedBuilder,
 } from "discord.js";
@@ -54,7 +53,6 @@ type GuildConfigDoc = NonNullable<Awaited<ReturnType<typeof guildConfigStore.fin
 export const data = new SlashCommandBuilder()
 	.setName("channels")
 	.setDescription("Hide or show homebase channels for members")
-	.setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 	.addSubcommand((sub) =>
 		sub
 			.setName("hide")
