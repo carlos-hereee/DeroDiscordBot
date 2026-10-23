@@ -18,6 +18,7 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({
 import { GuildSetupManager } from "./GuildSetupManager.js";
 import { CHALLENGE_GAMES } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { ChannelContent } from "./ChannelContent.js";
+import { DERO_ART_FILES } from "@features/renderer/deroArt.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 
@@ -1148,6 +1149,11 @@ describe("GuildSetupManager.refreshIntroEmbeds", () => {
 		// invite card is current so it is a no-op, and nothing reposts.
 		expect(summary).toEqual({ edited: 6, reposted: 0 });
 		for (const edit of Object.values(edits)) expect(edit).toHaveBeenCalledOnce();
+		// The welcome's edit re-sends Dero's welcome pose and replaces the copy it
+		// held (2026-10 item 245 Phase 3b); an intro without a file keeps its
+		// attachments untouched.
+		expect(edits.introChannelId.mock.calls[0][0]).toMatchObject({ files: [expect.objectContaining({ name: DERO_ART_FILES.welcome })], attachments: [] });
+		expect(edits.commandsChannelId.mock.calls[0][0]).not.toHaveProperty("attachments");
 		// no persist needed when every anchor resolves and only components moved.
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
 	});

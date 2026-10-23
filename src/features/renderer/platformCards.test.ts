@@ -121,6 +121,13 @@ describe("challengeCardRenderer", () => {
 		expect(pngSize(card)).toEqual({ width: 960, height: 380 });
 	});
 
+	// The art band (2026-10 item 245 Phase 3b) adds 240 pixels above the faces for
+	// a game with a logo; battleship's band also carries the admiral.
+	it.each(["battleship", "hangman"] as const)("leads a %s card with its art, 240 pixels taller", async (game) => {
+		const card = await renderChallengeCard({ game, status: "open", host: face("Host"), challengers: [face("Ana")], hiddenCount: 0 });
+		expect(pngSize(card)).toEqual({ width: 960, height: 620 });
+	});
+
 	it("names the draft's state the way the text card does", () => {
 		const base: OpenerCardState = { game: "rps", hostId: "h", visibility: null, pool: [] };
 		expect(challengeCardStatus(base)).toBe("choosing");

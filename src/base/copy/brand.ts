@@ -25,9 +25,9 @@ export const FOOTER = "Company Uno";
 // Dero, the Company Uno mascot, is the bot's visual identity. Set as the embed
 // author in embedBuilder.base() so every embed carries his name and icon. The
 // icon is a 128px PNG: Discord renders author icons as a single static frame, so
-// the icon-sized PNG is the right asset here; the animated gif is used as the
-// introductions embed image instead (see DERO_GIF_URL). Same value across every
-// pack, the bot presents as Dero regardless of voice.
+// the icon-sized PNG is the right asset here; the introductions embed shows the
+// bundled v2 welcome pose instead (ChannelContent.introductionImage). Same value
+// across every pack, the bot presents as Dero regardless of voice.
 //
 // DEPLOY NOTE: these assets live in companyuno-client/nexious-client/public/dero and only render
 // once the web app is deployed with them. Until then companyuno.com/dero/* 200s
@@ -37,8 +37,9 @@ export const AUTHOR = {
 	iconURL: "https://www.companyuno.com/dero/dero-icon-128.png",
 };
 
-// Animated Dero (default state) for the introductions embed image (setImage), so
-// new members see the mascot in action. Same deploy requirement as AUTHOR.iconURL.
+// Animated Dero (default state), the introductions embed image only while the
+// bundled v2 welcome pose is not on disk (ChannelContent.introductionImage).
+// Same deploy requirement as AUTHOR.iconURL.
 export const DERO_GIF_URL = "https://www.companyuno.com/dero/dero-default.gif";
 
 // ── bundled Dero images ──────────────────────────────────────────────────

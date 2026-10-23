@@ -105,3 +105,20 @@ describe("the opener card's Monopoly auction toggle", () => {
 		expect(on).toContain("/dero join");
 	});
 });
+
+// The challenge post's text card leads with the game's logo too (2026-10 item
+// 245 Phase 3b), but only while there is no picture, which carries the logo itself.
+describe("the opener card's logo thumbnail", () => {
+	const state: OpenerCardState = { game: "battleship", hostId: "host-1", visibility: null, pool: [] };
+	const logoRef = "attachment://opener-logo.png";
+
+	it("carries the game's logo as the thumbnail while the card has no picture", () => {
+		expect(openerCardEmbed(state, undefined, logoRef).data.thumbnail?.url).toBe(logoRef);
+	});
+
+	it("drops the thumbnail once the picture is attached, so the logo shows once", () => {
+		const pictured = openerCardEmbed(state, "attachment://challenge-abc.png", logoRef).data;
+		expect(pictured.image?.url).toBe("attachment://challenge-abc.png");
+		expect(pictured.thumbnail).toBeUndefined();
+	});
+});

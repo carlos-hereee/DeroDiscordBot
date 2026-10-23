@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DERO_IMAGE_FILE } from "@base/copy/brand.js";
 import { canvasModule, type CanvasModule } from "./canvasModule.js";
-import { clearDeroArtCache, DERO_ART_FILES, defaultDeroArtRoot, loadDeroArt, logDeroArtStatus } from "./deroArt.js";
+import { clearDeroArtCache, DERO_ART_FILES, defaultDeroArtRoot, deroArtAttachment, loadDeroArt, logDeroArtStatus } from "./deroArt.js";
 
 // ── deroArt ──────────────────────────────────────────────────────────
 // Pins the three ways a pose can stand: present with real transparency (drawn),
@@ -109,5 +109,31 @@ describe("logDeroArtStatus, the boot asset check", () => {
 		const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 		await logDeroArtStatus(root, null);
 		expect(String(log.mock.calls[0]?.[0])).toContain("unavailable");
+	});
+
+	// The repo's own assets/dero/v2, read the way a dev boot reads it (2026-10
+	// item 245 Phase 3b), so an opaque re-export of the lineup fails here first.
+	it("finds every pose of the committed lineup present", async () => {
+		const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+		await logDeroArtStatus();
+
+		const line = String(log.mock.calls[0]?.[0]);
+		for (const file of Object.values(DERO_ART_FILES)) expect(line).toContain(`${file} present`);
+	});
+});
+
+describe("deroArtAttachment, a pose sent whole", () => {
+	it("attaches a pose on disk under its own file name", async () => {
+		await writePose(join(root, "v2", DERO_ART_FILES.welcome), false);
+
+		const pose = deroArtAttachment("welcome", root);
+
+		expect(pose?.ref).toBe(`attachment://${DERO_ART_FILES.welcome}`);
+		expect(pose?.attachment.name).toBe(DERO_ART_FILES.welcome);
+	});
+
+	it("answers null for a pose that is not on disk, so the caller keeps its fallback", () => {
+		expect(deroArtAttachment("welcome", root)).toBeNull();
 	});
 });

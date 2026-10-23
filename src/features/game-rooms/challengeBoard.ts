@@ -27,7 +27,7 @@ import {
 import { readPrivateQuotaStatus, startSoloBlackjackBoard } from "./soloRooms.js";
 import { resolveRoomChannel } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
-import { rematchedResultEmbed, roomResultEmbed } from "./gameRoomsEmbeds.js";
+import { rematchedResultEmbed, roomOpenerLogo, roomResultEmbed } from "./gameRoomsEmbeds.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { buildInviteOptions, refilterInvitees } from "./invitePicker.js";
@@ -132,13 +132,17 @@ async function editOpenerCard(guild: Guild, roomId: string, message: EditableCar
 	// A cancelled or started card is never edited again, so its counter can go.
 	if (state.cancelled || state.startedChannelId) cardGenerations.delete(roomId);
 	const card = isRenderPayload(picture) ? picture : null;
+	// The picture leads with the game's logo; without it the text card carries the
+	// logo as its thumbnail instead (openerCardEmbed).
+	const logo = card ? null : roomOpenerLogo(state.game);
+	const file = card?.attachment ?? logo?.attachment;
 	// Cosmetic, so a failure is logged and swallowed: the draft row is the truth
 	// and the next edit will catch up.
 	try {
 		await message.edit({
-			embeds: [openerCardEmbed(state, card?.ref)],
+			embeds: [openerCardEmbed(state, card?.ref, logo?.ref)],
 			components: openerCardRows(roomId, state),
-			files: card ? [card.attachment] : [],
+			files: file ? [file] : [],
 			attachments: [],
 		});
 	} catch (error) {
@@ -203,8 +207,13 @@ export async function startChallengeDraft(
 	}
 
 	const state = cardStateFor(room, { visibility: null, pool: room.spectatorIds ?? [] });
+	const logo = roomOpenerLogo(game);
 	const card = await channel
-		.send({ embeds: [openerCardEmbed(state)], components: openerCardRows(room.roomId, state) })
+		.send({
+			embeds: [openerCardEmbed(state, undefined, logo?.ref)],
+			components: openerCardRows(room.roomId, state),
+			files: logo ? [logo.attachment] : [],
+		})
 		.catch(() => null);
 
 	if (!card) {

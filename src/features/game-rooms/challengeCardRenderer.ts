@@ -4,6 +4,7 @@ import {
 	avatarRequestFor,
 	canvasColor,
 	drawCardBackground,
+	drawImageContained,
 	drawMemberFace,
 	drawPill,
 	drawText,
@@ -11,10 +12,14 @@ import {
 	strokeCircle,
 	type AvatarRequest,
 	type DrawOutcome,
+	type Rect,
 	type RenderPayload,
 } from "@features/renderer/index.js";
 import type { SKRSContext2D } from "@features/renderer/canvasModule.js";
+import { loadGameArt } from "@features/games/gamesArt.js";
+import { gameAssetPath, type GameAssetKey } from "@features/games/gamesAssets.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { openerLogoKey } from "./gameRoomsEmbeds.js";
 import type { OpenerCardState } from "./challengeBoardEmbeds.js";
 import type { GameSlug } from "./roomTypes.js";
 
@@ -24,6 +29,10 @@ import type { GameSlug } from "./roomTypes.js";
 // right, under the game's name and the draft's state. challengeBoard draws it on
 // every card edit through withRenderFallback, so the text card posts unchanged
 // when the picture does not draw.
+//
+// A game with a logo leads the picture with a band of its art above the faces
+// (2026-10 item 245 Phase 3b): the logo, and the game's character beside it
+// where one was drawn. A game with no logo keeps the plain card, height and all.
 //
 // The plan named a challenge.gif base to burn the faces onto, but that art was
 // never drawn (gamesAssets.ts reports it missing on every checkout), so the base
@@ -57,7 +66,7 @@ const MAX_CHALLENGER_FACES = 6;
 const CHALLENGERS_PER_ROW = 3;
 
 // Bump whenever the drawing changes, or members keep seeing cached cards.
-const CHALLENGE_CARD_VERSION = 1;
+const CHALLENGE_CARD_VERSION = 2;
 const CARD_WIDTH = 960;
 const CARD_HEIGHT = 380;
 const PADDING = 32;
@@ -69,6 +78,26 @@ const GRID_TOP = 130;
 const FACE_DIAMETER = 72;
 const CELL_WIDTH = 150;
 const CELL_HEIGHT = 120;
+
+// ── the game's art band ──
+// The logo is the game's room opener logo (openerLogoKey), so a challenge post
+// and the room it opens show one mark. Only battleship has a character: the
+// admiral, who left the private fleet card to stand here. Hangman's Dero poses
+// stay on its gallows card.
+const CHALLENGE_CHARACTERS: Partial<Record<GameSlug, GameAssetKey>> = {
+	battleship: "battleshipAdmiral",
+};
+const ART_BAND_HEIGHT = 240;
+// The logo centred alone, or the logo and the character as one centred pair.
+const LOGO_ALONE: Rect = { x: 270, y: 16, width: 420, height: 208 };
+const LOGO_PAIRED: Rect = { x: 180, y: 12, width: 360, height: 216 };
+const CHARACTER_PAIRED: Rect = { x: 560, y: 4, width: 240, height: 236 };
+
+/** The art one game's card leads with, by slot. */
+interface ChallengeArtKeys {
+	logo: GameAssetKey;
+	character: GameAssetKey | null;
+}
 
 const STATUS_ACCENT: Record<ChallengeCardStatus, ColorResolvable> = {
 	choosing: COLORS.ARCADE,
@@ -112,19 +141,57 @@ async function resolveFace(guild: Guild, userId: string): Promise<ChallengeFace>
 
 /** The opener card's picture, or null when the text card should post alone. Never throws. */
 export function renderChallengeCard(view: ChallengeCardView): Promise<RenderPayload | null> {
+	// The band's presence sets the card's height, and the height is hashed into the
+	// cache key, so a card drawn before a game's logo landed is never served after.
+	const art = challengeArtKeys(view.game);
 	return renderCard({
 		kind: "challenge",
 		version: CHALLENGE_CARD_VERSION,
 		input: view,
 		width: CARD_WIDTH,
-		height: CARD_HEIGHT,
-		draw: drawChallengeCard,
+		height: art ? CARD_HEIGHT + ART_BAND_HEIGHT : CARD_HEIGHT,
+		draw: (context, input) => drawChallengeCard(context, input, art),
 	});
 }
 
-async function drawChallengeCard(context: SKRSContext2D, view: ChallengeCardView): Promise<DrawOutcome> {
+// The art a game's card leads with, or null for a game with no logo on disk,
+// which keeps the plain card.
+function challengeArtKeys(game: GameSlug): ChallengeArtKeys | null {
+	const logo = openerLogoKey(game);
+	if (!logo || !gameAssetPath(logo)) return null;
+	return { logo, character: CHALLENGE_CHARACTERS[game] ?? null };
+}
+
+async function drawChallengeCard(context: SKRSContext2D, view: ChallengeCardView, art: ChallengeArtKeys | null): Promise<DrawOutcome> {
 	const accent = STATUS_ACCENT[view.status];
-	drawCardBackground(context, accent, HOST_CENTER.x, HOST_CENTER.y, CARD_WIDTH * 0.6);
+	if (!art) {
+		drawCardBackground(context, accent, HOST_CENTER.x, HOST_CENTER.y, CARD_WIDTH * 0.6);
+		return drawFaces(context, view, accent);
+	}
+	drawCardBackground(context, accent, CARD_WIDTH / 2, ART_BAND_HEIGHT / 2, CARD_WIDTH * 0.6);
+	const artMissing = await drawArtBand(context, art);
+	// Below the band, the plain card's drawing moved down by the band's height.
+	context.save();
+	context.translate(0, ART_BAND_HEIGHT);
+	try {
+		const outcome = await drawFaces(context, view, accent);
+		return artMissing ? { cacheable: false } : outcome;
+	} finally {
+		context.restore();
+	}
+}
+
+// The logo, and the character beside it when its file drew; the logo centres
+// alone when it did not. Answers true when a piece of the game's art is missing,
+// so the card is not cached and the full band replaces it once the art lands.
+async function drawArtBand(context: SKRSContext2D, art: ChallengeArtKeys): Promise<boolean> {
+	const [logo, character] = await Promise.all([loadGameArt(art.logo), art.character ? loadGameArt(art.character) : Promise.resolve(null)]);
+	if (logo) drawImageContained(context, logo, character ? LOGO_PAIRED : LOGO_ALONE);
+	if (character) drawImageContained(context, character, CHARACTER_PAIRED);
+	return !logo || (art.character !== null && !character);
+}
+
+async function drawFaces(context: SKRSContext2D, view: ChallengeCardView, accent: ColorResolvable): Promise<DrawOutcome> {
 	drawHeader(context, view, accent);
 	let standIn = await drawMemberFace(context, view.host.avatar, view.host.name, HOST_CENTER.x, HOST_CENTER.y, HOST_DIAMETER);
 	strokeCircle(context, HOST_CENTER.x, HOST_CENTER.y, HOST_DIAMETER + 16, canvasColor(accent), 6);

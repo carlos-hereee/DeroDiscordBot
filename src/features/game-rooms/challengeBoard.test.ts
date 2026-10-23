@@ -293,7 +293,7 @@ describe("the Monopoly auction toggle", () => {
 
 describe("the opener card's picture", () => {
 	const members = makeMembers([{ id: HOST, bot: false, name: "Host" }]);
-	type CardEdit = { embeds: Array<{ data: { image?: { url: string } } }>; files: unknown[]; attachments: unknown[] };
+	type CardEdit = { embeds: Array<{ data: { image?: { url: string }; thumbnail?: { url: string } } }>; files: Array<{ name?: string }>; attachments: unknown[] };
 
 	// A board the refresh can reach: the stored challenges channel, and the card
 	// message inside it whose edits each case reads.
@@ -333,6 +333,18 @@ describe("the opener card's picture", () => {
 		const payload = edit.mock.calls[0][0] as CardEdit;
 		expect(payload.embeds[0].data.image).toBeUndefined();
 		expect(payload.files).toEqual([]);
+		expect(payload.attachments).toEqual([]);
+	});
+
+	it("leads the text card with the game's logo when a game with one has no picture", async () => {
+		cardMocks.renderChallengeCard.mockResolvedValue(null);
+		const { interaction, edit } = rigBoard("joiner-2");
+
+		await joinChallenge(interaction, makeRoom({ game: "battleship", visibility: "public", boardMessageId: "card-1" }));
+
+		const payload = edit.mock.calls[0][0] as CardEdit;
+		expect(payload.embeds[0].data.thumbnail?.url).toBe("attachment://opener-logo.png");
+		expect(payload.files.map((file) => file.name)).toEqual(["opener-logo.png"]);
 		expect(payload.attachments).toEqual([]);
 	});
 

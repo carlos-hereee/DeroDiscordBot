@@ -128,8 +128,11 @@ const POOL_NAMES_SHOWN = 8;
 
 // imageRef, when passed, is the challenge card's picture (the host's and the
 // joiners' faces, 2026-10 item 243 Phase 4), attached to the same message by
-// challengeBoard.
-export function openerCardEmbed(state: OpenerCardState, imageRef?: string): EmbedBuilder {
+// challengeBoard. logoRef is the game's logo (roomOpenerLogo), shown as the
+// thumbnail only while there is no picture: the picture already leads with the
+// logo, and the text card a failed draw leaves behind should lead with it too
+// (2026-10 item 245 Phase 3b). Both refs need their files on the same message.
+export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoRef?: string): EmbedBuilder {
 	const lines: string[] = [];
 
 	if (state.cancelled) {
@@ -158,6 +161,7 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string): Embe
 		COLORS.ARCADE as ColorResolvable
 	);
 	if (imageRef) embed.setImage(imageRef);
+	else if (logoRef) embed.setThumbnail(logoRef);
 	return embed;
 }
 

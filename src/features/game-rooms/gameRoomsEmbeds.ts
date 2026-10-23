@@ -48,21 +48,29 @@ export function roomOpenerEmbed(
 }
 
 // The game's logo for its room opener (2026-10 item 243 Phase 3b), one of the two
-// room messages allowed a file (R8). Only games with a logo in the art are listed.
+// room messages allowed a file (R8), and for its challenge post (2026-10 item 245
+// Phase 3b), so a game shows one mark everywhere. Only games with a logo in the
+// art are listed.
 const OPENER_LOGOS: Partial<Record<GameSlug, GameAssetKey>> = {
 	hangman: "hangmanLogoStacked",
 	"solo-hangman": "hangmanLogoStacked",
 	battleship: "battleshipLogo",
 };
 
+/** The art slot of a game's logo, or null for a game that has none. The challenge card draws it. */
+export function openerLogoKey(game: GameSlug): GameAssetKey | null {
+	return OPENER_LOGOS[game] ?? null;
+}
+
 /**
  * The opener's logo as an attachment plus the `attachment://` ref for the
  * embed's thumbnail, or null for a game with no logo or a logo not on disk. Unlike
  * resolveGameAsset it never substitutes the Dero avatar: an opener without a logo
- * stays the plain card it always was.
+ * stays the plain card it always was. The room opener and the challenge post's
+ * text card both carry it.
  */
 export function roomOpenerLogo(game: GameSlug): { attachment: AttachmentBuilder; ref: string } | null {
-	const key = OPENER_LOGOS[game];
+	const key = openerLogoKey(game);
 	const path = key ? gameAssetPath(key) : null;
 	if (!path) return null;
 	const name = `opener-${basename(path)}`;

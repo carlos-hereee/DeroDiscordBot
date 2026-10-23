@@ -48,6 +48,7 @@ vi.mock("./gamesArt.js", async (importOriginal) => {
 
 import { cachedCardCount, clearCardCache } from "@features/renderer/cardCache.js";
 import { roomOpenerLogo } from "@features/game-rooms/gameRoomsEmbeds.js";
+import { renderChallengeCard } from "@features/game-rooms/challengeCardRenderer.js";
 import { createHangmanState, applyGuess } from "./hangmanState.js";
 import { hangmanCardView, renderHangmanCard } from "./hangmanRenderer.js";
 import { settle, type BlackjackTable, type Card as BlackjackCard, type Hand } from "./blackjackState.js";
@@ -296,6 +297,8 @@ describe("battleshipRenderer", () => {
 		const state = matchWithASinking();
 		const drawn = await privateBoardReply(state, "b");
 		expect(drawn.files).toHaveLength(1);
+		// The board spans the card, with no admiral beside it (2026-10 item 245 Phase 3b).
+		expect(pngSize({ attachment: drawn.files[0], ref: "" })).toEqual({ width: 640, height: 744 });
 		expect(cachedCardCount()).toBe(0);
 
 		battleshipSwitch.fail = true;
@@ -466,6 +469,9 @@ describe("the arcade art", () => {
 		expect(pngSize(await renderBattleshipBoardCard(battleshipBoardView(state, { shooterId: "a", ship: "destroyer" }))).width).toBe(1000);
 		expect(pngSize(await renderBlackjackResultCard(settledBlackjack())).width).toBe(960);
 		expect(pngSize(await renderWinnerCard(finishedMonopoly())).width).toBe(960);
+		// The logo file is on disk but nothing decodes, so the band is drawn empty.
+		const challenge = { game: "battleship" as const, status: "open" as const, host: { name: "Host", avatar: null }, challengers: [], hiddenCount: 0 };
+		expect(pngSize(await renderChallengeCard(challenge))).toEqual({ width: 960, height: 620 });
 		expect(cachedCardCount()).toBe(0);
 	});
 

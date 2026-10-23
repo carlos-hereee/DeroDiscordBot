@@ -25,7 +25,10 @@ import { COLUMNS, GRID_SIZE, type CellView, type Coord, type OwnCellView, type S
 // hit and miss markers on the cells fired at, every sunk ship's art laid over
 // its cells, and the ship just sunk outlined and named, which is the sinking
 // reveal) and the PRIVATE fleet card (the viewer's own ships on the board under
-// the incoming fire, beside the admiral). roomBattleship builds both views from
+// the incoming fire, the board filling the card). The admiral stands on the
+// battleship challenge post instead (challengeCardRenderer), where he advertises
+// the game rather than taking width from the board a player reads every turn.
+// roomBattleship builds both views from
 // the match and wraps each in withRenderFallback, so the emoji grid embeds post
 // unchanged whenever a card does not draw.
 //
@@ -61,19 +64,24 @@ export interface BattleshipFleetView {
 	grid: OwnCellView[][];
 }
 
-// Bump whenever the drawing changes, or members keep seeing cached cards.
+// Bump whenever the drawing changes, or members keep seeing cached cards. The
+// fleet card is never cached, so a change to it alone needs no bump.
 const BATTLESHIP_CARD_VERSION = 2;
 const BOARD_CARD_WIDTH = 1000;
 const BOARD_CARD_HEIGHT = 666;
-const FLEET_CARD_WIDTH = 840;
-const FLEET_CARD_HEIGHT = 650;
 const LOGO_BOX: Rect = { x: 16, y: 8, width: 128, height: 112 };
 const SINKING_PILL: Rect = { x: 560, y: 40, width: 420, height: 44 };
 const PUBLIC_BOARD_SIZE = 464;
 const PUBLIC_BOARD_TOP = 192;
 const PUBLIC_BOARD_LEFTS = [24, 512];
-const FLEET_BOARD: Rect = { x: 24, y: 152, width: 480, height: 480 };
-const ADMIRAL_BOX: Rect = { x: 530, y: 110, width: 290, height: 530 };
+// The fleet board spans the card's width less its margins, so the card is as
+// wide as the board and nothing beside it competes for the space.
+const FLEET_MARGIN = 24;
+const FLEET_BOARD_TOP = 128;
+const FLEET_BOARD_SIZE = 592;
+const FLEET_BOARD: Rect = { x: FLEET_MARGIN, y: FLEET_BOARD_TOP, width: FLEET_BOARD_SIZE, height: FLEET_BOARD_SIZE };
+const FLEET_CARD_WIDTH = FLEET_BOARD_SIZE + FLEET_MARGIN * 2;
+const FLEET_CARD_HEIGHT = FLEET_BOARD_TOP + FLEET_BOARD_SIZE + FLEET_MARGIN;
 const SUNK_OUTLINE = 3;
 const SINKING_OUTLINE = 6;
 // Marker art against the smaller side of a cell: a miss splash a little inside
@@ -215,11 +223,9 @@ export function renderBattleshipFleetCard(view: BattleshipFleetView): Promise<Re
 
 async function drawFleetCard(context: SKRSContext2D, view: BattleshipFleetView): Promise<void> {
 	const art = await loadBattleshipArt();
-	const admiral = await loadGameArt("battleshipAdmiral");
-	drawCardBackground(context, COLORS.ARCADE, ADMIRAL_BOX.x + ADMIRAL_BOX.width / 2, ADMIRAL_BOX.y + 120, FLEET_CARD_WIDTH * 0.5);
-	drawText(context, view.title, { x: FLEET_BOARD.x, y: 56, size: 28, weight: "bold", color: canvasColor(COLORS.CARD_TEXT), baseline: "middle" });
-	drawText(context, view.fleetLine, { x: FLEET_BOARD.x, y: 100, size: 18, color: canvasColor(COLORS.CARD_TEXT_SECONDARY), maxWidth: FLEET_BOARD.width });
-	if (admiral) drawImageContained(context, admiral, ADMIRAL_BOX);
+	drawCardBackground(context, COLORS.ARCADE, FLEET_CARD_WIDTH / 2, 0, FLEET_CARD_WIDTH * 0.6);
+	drawText(context, view.title, { x: FLEET_BOARD.x, y: 52, size: 28, weight: "bold", color: canvasColor(COLORS.CARD_TEXT), baseline: "middle", maxWidth: FLEET_BOARD.width });
+	drawText(context, view.fleetLine, { x: FLEET_BOARD.x, y: 92, size: 18, color: canvasColor(COLORS.CARD_TEXT_SECONDARY), maxWidth: FLEET_BOARD.width });
 
 	const layout = drawBoard(context, art.board, FLEET_BOARD);
 	for (const [name, cells] of shipCells(view.grid)) drawShip(context, layout, name, cells, art);

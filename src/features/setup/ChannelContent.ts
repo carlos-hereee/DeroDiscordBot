@@ -1,7 +1,8 @@
-import { EmbedBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
+import { EmbedBuilder, ButtonBuilder, ButtonStyle, type AttachmentBuilder } from "discord.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { DERO_GIF_URL, COLORS, DERO_GIF_REF } from "@base/copy/brand.js";
+import { deroArtAttachment } from "@features/renderer/deroArt.js";
 // botInviteLink is composed in @utils/config from the env-driven
 // clientId, so a dev process serves the dev install URL and a prod
 // process serves the prod install URL automatically. We deliberately
@@ -33,10 +34,21 @@ export const ChannelContent = {
 	introduction(guildConfig?: ICopyConfig | null): EmbedBuilder {
 		const copy = getPluginCopy(guildConfig);
 		const cc = copy.channelContent;
-		// setImage shows the large animated Dero below the welcome so new members
-		// see the mascot in action (gifs animate in the image slot, unlike the
-		// static author icon). Renders once the asset is deployed (see DERO_GIF_URL).
-		return infoEmbed(cc.introduction.title, cc.introduction.description, copy.COLORS.INTRODUCTION).setImage(DERO_GIF_URL);
+		// The large Dero below the welcome is his v2 welcome pose from the bot's own
+		// assets (2026-10 item 245 Phase 3b), so it no longer waits on companyuno.com
+		// serving the gif. GuildSetupManager.resolveIntroFiles sends the file with
+		// every post and edit of this message.
+		return infoEmbed(cc.introduction.title, cc.introduction.description, copy.COLORS.INTRODUCTION).setImage(ChannelContent.introductionImage().ref);
+	},
+
+	/**
+	 * The welcome's image and the file it needs: the v2 welcome pose, or the hosted
+	 * gif with no file while the pose is not on disk, so a missing file can never
+	 * make the welcome's send fail. The embed's ref and the file sent with it both
+	 * come from here, so the two cannot name different images.
+	 */
+	introductionImage(): { ref: string; attachment: AttachmentBuilder | null } {
+		return deroArtAttachment("welcome") ?? { ref: DERO_GIF_URL, attachment: null };
 	},
 
 	// ── invite card ──────────────────────────────────────────────────

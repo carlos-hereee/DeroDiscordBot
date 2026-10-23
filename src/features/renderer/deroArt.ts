@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { AttachmentBuilder } from "discord.js";
 import { DERO_IMAGE_FILE } from "@base/copy/brand.js";
 import { canvasModule, type CanvasModule, type Image } from "./canvasModule.js";
 
@@ -75,6 +76,20 @@ export async function loadDeroArt(slot: DeroArtSlot, root: string = defaultDeroA
 	if (pose) return { image: pose, standIn: false };
 	const standIn = await cached(standIns, root, () => decodeQuietly(canvas, join(root, DERO_IMAGE_FILE)));
 	return standIn ? { image: standIn, standIn: true } : null;
+}
+
+/**
+ * A pose as a message attachment plus its `attachment://` ref, or null while the
+ * pose is not on disk. For an embed that shows the pose whole rather than a card
+ * drawing it (the introductions welcome); the file must ride every send and edit
+ * of that message. It does not check the corners: the boot line names an opaque
+ * pose, and the one caller falls back to the hosted gif only for a missing file.
+ */
+export function deroArtAttachment(slot: DeroArtSlot, root: string = defaultDeroArtRoot()): { attachment: AttachmentBuilder; ref: string } | null {
+	const path = posePath(root, slot);
+	if (!existsSync(path)) return null;
+	const name = DERO_ART_FILES[slot];
+	return { attachment: new AttachmentBuilder(path, { name }), ref: `attachment://${name}` };
 }
 
 /** Forget every decoded pose, so a test can swap the files between cases. */

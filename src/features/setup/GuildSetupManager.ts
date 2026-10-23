@@ -13,6 +13,8 @@ import {
 	EmbedBuilder,
 	Embed,
 	Message,
+	type AttachmentBuilder,
+	type MessageEditOptions,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { ISetupConfig, IAdminRoleConfig, ICreatedChannels, IChannelObjects, IEnsureHomebaseResult } from "./setup.types.js";
@@ -889,6 +891,29 @@ export class GuildSetupManager {
 		];
 	}
 
+	// ── resolveIntroFiles ─────────────────────────────────────────
+	// What:  the files a channel's intro embed points at through attachment://.
+	//        Only the introductions welcome has one, Dero's v2 welcome pose
+	//        (2026-10 item 245 Phase 3b, ChannelContent.introductionImage); every
+	//        other intro answers [].
+	// Who:   every send and edit of an intro: populateChannels, the repair post
+	//        and adopt, and refreshIntroEmbeds' in place edit and repost. Like
+	//        components, a file has to ride each one: an embed whose
+	//        attachment:// image arrives without its file shows an empty slot.
+	private static resolveIntroFiles(field: (typeof GuildSetupManager.CHANNEL_FIELDS)[number]): AttachmentBuilder[] {
+		if (field !== "introChannelId") return [];
+		const { attachment } = ChannelContent.introductionImage();
+		return attachment ? [attachment] : [];
+	}
+
+	// The file half of an intro edit. `attachments: []` replaces the copy the
+	// message already holds, or every edit would stack another one under the
+	// embed; an intro with no file gets nothing, so its edits stay as they were.
+	private static introEditFiles(field: (typeof GuildSetupManager.CHANNEL_FIELDS)[number]): Pick<MessageEditOptions, "files" | "attachments"> {
+		const files = GuildSetupManager.resolveIntroFiles(field);
+		return files.length > 0 ? { files, attachments: [] } : {};
+	}
+
 	// ── embed equivalence check ──────────────────────────────────
 	// What: returns true when a freshly generated intro embed has the
 	//       same user-visible content as the embed attached to an
@@ -927,8 +952,9 @@ export class GuildSetupManager {
 		// comes back from a posted message as a Discord CDN url ending in the same
 		// filename, so a literal compare would never match and the embed would
 		// re-post/re-edit every boot. For attachment refs, compare by filename; for
-		// plain urls (e.g. the introductions Dero gif), compare literally so a real
-		// image change still counts as drift worth reposting.
+		// plain urls (e.g. the hosted gif the introductions welcome falls back to),
+		// compare literally so a real image change still counts as drift worth
+		// reposting.
 		const freshImageUrl = a.image?.url ?? null;
 		const storedImageUrl = stored.image?.url ?? null;
 		if (freshImageUrl?.startsWith("attachment://")) {
@@ -1167,7 +1193,7 @@ export class GuildSetupManager {
 					// refreshIntroEmbeds but scoped to this one message).
 					introMessageId = existingIntro.id;
 					try {
-						await existingIntro.edit({ embeds: [introEmbed], components: introComponents ?? [] });
+						await existingIntro.edit({ embeds: [introEmbed], components: introComponents ?? [], ...GuildSetupManager.introEditFiles(spec.configField) });
 					} catch (editError) {
 						// edit failure is non fatal, the old embed stands.
 						console.warn(LOG_MESSAGES.setup.channelRepairFailed(spec.displayName, guild.id), editError);
@@ -1181,6 +1207,7 @@ export class GuildSetupManager {
 				const introMessage = await channel.send({
 					embeds: [introEmbed],
 					components: introComponents ?? [],
+					files: GuildSetupManager.resolveIntroFiles(spec.configField),
 				});
 				introMessageId = introMessage.id;
 				// No pin: the schedule channel is read-only, so the board stays put
@@ -2084,6 +2111,7 @@ export class GuildSetupManager {
 			introChannel.send({
 				embeds: [ChannelContent.introduction()],
 				components: GuildSetupManager.resolveIntroComponents("introChannelId") ?? [],
+				files: GuildSetupManager.resolveIntroFiles("introChannelId"),
 			}),
 			// Initial post includes the Suggestion Box button row so the
 			// pin carries the member-clickable surface from minute one.
@@ -2344,7 +2372,7 @@ export class GuildSetupManager {
 					// to the new button layout.
 					if (!GuildSetupManager.componentsAreEquivalent(componentRows, storedMessage.components)) {
 						try {
-							await storedMessage.edit({ embeds: [embed], components: componentRows ?? [] });
+							await storedMessage.edit({ embeds: [embed], components: componentRows ?? [], ...GuildSetupManager.introEditFiles(spec.configField) });
 							edited += 1;
 						} catch (error) {
 							console.warn(LOG_MESSAGES.setup.introRefreshEditFailed(spec.displayName, guild.id), error);
@@ -2410,7 +2438,7 @@ export class GuildSetupManager {
 			// because the owner's policy forbids it. Next boot will
 			// retry cleanly.
 			try {
-				const message = await channel.send({ embeds: [embed], components: componentRows ?? [] });
+				const message = await channel.send({ embeds: [embed], components: componentRows ?? [], files: GuildSetupManager.resolveIntroFiles(spec.configField) });
 				if (shouldBePinned) {
 					try {
 						await message.pin();
