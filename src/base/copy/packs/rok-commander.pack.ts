@@ -23,6 +23,37 @@ import { COLORS, FOOTER, AUTHOR } from "../brand.js";
 //        zero copy edits. The file split is the architectural change; the
 //        words shipped to mortals are unchanged so this can land without
 //        any visual diff in Discord.
+
+// ── the default server rules (2026-10 item 247 Phase 2) ──────────────────
+// The owner's own rules, numbered as the owner wrote them, with the two plan
+// additions the draft did not already cover (Don't Impersonate, One Person One
+// Account) as 13 and 14. Following Discord's rules is the owner's rule 10 and
+// advertising is folded into rule 8, which is why the plan's four additions add
+// two rules here. Plain words, not kingdom voice: these are the owner's rules, so
+// every pack shows them verbatim (general-events reads this same constant). The
+// owner replaces them per server with the Edit rules button, which saves
+// GuildConfig.customRulesMarkdown; null there means this text.
+const DEFAULT_SERVER_RULES = [
+	"**Welcome!** By being in this server, you agree to follow these rules. Admins and mods have final say on interpretation and enforcement.",
+	"**1. 🤝 Respect Everyone**\nBanter and trash talk are fine. Harassment, bullying, threats, or targeting someone to make them uncomfortable are not.",
+	"**2. 🚫 No Hate Speech**\nNo racism, sexism, homophobia, transphobia, slurs, or attacks on anyone's identity, background, or beliefs.",
+	"**3. 🔞 Keep It SFW**\nNo porn, explicit sexual content, gore, shock content, or anything that would get the server reported.",
+	"**4. 🚯 No Spam**\nNo flooding chats, mass pings, repeated posts, bot abuse, or low-effort noise.",
+	"**5. 🗂️ Use Channels as Intended**\nPost things where they belong. Doesn't need to be perfect, just don't derail or clutter channels on purpose.",
+	"**6. 🔒 Respect Privacy**\nDon't share anyone's personal info, private messages, photos, or recordings without their permission. This includes doxxing in any form.",
+	"**7. 🎙️ Don't Ruin Voice Chat**\nNo mic spam, ear-rape audio, soundboard abuse, music over conversations, or talking over others on purpose.",
+	"**8. 🔗 No Sketchy Links or Content**\nNo scams, phishing, malware, fake giveaways, suspicious downloads, or unsolicited self-promo and advertising.",
+	"**9. 🎮 No Cheating, Exploits, or Bad-Faith Game Behavior**\nNo sharing cheats, hacks, exploits, or account-selling. Don't use the server to coordinate anything that violates a game's or platform's terms of service.",
+	"**10. 📜 Follow Discord's Terms of Service and Community Guidelines**\nAnything that breaks Discord's rules breaks ours too.",
+	"**11. 👮 Listen to Staff**\nAdmins and mods are here to keep things running. If staff tells you to stop, change channels, or drop a topic, do it. Argue it in DMs after, not in chat.",
+	"**12. 🧠 Use Common Sense**\nNot every situation needs its own rule. If you're doing something to annoy, provoke, or cause problems, don't.",
+	"**13. 🎭 Don't Impersonate**\nDon't pretend to be another member, staff, a bot, or a public figure, and don't copy someone's name or avatar to fool people.",
+	"**14. 👤 One Person, One Account**\nNo alt accounts to dodge a ban, timeout, or vote, and no sharing one account between people.",
+	// The owner's draft named a placeholder here ("[admin contact / ticket
+	// channel]"); a server admin by DM is the one route every server has.
+	"**⚖️ Enforcement**\nBreaking the rules can result in a warning, timeout, kick, or ban depending on severity, intent, and history. Staff decisions are final; appeals go to a server admin by DM.",
+].join("\n\n");
+
 export const rokCommanderCopy = {
 	// Brand identity (footer wordmark, Dero author, color palette) is shared
 	// across every pack, see @base/copy/brand. Referenced here so
@@ -333,6 +364,12 @@ export const rokCommanderCopy = {
 			// guide moved out of inner-sanctum, with the admin control buttons folded
 			// into its pinned row).
 			adminCommands: "🎛️admin-controls",
+			// ── the join log and the rules post (2026-10 item 247 Phase 2) ──
+			// Both under the homebase category, read only for members. Universal
+			// across packs like every channel name. A server's own welcome or rules
+			// channel is adopted under its existing name instead of being built.
+			welcome: "👋welcome",
+			rules: "📘rules",
 			// ── the two ARCADE GAMES channels ───────────────────────
 			// Both live under gamesCategoryName, NOT under the homebase category,
 			// which is why every CHANNEL_SPECS entry now has to declare which
@@ -1012,7 +1049,7 @@ export const rokCommanderCopy = {
 		public: {
 			title: "⚔️ THE REALM KEEPS SCORE, AND DERO SPEAKS",
 			description:
-				"Warriors.\n\nMuch arrives at once. I have been busy.\n\n**Renown.** The realm now keeps score. Speak in the halls, answer a comrade with a reaction, sit in an approved war room, or play a game, and you earn renown. A message or a reaction earns 1, and messages, reactions and quick games against me earn at most 50 a day, counted from midnight Central. Gather enough and you rise a level. I shall announce it here, and I shall never ping a soul doing it. A secret, since you would find it anyway: level 2, level 3, level 5, level 7, level 11. Look at those numbers until you see it.\n`/account` shows your level, your rank and your record in every game, `/account view:levels` shows who is most present, and `/account view:achievements` the honors you have claimed. The Account, Levels and Achievements buttons in #command-center show yours to you alone.\n\n**The arcade.** A new 🕹️games channel holds every game. Flip a coin, roll a die or throw rock paper scissors against me on the spot: 3 renown for a win, 1 for anything else. Hang a word alone from one of ten shelves, each word with its hint, or start a challenge for a rival. Once your rivals are gathered a room opens in the arcade for that match alone. Hangman, coin flip, dice roll, rock paper scissors, battleship and Texas Hold'em are played there, and a hangman host writes the word or lets me draw one from a shelf. When a match ends, **Rematch** starts the next one in the same room. A room left 30 minutes without a move is closed, Monopoly and hangman aside. Blackjack is dealt right where you ask for it with `/mini-game blackjack`. Every move goes into the match's record, which outlives the room.\nAt Hold'em each decision has 60 seconds on a live clock, the next hand deals itself, two timeouts in a row sit you out until you press I'm back, and **Leave table** cashes you out whenever you choose.\nAnd **Monopoly** has arrived, for two to six, on a board of my own. You know the rules. Start a match from 🕹️games or with `/mini-game monopoly`, and settle in: a good one runs for days. `/rating` shows where you stand in Hold'em, Battleship and Monopoly.\n\n**Pictures.** Your `/account`, your level ups, the levels board, a fresh honor, a role you earn, every turn of blackjack and Hold'em, the end of a hangman or battleship match, a Monopoly trade, bid or victory, a welcome, a fortune and the challenge card now arrive as painted cards instead of lines of text. And on Mondays I send the most present among you a private card of your week.\n\n**My voice.** Where your keepers switch it on, I can speak. A Listen button on welcomes and on most fortunes reads the post aloud to you alone, or plays it in your voice call when I sit there with you. Members on my task list can give me small tasks with `/dero tell`, bring me into a voice call with `/dero join` or the Join button in 🏛️ Meeting Hall and 🎮 Arcade Lounge, and ask me for a Hold'em table, which I deal myself. When the host of a Monopoly match turns on the voice referee at its challenge card, I call the big moments out loud while I sit in a call with one of its players. Every bankruptcy, announced with the gravity it deserves. In a call I listen only to members on my task list. Their speech goes to ElevenLabs to become text, and I record and keep nothing. Anyone on the task list can send me away with `/dero leave`.\n\nWant something I do not do yet? Press the Suggestion Box below. I read every one of them, which is more than I can say for most prophecies.\n\nRise well, warriors. The scroll is open.",
+				"Warriors.\n\nMuch arrives at once. I have been busy.\n\n**Renown.** The realm now keeps score. Speak in the halls, answer a comrade with a reaction, sit in an approved war room, or play a game, and you earn renown. A message or a reaction earns 1, and messages, reactions and quick games against me earn at most 50 a day, counted from midnight Central. Gather enough and you rise a level. I shall announce it here, and I shall never ping a soul doing it. A secret, since you would find it anyway: level 2, level 3, level 5, level 7, level 11. Look at those numbers until you see it.\n`/account` shows your level, your rank and your record in every game, `/account view:levels` shows who is most present, and `/account view:achievements` the honors you have claimed. The Account, Levels and Achievements buttons in #command-center show yours to you alone.\n\n**The arcade.** A new 🕹️games channel holds every game. Flip a coin, roll a die or throw rock paper scissors against me on the spot: 3 renown for a win, 1 for anything else. Hang a word alone from one of ten shelves, each word with its hint, or start a challenge for a rival. Once your rivals are gathered a room opens in the arcade for that match alone. Hangman, coin flip, dice roll, rock paper scissors, battleship and Texas Hold'em are played there, and a hangman host writes the word or lets me draw one from a shelf. When a match ends, **Rematch** starts the next one in the same room. A room left 30 minutes without a move is closed, Monopoly and hangman aside. Blackjack is dealt right where you ask for it with `/mini-game blackjack`. Every move goes into the match's record, which outlives the room.\nAt Hold'em each decision has 60 seconds on a live clock, the next hand deals itself, two timeouts in a row sit you out until you press I'm back, and **Leave table** gives up your seat and its chips whenever you choose.\nAnd **Monopoly** has arrived, for two to six, on a board of my own. You know the rules. Start a match from 🕹️games or with `/mini-game monopoly`, and settle in: a good one runs for days. `/rating` shows where you stand in Hold'em, Battleship and Monopoly.\n\n**Pictures.** Your `/account`, your level ups, the levels board, a fresh honor, a role you earn, every turn of blackjack and Hold'em, the end of a hangman or battleship match, a Monopoly trade, bid or victory, a welcome, a fortune and the challenge card now arrive as painted cards instead of lines of text. And on Mondays I send the most present among you a private card of your week.\n\n**My voice.** Where your keepers switch it on, I can speak. A Listen button on welcomes and on most fortunes reads the post aloud to you alone, or plays it in your voice call when I sit there with you. Members on my task list can give me small tasks with `/dero tell`, bring me into a voice call with `/dero join` or the Join button in 🏛️ Meeting Hall and 🎮 Arcade Lounge, and ask me for a Hold'em table, which I deal myself. When the host of a Monopoly match turns on the voice referee at its challenge card, I call the big moments out loud while I sit in a call with one of its players. Every bankruptcy, announced with the gravity it deserves. In a call I listen only to members on my task list. Their speech goes to ElevenLabs to become text, and I record and keep nothing. Anyone on the task list can send me away with `/dero leave`.\n\nWant something I do not do yet? Press the Suggestion Box below. I read every one of them, which is more than I can say for most prophecies.\n\nRise well, warriors. The scroll is open.",
 		},
 		innerSanctum: {
 			title: "🏛️ THE ORACLE EXPLAINS WHAT CHANGED",

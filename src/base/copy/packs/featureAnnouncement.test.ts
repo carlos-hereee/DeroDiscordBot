@@ -5,6 +5,8 @@ import { describe, it, expect } from "vitest";
 import { rokCommanderCopy } from "./rok-commander.pack.js";
 import { generalEventsCopy } from "./general-events.pack.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { HANGMAN_CATEGORIES } from "@features/games/hangmanWords.js";
+import { RATED_GAMES, type RatedGame } from "@features/ratings/ratingEngine.js";
 
 // ── the release announcement ───────────────────────────────────────────────
 // postFeatureAnnouncement posts this block once per guild on the first boot at
@@ -20,7 +22,8 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 // referee is promised only behind the host's toggle and a call Dero is already in.
 // The 1.7.0 test fixes (2026-10 item 245) ride it too: the copy names the merged
 // commands, never the seventeen names Phase 4b retired, and states the fixes'
-// numbers, which these pins hold to BOT_CONSTANTS.
+// numbers, which these pins hold to the code: BOT_CONSTANTS, the hangman word
+// bank's shelves and ratingEngine's rated games.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMMANDS = join(HERE, "..", "..", "..", "commands");
@@ -56,6 +59,15 @@ const RETIRED_COMMANDS = [
 const UNPREPARED = /computer|\bPC\b|when it sleeps|when I am offline|is offline|my creator is online|honest word/i;
 // Wording that promises more than the service can keep.
 const OVERPROMISE = /always on|always available|24\/7|around the clock|any time, day or night/i;
+
+// The copy spells the shelf count as a word ("one of ten shelves"). A bank with a
+// count this list does not reach yields "undefined", which fails the pin on purpose:
+// the copy then needs rewording, not only the number.
+const COUNT_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+
+// How the copy names each rated game. A Record over RatedGame, so a game newly rated
+// in ratingEngine fails to compile here until the copy is checked for it.
+const RATED_GAME_NAMES: Record<RatedGame, string> = { holdem: "Hold'em", battleship: "Battleship", monopoly: "Monopoly" };
 
 const PACKS = [
 	{ name: "rok-commander", copy: rokCommanderCopy },
@@ -154,12 +166,21 @@ describe("the release announcement", () => {
 		// The games channel, the solo games' XP, the hangman shelves, rematch and the idle close.
 		expect(members.description).toContain("🕹️games");
 		expect(members.description).toContain(`${leveling.SOLO_LUCK_WIN_XP} renown for a win, ${leveling.SOLO_LUCK_OTHER_XP} for anything else`);
-		expect(members.description).toContain("one of ten shelves");
+		expect(members.description).toContain(`one of ${COUNT_WORDS[HANGMAN_CATEGORIES.length]} shelves`);
 		expect(members.description).toContain("**Rematch** starts the next one in the same room");
 		expect(members.description).toContain(`${BOT_CONSTANTS.GAME_ROOM_IDLE_ABANDON_MS / 60_000} minutes without a move`);
 		// Hold'em's clock and the way out of a table.
 		expect(members.description).toContain(`${BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS / 1000} seconds on a live clock`);
-		expect(members.description).toContain("**Leave table**");
+		expect(members.description).toContain("**Leave table** gives up your seat and its chips");
+		// holdemTable.leaveTable zeroes the leaver's stack, because chips exist only for
+		// their table, so neither embed may promise a cash out the engine never pays.
+		for (const text of [members.description, admins.description]) expect(text).not.toMatch(/cash/i);
+		// The voice rooms' Join button, by the rooms' own names in the pack.
+		const { meetingVoice, arcadeVoice } = rokCommanderCopy.setup.channels;
+		expect(members.description).toContain(`the Join button in ${meetingVoice} and ${arcadeVoice}`);
+		// /rating and the games it rates, in ratingEngine's order.
+		const rated = RATED_GAMES.map((game) => RATED_GAME_NAMES[game]);
+		expect(members.description).toContain(`\`/rating\` shows where you stand in ${rated.slice(0, -1).join(", ")} and ${rated[rated.length - 1]}`);
 		// George is the voice, with no step to choose one.
 		expect(admins.description).toContain("George's voice");
 		expect(admins.description).toContain("`/dero-config enable` is the only step");
