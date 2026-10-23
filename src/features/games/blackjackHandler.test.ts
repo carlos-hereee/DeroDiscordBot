@@ -12,17 +12,49 @@ import type { ButtonInteraction, TextChannel } from "discord.js";
 const mocks = vi.hoisted(() => ({ awardBlackjackResult: vi.fn() }));
 vi.mock("./gameXp.js", () => ({ awardBlackjackResult: mocks.awardBlackjackResult }));
 
+// Every redraw waits on a REAL card render (the table card every turn, the result
+// card on settle), and the PNG encode finishes on the native thread pool, not in a
+// microtask. The renderer stays real; this records each render in flight so flush()
+// below can wait for it, the hangman handler test's pattern.
+// `fail` stands in for a host where the cards do not draw; `gate`, while set, holds
+// every render until the test releases it, so a test can look at a board mid draw.
+const renders = vi.hoisted(() => ({ inFlight: new Set<Promise<unknown>>(), fail: false, gate: null as Promise<void> | null }));
+vi.mock("./blackjackRenderer.js", async (importOriginal) => {
+	const real = await importOriginal<typeof import("./blackjackRenderer.js")>();
+	const recorded = <T>(draw: () => Promise<T | null>): Promise<T | null> => {
+		const gate = renders.gate;
+		const render = (async () => {
+			if (gate) await gate;
+			return renders.fail ? null : draw();
+		})();
+		renders.inFlight.add(render);
+		void render.finally(() => renders.inFlight.delete(render));
+		return render;
+	};
+	return {
+		...real,
+		renderBlackjackTableCard: (view: Parameters<typeof real.renderBlackjackTableCard>[0]) => recorded(() => real.renderBlackjackTableCard(view)),
+		renderBlackjackResultCard: (view: Parameters<typeof real.renderBlackjackResultCard>[0]) => recorded(() => real.renderBlackjackResultCard(view)),
+	};
+});
+
 import {
 	startBlackjackTable,
 	hasLiveBlackjackTable,
 	_clearBlackjackGames,
 	_activeBlackjackGameCount,
 	SEATING_WINDOW_MS,
+	TABLE_TIMEOUT_MS,
 	MAX_SEATS,
 } from "./blackjackHandler.js";
+import { _resetDrawingPauses } from "@features/game-rooms/drawingPause.js";
+import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 
 interface SentPayload {
-	embeds: unknown[];
+	content?: string | null;
+	embeds: Array<{ data: { image?: { url: string } } }>;
+	files?: unknown[];
+	attachments?: unknown[];
 	components: Array<{ components: Array<{ data: { custom_id?: string; label?: string; disabled?: boolean } }> }>;
 }
 
@@ -88,31 +120,48 @@ function fakeChannel(id: string, opts: { failSend?: boolean } = {}): {
 interface FakeClick {
 	click: ButtonInteraction;
 	update: ReturnType<typeof vi.fn>;
+	editReply: ReturnType<typeof vi.fn>;
 	reply: ReturnType<typeof vi.fn>;
 	lastUpdate: () => SentPayload;
 }
 
+// A click's redraw is two writes: the drawing status as its update, then the board
+// as its edited reply. lastUpdate is whichever of the two landed last.
 function fakeClick(channelId: string, action: string, userId: string): FakeClick {
-	const update = vi.fn(async () => undefined);
+	const writes: SentPayload[] = [];
+	const record = vi.fn(async (payload: SentPayload) => {
+		writes.push(payload);
+	});
+	const update = vi.fn((payload: SentPayload) => record(payload));
+	const editReply = vi.fn((payload: SentPayload) => record(payload));
 	const reply = vi.fn(async () => undefined);
 	const click = {
 		customId: `minigame:blackjack:${channelId}:${action}`,
 		user: { id: userId, username: userId, globalName: userId },
 		client: {} as unknown,
 		update,
+		editReply,
 		reply,
 	};
 	return {
 		click: click as unknown as ButtonInteraction,
 		update,
+		editReply,
 		reply,
-		lastUpdate: () => update.mock.calls[update.mock.calls.length - 1][0] as SentPayload,
+		lastUpdate: () => writes[writes.length - 1] as SentPayload,
 	};
 }
 
 const host = { userId: "host-1", username: "host-1" };
+// Drains the microtasks, then waits out any card render in flight and drains again,
+// until a pass finds nothing rendering.
+const MAX_FLUSH_PASSES = 6;
 const flush = async (): Promise<void> => {
-	for (let i = 0; i < 8; i++) await Promise.resolve();
+	for (let pass = 0; pass < MAX_FLUSH_PASSES; pass++) {
+		for (let i = 0; i < 8; i++) await Promise.resolve();
+		if (renders.inFlight.size === 0) return;
+		await Promise.allSettled([...renders.inFlight]);
+	}
 };
 
 // Buttons the LAST render offered, by action suffix, with their disabled state.
@@ -128,6 +177,9 @@ const buttonsOf = (payload: SentPayload): Record<string, boolean> => {
 
 beforeEach(() => {
 	_clearBlackjackGames();
+	_resetDrawingPauses();
+	renders.fail = false;
+	renders.gate = null;
 	mocks.awardBlackjackResult.mockReset();
 	// Fixed rng so a deal is deterministic and a test cannot flake on the ~4.8%
 	// of hands that open with a natural and settle before anyone can act.
@@ -428,5 +480,72 @@ describe("settling exactly once", () => {
 		expect(payload.seats).toHaveLength(2);
 		// Read off the game rather than off whichever message was in scope.
 		expect(payload.guildId).toBe("g1");
+	});
+});
+
+// ── the table every turn (Dero 1.7.0 test fixes, Phase 3a) ─────────────────
+
+describe("drawing the table every turn", () => {
+	const dealtTable = async () => {
+		const c = fakeChannel("chan-1");
+		await startBlackjackTable(c.channel, "g1", host, false);
+		return c;
+	};
+
+	it("deals with the drawing status first, then the table card with the old card dropped", async () => {
+		const c = await dealtTable();
+		const deal = fakeClick("chan-1", "deal", host.userId);
+		c.board().collect(deal.click);
+		await flush();
+
+		expect(deal.update.mock.calls[0][0]).toEqual({ content: gameRoomsCopy.drawing.status });
+		const board = deal.lastUpdate();
+		expect(board.content).toBeNull();
+		expect(board.attachments).toEqual([]);
+		expect(board.files).toHaveLength(1);
+		expect(board.embeds[0].data.image?.url).toMatch(/^attachment:\/\/blackjack-table-/);
+	});
+
+	it("draws the table card on the opening post of a solo hand", async () => {
+		const c = fakeChannel("chan-1");
+		await startBlackjackTable(c.channel, "g1", host, true);
+		expect(c.sent().files).toHaveLength(1);
+		expect(c.sent().embeds[0].data.image?.url).toMatch(/^attachment:\/\/blackjack-table-/);
+	});
+
+	it("posts the text table, with no stale card, when the card does not draw", async () => {
+		renders.fail = true;
+		const c = await dealtTable();
+		const deal = fakeClick("chan-1", "deal", host.userId);
+		c.board().collect(deal.click);
+		await flush();
+
+		const board = deal.lastUpdate();
+		expect(board.files).toEqual([]);
+		expect(board.attachments).toEqual([]);
+		expect(board.embeds[0].data.image).toBeUndefined();
+		expect(Object.keys(buttonsOf(board)).sort()).toEqual(["double", "hit", "split", "stand"]);
+	});
+
+	it("holds the table's lifetime while the board draws, and adds the held time back", async () => {
+		vi.useFakeTimers();
+		const c = await dealtTable();
+		let release: () => void = () => undefined;
+		renders.gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		c.board().collect(fakeClick("chan-1", "deal", host.userId).click);
+		await vi.advanceTimersByTimeAsync(TABLE_TIMEOUT_MS);
+		// The lifetime is up, but the board is still drawing, so the table stays.
+		expect(c.board().stopped()).toBe(false);
+
+		release();
+		await flush();
+		await vi.advanceTimersByTimeAsync(0);
+		// The draw held the clock for the whole lifetime, so the deadline moved on by that much.
+		expect(c.board().stopped()).toBe(false);
+
+		await vi.advanceTimersByTimeAsync(TABLE_TIMEOUT_MS);
+		expect(c.board().stopped()).toBe(true);
 	});
 });

@@ -51,7 +51,7 @@ import { roomOpenerLogo } from "@features/game-rooms/gameRoomsEmbeds.js";
 import { createHangmanState, applyGuess } from "./hangmanState.js";
 import { hangmanCardView, renderHangmanCard } from "./hangmanRenderer.js";
 import { settle, type BlackjackTable, type Card as BlackjackCard, type Hand } from "./blackjackState.js";
-import { blackjackResultView, renderBlackjackResultCard } from "./blackjackRenderer.js";
+import { blackjackResultView, blackjackTableView, renderBlackjackResultCard, renderBlackjackTableCard } from "./blackjackRenderer.js";
 import { blackjackHandXp } from "./gameXp.js";
 import { applyShot, createMatch, formatCoord, type BattleshipState } from "./battleshipState.js";
 import { renderBattleshipBoardCard } from "./battleshipRenderer.js";
@@ -68,7 +68,8 @@ import {
 } from "./monopolyRenderer.js";
 import { act, actionsFor, createTable, dealHand, handInProgress, joinTable, whoActs } from "./holdemTable.js";
 import { toPublicResult, toPublicView } from "@features/dero-brain/dealerNarration.js";
-import { dealerShowdownView, renderDealerShowdownCard } from "@features/dero-brain/dealerShowdownRenderer.js";
+import { dealerShowdownView, holdemLiveView, renderDealerShowdownCard, renderHoldemLiveCard } from "@features/dero-brain/dealerShowdownRenderer.js";
+import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 
 // ── reading the bytes ──
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -175,6 +176,57 @@ describe("blackjackRenderer", () => {
 		const one = pngSize(await renderBlackjackResultCard({ ...view, hands: view.hands.slice(0, 1) }));
 		expect(three.width).toBe(960);
 		expect(three.height).toBeGreaterThan(one.height);
+	});
+});
+
+// The same two seats with the hand still in play: seat two has split, is on its
+// second hand, and the dealer's 8 of diamonds is the hole card nobody may see.
+function tableInPlay(): BlackjackTable {
+	return {
+		...settledTable(),
+		seats: [
+			{ userId: "u1", username: "Silent Warrior", hands: [hand([card("10", "H"), card("9", "S")])], activeHand: 1 },
+			{
+				userId: "u2",
+				username: "Iron Duke",
+				hands: [hand([card("A", "D"), card("K", "C")], { fromSplit: true }), hand([card("8", "H"), card("3", "C")], { status: "playing", fromSplit: true })],
+				activeHand: 1,
+			},
+		],
+		phase: "playing",
+		turn: 1,
+	};
+}
+
+describe("the blackjack table card, drawn every turn (Dero 1.7.0 test fixes, Phase 3a)", () => {
+	it("shows the dealer's up card and lays the hole card face down, out of the view entirely", () => {
+		const view = blackjackTableView(tableInPlay());
+		expect(view.dealer).toEqual({ upCards: [{ rank: "10", suit: "spade" }], faceDown: 1 });
+		// The hole card is the 8 of diamonds; the only 8 a player holds is a heart.
+		expect(JSON.stringify(view)).not.toContain(`{"rank":"8","suit":"diamond"}`);
+	});
+
+	it("marks the hand on the clock and says where every other hand stands", () => {
+		const view = blackjackTableView(tableInPlay());
+		expect(view.hands.map((row) => [row.name, row.label, row.standing])).toEqual([
+			["Silent Warrior", null, "stood"],
+			["Iron Duke", "Hand 1 of 2", "stood"],
+			["Iron Duke", "Hand 2 of 2", "acting"],
+		]);
+	});
+
+	it("draws a PNG the size of the result card, and caches it, since it carries nothing private", async () => {
+		const view = blackjackTableView(tableInPlay());
+		const table = pngSize(await renderBlackjackTableCard(view));
+		const result = pngSize(await renderBlackjackResultCard(blackjackResultView(settledTable(), settle(settledTable()))));
+		expect(table).toEqual(result);
+		expect(cachedCardCount()).toBe(2);
+	});
+
+	it("still draws when no art is on disk, the back included, and caches the stand in nowhere", async () => {
+		artSwitch.missing = true;
+		expect(pngSize(await renderBlackjackTableCard(blackjackTableView(tableInPlay()))).width).toBe(960);
+		expect(cachedCardCount()).toBe(0);
 	});
 });
 
@@ -323,6 +375,66 @@ describe("dealerShowdownRenderer", () => {
 	it("draws the showdown card, one strip row per seat", async () => {
 		const { view, result } = playedToShowdown();
 		expect(pngSize(await renderDealerShowdownCard(dealerShowdownView(view, result)))).toEqual({ width: 960, height: 260 + 3 * 56 + 40 });
+	});
+});
+
+describe("the hold em live table card, every action at every table (Dero 1.7.0 test fixes, Phase 3a)", () => {
+	// The private card field's name, built from halves the way the dealer tripwire does.
+	const PRIVATE_CARDS_FIELD = "hole" + "Cards";
+
+	function tableOnTheFlop() {
+		const table = createTable(5);
+		for (let index = 0; index < 3; index += 1) joinTable(table, `p${index}`, `Player ${index}`);
+		table.status = "playing";
+		const rng = seededRng(11);
+		dealHand(table, rng);
+		for (let guard = 0; table.board.length === 0 && guard < 10; guard += 1) {
+			const actor = whoActs(table)!;
+			const legal = actionsFor(table, actor).map((entry) => entry.action);
+			act(table, actor, legal.includes("check") ? "check" : "call", 0, rng);
+		}
+		table.seats[2].sittingOut = true;
+		return table;
+	}
+
+	it("builds from the public view: the board, the pot, whose turn, and each seat's stack and last action", () => {
+		const table = tableOnTheFlop();
+		const live = holdemLiveView(toPublicView(table), 60);
+		expect(live.board).toHaveLength(3);
+		expect(live.pot).toBe(60);
+		const actingName = table.seats.find((seat) => seat.userId === whoActs(table))!.username;
+		expect(live.headline).toBe(gameRoomsCopy.holdem.cardToAct(actingName));
+		expect(live.seats.map((seat) => seat.lastAction)).toEqual(expect.arrayContaining([gameRoomsCopy.holdem.cardCall, gameRoomsCopy.holdem.cardCheck]));
+		expect(live.seats[2].standing).toBe("sittingOut");
+		expect(live.seats.filter((seat) => seat.isActing)).toHaveLength(1);
+	});
+
+	it("carries no player's private cards at any depth", () => {
+		const table = tableOnTheFlop();
+		const live = JSON.stringify(holdemLiveView(toPublicView(table), 60));
+		expect(live).not.toContain(PRIVATE_CARDS_FIELD);
+		// The only cards in the view are the board's three.
+		expect(live.match(/"suit"/g)).toHaveLength(3);
+	});
+
+	it("draws a PNG with one strip row per seat, and caches it, since it is public", async () => {
+		const live = holdemLiveView(toPublicView(tableOnTheFlop()), 60);
+		expect(pngSize(await renderHoldemLiveCard(live))).toEqual({ width: 960, height: 260 + 3 * 56 + 40 });
+		expect(cachedCardCount()).toBe(1);
+	});
+
+	it("draws a table still waiting for buy ins, with nothing dealt", async () => {
+		const table = createTable(5);
+		joinTable(table, "p0", "Player 0");
+		const live = holdemLiveView(toPublicView(table), 0);
+		expect(live.headline).toBe(gameRoomsCopy.holdem.cardJoining);
+		expect(pngSize(await renderHoldemLiveCard(live))).toEqual({ width: 960, height: 260 + 56 + 40 });
+	});
+
+	it("still draws when no art is on disk, and caches the stand in nowhere", async () => {
+		artSwitch.missing = true;
+		expect(pngSize(await renderHoldemLiveCard(holdemLiveView(toPublicView(tableOnTheFlop()), 60))).width).toBe(960);
+		expect(cachedCardCount()).toBe(0);
 	});
 });
 

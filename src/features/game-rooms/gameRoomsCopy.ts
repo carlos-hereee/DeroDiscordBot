@@ -52,6 +52,13 @@ export const gameRoomsCopy = {
 	gameLabel: (game: GameSlug): string => GAME_LABELS[game] ?? game,
 	tierName: (tierKey: string): string => TIER_NAMES[tierKey] ?? tierKey,
 
+	// ── the drawing pause (drawingPause.ts) ──
+	// The status line on a board while its card renders. Every timed or per turn
+	// game shows the same words, so a player learns once that the clock is held.
+	drawing: {
+		status: "🎨 Dero is drawing the table…",
+	},
+
 	// ── the opener card, pinned inside the room ──
 	opener: {
 		title: (game: GameSlug): string => `${GAME_LABELS[game] ?? game} room`,
@@ -431,6 +438,18 @@ export const gameRoomsCopy = {
 		allInTag: "all in",
 		foldedTag: "folded",
 		bustedTag: "out",
+		sittingOutTag: "sitting out",
+
+		// The clock lines under the board, as Discord relative timestamps so every
+		// reader sees them count down. The turn clock starts when the board shows the
+		// player their turn (BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS).
+		turnClockLine: (userId: string, deadlineMs: number): string =>
+			`⏳ <@${userId}> to act. Time runs out ${discordRelativeTime(deadlineMs)}.`,
+		nextHandLine: (dueMs: number): string =>
+			`🃏 The next hand deals itself ${discordRelativeTime(dueMs)}. The host can deal it now.`,
+		// Between hands with fewer than two players at the table, the deal waits for a
+		// player to come back rather than deal a hand nobody is there to play.
+		nextHandWaitingLine: "🃏 The next hand waits until two players are back at the table. The host can still deal it.",
 
 		buyInLabel: (stack: number): string => `Buy in (${stack})`,
 		startLabel: "Deal",
@@ -447,6 +466,7 @@ export const gameRoomsCopy = {
 		showCardsLabel: "Show my cards",
 		leaveLabel: "Leave table",
 		endLabel: "End table",
+		imBackLabel: "I'm back",
 
 		yourCardsTitle: "🂠 Your hand",
 		noCardsYet: "You have no cards. Wait for the next deal.",
@@ -454,6 +474,7 @@ export const gameRoomsCopy = {
 
 		// ── refusals ──
 		notSeated: "You are not in this tournament.",
+		notSittingOut: "You are already playing. I'm back is for a seat that sits out.",
 		alreadySeated: "You already have a seat.",
 		tableFull: "Every seat is taken.",
 		alreadyStarted: "This tournament has already started.",
@@ -484,6 +505,11 @@ export const gameRoomsCopy = {
 		// ⚠️ FORCE FOLD, NEVER PAUSE. Said out loud so the table knows why a player's
 		// turn passed without them doing anything.
 		timedOut: (userId: string, action: string): string => `⏳ <@${userId}> ran out of time and ${action}.`,
+		// The second timeout in a row (BOT_CONSTANTS.HOLDEM_SIT_OUT_TIMEOUTS).
+		satOut: (userId: string): string =>
+			`💤 <@${userId}> ran out of time twice in a row and sits out. They post their blinds and fold each hand until they press I'm back.`,
+		sittingOutFolded: (userId: string): string => `💤 <@${userId}> is sitting out and folds.`,
+		backAtTable: (userId: string): string => `👋 <@${userId}> is back at the table.`,
 		// One line per leave, whether or not it folded a hand. A leave that ends the
 		// hand or the tournament still posts that hand's usual lines after this one.
 		leftTable: (userId: string, foldedHand: boolean): string =>
@@ -499,6 +525,22 @@ export const gameRoomsCopy = {
 						),
 				  ].join("\n")
 				: `🏁 <@${hostId}> ended the table before the first deal.`,
+
+		// ── the live table card (dealerShowdownRenderer, every action) ──
+		// What the table is waiting on, beside the board, and each seat's last decision
+		// on its pill. The card names players by display name, never by mention.
+		cardToAct: (name: string): string => `${name} to act`,
+		cardBetweenHands: "Between hands",
+		cardJoining: "Waiting for buy ins",
+		cardFinished: "The tournament is over",
+		cardBlinds: (small: number, big: number): string => `Blinds ${small}/${big}`,
+		cardSittingOut: "Sitting out",
+		cardFold: "Fold",
+		cardCheck: "Check",
+		cardCall: "Call",
+		cardBet: (amount: number): string => `Bet ${amount}`,
+		cardRaise: (amount: number): string => `Raise to ${amount}`,
+		cardAllIn: "All in",
 	},
 
 	// ── monopoly in a room (2026-10 item 241) ──

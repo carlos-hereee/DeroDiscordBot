@@ -180,7 +180,7 @@ export const BOT_CONSTANTS = {
 	// abandoned by sweepIdleRooms, so a forgotten draft or match can never hold its
 	// host's one room slot (the partial unique index) for good. 30 minutes is the
 	// owner's number from the 1.7.0 test run (test fixes plan, item 13). It sits above
-	// every live turn clock here (battleship's 10 minute turn, Hold'em's 30 seconds),
+	// every live turn clock here (battleship's 10 minute turn, Hold'em's 60 seconds),
 	// so a slow game is never cut off mid turn. Monopoly is exempt: its seats get the
 	// day above, which its opener promises, and that sweep already ends every match.
 	// A hangman room in play is exempt too (owner decision, 2026-10-23): hangman has no
@@ -222,13 +222,25 @@ export const BOT_CONSTANTS = {
 	// Without escalation a short stack can fold forever and nothing ever resolves.
 	HOLDEM_BLIND_ESCALATION_HANDS: 6,
 
-	// A player has this long to act before they are FORCE FOLDED. Never paused:
-	// pausing hands one absent player the power to stall five present ones, which
-	// is the failure mode a turn clock exists to prevent.
-	HOLDEM_TURN_TIMEOUT_MS: 30_000,
-	// How often the clock is checked. A 30 second budget needs a tick well under
+	// A player has this long to act before they are FORCE FOLDED, counted from when
+	// the board shows them their turn. Never paused for the player: pausing hands one
+	// absent player the power to stall five present ones, which is the failure mode a
+	// turn clock exists to prevent. Only a board that is drawing holds it (the drawing
+	// pause). 60 seconds is the owner's number from the 1.7.0 test run (test fixes
+	// plan, item 13).
+	HOLDEM_TURN_TIMEOUT_MS: 60_000,
+	// How long a settled hand stays on the board before the next one deals itself,
+	// counted the same way. The host's Next hand button deals at once instead. Also
+	// the owner's number (item 13). Checked on the clock tick below, so the deal lands
+	// up to one tick later.
+	HOLDEM_NEXT_HAND_DELAY_MS: 10_000,
+	// Timeouts in a row that sit a seat out (item 13): it keeps its seat and posts its
+	// blinds but is folded each hand until it presses I'm back. Two, so one slow turn
+	// is forgiven and a player who has walked away stops costing the table a minute.
+	HOLDEM_SIT_OUT_TIMEOUTS: 2,
+	// How often the clock is checked. A 60 second budget needs a tick well under
 	// it, so this is its own interval rather than a passenger on the 5 minute room
-	// sweep, which would make a 30 second clock fire somewhere inside 5 minutes.
+	// sweep, which would make a 60 second clock fire somewhere inside 5 minutes.
 	HOLDEM_CLOCK_TICK_MS: 10_000,
 	// How many times a buy in re-reads and retries when another player's seat write
 	// beat it. Six members can click Buy in at once, and each retry only loses to a

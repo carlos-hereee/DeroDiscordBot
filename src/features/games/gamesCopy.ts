@@ -261,6 +261,13 @@ export const gamesCopy = {
 		cardHandXp: (xp: number): string => `+${xp} XP`,
 		cardDoubled: "DOUBLED",
 		cardMoreHands: (count: number): string => `and ${count} more ${count === 1 ? "hand" : "hands"}`,
+		// ── the canvas table card, drawn every turn (Dero 1.7.0 test fixes, Phase 3a) ──
+		// Where each hand stands while the table plays; a hand dealt a natural reads
+		// as outcomeBlackjack, the same word the result card uses.
+		cardActing: "To act",
+		cardWaiting: "Waiting",
+		cardStood: "Stood",
+		cardBust: "Bust",
 		// Stated on the result card because doubling is the one action whose cost is
 		// invisible in the cards themselves.
 		doubledLostAll: "A doubled hand that loses pays nothing at all.",

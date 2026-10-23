@@ -102,6 +102,9 @@ export const GAME_ROOM_ACTIONS = {
 	// End the whole table now on the standings as they are. The host's call, like
 	// dealing, with the router's usual admin override for clearing a stuck table.
 	hend: { hostOnly: true, playersOnly: false },
+	// I'm back, for a seat that sits out after two timeouts in a row. playersOnly,
+	// and the handler also requires that the clicker's own seat is sitting out.
+	hback: { hostOnly: false, playersOnly: true },
 
 	// ── monopoly (2026-10 item 241) ──
 	// Every one is playersOnly and none is hostOnly: the host is just another seat,

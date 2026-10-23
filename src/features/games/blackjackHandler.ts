@@ -11,18 +11,20 @@ import {
 	type ChatInputCommandInteraction,
 	type EmbedBuilder,
 	type Message,
+	type MessageEditOptions,
 } from "discord.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { CooldownManager } from "@utils/cooldownManager.js";
-import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
+import { withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
 import { gamesCopy } from "./gamesCopy.js";
-import { blackjackResultView, renderBlackjackResultCard } from "./blackjackRenderer.js";
+import { blackjackResultView, blackjackTableView, renderBlackjackResultCard, renderBlackjackTableCard } from "./blackjackRenderer.js";
 import { buildBlackjackResultEmbed, buildBlackjackSeatingEmbed, buildBlackjackTableEmbed } from "./gamesEmbeds.js";
 import { applyAction, createTable, legalActions, playDealer, settle, type BlackjackAction, type BlackjackTable, type SeatResult } from "./blackjackState.js";
 import { awardBlackjackResult } from "./gameXp.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
+import { drawingSettled, isClockExpired, pausedDeadline, withDrawingPause } from "@features/game-rooms/drawingPause.js";
 
 // ── /mini-game blackjack ───────────────────────────────────────────────────
 // What:  three surfaces on ONE engine, exactly as the owner asked. `solo` deals
@@ -37,8 +39,10 @@ import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
 //        interaction token dies after 15 minutes and a seating window plus a
 //        multi seat hand can outlive that. A plain message edits forever.
 // How:   ONE message and ONE collector for the whole game, re-rendered three
-//        times: seating, table, result. Two messages would mean two collectors
-//        and a second cleanup path to forget.
+//        ways: seating, table, result. Two messages would mean two collectors
+//        and a second cleanup path to forget. The table and the result each carry
+//        their card (blackjackRenderer) and redraw behind the drawing pause after
+//        every deal and action, so players see the table every turn.
 //
 // ⚠️ THE DEALER'S HOLE CARD IS SECRET FROM EVERYONE, which is why this game has
 // no private per player view and therefore never meets the interaction token
@@ -64,8 +68,8 @@ export const SEATING_WINDOW_MS = 45_000;
 
 // The whole board's lifetime. Generous, because a five seat hand with splits is
 // genuinely slow, but finite so an abandoned table cleans itself up rather than
-// sitting live until a redeploy.
-const TABLE_TIMEOUT_MS = 10 * 60_000;
+// sitting live until a redeploy. Held while the board draws (see armLifetime).
+export const TABLE_TIMEOUT_MS = 10 * 60_000;
 
 // Seven is a real blackjack table. Five keeps the result embed inside a
 // comfortable field count and keeps the slowest hand tolerable for seat one.
@@ -105,6 +109,10 @@ interface BlackjackGame {
 	// for the inline table form, which lives in ⚔️challenges and owns no room.
 	roomId: string | null;
 	seatingTimer: NodeJS.Timeout | null;
+	// The table's lifetime clock: when the board was posted, and the timer that ends
+	// the table TABLE_TIMEOUT_MS later plus any time the board spent drawing.
+	openedAt: number;
+	lifetimeTimer: NodeJS.Timeout | null;
 	stop: () => void;
 }
 
@@ -115,9 +123,14 @@ const games = new Map<string, BlackjackGame>();
 
 // Test seams, matching hangmanHandler's convention.
 export const _clearBlackjackGames = (): void => {
-	for (const game of games.values()) if (game.seatingTimer) clearTimeout(game.seatingTimer);
+	for (const game of games.values()) clearGameTimers(game);
 	games.clear();
 };
+
+function clearGameTimers(game: BlackjackGame): void {
+	if (game.seatingTimer) clearTimeout(game.seatingTimer);
+	if (game.lifetimeTimer) clearTimeout(game.lifetimeTimer);
+}
 export const _activeBlackjackGameCount = (): number => games.size;
 
 // True while this channel holds a live table in THIS process. The boot recovery sweep
@@ -261,6 +274,8 @@ export async function startBlackjackTable(
 		settled: false,
 		roomId,
 		seatingTimer: null,
+		openedAt: Date.now(),
+		lifetimeTimer: null,
 		stop: () => undefined,
 	};
 	games.set(channel.id, game);
@@ -283,8 +298,10 @@ export async function startBlackjackTable(
 			const result = table.phase === "dealer" ? settleGame(game, channel.id, channel.client) : null;
 			settledOnDeal = result !== null;
 
+			// The opening deal draws before it posts: there is no board yet to put the
+			// drawing status on, and the table's lifetime only starts once it is posted.
 			board = await channel.send({
-				...(result ? await resultMessage(result) : { embeds: [embed] }),
+				...(result ? await resultParts(result) : await tableParts(table, embed)),
 				components: result ? [] : [actionRow(channel.id, table)],
 				allowedMentions: { parse: [] },
 			});
@@ -326,10 +343,11 @@ export async function startBlackjackTable(
 // ── the collector, one per game ─────────────────────────────────────────────
 
 function wireCollector(game: BlackjackGame, channelId: string, board: Message): void {
+	// No `time` option: the table's lifetime is armLifetime's timer below, which can
+	// hold while the board draws. The collector's own limit cannot.
 	const collector = board.createMessageComponentCollector({
 		componentType: ComponentType.Button,
 		filter: (i) => i.customId.startsWith(`${PREFIX}:${channelId}:`),
-		time: TABLE_TIMEOUT_MS,
 	});
 	game.stop = () => collector.stop();
 
@@ -337,13 +355,40 @@ function wireCollector(game: BlackjackGame, channelId: string, board: Message): 
 		void onClick(click as ButtonInteraction, channelId);
 	});
 
-	// The single cleanup path, firing on stop() AND on the time limit, so no exit
-	// leaves a map entry behind.
+	// The single cleanup path, firing on stop() from a settle AND from the lifetime
+	// timer, so no exit leaves a map entry or a timer behind.
 	collector.on("end", () => {
 		const stale = games.get(channelId);
-		if (stale?.seatingTimer) clearTimeout(stale.seatingTimer);
+		if (stale) clearGameTimers(stale);
 		games.delete(channelId);
 	});
+
+	game.openedAt = Date.now();
+	armLifetime(game, channelId);
+}
+
+// ── the table's lifetime ────────────────────────────────────────────────────
+// TABLE_TIMEOUT_MS from the post, plus every millisecond the board spent drawing,
+// so a render never ends a table early (the drawing pause). When the timer fires
+// mid draw it waits for the draw to finish, then measures again: the held time
+// has pushed the deadline on, so it re-arms rather than ending the table.
+function armLifetime(game: BlackjackGame, channelId: string): void {
+	const remaining = pausedDeadline(drawingKeyOf(channelId), game.openedAt, TABLE_TIMEOUT_MS) - Date.now();
+	game.lifetimeTimer = setTimeout(() => {
+		void endLifetimeIfDue(game, channelId);
+	}, Math.max(0, remaining));
+}
+
+async function endLifetimeIfDue(game: BlackjackGame, channelId: string): Promise<void> {
+	await drawingSettled(drawingKeyOf(channelId));
+	// A table that settled while this waited is already gone; stopping it again
+	// would run the cleanup on whatever table took the channel since.
+	if (games.get(channelId) !== game) return;
+	if (isClockExpired(drawingKeyOf(channelId), game.openedAt, TABLE_TIMEOUT_MS)) {
+		game.stop();
+		return;
+	}
+	armLifetime(game, channelId);
 }
 
 // Takes no Message: every render on the click path goes through click.update(),
@@ -416,13 +461,13 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 	if (game.table.phase === "dealer") {
 		const result = settleGame(game, channelId, click.client);
 		if (result) {
-			await click.update({ ...(await resultMessage(result)), components: [] });
+			await redrawResult(channelId, result, clickWriter(click));
 			game.stop();
 			return;
 		}
 	}
 
-	await click.update({ embeds: [buildBlackjackTableEmbed(game.table, false)], components: [actionRow(channelId, game.table)] });
+	await redrawTable(channelId, game.table, clickWriter(click));
 }
 
 // ── phase transitions ───────────────────────────────────────────────────────
@@ -457,13 +502,13 @@ async function dealInto(game: BlackjackGame, channelId: string, click: ButtonInt
 	if (table.phase === "dealer") {
 		const result = settleGame(game, channelId, click.client);
 		if (result) {
-			await click.update({ ...(await resultMessage(result)), components: [] });
+			await redrawResult(channelId, result, clickWriter(click));
 			game.stop();
 			return;
 		}
 	}
 
-	await click.update({ embeds: [embed], components: [actionRow(channelId, table)] });
+	await redrawTable(channelId, table, clickWriter(click), embed);
 }
 
 async function closeSeating(channelId: string, board: Message): Promise<void> {
@@ -484,12 +529,12 @@ async function closeSeating(channelId: string, board: Message): Promise<void> {
 	if (table.phase === "dealer") {
 		const result = settleGame(game, channelId, board.client);
 		if (result) {
-			await board.edit({ ...(await resultMessage(result)), components: [] }).catch(() => undefined);
+			await redrawResult(channelId, result, messageWriter(board));
 			game.stop();
 			return;
 		}
 	}
-	await board.edit({ embeds: [embed], components: [actionRow(channelId, table)] }).catch(() => undefined);
+	await redrawTable(channelId, table, messageWriter(board), embed);
 }
 
 // ── settlement ──────────────────────────────────────────────────────────────
@@ -502,18 +547,86 @@ interface SettledTable {
 	results: SeatResult[];
 }
 
-// The result as a message: the rendered card in the embed's image slot when it
-// draws (2026-10 item 243 Phase 3), the result embed alone when it does not.
-// The view is built INSIDE the render function, so a view that throws costs the
-// picture and not the result. A board that carried no file before gets one here,
-// and nothing needs dropping, so no `attachments: []` is passed.
-async function resultMessage(settled: SettledTable): Promise<{ embeds: EmbedBuilder[]; files?: AttachmentBuilder[] }> {
-	const card = await withRenderFallback(
-		() => renderBlackjackResultCard(blackjackResultView(settled.table, settled.results)),
-		() => settled.embed
-	);
-	if (isRenderPayload(card)) return { embeds: [settled.embed.setImage(card.ref)], files: [card.attachment] };
-	return { embeds: [card] };
+// ── drawing the board ───────────────────────────────────────────────────────
+// Every view is built INSIDE its render function, so a view that throws costs the
+// picture and not the turn or the result: the text embed posts on its own.
+
+// The board's key in the drawing pause. One table per channel, so the channel names it.
+const drawingKeyOf = (channelId: string): string => `blackjack:${channelId}`;
+
+const drawTableCard = (table: BlackjackTable): Promise<RenderPayload | null> => renderBlackjackTableCard(blackjackTableView(table));
+const drawResultCard = (settled: SettledTable): Promise<RenderPayload | null> =>
+	renderBlackjackResultCard(blackjackResultView(settled.table, settled.results));
+
+/** What a board message carries: the card in the embed's image slot when it drew, the embed alone when it did not. */
+interface BoardParts {
+	embeds: EmbedBuilder[];
+	files: AttachmentBuilder[];
+}
+
+function boardParts(embed: EmbedBuilder, drawn: RenderPayload | null): BoardParts {
+	if (drawn) return { embeds: [embed.setImage(drawn.ref)], files: [drawn.attachment] };
+	return { embeds: [embed], files: [] };
+}
+
+// The opening post's parts, drawn before it is sent (the deal and a dealt natural).
+async function tableParts(table: BlackjackTable, embed: EmbedBuilder): Promise<BoardParts> {
+	return boardParts(embed, await withRenderFallback(() => drawTableCard(table), () => null));
+}
+
+async function resultParts(settled: SettledTable): Promise<BoardParts> {
+	return boardParts(settled.embed, await withRenderFallback(() => drawResultCard(settled), () => null));
+}
+
+/**
+ * The two ways a board is rewritten. A click answers through its own fresh token:
+ * the status as the click's update, the board as its edited reply, which is what
+ * keeps a table editable past the 15 minute token life. The seating timer has no
+ * click, so it edits the board message itself.
+ */
+interface BoardWriter {
+	showStatus: (status: string) => Promise<unknown>;
+	write: (payload: MessageEditOptions) => Promise<unknown>;
+}
+
+const clickWriter = (click: ButtonInteraction): BoardWriter => ({
+	showStatus: (status) => click.update({ content: status }),
+	write: (payload) => click.editReply(payload),
+});
+
+const messageWriter = (board: Message): BoardWriter => ({
+	showStatus: (status) => board.edit({ content: status }),
+	write: (payload) => board.edit(payload),
+});
+
+// Behind the drawing pause. `attachments: []` drops the previous turn's card, which
+// an edit otherwise keeps, and `content: null` takes the drawing status back off.
+// Cosmetic, so a failure is logged: the table in memory is the truth and the next
+// action redraws it.
+async function redrawBoard(
+	channelId: string,
+	writer: BoardWriter,
+	render: () => Promise<RenderPayload | null>,
+	embed: EmbedBuilder,
+	components: ActionRowBuilder<ButtonBuilder>[]
+): Promise<void> {
+	await withDrawingPause({
+		gameKey: drawingKeyOf(channelId),
+		showStatus: writer.showStatus,
+		render,
+		fallback: () => null,
+		swapIn: (drawn) => writer.write({ ...boardParts(embed, drawn), components, content: null, attachments: [] }),
+	}).catch((error) => console.warn(`[mini-game] blackjack could not redraw the board in channel ${channelId}`, error));
+}
+
+// The table in play, with its action row.
+function redrawTable(channelId: string, table: BlackjackTable, writer: BoardWriter, embed: EmbedBuilder = buildBlackjackTableEmbed(table, false)): Promise<void> {
+	return redrawBoard(channelId, writer, () => drawTableCard(table), embed, [actionRow(channelId, table)]);
+}
+
+// The settled result, with nothing left to press.
+function redrawResult(channelId: string, settled: SettledTable, writer: BoardWriter): Promise<void> {
+	return redrawBoard(channelId, writer, () => drawResultCard(settled), settled.embed, []);
 }
 
 // Plays the dealer, pays everyone, and returns the result embed with the table it

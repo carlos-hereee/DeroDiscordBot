@@ -265,7 +265,14 @@ export async function battleshipBoardMessage(
 	roomId: string,
 	sinking: BattleshipSinking | null = null
 ): Promise<BattleshipBoardMessage> {
-	const card = await battleshipBoardCard(state, sinking);
+	return battleshipBoardMessageWith(state, roomId, await battleshipBoardCard(state, sinking));
+}
+
+/**
+ * The public board message around a card already drawn, or the emoji grid when
+ * `card` is null. For a redraw that drew its card behind the drawing pause.
+ */
+export function battleshipBoardMessageWith(state: BattleshipState, roomId: string, card: RenderPayload | null): BattleshipBoardMessage {
 	return {
 		embeds: [publicBoardEmbed(state, card?.ref)],
 		components: battleshipRows(roomId, state),

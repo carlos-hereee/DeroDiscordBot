@@ -25,10 +25,15 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 //        exactly one hit, in the private builder.
 // How:   three rows, because Discord caps a message at five and a betting table
 //        needs room to breathe: the actions, the raise presets, and the card peek
-//        beside Leave table and End table.
+//        beside Leave table, End table and, while a seat sits out, I'm back.
 
 // ── the public table ──────────────────────────────────────────────────
-export function tableEmbed(table: HoldemTable, potTotal: number): EmbedBuilder {
+/**
+ * The table as text: the header, the clock line when the redraw passes one (whose
+ * turn and when it runs out, or when the next hand deals), the board, the pot and
+ * every seat. The live card goes in its image slot when it draws.
+ */
+export function tableEmbed(table: HoldemTable, potTotal: number, clockLine: string | null = null): EmbedBuilder {
 	const board = table.board.length ? table.board.map(formatCard).join("  ") : gameRoomsCopy.holdem.noBoardYet;
 	const acting = whoActs(table);
 
@@ -42,9 +47,10 @@ export function tableEmbed(table: HoldemTable, potTotal: number): EmbedBuilder {
 				  : seat.folded
 				    ? gameRoomsCopy.holdem.foldedTag
 				    : `${seat.stack}`;
+			const away = !seat.out && seat.sittingOut ? `, ${gameRoomsCopy.holdem.sittingOutTag}` : "";
 			// Parentheses rather than a dash: house rule 1 bans em dashes in anything a
 			// member reads, and this line renders on every redraw of every table.
-			return `${marker} <@${seat.userId}> (${state})`;
+			return `${marker} <@${seat.userId}> (${state}${away})`;
 		})
 		.join("\n");
 
@@ -55,13 +61,8 @@ export function tableEmbed(table: HoldemTable, potTotal: number): EmbedBuilder {
 			  ? gameRoomsCopy.holdem.finishedLine(table.winnerId)
 			  : gameRoomsCopy.holdem.handLine(table.handNumber, table.smallBlind, table.bigBlind);
 
-	return infoEmbed(
-		gameRoomsCopy.holdem.tableTitle,
-		[header, "", `**${gameRoomsCopy.holdem.boardLabel}** ${board}`, `**${gameRoomsCopy.holdem.potLabel}** ${potTotal}`, "", seats].join(
-			"\n"
-		),
-		COLORS.ARCADE as ColorResolvable
-	);
+	const lines = [header, ...(clockLine ? [clockLine] : []), "", `**${gameRoomsCopy.holdem.boardLabel}** ${board}`, `**${gameRoomsCopy.holdem.potLabel}** ${potTotal}`, "", seats];
+	return infoEmbed(gameRoomsCopy.holdem.tableTitle, lines.join("\n"), COLORS.ARCADE as ColorResolvable);
 }
 
 // A table opened with terms says them while it waits for players, so nobody buys
@@ -102,8 +103,23 @@ export function holeCardsEmbed(table: HoldemTable, viewerId: string): EmbedBuild
 // Leave table and End table ride every live state's last row, so no state of the
 // table can hold a seated player, or the host's one room slot, with no way out.
 // Leave is any seated player's and End is the host's; gameRoomActions gates both.
-function tableExitButtons(roomId: string): ButtonBuilder[] {
+//
+// I'm back joins them once the game starts while any seat sits out. Discord cannot
+// show a button to one member only, so it is on the shared board for everybody, and
+// the handler refuses anybody who is not sitting out.
+function tableExitButtons(roomId: string, table?: HoldemTable): ButtonBuilder[] {
+	const anySittingOut = table?.seats.some((seat) => seat.sittingOut && !seat.out) ?? false;
+	const imBack = anySittingOut
+		? [
+				new ButtonBuilder()
+					.setCustomId(`${GAME_ROOM_PREFIX}:hback:${roomId}`)
+					.setLabel(gameRoomsCopy.holdem.imBackLabel)
+					.setEmoji("👋")
+					.setStyle(ButtonStyle.Success),
+		  ]
+		: [];
 	return [
+		...imBack,
 		new ButtonBuilder()
 			.setCustomId(`${GAME_ROOM_PREFIX}:hleave:${roomId}`)
 			.setLabel(gameRoomsCopy.holdem.leaveLabel)
@@ -142,7 +158,8 @@ export function joiningRows(roomId: string, seatCount: number, table?: HoldemTab
 }
 
 // The controls BETWEEN hands: the tournament is still running, the last hand has
-// settled, and the host decides when the next one starts.
+// settled, and the next one deals itself after HOLDEM_NEXT_HAND_DELAY_MS unless the
+// host deals it sooner.
 //
 // ⚠️ THE DEAL CONTROL HAS TO COME BACK, and rendering it only in `joiningRows` is
 // exactly why a tournament used to dead end after hand one. `redraw` edits ONE board
@@ -150,7 +167,7 @@ export function joiningRows(roomId: string, seatCount: number, table?: HoldemTab
 // first hand was dealt, leaving no surface anywhere that could start hand two: the
 // table sat on disabled buttons, the clock skipped it because nobody was to act, and
 // the row held its host's one-room slot until somebody archived it by hand.
-export function betweenHandsRows(roomId: string): ActionRowBuilder<ButtonBuilder>[] {
+export function betweenHandsRows(roomId: string, table?: HoldemTable): ActionRowBuilder<ButtonBuilder>[] {
 	return [
 		new ActionRowBuilder<ButtonBuilder>().addComponents(
 			new ButtonBuilder()
@@ -163,7 +180,7 @@ export function betweenHandsRows(roomId: string): ActionRowBuilder<ButtonBuilder
 				.setLabel(gameRoomsCopy.holdem.showCardsLabel)
 				.setEmoji("🂠")
 				.setStyle(ButtonStyle.Secondary),
-			...tableExitButtons(roomId)
+			...tableExitButtons(roomId, table)
 		),
 	];
 }
@@ -181,7 +198,7 @@ export const aggressiveActionFor = (table: HoldemTable, userId: string) =>
 
 // ⚠️ FIVE BUTTONS IN ONE ROW AND NO MODAL. A modal for a raise size costs a round
 // trip and a focus change on every aggressive action, in a game where the turn
-// clock is 30 seconds. The presets below are why a modal is not needed: they cover
+// clock is 60 seconds. The presets below are why a modal is not needed: they cover
 // the sizes players actually use, and all in covers the rest.
 export function bettingRows(table: HoldemTable, roomId: string, potTotal: number): ActionRowBuilder<ButtonBuilder>[] {
 	const acting = whoActs(table);
@@ -213,7 +230,7 @@ export function bettingRows(table: HoldemTable, roomId: string, potTotal: number
 	if (raise) {
 		// Two presets, not four. Half pot and pot are the sizes players actually
 		// reach for; anything larger is what All in is for, and a row of five
-		// near-identical numbers is harder to read under a 30 second clock than two.
+		// near-identical numbers is harder to read under a 60 second clock than two.
 		rows.push(
 			new ActionRowBuilder<ButtonBuilder>().addComponents(
 				action("half", gameRoomsCopy.holdem.halfPotLabel(Math.floor(potTotal / 2)), ButtonStyle.Secondary, true),
@@ -229,7 +246,7 @@ export function bettingRows(table: HoldemTable, roomId: string, potTotal: number
 				.setLabel(gameRoomsCopy.holdem.showCardsLabel)
 				.setEmoji("🂠")
 				.setStyle(ButtonStyle.Secondary),
-			...tableExitButtons(roomId)
+			...tableExitButtons(roomId, table)
 		)
 	);
 

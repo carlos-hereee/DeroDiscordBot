@@ -100,6 +100,10 @@ function makeInteraction(userId: string, client: Client = makeClient()) {
 	};
 }
 
+// The board the redraw swapped in. The first edit of a redraw is the drawing pause's
+// status line, so the board itself is always the last edit.
+const swappedBoard = (boardMessage: ReturnType<typeof makeBoardMessage>): unknown => boardMessage.edit.mock.calls.at(-1)?.[0];
+
 // The state the handler persisted, off the compare and swap call.
 const persisted = (): MonopolyState => storeMock.updateSecretIf.mock.calls[0][3] as MonopolyState;
 const trailTexts = (): string[] => postMoveMock.mock.calls.map((call) => (call[2] as { text: string }).text);
@@ -188,7 +192,7 @@ describe("handleMroll", () => {
 
 		await handleMroll(makeInteraction(A, makeClient(boardMessage)), room);
 
-		const payload = boardMessage.edit.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id?: string }[] } }[] };
+		const payload = swappedBoard(boardMessage) as { components: { toJSON(): { components: { custom_id?: string }[] } }[] };
 		const ids = payload.components.flatMap((row) => row.toJSON().components.map((button) => button.custom_id));
 		expect(ids).toEqual(["gameroom:mbuy:room-1:burnt-umber-row", "gameroom:mskip:room-1", "gameroom:mtrade:room-1", "gameroom:minventory:room-1"]);
 	});
@@ -201,7 +205,7 @@ describe("handleMroll", () => {
 
 		await handleMroll(makeInteraction(A, makeClient(boardMessage)), room);
 
-		const payload = boardMessage.edit.mock.calls[0][0] as {
+		const payload = swappedBoard(boardMessage) as {
 			attachments: unknown[];
 			files: AttachmentBuilder[];
 			embeds: { data: { image?: { url: string } } }[];
@@ -214,13 +218,23 @@ describe("handleMroll", () => {
 		expect(payload.attachments).toEqual([]);
 	});
 
+	it("puts the drawing status up first and takes it back off with the board", async () => {
+		const room = seed(freshMatch());
+		const boardMessage = makeBoardMessage();
+
+		await handleMroll(makeInteraction(A, makeClient(boardMessage)), room);
+
+		expect(boardMessage.edit.mock.calls[0][0]).toEqual({ content: gameRoomsCopy.drawing.status });
+		expect(swappedBoard(boardMessage)).toMatchObject({ content: null });
+	});
+
 	it("clears the last picture when a redraw falls back to the text board", async () => {
 		const room = seed(freshMatch());
 		const boardMessage = makeBoardMessage();
 
 		await handleMroll(makeInteraction(A, makeClient(boardMessage)), room);
 
-		const payload = boardMessage.edit.mock.calls[0][0] as { attachments: unknown[]; files: unknown[]; embeds: { data: { image?: unknown } }[] };
+		const payload = swappedBoard(boardMessage) as { attachments: unknown[]; files: unknown[]; embeds: { data: { image?: unknown } }[] };
 		expect(payload.files).toEqual([]);
 		expect(payload.attachments).toEqual([]);
 		expect(payload.embeds[0].data.image).toBeUndefined();

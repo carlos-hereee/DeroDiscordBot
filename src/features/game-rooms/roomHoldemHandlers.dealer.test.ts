@@ -132,7 +132,7 @@ describe("the turn clock announces the forced action", () => {
 		table.lastActionAt = Date.now() - BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS - 1000;
 		const stalling = whoActs(table);
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(table)]);
-		expect(await sweepHoldemClocks(client)).toEqual({ forced: 1 });
+		expect(await sweepHoldemClocks(client)).toEqual({ forced: 1, dealt: 0 });
 		expect(announceMock).toHaveBeenCalledTimes(1);
 		const input = announced();
 		expect(input.before.actingUserId).toBe(stalling);

@@ -22,13 +22,14 @@ import {
 	type MonopolyState,
 } from "@features/games/monopolyState.js";
 import { awardMultiPlayerResult } from "@features/games/gameXp.js";
-import { monopolyWinnerView, renderWinnerCard } from "@features/games/monopolyRenderer.js";
+import { monopolyWinnerView, renderBoard, renderWinnerCard } from "@features/games/monopolyRenderer.js";
 import { withRenderFallback } from "@features/renderer/index.js";
 import { monopolyFinishingOrder, recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { auctionClosesAt, monopolyBoardEmbed, monopolyControlsRow, monopolyInventoryReply } from "./roomMonopoly.js";
+import { auctionClosesAt, monopolyBoardEmbedWith, monopolyControlsRow, monopolyInventoryReply } from "./roomMonopoly.js";
+import { roomDrawingKey, withDrawingPause } from "./drawingPause.js";
 import { announceReferee } from "./roomMonopolyReferee.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { RoomMoveKind } from "./roomTypes.js";
@@ -112,22 +113,30 @@ export async function redrawMonopolyBoard(client: Client, room: IGameRoom, state
 	if (!message) return;
 
 	// Rendered for the seat on the clock, because the board is one shared message
-	// and that seat is the only one whose buttons do anything.
+	// and that seat is the only one whose buttons do anything. Behind the drawing
+	// pause, so the idle and auction clocks hold while the picture renders.
 	const activeId = state.seats[state.activeSeatIndex].userId;
-	const { embed, attachment } = await monopolyBoardEmbed(state);
-	await message
-		.edit({
-			embeds: [embed],
-			components: monopolyControlsRow(state, activeId, room.roomId),
-			// ⚠️ `attachments: []` IS LOAD BEARING. An edit keeps the message's existing
-			// files unless told otherwise, so without it every move would stack one more
-			// board picture on the message, and a redraw that fell back to text would
-			// leave the last picture hanging under the embed. It must be a fresh array
-			// per call: discord.js pushes the new upload into the one it is given.
-			attachments: [],
-			files: attachment ? [attachment] : [],
-		})
-		.catch((error) => console.warn("[game-rooms] failed to redraw the monopoly board", error));
+	await withDrawingPause({
+		gameKey: roomDrawingKey(room),
+		showStatus: (status) => message.edit({ content: status }),
+		render: () => renderBoard(state),
+		fallback: () => null,
+		swapIn: (picture) => {
+			const { embed, attachment } = monopolyBoardEmbedWith(state, picture);
+			return message.edit({
+				content: null,
+				embeds: [embed],
+				components: monopolyControlsRow(state, activeId, room.roomId),
+				// ⚠️ `attachments: []` IS LOAD BEARING. An edit keeps the message's existing
+				// files unless told otherwise, so without it every move would stack one more
+				// board picture on the message, and a redraw that fell back to text would
+				// leave the last picture hanging under the embed. It must be a fresh array
+				// per call: discord.js pushes the new upload into the one it is given.
+				attachments: [],
+				files: attachment ? [attachment] : [],
+			});
+		},
+	}).catch((error) => console.warn("[game-rooms] failed to redraw the monopoly board", error));
 }
 
 /**

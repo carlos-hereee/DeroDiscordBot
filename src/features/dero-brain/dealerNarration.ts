@@ -2,7 +2,7 @@ import type { Client } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { NO_PINGS } from "@utils/mentions.js";
 import { HAND_CATEGORIES, formatCard, type Card, type HandCategory } from "@features/games/holdemHand.js";
-import { handInProgress, whoActs, type ActionOutcome, type HoldemTable, type Street } from "@features/games/holdemTable.js";
+import { handInProgress, whoActs, type ActionOutcome, type HoldemTable, type SeatLastAction, type Street } from "@features/games/holdemTable.js";
 import { defaultCallAnnouncerDeps, speakInCall, type CallAnnouncerDeps } from "@features/voice/callAnnouncer.js";
 import { withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
 import { deroBrainCopy, type DealerWinner } from "./deroBrainCopy.js";
@@ -46,6 +46,10 @@ export interface PublicSeat {
 	folded: boolean;
 	allIn: boolean;
 	out: boolean;
+	/** Away from the table: still dealt in, folded whenever the action reaches it. */
+	sittingOut: boolean;
+	/** The seat's last decision this hand, already public in the room's trail. */
+	lastAction: SeatLastAction | null;
 }
 
 /** Everything the dealer may know about a table: what the board embed already shows anyone. */
@@ -92,6 +96,8 @@ export function toPublicView(table: HoldemTable): PublicView {
 			folded: seat.folded,
 			allIn: seat.allIn,
 			out: seat.out,
+			sittingOut: seat.sittingOut ?? false,
+			lastAction: seat.lastAction ? { action: seat.lastAction.action, amount: seat.lastAction.amount } : null,
 		})),
 	};
 }

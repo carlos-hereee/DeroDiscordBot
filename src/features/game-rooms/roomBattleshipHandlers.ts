@@ -1,4 +1,4 @@
-import { MessageFlags, TextChannel, type ButtonInteraction, type StringSelectMenuInteraction } from "discord.js";
+import { MessageFlags, TextChannel, type ButtonInteraction, type Client, type StringSelectMenuInteraction } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { placeFleet } from "@features/games/battleshipState.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
@@ -8,12 +8,13 @@ import { recordMatchRatings, twoPlayerFinishingOrder } from "@features/ratings/r
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { roomDrawingKey, withDrawingPause } from "./drawingPause.js";
 import {
 	fire,
 	deserializeMatch,
 	serializeMatch,
 	battleshipBoardCard,
-	battleshipBoardMessage,
+	battleshipBoardMessageWith,
 	privateBoardReply,
 	PRIVATE,
 	type BattleshipSinking,
@@ -40,26 +41,34 @@ async function persist(room: IGameRoom, stored: StoredBattleship) {
 	return gameRoomStore.update(room.guildId, room.roomId, { secret: stored as never });
 }
 
-// Redraw the one public board message. Cosmetic, so a failure is logged and
-// swallowed: the row is the truth and the next turn will catch up.
-async function refreshBoard(
-	interaction: ButtonInteraction,
+/**
+ * Redraw the one public board message behind the drawing pause, so the turn clock
+ * holds while the card renders. Shared by a shot and the turn sweep's expiry.
+ * Cosmetic, so a failure is logged and swallowed: the row is the truth and the
+ * next turn will catch up.
+ */
+export async function redrawBattleshipBoard(
+	client: Client,
 	room: IGameRoom,
 	stored: StoredBattleship,
 	sinking: BattleshipSinking | null = null
 ): Promise<void> {
 	if (!stored.boardMessageId || !room.channelId) return;
-	const channel = await interaction.client.channels.fetch(room.channelId).catch(() => null);
+	const channel = await client.channels.fetch(room.channelId).catch(() => null);
 	if (!(channel instanceof TextChannel)) return;
 	const message = await channel.messages.fetch(stored.boardMessageId).catch(() => null);
 	if (!message) return;
 
 	const state = deserializeMatch(stored);
-	const board = await battleshipBoardMessage(state, room.roomId, sinking);
-	// `attachments: []` drops the last turn's picture, which an edit otherwise keeps.
-	await message
-		.edit({ ...board, attachments: [] })
-		.catch((error) => console.warn("[game-rooms] failed to redraw the battleship board", error));
+	await withDrawingPause({
+		gameKey: roomDrawingKey(room),
+		showStatus: (status) => message.edit({ content: status }),
+		render: () => battleshipBoardCard(state, sinking),
+		fallback: () => null,
+		// `attachments: []` drops the last turn's picture, which an edit otherwise
+		// keeps, and `content: null` takes the drawing status back off.
+		swapIn: (card) => message.edit({ ...battleshipBoardMessageWith(state, room.roomId, card), content: null, attachments: [] }),
+	}).catch((error) => console.warn("[game-rooms] failed to redraw the battleship board", error));
 }
 
 // ── aiming ────────────────────────────────────────────────────────────
@@ -155,7 +164,7 @@ export async function handleFire(interaction: ButtonInteraction, room: IGameRoom
 
 	// A shot that sank a ship redraws with the sinking reveal on the card.
 	const sinking = outcome.sunk ? { shooterId: interaction.user.id, ship: outcome.sunk } : null;
-	await refreshBoard(interaction, room, next, sinking);
+	await redrawBattleshipBoard(interaction.client, room, next, sinking);
 
 	// ── the per sink bonus ──
 	// ⚠️ AWARDED WITHOUT `game`, DELIBERATELY. awardXp increments

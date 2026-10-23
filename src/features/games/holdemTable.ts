@@ -44,6 +44,22 @@ export interface TableSeat {
 	// Busted out of the TOURNAMENT. The seat stays in the array so finishing order
 	// survives, which is what the placement bonus is paid from.
 	out: boolean;
+	// The seat's last decision this hand, for the live table card. Cleared at every
+	// deal. Absent on a row stored before it existed, which reads as no action yet.
+	lastAction?: SeatLastAction | null;
+	// Turn clock timeouts in a row. Any decision the player makes starts it over, and
+	// reaching HOLDEM_SIT_OUT_TIMEOUTS sits the seat out. Absent reads as none.
+	timeoutsInRow?: number;
+	// Sitting out: still dealt in and still posting blinds, but folded whenever the
+	// action reaches it, until the player presses I'm back. Absent reads as false.
+	sittingOut?: boolean;
+}
+
+/** A seat's last decision this hand, as the live table card words it. */
+export interface SeatLastAction {
+	action: BettingAction;
+	/** The total a bet or raise made, or what an all in put in this hand; 0 for the rest. */
+	amount: number;
 }
 
 export interface HoldemTable {
@@ -62,6 +78,12 @@ export interface HoldemTable {
 	bigBlind: number;
 	// Epoch millis of the last action, for the turn clock.
 	lastActionAt: number;
+	// When the board first showed the table in the state stamped `stamp` (a
+	// lastActionAt). The turn clock and the next hand's delay count from `shownAt`
+	// while the stamp still matches (clockStartOf), so the trail lines and the render
+	// ahead of a prompt never eat a player's time. Written by the room's redraw and
+	// carried over by returnToTable; absent until a board has shown the table.
+	turnPrompt?: { stamp: number; shownAt: number };
 	boardMessageId: string | null;
 	winnerId: string | null;
 	// Busted players worst-first, so placement is derivable at the end.
@@ -165,11 +187,14 @@ export function joinTable(table: HoldemTable, userId: string, username: string):
 // A fresh shuffled deck per hand. Not a continuing shoe: a deck that carried over
 // would let a player who watched the previous hand narrow what is left, and the
 // only reason to keep one is a performance saving that does not exist here.
-export function dealHand(table: HoldemTable, rng: () => number = Math.random): void {
+//
+// Answers what the deal set off: a seat sitting out that the action reaches at once
+// is folded right away (see foldSeatsSittingOut), and that can end the hand.
+export function dealHand(table: HoldemTable, rng: () => number = Math.random): ActionOutcome {
 	const players = livePlayers(table);
 	if (players.length < BOT_CONSTANTS.HOLDEM_MIN_SEATS) {
 		finishTournament(table);
-		return;
+		return { ok: false, reason: "tooFewPlayers" };
 	}
 
 	table.handNumber += 1;
@@ -183,6 +208,7 @@ export function dealHand(table: HoldemTable, rng: () => number = Math.random): v
 		seat.totalCommitted = 0;
 		seat.folded = seat.out;
 		seat.allIn = false;
+		seat.lastAction = null;
 	}
 
 	// Two cards each, dealt one at a time around the table the way a real deal
@@ -209,6 +235,7 @@ export function dealHand(table: HoldemTable, rng: () => number = Math.random): v
 	table.betting = postBlinds(toBettingSeats(order), smallBlindSeat, table.smallBlind, table.bigBlind);
 	writeBack(table);
 	table.lastActionAt = Date.now();
+	return foldSeatsSittingOut(table, rng, { ok: true });
 }
 
 // The live seats in play order starting AT the button. Dealing and the blinds are
@@ -287,8 +314,16 @@ export interface ActionOutcome {
 	busted?: string[];
 	// Set at showdown, for the result card.
 	showdown?: { userId: string; hand: string }[];
+	// Seats folded because they sit out, in the order the action reached them. NOT in
+	// `narration`: the room posts its own line for each.
+	sittingOutFolds?: string[];
 }
 
+/**
+ * A player's own decision: apply it, then fold any seat sitting out that the action
+ * reaches next. A decision made by the player starts their run of timeouts over;
+ * forceFold puts the run back for the one decision the clock made for them.
+ */
 export function act(
 	table: HoldemTable,
 	userId: string,
@@ -296,6 +331,16 @@ export function act(
 	amount = 0,
 	rng: () => number = Math.random
 ): ActionOutcome {
+	const outcome = resolveAction(table, userId, action, amount, rng);
+	if (!outcome.ok) return outcome;
+	const seat = seatOf(table, userId);
+	if (seat) seat.timeoutsInRow = 0;
+	return foldSeatsSittingOut(table, rng, outcome);
+}
+
+// One action through the betting round and whatever it ends: the street, or the
+// hand. Every action goes through here, a player's, the clock's and a sit out fold.
+function resolveAction(table: HoldemTable, userId: string, action: BettingAction, amount: number, rng: () => number): ActionOutcome {
 	if (table.status !== "playing" || !table.betting) return { ok: false, reason: "closed" };
 
 	const result = applyAction(table.betting, userId, action, amount);
@@ -304,6 +349,7 @@ export function act(
 	table.betting = result.state;
 	writeBack(table);
 	table.lastActionAt = Date.now();
+	recordLastAction(table, userId, action, amount);
 
 	const narration = describeAction(table, userId, action, amount);
 
@@ -318,6 +364,40 @@ export function act(
 	}
 
 	return { ok: true, narration };
+}
+
+// Read after writeBack and before any settle, which zeroes the hand's commitments,
+// so an all in records what it put in, the same figure describeAction names.
+function recordLastAction(table: HoldemTable, userId: string, action: BettingAction, amount: number): void {
+	const seat = seatOf(table, userId);
+	if (!seat) return;
+	seat.lastAction = { action, amount: lastActionAmount(seat, action, amount) };
+}
+
+function lastActionAmount(seat: TableSeat, action: BettingAction, amount: number): number {
+	if (action === "allIn") return seat.totalCommitted;
+	if (action === "bet" || action === "raise") return amount;
+	return 0;
+}
+
+// ⚠️ A SEAT SITTING OUT IS FOLDED THE MOMENT THE ACTION REACHES IT, so a table never
+// waits out a clock on a player who already ran theirs out twice. It still posted its
+// blinds at the deal, the way a tournament blinds off an absent player. The loop stops
+// at the first seat that is present, or when a fold ends the hand; each fold makes the
+// next seat the one to act, so it can run at most once per seat.
+function foldSeatsSittingOut(table: HoldemTable, rng: () => number, outcome: ActionOutcome): ActionOutcome {
+	const folded = [...(outcome.sittingOutFolds ?? [])];
+	let merged = outcome;
+	for (let guard = 0; guard < table.seats.length && !merged.handOver; guard++) {
+		const userId = whoActs(table);
+		if (!userId || !seatOf(table, userId)?.sittingOut) break;
+		const fold = resolveAction(table, userId, "fold", 0, rng);
+		if (!fold.ok) break;
+		folded.push(userId);
+		// The caller's own narration leads; only a fold that ends the hand carries a settlement.
+		merged = { ...fold, narration: outcome.narration };
+	}
+	return folded.length > 0 ? { ...merged, sittingOutFolds: folded } : merged;
 }
 
 function describeAction(table: HoldemTable, userId: string, action: BettingAction, amount: number): string {
@@ -515,12 +595,25 @@ function finishTournament(table: HoldemTable): void {
 }
 
 // ── the turn clock ────────────────────────────────────────────────────
+/**
+ * When the clock on the table's current state started: when the board first showed
+ * that state, or the action stamp itself until a board has. The turn clock and the
+ * next hand's delay both count from here.
+ */
+export function clockStartOf(table: HoldemTable): number {
+	const prompt = table.turnPrompt;
+	return prompt && prompt.stamp === table.lastActionAt ? prompt.shownAt : table.lastActionAt;
+}
+
 // ⚠️ FORCE FOLD, NEVER PAUSE. Pausing hands one absent player the power to stall
 // five present ones, which is the exact failure a turn clock exists to prevent.
-// A player who is checked to and vanishes is folded, not waited for.
-export function forceFold(table: HoldemTable, rng: () => number = Math.random): ActionOutcome & { userId?: string } {
+// A player who is checked to and vanishes is folded, not waited for, and one who
+// runs out of time HOLDEM_SIT_OUT_TIMEOUTS turns in a row sits out (`satOut`).
+export function forceFold(table: HoldemTable, rng: () => number = Math.random): ActionOutcome & { userId?: string; satOut?: boolean } {
 	const userId = whoActs(table);
 	if (!userId) return { ok: false, reason: "nobodyToAct" };
+	const seat = seatOf(table, userId);
+	const timeoutsBefore = seat?.timeoutsInRow ?? 0;
 
 	// Fold if there is something to call, otherwise check: taking a player's chips
 	// off them for being slow when checking was free would be a punishment the
@@ -528,8 +621,40 @@ export function forceFold(table: HoldemTable, rng: () => number = Math.random): 
 	const legal = actionsFor(table, userId).map((entry) => entry.action);
 	const action: BettingAction = legal.includes("check") ? "check" : "fold";
 	const outcome = act(table, userId, action, 0, rng);
-	return { ...outcome, userId };
+	if (!outcome.ok || !seat) return { ...outcome, userId };
+
+	// act started the run over, as it does for any decision; this one was the clock's.
+	seat.timeoutsInRow = timeoutsBefore + 1;
+	if (seat.timeoutsInRow < BOT_CONSTANTS.HOLDEM_SIT_OUT_TIMEOUTS || seat.sittingOut) return { ...outcome, userId };
+	seat.sittingOut = true;
+	// A seat the clock checked for is still in the hand and can be the next to act,
+	// on a new street, so it is folded now rather than given another clock.
+	return { ...foldSeatsSittingOut(table, rng, outcome), userId, satOut: true };
 }
+
+export type ReturnResult = { ok: true } | { ok: false; reason: "closed" | "notSeated" | "notSittingOut" };
+
+/**
+ * Bring a seat that sits out back to the table, the I'm back button's engine half:
+ * from the next time the action reaches it, it plays again. Moves the action stamp,
+ * so a write racing on the old stamp loses, but carries the turn prompt over to the
+ * new one: the player on the clock keeps the time they had rather than a fresh
+ * clock because somebody else came back.
+ */
+export function returnToTable(table: HoldemTable, userId: string, now: number = Date.now()): ReturnResult {
+	if (table.status === "finished") return { ok: false, reason: "closed" };
+	const seat = seatOf(table, userId);
+	if (!seat || seat.out) return { ok: false, reason: "notSeated" };
+	if (!seat.sittingOut) return { ok: false, reason: "notSittingOut" };
+	seat.sittingOut = false;
+	seat.timeoutsInRow = 0;
+	table.turnPrompt = { stamp: now, shownAt: clockStartOf(table) };
+	table.lastActionAt = now;
+	return { ok: true };
+}
+
+/** Seats still in the tournament and not sitting out: the players actually at the table. */
+export const presentPlayers = (table: HoldemTable): TableSeat[] => livePlayers(table).filter((seat) => !seat.sittingOut);
 
 // Finishing places, best first, for the placement bonus. The winner is first, then
 // the bust order reversed: the last player to bust finished second.

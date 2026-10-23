@@ -9,14 +9,19 @@ import {
 	forceFold,
 	leaveTable,
 	endTable,
+	returnToTable,
 	handInProgress,
+	clockStartOf,
+	presentPlayers,
 	placements,
 	whoActs,
 	type ActionOutcome,
 	type HoldemTable,
+	type ReturnResult,
 } from "@features/games/holdemTable.js";
 import { awardXp } from "@features/leveling/awardXp.js";
-import { announceDealer, toPublicView } from "@features/dero-brain/dealerNarration.js";
+import { announceDealer, toPublicView, type PublicView } from "@features/dero-brain/dealerNarration.js";
+import { holdemLiveView, renderHoldemLiveCard } from "@features/dero-brain/dealerShowdownRenderer.js";
 import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
 import { recordShowdownHand } from "@features/ratings/gameResultCounts.js";
 import { isRatedHoldemSession } from "@features/ratings/ratingEngine.js";
@@ -24,6 +29,7 @@ import { secureRandom } from "@utils/secureRng.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { isClockExpired, roomDrawingKey, withDrawingPause } from "./drawingPause.js";
 import {
 	tableEmbed,
 	holeCardsEmbed,
@@ -37,16 +43,17 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomHoldemHandlers ───────────────────────────────────────────────
 // What:  every hold em interaction: buying in, dealing, acting, peeking at your
-//        own cards, leaving or ending the table, and the clock that folds for a
-//        player who vanished.
-// Who:   routed from gameRoomHandlers.
+//        own cards, leaving or ending the table, coming back from sitting out, and
+//        the clock that folds for a player who vanished and deals the next hand.
+// Who:   routed from gameRoomHandlers; main.ts runs the clock on its own interval.
 // When:  many times per tournament.
 // Where: the table lives on the room row, so a deploy mid-hand costs nothing. Its
 //        chips live NOWHERE ELSE, which is the whole of A9/R22.
-// How:   every path ends by persisting the table and redrawing one board message.
-//        The three paths that change a hand (a deal, an action, a clock fold) then
-//        hand a public view of the table before and after to announceDealer, fire
-//        and forget, which narrates only the tables Dero opened and deals.
+// How:   every path ends by persisting the table and redrawing one board message,
+//        with the live table card, behind the drawing pause. The three paths that
+//        change a hand (a deal, an action, a clock fold) then hand a public view of
+//        the table before and after to announceDealer, fire and forget, which
+//        narrates only the tables Dero opened and deals.
 //
 // ⚠️ EVERY CALL THAT CAN REACH THE SHUFFLE PASSES secureRandom. The engine's own
 // default is the fast, predictable generator and stays that way for its tests;
@@ -83,8 +90,10 @@ async function persistIfUnchanged(room: IGameRoom, table: HoldemTable, readAt: n
 	return gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.lastActionAt": readAt }, table);
 }
 
-// Redraw the one board message. Cosmetic, so a failure is logged and swallowed:
-// the row is the truth and the next action catches up.
+// Redraw the one board message behind the drawing pause: the live table card (every
+// table, every action) in the table embed's image slot, or the embed alone when the
+// card does not draw, while the clock holds. Cosmetic, so a failure is logged and
+// swallowed: the row is the truth and the next action catches up.
 async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Promise<void> {
 	if (!table.boardMessageId || !room.channelId) return;
 	const channel = await client.channels.fetch(room.channelId).catch(() => null);
@@ -105,12 +114,71 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Prom
 			  ? joiningRows(room.roomId, table.seats.length, table)
 			  : handInProgress(table)
 			    ? bettingRows(table, room.roomId, pot)
-			    : betweenHandsRows(room.roomId);
+			    : betweenHandsRows(room.roomId, table);
 
-	await message
-		.edit({ embeds: [tableEmbed(table, pot)], components })
-		.catch((error) => console.warn("[game-rooms] failed to redraw the hold em table", error));
+	await withDrawingPause({
+		gameKey: roomDrawingKey(room),
+		showStatus: (status) => message.edit({ content: status }),
+		// The view is built inside the render, so a view that throws costs the card,
+		// not the board. It reads the public view only: no seat's own cards.
+		render: () => renderHoldemLiveCard(holdemLiveView(toPublicView(table), pot)),
+		fallback: () => null,
+		swapIn: async (card) => {
+			const prompted = promptTable(table);
+			const embed = tableEmbed(table, pot, clockLine(table));
+			await message.edit({
+				content: null,
+				embeds: [card ? embed.setImage(card.ref) : embed],
+				components,
+				files: card ? [card.attachment] : [],
+				// `attachments: []` drops the last action's card, which an edit otherwise keeps.
+				attachments: [],
+			});
+			if (prompted) await rememberPrompt(room, table);
+		},
+	}).catch((error) => console.warn("[game-rooms] failed to redraw the hold em table", error));
 }
+
+// ── the prompt ────────────────────────────────────────────────────────
+// The first time a board shows a playing table in a new state is when the clock on
+// that state starts (clockStartOf): the turn clock for the player to act, the delay
+// before the next hand between hands. So the trail lines and the render ahead of the
+// board never eat into a player's minute. Stamped just before the edit, so the
+// countdown the board shows is the clock the sweep enforces.
+//
+// Only while playing. A joining table runs no clock, and a buy in moves no action
+// stamp, so a write keyed on that stamp could erase a seat that landed meanwhile.
+function promptTable(table: HoldemTable, now: number = Date.now()): boolean {
+	if (table.status !== "playing" || table.turnPrompt?.stamp === table.lastActionAt) return false;
+	table.turnPrompt = { stamp: table.lastActionAt, shownAt: now };
+	return true;
+}
+
+// Kept only while the table is still in the state that was shown: while playing,
+// every move moves the stamp, so a move that landed since makes this write lose, and
+// that move's own redraw prompts its own state.
+async function rememberPrompt(room: IGameRoom, table: HoldemTable): Promise<void> {
+	await gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.lastActionAt": table.lastActionAt, "secret.status": "playing" }, table);
+}
+
+// The line under the header that counts down: whose turn it is and when it runs out,
+// or when the next hand deals itself. None while joining or once the table is over.
+function clockLine(table: HoldemTable): string | null {
+	if (table.status !== "playing") return null;
+	const start = clockStartOf(table);
+	if (handInProgress(table)) {
+		const acting = whoActs(table);
+		return acting ? gameRoomsCopy.holdem.turnClockLine(acting, start + BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS) : null;
+	}
+	if (!canDealItself(table)) return gameRoomsCopy.holdem.nextHandWaitingLine;
+	return gameRoomsCopy.holdem.nextHandLine(start + BOT_CONSTANTS.HOLDEM_NEXT_HAND_DELAY_MS);
+}
+
+// ⚠️ THE NEXT HAND DEALS ITSELF ONLY WHILE TWO PLAYERS ARE AT THE TABLE. A hand dealt
+// to seats that all sit out would fold itself round and round with nobody there,
+// blinding absent players off and paying out a tournament nobody played. The host's
+// Next hand still deals, and the idle sweep closes a table nobody comes back to.
+const canDealItself = (table: HoldemTable): boolean => presentPlayers(table).length >= BOT_CONSTANTS.HOLDEM_MIN_SEATS;
 
 // ── buying in ─────────────────────────────────────────────────────────
 export async function handleBuyIn(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
@@ -210,41 +278,58 @@ export async function handleDeal(interaction: ButtonInteraction, room: IGameRoom
 		return;
 	}
 
-	const handNumberBefore = table.handNumber;
-	const blindsBefore = table.bigBlind;
-	const before = toPublicView(table);
-	dealHand(table, secureRandom);
-
-	// The claim. Discord delivers both halves of a double click as two independent
-	// interactions and each one re-reads the room, so both saw the same hand number
-	// and both would otherwise deal. Exactly one write can match it.
-	const written = await gameRoomStore.updateSecretIf(
-		room.guildId,
-		room.roomId,
-		{ "secret.handNumber": handNumberBefore },
-		table
-	);
-	if (!written) {
+	const deal = await claimDeal(room, table);
+	if (!deal) {
 		await interaction.reply({ content: gameRoomsCopy.holdem.handInProgress, ...PRIVATE });
 		return;
 	}
 
 	await interaction.deferUpdate();
+	await announceDeal(interaction.client, room, table, deal, interaction.user.id);
+}
 
-	if (table.bigBlind !== blindsBefore) {
-		await roomTrail.postMove(interaction.client, room, {
-			actorId: interaction.user.id,
+/** A deal that won its claim: the table as it stood before, and what the deal set off. */
+interface ClaimedDeal {
+	before: PublicView;
+	blindsBefore: number;
+	outcome: ActionOutcome;
+}
+
+// Deal the next hand and claim it. Shared by the host's button and the clock's
+// automatic deal, which race each other exactly the way a double click races itself:
+// each read the room, so each saw the same hand number and each would otherwise deal.
+// Exactly one write can match it, and null means somebody else's write landed.
+//
+// The action stamp is matched too, because the clock decides against a read taken
+// seconds earlier: a leave or an I'm back between hands moves the stamp and not the
+// hand number, and a deal from the older read would write that seat straight back.
+async function claimDeal(room: IGameRoom, table: HoldemTable): Promise<ClaimedDeal | null> {
+	const expected = { "secret.handNumber": table.handNumber, "secret.lastActionAt": table.lastActionAt };
+	const blindsBefore = table.bigBlind;
+	const before = toPublicView(table);
+	const outcome = dealHand(table, secureRandom);
+	const written = await gameRoomStore.updateSecretIf(room.guildId, room.roomId, expected, table);
+	return written ? { before, blindsBefore, outcome } : null;
+}
+
+// Everything after a deal landed, whoever dealt it: the blinds and deal lines, then
+// the same settle path an action takes, which posts any sit out folds the deal set
+// off, settles a hand they ended, and redraws the board.
+async function announceDeal(client: Client, room: IGameRoom, table: HoldemTable, deal: ClaimedDeal, actorId: string): Promise<void> {
+	if (table.bigBlind !== deal.blindsBefore) {
+		await roomTrail.postMove(client, room, {
+			actorId,
 			kind: "system",
 			text: gameRoomsCopy.holdem.blindsUp(table.smallBlind, table.bigBlind),
 		});
 	}
-	await roomTrail.postMove(interaction.client, room, {
-		actorId: interaction.user.id,
+	await roomTrail.postMove(client, room, {
+		actorId,
 		kind: "system",
 		text: gameRoomsCopy.holdem.handDealt(table.handNumber, table.smallBlind, table.bigBlind),
 	});
-	await redraw(interaction.client, room, table);
-	announceDealer({ client: interaction.client, roomId: room.roomId, before, after: toPublicView(table) });
+	await settleOutcome(client, room, table, deal.outcome, actorId);
+	announceDealer({ client, roomId: room.roomId, before: deal.before, after: toPublicView(table), outcome: deal.outcome });
 }
 
 // ── acting ────────────────────────────────────────────────────────────
@@ -333,6 +418,11 @@ async function settleOutcome(
 ): Promise<void> {
 	if (outcome.narration) {
 		await roomTrail.postMove(client, room, { actorId, kind: "guess", text: outcome.narration });
+	}
+	// Seats the action reached while they sit out, folded by the engine, each in the
+	// room's own words rather than the engine's plain "folds".
+	for (const userId of outcome.sittingOutFolds ?? []) {
+		await roomTrail.postMove(client, room, { actorId: userId, kind: "system", text: gameRoomsCopy.holdem.sittingOutFolded(userId) });
 	}
 
 	if (outcome.handOver) {
@@ -530,6 +620,45 @@ export async function handleEndTable(interaction: ButtonInteraction, room: IGame
 	if (claimed && table.handNumber > 0) void recordMatchRatings(room, order, [], { rated: isRatedHoldemSession(table.handNumber) });
 }
 
+// ── coming back ───────────────────────────────────────────────────────
+const RETURN_REFUSALS: Record<Exclude<ReturnResult, { ok: true }>["reason"], string> = {
+	closed: gameRoomsCopy.holdem.tournamentOver,
+	notSeated: gameRoomsCopy.holdem.notSeated,
+	notSittingOut: gameRoomsCopy.holdem.notSittingOut,
+};
+
+// I'm back, for a seat that sits out after two timeouts in a row. A compare and swap
+// on the action stamp, which returnToTable moves, so a racing action or clock fold
+// on the old stamp loses instead of writing the seat back to sitting out.
+export async function handleImBack(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	const table = tableOf(room);
+	if (!table || table.status === "finished") {
+		await interaction.reply({ content: gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
+		return;
+	}
+
+	const readAt = table.lastActionAt;
+	const result = returnToTable(table, interaction.user.id);
+	if (!result.ok) {
+		await interaction.reply({ content: RETURN_REFUSALS[result.reason], ...PRIVATE });
+		return;
+	}
+
+	const written = await persistIfUnchanged(room, table, readAt);
+	if (!written) {
+		await interaction.reply({ content: gameRoomsCopy.holdem.tableBusy, ...PRIVATE });
+		return;
+	}
+
+	await interaction.deferUpdate();
+	await roomTrail.postMove(interaction.client, room, {
+		actorId: interaction.user.id,
+		kind: "system",
+		text: gameRoomsCopy.holdem.backAtTable(interaction.user.id),
+	});
+	await redraw(interaction.client, room, table);
+}
+
 // ── the private peek ──────────────────────────────────────────────────
 export async function handleShowCards(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const table = tableOf(room);
@@ -545,20 +674,25 @@ export async function handleShowCards(interaction: ButtonInteraction, room: IGam
 // ── the turn clock ────────────────────────────────────────────────────
 export interface HoldemClockSummary {
 	forced: number;
+	dealt: number;
 }
 
 /**
- * Force an action for every hold em table whose player has run out of time.
+ * Force an action for every hold em table whose player has run out of time, and
+ * deal the next hand at every table whose last hand has sat on the board for
+ * HOLDEM_NEXT_HAND_DELAY_MS. Both clocks count from when the board showed the
+ * state (clockStartOf), and both hold while the board draws.
  *
- * ⚠️ NEVER PAUSES. A table that waits for an absent player hands one person the
- * power to stall five, which is the exact failure a turn clock exists to prevent.
+ * ⚠️ NEVER PAUSES FOR A PLAYER. A table that waits for an absent player hands one
+ * person the power to stall five, which is the exact failure a turn clock exists to
+ * prevent. Only a board that is drawing holds it, for as long as the draw takes.
  */
 export async function sweepHoldemClocks(client: Client, now: Date = new Date()): Promise<HoldemClockSummary> {
 	// ⚠️ ONE SWEEP AT A TIME. The interval fires every HOLDEM_CLOCK_TICK_MS whether or
 	// not the previous tick finished, and a tick that stalls behind a 429 while posting
 	// trail lines would otherwise re-enter on the same stale tables and force a second
 	// action for a seat it already folded.
-	if (sweepInFlight) return { forced: 0 };
+	if (sweepInFlight) return { forced: 0, dealt: 0 };
 	sweepInFlight = true;
 
 	try {
@@ -573,38 +707,17 @@ let sweepInFlight = false;
 async function runHoldemClockSweep(client: Client, now: Date): Promise<HoldemClockSummary> {
 	const rooms = await gameRoomStore.findPlayingByGame("holdem");
 	let forced = 0;
+	let dealt = 0;
 
 	for (const room of rooms) {
 		try {
 			const table = tableOf(room);
-			if (!table || table.status !== "playing" || !whoActs(table)) continue;
-			if (now.getTime() - table.lastActionAt < BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS) continue;
-
-			// Captured BEFORE forceFold, which stamps a new one through `act`.
-			const readAt = table.lastActionAt;
-			const before = toPublicView(table);
-			const outcome = forceFold(table, secureRandom);
-			if (!outcome.ok || !outcome.userId) continue;
-
-			// ⚠️ THE PLAYER GETS THE BENEFIT OF THE DOUBT ON A TIE. This loop is
-			// sequential and each iteration awaits Discord I/O, so the Nth table is being
-			// decided against a snapshot read seconds ago, and a short stack acting at
-			// 29.9 seconds races the fold. If their action landed first the write below
-			// finds a different lastActionAt and does nothing, so their real move stands
-			// instead of being overwritten by a fold they did not make. Without this both
-			// wrote, both called settleOutcome, and payPlacements paid the tournament out
-			// twice.
-			const written = await persistIfUnchanged(room, table, readAt);
-			if (!written) continue;
-
-			forced++;
-			await roomTrail.postMove(client, room, {
-				actorId: outcome.userId,
-				kind: "system",
-				text: gameRoomsCopy.holdem.timedOut(outcome.userId, outcome.narration?.includes("checks") ? "checked" : "folded"),
-			});
-			await settleOutcome(client, room, table, outcome, outcome.userId);
-			announceDealer({ client, roomId: room.roomId, before, after: toPublicView(table), outcome });
+			if (!table || table.status !== "playing") continue;
+			if (handInProgress(table)) {
+				if (await forceFoldIfDue(client, room, table, now)) forced++;
+				continue;
+			}
+			if (await dealNextHandIfDue(client, room, table, now)) dealt++;
 		} catch (error) {
 			// Per table. This runs on an interval with nobody watching, so a throw
 			// would stall every other table's clock too.
@@ -616,7 +729,59 @@ async function runHoldemClockSweep(client: Client, now: Date): Promise<HoldemClo
 		}
 	}
 
-	return { forced };
+	return { forced, dealt };
+}
+
+// The player on the clock has used their HOLDEM_TURN_TIMEOUT_MS: check for them when
+// checking is free, fold otherwise, and sit the seat out on its second timeout in a
+// row. Answers whether a forced action landed.
+async function forceFoldIfDue(client: Client, room: IGameRoom, table: HoldemTable, now: Date): Promise<boolean> {
+	if (!whoActs(table)) return false;
+	// Never while the board draws, and every held millisecond is added back (the
+	// drawing pause), so a slow render never costs a player their turn.
+	if (!isClockExpired(roomDrawingKey(room), clockStartOf(table), BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS, now.getTime())) return false;
+
+	// Captured BEFORE forceFold, which stamps a new one through `act`.
+	const readAt = table.lastActionAt;
+	const before = toPublicView(table);
+	const outcome = forceFold(table, secureRandom);
+	if (!outcome.ok || !outcome.userId) return false;
+
+	// ⚠️ THE PLAYER GETS THE BENEFIT OF THE DOUBT ON A TIE. This loop is
+	// sequential and each iteration awaits Discord I/O, so the Nth table is being
+	// decided against a snapshot read seconds ago, and a short stack acting at
+	// 59.9 seconds races the fold. If their action landed first the write below
+	// finds a different lastActionAt and does nothing, so their real move stands
+	// instead of being overwritten by a fold they did not make. Without this both
+	// wrote, both called settleOutcome, and payPlacements paid the tournament out
+	// twice.
+	const written = await persistIfUnchanged(room, table, readAt);
+	if (!written) return false;
+
+	await roomTrail.postMove(client, room, {
+		actorId: outcome.userId,
+		kind: "system",
+		text: gameRoomsCopy.holdem.timedOut(outcome.userId, outcome.narration?.includes("checks") ? "checked" : "folded"),
+	});
+	if (outcome.satOut) {
+		await roomTrail.postMove(client, room, { actorId: outcome.userId, kind: "system", text: gameRoomsCopy.holdem.satOut(outcome.userId) });
+	}
+	await settleOutcome(client, room, table, outcome, outcome.userId);
+	announceDealer({ client, roomId: room.roomId, before, after: toPublicView(table), outcome });
+	return true;
+}
+
+// The last hand has sat on the board for HOLDEM_NEXT_HAND_DELAY_MS: deal the next one
+// as the host's Next hand button would, which stays as the way to deal sooner. The
+// host is the actor on its trail lines, since it is their table. Answers whether a
+// deal landed; the host's own press winning the claim first answers false.
+async function dealNextHandIfDue(client: Client, room: IGameRoom, table: HoldemTable, now: Date): Promise<boolean> {
+	if (!canDealItself(table)) return false;
+	if (!isClockExpired(roomDrawingKey(room), clockStartOf(table), BOT_CONSTANTS.HOLDEM_NEXT_HAND_DELAY_MS, now.getTime())) return false;
+	const deal = await claimDeal(room, table);
+	if (!deal) return false;
+	await announceDeal(client, room, table, deal, room.hostId);
+	return true;
 }
 
 export const roomHoldemHandlers = {
@@ -626,6 +791,7 @@ export const roomHoldemHandlers = {
 	handleShowCards,
 	handleLeaveTable,
 	handleEndTable,
+	handleImBack,
 	sweepHoldemClocks,
 };
 

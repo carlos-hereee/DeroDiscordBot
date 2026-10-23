@@ -849,9 +849,10 @@ process.on("uncaughtException", (err) => {
 		await recoverGameRoomsOnBoot(client);
 
 		// ── hold em turn clock ─────────────────────────────────────
-		// What: force-folds a player who has run out of time at a poker table.
-		// When: every HOLDEM_CLOCK_TICK_MS (10s), because the turn budget is 30s
-		//       and the 5 minute room cron would let a 30 second clock fire
+		// What: force-folds a player who has run out of time at a poker table, and
+		//       deals the next hand once the last one has sat on the board long enough.
+		// When: every HOLDEM_CLOCK_TICK_MS (10s), because the turn budget is 60s
+		//       and the 5 minute room cron would let a 60 second clock fire
 		//       anywhere inside five minutes.
 		// Why an interval rather than a cron: node-cron's finest granularity is a
 		//       minute, which is twice the budget it is meant to enforce.

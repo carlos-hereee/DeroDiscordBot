@@ -24,6 +24,7 @@ import {
 	type MonopolyState,
 } from "@features/games/monopolyState.js";
 import { renderBoard } from "@features/games/monopolyRenderer.js";
+import type { ResolvedGameAsset } from "@features/games/gamesAssets.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
@@ -63,8 +64,15 @@ export interface MonopolyBoardMessage {
  * picture, or the token map when there is none), the seats, and the last move.
  */
 export async function monopolyBoardEmbed(state: MonopolyState): Promise<MonopolyBoardMessage> {
+	return monopolyBoardEmbedWith(state, await renderBoard(state));
+}
+
+/**
+ * The board message's embed around a picture already drawn, or the token map when
+ * `picture` is null. For a redraw that drew its picture behind the drawing pause.
+ */
+export function monopolyBoardEmbedWith(state: MonopolyState, picture: ResolvedGameAsset | null): MonopolyBoardMessage {
 	const lastMove = state.log[state.log.length - 1]?.text ?? gameRoomsCopy.monopoly.noMovesYet;
-	const picture = await renderBoard(state);
 
 	// The picture REPLACES the token map rather than joining it, because the two
 	// show the same positions. The seat lines stay either way: they name every

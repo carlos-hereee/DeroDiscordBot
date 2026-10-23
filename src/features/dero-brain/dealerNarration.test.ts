@@ -92,7 +92,7 @@ describe("toPublicView", () => {
 		expect(Object.keys(view).sort()).toEqual(
 			["actingUserId", "bigBlind", "board", "buttonUserId", "handNumber", "seats", "smallBlind", "status", "street", "winnerId"].sort(),
 		);
-		expect(Object.keys(view.seats[0]).sort()).toEqual(["allIn", "folded", "name", "out", "stack", "userId"].sort());
+		expect(Object.keys(view.seats[0]).sort()).toEqual(["allIn", "folded", "lastAction", "name", "out", "sittingOut", "stack", "userId"].sort());
 		expect(view).toMatchObject({ handNumber: 1, smallBlind: 100, bigBlind: 200, board: [] });
 	});
 

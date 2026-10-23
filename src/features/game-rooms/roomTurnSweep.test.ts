@@ -16,6 +16,7 @@ import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { startMatch, type StoredBattleship } from "./roomBattleship.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { _resetDrawingPauses, roomDrawingKey, withDrawingPause } from "./drawingPause.js";
 
 const storeMock = gameRoomStore as unknown as {
 	findPlayingByGame: ReturnType<typeof vi.fn>;
@@ -171,5 +172,32 @@ describe("sweepBattleshipTurns", () => {
 
 		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0 });
 		expect(lifecycleMock.finish).not.toHaveBeenCalled();
+	});
+});
+
+// ── the drawing pause (Dero 1.7.0 test fixes, Phase 3a) ────────────────────
+describe("a board that is drawing", () => {
+	it("keeps its turn, however long past the budget, until the draw is done", async () => {
+		_resetDrawingPauses();
+		const room = makeRoom(TIMEOUT + 60_000);
+		storeMock.findPlayingByGame.mockResolvedValue([room]);
+		let finish: (value: null) => void = () => undefined;
+		const pending = new Promise<null>((resolve) => {
+			finish = resolve;
+		});
+		const drawing = withDrawingPause({
+			gameKey: roomDrawingKey(room),
+			showStatus: async () => undefined,
+			render: () => pending,
+			fallback: () => null,
+			swapIn: async () => undefined,
+		});
+
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0 });
+		expect(storeMock.update).not.toHaveBeenCalled();
+
+		finish(null);
+		await drawing;
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 1, matchesForfeited: 0 });
 	});
 });

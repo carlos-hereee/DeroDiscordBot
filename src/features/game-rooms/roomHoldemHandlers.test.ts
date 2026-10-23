@@ -291,7 +291,7 @@ describe("the turn clock", () => {
 		table.lastActionAt = Date.now();
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(table)]);
 
-		expect(await sweepHoldemClocks(client)).toEqual({ forced: 0 });
+		expect(await sweepHoldemClocks(client)).toEqual({ forced: 0, dealt: 0 });
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
@@ -301,7 +301,7 @@ describe("the turn clock", () => {
 		const stalling = whoActs(table);
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(table)]);
 
-		expect(await sweepHoldemClocks(client)).toEqual({ forced: 1 });
+		expect(await sweepHoldemClocks(client)).toEqual({ forced: 1, dealt: 0 });
 		expect(whoActs(table)).not.toBe(stalling);
 	});
 
@@ -310,7 +310,7 @@ describe("the turn clock", () => {
 		table.lastActionAt = Date.now() - BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS - 1000;
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(table)]);
 
-		expect(await sweepHoldemClocks(client)).toEqual({ forced: 0 });
+		expect(await sweepHoldemClocks(client)).toEqual({ forced: 0, dealt: 0 });
 	});
 
 	it("keeps sweeping when one table throws", async () => {
@@ -322,7 +322,7 @@ describe("the turn clock", () => {
 		storeMock.findPlayingByGame.mockResolvedValue([broken, makeRoom(good)]);
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-		expect(await sweepHoldemClocks(client)).toEqual({ forced: 1 });
+		expect(await sweepHoldemClocks(client)).toEqual({ forced: 1, dealt: 0 });
 		errorSpy.mockRestore();
 	});
 });
@@ -442,7 +442,7 @@ describe("the turn clock defers to a real action", () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(table)]);
 		storeMock.updateSecretIf.mockResolvedValue(null);
 
-		expect(await sweepHoldemClocks(client)).toEqual({ forced: 0 });
+		expect(await sweepHoldemClocks(client)).toEqual({ forced: 0, dealt: 0 });
 	});
 });
 
