@@ -29,8 +29,12 @@ import {
 	applyRoll,
 	applySkip,
 	applyUnmortgage,
+	acceptTrade,
 	calculateRent,
+	closeAuction,
 	createInitialState,
+	openTrade,
+	placeBid,
 	unmortgageCost,
 	type MonopolyResult,
 	type MonopolyState,
@@ -291,7 +295,7 @@ describe("rent on landing", () => {
 		expect(calculateRent(state, teal)).toBe(0);
 	});
 
-	it("takes every chip a seat has when rent is short, and forfeits it", () => {
+	it("bankrupts a seat that cannot cover rent to the owner, who takes every chip", () => {
 		const state = newMatch();
 		giveTiles(state, BOB, "teal-ridge", "frost-hollow", "skyglass-terrace");
 		state.seats[0].chips = 4;
@@ -300,7 +304,8 @@ describe("rent on landing", () => {
 		expect(next.seats[0]).toMatchObject({ bankrupt: true, chips: 0, bankruptedAt: 1 });
 		expect(next.phase).toBe("finished");
 		expect(next.winnerId).toBe(BOB);
-		expect(trailLines).toContain("<@alice> could cover only $4 of $12.");
+		expect(trailLines).toContain("<@alice> cannot cover $12, even by selling and mortgaging everything, and is bankrupt.");
+		expect(trailLines).toContain("<@bob> takes $4, 0 lots and 0 Get Out of Jail Free cards from <@alice>.");
 		expect(trailLines.at(-1)).toBe("<@bob> wins the match.");
 	});
 
@@ -448,13 +453,24 @@ describe("applyJailChoice", () => {
 		expect(trailLines).toContain("<@alice> used the last try, pays $50 bail and moves.");
 	});
 
-	it("forfeits a seat that cannot cover the forced bail", () => {
+	it("bankrupts a seat that cannot cover the forced bail", () => {
 		const state = jailedMatch();
 		Object.assign(state.seats[0], { jailTurnsRemaining: 1, chips: 10 });
 		const { state: next, trailLines } = expectOk(applyJailChoice(state, "roll", diceRng(1, 2)));
 		expect(next.seats[0]).toMatchObject({ bankrupt: true, position: JAIL_INDEX });
 		expect(next.winnerId).toBe(BOB);
-		expect(trailLines).toContain("<@alice> could cover only $10 of $50.");
+		expect(trailLines).toContain("<@alice> cannot cover $50, even by selling and mortgaging everything, and is bankrupt.");
+	});
+
+	it("mortgages to cover the forced bail and still moves", () => {
+		const state = jailedMatch();
+		Object.assign(state.seats[0], { jailTurnsRemaining: 1, chips: 10 });
+		giveTiles(state, ALICE, "skyrail-station");
+		const { state: next, trailLines } = expectOk(applyJailChoice(state, "roll", diceRng(1, 2)));
+		expect(next.seats[0]).toMatchObject({ bankrupt: false, inJail: false, position: 13, chips: 10 + 100 - JAIL_BAIL });
+		expect(next.properties["skyrail-station"].mortgaged).toBe(true);
+		expect(trailLines).toContain("<@alice> mortgaged Skyrail Station for $100 to cover the debt.");
+		expect(trailLines).toContain("<@alice> used the last try, pays $50 bail and moves.");
 	});
 
 	it("refuses a free seat, a closed turn and a finished match", () => {
@@ -578,15 +594,15 @@ describe("Chance and Community Chest", () => {
 		expect(trailLines.at(-1)).toBe("<@alice> paid $15 to the bank.");
 	});
 
-	it("forfeits a seat that cannot cover a card's charge", () => {
+	it("bankrupts a seat that cannot cover a card's charge", () => {
 		const state = newMatch();
 		state.seats[0].chips = 10;
 		const { state: next, trailLines } = drawChance(state, "chance-speeding");
 		expect(next.winnerId).toBe(BOB);
-		expect(trailLines).toContain("<@alice> could cover only $10 of $15.");
+		expect(trailLines).toContain("<@alice> cannot cover $15, even by selling and mortgaging everything, and is bankrupt.");
 	});
 
-	it("collects from each rival, and a rival who cannot pay forfeits", () => {
+	it("collects from each rival, and a rival who cannot pay is bankrupt to the drawer", () => {
 		const { state, trailLines } = drawChest(newMatch([ALICE, BOB, CARA]), "chest-hatching-day");
 		expect(state.seats.map((seat) => seat.chips)).toEqual([STARTING_CHIPS + 20, STARTING_CHIPS - 10, STARTING_CHIPS - 10]);
 		expect(trailLines.slice(-2)).toEqual(["<@bob> paid <@alice> $10.", "<@cara> paid <@alice> $10."]);
@@ -610,7 +626,8 @@ describe("Chance and Community Chest", () => {
 		expect(next.seats[0].bankrupt).toBe(true);
 		expect(next.activeSeatIndex).toBe(1);
 		expect(trailLines).toContain("<@alice> paid <@bob> $50.");
-		expect(trailLines).toContain("<@alice> could cover only $10 of $50.");
+		expect(trailLines).toContain("<@alice> cannot cover $50, even by selling and mortgaging everything, and is bankrupt.");
+		expect(trailLines).toContain("<@cara> takes $10, 0 lots and 0 Get Out of Jail Free cards from <@alice>.");
 	});
 
 	it("advances onto an owned lot and pays its owner the rent", () => {
@@ -913,12 +930,25 @@ const ACTIONS_PER_TURN_LIMIT = 60;
 const LOW_CASH = 150;
 const RICH_CASH = 800;
 const BUILD_RESERVE = 300;
+// What a bidder keeps back when it bids, and what a buyer pays over list price
+// to complete a color group by trade. Tuned the same way as the three above.
+const AUCTION_RESERVE = 100;
+const TRADE_PRICE_MULTIPLIER = 2;
 
 interface MatchTally {
 	mortgages: number;
 	unmortgages: number;
 	hotels: number;
+	tradesAccepted: number;
+	auctionsWon: number;
 }
+
+interface MatchOptions {
+	auctionsEnabled: boolean;
+	trading: boolean;
+}
+
+const PLAIN_MATCH: MatchOptions = { auctionsEnabled: false, trading: false };
 
 // Every invariant a legal state keeps, checked after each turn.
 function assertConsistent(state: MonopolyState): void {
@@ -946,6 +976,9 @@ function assertConsistent(state: MonopolyState): void {
 	const piled = state.chanceDeck.length + state.chanceDiscard.length + state.chestDeck.length + state.chestDiscard.length;
 	expect(piled + heldCards).toBe(CHANCE_DECK.length + CHEST_DECK.length);
 	if (state.phase !== "finished") expect(state.seats[state.activeSeatIndex].bankrupt).toBe(false);
+	// Every trade and auction the driver opens resolves inside the turn.
+	expect(state.pendingTrade).toBeNull();
+	expect(state.pendingAuction).toBeNull();
 }
 
 // Mortgages the first lot it can when cash runs low, and lifts the first
@@ -994,10 +1027,50 @@ function buildWhileAffordable(state: MonopolyState, userId: string, tally: Match
 	return current;
 }
 
+// Buys the one lot standing between the active seat and a whole color group,
+// at a premium the seller always takes, when the purse covers it. At most one
+// trade a call, opened and accepted at once.
+function tradeForGroup(state: MonopolyState, userId: string, tally: MatchTally): MonopolyState {
+	const chips = state.seats[state.activeSeatIndex].chips;
+	for (const groupLots of Object.values(COLOR_GROUPS)) {
+		const missing = groupLots.filter((id) => state.properties[id].ownerId !== userId);
+		if (missing.length !== 1) continue;
+		const sellerId = state.properties[missing[0]].ownerId;
+		const price = tile(missing[0]).price * TRADE_PRICE_MULTIPLIER;
+		if (sellerId === null || chips - price < BUILD_RESERVE) continue;
+		const offered = expectOk(openTrade(state, {
+			initiatorId: userId,
+			counterpartyId: sellerId,
+			offer: { properties: [], chips: price, gojf: 0 },
+			request: { properties: missing, chips: 0, gojf: 0 },
+			openedAt: NOW,
+		})).state;
+		tally.tradesAccepted++;
+		return expectOk(acceptTrade(offered, sellerId)).state;
+	}
+	return state;
+}
+
+// Every seat still playing bids what it can spare up to list price, and the
+// round closes at once.
+function runAuction(state: MonopolyState, tally: MatchTally): MonopolyState {
+	const auction = state.pendingAuction;
+	if (!auction) throw new Error("runAuction needs an open auction");
+	let current = state;
+	for (const seat of state.seats) {
+		const bid = Math.min(tile(auction.tileId).price, seat.chips - AUCTION_RESERVE);
+		if (!seat.bankrupt && bid >= 1) current = expectOk(placeBid(current, seat.userId, bid)).state;
+	}
+	current = expectOk(closeAuction(current)).state;
+	if (current.properties[auction.tileId].ownerId !== null) tally.auctionsWon++;
+	return current;
+}
+
 // One seat's whole turn, played the way a greedy player would: manage its lots
 // before each roll, get out of jail by bail when it can, buy everything it can
-// afford, roll again on doubles.
-function playTurn(state: MonopolyState, rng: () => number, tally: MatchTally): { state: MonopolyState; actions: number } {
+// afford, roll again on doubles. With trading on it buys its way into whole
+// color groups first; with auctions on, every lot it passes on is auctioned.
+function playTurn(state: MonopolyState, rng: () => number, tally: MatchTally, options: MatchOptions): { state: MonopolyState; actions: number } {
 	let current = state;
 	let actions = 0;
 	while (current.phase !== "finished" && actions < ACTIONS_PER_TURN_LIMIT) {
@@ -1008,6 +1081,11 @@ function playTurn(state: MonopolyState, rng: () => number, tally: MatchTally): {
 			current = expectOk(buyOrSkip(current, seat.userId)).state;
 			continue;
 		}
+		if (current.phase === "in-auction") {
+			current = runAuction(current, tally);
+			continue;
+		}
+		if (options.trading) current = tradeForGroup(current, seat.userId, tally);
 		current = buildWhileAffordable(adjustMortgages(current, seat.userId, tally), seat.userId, tally);
 		if (seat.inJail) {
 			const choice = current.seats[current.activeSeatIndex].chips >= JAIL_BAIL ? "bail" : "roll";
@@ -1026,17 +1104,22 @@ function playTurn(state: MonopolyState, rng: () => number, tally: MatchTally): {
 function buyOrSkip(state: MonopolyState, userId: string): MonopolyResult {
 	const lot = BOARD[state.seats[state.activeSeatIndex].position];
 	if (isOwnableTile(lot) && state.seats[state.activeSeatIndex].chips >= lot.price) return applyBuy(state, userId, lot.id);
-	return applySkip(state, userId);
+	return applySkip(state, userId, NOW);
 }
 
 // Plays up to `turns` turns from a seed that fixes both the dice and the decks,
 // checking every invariant after each turn.
-function playMatch(players: string[], turns: number, seed: number): { state: MonopolyState; tally: MatchTally } {
+function playMatch(
+	players: string[],
+	turns: number,
+	seed: number,
+	options: MatchOptions = PLAIN_MATCH
+): { state: MonopolyState; tally: MatchTally } {
 	const rng = createSeededRng(seed);
-	let state = createInitialState(players, { auctionsEnabled: false }, NOW, seed);
-	const tally: MatchTally = { mortgages: 0, unmortgages: 0, hotels: 0 };
+	let state = createInitialState(players, { auctionsEnabled: options.auctionsEnabled }, NOW, seed);
+	const tally: MatchTally = { mortgages: 0, unmortgages: 0, hotels: 0, tradesAccepted: 0, auctionsWon: 0 };
 	for (let turn = 0; turn < turns && state.phase !== "finished"; turn++) {
-		const played = playTurn(state, rng, tally);
+		const played = playTurn(state, rng, tally, options);
 		expect(played.actions).toBeLessThan(ACTIONS_PER_TURN_LIMIT);
 		state = played.state;
 		assertConsistent(state);
@@ -1068,7 +1151,7 @@ describe("a 50 turn two player match", () => {
 // a mortgage, builds hotels and plays to a finish inside 100 turns. A change to
 // the engine's rules or the decks can move that; if this fails on the tally or
 // the finish alone, rescan for a seed rather than loosening the assertions.
-const THREE_PLAYER_SEED = 16;
+const THREE_PLAYER_SEED = 128;
 
 describe("a 100 turn three player match", () => {
 	it("plays through mortgages and hotel builds to a winner without throwing", () => {
@@ -1082,3 +1165,20 @@ describe("a 100 turn three player match", () => {
 	});
 });
 
+
+
+// Picked from the same kind of scan (seeds 1 to 400) as one where a five seat
+// match with auctions and trading on accepts a trade, sells a lot at auction
+// and bankrupts three seats inside 100 turns. Rescan rather than loosen.
+const FIVE_PLAYER_SEED = 258;
+const FIVE_PLAYERS = [ALICE, BOB, CARA, "dana", "eli"];
+
+describe("a 100 turn five player match", () => {
+	it("plays through a trade, an auction and bankruptcies without throwing", () => {
+		const { state, tally } = playMatch(FIVE_PLAYERS, 100, FIVE_PLAYER_SEED, { auctionsEnabled: true, trading: true });
+		expect(tally.tradesAccepted).toBeGreaterThanOrEqual(1);
+		expect(tally.auctionsWon).toBeGreaterThanOrEqual(1);
+		expect(state.seats.filter((seat) => seat.bankrupt)).toHaveLength(3);
+		expect([...state.seats.map((seat) => seat.bankruptedAt)].filter((order) => order !== null).sort()).toEqual([1, 2, 3]);
+	});
+});

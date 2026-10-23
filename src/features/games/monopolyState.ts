@@ -12,6 +12,7 @@ import {
 	isOwnableTile,
 	type TileId,
 } from "./monopolyBoard.js";
+import { openAuction } from "./monopolyAuction.js";
 import { shuffleStartingDecks } from "./monopolyCards.js";
 import { jailActiveSeat, moveAndLand, rollDice } from "./monopolyLanding.js";
 import {
@@ -29,9 +30,9 @@ import { createRandomSeed } from "@utils/seededRng.js";
 // ── monopolyState ───────────────────────────────────────────────────────────
 // What:  the Dero Arcade Monopoly match as a pure state machine, and the public
 //        door to it. The persisted types, the initial state, and the turn
-//        actions: roll, buy, skip and end turn. Jail, forfeit, and the mortgage
-//        and build actions live in their own modules (rule 18 split) and are
-//        re-exported here, so callers import one file.
+//        actions: roll, buy, skip and end turn. Jail, forfeit, mortgage and
+//        build, trade, auction and debt settlement live in their own modules
+//        (rule 18 split) and are re-exported here, so callers import one file.
 // Who:   the Phase 4 room handlers (roomMonopolyHandlers), the idle sweep, and the
 //        Vitest suite. Nothing here imports discord.js or touches the GameRoom row.
 // When:  once per button press. Every apply function takes a state and returns a
@@ -44,9 +45,10 @@ import { createRandomSeed } from "@utils/seededRng.js";
 //        monopolySeats and monopolyLanding, and finishes through completeAction,
 //        which is the one place trail lines reach the log.
 //
-// Scope through Phase 2 of 2026-10 item 241: every rent, taxes, jail, passing
-// GO, forfeit, the Chance and Community Chest decks, mortgages and buildings.
-// Auctions, trades and bankruptcy that pays a creditor everything are Phase 3.
+// Scope through Phase 3 of 2026-10 item 241: the whole ruleset. Every rent,
+// taxes, jail, passing GO, forfeit, the Chance and Community Chest decks,
+// mortgages and buildings, trades, auctions, and debts that raise cash before
+// they bankrupt a seat to its creditor.
 
 // ── persisted types (master plan Section 5, plus winnerId) ──────────────────
 
@@ -137,6 +139,9 @@ export { applyJailChoice } from "./monopolyJail.js";
 export { applyForfeit } from "./monopolyForfeit.js";
 export { calculateRent } from "./monopolyLanding.js";
 export { applyBuild, applyMortgage, applyUnmortgage, unmortgageCost, type BuildingKind } from "./monopolyBuildings.js";
+export { acceptTrade, openTrade, rejectTrade } from "./monopolyTrade.js";
+export { closeAuction, openAuction, placeBid } from "./monopolyAuction.js";
+export { BANK_CREDITOR, resolveDebt } from "./monopolyBankruptcy.js";
 
 // ── initial state ───────────────────────────────────────────────────────────
 
@@ -264,14 +269,17 @@ export function applyBuy(state: MonopolyState, buyerId: string, tileId: TileId):
 }
 
 /**
- * The active seat passes on the tile for sale. The tile stays with the bank.
- * Auctions on a skip are Phase 3, and until then this holds even when the match
- * was opened with auctions enabled.
+ * The active seat passes on the tile for sale. In a match opened with auctions
+ * on, the tile goes to auction (openAuction); otherwise it stays with the bank.
  */
-export function applySkip(state: MonopolyState, skipperId: string): MonopolyResult {
+export function applySkip(state: MonopolyState, skipperId: string, now: number = Date.now()): MonopolyResult {
 	const turnRefusal = guardActiveTurn(state, skipperId);
 	if (turnRefusal) return rejectAction(turnRefusal);
 	if (state.phase !== "awaiting-buy-or-skip") return rejectAction("There is nothing to pass on right now.");
+	const tile = BOARD[activeSeatOf(state).position];
+	// The awaiting phase is only ever set on an ownable lot, so the second check
+	// only narrows the type for the tile id.
+	if (state.settings.auctionsEnabled && isOwnableTile(tile)) return openAuction(state, tile.id, skipperId, now);
 
 	const next = cloneState(state);
 	const seat = activeSeatOf(next);

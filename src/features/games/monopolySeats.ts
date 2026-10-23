@@ -4,7 +4,7 @@ import type { MonopolyResult, MonopolySeat, MonopolyState, PropertyState } from 
 // What:  the small shared helpers every Monopoly action module leans on: cloning
 //        a state, finding seats, refusing an action, recording trail lines and
 //        passing the turn.
-// Who:   monopolyState, monopolyLanding, monopolyJail and monopolyForfeit. Not a
+// Who:   monopolyState and every split action module beside it. Not a
 //        public API; callers outside src/features/games go through monopolyState.
 // When:  inside every apply function, on the clone it is about to return.
 // Where: split out of monopolyState (rule 18) so the action modules can share
@@ -31,6 +31,9 @@ export const solventSeats = (state: MonopolyState): MonopolySeat[] => state.seat
 // A Discord user mention. The engine has no usernames (the persisted seat has
 // none), and a mention renders as the member's current name wherever it posts.
 export const mentionPlayer = (userId: string): string => `<@${userId}>`;
+
+/** "1 lot", "2 lots", "0 lots": a count and its noun for a trail line. */
+export const countNoun = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 /** The state of a lot nobody owns, at match start and when forfeit hands it back. */
 export const createBankProperty = (): PropertyState => ({ ownerId: null, houses: 0, hotel: false, mortgaged: false });

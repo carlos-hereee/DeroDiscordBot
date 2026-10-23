@@ -20,18 +20,17 @@ import {
 	type PropertyTile,
 	type SpecialTile,
 } from "./monopolyBoard.js";
+import { BANK_CREDITOR, settleDebts } from "./monopolyBankruptcy.js";
 import { drawCardFromState, type CardDeckKind, type MonopolyCard } from "./monopolyCards.js";
 import type { MonopolySeat, MonopolyState } from "./monopolyState.js";
-import { forfeitSeat } from "./monopolyForfeit.js";
-import { activeSeatOf, findSeat, mentionPlayer, solventSeats } from "./monopolySeats.js";
+import { activeSeatOf, mentionPlayer, solventSeats } from "./monopolySeats.js";
 import { resolveVersus } from "./versusResolve.js";
 
 // ── monopolyLanding ─────────────────────────────────────────────────────────
 // What:  everything that happens between the dice and the end of a move: the
 //        2d6 roll, moving a token round the board (and the GO salary), sending a
 //        seat to jail, what the landing tile does (including drawing and applying
-//        a Chance or Community Chest card), the rent a lot charges, and settling
-//        a debt.
+//        a Chance or Community Chest card), and the rent a lot charges.
 // Who:   applyRoll in monopolyState and the roll path of applyJailChoice. The
 //        rent helper is also the one the Phase 4 board embed reads, so the rent
 //        a player is shown and the rent they are charged cannot disagree (rule 17).
@@ -39,9 +38,9 @@ import { resolveVersus } from "./versusResolve.js";
 // Where: split out of monopolyState (rule 18). Mutates only the clone its caller
 //        hands it. The decks and the draw live in monopolyCards; applying a card
 //        lives here because most cards move a token or charge a debt.
-// How:   moveAndLand moves, then resolveLanding switches on the tile kind. A debt
-//        a seat cannot cover pays what it has and forfeits to the bank; Phase 3's
-//        bankruptcy flow replaces that with mortgage first and creditor transfer.
+// How:   moveAndLand moves, then resolveLanding switches on the tile kind. Every
+//        charge (rent, tax, the paying cards) is handed to monopolyBankruptcy,
+//        which raises cash or declares bankruptcy when the chips fall short.
 
 /**
  * A 2d6 roll. It reuses resolveVersus's dice mode rather than a second random
@@ -132,25 +131,11 @@ function calculateUtilityRent(state: MonopolyState, ownerId: string, boostedByCa
 
 // ── debts ───────────────────────────────────────────────────────────────────
 
-/**
- * Takes `amount` from the seat, paying `creditorId` when one is named and the
- * bank otherwise. Returns no lines when the seat could pay. A seat that cannot
- * pays every chip it has and forfeits, and the returned lines say so.
- */
-export function chargeSeat(state: MonopolyState, seat: MonopolySeat, amount: number, creditorId: string | null, now: number): string[] {
-	const creditor = creditorId === null ? undefined : findSeat(state, creditorId);
-	const paid = Math.min(seat.chips, amount);
-	seat.chips -= paid;
-	if (creditor) creditor.chips += paid;
-	if (paid === amount) return [];
-
-	return [`${mentionPlayer(seat.userId)} could cover only $${paid} of $${amount}.`, ...forfeitSeat(state, seat, now)];
-}
-
-// A bank debt with its own success line, shared by tax and the paying cards.
-function payBank(state: MonopolyState, seat: MonopolySeat, amount: number, now: number, paidLine: string): string[] {
-	const debtLines = chargeSeat(state, seat, amount, null, now);
-	return debtLines.length > 0 ? debtLines : [paidLine];
+// One debt with its own success line, shared by rent, tax and the paying cards.
+// A seat short of chips raises cash first, so the lines may open with mortgages
+// and sales, and a seat that still cannot pay ends in bankruptcy lines instead.
+function chargeSeat(state: MonopolyState, seat: MonopolySeat, amount: number, creditorId: string, now: number, paidLine: string): string[] {
+	return settleDebts(state, [{ debtor: seat, creditorId, amount, paidLine }], now);
 }
 
 // ── landing ─────────────────────────────────────────────────────────────────
@@ -177,9 +162,7 @@ function resolveOwnableLanding(state: MonopolyState, seat: MonopolySeat, tile: O
 	// least its base, and a utility landing always has the roll that brought the
 	// seat to it.
 	const rent = calculateRent(state, tile, boostedByCard);
-	const debtLines = chargeSeat(state, seat, rent, ownerId, now);
-	if (debtLines.length > 0) return debtLines;
-	return [`${mentionPlayer(seat.userId)} paid $${rent} rent to ${mentionPlayer(ownerId)}.`];
+	return chargeSeat(state, seat, rent, ownerId, now, `${mentionPlayer(seat.userId)} paid $${rent} rent to ${mentionPlayer(ownerId)}.`);
 }
 
 function resolveSpecialLanding(state: MonopolyState, seat: MonopolySeat, tile: SpecialTile, now: number): string[] {
@@ -189,7 +172,7 @@ function resolveSpecialLanding(state: MonopolyState, seat: MonopolySeat, tile: S
 		return [`${mentionPlayer(seat.userId)} goes straight to Jail.`];
 	case "tax": {
 		const amount = tile.amount ?? 0;
-		return payBank(state, seat, amount, now, `${mentionPlayer(seat.userId)} paid $${amount} in tax.`);
+		return chargeSeat(state, seat, amount, BANK_CREDITOR, now, `${mentionPlayer(seat.userId)} paid $${amount} in tax.`);
 	}
 	case "jail":
 		return [`${mentionPlayer(seat.userId)} is just visiting.`];
@@ -231,7 +214,7 @@ function applyCard(state: MonopolyState, seat: MonopolySeat, card: MonopolyCard,
 		seat.chips += card.amount;
 		return [`${player} collected $${card.amount} from the bank.`];
 	case "pay":
-		return payBank(state, seat, card.amount, now, `${player} paid $${card.amount} to the bank.`);
+		return chargeSeat(state, seat, card.amount, BANK_CREDITOR, now, `${player} paid $${card.amount} to the bank.`);
 	case "collect-from-each":
 		return collectFromEachRival(state, seat, card.amount, now);
 	case "pay-each":
@@ -262,27 +245,30 @@ function advanceToNearest(state: MonopolyState, seat: MonopolySeat, target: "rai
 	return [...moveSeat(seat, stepsForwardTo(seat.position, destination)), ...resolveLanding(state, seat, now, boostedRent)];
 }
 
-// Each rival still in the match pays the drawer. A rival who cannot cover it
-// pays what it has and forfeits, exactly like a short rent payment.
+// Each rival still in the match pays the drawer, settled as one batch so the
+// order of the rivals cannot decide who survives.
 function collectFromEachRival(state: MonopolyState, seat: MonopolySeat, amount: number, now: number): string[] {
-	const lines: string[] = [];
-	for (const rival of solventSeats(state).filter((candidate) => candidate.userId !== seat.userId)) {
-		const debtLines = chargeSeat(state, rival, amount, seat.userId, now);
-		lines.push(...(debtLines.length > 0 ? debtLines : [`${mentionPlayer(rival.userId)} paid ${mentionPlayer(seat.userId)} $${amount}.`]));
-	}
-	return lines;
+	const rivals = solventSeats(state).filter((candidate) => candidate.userId !== seat.userId);
+	const debts = rivals.map((rival) => ({
+		debtor: rival,
+		creditorId: seat.userId,
+		amount,
+		paidLine: `${mentionPlayer(rival.userId)} paid ${mentionPlayer(seat.userId)} $${amount}.`,
+	}));
+	return settleDebts(state, debts, now);
 }
 
-// The drawer pays each rival in seat order and stops at the first payment it
-// cannot cover, because by then it has forfeited and has nothing left to pay.
+// The drawer pays each rival in seat order. A drawer that goes bankrupt on one
+// payment has nothing left for the rest, and settleDebts writes those off.
 function payEachRival(state: MonopolyState, seat: MonopolySeat, amount: number, now: number): string[] {
-	const lines: string[] = [];
-	for (const rival of solventSeats(state).filter((candidate) => candidate.userId !== seat.userId)) {
-		const debtLines = chargeSeat(state, seat, amount, rival.userId, now);
-		if (debtLines.length > 0) return [...lines, ...debtLines];
-		lines.push(`${mentionPlayer(seat.userId)} paid ${mentionPlayer(rival.userId)} $${amount}.`);
-	}
-	return lines;
+	const rivals = solventSeats(state).filter((candidate) => candidate.userId !== seat.userId);
+	const debts = rivals.map((rival) => ({
+		debtor: seat,
+		creditorId: rival.userId,
+		amount,
+		paidLine: `${mentionPlayer(seat.userId)} paid ${mentionPlayer(rival.userId)} $${amount}.`,
+	}));
+	return settleDebts(state, debts, now);
 }
 
 function payForRepairs(state: MonopolyState, seat: MonopolySeat, perHouse: number, perHotel: number, now: number): string[] {
@@ -296,5 +282,5 @@ function payForRepairs(state: MonopolyState, seat: MonopolySeat, perHouse: numbe
 	const bill = houses * perHouse + hotels * perHotel;
 	const player = mentionPlayer(seat.userId);
 	if (bill === 0) return [`${player} owns no buildings, so there is nothing to repair.`];
-	return payBank(state, seat, bill, now, `${player} paid $${bill} in repairs.`);
+	return chargeSeat(state, seat, bill, BANK_CREDITOR, now, `${player} paid $${bill} in repairs.`);
 }

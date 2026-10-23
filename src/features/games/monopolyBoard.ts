@@ -3,7 +3,8 @@
 //        order, the eight color groups, every price, rent table, house cost and
 //        mortgage value, plus the fixed rule numbers (starting chips, GO salary,
 //        bail, the bank's building stock) the engine reads.
-// Who:   monopolyState and its split modules (landing, jail, forfeit), and the
+// Who:   monopolyState and its split modules (landing, jail, forfeit, buildings,
+//        trade, auction, bankruptcy), and the
 //        Phase 4 board embed. Nothing here imports discord.js or the engine.
 // When:  read on every action; never written. The board is the same for every
 //        match, so it lives here rather than on the persisted GameRoom row.
@@ -56,6 +57,11 @@ export const CARD_UTILITY_DICE_MULTIPLIER = 10;
 // Lifting a mortgage costs the mortgage value plus this much interest, in whole
 // percent so the math stays in integers (30 * 0.1 is not exactly 3 in floats).
 export const UNMORTGAGE_INTEREST_PERCENT = 10;
+// The bank buys a house or hotel back at half what it cost to build. Every house
+// cost on the board is even, so the halving never leaves a fraction.
+export const BUILDING_RESALE_DIVISOR = 2;
+// The smallest bid an auction takes. Bids are whole chips.
+export const MIN_AUCTION_BID = 1;
 
 // ── types ────────────────────────────────────────────────────────────────────
 
@@ -187,6 +193,17 @@ const OWNABLE_BY_ID = new Map<TileId, OwnableTile>(OWNABLE_TILES.map((tile) => [
 
 /** The ownable tile with this id, or undefined for an id the board does not have. */
 export const findOwnableTile = (tileId: TileId): OwnableTile | undefined => OWNABLE_BY_ID.get(tileId);
+
+/**
+ * The name of an ownable tile the engine already holds on its state (a pending
+ * auction's lot, a lot in a stored trade). Throws on an unknown id, because the
+ * actions that store an id validate it first, so one here is a corrupt state.
+ */
+export function ownableTileName(tileId: TileId): string {
+	const tile = findOwnableTile(tileId);
+	if (!tile) throw new Error(`The Monopoly board has no tile ${tileId}`);
+	return tile.name;
+}
 
 /**
  * The board position of an ownable tile. The card decks resolve their advance

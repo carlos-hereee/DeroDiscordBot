@@ -1,4 +1,5 @@
 import {
+	BUILDING_RESALE_DIVISOR,
 	COLOR_GROUPS,
 	MAX_HOUSES_PER_LOT,
 	UNMORTGAGE_INTEREST_PERCENT,
@@ -15,13 +16,15 @@ import { activeSeatOf, cloneState, completeAction, guardActiveTurn, mentionPlaye
 //        a mortgage, and build houses and hotels on a complete color group.
 // Who:   the Phase 4 build and mortgage buttons, through the re-exports in
 //        monopolyState. unmortgageCost is also what the board embed shows, so the
-//        price on the button and the charge cannot disagree (rule 17).
+//        price on the button and the charge cannot disagree (rule 17). The
+//        building helpers below are shared with monopolyBankruptcy (selling back
+//        and mortgaging to cover a debt) and monopolyTrade (which lots may move).
 // When:  mortgages at any point in a live match, by any seat still in it, which
 //        is the standard rule. Building only on the owner's own turn before the
 //        roll, per Section 1 of the plan.
 // Where: split out of monopolyState (rule 18) along the "owner's holdings" seam.
-//        Selling buildings back and the forced mortgage before bankruptcy are
-//        Phase 3 (monopolyBankruptcy) and are not here.
+//        Selling buildings back and the forced mortgage before bankruptcy live in
+//        monopolyBankruptcy, because they only ever happen to cover a debt.
 // How:   every value (price, mortgage, house cost) comes from monopolyBoard;
 //        the bank's house and hotel stock lives on the state and is the supply a
 //        build draws from.
@@ -34,10 +37,24 @@ export function unmortgageCost(tile: OwnableTile): number {
 }
 
 // A lot's place on the building ladder: 0 to 4 houses, then the hotel one rung
-// above. The even building rule compares these, so a hotel outranks four houses.
-const buildingLevel = (property: PropertyState): number => (property.hotel ? MAX_HOUSES_PER_LOT + 1 : property.houses);
+// above. The even building rule compares these, so a hotel outranks four houses,
+// and selling back walks the same ladder down.
+export const buildingLevel = (property: PropertyState): number => (property.hotel ? MAX_HOUSES_PER_LOT + 1 : property.houses);
 
-const hasBuildings = (property: PropertyState): boolean => property.hotel || property.houses > 0;
+export const hasBuildings = (property: PropertyState): boolean => property.hotel || property.houses > 0;
+
+/** What the bank pays for one house or one hotel on this lot when it is sold back. */
+export const buildingSaleValue = (tile: PropertyTile): number => tile.houseCost / BUILDING_RESALE_DIVISOR;
+
+/**
+ * Whether any lot in this tile's color group has buildings. The standard rules
+ * forbid mortgaging or trading any lot of such a group until they are sold, so
+ * the group is checked, not just the lot. Transports and utilities have no
+ * group and never block.
+ */
+export function groupHasBuildings(state: MonopolyState, tile: OwnableTile): boolean {
+	return tile.kind === "property" && COLOR_GROUPS[tile.group].some((id) => hasBuildings(state.properties[id]));
+}
 
 // ── ownership guard ─────────────────────────────────────────────────────────
 
@@ -66,9 +83,7 @@ export function applyMortgage(state: MonopolyState, ownerId: string, tileId: Til
 	if (!owned.ok) return rejectAction(owned.reason);
 	const { seatIndex, tile } = owned;
 	if (state.properties[tile.id].mortgaged) return rejectAction(`${tile.name} is already mortgaged.`);
-	// Standard rule: no lot in a color group may be mortgaged while any lot in that
-	// group still has buildings, so the group is checked, not just this lot.
-	if (tile.kind === "property" && COLOR_GROUPS[tile.group].some((id) => hasBuildings(state.properties[id]))) {
+	if (groupHasBuildings(state, tile)) {
 		return rejectAction(`${tile.name} cannot be mortgaged while its color group has buildings.`);
 	}
 

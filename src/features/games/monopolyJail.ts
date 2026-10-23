@@ -1,6 +1,7 @@
 import { JAIL_BAIL } from "./monopolyBoard.js";
 import { returnJailCards } from "./monopolyCards.js";
-import { chargeSeat, moveAndLand, rollDice } from "./monopolyLanding.js";
+import { BANK_CREDITOR, settleDebt } from "./monopolyBankruptcy.js";
+import { moveAndLand, rollDice } from "./monopolyLanding.js";
 import type { JailChoice, MonopolyResult, MonopolySeat, MonopolyState } from "./monopolyState.js";
 import { activeSeatOf, cloneState, completeAction, guardActiveTurn, mentionPlayer, rejectAction } from "./monopolySeats.js";
 
@@ -83,13 +84,19 @@ function rollFromJail(state: MonopolyState, rng: () => number, now: number): Mon
 		return completeAction(next, seat.userId, lines);
 	}
 
-	// The last try missed, so bail is no longer optional. A seat that cannot
-	// cover it forfeits inside chargeSeat and never moves.
-	const debtLines = chargeSeat(next, seat, JAIL_BAIL, null, now);
-	if (debtLines.length > 0) return completeAction(next, seat.userId, [...lines, ...debtLines]);
+	// The last try missed, so bail is no longer optional. A seat short of chips
+	// raises cash for it first; one that still cannot cover it is bankrupt to the
+	// bank and never moves.
+	const bail = settleDebt(next, {
+		debtor: seat,
+		creditorId: BANK_CREDITOR,
+		amount: JAIL_BAIL,
+		paidLine: `${mentionPlayer(seat.userId)} used the last try, pays $${JAIL_BAIL} bail and moves.`,
+	}, now);
+	lines.push(...bail.lines);
+	if (!bail.paid) return completeAction(next, seat.userId, lines);
 
 	releaseFromJail(seat);
-	lines.push(`${mentionPlayer(seat.userId)} used the last try, pays $${JAIL_BAIL} bail and moves.`);
 	lines.push(...moveAndLand(next, seat, firstDie + secondDie, now));
 	return completeAction(next, seat.userId, lines);
 }

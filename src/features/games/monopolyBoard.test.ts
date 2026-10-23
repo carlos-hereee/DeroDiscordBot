@@ -13,6 +13,7 @@ import {
 	describeTile,
 	findOwnableTile,
 	isOwnableTile,
+	ownableTileName,
 	type MonopolyTile,
 } from "./monopolyBoard.js";
 
@@ -139,6 +140,11 @@ describe("monopolyBoard, lookups", () => {
 	it("finds a tile's board position and throws on an id the board does not have", () => {
 		expect(boardIndexOf("sapphire-keep")).toBe(BOARD_SIZE - 1);
 		expect(() => boardIndexOf("not-a-tile")).toThrow(/no tile not-a-tile/);
+	});
+
+	it("names an ownable tile by id and throws on an id the board does not have", () => {
+		expect(ownableTileName("cinder-row")).toBe("Cinder Row");
+		expect(() => ownableTileName("not-a-tile")).toThrow(/no tile not-a-tile/);
 	});
 
 	it("lists the positions of every tile of a kind, in board order", () => {
