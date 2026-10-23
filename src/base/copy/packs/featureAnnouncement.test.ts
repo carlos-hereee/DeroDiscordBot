@@ -103,4 +103,12 @@ describe("the release announcement", () => {
 		expect(members.description).toContain("while I sit in a call with one of its players");
 		expect(admins.description).toContain("it speaks only into a call someone has already brought me into");
 	});
+
+	it("tells admins every drawn card falls back to its text, and bounds the weekly digest DM (2026-10 item 243)", () => {
+		const { public: members, innerSanctum: admins } = rokCommanderCopy.featureAnnouncement;
+		expect(members.description).toContain("**Pictures.**");
+		expect(admins.description).toContain("each falls back to the text you know whenever a picture cannot be drawn");
+		expect(admins.description).toContain("up to 25 of the week's most present members");
+		expect(admins.description).toContain("where level up announcements are off");
+	});
 });
