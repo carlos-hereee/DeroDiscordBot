@@ -26,7 +26,10 @@ export type VersusResult =
 	| { flip: "dice"; challengerRoll: number; opponentRoll: number; winner: VersusWinner }
 	| { flip: "coin"; face: CoinFace; winner: "challenger" | "opponent" };
 
-export function resolveVersus(flip: VersusFlip, rng: () => number = Math.random): VersusResult {
+// `sides` defaults to the duel's d20. Monopoly passes 6 for its 2d6 movement roll,
+// which is why the die size is a parameter rather than a second dice helper: one
+// function owns turning an rng into die faces for every game in the arcade.
+export function resolveVersus(flip: VersusFlip, rng: () => number = Math.random, sides: number = DUEL_DIE_SIDES): VersusResult {
 	if (flip === "coin") {
 		// Strictly below 0.5 is heads, so the two faces split the [0, 1) range
 		// evenly. Math.random never returns 1, so tails is not shortchanged.
@@ -34,8 +37,8 @@ export function resolveVersus(flip: VersusFlip, rng: () => number = Math.random)
 		return { flip: "coin", face, winner: face === "heads" ? "challenger" : "opponent" };
 	}
 
-	const challengerRoll = rollDie(rng);
-	const opponentRoll = rollDie(rng);
+	const challengerRoll = rollDie(rng, sides);
+	const opponentRoll = rollDie(rng, sides);
 	const winner: VersusWinner =
 		challengerRoll === opponentRoll ? "tie" : challengerRoll > opponentRoll ? "challenger" : "opponent";
 	return { flip: "dice", challengerRoll, opponentRoll, winner };
@@ -43,10 +46,10 @@ export function resolveVersus(flip: VersusFlip, rng: () => number = Math.random)
 
 // ── private ────────────────────────────────────────────────────────────────
 
-// 1 through DUEL_DIE_SIDES inclusive. rng() is [0, 1), so floor(rng * sides)
+// 1 through `sides` inclusive. rng() is [0, 1), so floor(rng * sides)
 // lands in [0, sides - 1] and the +1 shifts it onto a real die face. An rng
 // stubbed to exactly 0 must give 1, and one approaching 1 must give the top
 // face, both of which the tests pin.
-function rollDie(rng: () => number): number {
-	return Math.floor(rng() * DUEL_DIE_SIDES) + 1;
+function rollDie(rng: () => number, sides: number): number {
+	return Math.floor(rng() * sides) + 1;
 }

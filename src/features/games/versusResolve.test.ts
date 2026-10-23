@@ -124,3 +124,38 @@ describe("resolveVersus, dice", () => {
 		expect(Math.abs(challenger - opponent) / runs).toBeLessThan(0.03);
 	});
 });
+
+describe("resolveVersus, custom die size", () => {
+	const SIX_SIDES = 6;
+
+	it("maps the rng boundaries onto a six sided die's faces", () => {
+		const low = resolveVersus("dice", scriptedRng(0, 0), SIX_SIDES);
+		if (low.flip !== "dice") throw new Error("expected a dice result");
+		expect(low.challengerRoll).toBe(1);
+		expect(low.opponentRoll).toBe(1);
+
+		const high = resolveVersus("dice", scriptedRng(0.9999999, 0.9999999), SIX_SIDES);
+		if (high.flip !== "dice") throw new Error("expected a dice result");
+		expect(high.challengerRoll).toBe(SIX_SIDES);
+		expect(high.opponentRoll).toBe(SIX_SIDES);
+	});
+
+	it("never rolls past the requested face count", () => {
+		for (let i = 0; i < 2000; i++) {
+			const result = resolveVersus("dice", Math.random, SIX_SIDES);
+			if (result.flip !== "dice") throw new Error("expected a dice result");
+			for (const roll of [result.challengerRoll, result.opponentRoll]) {
+				expect(roll).toBeGreaterThanOrEqual(1);
+				expect(roll).toBeLessThanOrEqual(SIX_SIDES);
+			}
+		}
+	});
+
+	it("keeps the duel's d20 when no size is passed", () => {
+		// The rng 0.5 sits mid range: face 11 on a d20, face 4 on a d6, so the
+		// default cannot silently shrink without this failing.
+		const result = resolveVersus("dice", scriptedRng(0.5, 0.5));
+		if (result.flip !== "dice") throw new Error("expected a dice result");
+		expect(result.challengerRoll).toBe(DUEL_DIE_SIDES / 2 + 1);
+	});
+});
