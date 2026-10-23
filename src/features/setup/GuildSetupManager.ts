@@ -14,16 +14,19 @@ import {
 	Embed,
 	Message,
 	type AttachmentBuilder,
+	type MessageActionRowComponentBuilder,
 	type MessageEditOptions,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { ISetupConfig, IAdminRoleConfig, ICreatedChannels, IChannelObjects, IEnsureHomebaseResult } from "./setup.types.js";
 import { ChannelContent } from "./ChannelContent.js";
-import type { ICopyConfig } from "@base/copy/getCopy.js";
+import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
 import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
-import { buildArcadeHostRow } from "@features/games/arcadeHost.js";
+import { buildArcadeHostRow, buildHangmanCategoryStartRow } from "@features/games/arcadeHost.js";
+import { buildSoloLuckRow } from "@features/games/soloLuck.js";
 import { boardStartRows } from "@features/game-rooms/challengeBoardEmbeds.js";
+import { buildGameRequestRow } from "@features/game-rooms/gameRequestHandlers.js";
 import { buildMemberControlButtons, buildAdminControlButtons, buildIcebreakerButton, buildFortuneButton } from "@features/power-ups/PowerUps.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { buildDeroGifAttachment } from "@base/copy/brand.js";
@@ -340,6 +343,7 @@ export class GuildSetupManager {
 			gamesCategoryId: ids.gamesCategoryId,
 			arcadeRulesChannelId: ids.arcadeRulesChannelId,
 			arcadeChallengesChannelId: ids.arcadeChallengesChannelId,
+			arcadeGamesChannelId: ids.arcadeGamesChannelId,
 			// ── the two voice rooms (2026-10 item 235) ──
 			meetingVoiceChannelId: ids.meetingVoiceChannelId,
 			arcadeVoiceChannelId: ids.arcadeVoiceChannelId,
@@ -679,6 +683,8 @@ export class GuildSetupManager {
 		// from position in this array.
 		"arcadeRulesChannelId",
 		"arcadeChallengesChannelId",
+		// 🕹️games, the third arcade channel (2026-10 item 245 Phase 4a).
+		"arcadeGamesChannelId",
 		// ── the two VOICE rooms, one under each category (2026-10 item 235) ──
 		// They widen the resolveIntroEmbed switch like every other field, and
 		// resolve to null there, because a voice room carries no intro.
@@ -745,6 +751,14 @@ export class GuildSetupManager {
 		// distinction to avoid rebuilding a deleted room as a managed channel.
 		{ configField: "arcadeRulesChannelId", displayName: channels.arcadeRules, kind: "public", categoryField: "gamesCategoryId" },
 		{ configField: "arcadeChallengesChannelId", displayName: channels.arcadeChallenges, kind: "public", categoryField: "gamesCategoryId" },
+		// 🕹️games (2026-10 item 245 Phase 4a). ⚠️ THIS LINE ARMS THE BOOT REPAIR SWEEP
+		// for every existing guild, exactly as the two above once did: a legacy row
+		// loads arcadeGamesChannelId as null, the sweep reads null as case ③ "missing,
+		// build it", and the channel appears under 🎮 ARCADE GAMES on the next boot,
+		// once, because the id is persisted the moment it is built. autoHealEnabled
+		// false and userRemovedChannels both stop it, like every other spec. Public,
+		// like its siblings: members press its buttons, the bot writes the messages.
+		{ configField: "arcadeGamesChannelId", displayName: channels.arcadeGames, kind: "public", categoryField: "gamesCategoryId" },
 
 		// ── the two VOICE rooms (2026-10 item 235) ──
 		// ⚠️ THESE ARM THE BOOT REPAIR SWEEP for every existing guild, by the owner's
@@ -812,6 +826,10 @@ export class GuildSetupManager {
 				return ChannelContent.arcadeRulesIntro(guildConfig);
 			case "arcadeChallengesChannelId":
 				return ChannelContent.arcadeChallengesIntro(guildConfig);
+			// The first of 🕹️games' two messages; the Challenge Board beneath it is kept
+			// by maintainGamesBoard, because it is not this channel's intro.
+			case "arcadeGamesChannelId":
+				return ChannelContent.arcadeGamesIntro(guildConfig);
 			// ── the voice rooms ──
 			// No intro. A voice room's built in text chat is where people talk
 			// during a call, and a pinned bot card there would be the first thing
@@ -839,8 +857,13 @@ export class GuildSetupManager {
 	// How:   compose the ActionRow(s) per channel (command-center uses two rows so
 	//        the wide invite button sits on its own line). null means "no buttons."
 	private static resolveIntroComponents(
-		field: (typeof GuildSetupManager.CHANNEL_FIELDS)[number]
-	): ActionRowBuilder<ButtonBuilder>[] | null {
+		field: (typeof GuildSetupManager.CHANNEL_FIELDS)[number],
+		// Pack selector for the rows whose labels live in the copy packs (the rules
+		// card's ballot button and 🕹️games' play now rows), read exactly the way
+		// resolveIntroEmbed reads it: undefined is the rok-commander default, which is
+		// correct on a first build.
+		guildConfig?: ICopyConfig | null
+	): ActionRowBuilder<MessageActionRowComponentBuilder>[] | null {
 		switch (field) {
 			case "commandsChannelId":
 				// #command-center guide row: the member actions, Suggestion Box +
@@ -853,24 +876,94 @@ export class GuildSetupManager {
 				// admin controls (Refresh standings).
 				return [new ActionRowBuilder<ButtonBuilder>().addComponents(buildSelfDestructButton(), ...buildAdminControlButtons())];
 			case "arcadeRulesChannelId":
-				// The arcade rules card carries the Host a game row, so a member can
-				// start a game by pressing a button instead of learning /mini-game
-				// first. The hosted game is posted into ⚔️challenges, never here: this
-				// card is a pinned reference and a live board on top of it would bury
-				// what the member came to read.
-				return [buildArcadeHostRow()];
-			case "arcadeChallengesChannelId":
-				// The challenge board itself: one start button per head to head or
-				// cooperative game, chunked so no row exceeds Discord's five. This case
-				// is the ONLY thing that makes battleship, hold em and the co-op hangman
-				// room reachable; /mini-game only doors the three quick games. Because
-				// refreshIntroEmbeds re-resolves components on every boot, existing
-				// guilds get the board on their next boot rather than on a re-run of
-				// /setup.
-				return boardStartRows();
+				// The rules card's one control (2026-10 item 245 Phase 4a): the game
+				// request ballot, opened privately. The Host a game row it used to carry
+				// moved to 🕹️games with the roster, so this card is rules and nothing else.
+				return [buildGameRequestRow(getPluginCopy(guildConfig).channelContent.arcadeRules.voteButtonLabel)];
+			case "arcadeGamesChannelId":
+				return GuildSetupManager.gamesIntroRows(guildConfig);
 			default:
 				// introductions + every other channel: intro embed only, no buttons.
+				// ⚔️challenges lands here too since Phase 4a: its start board moved to
+				// 🕹️games, and it holds only the challenge posts themselves.
 				return null;
+		}
+	}
+
+	// ── 🕹️games, two messages ─────────────────────────────────────
+	// Every host button lives in 🕹️games, and they need SIX rows: the host row, the
+	// solo luck row against Dero, the hangman category select (a select takes a whole
+	// row to itself), and the Challenge Board's three rows of start buttons. Discord
+	// allows five rows a message and rejects the whole send past that, so the channel
+	// carries two messages: the intro with the three play now rows, and the board
+	// below it. The intro is this channel's anchor like every other spec's; the board
+	// is introMessageIds.arcadeGamesBoardId, kept by maintainGamesBoard.
+	private static gamesIntroRows(guildConfig?: ICopyConfig | null): ActionRowBuilder<MessageActionRowComponentBuilder>[] {
+		const c = getPluginCopy(guildConfig).channelContent.arcadeGames;
+		return [buildArcadeHostRow(), buildSoloLuckRow(c.soloLuckLabels), buildHangmanCategoryStartRow(c.hangmanCategoryPlaceholder)];
+	}
+
+	// The board message's whole content. The start buttons are boardStartRows, the same
+	// rows ⚔️challenges carried until Phase 4a; their customIds did not change, so a
+	// press routes through the challenge board exactly as before, and the card it opens
+	// is still posted in ⚔️challenges (challengeBoard resolves that channel by its id).
+	private static gamesBoardContent(guildConfig?: ICopyConfig | null): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
+		return { embeds: [ChannelContent.arcadeGamesBoard(guildConfig)], components: boardStartRows() };
+	}
+
+	// ── maintainGamesBoard ────────────────────────────────────────
+	// What:  keep 🕹️games' second message, the Challenge Board, present and current,
+	//        and hand back the id to persist on introMessageIds.arcadeGamesBoardId.
+	// Who:   refreshIntroEmbeds on every boot, and repairOneChannel when it builds or
+	//        adopts 🕹️games (so a channel rebuilt by the delete watcher has its board
+	//        at once rather than at the next boot). populateChannels posts the first
+	//        one itself, straight after the intro.
+	// How:   edited IN PLACE, like the invite card, rather than reposted on change: it
+	//        is a panel of controls, not copy with an audit trail. Adopted by embed
+	//        identity when the stored id is gone, so a lost id cannot duplicate it.
+	//        `forcePost` is set when the intro above it was just posted fresh: the board
+	//        has to sit BELOW the intro, and an older board left above a new intro
+	//        would invert the channel, so a new one is posted beneath it (the old one
+	//        stays in history; nothing here deletes a message).
+	private static async maintainGamesBoard(
+		channel: TextChannel,
+		options: { storedId: string | null | undefined; selfId: string | undefined; guildConfig?: ICopyConfig | null; forcePost: boolean }
+	): Promise<{ id: string | null; outcome: "kept" | "edited" | "posted" | "failed" }> {
+		const content = GuildSetupManager.gamesBoardContent(options.guildConfig);
+		const [embed] = content.embeds;
+
+		let message: Message | null = null;
+		if (!options.forcePost) {
+			message = options.storedId ? await channel.messages.fetch(options.storedId).catch(() => null) : null;
+			if (!message) {
+				const recent = await channel.messages.fetch({ limit: 20 }).catch(() => null);
+				message =
+					recent?.find((msg) => (!options.selfId || msg.author.id === options.selfId) && GuildSetupManager.embedsAreEquivalent(embed, msg.embeds[0])) ??
+					null;
+			}
+		}
+
+		if (message) {
+			const drifted =
+				!GuildSetupManager.embedsAreEquivalent(embed, message.embeds[0]) ||
+				!GuildSetupManager.componentsAreEquivalent(content.components, message.components);
+			if (!drifted) return { id: message.id, outcome: "kept" };
+			try {
+				await message.edit(content);
+				return { id: message.id, outcome: "edited" };
+			} catch (error) {
+				console.warn(LOG_MESSAGES.setup.introRefreshEditFailed("games board", channel.guildId), error);
+				return { id: message.id, outcome: "failed" };
+			}
+		}
+
+		try {
+			const posted = await channel.send(content);
+			return { id: posted.id, outcome: "posted" };
+		} catch (error) {
+			// Skipped and retried on the next boot, the same posture as an intro post.
+			console.warn(LOG_MESSAGES.setup.introRefreshEditFailed("games board", channel.guildId), error);
+			return { id: options.storedId ?? null, outcome: "failed" };
 		}
 	}
 
@@ -992,7 +1085,9 @@ export class GuildSetupManager {
 	//       the signature, so a pure row-restructure (same buttons, regrouped
 	//       across rows, e.g. the 4-in-one-row → 3+1 split) is also detected.
 	private static componentsAreEquivalent(
-		resolved: ActionRowBuilder<ButtonBuilder>[] | null,
+		// Any row builder: 🕹️games' intro carries a select row beside its button rows,
+		// and a select's custom_id reaches the signature the same way a button's does.
+		resolved: ReadonlyArray<{ toJSON(): unknown }> | null,
 		current: ReadonlyArray<{ toJSON(): unknown }>
 	): boolean {
 		const signature = (rows: ReadonlyArray<{ toJSON(): unknown }>): string =>
@@ -1102,9 +1197,10 @@ export class GuildSetupManager {
 		// postOrAdoptRepairIntro carries the post or adopt rules. A null embed
 		// means this channel has no intro (a voice room) and nothing is posted.
 		const introEmbed =GuildSetupManager.resolveIntroEmbed(spec.configField, guild, stored.adminRoleId ?? null, stored as unknown as ICopyConfig);
-		const introMessageId = introEmbed
-			? await GuildSetupManager.postOrAdoptRepairIntro(guild, newChannel, spec, introEmbed, Boolean(existingByName))
-			: null;
+		const intro = introEmbed
+			? await GuildSetupManager.postOrAdoptRepairIntro(guild, newChannel, spec, introEmbed, Boolean(existingByName), stored as unknown as ICopyConfig)
+			: { id: null, posted: false };
+		const introMessageId = intro.id;
 
 		// persist new ids. three pieces move together on a repair:
 		//   - spec.configField → new channel id
@@ -1118,6 +1214,19 @@ export class GuildSetupManager {
 		const priorIntroIds =
 			(stored.introMessageIds as Record<string, string | null> | undefined) ?? {};
 		const nextIntroIds: Record<string, string | null> = { ...priorIntroIds, [spec.configField]: introMessageId };
+		// 🕹️games has a second message, the Challenge Board, which has to exist the
+		// moment the channel does: a channel rebuilt by the delete watcher would
+		// otherwise sit without its start buttons until the next boot's refresh. A
+		// freshly posted intro forces a fresh board beneath it (see maintainGamesBoard).
+		if (spec.configField === "arcadeGamesChannelId" && newChannel instanceof TextChannel) {
+			const board = await GuildSetupManager.maintainGamesBoard(newChannel, {
+				storedId: priorIntroIds.arcadeGamesBoardId,
+				selfId: guild.client.user?.id,
+				guildConfig: stored as unknown as ICopyConfig,
+				forcePost: intro.posted,
+			});
+			nextIntroIds.arcadeGamesBoardId = board.id;
+		}
 
 		const update: Record<string, unknown> = { [spec.configField]: newChannel.id };
 		// A channel with no intro (a voice room) has no introMessageIds slot, so
@@ -1139,7 +1248,8 @@ export class GuildSetupManager {
 	// The intro half of repairOneChannel, split out so a channel that carries no
 	// intro (a voice room) skips it with one guard instead of another nesting
 	// level. Returns the intro message id, or null when the post failed, which
-	// refreshIntroEmbeds treats as "repost on the next boot".
+	// refreshIntroEmbeds treats as "repost on the next boot", and whether the id
+	// is a FRESH post, which 🕹️games needs to keep its board below its intro.
 	//
 	// Two paths, merged:
 	//   A. Fresh build (!adoptedExisting): post an intro embed, capture the new
@@ -1162,10 +1272,12 @@ export class GuildSetupManager {
 		channel: TextChannel | VoiceChannel,
 		spec: (typeof GuildSetupManager.CHANNEL_SPECS)[number],
 		introEmbed: EmbedBuilder,
-		adoptedExisting: boolean
-	): Promise<string | null> {
-		const introComponents = GuildSetupManager.resolveIntroComponents(spec.configField);
+		adoptedExisting: boolean,
+		guildConfig: ICopyConfig | null
+	): Promise<{ id: string | null; posted: boolean }> {
+		const introComponents = GuildSetupManager.resolveIntroComponents(spec.configField, guildConfig);
 		let introMessageId: string | null = null;
+		let posted = false;
 
 		try {
 			if (adoptedExisting) {
@@ -1210,13 +1322,14 @@ export class GuildSetupManager {
 					files: GuildSetupManager.resolveIntroFiles(spec.configField),
 				});
 				introMessageId = introMessage.id;
+				posted = true;
 				// No pin: the schedule channel is read-only, so the board stays put
 				// without one (2026-06 pinning policy, only introductions is pinned).
 			}
 		} catch (error) {
 			console.warn(LOG_MESSAGES.setup.channelRepairFailed(spec.displayName, guild.id), error);
 		}
-		return introMessageId;
+		return { id: introMessageId, posted };
 	}
 
 	// ── channel level self heal (boot sweep) ─────────────────
@@ -1891,6 +2004,7 @@ export class GuildSetupManager {
 			adminCommandsChannel,
 			arcadeRulesChannel,
 			arcadeChallengesChannel,
+			arcadeGamesChannel,
 			meetingVoiceChannel,
 			arcadeVoiceChannel,
 		] = await Promise.all([
@@ -1977,6 +2091,15 @@ export class GuildSetupManager {
 				parent: gamesCategory.id,
 				permissionOverwrites: publicOverwrites,
 			}),
+			// 🕹️games, the third arcade channel (2026-10 item 245 Phase 4a). Same parent
+			// and same posture as its two siblings: members press its buttons and read
+			// what Dero posts there, and nobody needs to type in it.
+			guild.channels.create({
+				name: channels.arcadeGames,
+				type: ChannelType.GuildText,
+				parent: gamesCategory.id,
+				permissionOverwrites: publicOverwrites,
+			}),
 			// ── the two voice rooms, one per category (2026-10 item 235) ──
 			// Same parent rule as above: the meeting room is homebase, the lounge is
 			// arcade. Both take voiceOverwrites, the posture buildSingleChannel also
@@ -2009,6 +2132,7 @@ export class GuildSetupManager {
 				gamesCategoryId: gamesCategory.id,
 				arcadeRulesChannelId: arcadeRulesChannel.id,
 				arcadeChallengesChannelId: arcadeChallengesChannel.id,
+				arcadeGamesChannelId: arcadeGamesChannel.id,
 				meetingVoiceChannelId: meetingVoiceChannel.id,
 				arcadeVoiceChannelId: arcadeVoiceChannel.id,
 			},
@@ -2023,6 +2147,7 @@ export class GuildSetupManager {
 				adminCommandsChannel,
 				arcadeRulesChannel,
 				arcadeChallengesChannel,
+				arcadeGamesChannel,
 			},
 		};
 	}
@@ -2063,6 +2188,9 @@ export class GuildSetupManager {
 			// reposting them. GuildConfig declared these two keys in task 2.1.
 			arcadeRulesChannelId: string;
 			arcadeChallengesChannelId: string;
+			// 🕹️games' intro, and its second message, the Challenge Board.
+			arcadeGamesChannelId: string;
+			arcadeGamesBoardId: string;
 			// Second pinned message in #command-center: the standalone invite card.
 			inviteCardId: string;
 		};
@@ -2078,6 +2206,7 @@ export class GuildSetupManager {
 			adminCommandsChannel,
 			arcadeRulesChannel,
 			arcadeChallengesChannel,
+			arcadeGamesChannel,
 		} = discordChannels;
 
 		const [
@@ -2100,6 +2229,8 @@ export class GuildSetupManager {
 			// there is nothing to bury the bot's message under.
 			arcadeRulesMsg,
 			arcadeChallengesMsg,
+			// 🕹️games' two messages, the intro and the Challenge Board beneath it.
+			arcadeGamesMsgs,
 			// Second #command-center message: the standalone invite card (pitch +
 			// Dero gif + Summon button), pinned separately from the command guide.
 			inviteCardMsg,
@@ -2135,8 +2266,13 @@ export class GuildSetupManager {
 			// The arcade's two cards. Ordering inside this array is load bearing:
 			// the destructure above is positional, which is exactly why every entry
 			// is named rather than indexed.
-			arcadeRulesChannel.send({ embeds: [ChannelContent.arcadeRulesIntro()] }),
+			arcadeRulesChannel.send({ embeds: [ChannelContent.arcadeRulesIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeRulesChannelId") ?? [] }),
 			arcadeChallengesChannel.send({ embeds: [ChannelContent.arcadeChallengesIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeChallengesChannelId") ?? [] }),
+			// Chained rather than two entries in this Promise.all: the board has to land
+			// BELOW the intro, and two parallel sends to one channel arrive in either order.
+			arcadeGamesChannel
+				.send({ embeds: [ChannelContent.arcadeGamesIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeGamesChannelId") ?? [] })
+				.then(async (intro) => ({ intro, board: await arcadeGamesChannel.send(GuildSetupManager.gamesBoardContent()) })),
 			// Standalone invite card in #command-center: short pitch + Dero gif + the
 			// Summon button. Its own message so the wide button is not crammed into
 			// the command guide's row. refreshIntroEmbeds maintains it on boot.
@@ -2176,6 +2312,8 @@ export class GuildSetupManager {
 				adminCommandsChannelId: adminCommandsMsg.id,
 				arcadeRulesChannelId: arcadeRulesMsg.id,
 				arcadeChallengesChannelId: arcadeChallengesMsg.id,
+				arcadeGamesChannelId: arcadeGamesMsgs.intro.id,
+				arcadeGamesBoardId: arcadeGamesMsgs.board.id,
 				inviteCardId: inviteCardMsg.id,
 			},
 		};
@@ -2274,8 +2412,14 @@ export class GuildSetupManager {
 			// #command-center). null on legacy rows; the invite-card block below
 			// posts it the first time and persists the id.
 			inviteCardId: storedIntroIds.inviteCardId ?? null,
+			// Flat key for 🕹️games' second message, the Challenge Board. null on every
+			// row until the board is first posted; the games board block below keeps it.
+			arcadeGamesBoardId: storedIntroIds.arcadeGamesBoardId ?? null,
 		};
 		let needsPersist = false;
+		// Set when this sweep posts a FRESH 🕹️games intro, so the board block below
+		// posts a fresh board beneath it rather than keep the old one above it.
+		let gamesIntroPosted = false;
 
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 			const channelId = stored[spec.configField] as string | null | undefined;
@@ -2304,7 +2448,7 @@ export class GuildSetupManager {
 			// resolveIntroComponents returns null for the channels that
 			// have no component surface; we pass `[]` in that case so
 			// the send call is explicit about "no components."
-			const componentRows = GuildSetupManager.resolveIntroComponents(spec.configField);
+			const componentRows = GuildSetupManager.resolveIntroComponents(spec.configField, stored as unknown as ICopyConfig);
 			const storedMessageId = nextIntroIds[spec.configField];
 
 			// ── schedule channel exception: edit-in-place ──────────
@@ -2460,6 +2604,7 @@ export class GuildSetupManager {
 				nextIntroIds[spec.configField] = message.id;
 				needsPersist = true;
 				reposted += 1;
+				if (spec.configField === "arcadeGamesChannelId") gamesIntroPosted = true;
 			} catch (error) {
 				// Post failure is the one place we MUST skip and retry
 				// next boot. Do not delete anything, do not fall back
@@ -2571,6 +2716,30 @@ export class GuildSetupManager {
 					} catch (error) {
 						console.warn(LOG_MESSAGES.setup.introRefreshEditFailed("invite card", guild.id), error);
 					}
+				}
+			}
+		}
+
+		// ── 🕹️games' second message, the Challenge Board ──────────────
+		// After the spec loop, like the invite card, so the intro above it is already
+		// current. This block is also what MOVES the board for an existing guild: the
+		// start buttons used to ride the ⚔️challenges intro, which the loop above
+		// reposts without them (never deleting the old one), and they reappear here.
+		const gamesChannelId = stored.arcadeGamesChannelId as string | null | undefined;
+		if (gamesChannelId) {
+			const gamesChannel = await client.channels.fetch(gamesChannelId).catch(() => null);
+			if (gamesChannel instanceof TextChannel) {
+				const board = await GuildSetupManager.maintainGamesBoard(gamesChannel, {
+					storedId: nextIntroIds.arcadeGamesBoardId,
+					selfId: guild.client.user?.id,
+					guildConfig: stored as unknown as ICopyConfig,
+					forcePost: gamesIntroPosted,
+				});
+				if (board.outcome === "edited") edited += 1;
+				if (board.outcome === "posted") reposted += 1;
+				if (board.id !== nextIntroIds.arcadeGamesBoardId) {
+					nextIntroIds.arcadeGamesBoardId = board.id;
+					needsPersist = true;
 				}
 			}
 		}

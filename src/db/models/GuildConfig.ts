@@ -72,6 +72,11 @@ const guildConfigSchema = new Schema(
 		gamesCategoryId: { type: String, required: false, default: null },
 		arcadeRulesChannelId: { type: String, required: false, default: null },
 		arcadeChallengesChannelId: { type: String, required: false, default: null },
+		// 🕹️games, the third arcade channel (2026-10 item 245 Phase 4a): every game
+		// listed once and every host button, so 📋arcade-rules holds only rules and
+		// ⚔️challenges only challenge posts. Nullable like its two siblings, so every
+		// existing row loads and the boot sweep reads the null as "missing, build it".
+		arcadeGamesChannelId: { type: String, required: false, default: null },
 
 		// ── the two managed VOICE rooms (2026-10 item 235) ──
 		// 🏛️ Meeting Hall under the homebase category and 🎮 Arcade Lounge under the
@@ -387,6 +392,16 @@ const guildConfigSchema = new Schema(
 				// ship looking like it worked.
 				arcadeRulesChannelId: { type: String, required: false, default: null },
 				arcadeChallengesChannelId: { type: String, required: false, default: null },
+				// 🕹️games carries TWO tracked messages, because its buttons do not fit in
+				// one: Discord allows five rows a message, and the host row, the solo luck
+				// row, the hangman category select and the three Challenge Board rows make
+				// six. arcadeGamesChannelId is the games intro (one anchor per channel, like
+				// every key above); arcadeGamesBoardId is the flat key for the second
+				// message, the Challenge Board, the same shape as inviteCardId. Both must be
+				// declared for the reason the post mortem above gives: an undeclared key is
+				// dropped in silence and the message reposts on every boot.
+				arcadeGamesChannelId: { type: String, required: false, default: null },
+				arcadeGamesBoardId: { type: String, required: false, default: null },
 			},
 			required: false,
 			default: () => ({}),

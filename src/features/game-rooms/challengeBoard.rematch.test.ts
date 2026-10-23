@@ -530,9 +530,12 @@ describe("solo rooms rematch in place", () => {
 		const next = rematchRow();
 		expect(next).toMatchObject({ channelId: CHANNEL, hostId: P1, visibility: "solo", status: "playing" });
 		expect(world.guild.channels.create).not.toHaveBeenCalled();
+		// The third argument is the shelf a 🕹️games category start picks; a rematch
+		// carries none, so its word comes from the whole bank.
 		expect(soloHangmanMock).toHaveBeenCalledWith(
 			world.client,
-			expect.objectContaining({ guildId: GUILD, roomId: next?.roomId, channelId: CHANNEL, hostId: P1 })
+			expect.objectContaining({ guildId: GUILD, roomId: next?.roomId, channelId: CHANNEL, hostId: P1 }),
+			undefined
 		);
 	});
 });

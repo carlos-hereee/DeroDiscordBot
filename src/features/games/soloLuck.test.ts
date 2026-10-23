@@ -5,7 +5,8 @@ const mocks = vi.hoisted(() => ({ awardXp: vi.fn() }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: mocks.awardXp }));
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import { pickDeroThrow, playSoloLuck, resolveSoloLuck } from "./soloLuck.js";
+import { buildSoloLuckRow, parseSoloLuckButton, pickDeroThrow, playSoloLuck, resolveSoloLuck } from "./soloLuck.js";
+import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gamesCopy } from "./gamesCopy.js";
 
 // ── soloLuck ───────────────────────────────────────────────────────────────
@@ -130,5 +131,42 @@ describe("playSoloLuck", () => {
 
 		expect(reply.mock.calls[0][0]).toMatchObject({ flags: expect.anything() });
 		expect(mocks.awardXp).not.toHaveBeenCalled();
+	});
+});
+
+// ── the 🕹️games row (2026-10 item 245 Phase 4a) ──
+// The buttons are the third way into playSoloLuck, after the two /mini-game paths, so
+// what is pinned here is the translation: every button the row builds parses back to
+// the round it names, and a replayed customId for anything else parses to nothing.
+describe("the solo luck row on 🕹️games", () => {
+	const row = buildSoloLuckRow(rokCommanderCopy.channelContent.arcadeGames.soloLuckLabels).toJSON() as { components: Array<{ custom_id?: string; label?: string }> };
+
+	it("fills one row with the coin, the dice and one button per throw", () => {
+		expect(row.components.map((button) => button.custom_id)).toEqual([
+			"solo_luck:coinflip",
+			"solo_luck:diceroll",
+			"solo_luck:rps:rock",
+			"solo_luck:rps:paper",
+			"solo_luck:rps:scissors",
+		]);
+		// Five is Discord's ceiling for one row.
+		expect(row.components).toHaveLength(5);
+	});
+
+	it("parses every button back to the round it names", () => {
+		const plays = row.components.map((button) => parseSoloLuckButton(button.custom_id ?? ""));
+		expect(plays).toEqual([
+			{ game: "coinflip" },
+			{ game: "diceroll" },
+			{ game: "rps", memberThrow: "rock" },
+			{ game: "rps", memberThrow: "paper" },
+			{ game: "rps", memberThrow: "scissors" },
+		]);
+	});
+
+	it("parses a customId this row never builds to nothing", () => {
+		for (const customId of ["solo_luck:rps:lizard", "solo_luck:rps", "solo_luck:hangman", "arcade_host:hangman"]) {
+			expect(parseSoloLuckButton(customId), customId).toBeNull();
+		}
 	});
 });

@@ -60,6 +60,8 @@ export const HOMEBASE_CHANNEL_FIELDS = [
 	// 🎮 ARCADE GAMES
 	"arcadeRulesChannelId",
 	"arcadeChallengesChannelId",
+	// 🕹️games (2026-10 item 245 Phase 4a)
+	"arcadeGamesChannelId",
 	// The two voice rooms, one per category (2026-10 item 235)
 	"meetingVoiceChannelId",
 	"arcadeVoiceChannelId",
@@ -98,7 +100,7 @@ export async function showSelfDestructConfirm(interaction: SelfDestructEntry): P
 			"",
 			"🪧 NOTICE BOARD: introductions, command center, leaderboard, event schedule, announcements, upcoming events, the admin channel, the admin command center, and the Meeting Hall voice room.",
 			"",
-			"🎮 ARCADE GAMES: the game rules card, the challenge board, the Arcade Lounge voice room, and **any match currently in progress**.",
+			"🎮 ARCADE GAMES: the games channel, the game rules card, the challenge board, the Arcade Lounge voice room, and **any match currently in progress**.",
 			"",
 			"It stays gone across restarts until you run `/setup` again. **This cannot be undone.**",
 		].join("\n"),

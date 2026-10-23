@@ -54,6 +54,9 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 		gamesCategoryId: "games-cat-1",
 		arcadeRulesChannelId: "ch-arcaderules",
 		arcadeChallengesChannelId: "ch-arcadechallenges",
+		// 🕹️games (2026-10 item 245 Phase 4a), present for the same reason; the boot
+		// test in GuildSetupManager.gamesChannel.test.ts nulls it.
+		arcadeGamesChannelId: "ch-arcadegames",
 		// The two voice rooms (2026-10 item 235), present for the same reason:
 		// a null id reads as "missing, rebuild too". Their own tests null them.
 		meetingVoiceChannelId: "ch-meetingvoice",
@@ -136,6 +139,7 @@ function makeGuild(options: {
 		"games-cat-1": { id: "games-cat-1", type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } },
 		"ch-arcaderules": { id: "ch-arcaderules" },
 		"ch-arcadechallenges": { id: "ch-arcadechallenges" },
+		"ch-arcadegames": { id: "ch-arcadegames" },
 		"ch-meetingvoice": { id: "ch-meetingvoice" },
 		"ch-arcadevoice": { id: "ch-arcadevoice" },
 		...(options.channelFetchMap ?? {}),
@@ -834,7 +838,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		};
 	}
 
-	it("builds exactly two categories and ten channels", async () => {
+	it("builds exactly two categories and eleven channels", async () => {
 		const { categories, textChannels } = await runFreshInstall();
 
 		// Both categories, in build order, with NO dev suffix: vitest runs under
@@ -846,7 +850,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 			rokCommanderCopy.setup.gamesCategoryName,
 		]);
 
-		expect(textChannels).toHaveLength(10);
+		expect(textChannels).toHaveLength(11);
 		expect(textChannels.map((channel) => channel.name).sort()).toEqual(
 			[
 				packChannels.intro,
@@ -859,6 +863,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 				packChannels.adminCommands,
 				packChannels.arcadeRules,
 				packChannels.arcadeChallenges,
+				packChannels.arcadeGames,
 			].sort()
 		);
 	});
@@ -867,7 +872,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 	// the compiler cannot tell them apart and a swapped parent.id is a silent
 	// misfile. CHANNEL_SPECS.categoryField protects every OTHER consumer;
 	// createChannels passes the parent literally, so only a test protects it.
-	it("files the eight homebase channels and the two arcade channels under their own categories", async () => {
+	it("files the eight homebase channels and the three arcade channels under their own categories", async () => {
 		const { textChannels } = await runFreshInstall();
 
 		const homebaseParent = `cat-${rokCommanderCopy.setup.categoryName}`;
@@ -887,14 +892,14 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 			expect(parentOf(name), `${name} belongs under the homebase category`).toBe(homebaseParent);
 		}
 
-		for (const name of [packChannels.arcadeRules, packChannels.arcadeChallenges]) {
+		for (const name of [packChannels.arcadeRules, packChannels.arcadeChallenges, packChannels.arcadeGames]) {
 			expect(parentOf(name), `${name} belongs under the arcade category`).toBe(arcadeParent);
 		}
 
 		// No channel may land unparented or under a third parent, which a typo
 		// in a parent id would otherwise produce without failing either loop.
 		expect(textChannels.filter((channel) => channel.parent === homebaseParent)).toHaveLength(8);
-		expect(textChannels.filter((channel) => channel.parent === arcadeParent)).toHaveLength(2);
+		expect(textChannels.filter((channel) => channel.parent === arcadeParent)).toHaveLength(3);
 	});
 
 	// The three postures createChannels mints, expressed as what @everyone and
@@ -940,6 +945,8 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		// command, never by typing here, so the lockdown costs nothing.
 		[packChannels.arcadeRules, "public"],
 		[packChannels.arcadeChallenges, "public"],
+		// 🕹️games: members press its buttons and read its posts, and type nothing.
+		[packChannels.arcadeGames, "public"],
 	];
 
 	it("gives every channel the overwrite array its privacy posture requires", async () => {
@@ -955,14 +962,14 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		}
 	});
 
-	it("carries the bot self overwrite on all ten channels", async () => {
+	it("carries the bot self overwrite on all eleven channels", async () => {
 		// Not decoration. Without it the @everyone SendMessages deny suppresses
 		// the bot's OWN posts on a public channel, and the @everyone ViewChannel
 		// deny hides an admin channel from the bot entirely. Both fail at post
 		// time, long after setup reported success, so the failure surfaces as a
 		// missing intro embed rather than as a setup error.
 		const { textChannels } = await runFreshInstall();
-		expect(textChannels).toHaveLength(10);
+		expect(textChannels).toHaveLength(11);
 
 		for (const created of textChannels) {
 			const botEntry = (created.permissionOverwrites ?? []).find((entry) => entry.id === BOT_ID);
@@ -989,6 +996,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		expect(payload.gamesCategoryId).toBe(`cat-${rokCommanderCopy.setup.gamesCategoryName}`);
 		expect(payload.arcadeRulesChannelId).toBe(`new-${packChannels.arcadeRules}`);
 		expect(payload.arcadeChallengesChannelId).toBe(`new-${packChannels.arcadeChallenges}`);
+		expect(payload.arcadeGamesChannelId).toBe(`new-${packChannels.arcadeGames}`);
 		expect(payload.adminCommandsChannelId).toBe(`new-${packChannels.adminCommands}`);
 		expect(payload.nextDecreeChannelId).toBe(`new-${packChannels.nextDecree}`);
 		expect(payload.introChannelId).toBe(`new-${packChannels.intro}`);
@@ -1006,6 +1014,26 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		for (const field of GuildSetupManager.CHANNEL_FIELDS) {
 			expect(payload[field], `${field} was created but never persisted`).toBeDefined();
 		}
+	});
+
+	it("posts 🕹️games' intro, then its Challenge Board beneath it, and anchors both", async () => {
+		// Two sends in one channel, in order: the board has to sit BELOW the intro, so
+		// populateChannels chains them rather than racing them in its Promise.all.
+		guildConfigMock.findByGuildId.mockResolvedValue(null);
+		guildConfigMock.create.mockResolvedValue(undefined);
+		const guild = makeCreateGuild();
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: OWNER_ID });
+
+		const createMock = guild.channels.create as unknown as ReturnType<typeof vi.fn>;
+		const index = createMock.mock.calls.findIndex((call) => (call[0] as ICreateCall).name === packChannels.arcadeGames);
+		const gamesChannel = (await createMock.mock.results[index].value) as { send: ReturnType<typeof vi.fn> };
+		const titles = gamesChannel.send.mock.calls.map((call) => (call[0] as { embeds: Array<{ data: { title?: string } }> }).embeds[0].data.title);
+		expect(titles).toEqual([rokCommanderCopy.channelContent.arcadeGames.title, rokCommanderCopy.channelContent.arcadeGames.boardTitle]);
+
+		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
+		const introIds = payload.introMessageIds as Record<string, unknown>;
+		expect(introIds.arcadeGamesChannelId).toBe(`msg-${packChannels.arcadeGames}`);
+		expect(introIds.arcadeGamesBoardId).toBe(`msg-${packChannels.arcadeGames}`);
 	});
 });
 
@@ -1437,27 +1465,63 @@ describe("GuildSetupManager.applyAdminRole", () => {
 	});
 });
 
-// ── the ⚔️challenges board ──────────────────────────────────────────────────
-// The challenge board's start buttons ride the challenges channel's pinned intro.
-// Before this case existed nothing returned them, so battleship, hold em and the co-op
-// hangman room were built and unreachable. This pins the wiring and the one Discord
-// limit that would have sunk the obvious version: five components per action row.
-describe("resolveIntroComponents: the challenges channel carries the start board", () => {
+// ── where the host buttons live (2026-10 item 245 Phase 4a) ────────────────────
+// Every host button is in 🕹️games: the host row, the solo luck row and the hangman
+// category start on its intro, and the Challenge Board's start buttons on its second
+// message. ⚔️challenges carries none and 📋arcade-rules carries only the ballot button.
+// The board used to ride the challenges intro; before it did, battleship, hold em and
+// the co-op hangman room were built and unreachable, so its coverage is pinned here.
+describe("resolveIntroComponents: every host button lives in 🕹️games", () => {
+	type Row = { toJSON(): { components: Array<{ custom_id?: string }> } };
 	const internals = GuildSetupManager as unknown as {
-		resolveIntroComponents(field: string): { toJSON(): { components: Array<{ custom_id?: string }> } }[] | null;
+		resolveIntroComponents(field: string, config?: unknown): Row[] | null;
+		gamesBoardContent(config?: unknown): { components: Row[] };
 	};
-
-	it("returns the board rows, none wider than Discord allows, covering every challenge game in order", () => {
-		const rows = internals.resolveIntroComponents("arcadeChallengesChannelId");
-		expect(rows).not.toBeNull();
-		const customIds = (rows ?? []).flatMap((row) => {
+	const customIdsOf = (rows: Row[]): Array<string | undefined> =>
+		rows.flatMap((row) => {
 			const { components } = row.toJSON();
+			// Discord rejects a whole send with a row wider than five.
 			expect(components.length).toBeLessThanOrEqual(5);
 			return components.map((component) => component.custom_id);
 		});
+
+	it("puts the host row, the solo luck row and the hangman category start on the games intro", () => {
+		const rows = internals.resolveIntroComponents("arcadeGamesChannelId") ?? [];
+		expect(customIdsOf(rows)).toEqual([
+			"arcade_host:hangman",
+			"arcade_host:blackjack",
+			"arcade_host:blackjack-table",
+			"solo_luck:coinflip",
+			"solo_luck:diceroll",
+			"solo_luck:rps:rock",
+			"solo_luck:rps:paper",
+			"solo_luck:rps:scissors",
+			"arcade_host:hcategory",
+		]);
+	});
+
+	it("puts every Challenge Board start button on the games channel's second message, in order", () => {
+		const customIds = customIdsOf(internals.gamesBoardContent().components);
 		expect(customIds).toEqual(CHALLENGE_GAMES.map((game) => `gameroom:new:${game}`));
 		expect(customIds).toContain("gameroom:new:battleship");
 		expect(customIds).toContain("gameroom:new:holdem");
+	});
+
+	it("needs both messages, because the six rows do not fit Discord's five per message", () => {
+		const introRows = internals.resolveIntroComponents("arcadeGamesChannelId") ?? [];
+		const boardRows = internals.gamesBoardContent().components;
+		expect(introRows.length).toBeLessThanOrEqual(5);
+		expect(boardRows.length).toBeLessThanOrEqual(5);
+		expect(introRows.length + boardRows.length).toBeGreaterThan(5);
+	});
+
+	it("leaves ⚔️challenges with no buttons at all", () => {
+		expect(internals.resolveIntroComponents("arcadeChallengesChannelId")).toBeNull();
+	});
+
+	it("gives 📋arcade-rules the ballot button and nothing else", () => {
+		const rows = internals.resolveIntroComponents("arcadeRulesChannelId") ?? [];
+		expect(customIdsOf(rows)).toEqual(["game_request:open"]);
 	});
 });
 

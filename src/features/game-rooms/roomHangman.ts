@@ -37,6 +37,7 @@ import {
 	isHangmanCategory,
 	pickWord,
 	pickWordFromCategory,
+	type HangmanCategory,
 	type PickedHangmanWord,
 } from "@features/games/hangmanWords.js";
 import { withRenderFallback } from "@features/renderer/index.js";
@@ -308,15 +309,18 @@ export async function handleCategorySelect(interaction: StringSelectMenuInteract
 }
 
 /**
- * Seed a SOLO hangman room with a word and hint from the whole bank and start it.
- * Called once by RoomProvisioner right after the opener is posted. The host is the
- * guesser, which a bank word's null author already allows.
+ * Seed a SOLO hangman room with a word and hint from the bank and start it: from the
+ * whole bank, or from one shelf when the member picked it at the 🕹️games category
+ * start (2026-10 item 245 Phase 4a). Called once by RoomProvisioner right after the
+ * opener is posted. The host is the guesser, which a bank word's null author allows.
  */
-export async function startSoloHangmanRound(client: Client, room: HangmanRoomRef): Promise<void> {
-	const pick = pickWord();
+export async function startSoloHangmanRound(client: Client, room: HangmanRoomRef, category?: HangmanCategory): Promise<void> {
+	const pick = category ? pickWordFromCategory(category) : pickWord();
 	await startRoomHangmanRound(client, room, bankSecret(pick), {
 		actorId: room.hostId,
-		text: gameRoomsCopy.hangman.soloOpener(pick.hint),
+		text: category
+			? gameRoomsCopy.hangman.soloCategoryOpener(gameRoomsCopy.hangman.categoryLabels[category], pick.hint)
+			: gameRoomsCopy.hangman.soloOpener(pick.hint),
 	});
 }
 

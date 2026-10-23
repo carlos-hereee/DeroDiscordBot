@@ -61,6 +61,9 @@ export const SLOT_LABELS: ReadonlyArray<{ label: string; configField: string }> 
 	// honors a stored override across rebuilds.
 	{ label: "Arcade rules", configField: "arcadeRulesChannelId" },
 	{ label: "Challenge board", configField: "arcadeChallengesChannelId" },
+	// 🕹️games (2026-10 item 245 Phase 4a). An autocomplete row, not a change to the
+	// command's registered shape, so no command redeploy is needed for it.
+	{ label: "Games", configField: "arcadeGamesChannelId" },
 	// ── the two voice rooms (2026-10 item 235) ──
 	// Renameable like every other managed channel; the drift sweep and the
 	// repair path both honor the stored override for a voice room too.

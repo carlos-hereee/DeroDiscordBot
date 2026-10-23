@@ -15,6 +15,7 @@ import {
 	rerollRow,
 } from "./roomBattleship.js";
 import { createTable as createHoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
+import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
 import { createInitialState as createMonopolyState } from "@features/games/monopolyState.js";
 import { monopolyBoardEmbed, monopolyControlsRow } from "./roomMonopoly.js";
@@ -148,6 +149,9 @@ export interface RoomOpenInput {
 	// challenge card, carried from the draft row. Absent means off. Ignored for every
 	// other game.
 	monopolyAuctions?: boolean;
+	// The shelf a SOLO hangman word is drawn from, set only by the 🕹️games category
+	// start. Absent draws from the whole bank. Ignored for every other game.
+	hangmanCategory?: HangmanCategory;
 }
 
 export const RoomProvisioner = {
@@ -262,6 +266,7 @@ export const RoomProvisioner = {
 			visibility,
 			holdemTerms: input.holdemTerms,
 			monopolyAuctions: input.monopolyAuctions,
+			hangmanCategory: input.hangmanCategory,
 		});
 
 		return { ok: true, room: started, channel };
@@ -363,6 +368,7 @@ export interface RoomSeedInput {
 	visibility: RoomVisibility;
 	holdemTerms?: HoldemTerms;
 	monopolyAuctions?: boolean;
+	hangmanCategory?: HangmanCategory;
 }
 
 // ── seeding: from a channel and a row to a playable match ─────────────
@@ -478,13 +484,17 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 	// It starts through the same path a hosted round does, which also posts the
 	// first gallows card.
 	if (game === "solo-hangman") {
-		await startSoloHangmanRound(guild.client, {
-			guildId: guild.id,
-			roomId: room.roomId,
-			channelId: channel.id,
-			openerMessageId: opener?.id ?? null,
-			hostId,
-		});
+		await startSoloHangmanRound(
+			guild.client,
+			{
+				guildId: guild.id,
+				roomId: room.roomId,
+				channelId: channel.id,
+				openerMessageId: opener?.id ?? null,
+				hostId,
+			},
+			input.hangmanCategory
+		);
 	}
 
 	if (game === "battleship") {

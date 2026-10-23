@@ -3,6 +3,7 @@ import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { DERO_GIF_URL, COLORS, DERO_GIF_REF } from "@base/copy/brand.js";
 import { deroArtAttachment } from "@features/renderer/deroArt.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 // botInviteLink is composed in @utils/config from the env-driven
 // clientId, so a dev process serves the dev install URL and a prod
 // process serves the prod install URL automatically. We deliberately
@@ -10,6 +11,11 @@ import { deroArtAttachment } from "@features/renderer/deroArt.js";
 // pinned to the prod client id and was the source of dev/prod mix-up
 // risk.
 import { botInviteLink } from "@utils/config.js";
+
+// The rules card states its clocks in minutes and hours; BOT_CONSTANTS keeps them
+// in milliseconds, the unit the sweeps run on.
+const MS_PER_MINUTE = 60_000;
+const MS_PER_HOUR = 60 * MS_PER_MINUTE;
 
 // ── ChannelContent ───────────────────────────────────────────────────────
 // What:  builders for the pinned intro embeds + self-heal notices the bot
@@ -150,53 +156,53 @@ export const ChannelContent = {
 	},
 
 	// ── 🎮 ARCADE GAMES intros ──────────────────────────────────
-	// The rules card, one FIELD per game rather than one embed per game.
-	// The plan asked for an embed each; the intro pipeline (resolveIntroEmbed,
-	// populateChannels, refreshIntroEmbeds, repairOneChannel, the delete watcher)
-	// is built around ONE embed per channel, and widening all of it to an array
-	// would be real surgery for a difference a reader cannot see: a field renders
-	// as its own titled block either way. Discord allows 25 fields and the roster
-	// is five games, seven once battleship and holdem land, so the ceiling is not
-	// close. If the roster ever outgrows that, THAT is the moment to widen the
-	// pipeline rather than to truncate the list.
+	// The rules card: rules ONLY since 2026-10 item 245 Phase 4a. The roster and the
+	// host buttons moved to 🕹️games (arcadeGamesIntro below), so this card is one
+	// field per rule, in the order a newcomer meets them. The clocks and amounts come
+	// from BOT_CONSTANTS rather than from the copy, so the card can never promise a
+	// number the sweep or awardXp does not run.
 	arcadeRulesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
 		const copy = getPluginCopy(guildConfig);
 		const c = copy.channelContent.arcadeRules;
-		const embed = infoEmbed(c.title, c.description, copy.COLORS.ARCADE);
-
-		// Order is the reading order a newcomer needs: what this place is, how to
-		// start something, how to join something somebody else started, why any of
-		// it is worth doing, and only THEN the roster. Leading with the roster is
-		// what made the old card read as a wall.
-		// `roomBody` explains what a head to head match actually IS now that Phase 4
-		// made rooms real, and it sits between joining and leveling because that is
-		// where a reader's question arrives: they have just been told they can join a
-		// match, and the next thing they do not know is where it happens.
-		embed.addFields(
-			{ name: c.hostTitle, value: c.hostBody, inline: false },
-			{ name: c.joinTitle, value: c.joinBody, inline: false },
+		const { LEVELING } = BOT_CONSTANTS;
+		return infoEmbed(c.title, c.description, copy.COLORS.ARCADE).addFields(
 			{ name: c.roomTitle, value: c.roomBody, inline: false },
-			{ name: c.levelingTitle, value: c.levelingBody, inline: false }
-		);
-
-		// The three rosters, grouped by how many humans a game needs. A group with
-		// no games is omitted rather than rendered empty, so a future pack that
-		// ships fewer games does not leave a bare heading behind.
-		const groups: Array<{ title: string; games: ReadonlyArray<{ name: string; how: string }> }> = [
-			{ title: c.soloTitle, games: c.solo },
-			{ title: c.versusTitle, games: c.versus },
-			{ title: c.partyTitle, games: c.party },
-		];
-		for (const group of groups) {
-			if (!group.games.length) continue;
-			embed.addFields({
-				name: group.title,
-				value: group.games.map((game) => `**${game.name}** ${game.how}`).join("\n"),
+			{ name: c.slotTitle, value: c.slotBody, inline: false },
+			{
+				name: c.idleTitle,
+				value: c.idleBody(BOT_CONSTANTS.GAME_ROOM_IDLE_ABANDON_MS / MS_PER_MINUTE, BOT_CONSTANTS.GAME_ROOM_MONOPOLY_IDLE_MS / MS_PER_HOUR),
 				inline: false,
-			});
-		}
+			},
+			{ name: c.rematchTitle, value: c.rematchBody, inline: false },
+			{
+				name: c.xpTitle,
+				value: c.xpBody(LEVELING.MESSAGE_XP, LEVELING.REACTION_XP, LEVELING.SOLO_LUCK_WIN_XP, LEVELING.SOLO_LUCK_OTHER_XP, LEVELING.DAILY_XP_CAP),
+				inline: false,
+			}
+		);
+	},
 
-		return embed;
+	// ── 🕹️games, the first of its two messages ──────────────────────
+	// Every game once, one line each, as ONE field: a field per game would spend a
+	// field per roster entry against Discord's 25, and one line reads as a list,
+	// which is what this is. The play now field explains the three control rows
+	// beneath it (resolveIntroComponents). The Challenge Board is the second message
+	// (arcadeGamesBoard), because all six rows of controls do not fit in one.
+	arcadeGamesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const c = copy.channelContent.arcadeGames;
+		return infoEmbed(c.title, c.description, copy.COLORS.ARCADE).addFields(
+			{ name: c.rosterTitle, value: c.roster.map((game) => `**${game.name}** ${game.how}`).join("\n"), inline: false },
+			{ name: c.playTitle, value: c.playBody, inline: false }
+		);
+	},
+
+	// 🕹️games' second message: the heading above the Challenge Board's start buttons.
+	// Tracked on introMessageIds.arcadeGamesBoardId and kept by GuildSetupManager.
+	arcadeGamesBoard(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const c = copy.channelContent.arcadeGames;
+		return infoEmbed(c.boardTitle, c.boardDescription, copy.COLORS.ARCADE);
 	},
 
 	arcadeChallengesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {

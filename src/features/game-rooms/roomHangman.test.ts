@@ -687,4 +687,15 @@ describe("startSoloHangmanRound", () => {
 		expect(channelSend).toHaveBeenCalledOnce();
 		expect(boardMock.mock.calls[0][0]).toMatchObject({ wrong: 0 });
 	});
+
+	it("draws from the shelf the 🕹️games category start picked, and names the shelf, never the word", async () => {
+		await startSoloHangmanRound({} as never, soloRoom, "animals");
+
+		const secret = savedSecret() as { word: string; hint: string; authoredBy: string | null };
+		expect(HANGMAN_WORD_BANK.animals).toContainEqual({ word: secret.word, hint: secret.hint });
+		expect(secret.authoredBy).toBeNull();
+		const opener = (trailMock.postMove.mock.calls[0][2] as { text: string }).text;
+		expect(opener).toBe(gameRoomsCopy.hangman.soloCategoryOpener(gameRoomsCopy.hangman.categoryLabels.animals, secret.hint));
+		expect(opener.toLowerCase()).not.toContain(secret.word);
+	});
 });

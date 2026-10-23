@@ -1,4 +1,4 @@
-import type { ButtonInteraction, GuildMember } from "discord.js";
+import type { ButtonInteraction, GuildMember, ModalSubmitInteraction, StringSelectMenuInteraction } from "discord.js";
 
 // ── permissions ─────────────────────────────────────────────────────
 // Centralized authorization helpers. Today only the decree-edit flow
@@ -66,11 +66,15 @@ export function isOwnerOrAdmin(member: GuildMember, config: IGuildConfigPermissi
  * deny a real admin. Returns false (deny) when there is no guild context or the
  * member cannot be resolved.
  *
+ * Accepts a string select and a modal submit too (the game request ballot, 2026-10
+ * item 245 Phase 4a): their customIds and values are user input exactly like a
+ * button press, and the gate reads only the guild and the clicker, which all carry.
+ *
  * Note: ScheduleControls and the main.ts command gate still inline this same
  * resolution; they could adopt this helper on a future cleanup pass.
  */
 export async function gateOwnerOrAdmin(
-	interaction: ButtonInteraction,
+	interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
 	config: IGuildConfigPermissionShape | null | undefined
 ): Promise<boolean> {
 	if (!interaction.guild) return false;

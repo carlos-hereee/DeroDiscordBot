@@ -33,6 +33,8 @@ import { refreshAllLeaderboards } from "@features/leaderboard/LeaderboardBoard.j
 import { registerScheduleControlHandlers } from "@features/schedule/ScheduleControls.js";
 import { registerSuggestionBoxHandlers } from "@features/suggestion-box/SuggestionBox.js";
 import { registerArcadeHostHandlers } from "@features/games/arcadeHost.js";
+import { registerSoloLuckHandlers } from "@features/games/soloLuck.js";
+import { registerGameRequestHandlers } from "@features/game-rooms/gameRequestHandlers.js";
 import { registerGameRoomHandlers } from "@features/game-rooms/gameRoomHandlers.js";
 import { registerGameRoomMemberRemoveWatcher } from "@features/game-rooms/guildMemberRemoveWatcher.js";
 import { recoverGameRoomsOnBoot } from "@features/game-rooms/roomBootRecovery.js";
@@ -328,10 +330,15 @@ process.on("uncaughtException", (err) => {
 	registerLeaderboardChannelHandlers();
 	registerScheduleControlHandlers();
 	registerSuggestionBoxHandlers();
-	// The Host a game buttons on the 📋arcade-rules card. Registered by customId
-	// PREFIX at the client level, like every other handler here, so the buttons
-	// keep working on a card posted by an earlier deploy.
+	// The Host a game buttons and the hangman category start on the 🕹️games intro.
+	// Registered by customId PREFIX at the client level, like every other handler
+	// here, so the buttons keep working on a card posted by an earlier deploy,
+	// including the old 📋arcade-rules card that still carries the host row.
 	registerArcadeHostHandlers();
+	// The solo luck row against Dero on the 🕹️games intro (2026-10 item 245 Phase 4a).
+	registerSoloLuckHandlers();
+	// The game request ballot behind the 📋arcade-rules card's button (same phase).
+	registerGameRequestHandlers();
 	// The in-room controls (Archive now, Forfeit). Registered at the client level
 	// like the rest, so a result card posted by an earlier deploy keeps working:
 	// a room's buttons outlive the room, and its customIds outlive the deploy.

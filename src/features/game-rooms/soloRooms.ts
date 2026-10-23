@@ -3,14 +3,15 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { startBlackjackTable } from "@features/games/blackjackHandler.js";
+import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import { RoomProvisioner, describeRoomOpenFailure, type RoomOpenResult } from "./RoomProvisioner.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── soloRooms ────────────────────────────────────────────────────────
-// What:  the one-player path into a room: "Host Hangman" and "Play Blackjack" on the
-//        arcade rules card. A rematch of a finished solo room does not come through
+// What:  the one-player path into a room: "Host Hangman", "Play Blackjack" and the
+//        hangman category start on the 🕹️games intro. A rematch of a finished solo room does not come through
 //        here (it plays on in the same channel), but it deals its blackjack table
 //        through startSoloBlackjackBoard below.
 // Who:   arcadeHost (the buttons), and challengeBoard.rematchFromRoom for the table.
@@ -32,7 +33,14 @@ export interface SoloHost {
 
 export type SoloOpenResult = RoomOpenResult | { ok: false; reason: "noArcadeCategory" };
 
-export async function openSoloRoom(guild: Guild, game: SoloGameSlug, host: SoloHost): Promise<SoloOpenResult> {
+export interface SoloOpenOptions {
+	// The shelf a solo hangman word is drawn from, set by the 🕹️games category start
+	// (2026-10 item 245 Phase 4a). Absent draws from the whole bank, as Host Hangman
+	// always has. Ignored for solo blackjack.
+	hangmanCategory?: HangmanCategory;
+}
+
+export async function openSoloRoom(guild: Guild, game: SoloGameSlug, host: SoloHost, options: SoloOpenOptions = {}): Promise<SoloOpenResult> {
 	const stored = await guildConfigStore.findByGuildId(guild.id);
 	const config = stored as unknown as { gamesCategoryId?: string | null; adminRoleId?: string | null } | null;
 
@@ -52,6 +60,7 @@ export async function openSoloRoom(guild: Guild, game: SoloGameSlug, host: SoloH
 		spectatorIds: [],
 		visibility: "solo",
 		adminRoleId: config?.adminRoleId ?? null,
+		hangmanCategory: options.hangmanCategory,
 	});
 	if (!result.ok) return result;
 

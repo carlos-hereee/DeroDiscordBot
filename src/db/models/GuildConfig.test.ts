@@ -134,6 +134,29 @@ describe("GuildConfig declares the ARCADE GAMES intro anchors inside introMessag
 	});
 });
 
+// ── 🕹️games (2026-10 item 245 Phase 4a) ──
+// The same two exposures as the arcade ids above, and a third: the channel carries a
+// SECOND tracked message, the Challenge Board, whose flat key would be dropped in
+// silence and reposted on every boot if it were not declared.
+describe("GuildConfig declares the 🕹️games channel and both of its anchors", () => {
+	it("round trips the channel id and defaults it to null so legacy rows load", () => {
+		const doc = new GuildConfigModel({ ...baseRow, arcadeGamesChannelId: "c-games" });
+		expect((doc.toObject() as Record<string, unknown>).arcadeGamesChannelId).toBe("c-games");
+		expect(GuildConfigModel.schema.path("arcadeGamesChannelId").instance).toBe("String");
+		expect(new GuildConfigModel(baseRow).get("arcadeGamesChannelId")).toBeNull();
+	});
+
+	it("round trips the intro anchor and the board anchor through introMessageIds", () => {
+		const doc = new GuildConfigModel({
+			...baseRow,
+			introMessageIds: { arcadeGamesChannelId: "msg-games", arcadeGamesBoardId: "msg-board", arcadeRulesChannelId: "msg-rules" },
+		});
+		expect(doc.get("introMessageIds.arcadeGamesChannelId")).toBe("msg-games");
+		expect(doc.get("introMessageIds.arcadeGamesBoardId")).toBe("msg-board");
+		expect(doc.get("introMessageIds.arcadeRulesChannelId")).toBe("msg-rules");
+	});
+});
+
 describe("GuildConfig declares the LEVELING subtree", () => {
 	it("declares levelsMessageId beside leaderboardMessageId without disturbing it", () => {
 		// Two boards, two anchors, one channel. Sharing an anchor would make each

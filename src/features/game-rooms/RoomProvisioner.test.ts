@@ -29,6 +29,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { HANGMAN_WORD_BANK } from "@features/games/hangmanWords.js";
 
 const storeMock = gameRoomStore as unknown as {
 	findOpenByHost: ReturnType<typeof vi.fn>;
@@ -276,6 +277,18 @@ describe("RoomProvisioner.open, solo rooms", () => {
 			"playing",
 			expect.objectContaining({ inviteCode: null })
 		);
+		warnSpy.mockRestore();
+	});
+
+	it("seeds solo-hangman from the shelf the 🕹️games category start picked", async () => {
+		// 2026-10 item 245 Phase 4a: the category start threads its shelf through open.
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		await RoomProvisioner.open(makeInput({ game: "solo-hangman", visibility: "solo", playerIds: [], hangmanCategory: "space" }));
+
+		const seed = storeMock.update.mock.calls.find(
+			(call) => (call[2] as { secret?: { word?: string } })?.secret?.word
+		)?.[2] as { secret: { word: string; hint: string } };
+		expect(HANGMAN_WORD_BANK.space).toContainEqual({ word: seed.secret.word, hint: seed.secret.hint });
 		warnSpy.mockRestore();
 	});
 

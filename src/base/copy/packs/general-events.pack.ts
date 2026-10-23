@@ -278,6 +278,7 @@ export const generalEventsCopy: IPluginCopy = {
 			// exactly; only the intro copy below differs in voice.
 			arcadeRules: "📋arcade-rules",
 			arcadeChallenges: "⚔️challenges",
+			arcadeGames: "🕹️games",
 			// The two voice rooms, universal names for the same reason (mirrors
 			// rok-commander, 2026-10 item 235).
 			meetingVoice: "🏛️ Meeting Hall",
@@ -407,80 +408,85 @@ export const generalEventsCopy: IPluginCopy = {
 				"*Posts stay so you can scroll back to confirm what was announced.*",
 		},
 
-		// One embed PER GAME, same structure as rok-commander's, plain voice. The
-		// `games` array is what the renderer walks, so adding a game is one entry
-		// in BOTH packs and nothing else.
-		// Grouped by player count, same structure as rok-commander's and for the
-		// same reason: a flat list was already crowded at five games and would be
-		// unreadable at eight. Blackjack appears in two groups on purpose, because
-		// it genuinely has a solo mode and a table mode.
+		// Rules only, same structure as rok-commander's, plain voice. The two packs
+		// differ in VOICE, never in keys: IPluginCopy is derived from the rok-commander
+		// pack, so a key in one and not the other is a compile error.
 		arcadeRules: {
 			title: "📋 Arcade rules",
 			description:
-				"Welcome to the arcade. Every game here is free to play, open to everyone, and every match earns XP toward your level.\n\n" +
-				"Pick a game below, or hit **Host a game** and one will be set up for you.",
+				"Every game in this arcade is free and open to everyone, and every one starts from 🕹️games. These are the rules each match follows.",
 
-			hostTitle: "🎲 How to host a game",
-			hostBody:
-				"Hit **Host a game** under this card for anything you can play alone or with a crowd. It gets set up in the right channel and announced.\n\n" +
-				"For a head to head match, go to the challenge board and pick your game there. A card gets posted, you choose who can see the room, and the match plays out inside it.\n\n" +
-				"You can also start any game yourself with `/mini-game`.",
-
-			joinTitle: "🚪 How to join a game",
-			joinBody:
-				"An open game posts a card with a button on it. Press it and you are in.\n\n" +
-				"On the challenge board, a card marked **Open to all** takes anyone who hits **Join**; the host then picks who plays, and everyone else who joined can watch. A card marked **Invite only** is visible to the people the host picked and nobody else.\n\n" +
-				"Party games seat anyone who hits **Take a seat** before the deal starts.",
-
-			// Mirrors the rok-commander pack key for key. The two packs differ in VOICE
-			// only; a key that exists in one and not the other is a compile error,
-			// because IPluginCopy is derived from the rok-commander pack.
-			roomTitle: "🏛️ What happens in a room",
+			roomTitle: "🏛️ How a room works",
 			roomBody:
-				"A head to head match gets its own channel under this category. Only the players can talk in it; anyone the host invited, or the whole server if the card was open, can watch and react.\n\n" +
-				"When the match ends the room is locked. Nobody can type, the result gets posted, and the host can clear it right away with **Archive now**. Left alone, it clears itself a few hours later.\n\n" +
-				"The record of the match outlives the room. Every move is kept, so a locked room is still readable until it is swept.",
+				"A match that takes more than a moment gets its own room under this category. The host decides who can see it: **Invite only** shows it to the members the host picks, and **Open to all** lets anyone hit **Join**, after which the host picks who plays.\n\n" +
+				"Only the players can talk in a room; everyone who can see it can watch and react. When the match ends the room is locked and the result gets posted. The host can clear it right away with **Archive now**, and left alone it clears itself a few hours later. The record of every move outlives the room.",
 
-			levelingTitle: "📈 How playing levels you up",
-			levelingBody:
-				"Every match pays XP, win or lose, because turning up is what is being rewarded. Winning pays more, and a rare hand pays more again.\n\n" +
-				"XP becomes levels. Check yours with `/account`, and see the standings with `/levels`.",
+			slotTitle: "🪑 One room per host",
+			slotBody:
+				"You can host one room at a time, and a challenge still gathering players counts as one. Finish it, give it up, or let it close, and the next one is yours.",
 
-			soloTitle: "🎯 Play alone (1 player)",
-			versusTitle: "⚔️ Head to head (exactly 2)",
-			partyTitle: "🎉 Party games (2 or more)",
+			idleTitle: "⏳ Idle rooms close",
+			idleBody: (idleMinutes: number, monopolySeatHours: number): string =>
+				`A room where nobody acts for ${idleMinutes} minutes is closed as abandoned, so a forgotten match never holds its host's spot. ` +
+				`Monopoly is the exception: each seat has ${monopolySeatHours} hours to take its turn, because a good game runs for days. ` +
+				"A hangman round in play waits as long as its players do, and its host ends it with **Give up**.",
 
-			solo: [
-				{ name: "🃏 Blackjack", how: "Beat the dealer without going over 21." },
-				{ name: "🔮 Fortune", how: "Ask the crystal ball. Do not act on the answer." },
-			],
-			versus: [
-				{ name: "🪙 Coin Flip", how: "One coin decides it. No ties." },
-				{ name: "🎲 Dice Roll", how: "Both roll a d20. Highest wins, and a tie means nobody does." },
-				{ name: "✂️ Rock Paper Scissors", how: "Both players pick in secret, revealed together." },
-				{ name: "🚢 Battleship", how: "Fleets are placed for you, one shot a turn. Sink every ship first." },
-			],
-			party: [
-				{ name: "🪢 Hangman", how: "One word, six wrong guesses, everyone in the channel guessing." },
-				{ name: "🃏 Blackjack table", how: "Up to five seats against the dealer. Everyone plays their own hand." },
-				{ name: "🃏 Texas hold em", how: "Up to six buy in with equal stacks. Blinds climb, and the last player with chips wins." },
-			],
+			rematchTitle: "🔁 Rematch in the same room",
+			rematchBody:
+				"When a match ends, **Rematch** on the result card starts the next one in the same room with the same players. The finished match keeps its record, and the new one starts its own.",
 
-			hostButtonLabel: "Host a game",
-			hostPickerPlaceholder: "Choose a game to host",
-			hostPickerTitle: "🎲 What do you want to play?",
-			hostNoChannel: "The arcade is not built yet. An admin needs to run `/setup`.",
-			hostFailed: "That game could not be set up. Try again in a moment.",
-			hostStarted: (game: string): string => `Your ${game} is live. Go play.`,
+			xpTitle: "📈 What playing earns",
+			xpBody: (messageXp: number, reactionXp: number, soloWinXp: number, soloOtherXp: number, dailyCap: number): string =>
+				`Every message earns ${messageXp} XP and every reaction ${reactionXp}. A game against Dero in 🕹️games pays ${soloWinXp} for a win and ${soloOtherXp} for anything else. ` +
+				`Those three together stop at ${dailyCap} XP a day, and the day resets at midnight Central time.\n\n` +
+				"A match against another member pays in full, win or lose, and a match in its own room pays more than one played in a channel. Check your level with `/account`.",
+
+			voteButtonLabel: "Don't see your favorite game?",
 		},
 
 		arcadeChallenges: {
-			title: "⚔️ Challenge board",
+			title: "⚔️ Challenges",
+			description: "Every challenge shows up here. Start one from 🕹️games.",
+		},
+
+		// Same two message structure as rok-commander's, plain voice.
+		arcadeGames: {
+			title: "🕹️ Games",
 			description:
-				"This is where a match starts.\n\n" +
-				"Pick a game below. A card is posted here, you choose whether the room is **Invite only** or **Open to all**, and once the players are in, a room is created and the match plays out inside it.\n\n" +
-				"You can hold one challenge at a time. Finish it and the next one is yours.\n\n" +
-				"*A finished room is locked, then cleared away. The record of the match is kept.*",
+				"Every game in the arcade starts here. Host one for yourself, play Dero right away, or challenge a member from the board below. The rules are in 📋arcade-rules.",
+
+			rosterTitle: "🎮 The games",
+			roster: [
+				{ name: "🪙 Coin Flip", how: "One coin decides it. Flip against Dero here, or challenge a member from the board." },
+				{ name: "🎲 Dice Roll", how: "Both roll a d20 and the highest wins. Against Dero here, or a member from the board." },
+				{ name: "✊ Rock Paper Scissors", how: "Throw against Dero here, or face a member who picks in secret." },
+				{ name: "🪢 Hangman", how: "Guess a word alone, from a category you pick, or open a room where the host writes the word." },
+				{ name: "🃏 Blackjack", how: "Beat the dealer alone, or open a table of up to five seats." },
+				{ name: "🚢 Battleship", how: "Fleets are placed for you, one shot a turn. Head to head, from the board." },
+				{ name: "🃏 Texas hold em", how: "Up to six buy in with equal stacks, and the last player with chips wins. From the board." },
+				{ name: "🏠 Monopoly", how: "Two to six players on one board, and a good match runs for days. From the board." },
+			],
+
+			playTitle: "🎯 Play now",
+			playBody:
+				"The first row sets up a game for you alone, or a blackjack table others can join. The second plays Dero right away: flip, roll, or throw rock, paper or scissors. The list below them starts a solo hangman round from the category you pick.",
+
+			soloLuckLabels: {
+				coinflip: "Coin flip with Dero",
+				diceroll: "Dice with Dero",
+				rock: "Rock",
+				paper: "Paper",
+				scissors: "Scissors",
+			},
+			hangmanCategoryPlaceholder: "Solo hangman: pick a word category",
+
+			boardTitle: "⚔️ Challenge a member",
+			boardDescription:
+				"Pick a game below and its card gets posted in ⚔️challenges. You choose whether the room is **Invite only** or **Open to all**, and once the players are in, a room is created and the match plays out inside it.",
+
+			hostNoChannel: "The arcade is not built yet. An admin needs to run `/setup`.",
+			hostFailed: "That game could not be set up. Try again in a moment.",
+			hostStarted: (game: string): string => `Your ${game} is live. Go play.`,
 		},
 
 		adminWelcome: {
@@ -518,6 +524,32 @@ export const generalEventsCopy: IPluginCopy = {
 				"⚠️ The category and its channels are required for me to work. " +
 				"Please do not delete them.",
 		},
+	},
+
+	// The game request ballot, key for key with rok-commander's, plain voice.
+	gameRequests: {
+		title: "🗳️ Game requests",
+		intro: "Name a game you want in the arcade, or vote for one already named. The most wanted games rise to the top.",
+		empty: "No game has been named yet. Be the first.",
+		row: (rank: number, name: string, votes: number, isMine: boolean): string =>
+			`${rank}. **${name}**, ${votes} ${votes === 1 ? "vote" : "votes"}${isMine ? " (including yours)" : ""}`,
+		votePlaceholder: "Vote for a game (pick it again to take your vote back)",
+		voteOption: (votes: number, isMine: boolean): string => `${votes} ${votes === 1 ? "vote" : "votes"}${isMine ? ", including yours" : ""}`,
+		removePlaceholder: "Remove a game from the list (owner and admins)",
+		addButtonLabel: "Add a game",
+		full: (cap: number): string => `The list holds ${cap} games and it is full. The owner or an admin can remove one to make room.`,
+		modalTitle: "Add a game to the list",
+		modalLabel: "Game name",
+		modalPlaceholder: "Chess",
+		nameLength: (min: number, max: number): string => `A game name needs ${min} to ${max} characters.`,
+		duplicate: (name: string): string => `**${name}** is already on the list. Find it in the list and vote for it there.`,
+		added: (name: string): string => `**${name}** is on the list, and your vote is its first.`,
+		voted: (name: string): string => `Your vote for **${name}** is counted.`,
+		unvoted: (name: string): string => `You took your vote back from **${name}**.`,
+		removed: (name: string): string => `**${name}** was removed from the list.`,
+		notFound: "That game is no longer on the list.",
+		adminOnly: "Only the server owner or an admin can remove a game from the list.",
+		outsideGuild: "Game requests belong to a server. Open them from 📋arcade-rules.",
 	},
 
 	responses: {

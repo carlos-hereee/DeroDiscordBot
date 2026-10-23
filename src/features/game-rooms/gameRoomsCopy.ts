@@ -280,6 +280,10 @@ export const gameRoomsCopy = {
 		// author), so the line says so instead of pointing at a host who is the guesser.
 		soloOpener: (hint: string): string =>
 			["Dero picked a word from the word bank.", "", `**Hint:** ${hint}`, "", "Guess a letter."].join("\n"),
+		// The same opener when the member chose the shelf at the 🕹️games category start.
+		// Names the shelf, never the word (risk R12).
+		soloCategoryOpener: (categoryLabel: string, hint: string): string =>
+			[`Dero picked a word from **${categoryLabel}**.`, "", `**Hint:** ${hint}`, "", "Guess a letter."].join("\n"),
 
 		// ── letting Dero pick (the 1.7.0 test fixes, item 12) ──
 		// The select beside the host's authoring button. A word Dero draws has no

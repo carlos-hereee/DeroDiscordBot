@@ -42,6 +42,7 @@ export interface ICreatedChannels {
 	gamesCategoryId: string;
 	arcadeRulesChannelId: string;
 	arcadeChallengesChannelId: string;
+	arcadeGamesChannelId: string;
 	// ── the two voice rooms (2026-10 item 235), one under each category ──
 	meetingVoiceChannelId: string;
 	arcadeVoiceChannelId: string;
@@ -62,6 +63,7 @@ export interface IChannelObjects {
 	adminCommandsChannel: TextChannel;
 	arcadeRulesChannel: TextChannel;
 	arcadeChallengesChannel: TextChannel;
+	arcadeGamesChannel: TextChannel;
 }
 
 // return shape of GuildSetupManager.ensureHomebase. the ready sweep in main.ts
