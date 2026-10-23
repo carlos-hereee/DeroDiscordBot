@@ -561,10 +561,12 @@ export const rokCommanderCopy = {
 		// RULES ONLY. The roster and the host buttons moved to 🕹️games, so this card
 		// answers one question: how is a match here played. One field per rule, in the
 		// order a newcomer meets them: what a room is, how many a host may hold, what
-		// closes one, what follows one, and what any of it earns. The numbers arrive
-		// as arguments from BOT_CONSTANTS (ChannelContent passes them), so the card
-		// cannot promise a clock or an amount the code does not run. Ratings get their
-		// own section in Phase 5, once ratings are shown anywhere.
+		// closes one, what follows one, what any of it earns, and which games are
+		// rated. The numbers arrive as arguments from BOT_CONSTANTS (ChannelContent
+		// passes them), so the card cannot promise a clock, an amount or a threshold the
+		// code does not run. The ratings field names its games in prose, so
+		// ChannelContent.arcade.test.ts pins them against ratingEngine's RATED_GAMES and
+		// LUCK_GAMES: a game rated in code and missing here turns that test red.
 		arcadeRules: {
 			title: "📋 The Rules of the Arena",
 			description:
@@ -594,6 +596,19 @@ export const rokCommanderCopy = {
 				`Every message earns ${messageXp} renown and every reaction ${reactionXp}. A game against me in 🕹️games pays ${soloWinXp} for a win and ${soloOtherXp} for anything else. ` +
 				`Those three together stop at ${dailyCap} renown a day, and the day turns at midnight Central time.\n\n` +
 				"A match against another warrior pays in full, win or lose, and a match in a room of its own pays more than one played in a channel. Check your standing with `/account`.",
+
+			// Members call the number a "rating", never Elo (see arcadeRatings below).
+			// A forfeit rates nothing in code, but the card does not advertise it as a
+			// way out of a loss.
+			ratingsTitle: "🏆 Ratings and the luck board",
+			ratingsBody: (provisionalGames: number, minRatedHands: number, luckMinDecided: number): string =>
+				"Only games of skill are rated: Texas Hold'em, Battleship and Monopoly. Every finished match moves each player's **rating**, " +
+				`and a rating earned in fewer than ${provisionalGames} rated matches wears a **?** while it settles. ` +
+				`A Hold'em table counts once ${minRatedHands} hands are dealt, running out of time at Battleship is a loss, and a room closed as abandoned moves no rating. ` +
+				"Blackjack is played against my dealer and hangman together, so neither is rated.\n\n" +
+				"Coin flip, dice roll and rock paper scissors are games of chance and are never rated. " +
+				`Played against another warrior, they feed this month's luck board instead, scored by wins above an even split, and a warrior appears there from ${luckMinDecided} decided games. ` +
+				"`/rating me` shows yours, `/rating board` the finest of this realm in one game, and `/rating luck` fortune's favorites.",
 
 			// The one button this card carries: it opens the game request ballot
 			// privately. Read by GuildSetupManager.resolveIntroComponents.

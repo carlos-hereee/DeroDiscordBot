@@ -456,6 +456,16 @@ export const generalEventsCopy: IPluginCopy = {
 				`Those three together stop at ${dailyCap} XP a day, and the day resets at midnight Central time.\n\n` +
 				"A match against another member pays in full, win or lose, and a match in its own room pays more than one played in a channel. Check your level with `/account`.",
 
+			ratingsTitle: "🏆 Ratings and the luck board",
+			ratingsBody: (provisionalGames: number, minRatedHands: number, luckMinDecided: number): string =>
+				"Only games of skill are rated: Texas Hold'em, Battleship and Monopoly. Every finished match moves each player's **rating**, " +
+				`and a rating from fewer than ${provisionalGames} rated matches shows a **?** while it settles. ` +
+				`A Hold'em table counts once ${minRatedHands} hands are dealt, running out of time in Battleship counts as a loss, and a room closed as abandoned moves no rating. ` +
+				"Blackjack is played against the dealer and hangman together, so neither is rated.\n\n" +
+				"Coin flip, dice roll and rock paper scissors are games of chance and are never rated. " +
+				`Played against another member, they count toward this month's luck board instead, scored by wins above an even split, and a member shows up there from ${luckMinDecided} decided games. ` +
+				"`/rating me` shows yours, `/rating board` the top players here in one game, and `/rating luck` the luckiest.",
+
 			voteButtonLabel: "Don't see your favorite game?",
 		},
 

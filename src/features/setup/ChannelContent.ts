@@ -158,13 +158,14 @@ export const ChannelContent = {
 	// ── 🎮 ARCADE GAMES intros ──────────────────────────────────
 	// The rules card: rules ONLY since 2026-10 item 245 Phase 4a. The roster and the
 	// host buttons moved to 🕹️games (arcadeGamesIntro below), so this card is one
-	// field per rule, in the order a newcomer meets them. The clocks and amounts come
-	// from BOT_CONSTANTS rather than from the copy, so the card can never promise a
-	// number the sweep or awardXp does not run.
+	// field per rule, in the order a newcomer meets them, ratings last. The clocks,
+	// amounts and rating thresholds come from BOT_CONSTANTS rather than from the copy,
+	// so the card can never promise a number the sweep, awardXp or the ratings code
+	// does not run.
 	arcadeRulesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
 		const copy = getPluginCopy(guildConfig);
 		const c = copy.channelContent.arcadeRules;
-		const { LEVELING } = BOT_CONSTANTS;
+		const { LEVELING, RATINGS } = BOT_CONSTANTS;
 		return infoEmbed(c.title, c.description, copy.COLORS.ARCADE).addFields(
 			{ name: c.roomTitle, value: c.roomBody, inline: false },
 			{ name: c.slotTitle, value: c.slotBody, inline: false },
@@ -177,6 +178,11 @@ export const ChannelContent = {
 			{
 				name: c.xpTitle,
 				value: c.xpBody(LEVELING.MESSAGE_XP, LEVELING.REACTION_XP, LEVELING.SOLO_LUCK_WIN_XP, LEVELING.SOLO_LUCK_OTHER_XP, LEVELING.DAILY_XP_CAP),
+				inline: false,
+			},
+			{
+				name: c.ratingsTitle,
+				value: c.ratingsBody(RATINGS.PROVISIONAL_GAMES, RATINGS.HOLDEM_MIN_RATED_HANDS, RATINGS.LUCK_MIN_DECIDED),
 				inline: false,
 			}
 		);

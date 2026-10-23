@@ -4,6 +4,7 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { generalEventsCopy } from "@base/copy/packs/general-events.pack.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { CHALLENGE_GAMES } from "@features/game-rooms/challengeBoardEmbeds.js";
+import { LUCK_GAMES, RATED_GAMES, type LuckGame, type RatedGame } from "@features/ratings/ratingEngine.js";
 
 // ── the 🎮 ARCADE GAMES cards ──────────────────────────────────────────────
 // Since 2026-10 item 245 Phase 4a the arcade has three cards with three jobs:
@@ -19,10 +20,10 @@ describe("arcadeRulesIntro", () => {
 	const embed = ChannelContent.arcadeRulesIntro();
 	const c = rokCommanderCopy.channelContent.arcadeRules;
 
-	it("holds exactly the five rules, in the order a newcomer meets them", () => {
+	it("holds exactly the six rules, in the order a newcomer meets them", () => {
 		// What a room is, how many a host may hold, what closes one, what follows one,
-		// and what any of it earns. Ratings join in Phase 5, once they are shown.
-		expect(fields(embed).map((f) => f.name)).toEqual([c.roomTitle, c.slotTitle, c.idleTitle, c.rematchTitle, c.xpTitle]);
+		// what any of it earns, and which games are rated.
+		expect(fields(embed).map((f) => f.name)).toEqual([c.roomTitle, c.slotTitle, c.idleTitle, c.rematchTitle, c.xpTitle, c.ratingsTitle]);
 	});
 
 	it("carries no game roster, because the roster lives in 🕹️games", () => {
@@ -42,10 +43,47 @@ describe("arcadeRulesIntro", () => {
 		expect(xp).toContain(`${BOT_CONSTANTS.LEVELING.DAILY_XP_CAP} renown a day`);
 	});
 
-	it("does not mention ratings yet", () => {
-		const text = fields(embed).map((f) => f.value).join("\n").toLowerCase();
-		expect(text).not.toContain("rating");
-	});
+});
+
+describe("the rules card's ratings field", () => {
+	// The field names its games in prose, so these pins keep it honest: every game
+	// ratingEngine rates and every luck game must be named, and each threshold must be
+	// the one the ratings code runs. Matched by each game's own words, the stable part.
+	const gameWords: Record<RatedGame | LuckGame, string> = {
+		holdem: "hold'em",
+		battleship: "battleship",
+		monopoly: "monopoly",
+		coinflip: "coin flip",
+		diceroll: "dice roll",
+		rps: "rock paper scissors",
+	};
+	const { RATINGS } = BOT_CONSTANTS;
+	const packs = [
+		{ name: "rok-commander", config: null, pack: rokCommanderCopy },
+		{ name: "general-events", config: { pluginId: "general-events" } as never, pack: generalEventsCopy },
+	];
+
+	for (const { name, config, pack } of packs) {
+		const ratings = fields(ChannelContent.arcadeRulesIntro(config)).find((f) => f.name === pack.channelContent.arcadeRules.ratingsTitle)?.value ?? "";
+
+		it(`names every rated game and every luck game (${name})`, () => {
+			const text = ratings.toLowerCase();
+			for (const game of [...RATED_GAMES, ...LUCK_GAMES]) expect(text, game).toContain(gameWords[game]);
+		});
+
+		it(`states the thresholds the ratings code runs (${name})`, () => {
+			expect(ratings).toContain(`${RATINGS.PROVISIONAL_GAMES} rated matches`);
+			expect(ratings).toContain(`${RATINGS.HOLDEM_MIN_RATED_HANDS} hands`);
+			expect(ratings).toContain(`${RATINGS.LUCK_MIN_DECIDED} decided games`);
+		});
+
+		it(`calls the number a rating, points at /rating, and fits one field (${name})`, () => {
+			expect(ratings).toContain("**rating**");
+			expect(ratings).toContain("`/rating me`");
+			expect(ratings).not.toMatch(/\belo\b/i);
+			expect(ratings.length).toBeLessThanOrEqual(1024);
+		});
+	}
 });
 
 describe("arcadeGamesIntro", () => {
@@ -117,7 +155,7 @@ describe("both packs describe the same arcade", () => {
 	it("renders every card in the neutral voice too", () => {
 		const neutral = { pluginId: "general-events" } as never;
 		expect(ChannelContent.arcadeRulesIntro(neutral).data.title).toBe(generalEventsCopy.channelContent.arcadeRules.title);
-		expect(fields(ChannelContent.arcadeRulesIntro(neutral))).toHaveLength(5);
+		expect(fields(ChannelContent.arcadeRulesIntro(neutral))).toHaveLength(6);
 		expect(ChannelContent.arcadeGamesIntro(neutral).data.title).toBe(generalEventsCopy.channelContent.arcadeGames.title);
 		expect(ChannelContent.arcadeGamesBoard(neutral).data.title).toBe(generalEventsCopy.channelContent.arcadeGames.boardTitle);
 		expect(ChannelContent.arcadeChallengesIntro(neutral).data.title).toBe(generalEventsCopy.channelContent.arcadeChallenges.title);
