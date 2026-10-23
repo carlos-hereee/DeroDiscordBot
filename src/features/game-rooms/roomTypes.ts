@@ -85,6 +85,26 @@ export type RatingBand = (typeof RATING_BANDS)[number];
 export const CHALLENGE_REACHES = ["invite-only", "server", "network"] as const;
 export type ChallengeReach = (typeof CHALLENGE_REACHES)[number];
 
+// ── A table's window in another server (2026-10 item 244 Phase 5a) ──
+// What:  one linked channel in a REMOTE guild that mirrors a network table, so a member
+//        of that guild can play a seat at a table hosted somewhere they cannot see.
+// Where: a CHILD of the host room row, never a room of its own. The transcript, status,
+//        winner, archive clock and the one open room per host index all stay on the host
+//        row; a satellite only says where the mirror lives and who plays through it.
+//        satelliteRooms.ts opens, relays to, locks and deletes these.
+export interface SatelliteRoom {
+	// The remote guild the channel lives in. Never the host room's own guild.
+	guildId: string;
+	channelId: string;
+	// The members of that guild seated through this channel. Only they may press a
+	// control here, whatever else the room's lists say.
+	userIds: string[];
+	// The mirrored table message, edited in place on every relay. Null until the first
+	// relay posts it. Stored on the row so a redeploy edits the same message rather
+	// than posting a second table under the first.
+	tableMessageId: string | null;
+}
+
 // ── A single entry in the append-only scroll ──
 // `kind` drives how the trail renders the entry, never whether it is recorded. `meta` is
 // persisted for the future dashboard but never rendered into Discord, so a handler can stash

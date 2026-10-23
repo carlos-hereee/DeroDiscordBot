@@ -40,6 +40,10 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 //           channel so the inner sanctum gets the audit line.
 //        Errors after the cooldown gate are logged and swallowed, the
 //        gateway connection must never crash because of a repair fault.
+//        ⚠️ A SECOND ChannelDelete LISTENER EXISTS ON PURPOSE: satelliteSeats
+//        seats out the players of a network table's satellite channel when it
+//        is deleted (2026-10 item 244 Phase 5a). Satellites are not rooms of
+//        their guild, so this watcher's room lookup never finds one.
 
 // ── cooldown map ──────────────────────────────────────────────────────
 // Key format: `${guildId}:${configField}`. configField is the GuildConfig

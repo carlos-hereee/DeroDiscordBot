@@ -269,6 +269,12 @@ export const BOT_CONSTANTS = {
 	// in; a few retries cover a burst of moves, and past them the host is told to
 	// press again rather than the bot looping against a busy table.
 	GAME_ROOM_KICK_ATTEMPTS: 4,
+	// The games a network table can seat players from other servers at, through a
+	// satellite channel in their own server (2026-10 item 244 Phase 5a). Hold'em only:
+	// a satellite mirrors one table message and relays its moves, and Hold'em is the
+	// game whose whole state is that one message. Battleship's private boards and
+	// Monopoly's several cards would each need their own relay before joining this list.
+	NETWORK_GAMES: ["holdem"],
 
 	// ── dero voice ───────────────────────────────────────────────
 	// What:  every number and provider string the voice feature runs on: the

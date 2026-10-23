@@ -38,6 +38,7 @@ import { registerGameRequestHandlers } from "@features/game-rooms/gameRequestHan
 import { registerGameRoomHandlers } from "@features/game-rooms/gameRoomHandlers.js";
 import { registerGameRoomMemberRemoveWatcher } from "@features/game-rooms/guildMemberRemoveWatcher.js";
 import { recoverGameRoomsOnBoot } from "@features/game-rooms/roomBootRecovery.js";
+import { reconcileSatellitesOnBoot, registerSatelliteWatchers } from "@features/game-rooms/satelliteSeats.js";
 import { sweepHoldemClocks } from "@features/game-rooms/roomHoldemHandlers.js";
 import { logMonopolyRendererStatus } from "@features/games/monopolyRenderer.js";
 import { logCanvasRendererStatus, logDeroArtStatus } from "@features/renderer/index.js";
@@ -609,6 +610,11 @@ process.on("uncaughtException", (err) => {
 		// as abandoned), with a system line in the room saying why. Rides
 		// the same GuildMembers intent the greeter needs.
 		registerGameRoomMemberRemoveWatcher(client);
+		// A network table's satellites in other servers (2026-10 item 244 Phase 5a): a
+		// member leaving THEIR server, their server removing Dero, or the satellite
+		// channel being deleted seats them out of the table, which plays on. Second
+		// listeners on GuildMemberRemove and ChannelDelete on purpose; see satelliteSeats.ts.
+		registerSatelliteWatchers(client);
 		// One line saying whether cards render as pictures on this host, with which
 		// fonts, and whether the S3 card cache is on. Registers the bundled fonts.
 		logCanvasRendererStatus();
@@ -863,6 +869,9 @@ process.on("uncaughtException", (err) => {
 		// Where: errors are isolated per room inside the helper, so one unreachable
 		//        guild cannot fail the boot.
 		await recoverGameRoomsOnBoot(client);
+		// The satellite half of the same catch up: departures from a network table's
+		// satellites that happened while the bot was down. Never throws.
+		await reconcileSatellitesOnBoot(client);
 
 		// ── hold em turn clock ─────────────────────────────────────
 		// What: force-folds a player who has run out of time at a poker table, and

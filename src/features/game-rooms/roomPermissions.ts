@@ -7,7 +7,9 @@ import type { RoomVisibility } from "./roomTypes.js";
 //        phase of its life.
 // Who:   RoomProvisioner.open (phase "playing"), and roomLifecycle.applyRoomPhase with
 //        channel.permissionOverwrites.set: "finished" from finish, and "playing" again
-//        when a rematch takes a finished room's channel over for its own players.
+//        when a rematch takes a finished room's channel over for its own players. And
+//        satelliteRooms, for a network table's channels in other guilds
+//        (buildSatelliteOverwrites, 2026-10 item 244 Phase 5a).
 // When:  twice per room, and never again. A room's membership is fixed at open, with
 //        one exception that never calls this: the host removing a member deletes that
 //        member's own overwrite and nothing else (hostControls, 2026-10 item 244 Phase 4).
@@ -83,12 +85,7 @@ export function buildRoomOverwrites(input: RoomPermissionInput): RoomOverwrite[]
 				: [PermissionFlagsBits.SendMessages],
 		});
 	} else {
-		overwrites.push({
-			id: everyoneRoleId,
-			deny: locked
-				? [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, ...THREAD_WRITE_DENIES]
-				: [PermissionFlagsBits.ViewChannel],
-		});
+		overwrites.push(hiddenEveryoneOverwrite(everyoneRoleId, locked));
 	}
 
 	// ── the bot ───────────────────────────────────────────────────────
@@ -106,14 +103,7 @@ export function buildRoomOverwrites(input: RoomPermissionInput): RoomOverwrite[]
 	// takes the last one, so a duplicate is a silent last-write-wins rather than an
 	// error. Collapse defensively.
 	const playerSet = new Set<string>([hostId, ...input.playerIds]);
-	for (const playerId of playerSet) {
-		overwrites.push({
-			id: playerId,
-			allow: locked
-				? [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
-				: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
-		});
-	}
+	for (const playerId of playerSet) overwrites.push(playerOverwrite(playerId, locked));
 
 	// ── explicit spectators ───────────────────────────────────────────
 	// Invite-only rooms ONLY. A public room expresses spectatorship with the single
@@ -143,12 +133,69 @@ export function buildRoomOverwrites(input: RoomPermissionInput): RoomOverwrite[]
 	// into a room to handle a report; they do not need to be able to play in someone
 	// else's match, and granting SendMessages here would put an admin's stray message
 	// into a transcript that is supposed to be the match.
-	if (adminRoleId) {
-		overwrites.push({
-			id: adminRoleId,
-			allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
-		});
-	}
+	if (adminRoleId) overwrites.push(adminReadOnlyOverwrite(adminRoleId));
 
 	return overwrites;
+}
+
+// ── the entries a satellite shares with a room ────────────────────────
+// Named once because a satellite (below) is built from the same three entries as an
+// invite room, and a second copy of any of them is a second matrix to keep in step.
+
+// A private channel's @everyone entry: invisible while playing, and once locked also
+// unwritable, threads included, for the lock reason the @everyone note above gives.
+function hiddenEveryoneOverwrite(everyoneRoleId: string, locked: boolean): RoomOverwrite {
+	return {
+		id: everyoneRoleId,
+		deny: locked
+			? [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, ...THREAD_WRITE_DENIES]
+			: [PermissionFlagsBits.ViewChannel],
+	};
+}
+
+function playerOverwrite(playerId: string, locked: boolean): RoomOverwrite {
+	return {
+		id: playerId,
+		allow: locked
+			? [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
+			: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+	};
+}
+
+function adminReadOnlyOverwrite(adminRoleId: string): RoomOverwrite {
+	return { id: adminRoleId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory] };
+}
+
+// ── a satellite's matrix (2026-10 item 244 Phase 5a) ──────────────────
+export interface SatellitePermissionInput {
+	// The REMOTE guild's @everyone role, never the host guild's.
+	everyoneRoleId: string;
+	botId: string;
+	// The members of the remote guild seated through this satellite.
+	playerIds: readonly string[];
+	phase: RoomPhase;
+	// The remote guild's own admin role, when it has one.
+	adminRoleId?: string | null;
+}
+
+/**
+ * The overwrite set for one satellite channel: an invite room whose players are the
+ * remote guild's seated members, with no host entry, because the host is a member of
+ * another guild and a member overwrite needs a member of this one.
+ *
+ * ⚠️ PLAYERS ONLY, AND NO @everyone ALLOW IN ANY PHASE. A satellite is a window onto a
+ * table hosted elsewhere, so nobody else in the remote guild sees it, whatever the host
+ * room's own visibility: a public host room's single @everyone allow is the host
+ * guild's, and copying it here would show a stranger's table to a whole other server.
+ * The admin role reads, as it does in every room, so a moderator can see what their
+ * members are part of.
+ */
+export function buildSatelliteOverwrites(input: SatellitePermissionInput): RoomOverwrite[] {
+	const locked = input.phase === "finished";
+	return [
+		hiddenEveryoneOverwrite(input.everyoneRoleId, locked),
+		buildBotSelfOverwrite(input.botId),
+		...[...new Set(input.playerIds)].map((playerId) => playerOverwrite(playerId, locked)),
+		...(input.adminRoleId ? [adminReadOnlyOverwrite(input.adminRoleId)] : []),
+	];
 }

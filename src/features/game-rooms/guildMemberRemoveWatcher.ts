@@ -15,7 +15,10 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 //        (see gameRoomStore.findOpenByPlayer) and why a non-participant departure
 //        must cost exactly one indexed read and zero writes.
 // Where: everything downstream is the room's ordinary machinery: the trail for the
-//        line, roomLifecycle.finish for the ending. No new mechanism.
+//        line, roomLifecycle.finish for the ending. No new mechanism. ⚠️ A SECOND
+//        GuildMemberRemove LISTENER EXISTS ON PURPOSE: satelliteSeats seats out a member
+//        of a network table's satellite server who leaves THAT server, and the table
+//        plays on (2026-10 item 244 Phase 5a). This one only ever sees the host guild.
 // How:   a departure is treated as a forfeit from that player, NOT as abandonment:
 //        the match ended, the player just ended it by leaving instead of pressing
 //        Forfeit, so the survivors keep their result and the room-rate top up. The

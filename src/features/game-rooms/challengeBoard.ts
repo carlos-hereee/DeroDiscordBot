@@ -676,6 +676,14 @@ async function checkRematch(interaction: ButtonInteraction, room: IGameRoom): Pr
 		return { ok: false, reply: { content: gameRoomsCopy.errors.notFound } };
 	}
 
+	// ⚠️ NO REMATCH AT A TABLE THAT SEATED OTHER SERVERS (2026-10 item 244 Phase 5a). A
+	// rematch plays on in the host's channel, which those players cannot see, and taking
+	// the channel over clears this row's archive clock, so its satellites in other servers
+	// would never be swept. Refused before anything is written; they archive with this room.
+	if ((room.satellites ?? []).length > 0) {
+		return { ok: false, reply: { content: rokCommanderCopy.arcadeSatellites.rematchRefused } };
+	}
+
 	if (await gameRoomStore.findByRematchedFrom(room.guildId, room.roomId)) {
 		return { ok: false, reply: { content: gameRoomsCopy.errors.rematchAlreadyOffered } };
 	}

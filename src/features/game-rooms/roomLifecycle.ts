@@ -7,13 +7,16 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { buildRoomOverwrites, type RoomPhase } from "./roomPermissions.js";
 import { roomResultEmbed, roomArchiveRow } from "./gameRoomsEmbeds.js";
+import { deleteSatellites, labelEmbedForRoom, lockSatellites } from "./satelliteRooms.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomLifecycle ────────────────────────────────────────────────────
 // What:  the terminal transitions of a room. `finish` ends the match, locks the
 //        channel and starts the archive clock; `releaseChannel` hands a finished room's
 //        channel to the rematch that plays on in it; `archiveNow` and `archiveRoom`
-//        delete the channel and close the row.
+//        delete the channel and close the row. A network table's satellites in other
+//        servers follow the host room through finish and archiveRoom, always after it
+//        and never able to stop it (satelliteRooms, 2026-10 item 244 Phase 5a).
 // Who:   finish is called by whatever ended the match (a game's win condition, the
 //        forfeit control, the boot recovery sweep). releaseChannel is called by the
 //        Rematch button (challengeBoard.rematchFromRoom). archiveNow is the button;
@@ -88,28 +91,42 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	// `if (!channel)` would otherwise silently unpay everyone who played it.
 	payRoomRateTopUp(client, room, winnerId, input.abandoned ?? false);
 
+	// A network table names its winner rather than mentioning them (satelliteRooms).
+	const resultEmbed = await labelEmbedForRoom(client, room, roomResultEmbed(winnerId, input.abandoned ?? false, input.art?.ref));
+
 	const channel = await resolveRoomChannel(client, room.channelId);
 	// An already-deleted channel is the ordinary abandonment case, not an error. The
-	// row is stamped, so the sweep will close it out on its next pass. TRUE, not false:
+	// row is stamped, so the sweep will close it out on its next pass. TRUE either way:
 	// this call DID end the match, and the return value reports the claim rather than
 	// whether Discord still had a channel to decorate.
-	if (!channel) return true;
+	if (channel) {
+		// ② Lock it.
+		await applyRoomPhase(client, channel, room, "finished");
 
-	// ② Lock it.
-	await applyRoomPhase(client, channel, room, "finished");
+		// ③ The result card, carrying Archive now. Posted after the lock so the last message
+		// in the channel is the outcome rather than a move, and it lands at all only because
+		// the bot keeps its own SendMessages allow in the locked overwrite set.
+		// The attachment and the embed's reference to it MUST ride the same message, or
+		// the image slot renders empty.
+		await channel
+			.send({
+				embeds: [resultEmbed],
+				components: [roomArchiveRow(room.roomId)],
+				...(input.art ? { files: [input.art.attachment] } : {}),
+			})
+			.catch((error) => console.error("[game-rooms] failed to post result card", { roomId: room.roomId, error }));
+	}
 
-	// ③ The result card, carrying Archive now. Posted after the lock so the last message
-	// in the channel is the outcome rather than a move, and it lands at all only because
-	// the bot keeps its own SendMessages allow in the locked overwrite set.
-	// The attachment and the embed's reference to it MUST ride the same message, or
-	// the image slot renders empty.
-	await channel
-		.send({
-			embeds: [roomResultEmbed(winnerId, input.abandoned ?? false, input.art?.ref)],
-			components: [roomArchiveRow(room.roomId)],
-			...(input.art ? { files: [input.art.attachment] } : {}),
-		})
-		.catch((error) => console.error("[game-rooms] failed to post result card", { roomId: room.roomId, error }));
+	// ④ Every satellite of a network table (2026-10 item 244 Phase 5a), AFTER the host
+	// room, and even when the host channel is gone, since a satellite in another server is
+	// still open to its players. Read off the CLAIMED row rather than the caller's: a
+	// satellite opened after the caller read the room is on the row the claim returned.
+	// Queued on the room's relay chain behind the last table and move, never awaited, so
+	// no satellite can hold up the caller or the ratings it records next.
+	const satellites = claimed.satellites ?? [];
+	if (satellites.length > 0) {
+		void lockSatellites(client, { roomId: room.roomId, satellites }, { embed: resultEmbed, files: input.art ? [input.art.attachment] : [] });
+	}
 
 	return true;
 }
@@ -248,7 +265,16 @@ function payRoomRateTopUp(client: Client, room: IGameRoom, winnerId: string | nu
 // Shared by the Archive now button and the cron sweep on purpose: two delete paths
 // would be two places to forget the botLog, two places to get the 404 handling wrong,
 // and two definitions of what "archived" means.
-export async function archiveRoom(client: Client, room: Pick<IGameRoom, "guildId" | "roomId" | "channelId">): Promise<void> {
+export async function archiveRoom(
+	client: Client,
+	room: Pick<IGameRoom, "guildId" | "roomId" | "channelId"> & Partial<Pick<IGameRoom, "satellites">>
+): Promise<void> {
+	// A network table's satellites go with it, and BEFORE the row closes: the sweep only
+	// ever finds a "finished" row, so a row archived first would leave its satellites in
+	// other servers with nothing that would ever delete them. Each satellite is isolated
+	// inside deleteSatellites, so none can stop the host room's own delete below.
+	if (room.satellites?.length) await deleteSatellites(client, { roomId: room.roomId, satellites: room.satellites });
+
 	const channel = await resolveRoomChannel(client, room.channelId);
 
 	// A channel an admin already deleted reaches this exactly the way a swept one does.

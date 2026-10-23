@@ -4,11 +4,13 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
+import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import {
 	GAME_ROOM_PREFIX,
 	GAME_ROOM_SELECT_PREFIX,
 	GAME_ROOM_MODAL_PREFIX,
 	GAME_ROOM_ACTIONS,
+	SATELLITE_ACTIONS,
 	parseGameRoomCustomId,
 	type GameRoomAction,
 } from "./gameRoomActions.js";
@@ -33,7 +35,11 @@ import { roomMonopolyMortgage } from "./roomMonopolyMortgage.js";
 import { roomMonopolyTrade } from "./roomMonopolyTrade.js";
 import { roomMonopolyAuction } from "./roomMonopolyAuction.js";
 import { hostControls } from "./hostControls.js";
-import type { GameSlug } from "./roomTypes.js";
+import { satelliteAt } from "./satelliteRooms.js";
+import type { GameSlug, SatelliteRoom } from "./roomTypes.js";
+import type { IGameRoom } from "@db/models/GameRoom.js";
+
+const satelliteWords = rokCommanderCopy.arcadeSatellites;
 
 // The actions that only make sense while a draft is still a draft. Listed once so
 // the status refusal below cannot drift from the routing switch. `requests` and `kick`
@@ -53,8 +59,9 @@ const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start",
 //        long before reaching them, so a button-driven feature MUST gate itself. This
 //        file is that gate, exactly as PowerUps.handlePowerUpButton re-verifies admin
 //        on every click rather than trusting the button's existence.
-// How:   parse, load the room SCOPED TO THE GUILD, apply the action's declared gate,
-//        then act.
+// How:   parse, load the room SCOPED TO THE GUILD (or, for a press in a network table's
+//        satellite, to the guild and channel it came from), apply the satellite's own
+//        gate and then the action's declared gate, then act.
 
 async function handleGameRoomButton(interaction: ButtonInteraction): Promise<void> {
 	const parsed = parseGameRoomCustomId(interaction.customId);
@@ -88,11 +95,32 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 	// customId, which anyone can read and replay, so the lookup is scoped to the guild
 	// the click came from. A room in ANOTHER guild therefore reads as not found rather
 	// than as forbidden, which is what stops a caller probing whether a room exists
-	// somewhere else.
-	const room = await gameRoomStore.findByRoomId(guildId, parsed.tail);
-	if (!room) {
+	// somewhere else. The one way to reach a room hosted elsewhere is from inside one of
+	// its satellite channels (resolvePressedRoom).
+	const pressed = await resolvePressedRoom(interaction, guildId, parsed.tail);
+	if (!pressed) {
 		await interaction.reply({ content: gameRoomsCopy.errors.notFound, flags: MessageFlags.Ephemeral });
 		return;
+	}
+	const { room, satellite } = pressed;
+	const actorId = interaction.user.id;
+
+	// ⚠️ A PRESS FROM A SATELLITE (2026-10 item 244 Phase 5a) IS GATED BEFORE ANYTHING
+	// ELSE, and by two rules of its own. ① Only a seated player's own controls are taken
+	// there (SATELLITE_ACTIONS): every host control, and the admin override that comes
+	// with it, belongs to the host room, because the override reads the CLICKER's
+	// permissions and here the clicker is an admin of a different server. ② Only the
+	// members that satellite seats may press anything in it; a remote admin reading
+	// along may watch, not play. The playersOnly gate below still applies on top.
+	if (satellite) {
+		if (!SATELLITE_ACTIONS.has(parsed.action)) {
+			await interaction.reply({ content: satelliteWords.hostRoomOnly, flags: MessageFlags.Ephemeral });
+			return;
+		}
+		if (!satellite.userIds.includes(actorId)) {
+			await interaction.reply({ content: satelliteWords.notSeatedHere, flags: MessageFlags.Ephemeral });
+			return;
+		}
 	}
 
 	// A draft that was cancelled, or a room that already finished, still has clickable
@@ -105,7 +133,6 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 	}
 
 	const action = GAME_ROOM_ACTIONS[parsed.action];
-	const actorId = interaction.user.id;
 
 	// playersOnly first: it is the cheaper check and needs no config read.
 	if (action.playersOnly && !room.playerIds.includes(actorId)) {
@@ -285,6 +312,32 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			return;
 		}
 	}
+}
+
+/** A pressed room, and the satellite the press came from when it was not the room's own channel. */
+interface PressedRoom {
+	room: IGameRoom;
+	satellite: SatelliteRoom | null;
+}
+
+// The room a press belongs to: the clicking guild's own room by its roomId, or, for a
+// press inside a network table's satellite channel, the host row that keeps that
+// satellite (2026-10 item 244 Phase 5a).
+//
+// ⚠️ THE SATELLITE LOOKUP IS SCOPED TO THE GUILD AND CHANNEL THE PRESS CAME FROM, never to
+// the clicking guild's rooms and never to the roomId alone. Discord sets both, so a roomId
+// replayed from any other channel still reads as not found; and the roomId must match the
+// row the channel belongs to, so a control from one table cannot act on another.
+async function resolvePressedRoom(interaction: ButtonInteraction, guildId: string, roomId: string): Promise<PressedRoom | null> {
+	const room = await gameRoomStore.findByRoomId(guildId, roomId);
+	if (room) return { room, satellite: null };
+
+	const channelId = interaction.channelId;
+	if (!channelId) return null;
+	const host = await gameRoomStore.findBySatelliteChannel(guildId, channelId);
+	if (!host || host.roomId !== roomId) return null;
+	const satellite = satelliteAt(host, guildId, channelId);
+	return satellite ? { room: host, satellite } : null;
 }
 
 /**

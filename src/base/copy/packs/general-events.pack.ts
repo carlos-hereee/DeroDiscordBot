@@ -868,4 +868,8 @@ export const generalEventsCopy: IPluginCopy = {
 	// arcade's cards, so this pack points at the rok-commander words rather than
 	// keeping a second copy that could drift from them.
 	arcadeHostControls: rokCommanderCopy.arcadeHostControls,
+
+	// The network tables' satellite words read the same in every voice too, for the
+	// same reason as the host controls above.
+	arcadeSatellites: rokCommanderCopy.arcadeSatellites,
 };

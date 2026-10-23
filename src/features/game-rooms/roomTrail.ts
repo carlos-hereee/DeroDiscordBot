@@ -1,6 +1,7 @@
 import { type Client, type TextChannel } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { labelForRoom, relayMove } from "./satelliteRooms.js";
 import type { RoomMoveKind } from "./roomTypes.js";
 
 // ── roomTrail ────────────────────────────────────────────────────────
@@ -37,9 +38,14 @@ export async function resolveRoomChannel(client: Client, channelId: string | nul
 
 // Post a move and record it. Returns false when the move never reached the channel,
 // in which case NOTHING was written to the transcript.
+//
+// A network table (2026-10 item 244 Phase 5a) shows the line with its players NAMED
+// rather than mentioned, since a mention of a member of another server does not resolve,
+// and then relays that same line to every satellite. The transcript keeps the line with
+// its ids, which is the history; the names are only how a channel shows it.
 export async function postMove(
 	client: Client,
-	room: Pick<IGameRoom, "guildId" | "roomId" | "channelId">,
+	room: Pick<IGameRoom, "guildId" | "roomId" | "channelId"> & Partial<Pick<IGameRoom, "network" | "satellites">>,
 	move: RoomMoveInput
 ): Promise<boolean> {
 	const channel = await resolveRoomChannel(client, room.channelId);
@@ -52,6 +58,7 @@ export async function postMove(
 		return false;
 	}
 
+	const shown = await labelForRoom(client, { network: room.network ?? false }, move.text);
 	try {
 		// ⚠️ THE ALLOWED MENTIONS PIN IS A SECURITY CONTROL, NOT A COURTESY. Move text is
 		// composed from user input in places (a hangman hint the host authored, a display
@@ -63,7 +70,7 @@ export async function postMove(
 		// attachment path here would be an unbounded upload surface driven by whatever a
 		// game passed in, on a per-move cadence.
 		await channel.send({
-			content: move.text,
+			content: shown,
 			allowedMentions: { users: [move.actorId] },
 		});
 	} catch (error) {
@@ -96,6 +103,10 @@ export async function postMove(
 			error,
 		});
 	}
+
+	// The satellites last, after the host room has the line: never awaited, and a
+	// satellite that fails cannot turn a move the players saw into a rejected one.
+	if (room.satellites?.length) void relayMove(client, { roomId: room.roomId, satellites: room.satellites }, shown);
 
 	return true;
 }

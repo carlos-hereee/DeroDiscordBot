@@ -36,6 +36,7 @@ import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isClockExpired, roomDrawingKey, withDrawingPause } from "./drawingPause.js";
 import { judgeJoin } from "./joinGate.js";
+import { labelEmbedForRoom, relayState } from "./satelliteRooms.js";
 import {
 	tableEmbed,
 	holeCardsEmbed,
@@ -63,7 +64,10 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 //        with the live table card, behind the drawing pause. The three paths that
 //        change a hand (a deal, an action, a clock fold) then hand a public view of
 //        the table before and after to announceDealer, fire and forget, which
-//        narrates only the tables Dero opened and deals.
+//        narrates only the tables Dero opened and deals. At a network table the
+//        redraw then relays the same board to every satellite in another server
+//        (satelliteRooms, 2026-10 item 244 Phase 5a), and a press from a satellite
+//        reaches these handlers with the host row, exactly like a press at home.
 //
 // ⚠️ EVERY CALL THAT CAN REACH THE SHUFFLE PASSES secureRandom. The engine's own
 // default is the fast, predictable generator and stays that way for its tests;
@@ -144,16 +148,23 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Prom
 		fallback: () => null,
 		swapIn: async (card) => {
 			const prompted = promptTable(table);
-			const embed = tableEmbed(table, pot, clockLine(table));
+			// A network table names its players rather than mentioning them (satelliteRooms).
+			const embed = await labelEmbedForRoom(client, room, tableEmbed(table, pot, clockLine(table)));
+			const embeds = [card ? embed.setImage(card.ref) : embed];
+			const files = card ? [card.attachment] : [];
 			await message.edit({
 				content: null,
-				embeds: [card ? embed.setImage(card.ref) : embed],
+				embeds,
 				components,
-				files: card ? [card.attachment] : [],
+				files,
 				// `attachments: []` drops the last action's card, which an edit otherwise keeps.
 				attachments: [],
 			});
 			if (prompted) await rememberPrompt(room, table);
+			// The same table into every satellite of a network table (2026-10 item 244 Phase
+			// 5a), after the host room has it and never awaited, so a satellite in another
+			// server can neither slow this board nor fail it.
+			if (room.satellites?.length) void relayState(client, room, { embeds, components, files });
 		},
 	}).catch((error) => console.warn("[game-rooms] failed to redraw the hold em table", error));
 }

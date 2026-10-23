@@ -6,6 +6,7 @@ import {
 	type RoomMove,
 	type RoomStatus,
 	type RoomVisibility,
+	type SatelliteRoom,
 } from "@features/game-rooms/roomTypes.js";
 
 // ── gameRoomStore ──
@@ -17,7 +18,9 @@ import {
 // Where: guild scoping is a security boundary (invariant 2), so every method except the
 //        cross-guild sweep query takes guildId and filters on it. A roomId that belongs to
 //        another guild therefore reads as NOT FOUND rather than forbidden, which is what stops
-//        a caller probing whether a room exists somewhere else.
+//        a caller probing whether a room exists somewhere else. The satellite methods are
+//        the one other shape: they are asked from a REMOTE guild, so they take that guild
+//        and match it inside the satellite entry rather than on the row's own guildId.
 // How:   house store rules apply: thin wrappers, no business logic, no tests against Mongo
 //        itself (rule 6). The behavioral guarantee that matters most here, one open room per
 //        host, is enforced by the schema's partial unique index rather than by anything in
@@ -315,6 +318,116 @@ export const gameRoomStore = {
 				$addToSet: { kickedIds: userId },
 			},
 			{ new: true }
+		);
+	},
+
+	// ── satellites (2026-10 item 244 Phase 5a) ──
+	// A network table's linked channels in other guilds. Every read names network: true,
+	// which is what lets it use the partial satellite indexes on the model, and every
+	// lookup by a remote guild matches that guild INSIDE the satellite entry: a satellite
+	// press is scoped to the guild and channel it came from exactly as an ordinary press
+	// is scoped to its guild, so a roomId replayed anywhere else still reads as not found.
+
+	// The host row a press in a satellite channel belongs to, by the guild and channel
+	// the press came from. Any status: the caller refuses by status as it would for the
+	// host room, and the channel delete watcher needs a finished row to recognise that a
+	// deleted channel was a satellite it should leave alone.
+	async findBySatelliteChannel(guildId: string, channelId: string) {
+		return GameRoom.findOne({ network: true, satellites: { $elemMatch: { guildId, channelId } } });
+	},
+
+	// Every live network room that seats this member through a satellite in this guild.
+	// Backs the satellite half of the departure watchers, which run on EVERY member
+	// leaving ANY guild, hence the partial index on satellites.userIds.
+	async findOpenBySatellitePlayer(guildId: string, userId: string) {
+		return GameRoom.find({
+			network: true,
+			status: { $in: [...NON_TERMINAL_ROOM_STATUSES] },
+			satellites: { $elemMatch: { guildId, userIds: userId } },
+		});
+	},
+
+	// Every live network room with a satellite in this guild. Only for a guild removing
+	// the bot, which is rare enough that the status index narrowing to live rooms is
+	// enough and no index of its own is spent on it.
+	async findOpenBySatelliteGuild(guildId: string) {
+		return GameRoom.find({ network: true, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] }, "satellites.guildId": guildId });
+	},
+
+	// Every live network room, across every guild, for the boot reconcile.
+	async findOpenNetwork() {
+		return GameRoom.find({ network: true, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] } });
+	},
+
+	// Add a satellite to a live network room.
+	//
+	// ⚠️ THE GUILD FILTER IS THE ONE SATELLITE PER GUILD CLAIM. Two members of the same
+	// remote guild sitting down in the same tick would otherwise each push a satellite and
+	// leave two channels mirroring one table there. The `$ne` makes the second push match
+	// nothing, and its caller deletes the channel it built and joins the first one instead.
+	async addSatellite(guildId: string, roomId: string, satellite: SatelliteRoom) {
+		return GameRoom.findOneAndUpdate(
+			{
+				guildId,
+				roomId,
+				network: true,
+				status: { $in: [...NON_TERMINAL_ROOM_STATUSES] },
+				"satellites.guildId": { $ne: satellite.guildId },
+			},
+			{ $push: { satellites: satellite } },
+			{ new: true }
+		);
+	},
+
+	// Seat more members of a remote guild through its existing satellite. $addToSet for
+	// the reason addPoolMember gives, and kickedIds for the no rejoin guarantee it gives.
+	async addSatellitePlayers(guildId: string, roomId: string, satelliteGuildId: string, userIds: readonly string[]) {
+		return GameRoom.findOneAndUpdate(
+			{
+				guildId,
+				roomId,
+				network: true,
+				status: { $in: [...NON_TERMINAL_ROOM_STATUSES] },
+				"satellites.guildId": satelliteGuildId,
+				kickedIds: { $nin: [...userIds] },
+			},
+			{ $addToSet: { "satellites.$.userIds": { $each: [...userIds] } } },
+			{ new: true }
+		);
+	},
+
+	// Remember the mirrored table message a relay just posted in one satellite.
+	async setSatelliteTableMessage(guildId: string, roomId: string, channelId: string, messageId: string) {
+		return GameRoom.updateOne(
+			{ guildId, roomId, "satellites.channelId": channelId },
+			{ $set: { "satellites.$.tableMessageId": messageId } }
+		);
+	},
+
+	// Seat members of one satellite out of a live room: they left their server, their
+	// server removed the bot, or the satellite's channel was deleted.
+	//
+	// ONE write, the same lists removeMember clears and the same kickedIds it fills, so a
+	// seat out is handled exactly the way a host's removal is: no door lets them back in,
+	// no gate counts them a player, and a finish rates without them. `endSatellite` also
+	// drops the satellite entry itself, for the two cases where the channel is out of
+	// reach for good; otherwise only these members leave its list. The status filter keeps
+	// a finished room's record as it ended. Returns null when there was nothing to change.
+	async seatOutSatellitePlayers(
+		guildId: string,
+		roomId: string,
+		satelliteGuildId: string,
+		userIds: readonly string[],
+		options: { endSatellite: boolean }
+	) {
+		const leaving = { $in: [...userIds] };
+		const pull: Record<string, unknown> = { playerIds: leaving, spectatorIds: leaving, pendingJoinIds: leaving };
+		if (options.endSatellite) pull.satellites = { guildId: satelliteGuildId };
+		else pull["satellites.$[satellite].userIds"] = leaving;
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] }, "satellites.guildId": satelliteGuildId },
+			{ $pull: pull, $addToSet: { kickedIds: { $each: [...userIds] } } },
+			{ new: true, ...(options.endSatellite ? {} : { arrayFilters: [{ "satellite.guildId": satelliteGuildId }] }) }
 		);
 	},
 

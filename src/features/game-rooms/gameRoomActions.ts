@@ -163,6 +163,21 @@ export const GAME_ROOM_ACTIONS = {
 
 export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;
 
+// ── the controls a satellite may press (2026-10 item 244 Phase 5a) ──
+// What:  the actions a member seated through a satellite channel may take there: their
+//        own seat's controls at a network Hold'em table, which is the one game a satellite
+//        mirrors today. Buy in (or Take a seat), act, peek at their own cards, leave, and
+//        come back from sitting out.
+// Who:   gameRoomHandlers refuses every other action from a satellite before any gate
+//        runs, and satelliteRooms strips every other button from the mirrored table.
+// Where: ⚠️ AN ALLOWLIST, NOT "EVERYTHING BUT hostOnly". The router's hostOnly gate grants
+//        an admin override through gateOwnerOrAdmin, which reads the CLICKER's permissions,
+//        and in a satellite the clicker is a member of another guild: an Administrator of
+//        their own server would pass it and run the host's table. A press from a satellite
+//        must never reach that gate, and a new action is refused there until somebody
+//        decides it belongs here. Satellite tests pin that no entry is hostOnly.
+export const SATELLITE_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["hjoin", "hmove", "hcards", "hleave", "hback"]);
+
 export interface ParsedGameRoomCustomId {
 	action: GameRoomAction;
 	// The roomId for every action but `new`, where it is the game slug instead.

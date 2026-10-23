@@ -1218,4 +1218,58 @@ export const rokCommanderCopy = {
 			waitingLine: (userIds: readonly string[]) => `🪑 Dealt in next hand: ${userIds.map((userId) => `<@${userId}>`).join(", ")}`,
 		},
 	},
+
+	// ── network tables: satellite rooms (2026-10 item 244 Phase 5a) ─
+	// What members read when a table hosted in one server seats players from another
+	// through a linked channel there. Plain like the host controls, and shared by the
+	// general-events pack for the same reason. Nothing here quotes anything a member
+	// typed: a satellite relays moves and the table, never chat.
+	arcadeSatellites: {
+		// How a player is named at a network table, in both servers: a mention of a member
+		// of another server does not resolve, so a name stands in for it. The tag is the
+		// server tag the player wears, when they wear one.
+		playerLabel: (name: string, tag: string | null) => (tag ? `${name} [${tag}]` : name),
+		// For a player Discord cannot tell us about any more. Never a raw id.
+		unknownPlayer: "a player",
+		// The first message in a satellite channel, before the table.
+		opener: {
+			title: "🌐 A table from another server",
+			description: (game: string, userIds: readonly string[]) =>
+				[
+					`This channel mirrors a ${game} table hosted in another server.`,
+					"Play your seat with the buttons on the table below. Your moves and the table are shared with the hosting server.",
+					"Anything typed here stays in this server.",
+					"",
+					`Seated from this server: ${userIds.map((userId) => `<@${userId}>`).join(", ")}`,
+				].join("\n"),
+		},
+		// Why a satellite could not be opened. Said to whoever asked for the seat.
+		refusals: {
+			notNetwork: "This table is not open to other servers.",
+			notNetworkGame: (game: string) => `A ${game} table cannot seat players from other servers.`,
+			roomClosed: "That table has already closed.",
+			sameServer: "Players in the hosting server play in its own room.",
+			notSetUp: "This server has no arcade category yet, so it cannot seat players at tables hosted elsewhere. An admin can run /setup to build it.",
+			noPlayers: "Name at least one player to seat.",
+			notMember: "A player named is not a member of this server.",
+			inHostServer: "A player named is a member of the hosting server, so they play in its own room.",
+			removed: "The host removed a player named from this table, so they cannot rejoin it.",
+			missingPermissions: "Dero cannot create a channel in this server's arcade category. An admin needs to grant Manage Channels.",
+			createFailed: "Something went wrong opening the table here. Try again in a moment.",
+		},
+		// A press in a satellite that only the hosting server's room can take.
+		hostRoomOnly: "That control works only in the table's own room, in the hosting server. Here you play your own seat.",
+		// A press in a satellite by a member it does not seat (an admin reading along).
+		notSeatedHere: "Only the players seated from this server can play here.",
+		// Why a seat left a network table without anyone pressing anything. Said in the
+		// room and in every satellite still open.
+		seatOut: {
+			leftServer: (userId: string) => `🚪 <@${userId}> left their server, so their seat leaves the table.`,
+			serverRemovedDero: (userId: string) => `🚪 <@${userId}>'s server removed Dero, so their seat leaves the table.`,
+			channelGone: (userId: string) => `🚪 The channel <@${userId}> played from was deleted, so their seat leaves the table.`,
+		},
+		// The finished room's Rematch, for a table that seated other servers: a rematch
+		// plays on in the host's channel, which the other servers' players cannot see.
+		rematchRefused: "A table shared with other servers has no rematch. Start a new challenge instead.",
+	},
 };

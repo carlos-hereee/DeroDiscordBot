@@ -121,10 +121,21 @@ describe("GameRoom host controls (2026-10 item 244 Phase 4)", () => {
 		expect((GameRoom.schema.path("ratingBand") as unknown as { enumValues: string[] }).enumValues).toEqual([...RATING_BANDS]);
 	});
 
-	it("adds no index, so the one open room per host index is the same index it was", () => {
+	// Phase 4 added no index. Phase 5a (2026-10 item 244) adds exactly the two partial
+	// satellite indexes and nothing else, so the one open room per host index is still
+	// the same index it was.
+	it("adds only the partial satellite indexes, so the one open room per host index is the same index it was", () => {
 		const declared = indexes.map(([fields]) => JSON.stringify(fields)).sort();
 		expect(declared).toEqual(
-			[{ roomId: 1 }, { guildId: 1, status: 1 }, { guildId: 1, hostId: 1 }, { status: 1, archiveAt: 1 }, { guildId: 1, playerIds: 1, endedAt: -1 }]
+			[
+				{ roomId: 1 },
+				{ guildId: 1, status: 1 },
+				{ guildId: 1, hostId: 1 },
+				{ status: 1, archiveAt: 1 },
+				{ guildId: 1, playerIds: 1, endedAt: -1 },
+				{ "satellites.channelId": 1 },
+				{ "satellites.userIds": 1 },
+			]
 				.map((fields) => JSON.stringify(fields))
 				.sort()
 		);
@@ -133,5 +144,36 @@ describe("GameRoom host controls (2026-10 item 244 Phase 4)", () => {
 			partialFilterExpression: { status: { $in: [...NON_TERMINAL_ROOM_STATUSES] } },
 			background: true,
 		});
+	});
+});
+
+describe("GameRoom network tables (2026-10 item 244 Phase 5a)", () => {
+	it("reads an older row as a server room with no satellites", () => {
+		const room = new GameRoom({ guildId: "guild-1", game: "holdem", hostId: "host-1" });
+		expect(room.network).toBe(false);
+		expect([...room.satellites]).toEqual([]);
+	});
+
+	// Partial on network: true, so the thousands of ordinary rooms cost these indexes
+	// nothing, and every satellite query names network: true to reach them.
+	it("indexes the satellite lookups partially, over network rooms only", () => {
+		for (const key of [{ "satellites.channelId": 1 }, { "satellites.userIds": 1 }]) {
+			const index = findIndex(key);
+			expect(index).toBeDefined();
+			expect(index![1].partialFilterExpression).toEqual({ network: true });
+			expect(index![1].unique).toBeUndefined();
+		}
+	});
+
+	it("keeps a satellite as a plain child entry with no id of its own", () => {
+		const room = new GameRoom({
+			guildId: "guild-1",
+			game: "holdem",
+			hostId: "host-1",
+			network: true,
+			satellites: [{ guildId: "guild-2", channelId: "sat-1", userIds: ["remote-1"] }],
+		});
+		const stored = room.toObject().satellites[0] as unknown as Record<string, unknown>;
+		expect(stored).toEqual({ guildId: "guild-2", channelId: "sat-1", userIds: ["remote-1"], tableMessageId: null });
 	});
 });

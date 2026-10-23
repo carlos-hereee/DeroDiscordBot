@@ -13,6 +13,7 @@ import {
 	type RoomSecret,
 	type RoomStatus,
 	type RoomVisibility,
+	type SatelliteRoom,
 } from "@features/game-rooms/roomTypes.js";
 
 // ── GameRoom ──
@@ -26,7 +27,9 @@ import {
 //        purpose: the transcript is the product, the channel is just where it was played.
 // Where: this is the bot's first USER-keyed collection. Every other collection is keyed on a
 //        guild or an event, so guild scoping here is a security boundary (invariant 2) and
-//        every store method below takes guildId and filters on it.
+//        every store method below takes guildId and filters on it. A network table's
+//        satellites (Phase 5a of 2026-10 item 244) live in other guilds, so the satellite
+//        lookups take the REMOTE guild and match it inside the satellite entry instead.
 // How:   ① the row is the single source of restart-survivable truth. The existing games keep
 //        their state in a module-scoped Map, which Railway's SIGTERM destroys on every deploy;
 //        anything a handler needs to resume a room after a redeploy lives HERE, and the only
@@ -89,6 +92,16 @@ export interface IGameRoom {
 	// Hold'em only: while true, a joiner may claim a free seat mid tournament and is
 	// dealt in at the start of the next hand. The host's Open seats and Close seats.
 	seatsOpen: boolean;
+	// ── network tables (2026-10 item 244 Phase 5a) ──
+	// True for a table open to players from other servers. Only a network room may
+	// carry satellites, and its players are named by display name and server tag
+	// rather than by mention, because a mention of a member of another server does not
+	// resolve. False on every older row, which therefore reads as a server room.
+	network: boolean;
+	// One linked channel per remote guild that seats players here, in the order they
+	// opened. Children of THIS row: they hold no transcript, no status and no clock of
+	// their own, so every room invariant stays on the host row (satelliteRooms.ts).
+	satellites: SatelliteRoom[];
 	// Hangman's hidden word and hint stack. Null for duel and rps, which have no secret.
 	secret: RoomSecret | null;
 	moves: RoomMove[];
@@ -120,6 +133,18 @@ const roomMoveSchema = new mongoose.Schema<RoomMove>(
 		// hangman mask, a dice roll, an rps pair) for the future dashboard. It is PERSISTED but
 		// never rendered into Discord, so widening it later needs no migration.
 		meta: { type: mongoose.Schema.Types.Mixed, default: undefined },
+	},
+	{ _id: false }
+);
+
+// A satellite is addressed by its guild and channel, never by an id of its own, so
+// _id is off for the same reason the transcript's is.
+const satelliteRoomSchema = new mongoose.Schema<SatelliteRoom>(
+	{
+		guildId: { type: String, required: true },
+		channelId: { type: String, required: true },
+		userIds: { type: [String], default: [] },
+		tableMessageId: { type: String, default: null },
 	},
 	{ _id: false }
 );
@@ -159,6 +184,10 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		// No index: a lookup always arrives with its roomId, and the arrays stay small.
 		kickedIds: { type: [String], default: [] },
 		seatsOpen: { type: Boolean, default: false },
+		// Off and empty by default, so an older row reads as a server room with no window
+		// anywhere else, and needs no backfill.
+		network: { type: Boolean, default: false },
+		satellites: { type: [satelliteRoomSchema], default: [] },
 		// Mixed rather than a typed subdocument: only hangman populates it, its shape will grow
 		// as other games gain hidden state, and a strict subschema here would silently drop the
 		// next game's fields the way GuildConfig.schedulePaused was dropped before it was declared.
@@ -203,6 +232,20 @@ gameRoomSchema.index({ status: 1, archiveAt: 1 });
 // The future dashboard's "show me my game history in this guild" query. playerIds is an array,
 // so this is a multikey index; endedAt descending gives the newest-first cursor for free.
 gameRoomSchema.index({ guildId: 1, playerIds: 1, endedAt: -1 });
+
+// ── The satellite lookups (2026-10 item 244 Phase 5a) ──
+// What:  a press in a satellite channel finds its host row by that channel, and a member
+//        leaving ANY guild checks whether a satellite seats them. Both run on events that
+//        fire for every guild the bot is in (every satellite click, every departure), so
+//        each must be an index seek rather than a scan of the whole rooms history.
+// How:   PARTIAL on network: true, so only network rooms are indexed at all and the
+//        thousands of ordinary rooms cost these indexes nothing. A query reaches them only
+//        when it names network: true itself, which every satellite query in gameRoomStore
+//        does. Single field multikey indexes rather than one compound over guildId and
+//        channelId: a Discord snowflake is unique across every guild, so the channel or
+//        user id alone is selective, and the guildId check rides the $elemMatch filter.
+gameRoomSchema.index({ "satellites.channelId": 1 }, { partialFilterExpression: { network: true } });
+gameRoomSchema.index({ "satellites.userIds": 1 }, { partialFilterExpression: { network: true } });
 
 // ── Retention NOTE (deliberately no TTL) ──
 // Mirrors PlayerActivity: this collection is the historical record the dashboard reads back,
