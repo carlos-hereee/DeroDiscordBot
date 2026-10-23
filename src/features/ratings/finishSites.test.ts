@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ButtonInteraction, Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findPlayingByGame: vi.fn(), findNonTerminal: vi.fn(), findByRoomId: vi.fn(), update: vi.fn() },
+	gameRoomStore: { findPlayingByGame: vi.fn(), findNonTerminal: vi.fn(), findByRoomId: vi.fn(), update: vi.fn(), updateSecretIf: vi.fn() },
 }));
 vi.mock("@features/game-rooms/roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("@features/game-rooms/roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
@@ -15,7 +15,9 @@ vi.mock("./luckStats.js", () => ({ recordLuckResult: vi.fn() }));
 
 import { sweepBattleshipTurns, sweepIdleRooms } from "@features/game-rooms/roomTurnSweep.js";
 import { runRoomMove } from "@features/game-rooms/roomGames.js";
+import { handleEndTable } from "@features/game-rooms/roomHoldemHandlers.js";
 import { startMatch, type StoredBattleship } from "@features/game-rooms/roomBattleship.js";
+import { act, createTable, dealHand, handInProgress, joinTable, standings, whoActs, type HoldemTable } from "@features/games/holdemTable.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
 import { recordMatchRatings } from "./recordMatchRatings.js";
@@ -26,11 +28,14 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // ── the finish sites ─────────────────────────────────────────────────────
 // What:  the real game room code that ends a match, with the rating and luck
 //        recorders mocked, so what is pinned is the WIRING of 2026-10 item 244: a
-//        Battleship turn timeout forfeit is rated, an abandoned room is not, a
-//        recorder runs only for the call that won finish's claim, and a coin flip
-//        reaches the luck tally.
+//        Battleship turn timeout forfeit is rated, an ended Hold'em table is rated by
+//        its standings, an abandoned room is not, a recorder runs only for the call
+//        that won finish's claim, and a coin flip reaches the luck tally.
 
-const storeMock = gameRoomStore as unknown as Record<"findPlayingByGame" | "findNonTerminal" | "findByRoomId" | "update", ReturnType<typeof vi.fn>>;
+const storeMock = gameRoomStore as unknown as Record<
+	"findPlayingByGame" | "findNonTerminal" | "findByRoomId" | "update" | "updateSecretIf",
+	ReturnType<typeof vi.fn>
+>;
 const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
 const ratingMock = recordMatchRatings as unknown as ReturnType<typeof vi.fn>;
 const luckMock = recordLuckResult as unknown as ReturnType<typeof vi.fn>;
@@ -73,7 +78,88 @@ const forfeitingMatch = (): StoredBattleship => ({
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
+	// The uncontended compare and swap: the caller's read was current, so its write landed.
+	storeMock.updateSecretIf.mockResolvedValue({});
 	finishMock.mockResolvedValue(true);
+});
+
+describe("Hold'em End table", () => {
+	// Three seats that dealt `hands` hands, each folded round to one player, so blinds
+	// move chips between stacks and the standings are not seat order, and nobody busts.
+	function tableAfter(hands: number): HoldemTable {
+		const table = createTable(NOW.getTime());
+		for (const userId of ["p0", "p1", "p2"]) joinTable(table, userId, userId.toUpperCase());
+		table.status = "playing";
+		const rng = seededRng(5);
+		for (let hand = 0; hand < hands; hand++) {
+			dealHand(table, rng);
+			while (handInProgress(table)) act(table, whoActs(table)!, "fold", 0, rng);
+		}
+		table.boardMessageId = null;
+		return table;
+	}
+
+	const holdemRoom = (table: HoldemTable): IGameRoom =>
+		({
+			roomId: "room-he",
+			guildId: "guild-1",
+			game: "holdem",
+			hostId: "p0",
+			status: "playing",
+			playerIds: table.seats.map((seat) => seat.userId),
+			channelId: "ch-he",
+			secret: table,
+		}) as unknown as IGameRoom;
+
+	const hostPress = (): ButtonInteraction =>
+		({
+			guildId: "guild-1",
+			user: { id: "p0" },
+			client: { channels: { fetch: vi.fn().mockResolvedValue(null) } },
+			reply: vi.fn().mockResolvedValue(undefined),
+			deferUpdate: vi.fn().mockResolvedValue(undefined),
+		}) as unknown as ButtonInteraction;
+
+	const endedTable = (): HoldemTable => storeMock.updateSecretIf.mock.calls[0][3] as HoldemTable;
+
+	it("rates a table ended after 12 hands by its standings, the chip leader first", async () => {
+		await handleEndTable(hostPress(), holdemRoom(tableAfter(12)));
+
+		expect(ratingMock).toHaveBeenCalledOnce();
+		const [room, order, excluded, options] = ratingMock.mock.calls[0];
+		expect(room).toMatchObject({ roomId: "room-he", game: "holdem" });
+		expect(order).toEqual(standings(endedTable()));
+		expect(order).toHaveLength(3);
+		expect(order[0]).toBe(endedTable().winnerId);
+		expect(excluded).toEqual([]);
+		expect(options).toEqual({ rated: true });
+	});
+
+	it("records a table ended after 3 hands unrated, like a short finished session", async () => {
+		await handleEndTable(hostPress(), holdemRoom(tableAfter(3)));
+
+		expect(ratingMock).toHaveBeenCalledOnce();
+		expect(ratingMock.mock.calls[0][3]).toEqual({ rated: false });
+	});
+
+	it("records nothing for a table ended before its first deal", async () => {
+		const table = createTable(NOW.getTime());
+		joinTable(table, "p0", "P0");
+		joinTable(table, "p1", "P1");
+
+		await handleEndTable(hostPress(), holdemRoom(table));
+
+		expect(finishMock).toHaveBeenCalledOnce();
+		expect(ratingMock).not.toHaveBeenCalled();
+	});
+
+	it("rates nothing when another path already finished the room", async () => {
+		finishMock.mockResolvedValue(false);
+
+		await handleEndTable(hostPress(), holdemRoom(tableAfter(12)));
+
+		expect(ratingMock).not.toHaveBeenCalled();
+	});
 });
 
 describe("Battleship turn timeout forfeit", () => {

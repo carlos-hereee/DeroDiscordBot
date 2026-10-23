@@ -489,6 +489,11 @@ export async function handleLeaveTable(interaction: ButtonInteraction, room: IGa
 // played out to its last bust; an ended table was not, and paying its standings
 // would turn "deal one hand, press End" into a prize that skips the game. The hands
 // that were played already paid their per hand XP as they settled.
+//
+// The RATING is different, by owner decision 2026-10-23 (2026-10 item 244): an ended
+// table is rated exactly like a finished session, ranked by its standings, and the
+// same 10 hand floor that keeps "deal, bust, repeat" unrated keeps "deal one hand,
+// press End" unrated too.
 export async function handleEndTable(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const table = tableOf(room);
 	if (!table || table.status === "finished") {
@@ -518,7 +523,11 @@ export async function handleEndTable(interaction: ButtonInteraction, room: IGame
 	// Redrawn before the finish so the board loses its controls; the result card that
 	// finish posts is the room's last word.
 	await redraw(interaction.client, room, table);
-	await roomLifecycle.finish(interaction.client, room, { winnerId: table.winnerId });
+	const claimed = await roomLifecycle.finish(interaction.client, room, { winnerId: table.winnerId });
+	// Ranked by the standings endTable answered: chips first, then the reverse bust
+	// order. Only the press that won finish's claim records it, and a table ended before
+	// its first deal records nothing, because no match was played. Fire and forget.
+	if (claimed && table.handNumber > 0) void recordMatchRatings(room, order, [], { rated: isRatedHoldemSession(table.handNumber) });
 }
 
 // ── the private peek ──────────────────────────────────────────────────
