@@ -1,4 +1,6 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type ColorResolvable } from "discord.js";
+import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type ColorResolvable } from "discord.js";
+import { basename } from "node:path";
+import { gameAssetPath, type GameAssetKey } from "@features/games/gamesAssets.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -23,14 +25,38 @@ export function roomOpenerEmbed(
 	hostId: string,
 	playerIds: string[],
 	visibility: RoomVisibility,
-	inviteCode?: string | null
+	inviteCode?: string | null,
+	logoRef?: string
 ): EmbedBuilder {
 	const description = gameRoomsCopy.opener.description(hostId, playerIds, visibility, inviteCode);
 	// Monopoly's rules ride the pinned opener because its board message, edited
 	// every move, has no room left for them, and a match that runs for days is
 	// joined mid way by people who never saw the start.
 	const body = game === "monopoly" ? [description, "", gameRoomsCopy.monopoly.openerRules()].join("\n") : description;
-	return infoEmbed(gameRoomsCopy.opener.title(game), body, COLORS.ARCADE as ColorResolvable);
+	const embed = infoEmbed(gameRoomsCopy.opener.title(game), body, COLORS.ARCADE as ColorResolvable);
+	return logoRef ? embed.setThumbnail(logoRef) : embed;
+}
+
+// The game's logo for its room opener (2026-10 item 243 Phase 3b), one of the two
+// room messages allowed a file (R8). Only games with a logo in the art are listed.
+const OPENER_LOGOS: Partial<Record<GameSlug, GameAssetKey>> = {
+	hangman: "hangmanLogoStacked",
+	"solo-hangman": "hangmanLogoStacked",
+	battleship: "battleshipLogo",
+};
+
+/**
+ * The opener's logo as an attachment plus the `attachment://` ref for the
+ * embed's thumbnail, or null for a game with no logo or a logo not on disk. Unlike
+ * resolveGameAsset it never substitutes the Dero avatar: an opener without a logo
+ * stays the plain card it always was.
+ */
+export function roomOpenerLogo(game: GameSlug): { attachment: AttachmentBuilder; ref: string } | null {
+	const key = OPENER_LOGOS[game];
+	const path = key ? gameAssetPath(key) : null;
+	if (!path) return null;
+	const name = `opener-${basename(path)}`;
+	return { attachment: new AttachmentBuilder(path, { name }), ref: `attachment://${name}` };
 }
 
 // The card that closes a room. `winnerId` null covers every drawn, forfeited or

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { DERO_IMAGE_REF } from "@base/copy/brand.js";
-import { GAME_ASSET_FILES, gameAssetPath, resolveGameAsset, hangmanStageKey, missingGameAssets, type GameAssetKey } from "./gamesAssets.js";
+import { GAME_ASSET_FILES, gameAssetPath, resolveGameAsset, hangmanStageKey, missingGameAssets, missingPlayingCards, playingCardFile, type GameAssetKey } from "./gamesAssets.js";
 
 // ── gamesAssets ────────────────────────────────────────────────────────────
 // The manifest is the owner's art checklist as much as it is code, so these
@@ -34,6 +34,21 @@ describe("the asset manifest", () => {
 		const monopoly = (Object.keys(GAME_ASSET_FILES) as GameAssetKey[]).filter((key) => key.startsWith("monopoly"));
 		expect(monopoly).toHaveLength(14);
 		for (const key of monopoly) expect(GAME_ASSET_FILES[key]).toMatch(/^monopoly\/[a-z0-9-]+\.png$/);
+	});
+});
+
+describe("the owner's arcade art (2026-10 item 243 Phase 3b)", () => {
+	it("has every hangman, battleship and card back file the manifest declares on disk", () => {
+		// These slots were filled by the art drop, so a missing one is a lost file,
+		// not art still owed: the cards would quietly fall back to their drawings.
+		const dropped = (Object.keys(GAME_ASSET_FILES) as GameAssetKey[]).filter((key) => /^(hangman|battleship|cardBack)/.test(key));
+		expect(missingGameAssets(dropped)).toEqual([]);
+	});
+
+	it("has all 52 faces of the Dero deck on disk, named by suit and rank", () => {
+		expect(playingCardFile("A", "spade")).toBe("cards/spades-a.png");
+		expect(playingCardFile("10", "heart")).toBe("cards/hearts-10.png");
+		expect(missingPlayingCards()).toEqual([]);
 	});
 });
 

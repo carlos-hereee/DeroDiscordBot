@@ -1,11 +1,12 @@
 import { AttachmentBuilder, type ColorResolvable } from "discord.js";
 import { COLORS } from "@base/copy/brand.js";
 import { canvasModule, type CanvasModule, type Image, type SKRSContext2D } from "@features/renderer/canvasModule.js";
-import { canvasColor, drawCardBackground, drawPanel, drawPill, drawText, renderCard, type RenderPayload } from "@features/renderer/index.js";
+import { canvasColor, drawCardBackground, drawPanel, drawPill, drawText, renderCard, type DrawOutcome, type Rect, type RenderPayload } from "@features/renderer/index.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { BOARD, BOARD_SIZE, MAX_SEATS, findOwnableTile, ownableTileName, type ColorGroup, type TileId } from "./monopolyBoard.js";
 import type { AuctionState, MonopolyState, TradeProposal } from "./monopolyState.js";
 import { GAME_ASSET_FILES, gameAssetPath, missingGameAssets, type GameAssetKey, type ResolvedGameAsset } from "./gamesAssets.js";
+import { clearGameArtCache, loadGameArt } from "./gamesArt.js";
 
 // ── monopolyRenderer ─────────────────────────────────────────────────
 // What:  draws the Monopoly board as one PNG: the owner's board art with every
@@ -137,9 +138,6 @@ const REQUIRED_ART: readonly GameAssetKey[] = ["monopolyBoardBase", ...TOKEN_ART
 // listed so a slot added to gamesAssets is reported without touching this file.
 const MONOPOLY_ART = (Object.keys(GAME_ASSET_FILES) as GameAssetKey[]).filter((key) => key.startsWith("monopoly"));
 
-// Decoded once per process. A deploy restarts the process, which is also how new
-// art reaches Railway, so nothing here ever needs to notice a file changing.
-const artCache = new Map<GameAssetKey, Image>();
 
 // ── public surface ────────────────────────────────────────────────────
 /** True when the canvas library loaded and every piece of art the composite needs is on disk. */
@@ -164,7 +162,7 @@ export async function renderBoard(state: MonopolyState, now: number = Date.now()
 
 /** Forget every decoded image, so a test can swap the art or the canvas mock between cases. */
 export function clearRenderCache(): void {
-	artCache.clear();
+	clearGameArtCache();
 }
 
 /** One boot line: whether boards render as images, and which Monopoly art is still owed. */
@@ -179,7 +177,7 @@ export function logMonopolyRendererStatus(): void {
 // ── composite ─────────────────────────────────────────────────────────
 async function composeBoard(canvas: CanvasModule, state: MonopolyState, now: number): Promise<ResolvedGameAsset> {
 	// ① The base, at the art's own size, so nothing is resampled but the pieces.
-	const board = await loadArt(canvas, "monopolyBoardBase");
+	const board = await loadArt("monopolyBoardBase");
 	const surface = canvas.createCanvas(board.width, board.height);
 	const context = surface.getContext("2d");
 	context.drawImage(board, 0, 0);
@@ -187,8 +185,8 @@ async function composeBoard(canvas: CanvasModule, state: MonopolyState, now: num
 
 	// ② then ③: buildings before tokens, so a token standing on a built lot is
 	// drawn over its houses rather than under them.
-	await drawBuildings(canvas, context, state, scale);
-	await drawTokens(canvas, context, state, scale);
+	await drawBuildings(context, state, scale);
+	await drawTokens(context, state, scale);
 
 	// ④ The name carries the time so each redraw is a new upload with its own
 	// ref, and an edit can never point an embed at the previous move's picture.
@@ -196,7 +194,7 @@ async function composeBoard(canvas: CanvasModule, state: MonopolyState, now: num
 	return { attachment: new AttachmentBuilder(await surface.encode("png"), { name }), ref: `attachment://${name}` };
 }
 
-async function drawBuildings(canvas: CanvasModule, context: SKRSContext2D, state: MonopolyState, scale: number): Promise<void> {
+async function drawBuildings(context: SKRSContext2D, state: MonopolyState, scale: number): Promise<void> {
 	for (const [position, tile] of BOARD.entries()) {
 		if (tile.kind !== "property") continue;
 		const lot = state.properties[tile.id];
@@ -206,12 +204,12 @@ async function drawBuildings(canvas: CanvasModule, context: SKRSContext2D, state
 		if (lot.hotel) {
 			// A hotel replaces the four houses it was built from (the engine hands
 			// them back to the bank), so it is drawn alone.
-			drawCentred(context, await loadArt(canvas, "monopolyHotel"), scalePoint(strip, scale), HOTEL_SIZE * scale);
+			drawCentred(context, await loadArt("monopolyHotel"), scalePoint(strip, scale), HOTEL_SIZE * scale);
 			continue;
 		}
 		if (lot.houses === 0) continue;
 
-		const house = await loadArt(canvas, "monopolyHouse");
+		const house = await loadArt("monopolyHouse");
 		for (let index = 0; index < lot.houses; index++) {
 			// Centred as a group along the edge: the first house sits half the row's
 			// width before the strip's centre, each next one a step further on.
@@ -221,9 +219,9 @@ async function drawBuildings(canvas: CanvasModule, context: SKRSContext2D, state
 	}
 }
 
-async function drawTokens(canvas: CanvasModule, context: SKRSContext2D, state: MonopolyState, scale: number): Promise<void> {
+async function drawTokens(context: SKRSContext2D, state: MonopolyState, scale: number): Promise<void> {
 	// Loaded only when someone is jailed, because the stamp is optional art.
-	const jailStamp = state.seats.some((seat) => seat.inJail && !seat.bankrupt) ? await loadOptionalArt(canvas, "monopolyJailStamp") : null;
+	const jailStamp = state.seats.some((seat) => seat.inJail && !seat.bankrupt) ? await loadOptionalArt("monopolyJailStamp") : null;
 
 	for (const [seatIndex, seat] of state.seats.entries()) {
 		// A bankrupt seat has left the board; the seat list still names it. The
@@ -232,7 +230,7 @@ async function drawTokens(canvas: CanvasModule, context: SKRSContext2D, state: M
 		if (seat.bankrupt || seatIndex >= MAX_SEATS) continue;
 
 		const centre = scalePoint(tokenCentre(seat.position, seatIndex), scale);
-		drawCentred(context, await loadArt(canvas, TOKEN_ART[seatIndex]), centre, TOKEN_SIZE * scale);
+		drawCentred(context, await loadArt(TOKEN_ART[seatIndex]), centre, TOKEN_SIZE * scale);
 		if (seat.inJail && jailStamp) drawCentred(context, jailStamp, centre, JAIL_STAMP_SIZE * scale);
 	}
 }
@@ -270,20 +268,13 @@ function drawCentred(context: SKRSContext2D, image: Image, [x, y]: Point, size: 
 }
 
 // ── art loading ───────────────────────────────────────────────────────
-async function loadOptionalArt(canvas: CanvasModule, key: GameAssetKey): Promise<Image | null> {
-	const cached = artCache.get(key);
-	if (cached) return cached;
-	const path = gameAssetPath(key);
-	if (!path) return null;
-	const image = await canvas.loadImage(path);
-	artCache.set(key, image);
-	return image;
-}
+// Decoded once per process by gamesArt, the loader every game card shares.
+const loadOptionalArt = (key: GameAssetKey): Promise<Image | null> => loadGameArt(key);
 
 // Required art. isRendererAvailable checked it is on disk, so a miss here means
 // the file vanished mid render; the throw lands in renderBoard's catch.
-async function loadArt(canvas: CanvasModule, key: GameAssetKey): Promise<Image> {
-	const image = await loadOptionalArt(canvas, key);
+async function loadArt(key: GameAssetKey): Promise<Image> {
+	const image = await loadOptionalArt(key);
 	if (!image) throw new Error(`Monopoly art ${GAME_ASSET_FILES[key]} disappeared from assets/games during a render`);
 	return image;
 }
@@ -376,13 +367,21 @@ export function monopolyWinnerView(state: MonopolyState, names: ReadonlyMap<stri
 }
 
 // Bump whenever a card's drawing changes, or members keep seeing cached cards.
-const MONOPOLY_CARD_VERSION = 1;
+const MONOPOLY_CARD_VERSION = 2;
 const CARD_WIDTH = 960;
 const CARD_PADDING = 40;
 const TRADE_CARD_HEIGHT = 440;
 const AUCTION_CARD_HEIGHT = 340;
 const STANDING_ROW_HEIGHT = 64;
 const WINNER_HEADER_HEIGHT = 200;
+// With the owner's winner.png on disk the header is the banner, then the name.
+const BANNER_BOX: Rect = { x: CARD_PADDING, y: 24, width: CARD_WIDTH - CARD_PADDING * 2, height: 300 };
+const WINNER_HEADER_WITH_BANNER = 404;
+// winner.png and bankrupt.png were exported with a white strip along the top and a
+// purple line down the left edge (about six and two pixels); this many pixels are
+// cropped from every side of both so neither strip shows on the card.
+const BANNER_EDGE_CROP = 8;
+const BANKRUPT_BADGE = 44;
 // A side lists this many items before it says how many more there are.
 const MAX_TRADE_ITEMS = 6;
 const TRADE_ITEM_HEIGHT = 44;
@@ -434,12 +433,16 @@ export function renderAuctionCard(view: MonopolyAuctionView): Promise<RenderPayl
 
 /** The winner card for a finished match's result, or null when the result card should post without it. Never throws. */
 export function renderWinnerCard(view: MonopolyWinnerView): Promise<RenderPayload | null> {
+	// The layout is chosen before the draw, because the banner makes the card
+	// taller and the height is fixed when the canvas is made.
+	const withBanner = gameAssetPath("monopolyWinner") !== null;
+	const header = withBanner ? WINNER_HEADER_WITH_BANNER : WINNER_HEADER_HEIGHT;
 	return renderCard({
 		kind: "monopoly-winner",
 		version: MONOPOLY_CARD_VERSION,
-		input: view,
+		input: { ...view, withBanner },
 		width: CARD_WIDTH,
-		height: WINNER_HEADER_HEIGHT + view.standings.length * STANDING_ROW_HEIGHT + CARD_PADDING,
+		height: header + view.standings.length * STANDING_ROW_HEIGHT + CARD_PADDING,
 		draw: drawWinnerCard,
 	});
 }
@@ -531,31 +534,62 @@ function drawAuctionCard(context: SKRSContext2D, view: MonopolyAuctionView): voi
 }
 
 // ── winner ──
-function drawWinnerCard(context: SKRSContext2D, view: MonopolyWinnerView): void {
+async function drawWinnerCard(context: SKRSContext2D, view: MonopolyWinnerView & { withBanner: boolean }): Promise<DrawOutcome> {
 	drawCardBackground(context, COLORS.MONOPOLY_YELLOW, CARD_WIDTH / 2, 0, CARD_WIDTH * 0.6);
-	const copy = gameRoomsCopy.monopoly;
-	drawPill(context, {
+	const banner = view.withBanner ? await loadGameArt("monopolyWinner") : null;
+	const bankrupt = view.standings.some((standing) => standing.bankrupt) ? await loadGameArt("monopolyBankrupt") : null;
+	if (banner) drawBannerArt(context, banner, BANNER_BOX);
+	else drawWinnerPill(context);
+	const nameY = banner ? BANNER_BOX.y + BANNER_BOX.height + 40 : 140;
+	drawText(context, view.winner ?? gameRoomsCopy.monopoly.cardNoWinner, {
 		x: CARD_PADDING,
-		y: CARD_PADDING,
-		width: 180,
-		height: 44,
-		fill: canvasColor(COLORS.MONOPOLY_YELLOW),
-		label: copy.cardWinner,
-		labelColor: canvasColor(COLORS.CARD_BACKGROUND),
-	});
-	drawText(context, view.winner ?? copy.cardNoWinner, {
-		x: CARD_PADDING,
-		y: 140,
+		y: nameY,
 		size: 44,
 		weight: "bold",
 		color: canvasColor(COLORS.CARD_TEXT),
 		baseline: "middle",
 		maxWidth: CARD_WIDTH - CARD_PADDING * 2,
 	});
-	view.standings.forEach((standing, index) => drawStanding(context, standing, WINNER_HEADER_HEIGHT + index * STANDING_ROW_HEIGHT));
+	const top = banner ? WINNER_HEADER_WITH_BANNER : WINNER_HEADER_HEIGHT;
+	view.standings.forEach((standing, index) => drawStanding(context, standing, top + index * STANDING_ROW_HEIGHT, bankrupt));
+	// Art the layout expected but could not load, or a bankrupt seat drawn without
+	// its badge, is a stand in, so the card is not cached.
+	const bankruptBadgeMissing = view.standings.some((standing) => standing.bankrupt) && !bankrupt;
+	return (view.withBanner && !banner) || bankruptBadgeMissing ? { cacheable: false } : undefined;
 }
 
-function drawStanding(context: SKRSContext2D, standing: MonopolyStandingView, top: number): void {
+// The owner's art inside `box` with its edge strips cropped, kept to its shape and
+// centred, with rounded corners.
+function drawBannerArt(context: SKRSContext2D, art: Image, box: Rect): void {
+	const sourceWidth = art.width - BANNER_EDGE_CROP * 2;
+	const sourceHeight = art.height - BANNER_EDGE_CROP * 2;
+	const scale = Math.min(box.width / sourceWidth, box.height / sourceHeight);
+	const width = sourceWidth * scale;
+	const height = sourceHeight * scale;
+	const x = box.x + (box.width - width) / 2;
+	const y = box.y + (box.height - height) / 2;
+	context.save();
+	context.beginPath();
+	context.roundRect(x, y, width, height, 18);
+	context.clip();
+	context.drawImage(art, BANNER_EDGE_CROP, BANNER_EDGE_CROP, sourceWidth, sourceHeight, x, y, width, height);
+	context.restore();
+}
+
+function drawWinnerPill(context: SKRSContext2D): void {
+	drawPill(context, {
+		x: CARD_PADDING,
+		y: CARD_PADDING,
+		width: 180,
+		height: 44,
+		fill: canvasColor(COLORS.MONOPOLY_YELLOW),
+		label: gameRoomsCopy.monopoly.cardWinner,
+		labelColor: canvasColor(COLORS.CARD_BACKGROUND),
+	});
+}
+
+// A bankrupt seat wears the owner's sympathetic bankrupt Dero beside its name.
+function drawStanding(context: SKRSContext2D, standing: MonopolyStandingView, top: number, bankruptBadge: Image | null): void {
 	const copy = gameRoomsCopy.monopoly;
 	const height = STANDING_ROW_HEIGHT - 10;
 	drawPanel(context, {
@@ -568,7 +602,12 @@ function drawStanding(context: SKRSContext2D, standing: MonopolyStandingView, to
 	});
 	const middle = top + height / 2;
 	const ink = canvasColor(standing.bankrupt ? COLORS.CARD_TEXT_MUTED : COLORS.CARD_TEXT);
-	drawText(context, standing.name, { x: CARD_PADDING + 24, y: middle, size: 24, weight: "bold", color: ink, baseline: "middle", maxWidth: 420 });
+	const badge = standing.bankrupt ? bankruptBadge : null;
+	if (badge) {
+		drawBannerArt(context, badge, { x: CARD_PADDING + 12, y: middle - BANKRUPT_BADGE / 2, width: BANKRUPT_BADGE, height: BANKRUPT_BADGE });
+	}
+	const nameX = CARD_PADDING + (badge ? 24 + BANKRUPT_BADGE : 24);
+	drawText(context, standing.name, { x: nameX, y: middle, size: 24, weight: "bold", color: ink, baseline: "middle", maxWidth: 420 });
 	const holdings = standing.bankrupt ? copy.cardBankrupt : `${copy.cardChips(standing.chips)}   ${copy.cardLots(standing.lots)}`;
 	drawText(context, holdings, { x: CARD_WIDTH - CARD_PADDING - 24, y: middle, size: 22, color: ink, align: "right", baseline: "middle" });
 }

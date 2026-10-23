@@ -9,6 +9,7 @@ import {
 	drawText,
 	renderCard,
 	type CardSuit,
+	type DrawOutcome,
 	type PlayingCardFace,
 	type RenderPayload,
 } from "@features/renderer/index.js";
@@ -16,11 +17,13 @@ import type { SKRSContext2D } from "@features/renderer/canvasModule.js";
 import { gamesCopy } from "./gamesCopy.js";
 import { renderTotal } from "./gamesEmbeds.js";
 import { blackjackHandXp } from "./gameXp.js";
+import { loadDeckFaces, type DeckFaces } from "./gamesArt.js";
 import type { BlackjackTable, Card, HandOutcome, SeatResult, Suit } from "./blackjackState.js";
 
 // ── blackjackRenderer ────────────────────────────────────────────────
-// The blackjack result card (2026-10 item 243 Phase 3): the dealer's hand, then
-// one row per player hand with its cards, its total, how it came out, and the
+// The blackjack result card (2026-10 item 243 Phases 3 and 3b): the dealer's
+// hand, then one row per player hand with its cards (the Dero deck's faces, or a
+// drawn face for one whose file is missing), its total, how it came out, and the
 // XP that hand paid. blackjackHandler draws it once, when the table settles,
 // through withRenderFallback, so the result embed posts unchanged whenever the
 // card does not draw. It renders only a SETTLED table: before the dealer plays
@@ -74,7 +77,7 @@ export function blackjackResultView(table: BlackjackTable, results: SeatResult[]
 }
 
 // Bump whenever the drawing changes, or members keep seeing cached cards.
-const BLACKJACK_CARD_VERSION = 1;
+const BLACKJACK_CARD_VERSION = 2;
 const CARD_WIDTH = 960;
 const PADDING = 32;
 const ROW_HEIGHT = 136;
@@ -83,9 +86,12 @@ const ROW_GAP = 12;
 // how many more there are and the embed under it still lists every hand.
 const MAX_HAND_ROWS = 6;
 const MORE_LINE_HEIGHT = 44;
-const PLAYING_CARD_WIDTH = 68;
-const PLAYING_CARD_HEIGHT = 96;
-const PLAYING_CARD_GAP = 10;
+// The Dero deck's faces are about twice as tall as they are wide (roughly 96 by
+// 204), so a card is drawn at that shape rather than the usual five by seven,
+// which would crop the art. The drawn stand in face takes the same shape.
+const PLAYING_CARD_HEIGHT = 118;
+const PLAYING_CARD_WIDTH = Math.round(PLAYING_CARD_HEIGHT * (96 / 204));
+const PLAYING_CARD_GAP = 8;
 const NAME_X = PADDING + 24;
 const CARDS_X = 300;
 const CARDS_RIGHT = 720;
@@ -123,14 +129,17 @@ export function renderBlackjackResultCard(view: BlackjackResultView): Promise<Re
 	});
 }
 
-function drawBlackjackResultCard(context: SKRSContext2D, view: BlackjackResultView): void {
+async function drawBlackjackResultCard(context: SKRSContext2D, view: BlackjackResultView): Promise<DrawOutcome> {
+	const deck = await loadDeckFaces([...view.dealer.cards, ...view.hands.flatMap((hand) => hand.cards)]);
 	drawCardBackground(context, COLORS.GAME_BLACKJACK, CARD_WIDTH / 2, 0, CARD_WIDTH * 0.6);
-	drawDealerRow(context, view.dealer);
+	drawDealerRow(context, view.dealer, deck);
 	const shown = view.hands.slice(0, MAX_HAND_ROWS);
-	shown.forEach((hand, index) => drawHandRow(context, hand, PADDING + (index + 1) * (ROW_HEIGHT + ROW_GAP)));
+	shown.forEach((hand, index) => drawHandRow(context, hand, PADDING + (index + 1) * (ROW_HEIGHT + ROW_GAP), deck));
 
+	// A face drawn without its deck art is a stand in, so the card is not cached.
+	const outcome: DrawOutcome = deck.allPresent ? undefined : { cacheable: false };
 	const hidden = view.hands.length - shown.length;
-	if (hidden <= 0) return;
+	if (hidden <= 0) return outcome;
 	drawText(context, gamesCopy.blackjack.cardMoreHands(hidden), {
 		x: CARD_WIDTH - PADDING,
 		y: context.canvas.height - PADDING,
@@ -138,9 +147,10 @@ function drawBlackjackResultCard(context: SKRSContext2D, view: BlackjackResultVi
 		color: canvasColor(COLORS.CARD_TEXT_MUTED),
 		align: "right",
 	});
+	return outcome;
 }
 
-function drawDealerRow(context: SKRSContext2D, dealer: BlackjackResultView["dealer"]): void {
+function drawDealerRow(context: SKRSContext2D, dealer: BlackjackResultView["dealer"], deck: DeckFaces): void {
 	const top = PADDING;
 	drawText(context, gamesCopy.blackjack.cardDealer, {
 		x: NAME_X,
@@ -157,10 +167,10 @@ function drawDealerRow(context: SKRSContext2D, dealer: BlackjackResultView["deal
 		color: canvasColor(COLORS.CARD_TEXT_SECONDARY),
 		baseline: "middle",
 	});
-	drawHand(context, dealer.cards, top);
+	drawHand(context, dealer.cards, top, deck);
 }
 
-function drawHandRow(context: SKRSContext2D, hand: BlackjackHandRow, top: number): void {
+function drawHandRow(context: SKRSContext2D, hand: BlackjackHandRow, top: number, deck: DeckFaces): void {
 	drawPanel(context, { x: PADDING, y: top, width: CARD_WIDTH - PADDING * 2, height: ROW_HEIGHT, radius: 18, fill: canvasColor(COLORS.CARD_PANEL) });
 	const middle = top + ROW_HEIGHT / 2;
 	drawText(context, hand.name, {
@@ -181,7 +191,7 @@ function drawHandRow(context: SKRSContext2D, hand: BlackjackHandRow, top: number
 		baseline: "middle",
 		maxWidth: CARDS_X - NAME_X - 16,
 	});
-	drawHand(context, hand.cards, top);
+	drawHand(context, hand.cards, top, deck);
 	drawPill(context, {
 		x: OUTCOME_X,
 		y: middle - 34,
@@ -205,12 +215,12 @@ function drawHandRow(context: SKRSContext2D, hand: BlackjackHandRow, top: number
 // The cards sit side by side, and squeeze into the space they have when a hand
 // runs long (a seven card twenty one), overlapping rather than spilling into the
 // outcome column.
-function drawHand(context: SKRSContext2D, cards: PlayingCardFace[], rowTop: number): void {
+function drawHand(context: SKRSContext2D, cards: PlayingCardFace[], rowTop: number, deck: DeckFaces): void {
 	const span = CARDS_RIGHT - CARDS_X;
 	const naturalStep = PLAYING_CARD_WIDTH + PLAYING_CARD_GAP;
 	const step = cards.length > 1 ? Math.min(naturalStep, (span - PLAYING_CARD_WIDTH) / (cards.length - 1)) : naturalStep;
 	const y = rowTop + (ROW_HEIGHT - PLAYING_CARD_HEIGHT) / 2;
 	cards.forEach((card, index) => {
-		drawPlayingCard(context, { x: CARDS_X + index * step, y, width: PLAYING_CARD_WIDTH, height: PLAYING_CARD_HEIGHT, rank: card.rank, suit: card.suit });
+		drawPlayingCard(context, { x: CARDS_X + index * step, y, width: PLAYING_CARD_WIDTH, height: PLAYING_CARD_HEIGHT, rank: card.rank, suit: card.suit, art: deck.faceFor(card) });
 	});
 }

@@ -57,11 +57,19 @@ export const GAME_ASSET_FILES = {
 	rpsScissors: "rps/scissors.png",
 	rpsTie: "rps/tie.png",
 
-	// ── hangman (Phase 4, declared, not yet rendered) ──
+	// ── hangman (the owner's art, 2026-10 item 243 Phase 3b) ──
 	// Seven gallows frames: stage 0 is the empty gallows, stage 6 is a full
 	// figure and a lost round. Classic hangman allows six wrong guesses, so the
 	// frame index IS the wrong guess count and hangmanStageKey below maps one to
-	// the other without arithmetic at the call site.
+	// the other without arithmetic at the call site. Stages 1 to 5 are the figure
+	// alone under its rope, drawn at another scale than the gallows, so each frame
+	// is shown on its own rather than layered on stage 0.
+	//
+	// Prepared by companyuno-growth/workspace-tools/prepare-arcade-art.mjs, which
+	// clears the light outline each file was cut out with. Also on disk and NOT
+	// declared, because nothing draws them: panel.png and keyboard-*.png (fixed
+	// pictures whose alphabets miss letters, so the card builds its keyboard from
+	// the tiles instead) and icon.png.
 	hangmanStage0: "hangman/stage-0.png",
 	hangmanStage1: "hangman/stage-1.png",
 	hangmanStage2: "hangman/stage-2.png",
@@ -69,15 +77,52 @@ export const GAME_ASSET_FILES = {
 	hangmanStage4: "hangman/stage-4.png",
 	hangmanStage5: "hangman/stage-5.png",
 	hangmanStage6: "hangman/stage-6.png",
+	// The ending banners: "YOU WIN" for a solved word, "GAME OVER" for the rest.
 	hangmanWin: "hangman/win.png",
 	hangmanLose: "hangman/lose.png",
+	hangmanBackground: "hangman/background.png",
+	hangmanLogo: "hangman/logo-horizontal.png",
+	// The room opener's art, the one other room message allowed a file (R8).
+	hangmanLogoStacked: "hangman/logo-stacked.png",
+	hangmanDeroIdle: "hangman/dero-idle.png",
+	hangmanDeroThinking: "hangman/dero-thinking.png",
+	hangmanDeroWin: "hangman/dero-win.png",
+	hangmanDeroLose: "hangman/dero-lose.png",
+	// Letter tiles. Only the blank tile is truly empty; the other three carry a
+	// sample "A", which the card paints over before printing the real letter.
+	hangmanTileBlank: "hangman/tile-blank.png",
+	hangmanTileDefault: "hangman/tile-default.png",
+	hangmanTileCorrect: "hangman/tile-correct.png",
+	hangmanTileWrong: "hangman/tile-wrong.png",
 
-	// ── monopoly board renderer (2026-10 item 241 Phase 5a, declared, not yet rendered) ──
+	// ── battleship (the owner's art, 2026-10 item 243 Phase 3b) ──
+	// Trimmed to the art and scaled down by prepare-arcade-art.mjs. The board's
+	// grid is baked in; battleshipRenderer holds where its cells were measured.
+	// Every ship is drawn bow up and is turned for a ship laid across a row.
+	battleshipBoard: "battleship/board.png",
+	battleshipLogo: "battleship/logo.png",
+	battleshipAdmiral: "battleship/admiral.png",
+	battleshipCarrier: "battleship/carrier.png",
+	battleshipBattleship: "battleship/battleship.png",
+	battleshipCruiser: "battleship/cruiser.png",
+	battleshipSubmarine: "battleship/submarine.png",
+	battleshipDestroyer: "battleship/destroyer.png",
+	battleshipHit: "battleship/hit.png",
+	battleshipMiss: "battleship/miss.png",
+
+	// ── the Dero deck's back (2026-10 item 243 Phase 3b) ──
+	// The 52 faces are resolved by playingCardAssetPath below rather than listed
+	// one by one. Also on disk and NOT declared: the two jokers and poster-back.png,
+	// since no game here deals a joker.
+	cardBack: "cards/back.png",
+
+	// ── monopoly (2026-10 item 241 Phase 5a, and the winner card of item 243) ──
 	// The board base, the six seat tokens, the house and the hotel are what
 	// monopolyRenderer composites; until every one of those is on disk the board
 	// stays the text map. The jail stamp is drawn when present and skipped when not.
-	// The card backs and the winner and bankrupt banners are declared now so the
-	// owner's art drop has a home; nothing renders them until Phase 5b.
+	// The winner banner heads the winner card and the bankrupt Dero badges each
+	// bankrupt seat on it. The Chance and Community Chest card backs are on disk but
+	// nothing renders them yet.
 	monopolyBoardBase: "monopoly/board-base.png",
 	monopolyToken1: "monopoly/token-1.png",
 	monopolyToken2: "monopoly/token-2.png",
@@ -121,6 +166,31 @@ export function hangmanStageKey(wrongGuesses: number): GameAssetKey {
 export function gameAssetPath(key: GameAssetKey): string | null {
 	const absolute = join(process.cwd(), "assets", GAMES_ASSET_DIR, GAME_ASSET_FILES[key]);
 	return existsSync(absolute) ? absolute : null;
+}
+
+// ── the Dero deck's faces ─────────────────────────────────────────────
+// 52 files named `<suit>-<rank>.png` (`spades-a.png`, `hearts-10.png`) under
+// assets/games/cards/, written by prepare-arcade-art.mjs from the deck's labels.
+// A rule rather than 52 manifest lines, because the names ARE the rule.
+const PLAYING_CARD_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"] as const;
+const PLAYING_CARD_SUITS = ["spade", "heart", "diamond", "club"] as const;
+
+/** The deck's file for one face, relative to assets/games/. A suit is named the way the renderer's CardSuit names it. */
+export function playingCardFile(rank: string, suit: (typeof PLAYING_CARD_SUITS)[number]): string {
+	return `cards/${suit}s-${rank.toLowerCase()}.png`;
+}
+
+/** The absolute path of one face of the deck, or null while it is not on disk. */
+export function playingCardAssetPath(rank: string, suit: (typeof PLAYING_CARD_SUITS)[number]): string | null {
+	const absolute = join(process.cwd(), "assets", GAMES_ASSET_DIR, playingCardFile(rank, suit));
+	return existsSync(absolute) ? absolute : null;
+}
+
+/** Which of the 52 faces are not on disk, as paths relative to assets/games/. */
+export function missingPlayingCards(): string[] {
+	return PLAYING_CARD_SUITS.flatMap((suit) => PLAYING_CARD_RANKS.map((rank) => ({ rank, suit })))
+		.filter(({ rank, suit }) => playingCardAssetPath(rank, suit) === null)
+		.map(({ rank, suit }) => playingCardFile(rank, suit));
 }
 
 export function resolveGameAsset(key: GameAssetKey): ResolvedGameAsset {

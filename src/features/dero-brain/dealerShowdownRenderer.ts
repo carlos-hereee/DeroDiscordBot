@@ -4,18 +4,22 @@ import {
 	canvasColor,
 	drawBarSegment,
 	drawCardBackground,
+	drawImageRounded,
 	drawPanel,
 	drawPill,
 	drawPlayingCard,
 	drawText,
+	playingCardRadius,
 	renderCard,
 	withAlpha,
 	type CardSuit,
+	type DrawOutcome,
 	type PlayingCardFace,
 	type RenderPayload,
 } from "@features/renderer/index.js";
-import type { SKRSContext2D } from "@features/renderer/canvasModule.js";
+import type { Image, SKRSContext2D } from "@features/renderer/canvasModule.js";
 import { RANK_LABELS, type Card, type Suit } from "@features/games/holdemHand.js";
+import { loadDeckFaces, loadGameArt, type DeckFaces } from "@features/games/gamesArt.js";
 import { deroBrainCopy } from "./deroBrainCopy.js";
 import type { PublicResult, PublicView } from "./dealerNarration.js";
 
@@ -93,12 +97,14 @@ export function dealerShowdownView(view: PublicView, result: PublicResult): Deal
 }
 
 // Bump whenever the drawing changes, or members keep seeing cached cards.
-const SHOWDOWN_CARD_VERSION = 1;
+const SHOWDOWN_CARD_VERSION = 2;
 const CARD_WIDTH = 960;
 const PADDING = 40;
-const BOARD_TOP = 104;
-const BOARD_CARD_WIDTH = 80;
-const BOARD_CARD_HEIGHT = 112;
+const BOARD_TOP = 96;
+// The Dero deck's faces are about twice as tall as they are wide (roughly 96 by
+// 204), so the board cards take that shape rather than crop the art.
+const BOARD_CARD_HEIGHT = 140;
+const BOARD_CARD_WIDTH = Math.round(BOARD_CARD_HEIGHT * (96 / 204));
 const BOARD_CARD_GAP = 12;
 const BOARD_SIZE = 5;
 const STRIP_TOP = 260;
@@ -133,7 +139,9 @@ export function renderDealerShowdownCard(view: DealerShowdownView): Promise<Rend
 	});
 }
 
-function drawShowdownCard(context: SKRSContext2D, view: DealerShowdownView): void {
+async function drawShowdownCard(context: SKRSContext2D, view: DealerShowdownView): Promise<DrawOutcome> {
+	const deck = await loadDeckFaces(view.board);
+	const back = view.board.length < BOARD_SIZE ? await loadGameArt("cardBack") : null;
 	drawCardBackground(context, COLORS.ARCADE, CARD_WIDTH / 2, 0, CARD_WIDTH * 0.6);
 	const copy = deroBrainCopy.dealer;
 	drawPill(context, { x: PADDING, y: 32, width: 160, height: 44, fill: canvasColor(COLORS.ARCADE), label: copy.cardHand(view.handNumber) });
@@ -146,22 +154,27 @@ function drawShowdownCard(context: SKRSContext2D, view: DealerShowdownView): voi
 		align: "right",
 		baseline: "middle",
 	});
-	drawBoard(context, view.board);
+	drawBoard(context, view.board, deck, back);
 	drawWinnerLines(context, view);
 	view.seats.forEach((seat, index) => drawSeatRow(context, seat, STRIP_TOP + index * SEAT_ROW_HEIGHT, maxStack(view)));
+	// A face or the back drawn without its deck art is a stand in, so the card is not cached.
+	const backMissing = view.board.length < BOARD_SIZE && !back;
+	return deck.allPresent && !backMissing ? undefined : { cacheable: false };
 }
 
-// ① The five board slots, face up where a card was dealt and an empty slot where
-// the hand ended before it (everyone else folded), so the board always reads as five.
-function drawBoard(context: SKRSContext2D, board: PlayingCardFace[]): void {
+// ① The five board slots, face up where a card was dealt and face down (the Dero
+// deck's back, or an empty slot without it) where the hand ended before that
+// street (everyone else folded), so the board always reads as five.
+function drawBoard(context: SKRSContext2D, board: PlayingCardFace[], deck: DeckFaces, back: Image | null): void {
 	for (let index = 0; index < BOARD_SIZE; index += 1) {
-		const x = PADDING + index * (BOARD_CARD_WIDTH + BOARD_CARD_GAP);
+		const slot = { x: PADDING + index * (BOARD_CARD_WIDTH + BOARD_CARD_GAP), y: BOARD_TOP, width: BOARD_CARD_WIDTH, height: BOARD_CARD_HEIGHT };
 		const card = board[index];
 		if (card) {
-			drawPlayingCard(context, { x, y: BOARD_TOP, width: BOARD_CARD_WIDTH, height: BOARD_CARD_HEIGHT, rank: card.rank, suit: card.suit });
+			drawPlayingCard(context, { ...slot, rank: card.rank, suit: card.suit, art: deck.faceFor(card) });
 			continue;
 		}
-		drawPanel(context, { x, y: BOARD_TOP, width: BOARD_CARD_WIDTH, height: BOARD_CARD_HEIGHT, radius: 8, fill: withAlpha(COLORS.CARD_TEXT_MUTED, 0.15) });
+		if (back) drawImageRounded(context, back, slot, playingCardRadius(slot.width));
+		else drawPanel(context, { ...slot, radius: 8, fill: withAlpha(COLORS.CARD_TEXT_MUTED, 0.15) });
 	}
 }
 

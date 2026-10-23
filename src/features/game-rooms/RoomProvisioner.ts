@@ -5,7 +5,7 @@ import { gameRoomCreatedEvent } from "@base/constants/BOT_LOG_EVENTS.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { buildRoomChannelName, resolveRoomChannelName } from "./roomNaming.js";
 import { buildRoomOverwrites } from "./roomPermissions.js";
-import { roomOpenerEmbed } from "./gameRoomsEmbeds.js";
+import { roomOpenerEmbed, roomOpenerLogo } from "./gameRoomsEmbeds.js";
 import { roomMoveRow } from "./roomGames.js";
 import { hangmanRow } from "./roomHangman.js";
 import {
@@ -318,9 +318,11 @@ export const RoomProvisioner = {
 		// The opener carries the game's own controls, so a player never has to find a
 		// command to take their turn. Pinned below, which is what keeps it reachable
 		// once the trail has scrolled past it.
+		const logo = roomOpenerLogo(game);
 		const opener = await channel
 			.send({
-				embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility, inviteCode)],
+				embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility, inviteCode, logo?.ref)],
+				...(logo ? { files: [logo.attachment] } : {}),
 				// Hangman opens with the AUTHORING control, not a guess control: there
 				// is no word yet, and offering "guess a letter" before one exists would
 				// be a button whose only possible answer is "not yet". The solo form is

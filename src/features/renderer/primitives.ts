@@ -73,6 +73,23 @@ export function drawCardBackground(context: SKRSContext2D, accent: ColorResolvab
 	context.restore();
 }
 
+/**
+ * Paints a scene across the whole card instead of the plain sheet: `image`
+ * covering the canvas, clipped to the same rounded corners, under a wash of the
+ * sheet color at `washAlpha` (0 to 1) so text drawn on it keeps its contrast.
+ */
+export function drawCardBackdrop(context: SKRSContext2D, image: Image, washAlpha: number): void {
+	const { width, height } = context.canvas;
+	context.save();
+	context.beginPath();
+	context.roundRect(0, 0, width, height, CARD_CORNER_RADIUS);
+	context.clip();
+	drawImageCovered(context, image, { x: 0, y: 0, width, height });
+	context.fillStyle = withAlpha(COLORS.CARD_BACKGROUND, washAlpha);
+	context.fillRect(0, 0, width, height);
+	context.restore();
+}
+
 /** Draws `image` cropped to a circle of `diameter` centred on (centerX, centerY): the avatar shape. */
 export function drawCircularImage(context: SKRSContext2D, image: Image, centerX: number, centerY: number, diameter: number): void {
 	const radius = diameter / 2;
@@ -169,6 +186,38 @@ export function drawImageContained(context: SKRSContext2D, image: Image, box: Re
 	const width = image.width * scale;
 	const height = image.height * scale;
 	context.drawImage(image, box.x + (box.width - width) / 2, box.y + (box.height - height) / 2, width, height);
+}
+
+/**
+ * Draws `image` so it fills all of `box`, keeping its aspect ratio and cropping
+ * the overflow equally from both sides: a backdrop, or art that must reach every
+ * edge of its slot (a card face, a scene behind a card). The counterpart of
+ * drawImageContained, which never crops.
+ */
+export function drawImageCovered(context: SKRSContext2D, image: Image, box: Rect): void {
+	if (image.width <= 0 || image.height <= 0) return;
+	const scale = Math.max(box.width / image.width, box.height / image.height);
+	const sourceWidth = box.width / scale;
+	const sourceHeight = box.height / scale;
+	context.drawImage(image, (image.width - sourceWidth) / 2, (image.height - sourceHeight) / 2, sourceWidth, sourceHeight, box.x, box.y, box.width, box.height);
+}
+
+/**
+ * `image` covering `box` with its corners rounded to `radius`: a card face or a
+ * card back whose file is square cornered and opaque.
+ */
+export function drawImageRounded(context: SKRSContext2D, image: Image, box: Rect, radius: number): void {
+	context.save();
+	context.beginPath();
+	context.roundRect(box.x, box.y, box.width, box.height, radius);
+	context.clip();
+	drawImageCovered(context, image, box);
+	context.restore();
+}
+
+/** The corner radius a playing card is drawn with, for a slot drawn beside one (a card back). */
+export function playingCardRadius(width: number): number {
+	return width * PLAYING_CARD_RADIUS;
 }
 
 export interface PillOptions extends Rect {
@@ -346,7 +395,11 @@ export interface PlayingCardFace {
 	suit: CardSuit;
 }
 
-export type PlayingCardOptions = Rect & PlayingCardFace;
+export type PlayingCardOptions = Rect &
+	PlayingCardFace & {
+		/** The deck's art for this face, when it is on disk. Null or omitted draws the plain face instead. */
+		art?: Image | null;
+	};
 
 // A playing card's proportions, measured against its width: the corner radius,
 // the corner index's inset, its rank size and pip size, and the big centre pip.
@@ -357,11 +410,17 @@ const PLAYING_CARD_CORNER_PIP = 0.2;
 const PLAYING_CARD_CENTRE_PIP = 0.5;
 
 /**
- * A face up playing card: the white stock, the rank and a small pip in the top
- * left corner, and one large pip in the middle. One drawing for every game that
- * deals cards, so a blackjack hand and a hold em board look like one deck.
+ * A face up playing card. With `art`, the Dero deck's face fills the card,
+ * clipped to its rounded corners (the deck's files are square cornered and
+ * opaque). Without it, the plain face: the white stock, the rank and a small pip
+ * in the top left corner, and one large pip in the middle. One drawing for every
+ * game that deals cards, so a blackjack hand and a hold em board look like one deck.
  */
-export function drawPlayingCard(context: SKRSContext2D, { x, y, width, height, rank, suit }: PlayingCardOptions): void {
+export function drawPlayingCard(context: SKRSContext2D, { x, y, width, height, rank, suit, art }: PlayingCardOptions): void {
+	if (art) {
+		drawImageRounded(context, art, { x, y, width, height }, playingCardRadius(width));
+		return;
+	}
 	drawPanel(context, { x, y, width, height, radius: width * PLAYING_CARD_RADIUS, fill: canvasColor(COLORS.PLAYING_CARD_FACE) });
 	const inset = width * PLAYING_CARD_INSET;
 	const rankSize = Math.round(width * PLAYING_CARD_RANK_SIZE);

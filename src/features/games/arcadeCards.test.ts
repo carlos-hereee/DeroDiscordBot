@@ -33,7 +33,21 @@ vi.mock("./battleshipRenderer.js", async (importOriginal) => {
 	};
 });
 
+// The games' art loader stays real; `missing` stands in for a host where none of
+// the art is on disk, so each card's drawn stand ins can be read (Phase 3b).
+const artSwitch = vi.hoisted(() => ({ missing: false }));
+vi.mock("./gamesArt.js", async (importOriginal) => {
+	const real = await importOriginal<typeof import("./gamesArt.js")>();
+	return {
+		...real,
+		loadGameArt: (key: Parameters<typeof real.loadGameArt>[0]) => (artSwitch.missing ? Promise.resolve(null) : real.loadGameArt(key)),
+		loadDeckFaces: (cards: Parameters<typeof real.loadDeckFaces>[0]) =>
+			artSwitch.missing ? Promise.resolve({ faceFor: () => null, allPresent: false }) : real.loadDeckFaces(cards),
+	};
+});
+
 import { cachedCardCount, clearCardCache } from "@features/renderer/cardCache.js";
+import { roomOpenerLogo } from "@features/game-rooms/gameRoomsEmbeds.js";
 import { createHangmanState, applyGuess } from "./hangmanState.js";
 import { hangmanCardView, renderHangmanCard } from "./hangmanRenderer.js";
 import { settle, type BlackjackTable, type Card as BlackjackCard, type Hand } from "./blackjackState.js";
@@ -84,6 +98,7 @@ function seededRng(seed: number): () => number {
 beforeEach(() => {
 	clearCardCache();
 	battleshipSwitch.fail = false;
+	artSwitch.missing = false;
 });
 
 // ── hangman ──
@@ -92,7 +107,7 @@ describe("hangmanRenderer", () => {
 		const state = createHangmanState("castle");
 		for (let wrong = 0; wrong <= 6; wrong += 1) {
 			const card = await renderHangmanCard({ ...hangmanCardView(state), wrong });
-			expect(pngSize(card)).toEqual({ width: 960, height: 420 });
+			expect(pngSize(card)).toEqual({ width: 960, height: 460 });
 		}
 	});
 
@@ -193,7 +208,7 @@ describe("battleshipRenderer", () => {
 		const view = battleshipBoardView(state, { shooterId: "a", ship: "destroyer" });
 		expect(view.sinking).toMatchObject({ sectionIndex: 0, ship: "destroyer" });
 		expect(view.sections[0].sunk.map((ship) => ship.name)).toEqual(["destroyer"]);
-		expect(pngSize(await renderBattleshipBoardCard(view))).toEqual({ width: 1000, height: 600 });
+		expect(pngSize(await renderBattleshipBoardCard(view))).toEqual({ width: 1000, height: 666 });
 	});
 
 	it("never puts an unfired ship cell into the public view", () => {
@@ -308,5 +323,43 @@ describe("dealerShowdownRenderer", () => {
 	it("draws the showdown card, one strip row per seat", async () => {
 		const { view, result } = playedToShowdown();
 		expect(pngSize(await renderDealerShowdownCard(dealerShowdownView(view, result)))).toEqual({ width: 960, height: 260 + 3 * 56 + 40 });
+	});
+});
+
+// ── the owner's art (2026-10 item 243 Phase 3b) ──
+describe("the arcade art", () => {
+	function settledBlackjack() {
+		const table = settledTable();
+		return blackjackResultView(table, settle(table));
+	}
+
+	function finishedMonopoly() {
+		const state = createInitialState(["a", "b", "c"], { auctionsEnabled: false }, 1_000, 1);
+		state.seats[2].bankrupt = true;
+		state.winnerId = "a";
+		return monopolyWinnerView(state, new Map([["a", "Lady Ledger"]]));
+	}
+
+	it("caches a card drawn entirely from its art", async () => {
+		await renderHangmanCard(hangmanCardView(createHangmanState("castle")));
+		await renderBlackjackResultCard(settledBlackjack());
+		await renderWinnerCard(finishedMonopoly());
+		expect(cachedCardCount()).toBe(3);
+	});
+
+	it("still draws every card when no art is on disk, and caches none of them", async () => {
+		artSwitch.missing = true;
+		const state = matchWithASinking();
+		expect(pngSize(await renderHangmanCard(hangmanCardView(createHangmanState("castle"), "lost"))).width).toBe(960);
+		expect(pngSize(await renderBattleshipBoardCard(battleshipBoardView(state, { shooterId: "a", ship: "destroyer" }))).width).toBe(1000);
+		expect(pngSize(await renderBlackjackResultCard(settledBlackjack())).width).toBe(960);
+		expect(pngSize(await renderWinnerCard(finishedMonopoly())).width).toBe(960);
+		expect(cachedCardCount()).toBe(0);
+	});
+
+	it("puts the game's logo on a hangman or battleship room opener, and nothing on a game without one", () => {
+		expect(roomOpenerLogo("hangman")?.ref).toBe("attachment://opener-logo-stacked.png");
+		expect(roomOpenerLogo("battleship")?.ref).toBe("attachment://opener-logo.png");
+		expect(roomOpenerLogo("monopoly")).toBeNull();
 	});
 });

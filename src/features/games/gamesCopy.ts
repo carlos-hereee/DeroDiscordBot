@@ -153,7 +153,6 @@ export const gamesCopy = {
 		// ── the canvas card (2026-10 item 243 Phase 3) ──
 		// Words drawn INTO the card's pixels, so none takes a mention. The word itself
 		// is never here: the card draws only the letters already guessed.
-		cardMisses: "MISSES",
 		cardAttemptsLeft: (remaining: number): string => `${remaining} ${remaining === 1 ? "ATTEMPT" : "ATTEMPTS"} LEFT`,
 		cardSolved: "SOLVED",
 		cardLost: "OUT OF ATTEMPTS",
