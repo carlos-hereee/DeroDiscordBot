@@ -166,6 +166,18 @@ export const BOT_LOG_EVENTS = {
 	//
 	// ⚠️ PRIVACY: numbers only. The guild id is the only id; no text, no audio.
 	DERO_VOICE_SAMPLE: "dero_voice_sample",
+	// ── member role gating announcement (2026-10 item 247 Phase 1) ─
+	// What:  per-guild log that the one time "these channels now need the member
+	//        role" posts went out to #announcements and #inner-sanctum.
+	// Who:   CommunityGatingAnnouncement reads it before posting and writes it
+	//        once BOTH posts succeed, so a failure on either retries next boot.
+	// When:  read on each boot where the member role gates a Community guild;
+	//        written once per guild for the life of the feature.
+	// How:   a plain per-guild key, like LEVELING_INTRO_SENT: gating is announced
+	//        once per guild, not once per release, so there is nothing to namespace.
+	//
+	// ⚠️ PRIVACY: metadata carries the two channel ids posted to and nothing else.
+	MEMBER_ROLE_GATING_ANNOUNCED: "member_role_gating_announced",
 	// add more here as needed
 } as const;
 

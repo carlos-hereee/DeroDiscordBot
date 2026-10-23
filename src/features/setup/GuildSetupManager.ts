@@ -32,7 +32,16 @@ import { buildAdminCommandRows } from "@features/command-buttons/adminGuideButto
 import { buildVoiceRoomControlRow } from "@features/voice/voiceRoomControls.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { buildDeroGifAttachment } from "@base/copy/brand.js";
-import { buildBotSelfOverwrite } from "@utils/channelOverwrites.js";
+import {
+	communityOverwritesFor,
+	dependsOnCommunityState,
+	isMemberRoleGated,
+	memberRoleGrant,
+	overwriteKindOf,
+	reconcileChannelOverwrite,
+	type ManagedOverwriteKind,
+} from "./communityOverwrites.js";
+import { CommunityGatingAnnouncement } from "./CommunityGatingAnnouncement.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
@@ -82,97 +91,12 @@ function resolveGamesCategoryName(): string {
 }
 
 export class GuildSetupManager {
-	// ── bot self overwrite ────────────────────────────────────
-	// What: build the channel permission overwrite that grants this bot
-	//       the perms it needs on a private/restricted channel. Without
-	//       this overwrite, an `@everyone deny ViewChannel` (or any
-	//       channel-level deny on a guild-wide perm) propagates to the
-	//       bot via @everyone-role membership and overrides the bot's
-	//       integration-role allows. Symptom: DiscordAPIError 50013 on
-	//       the very next operation against the channel, eg. creating
-	//       a child under a private category, posting an intro embed,
-	//       pinning the schedule board, etc.
-	// Who:   autoSetup (category overwrites), createChannels (every
-	//        public + admin child), buildSingleChannel (repair flow).
-	// When:  every time we mint a category or channel for the homebase,
-	//        regardless of public/admin kind. The cost is one extra
-	//        overwrite entry per channel, cheap insurance against
-	//        Discord's permission resolution model biting us.
-	// Where: relies on `guild.client.user.id`. The client is logged in
-	//        before guildCreate fires (login completes in main.ts step
-	//        5), so `client.user` is always populated when we reach
-	//        this code path. We avoid `guild.members.me` because the
-	//        member cache may not be populated on the very first tick
-	//        of guildCreate, but the User object on the Client is.
-	// How:   member-level overwrite on the bot's user id. In Discord's
-	//        channel permission resolution order, member overwrites
-	//        apply LAST (after @everyone, then role overwrites), so a
-	//        member allow beats any role-tier deny. We list every perm
-	//        the bot uses against any homebase channel, view, send,
-	//        embed, history, manage messages, manage channels, manage
-	//        roles, add reactions, mention everyone, so a single
-	//        overwrite shape works for category, public, and admin
-	//        channels alike.
-	private static botSelfOverwrite(guild: Guild) {
-		// non-null assertion: guildCreate fires after the client is logged
-		// in, so client.user is guaranteed populated.
-		//
-		// The permission LIST moved to @utils/channelOverwrites so game rooms can
-		// build the identical overwrite without importing this class (roomPermissions
-		// is pure, and reaching in here would drag the stores and copy packs into it).
-		// This wrapper stays because every call site here has a Guild and not a bot id.
-		return buildBotSelfOverwrite(guild.client.user!.id);
-	}
-
-	// ── voice room overwrites (2026-10 item 235) ──────────────────
-	// The ONE posture both voice rooms get, from createChannels and from
-	// buildSingleChannel alike, so the create path and the repair path cannot
-	// drift (the text overwrites ARE duplicated between those two today; that is
-	// known debt and deliberately not copied a third time here).
-	//
-	// Owner decision D3, member role only: @everyone sees the room but cannot
-	// connect or speak, and the member role, the owner and the admin role can.
-	// Until /setup names a member role (a fresh install, or a legacy row with
-	// none) only the owner and the admin role can join, which is the intended
-	// reading of "members only" rather than a gap.
-	//
-	// The bot's own entry adds Connect and Speak on top of the shared self
-	// overwrite. Without them the @everyone Connect deny reaches the bot through
-	// its @everyone membership, and an admin who later allowlists a room through
-	// /dero-config would get a join that silently waits out its timeout. Holding
-	// the bit listens to nothing: these rooms are never added to the voice
-	// allowlist here, and hearing anyone is gated by the voice feature itself.
-	private static voiceOverwrites(
-		guild: Guild,
-		ownerId: string,
-		roles: { memberRoleId: string | null; adminRoleId: string | null }
-	): Array<{ id: string; allow: bigint[]; deny?: bigint[] }> {
-		const joinAndSpeak = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak];
-		const bot = GuildSetupManager.botSelfOverwrite(guild);
-		const overwrites: Array<{ id: string; allow: bigint[]; deny?: bigint[] }> = [
-			{
-				id: guild.roles.everyone.id,
-				allow: [PermissionFlagsBits.ViewChannel],
-				deny: [PermissionFlagsBits.Connect, PermissionFlagsBits.Speak],
-			},
-			{ id: bot.id, allow: [...bot.allow, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak] },
-			{ id: ownerId, allow: joinAndSpeak },
-		];
-
-		// Replace, never append, when an id is already present. The /setup role
-		// picker accepts @everyone as the member role, and that choice has to
-		// REPLACE the Connect deny above (opening the room) rather than sit beside
-		// it as a second overwrite with the same id. Likewise an admin role that
-		// doubles as the member role ends on the wider admin grant.
-		const grant = (id: string, allow: bigint[]): void => {
-			const index = overwrites.findIndex((entry) => entry.id === id);
-			if (index === -1) overwrites.push({ id, allow });
-			else overwrites[index] = { id, allow };
-		};
-		if (roles.memberRoleId) grant(roles.memberRoleId, joinAndSpeak);
-		if (roles.adminRoleId) grant(roles.adminRoleId, [...joinAndSpeak, PermissionFlagsBits.SendMessages]);
-		return overwrites;
-	}
+	// ── channel overwrites ────────────────────────────────────
+	// Every overwrite shape a managed channel gets, text and voice, comes from
+	// ./communityOverwrites.ts, which branches on the guild's Discord Community state
+	// (2026-10 item 247 Phase 1). createChannels, buildSingleChannel, applyAdminRole
+	// and the boot reconcile below all read it, so the create path and the repair
+	// path cannot drift and no second copy of a shape lives in this file.
 
 	// ── Phase 1: auto-construct on join / restart ─────────────
 	// What: build the homebase category + six channels, then persist a
@@ -637,14 +561,70 @@ export class GuildSetupManager {
 		//    this method stays focused on branching logic.
 		const repairedChannels = await GuildSetupManager.repairMissingChannels(client, guild, category as CategoryChannel);
 		if (repairedChannels.length > 0) {
+			await GuildSetupManager.reconcileCommunityGating(client, guild);
 			console.log(LOG_MESSAGES.setup.ensureHomebaseDone(guild.id, "repaired"));
 			return { action: "repaired", repairedChannels };
 		}
 
 		// ⑤ happy path: stored homebase exists, is owned by this bot, and
 		//    all six channels are present.
+		await GuildSetupManager.reconcileCommunityGating(client, guild);
 		console.log(LOG_MESSAGES.setup.ensureHomebaseDone(guild.id, "skipped"));
 		return { action: "skipped", repairedChannels: [] };
+	}
+
+	// ── Community gating reconcile (2026-10 item 247 Phase 1) ─────
+	// What:  move every existing managed channel onto the shape the guild's
+	//        CURRENT Community state calls for, then hand the guild to the one
+	//        time gating announcement when the member role gates it.
+	// Who:   ensureHomebase, after a repair and on the happy path. Not after a
+	//        build or a rebuild: createChannels already read the branch live.
+	// When:  every boot, and on a re-invite. A channel already on its side of the
+	//        branch costs a cached read and no write, so a steady boot writes nothing,
+	//        and a non-Community guild that was never gated is never written to.
+	// How:   ① re-read the row, since a repair just moved ids; ② reconcile each
+	//        spec whose shape depends on the branch, one channel failing never
+	//        stopping the rest; ③ when the member role gates the guild and at least
+	//        one public text channel now carries the gate, call
+	//        CommunityGatingAnnouncement.post. It posts once per guild for good: the
+	//        BotLog key it checks makes every later call a no-op, and calling it on
+	//        a boot where nothing moved is what lets a failed post retry, since the
+	//        boot after a failure finds the gate already in place.
+	//        Fire and forget: nothing here throws back into the boot sweep.
+	private static async reconcileCommunityGating(client: Client, guild: Guild): Promise<void> {
+		try {
+			const stored = await guildConfigStore.findByGuildId(guild.id);
+			if (!stored) return;
+			const ids = stored as unknown as Record<string, string | null | undefined>;
+			const gated = isMemberRoleGated(guild, stored.memberRoleId);
+
+			let moved = 0;
+			let failed = 0;
+			let publicChannelsOnBranch = 0;
+			for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+				const kind = overwriteKindOf(spec);
+				const channelId = ids[spec.configField];
+				if (!dependsOnCommunityState(kind) || !channelId) continue;
+				const channel = await guild.channels.fetch(channelId).catch(() => null);
+				if (!(channel instanceof TextChannel || channel instanceof VoiceChannel)) continue;
+				try {
+					if (await reconcileChannelOverwrite(guild, channel, kind, stored)) moved += 1;
+					if (kind === "public") publicChannelsOnBranch += 1;
+				} catch (error) {
+					// One channel Discord refuses (a 50013, or a channel Community itself
+					// holds open) must not leave the rest on the wrong side of the branch.
+					failed += 1;
+					console.warn(`[community-gating] guild ${guild.id} could not reconcile ${spec.configField}`, error);
+				}
+			}
+
+			if (moved > 0 || failed > 0) {
+				console.log(`[community-gating] guild ${guild.id} gated ${gated}: moved ${moved} channel(s), failed ${failed}`);
+			}
+			if (gated && publicChannelsOnBranch > 0) await CommunityGatingAnnouncement.post(client, guild, stored);
+		} catch (error) {
+			console.warn(`[community-gating] guild ${guild.id} reconcile failed; the next boot retries`, error);
+		}
 	}
 
 	// ── channel spec type ─────────────────────────────────────
@@ -699,8 +679,9 @@ export class GuildSetupManager {
 	static readonly CHANNEL_SPECS: Array<{
 		configField: (typeof GuildSetupManager.CHANNEL_FIELDS)[number];
 		displayName: string;
-		// "voice" builds a GuildVoice room with voiceOverwrites, its intro posted in
-		// the room's built in text chat; the other two build text channels. One table for all three, so the repair
+		// "voice" builds a GuildVoice room with the voice shape, its intro posted in
+		// the room's built in text chat; the other two build text channels. One
+		// table for all three, so the repair
 		// sweep, the delete watcher, the drift rename, the admin grant and self
 		// destruct reach a voice room through the same walk as everything else.
 		kind: "public" | "admin" | "voice";
@@ -1259,9 +1240,11 @@ export class GuildSetupManager {
 		// Read defensively: the caller's row type carries an index signature, so
 		// a narrow here is cheaper than widening every caller's cast.
 		const memberRoleId = typeof stored.memberRoleId === "string" ? stored.memberRoleId : null;
+		// overwriteKindOf, not spec.kind: the introductions channel is a "public" spec
+		// but takes its own member-writable shape, the one createChannels gives it.
 		const newChannel = existingByName
 			? existingByName
-			: await GuildSetupManager.buildSingleChannel(guild, category, effectiveName, spec.kind, stored.adminRoleId ?? null, memberRoleId);
+			: await GuildSetupManager.buildSingleChannel(guild, category, effectiveName, overwriteKindOf(spec), stored.adminRoleId ?? null, memberRoleId);
 		if (existingByName) {
 			console.warn(LOG_MESSAGES.setup.channelAdopted(effectiveName, guild.id));
 		}
@@ -1634,92 +1617,33 @@ export class GuildSetupManager {
 	}
 
 	// ── single channel builder ────────────────────────────────
-	// What: recreate one text channel under the given category with the
-	//       same overwrites autoSetup.createChannels would have used for
-	//       its kind. If the guild has already run Phase 2 and has an
-	//       adminRoleId, that role's overwrite is layered on as well so
-	//       repaired channels preserve the admin surface.
-	// Who:  repairMissingChannels. Private because the overwrites are a
-	//       mirror of createChannels and callers have no business tuning
-	//       them ad hoc.
+	// What: recreate one channel under the given category with the shape
+	//       createChannels gives its kind, for the guild's Community state as
+	//       it is right now. Unlike createChannels, the stored admin role is
+	//       layered on as well, so a repaired channel keeps the admin surface
+	//       /setup granted.
+	// Who:  repairOneChannel, so the boot sweep and ChannelDeleteWatcher both.
 	// When: only from the repair path. autoSetup has its own bulk creation
-	//       because it creates all six in parallel with Promise.all.
-	// Where: keeps the posture identical to the original build, so a
-	//        repaired channel is indistinguishable from one created during
-	//        /setup except for the Discord creation timestamp.
-	// How:  branch on kind for the base overwrites, append the admin role
-	//       grant when applicable, then call guild.channels.create.
+	//       because it creates every channel in parallel with Promise.all.
+	// How:  communityOverwritesFor resolves the shape; this only picks the
+	//       Discord channel type and creates it.
 	private static async buildSingleChannel(
 		guild: Guild,
 		category: CategoryChannel,
 		name: string,
-		kind: "public" | "admin" | "voice",
+		kind: ManagedOverwriteKind,
 		adminRoleId: string | null,
-		// Read only by a voice room, the one kind whose posture names the member
-		// role (owner decision D3). The text kinds never grant it.
+		// Read by a voice room (owner decision D3), and by a public text channel only
+		// while the member role gates it on a Community guild.
 		memberRoleId: string | null = null
 	): Promise<TextChannel | VoiceChannel> {
+		const permissionOverwrites = communityOverwritesFor(kind, guild, { ownerId: guild.ownerId }, { memberRoleId, adminRoleId });
+		// guild.channels.create returns the class its type asks for, so both casts are
+		// safe and save the caller a narrow.
 		if (kind === "voice") {
-			// Same posture createChannels gives a fresh room, roles included, so a
-			// repaired room is indistinguishable from one /setup built.
-			return (await guild.channels.create({
-				name,
-				type: ChannelType.GuildVoice,
-				parent: category.id,
-				permissionOverwrites: GuildSetupManager.voiceOverwrites(guild, guild.ownerId, { memberRoleId, adminRoleId }),
-			})) as VoiceChannel;
+			return (await guild.channels.create({ name, type: ChannelType.GuildVoice, parent: category.id, permissionOverwrites })) as VoiceChannel;
 		}
-
-		// botSelfOverwrite must be in every shape, same reasoning as
-		// createChannels (which mints the initial six). Without it, a
-		// repaired public channel would silently fail to accept the bot's
-		// intro repost; a repaired admin channel would not be visible to
-		// the bot at all.
-		const publicOverwrites = [
-			{ id: guild.roles.everyone.id, allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] },
-			GuildSetupManager.botSelfOverwrite(guild),
-			{ id: guild.ownerId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
-		];
-		const adminOverwrites = [
-			{ id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-			GuildSetupManager.botSelfOverwrite(guild),
-			{
-				id: guild.ownerId,
-				allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
-			},
-		];
-
-		// layer the admin role grant on top of the base overwrites when
-		// the guild has already run Phase 2. public channels get send
-		// permission for the admin role; admin channel gets full access.
-		let overwrites;
-		if (kind === "admin") {
-			overwrites = [...adminOverwrites];
-		} else {
-			overwrites = [...publicOverwrites];
-		}
-		if (adminRoleId) {
-			// admin kind gets full access (including history) so admins can
-			// scroll back through past notices. public kind gets send
-			// permission only; history is implied by ViewChannel.
-			overwrites.push({
-				id: adminRoleId,
-				allow:
-					kind === "admin"
-						? [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-						: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
-			});
-		}
-
-		// guild.channels.create with ChannelType.GuildText always returns
-		// a TextChannel; the cast is safe and saves a narrow in the caller.
-		const created = (await guild.channels.create({
-			name,
-			type: ChannelType.GuildText,
-			parent: category.id,
-			permissionOverwrites: overwrites,
-		})) as TextChannel;
-		return created;
+		return (await guild.channels.create({ name, type: ChannelType.GuildText, parent: category.id, permissionOverwrites })) as TextChannel;
 	}
 
 	// ── audit notices ─────────────────────────────────────────
@@ -1915,14 +1839,18 @@ export class GuildSetupManager {
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 			const channel = await fetchChannel(storedIds[spec.configField]);
 			if (spec.configField === "adminChannelId") adminChannel = channel;
+			// The MEMBER role is granted on the voice rooms on every guild (owner
+			// decision D3), and on the public text channels too while it gates them on
+			// a Community guild (2026-10 item 247); this is when an existing channel
+			// first opens to members. The @everyone deny that makes the text grant
+			// matter lands at the next boot's reconcile, which is also what posts the
+			// one time gating announcement. Member role first, admin role last: create
+			// REPLACES an overwrite, so an admin role that doubles as the member role
+			// has to land second to keep the wider grant, and a member role that IS
+			// @everyone replaces a room's Connect deny, opening it to all.
+			const memberGrant = memberRoleGrant(guild, overwriteKindOf(spec), config.memberRoleId);
+			if (memberGrant) await channel?.permissionOverwrites.create(config.memberRoleId, memberGrant);
 			if (spec.kind === "voice") {
-				// The voice rooms are the one place /setup grants the MEMBER role
-				// (owner decision D3), and this is when an existing room first opens
-				// to members. Member role first, admin role last: create REPLACES an
-				// overwrite, so an admin role that doubles as the member role has to
-				// land second to keep the wider grant, and a member role that IS
-				// @everyone replaces the room's Connect deny, opening it to all.
-				await channel?.permissionOverwrites.create(config.memberRoleId, { ViewChannel: true, Connect: true, Speak: true });
 				await channel?.permissionOverwrites.create(config.adminRoleId, {
 					ViewChannel: true,
 					Connect: true,
@@ -2013,58 +1941,30 @@ export class GuildSetupManager {
 		// 50013 handling lives in one place above.
 		gamesCategory: CategoryChannel,
 		config: ISetupConfig,
-		// Read only by the voice rooms' posture; see the call site in runAutoSetup.
+		// Read by the voice rooms' posture (see the call site in runAutoSetup), and the
+		// member role by the public text channels while it gates a Community guild.
 		storedRoles: { memberRoleId: string | null; adminRoleId: string | null }
 	): Promise<{ ids: ICreatedChannels; objects: IChannelObjects }> {
-		const voiceRoomOverwrites = GuildSetupManager.voiceOverwrites(guild, config.ownerId, storedRoles);
+		const owner = { ownerId: config.ownerId };
+		const voiceRoomOverwrites = communityOverwritesFor("voice", guild, owner, storedRoles);
 
-		// public channels, owner can send, everyone else read-only.
-		// botSelfOverwrite required: @everyone deny SendMessages otherwise
-		// suppresses the bot's posts (intro embed, schedule board, reminders).
-		const publicOverwrites = [
-			{
-				id: guild.roles.everyone.id,
-				allow: [PermissionFlagsBits.ViewChannel],
-				deny: [PermissionFlagsBits.SendMessages],
-			},
-			GuildSetupManager.botSelfOverwrite(guild),
-			{
-				id: config.ownerId,
-				allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
-			},
-		];
+		// The text channels never take the admin role here, as they never have: /setup
+		// grants it (applyAdminRole) and the repair path layers it on (buildSingleChannel).
+		// A forced rebuild of a gated Community guild therefore opens to members at once
+		// and to an admin without the member role only after /setup runs again.
+		const textRoles = { memberRoleId: storedRoles.memberRoleId, adminRoleId: null };
+
+		// Members read, the owner and the bot write.
+		const publicOverwrites = communityOverwritesFor("public", guild, owner, textRoles);
 
 		// Introductions is the one member-writable homebase channel: it doubles
 		// as a greeter surface where new members answer the welcome icebreaker
 		// (welcomeNewMember) and satisfies a Discord Onboarding gate that requires
-		// posting in a channel before full access. Same as publicOverwrites but
-		// WITHOUT the @everyone SendMessages deny.
-		const introOverwrites = [
-			{
-				id: guild.roles.everyone.id,
-				allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
-			},
-			GuildSetupManager.botSelfOverwrite(guild),
-			{
-				id: config.ownerId,
-				allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
-			},
-		];
+		// posting in a channel before full access.
+		const introOverwrites = communityOverwritesFor("intro", guild, owner, textRoles);
 
-		// admin channel: owner only until Phase 2. botSelfOverwrite
-		// required for the same reason as the category: @everyone deny
-		// ViewChannel hides the channel from the bot otherwise.
-		const adminOverwrites = [
-			{
-				id: guild.roles.everyone.id,
-				deny: [PermissionFlagsBits.ViewChannel],
-			},
-			GuildSetupManager.botSelfOverwrite(guild),
-			{
-				id: config.ownerId,
-				allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
-			},
-		];
+		// Admin channels: owner only until /setup grants the admin role.
+		const adminOverwrites = communityOverwritesFor("admin", guild, owner, textRoles);
 
 		const [
 			introChannel,
@@ -2175,7 +2075,7 @@ export class GuildSetupManager {
 			}),
 			// ── the two voice rooms, one per category (2026-10 item 235) ──
 			// Same parent rule as above: the meeting room is homebase, the lounge is
-			// arcade. Both take voiceOverwrites, the posture buildSingleChannel also
+			// arcade. Both take the voice shape, the posture buildSingleChannel also
 			// uses on repair, so a rebuilt room matches a fresh one.
 			guild.channels.create({
 				name: channels.meetingVoice,
