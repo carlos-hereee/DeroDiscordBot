@@ -23,7 +23,7 @@ import { utcMonthKey } from "@utils/utcMonthKey.js";
 //        is the member's own rating in each rated game; `board <game>` is this
 //        server's best rated players of one game; `luck` is this server's luck
 //        board for the month. Members call it a rating, never Elo.
-// Who:   every member. PUBLIC, like /account and /levels, and in neither admin
+// Who:   every member. PUBLIC, like /account and /account view:levels, and in neither admin
 //        mechanism: not in ADMIN_COMMANDS and no default member permission.
 // When:  on demand. The monthly arcade post is the passive half.
 // Where: reads through features/ratings/ratingBoards.ts, the same reads the monthly

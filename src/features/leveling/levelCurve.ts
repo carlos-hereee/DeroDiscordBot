@@ -8,7 +8,7 @@
 //
 // What:  converts between a member's TOTAL xp and their level, in both
 //        directions, under a selectable curve preset and a per guild multiplier.
-// Who:   xpWriter (level up detection on every flush), /account and /levels (the
+// Who:   xpWriter (level up detection on every flush), /account and /account view:levels (the
 //        progress bar and the standings), the achievement engine (the "level"
 //        and "milestoneLevels" metrics), /xp set-level (admin correction).
 // When:  on the flush path, so several times a second on a busy guild. Every

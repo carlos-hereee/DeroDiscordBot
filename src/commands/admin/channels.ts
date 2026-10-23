@@ -1,21 +1,33 @@
 import {
 	SlashCommandBuilder,
-	ChatInputCommandInteraction,
-	AutocompleteInteraction,
 	TextChannel,
 	EmbedBuilder,
+	type AutocompleteInteraction,
+	type ChatInputCommandInteraction,
+	type RepliableInteraction,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { COLORS } from "@base/copy/brand.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { creatorId } from "@utils/config.js";
+import { addRenameChannelOptions, renameChannel, renameSlotChoices } from "@features/setup/renameChannel.js";
+import type { CommandOptionReader, FormChoicesProvider, OptionChoice } from "@handlers/commandOptions.js";
 
-/* /channels, v1.5.1 visibility-toggle command.
+/* /channels, v1.5.1 visibility-toggle command, and since 2026-10 item 245
+   Phase 4b the home of rename too (the old /rename-channel).
    Three subcommands let admins hide or show the member-facing homebase
    channels without deleting them. Hiding applies @everyone deny
    ViewChannel; showing clears the deny. Channels always exist and
-   the bot still posts to them; only member visibility changes.
+   the bot still posts to them; only member visibility changes. The
+   fourth, rename, renames a managed channel and persists the name; its
+   handler lives in features/setup/renameChannel.ts.
+
+   ⚠️ TWO GATES, ON PURPOSE. hide, show and list are server owner only
+   (the inline check in run), as they always were. rename keeps the gate
+   it had as /rename-channel: the admin role passes, through
+   BOT_CONSTANTS.ADMIN_COMMANDS alone. run dispatches rename BEFORE the
+   owner check so the merge changed neither command's audience.
 
    Autocomplete is dynamic per subcommand: /channels hide suggests only
    currently-VISIBLE channels (the ones the admin can actually hide);
@@ -69,35 +81,22 @@ export const data = new SlashCommandBuilder()
 				opt.setName("channel").setDescription("Which channel to show").setRequired(true).setAutocomplete(true)
 			)
 	)
-	.addSubcommand((sub) => sub.setName("list").setDescription("Show current visibility state of all hideable channels"));
+	.addSubcommand((sub) => sub.setName("list").setDescription("Show current visibility state of all hideable channels"))
+	.addSubcommand((sub) =>
+		addRenameChannelOptions(sub.setName("rename").setDescription("Rename a bot-managed channel so the new name persists across rebuilds"))
+	);
 
-/* Autocomplete handler. Dispatches on subcommand to return only the
-   channel-kinds that make sense for the current operation: hide
-   suggests visible channels, show suggests hidden channels. Empty list
-   on degenerate cases (eg /channels show when nothing is hidden) so
-   Discord shows "no options match" rather than misleading suggestions. */
-export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
-	if (!interaction.guildId) {
-		await interaction.respond([]);
-		return;
-	}
-
-	const subcommand = interaction.options.getSubcommand();
-	if (subcommand !== "hide" && subcommand !== "show") {
-		// list does not take a channel option, so autocomplete should
-		// never fire for it. Defensive empty response just in case.
-		await interaction.respond([]);
-		return;
-	}
-
-	const config = await guildConfigStore.findByGuildId(interaction.guildId);
-	if (!config) {
-		await interaction.respond([]);
-		return;
-	}
+/* Visibility choices. Return only the channel-kinds that make sense for
+   the operation: hide suggests visible channels, show suggests hidden
+   channels. Empty list on degenerate cases (eg /channels show when
+   nothing is hidden) so Discord shows "no options match" rather than
+   misleading suggestions. */
+async function visibilityChoices(guildId: string, subcommand: "hide" | "show"): Promise<OptionChoice[]> {
+	const config = await guildConfigStore.findByGuildId(guildId);
+	if (!config) return [];
 	const hidden = new Set(config.hiddenChannels ?? []);
 
-	const suggestions = HIDEABLE_CHANNELS.filter((c) => {
+	return HIDEABLE_CHANNELS.filter((c) => {
 		// Skip channels that have not been provisioned in this guild yet
 		// (resolveChannelId returns null for missing channel ids). Showing
 		// them in the dropdown is misleading because /channels hide on an
@@ -107,12 +106,34 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
 
 		const isCurrentlyHidden = hidden.has(c.value);
 		return subcommand === "hide" ? !isCurrentlyHidden : isCurrentlyHidden;
-	});
-
-	await interaction.respond(suggestions.map((c) => ({ name: c.name, value: c.value })));
+	}).map((c) => ({ name: c.name, value: c.value }));
 }
 
-export async function execute(interaction: ChatInputCommandInteraction) {
+/* The choices one subcommand's option offers, for the autocomplete and the
+   admin form alike: rename's slot lists the configured channel slots, hide
+   and show's channel lists the hideable channels in the right state. list
+   takes no option, so it answers nothing. */
+async function choicesFor(guild: RepliableInteraction["guild"], subcommand: string): Promise<OptionChoice[]> {
+	if (!guild) return [];
+	if (subcommand === "rename") return renameSlotChoices(guild);
+	if (subcommand === "hide" || subcommand === "show") return visibilityChoices(guild.id, subcommand);
+	return [];
+}
+
+export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
+	await interaction.respond(await choicesFor(interaction.guild, interaction.options.getSubcommand()));
+}
+
+/** The one handler the slash command and the admin guide's /channels button share. */
+export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
+	// rename keeps /rename-channel's admin gate, so it leaves before the owner
+	// check below (see the TWO GATES note at the top of this file).
+	const subcommand = options.getSubcommand();
+	if (subcommand === "rename") {
+		await renameChannel(interaction, options);
+		return;
+	}
+
 	// Load config first so the owner/setup responses below speak in the guild's
 	// copy pack (ownerOnly + setupChannelsPending diverge between packs). A null
 	// config resolves to the rok-commander default inside getPluginCopy.
@@ -132,17 +153,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 		return;
 	}
 
-	const subcommand = interaction.options.getSubcommand();
 	switch (subcommand) {
 		case "hide":
-			return handleHide(interaction, config);
+			return handleHide(interaction, options, config);
 		case "show":
-			return handleShow(interaction, config);
+			return handleShow(interaction, options, config);
 		case "list":
 			return handleList(interaction, config);
 		default:
 			await interaction.reply({ embeds: [errorEmbed("Unknown subcommand")], ephemeral: true });
 	}
+}
+
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+	await run(interaction, interaction.options);
 }
 
 /* Resolve a HideableField to the actual Discord channel id stored in
@@ -189,8 +213,8 @@ function isHideableField(value: string): value is HideableField {
 	return HIDEABLE_CHANNELS.some((c) => c.value === value);
 }
 
-async function handleHide(interaction: ChatInputCommandInteraction, config: GuildConfigDoc) {
-	const fieldInput = interaction.options.getString("channel", true);
+async function handleHide(interaction: RepliableInteraction, options: CommandOptionReader, config: GuildConfigDoc) {
+	const fieldInput = options.getString("channel", true);
 	if (!isHideableField(fieldInput)) {
 		await interaction.reply({
 			embeds: [errorEmbed(`Pick one of the channels from the dropdown.`)],
@@ -253,8 +277,8 @@ async function handleHide(interaction: ChatInputCommandInteraction, config: Guil
 	});
 }
 
-async function handleShow(interaction: ChatInputCommandInteraction, config: GuildConfigDoc) {
-	const fieldInput = interaction.options.getString("channel", true);
+async function handleShow(interaction: RepliableInteraction, options: CommandOptionReader, config: GuildConfigDoc) {
+	const fieldInput = options.getString("channel", true);
 	if (!isHideableField(fieldInput)) {
 		await interaction.reply({
 			embeds: [errorEmbed(`Pick one of the channels from the dropdown.`)],
@@ -322,7 +346,7 @@ async function handleShow(interaction: ChatInputCommandInteraction, config: Guil
 	});
 }
 
-async function handleList(interaction: ChatInputCommandInteraction, config: GuildConfigDoc) {
+async function handleList(interaction: RepliableInteraction, config: GuildConfigDoc) {
 	const hidden = new Set(config.hiddenChannels ?? []);
 	const lines = HIDEABLE_CHANNELS.map((c) => {
 		const id = resolveChannelId(config, c.value);
@@ -339,3 +363,9 @@ async function handleList(interaction: ChatInputCommandInteraction, config: Guil
 
 	await interaction.reply({ embeds: [embed], ephemeral: true });
 }
+
+/** The admin form's pickers read the same lists the autocomplete answers with. */
+export const formChoices: FormChoicesProvider = async (guild, leafPath, optionName) => {
+	if (leafPath === "rename") return optionName === "slot" ? renameSlotChoices(guild) : null;
+	return optionName === "channel" ? choicesFor(guild, leafPath) : null;
+};

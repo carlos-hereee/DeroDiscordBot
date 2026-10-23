@@ -1,9 +1,4 @@
-import {
-	SlashCommandBuilder,
-	ChatInputCommandInteraction,
-	AutocompleteInteraction,
-	MessageFlags,
-} from "discord.js";
+import { MessageFlags, type RepliableInteraction } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
@@ -11,66 +6,52 @@ import { getPluginCopy } from "@base/copy/getCopy.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
+import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
 
-// ── /pause-schedule ───────────────────────────────────────────────────
+// ── /schedule pause, one event ────────────────────────────────────────
 // What:  flips event.paused to true, optionally with a pausedUntil date.
 //        The schedule keeps existing in the DB (and on the schedule
 //        board, with a paused tag) but ReminderScheduler skips its fire
 //        decision until paused is cleared.
-// Who:   streamers and KvK admins both, anyone who needs to silence a
+// Who:   /schedule pause when it names an event, and the admin guide's
+//        /schedule button, which opens the same handler through a form.
+//        Streamers and KvK admins both, anyone who needs to silence a
 //        recurring event without losing the configuration.
 // When:  on demand. The optional days arg lets the streamer say "pause
 //        for two weeks" and the scheduler will auto-resume; omitting it
-//        means "paused indefinitely, I'll come back and run /continue".
+//        means "paused indefinitely, I'll come back and run /schedule resume".
 // Where: writes the Event document via eventStore.update, then kicks a
 //        schedule board refresh so the paused tag appears immediately.
-// How:   ① autocomplete on `name` lists active events; ② days arg gates
+// How:   ① the event choices list active events; ② days arg gates
 //        on a sane range (1-90); ③ idempotent, if already paused we
-//        update the pausedUntil but report "already paused" rather than
-//        re-pausing silently.
+//        report "already paused" rather than re-pausing silently.
 
 const c = rokCommanderCopy.pauseSchedule;
 
-export const data = new SlashCommandBuilder()
-	.setName("pause-schedule")
-	.setDescription("Pause reminders for a recurring event without deleting it")
-	.addStringOption((option) =>
-		option.setName("name").setDescription("Which schedule to pause").setRequired(true).setAutocomplete(true)
-	)
-	.addIntegerOption((option) =>
-		option
-			.setName("days")
-			.setDescription("Auto-resume after N days. Omit to pause indefinitely (then run /continue-schedule to resume).")
-			.setRequired(false)
-			.setMinValue(1)
-			.setMaxValue(90)
-	);
-
-export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
-	if (!interaction.guildId) {
-		await interaction.respond([]);
-		return;
-	}
-	// Filter to NOT-paused events. The original implementation listed all
-	// events including already-paused ones, which made the dropdown
-	// misleading: the streamer would see already-paused schedules and
-	// either re-pause (idempotent no-op) or get confused about state.
-	// Filtering at autocomplete mirrors the symmetric pattern in
-	// /continue-schedule which lists only paused events. v1.5.1 fix.
-	const events = await eventStore.findByGuildId(interaction.guildId);
-	const active = events.filter((e) => !e.paused);
-	await interaction.respond(active.slice(0, 25).map((e) => ({ name: e.name, value: e.eventId })));
+/**
+ * The events /schedule pause can name: every event not already paused. Read by the
+ * command's autocomplete and by the admin form's event picker, so the two list the
+ * same events.
+ */
+export async function pausableEventChoices(guildId: string): Promise<OptionChoice[]> {
+	// Filter to NOT-paused events. Listing every event including already-paused
+	// ones made the dropdown misleading: the streamer would see already-paused
+	// schedules and either re-pause (idempotent no-op) or get confused about state.
+	// Filtering here mirrors resumableEventChoices, which lists only paused events.
+	const events = await eventStore.findByGuildId(guildId);
+	return events.filter((e) => !e.paused).map((e) => ({ name: e.name, value: e.eventId }));
 }
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+/** Pause the one event the `event` option names, for `days` days or until resumed. */
+export async function pauseOneSchedule(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await interaction.reply({ embeds: [errorEmbed("Run this in a server, not a DM.")], flags: MessageFlags.Ephemeral });
 		return;
 	}
 
-	const eventId = interaction.options.getString("name", true);
-	const days = interaction.options.getInteger("days", false);
+	const eventId = options.getString("event", true);
+	const days = options.getInteger("days", false);
 
 	// findByIdInGuild scopes by guildId at the store layer so cross-guild access is
 	// blocked whether we're hitting the local DB or the remote API. The legacy
@@ -124,10 +105,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		// away. Failure here is logged, not surfaced, the DB write is
 		// the source of truth and the next refresh tick will catch up.
 		refreshSchedule(interaction.client, guildId).catch((err) =>
-			console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/pause-schedule"), err)
+			console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/schedule pause"), err)
 		);
 	} catch (err) {
-		console.error("[pause-schedule] update failed", err);
+		console.error("[schedule pause] update failed", err);
 		await interaction.reply({ embeds: [errorEmbed(c.failed)], flags: MessageFlags.Ephemeral });
 	}
 }

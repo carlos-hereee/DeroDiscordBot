@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import { rokCommanderCopy } from "./rok-commander.pack.js";
 import { generalEventsCopy } from "./general-events.pack.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 // ── the release announcement ───────────────────────────────────────────────
 // postFeatureAnnouncement posts this block once per guild on the first boot at
@@ -17,6 +18,9 @@ import { generalEventsCopy } from "./general-events.pack.js";
 // on voice either (2026-10 item 216, risk R9). Monopoly rides this release
 // (2026-10 item 241), so both embeds name it and its voice referee, and the
 // referee is promised only behind the host's toggle and a call Dero is already in.
+// The 1.7.0 test fixes (2026-10 item 245) ride it too: the copy names the merged
+// commands, never the seventeen names Phase 4b retired, and states the fixes'
+// numbers, which these pins hold to BOT_CONSTANTS.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMMANDS = join(HERE, "..", "..", "..", "commands");
@@ -27,6 +31,27 @@ const EMBED_DESCRIPTION_MAX = 4096;
 const LONGEST_VERSION_SUFFIX = " (v99.99.99)";
 const LONG_DASH = /[\u2013\u2014]/;
 const NAMED_COMMAND = /`\/([a-z][a-z-]*)/g;
+// The names Phase 4b folded into /schedule, /stream, /configure, /events, /channels
+// and /account, or removed. A deploy unregisters them, so naming one is a dead end.
+const RETIRED_COMMANDS = [
+	"pause-schedule",
+	"continue-schedule",
+	"pause-all-schedules",
+	"continue-all-schedules",
+	"announce-stream",
+	"go-live-soon",
+	"configure-stream-schedule",
+	"configure-auto-heal",
+	"configure-leaderboard-tracking",
+	"configure-leaderboard-week-start",
+	"list-events",
+	"delete-event",
+	"rename-channel",
+	"levels",
+	"achievements",
+	"ping",
+	"user",
+];
 // Wording that tells a client the service depends on one person's machine.
 const UNPREPARED = /computer|\bPC\b|when it sleeps|when I am offline|is offline|my creator is online|honest word/i;
 // Wording that promises more than the service can keep.
@@ -70,6 +95,11 @@ describe("the release announcement", () => {
 		expect(named.filter((command) => !registeredCommands.has(command))).toEqual([]);
 	});
 
+	it.each(EMBEDS)("$label names none of the retired commands", ({ description }) => {
+		const named = [...description.matchAll(NAMED_COMMAND)].map((match) => match[1]);
+		expect(named.filter((command) => RETIRED_COMMANDS.includes(command))).toEqual([]);
+	});
+
 	it.each(EMBEDS)("$label stays professional: nothing about where Dero runs or being offline", ({ title, description }) => {
 		expect(`${title}\n${description}`).not.toMatch(UNPREPARED);
 	});
@@ -110,5 +140,34 @@ describe("the release announcement", () => {
 		expect(admins.description).toContain("each falls back to the text you know whenever a picture cannot be drawn");
 		expect(admins.description).toContain("up to 25 of the week's most present members");
 		expect(admins.description).toContain("where level up announcements are off");
+	});
+
+	it("carries the 1.7.0 test fixes, with the numbers BOT_CONSTANTS runs (2026-10 item 245)", () => {
+		const { public: members, innerSanctum: admins } = rokCommanderCopy.featureAnnouncement;
+		const leveling = BOT_CONSTANTS.LEVELING;
+		// XP: one a message or reaction, and the daily cap over messages, reactions and solo games.
+		for (const text of [members.description, admins.description]) {
+			expect(text).toContain(`A message or a reaction ${text === members.description ? "earns" : "pays"} ${leveling.MESSAGE_XP}`);
+			expect(text).toContain(`at most ${leveling.DAILY_XP_CAP} a day`);
+		}
+		expect(leveling.MESSAGE_XP).toBe(leveling.REACTION_XP);
+		// The games channel, the solo games' XP, the hangman shelves, rematch and the idle close.
+		expect(members.description).toContain("🕹️games");
+		expect(members.description).toContain(`${leveling.SOLO_LUCK_WIN_XP} renown for a win, ${leveling.SOLO_LUCK_OTHER_XP} for anything else`);
+		expect(members.description).toContain("one of ten shelves");
+		expect(members.description).toContain("**Rematch** starts the next one in the same room");
+		expect(members.description).toContain(`${BOT_CONSTANTS.GAME_ROOM_IDLE_ABANDON_MS / 60_000} minutes without a move`);
+		// Hold'em's clock and the way out of a table.
+		expect(members.description).toContain(`${BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS / 1000} seconds on a live clock`);
+		expect(members.description).toContain("**Leave table**");
+		// George is the voice, with no step to choose one.
+		expect(admins.description).toContain("George's voice");
+		expect(admins.description).toContain("`/dero-config enable` is the only step");
+		// The merged commands and the buttons that open them.
+		for (const merged of ["`/schedule pause`", "`/stream announce`", "`/configure`", "`/events`", "`/channels rename`"]) {
+			expect(admins.description).toContain(merged);
+		}
+		expect(admins.description).toContain("Every admin command also has a button");
+		expect(members.description).toContain("`/account view:levels`");
 	});
 });

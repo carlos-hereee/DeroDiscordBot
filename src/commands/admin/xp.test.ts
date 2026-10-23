@@ -5,8 +5,6 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { XP_SUBCOMMANDS, data as xpData } from "./xp.js";
 import { data as setupData } from "./setup-level-system.js";
 import { data as accountData } from "@commands/fun/account.js";
-import { data as levelsData } from "@commands/fun/levels.js";
-import { data as achievementsData } from "@commands/fun/achievements.js";
 
 // ── the leveling command surface ───────────────────────────────────────────
 // Two things are pinned here, and both fail SILENTLY when wrong.
@@ -23,9 +21,10 @@ import { data as achievementsData } from "@commands/fun/achievements.js";
 //      • BOT_CONSTANTS.ADMIN_COMMANDS is the runtime gate in main.ts. Missing it
 //        means anyone who reaches the command anyway (a permission overwrite, a
 //        stale client) can RUN it.
-//    And the inverse matters just as much: /account and /levels are public on
-//    purpose, so putting either in the admin set would hide the whole point of
-//    the feature from the members it exists for.
+//    And the inverse matters just as much: /account, whose views include the
+//    levels standings and the achievements since 2026-10 item 245 Phase 4b, is
+//    public on purpose, so putting it in the admin set would hide the whole point
+//    of the feature from the members it exists for.
 
 type BuilderJSON = {
 	name: string;
@@ -93,12 +92,8 @@ describe("the admin commands are gated at runtime and visible to the admin role"
 });
 
 describe("the member commands are PUBLIC, in neither mechanism", () => {
-	it.each([
-		["account", accountData],
-		["levels", levelsData],
-		["achievements", achievementsData],
-	])("%s is visible to every member", (name, builder) => {
-		// Deliberately public, like /leaderboard and /list-events. Members seeing
+	it.each([["account", accountData]])("%s is visible to every member", (name, builder) => {
+		// Deliberately public, like /leaderboard and /events list. Members seeing
 		// their own standing is the entire point of the feature, so an accidental
 		// admin gate here would hide it from exactly the audience it is for.
 		expect(hasAdminDefault(builder), `${name} must not be admin gated`).toBe(false);

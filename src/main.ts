@@ -45,6 +45,8 @@ import { sweepMonopolyAuctions } from "@features/game-rooms/roomMonopolyAuction.
 import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/polls/PollDispatcher.js";
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
+import { registerAdminCommandLauncher } from "@features/command-buttons/adminCommandLauncher.js";
+import { registerVoiceRoomControlHandlers } from "@features/voice/voiceRoomControlHandlers.js";
 import { registerListenHandlers } from "@features/voice/listenHandler.js";
 import { registerHoldemRulesCardHandlers } from "@features/dero-brain/holdemRulesCard.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
@@ -55,6 +57,7 @@ import { registerGreeter, ensureIntroChannelsWritable } from "@features/greeter/
 import { runWeeklyDigest, startWeeklyDigest } from "@features/leveling/weeklyDigest.js";
 import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
+import { isAdminCommand } from "@utils/permissions.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
 import { registerMessageXp } from "@features/leveling/messageXp.js";
 import { registerReactionXp } from "@features/leveling/reactionXp.js";
@@ -208,7 +211,6 @@ process.on("uncaughtException", (err) => {
 (async () => {
 	// step 1 - load commands
 	client.commands = new Collection();
-	const ADMIN_COMMANDS = new Set<string>(BOT_CONSTANTS.ADMIN_COMMANDS);
 
 	const foldersPath = path.join(__dirname, "commands");
 	const commandFolders = fs.readdirSync(foldersPath);
@@ -346,6 +348,11 @@ process.on("uncaughtException", (err) => {
 	registerPollHandlers();
 	registerSelfDestructHandlers();
 	registerPowerUpHandlers();
+	// Every admin command's button on the admin guide, with the pick, the optional
+	// field pick and the form each one opens (2026-10 item 245 Phase 4b).
+	registerAdminCommandLauncher();
+	// Join, Leave and Status on the two voice rooms' intros, the /dero handlers.
+	registerVoiceRoomControlHandlers();
 	// The Listen button on fortunes and welcomes. Registered here like the rest so
 	// a Listen row posted by an earlier deploy keeps answering.
 	registerListenHandlers();
@@ -457,7 +464,9 @@ process.on("uncaughtException", (err) => {
 		if (interaction.commandName !== "setup") {
 			const config = await guildConfigStore.findByGuildId(interaction.guildId!);
 
-			if (ADMIN_COMMANDS.has(interaction.commandName)) {
+			// A whole command or one subcommand of it (BOT_CONSTANTS.ADMIN_COMMANDS):
+			// /events list is a member view, /events delete is not.
+			if (isAdminCommand(interaction.commandName, interaction.options.getSubcommand(false))) {
 				// guild hasn't run /setup yet, no config means no admin role is defined
 				if (!config) {
 					await interaction.reply({
@@ -729,7 +738,7 @@ process.on("uncaughtException", (err) => {
 
 				// Rename any homebase channel still on an old default name to the
 				// current default (e.g. 🛡️next-decree → 🔜upcoming-events), unless an
-				// admin set a custom name via /rename-channel. Removes the "delete +
+				// admin set a custom name via /channels rename. Removes the "delete +
 				// re-run /setup" friction for guilds on default channel names.
 				try {
 					await GuildSetupManager.renameDriftedChannels(client, guild);

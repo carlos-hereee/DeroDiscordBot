@@ -27,7 +27,9 @@ import { buildArcadeHostRow, buildHangmanCategoryStartRow } from "@features/game
 import { buildSoloLuckRow } from "@features/games/soloLuck.js";
 import { boardStartRows } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { buildGameRequestRow } from "@features/game-rooms/gameRequestHandlers.js";
-import { buildMemberControlButtons, buildAdminControlButtons, buildIcebreakerButton, buildFortuneButton } from "@features/power-ups/PowerUps.js";
+import { buildMemberControlButtons, buildAdminControlButtons, buildIcebreakerButton, buildFortuneButton, buildProfileButtons } from "@features/power-ups/PowerUps.js";
+import { buildAdminCommandRows } from "@features/command-buttons/adminGuideButtons.js";
+import { buildVoiceRoomControlRow } from "@features/voice/voiceRoomControls.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { buildDeroGifAttachment } from "@base/copy/brand.js";
 import { buildBotSelfOverwrite } from "@utils/channelOverwrites.js";
@@ -599,7 +601,7 @@ export class GuildSetupManager {
 		// authored by a different bot). "unknown" (missing/deleted anchor) falls
 		// through to repair-in-place: rebuilding there would duplicate our OWN
 		// homebase on a benign missing schedule message, and clobber any
-		// /rename-channel names (the rebuild path uses pack defaults). The schedule
+		// /channels rename names (the rebuild path uses pack defaults). The schedule
 		// board reposts its missing message on the next refresh.
 		if (ownership === "foreign") {
 			console.warn(LOG_MESSAGES.setup.homebaseNotOwned(guild.id));
@@ -686,8 +688,8 @@ export class GuildSetupManager {
 		// 🕹️games, the third arcade channel (2026-10 item 245 Phase 4a).
 		"arcadeGamesChannelId",
 		// ── the two VOICE rooms, one under each category (2026-10 item 235) ──
-		// They widen the resolveIntroEmbed switch like every other field, and
-		// resolve to null there, because a voice room carries no intro.
+		// They widen the resolveIntroEmbed switch like every other field; each
+		// carries the small /dero card in its text chat (2026-10 item 245 Phase 4b).
 		"meetingVoiceChannelId",
 		"arcadeVoiceChannelId",
 	] as const;
@@ -697,8 +699,8 @@ export class GuildSetupManager {
 	static readonly CHANNEL_SPECS: Array<{
 		configField: (typeof GuildSetupManager.CHANNEL_FIELDS)[number];
 		displayName: string;
-		// "voice" builds a GuildVoice room with voiceOverwrites and no intro; the
-		// other two build text channels. One table for all three, so the repair
+		// "voice" builds a GuildVoice room with voiceOverwrites, its intro posted in
+		// the room's built in text chat; the other two build text channels. One table for all three, so the repair
 		// sweep, the delete watcher, the drift rename, the admin grant and self
 		// destruct reach a voice room through the same walk as everything else.
 		kind: "public" | "admin" | "voice";
@@ -778,8 +780,8 @@ export class GuildSetupManager {
 	// Who:  repairOneChannel. Also usable by the realtime watcher.
 	// How:   plain switch on configField so a future spec addition becomes
 	//        a compile error here until the case is added. null means the
-	//        channel carries no intro at all (the two voice rooms), and every
-	//        caller skips its intro work on null.
+	//        channel carries no intro at all, and every caller skips its intro
+	//        work on null; every managed channel has one today.
 	private static resolveIntroEmbed(
 		field: (typeof GuildSetupManager.CHANNEL_FIELDS)[number],
 		guild: Guild,
@@ -831,21 +833,25 @@ export class GuildSetupManager {
 			case "arcadeGamesChannelId":
 				return ChannelContent.arcadeGamesIntro(guildConfig);
 			// ── the voice rooms ──
-			// No intro. A voice room's built in text chat is where people talk
-			// during a call, and a pinned bot card there would be the first thing
-			// every caller scrolls past; nothing in the plan calls for one.
+			// One small card in each room's built in text chat, carrying /dero's
+			// Join, Leave and Status (2026-10 item 245 Phase 4b, the owner's decision).
+			// It is never pinned: a pin there would be the first thing every caller
+			// scrolls past, and the card only has to be found by the people in the call.
 			case "meetingVoiceChannelId":
 			case "arcadeVoiceChannelId":
-				return null;
+				return ChannelContent.voiceRoomIntro(guildConfig);
 		}
 	}
 
 	// ── resolveIntroComponents ────────────────────────────────────
 	// What:  returns the action row(s) that accompany a given channel's intro
-	//        embed, or null if it has no buttons (the common case). Two channels
-	//        carry a folded control row (2026-06): the #command-center guide and
-	//        the admin-controls guide. The standalone "power-up" panels were
-	//        retired, every button now rides on these pinned guides.
+	//        embed, or null if it has no buttons (the common case). The
+	//        #command-center guide carries the member buttons, the admin-controls
+	//        guide one button per admin command above its control row, and each
+	//        voice room /dero's Join, Leave and Status (2026-10 item 245 Phase 4b).
+	//        The standalone "power-up" panels were retired, every button rides on
+	//        these guides. Five rows of five buttons is Discord's ceiling for one
+	//        message; the guide test holds every row set to it.
 	// Who:   populateChannels on first build and refreshIntroEmbeds on every boot
 	//        (both the edit-in-place and repost paths must pass components or
 	//        Discord silently drops them).
@@ -866,15 +872,26 @@ export class GuildSetupManager {
 	): ActionRowBuilder<MessageActionRowComponentBuilder>[] | null {
 		switch (field) {
 			case "commandsChannelId":
-				// #command-center guide row: the member actions, Suggestion Box +
-				// Toggle pings. The invite button and the Icebreaker button are NOT here:
-				// they live on the standalone Summon Dero card (inviteCardComponents) so
-				// they do not crowd this row.
-				return [new ActionRowBuilder<ButtonBuilder>().addComponents(buildSuggestionBoxButton(), ...buildMemberControlButtons())];
+				// #command-center guide, two rows: the three /account views, then
+				// Suggestion Box, Toggle pings and Fortune. Each answers privately. The
+				// invite button and the Icebreaker button are NOT here: they live on the
+				// standalone Summon Dero card (inviteCardComponents), which keeps its
+				// own Fortune too, so neither card loses a button.
+				return [
+					new ActionRowBuilder<ButtonBuilder>().addComponents(...buildProfileButtons()),
+					new ActionRowBuilder<ButtonBuilder>().addComponents(buildSuggestionBoxButton(), ...buildMemberControlButtons(), buildFortuneButton()),
+				];
 			case "adminCommandsChannelId":
-				// admin-controls guide row (2 buttons): owner-only Self destruct + the
-				// admin controls (Refresh standings).
-				return [new ActionRowBuilder<ButtonBuilder>().addComponents(buildSelfDestructButton(), ...buildAdminControlButtons())];
+				// admin-controls guide: two rows of admin command buttons (each opens its
+				// command's own flow, gated at every step), then the control row, the
+				// owner only Self destruct and the admin controls.
+				return [
+					...buildAdminCommandRows(),
+					new ActionRowBuilder<ButtonBuilder>().addComponents(buildSelfDestructButton(), ...buildAdminControlButtons()),
+				];
+			case "meetingVoiceChannelId":
+			case "arcadeVoiceChannelId":
+				return [buildVoiceRoomControlRow(getPluginCopy(guildConfig).channelContent.voiceRoom)];
 			case "arcadeRulesChannelId":
 				// The rules card's one control (2026-10 item 245 Phase 4a): the game
 				// request ballot, opened privately. The Host a game row it used to carry
@@ -1179,8 +1196,7 @@ export class GuildSetupManager {
 	//           (and memberRoleId, which only a voice room reads).
 	//        ② fire-and-forget the intro embed. failures are logged and
 	//           swallowed because the channel is already functional. A voice
-	//           room has no intro, so it skips this step and its repair leaves
-	//           introMessageIds untouched.
+	//           room's intro goes into its built in text chat like any other.
 	//        ③ persist: { [configField]: newChannel.id } plus, for the
 	//           schedule channel, scheduleMessageId: null so ScheduleBoard
 	//           reposts a fresh pinned board on its next refresh.
@@ -1219,7 +1235,7 @@ export class GuildSetupManager {
 		// How:   find by case-sensitive name match + TextChannel
 		//        instance check. Fall through to buildSingleChannel only
 		//        when no existing channel qualifies.
-		// Read the per-slot custom-name override (set by /rename-channel)
+		// Read the per-slot custom-name override (set by /channels rename)
 		// before falling back to spec.displayName. This is the rule the
 		// streamer-feedback announcement promises: admin renames persist
 		// across rebuilds. The Mongoose Map can be either a true Map (when
@@ -1252,7 +1268,7 @@ export class GuildSetupManager {
 
 		// ── intro message resolution ────────────────────────────────
 		// postOrAdoptRepairIntro carries the post or adopt rules. A null embed
-		// means this channel has no intro (a voice room) and nothing is posted.
+		// means this channel has no intro and nothing is posted.
 		const introEmbed =GuildSetupManager.resolveIntroEmbed(spec.configField, guild, stored.adminRoleId ?? null, stored as unknown as ICopyConfig);
 		const intro = introEmbed
 			? await GuildSetupManager.postOrAdoptRepairIntro(guild, newChannel, spec, introEmbed, Boolean(existingByName), stored as unknown as ICopyConfig)
@@ -1286,8 +1302,8 @@ export class GuildSetupManager {
 		}
 
 		const update: Record<string, unknown> = { [spec.configField]: newChannel.id };
-		// A channel with no intro (a voice room) has no introMessageIds slot, so
-		// its repair leaves the map exactly as it was.
+		// A channel with no intro has no introMessageIds slot, so its repair
+		// leaves the map exactly as it was.
 		if (introEmbed) update.introMessageIds = nextIntroIds;
 		if (spec.configField === "scheduleChannelId") {
 			// scheduleMessageId tracks the pinned board anchor. on a schedule
@@ -1429,7 +1445,7 @@ export class GuildSetupManager {
 			}
 			if (wouldRepairCount > 0) {
 				console.log(
-					`[auto-heal] skipped repair of ${wouldRepairCount} channel(s) in guild ${guild.id} because autoHealEnabled is false; run /configure-auto-heal enabled:True to resume.`
+					`[auto-heal] skipped repair of ${wouldRepairCount} channel(s) in guild ${guild.id} because autoHealEnabled is false; run /configure auto-heal enabled:True to resume.`
 				);
 			}
 			return [];
@@ -1458,7 +1474,7 @@ export class GuildSetupManager {
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 			// Honor per-channel user removal. If the admin removed this slot,
 			// skip it regardless of autoHealEnabled. The slot returns when the
-			// related toggle (eg /configure-leaderboard-tracking enabled:True)
+			// related toggle (eg /configure leaderboard-tracking enabled:True)
 			// pulls the configField name back out of userRemovedChannels.
 			if (userRemovedSlots.includes(spec.configField)) {
 				console.log(
@@ -1540,7 +1556,7 @@ export class GuildSetupManager {
 				// the new channel which is exactly where we want the notice.
 				stored = result.stored as typeof stored;
 				// Audit notice uses the EFFECTIVE channel name (override if
-				// set via /rename-channel, otherwise spec default). Without
+				// set via /channels rename, otherwise spec default). Without
 				// this, "homebase-leaderboard rebuilt" would post in admin
 				// after the rebuild even though the live channel is named
 				// "stream-rankings" per the persisted override.
@@ -1573,10 +1589,10 @@ export class GuildSetupManager {
 	// Who:   every setup-complete guild on every boot (main.ts ready loop).
 	// When:  skipped for guilds that disabled auto-heal (autoHealEnabled === false
 	//        means "do not manage my homebase", same opt-out as the rebuild sweep).
-	//        A channel with a /rename-channel override keeps that override (expected
+	//        A channel with a /channels rename override keeps that override (expected
 	//        = the override, normally already its live name); a channel with NO
 	//        override is renamed to the current pack default. So the only way to
-	//        keep an old custom name is to have set it via /rename-channel.
+	//        keep an old custom name is to have set it via /channels rename.
 	// How:   expected = override || spec.displayName; rename only when the live name
 	//        differs, so steady state is one fetch per channel and zero API writes.
 	//        Discord rate-limits renames (2 / 10 min / channel), but a drift rename
@@ -1800,7 +1816,7 @@ export class GuildSetupManager {
 	// Treating "unknown" as "rebuild" was the auto-heal duplicate-homebase bug: a
 	// benign missing/deleted schedule message looked identical to a foreign one,
 	// so a deleted pinned message triggered a full rebuild (new duplicate category
-	// + fresh channels, losing /rename-channel overrides). A missing anchor is not
+	// + fresh channels, losing /channels rename overrides). A missing anchor is not
 	// evidence the homebase is someone else's; ScheduleBoard reposts the message on
 	// its next refresh.
 	static async isHomebaseOwnedByThisBot(
@@ -2205,6 +2221,8 @@ export class GuildSetupManager {
 				arcadeRulesChannel,
 				arcadeChallengesChannel,
 				arcadeGamesChannel,
+				meetingVoiceChannel,
+				arcadeVoiceChannel,
 			},
 		};
 	}
@@ -2250,6 +2268,9 @@ export class GuildSetupManager {
 			arcadeGamesBoardId: string;
 			// Second pinned message in #command-center: the standalone invite card.
 			inviteCardId: string;
+			// The two voice rooms' cards, one anchor per room like every channel's.
+			meetingVoiceChannelId: string;
+			arcadeVoiceChannelId: string;
 		};
 	}> {
 		const {
@@ -2264,6 +2285,8 @@ export class GuildSetupManager {
 			arcadeRulesChannel,
 			arcadeChallengesChannel,
 			arcadeGamesChannel,
+			meetingVoiceChannel,
+			arcadeVoiceChannel,
 		} = discordChannels;
 
 		const [
@@ -2291,6 +2314,9 @@ export class GuildSetupManager {
 			// Second #command-center message: the standalone invite card (pitch +
 			// Dero gif + Summon button), pinned separately from the command guide.
 			inviteCardMsg,
+			// The voice rooms' cards, /dero's Join, Leave and Status (2026-10 item 245).
+			meetingVoiceMsg,
+			arcadeVoiceMsg,
 		] = await Promise.all([
 			// intro channel carries both the introduction embed AND the
 			// "Summon me to your server, Mortal" link button. Components
@@ -2338,6 +2364,8 @@ export class GuildSetupManager {
 				components: GuildSetupManager.inviteCardComponents(),
 				files: [buildDeroGifAttachment()],
 			}),
+			meetingVoiceChannel.send({ embeds: [ChannelContent.voiceRoomIntro()], components: GuildSetupManager.resolveIntroComponents("meetingVoiceChannelId") ?? [] }),
+			arcadeVoiceChannel.send({ embeds: [ChannelContent.voiceRoomIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeVoiceChannelId") ?? [] }),
 		]);
 
 		// Pinning policy (2026-06): pin ONLY member-writable channels. The
@@ -2372,6 +2400,8 @@ export class GuildSetupManager {
 				arcadeGamesChannelId: arcadeGamesMsgs.intro.id,
 				arcadeGamesBoardId: arcadeGamesMsgs.board.id,
 				inviteCardId: inviteCardMsg.id,
+				meetingVoiceChannelId: meetingVoiceMsg.id,
+				arcadeVoiceChannelId: arcadeVoiceMsg.id,
 			},
 		};
 	}
@@ -2448,15 +2478,11 @@ export class GuildSetupManager {
 			// That is correct and self healing: the loop treats a null anchor as
 			// "post it once", then persists the new id.
 			//
-			// Derived from the specs rather than CHANNEL_FIELDS only so the voice
-			// rooms stay out: they carry no intro, so they get no anchor slot, and
-			// introMessageIds has none for them in the schema either. Every other
-			// managed channel is still in, so the derivation keeps its guarantee.
+			// Derived from the specs, voice rooms included since they gained their
+			// intro (2026-10 item 245 Phase 4b); introMessageIds declares a slot for
+			// each, so the anchor persists like every other channel's.
 			...Object.fromEntries(
-				GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.kind !== "voice").map((spec) => [
-					spec.configField,
-					storedIntroIds[spec.configField] ?? null,
-				])
+				GuildSetupManager.CHANNEL_SPECS.map((spec) => [spec.configField, storedIntroIds[spec.configField] ?? null])
 			),
 			// The two FLAT keys stay explicit, because they are not a channel's own
 			// intro and so are deliberately absent from CHANNEL_FIELDS.
@@ -2482,10 +2508,7 @@ export class GuildSetupManager {
 			const channelId = stored[spec.configField] as string | null | undefined;
 			if (!channelId) continue;
 
-			// Resolved BEFORE the fetch so a channel with no intro (a voice room)
-			// is skipped quietly. Checked after the fetch instead, a voice room
-			// would fail the TextChannel test below and log a wrong type warning
-			// for every guild on every boot.
+			// Resolved BEFORE the fetch so a channel with no intro is skipped quietly.
 			const embed = GuildSetupManager.resolveIntroEmbed(spec.configField, guild, stored.adminRoleId ?? null, stored as unknown as ICopyConfig);
 			if (!embed) continue;
 
@@ -2494,7 +2517,9 @@ export class GuildSetupManager {
 				console.warn(LOG_MESSAGES.setup.introRefreshChannelMissing(spec.displayName, guild.id));
 				continue;
 			}
-			if (!(channel instanceof TextChannel)) {
+			// A voice room's built in text chat takes messages like a text channel, so
+			// both kinds pass; anything else under a managed id is the wrong type.
+			if (!(channel instanceof TextChannel || channel instanceof VoiceChannel)) {
 				console.warn(LOG_MESSAGES.setup.introRefreshChannelWrongType(spec.displayName, guild.id));
 				continue;
 			}

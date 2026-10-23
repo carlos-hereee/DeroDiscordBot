@@ -2,6 +2,7 @@ import {
 	SlashCommandBuilder,
 	SlashCommandSubcommandGroupBuilder,
 	ChatInputCommandInteraction,
+	type RepliableInteraction,
 	MessageFlags,
 	ChannelType,
 	type EmbedBuilder,
@@ -21,6 +22,7 @@ import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
 import { ratingsCopy } from "@features/ratings/ratingsCopy.js";
 import { asChallengeReach, isChallengeReach } from "@features/game-rooms/challengeReach.js";
 import { CHALLENGE_REACHES, type ChallengeReach } from "@features/game-rooms/roomTypes.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
 // ── /dero-config ──────────────────────────────────────────────────────
 // What:  every per guild voice setting in one admin command: the kill switch,
@@ -30,8 +32,8 @@ import { CHALLENGE_REACHES, type ChallengeReach } from "@features/game-rooms/roo
 //        The `arcade` group holds the arcade settings (2026-10 item 244): the
 //        monthly arcade post switch and the challenge reach (Phase 4), stored on
 //        GuildConfig rather than DeroVoiceConfig because neither has anything to
-//        do with the voice. Item 245 Phase 4b (the command merge) has not run
-//        yet, so this group is a new name that phase must fold into its layout.
+//        do with the voice. Item 245 Phase 4b kept the group where it is and gave
+//        the whole command a button on the admin guide, which runs this same run.
 // Who:   server admins, gated at runtime by ADMIN_COMMANDS in main.ts (guild
 //        owner or the bot's admin role). It carries no Discord default
 //        permission, which would hide it from that admin role.
@@ -265,7 +267,8 @@ function isListKind(group: string | null): group is ListKind {
 	return group === "role" || group === "channel" || group === "voicechannel";
 }
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+/** The one handler the slash command and the admin guide's /dero-config button share. */
+export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	// ① guild gate
 	const guildId = interaction.guildId;
 	if (!guildId) {
@@ -282,13 +285,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 	try {
 		// ③ dispatch. The arcade group needs only the GuildConfig the setup gate already read.
-		const group = interaction.options.getSubcommandGroup(false);
-		const sub = interaction.options.getSubcommand(true);
+		const group = options.getSubcommandGroup(false);
+		const sub = options.getSubcommand(true);
 		if (group === "arcade") {
 			const embed =
 				sub === "reach"
-					? await setReachFromOption(guildId, guildConfig.challengeReach, interaction.options.getString("mode", true))
-					: await setMonthlyPost(guildId, guildConfig.arcadeMonthlyPost, interaction.options.getBoolean("enabled", true));
+					? await setReachFromOption(guildId, guildConfig.challengeReach, options.getString("mode", true))
+					: await setMonthlyPost(guildId, guildConfig.arcadeMonthlyPost, options.getBoolean("enabled", true));
 			await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 			return;
 		}
@@ -298,14 +301,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		if (isListKind(group)) {
 			const id =
 				group === "role"
-					? interaction.options.getRole(LISTS.role.option, true).id
-					: interaction.options.getChannel(LISTS[group].option, true).id;
+					? options.getRole(LISTS.role.option, true).id
+					: options.getChannel(LISTS[group].option, true).id;
 			embed = await editList(guildId, current, group, sub, id);
 		}
 		else if (sub === "enable") embed = await enable(guildId, current);
 		else if (sub === "disable") embed = await disable(guildId, current);
-		else if (sub === "listen") embed = await setListen(guildId, current, interaction.options.getBoolean("enabled", true));
-		else if (sub === "cap") embed = await setCap(guildId, current, interaction.options.getInteger("dollars", true));
+		else if (sub === "listen") embed = await setListen(guildId, current, options.getBoolean("enabled", true));
+		else if (sub === "cap") embed = await setCap(guildId, current, options.getInteger("dollars", true));
 		else embed = await status(guildId, current);
 
 		// ④
@@ -317,4 +320,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 			.reply({ embeds: [errorEmbed(c.saveFailed)], flags: MessageFlags.Ephemeral })
 			.catch(() => undefined);
 	}
+}
+
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+	await run(interaction, interaction.options);
 }

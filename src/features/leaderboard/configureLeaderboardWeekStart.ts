@@ -1,7 +1,8 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, MessageFlags } from "discord.js";
+import { MessageFlags, type RepliableInteraction, type SlashCommandSubcommandBuilder } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
 // Mirrors the GuildConfig weekStart enum. Local union (zero runtime) so the
 // command, the schema, and /leaderboard's thisWeekRange all speak the same two
@@ -15,13 +16,13 @@ const BOUNDARY_LABEL: Record<WeekStart, string> = {
 	monday: "Monday to Sunday",
 };
 
-// ── /configure-leaderboard-week-start ─────────────────────────────────
+// ── /configure week-start ─────────────────────────────────
 // What:  sets which weekday the leaderboard's "This week" window is anchored
 //        to. "sunday" (default) runs Sun to Sat; "monday" runs Mon to Sun.
 // Who:   admins. Read at runtime by /leaderboard's thisWeekRange and embed
 //        title, and (once it ships) by Phase 2's LeaderboardBoard.
-// When:  on demand. Same idempotency contract as /configure-leaderboard-tracking
-//        and /configure-auto-heal: no silent re-writes, an explicit
+// When:  on demand. Same idempotency contract as /configure leaderboard-tracking
+//        and /configure auto-heal: no silent re-writes, an explicit
 //        "already that way" reply on a no-op invocation.
 // Where: writes GuildConfig.weekStart via guildConfigStore.update.
 // How:   ① guildId gate; ② config existence gate; ③ value validation, because
@@ -29,21 +30,22 @@ const BOUNDARY_LABEL: Record<WeekStart, string> = {
 //        so the schema enum will not catch a bad value on write; ④ idempotent
 //        write with a confirmation that states the resulting boundary.
 
-export const data = new SlashCommandBuilder()
-	.setName("configure-leaderboard-week-start")
-	.setDescription("Set which day the leaderboard's \"this week\" window starts on")
-	.addStringOption((option) =>
-		option
-			.setName("start")
-			.setDescription("Which day the leaderboard week begins on")
-			.setRequired(true)
-			.addChoices(
-				{ name: "Sunday (week runs Sun to Sat)", value: "sunday" },
-				{ name: "Monday (week runs Mon to Sun)", value: "monday" }
-			)
-	);
+/** The options this handler reads, added to the merged command's subcommand. */
+export function addWeekStartOptions(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
+	return sub
+		.addStringOption((option) =>
+			option
+				.setName("start")
+				.setDescription("Which day the leaderboard week begins on")
+				.setRequired(true)
+				.addChoices(
+					{ name: "Sunday (week runs Sun to Sat)", value: "sunday" },
+					{ name: "Monday (week runs Mon to Sun)", value: "monday" }
+				)
+		);
+}
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function configureLeaderboardWeekStart(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await interaction.reply({
@@ -57,7 +59,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	// Discord layer, but guildConfigStore.update does not run schema validators,
 	// so a value reaching the DB via any other path must be rejected here rather
 	// than silently written to the enum field.
-	const startRaw = interaction.options.getString("start", true);
+	const startRaw = options.getString("start", true);
 	if (startRaw !== "sunday" && startRaw !== "monday") {
 		await interaction.reply({
 			embeds: [errorEmbed("Pick Sunday or Monday from the dropdown.")],
@@ -107,7 +109,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 			flags: MessageFlags.Ephemeral,
 		});
 	} catch (err) {
-		console.error("[configure-leaderboard-week-start] update failed", err);
+		console.error("[configure week-start] update failed", err);
 		await interaction.reply({
 			embeds: [errorEmbed("Could not save the setting. Try again or check the bot's logs.")],
 			flags: MessageFlags.Ephemeral,

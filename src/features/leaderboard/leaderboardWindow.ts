@@ -48,7 +48,7 @@ export function weekBoundaryTitle(weekStart: WeekStart): string {
 //        "2026-W32" or "2026-08". The leveling feature stores one XpPeriod row
 //        per member per period keyed on this string.
 // Who:   @features/leveling/levelPeriod.ts wraps it; xpWriter stamps every
-//        buffered flush with the current week and month key; /levels and
+//        buffered flush with the current week and month key; /account view:levels and
 //        /account query on it.
 // When:  on every flush, so it stays pure arithmetic with no allocation beyond
 //        the returned string.

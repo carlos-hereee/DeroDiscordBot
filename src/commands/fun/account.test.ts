@@ -47,7 +47,8 @@ function interaction(): { interaction: ChatInputCommandInteraction; editReply: R
 	const fake = {
 		guildId: "g1",
 		user: USER,
-		options: { getUser: () => null },
+		// view and window read null, the defaults: the profile, as /account always showed.
+		options: { getUser: () => null, getString: () => null },
 		guild: { members: { cache: new Map([["u1", { displayName: "Silent Warrior" }]]) } },
 		client: {},
 		deferReply: vi.fn(async () => undefined),

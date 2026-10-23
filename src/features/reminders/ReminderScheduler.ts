@@ -397,11 +397,11 @@ export function startScheduler(client: Client): void {
 
 				// ── paused ───────────────────────────────────────────────
 				// Streamers (and anyone else) can pause an event from the
-				// dashboard or via /pause-schedule. Paused events stay in
+				// dashboard or via /schedule pause. Paused events stay in
 				// the DB, still render on the schedule board (with a
 				// "paused" tag rendered by ScheduleBoard), still appear in
 				// /event-list, they simply skip the fire decision until
-				// /continue-schedule flips paused back to false.
+				// /schedule resume flips paused back to false.
 				//
 				// Why this lives BEFORE the seasonEnd check: a paused
 				// event whose seasonEnd happens to pass while it is paused

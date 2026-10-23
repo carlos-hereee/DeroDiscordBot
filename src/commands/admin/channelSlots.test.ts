@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { GuildSetupManager } from "@features/setup/GuildSetupManager.js";
 import { HIDEABLE_CHANNELS } from "./channels.js";
-import { SLOT_LABELS } from "./rename-channel.js";
+import { SLOT_LABELS } from "@features/setup/renameChannel.js";
 
 // ── the two admin slot lists ───────────────────────────────────────────────
 // ⚠️ THESE ARE DELIBERATE SUBSETS OF CHANNEL_SPECS, NOT MIRRORS, which makes

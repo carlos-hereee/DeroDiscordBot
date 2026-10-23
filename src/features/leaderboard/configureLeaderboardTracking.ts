@@ -1,17 +1,18 @@
 import {
-	SlashCommandBuilder,
-	ChatInputCommandInteraction,
 	MessageFlags,
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
+	type RepliableInteraction,
+	type SlashCommandSubcommandBuilder,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { buildLeaderboardChannelDeleteCustomId } from "@features/leaderboard/leaderboardChannelHandlers.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
-// ── /configure-leaderboard-tracking ───────────────────────────────────
+// ── /configure leaderboard-tracking ───────────────────────────────────
 // What:  master switch for participation tracking. When ON (default),
 //        ActivityTracker writes PlayerActivity rows on ✅ reactions and
 //        voice-channel joins. When OFF, both listeners early-return so
@@ -21,7 +22,7 @@ import { buildLeaderboardChannelDeleteCustomId } from "@features/leaderboard/lea
 // Who:   streamers who do not want participation tracked, or who want
 //        to pause tracking during a hiatus without losing prior data.
 //        Captured from 2026-05-11 streamer feedback.
-// When:  on demand. Same idempotency contract as /configure-auto-heal,
+// When:  on demand. Same idempotency contract as /configure auto-heal,
 //        no silent re-writes, explicit "already on / already off"
 //        feedback on repeat invocations.
 // Where: writes GuildConfig.leaderboardTrackingEnabled via
@@ -31,17 +32,18 @@ import { buildLeaderboardChannelDeleteCustomId } from "@features/leaderboard/lea
 //        with a clear note that historical data remains visible so the
 //        admin does not panic about leaderboard accuracy after a flip.
 
-export const data = new SlashCommandBuilder()
-	.setName("configure-leaderboard-tracking")
-	.setDescription("Toggle whether the bot records participation (reactions + voice joins)")
-	.addBooleanOption((option) =>
-		option
-			.setName("enabled")
-			.setDescription("True to keep tracking new participation, false to pause new writes")
-			.setRequired(true)
-	);
+/** The options this handler reads, added to the merged command's subcommand. */
+export function addLeaderboardTrackingOptions(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
+	return sub
+		.addBooleanOption((option) =>
+			option
+				.setName("enabled")
+				.setDescription("True to keep tracking new participation, false to pause new writes")
+				.setRequired(true)
+		);
+}
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function configureLeaderboardTracking(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await interaction.reply({
@@ -51,7 +53,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		return;
 	}
 
-	const enabled = interaction.options.getBoolean("enabled", true);
+	const enabled = options.getBoolean("enabled", true);
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
@@ -158,7 +160,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 			flags: MessageFlags.Ephemeral,
 		});
 	} catch (err) {
-		console.error("[configure-leaderboard-tracking] update failed", err);
+		console.error("[configure leaderboard-tracking] update failed", err);
 		await interaction.reply({
 			embeds: [errorEmbed("Could not save the toggle. Try again or check the bot's logs.")],
 			flags: MessageFlags.Ephemeral,

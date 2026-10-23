@@ -9,12 +9,17 @@ import { welcomeNewMember } from "@features/greeter/welcomeNewMember.js";
 import { respondWithFortune } from "@features/fortune/respondWithFortune.js";
 import { startHangmanRound } from "@features/games/hangmanHandler.js";
 import { gamesCopy } from "@features/games/gamesCopy.js";
+import { levelingCopy } from "@features/leveling/levelingCopy.js";
+import { showAccountProfile } from "@features/leveling/accountProfile.js";
+import { showLevelsStandings } from "@features/leveling/levelsStandings.js";
+import { showAchievements } from "@features/leveling/achievementsView.js";
 
 // ── Channel controls (v1.6 item 36; folded into intro guides 2026-06) ──────
 // The bot's common channel actions are one-click buttons in Discord, no slash
 // command required. They USED to live on standalone pinned "power-up" panel
 // messages; they are now BUTTONS on the pinned intro guides instead:
-//   • #command-center guide: "Toggle pings" (any member)
+//   • #command-center guide: "Account", "Levels", "Achievements", "Toggle pings"
+//     and "Fortune" (any member)
 //   • Summon Dero invite card: "Icebreaker" (any member)
 //   • admin-controls guide:  "Refresh standings" (owner/admin)
 //   • admin-controls guide:  "Post hangman" (owner/admin), posts a PUBLIC
@@ -46,6 +51,11 @@ const POWERUP_ACTIONS = {
 	// "Fortune" (member:fortune), any member can pull their own fortune reading,
 	// so it is NOT adminOnly.
 	"member:fortune": { adminOnly: false },
+	// The three /account views (2026-10 item 245 Phase 4b), each answered privately
+	// for the member who pressed it: a guide's buttons never post in its channel.
+	"member:account": { adminOnly: false },
+	"member:levels": { adminOnly: false },
+	"member:achievements": { adminOnly: false },
 	"admin:refresh": { adminOnly: true },
 	// "Post hangman" (admin:hangman), starts a public /mini-game hangman round in
 	// the guild's #command-center. adminOnly because it POSTS to a channel other
@@ -69,6 +79,17 @@ export function buildMemberControlButtons(): ButtonBuilder[] {
 	];
 }
 
+// #command-center guide's first row: the three /account views, which share their
+// handlers with the slash command (features/leveling) and answer privately here.
+export function buildProfileButtons(): ButtonBuilder[] {
+	const labels = levelingCopy.guideButtons;
+	return [
+		new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:account`).setLabel(labels.account).setEmoji("🪪").setStyle(ButtonStyle.Primary),
+		new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:levels`).setLabel(labels.levels).setEmoji("📈").setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:achievements`).setLabel(labels.achievements).setEmoji("🏅").setStyle(ButtonStyle.Secondary),
+	];
+}
+
 // "Icebreaker", pulls the clicking member a random icebreaker question (posted to
 // #introductions). Member-usable (member:greet). Lives on the Summon Dero invite
 // card, not the command guide row.
@@ -79,7 +100,7 @@ export function buildIcebreakerButton(): ButtonBuilder {
 // "Fortune", pulls the clicking member a quick personal fortune reading
 // (ephemeral, so it never clutters the read-only #command-center guide).
 // Member-usable (member:fortune). Rides the Summon Dero invite card next to
-// Icebreaker.
+// Icebreaker, and the #command-center guide's second row.
 export function buildFortuneButton(): ButtonBuilder {
 	return new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:fortune`).setLabel("Fortune").setEmoji("🔮").setStyle(ButtonStyle.Secondary);
 }
@@ -144,6 +165,16 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 			return;
 		case "member:subscribe":
 			await runToggleNotificationRole(interaction, guildId);
+			return;
+		case "member:account":
+			await showAccountProfile(interaction, { target: interaction.user, isPrivate: true });
+			return;
+		case "member:levels":
+			// The all time standings, the slash command's own default window.
+			await showLevelsStandings(interaction, { window: "alltime", isPrivate: true });
+			return;
+		case "member:achievements":
+			await showAchievements(interaction, { target: interaction.user, isPrivate: true });
 			return;
 		default:
 			// In POWERUP_ACTIONS but not wired here, should not happen for shipped

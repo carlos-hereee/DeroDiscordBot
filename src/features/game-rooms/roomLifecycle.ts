@@ -224,7 +224,7 @@ function payRoomRateTopUp(client: Client, room: IGameRoom, winnerId: string | nu
 			const member = guild.members.cache.get(userId);
 			// ⚠️ SKIP rather than fall back to the raw id. memberLevelStore does
 			// `$set: { username }` on EVERY award, so handing it a snowflake would overwrite a
-			// real display name on /account and /levels with a string of digits. Losing one
+			// real display name on /account and /account view:levels with a string of digits. Losing one
 			// top up for a member who left mid-match is far cheaper than corrupting the name
 			// on both leaderboards, and their own game hook already paid them.
 			if (!member) continue;

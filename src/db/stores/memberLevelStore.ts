@@ -5,7 +5,7 @@ import type { AnyBulkWriteOperation } from "mongoose";
 // What:  the thin Mongoose wrapper over the MemberLevel collection. Query shapes
 //        only; every decision about WHEN xp is awarded, whether a cooldown
 //        passed, and what a level up means lives in features/leveling.
-// Who:   awardXp and xpWriter (writes), /account, /levels, LevelsBoard,
+// Who:   awardXp and xpWriter (writes), /account, /account view:levels, LevelsBoard,
 //        roleRewards and the achievement engine (reads), /xp (admin correction).
 // When:  on every flush and on every profile or board render.
 // Where: guild scoping is a security boundary (invariant 2), so every method
@@ -68,7 +68,7 @@ export const memberLevelStore = {
 				//
 				// ⚠️ ONLY WHEN THE CALLER ACTUALLY RESOLVED ONE. Because this is a WRITE on every
 				// award rather than a hint used on insert, an unresolved caller that passed a
-				// fallback would overwrite a real display name on /account, /levels and
+				// fallback would overwrite a real display name on /account, /account view:levels and
 				// LevelsBoard, and it would STAY overwritten until that member's next award from
 				// a path that could resolve a name. Nothing errors and no test fails, which is
 				// why the fix belongs here rather than at each call site: a caller that cannot
@@ -116,7 +116,7 @@ export const memberLevelStore = {
 		return (await MemberLevel.countDocuments({ guildId, totalXp: { $gt: totalXp } })) + 1;
 	},
 
-	// The all-time board and /levels all-time. Sorted by the same index rank
+	// The all-time board and /account view:levels all-time. Sorted by the same index rank
 	// counts against, so the two surfaces can never disagree about the order.
 	async topByTotalXp(guildId: string, limit = 10) {
 		return MemberLevel.find({ guildId }).sort({ totalXp: -1 }).limit(limit);

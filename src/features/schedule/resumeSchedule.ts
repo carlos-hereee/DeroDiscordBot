@@ -1,9 +1,4 @@
-import {
-	SlashCommandBuilder,
-	ChatInputCommandInteraction,
-	AutocompleteInteraction,
-	MessageFlags,
-} from "discord.js";
+import { MessageFlags, type RepliableInteraction } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
@@ -11,54 +6,50 @@ import { getPluginCopy } from "@base/copy/getCopy.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
+import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
 
-// ── /continue-schedule ────────────────────────────────────────────────
+// ── /schedule resume, one event ───────────────────────────────────────
 // What:  clears event.paused (and pausedUntil) so the scheduler resumes
 //        firing reminders on the next matching occurrence. Inverse of
-//        /pause-schedule. Same autocomplete pattern.
-// Who:   streamers and KvK admins resuming a previously paused event.
+//        pauseOneSchedule. Same event choice pattern.
+// Who:   /schedule resume when it names an event, and the admin guide's
+//        /schedule button. Streamers and KvK admins resuming a previously
+//        paused event.
 // When:  on demand, typically right when the streamer is back from
-//        vacation. If they used /pause-schedule with a duration the
-//        scheduler will auto-resume on its own; this command is for the
-//        "resume early" or "resume an indefinite pause" case.
+//        vacation. If they paused with a duration the scheduler will
+//        auto-resume on its own; this is for the "resume early" or
+//        "resume an indefinite pause" case.
 // Where: writes the Event document via eventStore.update, then kicks a
 //        schedule board refresh so the paused tag disappears.
-// How:   ① autocomplete shows only PAUSED events to keep the list short
+// How:   ① the event choices list only PAUSED events to keep the list short
 //        and the choice obvious; ② idempotent, already-active events
 //        report "already active" rather than silently no-op.
 
 const c = rokCommanderCopy.pauseSchedule;
 
-export const data = new SlashCommandBuilder()
-	.setName("continue-schedule")
-	.setDescription("Resume a paused recurring event")
-	.addStringOption((option) =>
-		option.setName("name").setDescription("Which schedule to resume").setRequired(true).setAutocomplete(true)
-	);
-
-export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
-	if (!interaction.guildId) {
-		await interaction.respond([]);
-		return;
-	}
+/**
+ * The events /schedule resume can name: every paused event. Read by the command's
+ * autocomplete and by the admin form's event picker.
+ */
+export async function resumableEventChoices(guildId: string): Promise<OptionChoice[]> {
 	// Filter to paused only. Listing every event would force the streamer
 	// to scroll past schedules that are already active, and the natural
 	// failure mode (selecting an active event) just shows "already
 	// active", annoying but harmless. Scoping the list keeps the choice
 	// space minimal for the common case.
-	const events = await eventStore.findByGuildId(interaction.guildId);
-	const paused = events.filter((e) => e.paused);
-	await interaction.respond(paused.slice(0, 25).map((e) => ({ name: e.name, value: e.eventId })));
+	const events = await eventStore.findByGuildId(guildId);
+	return events.filter((e) => e.paused).map((e) => ({ name: e.name, value: e.eventId }));
 }
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+/** Resume the one paused event the `event` option names. */
+export async function resumeOneSchedule(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await interaction.reply({ embeds: [errorEmbed("Run this in a server, not a DM.")], flags: MessageFlags.Ephemeral });
 		return;
 	}
 
-	const eventId = interaction.options.getString("name", true);
+	const eventId = options.getString("event", true);
 	// findByIdInGuild scopes by guildId at the store layer so cross-guild access is
 	// blocked whether we're hitting the local DB or the remote API. The redundant
 	// event.guildId check below is gone, the store guarantees a guild match.
@@ -85,9 +76,9 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 	try {
 		// Clear both fields together. Leaving pausedUntil populated would
-		// let a future "/pause-schedule" call accidentally re-use a stale
-		// expiry. The scheduler's auto-resume check is also a no-op once
-		// paused is false, but cleaner to drop both.
+		// let a future pause accidentally re-use a stale expiry. The
+		// scheduler's auto-resume check is also a no-op once paused is
+		// false, but cleaner to drop both.
 		await eventStore.updateInGuild(event.eventId, guildId, { paused: false, pausedUntil: null });
 
 		await interaction.reply({
@@ -96,10 +87,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		});
 
 		refreshSchedule(interaction.client, guildId).catch((err) =>
-			console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/continue-schedule"), err)
+			console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/schedule resume"), err)
 		);
 	} catch (err) {
-		console.error("[continue-schedule] update failed", err);
+		console.error("[schedule resume] update failed", err);
 		await interaction.reply({ embeds: [errorEmbed(c.failed)], flags: MessageFlags.Ephemeral });
 	}
 }

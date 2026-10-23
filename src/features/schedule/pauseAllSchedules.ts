@@ -1,42 +1,28 @@
-import {
-	SlashCommandBuilder,
-	ChatInputCommandInteraction,
-	MessageFlags,
-} from "discord.js";
+import { MessageFlags, type RepliableInteraction } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
-// /pause-all-schedules, bulk equivalent of /pause-schedule. Pauses every
-// non-paused event in the guild in one shot. Already-paused events are
-// skipped on purpose so any pausedUntil the streamer set individually
-// earlier (e.g. /pause-schedule X days:14) stays intact and is not
-// overwritten by a guild-wide days argument.
+// /schedule pause with no event, the bulk equivalent of pauseOneSchedule.
+// Pauses every non-paused event in the guild in one shot. Already-paused
+// events are skipped on purpose so any pausedUntil the streamer set
+// individually earlier (e.g. /schedule pause event:X days:14) stays intact
+// and is not overwritten by a guild-wide days argument.
 
 const c = rokCommanderCopy.pauseAllSchedules;
 
-export const data = new SlashCommandBuilder()
-	.setName("pause-all-schedules")
-	.setDescription("Pause every recurring schedule on this server at once")
-	.addIntegerOption((option) =>
-		option
-			.setName("days")
-			.setDescription("Auto-resume after N days. Omit to pause indefinitely (then run /continue-all-schedules to resume).")
-			.setRequired(false)
-			.setMinValue(1)
-			.setMaxValue(90)
-	);
-
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+/** Pause every event in the guild that is not already paused, for `days` days or until resumed. */
+export async function pauseAllSchedules(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await interaction.reply({ embeds: [errorEmbed("Run this in a server, not a DM.")], flags: MessageFlags.Ephemeral });
 		return;
 	}
 
-	const days = interaction.options.getInteger("days", false);
+	const days = options.getInteger("days", false);
 
 	const events = await eventStore.findByGuildId(guildId);
 	if (events.length === 0) {
@@ -46,7 +32,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 	// Partition before the writes so the success message can report skipped
 	// counts honestly. Already-paused events get skipped to preserve any
-	// per-event pausedUntil the streamer set earlier with /pause-schedule.
+	// per-event pausedUntil the streamer set earlier with /schedule pause.
 	const toPause = events.filter((e) => !e.paused);
 	const alreadyPaused = events.length - toPause.length;
 
@@ -74,13 +60,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 			succeeded++;
 		} catch (err) {
 			failed++;
-			console.error("[pause-all-schedules] update failed", { eventId: event.eventId }, err);
+			console.error("[schedule pause all] update failed", { eventId: event.eventId }, err);
 		}
 	}
 
 	// Fire-and-forget board refresh so paused tags render right away.
 	refreshSchedule(interaction.client, guildId).catch((err) =>
-		console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/pause-all-schedules"), err)
+		console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/schedule pause"), err)
 	);
 
 	if (failed > 0 && succeeded === 0) {

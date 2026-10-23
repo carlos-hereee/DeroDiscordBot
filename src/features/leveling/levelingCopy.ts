@@ -142,6 +142,19 @@ export const levelingCopy = {
 		participation: "Who showed up for events. See /leaderboard.",
 	},
 
+	// The three views /account offers, its `view` option's choice labels.
+	accountViews: {
+		profile: "Profile",
+		levels: "Levels",
+		achievements: "Achievements",
+	},
+	// The same three views as buttons on the #command-center guide (PowerUps).
+	guideButtons: {
+		account: "Account",
+		levels: "Levels",
+		achievements: "Achievements",
+	},
+
 	board: {
 		title: "Server levels",
 		emptyState: "Nobody has earned XP yet. Say something and you will be first.",

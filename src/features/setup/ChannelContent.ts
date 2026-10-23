@@ -205,6 +205,13 @@ export const ChannelContent = {
 		return infoEmbed(c.boardTitle, c.boardDescription, copy.COLORS.ARCADE);
 	},
 
+	// The card in each voice room's text chat, above /dero's Join, Leave and Status
+	// (2026-10 item 245 Phase 4b). Tracked on introMessageIds under the room's own field.
+	voiceRoomIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const c = getPluginCopy(guildConfig).channelContent.voiceRoom;
+		return infoEmbed(c.title, c.description, COLORS.DERO);
+	},
+
 	arcadeChallengesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
 		const copy = getPluginCopy(guildConfig);
 		const cc = copy.channelContent;

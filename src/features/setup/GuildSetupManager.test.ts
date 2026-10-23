@@ -1559,7 +1559,7 @@ describe("GuildSetupManager voice rooms", () => {
 
 	// A created channel of the REAL kind for its type, so every instanceof check in
 	// the unit under test sees a voice room as a VoiceChannel. The send spy is what
-	// proves nothing was ever posted into a room.
+	// shows exactly what was posted into a room: its /dero card and nothing else.
 	function makeCreatedChannel(opts: { name: string; type: number }): unknown {
 		if (opts.type === ChannelType.GuildCategory) {
 			return { id: `cat-${opts.name}`, type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } };
@@ -1647,7 +1647,9 @@ describe("GuildSetupManager voice rooms", () => {
 		}
 	});
 
-	it("persists both room ids, posts nothing into either, and gives neither an intro anchor", async () => {
+	// Each room's text chat carries one card, /dero's Join, Leave and Status (2026-10
+	// item 245 Phase 4b), anchored like every other intro so the boot sweep keeps it.
+	it("persists both room ids, posts each room its /dero card once, and anchors it", async () => {
 		const { voiceCreated } = await runAutoSetup(null);
 
 		const [payload] = guildConfigMock.create.mock.calls[0] as [Record<string, unknown>];
@@ -1655,11 +1657,20 @@ describe("GuildSetupManager voice rooms", () => {
 		expect(payload.arcadeVoiceChannelId).toBe(`new-${packChannels.arcadeVoice}`);
 
 		expect(voiceCreated).toHaveLength(2);
-		for (const room of voiceCreated) expect(room.send, `${room.id} received a post`).not.toHaveBeenCalled();
+		for (const room of voiceCreated) {
+			expect(room.send, `${room.id} posts`).toHaveBeenCalledTimes(1);
+			const [sent] = room.send.mock.calls[0] as [{ embeds: Array<{ data: { title?: string } }>; components: Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }> }];
+			expect(sent.embeds[0]?.data.title).toBe(rokCommanderCopy.channelContent.voiceRoom.title);
+			expect(sent.components.flatMap((row) => row.toJSON().components.map((button) => button.custom_id))).toEqual([
+				"dero_call:join",
+				"dero_call:leave",
+				"dero_call:status",
+			]);
+		}
 
 		const introIds = payload.introMessageIds as Record<string, unknown>;
-		expect(introIds).not.toHaveProperty("meetingVoiceChannelId");
-		expect(introIds).not.toHaveProperty("arcadeVoiceChannelId");
+		expect(introIds.meetingVoiceChannelId).toBe(`msg-${packChannels.meetingVoice}`);
+		expect(introIds.arcadeVoiceChannelId).toBe(`msg-${packChannels.arcadeVoice}`);
 	});
 
 	it("grants the stored member and admin roles when a forced rebuild rebuilds the rooms", async () => {
@@ -1744,7 +1755,7 @@ describe("GuildSetupManager voice rooms", () => {
 		return { result, calls, created, adminChannel };
 	}
 
-	it("builds the Meeting Hall for a legacy row with a null id, as a voice room under the homebase, with no intro", async () => {
+	it("builds the Meeting Hall for a legacy row with a null id, as a voice room under the homebase, with its /dero card", async () => {
 		// Owner decision D1: every existing guild gets the rooms through this path.
 		const { result, calls, created } = await runSweep({
 			stored: makeStoredConfig({ meetingVoiceChannelId: null, memberRoleId: "role-member" }),
@@ -1756,9 +1767,16 @@ describe("GuildSetupManager voice rooms", () => {
 		expect(calls[0]).toMatchObject({ name: packChannels.meetingVoice, type: ChannelType.GuildVoice, parent: "cat-1" });
 		// The stored member role reaches the rebuilt room's posture.
 		expect(overwriteFor(calls[0], "role-member")).toEqual({ id: "role-member", allow: JOIN_AND_SPEAK });
-		expect(created[0].send).not.toHaveBeenCalled();
-		// Exactly the room id: no introMessageIds key, because a room has no anchor.
-		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", { meetingVoiceChannelId: `new-${packChannels.meetingVoice}` });
+		// The rebuilt room gets its card at once, and the card's anchor persists with
+		// the room id, so the next boot's sweep keeps it rather than posting another.
+		expect(created[0].send).toHaveBeenCalledTimes(1);
+		expect(guildConfigMock.update).toHaveBeenCalledWith(
+			"guild-1",
+			expect.objectContaining({
+				meetingVoiceChannelId: `new-${packChannels.meetingVoice}`,
+				introMessageIds: expect.objectContaining({ meetingVoiceChannelId: `msg-${packChannels.meetingVoice}` }),
+			})
+		);
 	});
 
 	it("rebuilds a deleted Arcade Lounge under the ARCADE category, never under the homebase", async () => {
@@ -1773,14 +1791,24 @@ describe("GuildSetupManager voice rooms", () => {
 
 	it("adopts an existing voice room with the expected name instead of building a second one", async () => {
 		const existingRoom = makeVoiceRoom("v-existing", packChannels.meetingVoice);
+		// An adopted room is scanned for its card first; this one holds none, so the
+		// card is posted into it once (Phase 4b gave every room the /dero card).
+		Object.assign(existingRoom, { messages: { fetch: vi.fn().mockResolvedValue({ find: () => undefined }) } });
+		existingRoom.send.mockResolvedValue({ id: "card-v-existing" });
 		const { calls } = await runSweep({
 			stored: makeStoredConfig({ meetingVoiceChannelId: null }),
 			homebaseChildren: [existingRoom],
 		});
 
 		expect(calls).toHaveLength(0);
-		expect(existingRoom.send).not.toHaveBeenCalled();
-		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", { meetingVoiceChannelId: "v-existing" });
+		expect(existingRoom.send).toHaveBeenCalledTimes(1);
+		expect(guildConfigMock.update).toHaveBeenCalledWith(
+			"guild-1",
+			expect.objectContaining({
+				meetingVoiceChannelId: "v-existing",
+				introMessageIds: expect.objectContaining({ meetingVoiceChannelId: "card-v-existing" }),
+			})
+		);
 	});
 
 	it("does NOT adopt a TEXT channel that merely carries the room's name", async () => {
@@ -1795,7 +1823,11 @@ describe("GuildSetupManager voice rooms", () => {
 
 		expect(calls).toHaveLength(1);
 		expect(calls[0].type).toBe(ChannelType.GuildVoice);
-		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", { meetingVoiceChannelId: `new-${packChannels.meetingVoice}` });
+		// The real room is built, so it is the one whose id (and card) persists.
+		expect(guildConfigMock.update).toHaveBeenCalledWith(
+			"guild-1",
+			expect.objectContaining({ meetingVoiceChannelId: `new-${packChannels.meetingVoice}` })
+		);
 	});
 
 	// ── drift rename ────────────────────────────────────────────────────
@@ -1812,7 +1844,7 @@ describe("GuildSetupManager voice rooms", () => {
 		expect(room.setName).toHaveBeenCalledWith(packChannels.meetingVoice);
 	});
 
-	it("keeps a /rename-channel override on a voice room, and writes nothing in steady state", async () => {
+	it("keeps a /channels rename override on a voice room, and writes nothing in steady state", async () => {
 		const renamed = makeVoiceRoom("ch-meetingvoice", "old-hall");
 		const settled = makeVoiceRoom("ch-arcadevoice", packChannels.arcadeVoice);
 		await runRename(makeStoredConfig({ channelNames: new Map([["meetingVoiceChannelId", "War Room"]]) }), {
@@ -1864,32 +1896,46 @@ describe("GuildSetupManager voice rooms", () => {
 
 	// ── intro sweep ─────────────────────────────────────────────────────
 
-	it("never fetches a voice room during the intro sweep, so it logs no wrong type warning", async () => {
+	it("posts a missing voice room card in the intro sweep, as a voice channel, with no wrong type warning", async () => {
+		// A legacy row has no anchor for either room, so the sweep posts each card
+		// once. The rooms are real VoiceChannels: the sweep accepts their text chat
+		// rather than warning that a voice room is the wrong type.
 		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ introMessageIds: {} }));
-		const client = makeClient({ selfId: BOT_ID, fetchChannel: async () => null });
+		const rooms = {
+			"ch-meetingvoice": makeVoiceRoom("ch-meetingvoice", packChannels.meetingVoice),
+			"ch-arcadevoice": makeVoiceRoom("ch-arcadevoice", packChannels.arcadeVoice),
+		};
+		for (const room of Object.values(rooms)) {
+			Object.assign(room, { messages: { fetch: vi.fn().mockResolvedValue({ find: () => undefined, values: () => [][Symbol.iterator]() }) } });
+			room.send.mockResolvedValue({ id: `card-${room.id}`, pin: vi.fn() });
+		}
+		const client = makeClient({ selfId: BOT_ID, fetchChannel: async (id) => rooms[id as keyof typeof rooms] ?? null });
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
 		await GuildSetupManager.refreshIntroEmbeds(client, { id: "guild-1", ownerId: OWNER_ID, client: { user: { id: BOT_ID } } } as unknown as Guild);
 
-		const fetchedIds = (client.channels.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0]);
-		expect(fetchedIds).not.toContain("ch-meetingvoice");
-		expect(fetchedIds).not.toContain("ch-arcadevoice");
+		for (const room of Object.values(rooms)) expect(room.send, room.id).toHaveBeenCalledTimes(1);
 		const warned = warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
 		expect(warned).not.toContain(packChannels.meetingVoice);
 		expect(warned).not.toContain(packChannels.arcadeVoice);
+		const persisted = guildConfigMock.update.mock.calls.map((call) => call[1] as { introMessageIds?: Record<string, string | null> });
+		const introIds = persisted.find((update) => update.introMessageIds)?.introMessageIds;
+		expect(introIds?.meetingVoiceChannelId).toBe("card-ch-meetingvoice");
+		expect(introIds?.arcadeVoiceChannelId).toBe("card-ch-arcadevoice");
 		warnSpy.mockRestore();
 	});
 
-	it("resolves no intro for exactly the voice specs", () => {
+	it("resolves an intro for every spec, the voice rooms' being the /dero card", () => {
 		// The intro sweep, the repair path and the anchor map all read "no intro"
-		// from this null, so it has to line up with the spec kind one for one.
+		// from a null; since Phase 4b no managed channel answers one.
 		const internals = GuildSetupManager as unknown as {
-			resolveIntroEmbed(field: string, guild: Guild, adminRoleId: string | null): unknown;
+			resolveIntroEmbed(field: string, guild: Guild, adminRoleId: string | null): { data: { title?: string } } | null;
 		};
 		const guild = { ownerId: OWNER_ID } as unknown as Guild;
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
-			const hasIntro = internals.resolveIntroEmbed(spec.configField, guild, null) !== null;
-			expect(hasIntro, spec.configField).toBe(spec.kind !== "voice");
+			const intro = internals.resolveIntroEmbed(spec.configField, guild, null);
+			expect(intro, spec.configField).not.toBeNull();
+			if (spec.kind === "voice") expect(intro?.data.title, spec.configField).toBe(rokCommanderCopy.channelContent.voiceRoom.title);
 		}
 	});
 });

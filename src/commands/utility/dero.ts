@@ -3,6 +3,7 @@ import {
 	MessageFlags,
 	PermissionFlagsBits,
 	type ChatInputCommandInteraction,
+	type RepliableInteraction,
 	type EmbedBuilder,
 	type Guild,
 	type GuildMember,
@@ -94,7 +95,7 @@ export const data = new SlashCommandBuilder()
 
 // ── replies ──
 
-async function refuse(interaction: ChatInputCommandInteraction, line: string): Promise<void> {
+async function refuse(interaction: RepliableInteraction, line: string): Promise<void> {
 	await interaction.reply({ embeds: [errorEmbed(line)], flags: MessageFlags.Ephemeral });
 }
 
@@ -220,7 +221,12 @@ async function tell(interaction: ChatInputCommandInteraction): Promise<void> {
 
 // ── /dero status ──
 
-async function status(interaction: ChatInputCommandInteraction): Promise<void> {
+/**
+ * /dero status, shared with the Status button on the two voice rooms' intros
+ * (2026-10 item 245 Phase 4b). Any member may ask; the task list lines show only
+ * to a member on it.
+ */
+export async function showDeroStatus(interaction: RepliableInteraction): Promise<void> {
 	const lines = [brainQueue.isBrainOnline() ? deroBrainCopy.status.online : deroBrainCopy.status.offline];
 
 	// Shown to every member: anyone in the server can already see Dero sitting
@@ -307,7 +313,12 @@ export function checkJoin({ speaker, guildOwnerId, botMember, config, sessionCha
 	return { ok: true, channel, voiceId: resolveDeroVoiceId(config) };
 }
 
-async function join(interaction: ChatInputCommandInteraction): Promise<void> {
+/**
+ * /dero join, shared with the Join button on the two voice rooms' intros. Every
+ * gate is checkJoin's, so the button admits exactly who the command admits: a
+ * member on the task list, standing in an allowed voice channel.
+ */
+export async function bringDeroIntoCall(interaction: RepliableInteraction): Promise<void> {
 	if (!interaction.inCachedGuild()) {
 		await refuse(interaction, tellCopy.notInGuild);
 		return;
@@ -339,8 +350,12 @@ async function join(interaction: ChatInputCommandInteraction): Promise<void> {
 	// Ready can take up to 20 seconds, far past Discord's 3 second window.
 	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 	const voiceChannelId = gate.channel.id;
+	// The channel the request came from carries the join notice. A slash command
+	// and a button always have one; only an interaction with no channel at all falls
+	// back to the call's own voice chat, which is where the voice room's Join sits.
+	const controlChannelId = interaction.channelId ?? voiceChannelId;
 	try {
-		const outcome = await voiceSessions.join({ guild, channel: gate.channel, controlChannelId: interaction.channelId });
+		const outcome = await voiceSessions.join({ guild, channel: gate.channel, controlChannelId });
 		if (outcome.status === "alreadyInGuild") {
 			// Another join won the race between the gate and here.
 			await interaction.editReply({ embeds: [errorEmbed(callCopy.alreadyElsewhere(outcome.channelId))] });
@@ -353,7 +368,7 @@ async function join(interaction: ChatInputCommandInteraction): Promise<void> {
 
 		const greeting: GreetingOutcome = await announceJoin({
 			guild,
-			controlChannelId: interaction.channelId,
+			controlChannelId,
 			voiceChannelId,
 			voiceId: gate.voiceId,
 			speaker: outcome.session.speaker,
@@ -368,7 +383,11 @@ async function join(interaction: ChatInputCommandInteraction): Promise<void> {
 
 // ── /dero leave ──
 
-async function leave(interaction: ChatInputCommandInteraction): Promise<void> {
+/**
+ * /dero leave, shared with the Leave button on the two voice rooms' intros: the
+ * owner or a member on the task list sends Dero out of its call.
+ */
+export async function sendDeroAwayFromCall(interaction: RepliableInteraction): Promise<void> {
 	if (!interaction.inCachedGuild()) {
 		await refuse(interaction, tellCopy.notInGuild);
 		return;
@@ -400,11 +419,11 @@ async function runSubcommand(interaction: ChatInputCommandInteraction): Promise<
 		case "tell":
 			return tell(interaction);
 		case "join":
-			return join(interaction);
+			return bringDeroIntoCall(interaction);
 		case "leave":
-			return leave(interaction);
+			return sendDeroAwayFromCall(interaction);
 		default:
-			return status(interaction);
+			return showDeroStatus(interaction);
 	}
 }
 

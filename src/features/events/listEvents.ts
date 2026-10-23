@@ -1,15 +1,20 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, MessageFlags } from "discord.js";
+import { MessageFlags, type RepliableInteraction } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { listEventsEmbed } from "@utils/embedBuilder.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { getUpcomingOccurrences } from "@features/events/occurrenceCalculator.js";
 
-export const data = new SlashCommandBuilder()
-	.setName("list-events")
-	.setDescription("List all active events configured for this server");
+// ── /events list ──────────────────────────────────────────────────────
+// What:  every active event in this server, each with its next occurrence,
+//        its cadence and a paused tag, in a private reply.
+// Who:   any member (/events list is a member view; only /events delete is
+//        gated), from the slash command or the admin guide's /events button.
+// Where: reads the event store and the guild config; writes nothing. The pack
+//        voice and the announcements channel both come from the one config read.
 
-export async function execute(interaction: ChatInputCommandInteraction) {
+/** List this server's active events. Reads no option, so it takes only the interaction. */
+export async function listEvents(interaction: RepliableInteraction): Promise<void> {
 	const events = await eventStore.findByGuildId(interaction.guildId!);
 
 	// Load the config up front: it both selects the copy pack for the

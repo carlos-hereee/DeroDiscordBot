@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, MessageFlags, type ChatInputCommandInteraction, type User } from "discord.js";
+import { MessageFlags, type RepliableInteraction, type User } from "discord.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { levelFromTotalXp } from "@features/leveling/levelCurve.js";
@@ -8,15 +8,18 @@ import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import { buildAchievementsEmbed, type AchievementProgressView } from "@features/leveling/levelingEmbeds.js";
 import { buildCounters, progressFor, unlockedKey } from "@features/leveling/achievementEngine.js";
 import { ACHIEVEMENTS_BY_ID } from "@features/leveling/achievements.js";
+import { deferProfileReply } from "@features/leveling/accountProfile.js";
 
-// ── /achievements ──────────────────────────────────────────────────────────
+// ── /account view:achievements ─────────────────────────────────────────────
 // What:  which achievement tiers a member holds, with the action that earned
 //        each one, plus the two they are closest to.
-// Who:   every member. PUBLIC, in neither admin mechanism, like /account and
-//        /levels.
+// Who:   every member. /account view:achievements is PUBLIC, in neither admin
+//        mechanism; the #command-center guide's Achievements button answers
+//        privately. Both call showAchievements (2026-10 item 245 Phase 4b folded
+//        the old /achievements command into /account).
 // When:  on demand. Read only, and it never writes.
 // Where: the counters it reads are the ones MemberLevel already maintains, so
-//        this command adds no listener and no write anywhere.
+//        this view adds no listener and no write anywhere.
 //
 // ⚠️ A HIDDEN TRACK IS OMITTED ENTIRELY UNTIL IT UNLOCKS. Not shown as a locked
 // placeholder, not shown with its name blanked out, not counted in a "3 of 12"
@@ -31,14 +34,14 @@ import { ACHIEVEMENTS_BY_ID } from "@features/leveling/achievements.js";
 // than a checklist and a wall of twelve bars is neither.
 const IN_PROGRESS_SHOWN = 2;
 
-export const data = new SlashCommandBuilder()
-	.setName("achievements")
-	.setDescription("See which achievements you hold and which are closest")
-	.addUserOption((option) =>
-		option.setName("member").setDescription("Whose achievements to show. Defaults to you.").setRequired(false)
-	);
+/** Whose honors to show, and whether only the asker sees them. */
+export interface AchievementsRequest {
+	target: User;
+	isPrivate: boolean;
+}
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+/** Reply with `target`'s held achievements and the two closest to unlocking. */
+export async function showAchievements(interaction: RepliableInteraction, { target, isPrivate }: AchievementsRequest): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await interaction.reply({
@@ -48,13 +51,12 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		return;
 	}
 
-	const target: User = interaction.options.getUser("member") ?? interaction.user;
 	if (target.bot) {
 		await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.botMember)], flags: MessageFlags.Ephemeral });
 		return;
 	}
 
-	await interaction.deferReply();
+	await deferProfileReply(interaction, isPrivate);
 
 	const context = await getLevelingConfig(guildId);
 	if (!context) {

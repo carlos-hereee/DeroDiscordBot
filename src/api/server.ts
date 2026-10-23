@@ -121,7 +121,7 @@ export function startApiServer(client: Client): Server {
 	// /api/leaderboard-tracking, HTTP twin of the slash command for the
 	// Command Center leaderboard pause/continue button.
 	app.use("/api/leaderboard-tracking", createLeaderboardTrackingRouter());
-	// /api/auto-heal, HTTP twin of /configure-auto-heal for the Settings
+	// /api/auto-heal, HTTP twin of /configure auto-heal for the Settings
 	// tab toggle. Same idempotency + payload shape as leaderboard-tracking.
 	app.use("/api/auto-heal", createAutoHealRouter());
 	// /api/pairing, exchanges a one-time claim code (issued + DM'd on

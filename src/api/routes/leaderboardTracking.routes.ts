@@ -3,7 +3,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { requireGuildId } from "../middleware/requireGuildId.js";
 
 // ── /api/leaderboard-tracking ─────────────────────────────────────────
-// What:  HTTP twin of /configure-leaderboard-tracking slash command. Lets
+// What:  HTTP twin of /configure leaderboard-tracking slash command. Lets
 //        the Command Center dashboard button toggle
 //        GuildConfig.leaderboardTrackingEnabled without the admin opening
 //        Discord. Body: { enabled: boolean }. Same idempotency contract

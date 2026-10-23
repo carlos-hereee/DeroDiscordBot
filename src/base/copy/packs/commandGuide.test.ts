@@ -43,16 +43,21 @@ describe("member command guide", () => {
 		expect(guideText(copy)).toContain("`/account`");
 	});
 
-	it.each(PACKS)("$name names /levels, the standings", ({ copy }) => {
-		expect(guideText(copy)).toContain("`/levels`");
+	it.each(PACKS)("$name names /account view:levels, the standings", ({ copy }) => {
+		// /levels became a view of /account in 2026-10 item 245 Phase 4b; the guide
+		// names the view, because naming a command Discord no longer knows sends a
+		// member to a dead end.
+		expect(guideText(copy)).toContain("`/account view:levels`");
 	});
 
-	it.each(PACKS)("$name names /achievements", ({ copy }) => {
-		// Added in Phase 4, in the same commit that shipped the command. Through
-		// Phase 3 this case asserted the OPPOSITE, because the guide is the only
-		// surface telling a member a command exists and naming one Discord does not
-		// know sends them to a dead end.
-		expect(guideText(copy)).toContain("`/achievements`");
+	it.each(PACKS)("$name names /account view:achievements", ({ copy }) => {
+		expect(guideText(copy)).toContain("`/account view:achievements`");
+	});
+
+	it.each(PACKS)("$name no longer advertises /levels, /achievements or /list-events", ({ copy }) => {
+		// All three were folded into /account and /events in Phase 4b and their
+		// registrations are removed at deploy.
+		for (const retired of ["`/levels`", "`/achievements`", "`/list-events`"]) expect(guideText(copy)).not.toContain(retired);
 	});
 
 	it.each(PACKS)("$name no longer advertises the retired /fortune command", ({ copy }) => {

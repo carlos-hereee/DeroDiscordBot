@@ -1,4 +1,4 @@
-import type { TextChannel } from "discord.js";
+import type { TextChannel, VoiceChannel } from "discord.js";
 
 export interface ISetupConfig {
 	guildId: string;
@@ -64,6 +64,9 @@ export interface IChannelObjects {
 	arcadeRulesChannel: TextChannel;
 	arcadeChallengesChannel: TextChannel;
 	arcadeGamesChannel: TextChannel;
+	// The two voice rooms, so a fresh build can post their intros (2026-10 item 245).
+	meetingVoiceChannel: VoiceChannel;
+	arcadeVoiceChannel: VoiceChannel;
 }
 
 // return shape of GuildSetupManager.ensureHomebase. the ready sweep in main.ts

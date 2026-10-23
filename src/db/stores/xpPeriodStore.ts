@@ -4,7 +4,7 @@ import type { AnyBulkWriteOperation } from "mongoose";
 // ── xpPeriodStore ──
 // What:  the thin Mongoose wrapper over the XpPeriod collection, the per period
 //        xp aggregates behind "this week" and "this month".
-// Who:   xpWriter's flush (one bulkWrite per period key), /levels, /account's
+// Who:   xpWriter's flush (one bulkWrite per period key), /account view:levels, /account's
 //        weekly and monthly rank lines, LevelsBoard.
 // When:  every flush, and every period-scoped render.
 // Where: guild scoped like every other store here (invariant 2). The period key

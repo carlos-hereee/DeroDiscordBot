@@ -1,6 +1,7 @@
 import {
 	SlashCommandBuilder,
 	ChatInputCommandInteraction,
+	type RepliableInteraction,
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
@@ -15,6 +16,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { kvkConfirmationEmbed, errorEmbed } from "@utils/embedBuilder.js";
 import { addDays, parseEventDate, parseEventDateTime } from "@utils/dateParser.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
 const { configureReminders } = rokCommanderCopy;
 
@@ -59,11 +61,12 @@ export const data = new SlashCommandBuilder()
 // channel every time they ran this command was dead weight since the home
 // base already has exactly one announcement channel.
 
-export async function execute(interaction: ChatInputCommandInteraction) {
-	const daysRemaining = interaction.options.getInteger("days-remaining", true);
-	const ruinsInput = interaction.options.getString("ruins-date-time", true);
-	const altarInput = interaction.options.getString("altar-date-time", true);
-	const kauInput = interaction.options.getString("kau-date", true);
+/** The one handler the slash command and the admin guide's /configure-kvk-season button share. */
+export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
+	const daysRemaining = options.getInteger("days-remaining", true);
+	const ruinsInput = options.getString("ruins-date-time", true);
+	const altarInput = options.getString("altar-date-time", true);
+	const kauInput = options.getString("kau-date", true);
 
 	// ── resolve the announcements channel from guild config ─────
 	// the source of truth for "where do reminders go" is the guild's
@@ -369,4 +372,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 			components: [],
 		});
 	}
+}
+
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+	await run(interaction, interaction.options);
 }

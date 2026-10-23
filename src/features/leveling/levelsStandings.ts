@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, MessageFlags, type ChatInputCommandInteraction } from "discord.js";
+import { MessageFlags, type RepliableInteraction } from "discord.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { xpPeriodStore } from "@db/stores/xpPeriodStore.js";
@@ -7,12 +7,16 @@ import { periodKeysFor } from "@features/leveling/levelPeriod.js";
 import { getLevelingConfig } from "@features/leveling/levelingConfig.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import { buildLevelsBoardEmbed, type LevelsBoardEntry } from "@features/leveling/levelingEmbeds.js";
+import { deferProfileReply } from "@features/leveling/accountProfile.js";
 
-// ── /levels ────────────────────────────────────────────────────────────────
+// ── /account view:levels ───────────────────────────────────────────────────
 // What:  the guild's xp standings for this week, this month, or all time.
-// Who:   every member. PUBLIC, like /account and /leaderboard.
+// Who:   every member. /account view:levels is PUBLIC, like the profile and
+//        /leaderboard; the #command-center guide's Levels button answers
+//        privately. Both call showLevelsStandings (2026-10 item 245 Phase 4b
+//        folded the old /levels command into /account).
 // When:  on demand. The pinned LevelsBoard covers all time passively; this
-//        command is the only way to see the two period windows.
+//        view is the only way to see the two period windows.
 // Where: ⚠️ THIS IS NOT /leaderboard. That command ranks participation SCORE
 //        for ROK events, aggregated from PlayerActivity and keyed by event and
 //        occurrence. This one ranks XP. Both are legitimate standings and both
@@ -24,26 +28,29 @@ import { buildLevelsBoardEmbed, type LevelsBoardEntry } from "@features/leveling
 //        the period rows are disposable aggregates and denormalizing a name
 //        into them would mean two places to fix a nickname change.
 
-type Window = "week" | "month" | "alltime";
+/** The stretch of time the standings rank, the /account window option's values. */
+export type LevelsWindow = "week" | "month" | "alltime";
 
-export const data = new SlashCommandBuilder()
-	.setName("levels")
-	.setDescription("See who is most present in this server")
-	.addStringOption((option) =>
-		option
-			.setName("window")
-			.setDescription("Which stretch of time to rank")
-			.setRequired(false)
-			// Choices rather than free text, so Discord rejects anything else before
-			// the interaction reaches the bot and the handler never hand validates it.
-			.addChoices(
-				{ name: levelingCopy.board.allTime, value: "alltime" },
-				{ name: levelingCopy.board.thisWeek, value: "week" },
-				{ name: levelingCopy.board.thisMonth, value: "month" }
-			)
-	);
+/** Which window to rank, and whether only the asker sees it. */
+export interface LevelsStandingsRequest {
+	window: LevelsWindow;
+	isPrivate: boolean;
+}
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+/** The window choices, in the order the slash command offers them. */
+export const LEVELS_WINDOW_CHOICES: ReadonlyArray<{ name: string; value: LevelsWindow }> = [
+	{ name: levelingCopy.board.allTime, value: "alltime" },
+	{ name: levelingCopy.board.thisWeek, value: "week" },
+	{ name: levelingCopy.board.thisMonth, value: "month" },
+];
+
+/** A stored or typed window, narrowed; anything else reads as all time, the old default. */
+export function toLevelsWindow(value: string | null): LevelsWindow {
+	return value === "week" || value === "month" ? value : "alltime";
+}
+
+/** Reply with the standings for one window. */
+export async function showLevelsStandings(interaction: RepliableInteraction, { window, isPrivate }: LevelsStandingsRequest): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await interaction.reply({
@@ -53,7 +60,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		return;
 	}
 
-	await interaction.deferReply();
+	await deferProfileReply(interaction, isPrivate);
 
 	const context = await getLevelingConfig(guildId);
 	if (!context) {
@@ -61,7 +68,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		return;
 	}
 
-	const window = (interaction.options.getString("window") ?? "alltime") as Window;
 	const { entries, label } = await resolveWindow(guildId, window, context);
 
 	await interaction.editReply({ embeds: [buildLevelsBoardEmbed(label, entries)] });
@@ -69,7 +75,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 async function resolveWindow(
 	guildId: string,
-	window: Window,
+	window: LevelsWindow,
 	context: NonNullable<Awaited<ReturnType<typeof getLevelingConfig>>>
 ): Promise<{ entries: LevelsBoardEntry[]; label: string }> {
 	const settings = context.settings;

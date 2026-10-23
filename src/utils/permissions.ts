@@ -1,4 +1,5 @@
 import type { ButtonInteraction, GuildMember, ModalSubmitInteraction, StringSelectMenuInteraction } from "discord.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 // ── permissions ─────────────────────────────────────────────────────
 // Centralized authorization helpers. Today only the decree-edit flow
@@ -23,8 +24,7 @@ interface IGuildConfigPermissionShape {
  * What:  decides whether a Discord member is allowed to mutate an event
  *        through the decree-edit UI (apply once or apply permanent).
  *        Mirrors the slash-command admin gate in main.ts so a member who
- *        could run /list-events / /delete-event can also click Edit on a
- *        NextUpBoard post.
+ *        could run /events delete can also click Edit on a NextUpBoard post.
  * Who:   read by the persistent button + modal handlers in the decree-edit
  *        flow. Returns true on the happy path; the caller replies with an
  *        ephemeral denial when false.
@@ -84,4 +84,19 @@ export async function gateOwnerOrAdmin(
 	let member = interaction.guild.members.cache.get(interaction.user.id) ?? null;
 	if (!member) member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
 	return member ? member.roles.cache.has(adminRoleId) : false;
+}
+
+/**
+ * isAdminCommand
+ *
+ * Whether a slash command, or one subcommand of it, sits behind the owner or admin
+ * gate. BOT_CONSTANTS.ADMIN_COMMANDS lists a bare command name to gate all of it, or
+ * "command subcommand" to gate that one subcommand alone (/events delete, while
+ * /events list stays a member view). main.ts's slash command gate and the admin
+ * command launcher both ask this, so a button can never open what the command
+ * would refuse.
+ */
+export function isAdminCommand(commandName: string, subcommand: string | null): boolean {
+	if (BOT_CONSTANTS.ADMIN_COMMANDS.has(commandName)) return true;
+	return subcommand !== null && BOT_CONSTANTS.ADMIN_COMMANDS.has(`${commandName} ${subcommand}`);
 }

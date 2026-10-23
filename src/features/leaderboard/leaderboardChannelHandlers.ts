@@ -6,7 +6,7 @@ import { COLORS } from "@base/copy/brand.js";
 
 // ── leaderboard channel handlers ──────────────────────────────────────
 // What:  persistent button handlers that follow up the
-//        /configure-leaderboard-tracking flow with optional channel-
+//        /configure leaderboard-tracking flow with optional channel-
 //        lifecycle actions. When the admin turns tracking OFF, the
 //        command's reply includes a "Remove leaderboard channel" button.
 //        Clicking that button routes here.
@@ -93,7 +93,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 			embeds: [
 				infoEmbed(
 					"Already removed",
-					"The leaderboard channel is already gone from this server. To restore it later, run /configure-leaderboard-tracking enabled:True with auto-heal enabled.",
+					"The leaderboard channel is already gone from this server. To restore it later, run /configure leaderboard-tracking enabled:True with auto-heal enabled.",
 					COLORS.SCHEDULE
 				),
 			],
@@ -126,7 +126,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 		// "nothing to do" rather than an error.
 		const channel = await interaction.guild?.channels.fetch(channelId).catch(() => null);
 		if (channel) {
-			await channel.delete("Removed via /configure-leaderboard-tracking follow-up button");
+			await channel.delete("Removed via /configure leaderboard-tracking follow-up button");
 		}
 
 		// Clear the stored id after the delete settles. Splitting the write
@@ -138,7 +138,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 		});
 
 		// Audit notice in the admin channel. Other admins see "X removed
-		// the leaderboard channel via /configure-leaderboard-tracking" so
+		// the leaderboard channel via /configure leaderboard-tracking" so
 		// the action is traceable without broadcasting to every member.
 		// Swallow send failures, the deletion itself succeeded and the
 		// notice is observability, not the load-bearing path.
@@ -150,7 +150,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 					embeds: [
 						infoEmbed(
 							"🗑️ Leaderboard channel removed",
-							`**${actor}** removed the leaderboard channel via /configure-leaderboard-tracking.\n\nTo restore it later, an admin can run /configure-leaderboard-tracking enabled:True. Auto-heal will rebuild the channel on the next boot sweep as long as autoHealEnabled is on.`,
+							`**${actor}** removed the leaderboard channel via /configure leaderboard-tracking.\n\nTo restore it later, an admin can run /configure leaderboard-tracking enabled:True. Auto-heal will rebuild the channel on the next boot sweep as long as autoHealEnabled is on.`,
 							COLORS.SCHEDULE
 						),
 					],
@@ -164,7 +164,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 			embeds: [
 				infoEmbed(
 					"🗑️ Leaderboard channel removed",
-					"The leaderboard channel has been deleted from this server and flagged so auto-heal will not rebuild it. To restore it later, run /configure-leaderboard-tracking enabled:True, that re-enables tracking AND clears the removal flag, so the channel rebuilds on the next boot sweep (assuming autoHealEnabled is on).",
+					"The leaderboard channel has been deleted from this server and flagged so auto-heal will not rebuild it. To restore it later, run /configure leaderboard-tracking enabled:True, that re-enables tracking AND clears the removal flag, so the channel rebuilds on the next boot sweep (assuming autoHealEnabled is on).",
 					COLORS.SCHEDULE
 				),
 			],

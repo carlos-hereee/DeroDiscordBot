@@ -1,13 +1,10 @@
-import {
-	SlashCommandBuilder,
-	ChatInputCommandInteraction,
-	MessageFlags,
-} from "discord.js";
+import { MessageFlags, type RepliableInteraction, type SlashCommandSubcommandBuilder } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
-// ── /configure-auto-heal ──────────────────────────────────────────────
+// ── /configure auto-heal ──────────────────────────────────────────────
 // What:  master switch for the bot's channel auto-repair behavior.
 //        When ON (default), the boot sweep and the realtime
 //        ChannelDeleteWatcher rebuild missing homebase channels. When
@@ -28,17 +25,18 @@ import { COLORS } from "@base/copy/brand.js";
 //        write with explicit "already X" feedback so repeat invocations
 //        do not gaslight the admin.
 
-export const data = new SlashCommandBuilder()
-	.setName("configure-auto-heal")
-	.setDescription("Toggle whether the bot rebuilds missing homebase channels automatically")
-	.addBooleanOption((option) =>
-		option
-			.setName("enabled")
-			.setDescription("True to keep auto-repair on, false to let deleted channels stay gone")
-			.setRequired(true)
-	);
+/** The options this handler reads, added to the merged command's subcommand. */
+export function addAutoHealOptions(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
+	return sub
+		.addBooleanOption((option) =>
+			option
+				.setName("enabled")
+				.setDescription("True to keep auto-repair on, false to let deleted channels stay gone")
+				.setRequired(true)
+		);
+}
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function configureAutoHeal(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await interaction.reply({
@@ -48,7 +46,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		return;
 	}
 
-	const enabled = interaction.options.getBoolean("enabled", true);
+	const enabled = options.getBoolean("enabled", true);
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
@@ -89,7 +87,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 			flags: MessageFlags.Ephemeral,
 		});
 	} catch (err) {
-		console.error("[configure-auto-heal] update failed", err);
+		console.error("[configure auto-heal] update failed", err);
 		await interaction.reply({
 			embeds: [errorEmbed("Could not save the toggle. Try again or check the bot's logs.")],
 			flags: MessageFlags.Ephemeral,

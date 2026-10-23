@@ -628,8 +628,8 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 // ── the voice rooms, realtime half (2026-10 item 235) ──────────────────────
 // The watcher has no voice code of its own: it resolves the parent from the
 // spec's categoryField and hands off to repairOneChannel. These pin that a
-// deleted room comes back as a VOICE channel, under its own category, with
-// nothing posted into it and no intro anchor written.
+// deleted room comes back as a VOICE channel, under its own category, with its
+// /dero card posted once and anchored (2026-10 item 245 Phase 4b).
 describe("ChannelDeleteWatcher, voice rooms", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -663,7 +663,7 @@ describe("ChannelDeleteWatcher, voice rooms", () => {
 				const options = opts as { name: string; type: number; parent?: string };
 				createCalls.push(options);
 				const room = Object.create(VoiceChannel.prototype) as VoiceChannel & { send: ReturnType<typeof vi.fn> };
-				Object.assign(room, { id: `new-${options.name}`, send: vi.fn() });
+				Object.assign(room, { id: `new-${options.name}`, send: vi.fn().mockResolvedValue({ id: `card-${options.name}` }) });
 				created.push(room);
 				return room;
 			},
@@ -673,7 +673,7 @@ describe("ChannelDeleteWatcher, voice rooms", () => {
 		return { createCalls, created, adminChannel };
 	}
 
-	it("rebuilds a deleted Meeting Hall as a voice room under the homebase, posting nothing into it", async () => {
+	it("rebuilds a deleted Meeting Hall as a voice room under the homebase, with its /dero card", async () => {
 		const { createCalls, created, adminChannel } = await deleteRoom("ch-meetingvoice", rokCommanderCopy.setup.channels.meetingVoice);
 
 		expect(createCalls).toHaveLength(1);
@@ -684,10 +684,14 @@ describe("ChannelDeleteWatcher, voice rooms", () => {
 		});
 		// The stored member role reaches the rebuilt room (owner decision D3).
 		expect(createCalls[0].permissionOverwrites?.map((entry) => entry.id)).toContain("role-member");
-		expect(created[0].send).not.toHaveBeenCalled();
-		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", {
-			meetingVoiceChannelId: `new-${rokCommanderCopy.setup.channels.meetingVoice}`,
-		});
+		expect(created[0].send).toHaveBeenCalledTimes(1);
+		expect(guildConfigMock.update).toHaveBeenCalledWith(
+			"guild-1",
+			expect.objectContaining({
+				meetingVoiceChannelId: `new-${rokCommanderCopy.setup.channels.meetingVoice}`,
+				introMessageIds: expect.objectContaining({ meetingVoiceChannelId: `card-${rokCommanderCopy.setup.channels.meetingVoice}` }),
+			})
+		);
 		// The admin channel still gets the usual restored notice.
 		expect(adminChannel.send).toHaveBeenCalledOnce();
 	});

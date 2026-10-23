@@ -47,12 +47,12 @@ export interface AchievementTier {
 export interface AchievementDefinition {
 	id: string;
 	// The member-facing name. The id is a stable key and is never renamed; this
-	// is the string /achievements renders, and it CAN change.
+	// is the string /account view:achievements renders, and it CAN change.
 	label: string;
 	category: AchievementCategory;
 	metric: AchievementMetric;
 	tiers: readonly AchievementTier[];
-	// ⚠️ A hidden track does not appear in /achievements AT ALL until it unlocks.
+	// ⚠️ A hidden track does not appear in /account view:achievements AT ALL until it unlocks.
 	// Not as a locked placeholder, not with its name blanked out: a placeholder
 	// tells a member a secret exists, which is most of what the secret was.
 	hidden: boolean;
@@ -228,7 +228,7 @@ export const ACHIEVEMENTS: readonly AchievementDefinition[] = Object.freeze([
 	},
 ] satisfies AchievementDefinition[]);
 
-// Fast lookup for the unlock path and for /achievements, built once.
+// Fast lookup for the unlock path and for /account view:achievements, built once.
 export const ACHIEVEMENTS_BY_ID: ReadonlyMap<string, AchievementDefinition> = new Map(
 	ACHIEVEMENTS.map((achievement) => [achievement.id, achievement])
 );

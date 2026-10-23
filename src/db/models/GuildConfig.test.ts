@@ -98,6 +98,24 @@ describe("GuildConfig declares the two voice room ids", () => {
 	});
 });
 
+// The two voice rooms' /dero cards (2026-10 item 245 Phase 4b) are anchored like
+// every other intro. Undeclared, the anchor write is dropped in silence and the boot
+// sweep posts a fresh card into each room on every boot.
+describe("GuildConfig declares the voice room card anchors inside introMessageIds", () => {
+	it("round trips both anchors and defaults them to null so legacy rows load", () => {
+		const doc = new GuildConfigModel({
+			...baseRow,
+			introMessageIds: { meetingVoiceChannelId: "msg-hall", arcadeVoiceChannelId: "msg-lounge" },
+		});
+		expect(doc.get("introMessageIds.meetingVoiceChannelId")).toBe("msg-hall");
+		expect(doc.get("introMessageIds.arcadeVoiceChannelId")).toBe("msg-lounge");
+
+		const legacy = new GuildConfigModel({ ...baseRow, introMessageIds: {} });
+		expect(legacy.get("introMessageIds.meetingVoiceChannelId")).toBeNull();
+		expect(legacy.get("introMessageIds.arcadeVoiceChannelId")).toBeNull();
+	});
+});
+
 describe("GuildConfig declares the ARCADE GAMES intro anchors inside introMessageIds", () => {
 	it("round trips both anchor ids through the subdocument", () => {
 		// The failure this guards is not a missing id, it is an infinite repost: refreshIntroEmbeds

@@ -40,32 +40,31 @@ export const BOT_CONSTANTS = {
 	// set refuses everyone who is not an admin. BOT_CONSTANTS.adminCommands.test.ts
 	// loads every command and fails when one carries a default without being here.
 	//
+	// An entry is a command name, which gates every subcommand under it, or a command
+	// name and ONE subcommand separated by a space ("events delete"), which gates that
+	// subcommand alone. The qualified form exists for /events, whose list is a member
+	// view and whose delete is not (2026-10 item 245 Phase 4b merged the two).
+	// isAdminCommand in utils/permissions.ts reads both forms, for the slash command
+	// gate and the admin buttons alike.
+	//
 	// Deliberately NOT in the set:
 	//   /setup and /self-destruct are server owner only through their own inline checks
 	//   (commands/admin/setup.ts, features/setup/selfDestruct.ts) and keep their default
 	//   as a picker courtesy; main.ts skips /setup, which runs before an admin role exists.
 	//   /render-analytics is platform owner only (its execute checks CREATOR_DISCORD_ID),
 	//   and this gate would demand a /setup config in whatever server the owner uses.
-	//   /list-events, /leaderboard, /account, /levels and the games are member commands:
+	//   /events list, /leaderboard, /account, /rating and the games are member commands:
 	//   members seeing what is scheduled and where they stand is the whole point.
 	ADMIN_COMMANDS: new Set<string>([
 		// ── events ──
 		"configure-kvk-season",
-		"delete-event",
+		"events delete",
 		// ── streamer schedules ──
-		"configure-stream-schedule",
-		"pause-schedule",
-		"continue-schedule",
-		"pause-all-schedules",
-		"continue-all-schedules",
-		"go-live-soon",
-		"announce-stream",
+		"schedule",
+		"stream",
 		// ── channels and server switches ──
 		"channels",
-		"rename-channel",
-		"configure-auto-heal",
-		"configure-leaderboard-tracking",
-		"configure-leaderboard-week-start",
+		"configure",
 		// ── leveling ──
 		"setup-level-system",
 		"xp",
@@ -74,6 +73,22 @@ export const BOT_CONSTANTS = {
 		// lists of who may give Dero tasks.
 		"dero-config",
 	]),
+
+	// ── Discord's component limits ────────────────────────────────
+	// Discord's own ceilings, which it enforces by rejecting the whole send, never by
+	// trimming: 25 options in a select or an autocomplete answer, 5 buttons in a row,
+	// 5 rows in a message and 5 fields in a modal. The admin command launcher and the
+	// guide rows (2026-10 item 245 Phase 4b) build to these, and their tests assert them.
+	DISCORD_LIMITS: {
+		MAX_SELECT_OPTIONS: 25,
+		MAX_ROW_BUTTONS: 5,
+		MAX_MESSAGE_ROWS: 5,
+		MAX_MODAL_FIELDS: 5,
+		MAX_CUSTOM_ID_LENGTH: 100,
+		MAX_MODAL_TITLE_LENGTH: 45,
+		MAX_LABEL_LENGTH: 45,
+		MAX_SELECT_LABEL_LENGTH: 100,
+	},
 	// scheduler
 	SCHEDULER_CRON: "* * * * *", // every minute
 	REMINDER_FIRE_WINDOW_MS: 60_000, // how close to reminder time before we fire it
@@ -712,7 +727,7 @@ export const BOT_CONSTANTS = {
 		BAND_CLOSE: 150,
 		// Owner decision 2026-10-23 (2026-10 item 244): the host's Tight band admits joiners within this many display points.
 		BAND_TIGHT: 75,
-		// How many players /rating board and /rating luck list, the same ten /levels shows.
+		// How many players /rating board and /rating luck list, the same ten /account view:levels shows.
 		BOARD_SIZE: 10,
 		// Owner decision 2026-10-23 (2026-10 item 244): the monthly arcade post names the top three winning Hold'em hands.
 		MONTHLY_TOP_HANDS: 3,

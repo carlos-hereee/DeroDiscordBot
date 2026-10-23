@@ -26,7 +26,7 @@ import { requireGuildId } from "../middleware/requireGuildId.js";
 //        guild.
 // How:   "this week" is the leveling system's own period key (weekKey with the
 //        guild's configured weekStart), so the summary agrees with what
-//        /levels and the pinned board already show members. Guild scoping is
+//        /account view:levels and the pinned board already show members. Guild scoping is
 //        invariant 2: missing guildId is a 400 (requireGuildId), an unknown
 //        guild is a 404.
 

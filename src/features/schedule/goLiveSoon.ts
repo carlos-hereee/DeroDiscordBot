@@ -1,13 +1,10 @@
-import {
-	SlashCommandBuilder,
-	ChatInputCommandInteraction,
-	MessageFlags,
-} from "discord.js";
+import { MessageFlags, type RepliableInteraction, type SlashCommandSubcommandBuilder } from "discord.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { postGoLiveAnnouncement } from "@features/schedule/postGoLiveAnnouncement.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
-// ── /go-live-soon ─────────────────────────────────────────────────────
+// ── /stream soon ─────────────────────────────────────────────────────
 // What:  one-shot panic-button announcement. Does NOT create an Event.
 //        Posts directly to the guild's announcements channel with a
 //        single embed pinging the configured role (or an override).
@@ -17,8 +14,8 @@ import { postGoLiveAnnouncement } from "@features/schedule/postGoLiveAnnouncemen
 //        notice when a streamer goes live without a heads-up; this is
 //        the 30-second escape hatch that fixes that.
 // When:  on demand, ad-hoc. No persistence, if the streamer wants
-//        recurring reminders they should run /configure-stream-schedule.
-//        Two /go-live-soon calls in a row will produce two separate
+//        recurring reminders they should run /stream setup.
+//        Two /stream soon calls in a row will produce two separate
 //        announcement messages on purpose: each one is a fresh "now-ish"
 //        signal, not an edit of the previous.
 // Where: posts to guildConfig.announcementsChannelId. Same channel that
@@ -33,43 +30,44 @@ import { postGoLiveAnnouncement } from "@features/schedule/postGoLiveAnnouncemen
 
 const c = rokCommanderCopy.goLiveSoon;
 
-export const data = new SlashCommandBuilder()
-	.setName("go-live-soon")
-	.setDescription("Post a quick going-live announcement (one-shot, no recurring reminder)")
-	.addStringOption((option) =>
-		option
-			.setName("when")
-			.setDescription("When does the stream start?")
-			.setRequired(true)
-			.addChoices(
-				{ name: "Now", value: "now" },
-				{ name: "In 10 minutes", value: "10m" },
-				{ name: "In 30 minutes", value: "30m" },
-				{ name: "In 1 hour", value: "1h" },
-				{ name: "In 3 hours", value: "3h" },
-				{ name: "In 6 hours", value: "6h" }
-			)
-	)
-	.addStringOption((option) =>
-		option.setName("note").setDescription("Optional one-liner (game, what you're doing, etc)").setRequired(false).setMaxLength(500)
-	)
-	.addRoleOption((option) =>
-		option
-			.setName("mention-role")
-			.setDescription("Role to ping for this announcement (defaults to the guild member role)")
-			.setRequired(false)
-	);
+/** The options this handler reads, added to the merged command's subcommand. */
+export function addGoLiveSoonOptions(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
+	return sub
+		.addStringOption((option) =>
+			option
+				.setName("when")
+				.setDescription("When does the stream start?")
+				.setRequired(true)
+				.addChoices(
+					{ name: "Now", value: "now" },
+					{ name: "In 10 minutes", value: "10m" },
+					{ name: "In 30 minutes", value: "30m" },
+					{ name: "In 1 hour", value: "1h" },
+					{ name: "In 3 hours", value: "3h" },
+					{ name: "In 6 hours", value: "6h" }
+				)
+		)
+		.addStringOption((option) =>
+			option.setName("note").setDescription("Optional one-liner (game, what you're doing, etc)").setRequired(false).setMaxLength(500)
+		)
+		.addRoleOption((option) =>
+			option
+				.setName("mention-role")
+				.setDescription("Role to ping for this announcement (defaults to the guild member role)")
+				.setRequired(false)
+		);
+}
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function goLiveSoon(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await interaction.reply({ embeds: [errorEmbed("Run this in a server, not a DM.")], flags: MessageFlags.Ephemeral });
 		return;
 	}
 
-	const whenKey = interaction.options.getString("when", true);
-	const note = interaction.options.getString("note", false)?.trim() || null;
-	const mentionRole = interaction.options.getRole("mention-role", false);
+	const whenKey = options.getString("when", true);
+	const note = options.getString("note", false)?.trim() || null;
+	const mentionRole = options.getRole("mention-role", false);
 	const mentionRoleIdOverride = mentionRole?.id ?? null;
 
 	const result = await postGoLiveAnnouncement(interaction.client, guildId, whenKey, note, mentionRoleIdOverride);

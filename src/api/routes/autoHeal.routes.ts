@@ -3,7 +3,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { requireGuildId } from "../middleware/requireGuildId.js";
 
 // ── /api/auto-heal ────────────────────────────────────────────────────
-// What:  HTTP twin of /configure-auto-heal slash command. Lets the
+// What:  HTTP twin of /configure auto-heal slash command. Lets the
 //        Settings tab toggle GuildConfig.autoHealEnabled without the
 //        admin opening Discord. Body: { enabled: boolean }. Same
 //        idempotency contract as the slash command, re-writing the

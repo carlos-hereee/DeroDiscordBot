@@ -1,13 +1,12 @@
 import {
-	SlashCommandBuilder,
-	ChatInputCommandInteraction,
-	AutocompleteInteraction,
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
 	ComponentType,
 	MessageFlags,
 	EmbedBuilder,
+	type RepliableInteraction,
+	type SlashCommandSubcommandBuilder,
 } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -15,6 +14,8 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
 import {
 	parseFlexibleTime,
 	nextOccurrenceInZone,
@@ -22,7 +23,7 @@ import {
 	searchTimezones,
 } from "@utils/tzParser.js";
 
-// ── /configure-stream-schedule ────────────────────────────────────────
+// ── /stream setup ────────────────────────────────────────
 // What:  creates a recurring weekly event on a fixed day + time of week
 //        in the streamer's chosen timezone. Every 168 hours from the
 //        first occurrence, the bot fires a reminder in the guild's
@@ -32,7 +33,7 @@ import {
 //        Sibling to /configure-kvk-season, same primitive, simpler
 //        input surface because the cadence is fixed at "weekly".
 // When:  the streamer runs this once per recurring schedule. Re-running
-//        with the same name short circuits with a "use /pause-schedule"
+//        with the same name short circuits with a "use /schedule pause"
 //        hint so two schedules never collide on a guild.
 // Where: persists into the same Event collection as KvK events. Every
 //        downstream system (ReminderScheduler, ScheduleBoard, Test
@@ -92,81 +93,70 @@ const DAY_LABEL: Record<number, string> = {
 // instead of inline so a future "/configure-event-cadence" or
 // similar command can reuse the same parser without duplication.
 
-export const data = new SlashCommandBuilder()
-	.setName("configure-stream-schedule")
-	.setDescription("Set up a weekly stream / event reminder on a fixed day and time")
-	.addStringOption((option) =>
-		option.setName("name").setDescription("Short label for this schedule (e.g. Friday Night Stream)").setRequired(true).setMaxLength(80)
-	)
-	.addStringOption((option) =>
-		option
-			.setName("day")
-			.setDescription("Day of the week the stream happens")
-			.setRequired(true)
-			.addChoices(
-				{ name: "Sunday", value: "sunday" },
-				{ name: "Monday", value: "monday" },
-				{ name: "Tuesday", value: "tuesday" },
-				{ name: "Wednesday", value: "wednesday" },
-				{ name: "Thursday", value: "thursday" },
-				{ name: "Friday", value: "friday" },
-				{ name: "Saturday", value: "saturday" }
-			)
-	)
-	.addStringOption((option) =>
-		option
-			.setName("time")
-			.setDescription("Start time, e.g. 7pm, 7:30 pm, 19:30, or 9 (12h or 24h, am/pm optional)")
-			.setRequired(true)
-	)
-	.addStringOption((option) =>
-		option
-			.setName("timezone")
-			.setDescription("Your timezone, e.g. America/New_York. Defaults to UTC if blank.")
-			.setRequired(false)
-			.setAutocomplete(true)
-	)
-	.addRoleOption((option) =>
-		option
-			.setName("mention-role")
-			.setDescription("Role to ping when reminders fire (defaults to the guild member role)")
-			.setRequired(false)
-	)
-	.addStringOption((option) =>
-		option
-			.setName("description")
-			.setDescription("Optional one-liner shown in the reminder embed")
-			.setRequired(false)
-			.setMaxLength(500)
-	);
-
-// ── autocomplete ──────────────────────────────────────────────
-// What:  surface IANA timezone names matching the streamer's typed
-//        input.
-// Who:   Discord's autocomplete pipeline; main.ts dispatches to
-//        this via the command registry's autocomplete export.
-// When:  every keystroke in the timezone input.
-// Where: only the `timezone` option uses autocomplete in this
-//        command. Other options either have hardcoded choices
-//        (day) or are free text (name, time, description).
-// How:   defer to searchTimezones in tzParser. The returned array
-//        is { name, value } pairs where name is the human-visible
-//        zone string and value is the same string sent to execute().
-//        Cap at 25, Discord rejects autocomplete responses larger
-//        than that.
-export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
-	const focused = interaction.options.getFocused(true);
-	if (focused.name !== "timezone") {
-		// Defensive: future option additions might add their own
-		// autocomplete; only respond when it's our zone option.
-		await interaction.respond([]);
-		return;
-	}
-	const matches = searchTimezones(focused.value, 25);
-	await interaction.respond(matches.map((tz) => ({ name: tz, value: tz })));
+/** The options this handler reads, added to the merged command's subcommand. */
+export function addStreamScheduleOptions(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
+	return sub
+		.addStringOption((option) =>
+			option.setName("name").setDescription("Short label for this schedule (e.g. Friday Night Stream)").setRequired(true).setMaxLength(80)
+		)
+		.addStringOption((option) =>
+			option
+				.setName("day")
+				.setDescription("Day of the week the stream happens")
+				.setRequired(true)
+				.addChoices(
+					{ name: "Sunday", value: "sunday" },
+					{ name: "Monday", value: "monday" },
+					{ name: "Tuesday", value: "tuesday" },
+					{ name: "Wednesday", value: "wednesday" },
+					{ name: "Thursday", value: "thursday" },
+					{ name: "Friday", value: "friday" },
+					{ name: "Saturday", value: "saturday" }
+				)
+		)
+		.addStringOption((option) =>
+			option
+				.setName("time")
+				.setDescription("Start time, e.g. 7pm, 7:30 pm, 19:30, or 9 (12h or 24h, am/pm optional)")
+				.setRequired(true)
+		)
+		.addStringOption((option) =>
+			option
+				.setName("timezone")
+				.setDescription("Your timezone, e.g. America/New_York. Defaults to UTC if blank.")
+				.setRequired(false)
+				.setAutocomplete(true)
+		)
+		.addRoleOption((option) =>
+			option
+				.setName("mention-role")
+				.setDescription("Role to ping when reminders fire (defaults to the guild member role)")
+				.setRequired(false)
+		)
+		.addStringOption((option) =>
+			option
+				.setName("description")
+				.setDescription("Optional one-liner shown in the reminder embed")
+				.setRequired(false)
+				.setMaxLength(500)
+		);
 }
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+// ── timezone choices ──────────────────────────────────────────
+// What:  IANA timezone names matching what the streamer typed.
+// Who:   /stream setup's autocomplete, on every keystroke in the
+//        timezone input. Only the `timezone` option autocompletes in this
+//        subcommand: day has fixed choices and the rest are free text.
+//        The admin form keeps timezone a typed field instead, because a
+//        select cannot narrow as you type through hundreds of zones.
+// How:   defer to searchTimezones in tzParser. The name is the
+//        human-visible zone string and the value is the same string the
+//        handler reads. Capped at Discord's 25, which rejects anything larger.
+export function timezoneChoices(typed: string): OptionChoice[] {
+	return searchTimezones(typed, BOT_CONSTANTS.DISCORD_LIMITS.MAX_SELECT_OPTIONS).map((tz) => ({ name: tz, value: tz }));
+}
+
+export async function configureStreamSchedule(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		// Slash commands inside DMs have no guild, this command only ever
@@ -188,16 +178,16 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		return;
 	}
 
-	const name = interaction.options.getString("name", true).trim();
-	const dayRaw = interaction.options.getString("day", true).toLowerCase();
-	const timeRaw = interaction.options.getString("time", true);
+	const name = options.getString("name", true).trim();
+	const dayRaw = options.getString("day", true).toLowerCase();
+	const timeRaw = options.getString("time", true);
 	// Default to UTC when the streamer leaves the timezone blank. This
 	// preserves the pre-2026-04-25 contract where every time was UTC,
 	// so any guild that had docs/runbook entries pointing at "type your
 	// time in UTC" continues to work without changes.
-	const timezoneRaw = interaction.options.getString("timezone", false)?.trim() || "UTC";
-	const mentionRole = interaction.options.getRole("mention-role", false);
-	const description = interaction.options.getString("description", false)?.trim() ?? "";
+	const timezoneRaw = options.getString("timezone", false)?.trim() || "UTC";
+	const mentionRole = options.getRole("mention-role", false);
+	const description = options.getString("description", false)?.trim() ?? "";
 
 	const dayIndex = DAY_TO_INDEX[dayRaw];
 	if (dayIndex === undefined) {
@@ -315,10 +305,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 			// Fire and forget, schedule board refresh failure must not
 			// undo the successful save. Same pattern as the events route.
 			refreshSchedule(interaction.client, guildId).catch((err) =>
-				console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/configure-stream-schedule"), err)
+				console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/stream setup"), err)
 			);
 		} catch (err) {
-			console.error("[configure-stream-schedule] save failed", err);
+			console.error("[stream setup] save failed", err);
 			await press.update({ embeds: [errorEmbed(c.saveFailed)], components: [] });
 		}
 	} catch {

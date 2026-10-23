@@ -28,7 +28,7 @@ function base(): EmbedBuilder {
 }
 
 // ── the progress bar ────────────────────────────────────────────────────────
-// One helper, used by /account and by /achievements, so a member never sees two
+// One helper, used by /account and by /account view:achievements, so a member never sees two
 // differently shaped bars for the same idea (rule 17: one helper per concept).
 //
 // Unicode blocks rather than a custom emoji: a bar is rendered inside an embed

@@ -1,4 +1,4 @@
-import { ChatInputCommandInteraction } from "discord.js";
+import type { RepliableInteraction } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -37,7 +37,7 @@ interface IKvKSeasonInput {
 }
 
 export class GuildEventManager {
-	static async configureKvKSeason(interaction: ChatInputCommandInteraction, input: IKvKSeasonInput): Promise<void> {
+	static async configureKvKSeason(interaction: RepliableInteraction, input: IKvKSeasonInput): Promise<void> {
 		try {
 			const guildId = interaction.guildId!;
 
@@ -111,7 +111,7 @@ export class GuildEventManager {
 			//        rows that confuse members.
 			// Who:   the admin who re-runs /configure-kvk-season at the
 			//        start of every new season. Streamer events created
-			//        via /configure-stream-schedule are NOT touched,
+			//        via /stream setup are NOT touched,
 			//        the seasonEnd != null filter excludes them because
 			//        streamer schedules leave seasonEnd null by design.
 			// When:  exactly once per /configure-kvk-season invocation,

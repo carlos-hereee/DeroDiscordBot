@@ -111,7 +111,7 @@ interface MultiPlayerResult {
 	// which is the only place that knows how to look them up. A name the caller
 	// could not resolve is left undefined rather than filled with the snowflake:
 	// awardXp then records the result and skips the name write, where a raw id
-	// would overwrite the member's real name on /account and /levels.
+	// would overwrite the member's real name on /account and /account view:levels.
 	participants: Array<{ userId: string; username?: string }>;
 	// The member who finished it, when somebody did. Null on a loss or an expiry.
 	winnerId: string | null;

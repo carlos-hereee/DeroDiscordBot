@@ -1,26 +1,19 @@
-import {
-	SlashCommandBuilder,
-	ChatInputCommandInteraction,
-	MessageFlags,
-} from "discord.js";
+import { MessageFlags, type RepliableInteraction } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
-// /continue-all-schedules, bulk equivalent of /continue-schedule. Resumes
-// every paused event in the guild, including ones that had a pausedUntil
-// set. The intent of running this command is "everything back on right
+// /schedule resume with no event, the bulk equivalent of resumeOneSchedule.
+// Resumes every paused event in the guild, including ones that had a
+// pausedUntil set. The intent of running this is "everything back on right
 // now", so clearing pausedUntil alongside paused is correct.
 
 const c = rokCommanderCopy.continueAllSchedules;
 
-export const data = new SlashCommandBuilder()
-	.setName("continue-all-schedules")
-	.setDescription("Resume every paused schedule on this server at once");
-
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+/** Resume every paused event in the guild. Reads no option, so it takes only the interaction. */
+export async function resumeAllSchedules(interaction: RepliableInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await interaction.reply({ embeds: [errorEmbed("Run this in a server, not a DM.")], flags: MessageFlags.Ephemeral });
@@ -44,19 +37,19 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	let failed = 0;
 	for (const event of toResume) {
 		try {
-			// Clear both fields together, same reasoning as /continue-schedule:
+			// Clear both fields together, same reasoning as resumeOneSchedule:
 			// leaving a stale pausedUntil around lets a future pause accidentally
 			// re-use it.
 			await eventStore.updateInGuild(event.eventId, guildId, { paused: false, pausedUntil: null });
 			succeeded++;
 		} catch (err) {
 			failed++;
-			console.error("[continue-all-schedules] update failed", { eventId: event.eventId }, err);
+			console.error("[schedule resume all] update failed", { eventId: event.eventId }, err);
 		}
 	}
 
 	refreshSchedule(interaction.client, guildId).catch((err) =>
-		console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/continue-all-schedules"), err)
+		console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/schedule resume"), err)
 	);
 
 	if (failed > 0 && succeeded === 0) {

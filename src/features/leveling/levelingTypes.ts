@@ -2,7 +2,7 @@
 // What:  the vocabulary every other leveling module speaks. Slugs, xp sources,
 //        game outcomes and the per game record shape.
 // Who:   the MemberLevel and XpPeriod models, memberLevelStore, awardXp,
-//        xpWriter, the achievement engine, /account and /levels.
+//        xpWriter, the achievement engine, /account and /account view:levels.
 // When:  compile time only. Deliberately types plus frozen literal lists so a
 //        Mongoose model can import it without dragging feature code into the DB
 //        layer, exactly the role @features/game-rooms/roomTypes.ts plays for

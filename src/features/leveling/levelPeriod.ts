@@ -4,7 +4,7 @@
 // What:  the two period keys an xp award is stamped with, "2026-W32" and
 //        "2026-08", plus the pair of them for the common case where both are
 //        written in the same flush.
-// Who:   xpWriter (two bulkWrite ops per flush, one per key), /levels and
+// Who:   xpWriter (two bulkWrite ops per flush, one per key), /account view:levels and
 //        /account (this week's and this month's standings).
 // When:  every flush, and every read of a period-scoped surface.
 // Where: a THIN wrapper over periodKey in @features/leaderboard/

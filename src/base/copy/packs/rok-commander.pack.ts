@@ -65,7 +65,7 @@ export const rokCommanderCopy = {
 		title: "📅 Active KvK Events",
 		noEvents:
 			"📭 No active events are configured for this server yet.\n\n" +
-			"Streamers: run `/configure-stream-schedule` for weekly streams or `/announce-stream` for one-offs.\n" +
+			"Streamers: run `/stream setup` for weekly streams or `/stream announce` for one-offs.\n" +
 			"ROK alliances: run `/configure-kvk-season` to set up the season schedule.",
 		fieldName: (name: string, type: "recurring" | "one-time") => (type === "recurring" ? `🔁 ${name}` : `📌 ${name}`),
 		nextOccurrenceLabel: "Next occurrence",
@@ -391,7 +391,7 @@ export const rokCommanderCopy = {
 
 		// ── public #command-center guide ──────────────────────────
 		// Members-only surface. Shows ONLY the commands any mortal can
-		// run today: /leaderboard and /list-events. Admin commands have
+		// run today: /leaderboard and /events list. Admin commands have
 		// been moved to commandContentAdmin below which is posted to
 		// #inner-sanctum and gated by the admin role.
 		commandGuide: {
@@ -404,7 +404,7 @@ export const rokCommanderCopy = {
 			// empty.
 			description:
 				"The tools available to every mortal of this alliance. Go on, wield them with purpose. Learn them. Use them. **Impress me.**\n\n" +
-				"More may be unlocked as you rise.",
+				"The buttons beneath this scroll open the most used of them for your eyes alone. More may be unlocked as you rise.",
 			fields: [
 				{
 					name: "🏆 Leaderboard",
@@ -412,7 +412,7 @@ export const rokCommanderCopy = {
 				},
 				{
 					name: "📋 Events",
-					value: ["`/list-events`", "View all configured events."].join("\n"),
+					value: ["`/events list`", "View all configured events."].join("\n"),
 				},
 				{
 					name: "💡 Suggestion Box",
@@ -436,11 +436,11 @@ export const rokCommanderCopy = {
 						"Whisper a phrase you have uncovered. Fortune may favor your readings forever.",
 						"`/account`",
 						"Your renown: level, rank in the realm, your record in every game, and the honors you hold.",
-						"`/levels`",
+						"`/account view:levels`",
 						"See which warriors are most present in this realm, this week, this month, or all time.",
 						"`/rating`",
 						"Your arcade rating in Hold'em, Battleship and Monopoly, this realm's finest, and the luckiest hands.",
-						"`/achievements`",
+						"`/account view:achievements`",
 						"The honors you have claimed, and the ones within reach. Some stay secret until earned.",
 					].join("\n"),
 				},
@@ -464,7 +464,7 @@ export const rokCommanderCopy = {
 			// way" which read as creepy surveillance; removed 2026-04-24.
 			description:
 				"These are the tools of your trade. Go on, wield them with purpose. Learn them. Use them. **Impress me.**\n\n" +
-				"Commands reserved for those with the admin role.",
+				"Commands reserved for those with the admin role. Each has a button beneath this guide that opens it with a form.",
 			// ── whitespace strategy ─────────────────────────────────
 			// One blank line between sections. Commands within a section
 			// list command name then description on two consecutive
@@ -483,21 +483,36 @@ export const rokCommanderCopy = {
 				{
 					name: "📺 Stream / General Schedule Commands",
 					value: [
-						"`/configure-stream-schedule`",
+						"`/stream setup`",
 						"Set up a weekly recurring reminder on a fixed day and time.",
-						"`/announce-stream`",
+						"`/stream announce`",
 						"Schedule a one-off reminder for a specific future date and time.",
-						"`/go-live-soon`",
+						"`/stream soon`",
 						"Post a quick going-live announcement. One-shot, no reminder.",
-						"`/pause-schedule`",
-						"Pause reminders for a recurring event without deleting it.",
-						"`/continue-schedule`",
-						"Resume a paused recurring event.",
+						"`/schedule pause`",
+						"Pause reminders for one event without deleting it, or for every event when you name none.",
+						"`/schedule resume`",
+						"Resume one paused event, or every paused event when you name none.",
 					].join("\n"),
 				},
 				{
 					name: "📋 Event Management",
-					value: ["`/delete-event`", "Remove a configured event."].join("\n"),
+					value: ["`/events list`", "See every configured event.", "`/events delete`", "Remove a configured event."].join("\n"),
+				},
+				{
+					name: "🛠️ Server Settings",
+					value: [
+						"`/channels`",
+						"Hide, show or rename the chambers I keep.",
+						"`/configure`",
+						"Channel auto heal, leaderboard tracking and the day the leaderboard week starts.",
+						"`/setup-level-system`",
+						"Leveling: rates, the curve, where level ups post, which channels count, rewards and boosts.",
+						"`/xp`",
+						"Correct a member's XP or level, reset a member or the server, or export it all.",
+						"`/dero-config`",
+						"My voice: the switch, the monthly budget and who may give me tasks.",
+					].join("\n"),
 				},
 			] satisfies IEmbedField[],
 		},
@@ -641,6 +656,21 @@ export const rokCommanderCopy = {
 			hostNoChannel: "The arcade is not built yet. An admin must run `/setup`.",
 			hostFailed: "I could not set that table. Try again in a moment.",
 			hostStarted: (game: string): string => `Your ${game} is live. Go and play.`,
+		},
+
+		// ── the voice rooms' intro (2026-10 item 245 Phase 4b) ──────────────
+		// The card in the text chat of 🏛️ Meeting Hall and 🎮 Arcade Lounge, with
+		// /dero's Join, Leave and Status beneath it (features/voice/voiceRoomControls).
+		// Voice is switched on per server, so the card promises it only there, and
+		// it states what a call does with speech, as every voice surface does.
+		voiceRoom: {
+			title: "🎙️ Summon Dero to This Hall",
+			description:
+				"Where your keepers have switched my voice on, a warrior on my task list who stands in this call may bring me in with **Join** and send me away with **Leave**. **Status** tells anyone where I am.\n\n" +
+				"In a call I listen only to members on my task list. Their speech goes to ElevenLabs to become text, and I keep no audio and no transcript.",
+			joinLabel: "Join",
+			leaveLabel: "Leave",
+			statusLabel: "Status",
 		},
 
 		adminWelcome: {
@@ -816,7 +846,7 @@ export const rokCommanderCopy = {
 		invalidTime: "Time invalid. Use 24h `HH:MM` like `19:30` or `09:00`.",
 		invalidDay: "Day invalid. Pick one of: monday, tuesday, wednesday, thursday, friday, saturday, sunday.",
 		alreadyExists: (name: string) =>
-			`A schedule named **${name}** already exists. Pause it with \`/pause-schedule\` or pick a different name.`,
+			`A schedule named **${name}** already exists. Pause it with \`/schedule pause\` or pick a different name.`,
 		// Confirmation embed that previews the schedule before persisting.
 		// Times use Discord <t:UNIX:t> so each viewer sees their local time.
 		confirm: {
@@ -844,9 +874,9 @@ export const rokCommanderCopy = {
 
 	// ── pause / continue ──────────────────────────────────────────
 	pauseSchedule: {
-		notFound: "No schedule by that name. Use `/list-events` to see what is configured.",
+		notFound: "No schedule by that name. Use `/events list` to see what is configured.",
 		alreadyPaused: (name: string) => `**${name}** is already paused.`,
-		paused: (name: string) => `⏸️ **${name}** paused. Resume with \`/continue-schedule name:${name}\`.`,
+		paused: (name: string) => `⏸️ **${name}** paused. Resume it with \`/schedule resume\`.`,
 		pausedUntil: (name: string, untilUnix: number) =>
 			`⏸️ **${name}** paused until <t:${untilUnix}:F> (<t:${untilUnix}:R>). It will resume automatically.`,
 		invalidDuration: "Duration invalid. Use a positive number of days, max 90.",
@@ -857,22 +887,22 @@ export const rokCommanderCopy = {
 
 	// pause-all and resume-all act on every event in the guild at once.
 	// Skip-already-paused semantics on the pause path preserve any per-event
-	// pausedUntil dates the streamer set with /pause-schedule earlier.
+	// pausedUntil dates the streamer set with /schedule pause earlier.
 	pauseAllSchedules: {
 		noEvents: "No schedules to pause, this server has no events configured.",
 		allAlreadyPaused: (total: number) =>
-			`All ${total} schedules are already paused. Use \`/continue-all-schedules\` to resume them.`,
+			`All ${total} schedules are already paused. Use \`/schedule resume\` with no event to resume them.`,
 		paused: (count: number, skipped: number) =>
 			skipped > 0
 				? `⏸️ Paused **${count}** schedule(s). Skipped ${skipped} already-paused schedule(s) so their existing auto-resume dates stay intact.`
-				: `⏸️ Paused **${count}** schedule(s). Resume any with \`/continue-schedule\` or all with \`/continue-all-schedules\`.`,
+				: `⏸️ Paused **${count}** schedule(s). Resume one with \`/schedule resume\` and an event, or all of them with no event.`,
 		pausedUntil: (count: number, skipped: number, untilUnix: number) =>
 			skipped > 0
 				? `⏸️ Paused **${count}** schedule(s) until <t:${untilUnix}:F> (<t:${untilUnix}:R>). Skipped ${skipped} already-paused schedule(s) so their existing auto-resume dates stay intact.`
 				: `⏸️ Paused **${count}** schedule(s) until <t:${untilUnix}:F> (<t:${untilUnix}:R>). They will resume automatically.`,
 		invalidDuration: "Duration invalid. Use a positive number of days, max 90.",
 		partialFailure: (succeeded: number, failed: number) =>
-			`Updated ${succeeded} schedule(s) but ${failed} failed. Run \`/list-events\` to see which ones flipped, then retry the rest individually.`,
+			`Updated ${succeeded} schedule(s) but ${failed} failed. Run \`/events list\` to see which ones flipped, then retry the rest individually.`,
 		failed: "Could not pause the schedules. Try again.",
 	},
 
@@ -882,11 +912,11 @@ export const rokCommanderCopy = {
 		resumed: (count: number) =>
 			`▶️ Resumed **${count}** schedule(s). Reminders will fire on each event's next scheduled time.`,
 		partialFailure: (succeeded: number, failed: number) =>
-			`Resumed ${succeeded} schedule(s) but ${failed} failed. Run \`/list-events\` to see what is still paused, then retry the rest individually.`,
+			`Resumed ${succeeded} schedule(s) but ${failed} failed. Run \`/events list\` to see what is still paused, then retry the rest individually.`,
 		failed: "Could not resume the schedules. Try again.",
 	},
 
-	// ── /go-live-soon (panic button) ──────────────────────────────
+	// ── /stream soon (panic button) ──────────────────────────────
 	// Drops a one-off announcement for a stream starting in the next few
 	// hours. NOT a recurring event, this is a single now-ish nudge, the
 	// kind a streamer fires from the green room when life happened and
@@ -946,6 +976,14 @@ export const rokCommanderCopy = {
 		// digest DM's real limits (BOT_CONSTANTS.LEVELING.WEEKLY_DIGEST_*, and no DM
 		// where announcements are off), so an admin is never surprised by a DM.
 		//
+		// The 1.7.0 test fixes (2026-10 item 245) are folded in where each belongs,
+		// every number read off BOT_CONSTANTS by hand and pinned by the test: the
+		// 1 XP message and reaction with the 50 a day cap, the 🕹️games channel and
+		// its solo games against Dero, the ten hangman shelves, rematch in the same
+		// room, the 30 minute idle close, Hold'em's 60 second clock and Leave table,
+		// George as the ready voice, the merged commands and their buttons, and
+		// /rating. A number changed in BOT_CONSTANTS is a sentence to change here.
+		//
 		// Voice ships OFF in every guild, so the public block promises it only
 		// where the keepers switch it on. Owner decision 2026-10-21: release copy
 		// stays professional and never says where Dero's brain runs or when it is
@@ -959,17 +997,17 @@ export const rokCommanderCopy = {
 		public: {
 			title: "⚔️ THE REALM KEEPS SCORE, AND DERO SPEAKS",
 			description:
-				"Warriors.\n\nFour gifts arrive at once. I have been busy.\n\n**Renown.** The realm now keeps score. Speak in the halls, answer a comrade with a reaction, sit in an approved war room, or play a game, and you earn renown. Gather enough and you rise a level. I shall announce it here, and I shall never ping a soul doing it. A secret, since you would find it anyway: level 2, level 3, level 5, level 7, level 11. Look at those numbers until you see it.\n`/account` shows your level, your rank and your record in every game.\n`/levels` shows who is most present, this week, this month or since the beginning.\n`/achievements` shows the honors you have claimed. Some stay hidden until they are earned.\n\n**The arena.** Games now have rooms of their own. Go to ⚔️challenges, start a challenge, choose invite only or open to all, and once your rivals are gathered a room opens in the arcade for that match alone. Hangman with a word the host writes, coin flip, dice roll, rock paper scissors, battleship and Texas Hold'em are all played there, and blackjack is dealt right where you ask for it with `/mini-game blackjack`. Every move goes into the match's record, which outlives the room.\nAnd **Monopoly** has arrived, for two to six, on a board of my own. You know the rules. Start a match from ⚔️challenges or with `/mini-game monopoly`, and settle in: a good one runs for days.\n\n**Pictures.** Your `/account`, your level ups, the levels board, a fresh honor, a role you earn, the end of a hangman, battleship or blackjack match, a Hold'em showdown, a Monopoly trade, bid or victory, a welcome, a fortune and the challenge card now arrive as painted cards instead of lines of text. And on Mondays I send the most present among you a private card of your week.\n\n**My voice.** Where your keepers switch it on, I can speak. A Listen button on welcomes and on most fortunes reads the post aloud to you alone, or plays it in your voice call when I sit there with you. Members on my task list can give me small tasks with `/dero tell`, bring me into a voice call with `/dero join`, and ask me for a Hold'em table, which I deal myself. When the host of a Monopoly match turns on the voice referee at its challenge card, I call the big moments out loud while I sit in a call with one of its players. Every bankruptcy, announced with the gravity it deserves. In a call I listen only to members on my task list. Their speech goes to ElevenLabs to become text, and I record and keep nothing. Anyone on the task list can send me away with `/dero leave`.\n\nWant something I do not do yet? Press the Suggestion Box below. I read every one of them, which is more than I can say for most prophecies.\n\nRise well, warriors. The scroll is open.",
+				"Warriors.\n\nMuch arrives at once. I have been busy.\n\n**Renown.** The realm now keeps score. Speak in the halls, answer a comrade with a reaction, sit in an approved war room, or play a game, and you earn renown. A message or a reaction earns 1, and messages, reactions and quick games against me earn at most 50 a day, counted from midnight Central. Gather enough and you rise a level. I shall announce it here, and I shall never ping a soul doing it. A secret, since you would find it anyway: level 2, level 3, level 5, level 7, level 11. Look at those numbers until you see it.\n`/account` shows your level, your rank and your record in every game, `/account view:levels` shows who is most present, and `/account view:achievements` the honors you have claimed. The Account, Levels and Achievements buttons in #command-center show yours to you alone.\n\n**The arcade.** A new 🕹️games channel holds every game. Flip a coin, roll a die or throw rock paper scissors against me on the spot: 3 renown for a win, 1 for anything else. Hang a word alone from one of ten shelves, each word with its hint, or start a challenge for a rival. Once your rivals are gathered a room opens in the arcade for that match alone. Hangman, coin flip, dice roll, rock paper scissors, battleship and Texas Hold'em are played there, and a hangman host writes the word or lets me draw one from a shelf. When a match ends, **Rematch** starts the next one in the same room. A room left 30 minutes without a move is closed, Monopoly and hangman aside. Blackjack is dealt right where you ask for it with `/mini-game blackjack`. Every move goes into the match's record, which outlives the room.\nAt Hold'em each decision has 60 seconds on a live clock, the next hand deals itself, two timeouts in a row sit you out until you press I'm back, and **Leave table** cashes you out whenever you choose.\nAnd **Monopoly** has arrived, for two to six, on a board of my own. You know the rules. Start a match from 🕹️games or with `/mini-game monopoly`, and settle in: a good one runs for days. `/rating` shows where you stand in Hold'em, Battleship and Monopoly.\n\n**Pictures.** Your `/account`, your level ups, the levels board, a fresh honor, a role you earn, every turn of blackjack and Hold'em, the end of a hangman or battleship match, a Monopoly trade, bid or victory, a welcome, a fortune and the challenge card now arrive as painted cards instead of lines of text. And on Mondays I send the most present among you a private card of your week.\n\n**My voice.** Where your keepers switch it on, I can speak. A Listen button on welcomes and on most fortunes reads the post aloud to you alone, or plays it in your voice call when I sit there with you. Members on my task list can give me small tasks with `/dero tell`, bring me into a voice call with `/dero join` or the Join button in 🏛️ Meeting Hall and 🎮 Arcade Lounge, and ask me for a Hold'em table, which I deal myself. When the host of a Monopoly match turns on the voice referee at its challenge card, I call the big moments out loud while I sit in a call with one of its players. Every bankruptcy, announced with the gravity it deserves. In a call I listen only to members on my task list. Their speech goes to ElevenLabs to become text, and I record and keep nothing. Anyone on the task list can send me away with `/dero leave`.\n\nWant something I do not do yet? Press the Suggestion Box below. I read every one of them, which is more than I can say for most prophecies.\n\nRise well, warriors. The scroll is open.",
 		},
 		innerSanctum: {
 			title: "🏛️ THE ORACLE EXPLAINS WHAT CHANGED",
 			description:
-				"Those who hold the reins.\n\nFour things arrived with this release. Here is what each one does in your server and how to take it in hand.\n\n**Leveling is already running.** Messages, reactions, approved voice channels and games earn renown. I read no message text: I know that a message happened, where and by whom, and nothing else. Message renown has a sixty second cooldown. Voice renown is off until you approve a voice channel by name. Nothing I post pings anyone.\n`/setup-level-system` sets the rates, the curve, which channels count, role rewards and where level ups post. `/setup-level-system toggle enabled:false` turns it all off, keeps every record, and resumes where it stopped when you switch it back on.\n`/xp` corrects, resets a member or the whole server (it asks first) and exports everything as a file.\nI will not hand out a role carrying Administrator or Manage Server, and I cannot grant a role above my own, so keep my role above any reward.\n\n**The arcade is open.** A new 🎮 ARCADE GAMES category holds 📋arcade-rules, ⚔️challenges and a 🎮 Arcade Lounge voice room, and the notice board gains a 🏛️ Meeting Hall voice room. Every match gets its own room under the arcade, seen only by its players unless the host opens it to all, and the room clears four hours after the match ends. The match record is kept. Monopoly matches can run for days, and the host decides at the challenge card whether passed lots go to auction and whether I referee the match out loud.\n\n**Most posts are now drawn cards.** Profiles, level ups, the levels board, honors, role rewards, match results, welcomes, fortunes, the challenge card and my voice calls each post as a picture, and each falls back to the text you know whenever a picture cannot be drawn. On Mondays at 9 am Central I send up to 25 of the week's most present members a private card of their week; no such message goes out in a server where level up announcements are off.\n\n**My voice is switched off here**, and nothing listens or speaks until you turn it on. My voice comes ready, so `/dero-config enable` is the only step. The role, text channel and voice channel lists decide who may give me tasks, where I may post and which calls I may join. A monthly speech budget, $5 by default, is checked before every paid speech call. `/dero-config disable` or `/dero-config cap dollars:0` stops every speech call at once and ends a live call. In a call I hear only members on the task list; their speech goes to ElevenLabs to become text, and I keep no audio and no transcript. The Monopoly voice referee follows all of this: it speaks only into a call someone has already brought me into, and from the same monthly budget.",
+				"Those who hold the reins.\n\nMuch arrived with this release. Here is what each part does in your server and how to take it in hand.\n\n**Fewer commands, a button for each.** `/schedule pause` and `/schedule resume` act on one event, or on every event when you name none. `/stream announce`, `/stream soon` and `/stream setup` hold the stream tools, `/configure` holds auto heal, leaderboard tracking and the leaderboard week, `/events` lists and deletes events, and `/channels rename` renames a channel I keep. Every admin command also has a button on the guide in your admin channel that opens it with a form, and refuses anyone who is not the owner or an admin. Members get Account, Levels, Achievements, Suggestion Box, Toggle pings and Fortune buttons in #command-center.\n\n**Leveling is already running.** Messages, reactions, approved voice channels and games earn renown. A message or a reaction pays 1, and messages, reactions and solo games against me pay a member at most 50 a day, reset at midnight Central. I read no message text: I know that a message happened, where and by whom, and nothing else. Message renown has a sixty second cooldown. Voice renown is off until you approve a voice channel by name. Nothing I post pings anyone.\n`/setup-level-system` sets the cooldowns, the curve, which channels count, role rewards and where level ups post. `/setup-level-system toggle enabled:false` turns it all off, keeps every record, and resumes where it stopped when you switch it back on.\n`/xp` corrects, resets a member or the whole server (it asks first) and exports everything as a file.\nI will not hand out a role carrying Administrator or Manage Server, and I cannot grant a role above my own, so keep my role above any reward.\n\n**The arcade is open.** A 🎮 ARCADE GAMES category holds 🕹️games, where every game starts, 📋arcade-rules, ⚔️challenges and a 🎮 Arcade Lounge voice room, and the notice board gains a 🏛️ Meeting Hall voice room. Every match gets its own room under the arcade, seen only by its players unless the host opens it to all. A finished room clears four hours after the match ends unless its players start a rematch in it, and a room with no move for 30 minutes closes as abandoned, Monopoly and hangman aside. The match record is kept. Hold'em gives each decision 60 seconds, lets any player leave and lets the host end the table. Monopoly matches can run for days, and the host decides at the challenge card whether passed lots go to auction and whether I referee the match out loud.\n\n**Most posts are now drawn cards.** Profiles, level ups, the levels board, honors, role rewards, blackjack and Hold'em tables, match results, welcomes, fortunes, the challenge card and my voice calls each post as a picture, and each falls back to the text you know whenever a picture cannot be drawn. On Mondays at 9 am Central I send up to 25 of the week's most present members a private card of their week; no such message goes out in a server where level up announcements are off.\n\n**My voice is switched off here**, and nothing listens or speaks until you turn it on. I speak in George's voice from the start, so `/dero-config enable` is the only step. The role, text channel and voice channel lists decide who may give me tasks, where I may post and which calls I may join, and the Join, Leave and Status buttons in both voice rooms follow the same lists. A monthly speech budget, $5 by default, is checked before every paid speech call. `/dero-config disable` or `/dero-config cap dollars:0` stops every speech call at once and ends a live call. In a call I hear only members on the task list; their speech goes to ElevenLabs to become text, and I keep no audio and no transcript. The Monopoly voice referee follows all of this: it speaks only into a call someone has already brought me into, and from the same monthly budget.",
 		},
 	},
 
-	// ── /announce-stream (planned standalone) ─────────────────────
-	// Different from /go-live-soon: this is for a planned one-off stream
+	// ── /stream announce (planned standalone) ─────────────────────
+	// Different from /stream soon: this is for a planned one-off stream
 	// happening hours or days from now. Same primitive (one-time event),
 	// stricter input (explicit date+time, optional title and description).
 	announceStream: {

@@ -84,8 +84,8 @@ const guildConfigSchema = new Schema(
 		// arcade category. Plain voice channels: nothing listens in them, and they
 		// are deliberately NOT written to DeroVoiceConfig.allowedVoiceChannelIds.
 		// Nullable for the same reason as the arcade ids above, so legacy rows load
-		// and the boot sweep reads null as "missing, build it". They have no
-		// introMessageIds slot, because no intro is ever posted in a voice room.
+		// and the boot sweep reads null as "missing, build it". Each room's /dero
+		// card has its own introMessageIds slot below (2026-10 item 245 Phase 4b).
 		meetingVoiceChannelId: { type: String, required: false, default: null },
 		arcadeVoiceChannelId: { type: String, required: false, default: null },
 
@@ -352,7 +352,7 @@ const guildConfigSchema = new Schema(
 				//        this field tracks the admin-only command guide
 				//        which mortals never see because inner-sanctum is
 				//        role-gated. Public #command-center now only
-				//        lists /leaderboard + /list-events; every other
+				//        lists /leaderboard + /events list; every other
 				//        command lives behind this guide.
 				// Who:   GuildSetupManager.populateChannels (initial post),
 				//        refreshIntroEmbeds (edit in place on every boot).
@@ -403,6 +403,11 @@ const guildConfigSchema = new Schema(
 				// dropped in silence and the message reposts on every boot.
 				arcadeGamesChannelId: { type: String, required: false, default: null },
 				arcadeGamesBoardId: { type: String, required: false, default: null },
+				// The two voice rooms' cards (/dero's Join, Leave and Status, 2026-10 item
+				// 245 Phase 4b), one anchor per room. Declared for the reason the post
+				// mortem gives: undeclared, the card would repost on every boot.
+				meetingVoiceChannelId: { type: String, required: false, default: null },
+				arcadeVoiceChannelId: { type: String, required: false, default: null },
 			},
 			required: false,
 			default: () => ({}),
@@ -479,7 +484,7 @@ const guildConfigSchema = new Schema(
 		//        want the bot reconstituting them. Asked for in 2026-05-11
 		//        streamer feedback.
 		// When:  read by ChannelDeleteWatcher and by GuildSetupManager.autoSetup
-		//        before the repair sweep. Toggled by /configure-auto-heal.
+		//        before the repair sweep. Toggled by /configure auto-heal.
 		// Where: nullable so legacy rows load cleanly. Default true preserves
 		//        existing behavior, no data migration needed.
 		// How:   plain Boolean. Schema bumps for additional repair-related
@@ -487,18 +492,18 @@ const guildConfigSchema = new Schema(
 		autoHealEnabled: { type: Boolean, required: false, default: true },
 
 		// ── custom channel names (streamer feedback 2026-05-11) ───────────
-		// What:  per-slot custom name overrides set by /rename-channel.
+		// What:  per-slot custom name overrides set by /channels rename.
 		//        Keyed by configField name (e.g., "leaderboardChannelId")
 		//        with the value being the admin's chosen channel name.
 		//        repairOneChannel reads this map before falling back to
 		//        spec.displayName so a rebuild after channel deletion
 		//        preserves whatever name the admin had chosen.
-		// Who:   written by /rename-channel slash command (renames the
+		// Who:   written by /channels rename slash command (renames the
 		//        live Discord channel AND persists the override here).
 		//        Read by GuildSetupManager.repairOneChannel and by any
 		//        future rebuild path that builds a channel from a spec.
-		// When:  written on every /rename-channel invocation. Read at
-		//        rebuild time. Cleared by /rename-channel if the admin
+		// When:  written on every /channels rename invocation. Read at
+		//        rebuild time. Cleared by /channels rename if the admin
 		//        sets the name back to the pack default (which is the
 		//        existing spec.displayName).
 		// Where: a Mongoose Map so adding a new slot in the future is a
@@ -551,7 +556,7 @@ const guildConfigSchema = new Schema(
 		// Who:   streamers who do not want participation tracked, or who want
 		//        to pause tracking during a hiatus without losing prior data.
 		// When:  read at the top of every MessageReactionAdd and voiceStateUpdate
-		//        handler in ActivityTracker. Toggled by /configure-leaderboard-tracking.
+		//        handler in ActivityTracker. Toggled by /configure leaderboard-tracking.
 		// Where: same row as autoHealEnabled. Both are global per-guild
 		//        switches, not per-event or per-channel.
 		// How:   plain Boolean. Hide-history-on-disable was rejected as MVP

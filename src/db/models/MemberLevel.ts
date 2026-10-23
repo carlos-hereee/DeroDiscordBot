@@ -9,7 +9,7 @@ import type { IAchievementUnlock, IGameRecord } from "@features/leveling/levelin
 //        per game win/loss/draw/assist record, and the achievements they hold.
 // Who:   written ONLY through @features/leveling/awardXp.ts (which batches
 //        message xp through xpWriter and writes every other source through
-//        immediately) and by the /xp admin command. Read by /account, /levels,
+//        immediately) and by the /xp admin command. Read by /account, /account view:levels,
 //        LevelsBoard, roleRewards and the achievement engine.
 // When:  a row is born on the member's first xp award, upserted, and lives as
 //        long as the guild does. There is no TTL: this is the durable record,
@@ -84,7 +84,7 @@ const memberLevelSchema = new mongoose.Schema<IMemberLevel>(
 		userId: { type: String, required: true },
 		// Display name AT WRITE TIME, using the same precedence ActivityTracker
 		// already uses: nickname, then globalName, then username. Denormalized on
-		// purpose so /levels can render a board of 10 members without 10 Discord
+		// purpose so /account view:levels can render a board of 10 members without 10 Discord
 		// fetches; a member who changes their nickname is corrected on their next
 		// award rather than by a backfill.
 		username: { type: String, required: true },

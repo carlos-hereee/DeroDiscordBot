@@ -4,6 +4,7 @@ import {
 	PermissionFlagsBits,
 	SlashCommandBuilder,
 	type ChatInputCommandInteraction,
+	type RepliableInteraction,
 	type Role,
 } from "discord.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
@@ -12,6 +13,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getLevelingConfig, invalidateLevelingConfig } from "@features/leveling/levelingConfig.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
 // ── /setup-level-system ────────────────────────────────────────────────────
 // What:  every per-guild knob of the leveling system. Rates, the curve, where
@@ -244,7 +246,8 @@ export const data = new SlashCommandBuilder()
 			)
 	);
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+/** The one handler the slash command and the admin guide's /setup-level-system button share. */
+export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) {
 		await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.outsideGuild)], flags: MessageFlags.Ephemeral });
@@ -266,7 +269,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		return;
 	}
 
-	const subcommand = interaction.options.getSubcommand();
+	const subcommand = options.getSubcommand();
 	const settings = context.settings;
 	// Every branch below builds a $set patch of DOTTED paths rather than replacing
 	// the whole subtree. Replacing it would silently wipe every setting the admin
@@ -280,7 +283,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 			return;
 
 		case "toggle": {
-			const enabled = interaction.options.getBoolean("enabled", true);
+			const enabled = options.getBoolean("enabled", true);
 			patch["leveling.enabled"] = enabled;
 			notes.push(
 				enabled
@@ -292,7 +295,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 		case "rates": {
 			applyClampedInt(
-				interaction,
+				options,
 				"message-cooldown",
 				"leveling.message.cooldownSeconds",
 				LIMITS.MIN_COOLDOWN_SECONDS,
@@ -301,7 +304,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 				notes
 			);
 			applyClampedInt(
-				interaction,
+				options,
 				"reaction-cooldown",
 				"leveling.reaction.cooldownSeconds",
 				LIMITS.MIN_COOLDOWN_SECONDS,
@@ -310,7 +313,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 				notes
 			);
 			applyClampedInt(
-				interaction,
+				options,
 				"voice-per-minute",
 				"leveling.voice.perMinute",
 				LIMITS.MIN_XP,
@@ -319,44 +322,44 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 				notes
 			);
 
-			const awards = interaction.options.getString("reaction-awards");
+			const awards = options.getString("reaction-awards");
 			if (awards) patch["leveling.reaction.awards"] = awards;
 			break;
 		}
 
 		case "curve": {
-			const preset = interaction.options.getString("preset");
+			const preset = options.getString("preset");
 			if (preset) patch["leveling.curve"] = preset;
 
-			const multiplier = interaction.options.getNumber("multiplier");
+			const multiplier = options.getNumber("multiplier");
 			if (multiplier !== null) {
 				const clamped = clamp(multiplier, LIMITS.MIN_CURVE_MULTIPLIER, LIMITS.MAX_CURVE_MULTIPLIER);
 				patch["leveling.curveMultiplier"] = clamped;
 				if (clamped !== multiplier) notes.push(noteClamped("Curve multiplier", multiplier, clamped));
 			}
 
-			const maxLevel = interaction.options.getInteger("max-level");
+			const maxLevel = options.getInteger("max-level");
 			if (maxLevel !== null) {
 				// 0 is the honest way to say "uncapped" through an integer option,
 				// because Discord has no nullable integer.
 				patch["leveling.maxLevel"] = maxLevel <= 0 ? null : clamp(maxLevel, 2, LIMITS.MAX_SETTABLE_LEVEL);
 			}
 
-			const milestones = interaction.options.getString("milestones");
+			const milestones = options.getString("milestones");
 			if (milestones) patch["leveling.milestoneMode"] = milestones;
-			const everyN = interaction.options.getInteger("every-n");
+			const everyN = options.getInteger("every-n");
 			if (everyN !== null) patch["leveling.milestoneEveryN"] = clamp(everyN, 2, 100);
 			break;
 		}
 
 		case "announce": {
-			const mode = interaction.options.getString("mode");
+			const mode = options.getString("mode");
 			if (mode) patch["leveling.announceMode"] = mode;
 
-			const channel = interaction.options.getChannel("channel");
+			const channel = options.getChannel("channel");
 			if (channel) patch["leveling.announceChannelId"] = channel.id;
 
-			const emoji = interaction.options.getString("emoji");
+			const emoji = options.getString("emoji");
 			if (emoji) patch["leveling.reactionEmoji"] = emoji.trim();
 
 			notes.push("Level up messages never ping anyone, whatever channel they post in.");
@@ -364,20 +367,20 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		}
 
 		case "restrictions": {
-			const mode = interaction.options.getString("mode");
+			const mode = options.getString("mode");
 			if (mode) patch["leveling.restrictionMode"] = mode;
 
 			const channels = editList(
 				settings.restrictedChannels,
-				interaction.options.getChannel("add-channel")?.id,
-				interaction.options.getChannel("remove-channel")?.id
+				options.getChannel("add-channel")?.id,
+				options.getChannel("remove-channel")?.id
 			);
 			if (channels) patch["leveling.restrictedChannels"] = channels;
 
 			const roles = editList(
 				settings.restrictedRoles,
-				interaction.options.getRole("add-role")?.id,
-				interaction.options.getRole("remove-role")?.id
+				options.getRole("add-role")?.id,
+				options.getRole("remove-role")?.id
 			);
 			if (roles) patch["leveling.restrictedRoles"] = roles;
 
@@ -394,8 +397,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		case "voice": {
 			const approved = editList(
 				settings.voice.approvedChannels,
-				interaction.options.getChannel("approve")?.id,
-				interaction.options.getChannel("unapprove")?.id
+				options.getChannel("approve")?.id,
+				options.getChannel("unapprove")?.id
 			);
 			if (approved) {
 				patch["leveling.voice.approvedChannels"] = approved;
@@ -405,7 +408,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 			}
 
 			applyClampedInt(
-				interaction,
+				options,
 				"min-members",
 				"leveling.voice.minMembers",
 				LIMITS.MIN_VOICE_MEMBERS,
@@ -413,9 +416,9 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 				patch,
 				notes
 			);
-			applyClampedInt(interaction, "decay-after", "leveling.voice.decayAfterMinutes", 1, 1440, patch, notes);
+			applyClampedInt(options, "decay-after", "leveling.voice.decayAfterMinutes", 1, 1440, patch, notes);
 
-			const decayFactor = interaction.options.getNumber("decay-factor");
+			const decayFactor = options.getNumber("decay-factor");
 			if (decayFactor !== null) {
 				const clamped = clamp(decayFactor, 0, 1);
 				patch["leveling.voice.decayFactor"] = clamped;
@@ -425,18 +428,18 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		}
 
 		case "rewards": {
-			const stack = interaction.options.getBoolean("stack");
+			const stack = options.getBoolean("stack");
 			if (stack !== null) patch["leveling.stackRewards"] = stack;
 
-			const removeLevel = interaction.options.getInteger("remove-level");
+			const removeLevel = options.getInteger("remove-level");
 			let rewards = settings.rewards;
 			if (removeLevel !== null) {
 				rewards = rewards.filter((reward) => reward.level !== removeLevel);
 				notes.push(`Removed the reward for level ${removeLevel}.`);
 			}
 
-			const level = interaction.options.getInteger("level");
-			const role = interaction.options.getRole("role");
+			const level = options.getInteger("level");
+			const role = options.getRole("role");
 			if (level !== null && role) {
 				const refusal = refuseReward(interaction, role as Role);
 				if (refusal) {
@@ -459,12 +462,12 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		}
 
 		case "multipliers": {
-			const stack = interaction.options.getBoolean("stack");
+			const stack = options.getBoolean("stack");
 			if (stack !== null) patch["leveling.stackMultipliers"] = stack;
 
-			const multiplier = interaction.options.getNumber("multiplier");
-			const role = interaction.options.getRole("role");
-			const channel = interaction.options.getChannel("channel");
+			const multiplier = options.getNumber("multiplier");
+			const role = options.getRole("role");
+			const channel = options.getChannel("channel");
 
 			if ((role || channel) && multiplier === null) {
 				await interaction.reply({
@@ -543,7 +546,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 // kill earning everywhere and an admin only finds out from a member. A count an
 // admin can read at a glance makes that state impossible to miss.
 function buildPreview(
-	interaction: ChatInputCommandInteraction,
+	interaction: RepliableInteraction,
 	context: NonNullable<Awaited<ReturnType<typeof getLevelingConfig>>>
 ) {
 	const settings = context.settings;
@@ -590,7 +593,7 @@ const noteClamped = (label: string, given: number, used: number): string =>
 	`${label} was ${given}, which is outside the allowed range, so it was set to ${used}.`;
 
 function applyClampedInt(
-	interaction: ChatInputCommandInteraction,
+	options: CommandOptionReader,
 	optionName: string,
 	path: string,
 	low: number,
@@ -598,7 +601,7 @@ function applyClampedInt(
 	patch: Record<string, unknown>,
 	notes: string[]
 ): void {
-	const given = interaction.options.getInteger(optionName);
+	const given = options.getInteger(optionName);
 	if (given === null) return;
 	const used = clamp(given, low, high);
 	patch[path] = used;
@@ -637,7 +640,7 @@ function upsertMultiplier<K extends "roleId" | "channelId">(
 // The hierarchy and managed checks are refusals too rather than warnings: a role
 // the bot can never assign is a reward that will never be granted, and accepting
 // it would be selling something that does not exist.
-function refuseReward(interaction: ChatInputCommandInteraction, role: Role): string | null {
+function refuseReward(interaction: RepliableInteraction, role: Role): string | null {
 	if (role.permissions.has(PermissionFlagsBits.Administrator) || role.permissions.has(PermissionFlagsBits.ManageGuild)) {
 		return levelingCopy.errors.rewardRolePrivileged;
 	}
@@ -650,4 +653,8 @@ function refuseReward(interaction: ChatInputCommandInteraction, role: Role): str
 	if (me && me.roles.highest.comparePositionTo(role) <= 0) return levelingCopy.errors.rewardRoleTooHigh;
 
 	return null;
+}
+
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+	await run(interaction, interaction.options);
 }

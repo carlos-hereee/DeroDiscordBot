@@ -7,6 +7,7 @@ import {
 	MessageFlags,
 	SlashCommandBuilder,
 	type ChatInputCommandInteraction,
+	type RepliableInteraction,
 	type User,
 } from "discord.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
@@ -18,6 +19,7 @@ import { awardXp } from "@features/leveling/awardXp.js";
 import { levelFromTotalXp, totalXpForLevel } from "@features/leveling/levelCurve.js";
 import { getLevelingConfig } from "@features/leveling/levelingConfig.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
 // ── /xp ────────────────────────────────────────────────────────────────────
 // What:  admin correction of a member's xp, plus the two reset paths and a
@@ -113,7 +115,8 @@ export const data = new SlashCommandBuilder()
 		sub.setName("export").setDescription("Download this server's leveling data as a JSON file")
 	);
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+/** The one handler the slash command and the admin guide's /xp button share. */
+export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.outsideGuild)], flags: MessageFlags.Ephemeral });
@@ -129,8 +132,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	const levelOf = (totalXp: number): number =>
 		levelFromTotalXp(totalXp, settings.curve, settings.curveMultiplier, settings.maxLevel);
 
-	const subcommand = interaction.options.getSubcommand();
-	const target = subcommand === "reset-server" || subcommand === "export" ? null : interaction.options.getUser("member", true);
+	const subcommand = options.getSubcommand();
+	const target = subcommand === "reset-server" || subcommand === "export" ? null : options.getUser("member", true);
 
 	if (target?.bot) {
 		await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.botMember)], flags: MessageFlags.Ephemeral });
@@ -139,7 +142,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 	switch (subcommand) {
 		case "add": {
-			const amount = Math.max(1, interaction.options.getInteger("amount", true));
+			const amount = Math.max(1, options.getInteger("amount", true));
 			// Routed through awardXp rather than the store, deliberately: adding xp
 			// that crosses a level SHOULD celebrate, and awardXp is what knows how.
 			// source "admin" writes through immediately rather than buffering.
@@ -156,7 +159,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		}
 
 		case "remove": {
-			const amount = Math.max(1, interaction.options.getInteger("amount", true));
+			const amount = Math.max(1, options.getInteger("amount", true));
 			// NOT routed through awardXp: it takes positive amounts only, and taking
 			// xp away must never fire a celebration. A negative $inc can drive a total
 			// below zero, which levelCurve resolves to level 1 rather than throwing.
@@ -175,13 +178,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		}
 
 		case "set-xp": {
-			const amount = Math.max(0, interaction.options.getInteger("amount", true));
+			const amount = Math.max(0, options.getInteger("amount", true));
 			await setExactly(interaction, guildId, target!, amount, levelOf(amount));
 			return;
 		}
 
 		case "set-level": {
-			const level = clamp(interaction.options.getInteger("level", true), 1, LIMITS.MAX_SETTABLE_LEVEL);
+			const level = clamp(options.getInteger("level", true), 1, LIMITS.MAX_SETTABLE_LEVEL);
 			// The member lands at the START of that level, on exactly the cumulative
 			// cost of reaching it, so their progress bar reads empty rather than
 			// inheriting whatever fraction they happened to have.
@@ -283,10 +286,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
 
-const displayNameOf = (interaction: ChatInputCommandInteraction, user: User): string =>
+const displayNameOf = (interaction: RepliableInteraction, user: User): string =>
 	interaction.guild?.members.cache.get(user.id)?.displayName ?? user.globalName ?? user.username;
 
-async function reply(interaction: ChatInputCommandInteraction, title: string, description: string): Promise<void> {
+async function reply(interaction: RepliableInteraction, title: string, description: string): Promise<void> {
 	await interaction.reply({
 		embeds: [infoEmbed(title, description, COLORS.ACCOUNT)],
 		flags: MessageFlags.Ephemeral,
@@ -302,7 +305,7 @@ async function reply(interaction: ChatInputCommandInteraction, title: string, de
 // granted. Matching it to the new level makes an admin correction silent, which
 // is what a correction should be.
 async function setExactly(
-	interaction: ChatInputCommandInteraction,
+	interaction: RepliableInteraction,
 	guildId: string,
 	target: User,
 	totalXp: number,
@@ -325,7 +328,7 @@ async function setExactly(
 //
 // Returns false on decline AND on timeout, and in both cases the prompt is
 // rewritten so a stale message can never be clicked into a deletion later.
-async function confirm(interaction: ChatInputCommandInteraction, title: string, warning: string): Promise<boolean> {
+async function confirm(interaction: RepliableInteraction, title: string, warning: string): Promise<boolean> {
 	const confirmId = `xp:confirm:${interaction.id}`;
 	const cancelId = `xp:cancel:${interaction.id}`;
 
@@ -365,4 +368,8 @@ async function confirm(interaction: ChatInputCommandInteraction, title: string, 
 	// can outlast Discord's three second window on a large guild.
 	await click.deferUpdate().catch(() => undefined);
 	return true;
+}
+
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+	await run(interaction, interaction.options);
 }

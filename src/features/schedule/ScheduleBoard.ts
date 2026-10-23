@@ -160,7 +160,7 @@ function toField(event: IGameEvent): IScheduleField {
 		// to a clean boolean so IScheduleField stays narrow, the embed
 		// builder never needs to distinguish "false" from "unset". All
 		// three falsy states map to "not paused", which matches how the
-		// scheduler and /pause-schedule both interpret the field.
+		// scheduler and /schedule pause both interpret the field.
 		paused: event.paused === true,
 		firstOccurrenceTs: Math.floor(firstOccurrenceMs / 1000),
 		isCompleted,

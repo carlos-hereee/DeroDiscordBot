@@ -9,7 +9,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 //        by @features/leveling/levelPeriod.ts.
 // Who:   written by xpWriter's flush (one bulkWrite for the week key, one for
 //        the month key, in the same flush as the MemberLevel write). Read by
-//        /levels, by /account's weekly and monthly rank lines, and by LevelsBoard.
+//        /account view:levels, by /account's weekly and monthly rank lines, and by LevelsBoard.
 // When:  every flush. A member who earns nothing in a period simply has no row
 //        for it, which is the correct rendering of "not on this week's board".
 // Where: strictly derivable, disposable aggregate data. MemberLevel.totalXp is

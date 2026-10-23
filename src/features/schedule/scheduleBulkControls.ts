@@ -3,9 +3,9 @@ import { eventStore } from "@db/stores/eventStore.js";
 // ── scheduleBulkControls ───────────────────────────────────────────────
 // Guild-wide pause/resume primitives extracted so the schedule channel
 // power-up button (v1.6 Phase 5, item 36) can reuse the bulk logic. A single
-// button cannot pick an event the way /pause-schedule does, so the channel
+// button cannot pick an event the way /schedule pause does, so the channel
 // control operates on every event at once, the same intent as the
-// /pause-all-schedules and /continue-all-schedules commands.
+// /schedule pause and /schedule resume commands.
 //
 // DEBT: those two commands still carry equivalent inline loops. They predate
 // this helper and were intentionally left untouched (narrow change); a future

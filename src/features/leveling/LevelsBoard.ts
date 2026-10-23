@@ -44,7 +44,7 @@ import { avatarRequestFor, isRenderPayload, withRenderFallback, type AvatarReque
 // of that to separate two things that are both standings.
 //
 // ⚠️ THE BOARD IS ALL TIME, deliberately. "This week" and "this month" live on
-// /levels instead. The board's own subtitle promises presence "all the time",
+// /account view:levels instead. The board's own subtitle promises presence "all the time",
 // and an all-time render needs no join: the period collection stores a userId
 // and an xp total but no display name, so a weekly board would have to look up
 // every member on every refresh to say who they are.

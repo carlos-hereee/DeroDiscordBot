@@ -123,7 +123,7 @@ export function evaluate(counters: AchievementCounters, unlocked: readonly strin
 	return newly;
 }
 
-// ── progress, for /achievements ────────────────────────────────────────────
+// ── progress, for /account view:achievements ────────────────────────────────────────────
 // The next unearned tier of each track and how close the member is to it.
 // Returns null for a track that is fully complete, so the caller can drop it.
 export interface AchievementProgress {
@@ -153,7 +153,7 @@ export function progressFor(counters: AchievementCounters, unlocked: readonly st
 		});
 	}
 
-	// Closest to completion first, so the two rows /achievements shows are the two
+	// Closest to completion first, so the two rows /account view:achievements shows are the two
 	// worth chasing rather than two arbitrary ones.
 	return rows.sort((left, right) => right.current / right.threshold - left.current / left.threshold);
 }

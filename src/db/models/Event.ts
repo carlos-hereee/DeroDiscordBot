@@ -70,7 +70,7 @@ const eventSchema = new Schema(
 		//        to GuildConfig.memberRoleId, then @here. TestReminderJob
 		//        applies the same precedence so the test fire mirrors the
 		//        real fire's mention surface.
-		// When:  set at event create time by /configure-stream-schedule
+		// When:  set at event create time by /stream setup
 		//        or any future command that needs a non-default audience.
 		//        Legacy events (created before this field existed) load
 		//        with null, so the fallback to memberRoleId preserves
@@ -84,11 +84,11 @@ const eventSchema = new Schema(
 		//        on every cron tick. The event still exists, still shows
 		//        up on the schedule board (with a "paused" tag), still
 		//        appears in /event-list, it just does not fire reminders
-		//        until /continue-schedule flips this back to false (or
+		//        until /schedule resume flips this back to false (or
 		//        pausedUntil expires and the scheduler auto-resumes).
 		// Who:   ReminderScheduler (gates the fire decision and handles
 		//        the pausedUntil auto-resume), ScheduleBoard (renders the
-		//        paused tag), the /pause-schedule and /continue-schedule
+		//        paused tag), the /schedule pause and /schedule resume
 		//        commands (write these fields).
 		// When:  flipped on demand by the streamer when they want to take
 		//        a week (or several) off.
@@ -101,9 +101,9 @@ const eventSchema = new Schema(
 		//        automatically flip paused back to false on the next cron
 		//        tick at or after this date. Persisted (not setTimeout) so
 		//        the auto-resume survives a bot restart. Null means
-		//        "paused indefinitely", only /continue-schedule clears it.
-		// Who:   /pause-schedule writes this when the streamer passes a
-		//        days argument. /continue-schedule clears both paused and
+		//        "paused indefinitely", only /schedule resume clears it.
+		// Who:   /schedule pause writes this when the streamer passes a
+		//        days argument. /schedule resume clears both paused and
 		//        pausedUntil. ReminderScheduler reads it.
 		// When:  optional. Most streamer pauses will be open-ended ("I'm
 		//        going on vacation, I'll resume when I'm back") and leave
