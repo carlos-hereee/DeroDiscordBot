@@ -138,6 +138,8 @@ const EXISTING_IDS = {
 	rulesChannelId: "ch-rules",
 	arcadeRulesChannelId: "ch-arcaderules",
 	arcadeChallengesChannelId: "ch-arcadechallenges",
+	// 🎉party-games (post-launch plan item 3), present so only 🕹️games is missing here.
+	partyGamesChannelId: "ch-partygames",
 	meetingVoiceChannelId: "ch-meetingvoice",
 	arcadeVoiceChannelId: "ch-arcadevoice",
 };

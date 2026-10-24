@@ -6,6 +6,7 @@ import {
 	cloneState,
 	completeAction,
 	createBankProperty,
+	ensureStats,
 	mentionPlayer,
 	passTurn,
 	rejectAction,
@@ -34,6 +35,7 @@ export function applyForfeit(state: MonopolyState, seatId: string, now: number =
 	if (state.seats[seatIndex].bankrupt) return rejectAction("That player is already out of the match.");
 
 	const next = cloneState(state);
+	ensureStats(next).forfeits += 1;
 	return completeAction(next, seatId, forfeitSeat(next, next.seats[seatIndex], now));
 }
 

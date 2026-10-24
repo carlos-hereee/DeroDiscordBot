@@ -59,7 +59,9 @@ export interface PlayerBoard {
 	shots: Set<string>;
 }
 
-export type MatchStatus = "playing" | "finished";
+// "setup" comes first (post-launch plan item 17): each player looks at the fleet Dero
+// laid, re-lays it if they like, and presses Ready. The first shot waits for both.
+export type MatchStatus = "setup" | "playing" | "finished";
 
 export interface BattleshipState {
 	// Exactly two, indexed so `turn` can be an index rather than an id lookup.
@@ -71,6 +73,9 @@ export interface BattleshipState {
 	// match, which is what stops an abandoned room from never terminating and
 	// blocking the archive sweep.
 	missedTurns: [number, number];
+	// Who has pressed Ready, by index. Only read during setup; both true from the
+	// moment the battle starts.
+	ready: [boolean, boolean];
 }
 
 // ── coordinates ─────────────────────────────────────────────────────────────
@@ -147,15 +152,79 @@ export function createMatch(
 			{ ...players[1], ships: placeFleet(rng), shots: new Set<string>() },
 		],
 		turn: 0,
-		status: "playing",
+		status: "setup",
 		winnerId: null,
 		missedTurns: [0, 0],
+		ready: [false, false],
 	};
+}
+
+// ── setup (post-launch plan item 17) ────────────────────────────────────────
+// Placement stays automatic by decision (a coordinate UI for five ships is a lot of
+// Discord for a little value); setup is where a player may re-lay what Dero placed
+// and then lock it in. Ready locks the layout, so a player cannot re-roll after the
+// opponent has seen them commit.
+
+export type SetupRefusal = "not-in-setup" | "not-a-player" | "already-ready";
+
+const playerIndexOf = (state: BattleshipState, userId: string): 0 | 1 | -1 => {
+	const index = state.players.findIndex((player) => player.userId === userId);
+	return index === 0 || index === 1 ? index : -1;
+};
+
+function setupRefusal(state: BattleshipState, userId: string): SetupRefusal | null {
+	if (state.status !== "setup") return "not-in-setup";
+	const index = playerIndexOf(state, userId);
+	if (index === -1) return "not-a-player";
+	return state.ready[index] ? "already-ready" : null;
+}
+
+/** Re-lay one player's fleet during setup. Mutates `state`; answers a refusal or the index re-laid. */
+export function rerollFleet(
+	state: BattleshipState,
+	userId: string,
+	rng: () => number = Math.random
+): { ok: true; index: 0 | 1 } | { ok: false; reason: SetupRefusal } {
+	const refusal = setupRefusal(state, userId);
+	if (refusal) return { ok: false, reason: refusal };
+	const index = playerIndexOf(state, userId) as 0 | 1;
+	state.players[index].ships = placeFleet(rng);
+	return { ok: true, index };
+}
+
+/**
+ * Lock one player's fleet in. The battle starts when the second player readies.
+ * Mutates `state`. Pure, so the room layer decides how to persist it safely.
+ */
+export function markReady(
+	state: BattleshipState,
+	userId: string
+): { ok: true; index: 0 | 1; battleStarted: boolean } | { ok: false; reason: SetupRefusal } {
+	const refusal = setupRefusal(state, userId);
+	if (refusal) return { ok: false, reason: refusal };
+	const index = playerIndexOf(state, userId) as 0 | 1;
+	state.ready[index] = true;
+	const battleStarted = state.ready[0] && state.ready[1];
+	if (battleStarted) state.status = "playing";
+	return { ok: true, index, battleStarted };
+}
+
+/**
+ * End setup for both players at once, as laid: the setup clock ran out. Nobody is
+ * forfeited for it, because a fleet Dero laid is a legal fleet. False when the match
+ * was not in setup.
+ */
+export function startBattle(state: BattleshipState): boolean {
+	if (state.status !== "setup") return false;
+	state.ready = [true, true];
+	state.status = "playing";
+	return true;
 }
 
 // ── firing ──────────────────────────────────────────────────────────────────
 
 export type ShotResult =
+	| { status: "setup" }
 	| { status: "not-your-turn" }
 	| { status: "finished" }
 	| { status: "invalid"; reason: "off-grid" }
@@ -167,6 +236,8 @@ export type ShotResult =
 const opponentIndex = (turn: 0 | 1): 0 | 1 => (turn === 0 ? 1 : 0);
 
 export function applyShot(state: BattleshipState, shooterId: string, coord: Coord): ShotResult {
+	// Nobody fires while either fleet is still being laid.
+	if (state.status === "setup") return { status: "setup" };
 	if (state.status !== "playing") return { status: "finished" };
 	if (state.players[state.turn].userId !== shooterId) return { status: "not-your-turn" };
 	if (!inBounds(coord)) return { status: "invalid", reason: "off-grid" };

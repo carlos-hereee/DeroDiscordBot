@@ -7,8 +7,6 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { refreshLeaderboard } from "@features/leaderboard/LeaderboardBoard.js";
 import { welcomeNewMember } from "@features/greeter/welcomeNewMember.js";
 import { respondWithFortune } from "@features/fortune/respondWithFortune.js";
-import { startHangmanRound } from "@features/games/hangmanHandler.js";
-import { gamesCopy } from "@features/games/gamesCopy.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import { showAccountProfile } from "@features/leveling/accountProfile.js";
 import { showLevelsStandings } from "@features/leveling/levelsStandings.js";
@@ -24,9 +22,9 @@ import { setupCopy } from "@features/setup/setupCopy.js";
 //     and "Fortune" (any member)
 //   • Summon Dero invite card: "Icebreaker" (any member)
 //   • admin-controls guide:  "Refresh standings" (owner/admin)
-//   • admin-controls guide:  "Post hangman" (owner/admin), posts a PUBLIC
-//     /mini-game hangman board into #command-center. The game is open to
-//     everyone; only posting one on the channel's behalf is gated.
+// The admin "Post hangman" button moved to 🎉party-games as Host hangman
+// (post-launch plan item 3, features/game-rooms/partyGames); a stale one on an
+// old card answers as a retired control.
 // resolveIntroComponents (GuildSetupManager) composes these, built by the
 // factories below, into the guide rows alongside the suggestion-box, invite,
 // and self-destruct buttons.
@@ -59,12 +57,6 @@ const POWERUP_ACTIONS = {
 	"member:levels": { adminOnly: false },
 	"member:achievements": { adminOnly: false },
 	"admin:refresh": { adminOnly: true },
-	// "Post hangman" (admin:hangman), starts a public /mini-game hangman round in
-	// the guild's #command-center. adminOnly because it POSTS to a channel other
-	// than the one clicked, which is a moderator action; the game itself is open
-	// to everyone, and any member can start their own round with
-	// /mini-game hangman in any channel they can talk in.
-	"admin:hangman": { adminOnly: true },
 } as const satisfies Record<string, { adminOnly: boolean }>;
 
 // ── button factories (folded into the intro guides) ──────────────────────
@@ -111,13 +103,10 @@ export function buildFortuneButton(): ButtonBuilder {
 // in handlePowerUpButton via POWERUP_ACTIONS.
 export function buildAdminControlButtons(): ButtonBuilder[] {
 	return [
+		// Changing this row re-edits every existing guild's pinned admin card on its
+		// next boot, via the componentsAreEquivalent check in refreshIntroEmbeds, so
+		// it ships with no re-run of /setup.
 		new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:admin:refresh`).setLabel("Refresh standings").setEmoji("🔄").setStyle(ButtonStyle.Primary),
-		// Posts a public hangman board to #command-center. Secondary so Refresh
-		// standings stays the row's lead. Adding a button here re-edits every
-		// existing guild's pinned admin card on its next boot, via the
-		// componentsAreEquivalent check in refreshIntroEmbeds, so this ships with
-		// no re-run of /setup.
-		new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:admin:hangman`).setLabel("Post hangman").setEmoji("🪢").setStyle(ButtonStyle.Secondary),
 	];
 }
 
@@ -156,9 +145,6 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 		case "admin:refresh":
 			await runLeaderboardRefresh(interaction, guildId);
 			return;
-		case "admin:hangman":
-			await runPostHangman(interaction, guildId);
-			return;
 		case "member:greet":
 			await runFireGreeting(interaction);
 			return;
@@ -195,43 +181,6 @@ async function runLeaderboardRefresh(interaction: ButtonInteraction, guildId: st
 	await refreshLeaderboard(interaction.client, guildId);
 	adminLog.emitFor(interaction, guildId, "powerup.toggle", { subject: setupCopy.adminLog.subjects.refreshStandings });
 	await interaction.editReply({ content: "🔄 Standings refreshed." });
-}
-
-async function runPostHangman(interaction: ButtonInteraction, guildId: string): Promise<void> {
-	// Defer: this resolves the guild config, fetches a channel and posts a board,
-	// three round trips that can exceed the 3s interaction ack window on a cold
-	// cache. Same reasoning as runLeaderboardRefresh above.
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-	// The board goes to #command-center, NOT to the channel this button lives in.
-	// The admin controls card sits in the role-gated admin channel, so posting
-	// there would make a "public board" that only admins can see. #command-center
-	// is the members' bot hub and is read-only, which suits a board perfectly:
-	// nobody can bury it in chat and everyone plays through the button.
-	const config = await guildConfigStore.findByGuildId(guildId);
-	const channelId = config?.commandsChannelId;
-	const channel = channelId ? await interaction.client.channels.fetch(channelId).catch(() => null) : null;
-	if (!(channel instanceof TextChannel)) {
-		await interaction.editReply({ embeds: [errorEmbed(gamesCopy.hangman.noChannel)] });
-		return;
-	}
-
-	// Shared with the /mini-game hangman slash path so the two entry points cannot
-	// drift, exactly as runFortune below shares respondWithFortune with its
-	// command. The board, the rules, the modal and the cleanup all live in the
-	// games feature; this function only decides WHERE to post.
-	const result = await startHangmanRound(channel, interaction.user.id);
-	if (result === "alreadyRunning") {
-		await interaction.editReply({ embeds: [errorEmbed(gamesCopy.hangman.alreadyRunning)] });
-		return;
-	}
-	if (result === "failed") {
-		await interaction.editReply({ embeds: [errorEmbed(gamesCopy.hangman.noChannel)] });
-		return;
-	}
-
-	adminLog.emitFor(interaction, guildId, "powerup.toggle", { subject: setupCopy.adminLog.subjects.postHangman });
-	await interaction.editReply({ content: gamesCopy.hangman.startedIn(channel.id) });
 }
 
 async function runFireGreeting(interaction: ButtonInteraction): Promise<void> {

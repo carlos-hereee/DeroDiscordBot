@@ -81,6 +81,8 @@ export const HOMEBASE_CHANNEL_FIELDS = [
 	"arcadeChallengesChannelId",
 	// 🕹️games (2026-10 item 245 Phase 4a)
 	"arcadeGamesChannelId",
+	// 🎉party-games (post-launch plan item 3)
+	"partyGamesChannelId",
 	// The two voice rooms, one per category (2026-10 item 235)
 	"meetingVoiceChannelId",
 	"arcadeVoiceChannelId",

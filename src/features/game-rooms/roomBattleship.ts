@@ -34,6 +34,7 @@ import {
 } from "@features/games/battleshipRenderer.js";
 import { isRenderPayload, withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
+import type { PrivateViewContent } from "./privateView.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -74,9 +75,12 @@ interface StoredBoard {
 export interface StoredBattleship {
 	players: [StoredBoard, StoredBoard];
 	turn: 0 | 1;
-	status: "playing" | "finished";
+	status: "setup" | "playing" | "finished";
 	winnerId: string | null;
 	missedTurns: [number, number];
+	// Who pressed Ready during setup (post-launch plan item 17). ABSENT on a match
+	// stored before setup existed, which was already past it, so it reads as both.
+	ready?: [boolean, boolean];
 	// The half-entered coordinate each player has selected but not yet fired. Kept
 	// on the ROW rather than in a Map so a deploy mid-aim costs a re-click at worst,
 	// and so two players aiming at once cannot collide on one shared slot.
@@ -100,6 +104,7 @@ export function serializeMatch(state: BattleshipState, extra: Partial<StoredBatt
 		status: state.status,
 		winnerId: state.winnerId,
 		missedTurns: state.missedTurns,
+		ready: state.ready,
 		...extra,
 	};
 }
@@ -117,12 +122,13 @@ export function deserializeMatch(stored: StoredBattleship): BattleshipState {
 		status: stored.status,
 		winnerId: stored.winnerId,
 		missedTurns: stored.missedTurns,
+		ready: stored.ready ?? [true, true],
 	};
 }
 
-// Start a match for a provisioned room. Placement is automatic with a Reroll
-// button; manual placement is deferred by decision, being a second full coordinate
-// UI for a fraction of the value.
+// Start a match for a provisioned room, in setup (post-launch plan item 17).
+// Placement is automatic with a Randomize button; manual placement is deferred by
+// decision, being a second full coordinate UI for a fraction of the value.
 export function startMatch(room: IGameRoom, usernames: Record<string, string>, rng: () => number = Math.random): StoredBattleship {
 	// createMatch places both fleets itself from the injected rng, so this passes
 	// identities only. Rerolling later replaces one player's ships in place.
@@ -163,10 +169,7 @@ export function publicBoardEmbed(state: BattleshipState, imageRef?: string): Emb
 		return [heading, renderGrid(grid)].join("\n");
 	};
 
-	const turnLine =
-		state.status === "finished"
-			? gameRoomsCopy.battleship.finished(state.winnerId)
-			: gameRoomsCopy.battleship.turnLine(state.players[state.turn].userId);
+	const turnLine = statusLine(state);
 
 	const embed = infoEmbed(
 		gameRoomsCopy.battleship.boardTitle,
@@ -174,6 +177,38 @@ export function publicBoardEmbed(state: BattleshipState, imageRef?: string): Emb
 		COLORS.ARCADE as ColorResolvable
 	);
 	return imageRef ? embed.setImage(imageRef) : embed;
+}
+
+// The line above both grids: setup's ready roll call, whose turn it is, or the end.
+function statusLine(state: BattleshipState): string {
+	const copy = gameRoomsCopy.battleship;
+	if (state.status === "setup") {
+		return copy.setupLine(state.players.map((player, index) => ({ userId: player.userId, ready: state.ready[index] })));
+	}
+	if (state.status === "finished") return copy.finished(state.winnerId);
+	return copy.turnLine(state.players[state.turn].userId);
+}
+
+// The viewer's own grid as emoji, their ships and the shots fired at them. One
+// builder for the private embed and the private view modal, so the two cannot draw
+// a fleet differently.
+function ownGridText(state: BattleshipState, viewerId: string): string {
+	const grid = ownView(state, viewerId).map((row) =>
+		row.map((cell) => (cell.hit ? CELL.hit : cell.ship ? CELL.ship : cell.miss ? CELL.miss : CELL.unknown))
+	);
+	return renderGrid(grid);
+}
+
+/**
+ * The private view modal's content (post-launch plan item 16): the viewer's own grid
+ * and what is still afloat, plus setup's next step while the fleets are being laid.
+ * ⚠️ PRIVATE ONLY, like privateBoardEmbed: it reads ownView.
+ */
+export function privateBoardView(state: BattleshipState, viewerId: string): PrivateViewContent {
+	const copy = gameRoomsCopy.battleship;
+	const sections = [ownGridText(state, viewerId), copy.fleetLine(afloatShipNames(state, viewerId))];
+	if (state.status === "setup") sections.push(copy.privateSetupHint);
+	return { title: copy.privateModalTitle, sections };
 }
 
 // The PRIVATE board: the viewer's own fleet, with their opponent's shots on it.
@@ -185,10 +220,7 @@ export function privateBoardEmbed(state: BattleshipState, viewerId: string, imag
 	if (imageRef) {
 		return infoEmbed(gameRoomsCopy.battleship.ownBoardTitle, fleetLine, COLORS.ARCADE as ColorResolvable).setImage(imageRef);
 	}
-	const grid = ownView(state, viewerId).map((row) =>
-		row.map((cell) => (cell.hit ? CELL.hit : cell.ship ? CELL.ship : cell.miss ? CELL.miss : CELL.unknown))
-	);
-	return infoEmbed(gameRoomsCopy.battleship.ownBoardTitle, [renderGrid(grid), "", fleetLine].join("\n"), COLORS.ARCADE as ColorResolvable);
+	return infoEmbed(gameRoomsCopy.battleship.ownBoardTitle, [ownGridText(state, viewerId), "", fleetLine].join("\n"), COLORS.ARCADE as ColorResolvable);
 }
 
 // The viewer's ships still afloat, in fleet order. One helper for the private embed
@@ -236,6 +268,7 @@ export function battleshipBoardView(state: BattleshipState, sinking: BattleshipS
 
 function boardHeadline(state: BattleshipState, nameOf: (userId: string | null) => string): string {
 	const copy = gameRoomsCopy.battleship;
+	if (state.status === "setup") return copy.cardSetup;
 	if (state.status !== "finished") return copy.cardTurn(state.players[state.turn].username);
 	return state.winnerId ? copy.cardWinner(nameOf(state.winnerId)) : copy.cardOver;
 }
@@ -311,6 +344,7 @@ export async function privateBoardReply(state: BattleshipState, viewerId: string
 // components against Discord's hard cap of 25 (5 rows of 5), so the obvious
 // implementation is not merely ugly, it is impossible.
 export function battleshipRows(roomId: string, state: BattleshipState): ActionRowBuilder<never>[] {
+	if (state.status === "setup") return [setupRow(roomId) as unknown as ActionRowBuilder<never>];
 	const columnSelect = new StringSelectMenuBuilder()
 		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:bscol:${roomId}`)
 		.setPlaceholder(gameRoomsCopy.battleship.columnPlaceholder)
@@ -346,16 +380,18 @@ export function battleshipRows(roomId: string, state: BattleshipState): ActionRo
 	];
 }
 
-// The Reroll row, offered once before the first shot. Auto placement with a reroll
-// is the whole of placement by decision: manual placement is a second full
-// coordinate UI for a fraction of the value.
-export function rerollRow(roomId: string): ActionRowBuilder<ButtonBuilder> {
+// The setup row (post-launch plan item 17), the board's only row until both captains
+// are ready: see your fleet, lay it again, lock it in, or surrender. The aim selects
+// and Fire join only when the battle starts, so nothing on the board offers a shot
+// that would be refused. Randomize keeps the `reroll` action, so a Reroll button on
+// a board posted before setup existed still routes.
+function setupRow(roomId: string): ActionRowBuilder<ButtonBuilder> {
+	const copy = gameRoomsCopy.battleship;
 	return new ActionRowBuilder<ButtonBuilder>().addComponents(
-		new ButtonBuilder()
-			.setCustomId(`${GAME_ROOM_PREFIX}:reroll:${roomId}`)
-			.setLabel(gameRoomsCopy.battleship.rerollLabel)
-			.setEmoji("🎲")
-			.setStyle(ButtonStyle.Secondary)
+		new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:board:${roomId}`).setLabel(copy.viewLabel).setEmoji("🗺️").setStyle(ButtonStyle.Primary),
+		new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:reroll:${roomId}`).setLabel(copy.randomizeLabel).setEmoji("🎲").setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:bready:${roomId}`).setLabel(copy.readyLabel).setEmoji("⚓").setStyle(ButtonStyle.Success),
+		new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:forfeit:${roomId}`).setLabel(copy.forfeitLabel).setStyle(ButtonStyle.Secondary)
 	);
 }
 
@@ -373,6 +409,7 @@ export interface FireOutcome {
 export function fire(stored: StoredBattleship, shooterId: string): FireOutcome {
 	const state = deserializeMatch(stored);
 
+	if (state.status === "setup") return { ok: false, message: gameRoomsCopy.battleship.setupFirst };
 	if (state.status !== "playing") return { ok: false, message: gameRoomsCopy.battleship.matchOver };
 	if (state.players[state.turn].userId !== shooterId) return { ok: false, message: gameRoomsCopy.battleship.notYourTurn };
 
@@ -386,6 +423,8 @@ export function fire(stored: StoredBattleship, shooterId: string): FireOutcome {
 	// a select menu makes a double submit easy, and spending somebody's turn on
 	// their own double click is the kind of unfairness a player never forgives.
 	switch (result.status) {
+		case "setup":
+			return { ok: false, message: gameRoomsCopy.battleship.setupFirst };
 		case "not-your-turn":
 			return { ok: false, message: gameRoomsCopy.battleship.notYourTurn };
 		case "repeat":

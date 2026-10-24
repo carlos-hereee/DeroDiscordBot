@@ -2,7 +2,7 @@ import type { Client } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { mapWithConcurrency } from "@utils/mapWithConcurrency.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import { expireTurn } from "@features/games/battleshipState.js";
+import { expireTurn, startBattle } from "@features/games/battleshipState.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { applyDebtDefault, applyForfeit, waitingDebt } from "@features/games/monopolyState.js";
 import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
@@ -38,6 +38,8 @@ import type { HoldemTable } from "@features/games/holdemTable.js";
 export interface TurnSweepSummary {
 	turnsExpired: number;
 	matchesForfeited: number;
+	// Matches whose setup clock ran out and sailed as laid (post-launch plan item 17).
+	setupsTimedOut: number;
 }
 
 // When this match last saw activity. The move trail is the record of that: every
@@ -52,12 +54,28 @@ function lastActivityAt(room: IGameRoom): number {
 	return stamp ? new Date(stamp).getTime() : 0;
 }
 
+// The setup clock ran out (post-launch plan item 17): start the battle with both
+// fleets as they are. A compare and swap on the status, so a second Ready landing in
+// the same moment and this sweep cannot both start it. True when this call started it.
+async function startBattleOnSetupTimeout(client: Client, room: IGameRoom, stored: StoredBattleship): Promise<boolean> {
+	const state = deserializeMatch(stored);
+	if (!startBattle(state)) return false;
+	const next = serializeMatch(state, { pending: stored.pending, boardMessageId: stored.boardMessageId });
+	const started = await gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.status": "setup" }, next);
+	if (!started) return false;
+	await roomTrail.postMove(client, room, { actorId: room.hostId, kind: "system", text: gameRoomsCopy.battleship.setupTimedOut, meta: { expired: true } });
+	await roomTrail.postMove(client, room, { actorId: room.hostId, kind: "system", text: gameRoomsCopy.battleship.battleBegins(state.players[state.turn].userId) });
+	await redrawBattleshipBoard(client, room, next);
+	return true;
+}
+
 export async function sweepBattleshipTurns(client: Client, now: Date = new Date()): Promise<TurnSweepSummary> {
 	const rooms = await gameRoomStore.findPlayingByGame("battleship");
-	if (rooms.length === 0) return { turnsExpired: 0, matchesForfeited: 0 };
+	if (rooms.length === 0) return { turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 };
 
 	let turnsExpired = 0;
 	let matchesForfeited = 0;
+	let setupsTimedOut = 0;
 
 	await mapWithConcurrency(rooms, BOT_CONSTANTS.SCHEDULER_GUILD_CONCURRENCY, async (room) => {
 		try {
@@ -71,6 +89,12 @@ export async function sweepBattleshipTurns(client: Client, now: Date = new Date(
 			if (!isClockExpired(roomDrawingKey(room), lastActivityAt(room), BOT_CONSTANTS.GAME_ROOM_TURN_TIMEOUT_MS, now.getTime())) return;
 
 			const state = deserializeMatch(stored);
+			// A captain who never pressed Ready costs nobody the match (post-launch plan
+			// item 17): when the setup clock runs out the fleets sail as Dero laid them.
+			if (state.status === "setup") {
+				if (await startBattleOnSetupTimeout(client, room, stored)) setupsTimedOut++;
+				return;
+			}
 			if (state.status !== "playing") return;
 
 			// Whose turn is being forfeited, captured BEFORE expireTurn mutates the
@@ -99,7 +123,7 @@ export async function sweepBattleshipTurns(client: Client, now: Date = new Date(
 			}
 
 			matchesForfeited++;
-			const claimed = await roomLifecycle.finish(client, room, { winnerId: result.winnerId });
+			const claimed = await roomLifecycle.finish(client, room, { winnerId: result.winnerId, outcome: { bucket: "timeout" } });
 			// A turn timeout forfeit IS rated, by owner decision (2026-10 item 244): the
 			// player who stopped taking turns lost a match they started. Once, by the call
 			// that won finish's claim; fire and forget.
@@ -133,7 +157,7 @@ export async function sweepBattleshipTurns(client: Client, now: Date = new Date(
 	if (turnsExpired > 0 || matchesForfeited > 0) {
 		console.log(`[game-rooms] turn sweep: ${turnsExpired} turn(s) expired, ${matchesForfeited} match(es) forfeited`);
 	}
-	return { turnsExpired, matchesForfeited };
+	return { turnsExpired, matchesForfeited, setupsTimedOut };
 }
 
 // ── monopoly ──────────────────────────────────────────────────────────
@@ -193,11 +217,17 @@ export async function sweepMonopolyIdle(client: Client, now: Date = new Date()):
 
 			seatsForfeited++;
 			if (result.state.phase === "finished") matchesFinished++;
-			await applyMonopolyOutcome(client, room, result.state, {
-				actorId: idleId,
-				kind: "system",
-				lines: [reason, ...result.trailLines],
-			});
+			await applyMonopolyOutcome(
+				client,
+				room,
+				result.state,
+				{
+					actorId: idleId,
+					kind: "system",
+					lines: [reason, ...result.trailLines],
+				},
+				"timeout"
+			);
 		} catch (error) {
 			// Isolated per ROOM, for the same reason as the battleship sweep above.
 			console.error("[game-rooms] monopoly idle sweep failed for one room", {

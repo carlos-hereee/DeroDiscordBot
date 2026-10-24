@@ -211,6 +211,20 @@ export const BOT_CONSTANTS = {
 	// that matters is that a walked-away match terminates at all.
 	GAME_ROOM_TURN_TIMEOUT_MS: 10 * 60_000, // 10 minutes
 
+	// ── scheduled party games (post-launch plan item 3) ──
+	// The schedule modal's defaults are the owner's (30 minutes, 20 attendees, 0 for no
+	// cap). The bounds keep a typo from scheduling a game for a week or a list nobody can
+	// read: the RSVP card names every attendee, and Discord caps an embed field at 1024
+	// characters, which a mention list of PARTY_GAME_MAX_ATTENDEES still fits beside
+	// the "and N more" summary the card falls back to.
+	PARTY_GAME_DEFAULT_DURATION_MINUTES: 30,
+	PARTY_GAME_MIN_DURATION_MINUTES: 5,
+	PARTY_GAME_MAX_DURATION_MINUTES: 240,
+	PARTY_GAME_DEFAULT_MAX_ATTENDEES: 20,
+	PARTY_GAME_MAX_ATTENDEES: 100,
+	// How many attendees the card names before it summarises the rest.
+	PARTY_GAME_NAMES_SHOWN: 30,
+
 	// How long a Monopoly seat may sit on the clock before the idle sweep forfeits
 	// it (2026-10 item 241). Its own constant rather than the battleship budget
 	// above, because a Monopoly match is played across days by people who check in

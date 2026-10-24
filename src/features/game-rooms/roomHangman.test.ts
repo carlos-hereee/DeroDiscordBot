@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MessageFlags, type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
 
-vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn() } }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn() } }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() }, resolveRoomChannel: vi.fn() }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
@@ -63,6 +63,7 @@ const HINT = "it goes around a star";
 const storeMock = gameRoomStore as unknown as {
 	update: ReturnType<typeof vi.fn>;
 	findByRoomId: ReturnType<typeof vi.fn>;
+	setSecretField: ReturnType<typeof vi.fn>;
 };
 const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn> };
 const resolveChannelMock = resolveRoomChannel as unknown as ReturnType<typeof vi.fn>;
@@ -422,6 +423,45 @@ describe("handleGuessModal, the gallows card", () => {
 		await handleGuessModal(makeSubmit(HOST));
 
 		expect(channelSend).not.toHaveBeenCalled();
+	});
+
+	// Post-launch plan item 3: the guess controls sit under the newest gallows, so a
+	// guesser never scrolls back to the pinned opener to play.
+	it("puts Guess and Give up on the new card and remembers it", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		channelSend.mockResolvedValue({ id: "card-2" });
+
+		await handleGuessModal(makeSubmit(GUESSER, "z"));
+
+		const { components } = channelSend.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id: string }[] } }[] };
+		const ids = components[0].toJSON().components.map((button) => button.custom_id);
+		expect(ids).toEqual([`${GAME_ROOM_PREFIX}:move:room-1`, `${GAME_ROOM_PREFIX}:forfeit:room-1`]);
+		expect(storeMock.setSecretField).toHaveBeenCalledWith("guild-1", "room-1", "gallowsMessageId", "card-2");
+	});
+
+	it("takes the controls off the previous card, and only that one", async () => {
+		const room = makeRoom();
+		(room.secret as unknown as { gallowsMessageId?: string }).gallowsMessageId = "card-1";
+		storeMock.findByRoomId.mockResolvedValue(room);
+		channelSend.mockResolvedValue({ id: "card-2" });
+
+		await handleGuessModal(makeSubmit(GUESSER, "z"));
+
+		expect(openerFetch).toHaveBeenCalledWith("card-1");
+		expect(openerEdit).toHaveBeenCalledWith({ components: [] });
+	});
+
+	it("takes the controls off the last card when the guess ends the round", async () => {
+		const room = makeRoom();
+		(room.secret as unknown as { guessedLetters: string[] }).guessedLetters = ["p", "l", "a", "n", "e"];
+		(room.secret as unknown as { gallowsMessageId?: string }).gallowsMessageId = "card-5";
+		storeMock.findByRoomId.mockResolvedValue(room);
+
+		await handleGuessModal(makeSubmit(GUESSER, "t"));
+
+		expect(channelSend).not.toHaveBeenCalled();
+		expect(openerFetch).toHaveBeenCalledWith("card-5");
+		expect(openerEdit).toHaveBeenCalledWith({ components: [] });
 	});
 });
 

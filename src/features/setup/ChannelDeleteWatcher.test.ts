@@ -592,6 +592,8 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			"arcadeChallengesChannelId",
 			// 🕹️games, the third arcade channel (2026-10 item 245 Phase 4a).
 			"arcadeGamesChannelId",
+			// 🎉party-games, the fourth (post-launch plan item 3).
+			"partyGamesChannelId",
 			// The two voice rooms, one per category (2026-10 item 235).
 			"meetingVoiceChannelId",
 			"arcadeVoiceChannelId",
@@ -610,7 +612,7 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 				.map((s) => s.configField)
 				.sort();
 
-		expect(byCategory("gamesCategoryId")).toEqual(["arcadeChallengesChannelId", "arcadeGamesChannelId", "arcadeRulesChannelId", "arcadeVoiceChannelId"]);
+		expect(byCategory("gamesCategoryId")).toEqual(["arcadeChallengesChannelId", "arcadeGamesChannelId", "arcadeRulesChannelId", "arcadeVoiceChannelId", "partyGamesChannelId"]);
 		// Eleven text channels (welcome, rules and admin-log among them) plus the 🏛️ Meeting Hall voice room.
 		expect(byCategory("categoryId")).toHaveLength(12);
 		expect(byCategory("categoryId")).toContain("meetingVoiceChannelId");

@@ -3,6 +3,7 @@ import { STARTING_CHIPS } from "@features/games/monopolyBoard.js";
 import type { BuildingKind } from "@features/games/monopolyState.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
+import type { FlavorTable } from "./matchOutcome.js";
 
 // ── game rooms user-facing copy ──────────────────────────────────────
 // Feature-local copy module, the exact sibling of gamesCopy.ts and fortuneCopy.ts,
@@ -46,6 +47,132 @@ const TIER_NAMES: Record<string, string> = {
 	free: "Starter",
 	pro: "Creator Pro",
 	business: "Creator Studio",
+};
+
+// ── the post match flavor table (post-launch plan item 21) ──────────────
+// One line under the winner on the closed challenge card, picked at random from the
+// shelf for (game, bucket); matchOutcome.pickFlavor falls back to the shared shelf for
+// a bucket a game has no shelf of its own for. Hand written in the kingdom voice and
+// never brain generated (risk R10). Every line follows "**winner** won." on the card,
+// so none names the winner or a count it cannot know.
+//
+// ⚠️ NOT LOCKED. The owner reviews the first ten lines (hold em decisive and tactic)
+// before the full table is locked; until then the rest stands as a draft in the same
+// voice, and the plan's Phase 2 build record says which state it is in.
+const POST_MATCH_FLAVOR: FlavorTable = {
+	byGame: {
+		holdem: {
+			decisive: [
+				"Rode in with a war chest and left with the whole treasury.",
+				"The table bent the knee long before the last card fell.",
+				"Every stack at this table now flies one banner.",
+				"Not a siege. A coronation.",
+				"The vault doors swung one way all night.",
+			],
+			tactic: [
+				"Waited in the tall grass with a monster hand and sprang the trap.",
+				"Showed a hand built like castle walls and dared anyone to scale them.",
+				"The cards were sharpened in the armory before the duel began.",
+				"Laid the ambush on the flop and let the river close the pass.",
+				"A hand like that is not luck. It is a standing army.",
+			],
+			routing: [
+				"One hand, one sweep, and the whole table emptied at once.",
+				"Every rival rode into the same ambush and none rode out.",
+				"The last hand was not a duel. It was a rout.",
+				"Every crown at the table fell on a single deal.",
+			],
+			narrow: [
+				"The river decided it, and the river does not apologize.",
+				"Won by a card's width, the way the old songs tell it.",
+				"Down to the last street with nothing to spare.",
+				"A close siege, settled at the final gate.",
+			],
+		},
+		monopoly: {
+			routing: [
+				"The board was conquered before the season turned.",
+				"Rents fell like arrows and the rivals ran out of gold early.",
+				"A swift campaign. The bank barely had time to count.",
+				"Every rival was bankrupt before the dice grew warm.",
+			],
+			comeback: [
+				"Down to their last coins and still they took the kingdom.",
+				"Counted out by the treasury, crowned by the end.",
+				"From an empty purse to every deed on the board.",
+				"The realm wrote them off. The realm was wrong.",
+			],
+			decisive: [
+				"Not a single lot went to the auction block. They took what they wanted.",
+				"Bought clean, built high, never bargained.",
+				"Every deed signed at full price and every rent collected.",
+				"No auctions, no mercy, no rival left standing.",
+			],
+			narrow: [
+				"Two treasuries, one crown, and a long night of rent.",
+				"The last bankruptcy came hard and late.",
+				"A long war of rents, won by the one who held on longest.",
+				"Every lot was contested and the margin was thin.",
+			],
+		},
+		battleship: {
+			decisive: [
+				"The enemy fleet sank and the home fleet barely got wet.",
+				"The home fleet sailed home nearly untouched.",
+				"A clean sweep of the seas.",
+				"The enemy never found the range.",
+			],
+			comeback: [
+				"Outgunned for a while, then the tide turned.",
+				"Lost ships early and won the war anyway.",
+				"The admiralty had written them off. The sea had other plans.",
+				"Behind on hulls, ahead on nerve.",
+			],
+			narrow: [
+				"Barely a plank left above water, but the flag still flies.",
+				"A war of attrition, won by whatever was left afloat.",
+				"Both fleets bled. Only one kept a mast.",
+				"The sea took nearly everything, but not the crown.",
+			],
+		},
+		hangman: {
+			decisive: [
+				"Not a single wrong letter. The gallows stood idle.",
+				"Clean as a royal decree.",
+				"The hangman never lifted the rope.",
+				"Read the word like a herald reads a scroll.",
+			],
+			narrow: [
+				"One more miss and the rope would have won.",
+				"Pulled back from the gallows at the last breath.",
+				"The trapdoor creaked, and held.",
+				"Spared by a single letter.",
+			],
+		},
+		luck: {
+			narrow: [
+				"Fate favored the bold this time.",
+				"Fortune picked a side, and it was theirs.",
+				"The fates rolled, and rolled their way.",
+				"A small battle, a fair victory.",
+			],
+		},
+	},
+	shared: {
+		decisive: ["A victory without a doubt in it.", "Clear, clean and beyond argument.", "The field was theirs from start to end.", "No rival came close."],
+		narrow: ["Close enough to feel the other blade.", "Won by a hair and a prayer.", "The margin was thin, the crown is not.", "A hard fought win, and an honest one."],
+		comeback: ["Written off, then written into the chronicle.", "Rose from behind and took the throne.", "The tide turned, and they rode it in.", "Down but never out."],
+		routing: ["A rout from the first horn.", "The rivals broke and ran.", "Swift, total and decisive.", "Nothing left standing on the other side."],
+		tactic: ["Planned like a siege, executed like a charge.", "A strategist's victory.", "Cunning won this one.", "The better plan carried the day."],
+		forfeit: [
+			"The rival left the field, and the field is theirs.",
+			"Victory by the other side's retreat.",
+			"An empty chair across the table, and a win.",
+			"The challenger quit the field.",
+		],
+		timeout: ["The rival's clock ran dry.", "Time itself took the other side.", "The rival went quiet and the hourglass decided.", "Won while the rival slept."],
+		draw: ["Neither side would yield.", "Two crowns, one table, no winner.", "Even steel, even luck.", "The realm calls it a draw."],
+	},
 };
 
 export const gameRoomsCopy = {
@@ -109,6 +236,82 @@ export const gameRoomsCopy = {
 		// takes the channel over: the room no longer disappears, and the line answers
 		// "who started this" for everyone scrolling back.
 		rematchStarted: (presserId: string): string => `🔁 <@${presserId}> started a rematch. The next match is below.`,
+	},
+
+	// ── 🎉party-games (post-launch plan item 3) ──
+	// The admin buttons and their replies are admin facing and practical; the
+	// announcement and the RSVP card are member facing, in the kingdom voice.
+	partyGames: {
+		hostHangmanLabel: "Host hangman",
+		scheduleLabel: "Schedule a party game",
+		adminsOnly: "Only the server owner or an admin can host or schedule party games.",
+		noChannel: "There is no 🎉party-games channel yet. An admin can run /setup to build it.",
+		hostStarted: (channelId: string): string => `Hangman is open in <#${channelId}>.`,
+		gameLabels: { hangman: "Hangman" } as const,
+
+		// The schedule modal. Discord caps a modal title at 45 characters and a label at 45.
+		modalTitle: "Schedule a party game",
+		gameLabel: "Game",
+		startLabel: "Starts (UTC, MM/DD @HH:MM)",
+		startPlaceholder: "10/31 @19:00",
+		durationLabel: "Runs for (minutes)",
+		maxLabel: "Most attendees (0 for no limit)",
+
+		// Refusals of the form, each naming what to fix.
+		badStart: "The start time reads MM/DD @HH:MM in UTC, for example 10/31 @19:00.",
+		pastStart: "That time has already passed. Pick a time ahead.",
+		badDuration: (min: number, max: number): string => `The length is a whole number of minutes from ${min} to ${max}.`,
+		badMax: (max: number): string => `Most attendees is a whole number from 0 (no limit) to ${max}.`,
+		badGame: "Pick a game from the list.",
+		noRsvpChannel: "There is no 🔜upcoming-events channel to post the RSVP card in. An admin can run /setup to build it.",
+		scheduled: (rsvpChannelId: string): string => `Scheduled. The RSVP card is in <#${rsvpChannelId}>.`,
+
+		// The line in 📢announcements. Mentions render as names and ping nobody.
+		announcementTitle: "🎉 A party game is called",
+		announcement: (hostId: string, game: string, startSeconds: number, minutes: number, partyChannelId: string | null, rsvpChannelId: string): string =>
+			[
+				`<@${hostId}> will host **${game}**${partyChannelId ? ` in <#${partyChannelId}>` : ""} on <t:${startSeconds}:F> (<t:${startSeconds}:R>), for about ${minutes} minutes.`,
+				"",
+				`Mark whether you will come in <#${rsvpChannelId}>.`,
+			].join("\n"),
+
+		// The RSVP card in 🔜upcoming-events.
+		cardTitle: (game: string): string => `🎉 Party game: ${game}`,
+		cardDescription: (hostId: string, startSeconds: number, minutes: number, partyChannelId: string | null): string =>
+			`Hosted by <@${hostId}>${partyChannelId ? ` in <#${partyChannelId}>` : ""}. Starts <t:${startSeconds}:F> (<t:${startSeconds}:R>) and runs about ${minutes} minutes.`,
+		attendingTitle: (count: number, max: number): string => (max > 0 ? `Attending (${count}/${max})` : `Attending (${count})`),
+		decliningTitle: (count: number): string => `Not attending (${count})`,
+		nobodyYet: "Nobody yet.",
+		names: (ids: string[], shown: number): string => {
+			const named = ids.slice(0, shown).map((id) => `<@${id}>`).join(", ");
+			const hidden = ids.length - shown;
+			return hidden > 0 ? `${named} and ${hidden} more` : named;
+		},
+		attendLabel: "I will attend",
+		declineLabel: "I won't attend",
+		full: "Every seat is taken. Watch this card in case one opens.",
+		over: "This party game is over.",
+		gone: "This party game is no longer on the schedule.",
+
+		// The admin log's subject and the two moments it records.
+		logSubject: (game: string): string => `Party game: ${game}`,
+		logScheduled: (startSeconds: number, minutes: number, max: number): string =>
+			`<t:${startSeconds}:f>, ${minutes} min, ${max > 0 ? `up to ${max}` : "no limit"}`,
+		logFull: (max: number): string => `RSVP full at ${max}`,
+		logReopened: (max: number): string => `RSVP back under ${max}`,
+	},
+
+	// ── the closed challenge card (post-launch plan item 21) ──
+	// The card's last line once its match ends: who won and how, in one line. Mentions in
+	// an embed render as names without pinging, which is what a closed card wants.
+	postMatch: {
+		flavor: POST_MATCH_FLAVOR,
+		winnerLine: (winnerId: string, flavor: string): string => `👑 **<@${winnerId}>** won. ${flavor}`,
+		// Hangman's guessers win together, so the room is the winner.
+		roomWonLine: (flavor: string): string => `👑 **The room** won. ${flavor}`,
+		drawLine: (flavor: string): string => `🤝 **A draw.** ${flavor}`,
+		noWinnerLine: "The match is over. Nobody took it.",
+		abandonedLine: "The match was abandoned, so Dero closed it.",
 	},
 
 	// ── ephemeral replies from the provisioner ──
@@ -175,6 +378,13 @@ export const gameRoomsCopy = {
 		},
 		cardCancelled: (hostId: string): string => `<@${hostId}> called off the challenge.`,
 		cardStarted: (channelId: string): string => `The match is under way in <#${channelId}>.`,
+		// ── Play Dero instead (post-launch plan item 13) ──
+		// Coin flip, dice roll and rps only: the host plays one round against Dero right
+		// here and the challenge closes. The round's own result card posts below the card.
+		playDeroLabel: "Play Dero instead",
+		cardPlayedDero: (hostId: string): string => `🤖 <@${hostId}> took on Dero instead. The result is below.`,
+		deroThrowModalTitle: "Your throw against Dero",
+		deroThrowLabel: "Rock, paper or scissors",
 		// Words drawn into the challenge card's picture (2026-10 item 243 Phase 4).
 		// A picture cannot carry a mention, so it names nobody by id; the embed
 		// text above it still does.
@@ -189,6 +399,8 @@ export const gameRoomsCopy = {
 				open: "OPEN TO ALL",
 				started: "UNDER WAY",
 				cancelled: "CALLED OFF",
+				// The card after the match (item 21), or after a round against Dero (item 13).
+				finished: "FINISHED",
 			},
 		},
 
@@ -240,6 +452,9 @@ export const gameRoomsCopy = {
 
 		// ── refusals ──
 		notYourChallenge: "This is somebody else's challenge.",
+		// Start and Play Dero are the host's alone, admins included (post-launch plan
+		// item 18), so the refusal says exactly that rather than "the host or an admin".
+		onlyHostStarts: "Only the host can start this match.",
 		alreadyJoined: "You already joined this one.",
 		hostCannotJoin: "You are the host. You are already in.",
 		poolEmpty: "Nobody has joined yet, so there is nobody to play against.",
@@ -341,7 +556,7 @@ export const gameRoomsCopy = {
 		// because Dero drew its word from the bank.
 		boardDescription: (authorId: string | null): string =>
 			authorId
-				? `<@${authorId}> set the word. Everyone else guesses with the button on the pinned opener.`
+				? `<@${authorId}> set the word. Everyone else guesses with the button below.`
 				: "Dero picked this word from the word bank.",
 
 		guessModalTitle: "Guess a letter",
@@ -386,7 +601,6 @@ export const gameRoomsCopy = {
 		fireLabel: "Fire",
 		viewLabel: "View my board",
 		forfeitLabel: "Surrender",
-		rerollLabel: "Reroll my fleet",
 
 		aimed: (coord: string): string => `Target set: **${coord}**. Press Fire when you are ready.`,
 		aimedPartial: "Target set. Pick the other half of the coordinate, then Fire.",
@@ -403,6 +617,28 @@ export const gameRoomsCopy = {
 		forfeitedMatch: (userId: string): string =>
 			`⏳ <@${userId}> missed two turns in a row and forfeits the match.`,
 		rerollTooLate: "The first shot has been fired. The fleets are where they are.",
+
+		// ── setup (post-launch plan item 17) ──
+		// Dero lays both fleets at open; each captain may re-lay theirs, then locks it
+		// in with Ready. The public lines name who is ready and never where anything is.
+		setupLine: (players: { userId: string; ready: boolean }[]): string =>
+			[
+				"⚓ **Setup.** Dero laid both fleets. Press **View my board** to see yours, **Randomize** to lay it again, then **Ready**. The first shot waits for both captains.",
+				"",
+				...players.map((player) => (player.ready ? `✅ <@${player.userId}> is ready.` : `⏳ <@${player.userId}> is still laying their fleet.`)),
+			].join("\n"),
+		readyLabel: "Ready",
+		randomizeLabel: "Randomize",
+		readyLine: (userId: string): string => `⚓ <@${userId}> is ready.`,
+		battleBegins: (firstId: string): string => `🎯 Both fleets are laid. <@${firstId}> fires first.`,
+		setupTimedOut: "⏳ Setup time is up. The fleets sail as Dero laid them.",
+		setupFirst: "Both captains have to press Ready before the first shot.",
+		alreadyReady: "You are ready, so your fleet is locked in.",
+		setupOver: "Setup is over. The fleets are where they are.",
+		cardSetup: "Laying the fleets",
+		// The private view's modal (item 16). Discord caps a modal title at 45 characters.
+		privateModalTitle: "Your own waters",
+		privateSetupHint: "Not happy with it? Close this and press Randomize. Happy? Press Ready.",
 
 		// The public narration. None of these names an UNFIRED position, which is the
 		// property the whole feature turns on.
@@ -473,6 +709,9 @@ export const gameRoomsCopy = {
 		imBackLabel: "I'm back",
 
 		yourCardsTitle: "🂠 Your hand",
+		// The private view modal's title (post-launch plan item 16). A modal title is
+		// plain text with a 45 character cap, so no card back glyph.
+		yourCardsModalTitle: "Your hand",
 		noCardsYet: "You have no cards. Wait for the next deal.",
 		yourStack: (stack: number): string => `Your stack: **${stack}**`,
 

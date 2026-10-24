@@ -69,6 +69,12 @@ export const COOPERATIVE_GAMES: readonly GameSlug[] = ["hangman", "holdem", "mon
 
 export const isCooperativeGame = (game: GameSlug): boolean => COOPERATIVE_GAMES.includes(game);
 
+// The games a host may play against Dero instead of a member (post-launch plan item
+// 13): the three one press luck games, whose solo round soloLuck already plays.
+export const DERO_PLAYABLE_GAMES: readonly GameSlug[] = ["coinflip", "diceroll", "rps"] as const;
+
+export const isDeroPlayable = (game: GameSlug): boolean => DERO_PLAYABLE_GAMES.includes(game);
+
 /**
  * Every game's one emoji: the board's start buttons and the front of each room's
  * channel name (roomNaming) both read it, so a room and the button that opened it
@@ -138,9 +144,12 @@ export interface OpenerCardState {
 	// card and switched by its own toggle. Ignored for every other game.
 	monopolyAuctions?: boolean;
 	monopolyReferee?: boolean;
-	// Terminal states. When either is set the card stops offering controls.
+	// Terminal states. When any is set the card stops offering controls.
 	cancelled?: boolean;
 	startedChannelId?: string | null;
+	// The card's last word: how the match ended (post-launch plan item 21), or that the
+	// host played Dero instead (item 13). It replaces the "under way" line.
+	resultLine?: string | null;
 	// False when the server's challenge reach is invite only (2026-10 item 244 Phase 4),
 	// which drops Open to all from the visibility step. Absent offers both, the card
 	// as it was; the choice is refused server side either way, since a stale card
@@ -178,7 +187,9 @@ const POOL_NAMES_SHOWN = 8;
 export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoRef?: string): EmbedBuilder {
 	const lines: string[] = [];
 
-	if (state.cancelled) {
+	if (state.resultLine) {
+		lines.push(state.resultLine);
+	} else if (state.cancelled) {
 		lines.push(gameRoomsCopy.board.cardCancelled(state.hostId));
 	} else if (state.startedChannelId) {
 		lines.push(gameRoomsCopy.board.cardStarted(state.startedChannelId));
@@ -193,7 +204,7 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 	}
 	// The Monopoly choices are shown once the host is past the visibility step, the
 	// same step that offers their toggles, so each line and its button appear together.
-	if (state.game === "monopoly" && state.visibility && !state.cancelled && !state.startedChannelId) {
+	if (state.game === "monopoly" && state.visibility && !state.cancelled && !state.startedChannelId && !state.resultLine) {
 		lines.push("", gameRoomsCopy.board.cardMonopolyAuctions(state.monopolyAuctions ?? false));
 		lines.push(gameRoomsCopy.board.cardMonopolyReferee(state.monopolyReferee ?? false));
 	}
@@ -290,7 +301,7 @@ function bandSelectRow(roomId: string, band: RatingBand): CardRow {
 // terminal, which is what strips the buttons off a finished card rather than leaving
 // dead controls a member can still press.
 export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[] {
-	if (state.cancelled || state.startedChannelId) return [];
+	if (state.cancelled || state.startedChannelId || state.resultLine) return [];
 
 	const cancel = new ButtonBuilder()
 		.setCustomId(`${GAME_ROOM_PREFIX}:cancel:${roomId}`)
@@ -328,6 +339,7 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 					.setStyle(ButtonStyle.Secondary),
 				...openToAll,
 				...openToNetwork,
+				...playDeroButtons(roomId, state.game),
 				cancel
 			),
 		];
@@ -373,13 +385,27 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 					draftSettingToggle(roomId, "referee", state.monopolyReferee ?? false, gameRoomsCopy.board.monopolyRefereeToggleLabel, "🎙️"),
 					cancel
 			  )
-			: new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(gather, start, cancel);
+			: new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(gather, start, ...playDeroButtons(roomId, state.game), cancel);
 
 	// The host's controls ride their own rows below, so the gather row keeps its shape
 	// (and Monopoly keeps all five of its slots). Three rows at most, inside Discord's five.
 	const controls = state.hostControls;
 	if (!controls) return [gatherRow];
 	return [gatherRow, hostControlRow(roomId, state, controls), ...(showsBand(state) ? [bandSelectRow(roomId, controls.ratingBand)] : [])];
+}
+
+// Play Dero instead (post-launch plan item 13), on a luck game's card at both steps.
+// Never on any other game, which has no solo round to fall back to. Five buttons is
+// still the row's ceiling at step one: invite, open, network, Dero and cancel.
+function playDeroButtons(roomId: string, game: GameSlug): ButtonBuilder[] {
+	if (!isDeroPlayable(game)) return [];
+	return [
+		new ButtonBuilder()
+			.setCustomId(`${GAME_ROOM_PREFIX}:dero:${roomId}`)
+			.setLabel(gameRoomsCopy.board.playDeroLabel)
+			.setEmoji("🤖")
+			.setStyle(ButtonStyle.Secondary),
+	];
 }
 
 /** The card actions that switch a Monopoly draft setting; challengeBoard maps each to its row field. */

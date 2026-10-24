@@ -31,6 +31,9 @@ import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
 import { recordShowdownHand } from "@features/ratings/gameResultCounts.js";
 import { isRatedHoldemSession } from "@features/ratings/ratingEngine.js";
 import { secureRandom } from "@utils/secureRng.js";
+import { showPrivateView } from "./privateView.js";
+import { chipsAtHandStart, holdemOutcome, shareOf, type FinishCause, type OutcomeBucket } from "./matchOutcome.js";
+import { HAND_CATEGORIES } from "@features/games/holdemHand.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -43,6 +46,7 @@ import { hostDestinationFor, resolveHoldemXpDestination } from "./networkXp.js";
 import {
 	tableEmbed,
 	holeCardsEmbed,
+	holeCardsView,
 	joiningRows,
 	betweenHandsRows,
 	bettingRows,
@@ -498,7 +502,7 @@ async function announceDeal(client: Client, room: IGameRoom, table: HoldemTable,
 		kind: "system",
 		text: gameRoomsCopy.holdem.handDealt(table.handNumber, table.smallBlind, table.bigBlind),
 	});
-	await settleOutcome(client, room, table, deal.outcome, actorId);
+	await settleOutcome(client, room, table, deal.outcome, actorId, { cause: "played", handStartChips: chipsAtHandStart(table.seats) });
 	announceDealer({ client, roomId: room.roomId, before: deal.before, after: toPublicView(table), outcome: deal.outcome });
 }
 
@@ -553,6 +557,7 @@ export async function handleMove(interaction: ButtonInteraction, room: IGameRoom
 
 	const readAt = table.lastActionAt;
 	const before = toPublicView(table);
+	const handStartChips = chipsAtHandStart(table.seats);
 	const outcome = act(table, interaction.user.id, action, amount, secureRandom);
 	if (!outcome.ok) {
 		// Says what actually happened. Answering an illegal action with "it is not your
@@ -573,8 +578,16 @@ export async function handleMove(interaction: ButtonInteraction, room: IGameRoom
 	}
 
 	await interaction.deferUpdate();
-	await settleOutcome(interaction.client, room, table, outcome, interaction.user.id);
+	await settleOutcome(interaction.client, room, table, outcome, interaction.user.id, { cause: "played", handStartChips });
 	announceDealer({ client: interaction.client, roomId: room.roomId, before, after: toPublicView(table), outcome });
+}
+
+// How a tournament that ends on this action ended, for the closed challenge card
+// (post-launch plan item 21): what caused the action, and every seat's chips when the
+// final hand began, captured by the caller before the engine moved them.
+interface HoldemEnding {
+	cause: FinishCause;
+	handStartChips: ReadonlyMap<string, number>;
 }
 
 // Everything that happens after any action, whoever caused it. Shared by the
@@ -584,7 +597,8 @@ async function settleOutcome(
 	room: IGameRoom,
 	table: HoldemTable,
 	outcome: ActionOutcome,
-	actorId: string
+	actorId: string,
+	ending: HoldemEnding
 ): Promise<void> {
 	if (outcome.narration) {
 		await roomTrail.postMove(client, room, { actorId, kind: "guess", text: outcome.narration });
@@ -654,7 +668,7 @@ async function settleOutcome(
 
 	if (outcome.tournamentOver) {
 		await payPlacements(client, room, table);
-		const claimed = await roomLifecycle.finish(client, room, { winnerId: table.winnerId });
+		const claimed = await roomLifecycle.finish(client, room, { winnerId: table.winnerId, outcome: { bucket: holdemEndingBucket(table, outcome, ending) } });
 		// One rating update per finished session, by finishing order: the winner, then the
 		// reverse bust order (a seat that left counts as a bust, since leaveTable records
 		// it in bustOrder). Only the call that won finish's claim rates, so a racing clock
@@ -668,6 +682,19 @@ async function settleOutcome(
 	}
 
 	await redraw(client, room, table);
+}
+
+// The bucket for a tournament that ended on `outcome`. The winner's made hand is read
+// off the showdown the engine already reported, so nothing is evaluated twice.
+function holdemEndingBucket(table: HoldemTable, outcome: ActionOutcome, ending: HoldemEnding): OutcomeBucket {
+	const shown = outcome.showdown?.find((entry) => entry.userId === table.winnerId)?.hand;
+	const winnerHandCategory = HAND_CATEGORIES.find((category) => category === shown) ?? null;
+	return holdemOutcome({
+		cause: ending.cause,
+		bustedInFinalHand: outcome.busted?.length ?? 0,
+		winnerHandCategory,
+		winnerShare: shareOf(ending.handStartChips, table.winnerId),
+	});
 }
 
 // The real prize. Scaled by finishing position so second place is worth
@@ -733,6 +760,7 @@ export async function handleLeaveTable(interaction: ButtonInteraction, room: IGa
 	const readAt = table.lastActionAt;
 	const seatsRead = table.seats.length;
 	const before = toPublicView(table);
+	const handStartChips = chipsAtHandStart(table.seats);
 	const outcome = leaveTable(table, interaction.user.id, secureRandom);
 	if (!outcome.ok) {
 		await interaction.reply({ content: gameRoomsCopy.holdem.notSeated, ...PRIVATE });
@@ -753,7 +781,7 @@ export async function handleLeaveTable(interaction: ButtonInteraction, room: IGa
 	});
 	// The same settle path a fold takes, so a leave that ends the hand pays the pot and
 	// one that leaves a single seat ends the tournament exactly the way a bust does.
-	await settleOutcome(interaction.client, room, table, outcome, interaction.user.id);
+	await settleOutcome(interaction.client, room, table, outcome, interaction.user.id, { cause: "forfeit", handStartChips });
 	if (outcome.foldedHand) {
 		announceDealer({ client: interaction.client, roomId: room.roomId, before, after: toPublicView(table), outcome });
 	}
@@ -797,7 +825,9 @@ export async function handleEndTable(interaction: ButtonInteraction, room: IGame
 	// Redrawn before the finish so the board loses its controls; the result card that
 	// finish posts is the room's last word.
 	await redraw(interaction.client, room, table);
-	const claimed = await roomLifecycle.finish(interaction.client, room, { winnerId: table.winnerId });
+	// Judged on the standings the host stopped at: a dominant chip lead reads decisive.
+	const endedBucket = holdemOutcome({ cause: "ended", bustedInFinalHand: 0, winnerHandCategory: null, winnerShare: shareOf(chipsAtHandStart(table.seats), table.winnerId) });
+	const claimed = await roomLifecycle.finish(interaction.client, room, { winnerId: table.winnerId, outcome: { bucket: endedBucket } });
 	// Ranked by the standings endTable answered: chips first, then the reverse bust
 	// order. Only the press that won finish's claim records it, and a table ended before
 	// its first deal records nothing, because no match was played. Fire and forget.
@@ -901,6 +931,7 @@ export async function removeFromTable(client: Client, room: IGameRoom, userId: s
 		const readAt = table.lastActionAt;
 		const seatsRead = table.seats.length;
 		const before = toPublicView(table);
+		const handStartChips = chipsAtHandStart(table.seats);
 		const withdrewLateSeat = withdrawLateSeat(table, userId);
 		const outcome = withdrewLateSeat ? null : leaveTable(table, userId, secureRandom);
 		if (outcome && !outcome.ok) return "notAtTable";
@@ -910,7 +941,7 @@ export async function removeFromTable(client: Client, room: IGameRoom, userId: s
 				await redraw(client, current, table);
 				return "removed";
 			}
-			await settleOutcome(client, current, table, outcome, actorId);
+			await settleOutcome(client, current, table, outcome, actorId, { cause: "forfeit", handStartChips });
 			if (outcome.foldedHand) announceDealer({ client, roomId: current.roomId, before, after: toPublicView(table), outcome });
 			return "removed";
 		}
@@ -932,9 +963,13 @@ export async function handleShowCards(interaction: ButtonInteraction, room: IGam
 		await interaction.reply({ content: gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
 		return;
 	}
-	// ⚠️ EPHEMERAL AND ONLY EVER THE CLICKER'S OWN CARDS. There is no code path
-	// here that takes another member's id.
-	await interaction.reply({ embeds: [holeCardsEmbed(table, interaction.user.id)], ...PRIVATE });
+	// ⚠️ ONLY EVER THE CLICKER'S OWN CARDS. There is no code path here that takes
+	// another member's id. A modal only the presser sees (post-launch plan item 16),
+	// with the ephemeral embed it used to be as the fallback.
+	await showPrivateView(interaction, room.roomId, holeCardsView(table, interaction.user.id), async () => ({
+		embeds: [holeCardsEmbed(table, interaction.user.id)],
+		...PRIVATE,
+	}));
 }
 
 // ── the turn clock ────────────────────────────────────────────────────
@@ -1010,6 +1045,7 @@ async function forceFoldIfDue(client: Client, room: IGameRoom, table: HoldemTabl
 	// Captured BEFORE forceFold, which stamps a new one through `act`.
 	const readAt = table.lastActionAt;
 	const before = toPublicView(table);
+	const handStartChips = chipsAtHandStart(table.seats);
 	const outcome = forceFold(table, secureRandom);
 	if (!outcome.ok || !outcome.userId) return false;
 
@@ -1032,7 +1068,7 @@ async function forceFoldIfDue(client: Client, room: IGameRoom, table: HoldemTabl
 	if (outcome.satOut) {
 		await roomTrail.postMove(client, room, { actorId: outcome.userId, kind: "system", text: gameRoomsCopy.holdem.satOut(outcome.userId) });
 	}
-	await settleOutcome(client, room, table, outcome, outcome.userId);
+	await settleOutcome(client, room, table, outcome, outcome.userId, { cause: "timeout", handStartChips });
 	announceDealer({ client, roomId: room.roomId, before, after: toPublicView(table), outcome });
 	return true;
 }

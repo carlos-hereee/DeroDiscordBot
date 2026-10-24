@@ -15,6 +15,7 @@ import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { recordLuckResult } from "@features/ratings/luckStats.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
+import { luckOutcome } from "./matchOutcome.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -109,7 +110,12 @@ async function runVersusMove(interaction: ButtonInteraction, room: IGameRoom): P
 	// reads as an outcome rather than a missing winner; a coin cannot tie, which the
 	// VersusResult union already guarantees.
 	const artKey: GameAssetKey = result.flip === "coin" ? "coinFlip" : result.winner === "tie" ? "diceTie" : "diceRoll";
-	const ended = await roomLifecycle.finish(interaction.client, room, { winnerId, art: resolveGameAsset(artKey) });
+	// The closed challenge card's flavor (post-launch plan item 21): narrow, or a draw on a tie.
+	const ended = await roomLifecycle.finish(interaction.client, room, {
+		winnerId,
+		art: resolveGameAsset(artKey),
+		outcome: { bucket: luckOutcome(result.winner === "tie") },
+	});
 
 	// ⚠️ ONLY THE PRESS THAT ENDED THE MATCH PAYS. This function takes no claim of its own,
 	// so two players pressing in the same tick both reach here having each resolved their own
@@ -266,7 +272,11 @@ export async function handleRpsSelect(interaction: StringSelectMenuInteraction):
 		outcome === "tie"
 			? "rpsTie"
 			: (`rps${(outcome === "challenger" ? picks[challengerId] : picks[opponentId]).replace(/^./, (c) => c.toUpperCase())}` as GameAssetKey);
-	const ended = await roomLifecycle.finish(interaction.client, room, { winnerId, art: resolveGameAsset(rpsArt) });
+	const ended = await roomLifecycle.finish(interaction.client, room, {
+		winnerId,
+		art: resolveGameAsset(rpsArt),
+		outcome: { bucket: luckOutcome(outcome === "tie") },
+	});
 
 	// The luck board's tally (2026-10 item 244), only from the reveal that won finish's
 	// claim, so the match counts once. A tie records nothing. Fire and forget.

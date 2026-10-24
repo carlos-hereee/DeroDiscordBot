@@ -284,6 +284,8 @@ export const generalEventsCopy: IPluginCopy = {
 			arcadeRules: "📋arcade-rules",
 			arcadeChallenges: "⚔️challenges",
 			arcadeGames: "🕹️games",
+			// Admin hosted group games (mirrors rok-commander, post-launch plan item 3).
+			partyGames: "🎉party-games",
 			// The two voice rooms, universal names for the same reason (mirrors
 			// rok-commander, 2026-10 item 235).
 			meetingVoice: "🏛️ Meeting Hall",
@@ -525,6 +527,14 @@ export const generalEventsCopy: IPluginCopy = {
 			hostNoChannel: "The arcade is not built yet. An admin needs to run `/setup`.",
 			hostFailed: "That game could not be set up. Try again in a moment.",
 			hostStarted: (game: string): string => `Your ${game} is live. Go play.`,
+		},
+
+		// 🎉party-games' intro, plain voice (mirrors rok-commander, post-launch plan item 3).
+		partyGames: {
+			title: "🎉 Party Games",
+			description:
+				"When an admin starts a party game, everyone plays together here. A hangman round opens in this channel for the whole server at once.\n\n" +
+				"Upcoming party games are announced in 📢announcements, and the list of who is coming lives in 🔜upcoming-events. RSVP there so the host knows to wait for you.",
 		},
 
 		// ── the voice rooms' intro (2026-10 item 245 Phase 4b) ──────────────

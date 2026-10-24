@@ -122,3 +122,38 @@ describe("the opener card's logo thumbnail", () => {
 		expect(pictured.thumbnail).toBeUndefined();
 	});
 });
+
+// ── Play Dero instead and the closed card (post-launch plan items 13 and 21) ──
+describe("the opener card's Play Dero button and its closed state", () => {
+	const card = (overrides: Partial<OpenerCardState> = {}): OpenerCardState => ({
+		game: "coinflip",
+		hostId: "host-1",
+		visibility: null,
+		pool: [],
+		...overrides,
+	});
+	const ids = (state: OpenerCardState): string[] =>
+		openerCardRows("room-1", state).flatMap((row) => row.toJSON().components.map((button) => ("custom_id" in button ? button.custom_id : "")));
+
+	it.each(["coinflip", "diceroll", "rps"] as const)("offers %s's host Play Dero at both steps", (game) => {
+		expect(ids(card({ game }))).toContain(`${GAME_ROOM_PREFIX}:dero:room-1`);
+		expect(ids(card({ game, visibility: "public" }))).toContain(`${GAME_ROOM_PREFIX}:dero:room-1`);
+	});
+
+	it.each(["hangman", "battleship", "holdem", "monopoly"] as const)("never offers it on %s, which has no solo round", (game) => {
+		expect(ids(card({ game }))).not.toContain(`${GAME_ROOM_PREFIX}:dero:room-1`);
+	});
+
+	it("keeps the first step inside Discord's five per row with every choice offered", () => {
+		const rows = openerCardRows("room-1", card({ allowNetwork: true }));
+		for (const row of rows) expect(row.toJSON().components.length).toBeLessThanOrEqual(DISCORD_COMPONENTS_PER_ROW);
+	});
+
+	it("closes with its result line and no controls", () => {
+		const closed = card({ visibility: "public", startedChannelId: "ch-9", resultLine: "👑 **<@p2>** won. A clean sweep." });
+		expect(openerCardRows("room-1", closed)).toEqual([]);
+		const description = openerCardEmbed(closed).toJSON().description ?? "";
+		expect(description).toContain("A clean sweep.");
+		expect(description).not.toContain(gameRoomsCopy.board.cardStarted("ch-9"));
+	});
+});

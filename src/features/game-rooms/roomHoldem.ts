@@ -14,6 +14,7 @@ import {
 } from "@features/games/holdemTable.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
+import type { PrivateViewContent } from "./privateView.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -176,6 +177,27 @@ export function holeCardsEmbed(table: HoldemTable, viewerId: string): EmbedBuild
 		[cards.map(formatCard).join("  "), "", gameRoomsCopy.holdem.yourStack(seat?.stack ?? 0)].join("\n"),
 		COLORS.ARCADE as ColorResolvable
 	);
+}
+
+/**
+ * The private view modal's content (post-launch plan item 16): the viewer's two
+ * cards, the board they play with, and their stack. Built from the same fields as
+ * holeCardsEmbed, which stays as the fallback when Discord refuses the modal.
+ * ⚠️ ONLY THE VIEWER'S OWN CARDS, for the same reason as the embed.
+ */
+export function holeCardsView(table: HoldemTable, viewerId: string): PrivateViewContent {
+	const copy = gameRoomsCopy.holdem;
+	const cards = table.holeCards[viewerId];
+	const seat = table.seats.find((entry) => entry.userId === viewerId);
+	if (!cards?.length) return { title: copy.yourCardsModalTitle, sections: [copy.noCardsYet] };
+	return {
+		title: copy.yourCardsModalTitle,
+		sections: [
+			`## ${cards.map(formatCard).join("  ")}`,
+			`${copy.boardLabel} ${table.board.length ? table.board.map(formatCard).join("  ") : copy.noBoardYet}`,
+			copy.yourStack(seat?.stack ?? 0),
+		],
+	};
 }
 
 // ── controls ──────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { MessageFlags, TextChannel, type ButtonInteraction, type Client, type StringSelectMenuInteraction } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
-import { placeFleet } from "@features/games/battleshipState.js";
+import { FLEET, markReady, rerollFleet, shipsRemaining, type BattleshipState, type SetupRefusal } from "@features/games/battleshipState.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -16,10 +16,13 @@ import {
 	battleshipBoardCard,
 	battleshipBoardMessageWith,
 	privateBoardReply,
+	privateBoardView,
 	PRIVATE,
 	type BattleshipSinking,
 	type StoredBattleship,
 } from "./roomBattleship.js";
+import { showPrivateView } from "./privateView.js";
+import { battleshipOutcome, wasBehindOnShips, type OutcomeBucket } from "./matchOutcome.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomBattleshipHandlers ───────────────────────────────────────────
@@ -195,7 +198,11 @@ export async function handleFire(interaction: ButtonInteraction, room: IGameRoom
 
 	// The result card shows the final board with the last sinking on it, when it draws.
 	const finalBoard = await battleshipBoardCard(outcome.state, sinking);
-	const claimed = await roomLifecycle.finish(interaction.client, room, { winnerId: interaction.user.id, ...(finalBoard ? { art: finalBoard } : {}) });
+	const claimed = await roomLifecycle.finish(interaction.client, room, {
+		winnerId: interaction.user.id,
+		...(finalBoard ? { art: finalBoard } : {}),
+		outcome: { bucket: battleshipWinOutcome(room, outcome.state, interaction.user.id) },
+	});
 	// Rated once, by the shot that won finish's claim: the shooter first, the other
 	// player second (2026-10 item 244). Fire and forget, never awaited.
 	if (claimed) void recordMatchRatings(room, twoPlayerFinishingOrder(room.playerIds, interaction.user.id));
@@ -212,24 +219,52 @@ export async function handleFire(interaction: ButtonInteraction, room: IGameRoom
 	});
 }
 
+// How the winning shot's match was won (post-launch plan item 21): ships still afloat,
+// and whether the winner was ever behind, replayed from the sinkings in the trail. The
+// winning shot itself is not in `room.moves` yet, and it cannot put the winner behind.
+function battleshipWinOutcome(room: IGameRoom, state: BattleshipState, winnerId: string): OutcomeBucket {
+	const loserId = room.playerIds.find((id) => id !== winnerId) ?? "";
+	const sinkings = (room.moves ?? []).filter((move) => move.kind === "guess" && Boolean(move.meta?.sunk)).map((move) => move.actorId);
+	return battleshipOutcome({
+		cause: "played",
+		winnerShipsAfloat: shipsRemaining(state, winnerId),
+		winnerWasBehind: wasBehindOnShips(sinkings, winnerId, loserId, FLEET.length),
+	});
+}
+
 // ── the private board (Q8: pull based, never pushed) ──────────────────
-// ⚠️ EPHEMERAL, ALWAYS. This is the one surface that renders a player's own
-// unfired ships, so it must never reach the channel. No private channels and no
-// DMs either: a channel per player costs two channels per match against a 500
-// channel server cap, on top of the room's own.
+// ⚠️ ONLY EVER THE CLICKER'S OWN FLEET. This is the one surface that renders a
+// player's unfired ships, so it must never reach the channel. It opens as a modal
+// (post-launch plan item 16), which only the presser sees, and falls back to the
+// ephemeral reply it used to be. No private channels and no DMs either: a channel per
+// player costs two channels per match against a 500 channel server cap.
+async function showOwnBoard(interaction: ButtonInteraction, room: IGameRoom, state: BattleshipState): Promise<void> {
+	await showPrivateView(interaction, room.roomId, privateBoardView(state, interaction.user.id), async () => ({
+		...(await privateBoardReply(state, interaction.user.id)),
+		...PRIVATE,
+	}));
+}
+
 export async function handleViewBoard(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const stored = storedMatch(room);
 	if (!stored) {
 		await interaction.reply({ content: gameRoomsCopy.battleship.matchOver, ...PRIVATE });
 		return;
 	}
-	await interaction.reply({
-		...(await privateBoardReply(deserializeMatch(stored), interaction.user.id)),
-		...PRIVATE,
-	});
+	await showOwnBoard(interaction, room, deserializeMatch(stored));
 }
 
-// ── reroll ────────────────────────────────────────────────────────────
+// ── setup: Randomize and Ready (post-launch plan item 17) ─────────────
+// The refusals the setup controls share, worded for the member who pressed.
+const SETUP_REFUSALS: Record<SetupRefusal, string> = {
+	"not-in-setup": gameRoomsCopy.battleship.setupOver,
+	"not-a-player": gameRoomsCopy.errors.notYours,
+	"already-ready": gameRoomsCopy.battleship.alreadyReady,
+};
+
+// Randomize: lay this player's fleet again, then show them the new layout in the
+// private view, so the press answers with the thing it changed and nothing lands in
+// the channel. Only during setup and only before this player pressed Ready.
 export async function handleReroll(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const stored = storedMatch(room);
 	if (!stored) {
@@ -237,34 +272,68 @@ export async function handleReroll(interaction: ButtonInteraction, room: IGameRo
 		return;
 	}
 
-	// Only before the first shot lands anywhere. Re-laying a fleet mid-match would
-	// move ships out from under hits the opponent has already earned.
-	const anyShotFired = stored.players.some((player) => player.shots.length > 0);
-	if (anyShotFired) {
-		await interaction.reply({ content: gameRoomsCopy.battleship.rerollTooLate, ...PRIVATE });
+	const state = deserializeMatch(stored);
+	const result = rerollFleet(state, interaction.user.id);
+	if (!result.ok) {
+		// A board posted before setup existed is past its first shot or at it; its old
+		// Reroll button answers in the words it always did.
+		const refusal = result.reason === "not-in-setup" && stored.ready === undefined ? gameRoomsCopy.battleship.rerollTooLate : SETUP_REFUSALS[result.reason];
+		await interaction.reply({ content: refusal, ...PRIVATE });
 		return;
 	}
 
-	const index = stored.players.findIndex((player) => player.userId === interaction.user.id);
-	if (index === -1) {
-		await interaction.reply({ content: gameRoomsCopy.errors.notYours, ...PRIVATE });
-		return;
-	}
-
-	const relaid = {
-		...stored.players[index],
-		ships: placeFleet().map((ship) => ({ name: ship.name, cells: ship.cells, hits: [] })),
-	};
 	// One player's fleet slot, by index, for the same reason as the aim above: writing the whole
 	// secret back would revert whatever the opponent did between this handler's read and its
-	// write. The guard overhead is the opponent's own reroll, which is a DIFFERENT index.
-	await gameRoomStore.setSecretField(room.guildId, room.roomId, `players.${index}`, relaid);
-
-	// Ephemeral: the whole point is that nobody else learns the new layout.
-	await interaction.reply({ content: gameRoomsCopy.battleship.rerolled, ...PRIVATE });
+	// write. The opponent's own reroll is a DIFFERENT index.
+	const relaid = serializeMatch(state).players[result.index];
+	await gameRoomStore.setSecretField(room.guildId, room.roomId, `players.${result.index}`, relaid);
+	await showOwnBoard(interaction, room, state);
 }
 
-export const roomBattleshipHandlers = { handleAimSelect, handleFire, handleViewBoard, handleReroll };
+// Ready: lock this player's fleet. The first Ready is narrated and redrawn; the second
+// starts the battle, exactly once, however close together the two presses land.
+export async function handleReady(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	const stored = storedMatch(room);
+	if (!stored) {
+		await interaction.reply({ content: gameRoomsCopy.battleship.matchOver, ...PRIVATE });
+		return;
+	}
+
+	const result = markReady(deserializeMatch(stored), interaction.user.id);
+	if (!result.ok) {
+		await interaction.reply({ content: SETUP_REFUSALS[result.reason], ...PRIVATE });
+		return;
+	}
+
+	// ① This player's own slot only, so a Ready landing beside the opponent's cannot
+	// write theirs back to false. ② The start is a compare and swap on the status, so
+	// when both Readies land together and each sees both flags, one of them starts it.
+	// Writing the whole blob there is safe: with both captains ready nothing else in
+	// setup writes the secret (no aim exists yet and Randomize refuses a ready player).
+	const afterReady = await gameRoomStore.setSecretField(room.guildId, room.roomId, `ready.${result.index}`, true);
+	const readied = (afterReady?.secret as StoredBattleship | null) ?? null;
+	const bothReady = readied?.ready?.[0] === true && readied?.ready?.[1] === true;
+	const started =
+		readied && bothReady
+			? await gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.status": "setup" }, { ...readied, status: "playing" })
+			: null;
+
+	await interaction.deferUpdate();
+	await roomTrail.postMove(interaction.client, room, { actorId: interaction.user.id, kind: "system", text: gameRoomsCopy.battleship.readyLine(interaction.user.id) });
+
+	const latest = (started ?? afterReady)?.secret as StoredBattleship | null;
+	if (!latest) return;
+	if (started) {
+		await roomTrail.postMove(interaction.client, room, {
+			actorId: interaction.user.id,
+			kind: "system",
+			text: gameRoomsCopy.battleship.battleBegins(latest.players[latest.turn].userId),
+		});
+	}
+	await redrawBattleshipBoard(interaction.client, room, latest);
+}
+
+export const roomBattleshipHandlers = { handleAimSelect, handleFire, handleViewBoard, handleReroll, handleReady };
 
 // Re-exported so the router's flag reads identically to every other ephemeral
 // surface in the feature.

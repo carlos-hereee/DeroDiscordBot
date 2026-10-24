@@ -435,7 +435,8 @@ describe("handleMjail", () => {
 
 		expect(persisted().phase).toBe("finished");
 		expect(persisted().winnerId).toBe(B);
-		expect(finishMock).toHaveBeenCalledWith(expect.anything(), room, { winnerId: B });
+		// Bankrupt within the first rounds reads as a rout (post-launch plan item 21).
+		expect(finishMock).toHaveBeenCalledWith(expect.anything(), room, { winnerId: B, outcome: { bucket: "routing" } });
 		expect(awardMock).toHaveBeenCalledWith(
 			expect.objectContaining({
 				game: "monopoly",

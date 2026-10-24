@@ -1,4 +1,4 @@
-import type { MonopolyResult, MonopolySeat, MonopolyState, PropertyState } from "./monopolyState.js";
+import type { MonopolyMatchStats, MonopolyResult, MonopolySeat, MonopolyState, PropertyState } from "./monopolyState.js";
 
 // ── monopolySeats ───────────────────────────────────────────────────────────
 // What:  the small shared helpers every Monopoly action module leans on: cloning
@@ -52,9 +52,30 @@ export function guardActiveTurn(state: MonopolyState, actorId?: string): string 
 	return null;
 }
 
+/** The state's running match facts, created on first use (post-launch plan item 21). */
+export function ensureStats(state: MonopolyState): MonopolyMatchStats {
+	state.stats ??= { turnsTaken: 0, auctionsOpened: 0, forfeits: 0, lowestCashShare: {} };
+	return state.stats;
+}
+
+// Each solvent seat's share of every chip at the table, kept at its lowest. Read after
+// every action, which is what lets "came back from under a fifth of the cash" be
+// judged at the end without a history of every balance.
+function recordCashShares(state: MonopolyState): void {
+	const solvent = solventSeats(state);
+	const total = solvent.reduce((sum, seat) => sum + seat.chips, 0);
+	if (total <= 0) return;
+	const lowest = ensureStats(state).lowestCashShare;
+	for (const seat of solvent) {
+		const share = seat.chips / total;
+		lowest[seat.userId] = Math.min(lowest[seat.userId] ?? share, share);
+	}
+}
+
 /** Bumps the state's revision, records the trail lines on its log, and wraps them as a successful result. */
 export function completeAction(state: MonopolyState, actorId: string, trailLines: string[]): MonopolyResult {
 	state.revision += 1;
+	recordCashShares(state);
 	state.log.push(...trailLines.map((text) => ({ userId: actorId, text })));
 	state.log = state.log.slice(-LOG_ENTRY_LIMIT);
 	return { ok: true, state, trailLines };
@@ -77,4 +98,5 @@ export function passTurn(state: MonopolyState, now: number): void {
 	state.doublesStreak = 0;
 	state.phase = "pre-roll";
 	state.turnStartedAt = now;
+	ensureStats(state).turnsTaken += 1;
 }

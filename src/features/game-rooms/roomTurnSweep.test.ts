@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findPlayingByGame: vi.fn(), update: vi.fn() },
+	gameRoomStore: { findPlayingByGame: vi.fn(), update: vi.fn(), updateSecretIf: vi.fn() },
 }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
@@ -15,12 +15,14 @@ import { roomLifecycle } from "./roomLifecycle.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { startMatch, type StoredBattleship } from "./roomBattleship.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { _resetDrawingPauses, roomDrawingKey, withDrawingPause } from "./drawingPause.js";
 
 const storeMock = gameRoomStore as unknown as {
 	findPlayingByGame: ReturnType<typeof vi.fn>;
 	update: ReturnType<typeof vi.fn>;
+	updateSecretIf: ReturnType<typeof vi.fn>;
 };
 const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn> };
 const lifecycleMock = roomLifecycle as unknown as { finish: ReturnType<typeof vi.fn> };
@@ -45,9 +47,11 @@ function seededRng(seed = 1): () => number {
 	};
 }
 
+// Past setup by default, the state every turn case below is about; the setup clock
+// cases pass `status: "setup"` back in.
 function makeMatch(overrides: Partial<StoredBattleship> = {}): StoredBattleship {
 	const base = startMatch({ playerIds: [A, B] } as IGameRoom, { [A]: "A", [B]: "B" }, seededRng());
-	return { ...base, ...overrides };
+	return { ...base, status: "playing", ready: [true, true], ...overrides };
 }
 
 function makeRoom(idleMs: number, match: StoredBattleship = makeMatch(), moves = true): IGameRoom {
@@ -75,14 +79,14 @@ beforeEach(() => {
 describe("sweepBattleshipTurns", () => {
 	it("does nothing when no battleship match is live", async () => {
 		storeMock.findPlayingByGame.mockResolvedValue([]);
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
 		expect(trailMock.postMove).not.toHaveBeenCalled();
 	});
 
 	it("leaves a match alone while the player is still inside the turn budget", async () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT - 1000)]);
 
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
@@ -91,7 +95,7 @@ describe("sweepBattleshipTurns", () => {
 
 		const summary = await sweepBattleshipTurns(client, NOW);
 
-		expect(summary).toEqual({ turnsExpired: 1, matchesForfeited: 0 });
+		expect(summary).toEqual({ turnsExpired: 1, matchesForfeited: 0, setupsTimedOut: 0 });
 		// The turn moved, and the match is NOT over on a single expiry.
 		const saved = storeMock.update.mock.calls[0][2].secret as StoredBattleship;
 		expect(saved.turn).toBe(1);
@@ -108,7 +112,7 @@ describe("sweepBattleshipTurns", () => {
 
 		const summary = await sweepBattleshipTurns(client, NOW);
 
-		expect(summary).toEqual({ turnsExpired: 0, matchesForfeited: 1 });
+		expect(summary).toEqual({ turnsExpired: 0, matchesForfeited: 1, setupsTimedOut: 0 });
 		expect(lifecycleMock.finish).toHaveBeenCalledOnce();
 		// The player who did NOT walk away wins.
 		expect(lifecycleMock.finish.mock.calls[0][2]).toMatchObject({ winnerId: B });
@@ -140,7 +144,7 @@ describe("sweepBattleshipTurns", () => {
 	// player a full budget rather than an instant expiry on the next tick.
 	it("gives an unplayed match its full first turn", async () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT - 1000, makeMatch(), false)]);
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
 	});
 
 	it("ignores a room whose secret is not a battleship match", async () => {
@@ -148,7 +152,7 @@ describe("sweepBattleshipTurns", () => {
 		(room as { secret: unknown }).secret = { word: "planet" };
 		storeMock.findPlayingByGame.mockResolvedValue([room]);
 
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
@@ -160,7 +164,7 @@ describe("sweepBattleshipTurns", () => {
 
 		// One fails, the other still expires. A throw here would be swallowed by the
 		// cron wrapper while every other stalled match stayed stalled.
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 1, matchesForfeited: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 1, matchesForfeited: 0, setupsTimedOut: 0 });
 		errorSpy.mockRestore();
 		logSpy.mockRestore();
 	});
@@ -170,7 +174,7 @@ describe("sweepBattleshipTurns", () => {
 			makeRoom(TIMEOUT + 1000, makeMatch({ status: "finished", winnerId: A })),
 		]);
 
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
 		expect(lifecycleMock.finish).not.toHaveBeenCalled();
 	});
 });
@@ -193,11 +197,44 @@ describe("a board that is drawing", () => {
 			swapIn: async () => undefined,
 		});
 
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
 		expect(storeMock.update).not.toHaveBeenCalled();
 
 		finish(null);
 		await drawing;
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 1, matchesForfeited: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 1, matchesForfeited: 0, setupsTimedOut: 0 });
+	});
+});
+
+// ── the setup clock (post-launch plan item 17) ────────────────────────
+describe("sweepBattleshipTurns, setup", () => {
+	const inSetup = (): StoredBattleship => makeMatch({ status: "setup", ready: [true, false] });
+
+	it("leaves setup alone inside the budget", async () => {
+		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT - 1000, inSetup())]);
+
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+	});
+
+	it("starts the battle as laid when the setup clock runs out, and forfeits nobody", async () => {
+		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000, inSetup())]);
+		storeMock.updateSecretIf.mockResolvedValue({});
+
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 1 });
+		const [, , expected, saved] = storeMock.updateSecretIf.mock.calls[0] as [string, string, Record<string, unknown>, StoredBattleship];
+		expect(expected).toEqual({ "secret.status": "setup" });
+		expect(saved.status).toBe("playing");
+		expect(saved.ready).toEqual([true, true]);
+		expect(lifecycleMock.finish).not.toHaveBeenCalled();
+		expect(trailMock.postMove.mock.calls[0][2]).toMatchObject({ text: gameRoomsCopy.battleship.setupTimedOut });
+	});
+
+	it("says nothing when a Ready started the battle first", async () => {
+		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000, inSetup())]);
+		storeMock.updateSecretIf.mockResolvedValue(null);
+
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(trailMock.postMove).not.toHaveBeenCalled();
 	});
 });

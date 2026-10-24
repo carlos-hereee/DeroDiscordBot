@@ -45,8 +45,13 @@ export const GAME_ROOM_ACTIONS = {
 	// A member volunteers for an open-to-all challenge. Deliberately ungated: the
 	// whole point is that anyone may take it up.
 	join: { hostOnly: false, playersOnly: false },
-	// Host provisions the room from the pool they gathered.
+	// Host provisions the room from the pool they gathered. HOST_STRICT_ACTIONS below
+	// takes the router's admin override away from it.
 	start: { hostOnly: true, playersOnly: false },
+	// The host plays Dero instead (coin flip, dice roll and rps drafts only): the draft
+	// closes and one solo round is played against Dero (post-launch plan item 13).
+	// Strict host only, like `start`, since it ends the host's challenge.
+	dero: { hostOnly: true, playersOnly: false },
 	// Host abandons the draft before it becomes a room.
 	cancel: { hostOnly: true, playersOnly: false },
 	// Monopoly drafts only: the host turns auctions on or off for the match, with the
@@ -96,8 +101,10 @@ export const GAME_ROOM_ACTIONS = {
 	// surface that would leak a position if it were ever public, so the gate matters
 	// more here than its ephemeral reply already implies.
 	board: { hostOnly: false, playersOnly: true },
-	// Battleship: re-lay your own fleet, before the first shot only.
+	// Battleship: re-lay your own fleet, during setup only (post-launch plan item 17).
 	reroll: { hostOnly: false, playersOnly: true },
+	// Battleship: lock your fleet in. The battle starts when both captains are ready.
+	bready: { hostOnly: false, playersOnly: true },
 
 	// ── hold em ──
 	// Buying in is how you BECOME a player, so it cannot be playersOnly: that gate
@@ -163,6 +170,15 @@ export const GAME_ROOM_ACTIONS = {
 } as const satisfies Record<string, { hostOnly: boolean; playersOnly: boolean }>;
 
 export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;
+
+// ── the host's alone, with no admin override (post-launch plan item 18) ──
+// What:  the hostOnly actions the router does NOT let an admin press for the host.
+// Who:   gameRoomHandlers, at the hostOnly gate.
+// Where: every other hostOnly action keeps the override, because clearing a stuck room
+//        or removing a member is moderation. Starting a match is not: the host decides
+//        when their own challenge begins, so an admin pressing Start would play the
+//        host's hand for them. An admin may still kick, manage and cancel.
+export const HOST_STRICT_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["start", "dero"]);
 
 // ── the controls a satellite may press (2026-10 item 244 Phase 5a) ──
 // What:  the actions a member seated through a satellite channel may take there: their

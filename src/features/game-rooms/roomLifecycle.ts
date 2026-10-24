@@ -9,6 +9,8 @@ import { buildRoomOverwrites, type RoomPhase } from "./roomPermissions.js";
 import { roomResultEmbed, roomArchiveRow } from "./gameRoomsEmbeds.js";
 import { deleteSatellites, labelEmbedForRoom, lockSatellites } from "./satelliteRooms.js";
 import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
+import { challengeResultLine, closeChallengeCard } from "./challengeCard.js";
+import type { OutcomeBucket } from "./matchOutcome.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomLifecycle ────────────────────────────────────────────────────
@@ -50,6 +52,9 @@ export interface FinishRoomInput {
 	// room, or a boot found a room whose channel no longer exists. It changes only the
 	// wording, so a reaped room does not read as though somebody lost.
 	abandoned?: boolean;
+	// How the match was won (post-launch plan item 21), from the game that ended it. It
+	// only chooses the flavor line on the closed challenge card.
+	outcome?: { bucket: OutcomeBucket; roomWon?: boolean };
 	now?: Date;
 }
 
@@ -131,6 +136,18 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	// ⑤ A finished network table leaves the network board (2026-10 item 244 Phase 5b).
 	// Debounced and fire and forget there, so the board never holds up a finish.
 	if (claimed.network) scheduleNetworkBoardRefresh();
+
+	// ⑥ The challenge card in ⚔️challenges closes with who won and how (post-launch plan
+	// item 21). After everything above and never awaited: it is cosmetic, it may need a
+	// picture drawn, and a room that never had a card skips it inside.
+	const resultLine = challengeResultLine({
+		game: room.game,
+		winnerId,
+		abandoned: input.abandoned ?? false,
+		bucket: input.outcome?.bucket,
+		roomWon: input.outcome?.roomWon,
+	});
+	void closeChallengeCard(client, room, resultLine);
 
 	return true;
 }

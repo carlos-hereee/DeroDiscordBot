@@ -105,10 +105,12 @@ const STATUS_ACCENT: Record<ChallengeCardStatus, ColorResolvable> = {
 	open: COLORS.ARCADE,
 	started: COLORS.CARD_OUTCOME_WIN,
 	cancelled: COLORS.CARD_TEXT_MUTED,
+	finished: COLORS.CARD_OUTCOME_WIN,
 };
 
 /** Which state the opener card is in, as the picture names it. */
 export function challengeCardStatus(state: OpenerCardState): ChallengeCardStatus {
+	if (state.resultLine) return "finished";
 	if (state.cancelled) return "cancelled";
 	if (state.startedChannelId) return "started";
 	if (!state.visibility) return "choosing";

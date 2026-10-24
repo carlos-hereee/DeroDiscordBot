@@ -385,6 +385,10 @@ export const rokCommanderCopy = {
 			// host button, so the rules card holds only rules and ⚔️challenges holds
 			// only the challenge posts themselves.
 			arcadeGames: "🕹️games",
+			// The fourth arcade channel (post-launch plan item 3): admin hosted group
+			// games and the party game schedule. Members read and play through the
+			// buttons; only admins and Dero post. Universal across packs.
+			partyGames: "🎉party-games",
 			// ── the two VOICE rooms, one per managed category ───────────
 			// Plain voice channels, groundwork for a later meeting notes feature:
 			// nothing listens in either, and neither is on Dero's voice allowlist
@@ -721,6 +725,16 @@ export const rokCommanderCopy = {
 			hostNoChannel: "The arcade is not built yet. An admin must run `/setup`.",
 			hostFailed: "I could not set that table. Try again in a moment.",
 			hostStarted: (game: string): string => `Your ${game} is live. Go and play.`,
+		},
+
+		// ── 🎉party-games' intro (post-launch plan item 3) ──────────────────
+		// Above the two admin buttons (Host hangman, Schedule a party game). Member
+		// facing, so kingdom voice: it says what happens here and where the schedule is.
+		partyGames: {
+			title: "🎉 The Revel Hall",
+			description:
+				"When the keepers call a party game, the whole kingdom plays together here. A hangman round opens in this hall for every warrior at once.\n\n" +
+				"Revels to come are cried in 📢announcements, and the roll of who will attend is kept in 🔜upcoming-events. Mark yourself there so the host knows to wait for you.",
 		},
 
 		// ── the voice rooms' intro (2026-10 item 245 Phase 4b) ──────────────

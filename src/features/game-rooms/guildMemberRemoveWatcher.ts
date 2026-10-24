@@ -58,6 +58,7 @@ export async function handleGuildMemberRemove(client: Client, member: DepartedMe
 		const remaining = room.playerIds.filter((id) => id !== member.id);
 		await roomLifecycle.finish(client, room, {
 			winnerId: remaining.length === 1 ? remaining[0] : null,
+			outcome: { bucket: "forfeit" },
 		});
 	}
 }

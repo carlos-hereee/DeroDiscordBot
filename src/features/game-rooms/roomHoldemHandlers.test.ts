@@ -36,6 +36,7 @@ import { act, createTable, joinTable, dealHand, whoActs, type HoldemTable } from
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { formatCard } from "@features/games/holdemHand.js";
 
 const storeMock = gameRoomStore as unknown as {
 	update: ReturnType<typeof vi.fn>;
@@ -82,7 +83,15 @@ function makeInteraction(userId: string): ButtonInteraction {
 		client: { channels: { fetch: vi.fn().mockResolvedValue(null) } },
 		reply: vi.fn().mockResolvedValue(undefined),
 		deferUpdate: vi.fn().mockResolvedValue(undefined),
+		showModal: vi.fn().mockResolvedValue(undefined),
 	} as unknown as ButtonInteraction;
+}
+
+// A press whose private view modal Discord refuses, so the old ephemeral reply answers.
+function makeRefusedModalInteraction(userId: string): ButtonInteraction {
+	const interaction = makeInteraction(userId);
+	(interaction.showModal as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Invalid Form Body"));
+	return interaction;
 }
 
 const client = { channels: { fetch: vi.fn().mockResolvedValue(null) } } as unknown as Client;
@@ -99,9 +108,29 @@ beforeEach(() => {
 // ⚠️ THE HOLE CARDS ARE THE WHOLE SECRECY PROPERTY. A player's two cards must
 // reach nobody but them, pulled on their own click, never pushed and never a DM.
 describe("the private peek", () => {
-	it("always replies ephemerally", async () => {
+	// Post-launch plan item 16: the hand opens in a modal only the presser sees.
+	it("opens the clicker's OWN cards in a modal and posts nothing", async () => {
 		const table = dealtTable();
-		const interaction = makeInteraction("p0");
+		const interaction = makeInteraction("p1");
+
+		await handleShowCards(interaction, makeRoom(table));
+
+		expect(interaction.reply).not.toHaveBeenCalled();
+		const modal = (interaction.showModal as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+			toJSON(): { components: { content?: string }[] };
+		};
+		const shown = modal.toJSON().components.map((component) => component.content ?? "").join("\n");
+		const mine = table.holeCards.p1 ?? [];
+		for (const card of mine) expect(shown).toContain(formatCard(card));
+		for (const card of [...(table.holeCards.p0 ?? []), ...(table.holeCards.p2 ?? [])]) {
+			const isAlsoMine = mine.some((own) => own.rank === card.rank && own.suit === card.suit);
+			if (!isAlsoMine) expect(shown).not.toContain(formatCard(card));
+		}
+	});
+
+	it("falls back to an ephemeral reply when the modal is refused", async () => {
+		const table = dealtTable();
+		const interaction = makeRefusedModalInteraction("p0");
 
 		await handleShowCards(interaction, makeRoom(table));
 
@@ -110,9 +139,9 @@ describe("the private peek", () => {
 		expect(reply.flags).toBe(64);
 	});
 
-	it("shows the clicker their OWN cards and nobody else's", async () => {
+	it("shows the clicker their OWN cards and nobody else's, in the fallback too", async () => {
 		const table = dealtTable();
-		const interaction = makeInteraction("p1");
+		const interaction = makeRefusedModalInteraction("p1");
 
 		await handleShowCards(interaction, makeRoom(table));
 
@@ -482,7 +511,7 @@ describe("leaving and ending the table", () => {
 		const lines = trailMock.postMove.mock.calls.map((call) => (call[2] as { text: string }).text);
 		expect(lines[0]).toBe(gameRoomsCopy.holdem.leftTable("p0", true));
 		expect(lines.filter((line) => line.includes("left the table"))).toHaveLength(1);
-		expect(finishMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), { winnerId: "p1" });
+		expect(finishMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), { winnerId: "p1", outcome: { bucket: "forfeit" } });
 		expect(awardXpMock).toHaveBeenCalledWith(expect.objectContaining({ userId: "p1", game: "holdem", outcome: "won" }));
 	});
 
@@ -542,7 +571,11 @@ describe("leaving and ending the table", () => {
 		expect(ended.status).toBe("finished");
 		const text = (trailMock.postMove.mock.calls[0][2] as { text: string }).text;
 		expect(text).toContain("Final standings");
-		expect(finishMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), { winnerId: ended.winnerId });
+		// The host ended it, so the standings decide the flavor (post-launch plan item 21).
+		expect(finishMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+			winnerId: ended.winnerId,
+			outcome: { bucket: expect.stringMatching(/^(decisive|narrow)$/) },
+		});
 		expect(ended.winnerId).not.toBeNull();
 		expect(awardXpMock).not.toHaveBeenCalledWith(expect.objectContaining({ game: "holdem" }));
 	});
@@ -556,7 +589,7 @@ describe("leaving and ending the table", () => {
 		expect(trailMock.postMove.mock.calls[0][2]).toMatchObject({
 			text: gameRoomsCopy.holdem.tableEnded("p0", [], false),
 		});
-		expect(finishMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), { winnerId: null });
+		expect(finishMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), { winnerId: null, outcome: { bucket: "narrow" } });
 	});
 
 	it("refuses to end a table that is already over", async () => {

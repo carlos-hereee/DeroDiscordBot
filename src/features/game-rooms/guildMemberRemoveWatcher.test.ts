@@ -58,6 +58,7 @@ describe("handleGuildMemberRemove", () => {
 		expect(lifecycleMock.finish).toHaveBeenCalledOnce();
 		expect(lifecycleMock.finish).toHaveBeenCalledWith(client, expect.objectContaining({ roomId: "room-1" }), {
 			winnerId: "host-1",
+			outcome: { bucket: "forfeit" },
 		});
 	});
 
@@ -68,7 +69,7 @@ describe("handleGuildMemberRemove", () => {
 
 		await handleGuildMemberRemove(client, departed);
 
-		expect(lifecycleMock.finish).toHaveBeenCalledWith(client, expect.anything(), { winnerId: null });
+		expect(lifecycleMock.finish).toHaveBeenCalledWith(client, expect.anything(), { winnerId: null, outcome: { bucket: "forfeit" } });
 	});
 
 	it("closes a solo room as abandoned: no winner, no top up to pay", async () => {

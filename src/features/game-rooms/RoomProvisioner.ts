@@ -12,7 +12,6 @@ import {
 	startMatch as startBattleshipMatch,
 	deserializeMatch,
 	battleshipBoardMessage,
-	rerollRow,
 } from "./roomBattleship.js";
 import { createTable as createHoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
@@ -530,9 +529,8 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 		const boardMessage = await channel
 			.send(await battleshipBoardMessage(deserializeMatch(match), room.roomId))
 			.catch(() => null);
-		// The reroll offer rides its own message so it can be ignored without
-		// cluttering the board that gets edited thirty times.
-		await channel.send({ components: [rerollRow(room.roomId)] }).catch(() => undefined);
+		// No separate reroll message any more: the match opens in setup, and the board's
+		// own setup row carries Randomize and Ready (post-launch plan item 17).
 		await gameRoomStore.update(guild.id, room.roomId, {
 			secret: { ...match, boardMessageId: boardMessage?.id ?? null } as never,
 		});

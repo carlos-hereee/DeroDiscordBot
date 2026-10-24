@@ -54,7 +54,7 @@ import { hangmanCardView, renderHangmanCard } from "./hangmanRenderer.js";
 import { settle, type BlackjackTable, type Card as BlackjackCard, type Hand } from "./blackjackState.js";
 import { blackjackResultView, blackjackTableView, renderBlackjackResultCard, renderBlackjackTableCard } from "./blackjackRenderer.js";
 import { blackjackHandXp } from "./gameXp.js";
-import { applyShot, createMatch, formatCoord, type BattleshipState } from "./battleshipState.js";
+import { applyShot, createMatch, startBattle, formatCoord, type BattleshipState } from "./battleshipState.js";
 import { renderBattleshipBoardCard } from "./battleshipRenderer.js";
 import { battleshipBoardMessage, battleshipBoardView, privateBoardReply } from "@features/game-rooms/roomBattleship.js";
 import { OWNABLE_TILES } from "./monopolyBoard.js";
@@ -242,6 +242,8 @@ function matchWithASinking(): BattleshipState {
 		],
 		seededRng(3)
 	);
+	// Past setup (post-launch plan item 17): this card is about a battle under way.
+	startBattle(state);
 	const destroyer = state.players[1].ships.find((ship) => ship.name === "destroyer")!;
 	const occupied = new Set(state.players[0].ships.flatMap((ship) => ship.cells.map((cell) => `${cell.x},${cell.y}`)));
 	const misses = [];

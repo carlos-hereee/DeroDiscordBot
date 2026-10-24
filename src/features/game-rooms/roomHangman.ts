@@ -43,6 +43,7 @@ import {
 import { withRenderFallback } from "@features/renderer/index.js";
 import { roomTrail, resolveRoomChannel } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
+import { hangmanOutcome } from "./matchOutcome.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX, GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -81,6 +82,9 @@ type HangmanRoomRef = Pick<IGameRoom, "guildId" | "roomId" | "channelId" | "open
 interface HangmanSecret extends RoomSecret {
 	guessedLetters?: string[];
 	wrong?: number;
+	// The newest gallows card, the one carrying the guess controls (post-launch plan
+	// item 3). Kept so the next card can take the controls off it.
+	gallowsMessageId?: string | null;
 }
 
 function rehydrate(room: Pick<IGameRoom, "secret">): HangmanState | null {
@@ -365,7 +369,7 @@ async function startRoomHangmanRound(
 
 	await swapOpenerToGuessing(client, room);
 	const state = rehydrate({ secret });
-	if (state) await postGallowsCard(client, room, state);
+	if (state) await postGallowsCard(client, room, state, null);
 }
 
 // The pinned opener the provisioner posted still carries the host's authoring
@@ -394,14 +398,41 @@ async function swapOpenerToGuessing(client: Client, room: HangmanRoomRef): Promi
 // The round's last guess posts no card, because the result card from
 // roomLifecycle.finish carries the ending's gallows. Cosmetic, so a failure is
 // logged and swallowed: the row is the truth and the next guess draws again.
-async function postGallowsCard(client: Client, room: Pick<IGameRoom, "roomId" | "channelId">, state: HangmanState): Promise<void> {
+//
+// ⚠️ THE GUESS CONTROLS RIDE THE NEWEST CARD (post-launch plan item 3). The pinned
+// opener sits above every move line, so a guesser used to scroll back up past the
+// whole round to press Guess. Each card now carries the row under its own picture,
+// and the card before it gives the row up, so the only live controls in the scroll
+// are the ones directly under the gallows the room is looking at. The opener keeps
+// its row too: it is the pinned way back in for anyone arriving late.
+async function postGallowsCard(
+	client: Client,
+	room: Pick<IGameRoom, "guildId" | "roomId" | "channelId">,
+	state: HangmanState,
+	previousCardId: string | null
+): Promise<void> {
 	try {
 		const channel = await resolveRoomChannel(client, room.channelId);
 		if (!channel) return;
 		const picture = await playingBoardPicture(state, gameRoomsCopy.hangman.boardDescription(state.authoredBy));
-		await channel.send({ ...picture, allowedMentions: { parse: [] } });
+		const card = await channel.send({ ...picture, components: [hangmanRow(room, true)], allowedMentions: { parse: [] } });
+		await gameRoomStore.setSecretField(room.guildId, room.roomId, "gallowsMessageId", card.id);
+		await stripGallowsControls(client, room, previousCardId);
 	} catch (error) {
 		console.warn("[game-rooms] could not post the hangman gallows card", { roomId: room.roomId, error });
+	}
+}
+
+// Take the guess row off an older gallows card. Components only, so its picture and
+// embed stay exactly as they were. A card that is already gone is not an error.
+async function stripGallowsControls(client: Client, room: Pick<IGameRoom, "roomId" | "channelId">, cardId: string | null): Promise<void> {
+	if (!cardId) return;
+	try {
+		const channel = await resolveRoomChannel(client, room.channelId);
+		const card = await channel?.messages.fetch(cardId);
+		await card?.edit({ components: [] });
+	} catch (error) {
+		console.warn("[game-rooms] could not take the controls off an older hangman card", { roomId: room.roomId, error });
 	}
 }
 
@@ -509,10 +540,13 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 
 	const won = outcome.status === "hit" && outcome.solved;
 	const lost = outcome.status === "miss" && outcome.lost;
+	const previousCardId = (room.secret as HangmanSecret).gallowsMessageId ?? null;
 	if (!won && !lost) {
-		await postGallowsCard(interaction.client, room, state);
+		await postGallowsCard(interaction.client, room, state, previousCardId);
 		return;
 	}
+	// The round is over, so the last card's Guess and Give up have nothing left to do.
+	await stripGallowsControls(interaction.client, room, previousCardId);
 
 	// ⚠️ THE ONLY PLACE THE WORD IS EVER RENDERED, and it is after the round is over.
 	await roomTrail.postMove(interaction.client, room, {
@@ -528,8 +562,11 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	// posted no playing card above. The hangman end card when it draws (2026-10
 	// item 243 Phase 3), the gallows art or its Dero stand in when it does not. The
 	// card takes revealedLetters, never the word, so this line adds no third read of it.
+	// A solved word closes the challenge card as the room's win (post-launch plan item
+	// 21), clean or one miss from the rope; a lost round closes it with no winner.
 	await roomLifecycle.finish(interaction.client, room, {
 		winnerId: null,
+		...(won ? { outcome: { bucket: hangmanOutcome(state.wrong), roomWon: true } } : {}),
 		art: await withRenderFallback(
 			() => renderHangmanCard(hangmanCardView(state, won ? "solved" : "lost")),
 			() => resolveGameAsset(won ? "hangmanWin" : "hangmanLose")

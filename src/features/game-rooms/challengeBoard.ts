@@ -1,14 +1,16 @@
 import {
 	ActionRowBuilder,
 	ChannelType,
+	LabelBuilder,
 	MessageFlags,
+	ModalBuilder,
 	StringSelectMenuBuilder,
 	TextChannel,
 	type ButtonInteraction,
 	type CategoryChannel,
 	type EmbedBuilder,
 	type Guild,
-	type MessageEditOptions,
+	type ModalSubmitInteraction,
 	type StringSelectMenuInteraction,
 } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -29,25 +31,26 @@ import { resolveRoomChannel } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { rematchedResultEmbed, roomOpenerLogo, roomResultEmbed } from "./gameRoomsEmbeds.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
+import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { buildInviteOptions, refilterInvitees } from "./invitePicker.js";
 import {
 	openerCardEmbed,
 	openerCardRows,
 	isCooperativeGame,
+	isDeroPlayable,
 	type MonopolyDraftSettingAction,
-	type OpenerCardState,
 } from "./challengeBoardEmbeds.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
-import { challengeCardView, renderChallengeCard } from "./challengeCardRenderer.js";
+import { cardStateFor, editOpenerCard, refreshCard, resolveChallengesChannel } from "./challengeCard.js";
 import { isWithinReach, readChallengeReach } from "./challengeReach.js";
 import { isKicked, judgeJoin } from "./joinGate.js";
 import { consentPrompt, isGuildBanned, isUserBanned, readNetworkGuild } from "./networkRules.js";
 import { hasNetworkConsent } from "./networkConsent.js";
 import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
 import { networkBanStore } from "@db/stores/networkBanStore.js";
-import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
+import { playSoloLuck, type SoloLuckPlay } from "@features/games/soloLuck.js";
+import { RPS_CHOICES, type RpsChoice } from "@features/games/rpsWinner.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // The host controls' words are shared by every pack (2026-10 item 244 Phase 4), so
@@ -82,39 +85,6 @@ const networkWords = rokCommanderCopy.arcadeNetwork;
 // room. This way the permission matrix receives the same two arrays no matter how the
 // challenge was assembled.
 
-async function resolveChallengesChannel(guild: Guild): Promise<TextChannel | null> {
-	const stored = await guildConfigStore.findByGuildId(guild.id);
-	const channelId = (stored as unknown as { arcadeChallengesChannelId?: string | null } | null)?.arcadeChallengesChannelId;
-	if (!channelId) return null;
-	const channel = await guild.channels.fetch(channelId).catch(() => null);
-	return channel instanceof TextChannel ? channel : null;
-}
-
-function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState> = {}): OpenerCardState {
-	return {
-		game: room.game,
-		hostId: room.hostId,
-		// A draft row carries the schema default "invite" before the host has chosen,
-		// so the CARD's notion of "not chosen yet" cannot read the row's visibility
-		// field. `status === "draft"` plus a null boardMessageId is not enough either.
-		// The honest signal is startedAt: null and an explicit override from the
-		// caller that knows whether the chooser has been answered.
-		visibility: overrides.visibility ?? null,
-		pool: room.spectatorIds ?? [],
-		monopolyAuctions: room.monopolyAuctions ?? false,
-		monopolyReferee: room.monopolyReferee ?? false,
-		// A table the host opened to the network (2026-10 item 244 Phase 5b), off the row.
-		network: room.network ?? false,
-		// The host's say over who joins (2026-10 item 244 Phase 4), off the draft row.
-		hostControls: {
-			ratingBand: room.ratingBand ?? "any",
-			requireApproval: room.requireApproval ?? false,
-			pendingJoinCount: (room.pendingJoinIds ?? []).length,
-		},
-		...overrides,
-	};
-}
-
 /**
  * Re-render a draft's card from its row, for the host controls (hostControls.ts) that
  * change a draft without going through this file's own handlers. Only ever called
@@ -122,62 +92,6 @@ function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState> = {})
  */
 export async function refreshDraftCard(guild: Guild, room: IGameRoom): Promise<void> {
 	await refreshCard(guild, room, cardStateFor(room, { visibility: room.visibility, pool: room.spectatorIds ?? [] }));
-}
-
-// Re-render the opener card for a room's current state. Cosmetic, so a failure is
-// logged and swallowed: the draft row is the truth and the next edit will catch up.
-async function refreshCard(guild: Guild, room: IGameRoom, state: OpenerCardState): Promise<void> {
-	if (!room.boardMessageId) return;
-	const channel = await resolveChallengesChannel(guild);
-	if (!channel) return;
-	const message = await channel.messages.fetch(room.boardMessageId).catch(() => null);
-	if (!message) return;
-	await editOpenerCard(guild, room.roomId, message, state);
-}
-
-// ── the opener card's picture (2026-10 item 243 Phase 4) ──────────────
-// Every card edit draws the host's and the joiners' faces and sends them with the
-// text in ONE edit, so the picture and the pool line never disagree on screen.
-// When the picture does not draw, the edit carries the text card alone, exactly
-// as before. `attachments: []` drops the previous picture rather than letting it
-// pile up as a loose file under the card on every edit.
-//
-// ⚠️ LATEST WINS. A render takes longer than a text edit (a cold avatar fetch can
-// take seconds), so two joins close together could otherwise land out of order
-// and leave the card showing the older pool. Each edit takes a generation number
-// for its room, and an edit that finishes rendering after a newer one started is
-// dropped: the newer one carries the newer state.
-const cardGenerations = new Map<string, number>();
-
-type EditableCard = { edit(options: MessageEditOptions): Promise<unknown> };
-
-async function editOpenerCard(guild: Guild, roomId: string, message: EditableCard, state: OpenerCardState): Promise<void> {
-	const generation = (cardGenerations.get(roomId) ?? 0) + 1;
-	cardGenerations.set(roomId, generation);
-	const picture = await withRenderFallback(
-		async () => renderChallengeCard(await challengeCardView(guild, state)),
-		() => null
-	);
-	if (cardGenerations.get(roomId) !== generation) return;
-	// A cancelled or started card is never edited again, so its counter can go.
-	if (state.cancelled || state.startedChannelId) cardGenerations.delete(roomId);
-	const card = isRenderPayload(picture) ? picture : null;
-	// The picture leads with the game's logo; without it the text card carries the
-	// logo as its thumbnail instead (openerCardEmbed).
-	const logo = card ? null : roomOpenerLogo(state.game);
-	const file = card?.attachment ?? logo?.attachment;
-	// Cosmetic, so a failure is logged and swallowed: the draft row is the truth
-	// and the next edit will catch up.
-	try {
-		await message.edit({
-			embeds: [openerCardEmbed(state, card?.ref, logo?.ref)],
-			components: openerCardRows(roomId, state),
-			files: file ? [file] : [],
-			attachments: [],
-		});
-	} catch (error) {
-		console.warn("[game-rooms] failed to refresh the opener card", error);
-	}
 }
 
 // ── start a challenge ─────────────────────────────────────────────────
@@ -862,6 +776,81 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 	return { ok: true, room: next };
 }
 
+// ── Play Dero instead (post-launch plan item 13) ──────────────────────
+// What:  the host of a coin flip, dice roll or rps challenge plays one round against
+//        Dero instead of waiting on a member. The draft closes and soloLuck plays the
+//        round, its result card posted publicly in ⚔️challenges below the card.
+// Who:   the card's `dero` button (strict host only: HOST_STRICT_ACTIONS), and for rps
+//        the throw modal it opens, whose submit re-checks the host and the draft
+//        because a modal is reachable without the button.
+// Where: soloLuck is the ONE solo round, shared with /mini-game against Dero and the
+//        🕹️games row, so the odds and the pay cannot drift between the three doors.
+// How:   ① refuse anything but a luck draft; ② archive the draft, which frees the
+//        host's one room slot exactly like Call it off; ③ play the round; ④ close the
+//        card with the line that points at the round.
+const DERO_THROW_FIELD = "throw";
+
+export async function playDero(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	if (!isDeroPlayable(room.game)) {
+		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	// rps needs the host's throw first: a modal with the three throws, so the press
+	// answers with the question rather than a message to dismiss.
+	if (room.game === "rps") {
+		await interaction.showModal(deroThrowModal(room.roomId));
+		return;
+	}
+	await playDeroRound(interaction, room, { game: room.game === "coinflip" ? "coinflip" : "diceroll" });
+}
+
+function deroThrowModal(roomId: string): ModalBuilder {
+	const words = gameRoomsCopy;
+	return new ModalBuilder()
+		.setCustomId(`${GAME_ROOM_MODAL_PREFIX}:dero:${roomId}`)
+		.setTitle(words.board.deroThrowModalTitle)
+		.addLabelComponents(
+			new LabelBuilder().setLabel(words.board.deroThrowLabel).setStringSelectMenuComponent(
+				new StringSelectMenuBuilder()
+					.setCustomId(DERO_THROW_FIELD)
+					.setMinValues(1)
+					.setMaxValues(1)
+					.addOptions(RPS_CHOICES.map((choice) => ({ label: words.games.rpsLabel(choice), value: choice })))
+			)
+		);
+}
+
+/** The rps throw modal's submit: the same gates as the button, then the round. */
+export async function handleDeroThrowModal(interaction: ModalSubmitInteraction): Promise<void> {
+	const [, , roomId] = interaction.customId.split(":");
+	const guildId = interaction.guildId;
+	if (!guildId || !roomId) return;
+
+	const room = await gameRoomStore.findByRoomId(guildId, roomId);
+	if (!room || room.status !== "draft" || room.game !== "rps") {
+		await interaction.reply({ content: gameRoomsCopy.board.draftGone, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	if (room.hostId !== interaction.user.id) {
+		await interaction.reply({ content: gameRoomsCopy.board.onlyHostStarts, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	// The value is user input whoever built the menu, so it is checked against the throws.
+	const memberThrow = interaction.fields.getStringSelectValues(DERO_THROW_FIELD)[0] as RpsChoice | undefined;
+	if (!memberThrow || !RPS_CHOICES.includes(memberThrow)) {
+		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	await playDeroRound(interaction, room, { game: "rps", memberThrow });
+}
+
+async function playDeroRound(interaction: ButtonInteraction | ModalSubmitInteraction, room: IGameRoom, play: SoloLuckPlay): Promise<void> {
+	await gameRoomStore.markArchived(room.guildId, room.roomId);
+	await playSoloLuck(interaction, play);
+	if (!interaction.guild) return;
+	await refreshCard(interaction.guild, room, cardStateFor(room, { visibility: room.visibility, resultLine: gameRoomsCopy.board.cardPlayedDero(room.hostId) }));
+}
+
 // ── cancel ────────────────────────────────────────────────────────────
 export async function cancelDraft(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	// "archived" rather than a delete: the row is the audit trail, and the partial
@@ -883,4 +872,6 @@ export const challengeBoard = {
 	cancelDraft,
 	rematchFromRoom,
 	chooseMonopolyDraftSetting,
+	playDero,
+	handleDeroThrowModal,
 };

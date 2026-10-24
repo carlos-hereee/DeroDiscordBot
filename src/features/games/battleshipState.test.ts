@@ -9,11 +9,14 @@ import {
 	GRID_SIZE,
 	inBounds,
 	isFleetDestroyed,
+	markReady,
 	opponentView,
 	ownView,
 	parseCoord,
 	placeFleet,
+	rerollFleet,
 	shipsRemaining,
+	startBattle,
 	type BattleshipState,
 	type Coord,
 } from "./battleshipState.js";
@@ -33,7 +36,13 @@ const players: [{ userId: string; username: string }, { userId: string; username
 	{ userId: "b", username: "b" },
 ];
 
-const match = (seed = 1): BattleshipState => createMatch(players, seeded(seed));
+// A match past setup, which is what every firing case below starts from. The setup
+// stage itself has its own block at the end.
+const match = (seed = 1): BattleshipState => {
+	const state = createMatch(players, seeded(seed));
+	startBattle(state);
+	return state;
+};
 
 // Fire at every cell of the target's fleet, in order, alternating turns so the
 // shooter always has the move. Used to drive a match to its end deterministically.
@@ -335,5 +344,62 @@ describe("ownView", () => {
 	it("returns an empty grid for somebody who is not in this match", () => {
 		const state = match();
 		expect(ownView(state, "stranger").flat().every((cell) => cell.ship === null)).toBe(true);
+	});
+});
+
+// ── setup (post-launch plan item 17) ────────────────────────────────────────
+
+describe("setup", () => {
+	const fresh = (): BattleshipState => createMatch(players, seeded(7));
+
+	it("opens in setup, and nobody can fire until both players are ready", () => {
+		const state = fresh();
+		expect(state.status).toBe("setup");
+		expect(applyShot(state, "a", { x: 0, y: 0 })).toEqual({ status: "setup" });
+	});
+
+	it("starts the battle on the second Ready, not the first", () => {
+		const state = fresh();
+		expect(markReady(state, "a")).toEqual({ ok: true, index: 0, battleStarted: false });
+		expect(state.status).toBe("setup");
+		expect(markReady(state, "b")).toEqual({ ok: true, index: 1, battleStarted: true });
+		expect(state.status).toBe("playing");
+	});
+
+	it("refuses a second Ready, a stranger, and anything after setup", () => {
+		const state = fresh();
+		markReady(state, "a");
+		expect(markReady(state, "a")).toEqual({ ok: false, reason: "already-ready" });
+		expect(markReady(state, "z")).toEqual({ ok: false, reason: "not-a-player" });
+		markReady(state, "b");
+		expect(markReady(state, "b")).toEqual({ ok: false, reason: "not-in-setup" });
+	});
+
+	it("re-lays only the asking player's fleet, and only before they are ready", () => {
+		const state = fresh();
+		const before = JSON.stringify(state.players[1].ships);
+		const own = JSON.stringify(state.players[0].ships);
+		expect(rerollFleet(state, "a", seeded(99))).toEqual({ ok: true, index: 0 });
+		expect(JSON.stringify(state.players[0].ships)).not.toBe(own);
+		expect(JSON.stringify(state.players[1].ships)).toBe(before);
+		markReady(state, "a");
+		expect(rerollFleet(state, "a")).toEqual({ ok: false, reason: "already-ready" });
+	});
+
+	it("a re-laid fleet is still the whole legal fleet", () => {
+		const state = fresh();
+		rerollFleet(state, "b", seeded(3));
+		const ships = state.players[1].ships;
+		expect(ships.map((ship) => ship.name)).toEqual(FLEET.map((spec) => spec.name));
+		const cells = ships.flatMap((ship) => ship.cells.map((cell) => `${cell.x},${cell.y}`));
+		expect(new Set(cells).size).toBe(cells.length);
+	});
+
+	it("the setup clock starts the battle as laid, once", () => {
+		const state = fresh();
+		expect(startBattle(state)).toBe(true);
+		expect(state.status).toBe("playing");
+		expect(state.ready).toEqual([true, true]);
+		expect(startBattle(state)).toBe(false);
 	});
 });

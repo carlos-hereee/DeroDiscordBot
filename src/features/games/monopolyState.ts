@@ -106,6 +106,22 @@ export interface MonopolyState {
 	// Not in the plan's Section 5 block; added on the owner's ruling so a finished
 	// match records who won without re-deriving it from the seats.
 	winnerId: string | null;
+	// How the match is going, for the closed challenge card's flavor line (post-launch
+	// plan item 21). ABSENT on every state stored before it existed and on a fresh
+	// match; ensureStats in monopolySeats creates it on the first action that counts.
+	stats?: MonopolyMatchStats;
+}
+
+/** The running facts matchOutcome reads at the end. Kept by the engine, never by the room. */
+export interface MonopolyMatchStats {
+	// Turns handed on, across every seat.
+	turnsTaken: number;
+	auctionsOpened: number;
+	// Seats taken out through applyForfeit (a leave, a removal, an idle day), as against
+	// a bankruptcy.
+	forfeits: number;
+	// Each seat's lowest share of all the chips at the table after any action.
+	lowestCashShare: Record<string, number>;
 }
 
 export interface MonopolySeat {

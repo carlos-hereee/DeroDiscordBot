@@ -72,6 +72,9 @@ function battleshipRoom(match: StoredBattleship): IGameRoom {
 // A's second missed turn in a row, which forfeits the match to B.
 const forfeitingMatch = (): StoredBattleship => ({
 	...startMatch({ playerIds: [A, B] } as IGameRoom, { [A]: "A", [B]: "B" }, seededRng()),
+	// Past setup (post-launch plan item 17): the turn clock forfeits only a battle.
+	status: "playing",
+	ready: [true, true],
 	missedTurns: [1, 0],
 });
 

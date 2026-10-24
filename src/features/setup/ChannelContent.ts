@@ -233,6 +233,14 @@ export const ChannelContent = {
 		return infoEmbed(cc.arcadeChallenges.title, cc.arcadeChallenges.description, copy.COLORS.ARCADE);
 	},
 
+	// 🎉party-games' intro (post-launch plan item 3), above the admin host and
+	// schedule buttons (features/game-rooms/partyGames).
+	partyGamesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.partyGames.title, cc.partyGames.description, copy.COLORS.ARCADE);
+	},
+
 	// ── 👋welcome and 📘rules (2026-10 item 247 Phase 2) ──────────────
 	// The join log's intro, above the join and leave lines welcomeLog posts.
 	welcomeIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {

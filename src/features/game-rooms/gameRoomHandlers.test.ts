@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ButtonInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findByRoomId: vi.fn() },
+	gameRoomStore: { findByRoomId: vi.fn(), markArchived: vi.fn() },
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: { findByGuildId: vi.fn() },
@@ -19,6 +19,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { roomTrail } from "./roomTrail.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
 const storeMock = gameRoomStore as unknown as { findByRoomId: ReturnType<typeof vi.fn> };
 const gateMock = gateOwnerOrAdmin as unknown as ReturnType<typeof vi.fn>;
@@ -162,6 +163,31 @@ describe("gameRoomHandlers gates", () => {
 		expect(replyText(interaction)).toContain("host or an admin");
 	});
 
+	// Post-launch plan item 18: starting a match is the host's alone. The admin override
+	// every other host control keeps is exactly what must not reach Start, so the gate
+	// is not even consulted, and the refusal does not promise an admin can do it.
+	it.each(["start", "dero"])("refuses an admin pressing %s for the host, without consulting the admin gate", async (action) => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "draft" }));
+		gateMock.mockResolvedValue(true);
+		const interaction = makeInteraction(`gameroom:${action}:room-1`, "moderator-9");
+
+		await _handleGameRoomButton(interaction);
+
+		expect(gateMock).not.toHaveBeenCalled();
+		expect(replyText(interaction)).toBe(gameRoomsCopy.board.onlyHostStarts);
+	});
+
+	it("still lets an admin cancel somebody else's draft", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "draft" }));
+		gateMock.mockResolvedValue(true);
+		const interaction = { ...makeInteraction("gameroom:cancel:room-1", "moderator-9"), deferUpdate: vi.fn().mockResolvedValue(undefined) } as unknown as ButtonInteraction;
+
+		await _handleGameRoomButton(interaction);
+
+		expect(gateMock).toHaveBeenCalledOnce();
+		expect((gameRoomStore as unknown as { markArchived: ReturnType<typeof vi.fn> }).markArchived).toHaveBeenCalledWith("guild-1", "room-1");
+	});
+
 	// ⚠️ main.ts DOES NOT GATE BUTTONS. Its permission checks live inside
 	// `if (interaction.isChatInputCommand())`, so this handler is the only gate a
 	// clicker passes. A spectator forfeiting somebody else's match is the obvious
@@ -194,7 +220,7 @@ describe("gameRoomHandlers forfeit", () => {
 
 	it("hands the win to the one remaining player", async () => {
 		await _handleGameRoomButton(makeInteraction("gameroom:forfeit:room-1", "player-2"));
-		expect(lifecycleMock.finish.mock.calls[0][2]).toEqual({ winnerId: "host-1" });
+		expect(lifecycleMock.finish.mock.calls[0][2]).toEqual({ winnerId: "host-1", outcome: { bucket: "forfeit" } });
 	});
 
 	// A three seat room losing one player has no winner yet. Picking an arbitrary
@@ -202,7 +228,7 @@ describe("gameRoomHandlers forfeit", () => {
 	it("declares no winner when more than one player remains", async () => {
 		storeMock.findByRoomId.mockResolvedValue(makeRoom({ playerIds: ["host-1", "player-2", "player-3"] }));
 		await _handleGameRoomButton(makeInteraction("gameroom:forfeit:room-1", "player-2"));
-		expect(lifecycleMock.finish.mock.calls[0][2]).toEqual({ winnerId: null });
+		expect(lifecycleMock.finish.mock.calls[0][2]).toEqual({ winnerId: null, outcome: { bucket: "forfeit" } });
 	});
 
 	it("acknowledges before the room is torn down", async () => {

@@ -1,6 +1,7 @@
 import { BOARD, MIN_AUCTION_BID, isOwnableTile, ownableTileName, type TileId } from "./monopolyBoard.js";
 import type { MonopolyResult, MonopolySeat, MonopolyState } from "./monopolyState.js";
-import { activeSeatOf, cloneState, completeAction, findSeat, guardActiveTurn, mentionPlayer, rejectAction } from "./monopolySeats.js";
+import { activeSeatOf, cloneState, completeAction,
+	ensureStats, findSeat, guardActiveTurn, mentionPlayer, rejectAction } from "./monopolySeats.js";
 
 // ── monopolyAuction ─────────────────────────────────────────────────────────
 // What:  the auction a lot goes to when the seat standing on it passes, in a
@@ -43,6 +44,7 @@ export function openAuction(state: MonopolyState, tileId: TileId, skipperId: str
 	const next = cloneState(state);
 	next.pendingAuction = { tileId: tile.id, bids: {}, roundOpenedAt: now, skippedBy: skipperId };
 	next.phase = "in-auction";
+	ensureStats(next).auctionsOpened += 1;
 	return completeAction(next, skipperId, [`${mentionPlayer(skipperId)} passed on ${tile.name}, and it goes up for auction.`]);
 }
 

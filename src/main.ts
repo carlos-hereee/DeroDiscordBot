@@ -34,6 +34,7 @@ import { registerScheduleControlHandlers } from "@features/schedule/ScheduleCont
 import { registerSuggestionBoxHandlers } from "@features/suggestion-box/SuggestionBox.js";
 import { registerArcadeHostHandlers } from "@features/games/arcadeHost.js";
 import { registerSoloLuckHandlers } from "@features/games/soloLuck.js";
+import { registerPartyGameHandlers } from "@features/game-rooms/partyGames.js";
 import { registerGameRequestHandlers } from "@features/game-rooms/gameRequestHandlers.js";
 import { registerGameRoomHandlers } from "@features/game-rooms/gameRoomHandlers.js";
 import { registerGameRoomMemberRemoveWatcher } from "@features/game-rooms/guildMemberRemoveWatcher.js";
@@ -346,6 +347,9 @@ process.on("uncaughtException", (err) => {
 	registerArcadeHostHandlers();
 	// The solo luck row against Dero on the 🕹️games intro (2026-10 item 245 Phase 4a).
 	registerSoloLuckHandlers();
+	// 🎉party-games' Host hangman and Schedule buttons, the schedule modal and the RSVP
+	// buttons in 🔜upcoming-events (post-launch plan item 3).
+	registerPartyGameHandlers();
 	// The game request ballot behind the 📋arcade-rules card's button (same phase).
 	registerGameRequestHandlers();
 	// The in-room controls (Archive now, Forfeit). Registered at the client level

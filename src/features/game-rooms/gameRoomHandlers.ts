@@ -10,6 +10,7 @@ import {
 	GAME_ROOM_SELECT_PREFIX,
 	GAME_ROOM_MODAL_PREFIX,
 	GAME_ROOM_ACTIONS,
+	HOST_STRICT_ACTIONS,
 	SATELLITE_ACTIONS,
 	parseGameRoomCustomId,
 	type GameRoomAction,
@@ -35,6 +36,7 @@ import { roomMonopolyMortgage } from "./roomMonopolyMortgage.js";
 import { roomMonopolyTrade } from "./roomMonopolyTrade.js";
 import { roomMonopolyAuction } from "./roomMonopolyAuction.js";
 import { hostControls } from "./hostControls.js";
+import { PRIVATE_VIEW_ACTION, closePrivateView } from "./privateView.js";
 import { satelliteAt } from "./satelliteRooms.js";
 import { registerNetworkHandlers } from "./networkJoin.js";
 import type { GameSlug, SatelliteRoom } from "./roomTypes.js";
@@ -46,7 +48,7 @@ const satelliteWords = rokCommanderCopy.arcadeSatellites;
 // the status refusal below cannot drift from the routing switch. `requests` and `kick`
 // are host controls too but are NOT here: they also work in a live room, and each
 // refuses by the room's status itself.
-const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "cancel", "auctions", "referee", "approval"]);
+const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "dero", "cancel", "auctions", "referee", "approval"]);
 
 // ── gameRoomHandlers ─────────────────────────────────────────────────
 // What:  routes every `gameroom:` button to its action, after proving the clicker is
@@ -146,6 +148,12 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 	// moderator is not one of the room's players.
 	let isAdmin = false;
 	if (action.hostOnly && actorId !== room.hostId) {
+		// Starting the match is the host's alone (post-launch plan item 18), so no
+		// config read and no override: an admin is refused like any other member.
+		if (HOST_STRICT_ACTIONS.has(parsed.action)) {
+			await interaction.reply({ content: gameRoomsCopy.board.onlyHostStarts, flags: MessageFlags.Ephemeral });
+			return;
+		}
 		const config = await guildConfigStore.findByGuildId(guildId);
 		isAdmin = await gateOwnerOrAdmin(interaction, config);
 		if (!isAdmin) {
@@ -167,6 +175,9 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			return;
 		case "start":
 			await challengeBoard.startMatch(interaction, room);
+			return;
+		case "dero":
+			await challengeBoard.playDero(interaction, room);
 			return;
 		case "cancel":
 			await challengeBoard.cancelDraft(interaction, room);
@@ -267,6 +278,9 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		case "reroll":
 			await roomBattleshipHandlers.handleReroll(interaction, room);
 			return;
+		case "bready":
+			await roomBattleshipHandlers.handleReady(interaction, room);
+			return;
 		case "move":
 			// Each game answers `move` its own way and the fork has to happen HERE
 			// rather than inside runRoomMove: hangman shows a modal, which must be the
@@ -309,6 +323,7 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			const remaining = room.playerIds.filter((id) => id !== actorId);
 			await roomLifecycle.finish(interaction.client, room, {
 				winnerId: remaining.length === 1 ? remaining[0] : null,
+				outcome: { bucket: "forfeit" },
 			});
 			return;
 		}
@@ -382,6 +397,11 @@ export function registerGameRoomHandlers(): void {
 		if (action === "guess") return handleGuessModal(interaction);
 		if (action === "mtrade") return roomMonopolyTrade.handleTradeModal(interaction);
 		if (action === "mbid") return roomMonopolyAuction.handleBidModal(interaction);
+		// The host's throw against Dero (post-launch plan item 13).
+		if (action === "dero") return challengeBoard.handleDeroThrowModal(interaction);
+		// The private view modals (battleship's board, hold em's hand) have nothing to
+		// submit; closing one is acknowledged and nothing else.
+		if (action === PRIVATE_VIEW_ACTION) return closePrivateView(interaction);
 		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
 	});
 	// The network board's select and the network notice's buttons (2026-10 item 244 Phase

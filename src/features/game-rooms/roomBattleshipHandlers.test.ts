@@ -2,26 +2,28 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ButtonInteraction, StringSelectMenuInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn() },
+	gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn(), updateSecretIf: vi.fn() },
 }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardTwoPlayerResult: vi.fn() }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 
-import { handleFire, handleViewBoard, handleReroll, handleAimSelect } from "./roomBattleshipHandlers.js";
+import { handleFire, handleViewBoard, handleReroll, handleAimSelect, handleReady } from "./roomBattleshipHandlers.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { roomTrail } from "./roomTrail.js";
 import { startMatch, deserializeMatch, serializeMatch, type StoredBattleship } from "./roomBattleship.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 const storeMock = gameRoomStore as unknown as {
 	update: ReturnType<typeof vi.fn>;
 	findByRoomId: ReturnType<typeof vi.fn>;
 	setSecretField: ReturnType<typeof vi.fn>;
+	updateSecretIf: ReturnType<typeof vi.fn>;
 };
 const awardXpMock = awardXp as unknown as ReturnType<typeof vi.fn>;
 const awardMatchMock = awardTwoPlayerResult as unknown as ReturnType<typeof vi.fn>;
@@ -57,6 +59,7 @@ function makeInteraction(userId: string): ButtonInteraction {
 		client: { channels: { fetch: vi.fn().mockResolvedValue(null) } },
 		reply: vi.fn().mockResolvedValue(undefined),
 		deferUpdate: vi.fn().mockResolvedValue(undefined),
+		showModal: vi.fn().mockResolvedValue(undefined),
 	} as unknown as ButtonInteraction;
 }
 
@@ -66,7 +69,10 @@ function aimedAt(match: StoredBattleship, shooter: string, x: number, y: number)
 	return { ...match, pending: { [shooter]: { x, y } } };
 }
 
-const freshMatch = () => startMatch({ playerIds: [A, B] } as IGameRoom, { [A]: "A", [B]: "B" }, seededRng());
+// A match in setup, as the provisioner stores it (post-launch plan item 17), and the
+// same match past setup, which is what every firing case starts from.
+const setupMatch = () => startMatch({ playerIds: [A, B] } as IGameRoom, { [A]: "A", [B]: "B" }, seededRng());
+const freshMatch = (): StoredBattleship => ({ ...setupMatch(), status: "playing", ready: [true, true] });
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -168,9 +174,20 @@ describe("the per sink bonus", () => {
 
 describe("the private board", () => {
 	// ⚠️ THE ONE SURFACE THAT RENDERS A PLAYER'S OWN UNFIRED SHIPS. It must never
-	// reach the channel; 64 is MessageFlags.Ephemeral.
-	it("always replies ephemerally", async () => {
+	// reach the channel: a modal only the presser sees (post-launch plan item 16).
+	it("opens the presser's own board as a modal, and posts nothing", async () => {
 		const interaction = makeInteraction(A);
+		await handleViewBoard(interaction, makeRoom(freshMatch()));
+
+		expect(interaction.showModal).toHaveBeenCalledOnce();
+		expect(interaction.reply).not.toHaveBeenCalled();
+	});
+
+	// When Discord refuses the modal the old answer stands, still private; 64 is
+	// MessageFlags.Ephemeral.
+	it("falls back to an ephemeral reply when the modal is refused", async () => {
+		const interaction = makeInteraction(A);
+		(interaction.showModal as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Invalid Form Body"));
 		await handleViewBoard(interaction, makeRoom(freshMatch()));
 
 		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { flags?: number };
@@ -216,11 +233,12 @@ describe("aiming", () => {
 });
 
 describe("reroll", () => {
-	it("re-lays the caller's fleet before the first shot", async () => {
-		const room = makeRoom(freshMatch());
+	it("re-lays the caller's fleet during setup and shows the new layout privately", async () => {
+		const room = makeRoom(setupMatch());
 		const before = JSON.stringify((room.secret as StoredBattleship).players[0].ships);
+		const interaction = makeInteraction(A);
 
-		await handleReroll(makeInteraction(A), room);
+		await handleReroll(interaction, room);
 
 		const [, , path, value] = storeMock.setSecretField.mock.calls[0];
 		// ⚠️ THE PATH IS THE ASSERTION. A whole-secret write here reverted whatever the opponent
@@ -230,22 +248,94 @@ describe("reroll", () => {
 		expect(path).toBe("players.0");
 		expect(JSON.stringify((value as StoredBattleship["players"][number]).ships)).not.toBe(before);
 		expect(storeMock.update).not.toHaveBeenCalled();
+		// The answer is the private view of the fleet just laid, never a channel message.
+		expect(interaction.showModal).toHaveBeenCalledOnce();
+		expect(interaction.reply).not.toHaveBeenCalled();
+	});
+
+	it("refuses a captain who is already ready, and writes nothing", async () => {
+		const room = makeRoom({ ...setupMatch(), ready: [true, false] });
+		const interaction = makeInteraction(A);
+
+		await handleReroll(interaction, room);
+
+		expect(storeMock.setSecretField).not.toHaveBeenCalled();
+		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
+		expect(reply.content).toBe(gameRoomsCopy.battleship.alreadyReady);
 	});
 
 	// Re-laying mid-match would move ships out from under hits the opponent has
-	// already earned.
-	it("refuses once any shot has landed", async () => {
+	// already earned. A board posted before setup existed keeps its old words.
+	it("refuses once the battle is under way", async () => {
 		const match = freshMatch();
 		const state = deserializeMatch(match);
 		state.players[1].shots.add("0,0");
-		const room = makeRoom(serializeMatch(state));
+		const room = makeRoom({ ...serializeMatch(state), ready: undefined });
 
 		const interaction = makeInteraction(A);
 		await handleReroll(interaction, room);
 
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.setSecretField).not.toHaveBeenCalled();
 		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
 		expect(reply.content).toMatch(/first shot/i);
+	});
+});
+
+describe("ready (post-launch plan item 17)", () => {
+	it("locks only this captain's slot, and does not start the battle on the first Ready", async () => {
+		const room = makeRoom(setupMatch());
+		storeMock.setSecretField.mockResolvedValue({ secret: { ...setupMatch(), ready: [true, false] } });
+		const interaction = makeInteraction(A);
+
+		await handleReady(interaction, room);
+
+		expect(storeMock.setSecretField).toHaveBeenCalledWith("guild-1", "room-1", "ready.0", true);
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+	});
+
+	it("starts the battle on the second Ready, through a compare and swap on setup", async () => {
+		const room = makeRoom({ ...setupMatch(), ready: [true, false] });
+		const both = { ...setupMatch(), ready: [true, true] };
+		storeMock.setSecretField.mockResolvedValue({ secret: both });
+		storeMock.updateSecretIf.mockResolvedValue({ secret: { ...both, status: "playing" } });
+
+		await handleReady(makeInteraction(B), room);
+
+		const [, , expected, saved] = storeMock.updateSecretIf.mock.calls[0] as [string, string, Record<string, unknown>, StoredBattleship];
+		expect(expected).toEqual({ "secret.status": "setup" });
+		expect(saved.status).toBe("playing");
+		const lines = (roomTrail.postMove as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[2] as { text: string }).text);
+		expect(lines).toContain(gameRoomsCopy.battleship.battleBegins(A));
+	});
+
+	it("does not announce a battle another press already started", async () => {
+		const room = makeRoom({ ...setupMatch(), ready: [true, false] });
+		storeMock.setSecretField.mockResolvedValue({ secret: { ...setupMatch(), ready: [true, true] } });
+		storeMock.updateSecretIf.mockResolvedValue(null);
+
+		await handleReady(makeInteraction(B), room);
+
+		const lines = (roomTrail.postMove as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[2] as { text: string }).text);
+		expect(lines).not.toContain(gameRoomsCopy.battleship.battleBegins(A));
+	});
+
+	it("refuses a second Ready from the same captain", async () => {
+		const interaction = makeInteraction(A);
+		await handleReady(interaction, makeRoom({ ...setupMatch(), ready: [true, false] }));
+
+		expect(storeMock.setSecretField).not.toHaveBeenCalled();
+		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
+		expect(reply.content).toBe(gameRoomsCopy.battleship.alreadyReady);
+	});
+
+	it("refuses a shot while the fleets are being laid", async () => {
+		const interaction = makeInteraction(A);
+		await handleFire(interaction, makeRoom(aimedAt(setupMatch(), A, 0, 0)));
+
+		expect(storeMock.update).not.toHaveBeenCalled();
+		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
+		expect(reply.content).toBe(gameRoomsCopy.battleship.setupFirst);
 	});
 });
 

@@ -25,6 +25,7 @@ import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
 import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
 import { buildArcadeHostRow, buildHangmanCategoryStartRow } from "@features/games/arcadeHost.js";
+import { buildPartyGamesRow } from "@features/game-rooms/partyGames.js";
 import { buildSoloLuckRow } from "@features/games/soloLuck.js";
 import { boardStartRows } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { buildGameRequestRow } from "@features/game-rooms/gameRequestHandlers.js";
@@ -293,6 +294,7 @@ export class GuildSetupManager {
 			arcadeRulesChannelId: ids.arcadeRulesChannelId,
 			arcadeChallengesChannelId: ids.arcadeChallengesChannelId,
 			arcadeGamesChannelId: ids.arcadeGamesChannelId,
+			partyGamesChannelId: ids.partyGamesChannelId,
 			// ── the two voice rooms (2026-10 item 235) ──
 			meetingVoiceChannelId: ids.meetingVoiceChannelId,
 			arcadeVoiceChannelId: ids.arcadeVoiceChannelId,
@@ -695,6 +697,8 @@ export class GuildSetupManager {
 		"arcadeChallengesChannelId",
 		// 🕹️games, the third arcade channel (2026-10 item 245 Phase 4a).
 		"arcadeGamesChannelId",
+		// 🎉party-games, the fourth (post-launch plan item 3).
+		"partyGamesChannelId",
 		// ── the two VOICE rooms, one under each category (2026-10 item 235) ──
 		// They widen the resolveIntroEmbed switch like every other field; each
 		// carries the small /dero card in its text chat (2026-10 item 245 Phase 4b).
@@ -789,6 +793,13 @@ export class GuildSetupManager {
 		// false and userRemovedChannels both stop it, like every other spec. Public,
 		// like its siblings: members press its buttons, the bot writes the messages.
 		{ configField: "arcadeGamesChannelId", displayName: channels.arcadeGames, kind: "public", categoryField: "gamesCategoryId" },
+		// 🎉party-games (post-launch plan item 3). ⚠️ THIS LINE ARMS THE BOOT REPAIR SWEEP
+		// for every existing guild, like 🕹️games before it: a legacy row loads
+		// partyGamesChannelId as null and the next boot builds it under 🎮 ARCADE GAMES,
+		// once. "public" is the posture the plan asks for: members read and press its
+		// buttons, the owner and the admin role may post, Dero writes the rounds.
+		// arcadeSwitch reads the arcade's specs by category, so arcade off takes it too.
+		{ configField: "partyGamesChannelId", displayName: channels.partyGames, kind: "public", categoryField: "gamesCategoryId" },
 
 		// ── the two VOICE rooms (2026-10 item 235) ──
 		// ⚠️ THESE ARM THE BOOT REPAIR SWEEP for every existing guild, by the owner's
@@ -870,6 +881,8 @@ export class GuildSetupManager {
 			// by maintainGamesBoard, because it is not this channel's intro.
 			case "arcadeGamesChannelId":
 				return ChannelContent.arcadeGamesIntro(guildConfig);
+			case "partyGamesChannelId":
+				return ChannelContent.partyGamesIntro(guildConfig);
 			// ── the voice rooms ──
 			// One small card in each room's built in text chat, carrying /dero's
 			// Join, Leave and Status (2026-10 item 245 Phase 4b, the owner's decision).
@@ -942,6 +955,11 @@ export class GuildSetupManager {
 				return [buildGameRequestRow(getPluginCopy(guildConfig).channelContent.arcadeRules.voteButtonLabel)];
 			case "arcadeGamesChannelId":
 				return GuildSetupManager.gamesIntroRows(guildConfig);
+			case "partyGamesChannelId":
+				// The admin host and schedule buttons (post-launch plan item 3). Public on the
+				// card because a message cannot show a button to admins only; partyGames
+				// refuses anyone else on the press.
+				return [buildPartyGamesRow()];
 			case "rulesChannelId":
 				// Edit rules, the owner and admins' way to replace the rules post's text
 				// (2026-10 item 247 Phase 2). It rides the public post because a message
@@ -2243,6 +2261,7 @@ export class GuildSetupManager {
 			arcadeRulesChannel,
 			arcadeChallengesChannel,
 			arcadeGamesChannel,
+			partyGamesChannel,
 			meetingVoiceChannel,
 			arcadeVoiceChannel,
 		] = await Promise.all([
@@ -2349,6 +2368,13 @@ export class GuildSetupManager {
 				parent: gamesCategory.id,
 				permissionOverwrites: publicOverwrites,
 			}),
+			// 🎉party-games (post-launch plan item 3), the same parent and posture.
+			guild.channels.create({
+				name: channels.partyGames,
+				type: ChannelType.GuildText,
+				parent: gamesCategory.id,
+				permissionOverwrites: publicOverwrites,
+			}),
 			// ── the two voice rooms, one per category (2026-10 item 235) ──
 			// Same parent rule as above: the meeting room is homebase, the lounge is
 			// arcade. Both take the voice shape, the posture buildSingleChannel also
@@ -2385,6 +2411,7 @@ export class GuildSetupManager {
 				arcadeRulesChannelId: arcadeRulesChannel.id,
 				arcadeChallengesChannelId: arcadeChallengesChannel.id,
 				arcadeGamesChannelId: arcadeGamesChannel.id,
+				partyGamesChannelId: partyGamesChannel.id,
 				meetingVoiceChannelId: meetingVoiceChannel.id,
 				arcadeVoiceChannelId: arcadeVoiceChannel.id,
 			},
@@ -2403,6 +2430,7 @@ export class GuildSetupManager {
 				arcadeRulesChannel,
 				arcadeChallengesChannel,
 				arcadeGamesChannel,
+				partyGamesChannel,
 				meetingVoiceChannel,
 				arcadeVoiceChannel,
 			},
@@ -2461,6 +2489,8 @@ export class GuildSetupManager {
 			// 🕹️games' intro, and its second message, the Challenge Board.
 			arcadeGamesChannelId: string;
 			arcadeGamesBoardId: string;
+			// 🎉party-games' intro, above its admin buttons (post-launch plan item 3).
+			partyGamesChannelId: string;
 			// Second pinned message in #command-center: the standalone invite card.
 			inviteCardId: string;
 			// The two voice rooms' cards, one anchor per room like every channel's.
@@ -2483,6 +2513,7 @@ export class GuildSetupManager {
 			arcadeRulesChannel,
 			arcadeChallengesChannel,
 			arcadeGamesChannel,
+			partyGamesChannel,
 			meetingVoiceChannel,
 			arcadeVoiceChannel,
 		} = discordChannels;
@@ -2522,6 +2553,8 @@ export class GuildSetupManager {
 			arcadeChallengesMsg,
 			// 🕹️games' two messages, the intro and the Challenge Board beneath it.
 			arcadeGamesMsgs,
+			// 🎉party-games' intro with the admin host and schedule buttons.
+			partyGamesMsg,
 			// Second #command-center message: the standalone invite card (pitch +
 			// Dero gif + Summon button), pinned separately from the command guide.
 			inviteCardMsg,
@@ -2570,6 +2603,7 @@ export class GuildSetupManager {
 			arcadeGamesChannel
 				.send({ embeds: [ChannelContent.arcadeGamesIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeGamesChannelId") ?? [] })
 				.then(async (intro) => ({ intro, board: await arcadeGamesChannel.send(GuildSetupManager.gamesBoardContent()) })),
+			partyGamesChannel.send({ embeds: [ChannelContent.partyGamesIntro()], components: GuildSetupManager.resolveIntroComponents("partyGamesChannelId") ?? [] }),
 			// Standalone invite card in #command-center: short pitch + Dero gif + the
 			// Summon button. Its own message so the wide button is not crammed into
 			// the command guide's row. refreshIntroEmbeds maintains it on boot.
@@ -2616,6 +2650,7 @@ export class GuildSetupManager {
 				arcadeChallengesChannelId: arcadeChallengesMsg.id,
 				arcadeGamesChannelId: arcadeGamesMsgs.intro.id,
 				arcadeGamesBoardId: arcadeGamesMsgs.board.id,
+				partyGamesChannelId: partyGamesMsg.id,
 				inviteCardId: inviteCardMsg.id,
 				meetingVoiceChannelId: meetingVoiceMsg.id,
 				arcadeVoiceChannelId: arcadeVoiceMsg.id,

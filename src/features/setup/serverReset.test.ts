@@ -18,6 +18,7 @@ const m = vi.hoisted(() => {
 		tallies: deleter(),
 		rooms: deleter(),
 		requests: deleter(),
+		partyGames: deleter(),
 		polls: deleter(),
 		overrides: deleter(),
 		pairing: deleter(),
@@ -38,6 +39,7 @@ vi.mock("@db/stores/luckStatStore.js", () => ({ luckStatStore: { deleteGuild: m.
 vi.mock("@db/stores/gameResultCountStore.js", () => ({ gameResultCountStore: { deleteGuild: m.tallies } }));
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { deleteGuild: m.rooms } }));
 vi.mock("@db/stores/gameRequestStore.js", () => ({ gameRequestStore: { deleteGuild: m.requests } }));
+vi.mock("@db/stores/partyGameStore.js", () => ({ partyGameStore: { deleteGuild: m.partyGames } }));
 vi.mock("@db/stores/pollResultStore.js", () => ({ pollResultStore: { deleteGuild: m.polls } }));
 vi.mock("@db/stores/eventOverrideStore.js", () => ({ eventOverrideStore: { deleteGuild: m.overrides } }));
 vi.mock("@db/stores/pendingPairingStore.js", () => ({ pendingPairingStore: { deleteUnclaimedForGuild: m.pairing } }));
@@ -75,7 +77,7 @@ describe("wipeServerData", () => {
 		const result = await wipeServerData("g1");
 
 		expect(result).toEqual({ failed: [] });
-		for (const fn of [m.memberLevels, m.xpPeriods, m.xpDaily, m.luck, m.tallies, m.rooms, m.requests, m.polls, m.overrides, m.pairing]) {
+		for (const fn of [m.memberLevels, m.xpPeriods, m.xpDaily, m.luck, m.tallies, m.rooms, m.requests, m.partyGames, m.polls, m.overrides, m.pairing]) {
 			expect(fn).toHaveBeenCalledWith("g1");
 		}
 		expect(m.attendance).toHaveBeenCalledWith(["evt-1", "evt-2"]);

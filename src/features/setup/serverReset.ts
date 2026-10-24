@@ -7,6 +7,7 @@ import { luckStatStore } from "@db/stores/luckStatStore.js";
 import { gameResultCountStore } from "@db/stores/gameResultCountStore.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { gameRequestStore } from "@db/stores/gameRequestStore.js";
+import { partyGameStore } from "@db/stores/partyGameStore.js";
 import { pollResultStore } from "@db/stores/pollResultStore.js";
 import { eventOverrideStore } from "@db/stores/eventOverrideStore.js";
 import { pendingPairingStore } from "@db/stores/pendingPairingStore.js";
@@ -95,6 +96,7 @@ const WIPE_STEPS: readonly WipeStep[] = [
 	{ label: "game tallies", run: (guildId) => gameResultCountStore.deleteGuild(guildId) },
 	{ label: "game rooms", run: (guildId) => gameRoomStore.deleteGuild(guildId) },
 	{ label: "game requests", run: (guildId) => gameRequestStore.deleteGuild(guildId) },
+	{ label: "party games", run: (guildId) => partyGameStore.deleteGuild(guildId) },
 	{ label: "poll votes", run: (guildId) => pollResultStore.deleteGuild(guildId) },
 	{ label: "event overrides", run: (guildId) => eventOverrideStore.deleteGuild(guildId) },
 	{ label: "events and attendance", run: retireEventsAndAttendance },

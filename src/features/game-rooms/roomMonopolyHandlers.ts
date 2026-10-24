@@ -29,6 +29,7 @@ import { withRenderFallback } from "@features/renderer/index.js";
 import { monopolyFinishingOrder, recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
+import { monopolyOutcome, type FinishCause, type OutcomeBucket } from "./matchOutcome.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { auctionClosesAt, monopolyBoardEmbedWith, monopolyControlsRow, monopolyInventoryReply } from "./roomMonopoly.js";
 import { roomDrawingKey, withDrawingPause } from "./drawingPause.js";
@@ -152,7 +153,9 @@ export async function applyMonopolyOutcome(
 	client: Client,
 	room: IGameRoom,
 	state: MonopolyState,
-	trail: { actorId: string; kind: RoomMoveKind; lines: string[] }
+	trail: { actorId: string; kind: RoomMoveKind; lines: string[] },
+	// "timeout" when the idle sweep's forfeit is what ended it (post-launch plan item 21).
+	cause: FinishCause = "played"
 ): Promise<void> {
 	await redrawMonopolyBoard(client, room, state);
 	for (const text of trail.lines) {
@@ -161,7 +164,23 @@ export async function applyMonopolyOutcome(
 	// Voice only, for a room whose host turned the referee on. Fire and forget, so a
 	// slow render never holds up the finish below or the next press.
 	announceReferee({ client, room, state, lines: trail.lines });
-	if (state.phase === "finished") await finishMonopolyMatch(client, room, state);
+	if (state.phase === "finished") await finishMonopolyMatch(client, room, state, cause);
+}
+
+// How the match was won, for the closed challenge card (post-launch plan item 21), from
+// the facts the engine kept. A match stored before the facts existed reads as no
+// auctions, no forfeits and a winner never short of cash.
+function monopolyEndingBucket(state: MonopolyState, cause: FinishCause): OutcomeBucket {
+	const stats = state.stats;
+	const winnerLowestShare = state.winnerId ? stats?.lowestCashShare[state.winnerId] : undefined;
+	return monopolyOutcome({
+		cause,
+		turnsTaken: stats?.turnsTaken ?? 0,
+		seatCount: state.seats.length,
+		auctionsOpened: stats?.auctionsOpened ?? 0,
+		forfeits: stats?.forfeits ?? 0,
+		winnerLowestShare: winnerLowestShare ?? 1,
+	});
 }
 
 // The match is over: close the room, then record one result per seat.
@@ -176,14 +195,18 @@ export async function applyMonopolyOutcome(
 // (2026-10 item 243 Phase 3) needs them and finish posts the result. A press that
 // loses the claim spends one member fetch for nothing, which is cheaper than a
 // second result card. No card means the result posts without art, as it did.
-async function finishMonopolyMatch(client: Client, room: IGameRoom, state: MonopolyState): Promise<void> {
+async function finishMonopolyMatch(client: Client, room: IGameRoom, state: MonopolyState, cause: FinishCause): Promise<void> {
 	const participants = await resolveParticipants(client, room.guildId, state.seats.map((seat) => seat.userId));
 	const names = new Map(participants.flatMap(({ userId, username }) => (username ? [[userId, username] as const] : [])));
 	const winnerCard = await withRenderFallback(
 		() => renderWinnerCard(monopolyWinnerView(state, names)),
 		() => null
 	);
-	const claimed = await roomLifecycle.finish(client, room, { winnerId: state.winnerId, ...(winnerCard ? { art: winnerCard } : {}) });
+	const claimed = await roomLifecycle.finish(client, room, {
+		winnerId: state.winnerId,
+		...(winnerCard ? { art: winnerCard } : {}),
+		outcome: { bucket: monopolyEndingBucket(state, cause) },
+	});
 	if (!claimed) return;
 
 	// The winner first, then the seats in reverse elimination order; a seat forfeited
