@@ -52,11 +52,15 @@ const mocks = vi.hoisted(() => ({
 	has: vi.fn(),
 	log: vi.fn(),
 	registerButton: vi.fn(),
+	registerModal: vi.fn(),
 }));
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update } }));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { has: mocks.has, log: mocks.log } }));
-vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton }));
+vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerModal: mocks.registerModal }));
+// Self destruct now reaches its teardown through the CONFIRM modal and then wipes stored
+// records (post-launch plan item 10); R6 is about channels, so the wipe is a no-op here.
+vi.mock("@features/setup/serverReset.js", () => ({ resetConfigsToDefault: vi.fn(), wipeServerData: vi.fn(async () => ({ failed: [] })) }));
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
@@ -526,16 +530,17 @@ describe("R6: an adopted channel survives /self-destruct", () => {
 		const fetchable = new Map<string, unknown>([...channels, ["cat-home", home], ["cat-games", games]]);
 		const guild = { id: nextGuildId("r6"), ownerId: OWNER, channels: { fetch: vi.fn(async (id: string) => fetchable.get(id) ?? null) } };
 		const interaction = {
-			customId: "self_destruct:confirm",
+			customId: "self_destruct:modal",
 			user: { id: OWNER },
 			guild,
 			client: {},
-			update: vi.fn(async () => undefined),
+			fields: { getTextInputValue: () => "CONFIRM" },
+			reply: vi.fn(async () => undefined),
 			followUp: vi.fn(async () => undefined),
-		} as unknown as ButtonInteraction;
+		} as unknown as ModalSubmitInteraction;
 
 		registerSelfDestructHandlers();
-		const handler = mocks.registerButton.mock.calls.at(-1)![1] as (press: ButtonInteraction) => Promise<void>;
+		const handler = mocks.registerModal.mock.calls.at(-1)![1] as (submit: ModalSubmitInteraction) => Promise<void>;
 		await handler(interaction);
 
 		expect(ownRules.delete).not.toHaveBeenCalled();

@@ -7,6 +7,7 @@ import {
 	ChannelType,
 	type Client,
 	type EmbedBuilder,
+	type Guild,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { deroVoiceConfigStore, type DeroVoiceListField } from "@db/stores/deroVoiceConfigStore.js";
@@ -26,6 +27,9 @@ import { scheduleNetworkBoardRefresh } from "@features/game-rooms/networkBoard.j
 import { seatOutBlockedServers } from "@features/game-rooms/satelliteSeats.js";
 import { CHALLENGE_REACHES, type ChallengeReach } from "@features/game-rooms/roomTypes.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { adminLog, type AdminLogKind } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
+import { turnArcadeOff, turnArcadeOn } from "@features/setup/arcadeSwitch.js";
 
 // ── /dero-config ──────────────────────────────────────────────────────
 // What:  every per guild voice setting in one admin command: the kill switch,
@@ -54,12 +58,22 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 //        /setup has no admin role for the runtime gate to check); ③ dispatch on
 //        the subcommand group or subcommand; ④ one ephemeral embed reply.
 //
+// Every write records one 🗒️admin-log line through the Audit callback run() builds
+// (post-launch plan item 11); an "already X" reply wrote nothing and logs nothing.
+// `arcade off` and `arcade on` (post-launch plan item 14) are the one pair here that
+// builds or deletes channels, through features/setup/arcadeSwitch.ts.
+//
 // ⚠️ DISABLE NEVER DELETES. It flips `enabled` and nothing else, so enable
 // restores the guild exactly as it was, lists and cap included. It
 // (and a cap of 0) DOES end a live voice call at once: that is a session, not a
 // setting, and a kill switch that left Dero talking would not be one.
 
 const c = voiceCopy.config;
+const audited = setupCopy.adminLog;
+const arcadeCopy = setupCopy.arcade;
+
+/** Records one admin log line for a write that just landed. */
+type Audit = (kind: AdminLogKind, subject: string, detail: string) => void;
 const VOICE_ID_TAIL_LENGTH = 4;
 const SERVER_OPTION = "server";
 
@@ -171,6 +185,9 @@ export const data = new SlashCommandBuilder()
 					.setDescription(ratingsCopy.config.unblockServer)
 					.addStringOption((option) => option.setName(SERVER_OPTION).setDescription(ratingsCopy.config.serverIdOption).setRequired(true))
 			)
+			// The arcade's on and off switch (post-launch plan item 14).
+			.addSubcommand((sub) => sub.setName("off").setDescription(arcadeCopy.offDescription))
+			.addSubcommand((sub) => sub.setName("on").setDescription(arcadeCopy.onDescription))
 	);
 
 // ── handlers, one per subcommand ──
@@ -196,9 +213,10 @@ async function status(guildId: string, current: IDeroVoiceConfig | null): Promis
 	);
 }
 
-async function enable(guildId: string, current: IDeroVoiceConfig | null): Promise<EmbedBuilder> {
+async function enable(guildId: string, current: IDeroVoiceConfig | null, audit: Audit): Promise<EmbedBuilder> {
 	if (current?.enabled) return info(c.alreadyEnabled);
 	await deroVoiceConfigStore.upsert(guildId, { enabled: true });
+	audit("config.change", audited.subjects.voice, audited.on);
 	return info(c.enabledBody, c.enabledTitle);
 }
 
@@ -215,27 +233,30 @@ function endCallForKillSwitch(guildId: string): string | null {
 
 const withLine = (body: string, line: string | null): string => (line ? `${body}\n\n${line}` : body);
 
-async function disable(guildId: string, current: IDeroVoiceConfig | null): Promise<EmbedBuilder> {
+async function disable(guildId: string, current: IDeroVoiceConfig | null, audit: Audit): Promise<EmbedBuilder> {
 	// Even an "already off" disable ends a call, so the command always means "stop".
 	const leftCall = endCallForKillSwitch(guildId);
 	if (!current?.enabled) return info(withLine(c.alreadyDisabled, leftCall));
 	await deroVoiceConfigStore.upsert(guildId, { enabled: false });
+	audit("config.change", audited.subjects.voice, audited.off);
 	return info(withLine(c.disabledBody, leftCall), c.disabledTitle);
 }
 
-async function setListen(guildId: string, current: IDeroVoiceConfig | null, on: boolean): Promise<EmbedBuilder> {
+async function setListen(guildId: string, current: IDeroVoiceConfig | null, on: boolean, audit: Audit): Promise<EmbedBuilder> {
 	if ((current?.listenEnabled ?? true) === on) return info(c.listenUnchanged(on));
 	await deroVoiceConfigStore.upsert(guildId, { listenEnabled: on });
+	audit("config.change", audited.subjects.listen, on ? audited.on : audited.off);
 	return info(c.listenSet(on));
 }
 
-async function setCap(guildId: string, current: IDeroVoiceConfig | null, dollars: number): Promise<EmbedBuilder> {
+async function setCap(guildId: string, current: IDeroVoiceConfig | null, dollars: number, audit: Audit): Promise<EmbedBuilder> {
 	// The option's bounds are a hint Discord enforces in its client; this clamp is the gate.
 	const usd = Math.min(Math.max(Math.trunc(dollars), 0), BOT_CONSTANTS.DERO_VOICE_MAX_CAP_USD);
 	// A cap of 0 is the second kill switch, so it ends a live call the same way.
 	const leftCall = usd === 0 ? endCallForKillSwitch(guildId) : null;
 	if ((current?.monthlyCapUsd ?? BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD) === usd) return info(withLine(c.capUnchanged(usd), leftCall));
 	await deroVoiceConfigStore.upsert(guildId, { monthlyCapUsd: usd });
+	audit("voice.cap", audited.subjects.cap, audited.capSet(usd));
 	return info(withLine(c.capSet(usd), leftCall));
 }
 
@@ -244,7 +265,8 @@ async function editList(
 	current: IDeroVoiceConfig | null,
 	kind: ListKind,
 	action: string,
-	id: string
+	id: string,
+	audit: Audit
 ): Promise<EmbedBuilder> {
 	const list = LISTS[kind];
 	const mention = list.mention(id);
@@ -252,29 +274,33 @@ async function editList(
 	if (action === "add") {
 		if (present) return info(c.listAlreadyThere(mention), list.title);
 		await deroVoiceConfigStore.addToList(guildId, list.field, id);
+		audit("voice.allowlist", list.title, audited.added(mention));
 		return info(c.listAdded(mention), list.title);
 	}
 	if (!present) return info(c.listNotThere(mention), list.title);
 	await deroVoiceConfigStore.removeFromList(guildId, list.field, id);
+	audit("voice.allowlist", list.title, audited.removed(mention));
 	return info(c.listRemoved(mention), list.title);
 }
 
 // Same idempotent shape as the voice switches: an unchanged value says so and writes nothing.
 // A row that never stored the field reads as ON, the schema's default.
-async function setMonthlyPost(guildId: string, storedValue: boolean | null | undefined, on: boolean): Promise<EmbedBuilder> {
+async function setMonthlyPost(guildId: string, storedValue: boolean | null | undefined, on: boolean, audit: Audit): Promise<EmbedBuilder> {
 	const title = ratingsCopy.config.title;
 	if ((storedValue ?? true) === on) return info(ratingsCopy.config.monthlyPostUnchanged(on), title);
 	await guildConfigStore.update(guildId, { arcadeMonthlyPost: on });
+	audit("config.change", audited.subjects.arcadeMonthlyPost, on ? audited.on : audited.off);
 	return info(ratingsCopy.config.monthlyPostSet(on), title);
 }
 
 // The same idempotent shape for the challenge reach (2026-10 item 244 Phase 4). A row
 // that never stored it reads as "server", the schema's default and today's behavior.
 // Rooms already playing are untouched; the next open, choice or rematch reads the new value.
-async function setChallengeReach(guildId: string, storedValue: unknown, reach: ChallengeReach): Promise<EmbedBuilder> {
+async function setChallengeReach(guildId: string, storedValue: unknown, reach: ChallengeReach, audit: Audit): Promise<EmbedBuilder> {
 	const title = ratingsCopy.config.title;
 	if (asChallengeReach(storedValue) === reach) return info(ratingsCopy.config.reachUnchanged(reach), title);
 	await guildConfigStore.update(guildId, { challengeReach: reach });
+	audit("config.change", audited.subjects.arcadeReach, audited.set(ratingsCopy.config.reachName(reach)));
 	// The server joined or left the network, or neither: the board refresh decides, and a
 	// server that left loses its board message there (2026-10 item 244 Phase 5b).
 	scheduleNetworkBoardRefresh();
@@ -284,9 +310,9 @@ async function setChallengeReach(guildId: string, storedValue: unknown, reach: C
 // The submitted mode is checked rather than trusted: Discord offers only the fixed
 // choices, but an interaction's values are user input, and an unknown one is refused
 // rather than read as a default that would quietly widen the reach.
-async function setReachFromOption(guildId: string, storedValue: unknown, mode: string): Promise<EmbedBuilder> {
+async function setReachFromOption(guildId: string, storedValue: unknown, mode: string, audit: Audit): Promise<EmbedBuilder> {
 	if (!isChallengeReach(mode)) return errorEmbed(ratingsCopy.config.reachUnknown);
-	return setChallengeReach(guildId, storedValue, mode);
+	return setChallengeReach(guildId, storedValue, mode, audit);
 }
 
 // The network block list (2026-10 item 244 Phase 5b), the same idempotent shape: an
@@ -301,7 +327,8 @@ async function editNetworkBlock(
 	guildId: string,
 	storedList: readonly string[] | null | undefined,
 	sub: "block-server" | "unblock-server",
-	rawId: string
+	rawId: string,
+	audit: Audit
 ): Promise<EmbedBuilder> {
 	const title = ratingsCopy.config.blockTitle;
 	const serverId = rawId.trim();
@@ -312,6 +339,7 @@ async function editNetworkBlock(
 	if (sub === "block-server") {
 		if (present) return info(ratingsCopy.config.alreadyBlocked(serverId), title);
 		await guildConfigStore.addBlockedNetworkGuild(guildId, serverId);
+		audit("config.change", audited.subjects.networkBlock, audited.blocked(serverId));
 		scheduleNetworkBoardRefresh();
 		void seatOutBlockedServers(client, guildId, serverId).catch((error) =>
 			console.error(`[dero-config] seating out the seats between ${guildId} and blocked server ${serverId} failed`, error)
@@ -320,6 +348,7 @@ async function editNetworkBlock(
 	}
 	if (!present) return info(ratingsCopy.config.notBlocked(serverId), title);
 	await guildConfigStore.removeBlockedNetworkGuild(guildId, serverId);
+	audit("config.change", audited.subjects.networkBlock, audited.unblocked(serverId));
 	scheduleNetworkBoardRefresh();
 	return info(ratingsCopy.config.unblocked(serverId), title);
 }
@@ -337,13 +366,38 @@ async function arcadeAnswer(
 	guildId: string,
 	settings: ArcadeSettings,
 	sub: string,
-	options: CommandOptionReader
+	options: CommandOptionReader,
+	audit: Audit
 ): Promise<EmbedBuilder> {
-	if (sub === "reach") return setReachFromOption(guildId, settings.challengeReach, options.getString("mode", true));
+	if (sub === "reach") return setReachFromOption(guildId, settings.challengeReach, options.getString("mode", true), audit);
 	if (sub === "block-server" || sub === "unblock-server") {
-		return editNetworkBlock(client, guildId, settings.blockedNetworkGuildIds, sub, options.getString(SERVER_OPTION, true));
+		return editNetworkBlock(client, guildId, settings.blockedNetworkGuildIds, sub, options.getString(SERVER_OPTION, true), audit);
 	}
-	return setMonthlyPost(guildId, settings.arcadeMonthlyPost, options.getBoolean("enabled", true));
+	return setMonthlyPost(guildId, settings.arcadeMonthlyPost, options.getBoolean("enabled", true), audit);
+}
+
+// ── arcade off and on (post-launch plan item 14) ──
+// Deferred, because building or deleting a category and its channels can outrun
+// Discord's three second reply window. Each outcome is a reply, and only a real
+// change is logged.
+async function switchArcade(interaction: RepliableInteraction, guild: Guild, sub: "off" | "on", audit: Audit): Promise<void> {
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	try {
+		if (sub === "off") {
+			const outcome = await turnArcadeOff(guild);
+			if (outcome === "off") audit("config.change", audited.subjects.arcade, arcadeCopy.auditOff);
+			const embed = outcome === "off" ? info(arcadeCopy.offBody, arcadeCopy.offTitle) : info(arcadeCopy.alreadyOff, arcadeCopy.offTitle);
+			await interaction.editReply({ embeds: [embed] });
+			return;
+		}
+		const outcome = await turnArcadeOn(interaction.client, guild);
+		if (outcome !== "already-on") audit("config.change", audited.subjects.arcade, arcadeCopy.auditOn);
+		const body = { on: arcadeCopy.onBody, pending: arcadeCopy.onPending, "already-on": arcadeCopy.alreadyOn }[outcome];
+		await interaction.editReply({ embeds: [info(body, arcadeCopy.onTitle)] });
+	} catch (error) {
+		console.error(`[dero-config] arcade ${sub} failed guild=${guild.id}`, error);
+		await interaction.editReply({ embeds: [errorEmbed(sub === "off" ? arcadeCopy.offFailed : arcadeCopy.onFailed)] }).catch(() => undefined);
+	}
 }
 
 function isListKind(group: string | null): group is ListKind {
@@ -366,12 +420,21 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 		return;
 	}
 
+	// Every write below records one admin log line, by the member who ran the command.
+	const audit: Audit = (kind, subject, detail) =>
+		adminLog.emit({ guild: { id: guildId, client: interaction.client }, kind, actor: { userId: interaction.user.id }, payload: { subject, detail } });
+
 	try {
 		// ③ dispatch. The arcade group needs only the GuildConfig the setup gate already read.
 		const group = options.getSubcommandGroup(false);
 		const sub = options.getSubcommand(true);
+		if (group === "arcade" && (sub === "off" || sub === "on")) {
+			const guild = interaction.guild ?? (await interaction.client.guilds.fetch(guildId));
+			await switchArcade(interaction, guild, sub, audit);
+			return;
+		}
 		if (group === "arcade") {
-			const embed = await arcadeAnswer(interaction.client, guildId, guildConfig, sub, options);
+			const embed = await arcadeAnswer(interaction.client, guildId, guildConfig, sub, options, audit);
 			await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 			return;
 		}
@@ -383,12 +446,12 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 				group === "role"
 					? options.getRole(LISTS.role.option, true).id
 					: options.getChannel(LISTS[group].option, true).id;
-			embed = await editList(guildId, current, group, sub, id);
+			embed = await editList(guildId, current, group, sub, id, audit);
 		}
-		else if (sub === "enable") embed = await enable(guildId, current);
-		else if (sub === "disable") embed = await disable(guildId, current);
-		else if (sub === "listen") embed = await setListen(guildId, current, options.getBoolean("enabled", true));
-		else if (sub === "cap") embed = await setCap(guildId, current, options.getInteger("dollars", true));
+		else if (sub === "enable") embed = await enable(guildId, current, audit);
+		else if (sub === "disable") embed = await disable(guildId, current, audit);
+		else if (sub === "listen") embed = await setListen(guildId, current, options.getBoolean("enabled", true), audit);
+		else if (sub === "cap") embed = await setCap(guildId, current, options.getInteger("dollars", true), audit);
 		else embed = await status(guildId, current);
 
 		// ④

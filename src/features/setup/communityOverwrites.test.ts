@@ -75,6 +75,13 @@ const TODAY = {
 	public: [{ id: EVERYONE_ID, allow: [ViewChannel], deny: [SendMessages] }, BOT, { id: OWNER_ID, allow: [ViewChannel, SendMessages] }],
 	intro: [{ id: EVERYONE_ID, allow: [ViewChannel, SendMessages] }, BOT, { id: OWNER_ID, allow: [ViewChannel, SendMessages] }],
 	admin: [{ id: EVERYONE_ID, deny: [ViewChannel] }, BOT, { id: OWNER_ID, allow: [ViewChannel, SendMessages, ReadMessageHistory] }],
+	// 🗒️admin-log (post-launch plan item 11): the one bot write only channel. Not a
+	// pre-Community shape, it is new, but it reads the same on both branches.
+	adminLog: [
+		{ id: EVERYONE_ID, deny: [ViewChannel, SendMessages] },
+		BOT,
+		{ id: OWNER_ID, allow: [ViewChannel, ReadMessageHistory], deny: [SendMessages] },
+	],
 	voice: [
 		{ id: EVERYONE_ID, allow: [ViewChannel], deny: [Connect, Speak] },
 		{ id: BOT_ID, allow: [...BOT.allow, Connect, Speak] },
@@ -85,6 +92,7 @@ const TODAY = {
 	voiceAdminGrant: { id: ADMIN_ROLE_ID, allow: [...JOIN_AND_SPEAK, SendMessages] },
 	publicAdminGrant: { id: ADMIN_ROLE_ID, allow: [ViewChannel, SendMessages] },
 	adminAdminGrant: { id: ADMIN_ROLE_ID, allow: [ViewChannel, SendMessages, ReadMessageHistory] },
+	adminLogAdminGrant: { id: ADMIN_ROLE_ID, allow: [ViewChannel, ReadMessageHistory], deny: [SendMessages] },
 } as const;
 
 // A created channel of the real class for its type, so every instanceof check in
@@ -140,6 +148,7 @@ function todayCreateShape(field: string): readonly IOverwrite[] {
 	if (field === "introChannelId") return TODAY.intro;
 	const spec = GuildSetupManager.CHANNEL_SPECS.find((entry) => entry.configField === field)!;
 	if (spec.kind === "admin") return TODAY.admin;
+	if (spec.kind === "adminLog") return TODAY.adminLog;
 	if (spec.kind === "voice") return TODAY.voice;
 	return TODAY.public;
 }
@@ -205,6 +214,7 @@ describe("non-Community guilds keep today's overwrite shapes byte for byte", () 
 			const expected = {
 				voice: [...TODAY.voice, TODAY.voiceMemberGrant, TODAY.voiceAdminGrant],
 				admin: [...TODAY.admin, TODAY.adminAdminGrant],
+				adminLog: [...TODAY.adminLog, TODAY.adminLogAdminGrant],
 				public: [...todayCreateShape(field), TODAY.publicAdminGrant],
 			}[spec.kind];
 			expect(overwrites).toEqual(expected);
@@ -243,6 +253,7 @@ describe("non-Community guilds keep today's overwrite shapes byte for byte", () 
 					[ADMIN_ROLE_ID, { ViewChannel: true, Connect: true, Speak: true, SendMessages: true }],
 				] as Array<[string, Record<string, boolean>]>,
 				admin: [[ADMIN_ROLE_ID, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true }]] as Array<[string, Record<string, boolean>]>,
+				adminLog: [[ADMIN_ROLE_ID, { ViewChannel: true, ReadMessageHistory: true, SendMessages: false }]] as Array<[string, Record<string, boolean>]>,
 				public: [[ADMIN_ROLE_ID, { ViewChannel: true, SendMessages: true }]] as Array<[string, Record<string, boolean>]>,
 			}[spec.kind];
 			expect(grants[`ch-${spec.configField}`], spec.configField).toEqual(expected);
@@ -505,6 +516,7 @@ describe("GuildSetupManager on a Community guild", () => {
 		const expectedByKind: Record<ManagedOverwriteKind, readonly IOverwriteEntry[]> = {
 			intro: TODAY.intro,
 			admin: TODAY.admin,
+			adminLog: TODAY.adminLog,
 			public: gatedPublicWithoutAdmin,
 			voice: GATED.voice,
 		};
@@ -557,6 +569,7 @@ describe("GuildSetupManager on a Community guild", () => {
 			],
 			intro: [[ADMIN_ROLE_ID, { ViewChannel: true, SendMessages: true }]],
 			admin: [[ADMIN_ROLE_ID, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true }]],
+			adminLog: [[ADMIN_ROLE_ID, { ViewChannel: true, ReadMessageHistory: true, SendMessages: false }]],
 			voice: [
 				[MEMBER_ROLE_ID, { ViewChannel: true, Connect: true, Speak: true }],
 				[ADMIN_ROLE_ID, { ViewChannel: true, Connect: true, Speak: true, SendMessages: true }],
@@ -575,6 +588,7 @@ describe("ensureHomebase reconciles the gate and hands the guild to the announce
 		public: [...TODAY.public, TODAY.publicAdminGrant],
 		intro: TODAY.intro,
 		admin: TODAY.admin,
+		adminLog: [...TODAY.adminLog, TODAY.adminLogAdminGrant],
 		voice: TODAY.voice,
 	};
 

@@ -30,4 +30,9 @@ export const deroVoiceConfigStore = {
 	async removeFromList(guildId: string, field: DeroVoiceListField, id: string): Promise<IDeroVoiceConfig | null> {
 		return DeroVoiceConfig.findOneAndUpdate({ guildId }, { $pull: { [field]: id } }, { new: true }).lean<IDeroVoiceConfig>();
 	},
+
+	// Self destruct's config reset (post-launch plan item 10): no row is the default, voice off.
+	async deleteByGuildId(guildId: string) {
+		return DeroVoiceConfig.deleteOne({ guildId });
+	},
 };

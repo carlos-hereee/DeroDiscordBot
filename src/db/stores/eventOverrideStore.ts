@@ -79,4 +79,9 @@ export const eventOverrideStore = {
 		}).lean();
 		return docs as unknown as IEventOverride[];
 	},
+
+	// Self destruct's server data delete (post-launch plan item 10): every row this guild owns.
+	async deleteGuild(guildId: string) {
+		return EventOverrideModel.deleteMany({ guildId });
+	},
 };

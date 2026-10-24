@@ -7,6 +7,8 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { requireGuildId } from "../middleware/requireGuildId.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // fire and forget helper. the schedule board refresh is a Discord API call
 // that should never block the HTTP response. errors are logged; on the
@@ -130,6 +132,7 @@ export function createEventsRouter(client: Client): Router {
 
 			const event = await eventStore.create(body);
 			res.status(201).json({ data: event });
+			adminLog.emit({ guild: { id: guildId, client }, kind: "event.create", actor: { source: "dashboard" }, payload: { subject: String(body.name ?? ""), detail: setupCopy.adminLog.created } });
 			kickScheduleRefresh(client, guildId, "POST /api/events");
 		} catch (error) {
 			console.log(LOG_MESSAGES.api.errorCreatingEvent, error, LOG_MESSAGES.api.errorSuffix);
@@ -157,6 +160,7 @@ export function createEventsRouter(client: Client): Router {
 			delete body.guildId;
 			const updated = await eventStore.updateInGuild(req.params.eventId, guildId, body);
 			res.json({ data: updated });
+			adminLog.emit({ guild: { id: guildId, client }, kind: "event.update", actor: { source: "dashboard" }, payload: { subject: existing.name, detail: setupCopy.adminLog.updated } });
 			kickScheduleRefresh(client, guildId, "PATCH /api/events/:eventId");
 		} catch (error) {
 			console.log(LOG_MESSAGES.api.errorUpdatingEvent, error, LOG_MESSAGES.api.errorSuffix);
@@ -176,6 +180,7 @@ export function createEventsRouter(client: Client): Router {
 			}
 			await eventStore.deleteInGuild(req.params.eventId, guildId);
 			res.json({ message: "Event deactivated" });
+			adminLog.emit({ guild: { id: guildId, client }, kind: "event.delete", actor: { source: "dashboard" }, payload: { subject: existing.name, detail: setupCopy.adminLog.deleted } });
 			kickScheduleRefresh(client, guildId, "DELETE /api/events/:eventId");
 		} catch (error) {
 			console.log(LOG_MESSAGES.api.errorDeletingEvent, error, LOG_MESSAGES.api.errorSuffix);

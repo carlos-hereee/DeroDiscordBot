@@ -4,6 +4,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import { isAuthorizedSpeaker, type AuthorizableMember } from "@features/dero-brain/authorizer.js";
+import { readSpeakerAdminRoleId } from "@features/dero-brain/speakerAdminRole.js";
 import { createOpusDecoder, DECODE_CHANNELS, DECODE_SAMPLE_RATE, type OpusPacketDecoder } from "./opusDecoder.js";
 import { createTurnLoop, type TurnLoop, type TurnTarget } from "./turnLoop.js";
 import type { VoiceSpeaker } from "./voiceSpeaker.js";
@@ -67,6 +68,12 @@ export interface VoiceListenerDeps {
 	cachedMember(guild: Guild, userId: string): ListenMember | null;
 	fetchMember(guild: Guild, userId: string): Promise<ListenMember | null>;
 	loadConfig(guildId: string): Promise<IDeroVoiceConfig | null>;
+	/**
+	 * GuildConfig.adminRoleId, which authorizes by itself (post-launch plan item 12).
+	 * Optional so a test rig that never builds it keeps the allowlist only rule; the
+	 * default deps always wire it to readSpeakerAdminRoleId.
+	 */
+	loadAdminRoleId?(guildId: string): Promise<string | null>;
 	createTurnLoop(target: TurnTarget): TurnLoop;
 }
 
@@ -82,6 +89,7 @@ export const defaultVoiceListenerDeps: VoiceListenerDeps = {
 	cachedMember: (guild, userId) => guild.members.cache.get(userId) ?? null,
 	fetchMember: (guild, userId) => guild.members.fetch(userId).catch(() => null),
 	loadConfig: (guildId) => deroVoiceConfigStore.findByGuildId(guildId),
+	loadAdminRoleId: readSpeakerAdminRoleId,
 	createTurnLoop: (target) => createTurnLoop(target),
 };
 
@@ -130,7 +138,8 @@ export function startVoiceListener(target: ListenTarget, deps: VoiceListenerDeps
 	async function passesAllowlist(member: ListenMember): Promise<boolean> {
 		const config = await deps.loadConfig(guild.id);
 		if (!config || !config.enabled) return false;
-		return isAuthorizedSpeaker({ member, guildOwnerId: guild.ownerId, voiceConfig: config });
+		const adminRoleId = deps.loadAdminRoleId ? await deps.loadAdminRoleId(guild.id) : null;
+		return isAuthorizedSpeaker({ member, guildOwnerId: guild.ownerId, adminRoleId, voiceConfig: config });
 	}
 
 	async function verify(userId: string): Promise<boolean> {

@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
 	announceJoin: vi.fn(),
 }));
 
+// The admin role read is a GuildConfig lookup; null keeps these suites on the allowlist only rule.
+vi.mock("@features/dero-brain/speakerAdminRole.js", () => ({ readSpeakerAdminRoleId: vi.fn(async () => null) }));
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { findByGuildId: mocks.findByGuildId } }));
 vi.mock("@features/voice/voiceSessions.js", () => ({
 	voiceSessions: { get: mocks.sessionGet, join: mocks.sessionJoin, leave: mocks.sessionLeave },
@@ -68,6 +70,7 @@ function gateInput(overrides: Partial<JoinGateInput> = {}): JoinGateInput {
 	return {
 		speaker: memberFor("g1", { channel: voiceChannel(VC).channel }),
 		guildOwnerId: OWNER_ID,
+		adminRoleId: null,
 		botMember: BOT,
 		config: configFor("g1") as unknown as JoinGateInput["config"],
 		sessionChannelId: null,

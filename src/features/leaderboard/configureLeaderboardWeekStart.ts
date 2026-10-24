@@ -3,6 +3,8 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // Mirrors the GuildConfig weekStart enum. Local union (zero runtime) so the
 // command, the schema, and /leaderboard's thisWeekRange all speak the same two
@@ -98,6 +100,7 @@ export async function configureLeaderboardWeekStart(interaction: RepliableIntera
 
 	try {
 		await guildConfigStore.update(guildId, { weekStart: start });
+		adminLog.emitFor(interaction, guildId, "config.change", { subject: setupCopy.adminLog.subjects.weekStart, detail: setupCopy.adminLog.set(start) });
 		await interaction.reply({
 			embeds: [
 				infoEmbed(

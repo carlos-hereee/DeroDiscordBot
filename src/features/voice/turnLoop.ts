@@ -7,6 +7,7 @@ import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import { resolveDeroVoiceId } from "./deroVoiceId.js";
 import { CooldownManager } from "@utils/cooldownManager.js";
 import { isAuthorizedSpeaker } from "@features/dero-brain/authorizer.js";
+import { readSpeakerAdminRoleId } from "@features/dero-brain/speakerAdminRole.js";
 import {
 	describeBrainTurn,
 	runBrainTurn,
@@ -87,6 +88,12 @@ export interface TurnLoopDeps {
 	now(): number;
 	loadConfig(guildId: string): Promise<IDeroVoiceConfig | null>;
 	findMember(guild: Guild, userId: string): Promise<GuildMember | null>;
+	/**
+	 * GuildConfig.adminRoleId, which authorizes by itself (post-launch plan item 12).
+	 * Optional so a test rig that never builds it keeps the allowlist only rule; the
+	 * default deps always wire it to readSpeakerAdminRoleId.
+	 */
+	loadAdminRoleId?(guildId: string): Promise<string | null>;
 	reserve(guildId: string, cents: number, options: { sttSeconds: number }): Promise<ReserveResult>;
 	refund(reservation: SpendReservation): Promise<void>;
 	stt: SttProvider;
@@ -138,6 +145,7 @@ export const defaultTurnLoopDeps: TurnLoopDeps = {
 	now: () => Date.now(),
 	loadConfig: (guildId) => deroVoiceConfigStore.findByGuildId(guildId),
 	findMember: async (guild, userId) => guild.members.cache.get(userId) ?? (await guild.members.fetch(userId).catch(() => null)),
+	loadAdminRoleId: readSpeakerAdminRoleId,
 	reserve: (guildId, cents, options) => tryReserve(guildId, cents, options),
 	refund,
 	stt: elevenLabsStt,
@@ -302,7 +310,8 @@ export function createTurnLoop(target: TurnTarget, deps: TurnLoopDeps = defaultT
 
 		// ⑦
 		const member = await deps.findMember(guild, speakerId);
-		if (!member || !isAuthorizedSpeaker({ member, guildOwnerId: guild.ownerId, voiceConfig: config })) {
+		const adminRoleId = deps.loadAdminRoleId ? await deps.loadAdminRoleId(guild.id) : null;
+		if (!member || !isAuthorizedSpeaker({ member, guildOwnerId: guild.ownerId, adminRoleId, voiceConfig: config })) {
 			const spoken = await speakOwnLine(voiceId, voiceCopy.turn.spoken.notAllowed);
 			finish("not_authorized", { delivery: spoken });
 			return;

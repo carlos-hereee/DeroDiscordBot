@@ -227,6 +227,14 @@ export const BOT_LOG_EVENTS = {
 	// Onboarding answers, which Discord alone stores.
 	ONBOARDING_CONFIGURED_BY_BOT: "onboarding_configured_by_bot",
 	ONBOARDING_PRECONDITION_FAILED: "onboarding_precondition_failed",
+	// ── the admin audit trail (post-launch plan item 11) ──────────
+	// One row per admin action, keyed `admin_log:<kind>` (schedule.create,
+	// config.change, selfdestruct.attempt and so on), written by
+	// features/setup/adminLog.ts BEFORE it posts the matching line to 🗒️admin-log,
+	// so the trail survives a deleted channel or a failed post. Metadata is the
+	// actor and the payload the caller passed: ids and short labels, never message
+	// text a member typed.
+	ADMIN_LOG_PREFIX: "admin_log",
 	// add more here as needed
 } as const;
 
@@ -251,3 +259,6 @@ export const weeklyDigestSentEvent = (period: string): string => `${BOT_LOG_EVEN
 
 // Compose the per-month arcade post event key, the same shape as the weekly digest's.
 export const arcadeMonthlyPostEvent = (month: string): string => `${BOT_LOG_EVENTS.ARCADE_MONTHLY_POST_PREFIX}:${month}`;
+
+// Compose the per-kind admin audit event key, the same shape as the keys above.
+export const adminLogEvent = (kind: string): string => `${BOT_LOG_EVENTS.ADMIN_LOG_PREFIX}:${kind}`;

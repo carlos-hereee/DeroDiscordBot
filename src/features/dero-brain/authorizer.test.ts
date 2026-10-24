@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { isAuthorizedSpeaker, type AuthorizableMember } from "./authorizer.js";
 
 // ── authorizer ─────────────────────────────────────────────────────────────
-// The whole matrix: the guild owner and an allowlisted role pass; no role, an
-// admin role that is not on the allowlist, a missing member and a member of
+// The whole matrix: the guild owner, the guild's admin role (post-launch plan
+// item 12) and an allowlisted role pass; no role, a missing member and a member of
 // another guild do not.
 
 const GUILD = "g1";
@@ -17,8 +17,8 @@ function member(id: string, roleIds: string[], guildId: string = GUILD): Authori
 	return { id, guild: { id: guildId }, roles: { cache: new Set(roleIds) } };
 }
 
-const allowed = (who: AuthorizableMember | null, voiceConfig = config) =>
-	isAuthorizedSpeaker({ member: who, guildOwnerId: OWNER, voiceConfig });
+const allowed = (who: AuthorizableMember | null, voiceConfig = config, adminRoleId: string | null = ADMIN_ROLE) =>
+	isAuthorizedSpeaker({ member: who, guildOwnerId: OWNER, adminRoleId, voiceConfig });
 
 describe("isAuthorizedSpeaker", () => {
 	it("allows the guild owner with no roles at all", () => {
@@ -34,11 +34,21 @@ describe("isAuthorizedSpeaker", () => {
 		expect(allowed(member("u1", []))).toBe(false);
 	});
 
-	it("refuses an admin whose admin role is not on the allowlist", () => {
-		expect(allowed(member("admin", [ADMIN_ROLE]))).toBe(false);
+	it("allows a member holding the guild's admin role, even when that role is not on the allowlist", () => {
+		expect(allowed(member("admin", [ADMIN_ROLE]))).toBe(true);
+		expect(allowed(member("admin", [ADMIN_ROLE]), { guildId: GUILD, allowedRoleIds: [] })).toBe(true);
 	});
 
-	it("refuses everyone but the owner when the allowlist is empty", () => {
+	it("falls back to the allowlist when the guild has no admin role yet", () => {
+		expect(allowed(member("admin", [ADMIN_ROLE]), config, null)).toBe(false);
+		expect(allowed(member("u1", [ALLOWED_ROLE]), config, null)).toBe(true);
+	});
+
+	it("refuses an admin of another guild, whose role id merely matches", () => {
+		expect(allowed(member("admin", [ADMIN_ROLE], "g2"))).toBe(false);
+	});
+
+	it("refuses everyone but the owner and the admin role when the allowlist is empty", () => {
 		const empty = { guildId: GUILD, allowedRoleIds: [] };
 		expect(allowed(member("u1", [ALLOWED_ROLE]), empty)).toBe(false);
 		expect(allowed(member(OWNER, []), empty)).toBe(true);

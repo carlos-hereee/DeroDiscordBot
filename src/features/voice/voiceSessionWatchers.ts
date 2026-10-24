@@ -3,6 +3,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import { isAuthorizedSpeaker } from "@features/dero-brain/authorizer.js";
+import { readSpeakerAdminRoleId } from "@features/dero-brain/speakerAdminRole.js";
 import { voiceSessions, type VoiceSessions, type VoiceSessionView } from "./voiceSessions.js";
 
 // ── voice session watchers ─────────────────────────────────────────────────
@@ -33,12 +34,19 @@ import { voiceSessions, type VoiceSessions, type VoiceSessionView } from "./voic
 export interface VoiceWatcherDeps {
 	sessions: Pick<VoiceSessions, "get" | "leave">;
 	findConfig(guildId: string): Promise<IDeroVoiceConfig | null>;
+	/**
+	 * GuildConfig.adminRoleId, which authorizes by itself (post-launch plan item 12).
+	 * Optional so a test rig that never builds it keeps the allowlist only rule; the
+	 * default deps always wire it to readSpeakerAdminRoleId.
+	 */
+	loadAdminRoleId?(guildId: string): Promise<string | null>;
 	idleLeaveMs: number;
 }
 
 export const defaultVoiceWatcherDeps: VoiceWatcherDeps = {
 	sessions: voiceSessions,
 	findConfig: (guildId) => deroVoiceConfigStore.findByGuildId(guildId),
+	loadAdminRoleId: readSpeakerAdminRoleId,
 	idleLeaveMs: BOT_CONSTANTS.DERO_VOICE_IDLE_LEAVE_MS,
 };
 
@@ -72,12 +80,12 @@ export function createVoiceSessionWatcher(deps: VoiceWatcherDeps = defaultVoiceW
 		idleTimers.set(guildId, { timer, session });
 	}
 
-	function hasAuthorizedHuman(guild: Guild, channelId: string, config: IDeroVoiceConfig | null): boolean {
+	function hasAuthorizedHuman(guild: Guild, channelId: string, config: IDeroVoiceConfig | null, adminRoleId: string | null): boolean {
 		if (!config) return false;
 		const channel = guild.channels.cache.get(channelId);
 		if (!channel || !channel.isVoiceBased()) return false;
 		return channel.members.some(
-			(member) => !member.user.bot && isAuthorizedSpeaker({ member, guildOwnerId: guild.ownerId, voiceConfig: config }),
+			(member) => !member.user.bot && isAuthorizedSpeaker({ member, guildOwnerId: guild.ownerId, adminRoleId, voiceConfig: config }),
 		);
 	}
 
@@ -91,9 +99,10 @@ export function createVoiceSessionWatcher(deps: VoiceWatcherDeps = defaultVoiceW
 	// ②
 	async function reconcilePresence(guild: Guild, session: VoiceSessionView): Promise<void> {
 		const config = await deps.findConfig(guild.id);
+		const adminRoleId = deps.loadAdminRoleId ? await deps.loadAdminRoleId(guild.id) : null;
 		// The call can end while the config is read.
 		if (deps.sessions.get(guild.id) !== session) return;
-		if (hasAuthorizedHuman(guild, session.channelId, config)) cancelIdle(guild.id);
+		if (hasAuthorizedHuman(guild, session.channelId, config, adminRoleId)) cancelIdle(guild.id);
 		else armIdle(guild.id, session);
 	}
 

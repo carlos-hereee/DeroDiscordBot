@@ -13,6 +13,8 @@ import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import { showAccountProfile } from "@features/leveling/accountProfile.js";
 import { showLevelsStandings } from "@features/leveling/levelsStandings.js";
 import { showAchievements } from "@features/leveling/achievementsView.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // ── Channel controls (v1.6 item 36; folded into intro guides 2026-06) ──────
 // The bot's common channel actions are one-click buttons in Discord, no slash
@@ -191,6 +193,7 @@ async function runLeaderboardRefresh(interaction: ButtonInteraction, guildId: st
 	// errors), so we cannot tell success from a silently-handled failure; await
 	// it so the board is updated before we ack, then confirm generically.
 	await refreshLeaderboard(interaction.client, guildId);
+	adminLog.emitFor(interaction, guildId, "powerup.toggle", { subject: setupCopy.adminLog.subjects.refreshStandings });
 	await interaction.editReply({ content: "🔄 Standings refreshed." });
 }
 
@@ -227,6 +230,7 @@ async function runPostHangman(interaction: ButtonInteraction, guildId: string): 
 		return;
 	}
 
+	adminLog.emitFor(interaction, guildId, "powerup.toggle", { subject: setupCopy.adminLog.subjects.postHangman });
 	await interaction.editReply({ content: gamesCopy.hangman.startedIn(channel.id) });
 }
 

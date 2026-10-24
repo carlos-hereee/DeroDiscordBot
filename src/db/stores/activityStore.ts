@@ -114,4 +114,10 @@ export const activityStore = {
 		const result = await PlayerActivityModel.deleteMany({ eventOccurrence: { $lt: cutoff } });
 		return result.deletedCount ?? 0;
 	},
+
+	// Self destruct's server data delete (post-launch plan item 10). Attendance rows carry
+	// no guildId, so the caller passes the guild's event ids.
+	async deleteByEvents(eventIds: string[]) {
+		return PlayerActivityModel.deleteMany({ eventId: { $in: eventIds } });
+	},
 };

@@ -31,6 +31,8 @@ import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { resolveRulesMarkdown, type IRulesConfig } from "@features/setup/rulesContent.js";
 import { communityCopy, type ICommunityChangeSummary, type ScreeningReplyOutcome } from "./communityCopy.js";
 import { COMMUNITY_PREFIX, buildConfigureOnboardingOfferRow, buildConfirmEnableRow } from "./communityControls.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // ── enableCommunity ──────────────────────────────────────────────────
 // What:  the Enable Community flow behind the admin guide's button (2026-10 item
@@ -334,6 +336,7 @@ export async function handleConfirm(interaction: ButtonInteraction, guild: Guild
 		await interaction.editReply({ embeds: [errorEmbed(editRefusal.ownerMessage, config)] });
 		return;
 	}
+	adminLog.emitFor(interaction, guild.id, "config.change", { subject: setupCopy.adminLog.subjects.community, detail: setupCopy.adminLog.on });
 
 	const screening: ScreeningReplyOutcome = flow.membershipScreening ? await enableMembershipScreening(guild, config, interaction.user.id) : "skipped";
 	await interaction.editReply({

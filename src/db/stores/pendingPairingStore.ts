@@ -81,4 +81,10 @@ export const pendingPairingStore = {
 		).lean();
 		return (doc ?? null) as IPendingPairing | null;
 	},
+
+	// Self destruct's server data delete (post-launch plan item 10): only codes nobody
+	// redeemed, since a redeemed row is the record that pairs the server to its app.
+	async deleteUnclaimedForGuild(guildId: string) {
+		return PendingPairing.deleteMany({ guildId, consumedAt: null });
+	},
 };

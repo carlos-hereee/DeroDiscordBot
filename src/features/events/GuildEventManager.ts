@@ -7,6 +7,8 @@ import { v4 } from "uuid";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 interface IKvKSeasonInput {
 	seasonEnd: Date;
@@ -207,6 +209,8 @@ export class GuildEventManager {
 					announcementsChannelId
 				),
 			});
+
+			adminLog.emitFor(interaction, guildId, "event.create", { subject: setupCopy.adminLog.kvkSeason, detail: setupCopy.adminLog.created });
 
 			// refresh the pinned schedule board now that events exist. fire
 			// and forget, the admin's reply has already gone out and the

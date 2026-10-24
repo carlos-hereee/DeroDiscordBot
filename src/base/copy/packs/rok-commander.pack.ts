@@ -364,6 +364,9 @@ export const rokCommanderCopy = {
 			// guide moved out of inner-sanctum, with the admin control buttons folded
 			// into its pinned row).
 			adminCommands: "🎛️admin-controls",
+			// The audit trail (post-launch plan item 11): admins read, only Dero writes,
+			// one line per admin action. Universal across packs like every channel name.
+			adminLog: "🗒️admin-log",
 			// ── the join log and the rules post (2026-10 item 247 Phase 2) ──
 			// Both under the homebase category, read only for members. Universal
 			// across packs like every channel name. A server's own welcome or rules
@@ -592,6 +595,16 @@ export const rokCommanderCopy = {
 				"A heads-up for what is coming next.\n\n" +
 				"As each event moves within the next day, a fresh post appears here with its time and any prep notes.\n\n" +
 				"*Posts stay so you can scroll back to confirm what was announced.*",
+		},
+
+		// 🗒️admin-log's intro (post-launch plan item 11). Practical rather than kingdom
+		// voice, like every admin surface: it says what lands here and that nobody but
+		// Dero can post.
+		adminLog: {
+			title: "🗒️ Admin Log",
+			description:
+				"One line for every admin action Dero sees: schedule and event changes, settings changes, power-up toggles, voice list edits and self destruct attempts.\n\n" +
+				"Each line names who did it and when. Only Dero posts here, so the trail stays complete.",
 		},
 
 		// ── the arcade rules card (2026-10 item 245 Phase 4a) ────────────

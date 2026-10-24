@@ -614,4 +614,9 @@ export const gameRoomStore = {
 			.sort({ endedAt: -1 })
 			.limit(limit);
 	},
+
+	// Self destruct's server data delete (post-launch plan item 10): every row this guild owns.
+	async deleteGuild(guildId: string) {
+		return GameRoom.deleteMany({ guildId });
+	},
 };

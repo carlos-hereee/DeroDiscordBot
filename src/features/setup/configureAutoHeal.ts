@@ -3,6 +3,8 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // ── /configure auto-heal ──────────────────────────────────────────────
 // What:  master switch for the bot's channel auto-repair behavior.
@@ -78,6 +80,7 @@ export async function configureAutoHeal(interaction: RepliableInteraction, optio
 
 	try {
 		await guildConfigStore.update(guildId, { autoHealEnabled: enabled });
+		adminLog.emitFor(interaction, guildId, "config.change", { subject: setupCopy.adminLog.subjects.autoHeal, detail: enabled ? setupCopy.adminLog.on : setupCopy.adminLog.off });
 		const heading = enabled ? "🛠️ Auto-heal ON" : "✋ Auto-heal OFF";
 		const body = enabled
 			? "The bot will rebuild any homebase channel that goes missing. This is the default behavior."

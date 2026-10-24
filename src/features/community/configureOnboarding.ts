@@ -16,6 +16,8 @@ import {
 	type IOnboardingSnapshot,
 	type PendingOnboardingDraft,
 } from "./onboardingDraft.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // ── configureOnboarding ──────────────────────────────────────────────
 // What:  the Configure Onboarding flow behind the admin guide's button (2026-10 item
@@ -181,6 +183,7 @@ export async function handleConfirmOnboarding(interaction: ButtonInteraction, gu
 		await interaction.editReply({ embeds: [...review.embeds, errorEmbed(writeRefusal.ownerMessage, config)], components: review.components });
 		return;
 	}
+	adminLog.emitFor(interaction, guild.id, "config.change", { subject: setupCopy.adminLog.subjects.onboarding, detail: setupCopy.adminLog.updated });
 
 	void notifyOwnerThenAudit(guild, interaction.user.id, draft);
 	const summary = { promptCount: draft.prompts.length, defaultChannelCount: draft.defaultChannelIds.length, memberRoleId: draft.memberRoleId };

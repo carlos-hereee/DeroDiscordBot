@@ -24,4 +24,9 @@ export const xpDailyStore = {
 		).lean();
 		return doc?.xp ?? amount;
 	},
+
+	// Self destruct's server data delete (post-launch plan item 10): every row this guild owns.
+	async deleteGuild(guildId: string) {
+		return XpDaily.deleteMany({ guildId });
+	},
 };

@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
 	removeFromList: vi.fn(),
 	currentMonthCents: vi.fn(),
 	seatOutBlocked: vi.fn(),
+	emit: vi.fn(),
+	turnArcadeOff: vi.fn(),
+	turnArcadeOn: vi.fn(),
 }));
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({
@@ -38,6 +41,8 @@ vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({
 vi.mock("@features/voice/spendMeter.js", () => ({ currentMonthCents: mocks.currentMonthCents }));
 vi.mock("@features/voice/elevenLabsTts.js", () => ({ isTtsKeyConfigured: () => true }));
 vi.mock("@features/game-rooms/satelliteSeats.js", () => ({ seatOutBlockedServers: mocks.seatOutBlocked }));
+vi.mock("@features/setup/adminLog.js", () => ({ adminLog: { emit: mocks.emit } }));
+vi.mock("@features/setup/arcadeSwitch.js", () => ({ turnArcadeOff: mocks.turnArcadeOff, turnArcadeOn: mocks.turnArcadeOn }));
 
 import { execute, voiceIdTail, data } from "./dero-config.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -60,7 +65,11 @@ function run(options: Options, guildId: string | null = "g1") {
 	const reply = vi.fn(async () => undefined);
 	const interaction = {
 		guildId,
+		user: { id: "admin-1" },
+		guild: { id: guildId },
 		reply,
+		deferReply: vi.fn(async () => undefined),
+		editReply: reply,
 		options: {
 			getSubcommandGroup: () => options.group ?? null,
 			getSubcommand: () => options.sub,
@@ -92,6 +101,9 @@ beforeEach(() => {
 	mocks.removeFromList.mockReset().mockResolvedValue(STORED);
 	mocks.currentMonthCents.mockReset().mockResolvedValue(312);
 	mocks.seatOutBlocked.mockReset().mockResolvedValue(0);
+	mocks.emit.mockReset();
+	mocks.turnArcadeOff.mockReset().mockResolvedValue("off");
+	mocks.turnArcadeOn.mockReset().mockResolvedValue("on");
 });
 
 describe("the voice id tail", () => {
@@ -345,5 +357,47 @@ describe("arcade network block list (2026-10 item 244 Phase 5b)", () => {
 		mocks.guildConfig.mockResolvedValue({ guildId: "111111111111111111" });
 		expect(await replyText({ group: "arcade", sub: "block-server", id: "111111111111111111" }, "111111111111111111")).toContain("this server's own id");
 		expect(mocks.addBlocked).not.toHaveBeenCalled();
+	});
+});
+
+// ── the admin log and the arcade switch (post-launch plan items 11 and 14) ──
+describe("admin log lines", () => {
+	const kinds = () => mocks.emit.mock.calls.map((call) => (call[0] as { kind: string }).kind);
+
+	it("logs a cap change as voice.cap, by the member who ran it", async () => {
+		await replyText({ sub: "cap", dollars: 10 });
+		expect(kinds()).toEqual(["voice.cap"]);
+		expect(mocks.emit.mock.calls[0]![0]).toMatchObject({ actor: { userId: "admin-1" }, guild: { id: "g1" } });
+	});
+
+	it("logs a role added to the task list as voice.allowlist", async () => {
+		await replyText({ group: "role", sub: "add", roleId: "r2" });
+		expect(kinds()).toEqual(["voice.allowlist"]);
+	});
+
+	it("logs a real setting change as config.change and an unchanged one not at all", async () => {
+		await replyText({ sub: "enable" });
+		await replyText({ group: "arcade", sub: "monthly-post", enabled: true });
+		expect(kinds()).toEqual(["config.change"]);
+	});
+});
+
+describe("arcade off and on", () => {
+	it("turns the arcade off through arcadeSwitch and logs it", async () => {
+		const text = await replyText({ group: "arcade", sub: "off" });
+		expect(mocks.turnArcadeOff).toHaveBeenCalledOnce();
+		expect(text).toContain("deleted");
+		expect(mocks.emit).toHaveBeenCalledOnce();
+	});
+
+	it("says so and logs nothing when the arcade is already off", async () => {
+		mocks.turnArcadeOff.mockResolvedValue("already-off");
+		expect(await replyText({ group: "arcade", sub: "off" })).toContain("already off");
+		expect(mocks.emit).not.toHaveBeenCalled();
+	});
+
+	it("is honest when the arcade could not be rebuilt at once", async () => {
+		mocks.turnArcadeOn.mockResolvedValue("pending");
+		expect(await replyText({ group: "arcade", sub: "on" })).toContain("could not all be built");
 	});
 });

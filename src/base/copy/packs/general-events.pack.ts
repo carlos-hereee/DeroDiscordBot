@@ -273,6 +273,8 @@ export const generalEventsCopy: IPluginCopy = {
 			nextDecree: "🔜upcoming-events",
 			// Eighth channel: admin-only command + control surface (mirrors rok-commander).
 			adminCommands: "🎛️admin-controls",
+			// The audit trail (mirrors rok-commander, post-launch plan item 11).
+			adminLog: "🗒️admin-log",
 			// The join log and the rules post (mirrors rok-commander, 2026-10 item 247).
 			welcome: "👋welcome",
 			rules: "📘rules",
@@ -424,6 +426,14 @@ export const generalEventsCopy: IPluginCopy = {
 				"A heads-up for what is coming next.\n\n" +
 				"As each event moves within the next day, a fresh post appears here with its time and any prep notes.\n\n" +
 				"*Posts stay so you can scroll back to confirm what was announced.*",
+		},
+
+		// 🗒️admin-log's intro (mirrors rok-commander, post-launch plan item 11).
+		adminLog: {
+			title: "🗒️ Admin Log",
+			description:
+				"One line for every admin action Dero sees: schedule and event changes, settings changes, power-up toggles, voice list edits and self destruct attempts.\n\n" +
+				"Each line names who did it and when. Only Dero posts here, so the trail stays complete.",
 		},
 
 		// Rules only, same structure as rok-commander's, plain voice. The two packs

@@ -7,6 +7,8 @@ import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // ── /schedule resume, one event ───────────────────────────────────────
 // What:  clears event.paused (and pausedUntil) so the scheduler resumes
@@ -80,6 +82,7 @@ export async function resumeOneSchedule(interaction: RepliableInteraction, optio
 		// scheduler's auto-resume check is also a no-op once paused is
 		// false, but cleaner to drop both.
 		await eventStore.updateInGuild(event.eventId, guildId, { paused: false, pausedUntil: null });
+		adminLog.emitFor(interaction, guildId, "schedule.update", { subject: event.name, detail: setupCopy.adminLog.resumed, eventId: event.eventId });
 
 		await interaction.reply({
 			embeds: [infoEmbed("▶️ Schedule resumed", c.resumed(event.name), rokCommanderCopy.COLORS.SCHEDULE)],

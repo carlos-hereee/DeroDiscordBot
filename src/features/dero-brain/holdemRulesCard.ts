@@ -32,6 +32,7 @@ import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { renderCallSpeech, type CallSpeechInput, type CallSpeechResult } from "@features/voice/callSpeech.js";
 import { voiceSessions, type VoiceSessionView } from "@features/voice/voiceSessions.js";
 import { isAuthorizedSpeaker } from "./authorizer.js";
+import { readSpeakerAdminRoleId } from "./speakerAdminRole.js";
 import { registerDealerTable, type RegisterDealerInput } from "./dealerNarration.js";
 import { deroBrainCopy } from "./deroBrainCopy.js";
 import { describeTerms, describeTermsRefusal, resolveTerms, type HoldemTermsRequest } from "./holdemTerms.js";
@@ -89,6 +90,12 @@ export interface RulesCardDeps {
 	loadConfig(guildId: string): Promise<IDeroVoiceConfig | null>;
 	/** A fresh read of the member, bypassing the cache, or null when they left. */
 	fetchMember(guild: Guild, userId: string): Promise<GuildMember | null>;
+	/**
+	 * GuildConfig.adminRoleId, which authorizes by itself (post-launch plan item 12).
+	 * Optional so a test rig that never builds it keeps the allowlist only rule; the
+	 * default deps always wire it to readSpeakerAdminRoleId.
+	 */
+	loadAdminRoleId?(guildId: string): Promise<string | null>;
 	/** The guild's arcade category and admin role, or null when the arcade was never built. */
 	resolveArcade(guild: Guild): Promise<{ category: CategoryChannel; adminRoleId: string | null } | null>;
 	openRoom(input: RoomOpenInput): Promise<RoomOpenResult>;
@@ -117,6 +124,7 @@ export const defaultRulesCardDeps: RulesCardDeps = {
 	// force: true for the same reason as the executor: the cached member is the
 	// stale copy a press time re-check exists to get past.
 	fetchMember: (guild, userId) => guild.members.fetch({ user: userId, force: true }).catch(() => null),
+	loadAdminRoleId: readSpeakerAdminRoleId,
 	resolveArcade,
 	openRoom: (input) => RoomProvisioner.open(input),
 	inviteOptions: buildInviteOptions,
@@ -267,7 +275,8 @@ async function passGate(interaction: AnyCardInteraction, requestId: string, deps
 		return null;
 	}
 	const member = await deps.fetchMember(guild, interaction.user.id);
-	if (!member || !isAuthorizedSpeaker({ member, guildOwnerId: guild.ownerId, voiceConfig: config })) {
+	const adminRoleId = deps.loadAdminRoleId ? await deps.loadAdminRoleId(guild.id) : null;
+	if (!member || !isAuthorizedSpeaker({ member, guildOwnerId: guild.ownerId, adminRoleId, voiceConfig: config })) {
 		await replyPrivately(interaction, cardCopy.notAuthorized);
 		return null;
 	}

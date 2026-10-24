@@ -16,6 +16,8 @@ import { parseEventDateTimeMinutes } from "@utils/dateParser.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // ── /stream announce ──────────────────────────────────────────────────
 // What:  schedules a one-time stream announcement at a specific future
@@ -160,6 +162,7 @@ export async function announceStream(interaction: RepliableInteraction, options:
 				components: [],
 			});
 
+			adminLog.emitFor(interaction, guildId, "schedule.create", { subject: title, detail: setupCopy.adminLog.streamAnnounced });
 			refreshSchedule(interaction.client, guildId).catch((err) =>
 				console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/stream announce"), err)
 			);

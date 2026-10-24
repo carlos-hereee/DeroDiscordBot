@@ -7,6 +7,8 @@ import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // ── /schedule pause, one event ────────────────────────────────────────
 // What:  flips event.paused to true, optionally with a pausedUntil date.
@@ -91,6 +93,11 @@ export async function pauseOneSchedule(interaction: RepliableInteraction, option
 
 	try {
 		await eventStore.updateInGuild(event.eventId, guildId, { paused: true, pausedUntil });
+		adminLog.emitFor(interaction, guildId, "schedule.update", {
+			subject: event.name,
+			detail: pausedUntil ? setupCopy.adminLog.pausedUntil(Math.floor(pausedUntil.getTime() / 1000)) : setupCopy.adminLog.paused,
+			eventId: event.eventId,
+		});
 
 		const successText = pausedUntil
 			? c.pausedUntil(event.name, Math.floor(pausedUntil.getTime() / 1000))

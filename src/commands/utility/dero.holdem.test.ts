@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
 	rulesCardFor: vi.fn(),
 }));
 
+// The admin role read is a GuildConfig lookup; null keeps these suites on the allowlist only rule.
+vi.mock("@features/dero-brain/speakerAdminRole.js", () => ({ readSpeakerAdminRoleId: vi.fn(async () => null) }));
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { findByGuildId: mocks.findByGuildId } }));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: mocks.log } }));
 vi.mock("@features/dero-brain/brainQueue.js", () => ({ brainQueue: { enqueue: mocks.enqueue, isBrainOnline: mocks.isBrainOnline } }));

@@ -1,21 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { CategoryChannel, type ButtonInteraction } from "discord.js";
+import { CategoryChannel, type ModalSubmitInteraction } from "discord.js";
 
 // ── selfDestruct, adopted channels (2026-10 item 247 Phase 2) ──────────────
 // /self-destruct removes what Dero BUILT. A welcome or rules channel the server
 // already had, and Dero only adopted, is the owner's: it must survive the
 // demolition parent-less, with its permissions untouched, and the stored row must
 // let go of it in the same write that sets homebaseDestroyed. selfDestruct.test.ts
-// keeps the completeness guard; this file drives the teardown itself.
+// keeps the completeness guard; this file drives the teardown itself, through the
+// tier two CONFIRM modal that now reaches it (post-launch plan item 10).
 
 const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
 	update: vi.fn(),
 	registerButton: vi.fn(),
+	registerModal: vi.fn(),
+	wipeServerData: vi.fn(),
 }));
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update } }));
-vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton }));
+vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerModal: mocks.registerModal }));
+vi.mock("./serverReset.js", () => ({ resetConfigsToDefault: vi.fn(), wipeServerData: mocks.wipeServerData }));
+vi.mock("./adminLog.js", () => ({ adminLog: { emit: vi.fn() } }));
 
 import { HOMEBASE_CHANNEL_FIELDS, registerSelfDestructHandlers } from "./selfDestruct.js";
 
@@ -53,20 +58,21 @@ function rig() {
 
 	const guild = { id: "g1", ownerId: OWNER, channels: { fetch: vi.fn(async (id: string) => channels.get(id) ?? null) } };
 	const interaction = {
-		customId: "self_destruct:confirm",
+		customId: "self_destruct:modal",
 		user: { id: OWNER },
 		guild,
 		client: {},
-		update: vi.fn(async () => undefined),
+		fields: { getTextInputValue: () => "CONFIRM" },
+		reply: vi.fn(async () => undefined),
 		followUp: vi.fn(async () => undefined),
-	} as unknown as ButtonInteraction;
+	} as unknown as ModalSubmitInteraction;
 
 	return { stored, channels, adopted, overwrites, room, home, games, interaction };
 }
 
-async function confirm(interaction: ButtonInteraction): Promise<void> {
+async function confirm(interaction: ModalSubmitInteraction): Promise<void> {
 	registerSelfDestructHandlers();
-	const handler = mocks.registerButton.mock.calls.at(-1)![1] as (press: ButtonInteraction) => Promise<void>;
+	const handler = mocks.registerModal.mock.calls.at(-1)![1] as (submit: ModalSubmitInteraction) => Promise<void>;
 	await handler(interaction);
 }
 
@@ -74,6 +80,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	vi.spyOn(console, "warn").mockImplementation(() => undefined);
 	mocks.update.mockResolvedValue(undefined);
+	mocks.wipeServerData.mockResolvedValue({ failed: [] });
 });
 
 describe("self-destruct with an adopted channel", () => {

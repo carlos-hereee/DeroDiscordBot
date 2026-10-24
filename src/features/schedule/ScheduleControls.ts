@@ -7,6 +7,8 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { postGoLiveAnnouncement } from "@features/schedule/postGoLiveAnnouncement.js";
 import { pauseAllGuildEvents, resumeAllGuildEvents, IBulkScheduleResult } from "@features/schedule/scheduleBulkControls.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // ── Schedule channel controls (item 36) ────────────────────────────────
 // The pinned schedule board carries ONE dynamic, phase-gated control row,
@@ -162,6 +164,10 @@ async function runConfigureHowTo(interaction: ButtonInteraction): Promise<void> 
 async function runBulkSchedule(interaction: ButtonInteraction, guildId: string, action: "paused" | "resumed"): Promise<void> {
 	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 	const result = action === "paused" ? await pauseAllGuildEvents(guildId) : await resumeAllGuildEvents(guildId);
+	if (result.changed > 0) {
+		const detail = action === "paused" ? setupCopy.adminLog.pausedCount(result.changed) : setupCopy.adminLog.resumedCount(result.changed);
+		adminLog.emitFor(interaction, guildId, "schedule.update", { subject: setupCopy.adminLog.allSchedules, detail });
+	}
 	// Refresh the board so the toggle flips to its opposite and paused tags
 	// update. Fire-and-forget, the DB writes are the source of truth and the
 	// next refresh tick reconciles regardless.

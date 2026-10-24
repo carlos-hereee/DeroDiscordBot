@@ -11,6 +11,8 @@ import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { buildLeaderboardChannelDeleteCustomId } from "@features/leaderboard/leaderboardChannelHandlers.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // ── /configure leaderboard-tracking ───────────────────────────────────
 // What:  master switch for participation tracking. When ON (default),
@@ -120,6 +122,7 @@ export async function configureLeaderboardTracking(interaction: RepliableInterac
 			updatePayload.userRemovedChannels = Array.from(removedSlots);
 		}
 		await guildConfigStore.update(guildId, updatePayload);
+		adminLog.emitFor(interaction, guildId, "config.change", { subject: setupCopy.adminLog.subjects.leaderboardTracking, detail: enabled ? setupCopy.adminLog.on : setupCopy.adminLog.off });
 		const heading = enabled ? "📊 Leaderboard tracking ON" : "⏸️ Leaderboard tracking OFF";
 
 		// Body copy diverges per branch. The toggle-OFF path additionally

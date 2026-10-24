@@ -57,6 +57,8 @@ export const SLOT_LABELS: ReadonlyArray<{ label: string; configField: string }> 
 	// is most likely to want renamed was the one slot they could not pick. Not a
 	// deliberate exclusion, just a list nobody extended when the channel shipped.
 	{ label: "Admin controls", configField: "adminCommandsChannelId" },
+	// 🗒️admin-log (post-launch plan item 11), renameable like every managed channel.
+	{ label: "Admin log", configField: "adminLogChannelId" },
 	// 👋welcome and 📘rules (2026-10 item 247 Phase 2). An autocomplete row each, so
 	// no command redeploy. The drift sweep leaves an ADOPTED one's name alone, but an
 	// admin renaming it here is the owner's own choice and goes through.

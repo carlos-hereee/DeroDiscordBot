@@ -40,4 +40,9 @@ export const luckStatStore = {
 	async findForGuildMonth(guildId: string, month: string): Promise<ILuckStat[]> {
 		return LuckStat.find({ guildId, month }).lean<ILuckStat[]>();
 	},
+
+	// Self destruct's server data delete (post-launch plan item 10): every row this guild owns.
+	async deleteGuild(guildId: string) {
+		return LuckStat.deleteMany({ guildId });
+	},
 };

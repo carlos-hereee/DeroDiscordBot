@@ -133,6 +133,7 @@ const EXISTING_IDS = {
 	adminChannelId: "ch-admin",
 	nextDecreeChannelId: "ch-nextdecree",
 	adminCommandsChannelId: "ch-admincommands",
+	adminLogChannelId: "ch-adminlog",
 	welcomeChannelId: "ch-welcome",
 	rulesChannelId: "ch-rules",
 	arcadeRulesChannelId: "ch-arcaderules",

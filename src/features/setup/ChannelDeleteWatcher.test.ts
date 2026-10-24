@@ -582,6 +582,8 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			"adminChannelId",
 			"nextDecreeChannelId",
 			"adminCommandsChannelId",
+			// 🗒️admin-log (post-launch plan item 11).
+			"adminLogChannelId",
 			// 👋welcome and 📘rules (2026-10 item 247 Phase 2).
 			"welcomeChannelId",
 			"rulesChannelId",
@@ -609,8 +611,8 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 				.sort();
 
 		expect(byCategory("gamesCategoryId")).toEqual(["arcadeChallengesChannelId", "arcadeGamesChannelId", "arcadeRulesChannelId", "arcadeVoiceChannelId"]);
-		// Ten text channels (welcome and rules among them) plus the 🏛️ Meeting Hall voice room.
-		expect(byCategory("categoryId")).toHaveLength(11);
+		// Eleven text channels (welcome, rules and admin-log among them) plus the 🏛️ Meeting Hall voice room.
+		expect(byCategory("categoryId")).toHaveLength(12);
 		expect(byCategory("categoryId")).toContain("meetingVoiceChannelId");
 		// No spec may be left unfiled, which a typo in the union would otherwise
 		// produce silently.

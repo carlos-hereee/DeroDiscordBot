@@ -33,6 +33,8 @@ export interface ICreatedChannels {
 	// guide + the admin power-up panel; kept out of inner-sanctum so daily
 	// announcements there do not bury the quick-action controls.
 	adminCommandsChannelId: string;
+	// 🗒️admin-log, the bot write only audit trail (post-launch plan item 11).
+	adminLogChannelId: string;
 	// 👋welcome and 📘rules (2026-10 item 247 Phase 2). Either may be a channel the
 	// server already had, adopted into the homebase rather than built.
 	welcomeChannelId: string;
@@ -65,6 +67,7 @@ export interface IChannelObjects {
 	announcementsChannel: TextChannel;
 	nextDecreeChannel: TextChannel;
 	adminCommandsChannel: TextChannel;
+	adminLogChannel: TextChannel;
 	welcomeChannel: TextChannel;
 	rulesChannel: TextChannel;
 	arcadeRulesChannel: TextChannel;

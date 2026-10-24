@@ -26,6 +26,8 @@ import { parseFlexibleTime, isValidTimezone, localTimeToUtc, dateInTimezone } fr
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import type { Client } from "discord.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // ── customId prefixes ───────────────────────────────────────────────
 // What:  the wire format every persistent decree-edit interaction uses.
@@ -802,6 +804,7 @@ async function applyOnce(
 			overrideTime: values.overrideTime?.toISOString() ?? null,
 		};
 		await logAudit(guildId, interaction.user.id, event.eventId, "decree_edit_once", before, after, originalOccurrence);
+		adminLog.emitFor(interaction, guildId, "schedule.update", { subject: event.name, detail: setupCopy.adminLog.editedOnce, eventId: event.eventId });
 
 		// Fire-and-forget refresh so the schedule board picks up any
 		// time-shifted occurrence on its next read. Errors here must
@@ -858,6 +861,7 @@ async function applyPermanent(
 			firstOccurrence: updated.firstOccurrence.toISOString(),
 		};
 		await logAudit(guildId, interaction.user.id, event.eventId, "decree_edit_permanent", before, after);
+		adminLog.emitFor(interaction, guildId, "schedule.update", { subject: updated.name, detail: setupCopy.adminLog.editedEveryFire, eventId: event.eventId });
 
 		refreshSchedule(interaction.client as Client, guildId).catch((err) =>
 			console.error("[decreeEdit] schedule refresh after apply-permanent failed", err)

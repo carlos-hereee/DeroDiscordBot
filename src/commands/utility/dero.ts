@@ -20,6 +20,7 @@ import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { brainQueue } from "@features/dero-brain/brainQueue.js";
 import { describeBrainTurn, runBrainTurn, type UnansweredReason } from "@features/dero-brain/brainTurn.js";
 import { isAuthorizedSpeaker } from "@features/dero-brain/authorizer.js";
+import { readSpeakerAdminRoleId } from "@features/dero-brain/speakerAdminRole.js";
 import type { ActionReport } from "@features/dero-brain/executor.js";
 import { rulesCardFor } from "@features/dero-brain/holdemRulesCard.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
@@ -158,7 +159,8 @@ async function tell(interaction: ChatInputCommandInteraction): Promise<void> {
 	}
 
 	// ③ before anything reaches the brain, so a refused member costs no job
-	if (!isAuthorizedSpeaker({ member: speaker, guildOwnerId: guild.ownerId, voiceConfig: config })) {
+	const adminRoleId = await readSpeakerAdminRoleId(guild.id);
+	if (!isAuthorizedSpeaker({ member: speaker, guildOwnerId: guild.ownerId, adminRoleId, voiceConfig: config })) {
 		await refuse(interaction, tellCopy.notAuthorized);
 		return;
 	}
@@ -241,7 +243,12 @@ export async function showDeroStatus(interaction: RepliableInteraction): Promise
 		const config = await deroVoiceConfigStore.findByGuildId(interaction.guild.id);
 		const authorized =
 			config !== null &&
-			isAuthorizedSpeaker({ member: interaction.member, guildOwnerId: interaction.guild.ownerId, voiceConfig: config });
+			isAuthorizedSpeaker({
+				member: interaction.member,
+				guildOwnerId: interaction.guild.ownerId,
+				adminRoleId: await readSpeakerAdminRoleId(interaction.guild.id),
+				voiceConfig: config,
+			});
 		if (authorized) {
 			lines.push(config.enabled ? deroBrainCopy.status.canTell : deroBrainCopy.status.switchedOffForYou);
 			// How fast Dero answers by voice here lately, for the people who talk
@@ -280,6 +287,8 @@ export type JoinGate = { ok: true; channel: VoiceBasedChannel; voiceId: string }
 export interface JoinGateInput {
 	speaker: GuildMember;
 	guildOwnerId: string;
+	// GuildConfig.adminRoleId, which authorizes by itself (post-launch plan item 12).
+	adminRoleId: string | null;
 	botMember: GuildMember | null;
 	config: IDeroVoiceConfig | null;
 	/** The voice channel Dero is already in for this guild, if any. */
@@ -295,10 +304,10 @@ const refuseJoin = (line: string): JoinGate => ({ ok: false, line });
  * allowlist, and the bot able to see, connect and speak there. Every refusal
  * reuses the line that already says it, from the tell gates or the Listen copy.
  */
-export function checkJoin({ speaker, guildOwnerId, botMember, config, sessionChannelId }: JoinGateInput): JoinGate {
+export function checkJoin({ speaker, guildOwnerId, adminRoleId, botMember, config, sessionChannelId }: JoinGateInput): JoinGate {
 	if (!config) return refuseJoin(voiceCopy.listen.notSetUp);
 	if (!config.enabled) return refuseJoin(tellCopy.switchedOff);
-	if (!isAuthorizedSpeaker({ member: speaker, guildOwnerId, voiceConfig: config })) return refuseJoin(tellCopy.notAuthorized);
+	if (!isAuthorizedSpeaker({ member: speaker, guildOwnerId, adminRoleId, voiceConfig: config })) return refuseJoin(tellCopy.notAuthorized);
 
 	// The speaker's own channel is the target, so "the speaker is in it" holds
 	// by construction and there is no channel option to spoof.
@@ -328,6 +337,7 @@ export async function bringDeroIntoCall(interaction: RepliableInteraction): Prom
 	const gate = checkJoin({
 		speaker: interaction.member,
 		guildOwnerId: guild.ownerId,
+		adminRoleId: await readSpeakerAdminRoleId(guild.id),
 		botMember: guild.members.me,
 		config,
 		sessionChannelId: voiceSessions.get(guild.id)?.channelId ?? null,
@@ -400,7 +410,7 @@ export async function sendDeroAwayFromCall(interaction: RepliableInteraction): P
 	}
 	// The kill switch is NOT a gate here: sending Dero away is always safe, and a
 	// switched off guild is exactly where an authorized member may want it gone.
-	if (!isAuthorizedSpeaker({ member: interaction.member, guildOwnerId: guild.ownerId, voiceConfig: config })) {
+	if (!isAuthorizedSpeaker({ member: interaction.member, guildOwnerId: guild.ownerId, adminRoleId: await readSpeakerAdminRoleId(guild.id), voiceConfig: config })) {
 		await refuse(interaction, tellCopy.notAuthorized);
 		return;
 	}

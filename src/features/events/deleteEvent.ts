@@ -11,6 +11,8 @@ import { eventStore } from "@db/stores/eventStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { infoEmbed, errorEmbed } from "@utils/embedBuilder.js";
 import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // ── deleting an event ─────────────────────────────────────────────────
 // What:  soft deletes one active event after a private Delete or Cancel
@@ -98,6 +100,7 @@ export async function deleteEvent(interaction: RepliableInteraction, options: Co
 
 		// confirmed, soft delete
 		await eventStore.deleteInGuild(event.eventId, guildId);
+		adminLog.emitFor(interaction, guildId, "event.delete", { subject: event.name, detail: setupCopy.adminLog.deleted, eventId: event.eventId });
 		await button.update({
 			embeds: [infoEmbed(c.confirmTitle, c.successDescription(event.name), rokCommanderCopy.COLORS.SCHEDULE)],
 			components: [],

@@ -49,6 +49,18 @@ const guildConfigSchema = new Schema(
 		// creates it (repairMissingChannels treats null as "missing, build it").
 		adminCommandsChannelId: { type: String, required: false, default: null },
 
+		// ── 📜admin-log (post-launch plan item 11) ──
+		// What:  the audit trail channel under the homebase category: one line per admin
+		//        action (schedule and event changes, config changes, power-up toggles,
+		//        voice allowlist edits, self destruct attempts), written by
+		//        features/setup/adminLog.ts and nothing else.
+		// Who:   GuildSetupManager (create, self heal), ChannelDeleteWatcher, selfDestruct
+		//        and adminLog. Admins read it; only the bot writes (the "adminLog" kind).
+		// How:   nullable like adminCommandsChannelId, so every legacy row loads and the
+		//        boot sweep reads the null as "missing, build it". While it is null the
+		//        emitter still persists each line to BotLog and simply posts nothing.
+		adminLogChannelId: { type: String, required: false, default: null },
+
 		// ── ARCADE GAMES: the guild's SECOND managed category (2026-08-10) ──
 		// What:  ids of the 🎮 ARCADE GAMES category and the two managed channels
 		//        inside it, 📋arcade-rules and ⚔️challenges. Per match game rooms
@@ -434,6 +446,9 @@ const guildConfigSchema = new Schema(
 				// edits in place.
 				welcomeChannelId: { type: String, required: false, default: null },
 				rulesChannelId: { type: String, required: false, default: null },
+				// 📜admin-log's intro (post-launch plan item 11). Declared for the reason
+				// the post mortem gives: undeclared, it would repost on every boot.
+				adminLogChannelId: { type: String, required: false, default: null },
 			},
 			required: false,
 			default: () => ({}),

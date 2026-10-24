@@ -156,6 +156,14 @@ export const ChannelContent = {
 		return infoEmbed(cc.nextDecree.title, cc.nextDecree.description, copy.COLORS.NEXT_DECREE);
 	},
 
+	// 🗒️admin-log's header (post-launch plan item 11), above the one line per admin
+	// action that features/setup/adminLog.ts posts beneath it.
+	adminLogIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.adminLog.title, cc.adminLog.description, copy.COLORS.ADMIN);
+	},
+
 	// ── 🎮 ARCADE GAMES intros ──────────────────────────────────
 	// The rules card: rules ONLY since 2026-10 item 245 Phase 4a. The roster and the
 	// host buttons moved to 🕹️games (arcadeGamesIntro below), so this card is one

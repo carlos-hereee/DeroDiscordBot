@@ -7,6 +7,7 @@ import { voiceSessions, type VoiceSessionView } from "@features/voice/voiceSessi
 import { voiceCopy } from "@features/voice/voiceCopy.js";
 import type { BrainAction, BrainActionType, OpenHoldemAction, PostMessageAction, SayAction } from "./brainTypes.js";
 import { isAuthorizedSpeaker } from "./authorizer.js";
+import { readSpeakerAdminRoleId } from "./speakerAdminRole.js";
 import { checkPostableChannel, type ChannelRefusal } from "./channelGate.js";
 import { deroBrainCopy } from "./deroBrainCopy.js";
 import { describeTerms, describeTermsRefusal, resolveTerms } from "./holdemTerms.js";
@@ -75,6 +76,12 @@ export interface ExecutorVoiceDeps {
 export interface ExecutorDeps {
 	/** A fresh read of the member, bypassing the cache, or null when they left. */
 	fetchMember(guild: Guild, userId: string): Promise<GuildMember | null>;
+	/**
+	 * GuildConfig.adminRoleId, which authorizes by itself (post-launch plan item 12).
+	 * Optional so a test rig that never builds it keeps the allowlist only rule; the
+	 * default deps always wire it to readSpeakerAdminRoleId.
+	 */
+	loadAdminRoleId?(guildId: string): Promise<string | null>;
 	/** Optional so a caller that never speaks need not build it; defaults to the live calls. */
 	voice?: ExecutorVoiceDeps;
 }
@@ -113,6 +120,7 @@ export const defaultExecutorDeps: ExecutorDeps = {
 	// force: true because the cached member is exactly the stale copy this
 	// re-check exists to get past. A member who left resolves to null.
 	fetchMember: (guild, userId) => guild.members.fetch({ user: userId, force: true }).catch(() => null),
+	loadAdminRoleId: readSpeakerAdminRoleId,
 	voice: defaultExecutorVoiceDeps,
 };
 
@@ -216,7 +224,8 @@ export async function executeActions({
 	let speakerAuthorized = false;
 	if (postable.length > 0 || callActionable || asksForTable) {
 		speaker = await deps.fetchMember(guild, speakerId);
-		speakerAuthorized = isAuthorizedSpeaker({ member: speaker, guildOwnerId: guild.ownerId, voiceConfig });
+		const adminRoleId = deps.loadAdminRoleId ? await deps.loadAdminRoleId(guild.id) : null;
+		speakerAuthorized = isAuthorizedSpeaker({ member: speaker, guildOwnerId: guild.ownerId, adminRoleId, voiceConfig });
 	}
 
 	const reports: ActionReport[] = [];

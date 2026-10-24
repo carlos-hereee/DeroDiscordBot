@@ -4,6 +4,8 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // /schedule resume with no event, the bulk equivalent of resumeOneSchedule.
 // Resumes every paused event in the guild, including ones that had a
@@ -47,6 +49,8 @@ export async function resumeAllSchedules(interaction: RepliableInteraction): Pro
 			console.error("[schedule resume all] update failed", { eventId: event.eventId }, err);
 		}
 	}
+
+	if (succeeded > 0) adminLog.emitFor(interaction, guildId, "schedule.update", { subject: setupCopy.adminLog.allSchedules, detail: setupCopy.adminLog.resumedCount(succeeded) });
 
 	refreshSchedule(interaction.client, guildId).catch((err) =>
 		console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/schedule resume"), err)

@@ -42,4 +42,9 @@ export const gameRequestStore = {
 	async deleteByKey(guildId: string, nameKey: string): Promise<IGameRequest | null> {
 		return GameRequest.findOneAndDelete({ guildId, nameKey }).lean<IGameRequest>();
 	},
+
+	// Self destruct's server data delete (post-launch plan item 10): every row this guild owns.
+	async deleteGuild(guildId: string) {
+		return GameRequest.deleteMany({ guildId });
+	},
 };

@@ -26,7 +26,8 @@ import { buildBotSelfOverwrite } from "@utils/channelOverwrites.js";
 // ── kinds and inputs ─────────────────────────────────────────────────
 
 /** Which overwrite shape a managed channel takes. CHANNEL_SPECS' kind, with introductions split out of "public". */
-export type ManagedOverwriteKind = "public" | "intro" | "admin" | "voice";
+// "adminLog" is the bot write only audit channel (post-launch plan item 11).
+export type ManagedOverwriteKind = "public" | "intro" | "admin" | "adminLog" | "voice";
 
 /** One overwrite entry, in the form guild.channels.create and permissionOverwrites.set both accept. */
 export interface IOverwriteEntry {
@@ -62,6 +63,11 @@ const MEMBER_GATED_TEXT_ALLOW = [ViewChannel];
 // the plan's decision), so a change here is a change there too.
 const ADMIN_TEXT_ALLOW = [ViewChannel, SendMessages];
 const ADMIN_PRIVATE_ALLOW = [ViewChannel, SendMessages, ReadMessageHistory];
+// The audit channel's read only grant: admins and the owner read it, nobody but the
+// bot writes, so the trail cannot be padded or answered in place. applyAdminRole
+// keeps its option-form copy beside the other two.
+const ADMIN_LOG_READ_ALLOW = [ViewChannel, ReadMessageHistory];
+const ADMIN_LOG_WRITE_DENY = [SendMessages];
 const ADMIN_VOICE_ALLOW = [...JOIN_AND_SPEAK, SendMessages];
 
 // ── the branch ───────────────────────────────────────────────────────
@@ -78,7 +84,7 @@ export function isMemberRoleGated(guild: Guild, memberRoleId: string | null | un
 }
 
 /** The overwrite kind a CHANNEL_SPECS row takes: its own, except introductions, the one public channel members may write in. */
-export function overwriteKindOf(spec: { configField: string; kind: "public" | "admin" | "voice" }): ManagedOverwriteKind {
+export function overwriteKindOf(spec: { configField: string; kind: "public" | "admin" | "adminLog" | "voice" }): ManagedOverwriteKind {
 	return spec.configField === "introChannelId" ? "intro" : spec.kind;
 }
 
@@ -139,6 +145,30 @@ export function adminCommunityOverwrites(guild: Guild, config: IOverwriteOwner, 
 }
 
 /**
+ * 🗒️admin-log (post-launch plan item 11): hidden from @everyone like the admin
+ * channels, readable by the owner and the admin role, and writable by the bot alone.
+ * The SendMessages deny on the owner and admin role is explicit rather than a missing
+ * allow, because a server's own permissions can otherwise grant it through the role.
+ * A member holding Administrator still bypasses every overwrite; Discord allows no
+ * channel to refuse one.
+ */
+export function adminLogCommunityOverwrites(guild: Guild, config: IOverwriteOwner, roles: IOverwriteRoles): IOverwriteEntry[] {
+	const overwrites: IOverwriteEntry[] = [
+		{ id: guild.roles.everyone.id, deny: [ViewChannel, SendMessages] },
+		buildBotSelfOverwrite(guild.client.user!.id),
+		{ id: config.ownerId, allow: ADMIN_LOG_READ_ALLOW, deny: ADMIN_LOG_WRITE_DENY },
+	];
+	if (!roles.adminRoleId) return overwrites;
+	// Replaced rather than appended when the id is already present, as grant() does, so
+	// an admin role picked as @everyone yields one entry rather than a rejected pair.
+	const adminEntry: IOverwriteEntry = { id: roles.adminRoleId, allow: ADMIN_LOG_READ_ALLOW, deny: ADMIN_LOG_WRITE_DENY };
+	const index = overwrites.findIndex((entry) => entry.id === adminEntry.id);
+	if (index === -1) overwrites.push(adminEntry);
+	else overwrites[index] = adminEntry;
+	return overwrites;
+}
+
+/**
  * Both voice rooms (2026-10 item 235, owner decision D3, member role only): @everyone
  * may not connect or speak, and on a gated guild may not see the room either. The
  * member role, the owner and the admin role can join.
@@ -174,6 +204,8 @@ export function communityOverwritesFor(kind: ManagedOverwriteKind, guild: Guild,
 			return introCommunityOverwrites(guild, config, roles);
 		case "admin":
 			return adminCommunityOverwrites(guild, config, roles);
+		case "adminLog":
+			return adminLogCommunityOverwrites(guild, config, roles);
 		case "voice":
 			return voiceCommunityOverwrites(guild, config, roles);
 	}

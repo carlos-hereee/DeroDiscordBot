@@ -5,6 +5,8 @@ import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // /schedule pause with no event, the bulk equivalent of pauseOneSchedule.
 // Pauses every non-paused event in the guild in one shot. Already-paused
@@ -63,6 +65,8 @@ export async function pauseAllSchedules(interaction: RepliableInteraction, optio
 			console.error("[schedule pause all] update failed", { eventId: event.eventId }, err);
 		}
 	}
+
+	if (succeeded > 0) adminLog.emitFor(interaction, guildId, "schedule.update", { subject: setupCopy.adminLog.allSchedules, detail: setupCopy.adminLog.pausedCount(succeeded) });
 
 	// Fire-and-forget board refresh so paused tags render right away.
 	refreshSchedule(interaction.client, guildId).catch((err) =>

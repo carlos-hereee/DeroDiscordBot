@@ -46,6 +46,7 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 		// be present or every repair sweep rebuilds them alongside the real target.
 		nextDecreeChannelId: "ch-nextdecree",
 		adminCommandsChannelId: "ch-admincommands",
+		adminLogChannelId: "ch-adminlog",
 		// 👋welcome and 📘rules (2026-10 item 247 Phase 2), present for the same reason.
 		welcomeChannelId: "ch-welcome",
 		rulesChannelId: "ch-rules",
@@ -137,6 +138,7 @@ function makeGuild(options: {
 	const map: Record<string, unknown> = {
 		"ch-nextdecree": { id: "ch-nextdecree" },
 		"ch-admincommands": { id: "ch-admincommands" },
+		"ch-adminlog": { id: "ch-adminlog" },
 		// 👋welcome and 📘rules (2026-10 item 247 Phase 2), present by default too.
 		"ch-welcome": { id: "ch-welcome" },
 		"ch-rules": { id: "ch-rules" },
@@ -411,6 +413,80 @@ describe("GuildSetupManager.ensureHomebase", () => {
 			expect(call.parent).toBe("new-arcade");
 			expect(call.parent).not.toBe("cat-1");
 		}
+	});
+
+	// ⚠️ THE ARCADE DUPLICATE (post-launch plan item 1). A boot that cannot confirm the
+	// stored 🎮 ARCADE GAMES (a timeout, a rate limit) used to read that as "gone" and
+	// build a second one beside the live one. Only Discord's Unknown Channel answer may
+	// lead to a create; anything else skips the arcade for this pass.
+	it("creates no arcade category when the stored one cannot be confirmed", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ arcadeRulesChannelId: null }));
+
+		const createCalls: Array<{ type?: number }> = [];
+		const intact = { id: "intact" };
+		const guild = makeGuild({
+			categoryId: { id: "cat-1" },
+			channelFetchMap: {
+				"ch-intro": intact,
+				"ch-commands": intact,
+				"ch-leaderboard": intact,
+				"ch-schedule": intact,
+				"ch-announcements": intact,
+				"ch-admin": intact,
+				"games-cat-1": new Error("socket hang up"),
+			},
+			createHandler: async (opts) => {
+				createCalls.push(opts as { type?: number });
+				return { id: "should-not-exist" };
+			},
+		});
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async () => null });
+
+		await GuildSetupManager.ensureHomebase(client, guild);
+
+		expect(createCalls).toHaveLength(0);
+		expect(guildConfigMock.update).not.toHaveBeenCalledWith("guild-1", expect.objectContaining({ gamesCategoryId: expect.anything() }));
+	});
+
+	it("adopts an arcade category already in the guild instead of building a second one", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ gamesCategoryId: null, arcadeRulesChannelId: null }));
+
+		const createCalls: Array<{ name: string; type?: number; parent?: string }> = [];
+		const intact = { id: "intact" };
+		const liveArcade = {
+			id: "live-arcade",
+			name: rokCommanderCopy.setup.gamesCategoryName,
+			type: ChannelType.GuildCategory,
+			children: { cache: { find: () => undefined, size: 4 } },
+		};
+		const guild = makeGuild({
+			categoryId: { id: "cat-1" },
+			channelFetchMap: {
+				"ch-intro": intact,
+				"ch-commands": intact,
+				"ch-leaderboard": intact,
+				"ch-schedule": intact,
+				"ch-announcements": intact,
+				"ch-admin": intact,
+			},
+			createHandler: async (opts) => {
+				const options = opts as { name: string; type?: number; parent?: string };
+				createCalls.push(options);
+				const created = Object.create(TextChannel.prototype) as TextChannel & { send: ReturnType<typeof vi.fn> };
+				Object.assign(created, { id: `new-${options.name}`, send: vi.fn().mockResolvedValue({ id: "intro-msg" }) });
+				return created;
+			},
+		});
+		Object.assign(guild.channels, { cache: new Map([[liveArcade.id, liveArcade]]) });
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async () => null });
+
+		await GuildSetupManager.ensureHomebase(client, guild);
+
+		expect(createCalls.filter((call) => call.type === ChannelType.GuildCategory)).toHaveLength(0);
+		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", { gamesCategoryId: "live-arcade" });
+		const rebuilt = createCalls.filter((call) => call.type !== ChannelType.GuildCategory);
+		expect(rebuilt).toHaveLength(1);
+		expect(rebuilt[0]!.parent).toBe("live-arcade");
 	});
 
 	it("repairs a single missing public channel and posts a notice in the inner sanctum", async () => {
@@ -844,7 +920,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		};
 	}
 
-	it("builds exactly two categories and thirteen channels", async () => {
+	it("builds exactly two categories and fourteen channels", async () => {
 		const { categories, textChannels } = await runFreshInstall();
 
 		// Both categories, in build order, with NO dev suffix: vitest runs under
@@ -856,7 +932,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 			rokCommanderCopy.setup.gamesCategoryName,
 		]);
 
-		expect(textChannels).toHaveLength(13);
+		expect(textChannels).toHaveLength(14);
 		expect(textChannels.map((channel) => channel.name).sort()).toEqual(
 			[
 				packChannels.intro,
@@ -867,6 +943,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 				packChannels.admin,
 				packChannels.nextDecree,
 				packChannels.adminCommands,
+				packChannels.adminLog,
 				packChannels.welcome,
 				packChannels.rules,
 				packChannels.arcadeRules,
@@ -880,7 +957,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 	// the compiler cannot tell them apart and a swapped parent.id is a silent
 	// misfile. CHANNEL_SPECS.categoryField protects every OTHER consumer;
 	// createChannels passes the parent literally, so only a test protects it.
-	it("files the ten homebase channels and the three arcade channels under their own categories", async () => {
+	it("files the eleven homebase channels and the three arcade channels under their own categories", async () => {
 		const { textChannels } = await runFreshInstall();
 
 		const homebaseParent = `cat-${rokCommanderCopy.setup.categoryName}`;
@@ -896,6 +973,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 			packChannels.admin,
 			packChannels.nextDecree,
 			packChannels.adminCommands,
+			packChannels.adminLog,
 			packChannels.welcome,
 			packChannels.rules,
 		]) {
@@ -908,7 +986,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 
 		// No channel may land unparented or under a third parent, which a typo
 		// in a parent id would otherwise produce without failing either loop.
-		expect(textChannels.filter((channel) => channel.parent === homebaseParent)).toHaveLength(10);
+		expect(textChannels.filter((channel) => channel.parent === homebaseParent)).toHaveLength(11);
 		expect(textChannels.filter((channel) => channel.parent === arcadeParent)).toHaveLength(3);
 	});
 
@@ -938,6 +1016,16 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 				allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
 			},
 		},
+		// 🗒️admin-log: hidden from members, readable by the owner, and written by the
+		// bot alone, so the owner's write is an explicit deny (post-launch plan item 11).
+		adminLog: {
+			everyone: { id: EVERYONE_ID, deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+			owner: {
+				id: OWNER_ID,
+				allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+				deny: [PermissionFlagsBits.SendMessages],
+			},
+		},
 	} as const;
 
 	const EXPECTED_POSTURES: Array<[string, keyof typeof POSTURES]> = [
@@ -949,6 +1037,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		[packChannels.admin, "admin"],
 		[packChannels.nextDecree, "public"],
 		[packChannels.adminCommands, "admin"],
+		[packChannels.adminLog, "adminLog"],
 		// 👋welcome and 📘rules: members read Dero's log and the rules, and type nothing.
 		[packChannels.welcome, "public"],
 		[packChannels.rules, "public"],
@@ -975,14 +1064,14 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		}
 	});
 
-	it("carries the bot self overwrite on all thirteen channels", async () => {
+	it("carries the bot self overwrite on all fourteen channels", async () => {
 		// Not decoration. Without it the @everyone SendMessages deny suppresses
 		// the bot's OWN posts on a public channel, and the @everyone ViewChannel
 		// deny hides an admin channel from the bot entirely. Both fail at post
 		// time, long after setup reported success, so the failure surfaces as a
 		// missing intro embed rather than as a setup error.
 		const { textChannels } = await runFreshInstall();
-		expect(textChannels).toHaveLength(13);
+		expect(textChannels).toHaveLength(14);
 
 		for (const created of textChannels) {
 			const botEntry = (created.permissionOverwrites ?? []).find((entry) => entry.id === BOT_ID);
@@ -1442,7 +1531,8 @@ describe("GuildSetupManager.applyAdminRole", () => {
 			const id = stored[spec.configField];
 			expect(created[id], `${spec.configField} was never granted`).toBeDefined();
 			expect(created[id].ViewChannel).toBe(true);
-			expect(created[id].SendMessages).toBe(true);
+			// The audit trail is the one channel admins read and never write.
+			expect(created[id].SendMessages).toBe(spec.kind !== "adminLog");
 		}
 	});
 

@@ -21,6 +21,7 @@ vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({
 }));
 vi.mock("@features/voice/spendMeter.js", () => ({ currentMonthCents: async () => 0 }));
 vi.mock("@features/voice/elevenLabsTts.js", () => ({ isTtsKeyConfigured: () => true }));
+vi.mock("@features/setup/adminLog.js", () => ({ adminLog: { emit: vi.fn() } }));
 vi.mock("@features/voice/voiceSessions.js", () => ({
 	voiceSessions: { get: mocks.sessionGet, leave: mocks.sessionLeave },
 }));
@@ -35,6 +36,8 @@ async function replyText(options: { sub: string; dollars?: number; enabled?: boo
 	const reply = vi.fn(async () => undefined);
 	const interaction = {
 		guildId: "g1",
+		user: { id: "admin-1" },
+		client: {},
 		reply,
 		options: {
 			getSubcommandGroup: () => null,

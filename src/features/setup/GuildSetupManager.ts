@@ -8,6 +8,7 @@ import {
 	TextChannel,
 	VoiceChannel,
 	DiscordAPIError,
+	RESTJSONErrorCodes,
 	ActionRowBuilder,
 	ButtonBuilder,
 	EmbedBuilder,
@@ -153,6 +154,28 @@ export class GuildSetupManager {
 		// we want to refresh the ids on THAT row, not insert a second one.
 		if (existing?.categoryId && !options.force) return;
 
+		// The SECOND category is LOOKED UP before the homebase category is built, and
+		// only CREATED after it, so the sidebar order stays NOTICE BOARD then ARCADE
+		// GAMES (Discord orders categories by creation). Looking first matters because
+		// a stored id Discord could not confirm either way stops the pass here, with
+		// nothing built: a NOTICE BOARD created and then abandoned unpersisted would
+		// itself be a duplicate on the next pass (the post-launch plan's item 1).
+		// ⚠️ THREAD THE STORED ARCADE ID. This used to hardcode null, which made the
+		// helper's reuse branch dead on this path and always created a category. That
+		// is harmless on a fresh install (the id genuinely is null) but this is NOT
+		// only the fresh-install path: rebuildFromStaleConfig and ScheduleBoard
+		// .rebuildHomebase both call in with force: true, which walks straight past
+		// the early return above. An admin deleting only the NOTICE BOARD category
+		// therefore got a SECOND 🎮 ARCADE GAMES built beside the live one, with
+		// gamesCategoryId repointed at it, permanently orphaning the original
+		// category, its channels, and every in-progress room channel parented under
+		// it (selfDestruct's MANAGED_CATEGORY_FIELDS reads the stored id, so
+		// /self-destruct could not reach them either). repairMissingChannels passes
+		// the stored id for exactly this reason; this is the same call.
+		const storedArcadeId = (existing as unknown as { gamesCategoryId?: string | null } | null)?.gamesCategoryId ?? null;
+		const existingArcade = await GuildSetupManager.findExistingArcadeCategory(guild, storedArcadeId);
+		if (existingArcade === "unreachable") return;
+
 		// What:  build the homebase category. Owner is granted explicit
 		//        view/send/read; @everyone is intentionally NOT denied
 		//        ViewChannel here.
@@ -196,25 +219,9 @@ export class GuildSetupManager {
 			throw error;
 		}
 
-		// The SECOND category. Built here rather than left to the boot sweep so a
-		// fresh install produces both categories and all ten channels in one pass,
-		// which is what the completion criteria for this phase actually asks for.
 		// A null return means a 50013 already routed through handlePermissionFailure,
 		// so bail exactly as the homebase category create above does.
-		// ⚠️ THREAD THE STORED ARCADE ID. This used to hardcode null, which made the
-		// helper's reuse branch dead on this path and always created a category. That
-		// is harmless on a fresh install (the id genuinely is null) but this is NOT
-		// only the fresh-install path: rebuildFromStaleConfig and ScheduleBoard
-		// .rebuildHomebase both call in with force: true, which walks straight past
-		// the early return above. An admin deleting only the NOTICE BOARD category
-		// therefore got a SECOND 🎮 ARCADE GAMES built beside the live one, with
-		// gamesCategoryId repointed at it, permanently orphaning the original
-		// category, its channels, and every in-progress room channel parented under
-		// it (selfDestruct's MANAGED_CATEGORY_FIELDS reads the stored id, so
-		// /self-destruct could not reach them either). repairMissingChannels passes
-		// the stored id for exactly this reason; this is the same call.
-		const storedArcadeId = (existing as unknown as { gamesCategoryId?: string | null } | null)?.gamesCategoryId ?? null;
-		const gamesCategory = await GuildSetupManager.resolveOrCreateArcadeCategory(guild, storedArcadeId, config.ownerId);
+		const gamesCategory = existingArcade ?? (await GuildSetupManager.createArcadeCategory(guild, config.ownerId));
 		if (!gamesCategory) return;
 
 		// The voice rooms are the one posture that names a role (owner decision D3,
@@ -273,6 +280,8 @@ export class GuildSetupManager {
 			// Keys the admin power-up panel, so ensurePowerUps can post as soon as
 			// /setup runs rather than waiting for a reboot.
 			adminCommandsChannelId: ids.adminCommandsChannelId,
+			// The audit trail, so the first admin action after /setup already has a home.
+			adminLogChannelId: ids.adminLogChannelId,
 			// 👋welcome and 📘rules, and which of the two (if either) the server already
 			// had. Replaced, not merged: a build re-derives every adoption, and an id from
 			// a prior build points at a channel this one either re-adopted or never saw.
@@ -669,6 +678,8 @@ export class GuildSetupManager {
 		// admin power-up panel. kept separate so daily inner-sanctum notices
 		// never bury the quick-action controls.
 		"adminCommandsChannelId",
+		// 🗒️admin-log, the audit trail under the homebase (post-launch plan item 11).
+		"adminLogChannelId",
 		// 👋welcome and 📘rules, under the homebase (2026-10 item 247 Phase 2).
 		"welcomeChannelId",
 		"rulesChannelId",
@@ -701,7 +712,8 @@ export class GuildSetupManager {
 		// table for all three, so the repair
 		// sweep, the delete watcher, the drift rename, the admin grant and self
 		// destruct reach a voice room through the same walk as everything else.
-		kind: "public" | "admin" | "voice";
+		// "adminLog" is the one bot write only channel, the audit trail.
+		kind: "public" | "admin" | "adminLog" | "voice";
 		// ⚠️ REQUIRED ON PURPOSE, and that is the entire mitigation for risk R2.
 		// There are TWO managed categories now, and every consumer that builds or
 		// repairs a channel has to know which parent it belongs under. An optional
@@ -731,6 +743,12 @@ export class GuildSetupManager {
 		// 🛡️ eighth, admin command center. admin-only (same gating as the
 		// admin channel); hosts the command guide + admin power-up panel.
 		{ configField: "adminCommandsChannelId", displayName: channels.adminCommands, kind: "admin", categoryField: "categoryId" },
+		// 🗒️ the audit trail (post-launch plan item 11). ⚠️ THIS LINE ARMS THE BOOT
+		// REPAIR SWEEP for every existing guild, the way the welcome and arcade specs
+		// did: a legacy row loads adminLogChannelId as null, the sweep reads null as
+		// case ③ "missing, build it", and the channel appears once on the next boot.
+		// Its own kind, because it is the one channel nobody but the bot may post in.
+		{ configField: "adminLogChannelId", displayName: channels.adminLog, kind: "adminLog", categoryField: "categoryId" },
 
 		// ── 👋welcome and 📘rules (2026-10 item 247 Phase 2) ──
 		// ⚠️ THESE TWO LINES ARM THE BOOT REPAIR SWEEP for every existing guild, the way
@@ -830,6 +848,9 @@ export class GuildSetupManager {
 				// the 2026-06-19 split). Self-destruct button rides along via
 				// resolveIntroComponents.
 				return ChannelContent.adminCommandGuide(guildConfig);
+			// The header above the audit lines adminLog.ts posts.
+			case "adminLogChannelId":
+				return ChannelContent.adminLogIntro(guildConfig);
 			// ── 👋welcome and 📘rules ──
 			// The rules post reads the owner's saved rules off the stored row, which is
 			// why callers pass the loaded GuildConfig here rather than only a pack id.
@@ -2017,6 +2038,12 @@ export class GuildSetupManager {
 				});
 				continue;
 			}
+			// The audit trail is read only for admins too (communityOverwrites keeps the
+			// array form of this grant), so nobody can pad or answer it in place.
+			if (spec.kind === "adminLog") {
+				await channel?.permissionOverwrites.create(config.adminRoleId, { ViewChannel: true, ReadMessageHistory: true, SendMessages: false });
+				continue;
+			}
 			await channel?.permissionOverwrites.create(
 				config.adminRoleId,
 				spec.kind === "admin"
@@ -2061,16 +2088,47 @@ export class GuildSetupManager {
 	//        matching runAutoSetup's posture: a guild that will not let the bot
 	//        build is tracked toward the auto-leave grace period rather than
 	//        throwing on every boot forever.
+	//
+	// ⚠️ NOTHING IS CREATED UNLESS DISCORD POSITIVELY SAID THERE IS NONE (the
+	// post-launch plan's item 1, a second 🎮 ARCADE GAMES beside a live one). The
+	// stored id is read first, but a failed fetch only means "gone" when Discord
+	// answers Unknown Channel; a timeout, a rate limit or a 5xx used to read as gone
+	// too, and built a duplicate. Then, before any create, a category already
+	// carrying the arcade's name is adopted, which also heals a row that lost its id
+	// (a self destruct release, a reset database). An unconfirmed stored id returns
+	// null, which both callers already treat as "skip the arcade this pass".
+	// runAutoSetup calls the two halves itself (see its call site for why); the boot
+	// sweep takes them together here.
 	private static async resolveOrCreateArcadeCategory(
 		guild: Guild,
 		storedId: string | null | undefined,
 		ownerId: string
 	): Promise<CategoryChannel | null> {
+		const existing = await GuildSetupManager.findExistingArcadeCategory(guild, storedId);
+		if (existing === "unreachable") return null;
+		return existing ?? GuildSetupManager.createArcadeCategory(guild, ownerId);
+	}
+
+	// The lookup half: the stored category, else one already carrying the arcade's
+	// name, else null (Discord confirmed there is none to reuse), or "unreachable"
+	// when the stored id could not be confirmed either way.
+	private static async findExistingArcadeCategory(guild: Guild, storedId: string | null | undefined): Promise<CategoryChannel | null | "unreachable"> {
 		if (storedId) {
-			const existing = await guild.channels.fetch(storedId).catch(() => null);
-			if (existing && existing.type === ChannelType.GuildCategory) return existing as CategoryChannel;
+			const stored = await GuildSetupManager.fetchStoredCategory(guild, storedId);
+			if (stored === "unreachable") {
+				console.warn(`[arcade-category] guild ${guild.id}: could not confirm stored category ${storedId}; creating nothing this pass`);
+				return "unreachable";
+			}
+			if (stored) return stored;
 		}
 
+		const adopted = GuildSetupManager.findArcadeCategoryByName(guild);
+		if (adopted) console.log(`[arcade-category] guild ${guild.id}: adopted existing category ${adopted.id} instead of building a second one`);
+		return adopted;
+	}
+
+	// The create half, null on a 50013 after routing through handlePermissionFailure.
+	private static async createArcadeCategory(guild: Guild, ownerId: string): Promise<CategoryChannel | null> {
 		try {
 			return await guild.channels.create({
 				name: resolveGamesCategoryName(),
@@ -2089,6 +2147,34 @@ export class GuildSetupManager {
 			}
 			throw error;
 		}
+	}
+
+	// The stored category, null when Discord answered that it does not exist (or the id
+	// now names something that is not a category), and "unreachable" for any other
+	// failure, which says nothing about whether it exists.
+	private static async fetchStoredCategory(guild: Guild, categoryId: string): Promise<CategoryChannel | null | "unreachable"> {
+		try {
+			const channel = await guild.channels.fetch(categoryId);
+			return channel?.type === ChannelType.GuildCategory ? (channel as CategoryChannel) : null;
+		} catch (error) {
+			if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return null;
+			return "unreachable";
+		}
+	}
+
+	// A category already named as this environment's arcade. When a guild already
+	// holds several (the duplicate this guards against), the one with the most
+	// channels under it is the live one, so it wins and the empty spare is left for
+	// an admin to delete rather than deleted by Dero. Reads the channel cache only, the
+	// way adoption.ts scans for a welcome or rules channel: the Guilds intent fills it
+	// at ready, so the scan costs no API call and has no failure of its own.
+	private static findArcadeCategoryByName(guild: Guild): CategoryChannel | null {
+		const name = resolveGamesCategoryName();
+		const matches = [...(guild.channels.cache?.values() ?? [])].filter(
+			(channel): channel is CategoryChannel => channel?.type === ChannelType.GuildCategory && channel.name === name
+		);
+		if (matches.length === 0) return null;
+		return matches.reduce((best, next) => (next.children.cache.size > best.children.cache.size ? next : best));
 	}
 
 	private static async createChannels(
@@ -2127,6 +2213,9 @@ export class GuildSetupManager {
 		// Admin channels: owner only until /setup grants the admin role.
 		const adminOverwrites = communityOverwritesFor("admin", guild, owner, textRoles);
 
+		// The audit trail: the owner reads, only the bot writes (the admin role joins at /setup).
+		const adminLogOverwrites = communityOverwritesFor("adminLog", guild, owner, textRoles);
+
 		// 👋welcome and 📘rules adopt the server's own channel when it has one
 		// (2026-10 item 247 Phase 2). The scan runs BEFORE the create, which is the
 		// whole guarantee against a duplicate: a match short circuits the build. The
@@ -2148,6 +2237,7 @@ export class GuildSetupManager {
 			adminChannel,
 			nextDecreeChannel,
 			adminCommandsChannel,
+			adminLogChannel,
 			welcome,
 			rules,
 			arcadeRulesChannel,
@@ -2215,6 +2305,13 @@ export class GuildSetupManager {
 				parent: category.id,
 				permissionOverwrites: adminOverwrites,
 			}),
+			// 🗒️admin-log (post-launch plan item 11), the bot write only audit trail.
+			guild.channels.create({
+				name: channels.adminLog,
+				type: ChannelType.GuildText,
+				parent: category.id,
+				permissionOverwrites: adminLogOverwrites,
+			}),
 			// 👋welcome and 📘rules: publicOverwrites, members read and the bot writes,
 			// whether built here or adopted and moved onto the same shape.
 			adoptOrCreate("welcomeChannelId"),
@@ -2281,6 +2378,7 @@ export class GuildSetupManager {
 				adminChannelId: adminChannel.id,
 				nextDecreeChannelId: nextDecreeChannel.id,
 				adminCommandsChannelId: adminCommandsChannel.id,
+				adminLogChannelId: adminLogChannel.id,
 				welcomeChannelId: welcome.channel.id,
 				rulesChannelId: rules.channel.id,
 				gamesCategoryId: gamesCategory.id,
@@ -2299,6 +2397,7 @@ export class GuildSetupManager {
 				adminChannel,
 				nextDecreeChannel,
 				adminCommandsChannel,
+				adminLogChannel,
 				welcomeChannel: welcome.channel,
 				rulesChannel: rules.channel,
 				arcadeRulesChannel,
@@ -2348,6 +2447,8 @@ export class GuildSetupManager {
 			// guide). Standard one-key-per-channel slot, the guide is this
 			// channel's only tracked message after the 2026-06-19 split.
 			adminCommandsChannelId: string;
+			// 🗒️admin-log's header, edited in place on later boots like every intro.
+			adminLogChannelId: string;
 			// Null when an adopted channel already held the owner's own content.
 			welcomeChannelId: string | null;
 			rulesChannelId: string | null;
@@ -2376,6 +2477,7 @@ export class GuildSetupManager {
 			adminChannel,
 			nextDecreeChannel,
 			adminCommandsChannel,
+			adminLogChannel,
 			welcomeChannel,
 			rulesChannel,
 			arcadeRulesChannel,
@@ -2406,6 +2508,8 @@ export class GuildSetupManager {
 			// one batch and ordering is deterministic. Persisted on
 			// introMessageIds.adminCommandsChannelId like every other channel intro.
 			adminCommandsMsg,
+			// 🗒️admin-log's header. Not pinned: only Dero writes there, so nothing buries it.
+			adminLogMsg,
 			// 👋welcome's intro and 📘rules' rules post, null where an adopted channel
 			// already held the owner's content. Neither is pinned: both are read only.
 			welcomeMsg,
@@ -2453,6 +2557,7 @@ export class GuildSetupManager {
 			// (gated in the handler). Pinning handled below alongside the
 			// schedule + next-decree pins.
 			adminCommandsChannel.send({ embeds: [ChannelContent.adminCommandGuide()], components: GuildSetupManager.resolveIntroComponents("adminCommandsChannelId") ?? [] }),
+			adminLogChannel.send({ embeds: [ChannelContent.adminLogIntro()] }),
 			postIntroUnlessOwnerContent(welcomeChannel, "welcomeChannelId"),
 			postIntroUnlessOwnerContent(rulesChannel, "rulesChannelId"),
 			// The arcade's two cards. Ordering inside this array is load bearing:
@@ -2504,6 +2609,7 @@ export class GuildSetupManager {
 				adminChannelId: adminMsg.id,
 				nextDecreeChannelId: nextDecreeMsg.id,
 				adminCommandsChannelId: adminCommandsMsg.id,
+				adminLogChannelId: adminLogMsg.id,
 				welcomeChannelId: welcomeMsg?.id ?? null,
 				rulesChannelId: rulesMsg?.id ?? null,
 				arcadeRulesChannelId: arcadeRulesMsg.id,

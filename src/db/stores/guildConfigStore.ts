@@ -46,4 +46,10 @@ export const guildConfigStore = {
 	async deleteByGuildId(guildId: string) {
 		return GuildConfigModel.deleteOne({ guildId });
 	},
+
+	// Self destruct's config reset (post-launch plan item 10). The caller names every
+	// field and its default; this only writes them.
+	async resetSettings(guildId: string, defaults: object) {
+		return GuildConfigModel.findOneAndUpdate({ guildId }, { $set: defaults }, { new: true });
+	},
 };

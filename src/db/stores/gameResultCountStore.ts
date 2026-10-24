@@ -24,4 +24,9 @@ export const gameResultCountStore = {
 	async findForGuildMonth(guildId: string, game: string, month: string): Promise<IGameResultCount[]> {
 		return GameResultCount.find({ guildId, game, month }).sort({ count: -1 }).lean<IGameResultCount[]>();
 	},
+
+	// Self destruct's server data delete (post-launch plan item 10): every row this guild owns.
+	async deleteGuild(guildId: string) {
+		return GameResultCount.deleteMany({ guildId });
+	},
 };

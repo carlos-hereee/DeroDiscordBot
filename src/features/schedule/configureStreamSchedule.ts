@@ -22,6 +22,8 @@ import {
 	isValidTimezone,
 	searchTimezones,
 } from "@utils/tzParser.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // ── /stream setup ────────────────────────────────────────
 // What:  creates a recurring weekly event on a fixed day + time of week
@@ -301,6 +303,8 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 				embeds: [new EmbedBuilder().setDescription(c.saved(name)).setColor(rokCommanderCopy.COLORS.SCHEDULE)],
 				components: [],
 			});
+
+			adminLog.emitFor(interaction, guildId, "schedule.create", { subject: name, detail: setupCopy.adminLog.weeklyStream });
 
 			// Fire and forget, schedule board refresh failure must not
 			// undo the successful save. Same pattern as the events route.

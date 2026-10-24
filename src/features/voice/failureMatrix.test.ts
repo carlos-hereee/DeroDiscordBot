@@ -29,6 +29,8 @@ const hoisted = vi.hoisted(() => ({
 	},
 }));
 
+// The admin role read is a GuildConfig lookup; null keeps these suites on the allowlist only rule.
+vi.mock("@features/dero-brain/speakerAdminRole.js", () => ({ readSpeakerAdminRoleId: vi.fn(async () => null) }));
 vi.mock("@utils/config.js", async (importOriginal) => ({
 	...(await importOriginal<Record<string, unknown>>()),
 	deroBrainKey: hoisted.KEY,
@@ -789,6 +791,7 @@ describe("people and switches", () => {
 		const startedAt = Date.now();
 		await deroConfigCommand({
 			guildId: GUILD_ID,
+			user: { id: OWNER_ID },
 			reply,
 			options: { getSubcommandGroup: () => null, getSubcommand: () => "disable" },
 		} as unknown as ChatInputCommandInteraction);
