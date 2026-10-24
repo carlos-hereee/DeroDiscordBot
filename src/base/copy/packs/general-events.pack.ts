@@ -273,6 +273,9 @@ export const generalEventsCopy: IPluginCopy = {
 			nextDecree: "🔜upcoming-events",
 			// Eighth channel: admin-only command + control surface (mirrors rok-commander).
 			adminCommands: "🎛️admin-controls",
+			// The join log and the rules post (mirrors rok-commander, 2026-10 item 247).
+			welcome: "👋welcome",
+			rules: "📘rules",
 			// The two ARCADE GAMES channels. Channel NAMES are universal across packs
 			// (the same reason the category name is), so these match rok-commander
 			// exactly; only the intro copy below differs in voice.
@@ -583,6 +586,27 @@ export const generalEventsCopy: IPluginCopy = {
 					"Members who already hold the role see no change. Anyone who lost sight of a channel can open **Channels & Roles** and choose **Retake Onboarding**.",
 			},
 		},
+
+		// The join and leave log, key for key with rok-commander's, plain voice.
+		welcome: {
+			title: "👋 Welcome Log",
+			description:
+				"Dero notes every member who joins or leaves the server here.\n\n" +
+				"Say hi to newcomers in 📜introductions, where they can answer.",
+			joinTitle: "👋 Member joined",
+			joinLine: (displayName: string): string => `**${displayName}** joined the server.`,
+			leaveTitle: "🚪 Member left",
+			leaveLine: (displayName: string): string => `**${displayName}** left the server.`,
+		},
+
+		// The rules post. The rules themselves are the owner's words, shown verbatim
+		// in every pack, so this reads rok-commander's one copy rather than a second
+		// that could drift from it.
+		rules: {
+			title: "📘 Server Rules",
+			defaultMarkdown: rokCommanderCopy.channelContent.rules.defaultMarkdown,
+			editButtonLabel: "Edit rules",
+		},
 	},
 
 	// The game request ballot, key for key with rok-commander's, plain voice.
@@ -646,6 +670,9 @@ export const generalEventsCopy: IPluginCopy = {
 		},
 		setupRequired:
 			"⚠️ **Setup has not been completed.**\n\n" + "An admin must run `/setup` before any commands can be used.",
+		// The Edit rules modal, owner and admin facing, so it reads the same as
+		// rok-commander's plain wording.
+		rulesEdit: rokCommanderCopy.responses.rulesEdit,
 	},
 
 	// Streamer-tone copy that already lived in rok-commander.pack.ts. Reproduced

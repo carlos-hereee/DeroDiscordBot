@@ -45,6 +45,8 @@ import { logCanvasRendererStatus, logDeroArtStatus } from "@features/renderer/in
 import { sweepMonopolyAuctions } from "@features/game-rooms/roomMonopolyAuction.js";
 import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/polls/PollDispatcher.js";
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
+import { registerRulesEditHandlers } from "@features/setup/rulesEdit.js";
+import { registerWelcomeLog } from "@features/setup/welcomeLog.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
 import { registerAdminCommandLauncher } from "@features/command-buttons/adminCommandLauncher.js";
 import { registerVoiceRoomControlHandlers } from "@features/voice/voiceRoomControlHandlers.js";
@@ -348,6 +350,8 @@ process.on("uncaughtException", (err) => {
 	registerGameRoomHandlers();
 	registerPollHandlers();
 	registerSelfDestructHandlers();
+	// The Edit rules button on the 📘rules post (2026-10 item 247 Phase 2).
+	registerRulesEditHandlers();
 	registerPowerUpHandlers();
 	// Every admin command's button on the admin guide, with the pick, the optional
 	// field pick and the form each one opens (2026-10 item 245 Phase 4b).
@@ -647,6 +651,10 @@ process.on("uncaughtException", (err) => {
 		// homebase sweep) makes existing guilds' intro channels member-writable
 		// so newcomers can actually answer.
 		registerGreeter(client);
+		// The 👋welcome channel's join and leave log (2026-10 item 247 Phase 2). A
+		// second GuildMemberAdd listener beside the greeter's on purpose: the greeter
+		// welcomes in introductions, this logs in 👋welcome, each throttled apart.
+		registerWelcomeLog(client);
 
 		// ── legacy arcade field rename ─────────────────────────────
 		// What: renames gamesRulesChannelId / gamesChallengesChannelId (and their

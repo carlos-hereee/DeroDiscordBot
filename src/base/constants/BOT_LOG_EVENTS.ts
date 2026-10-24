@@ -178,6 +178,15 @@ export const BOT_LOG_EVENTS = {
 	//
 	// ⚠️ PRIVACY: metadata carries the two channel ids posted to and nothing else.
 	MEMBER_ROLE_GATING_ANNOUNCED: "member_role_gating_announced",
+	// ── rules edited (2026-10 item 247 Phase 2) ────────────────────
+	// What:  one row per Edit rules submit that saved, from the 📘rules post.
+	// Who:   rulesEdit writes it, fire and forget, after the save. Nothing reads
+	//        it on a hot path; it answers "who changed the rules, and when".
+	// When:  once per saved edit. Not idempotent on purpose: every edit is an event.
+	//
+	// ⚠️ PRIVACY: metadata carries ids, the saved text's LENGTH and whether the
+	// edit reset to the default, and NEVER the rules text itself.
+	RULES_EDITED: "rules_edited",
 	// add more here as needed
 } as const;
 

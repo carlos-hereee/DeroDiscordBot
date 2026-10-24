@@ -23,6 +23,37 @@ import { COLORS, FOOTER, AUTHOR } from "../brand.js";
 //        zero copy edits. The file split is the architectural change; the
 //        words shipped to mortals are unchanged so this can land without
 //        any visual diff in Discord.
+
+// ── the default server rules (2026-10 item 247 Phase 2) ──────────────────
+// The owner's own rules, numbered as the owner wrote them, with the two plan
+// additions the draft did not already cover (Don't Impersonate, One Person One
+// Account) as 13 and 14. Following Discord's rules is the owner's rule 10 and
+// advertising is folded into rule 8, which is why the plan's four additions add
+// two rules here. Plain words, not kingdom voice: these are the owner's rules, so
+// every pack shows them verbatim (general-events reads this same constant). The
+// owner replaces them per server with the Edit rules button, which saves
+// GuildConfig.customRulesMarkdown; null there means this text.
+const DEFAULT_SERVER_RULES = [
+	"**Welcome!** By being in this server, you agree to follow these rules. Admins and mods have final say on interpretation and enforcement.",
+	"**1. 🤝 Respect Everyone**\nBanter and trash talk are fine. Harassment, bullying, threats, or targeting someone to make them uncomfortable are not.",
+	"**2. 🚫 No Hate Speech**\nNo racism, sexism, homophobia, transphobia, slurs, or attacks on anyone's identity, background, or beliefs.",
+	"**3. 🔞 Keep It SFW**\nNo porn, explicit sexual content, gore, shock content, or anything that would get the server reported.",
+	"**4. 🚯 No Spam**\nNo flooding chats, mass pings, repeated posts, bot abuse, or low-effort noise.",
+	"**5. 🗂️ Use Channels as Intended**\nPost things where they belong. Doesn't need to be perfect, just don't derail or clutter channels on purpose.",
+	"**6. 🔒 Respect Privacy**\nDon't share anyone's personal info, private messages, photos, or recordings without their permission. This includes doxxing in any form.",
+	"**7. 🎙️ Don't Ruin Voice Chat**\nNo mic spam, ear-rape audio, soundboard abuse, music over conversations, or talking over others on purpose.",
+	"**8. 🔗 No Sketchy Links or Content**\nNo scams, phishing, malware, fake giveaways, suspicious downloads, or unsolicited self-promo and advertising.",
+	"**9. 🎮 No Cheating, Exploits, or Bad-Faith Game Behavior**\nNo sharing cheats, hacks, exploits, or account-selling. Don't use the server to coordinate anything that violates a game's or platform's terms of service.",
+	"**10. 📜 Follow Discord's Terms of Service and Community Guidelines**\nAnything that breaks Discord's rules breaks ours too.",
+	"**11. 👮 Listen to Staff**\nAdmins and mods are here to keep things running. If staff tells you to stop, change channels, or drop a topic, do it. Argue it in DMs after, not in chat.",
+	"**12. 🧠 Use Common Sense**\nNot every situation needs its own rule. If you're doing something to annoy, provoke, or cause problems, don't.",
+	"**13. 🎭 Don't Impersonate**\nDon't pretend to be another member, staff, a bot, or a public figure, and don't copy someone's name or avatar to fool people.",
+	"**14. 👤 One Person, One Account**\nNo alt accounts to dodge a ban, timeout, or vote, and no sharing one account between people.",
+	// The owner's draft named a placeholder here ("[admin contact / ticket
+	// channel]"); a server admin by DM is the one route every server has.
+	"**⚖️ Enforcement**\nBreaking the rules can result in a warning, timeout, kick, or ban depending on severity, intent, and history. Staff decisions are final; appeals go to a server admin by DM.",
+].join("\n\n");
+
 export const rokCommanderCopy = {
 	// Brand identity (footer wordmark, Dero author, color palette) is shared
 	// across every pack, see @base/copy/brand. Referenced here so
@@ -333,6 +364,12 @@ export const rokCommanderCopy = {
 			// guide moved out of inner-sanctum, with the admin control buttons folded
 			// into its pinned row).
 			adminCommands: "🎛️admin-controls",
+			// ── the join log and the rules post (2026-10 item 247 Phase 2) ──
+			// Both under the homebase category, read only for members. Universal
+			// across packs like every channel name. A server's own welcome or rules
+			// channel is adopted under its existing name instead of being built.
+			welcome: "👋welcome",
+			rules: "📘rules",
 			// ── the two ARCADE GAMES channels ───────────────────────
 			// Both live under gamesCategoryName, NOT under the homebase category,
 			// which is why every CHANNEL_SPECS entry now has to declare which
@@ -762,6 +799,32 @@ export const rokCommanderCopy = {
 					"Members who already hold the role see no change. Anyone who lost sight of a channel can open **Channels & Roles** and choose **Retake Onboarding**.",
 			},
 		},
+
+		// ── 👋welcome, the join and leave log (2026-10 item 247 Phase 2) ──
+		// The intro is the channel's one tracked message; the join and leave lines
+		// are posted by features/setup/welcomeLog.ts, one small embed each, naming
+		// the member by display name only and pinging nobody.
+		welcome: {
+			title: "👋 The Gate Ledger",
+			description:
+				"Every warrior who passes through the gates of this realm is written here, arriving or departing.\n\n" +
+				"This ledger is mine to keep. Greet the newcomers in 📜introductions, where they can answer you.",
+			joinTitle: "👋 A Warrior Arrives",
+			joinLine: (displayName: string): string => `**${displayName}** has passed through the gates.`,
+			leaveTitle: "🚪 A Warrior Departs",
+			leaveLine: (displayName: string): string => `**${displayName}** has left the realm.`,
+		},
+
+		// ── 📘rules, the server rules post (2026-10 item 247 Phase 2) ──
+		// Built by features/setup/rulesContent.ts: the title below over the owner's
+		// saved rules, or over defaultMarkdown when they never edited. The button
+		// opens the Edit rules modal for the owner and admins; anyone else who
+		// presses it is refused privately.
+		rules: {
+			title: "📘 Server Rules",
+			defaultMarkdown: DEFAULT_SERVER_RULES,
+			editButtonLabel: "Edit rules",
+		},
 	},
 
 	// ── the game request ballot (2026-10 item 245 Phase 4a) ─────────────
@@ -848,6 +911,20 @@ export const rokCommanderCopy = {
 		},
 		setupRequired:
 			"⚠️ **My throne has not been constructed.**\n\n" + "An admin must run `/setup` before any commands can be used.",
+		// ── the Edit rules modal (2026-10 item 247 Phase 2) ──────────────
+		// Owner and admin facing and always ephemeral, so the instructions stay
+		// plain. The modal is preloaded with the rules as they stand.
+		rulesEdit: {
+			modalTitle: "Edit the server rules",
+			inputLabel: "Rules (Markdown works)",
+			placeholder: "**1. Respect Everyone**\nOne rule per paragraph. **Bold** and *italic* work.",
+			saved: "✅ The rules are saved, and the rules post shows them now.",
+			savedNotRefreshed: "✅ The rules are saved, but I could not update the rules post. It catches up on my next restart.",
+			reset: "✅ The rules match the default again, so the rules post follows the default wording from now on.",
+			empty: "The rules cannot be empty. Nothing was changed.",
+			failed: "I could not save the rules. Nothing was changed. Try again in a moment.",
+			expired: "This control is no longer available.",
+		},
 	},
 
 	// ── streamer / general schedule copy ──────────────────────────

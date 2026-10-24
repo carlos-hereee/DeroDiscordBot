@@ -57,6 +57,11 @@ export const SLOT_LABELS: ReadonlyArray<{ label: string; configField: string }> 
 	// is most likely to want renamed was the one slot they could not pick. Not a
 	// deliberate exclusion, just a list nobody extended when the channel shipped.
 	{ label: "Admin controls", configField: "adminCommandsChannelId" },
+	// 👋welcome and 📘rules (2026-10 item 247 Phase 2). An autocomplete row each, so
+	// no command redeploy. The drift sweep leaves an ADOPTED one's name alone, but an
+	// admin renaming it here is the owner's own choice and goes through.
+	{ label: "Welcome log", configField: "welcomeChannelId" },
+	{ label: "Rules", configField: "rulesChannelId" },
 	// ── 🎮 ARCADE GAMES ──
 	// Both member facing and both renameable: a guild that calls its arcade
 	// something else should be able to say so, and repairOneChannel already

@@ -4,6 +4,7 @@ import { infoEmbed } from "@utils/embedBuilder.js";
 import { DERO_GIF_URL, COLORS, DERO_GIF_REF } from "@base/copy/brand.js";
 import { deroArtAttachment } from "@features/renderer/deroArt.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { rulesContent, type IRulesConfig } from "./rulesContent.js";
 // botInviteLink is composed in @utils/config from the env-driven
 // clientId, so a dev process serves the dev install URL and a prod
 // process serves the prod install URL automatically. We deliberately
@@ -222,6 +223,21 @@ export const ChannelContent = {
 		const copy = getPluginCopy(guildConfig);
 		const cc = copy.channelContent;
 		return infoEmbed(cc.arcadeChallenges.title, cc.arcadeChallenges.description, copy.COLORS.ARCADE);
+	},
+
+	// ── 👋welcome and 📘rules (2026-10 item 247 Phase 2) ──────────────
+	// The join log's intro, above the join and leave lines welcomeLog posts.
+	welcomeIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const c = copy.channelContent.welcome;
+		return infoEmbed(c.title, c.description, copy.COLORS.ARRIVAL);
+	},
+
+	// The rules post's embed. Takes the stored row rather than only a pack selector,
+	// because the owner's saved rules live on it; rulesContent owns the build so the
+	// intro sweep and the Edit rules re-render cannot render the rules two ways.
+	rulesIntro(guildConfig?: IRulesConfig | null): EmbedBuilder {
+		return rulesContent.build(guildConfig).embed;
 	},
 
 	adminWelcome(ownerId: string, adminRoleId: string, guildConfig?: ICopyConfig | null): EmbedBuilder {

@@ -42,6 +42,9 @@ import {
 	type ManagedOverwriteKind,
 } from "./communityOverwrites.js";
 import { CommunityGatingAnnouncement } from "./CommunityGatingAnnouncement.js";
+import { fetchAcceptsDeroContent, moveIntoNoticeBoard, readAdoptedChannelIds, scanAndClaim } from "./adoption.js";
+import { buildRulesEditRow, carriesRulesEditButton, type IRulesConfig } from "./rulesContent.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
@@ -218,8 +221,12 @@ export class GuildSetupManager {
 		// threads its stored roles through and the rebuilt rooms open to members at
 		// once instead of waiting for /setup to run again. Both null on a fresh install.
 		const storedRoles = { memberRoleId: existing?.memberRoleId ?? null, adminRoleId: existing?.adminRoleId ?? null };
-		const { ids, objects } = await GuildSetupManager.createChannels(guild, category, gamesCategory, config, storedRoles);
-		const { scheduleMessageId, introMessageIds } = await GuildSetupManager.populateChannels(objects);
+		// The stored row rides along twice: createChannels' adoption scan must not take
+		// a channel that already fills another slot, and the rules post keeps the
+		// owner's saved rules through a forced rebuild.
+		const storedRow = existing as unknown as (Record<string, unknown> & IRulesConfig) | null;
+		const { ids, objects, adoptedChannelIds } = await GuildSetupManager.createChannels(guild, category, gamesCategory, config, storedRoles, storedRow);
+		const { scheduleMessageId, introMessageIds } = await GuildSetupManager.populateChannels(guild, objects, { adoptedChannelIds, rulesConfig: storedRow });
 
 		// What: persist the freshly built channel ids.
 		// When: two mutually exclusive persist paths, chosen by the state of
@@ -265,6 +272,12 @@ export class GuildSetupManager {
 			// Keys the admin power-up panel, so ensurePowerUps can post as soon as
 			// /setup runs rather than waiting for a reboot.
 			adminCommandsChannelId: ids.adminCommandsChannelId,
+			// 👋welcome and 📘rules, and which of the two (if either) the server already
+			// had. Replaced, not merged: a build re-derives every adoption, and an id from
+			// a prior build points at a channel this one either re-adopted or never saw.
+			welcomeChannelId: ids.welcomeChannelId,
+			rulesChannelId: ids.rulesChannelId,
+			adoptedChannelIds,
 			// ── 🎮 ARCADE GAMES ──
 			gamesCategoryId: ids.gamesCategoryId,
 			arcadeRulesChannelId: ids.arcadeRulesChannelId,
@@ -655,6 +668,9 @@ export class GuildSetupManager {
 		// admin power-up panel. kept separate so daily inner-sanctum notices
 		// never bury the quick-action controls.
 		"adminCommandsChannelId",
+		// 👋welcome and 📘rules, under the homebase (2026-10 item 247 Phase 2).
+		"welcomeChannelId",
+		"rulesChannelId",
 		// ── ninth and tenth, under the SECOND category ────────────
 		// 📋arcade-rules and ⚔️challenges. This array is consumed in TYPE positions
 		// only (it types configField, the resolveIntroEmbed switch, and the
@@ -714,6 +730,18 @@ export class GuildSetupManager {
 		// 🛡️ eighth, admin command center. admin-only (same gating as the
 		// admin channel); hosts the command guide + admin power-up panel.
 		{ configField: "adminCommandsChannelId", displayName: channels.adminCommands, kind: "admin", categoryField: "categoryId" },
+
+		// ── 👋welcome and 📘rules (2026-10 item 247 Phase 2) ──
+		// ⚠️ THESE TWO LINES ARM THE BOOT REPAIR SWEEP for every existing guild, the way
+		// the arcade and voice specs did: a legacy row loads both ids as null, the sweep
+		// reads null as case ③ "missing", and the next boot gives each guild its own.
+		// Unlike every spec above, the missing channel may already EXIST under another
+		// name: repairOneChannel and createChannels first look for the server's own
+		// welcome or rules channel (ADOPTION_PATTERNS below) and adopt it into the
+		// notice board, and only build when there is none. Members read both, the bot
+		// writes: the join log is Dero's ledger and the rules post is a reference.
+		{ configField: "welcomeChannelId", displayName: channels.welcome, kind: "public", categoryField: "categoryId" },
+		{ configField: "rulesChannelId", displayName: channels.rules, kind: "public", categoryField: "categoryId" },
 
 		// ── 🎮 ARCADE GAMES, the two specs under the SECOND category ──
 		// ⚠️ THESE TWO LINES ARM THE BOOT REPAIR SWEEP, and they were deliberately
@@ -801,6 +829,13 @@ export class GuildSetupManager {
 				// the 2026-06-19 split). Self-destruct button rides along via
 				// resolveIntroComponents.
 				return ChannelContent.adminCommandGuide(guildConfig);
+			// ── 👋welcome and 📘rules ──
+			// The rules post reads the owner's saved rules off the stored row, which is
+			// why callers pass the loaded GuildConfig here rather than only a pack id.
+			case "welcomeChannelId":
+				return ChannelContent.welcomeIntro(guildConfig);
+			case "rulesChannelId":
+				return ChannelContent.rulesIntro(guildConfig as IRulesConfig | null | undefined);
 			// ── 🎮 ARCADE GAMES ────────────────────────────────────────
 			// Neither depends on adminRoleId: both channels are member facing, and
 			// the rules card is the answer to "who can play what" for everyone
@@ -881,6 +916,11 @@ export class GuildSetupManager {
 				return [buildGameRequestRow(getPluginCopy(guildConfig).channelContent.arcadeRules.voteButtonLabel)];
 			case "arcadeGamesChannelId":
 				return GuildSetupManager.gamesIntroRows(guildConfig);
+			case "rulesChannelId":
+				// Edit rules, the owner and admins' way to replace the rules post's text
+				// (2026-10 item 247 Phase 2). It rides the public post because a message
+				// button cannot be shown to admins only; rulesEdit refuses anyone else.
+				return [buildRulesEditRow(guildConfig)];
 			default:
 				// introductions + every other channel: intro embed only, no buttons.
 				// ⚔️challenges lands here too since Phase 4a: its start board moved to
@@ -1161,6 +1201,90 @@ export class GuildSetupManager {
 		return signature(resolved ?? []) === signature(current);
 	}
 
+	// ── welcome and rules adoption (2026-10 item 247 Phase 2) ──────────
+	// What:  the specs whose missing channel may be one the server already has,
+	//        and the three steps every build path shares for them: find it, move it
+	//        into the notice board, and only then decide whether Dero may post its
+	//        intro there. adoption.ts holds the mechanics; this holds the policy.
+	// Who:   createChannels (fresh install, forced rebuild), repairOneChannel (boot
+	//        sweep, ChannelDeleteWatcher), populateChannels and refreshIntroEmbeds.
+	// Where: an adopted id goes on GuildConfig.adoptedChannelIds, which selfDestruct
+	//        and renameDriftedChannels read to leave the owner's channel alone.
+
+	/** The adoption pattern list for each adoptable spec; a spec absent here is always built. */
+	private static readonly ADOPTION_PATTERNS: Partial<Record<(typeof GuildSetupManager.CHANNEL_FIELDS)[number], readonly string[]>> = {
+		welcomeChannelId: BOT_CONSTANTS.WELCOME_ADOPTION_PATTERNS,
+		rulesChannelId: BOT_CONSTANTS.RULES_ADOPTION_PATTERNS,
+	};
+
+	/**
+	 * Adopt the server's own channel for one adoptable spec: scan, then move it into
+	 * the notice board onto the public shape. Null when the spec is not adoptable,
+	 * nothing matches, or the move failed, and the caller then builds Dero's own.
+	 */
+	private static async adoptExistingChannel(
+		guild: Guild,
+		category: CategoryChannel,
+		spec: (typeof GuildSetupManager.CHANNEL_SPECS)[number],
+		stored: Record<string, unknown> | null,
+		roles: { memberRoleId: string | null; adminRoleId: string | null }
+	): Promise<TextChannel | null> {
+		const patterns = GuildSetupManager.ADOPTION_PATTERNS[spec.configField];
+		if (!patterns) return null;
+		const match = scanAndClaim(guild, category, patterns, {
+			// A channel already filling another slot on this row is never taken for this one.
+			ids: GuildSetupManager.idsStoredOutside(stored, spec.configField),
+			names: new Set([spec.displayName]),
+		});
+		if (!match) return null;
+		try {
+			const moved = await moveIntoNoticeBoard(match, category, communityOverwritesFor("public", guild, { ownerId: guild.ownerId }, roles));
+			console.log(`[adoption] guild ${guild.id} adopted channel ${match.id} as ${spec.configField}${moved ? ", moved into the notice board" : ""}`);
+			return match;
+		} catch (error) {
+			// A channel Dero cannot move (a 50013 on a channel the owner locked down) is
+			// left where it is, and Dero builds its own: a working channel beside the
+			// owner's beats a setup that throws on every boot.
+			console.warn(`[adoption] guild ${guild.id} could not adopt channel ${match.id}; building ${spec.configField} instead`, error);
+			return null;
+		}
+	}
+
+	/**
+	 * Whether Dero may post its intro in this channel. Always for a channel Dero
+	 * built. For an adopted one, only when it is empty or already holds Dero's own
+	 * intro (that intro's title, or the Edit rules button), so the owner's own
+	 * welcome or rules text is never buried under Dero's.
+	 */
+	private static async adoptedChannelAcceptsIntro(
+		guild: Guild,
+		channel: TextChannel | VoiceChannel,
+		introEmbed: EmbedBuilder,
+		adoptedChannelIds: readonly string[]
+	): Promise<boolean> {
+		if (!adoptedChannelIds.includes(channel.id)) return true;
+		const selfId = guild.client.user?.id;
+		const introTitle = introEmbed.data.title ?? null;
+		return fetchAcceptsDeroContent(
+			channel,
+			(message) =>
+				selfId !== undefined &&
+				message.author.id === selfId &&
+				(carriesRulesEditButton(message) || (introTitle !== null && message.embeds[0]?.title === introTitle))
+		);
+	}
+
+	// Every channel id the row stores under a slot other than `field`.
+	private static idsStoredOutside(stored: Record<string, unknown> | null, field: string): Set<string> {
+		const ids = new Set<string>();
+		if (!stored) return ids;
+		for (const other of GuildSetupManager.CHANNEL_FIELDS) {
+			const id = stored[other];
+			if (other !== field && typeof id === "string") ids.add(id);
+		}
+		return ids;
+	}
+
 	// ── single channel repair primitive ───────────────────────
 	// What: rebuild one homebase channel under the given category, repost the
 	//       intro, persist the new channel id on GuildConfig. Shared between
@@ -1241,22 +1365,42 @@ export class GuildSetupManager {
 		// Read defensively: the caller's row type carries an index signature, so
 		// a narrow here is cheaper than widening every caller's cast.
 		const memberRoleId = typeof stored.memberRoleId === "string" ? stored.memberRoleId : null;
+		const adminRoleId = stored.adminRoleId ?? null;
+		// Dero's own channel by name comes first; only then the server's own welcome or
+		// rules channel (2026-10 item 247 Phase 2), and a build only when neither exists.
+		const adopted = existingByName ? null : await GuildSetupManager.adoptExistingChannel(guild, category, spec, stored, { memberRoleId, adminRoleId });
 		// overwriteKindOf, not spec.kind: the introductions channel is a "public" spec
 		// but takes its own member-writable shape, the one createChannels gives it.
-		const newChannel = existingByName
-			? existingByName
-			: await GuildSetupManager.buildSingleChannel(guild, category, effectiveName, overwriteKindOf(spec), stored.adminRoleId ?? null, memberRoleId);
+		const newChannel =
+			existingByName ?? adopted ?? (await GuildSetupManager.buildSingleChannel(guild, category, effectiveName, overwriteKindOf(spec), adminRoleId, memberRoleId));
 		if (existingByName) {
 			console.warn(LOG_MESSAGES.setup.channelAdopted(effectiveName, guild.id));
 		}
 
+		// The slot's adopted ids: the channel it replaces leaves the list (it is gone,
+		// or it was Dero's), and a newly adopted one joins it.
+		const priorAdoptedIds = readAdoptedChannelIds(stored);
+		const replacedId = stored[spec.configField];
+		const nextAdoptedIds = [...new Set([...priorAdoptedIds.filter((id) => id !== replacedId), ...(adopted ? [adopted.id] : [])])];
+
 		// ── intro message resolution ────────────────────────────────
 		// postOrAdoptRepairIntro carries the post or adopt rules. A null embed
-		// means this channel has no intro and nothing is posted.
-		const introEmbed =GuildSetupManager.resolveIntroEmbed(spec.configField, guild, stored.adminRoleId ?? null, stored as unknown as ICopyConfig);
-		const intro = introEmbed
-			? await GuildSetupManager.postOrAdoptRepairIntro(guild, newChannel, spec, introEmbed, Boolean(existingByName), stored as unknown as ICopyConfig)
-			: { id: null, posted: false };
+		// means this channel has no intro and nothing is posted, and so does an
+		// adopted channel that already holds the owner's own content.
+		const introEmbed = GuildSetupManager.resolveIntroEmbed(spec.configField, guild, adminRoleId, stored as unknown as ICopyConfig);
+		const mayPostIntro =
+			introEmbed !== null && (await GuildSetupManager.adoptedChannelAcceptsIntro(guild, newChannel, introEmbed, nextAdoptedIds));
+		const intro =
+			introEmbed && mayPostIntro
+				? await GuildSetupManager.postOrAdoptRepairIntro(
+						guild,
+						newChannel,
+						spec,
+						introEmbed,
+						Boolean(existingByName || adopted),
+						stored as unknown as ICopyConfig
+					)
+				: { id: null, posted: false };
 		const introMessageId = intro.id;
 
 		// persist new ids. three pieces move together on a repair:
@@ -1289,6 +1433,9 @@ export class GuildSetupManager {
 		// A channel with no intro has no introMessageIds slot, so its repair
 		// leaves the map exactly as it was.
 		if (introEmbed) update.introMessageIds = nextIntroIds;
+		// Written only for the adoptable slots, so every other repair leaves the list
+		// exactly as it was.
+		if (GuildSetupManager.ADOPTION_PATTERNS[spec.configField]) update.adoptedChannelIds = nextAdoptedIds;
 		if (spec.configField === "scheduleChannelId") {
 			// scheduleMessageId tracks the pinned board anchor. on a schedule
 			// channel repair the newly posted intro IS the fresh anchor.
@@ -1589,10 +1736,15 @@ export class GuildSetupManager {
 
 		const channelNamesRaw = stored.channelNames;
 		const ids = stored as unknown as Record<string, string | null | undefined>;
+		const adoptedIds = readAdoptedChannelIds(stored);
 
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 			const storedId = ids[spec.configField];
 			if (!storedId) continue;
+			// An adopted channel keeps the name its server gave it (2026-10 item 247
+			// Phase 2): renaming the owner's #rules to 📘rules on every boot would be
+			// Dero overwriting the owner's choice. /channels rename still works on it.
+			if (adoptedIds.includes(storedId)) continue;
 			const channel = await client.channels.fetch(storedId).catch(() => null);
 			// Both kinds rename the same way; the voice rooms are the only managed
 			// channels that are not text channels.
@@ -1944,8 +2096,11 @@ export class GuildSetupManager {
 		config: ISetupConfig,
 		// Read by the voice rooms' posture (see the call site in runAutoSetup), and the
 		// member role by the public text channels while it gates a Community guild.
-		storedRoles: { memberRoleId: string | null; adminRoleId: string | null }
-	): Promise<{ ids: ICreatedChannels; objects: IChannelObjects }> {
+		storedRoles: { memberRoleId: string | null; adminRoleId: string | null },
+		// The row a forced rebuild replaces (null on a fresh install), read only by the
+		// welcome and rules adoption scan.
+		storedRow: Record<string, unknown> | null = null
+	): Promise<{ ids: ICreatedChannels; objects: IChannelObjects; adoptedChannelIds: string[] }> {
 		const owner = { ownerId: config.ownerId };
 		const voiceRoomOverwrites = communityOverwritesFor("voice", guild, owner, storedRoles);
 
@@ -1967,6 +2122,18 @@ export class GuildSetupManager {
 		// Admin channels: owner only until /setup grants the admin role.
 		const adminOverwrites = communityOverwritesFor("admin", guild, owner, textRoles);
 
+		// 👋welcome and 📘rules adopt the server's own channel when it has one
+		// (2026-10 item 247 Phase 2). The scan runs BEFORE the create, which is the
+		// whole guarantee against a duplicate: a match short circuits the build. The
+		// two pattern lists share no name, so their scans cannot race for one channel.
+		const adoptOrCreate = async (field: "welcomeChannelId" | "rulesChannelId"): Promise<{ channel: TextChannel; adopted: boolean }> => {
+			const spec = GuildSetupManager.CHANNEL_SPECS.find((entry) => entry.configField === field)!;
+			const adopted = await GuildSetupManager.adoptExistingChannel(guild, category, spec, storedRow, textRoles);
+			if (adopted) return { channel: adopted, adopted: true };
+			const channel = await guild.channels.create({ name: spec.displayName, type: ChannelType.GuildText, parent: category.id, permissionOverwrites: publicOverwrites });
+			return { channel, adopted: false };
+		};
+
 		const [
 			introChannel,
 			commandsChannel,
@@ -1976,6 +2143,8 @@ export class GuildSetupManager {
 			adminChannel,
 			nextDecreeChannel,
 			adminCommandsChannel,
+			welcome,
+			rules,
 			arcadeRulesChannel,
 			arcadeChallengesChannel,
 			arcadeGamesChannel,
@@ -2041,6 +2210,10 @@ export class GuildSetupManager {
 				parent: category.id,
 				permissionOverwrites: adminOverwrites,
 			}),
+			// 👋welcome and 📘rules: publicOverwrites, members read and the bot writes,
+			// whether built here or adopted and moved onto the same shape.
+			adoptOrCreate("welcomeChannelId"),
+			adoptOrCreate("rulesChannelId"),
 			// ── ninth and tenth, under 🎮 ARCADE GAMES ────────────
 			// ⚠️ NOTE THE PARENT: gamesCategory.id, not category.id. These two are
 			// the only channels here that do not live in the homebase, and getting
@@ -2103,6 +2276,8 @@ export class GuildSetupManager {
 				adminChannelId: adminChannel.id,
 				nextDecreeChannelId: nextDecreeChannel.id,
 				adminCommandsChannelId: adminCommandsChannel.id,
+				welcomeChannelId: welcome.channel.id,
+				rulesChannelId: rules.channel.id,
 				gamesCategoryId: gamesCategory.id,
 				arcadeRulesChannelId: arcadeRulesChannel.id,
 				arcadeChallengesChannelId: arcadeChallengesChannel.id,
@@ -2119,12 +2294,15 @@ export class GuildSetupManager {
 				adminChannel,
 				nextDecreeChannel,
 				adminCommandsChannel,
+				welcomeChannel: welcome.channel,
+				rulesChannel: rules.channel,
 				arcadeRulesChannel,
 				arcadeChallengesChannel,
 				arcadeGamesChannel,
 				meetingVoiceChannel,
 				arcadeVoiceChannel,
 			},
+			adoptedChannelIds: [welcome, rules].filter((entry) => entry.adopted).map((entry) => entry.channel.id),
 		};
 	}
 
@@ -2144,7 +2322,14 @@ export class GuildSetupManager {
 	// How:   Promise.all returns the messages in the same order we send them.
 	//        We destructure with names so adding a seventh channel later does
 	//        not silently shift positional indexes.
-	private static async populateChannels(discordChannels: IChannelObjects): Promise<{
+	private static async populateChannels(
+		guild: Guild,
+		discordChannels: IChannelObjects,
+		// Which of 👋welcome and 📘rules the server already had, and the row whose
+		// saved rules the rules post shows (2026-10 item 247 Phase 2). An adopted
+		// channel holding the owner's content gets no intro, and its anchor stays null.
+		options: { adoptedChannelIds: readonly string[]; rulesConfig: IRulesConfig | null }
+	): Promise<{
 		scheduleMessageId: string;
 		introMessageIds: {
 			introChannelId: string;
@@ -2158,6 +2343,9 @@ export class GuildSetupManager {
 			// guide). Standard one-key-per-channel slot, the guide is this
 			// channel's only tracked message after the 2026-06-19 split.
 			adminCommandsChannelId: string;
+			// Null when an adopted channel already held the owner's own content.
+			welcomeChannelId: string | null;
+			rulesChannelId: string | null;
 			// ── 🎮 ARCADE GAMES intro anchors ──
 			// Same one-key-per-channel slot every other intro gets, so
 			// refreshIntroEmbeds edits both cards in place on later boots instead of
@@ -2183,12 +2371,21 @@ export class GuildSetupManager {
 			adminChannel,
 			nextDecreeChannel,
 			adminCommandsChannel,
+			welcomeChannel,
+			rulesChannel,
 			arcadeRulesChannel,
 			arcadeChallengesChannel,
 			arcadeGamesChannel,
 			meetingVoiceChannel,
 			arcadeVoiceChannel,
 		} = discordChannels;
+
+		// The welcome and rules intros, through the adopted channel content gate.
+		const postIntroUnlessOwnerContent = async (channel: TextChannel, field: "welcomeChannelId" | "rulesChannelId"): Promise<Message | null> => {
+			const embed = GuildSetupManager.resolveIntroEmbed(field, guild, null, options.rulesConfig);
+			if (!embed || !(await GuildSetupManager.adoptedChannelAcceptsIntro(guild, channel, embed, options.adoptedChannelIds))) return null;
+			return channel.send({ embeds: [embed], components: GuildSetupManager.resolveIntroComponents(field, options.rulesConfig) ?? [] });
+		};
 
 		const [
 			introMsg,
@@ -2204,6 +2401,10 @@ export class GuildSetupManager {
 			// one batch and ordering is deterministic. Persisted on
 			// introMessageIds.adminCommandsChannelId like every other channel intro.
 			adminCommandsMsg,
+			// 👋welcome's intro and 📘rules' rules post, null where an adopted channel
+			// already held the owner's content. Neither is pinned: both are read only.
+			welcomeMsg,
+			rulesMsg,
 			// ── 🎮 ARCADE GAMES ───────────────────────
 			// The rules card and the challenge board intro. Neither is pinned, per
 			// the pinning policy below: both channels are read-only for members, so
@@ -2247,6 +2448,8 @@ export class GuildSetupManager {
 			// (gated in the handler). Pinning handled below alongside the
 			// schedule + next-decree pins.
 			adminCommandsChannel.send({ embeds: [ChannelContent.adminCommandGuide()], components: GuildSetupManager.resolveIntroComponents("adminCommandsChannelId") ?? [] }),
+			postIntroUnlessOwnerContent(welcomeChannel, "welcomeChannelId"),
+			postIntroUnlessOwnerContent(rulesChannel, "rulesChannelId"),
 			// The arcade's two cards. Ordering inside this array is load bearing:
 			// the destructure above is positional, which is exactly why every entry
 			// is named rather than indexed.
@@ -2296,6 +2499,8 @@ export class GuildSetupManager {
 				adminChannelId: adminMsg.id,
 				nextDecreeChannelId: nextDecreeMsg.id,
 				adminCommandsChannelId: adminCommandsMsg.id,
+				welcomeChannelId: welcomeMsg?.id ?? null,
+				rulesChannelId: rulesMsg?.id ?? null,
 				arcadeRulesChannelId: arcadeRulesMsg.id,
 				arcadeChallengesChannelId: arcadeChallengesMsg.id,
 				arcadeGamesChannelId: arcadeGamesMsgs.intro.id,
@@ -2404,6 +2609,7 @@ export class GuildSetupManager {
 		// Set when this sweep posts a FRESH 🕹️games intro, so the board block below
 		// posts a fresh board beneath it rather than keep the old one above it.
 		let gamesIntroPosted = false;
+		const adoptedIds = readAdoptedChannelIds(stored);
 
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 			const channelId = stored[spec.configField] as string | null | undefined;
@@ -2520,6 +2726,12 @@ export class GuildSetupManager {
 					continue;
 				}
 			}
+
+			// An adopted channel with no Dero intro tracked in it holds the owner's own
+			// content until shown otherwise (2026-10 item 247 Phase 2): leave it alone
+			// rather than post Dero's intro over the owner's welcome or rules. A tracked
+			// intro proves Dero already posts there, so that case flows on as usual.
+			if (!storedMessage && !(await GuildSetupManager.adoptedChannelAcceptsIntro(guild, channel, embed, adoptedIds))) continue;
 
 			// Copy differs (or stored message is gone). Before posting
 			// a brand new message, scan the last 20 bot-authored

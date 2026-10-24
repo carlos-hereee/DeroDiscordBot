@@ -582,6 +582,9 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			"adminChannelId",
 			"nextDecreeChannelId",
 			"adminCommandsChannelId",
+			// 👋welcome and 📘rules (2026-10 item 247 Phase 2).
+			"welcomeChannelId",
+			"rulesChannelId",
 			// The two under 🎮 ARCADE GAMES. CHANNEL_SPECS now spans TWO categories.
 			"arcadeRulesChannelId",
 			"arcadeChallengesChannelId",
@@ -606,8 +609,8 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 				.sort();
 
 		expect(byCategory("gamesCategoryId")).toEqual(["arcadeChallengesChannelId", "arcadeGamesChannelId", "arcadeRulesChannelId", "arcadeVoiceChannelId"]);
-		// Eight text channels plus the 🏛️ Meeting Hall voice room.
-		expect(byCategory("categoryId")).toHaveLength(9);
+		// Ten text channels (welcome and rules among them) plus the 🏛️ Meeting Hall voice room.
+		expect(byCategory("categoryId")).toHaveLength(11);
 		expect(byCategory("categoryId")).toContain("meetingVoiceChannelId");
 		// No spec may be left unfiled, which a typo in the union would otherwise
 		// produce silently.
@@ -701,5 +704,67 @@ describe("ChannelDeleteWatcher, voice rooms", () => {
 
 		expect(createCalls).toHaveLength(1);
 		expect(createCalls[0]).toMatchObject({ type: ChannelType.GuildVoice, parent: "games-cat-1" });
+	});
+});
+
+// ── 👋welcome and 📘rules, realtime half (2026-10 item 247 Phase 2) ─────────
+// The watcher reaches both through CHANNEL_SPECS with no code of its own. A
+// deleted 👋welcome comes back under the homebase with its intro, and a deleted
+// ADOPTED rules channel comes back as Dero's own 📘rules with the dead id dropped
+// from adoptedChannelIds, so /self-destruct never spares a channel that is gone.
+describe("ChannelDeleteWatcher, welcome and rules", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		__resetRepairCooldownsForTests();
+		gameRoomMock.findByChannelId.mockResolvedValue(null);
+		guildConfigMock.update.mockResolvedValue(undefined);
+	});
+
+	async function deleteChannel(deletedId: string, name: string, overrides: Record<string, unknown> = {}) {
+		guildConfigMock.findByGuildId.mockResolvedValue(
+			makeStoredConfig({ welcomeChannelId: "ch-welcome", rulesChannelId: "ch-own-rules", adoptedChannelIds: ["ch-own-rules"], ...overrides })
+		);
+		const captured = makeClientCapturing({
+			selfId: "bot-1",
+			channelFetchMap: { "ch-admin": makeAdminChannel("ch-admin"), "ch-schedule": makeScheduleChannel("bot-1") },
+		});
+		registerChannelDeleteWatcher(captured.client);
+		const createCalls: Array<{ name: string; parent?: string }> = [];
+		const sends: Array<ReturnType<typeof vi.fn>> = [];
+		const guild = makeGuild({
+			categoryFetchMap: { "cat-1": makeCategory("cat-1") },
+			createHandler: async (opts) => {
+				const options = opts as { name: string; parent?: string };
+				createCalls.push(options);
+				const created = Object.create(TextChannel.prototype) as TextChannel & { send: ReturnType<typeof vi.fn> };
+				Object.assign(created, { id: `new-${options.name}`, send: vi.fn().mockResolvedValue({ id: `intro-${options.name}` }) });
+				sends.push(created.send);
+				return created;
+			},
+		});
+		await captured.handler!({ id: deletedId, name, guild, type: ChannelType.GuildText });
+		return { createCalls, sends };
+	}
+
+	it("rebuilds a deleted 👋welcome under the homebase with its intro", async () => {
+		const { createCalls, sends } = await deleteChannel("ch-welcome", rokCommanderCopy.setup.channels.welcome);
+
+		expect(createCalls).toEqual([expect.objectContaining({ name: rokCommanderCopy.setup.channels.welcome, parent: "cat-1" })]);
+		const intro = sends[0]!.mock.calls[0]![0] as { embeds: Array<{ data: { title?: string } }> };
+		expect(intro.embeds[0]!.data.title).toBe(rokCommanderCopy.channelContent.welcome.title);
+		// The adopted rules channel is a different slot and stays on the list.
+		expect(guildConfigMock.update).toHaveBeenCalledWith("guild-1", expect.objectContaining({ adoptedChannelIds: ["ch-own-rules"] }));
+	});
+
+	it("rebuilds a deleted adopted rules channel as Dero's own 📘rules and drops the dead id", async () => {
+		const { createCalls, sends } = await deleteChannel("ch-own-rules", "rules");
+
+		expect(createCalls).toEqual([expect.objectContaining({ name: rokCommanderCopy.setup.channels.rules, parent: "cat-1" })]);
+		const post = sends[0]!.mock.calls[0]![0] as { embeds: Array<{ data: { title?: string } }> };
+		expect(post.embeds[0]!.data.title).toBe(rokCommanderCopy.channelContent.rules.title);
+		expect(guildConfigMock.update).toHaveBeenCalledWith(
+			"guild-1",
+			expect.objectContaining({ rulesChannelId: `new-${rokCommanderCopy.setup.channels.rules}`, adoptedChannelIds: [] })
+		);
 	});
 });

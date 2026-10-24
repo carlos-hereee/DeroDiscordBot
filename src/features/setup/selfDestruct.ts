@@ -13,6 +13,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
+import { readAdoptedChannelIds } from "./adoption.js";
 
 // ── Self destruct ──────────────────────────────────────────────────────
 // Server-owner-only homebase teardown. Demolishes the bot's category and every
@@ -57,6 +58,10 @@ export const HOMEBASE_CHANNEL_FIELDS = [
 	"nextDecreeChannelId",
 	"adminChannelId",
 	"adminCommandsChannelId",
+	// 👋welcome and 📘rules (2026-10 item 247 Phase 2). Demolished only when Dero
+	// built them: an adopted one is the server's own and is left standing.
+	"welcomeChannelId",
+	"rulesChannelId",
 	// 🎮 ARCADE GAMES
 	"arcadeRulesChannelId",
 	"arcadeChallengesChannelId",
@@ -98,9 +103,11 @@ export async function showSelfDestructConfirm(interaction: SelfDestructEntry): P
 		[
 			"This DELETES **both** of the bot's categories and every channel in them, along with everything posted there.",
 			"",
-			"🪧 NOTICE BOARD: introductions, command center, leaderboard, event schedule, announcements, upcoming events, the admin channel, the admin command center, and the Meeting Hall voice room.",
+			"🪧 NOTICE BOARD: introductions, command center, leaderboard, event schedule, announcements, upcoming events, welcome, rules, the admin channel, the admin command center, and the Meeting Hall voice room.",
 			"",
 			"🎮 ARCADE GAMES: the games channel, the game rules card, the challenge board, the Arcade Lounge voice room, and **any match currently in progress**.",
+			"",
+			"A welcome or rules channel your server already had before I adopted it is **kept**, moved out of the category, with its messages and permissions as they are.",
 			"",
 			"It stays gone across restarts until you run `/setup` again. **This cannot be undone.**",
 		].join("\n"),
@@ -178,18 +185,27 @@ async function demolishHomebase(client: Client, guild: Guild, actorId: string): 
 	const config = await guildConfigStore.findByGuildId(guild.id);
 	if (!config) return;
 
+	// Channels the server had before Dero adopted them (2026-10 item 247 Phase 2)
+	// are the owner's, so they survive the demolition: skipped below, and their
+	// stored ids are released in the same write as the flag, so nothing Dero keeps
+	// still points at a channel it no longer manages. Their overwrites are untouched.
+	const ids = config as unknown as Record<string, string | null | undefined>;
+	const adoptedIds = new Set(readAdoptedChannelIds(config));
+	const releasedSlots = Object.fromEntries(
+		HOMEBASE_CHANNEL_FIELDS.filter((field) => adoptedIds.has(ids[field] ?? "")).map((field) => [field, null])
+	);
+
 	// Flag FIRST, before any delete. The realtime ChannelDeleteWatcher reads this
 	// on each channelDelete; setting it first means the watcher (and the boot
 	// sweep) skip rebuilding instead of racing the teardown and resurrecting
 	// channels. setupComplete is cleared so /setup treats this as a fresh setup.
-	await guildConfigStore.update(guild.id, { homebaseDestroyed: true, setupComplete: false });
+	await guildConfigStore.update(guild.id, { homebaseDestroyed: true, setupComplete: false, ...releasedSlots, adoptedChannelIds: [] });
 
-	console.warn(`[self-destruct] demolishing homebase in guild ${guild.id}, requested by ${actorId}`);
+	console.warn(`[self-destruct] demolishing homebase in guild ${guild.id}, requested by ${actorId}; keeping ${adoptedIds.size} adopted channel(s)`);
 
-	const ids = config as unknown as Record<string, string | null | undefined>;
 	for (const field of HOMEBASE_CHANNEL_FIELDS) {
 		const id = ids[field];
-		if (!id) continue;
+		if (!id || adoptedIds.has(id)) continue;
 		const channel = await guild.channels.fetch(id).catch(() => null);
 		if (channel) {
 			await channel
@@ -201,7 +217,7 @@ async function demolishHomebase(client: Client, guild: Guild, actorId: string): 
 	// Both managed categories, through one helper so the arcade cannot be
 	// demolished less thoroughly than the homebase.
 	for (const field of MANAGED_CATEGORY_FIELDS) {
-		await demolishCategory(guild, ids[field], field);
+		await demolishCategory(guild, ids[field], field, adoptedIds);
 	}
 
 	console.warn(`[self-destruct] homebase demolished in guild ${guild.id}`);
@@ -212,7 +228,7 @@ async function demolishHomebase(client: Client, guild: Guild, actorId: string): 
  * throughout: a failed delete is logged and the rest proceed, because a partial
  * demolition that reports honestly beats one that aborts halfway.
  */
-async function demolishCategory(guild: Guild, categoryId: string | null | undefined, label: string): Promise<void> {
+async function demolishCategory(guild: Guild, categoryId: string | null | undefined, label: string, keepIds: ReadonlySet<string>): Promise<void> {
 	if (!categoryId) return;
 	const category = await guild.channels.fetch(categoryId).catch(() => null);
 	if (!category) return;
@@ -222,9 +238,11 @@ async function demolishCategory(guild: Guild, categoryId: string | null | undefi
 	// or, under the arcade, a live per-match room channel that is not tracked on
 	// GuildConfig at all). Discord ORPHANS children when a category is deleted
 	// rather than cascading, so without this they survive as stray top level
-	// channels that nothing will ever clean up.
+	// channels that nothing will ever clean up. That same orphaning is what an
+	// ADOPTED channel relies on: skipped here, it outlives the category, parent-less.
 	if (category instanceof CategoryChannel) {
 		for (const child of category.children.cache.values()) {
+			if (keepIds.has(child.id)) continue;
 			await child
 				.delete("Homebase self-destruct")
 				.catch((err) => console.warn(`[self-destruct] failed to delete orphan child ${child.id} in guild ${guild.id}`, err));

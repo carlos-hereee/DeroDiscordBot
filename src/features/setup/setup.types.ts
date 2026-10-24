@@ -33,6 +33,10 @@ export interface ICreatedChannels {
 	// guide + the admin power-up panel; kept out of inner-sanctum so daily
 	// announcements there do not bury the quick-action controls.
 	adminCommandsChannelId: string;
+	// 👋welcome and 📘rules (2026-10 item 247 Phase 2). Either may be a channel the
+	// server already had, adopted into the homebase rather than built.
+	welcomeChannelId: string;
+	rulesChannelId: string;
 	// ── 🎮 ARCADE GAMES, the SECOND managed category ──
 	// Declared here rather than left to the boot sweep because a fresh install
 	// should produce both categories in one pass. These three are hand written
@@ -61,6 +65,8 @@ export interface IChannelObjects {
 	announcementsChannel: TextChannel;
 	nextDecreeChannel: TextChannel;
 	adminCommandsChannel: TextChannel;
+	welcomeChannel: TextChannel;
+	rulesChannel: TextChannel;
 	arcadeRulesChannel: TextChannel;
 	arcadeChallengesChannel: TextChannel;
 	arcadeGamesChannel: TextChannel;

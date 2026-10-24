@@ -133,17 +133,25 @@ export async function ensureIntroChannelsWritable(client: Client): Promise<void>
 // other cooldowns (announce / test-fire routes); resets on restart, which is fine.
 const GREET_WINDOW_MS = 60_000;
 const GREET_BURST = 8;
+const GREETER_BUCKET = "greeter";
 const recentGreets = new Map<string, number[]>();
 
-function greetAllowed(guildId: string): boolean {
+/**
+ * The per guild join flood throttle: true when a post fits the rolling window, and
+ * records it. `bucket` keeps each caller's budget apart (2026-10 item 247 Phase 2):
+ * the welcome log posts on the same joins, and sharing one window would halve how
+ * many newcomers the greeter welcomes in a burst.
+ */
+export function greetAllowed(guildId: string, bucket: string = GREETER_BUCKET): boolean {
+	const key = `${bucket}:${guildId}`;
 	const now = Date.now();
-	const times = (recentGreets.get(guildId) ?? []).filter((t) => now - t < GREET_WINDOW_MS);
+	const times = (recentGreets.get(key) ?? []).filter((t) => now - t < GREET_WINDOW_MS);
 	if (times.length >= GREET_BURST) {
-		recentGreets.set(guildId, times); // keep the trimmed window so it decays
+		recentGreets.set(key, times); // keep the trimmed window so it decays
 		return false;
 	}
 	times.push(now);
-	recentGreets.set(guildId, times);
+	recentGreets.set(key, times);
 	return true;
 }
 

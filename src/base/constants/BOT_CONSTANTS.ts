@@ -121,6 +121,31 @@ export const BOT_CONSTANTS = {
 	// hammering Discord with dozens of edits. Read by scheduleLeaderboardRefresh.
 	LEADERBOARD_REFRESH_DEBOUNCE_MS: 60_000, // at most one activity-driven refresh per guild per 60s
 
+	// ── welcome and rules channel adoption (2026-10 item 247 Phase 2) ──
+	// What:  the base names that mark a server's OWN welcome or rules channel, so
+	//        setup moves that channel into 🪧 NOTICE BOARD instead of building a
+	//        second one beside it.
+	// Who:   features/setup/adoption.ts matches against them; GuildSetupManager
+	//        picks the list by spec.
+	// How:   an EXACT match on the name after it is lowercased and stripped of its
+	//        leading emoji and symbols, never a substring, so "📋arcade-rules" and
+	//        "rules-lawyering" stay where they are (risk R2 in the plan). The lists
+	//        are the owner's, in the owner's order.
+	WELCOME_ADOPTION_PATTERNS: ["welcome", "welcomes", "join-log", "joins", "new-members", "arrivals"],
+	RULES_ADOPTION_PATTERNS: ["rules", "server-rules", "the-rules", "rulebook", "read-me", "read-this"],
+	// How many recent messages decide whether an adopted channel holds the owner's
+	// content. One fetch of this many: an empty channel, or one already carrying
+	// Dero's own intro, takes Dero's post; anything else is left untouched.
+	ADOPTION_CONTENT_SCAN_LIMIT: 10,
+	// The Edit rules modal's text box. Discord caps a modal text input at 4000
+	// characters and an embed description at 4096, so the input's own cap is the
+	// binding one and the saved text always fits the rules embed.
+	RULES_MARKDOWN_MAX_LENGTH: 4000,
+	// How long the Edit rules button waits for its modal. Longer than the three
+	// minute modals elsewhere because rewriting a rules list takes a while, and well
+	// inside the 15 minutes an interaction token lives.
+	RULES_EDIT_MODAL_TIMEOUT_MS: 10 * 60_000,
+
 	// ── game rooms ────────────────────────────────────────────────
 	// What:  the four numbers and one schedule that bound the Game Rooms
 	//        feature. A room is one match of one mini game in its own

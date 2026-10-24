@@ -89,6 +89,26 @@ const guildConfigSchema = new Schema(
 		meetingVoiceChannelId: { type: String, required: false, default: null },
 		arcadeVoiceChannelId: { type: String, required: false, default: null },
 
+		// ── 👋welcome and 📘rules (2026-10 item 247 Phase 2) ──
+		// What:  the join and leave log and the server rules post, both under the
+		//        homebase category. Either may be a channel the server already had
+		//        and Dero ADOPTED (see adoptedChannelIds) rather than one it built.
+		// Who:   GuildSetupManager (create, adopt, self heal), ChannelDeleteWatcher,
+		//        selfDestruct, welcomeLog (posts each join and leave) and rulesEdit.
+		// How:   nullable, following nextDecreeChannelId exactly, so every legacy row
+		//        loads and the boot sweep reads the null as "missing", which adopts a
+		//        matching channel or builds a new one on the next boot.
+		welcomeChannelId: { type: String, required: false, default: null },
+		rulesChannelId: { type: String, required: false, default: null },
+		// The owner's own rules text from the Edit rules modal. Null means the pack
+		// default, so a guild that never edited keeps following the pack's wording.
+		customRulesMarkdown: { type: String, required: false, default: null },
+		// Ids of managed channels that were the server's own before Dero adopted
+		// them. /self-destruct leaves these standing (and clears their stored ids)
+		// instead of deleting a channel Dero never built. Default empty so a legacy
+		// row reads as "adopted nothing", which is true of every row before this.
+		adoptedChannelIds: { type: [String], required: false, default: () => [] as string[] },
+
 		// id of the pinned message inside scheduleChannelId that ScheduleBoard
 		// keeps up to date. null until autoSetup finishes posting the intro,
 		// at which point this is populated and every subsequent refresh edits
@@ -408,6 +428,12 @@ const guildConfigSchema = new Schema(
 				// mortem gives: undeclared, the card would repost on every boot.
 				meetingVoiceChannelId: { type: String, required: false, default: null },
 				arcadeVoiceChannelId: { type: String, required: false, default: null },
+				// 👋welcome's intro and 📘rules' rules post (2026-10 item 247 Phase 2).
+				// Declared for the reason the post mortem gives: undeclared, each would
+				// repost on every boot. The rules anchor is also the message Edit rules
+				// edits in place.
+				welcomeChannelId: { type: String, required: false, default: null },
+				rulesChannelId: { type: String, required: false, default: null },
 			},
 			required: false,
 			default: () => ({}),

@@ -377,3 +377,37 @@ describe("GuildConfig declares the challenge reach (2026-10 item 244 Phase 4)", 
 		expect(doc.validateSync()?.errors.challengeReach).toBeDefined();
 	});
 });
+
+// ── welcome and rules (2026-10 item 247 Phase 2) ──
+// The same silent drop, in four places at once: an undeclared channel id makes the
+// boot sweep adopt or build the channel again on every boot, an undeclared anchor
+// reposts its intro on every boot, an undeclared customRulesMarkdown throws the
+// owner's edit away, and an undeclared adoptedChannelIds makes /self-destruct delete
+// a channel the server owned before Dero ever arrived.
+describe("GuildConfig declares the welcome and rules fields", () => {
+	it("round trips all four and loads a legacy row with nulls and an empty adopted list", () => {
+		const doc = new GuildConfigModel({
+			...baseRow,
+			welcomeChannelId: "c-welcome",
+			rulesChannelId: "c-rules",
+			customRulesMarkdown: "**1. Be kind**",
+			adoptedChannelIds: ["c-rules"],
+			introMessageIds: { welcomeChannelId: "msg-welcome", rulesChannelId: "msg-rules" },
+		});
+		expect(doc.get("welcomeChannelId")).toBe("c-welcome");
+		expect(doc.get("rulesChannelId")).toBe("c-rules");
+		expect(doc.get("customRulesMarkdown")).toBe("**1. Be kind**");
+		expect([...doc.get("adoptedChannelIds")]).toEqual(["c-rules"]);
+		expect(doc.get("introMessageIds.welcomeChannelId")).toBe("msg-welcome");
+		expect(doc.get("introMessageIds.rulesChannelId")).toBe("msg-rules");
+
+		const legacy = new GuildConfigModel({ ...baseRow, introMessageIds: {} });
+		expect(legacy.get("welcomeChannelId")).toBeNull();
+		expect(legacy.get("rulesChannelId")).toBeNull();
+		expect(legacy.get("customRulesMarkdown")).toBeNull();
+		expect([...legacy.get("adoptedChannelIds")]).toEqual([]);
+		expect(legacy.get("introMessageIds.welcomeChannelId")).toBeNull();
+		expect(legacy.get("introMessageIds.rulesChannelId")).toBeNull();
+		expect(legacy.validateSync()).toBeUndefined();
+	});
+});
