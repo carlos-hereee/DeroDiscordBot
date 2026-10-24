@@ -24,7 +24,7 @@ import {
 	type ReturnResult,
 } from "@features/games/holdemTable.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
-import { awardXp } from "@features/leveling/awardXp.js";
+import { awardXp, type AwardXpInput } from "@features/leveling/awardXp.js";
 import { announceDealer, toPublicView, type PublicView } from "@features/dero-brain/dealerNarration.js";
 import { holdemLiveView, renderHoldemLiveCard } from "@features/dero-brain/dealerShowdownRenderer.js";
 import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
@@ -37,6 +37,9 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isClockExpired, roomDrawingKey, withDrawingPause } from "./drawingPause.js";
 import { judgeJoin } from "./joinGate.js";
 import { labelEmbedForRoom, relayState } from "./satelliteRooms.js";
+import { consentPrompt } from "./networkRules.js";
+import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
+import { hostDestinationFor, resolveHoldemXpDestination } from "./networkXp.js";
 import {
 	tableEmbed,
 	holeCardsEmbed,
@@ -68,6 +71,9 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 //        redraw then relays the same board to every satellite in another server
 //        (satelliteRooms, 2026-10 item 244 Phase 5a), and a press from a satellite
 //        reaches these handlers with the host row, exactly like a press at home.
+//        Since Phase 5b a satellite player's XP is paid in the server networkXp
+//        names, a network table's door asks for the network notice first, and
+//        every redraw of one asks the network board to refresh.
 //
 // ⚠️ EVERY CALL THAT CAN REACH THE SHUFFLE PASSES secureRandom. The engine's own
 // default is the fast, predictable generator and stays that way for its tests;
@@ -165,6 +171,9 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Prom
 			// 5a), after the host room has it and never awaited, so a satellite in another
 			// server can neither slow this board nor fail it.
 			if (room.satellites?.length) void relayState(client, room, { embeds, components, files });
+			// A network table's seats and phase are what the network board lists (2026-10 item
+			// 244 Phase 5b), so every redraw asks for a board refresh, debounced there.
+			if (room.network) scheduleNetworkBoardRefresh();
 		},
 	}).catch((error) => console.warn("[game-rooms] failed to redraw the hold em table", error));
 }
@@ -222,6 +231,12 @@ export async function handleBuyIn(interaction: ButtonInteraction, room: IGameRoo
 	// the band and the host's answer on the way in, so they are not asked twice.
 	const verdict = await judgeJoin(room, userId, { alreadyApproved: room.playerIds.includes(userId) });
 	if (verdict.kind === "refuse") {
+		// A network table's seat needs the network notice first (2026-10 item 244 Phase 5b):
+		// the member gets the notice, and presses Buy in again once they accept it.
+		if (verdict.reason === "noConsent") {
+			await interaction.reply(consentPrompt({ kind: "again" }));
+			return;
+		}
 		await interaction.reply({ content: joinRefusalText(room, verdict.reason), ...PRIVATE });
 		return;
 	}
@@ -618,9 +633,7 @@ async function settleOutcome(
 			// at the end. Deliberately omits `game`, for the same reason battleship's
 			// sink bonus does: awardXp increments games.<slug>.played for any call
 			// naming a game, and a 30 hand tournament would record 30 plays.
-			void awardXp({
-				client,
-				guildId: room.guildId,
+			awardHoldemXp(client, room, {
 				userId: award.userId,
 				// undefined, NOT the raw snowflake. A seat rebuilt from Mongo after a Railway
 				// restart can legitimately miss its username, and awardXp $sets whatever it is
@@ -628,7 +641,6 @@ async function settleOutcome(
 				username: table.seats.find((seat) => seat.userId === award.userId)?.username,
 				amount: BOT_CONSTANTS.LEVELING.HOLDEM_HAND_WIN_XP,
 				source: "game",
-				channelId: room.channelId,
 			});
 		}
 		for (const bustedId of outcome.busted ?? []) {
@@ -666,9 +678,7 @@ async function payPlacements(client: Client, room: IGameRoom, table: HoldemTable
 	for (const [index, userId] of order.entries()) {
 		const amount = Math.floor(BOT_CONSTANTS.LEVELING.HOLDEM_PLACEMENT_XP / (index + 1));
 		if (amount <= 0) continue;
-		void awardXp({
-			client,
-			guildId: room.guildId,
+		awardHoldemXp(client, room, {
 			userId,
 			// undefined rather than the raw id, same reason as the per-hand payout above.
 			username: table.seats.find((seat) => seat.userId === userId)?.username,
@@ -678,9 +688,25 @@ async function payPlacements(client: Client, room: IGameRoom, table: HoldemTable
 			// once per tournament rather than once per hand.
 			game: "holdem",
 			outcome: index === 0 ? "won" : "lost",
-			channelId: room.channelId,
 		});
 	}
+}
+
+// One Hold'em award, paid in the server the player earns it in (networkXp, 2026-10 item
+// 244 Phase 5b): the host server for its own players, the server whose tag a satellite
+// player wears or the one they clicked from for theirs. A player no satellite seats is
+// paid at once, exactly as before network tables, so an ordinary table never waits on a
+// lookup; a satellite player's award waits on their tag. Fire and forget either way, like
+// every award: awardXp swallows its own failures, and a failed lookup is logged here.
+function awardHoldemXp(client: Client, room: IGameRoom, award: Omit<AwardXpInput, "client" | "guildId" | "channelId">): void {
+	const local = hostDestinationFor(room, award.userId);
+	if (local) {
+		void awardXp({ ...award, client, guildId: local.guildId, channelId: local.channelId });
+		return;
+	}
+	void resolveHoldemXpDestination(client, room, award.userId)
+		.then((destination) => awardXp({ ...award, client, guildId: destination.guildId, channelId: destination.channelId }))
+		.catch((error) => console.warn("[game-rooms] hold em XP destination lookup failed", { roomId: room.roomId, userId: award.userId, error }));
 }
 
 // ── leaving and ending ────────────────────────────────────────────────

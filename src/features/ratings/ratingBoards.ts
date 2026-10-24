@@ -6,6 +6,8 @@ import { gameResultCountStore } from "@db/stores/gameResultCountStore.js";
 import { luckStatStore } from "@db/stores/luckStatStore.js";
 import { matchResultStore, type IFinishedBetween } from "@db/stores/matchResultStore.js";
 import { playerRatingStore } from "@db/stores/playerRatingStore.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { consentingAmong } from "@features/game-rooms/networkConsent.js";
 import { phraseHoldemHandLabel } from "./gameResultCounts.js";
 import { luckScore, type LuckTally } from "./luckStats.js";
 import { isProvisional, RATED_GAMES, type RatedGame } from "./ratingEngine.js";
@@ -22,9 +24,11 @@ import { isProvisional, RATED_GAMES, type RatedGame } from "./ratingEngine.js";
 // one from a Guild). A player the resolver cannot name (they left, or are a bot)
 // sits out the board rather than showing up as a bare id.
 //
-// ⚠️ NOTHING NETWORK WIDE. A PlayerRating has no guildId, so every server board
-// starts from the players who have a MatchResult in THAT server, and nothing here
-// lists a rating outside a server its owner played in (risk R9).
+// ⚠️ A SERVER BOARD IS NEVER NETWORK WIDE. A PlayerRating has no guildId, so every
+// server board starts from the players who have a MatchResult in THAT server. The
+// network scope boards (Phase 5b) are the one exception, and they list ONLY players
+// who accepted the network notice (networkRules.consentingAmong), so no rating shows
+// outside a server its owner played in without their consent (risk R9).
 
 /** Answers the display names of the ids that are current members; an id it cannot name is absent. */
 export type NameResolver = (userIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
@@ -100,6 +104,36 @@ export async function topRatedInGuild(query: GuildBoardQuery & { game: RatedGame
 /** One server's luck board for one UTC month: players past the 20 decided game minimum, luckiest first, current members only. */
 export async function luckBoardInGuild(query: GuildBoardQuery & { month: string }): Promise<LuckyPlayer[]> {
 	const ranked = rankLuck(sumLuckByPlayer(await luckStatStore.findForGuildMonth(query.guildId, query.month)));
+	return keepCurrentMembers(ranked, query.limit, query.resolveNames);
+}
+
+// ── the network scope (2026-10 item 244 Phase 5b) ──
+
+/**
+ * The network's best rated players of one game: consenting players only, wherever they
+ * play, at most `limit` of them. Reads the game's ratings a page at a time, best first,
+ * and keeps the consenting ones, so a page full of players who never consented costs
+ * one more read rather than the whole collection.
+ */
+export async function topRatedOnNetwork(query: { game: RatedGame; limit: number; resolveNames: NameResolver }): Promise<RatedPlayer[]> {
+	const kept: RatedPlayer[] = [];
+	const page = BOT_CONSTANTS.NETWORK.NETWORK_BOARD_PAGE;
+	for (let skip = 0; kept.length < query.limit; skip += page) {
+		const rows = await playerRatingStore.findTopInGame(query.game, page, skip);
+		if (rows.length === 0) break;
+		const consenting = await consentingAmong(rows.map((row) => row.userId));
+		const ranked = rankRatings(rows.filter((row) => consenting.has(row.userId)));
+		kept.push(...(await keepCurrentMembers(ranked, query.limit - kept.length, query.resolveNames)));
+		if (rows.length < page) break;
+	}
+	return kept;
+}
+
+/** The network's luck board for one UTC month: consenting players only, each player's luck games in every server added up. */
+export async function luckBoardOnNetwork(query: { month: string; limit: number; resolveNames: NameResolver }): Promise<LuckyPlayer[]> {
+	const rows = await luckStatStore.findForMonth(query.month);
+	const consenting = await consentingAmong([...new Set(rows.map((row) => row.userId))]);
+	const ranked = rankLuck(sumLuckByPlayer(rows.filter((row) => consenting.has(row.userId))));
 	return keepCurrentMembers(ranked, query.limit, query.resolveNames);
 }
 

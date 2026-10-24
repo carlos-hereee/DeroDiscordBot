@@ -758,6 +758,22 @@ const guildConfigSchema = new Schema(
 		// How:   default "server", today's behavior, so a legacy row needs no
 		//        backfill. The list lives in game-rooms/roomTypes.ts.
 		challengeReach: { type: String, required: false, enum: [...CHALLENGE_REACHES], default: "server" },
+
+		// ── network tables (2026-10 item 244 Phase 5b) ──────────────────
+		// What:  the servers this server keeps off its network (both ways: their
+		//        tables are not listed here, and their members cannot sit at this
+		//        server's tables), and the network board message in this server's
+		//        challenges channel.
+		// Who:   blockedNetworkGuildIds is written by /dero-config arcade
+		//        block-server and unblock-server and read by the network board and
+		//        every remote join (game-rooms/networkJoin.ts). networkBoardMessageId
+		//        is written and read only by game-rooms/networkBoard.ts.
+		// How:   an empty list and null by default, so every legacy row blocks nobody
+		//        and has no board until it joins the network. The board id follows
+		//        scheduleMessageId: null means "post one and remember it", and a
+		//        deleted message is reposted on the next refresh.
+		blockedNetworkGuildIds: { type: [String], required: false, default: () => [] as string[] },
+		networkBoardMessageId: { type: String, required: false, default: null },
 	},
 	{ timestamps: true }
 );

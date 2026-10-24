@@ -42,6 +42,10 @@ import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import { challengeCardView, renderChallengeCard } from "./challengeCardRenderer.js";
 import { isWithinReach, readChallengeReach } from "./challengeReach.js";
 import { isKicked, judgeJoin } from "./joinGate.js";
+import { consentPrompt, isGuildBanned, isUserBanned, readNetworkGuild } from "./networkRules.js";
+import { hasNetworkConsent } from "./networkConsent.js";
+import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
+import { networkBanStore } from "@db/stores/networkBanStore.js";
 import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -49,6 +53,8 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // The host controls' words are shared by every pack (2026-10 item 244 Phase 4), so
 // the default pack is the right one for every guild.
 const hostWords = rokCommanderCopy.arcadeHostControls;
+// The network words (2026-10 item 244 Phase 5b), shared by every pack for the same reason.
+const networkWords = rokCommanderCopy.arcadeNetwork;
 
 // ── challengeBoard ───────────────────────────────────────────────────
 // What:  the ⚔️challenges flow: start a challenge, choose who can see it, gather
@@ -97,6 +103,8 @@ function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState> = {})
 		pool: room.spectatorIds ?? [],
 		monopolyAuctions: room.monopolyAuctions ?? false,
 		monopolyReferee: room.monopolyReferee ?? false,
+		// A table the host opened to the network (2026-10 item 244 Phase 5b), off the row.
+		network: room.network ?? false,
 		// The host's say over who joins (2026-10 item 244 Phase 4), off the draft row.
 		hostControls: {
 			ratingBand: room.ratingBand ?? "any",
@@ -231,8 +239,13 @@ export async function startChallengeDraft(
 	// The server's challenge reach decides whether Open to all is offered at all; the
 	// choice is still refused server side (chooseVisibility, checkRoomAdmission), since a
 	// card posted before an admin narrowed the reach still carries the button.
-	const allowPublic = isWithinReach(await readChallengeReach(guildId), "public");
-	const state = cardStateFor(room, { visibility: null, pool: room.spectatorIds ?? [], allowPublic });
+	const reach = await readChallengeReach(guildId);
+	const allowPublic = isWithinReach(reach, "public");
+	// The network choice (2026-10 item 244 Phase 5b) is offered only where it could work:
+	// a server whose reach is network, for a game a satellite can mirror. chooseVisibility
+	// refuses it again on the press, for the same stale card reason as Open to all.
+	const allowNetwork = reach === "network" && isNetworkGame(game);
+	const state = cardStateFor(room, { visibility: null, pool: room.spectatorIds ?? [], allowPublic, allowNetwork });
 	const logo = roomOpenerLogo(game);
 	const card = await channel
 		.send({
@@ -294,6 +307,10 @@ export async function chooseMonopolyDraftSetting(
 
 // ── the visibility chooser ────────────────────────────────────────────
 export async function chooseVisibility(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
+	if (choice === "network") {
+		await chooseNetworkTable(interaction, room);
+		return;
+	}
 	const visibility: RoomVisibility = choice === "public" ? "public" : "invite";
 
 	// ⚠️ THE REACH CEILING, REFUSED AT THE CHOICE (2026-10 item 244 Phase 4). The card
@@ -322,6 +339,44 @@ export async function chooseVisibility(interaction: ButtonInteraction, room: IGa
 			)
 			.catch((error) => console.warn("[game-rooms] private quota status failed", error));
 	}
+}
+
+const isNetworkGame = (game: GameSlug): boolean => (BOT_CONSTANTS.NETWORK_GAMES as readonly string[]).includes(game);
+
+// ── the network choice (2026-10 item 244 Phase 5b) ────────────────────
+// Open to all, plus players from other network servers once the table opens: the row
+// becomes a public room with network set, which the provisioner adopts like any draft,
+// and the network board lists the table once it is playing and taking players.
+//
+// ⚠️ THE HOST THEMSELVES, AND ONLY WITH THEIR CONSENT. The board names the host in other
+// servers, and consent is personal, so the router's admin override (an admin pressing a
+// host's button) cannot open somebody else's table to the network; and a host who has
+// not accepted the network notice is shown it, then presses the choice again.
+async function chooseNetworkTable(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	const refusal = interaction.user.id === room.hostId ? await networkChoiceRefusal(interaction, room) : networkWords.hostRefusals.notHost;
+	if (refusal) {
+		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	if (!(await hasNetworkConsent(room.hostId))) {
+		await interaction.reply(consentPrompt({ kind: "again" }));
+		return;
+	}
+
+	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { visibility: "public", network: true })) ?? room;
+	await interaction.deferUpdate();
+	await refreshCard(interaction.guild!, updated, cardStateFor(updated, { visibility: "public", pool: updated.spectatorIds ?? [] }));
+}
+
+// Why this table cannot be opened to the network, or null: a game no satellite mirrors, a
+// server that is not on the network, or a host or server the owner banned from it.
+async function networkChoiceRefusal(interaction: ButtonInteraction, room: IGameRoom): Promise<string | null> {
+	if (!isNetworkGame(room.game)) return networkWords.hostRefusals.notNetworkGame(gameRoomsCopy.gameLabel(room.game));
+	if (!(await readNetworkGuild(interaction.client, room.guildId)).onNetwork) return networkWords.hostRefusals.notOnNetwork;
+	const bans = await networkBanStore.findAgainst({ userIds: [room.hostId], guildIds: [room.guildId] });
+	if (isUserBanned(bans, room.hostId)) return networkWords.hostRefusals.banned;
+	if (isGuildBanned(bans, room.guildId)) return networkWords.hostRefusals.serverBanned;
+	return null;
 }
 
 // ── the invite picker (F9's structural half) ──────────────────────────
@@ -414,6 +469,12 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 	// outside the band is refused, and a host who approves each joiner gets a request.
 	const verdict = await judgeJoin(room, actorId, { alreadyApproved: false });
 	if (verdict.kind === "refuse") {
+		// A network table needs the network notice first (2026-10 item 244 Phase 5b); the
+		// member presses Join again once they accept it.
+		if (verdict.reason === "noConsent") {
+			await interaction.reply(consentPrompt({ kind: "again" }));
+			return;
+		}
 		const refusal = verdict.reason === "kicked" ? hostWords.kick.refusedRejoin : hostWords.band.refused(gameRoomsCopy.gameLabel(room.game));
 		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
 		return;
@@ -460,7 +521,10 @@ async function askHostToJoin(interaction: ButtonInteraction, room: IGameRoom): P
 // ── start the match ───────────────────────────────────────────────────
 export async function startMatch(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const pool = room.spectatorIds ?? [];
-	if (pool.length === 0) {
+	// A network table may open with nobody else in the pool (2026-10 item 244 Phase 5b):
+	// its players come from the network board and the room's own Buy in once it opens,
+	// and a Hold'em table is built to open with no seat taken.
+	if (pool.length === 0 && !room.network) {
 		await interaction.reply({ content: gameRoomsCopy.board.poolEmpty, flags: MessageFlags.Ephemeral });
 		return;
 	}
@@ -608,6 +672,8 @@ async function provisionFromDraft(
 	}
 
 	await interaction.editReply({ content: gameRoomsCopy.board.cardStarted(result.channel.id) });
+	// A network table is now playing and taking players, which is what the board lists.
+	if (room.network) scheduleNetworkBoardRefresh();
 	await refreshCard(
 		guild,
 		result.room,

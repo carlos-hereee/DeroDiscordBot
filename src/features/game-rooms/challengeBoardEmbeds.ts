@@ -19,6 +19,7 @@ import { RATING_BANDS, type GameSlug, type RatingBand, type RoomVisibility } fro
 // The host controls' words are shared by every pack, so the default pack is the right
 // one here and the card stays a pure function of its state.
 const hostWords = rokCommanderCopy.arcadeHostControls;
+const networkWords = rokCommanderCopy.arcadeNetwork;
 
 type CardRow = ActionRowBuilder<MessageActionRowComponentBuilder>;
 
@@ -29,7 +30,8 @@ type CardRow = ActionRowBuilder<MessageActionRowComponentBuilder>;
 // When:  the intro once per boot (refreshIntroEmbeds keeps it current); the card on
 //        every state change of a draft, including the host's controls (2026-10 item
 //        244 Phase 4: the reach capped visibility step, the band, approval and Remove
-//        a player), which render only when the caller passes the draft's host state.
+//        a player), which render only when the caller passes the draft's host state,
+//        and the network choice and its card line (Phase 5b).
 // How:   ONE card, edited, rather than a new message per step. A challenge that
 //        posted a fresh message for each of visibility, join and start would bury
 //        the channel it lives in, and ⚔️challenges is meant to be scannable.
@@ -144,6 +146,12 @@ export interface OpenerCardState {
 	// as it was; the choice is refused server side either way, since a stale card
 	// still carries the button.
 	allowPublic?: boolean;
+	// True offers Open to the network beside Open to all (2026-10 item 244 Phase 5b): a
+	// server whose reach is network, for a game a satellite can mirror. Absent offers no
+	// network choice, the card as it was; the choice is refused server side either way.
+	allowNetwork?: boolean;
+	// True once the host opened the table to the network, which changes the card's line.
+	network?: boolean;
 	// The host's say over who joins (Phase 4), read off the draft row. Absent renders
 	// the card exactly as it was before the controls existed.
 	hostControls?: DraftHostControls;
@@ -180,7 +188,7 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 		lines.push(gameRoomsCopy.board.cardInviteOnly(state.hostId));
 		lines.push("", gameRoomsCopy.board.cardPool(state.pool, POOL_NAMES_SHOWN));
 	} else {
-		lines.push(gameRoomsCopy.board.cardOpenToAll(state.hostId));
+		lines.push(state.network ? networkWords.cardLine(state.hostId) : gameRoomsCopy.board.cardOpenToAll(state.hostId));
 		lines.push("", gameRoomsCopy.board.cardPool(state.pool, POOL_NAMES_SHOWN));
 	}
 	// The Monopoly choices are shown once the host is past the visibility step, the
@@ -302,6 +310,15 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 							.setEmoji("🌐")
 							.setStyle(ButtonStyle.Primary),
 				  ];
+		const openToNetwork = state.allowNetwork
+			? [
+					new ButtonBuilder()
+						.setCustomId(`${GAME_ROOM_PREFIX}:vis:${roomId}:network`)
+						.setLabel(networkWords.visibilityLabel)
+						.setEmoji("🛰️")
+						.setStyle(ButtonStyle.Primary),
+			  ]
+			: [];
 		return [
 			new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
 				new ButtonBuilder()
@@ -310,6 +327,7 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 					.setEmoji("🔒")
 					.setStyle(ButtonStyle.Secondary),
 				...openToAll,
+				...openToNetwork,
 				cancel
 			),
 		];

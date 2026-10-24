@@ -41,6 +41,8 @@ const FINAL_COMMANDS = [
 	"events",
 	"leaderboard",
 	"mini-game",
+	// The platform owner's network bans (2026-10 item 244 Phase 5b), owner only like /render-analytics.
+	"network",
 	"rating",
 	"render-analytics",
 	"schedule",

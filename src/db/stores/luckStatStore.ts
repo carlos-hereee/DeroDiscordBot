@@ -25,6 +25,17 @@ export const luckStatStore = {
 		await LuckStat.updateOne(key, { $inc: { decided: increments.decided, wins: increments.wins } }, { upsert: true });
 	},
 
+	/**
+	 * Every row of one UTC month in every guild, for the network luck board (2026-10 item
+	 * 244 Phase 5b). No index leads with month (the unique one leads with guildId), so
+	 * each /rating luck scope:network scans the whole collection. That is small at
+	 * today's scale, one row per player per luck game per guild per month; a { month }
+	 * index is the fix once it is not, and adding one moves LuckStat.test.ts's index pin.
+	 */
+	async findForMonth(month: string): Promise<ILuckStat[]> {
+		return LuckStat.find({ month }).lean<ILuckStat[]>();
+	},
+
 	/** Every player's rows in one guild for one UTC month, one row per player per luck game. */
 	async findForGuildMonth(guildId: string, month: string): Promise<ILuckStat[]> {
 		return LuckStat.find({ guildId, month }).lean<ILuckStat[]>();

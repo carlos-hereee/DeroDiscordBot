@@ -21,6 +21,7 @@ import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
 import { ratingsCopy } from "@features/ratings/ratingsCopy.js";
 import { asChallengeReach, isChallengeReach } from "@features/game-rooms/challengeReach.js";
+import { scheduleNetworkBoardRefresh } from "@features/game-rooms/networkBoard.js";
 import { CHALLENGE_REACHES, type ChallengeReach } from "@features/game-rooms/roomTypes.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
@@ -30,9 +31,9 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 //        phases authorize against. The voice itself is not a setting: Dero
 //        speaks with DERO_DEFAULT_VOICE_ID, so enable works straight away.
 //        The `arcade` group holds the arcade settings (2026-10 item 244): the
-//        monthly arcade post switch and the challenge reach (Phase 4), stored on
-//        GuildConfig rather than DeroVoiceConfig because neither has anything to
-//        do with the voice. Item 245 Phase 4b kept the group where it is and gave
+//        monthly arcade post switch, the challenge reach (Phase 4) and the network
+//        block list (Phase 5b), stored on GuildConfig rather than DeroVoiceConfig
+//        because none has anything to do with the voice. Item 245 Phase 4b kept the group where it is and gave
 //        the whole command a button on the admin guide, which runs this same run.
 // Who:   server admins, gated at runtime by ADMIN_COMMANDS in main.ts (guild
 //        owner or the bot's admin role). It carries no Discord default
@@ -42,7 +43,9 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 // Where: writes DeroVoiceConfig through deroVoiceConfigStore. Read by the Listen
 //        button and handler and by the spend meter. The arcade group writes
 //        GuildConfig.arcadeMonthlyPost, read by features/ratings/monthlyArcadePost.ts,
-//        and GuildConfig.challengeReach, read by features/game-rooms/challengeReach.ts.
+//        GuildConfig.challengeReach, read by features/game-rooms/challengeReach.ts, and
+//        GuildConfig.blockedNetworkGuildIds, read by the network board and every
+//        remote join (features/game-rooms/networkBoard.ts and networkJoin.ts).
 // How:   ① guild gate (rejects DM use); ② setup gate (a guild that never ran
 //        /setup has no admin role for the runtime gate to check); ③ dispatch on
 //        the subcommand group or subcommand; ④ one ephemeral embed reply.
@@ -54,6 +57,7 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
 const c = voiceCopy.config;
 const VOICE_ID_TAIL_LENGTH = 4;
+const SERVER_OPTION = "server";
 
 type ListKind = "role" | "channel" | "voicechannel";
 
@@ -147,6 +151,21 @@ export const data = new SlashCommandBuilder()
 							.setRequired(true)
 							.addChoices(...CHALLENGE_REACHES.map((reach) => ({ name: ratingsCopy.config.reachName(reach), value: reach })))
 					)
+			)
+			// The network block list (2026-10 item 244 Phase 5b). A server id rather than a
+			// server picker, because the server to block is one Dero shares a network with,
+			// not one the admin is in, and Discord has no option type for that.
+			.addSubcommand((sub) =>
+				sub
+					.setName("block-server")
+					.setDescription(ratingsCopy.config.blockServer)
+					.addStringOption((option) => option.setName(SERVER_OPTION).setDescription(ratingsCopy.config.serverIdOption).setRequired(true))
+			)
+			.addSubcommand((sub) =>
+				sub
+					.setName("unblock-server")
+					.setDescription(ratingsCopy.config.unblockServer)
+					.addStringOption((option) => option.setName(SERVER_OPTION).setDescription(ratingsCopy.config.serverIdOption).setRequired(true))
 			)
 	);
 
@@ -252,6 +271,9 @@ async function setChallengeReach(guildId: string, storedValue: unknown, reach: C
 	const title = ratingsCopy.config.title;
 	if (asChallengeReach(storedValue) === reach) return info(ratingsCopy.config.reachUnchanged(reach), title);
 	await guildConfigStore.update(guildId, { challengeReach: reach });
+	// The server joined or left the network, or neither: the board refresh decides, and a
+	// server that left loses its board message there (2026-10 item 244 Phase 5b).
+	scheduleNetworkBoardRefresh();
 	return info(ratingsCopy.config.reachSet(reach), title);
 }
 
@@ -261,6 +283,50 @@ async function setChallengeReach(guildId: string, storedValue: unknown, reach: C
 async function setReachFromOption(guildId: string, storedValue: unknown, mode: string): Promise<EmbedBuilder> {
 	if (!isChallengeReach(mode)) return errorEmbed(ratingsCopy.config.reachUnknown);
 	return setChallengeReach(guildId, storedValue, mode);
+}
+
+// The network block list (2026-10 item 244 Phase 5b), the same idempotent shape: an
+// unchanged list says so and writes nothing. The id is user input, so it is checked for a
+// snowflake's shape, and this server's own id is refused, since a server cannot keep
+// itself off its own tables. A change redraws the network boards.
+async function editNetworkBlock(
+	guildId: string,
+	storedList: readonly string[] | null | undefined,
+	sub: "block-server" | "unblock-server",
+	rawId: string
+): Promise<EmbedBuilder> {
+	const title = ratingsCopy.config.blockTitle;
+	const serverId = rawId.trim();
+	if (!BOT_CONSTANTS.NETWORK.SERVER_ID_PATTERN.test(serverId)) return errorEmbed(ratingsCopy.config.serverIdInvalid);
+	if (serverId === guildId) return errorEmbed(ratingsCopy.config.blockSelf);
+
+	const present = (storedList ?? []).includes(serverId);
+	if (sub === "block-server") {
+		if (present) return info(ratingsCopy.config.alreadyBlocked(serverId), title);
+		await guildConfigStore.addBlockedNetworkGuild(guildId, serverId);
+		scheduleNetworkBoardRefresh();
+		return info(ratingsCopy.config.blocked(serverId), title);
+	}
+	if (!present) return info(ratingsCopy.config.notBlocked(serverId), title);
+	await guildConfigStore.removeBlockedNetworkGuild(guildId, serverId);
+	scheduleNetworkBoardRefresh();
+	return info(ratingsCopy.config.unblocked(serverId), title);
+}
+
+/** The slice of a GuildConfig row the arcade group reads. */
+interface ArcadeSettings {
+	challengeReach?: unknown;
+	arcadeMonthlyPost?: boolean | null;
+	blockedNetworkGuildIds?: readonly string[] | null;
+}
+
+/** The arcade group's reply, one setting per subcommand. */
+async function arcadeAnswer(guildId: string, settings: ArcadeSettings, sub: string, options: CommandOptionReader): Promise<EmbedBuilder> {
+	if (sub === "reach") return setReachFromOption(guildId, settings.challengeReach, options.getString("mode", true));
+	if (sub === "block-server" || sub === "unblock-server") {
+		return editNetworkBlock(guildId, settings.blockedNetworkGuildIds, sub, options.getString(SERVER_OPTION, true));
+	}
+	return setMonthlyPost(guildId, settings.arcadeMonthlyPost, options.getBoolean("enabled", true));
 }
 
 function isListKind(group: string | null): group is ListKind {
@@ -288,10 +354,7 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 		const group = options.getSubcommandGroup(false);
 		const sub = options.getSubcommand(true);
 		if (group === "arcade") {
-			const embed =
-				sub === "reach"
-					? await setReachFromOption(guildId, guildConfig.challengeReach, options.getString("mode", true))
-					: await setMonthlyPost(guildId, guildConfig.arcadeMonthlyPost, options.getBoolean("enabled", true));
+			const embed = await arcadeAnswer(guildId, guildConfig, sub, options);
 			await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 			return;
 		}

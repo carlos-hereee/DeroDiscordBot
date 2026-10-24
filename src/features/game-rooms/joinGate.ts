@@ -1,24 +1,32 @@
 import { playerRatingStore } from "@db/stores/playerRatingStore.js";
 import { fitsBand, isRatedGame, UNRATED_STANDING, type RatingStanding } from "@features/ratings/ratingEngine.js";
+import { hasNetworkConsent } from "./networkConsent.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── joinGate ─────────────────────────────────────────────────────────
 // What:  the one answer to "may this member join this room?" under the host's
 //        controls (2026-10 item 244 Phase 4): refused if the host removed them or
 //        their rating sits outside the host's band, asked to wait when the host
-//        approves each joiner, admitted otherwise.
-// Who:   every door into a room: the challenge card's Join, and Hold'em's Buy in
-//        and Take a seat inside the room. ONE function, so no door can forget a
+//        approves each joiner, admitted otherwise. At a network table (Phase 5b) a
+//        member who has not accepted the network notice is refused first, because a
+//        seat there shows their name and moves in other servers.
+// Who:   every door into a room: the challenge card's Join, Hold'em's Buy in and
+//        Take a seat inside the room, and the network board's request for a seat
+//        from another server (networkJoin, Phase 5b). ONE function, so no door can forget a
 //        rule the others apply; the host's own invite picker filters removed
 //        members through invitePicker instead, since the host is the one choosing.
 // Does NOT: write anything, check seats, pool caps or turn order (each door's own
 //        job), or decide who the host is (the caller's gate).
 
-/** What a join attempt earns: in, a request for the host, or a refusal and why. */
-export type JoinVerdict = { kind: "admit" } | { kind: "ask" } | { kind: "refuse"; reason: "kicked" | "outsideBand" };
+/** Why a join was refused. "noConsent" sends the member to the network notice rather than away. */
+export type JoinRefusal = "kicked" | "outsideBand" | "noConsent";
 
-/** The slice of a room row the gate reads. */
-export type JoinGateRoom = Pick<IGameRoom, "guildId" | "roomId" | "game" | "hostId" | "ratingBand" | "requireApproval" | "kickedIds">;
+/** What a join attempt earns: in, a request for the host, or a refusal and why. */
+export type JoinVerdict = { kind: "admit" } | { kind: "ask" } | { kind: "refuse"; reason: JoinRefusal };
+
+/** The slice of a room row the gate reads. `network` is optional so an older caller's slice reads as a server room. */
+export type JoinGateRoom = Pick<IGameRoom, "guildId" | "roomId" | "game" | "hostId" | "ratingBand" | "requireApproval" | "kickedIds"> &
+	Partial<Pick<IGameRoom, "network">>;
 
 /** True when the host removed this member from the room. Absent kickedIds (an older row) removes nobody. */
 export function isKicked(room: Pick<IGameRoom, "kickedIds">, userId: string): boolean {
@@ -57,16 +65,20 @@ export async function fitsRoomBand(room: JoinGateRoom, joinerId: string): Promis
 
 /**
  * Judge one join attempt, in this order: ① a removed member is refused, whoever they
- * are; ② a member the room already let in (the draft's pool, or a live room's players)
- * is admitted without asking twice, since they passed the band and the host's answer
- * on the way in; ③ a rating outside the band is refused; ④ a room whose host approves
- * each joiner asks; ⑤ everybody else is admitted.
+ * are; ② at a network table, a member without network consent is refused, even one the
+ * room already let in, since consent is about what other servers see, not about the
+ * host's say; ③ a member the room already let in (the draft's pool, or a live room's
+ * players) is admitted without asking twice, since they passed the band and the host's
+ * answer on the way in; ④ a rating outside the band is refused; ⑤ a room whose host
+ * approves each joiner asks; ⑥ everybody else is admitted.
  *
  * The band comes before the approval on purpose: asking the host to answer a request
  * the band would refuse anyway only spends their attention on a no.
  */
 export async function judgeJoin(room: JoinGateRoom, joinerId: string, options: { alreadyApproved: boolean }): Promise<JoinVerdict> {
 	if (isKicked(room, joinerId)) return { kind: "refuse", reason: "kicked" };
+	// Only a network table reads consent, so every server room keeps its old cost: no read.
+	if (room.network && !(await hasNetworkConsent(joinerId))) return { kind: "refuse", reason: "noConsent" };
 	if (options.alreadyApproved) return { kind: "admit" };
 	if (!(await fitsRoomBand(room, joinerId))) return { kind: "refuse", reason: "outsideBand" };
 	if (room.requireApproval) return { kind: "ask" };

@@ -860,6 +860,13 @@ export const generalEventsCopy: IPluginCopy = {
 			board: "The best rated players of one game in this server",
 			luck: "This month's luckiest players at coin flip, dice and rock paper scissors",
 			gameOption: "Which rated game",
+			scopeOption: "This server, or every player on the network who chose to be shown there",
+			scopeServer: "This server",
+			scopeNetwork: "The network",
+			servers: "Servers on the network, ranked by the players who wear their tag",
+			serversGameOption: "One rated game, or leave it out for every rated game",
+			networkGroup: "Your place on the network",
+			leave: "Leave the network: deletes your network consent and your ratings in every game",
 		},
 		provisionalMark: "?",
 		provisionalNote: "A ? means the rating is still settling: fewer than 10 rated games.",
@@ -876,8 +883,12 @@ export const generalEventsCopy: IPluginCopy = {
 			title: (game: string) => `🏆 ${game} ratings in this server`,
 			row: (place: number, name: string, rating: string) => `${place}. **${name}**: ${rating}`,
 			empty: "Nobody in this server has a rating in this game yet. Finish a match to be the first.",
+			networkTitle: (game: string) => `🌐 ${game} ratings across the network`,
+			networkEmpty: "Nobody on the network has a rating in this game yet.",
 		},
 		luck: {
+			networkTitle: "🌐 Luckiest players on the network this month",
+			networkEmpty: (minimum: number) => `Nobody on the network has ${minimum} decided games of chance this month yet.`,
 			title: "🍀 Luckiest players this month",
 			description:
 				"Coin flip, dice roll and rock paper scissors, scored by wins above an even split. Ties do not count.",
@@ -899,6 +910,24 @@ export const generalEventsCopy: IPluginCopy = {
 			luckEmpty: (minimum: number) => `Nobody reached ${minimum} decided games of chance.`,
 			footer: "See your own with /rating me.",
 		},
+		servers: {
+			title: (game: string | null) => (game ? `🏆 Network servers at ${game}` : "🏆 Network servers"),
+			description: (minimum: number) =>
+				`A server's rating is the mean of the top ${minimum} ratings among players who wear its server tag and chose to be shown on the network. A network server that can hand out tags needs ${minimum} such players to be ranked.`,
+			row: (place: number, server: string, tag: string | null, rating: number, members: number) =>
+				`${place}. **${server}**${tag ? ` [${tag}]` : ""}: ${rating}, from ${members} ${members === 1 ? "player" : "players"}`,
+			empty: "No network server has enough players wearing its tag to be ranked yet.",
+		},
+		leave: {
+			done: (ratingsDeleted: number) => {
+				const kept = "Your luck in each server stays with that server.";
+				if (ratingsDeleted === 0) return `You left the network and your consent is deleted. You had no rating to delete. ${kept}`;
+				if (ratingsDeleted === 1) return `You left the network. Your consent and your rating are deleted. ${kept}`;
+				return `You left the network. Your consent and your ratings in ${ratingsDeleted} games are deleted. ${kept}`;
+			},
+			nothing: "You were not on the network and had no rating, so there was nothing to delete.",
+			failed: "Leaving the network did not finish just now. Run it again in a moment; it deletes whatever is left.",
+		},
 	},
 
 	// The arcade's host controls read the same in every voice, like the rest of the
@@ -909,4 +938,8 @@ export const generalEventsCopy: IPluginCopy = {
 	// The network tables' satellite words read the same in every voice too, for the
 	// same reason as the host controls above.
 	arcadeSatellites: rokCommanderCopy.arcadeSatellites,
+
+	// And the network board, consent and door words (2026-10 item 244 Phase 5b), for
+	// the same reason again.
+	arcadeNetwork: rokCommanderCopy.arcadeNetwork,
 };

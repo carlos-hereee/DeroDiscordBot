@@ -13,6 +13,26 @@ export const guildConfigStore = {
 		return GuildConfigModel.findOneAndUpdate({ guildId }, { $set: data }, { new: true });
 	},
 
+	// ── network tables (2026-10 item 244 Phase 5b) ──
+	// Every config the network board has business with: the servers on the network,
+	// and any server that still holds a board message from before it left, so the
+	// board refresh can take that message down. No index serves it, deliberately: the
+	// collection holds one row per server, and the board reads it once per debounced
+	// refresh, never per interaction.
+	async findNetworkBoardConfigs() {
+		return GuildConfigModel.find({ $or: [{ challengeReach: "network" }, { networkBoardMessageId: { $ne: null } }] });
+	},
+
+	// One server added to or taken off this server's network block list, in one atomic
+	// write each, so two admins blocking at once both land. Null when the guild has no config.
+	async addBlockedNetworkGuild(guildId: string, blockedGuildId: string) {
+		return GuildConfigModel.findOneAndUpdate({ guildId }, { $addToSet: { blockedNetworkGuildIds: blockedGuildId } }, { new: true });
+	},
+
+	async removeBlockedNetworkGuild(guildId: string, blockedGuildId: string) {
+		return GuildConfigModel.findOneAndUpdate({ guildId }, { $pull: { blockedNetworkGuildIds: blockedGuildId } }, { new: true });
+	},
+
 	async isSetupComplete(guildId: string): Promise<boolean> {
 		const config = await GuildConfigModel.findOne({ guildId });
 		return config?.setupComplete ?? false;

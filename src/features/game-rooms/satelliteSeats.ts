@@ -13,7 +13,8 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 //        Phase 5a): a satellite opens with the table already drawn in it, and its players
 //        are seated out of the table when they leave their own server, when their server
 //        removes Dero, or when the satellite channel is deleted, live and at boot.
-// Who:   openSatelliteWithTable: the test helper script today, Phase 5b's join flow next.
+// Who:   openSatelliteWithTable: networkJoin (a seat asked for from the network board,
+//        and the host accepting one from Requests), and the test helper script.
 //        The watchers: main.ts, beside the room departure and channel delete watchers.
 //        The boot reconcile: main.ts, right after recoverGameRoomsOnBoot.
 // Does NOT: open, relay to, lock or delete a satellite channel (satelliteRooms does, and

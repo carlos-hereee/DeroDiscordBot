@@ -9,8 +9,9 @@ import { CHALLENGE_REACHES, type ChallengeReach, type RoomVisibility } from "./r
 //        on the choice itself) and RoomProvisioner.checkRoomAdmission (the refusal
 //        every room open goes through: the board, a rematch, Dero's rules card).
 //        /dero-config arcade reach writes the setting.
-// Does NOT: decide anything about network tables. "network" is accepted and stored
-//        now and allows what "server" allows until Phase 5 builds them.
+// Does NOT: decide anything about network tables. "network" allows every room "server"
+//        allows; what it adds (the host's network choice, the network board) is
+//        decided where those live, from networkRules.isOnNetwork (Phase 5b).
 
 /** True for one of the three reaches. */
 export function isChallengeReach(value: unknown): value is ChallengeReach {

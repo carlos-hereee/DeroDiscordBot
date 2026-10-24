@@ -177,3 +177,20 @@ describe("GameRoom network tables (2026-10 item 244 Phase 5a)", () => {
 		expect(stored).toEqual({ guildId: "guild-2", channelId: "sat-1", userIds: ["remote-1"], tableMessageId: null });
 	});
 });
+
+describe("GameRoom remote requests (2026-10 item 244 Phase 5b)", () => {
+	it("reads an older row as nobody waiting from another server", () => {
+		const room = new GameRoom({ guildId: "guild-1", game: "holdem", hostId: "host-1" });
+		expect([...room.pendingNetworkJoins]).toEqual([]);
+	});
+
+	it("keeps a waiting remote member as a plain entry with the server they asked from", () => {
+		const room = new GameRoom({
+			guildId: "guild-1",
+			game: "holdem",
+			hostId: "host-1",
+			pendingNetworkJoins: [{ userId: "remote-1", guildId: "guild-2" }],
+		});
+		expect(room.toObject().pendingNetworkJoins[0]).toEqual({ userId: "remote-1", guildId: "guild-2" });
+	});
+});

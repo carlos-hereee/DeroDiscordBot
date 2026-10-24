@@ -7,6 +7,7 @@ vi.mock("@db/stores/matchResultStore.js", () => ({ matchResultStore: { insertOnc
 
 import {
 	monopolyFinishingOrder,
+	onRatedWin,
 	ratedOrder,
 	recordMatchRatings,
 	twoPlayerFinishingOrder,
@@ -250,5 +251,53 @@ describe("the claim and the failure path", () => {
 describe("ratedOrder", () => {
 	it("keeps each player once, at their first place", () => {
 		expect(ratedOrder(["a", "b", "a", "c"], [])).toEqual(["a", "b", "c"]);
+	});
+});
+
+// ── a rated win is announced (2026-10 item 244 Phase 5b) ───────────────────
+// The tag notice listens for these, so exactly a RATED win must announce, once.
+describe("onRatedWin", () => {
+	it("announces the winner of a rated match once, after the ratings moved", async () => {
+		const heard: Array<{ winnerId: string; roomId: string }> = [];
+		const stop = onRatedWin((win) => heard.push({ winnerId: win.winnerId, roomId: win.room.roomId }));
+		try {
+			await recordMatchRatings(room("battleship"), twoPlayerFinishingOrder(["host", "guest"], "guest"), [], { now: NOW });
+			expect(heard).toEqual([{ winnerId: "guest", roomId: "room-1" }]);
+			expect(ratingStore.applyRating).toHaveBeenCalled();
+		} finally {
+			stop();
+		}
+	});
+
+	it("announces nothing for an unrated match, an abandoned room, or a match already recorded", async () => {
+		const heard: string[] = [];
+		const stop = onRatedWin((win) => heard.push(win.winnerId));
+		try {
+			await recordMatchRatings(room("holdem"), ["a", "b"], [], { rated: false, now: NOW });
+			await recordMatchRatings(room("holdem"), ["a", "b"], [], { abandoned: true, now: NOW });
+			resultStore.insertOnce.mockResolvedValue(false);
+			await recordMatchRatings(room("battleship"), ["a", "b"], [], { now: NOW });
+			expect(heard).toEqual([]);
+		} finally {
+			stop();
+		}
+	});
+
+	it("keeps rating when a listener throws, and stops calling a listener that stopped listening", async () => {
+		const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const stopThrowing = onRatedWin(() => {
+			throw new Error("listener broke");
+		});
+		const heard: string[] = [];
+		const stop = onRatedWin((win) => heard.push(win.winnerId));
+		stop();
+		try {
+			await expect(recordMatchRatings(room("battleship"), ["a", "b"], [], { now: NOW })).resolves.toBeUndefined();
+			expect(ratingStore.applyRating).toHaveBeenCalledTimes(2);
+			expect(heard).toEqual([]);
+		} finally {
+			stopThrowing();
+			error.mockRestore();
+		}
 	});
 });

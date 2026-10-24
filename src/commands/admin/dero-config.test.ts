@@ -9,6 +9,8 @@ import type { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 const mocks = vi.hoisted(() => ({
 	guildConfig: vi.fn(),
 	guildConfigUpdate: vi.fn(),
+	addBlocked: vi.fn(),
+	removeBlocked: vi.fn(),
 	findByGuildId: vi.fn(),
 	upsert: vi.fn(),
 	addToList: vi.fn(),
@@ -16,7 +18,14 @@ const mocks = vi.hoisted(() => ({
 	currentMonthCents: vi.fn(),
 }));
 
-vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.guildConfig, update: mocks.guildConfigUpdate } }));
+vi.mock("@db/stores/guildConfigStore.js", () => ({
+	guildConfigStore: {
+		findByGuildId: mocks.guildConfig,
+		update: mocks.guildConfigUpdate,
+		addBlockedNetworkGuild: mocks.addBlocked,
+		removeBlockedNetworkGuild: mocks.removeBlocked,
+	},
+}));
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({
 	deroVoiceConfigStore: {
 		findByGuildId: mocks.findByGuildId,
@@ -73,6 +82,8 @@ async function replyText(options: Options, guildId: string | null = "g1"): Promi
 beforeEach(() => {
 	mocks.guildConfig.mockReset().mockResolvedValue({ guildId: "g1" });
 	mocks.guildConfigUpdate.mockReset().mockResolvedValue({ guildId: "g1" });
+	mocks.addBlocked.mockReset().mockResolvedValue({ guildId: "g1" });
+	mocks.removeBlocked.mockReset().mockResolvedValue({ guildId: "g1" });
 	mocks.findByGuildId.mockReset().mockResolvedValue(STORED);
 	mocks.upsert.mockReset().mockResolvedValue(STORED);
 	mocks.addToList.mockReset().mockResolvedValue(STORED);
@@ -251,15 +262,62 @@ describe("arcade reach (2026-10 item 244 Phase 4)", () => {
 		expect(mocks.guildConfigUpdate).not.toHaveBeenCalled();
 	});
 
-	it("accepts and stores Network now, saying it allows what Server does until network tables arrive", async () => {
+	// Phase 5b (2026-10 item 244) built the network tables, so the reply now says what
+	// Network adds instead of promising it reads like Server until they arrive.
+	it("stores Network and says it opens Hold'em tables to other network servers, with the notice and the block list", async () => {
 		const text = await replyText({ group: "arcade", sub: "reach", id: "network" });
 		expect(mocks.guildConfigUpdate).toHaveBeenCalledWith("g1", { challengeReach: "network" });
-		expect(text).toContain("the same as Server");
+		expect(text).toContain("other network servers");
+		expect(text).toContain("network notice");
+		expect(text).toContain("block-server");
+		expect(text).not.toContain("the same as Server");
 	});
 
 	it("refuses an unknown reach rather than reading it as a default, and writes nothing", async () => {
 		mocks.guildConfig.mockResolvedValue({ guildId: "g1", challengeReach: "invite-only" });
 		expect(await replyText({ group: "arcade", sub: "reach", id: "everywhere" })).toContain("That is not a challenge reach");
 		expect(mocks.guildConfigUpdate).not.toHaveBeenCalled();
+	});
+});
+
+describe("arcade network block list (2026-10 item 244 Phase 5b)", () => {
+	const OTHER = "123456789012345678";
+
+	it("offers block-server and unblock-server, each with a required server id", () => {
+		const arcade = (data.toJSON().options ?? []).find((option) => option.name === "arcade") as
+			| { options?: { name: string; options?: { name: string; required?: boolean }[] }[] }
+			| undefined;
+		for (const name of ["block-server", "unblock-server"]) {
+			const sub = arcade?.options?.find((option) => option.name === name);
+			expect(sub?.options?.[0]).toMatchObject({ name: "server", required: true });
+		}
+	});
+
+	it("blocks a server once, and says so without writing when it is already blocked", async () => {
+		expect(await replyText({ group: "arcade", sub: "block-server", id: OTHER })).toContain(`Blocked server \`${OTHER}\``);
+		expect(mocks.addBlocked).toHaveBeenCalledWith("g1", OTHER);
+
+		mocks.addBlocked.mockClear();
+		mocks.guildConfig.mockResolvedValue({ guildId: "g1", blockedNetworkGuildIds: [OTHER] });
+		expect(await replyText({ group: "arcade", sub: "block-server", id: OTHER })).toContain("already blocked");
+		expect(mocks.addBlocked).not.toHaveBeenCalled();
+	});
+
+	it("unblocks a blocked server, and says so without writing when it was never blocked", async () => {
+		mocks.guildConfig.mockResolvedValue({ guildId: "g1", blockedNetworkGuildIds: [OTHER] });
+		expect(await replyText({ group: "arcade", sub: "unblock-server", id: OTHER })).toContain(`Unblocked server \`${OTHER}\``);
+		expect(mocks.removeBlocked).toHaveBeenCalledWith("g1", OTHER);
+
+		mocks.removeBlocked.mockClear();
+		mocks.guildConfig.mockResolvedValue({ guildId: "g1", blockedNetworkGuildIds: [] });
+		expect(await replyText({ group: "arcade", sub: "unblock-server", id: OTHER })).toContain("is not blocked");
+		expect(mocks.removeBlocked).not.toHaveBeenCalled();
+	});
+
+	it("refuses anything that is not a server id, and this server's own id, writing nothing", async () => {
+		expect(await replyText({ group: "arcade", sub: "block-server", id: "not-a-server" })).toContain("is not a server id");
+		mocks.guildConfig.mockResolvedValue({ guildId: "111111111111111111" });
+		expect(await replyText({ group: "arcade", sub: "block-server", id: "111111111111111111" }, "111111111111111111")).toContain("this server's own id");
+		expect(mocks.addBlocked).not.toHaveBeenCalled();
 	});
 });

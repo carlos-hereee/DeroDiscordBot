@@ -105,6 +105,14 @@ export interface SatelliteRoom {
 	tableMessageId: string | null;
 }
 
+// ── A member of another server waiting on the host's answer (2026-10 item 244 Phase 5b) ──
+// The server they pressed the network board's Join in, so the host's accept opens their
+// satellite there. Removed once they are accepted, declined or removed.
+export interface PendingNetworkJoin {
+	userId: string;
+	guildId: string;
+}
+
 // ── A single entry in the append-only scroll ──
 // `kind` drives how the trail renders the entry, never whether it is recorded. `meta` is
 // persisted for the future dashboard but never rendered into Discord, so a handler can stash

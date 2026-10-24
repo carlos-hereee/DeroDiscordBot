@@ -23,6 +23,7 @@ import { roomLifecycle } from "./roomLifecycle.js";
 import { roomTrail } from "./roomTrail.js";
 import { redrawTable, removeFromTable, seatAcceptedPlayer } from "./roomHoldemHandlers.js";
 import { monopolyStateOf, removeFromMonopolyMatch } from "./roomMonopolyHandlers.js";
+import { seatAcceptedRemotePlayer } from "./networkJoin.js";
 import { RATING_BANDS, type RatingBand } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -207,12 +208,17 @@ async function acceptRequests(interaction: StringSelectMenuInteraction, room: IG
 	let accepted = 0;
 	let latest = room;
 	for (const userId of userIds) {
+		// Read BEFORE the admit, which takes the origin off the row with the request: a
+		// member who asked from another server's network board (2026-10 item 244 Phase 5b)
+		// is seated through a satellite in that server, not in this room.
+		const origin = (room.pendingNetworkJoins ?? []).find((entry) => entry.userId === userId) ?? null;
 		const admitted = await gameRoomStore.admitPendingJoin(room.guildId, room.roomId, userId, "playerIds");
 		if (!admitted) continue;
 		accepted++;
 		latest = admitted;
-		const name = (await memberOptions(interaction.guild!, [userId]))[0]?.label ?? userId;
-		const refusal = await seatAcceptedPlayer(interaction.client, admitted, userId, name);
+		const refusal = origin
+			? await seatAcceptedRemotePlayer(interaction.client, admitted, userId, origin.guildId)
+			: await seatAcceptedPlayer(interaction.client, admitted, userId, (await memberOptions(interaction.guild!, [userId]))[0]?.label ?? userId);
 		if (refusal) lines.push(words.approval.acceptedNotSeated(userId, refusal));
 	}
 	// A seat that landed redrew the table already; this catches the Requests count when none did.

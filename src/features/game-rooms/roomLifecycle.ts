@@ -8,6 +8,7 @@ import { awardXp } from "@features/leveling/awardXp.js";
 import { buildRoomOverwrites, type RoomPhase } from "./roomPermissions.js";
 import { roomResultEmbed, roomArchiveRow } from "./gameRoomsEmbeds.js";
 import { deleteSatellites, labelEmbedForRoom, lockSatellites } from "./satelliteRooms.js";
+import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomLifecycle ────────────────────────────────────────────────────
@@ -127,6 +128,9 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	if (satellites.length > 0) {
 		void lockSatellites(client, { roomId: room.roomId, satellites }, { embed: resultEmbed, files: input.art ? [input.art.attachment] : [] });
 	}
+	// ⑤ A finished network table leaves the network board (2026-10 item 244 Phase 5b).
+	// Debounced and fire and forget there, so the board never holds up a finish.
+	if (claimed.network) scheduleNetworkBoardRefresh();
 
 	return true;
 }

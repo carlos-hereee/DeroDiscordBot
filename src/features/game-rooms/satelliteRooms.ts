@@ -31,12 +31,12 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 //        satellite after the host room has them, locks every satellite when the match
 //        ends, deletes every satellite with the host room, and names players by display
 //        name and server tag where a network table shows them.
-// Who:   openSatellite: satelliteSeats.openSatelliteWithTable (and Phase 5b's join flow).
+// Who:   openSatellite: satelliteSeats.openSatelliteWithTable, which networkJoin calls.
 //        relayState: the Hold'em redraw. relayMove: roomTrail.postMove. lockSatellites:
 //        roomLifecycle.finish. deleteSatellites: roomLifecycle.archiveRoom, the one delete
 //        path the archive sweep and Archive now share. The labels: postMove, the Hold'em
 //        redraw and finish.
-// Does NOT: decide who may sit down (Phase 5b's join flow and joinGate), seat anybody out
+// Does NOT: decide who may sit down (networkJoin and joinGate), seat anybody out
 //        (satelliteSeats, which needs the Hold'em table and so sits above this module), or
 //        relay anything a member typed: chat stays in the server it was typed in.
 // Where: ⚠️ A SATELLITE IS A CHILD OF THE HOST ROW, NEVER A ROOM. Nothing here writes a

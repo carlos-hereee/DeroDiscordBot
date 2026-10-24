@@ -4,16 +4,24 @@ import { COLORS } from "@base/copy/brand.js";
 import { getPluginCopy, type IPluginCopy } from "@base/copy/index.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { networkConsentStore } from "@db/stores/networkConsentStore.js";
+import { playerRatingStore } from "@db/stores/playerRatingStore.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
-import { memberNameResolver } from "@features/ratings/memberNames.js";
+import { scheduleNetworkBoardRefresh } from "@features/game-rooms/networkBoard.js";
+import { memberNameResolver, networkNameResolver } from "@features/ratings/memberNames.js";
 import {
 	formatLuckScore,
 	formatRating,
 	luckBoardInGuild,
+	luckBoardOnNetwork,
 	memberRatings,
 	topRatedInGuild,
+	topRatedOnNetwork,
+	type LuckyPlayer,
+	type RatedPlayer,
 	type RatingSnapshot,
 } from "@features/ratings/ratingBoards.js";
+import { serverBoard } from "@features/ratings/serverRatings.js";
 import { isRatedGame, RATED_GAMES, type RatedGame } from "@features/ratings/ratingEngine.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { utcMonthKey } from "@utils/utcMonthKey.js";
@@ -33,16 +41,28 @@ import { utcMonthKey } from "@utils/utcMonthKey.js";
 //        since a board is a few round trips; ③ dispatch on the subcommand;
 //        ④ one embed.
 //
-// ⚠️ NOTHING NETWORK WIDE. A rating follows its player across servers, but every
-// board here starts from the players with a MatchResult in THIS server, and `me`
-// only ever shows the asking member their own numbers (risk R9).
+// The network (2026-10 item 244 Phase 5b): `board` and `luck` take a scope, this
+// server (the default) or the network; `servers [game]` ranks the servers on the
+// network by the players who wear their tag; `network leave` deletes the member's
+// network consent and every rating they hold, privately.
 //
-// Item 245 Phase 4b (the command merge) has not run yet, so /rating is a new top
-// level name that phase must fold into its command layout.
+// ⚠️ NOTHING NETWORK WIDE WITHOUT CONSENT. A rating follows its player across servers,
+// but a server board starts from the players with a MatchResult in THIS server, a
+// network scope board and the server ranking count only players who accepted the
+// network notice, and `me` only ever shows the asking member their own numbers (R9).
 
 const words = rokCommanderCopy.arcadeRatings;
 const GAME_OPTION = "game";
+const SCOPE_OPTION = "scope";
+const NETWORK_SCOPE = "network";
 const LIMITS = BOT_CONSTANTS.RATINGS;
+
+// This server or the network, offered on `board` and `luck`. Leaving it out reads as this
+// server, the boards as they were before the network existed.
+const SCOPE_CHOICES = [
+	{ name: words.command.scopeServer, value: "server" },
+	{ name: words.command.scopeNetwork, value: NETWORK_SCOPE },
+];
 
 // Choices rather than free text, so Discord refuses an unrated game before the
 // interaction reaches the bot. Built from RATED_GAMES, so a newly rated game
@@ -63,8 +83,28 @@ export const data = new SlashCommandBuilder()
 			.setName("board")
 			.setDescription(words.command.board)
 			.addStringOption((option) => option.setName(GAME_OPTION).setDescription(words.command.gameOption).setRequired(true).addChoices(...GAME_CHOICES))
+			.addStringOption((option) => option.setName(SCOPE_OPTION).setDescription(words.command.scopeOption).setRequired(false).addChoices(...SCOPE_CHOICES))
 	)
-	.addSubcommand((sub) => sub.setName("luck").setDescription(words.command.luck));
+	.addSubcommand((sub) =>
+		sub
+			.setName("luck")
+			.setDescription(words.command.luck)
+			.addStringOption((option) => option.setName(SCOPE_OPTION).setDescription(words.command.scopeOption).setRequired(false).addChoices(...SCOPE_CHOICES))
+	)
+	.addSubcommand((sub) =>
+		sub
+			.setName("servers")
+			.setDescription(words.command.servers)
+			.addStringOption((option) =>
+				option.setName(GAME_OPTION).setDescription(words.command.serversGameOption).setRequired(false).addChoices(...GAME_CHOICES)
+			)
+	)
+	.addSubcommandGroup((group) =>
+		group
+			.setName("network")
+			.setDescription(words.command.networkGroup)
+			.addSubcommand((sub) => sub.setName("leave").setDescription(words.command.leave))
+	);
 
 type RatingWords = IPluginCopy["arcadeRatings"];
 
@@ -80,6 +120,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	const guild = interaction.guild;
 	if (!guild) {
 		await interaction.reply({ embeds: [errorEmbed(words.notInGuild)], flags: MessageFlags.Ephemeral });
+		return;
+	}
+
+	// Leaving the network answers privately and writes, so it takes its own path before
+	// the public defer every board shares.
+	if (interaction.options.getSubcommandGroup(false) === "network") {
+		await leaveNetwork(interaction, guild);
 		return;
 	}
 
@@ -103,8 +150,11 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 function answerFor(subcommand: string, request: RatingRequest): Promise<EmbedBuilder> {
 	if (subcommand === "board") return boardAnswer(request);
 	if (subcommand === "luck") return luckAnswer(request);
+	if (subcommand === "servers") return serversAnswer(request);
 	return myAnswer(request);
 }
+
+const isNetworkScope = (interaction: ChatInputCommandInteraction): boolean => interaction.options.getString(SCOPE_OPTION) === NETWORK_SCOPE;
 
 // ── me [game] ──
 
@@ -134,10 +184,14 @@ async function boardAnswer({ interaction, guild, words: copy }: RatingRequest): 
 	const ratedGame = interaction.options.getString(GAME_OPTION, true);
 	// The choices already restrict this; a hand built request still gets an honest error, never another game's board.
 	if (!isRatedGame(ratedGame)) throw new Error(`/rating board was asked for "${ratedGame}", which is not a rated game`);
-	const players = await topRatedInGuild({ guildId: guild.id, game: ratedGame, limit: LIMITS.BOARD_SIZE, resolveNames: memberNameResolver(guild) });
+	const network = isNetworkScope(interaction);
+	const players: RatedPlayer[] = network
+		? await topRatedOnNetwork({ game: ratedGame, limit: LIMITS.BOARD_SIZE, resolveNames: networkNameResolver(interaction.client) })
+		: await topRatedInGuild({ guildId: guild.id, game: ratedGame, limit: LIMITS.BOARD_SIZE, resolveNames: memberNameResolver(guild) });
 
-	const title = copy.board.title(gameRoomsCopy.gameLabel(ratedGame));
-	if (players.length === 0) return infoEmbed(title, copy.board.empty, COLORS.ARCADE);
+	const gameLabel = gameRoomsCopy.gameLabel(ratedGame);
+	const title = network ? copy.board.networkTitle(gameLabel) : copy.board.title(gameLabel);
+	if (players.length === 0) return infoEmbed(title, network ? copy.board.networkEmpty : copy.board.empty, COLORS.ARCADE);
 
 	const rows = players.map((player, index) => copy.board.row(index + 1, escapeMarkdown(player.displayName), formatRating(player, copy.provisionalMark)));
 	const body = [rows.join("\n"), provisionalNoteFor(players, copy)].filter(Boolean).join("\n\n");
@@ -146,18 +200,60 @@ async function boardAnswer({ interaction, guild, words: copy }: RatingRequest): 
 
 // ── luck ──
 
-async function luckAnswer({ guild, words: copy }: RatingRequest): Promise<EmbedBuilder> {
-	const players = await luckBoardInGuild({
-		guildId: guild.id,
-		month: utcMonthKey(new Date()),
-		limit: LIMITS.BOARD_SIZE,
-		resolveNames: memberNameResolver(guild),
-	});
+async function luckAnswer({ interaction, guild, words: copy }: RatingRequest): Promise<EmbedBuilder> {
+	const network = isNetworkScope(interaction);
+	const month = utcMonthKey(new Date());
+	const players: LuckyPlayer[] = network
+		? await luckBoardOnNetwork({ month, limit: LIMITS.BOARD_SIZE, resolveNames: networkNameResolver(interaction.client) })
+		: await luckBoardInGuild({ guildId: guild.id, month, limit: LIMITS.BOARD_SIZE, resolveNames: memberNameResolver(guild) });
 	const rows = players.map((player, index) =>
 		copy.luck.row(index + 1, escapeMarkdown(player.displayName), formatLuckScore(player.score), player.wins, player.decided)
 	);
-	const board = rows.length > 0 ? rows.join("\n") : copy.luck.empty(LIMITS.LUCK_MIN_DECIDED);
-	return infoEmbed(copy.luck.title, `${copy.luck.description}\n\n${board}`, COLORS.ARCADE);
+	const empty = network ? copy.luck.networkEmpty(LIMITS.LUCK_MIN_DECIDED) : copy.luck.empty(LIMITS.LUCK_MIN_DECIDED);
+	const board = rows.length > 0 ? rows.join("\n") : empty;
+	return infoEmbed(network ? copy.luck.networkTitle : copy.luck.title, `${copy.luck.description}\n\n${board}`, COLORS.ARCADE);
+}
+
+// ── servers [game] (2026-10 item 244 Phase 5b) ──
+
+async function serversAnswer({ interaction, words: copy }: RatingRequest): Promise<EmbedBuilder> {
+	const chosen = interaction.options.getString(GAME_OPTION);
+	const game = chosen && isRatedGame(chosen) ? chosen : null;
+	const servers = await serverBoard(interaction.client, game);
+
+	const title = copy.servers.title(game ? gameRoomsCopy.gameLabel(game) : null);
+	const description = copy.servers.description(BOT_CONSTANTS.NETWORK.SERVER_BOARD_MIN_MEMBERS);
+	if (servers.length === 0) return infoEmbed(title, `${description}\n\n${copy.servers.empty}`, COLORS.ARCADE);
+	const rows = servers.map((server, index) =>
+		copy.servers.row(index + 1, escapeMarkdown(server.name), server.tag ? escapeMarkdown(server.tag) : null, server.rating, server.members)
+	);
+	return infoEmbed(title, `${description}\n\n${rows.join("\n")}`, COLORS.ARCADE);
+}
+
+// ── network leave (2026-10 item 244 Phase 5b) ──
+
+/**
+ * Delete the member's network consent and every rating they hold, privately. Their luck
+ * rows stay, because luck is kept per server and was never shown across servers without
+ * consent. Consent goes FIRST, so a failure part way leaves them off the network rather
+ * than shown there; running it again deletes whatever is left. The network boards are
+ * redrawn, since a host who left is no longer listed.
+ */
+async function leaveNetwork(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	const guildConfig = await guildConfigStore.findByGuildId(guild.id).catch(() => null);
+	const copy = getPluginCopy(guildConfig).arcadeRatings;
+	try {
+		const hadConsent = await networkConsentStore.deleteForUser(interaction.user.id);
+		const ratingsDeleted = await playerRatingStore.deleteAllForPlayer(interaction.user.id);
+		scheduleNetworkBoardRefresh();
+		const text = !hadConsent && ratingsDeleted === 0 ? copy.leave.nothing : copy.leave.done(ratingsDeleted);
+		await interaction.editReply({ content: text });
+	}
+	catch (error) {
+		console.error(`[rating] network leave failed for user ${interaction.user.id} in guild ${guild.id}`, error);
+		await interaction.editReply({ content: copy.leave.failed }).catch(() => undefined);
+	}
 }
 
 // The note explaining the mark, only when a number on screen carries it.

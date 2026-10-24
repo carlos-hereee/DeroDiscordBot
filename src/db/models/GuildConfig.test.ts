@@ -411,3 +411,18 @@ describe("GuildConfig declares the welcome and rules fields", () => {
 		expect(legacy.validateSync()).toBeUndefined();
 	});
 });
+
+describe("GuildConfig declares the network fields (2026-10 item 244 Phase 5b)", () => {
+	it("round trips the block list and the network board message id", () => {
+		const doc = new GuildConfigModel({ ...baseRow, blockedNetworkGuildIds: ["123456789012345678"], networkBoardMessageId: "msg-1" });
+		const plain = doc.toObject() as Record<string, unknown>;
+		expect(plain.blockedNetworkGuildIds).toEqual(["123456789012345678"]);
+		expect(plain.networkBoardMessageId).toBe("msg-1");
+	});
+
+	it("reads a legacy row as blocking nobody and holding no board", () => {
+		const plain = new GuildConfigModel(baseRow).toObject() as Record<string, unknown>;
+		expect(plain.blockedNetworkGuildIds).toEqual([]);
+		expect(plain.networkBoardMessageId).toBeNull();
+	});
+});

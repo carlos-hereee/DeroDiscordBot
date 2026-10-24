@@ -53,6 +53,8 @@ export const BOT_CONSTANTS = {
 	//   as a picker courtesy; main.ts skips /setup, which runs before an admin role exists.
 	//   /render-analytics is platform owner only (its execute checks CREATOR_DISCORD_ID),
 	//   and this gate would demand a /setup config in whatever server the owner uses.
+	//   /network (2026-10 item 244 Phase 5b) is the same: the owner's network bans,
+	//   behind the same CREATOR_DISCORD_ID check.
 	//   /events list, /leaderboard, /account, /rating and the games are member commands:
 	//   members seeing what is scheduled and where they stand is the whole point.
 	ADMIN_COMMANDS: new Set<string>([
@@ -300,6 +302,44 @@ export const BOT_CONSTANTS = {
 	// game whose whole state is that one message. Battleship's private boards and
 	// Monopoly's several cards would each need their own relay before joining this list.
 	NETWORK_GAMES: ["holdem"],
+	// ── network tables: consent, the board, server ratings (2026-10 item 244 Phase 5b) ──
+	// What:  the numbers the network around a satellite runs on.
+	// Who:   game-rooms/networkRules.ts, networkBoard.ts and networkJoin.ts;
+	//        ratings/serverRatings.ts and tagNotice.ts; /network and /dero-config arcade.
+	NETWORK: {
+		// The network notice a member accepts before anything of theirs is shown in another
+		// server. Raise it when the notice's wording changes what crosses servers: every row
+		// below it then reads as not consented until the member accepts the new notice.
+		CONSENT_VERSION: 1,
+		// How long the network board waits after a change before redrawing every network
+		// server's board, so a burst of seats and hands costs one round of edits, not one
+		// per press. Short enough that a table a member just saw open is there to join.
+		BOARD_REFRESH_DEBOUNCE_MS: 5_000,
+		// How many tables one network board lists. Under a select menu's 25 options, and
+		// short enough that the embed stays readable on a phone.
+		BOARD_MAX_TABLES: 10,
+		// Owner decision 2026-10-23 (2026-10 item 244): the tag notice goes to one player
+		// at most once in this window, however many rated games they win.
+		TAG_NOTICE_INTERVAL_MS: 30 * 24 * 60 * 60_000,
+		// Owner decision 2026-10-23 (2026-10 item 244): a server is on the server board only
+		// with at least this many rated, consenting members wearing its tag, and its rating
+		// is the mean of that many top display ratings.
+		SERVER_BOARD_MIN_MEMBERS: 5,
+		// How many servers /rating servers lists, the same ten the member boards show.
+		SERVER_BOARD_SIZE: 10,
+		// The guild feature Discord sets on a server that can hand out a server tag.
+		GUILD_TAGS_FEATURE: "GUILD_TAGS",
+		// How many ratings the network scope board reads per page while it looks for
+		// consenting players, so a top heavy page of non consenting players costs one more
+		// read rather than an unbounded one.
+		NETWORK_BOARD_PAGE: 50,
+		// A Discord server id as an admin or the owner types it into /network or
+		// /dero-config arcade block-server. A snowflake is 17 to 20 digits today.
+		SERVER_ID_PATTERN: /^\d{17,20}$/,
+		// The longest note the owner may keep on a network ban. Only the owner reads it,
+		// and a short cap keeps a pasted wall of text out of the ban list.
+		BAN_REASON_MAX_LENGTH: 200,
+	},
 
 	// ── dero voice ───────────────────────────────────────────────
 	// What:  every number and provider string the voice feature runs on: the

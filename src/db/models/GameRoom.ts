@@ -8,6 +8,7 @@ import {
 	ROOM_STATUSES,
 	ROOM_VISIBILITIES,
 	type GameSlug,
+	type PendingNetworkJoin,
 	type RatingBand,
 	type RoomMove,
 	type RoomSecret,
@@ -102,6 +103,11 @@ export interface IGameRoom {
 	// opened. Children of THIS row: they hold no transcript, no status and no clock of
 	// their own, so every room invariant stays on the host row (satelliteRooms.ts).
 	satellites: SatelliteRoom[];
+	// The server each member of ANOTHER server asked from, while they wait on the host's
+	// Requests answer at a network table (2026-10 item 244 Phase 5b). Their id waits in
+	// pendingJoinIds like anyone's; this is what tells the host's accept which server to
+	// open their satellite in, since a member may share several servers with Dero.
+	pendingNetworkJoins: PendingNetworkJoin[];
 	// Hangman's hidden word and hint stack. Null for duel and rps, which have no secret.
 	secret: RoomSecret | null;
 	moves: RoomMove[];
@@ -149,6 +155,16 @@ const satelliteRoomSchema = new mongoose.Schema<SatelliteRoom>(
 	{ _id: false }
 );
 
+// A waiting remote member and the server they asked from, addressed by the member, so
+// _id is off for the same reason again.
+const pendingNetworkJoinSchema = new mongoose.Schema<PendingNetworkJoin>(
+	{
+		userId: { type: String, required: true },
+		guildId: { type: String, required: true },
+	},
+	{ _id: false }
+);
+
 const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 	{
 		// Rides every customId, so it must be stable and URL/customId safe. uuid v4 matches
@@ -188,6 +204,8 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		// anywhere else, and needs no backfill.
 		network: { type: Boolean, default: false },
 		satellites: { type: [satelliteRoomSchema], default: [] },
+		// Empty by default, so an older row has nobody waiting from another server.
+		pendingNetworkJoins: { type: [pendingNetworkJoinSchema], default: [] },
 		// Mixed rather than a typed subdocument: only hangman populates it, its shape will grow
 		// as other games gain hidden state, and a strict subschema here would silently drop the
 		// next game's fields the way GuildConfig.schedulePaused was dropped before it was declared.

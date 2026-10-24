@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@db/stores/playerRatingStore.js", () => ({ playerRatingStore: { findForPlayers: vi.fn() } }));
+vi.mock("@db/stores/networkConsentStore.js", () => ({ networkConsentStore: { findByUserId: vi.fn() } }));
 
 import { judgeJoin, fitsRoomBand, isKicked, type JoinGateRoom } from "./joinGate.js";
 import { asChallengeReach, isChallengeReach, isWithinReach } from "./challengeReach.js";
 import { playerRatingStore } from "@db/stores/playerRatingStore.js";
+import { networkConsentStore } from "@db/stores/networkConsentStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 // ── the join gate and the reach ceiling (2026-10 item 244 Phase 4) ─────────
@@ -123,5 +125,33 @@ describe("the challenge reach ceiling", () => {
 		expect(asChallengeReach("invite-only")).toBe("invite-only");
 		expect(isChallengeReach("network")).toBe(true);
 		expect(isChallengeReach("everywhere")).toBe(false);
+	});
+});
+
+// ── a network table's consent step (2026-10 item 244 Phase 5b) ─────────────
+describe("judgeJoin at a network table", () => {
+	const consentMock = networkConsentStore.findByUserId as unknown as ReturnType<typeof vi.fn>;
+
+	it("refuses a member without network consent, even one the room already let in", async () => {
+		consentMock.mockResolvedValue(null);
+		expect(await judgeJoin(room({ network: true }), JOINER, { alreadyApproved: false })).toEqual({ kind: "refuse", reason: "noConsent" });
+		expect(await judgeJoin(room({ network: true }), JOINER, { alreadyApproved: true })).toEqual({ kind: "refuse", reason: "noConsent" });
+	});
+
+	it("refuses a removed member as removed before asking about consent", async () => {
+		consentMock.mockResolvedValue(null);
+		expect(await judgeJoin(room({ network: true, kickedIds: [JOINER] }), JOINER, { alreadyApproved: false })).toEqual({ kind: "refuse", reason: "kicked" });
+	});
+
+	it("admits a consenting member and goes on to the band and approval as before", async () => {
+		consentMock.mockResolvedValue({ userId: JOINER, version: BOT_CONSTANTS.NETWORK.CONSENT_VERSION });
+		expect(await judgeJoin(room({ network: true }), JOINER, { alreadyApproved: false })).toEqual({ kind: "admit" });
+		expect(await judgeJoin(room({ network: true, requireApproval: true }), JOINER, { alreadyApproved: false })).toEqual({ kind: "ask" });
+	});
+
+	it("never reads consent for a server room", async () => {
+		consentMock.mockClear();
+		expect(await judgeJoin(room(), JOINER, { alreadyApproved: false })).toEqual({ kind: "admit" });
+		expect(consentMock).not.toHaveBeenCalled();
 	});
 });

@@ -39,6 +39,8 @@ import { registerGameRoomHandlers } from "@features/game-rooms/gameRoomHandlers.
 import { registerGameRoomMemberRemoveWatcher } from "@features/game-rooms/guildMemberRemoveWatcher.js";
 import { recoverGameRoomsOnBoot } from "@features/game-rooms/roomBootRecovery.js";
 import { reconcileSatellitesOnBoot, registerSatelliteWatchers } from "@features/game-rooms/satelliteSeats.js";
+import { startNetworkBoards } from "@features/game-rooms/networkBoard.js";
+import { registerTagNotice } from "@features/ratings/tagNotice.js";
 import { sweepHoldemClocks } from "@features/game-rooms/roomHoldemHandlers.js";
 import { logMonopolyRendererStatus } from "@features/games/monopolyRenderer.js";
 import { logCanvasRendererStatus, logDeroArtStatus } from "@features/renderer/index.js";
@@ -624,6 +626,10 @@ process.on("uncaughtException", (err) => {
 		// channel being deleted seats them out of the table, which plays on. Second
 		// listeners on GuildMemberRemove and ChannelDelete on purpose; see satelliteSeats.ts.
 		registerSatelliteWatchers(client);
+		// After a rated win, one line inviting a winner whose worn server tag belongs to a
+		// server off the network to bring Dero there, at most once in 30 days (2026-10 item
+		// 244 Phase 5b). A listener on the rating writer; see features/ratings/tagNotice.ts.
+		registerTagNotice(client);
 		// One line saying whether cards render as pictures on this host, with which
 		// fonts, and whether the S3 card cache is on. Registers the bundled fonts.
 		logCanvasRendererStatus();
@@ -885,6 +891,10 @@ process.on("uncaughtException", (err) => {
 		// The satellite half of the same catch up: departures from a network table's
 		// satellites that happened while the bot was down. Never throws.
 		await reconcileSatellitesOnBoot(client);
+		// Every network server's network board, drawn once and then kept current by the
+		// changes that move it (2026-10 item 244 Phase 5b). After the reconcile, so a table
+		// a departure closed is not listed. Never throws.
+		await startNetworkBoards(client);
 
 		// ── community buttons pointer (2026-10 item 247 Phase 3) ──
 		// Once per guild, an #inner-sanctum post pointing at the new Enable Community

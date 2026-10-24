@@ -36,6 +36,7 @@ import { roomMonopolyTrade } from "./roomMonopolyTrade.js";
 import { roomMonopolyAuction } from "./roomMonopolyAuction.js";
 import { hostControls } from "./hostControls.js";
 import { satelliteAt } from "./satelliteRooms.js";
+import { registerNetworkHandlers } from "./networkJoin.js";
 import type { GameSlug, SatelliteRoom } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -383,6 +384,10 @@ export function registerGameRoomHandlers(): void {
 		if (action === "mbid") return roomMonopolyAuction.handleBidModal(interaction);
 		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
 	});
+	// The network board's select and the network notice's buttons (2026-10 item 244 Phase
+	// 5b): their own prefixes, registered here so the network rides the same boot step as
+	// the rooms it seats players at.
+	registerNetworkHandlers();
 }
 
 // Exported for the handler tests, which drive the routing without a live client.

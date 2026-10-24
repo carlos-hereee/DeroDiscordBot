@@ -37,7 +37,8 @@ export const GAME_ROOM_ACTIONS = {
 	// Start a challenge. Carries a GAME SLUG, not a roomId: this is the one action
 	// that runs before a room exists. Any member may start one, so no gate.
 	new: { hostOnly: false, playersOnly: false },
-	// Host picks Invite only or Open to all. hostOnly: it is their draft.
+	// Host picks Invite only, Open to all, or Open to the network (2026-10 item 244
+	// Phase 5b, which the handler allows the host alone). hostOnly: it is their draft.
 	vis: { hostOnly: true, playersOnly: false },
 	// Host opens the member picker.
 	invite: { hostOnly: true, playersOnly: false },

@@ -296,14 +296,20 @@ export const gameRoomStore = {
 				pendingJoinIds: userId,
 				kickedIds: { $ne: userId },
 			},
-			{ $pull: { pendingJoinIds: userId }, $addToSet: { [into]: userId } },
+			// A remote member's origin server goes with the request: once answered it is
+			// never read again (hostControls reads it off the row it loaded BEFORE this write).
+			{ $pull: { pendingJoinIds: userId, pendingNetworkJoins: { userId } }, $addToSet: { [into]: userId } },
 			{ new: true }
 		);
 	},
 
 	// The host declined these requests. A declined member may ask again; a removed one may not.
 	async declinePendingJoins(guildId: string, roomId: string, userIds: readonly string[]) {
-		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $pull: { pendingJoinIds: { $in: [...userIds] } } }, { new: true });
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId },
+			{ $pull: { pendingJoinIds: { $in: [...userIds] }, pendingNetworkJoins: { userId: { $in: [...userIds] } } } },
+			{ new: true }
+		);
 	},
 
 	// The host removed a member: out of every list that lets them in, and onto
@@ -314,7 +320,7 @@ export const gameRoomStore = {
 		return GameRoom.findOneAndUpdate(
 			{ guildId, roomId, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] }, hostId: { $ne: userId } },
 			{
-				$pull: { playerIds: userId, spectatorIds: userId, pendingJoinIds: userId },
+				$pull: { playerIds: userId, spectatorIds: userId, pendingJoinIds: userId, pendingNetworkJoins: { userId } },
 				$addToSet: { kickedIds: userId },
 			},
 			{ new: true }
@@ -357,6 +363,28 @@ export const gameRoomStore = {
 	// Every live network room, across every guild, for the boot reconcile.
 	async findOpenNetwork() {
 		return GameRoom.find({ network: true, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] } });
+	},
+
+	// ── the network board and remote requests (2026-10 item 244 Phase 5b) ──
+	// Every network room whose match is under way, across every guild: the candidates
+	// the network board lists (networkBoard decides which still take players). Served
+	// by the { status, archiveAt } index's prefix, which "playing" keeps to live rooms.
+	async findPlayingNetwork() {
+		return GameRoom.find({ network: true, status: "playing" });
+	},
+
+	// A member of another server asks the host for a seat at a live network table: their
+	// id joins the waiting list and the server they asked from is remembered beside it.
+	// The old origin goes first, so a member who was declined and asks again from another
+	// server is remembered by the server they asked from last. The second write filters
+	// on kickedIds like addPendingJoin, so a removed member is never written back in.
+	async addNetworkPendingJoin(guildId: string, roomId: string, userId: string, fromGuildId: string) {
+		await GameRoom.updateOne({ guildId, roomId, network: true }, { $pull: { pendingNetworkJoins: { userId } } });
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, network: true, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] }, kickedIds: { $ne: userId } },
+			{ $addToSet: { pendingJoinIds: userId }, $push: { pendingNetworkJoins: { userId, guildId: fromGuildId } } },
+			{ new: true }
+		);
 	},
 
 	// Add a satellite to a live network room.

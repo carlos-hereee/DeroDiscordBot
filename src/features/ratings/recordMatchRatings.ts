@@ -25,12 +25,51 @@ import { displayRating, isRatedGame, newRating, rateFinishingOrder, type SkillRa
 //
 // ⚠️ NEVER THROWS INTO THE GAME, and never makes it wait: every failure is caught and
 // logged here, and the finish sites call it with `void`.
+//
+// A rated win is announced to whoever listens (onRatedWin, Phase 5b), after the ratings
+// moved: the tag notice (tagNotice.ts) is the one listener, registered at boot. A
+// listener rather than a call from every finish site, because there are five finish
+// sites and only this writer knows a win was RATED (not abandoned, not under the Hold'em
+// hand floor, not a match with one rated player left).
 
 // A rating needs somebody to beat: one remaining player is a record, not a match.
 const MIN_RATED_PLAYERS = 2;
 
-/** The slice of a room row this recorder reads. */
-export type RatingRoom = Pick<IGameRoom, "roomId" | "guildId" | "game">;
+/**
+ * The slice of a room row this recorder reads. The channel and satellites are optional
+ * and only passed on to a rated win's listeners, which post where the winner played.
+ */
+export type RatingRoom = Pick<IGameRoom, "roomId" | "guildId" | "game"> & Partial<Pick<IGameRoom, "channelId" | "satellites">>;
+
+/** A rated match's winner, announced once its ratings moved. */
+export interface RatedWin {
+	room: RatingRoom;
+	winnerId: string;
+}
+
+type RatedWinListener = (win: RatedWin) => void;
+
+const ratedWinListeners: RatedWinListener[] = [];
+
+/** Listen for rated wins. Answers a function that stops listening. Each listener must not throw; one that does is logged and skipped. */
+export function onRatedWin(listener: RatedWinListener): () => void {
+	ratedWinListeners.push(listener);
+	return () => {
+		const index = ratedWinListeners.indexOf(listener);
+		if (index !== -1) ratedWinListeners.splice(index, 1);
+	};
+}
+
+function announceRatedWin(win: RatedWin): void {
+	for (const listener of ratedWinListeners) {
+		try {
+			listener(win);
+		}
+		catch (error) {
+			console.error(`[ratings] a rated win listener failed for room ${win.room.roomId}`, error);
+		}
+	}
+}
 
 export interface MatchRatingOptions {
 	/** False records the match without moving any rating (a Hold'em session under 10 dealt hands). */
@@ -186,6 +225,9 @@ async function writeMatchRatings(
 			})
 		)
 	);
+	// The winner is first in a rated finishing order. Only after the ratings moved, and
+	// only for the call that inserted the result, so a win is announced once.
+	announceRatedWin({ room, winnerId: order[0] });
 }
 
 /**

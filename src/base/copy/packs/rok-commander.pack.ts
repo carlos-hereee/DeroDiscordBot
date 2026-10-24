@@ -1181,6 +1181,14 @@ export const rokCommanderCopy = {
 			board: "The finest rated warriors of one game in this realm",
 			luck: "This month's luckiest warriors at coin flip, dice and rock paper scissors",
 			gameOption: "Which rated game",
+			// ── the network (2026-10 item 244 Phase 5b) ──
+			scopeOption: "This realm, or every warrior on the network who chose to be seen there",
+			scopeServer: "This realm",
+			scopeNetwork: "The network",
+			servers: "The realms on the network, ranked by the warriors who wear their tag",
+			serversGameOption: "One rated game, or leave it out for every rated game",
+			networkGroup: "Your place on the network",
+			leave: "Leave the network: deletes your network consent and your ratings in every game",
 		},
 		// Appended to a rating under 10 rated games, so an early number never reads as settled.
 		provisionalMark: "?",
@@ -1198,8 +1206,13 @@ export const rokCommanderCopy = {
 			title: (game: string) => `🏆 ${game} ratings in this realm`,
 			row: (place: number, name: string, rating: string) => `${place}. **${name}**: ${rating}`,
 			empty: "No warrior of this realm holds a rating in this game yet. Finish a match and claim the first.",
+			// The network scope: every warrior who accepted the network notice, wherever they play.
+			networkTitle: (game: string) => `🌐 ${game} ratings across the network`,
+			networkEmpty: "No warrior on the network holds a rating in this game yet.",
 		},
 		luck: {
+			networkTitle: "🌐 The luckiest warriors on the network this month",
+			networkEmpty: (minimum: number) => `No warrior on the network has ${minimum} decided games of chance this month yet.`,
 			title: "🍀 The luckiest warriors this month",
 			description:
 				"Coin flip, dice roll and rock paper scissors, scored by wins above an even split. A tie decides nothing and counts for nothing.",
@@ -1222,6 +1235,25 @@ export const rokCommanderCopy = {
 			luckDetail: (score: string, wins: number, decided: number) => `${score} above even, ${wins} of ${decided} won`,
 			luckEmpty: (minimum: number) => `Nobody reached ${minimum} decided games of chance.`,
 			footer: "Ask for your own with /rating me.",
+		},
+		// ── the server board and leaving the network (2026-10 item 244 Phase 5b) ──
+		servers: {
+			title: (game: string | null) => (game ? `🏰 Realms of the network at ${game}` : "🏰 Realms of the network"),
+			description: (minimum: number) =>
+				`A realm's rating is the mean of the top ${minimum} ratings among the warriors who wear its server tag and chose to be seen on the network. A realm on the network that can hand out tags needs ${minimum} such warriors to be ranked.`,
+			row: (place: number, server: string, tag: string | null, rating: number, members: number) =>
+				`${place}. **${server}**${tag ? ` [${tag}]` : ""}: ${rating}, from ${members} ${members === 1 ? "warrior" : "warriors"}`,
+			empty: "No realm on the network has enough warriors wearing its tag to be ranked yet.",
+		},
+		leave: {
+			done: (ratingsDeleted: number) => {
+				const kept = "Your luck in each realm stays with that realm.";
+				if (ratingsDeleted === 0) return `You have left the network and your consent is gone. You held no rating to delete. ${kept}`;
+				if (ratingsDeleted === 1) return `You have left the network. Your consent is gone, and so is your rating. ${kept}`;
+				return `You have left the network. Your consent is gone, and so are your ratings in ${ratingsDeleted} games. ${kept}`;
+			},
+			nothing: "You were not on the network and held no rating, so there was nothing to delete.",
+			failed: "The scrolls would not finish letting go of your network records just now. Ask again in a moment; it deletes whatever is left.",
 		},
 	},
 
@@ -1363,5 +1395,91 @@ export const rokCommanderCopy = {
 		// The finished room's Rematch, for a table that seated other servers: a rematch
 		// plays on in the host's channel, which the other servers' players cannot see.
 		rematchRefused: "A table shared with other servers has no rematch. Start a new challenge instead.",
+	},
+
+	// ── network tables: the board, consent and the doors (2026-10 item 244 Phase 5b) ─
+	// What members read around a satellite: the host's network option, the one time
+	// network notice, the network board in each network server's challenges channel,
+	// why a seat was refused, and the tag notice after a rated win. Plain like the
+	// satellite words, and shared by the general-events pack for the same reason.
+	// Members call the number a "rating", never Elo.
+	arcadeNetwork: {
+		// The host's third visibility choice, offered when the server's reach is network.
+		visibilityLabel: "Open to the network",
+		cardLine: (hostId: string) =>
+			`<@${hostId}> is hosting a table open to this server and to players from other network servers. Once the table opens, it is listed on the network board.`,
+		// Why the network choice was refused.
+		hostRefusals: {
+			notHost: "Only the host can open their own table to the network.",
+			notOnNetwork: "This server is not on the network. An admin can open it with /dero-config arcade reach.",
+			notNetworkGame: (game: string) => `A ${game} table cannot be opened to the network yet.`,
+			banned: "Network tables are closed to you.",
+			serverBanned: "Network tables are closed to this server.",
+		},
+		// The one time network notice, before anything of a member's is shown in another server.
+		consent: {
+			title: "🌐 Playing across servers",
+			body: [
+				"Network tables seat players from several servers. Before you play at one, here is what crosses servers:",
+				"",
+				"• Your display name and the server tag you wear",
+				"• Your moves at the table and the table itself",
+				"• Your rating in each rated game, on network boards and server rankings",
+				"",
+				"Nothing you type in a channel is shared. You can leave at any time with `/rating network leave`, which deletes your consent and your ratings.",
+			].join("\n"),
+			acceptLabel: "I agree",
+			declineLabel: "Not now",
+			// After accepting from a door that does not continue by itself (a Join or Buy in in this server).
+			acceptedPressAgain: "Thanks, you are on the network. Press the button again to take your seat.",
+			accepted: "Thanks, you are on the network.",
+			declined: "No problem. Nothing of yours is shared, and you can still play every table in your own server.",
+		},
+		// The network board: one message per network server, listing other servers' open tables.
+		board: {
+			title: "🌐 Network tables",
+			description: "Tables hosted in other servers on the network that are taking players. Pick one to ask for a seat.",
+			empty: "No network table is taking players right now. A table opened to the network in any network server shows up here.",
+			closedHere: "Network tables are closed to this server.",
+			// One table's line: `phase` says whether it is buying in or seating between hands.
+			tableLine: (game: string, host: string, server: string, seated: number, cap: number, phase: "joining" | "seatsOpen") =>
+				`**${game}** hosted by ${host} from **${server}**: ${seated} of ${cap} seats, ${phase === "joining" ? "buying in" : "seating at the next hand"}`,
+			// What a table's host has set, after its line, when anything is set.
+			bandNote: (band: string) => `rating band ${band}`,
+			approvalNote: "the host approves each player",
+			placeholder: "Choose a table to join",
+			optionLabel: (game: string, server: string) => `${game} from ${server}`,
+			optionDescription: (host: string, seated: number, cap: number) => `Hosted by ${host}, ${seated} of ${cap} seats`,
+		},
+		// Why a seat at a network table was refused, said privately to whoever asked.
+		joinRefusals: {
+			serverOffNetwork: "This server is not on the network any more, so it cannot seat players at tables hosted elsewhere.",
+			tableGone: "That table is no longer taking players.",
+			bannedUser: "Network tables are closed to you.",
+			bannedServer: "Network tables are closed to this server.",
+			hostServerClosed: "That table's server is no longer on the network.",
+			blocked: "That table's server and this one do not share tables.",
+			outsideBand: (game: string) => `Your ${game} rating is outside the band this host set. Look for another table.`,
+			removed: "The host removed you from that table, so you cannot rejoin it.",
+		},
+		// A seat that worked: the satellite channel to play from.
+		seatReady: (channelId: string) => `Your seat is ready in <#${channelId}>. Buy in there.`,
+		alreadySeated: (channelId: string) => `You already have a seat at that table, in <#${channelId}>.`,
+		asked: "Your request is with the host. Once they accept it, your seat opens in a channel here.",
+		alreadyAsked: "Your request is already with the host.",
+		// Said to the host, after "accepted but not seated:", when a member from another
+		// server can no longer be seated by the time the host accepts them.
+		hostAccept: {
+			serverGone: "their server is no longer on the network",
+			closed: "network tables are now closed to them or their server",
+		},
+		// After a rated win, at most once in 30 days, when the server tag the winner wears
+		// belongs to a server that is not on the network.
+		tagNotice: {
+			notInServer: (userId: string, tag: string, inviteUrl: string) =>
+				`🏷️ <@${userId}>, your server tag **${tag}** belongs to a server Dero is not in yet. Bring Dero there and its rated wins can count toward a server ranking: ${inviteUrl}`,
+			notOnNetwork: (userId: string, server: string) =>
+				`🏷️ <@${userId}>, your server tag belongs to **${server}**, which is not on the network yet. Ask its admins to open it with /dero-config arcade reach, and its rated wins can count toward a server ranking.`,
+		},
 	},
 };

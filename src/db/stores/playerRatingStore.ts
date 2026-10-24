@@ -27,6 +27,24 @@ export const playerRatingStore = {
 		return PlayerRating.find({ userId }).lean<IPlayerRating[]>();
 	},
 
+	// ── the network (2026-10 item 244 Phase 5b) ──
+	/** One page of a game's ratings, best first, for the network board to look through for consenting players. */
+	async findTopInGame(game: string, limit: number, skip: number): Promise<IPlayerRating[]> {
+		return PlayerRating.find({ game }).sort({ displayRating: -1, userId: 1 }).skip(skip).limit(limit).lean<IPlayerRating[]>();
+	},
+
+	/** These players' ratings in every rated game, in one query, for the server ratings. */
+	async findForPlayersInAllGames(userIds: readonly string[]): Promise<IPlayerRating[]> {
+		if (userIds.length === 0) return [];
+		return PlayerRating.find({ userId: { $in: [...userIds] } }).lean<IPlayerRating[]>();
+	},
+
+	/** Delete every rating one player holds, for /rating network leave. Answers how many games' ratings went. */
+	async deleteAllForPlayer(userId: string): Promise<number> {
+		const result = await PlayerRating.deleteMany({ userId });
+		return result.deletedCount;
+	},
+
 	// One rated game for one player: the new estimate is SET (it was computed from the
 	// row the caller read) and the game count is INCREMENTED, so the count can never
 	// be written back stale.
