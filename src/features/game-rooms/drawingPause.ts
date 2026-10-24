@@ -8,8 +8,11 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 //        withRenderFallback, swap the card (or the text board) in, release the clocks.
 // Who:   blackjack's click and seating paths, the battleship and Monopoly redraws,
 //        and the Hold'em table redraw (Dero 1.7.0 test fixes, Phase 3a). Their clocks
-//        (roomTurnSweep, the Monopoly auction close, the Hold'em clock, blackjack's
-//        table lifetime) read isClockExpired and pausedDeadline below.
+//        (roomTurnSweep's battleship and Monopoly turn sweeps, the Hold'em clock,
+//        blackjack's table lifetime) read isClockExpired and pausedDeadline below.
+//        The Monopoly auction close is deliberately NOT held: its bid gates check the
+//        nominal close (auctionClosesAt) too, so holding only the closing sweep would
+//        give bidders no extra time.
 // When:  after a move has been persisted, whoever made it.
 // Where: process memory only. A pause lasts as long as one render, so a restart
 //        loses nothing worth keeping: every clock falls back to its stored stamp.

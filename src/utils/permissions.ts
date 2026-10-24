@@ -92,9 +92,11 @@ export async function gateOwnerOrAdmin(
  * Whether a slash command, or one subcommand of it, sits behind the owner or admin
  * gate. BOT_CONSTANTS.ADMIN_COMMANDS lists a bare command name to gate all of it, or
  * "command subcommand" to gate that one subcommand alone (/events delete, while
- * /events list stays a member view). main.ts's slash command gate and the admin
- * command launcher both ask this, so a button can never open what the command
- * would refuse.
+ * /events list stays a member view). main.ts's slash command gate asks this. The
+ * admin command launcher does not need to: it offers only the admin guide's
+ * commands and re-runs gateOwnerOrAdmin at every step, so a button refuses everyone
+ * the slash command would, and a member view such as /events list stays on the
+ * slash command.
  */
 export function isAdminCommand(commandName: string, subcommand: string | null): boolean {
 	if (BOT_CONSTANTS.ADMIN_COMMANDS.has(commandName)) return true;

@@ -103,10 +103,12 @@ export function boardIntroEmbed(): EmbedBuilder {
 const BOARD_BUTTONS_PER_ROW = 3;
 
 // One button per challenge game, chunked into rows. Carries the SLUG rather than a
-// roomId, because no room exists until this is pressed. Rides the pinned ⚔️challenges
-// intro: resolveIntroComponents in GuildSetupManager attaches these rows on first build
-// and on every boot's refresh, so a guild set up before the board existed gets it on
-// its next boot without a re-run of /setup.
+// roomId, because no room exists until this is pressed. Rides 🕹️games' second
+// message, the Challenge Board: GuildSetupManager.gamesBoardContent attaches these
+// rows, the board is posted at first build and kept present on every boot by
+// maintainGamesBoard, so a guild set up before it existed gets it without a re-run
+// of /setup. stripMovedArcadeControls reads the same rows' customIds to clear them
+// off a superseded ⚔️challenges intro, where the card a press opens is still posted.
 export function boardStartRows(): ActionRowBuilder<ButtonBuilder>[] {
 	const rows: ActionRowBuilder<ButtonBuilder>[] = [];
 	for (let start = 0; start < CHALLENGE_GAMES.length; start += BOARD_BUTTONS_PER_ROW) {
