@@ -383,8 +383,11 @@ describe("Confirm", () => {
 
 	it("answers expired once the draft's ten minutes are up", async () => {
 		const guild = makeGuild();
-		const start = Date.now();
 		await openReview(guild);
+		// Read after the draft is stored, which stamps its own Date.now(): read before,
+		// a full suite run under load let more than 1 ms pass, and the "late" press
+		// still landed inside the window.
+		const start = Date.now();
 		vi.spyOn(Date, "now").mockReturnValue(start + ONBOARDING_DRAFT_TTL_MS + 1);
 		const late = await pressConfirm(guild);
 		expect(guild.editOnboarding).not.toHaveBeenCalled();
