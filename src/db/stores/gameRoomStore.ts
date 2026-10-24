@@ -365,6 +365,35 @@ export const gameRoomStore = {
 		return GameRoom.find({ network: true, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] } });
 	},
 
+	// ── network bans and blocks reaching seats already taken (2026-10 item 244 Phase 5c) ──
+	// Every live network room that seats this member through a satellite in ANY guild, for
+	// the owner's network ban. Served by the partial satellites.userIds index.
+	async findOpenBySatelliteUser(userId: string) {
+		return GameRoom.find({ network: true, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] }, "satellites.userIds": userId });
+	},
+
+	// Every live network room this guild hosts, for a server ban and a block. Served by the
+	// { guildId, status } index; network: true only narrows what it returns.
+	async findOpenNetworkHostedIn(guildId: string) {
+		return GameRoom.find({ guildId, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] }, network: true });
+	},
+
+	// End one satellite, but only while it seats nobody. The $size match is the claim: a
+	// member who sat down through it in the meantime makes this match nothing, so a seat out
+	// that emptied the satellite can never take a newcomer's window away with it.
+	async endEmptySatellite(guildId: string, roomId: string, satelliteGuildId: string) {
+		return GameRoom.findOneAndUpdate(
+			{
+				guildId,
+				roomId,
+				status: { $in: [...NON_TERMINAL_ROOM_STATUSES] },
+				satellites: { $elemMatch: { guildId: satelliteGuildId, userIds: { $size: 0 } } },
+			},
+			{ $pull: { satellites: { guildId: satelliteGuildId, userIds: { $size: 0 } } } },
+			{ new: true }
+		);
+	},
+
 	// ── the network board and remote requests (2026-10 item 244 Phase 5b) ──
 	// Every network room whose match is under way, across every guild: the candidates
 	// the network board lists (networkBoard decides which still take players). Served

@@ -9,7 +9,8 @@ import { createHmac } from "crypto";
 // route's whole gate: it takes no guildId, so nothing else stands between a
 // caller and platform wide totals. Strict mode is on, so an unsigned request
 // cannot fall back to the shared api key. The report builder is mocked; its
-// math is pinned in renderAnalytics.test.ts.
+// math is pinned in renderAnalytics.test.ts. The ratings block (Phase 5c) is
+// mocked the same way; its math is pinned in platformRatings.test.ts.
 
 // Hoisted because vi.mock below is lifted above every plain const, and its factory reads both.
 const { SECRET, API_KEY } = vi.hoisted(() => ({
@@ -28,13 +29,18 @@ vi.mock("@features/renderer/renderAnalytics.js", () => ({
 	RENDER_ANALYTICS_PERIODS: ["this-month", "last-month", "all-time"],
 	buildRenderAnalyticsReport: vi.fn(),
 }));
+vi.mock("@features/ratings/platformRatings.js", () => ({ readPlatformRatings: vi.fn() }));
 
 import { buildCanonicalString, hashBody } from "@utils/canonicalRequest.js";
 import { verifySignature } from "@api/middleware/verifySignature.js";
 import { buildRenderAnalyticsReport, type RenderAnalyticsReport } from "@features/renderer/renderAnalytics.js";
+import { readPlatformRatings, type PlatformRatingsReport } from "@features/ratings/platformRatings.js";
 import { createPlatformAnalyticsRouter } from "./platformAnalytics.routes.js";
+import type { Client } from "discord.js";
 
 const buildMock = vi.mocked(buildRenderAnalyticsReport);
+const ratingsMock = vi.mocked(readPlatformRatings);
+const CLIENT = { user: { id: "bot-1" } } as unknown as Client;
 
 const REPORT: RenderAnalyticsReport = {
 	period: "last-month",
@@ -44,6 +50,15 @@ const REPORT: RenderAnalyticsReport = {
 	memory: { cards: 3, cardCapacity: 100, avatars: 7, avatarCapacity: 500, growMemoryTier: false },
 	top: [{ surface: "account", version: 1, keyHash: "abc123def456", hits: 12 }],
 	droppedWrites: 0,
+};
+
+const RATINGS: PlatformRatingsReport = {
+	games: [
+		{ game: "holdem", players: 3, distribution: [{ bucket: 900, count: 1 }, { bucket: 1000, count: 2 }] },
+		{ game: "battleship", players: 0, distribution: [] },
+		{ game: "monopoly", players: 0, distribution: [] },
+	],
+	servers: [{ guildName: "Kingdom One", tag: "KD1", game: "holdem", rating: 1180 }],
 };
 
 // Mirrors server.ts: raw body capture, then the signature gate, then the router.
@@ -57,7 +72,7 @@ function buildApp() {
 		})
 	);
 	app.use(verifySignature);
-	app.use(MOUNT, createPlatformAnalyticsRouter());
+	app.use(MOUNT, createPlatformAnalyticsRouter(CLIENT));
 	return app;
 }
 
@@ -79,6 +94,8 @@ function signedGet(query: string) {
 beforeEach(() => {
 	buildMock.mockReset();
 	buildMock.mockResolvedValue(REPORT);
+	ratingsMock.mockReset();
+	ratingsMock.mockResolvedValue(RATINGS);
 });
 
 describe("GET /api/platform/render-analytics", () => {
@@ -107,11 +124,31 @@ describe("GET /api/platform/render-analytics", () => {
 		expect(buildMock).not.toHaveBeenCalled();
 	});
 
-	it("answers the report for a valid period inside the data envelope", async () => {
+	it("answers the report for a valid period inside the data envelope, with the ratings block beside it", async () => {
 		const res = await signedGet("period=last-month");
 		expect(res.status).toBe(200);
 		expect(buildMock).toHaveBeenCalledWith({ period: "last-month" });
-		expect(res.body).toEqual({ data: REPORT });
+		expect(res.body).toEqual({ data: { ...REPORT, ratings: RATINGS } });
+	});
+
+	it("reads the ratings block with the client, whatever the period, since ratings keep no history", async () => {
+		await signedGet("period=all-time");
+		await signedGet("period=this-month");
+		expect(ratingsMock).toHaveBeenCalledTimes(2);
+		expect(ratingsMock.mock.calls.every((call) => call[0] === CLIENT && call.length === 1)).toBe(true);
+	});
+
+	it("still answers the render report when the ratings block gave up, with ratings null", async () => {
+		ratingsMock.mockResolvedValue(null);
+		const res = await signedGet("period=this-month");
+		expect(res.status).toBe(200);
+		expect(res.body).toEqual({ data: { ...REPORT, ratings: null } });
+	});
+
+	it("never reads the ratings block for a refused request", async () => {
+		await signedGet("period=last-week");
+		await request(buildApp()).get(`${MOUNT}?period=this-month`).set("x-api-key", API_KEY);
+		expect(ratingsMock).not.toHaveBeenCalled();
 	});
 
 	it("reads this month when no period is given", async () => {

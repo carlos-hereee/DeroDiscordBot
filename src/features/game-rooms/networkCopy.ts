@@ -28,7 +28,9 @@ export const networkCopy = {
 	serverIdInvalid: "That is not a server id. A server id is 17 to 20 digits. Nothing changed.",
 	unknownSubcommand: (name: string): string => `Unknown subcommand: ${name}.`,
 	banned: (kind: NetworkBanKind, label: string): string =>
-		`Banned ${KIND_NAMES[kind]} ${label} from network tables. The network board stops listing them, and every new seat they ask for is refused. Seats already taken stay until their table ends.`,
+		kind === "user"
+			? `Banned member ${label} from network tables. The network board stops listing them and refuses every new seat they ask for. Their seats at network tables hosted elsewhere leave those tables now, and so do other servers' seats at the network tables they host. A room in their own server keeps them.`
+			: `Banned server ${label} from network tables. The network board stops listing it and refuses its members' new seats. Its members' seats at network tables elsewhere leave those tables now, and so do other servers' seats at the network tables it hosts.`,
 	alreadyBanned: (kind: NetworkBanKind, label: string): string => `That ${KIND_NAMES[kind]} (${label}) is already banned. Nothing changed.`,
 	unbanned: (kind: NetworkBanKind, label: string): string => `Lifted the network ban on ${KIND_NAMES[kind]} ${label}.`,
 	notBanned: (kind: NetworkBanKind, label: string): string => `That ${KIND_NAMES[kind]} (${label}) is not banned. Nothing changed.`,

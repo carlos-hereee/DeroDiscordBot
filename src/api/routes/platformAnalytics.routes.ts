@@ -1,4 +1,6 @@
 import { Router, type Request, type Response } from "express";
+import type { Client } from "discord.js";
+import { readPlatformRatings } from "@features/ratings/platformRatings.js";
 import {
 	buildRenderAnalyticsReport,
 	RENDER_ANALYTICS_PERIODS,
@@ -17,6 +19,13 @@ import {
 // guild scope would have nothing to filter. The signature is therefore the whole
 // gate. It reads only, and the report is Phase 1's buildRenderAnalyticsReport,
 // the same one /render-analytics and the Monday digest show.
+//
+// Beside the report rides `ratings` (Phase 5c, features/ratings/platformRatings.ts):
+// each rated game's consenting players and their spread, and the server boards. It
+// ignores the period, since ratings keep no history, and it is null when its read
+// failed or ran late, so a slow tag lookup never costs the Castle its render numbers.
+// The router takes the client for that block: the server boards read who wears which
+// server's tag.
 
 const DEFAULT_PERIOD: RenderAnalyticsPeriod = "this-month";
 
@@ -24,7 +33,7 @@ function isPeriod(value: unknown): value is RenderAnalyticsPeriod {
 	return typeof value === "string" && (RENDER_ANALYTICS_PERIODS as readonly string[]).includes(value);
 }
 
-export function createPlatformAnalyticsRouter(): Router {
+export function createPlatformAnalyticsRouter(client: Client): Router {
 	const router = Router();
 
 	router.get("/", async (req: Request, res: Response) => {
@@ -39,9 +48,9 @@ export function createPlatformAnalyticsRouter(): Router {
 		const period = rawPeriod ?? DEFAULT_PERIOD;
 
 		try {
-			const report = await buildRenderAnalyticsReport({ period });
+			const [report, ratings] = await Promise.all([buildRenderAnalyticsReport({ period }), readPlatformRatings(client)]);
 			// { data } matches every other bot route and what botApiClient unwraps.
-			res.json({ data: report });
+			res.json({ data: { ...report, ratings } });
 		}
 		catch (error) {
 			// The server answers { available: false } on any non 2xx, so a sparse

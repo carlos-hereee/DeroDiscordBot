@@ -136,8 +136,9 @@ export function startApiServer(client: Client): Server {
 	// for Dero's Castle (2026-10 item 244). Like pairing it takes no ?guildId=,
 	// because the rows belong to no guild. Its one caller is the server's own
 	// botApiClient, never the plugin proxy, so "platform" stays off the server's
-	// ROK_BOT_PATH_PREFIXES allowlist.
-	app.use("/api/platform/render-analytics", createPlatformAnalyticsRouter());
+	// ROK_BOT_PATH_PREFIXES allowlist. The client rides in for its ratings block,
+	// whose server boards read the server tag each rated player wears.
+	app.use("/api/platform/render-analytics", createPlatformAnalyticsRouter(client));
 
 	// Return the Server handle so main.ts can close it during graceful shutdown
 	// (stop accepting new requests before the Discord client and Mongo connection

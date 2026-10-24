@@ -806,6 +806,12 @@ export const BOT_CONSTANTS = {
 		MONTHLY_POST_CRON: "5 9 1 * *",
 		// The post cron reads in the owner's zone, not the Railway host clock (UTC), so 9:05 stays 9:05 across daylight saving.
 		MONTHLY_POST_TIME_ZONE: CENTRAL_TIME_ZONE,
+		// Owner decision (2026-10 item 244 Phase 5c): Dero's Castle shows each rated game's display ratings in 100 point buckets.
+		DISTRIBUTION_BUCKET: 100,
+		// How long the platform route waits for the ratings block before answering without it. Under the
+		// server's 5 s BOT_FETCH_TIMEOUT_MS in botApiClient.ts, so a slow tag lookup can cost the Castle its
+		// ratings widget but never the render analytics beside it.
+		PLATFORM_REPORT_TIMEOUT_MS: 3_000,
 	},
 
 	// ── invite URL provenance ─────────────────────────────────────

@@ -54,7 +54,7 @@ export const ratingsCopy = {
 		serverIdInvalid: "That is not a server id. A server id is 17 to 20 digits. Nothing changed.",
 		blockSelf: "That is this server's own id. Nothing changed.",
 		blocked: (serverId: string): string =>
-			`Blocked server \`${serverId}\`. Its tables are no longer listed on this server's network board, and its members cannot sit at this server's tables. Seats already taken stay until their table ends.`,
+			`Blocked server \`${serverId}\`. Its tables are no longer listed on this server's network board, and its members cannot sit at this server's tables. Seats already taken between the two servers, both ways, leave their tables now.`,
 		alreadyBlocked: (serverId: string): string => `Server \`${serverId}\` is already blocked. Nothing changed.`,
 		unblocked: (serverId: string): string => `Unblocked server \`${serverId}\`. It shares network tables with this server again.`,
 		notBlocked: (serverId: string): string => `Server \`${serverId}\` is not blocked. Nothing changed.`,

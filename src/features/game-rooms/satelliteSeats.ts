@@ -3,7 +3,14 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { roomTrail } from "./roomTrail.js";
 import { redrawTable, removeFromTable } from "./roomHoldemHandlers.js";
-import { openSatellite, satelliteAt, satelliteIn, type SatelliteOpenResult } from "./satelliteRooms.js";
+import {
+	deleteSatellites,
+	openSatellite,
+	rebuildSatelliteOverwrites,
+	satelliteAt,
+	satelliteIn,
+	type SatelliteOpenResult,
+} from "./satelliteRooms.js";
 import { NON_TERMINAL_ROOM_STATUSES, type SatelliteRoom } from "./roomTypes.js";
 import type { DepartedMember } from "./guildMemberRemoveWatcher.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -12,11 +19,14 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // What:  what happens to the seats a network table's satellites hold (2026-10 item 244
 //        Phase 5a): a satellite opens with the table already drawn in it, and its players
 //        are seated out of the table when they leave their own server, when their server
-//        removes Dero, or when the satellite channel is deleted, live and at boot.
+//        removes Dero, or when the satellite channel is deleted, live and at boot. The
+//        owner's network ban and a server's block list (Phase 5c) do the same to the
+//        players they name who already sit at a network table, and stop relays to them.
 // Who:   openSatelliteWithTable: networkJoin (a seat asked for from the network board,
 //        and the host accepting one from Requests), and the test helper script.
 //        The watchers: main.ts, beside the room departure and channel delete watchers.
 //        The boot reconcile: main.ts, right after recoverGameRoomsOnBoot.
+//        The ban and block sweeps: /network ban and /dero-config arcade block-server.
 // Does NOT: open, relay to, lock or delete a satellite channel (satelliteRooms does, and
 //        sits below this module because this one needs the Hold'em table), or end the host
 //        room on a departure: a remote player leaving is not the host room's player leaving.
@@ -35,6 +45,22 @@ export type SeatOutReason = keyof typeof words.seatOut;
 
 const isLive = (room: Pick<IGameRoom, "status">): boolean => (NON_TERMINAL_ROOM_STATUSES as readonly string[]).includes(room.status);
 
+// What a remote server's audit log reads when a ban or a block deletes a satellite channel.
+// Admin facing and neutral: it never carries the owner's ban note.
+const SEAT_OUT_DELETE_REASON = "network table link ended by a network ban or block";
+
+/** How a seat out treats the satellite its players sat in. */
+export interface SeatOutOptions {
+	// The satellite entry leaves the row too, so no relay or archive reaches it again.
+	endSatellite: boolean;
+	// The channel is still in Dero's reach and the members must lose it as well (a network ban
+	// or a block, Phase 5c): an ended satellite's channel is deleted at once (owner decision
+	// 2026-10-24, since nothing deletes a channel no row points at), and a satellite that stays
+	// is rebuilt from the players left in it, or ends when nobody is left. The departures never
+	// pass it: their channel is already gone or out of reach, or the member left that server.
+	revokeAccess?: boolean;
+}
+
 // ── opening a satellite with its table ────────────────────────────────
 /**
  * Seat members of a remote guild at a live network table and draw the table in their
@@ -50,8 +76,9 @@ export async function openSatelliteWithTable(room: IGameRoom, remoteGuild: Guild
 // ── seating players out ───────────────────────────────────────────────
 /**
  * Seat members of one satellite out of a live network table, for `reason`. With
- * `endSatellite`, the satellite entry goes too (its channel is out of reach for good).
- * Answers how many members were seated out: zero when the room had already closed.
+ * `endSatellite`, the satellite entry goes too; with `revokeAccess`, the members lose the
+ * channel itself (see SeatOutOptions). Answers how many members were seated out: zero when
+ * the room had already closed.
  */
 export async function seatOutSatellitePlayers(
 	client: Client,
@@ -59,11 +86,16 @@ export async function seatOutSatellitePlayers(
 	satelliteGuildId: string,
 	userIds: readonly string[],
 	reason: SeatOutReason,
-	options: { endSatellite: boolean }
+	options: SeatOutOptions
 ): Promise<number> {
 	const leaving = [...new Set(userIds)];
-	const updated = await gameRoomStore.seatOutSatellitePlayers(room.guildId, room.roomId, satelliteGuildId, leaving, options);
+	const updated = await gameRoomStore.seatOutSatellitePlayers(room.guildId, room.roomId, satelliteGuildId, leaving, {
+		endSatellite: options.endSatellite,
+	});
 	if (!updated) return 0;
+	// Before the transcript and the table: a member a ban took off a table must not go on
+	// watching it for as long as the removal below takes.
+	if (options.revokeAccess) await revokeSatelliteAccess(client, room, updated, satelliteGuildId, options.endSatellite);
 
 	for (const userId of leaving) {
 		// The line first, then the table, so the transcript reads in the order the room
@@ -84,6 +116,31 @@ export async function seatOutSatellitePlayers(
 		if (removal === "busy") console.warn("[game-rooms] satellite seat out left a seat at a busy table", { roomId: room.roomId, userId });
 	}
 	return leaving.length;
+}
+
+// After a ban or a block took members off a satellite: an ended satellite's channel goes,
+// and one that stays is rebuilt from the players left in it, or ends when none is left.
+async function revokeSatelliteAccess(client: Client, before: IGameRoom, after: IGameRoom, satelliteGuildId: string, ended: boolean): Promise<void> {
+	if (ended) {
+		const original = satelliteIn(before, satelliteGuildId);
+		if (original) await deleteSatellites(client, { roomId: before.roomId, satellites: [original] }, SEAT_OUT_DELETE_REASON);
+		return;
+	}
+	const kept = satelliteIn(after, satelliteGuildId);
+	if (!kept) return;
+	if (kept.userIds.length > 0) {
+		await rebuildSatelliteOverwrites(client, kept);
+		return;
+	}
+	// Nobody is left to play from it, so it ends, unless a member sat down through it in the
+	// same tick: then the conditional write matches nothing and the newcomer keeps the window.
+	if (await gameRoomStore.endEmptySatellite(after.guildId, after.roomId, satelliteGuildId)) {
+		await deleteSatellites(client, { roomId: after.roomId, satellites: [kept] }, SEAT_OUT_DELETE_REASON);
+		return;
+	}
+	const fresh = await gameRoomStore.findByRoomId(after.guildId, after.roomId);
+	const refilled = fresh && isLive(fresh) ? satelliteIn(fresh, satelliteGuildId) : null;
+	if (refilled) await rebuildSatelliteOverwrites(client, refilled);
 }
 
 // ── the departure watchers ────────────────────────────────────────────
@@ -164,6 +221,97 @@ export function registerSatelliteWatchers(client: Client): void {
 	});
 }
 
+// ── network bans and blocks (2026-10 item 244 Phase 5c) ───────────────
+// Owner decision 2026-10-24: a network ban or a block list entry reaches seats already
+// taken. Each sweep goes through seatOutSatellitePlayers with revokeAccess, so a seat out
+// by a ban is the same removal as every other (off every list, onto kickedIds, excluded
+// from ratings, off the table) and the member also loses the channel. An ended satellite
+// leaves the row, so no relay reaches it again; the host room plays on. Unban and unblock
+// restore nothing: the member is on that table's kickedIds, like every seat out.
+
+/**
+ * The owner banned a member from the network: seat them out of every live network table
+ * that seats them through a satellite, in any server, and end every satellite of the live
+ * network tables they host. A satellite they leave keeps its other players and loses only
+ * them; one they leave with nobody ends.
+ *
+ * ⚠️ A MEMBER IN THEIR OWN SERVER'S HOST ROOM KEEPS THAT SEAT. A network ban reaches the
+ * network only (NetworkBan's header). A table hosted in the member's own server seats them
+ * through its room, never through a satellite, so no read here finds them there.
+ */
+export async function seatOutBannedMember(client: Client, userId: string): Promise<number> {
+	let seatedOut = 0;
+	for (const room of await gameRoomStore.findOpenBySatelliteUser(userId)) {
+		const satellite = (room.satellites ?? []).find((entry) => entry.userIds.includes(userId));
+		if (!satellite) continue;
+		seatedOut += await perTable(room, () =>
+			seatOutSatellitePlayers(client, room, satellite.guildId, [userId], "banned", { endSatellite: false, revokeAccess: true })
+		);
+	}
+	// Live network rooms are few, and one host's tables can sit in several servers, so the
+	// boot reconcile's read filtered here beats spending an index on hostId alone.
+	const hosted = (await gameRoomStore.findOpenNetwork()).filter((room) => room.hostId === userId);
+	for (const room of hosted) seatedOut += await endEverySatellite(client, room, "banned");
+	return seatedOut;
+}
+
+/**
+ * The owner banned a server from the network: end every satellite it keeps at a live
+ * network table, seating out its players (the shape of a server removing Dero), and end
+ * every satellite of every live network table it hosts. Every host room plays on.
+ */
+export async function seatOutBannedServer(client: Client, guildId: string): Promise<number> {
+	let seatedOut = 0;
+	for (const room of await gameRoomStore.findOpenBySatelliteGuild(guildId)) seatedOut += await endSatelliteIn(client, room, guildId, "banned");
+	for (const room of await gameRoomStore.findOpenNetworkHostedIn(guildId)) seatedOut += await endEverySatellite(client, room, "banned");
+	return seatedOut;
+}
+
+/**
+ * One server blocked another: end the blocked server's satellites at the tables the
+ * blocking server hosts, and the blocking server's satellites at the tables the blocked
+ * one hosts, because a block reaches both ways (networkRules.blocksEachOther).
+ */
+export async function seatOutBlockedServers(client: Client, blockingGuildId: string, blockedGuildId: string): Promise<number> {
+	let seatedOut = 0;
+	const directions: [hostGuildId: string, satelliteGuildId: string][] = [
+		[blockingGuildId, blockedGuildId],
+		[blockedGuildId, blockingGuildId],
+	];
+	for (const [hostGuildId, satelliteGuildId] of directions) {
+		for (const room of await gameRoomStore.findOpenNetworkHostedIn(hostGuildId)) {
+			seatedOut += await endSatelliteIn(client, room, satelliteGuildId, "blocked");
+		}
+	}
+	return seatedOut;
+}
+
+// End the satellite a room keeps in one guild, seating out everybody it seats.
+async function endSatelliteIn(client: Client, room: IGameRoom, satelliteGuildId: string, reason: SeatOutReason): Promise<number> {
+	const satellite = satelliteIn(room, satelliteGuildId);
+	if (!satellite) return 0;
+	return perTable(room, () =>
+		seatOutSatellitePlayers(client, room, satelliteGuildId, satellite.userIds, reason, { endSatellite: true, revokeAccess: true })
+	);
+}
+
+async function endEverySatellite(client: Client, room: IGameRoom, reason: SeatOutReason): Promise<number> {
+	let seatedOut = 0;
+	for (const satellite of [...(room.satellites ?? [])]) seatedOut += await endSatelliteIn(client, room, satellite.guildId, reason);
+	return seatedOut;
+}
+
+// One table at a time and each isolated, so a table whose write or Discord call failed
+// never stops the rest of a sweep. The ban or block already stands either way.
+async function perTable(room: IGameRoom, seatOut: () => Promise<number>): Promise<number> {
+	try {
+		return await seatOut();
+	} catch (error) {
+		console.error("[game-rooms] network ban or block seat out failed for one table", { roomId: room.roomId, error });
+		return 0;
+	}
+}
+
 // ── the boot reconcile ────────────────────────────────────────────────
 /**
  * Catch up on the satellite departures that happened while the bot was down, once per
@@ -231,6 +379,9 @@ async function isGone(fetch: () => Promise<unknown>, unknownCode: number): Promi
 export const satelliteSeats = {
 	openSatelliteWithTable,
 	seatOutSatellitePlayers,
+	seatOutBannedMember,
+	seatOutBannedServer,
+	seatOutBlockedServers,
 	handleSatelliteMemberRemove,
 	handleSatelliteGuildDelete,
 	handleSatelliteChannelDelete,

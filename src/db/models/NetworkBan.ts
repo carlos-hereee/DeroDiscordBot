@@ -6,7 +6,9 @@ import mongoose from "mongoose";
 // server, kept off every network table. Written only by the owner's /network command
 // through networkBanStore; read by the network board (a banned host or server is not
 // listed) and by every remote join (a banned member, the server they click from, or
-// the hosting server refuses the seat).
+// the hosting server refuses the seat). A ban placed while its target already sits at a
+// network table seats them out at once (satelliteSeats, Phase 5c), so a ban never waits
+// for a table to end.
 //
 // A ban reaches the network only. A banned member still plays every room inside their
 // own server, and a banned server keeps its own arcade; an admin's per server block

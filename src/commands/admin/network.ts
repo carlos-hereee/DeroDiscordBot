@@ -1,10 +1,11 @@
-import { escapeMarkdown, MessageFlags, SlashCommandBuilder, type ChatInputCommandInteraction, type EmbedBuilder } from "discord.js";
+import { escapeMarkdown, MessageFlags, SlashCommandBuilder, type ChatInputCommandInteraction, type Client, type EmbedBuilder } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { COLORS } from "@base/copy/brand.js";
 import { networkBanStore } from "@db/stores/networkBanStore.js";
 import type { NetworkBanKind } from "@db/models/NetworkBan.js";
 import { networkCopy } from "@features/game-rooms/networkCopy.js";
 import { scheduleNetworkBoardRefresh } from "@features/game-rooms/networkBoard.js";
+import { seatOutBannedMember, seatOutBannedServer } from "@features/game-rooms/satelliteSeats.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { isPlatformOwner } from "./render-analytics.js";
 
@@ -18,9 +19,12 @@ import { isPlatformOwner } from "./render-analytics.js";
 //        default permission, like /render-analytics; the owner check is the whole gate.
 // Where: deliberately NOT in BOT_CONSTANTS.ADMIN_COMMANDS: that runtime gate requires a
 //        /setup config in the guild, and the owner must reach the network from any server.
-//        Writes NetworkBan through networkBanStore, then asks the network board to redraw.
-// Does NOT: seat anybody out of a table they already sit at; a ban stops new seats, and
-//        the reply says so. A server admin's narrower tool is /dero-config arcade block-server.
+//        Writes NetworkBan through networkBanStore, asks the network board to redraw, and
+//        (Phase 5c, owner decision 2026-10-24) seats out every seat the new ban names that
+//        is already taken at a network table, through satelliteSeats.
+// Does NOT: reach a banned member's seat in a room hosted in their own server (a ban
+//        reaches the network only), or give anything back on unban. A server admin's
+//        narrower tool is /dero-config arcade block-server.
 //
 // ⚠️ `data` IS DELIBERATELY UNANNOTATED, for the same reason as xp.ts:
 // .addSubcommandGroup() narrows the builder away from SlashCommandBuilder.
@@ -103,7 +107,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	}
 
 	try {
-		const embed = group === "ban" ? await ban(target, interaction.options.getString(REASON_OPTION) ?? "") : await unban(target);
+		const embed = group === "ban" ? await ban(interaction.client, target, interaction.options.getString(REASON_OPTION) ?? "") : await unban(target);
 		// No ping: the reply names a member only for the owner's eyes.
 		await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
 	}
@@ -128,11 +132,24 @@ function readTarget(interaction: ChatInputCommandInteraction, sub: "user" | "ser
 
 // Each write is idempotent with an honest "already" reply, and a change redraws the boards
 // so a banned table or server leaves them within the board's debounce.
-async function ban(target: BanTarget, reason: string): Promise<EmbedBuilder> {
+async function ban(client: Client, target: BanTarget, reason: string): Promise<EmbedBuilder> {
 	const added = await networkBanStore.ban(target.kind, target.targetId, reason.trim(), new Date());
 	if (!added) return infoEmbed(copy.title, copy.alreadyBanned(target.kind, target.label), COLORS.ADMIN);
 	scheduleNetworkBoardRefresh();
+	seatOutTakenSeats(client, target);
 	return infoEmbed(copy.title, copy.banned(target.kind, target.label), COLORS.ADMIN);
+}
+
+// Fire and forget after the ban landed (the bot's rule 7): a sweep across several servers
+// can outrun Discord's three second reply window, and the ban stands whatever it finds. A
+// ban that already stood sweeps nothing, since its seats were swept when it was placed.
+function seatOutTakenSeats(client: Client, target: BanTarget): void {
+	const sweep = target.kind === "user" ? seatOutBannedMember(client, target.targetId) : seatOutBannedServer(client, target.targetId);
+	void sweep
+		.then((seatedOut) => {
+			if (seatedOut > 0) console.log(`[network] the ban on ${target.kind} ${target.targetId} seated out ${seatedOut} player(s) at network tables`);
+		})
+		.catch((error) => console.error(`[network] seating out the seats a ban on ${target.kind} ${target.targetId} names failed`, error));
 }
 
 async function unban(target: BanTarget): Promise<EmbedBuilder> {

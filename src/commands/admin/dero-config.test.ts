@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 	addToList: vi.fn(),
 	removeFromList: vi.fn(),
 	currentMonthCents: vi.fn(),
+	seatOutBlocked: vi.fn(),
 }));
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({
@@ -36,6 +37,7 @@ vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({
 }));
 vi.mock("@features/voice/spendMeter.js", () => ({ currentMonthCents: mocks.currentMonthCents }));
 vi.mock("@features/voice/elevenLabsTts.js", () => ({ isTtsKeyConfigured: () => true }));
+vi.mock("@features/game-rooms/satelliteSeats.js", () => ({ seatOutBlockedServers: mocks.seatOutBlocked }));
 
 import { execute, voiceIdTail, data } from "./dero-config.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -89,6 +91,7 @@ beforeEach(() => {
 	mocks.addToList.mockReset().mockResolvedValue(STORED);
 	mocks.removeFromList.mockReset().mockResolvedValue(STORED);
 	mocks.currentMonthCents.mockReset().mockResolvedValue(312);
+	mocks.seatOutBlocked.mockReset().mockResolvedValue(0);
 });
 
 describe("the voice id tail", () => {
@@ -301,6 +304,29 @@ describe("arcade network block list (2026-10 item 244 Phase 5b)", () => {
 		mocks.guildConfig.mockResolvedValue({ guildId: "g1", blockedNetworkGuildIds: [OTHER] });
 		expect(await replyText({ group: "arcade", sub: "block-server", id: OTHER })).toContain("already blocked");
 		expect(mocks.addBlocked).not.toHaveBeenCalled();
+	});
+
+	// Phase 5c (owner decision 2026-10-24): a new block reaches the seats already taken between the two servers.
+	it("ends the satellites between this server and a newly blocked one, both ways, and says so", async () => {
+		const text = await replyText({ group: "arcade", sub: "block-server", id: OTHER });
+		expect(mocks.seatOutBlocked).toHaveBeenCalledWith(undefined, "g1", OTHER);
+		expect(text).toContain("both ways, leave their tables now");
+	});
+
+	it("sweeps nothing for a block that already stood, an unblock, or a refused id", async () => {
+		mocks.guildConfig.mockResolvedValue({ guildId: "g1", blockedNetworkGuildIds: [OTHER] });
+		await replyText({ group: "arcade", sub: "block-server", id: OTHER });
+		await replyText({ group: "arcade", sub: "unblock-server", id: OTHER });
+		await replyText({ group: "arcade", sub: "block-server", id: "not-a-server" });
+		expect(mocks.seatOutBlocked).not.toHaveBeenCalled();
+	});
+
+	it("replies to a new block even when the seat out fails", async () => {
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		mocks.seatOutBlocked.mockRejectedValue(new Error("atlas unreachable"));
+		expect(await replyText({ group: "arcade", sub: "block-server", id: OTHER })).toContain(`Blocked server \`${OTHER}\``);
+		await vi.waitFor(() => expect(consoleError).toHaveBeenCalled());
+		consoleError.mockRestore();
 	});
 
 	it("unblocks a blocked server, and says so without writing when it was never blocked", async () => {

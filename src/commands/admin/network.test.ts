@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 
-const mocks = vi.hoisted(() => ({ ban: vi.fn(), unban: vi.fn(), scheduleRefresh: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+	ban: vi.fn(),
+	unban: vi.fn(),
+	scheduleRefresh: vi.fn(),
+	seatOutMember: vi.fn(),
+	seatOutServer: vi.fn(),
+}));
 
 vi.mock("@utils/config.js", () => ({ creatorId: "owner-1" }));
 vi.mock("@db/stores/networkBanStore.js", () => ({ networkBanStore: { ban: mocks.ban, unban: mocks.unban } }));
 vi.mock("@features/game-rooms/networkBoard.js", () => ({ scheduleNetworkBoardRefresh: mocks.scheduleRefresh }));
+vi.mock("@features/game-rooms/satelliteSeats.js", () => ({ seatOutBannedMember: mocks.seatOutMember, seatOutBannedServer: mocks.seatOutServer }));
 
 import { data, execute } from "./network.js";
 
@@ -40,6 +47,8 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	mocks.ban.mockResolvedValue(true);
 	mocks.unban.mockResolvedValue(true);
+	mocks.seatOutMember.mockResolvedValue(0);
+	mocks.seatOutServer.mockResolvedValue(0);
 });
 
 describe("the builder", () => {
@@ -80,6 +89,40 @@ describe("execute", () => {
 		mocks.ban.mockResolvedValue(false);
 		expect((await run({ group: "ban", sub: "user" })).text).toContain("already banned");
 		expect(mocks.scheduleRefresh).not.toHaveBeenCalled();
+	});
+
+	// Phase 5c (owner decision 2026-10-24): a new ban reaches the seats it names that are already taken.
+	it("seats out a newly banned member's seats at network tables, and says so", async () => {
+		const { text } = await run({ group: "ban", sub: "user" });
+		expect(mocks.seatOutMember).toHaveBeenCalledWith(expect.anything(), "member-1");
+		expect(mocks.seatOutServer).not.toHaveBeenCalled();
+		expect(text).toContain("leave those tables now");
+		expect(text).toContain("A room in their own server keeps them");
+	});
+
+	it("ends a newly banned server's satellites and the satellites of the tables it hosts", async () => {
+		const { text } = await run({ group: "ban", sub: "server", server: SERVER });
+		expect(mocks.seatOutServer).toHaveBeenCalledWith(expect.anything(), SERVER);
+		expect(mocks.seatOutMember).not.toHaveBeenCalled();
+		expect(text).toContain("leave those tables now");
+	});
+
+	it("never shows the owner's ban note in the reply, and replies even when the seat out fails", async () => {
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		mocks.seatOutMember.mockRejectedValue(new Error("atlas unreachable"));
+		const { text } = await run({ group: "ban", sub: "user", reason: "private note" });
+		expect(text).toContain("Banned member <@member-1>");
+		expect(text).not.toContain("private note");
+		await vi.waitFor(() => expect(consoleError).toHaveBeenCalled());
+		consoleError.mockRestore();
+	});
+
+	it("sweeps nothing for a ban that already stood, or for an unban", async () => {
+		mocks.ban.mockResolvedValue(false);
+		await run({ group: "ban", sub: "user" });
+		await run({ group: "unban", sub: "server", server: SERVER });
+		expect(mocks.seatOutMember).not.toHaveBeenCalled();
+		expect(mocks.seatOutServer).not.toHaveBeenCalled();
 	});
 
 	it("lifts a ban, and says so honestly when there was none", async () => {

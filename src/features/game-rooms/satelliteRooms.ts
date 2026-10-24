@@ -34,8 +34,10 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // Who:   openSatellite: satelliteSeats.openSatelliteWithTable, which networkJoin calls.
 //        relayState: the Hold'em redraw. relayMove: roomTrail.postMove. lockSatellites:
 //        roomLifecycle.finish. deleteSatellites: roomLifecycle.archiveRoom, the one delete
-//        path the archive sweep and Archive now share. The labels: postMove, the Hold'em
-//        redraw and finish.
+//        path the archive sweep and Archive now share, and satelliteSeats when a network ban
+//        or a block ends a satellite (Phase 5c). rebuildSatelliteOverwrites: seating a member
+//        in, and satelliteSeats when a ban takes one member out of a satellite that stays.
+//        The labels: postMove, the Hold'em redraw and finish.
 // Does NOT: decide who may sit down (networkJoin and joinGate), seat anybody out
 //        (satelliteSeats, which needs the Hold'em table and so sits above this module), or
 //        relay anything a member typed: chat stays in the server it was typed in.
@@ -279,13 +281,21 @@ export function lockSatellites(client: Client, room: Pick<IGameRoom, "roomId" | 
  * now share (roomLifecycle.archiveRoom), before it closes the row. A channel already gone
  * is a success, the same way archiveRoom treats its own. Each satellite is isolated, so a
  * server that removed the bot never stops the rest, or the host room after them.
+ *
+ * `reason` lands in the remote server's audit log. A ban or a block that ends a satellite
+ * (satelliteSeats, Phase 5c) passes its own, so that server's admins never read "archived"
+ * for a table that is still playing.
  */
-export async function deleteSatellites(client: Client, room: Pick<IGameRoom, "roomId" | "satellites">): Promise<void> {
+export async function deleteSatellites(
+	client: Client,
+	room: Pick<IGameRoom, "roomId" | "satellites">,
+	reason: string = "game room archived"
+): Promise<void> {
 	for (const satellite of room.satellites ?? []) {
 		tableMessageIds.delete(satellite.channelId);
 		const channel = await resolveSatelliteChannel(client, satellite).catch(() => null);
 		if (!channel) continue;
-		await channel.delete("game room archived").catch((error) =>
+		await channel.delete(reason).catch((error) =>
 			console.error("[game-rooms] satellite channel delete failed", {
 				roomId: room.roomId,
 				guildId: satellite.guildId,
@@ -294,6 +304,17 @@ export async function deleteSatellites(client: Client, room: Pick<IGameRoom, "ro
 			})
 		);
 	}
+}
+
+/**
+ * Rebuild a live satellite's overwrites from the players it seats now, so a member taken
+ * off its list loses sight of it and a member added gains it. The ONE way the overwrites
+ * of a playing satellite change: seating a member in, and a network ban taking one out
+ * (satelliteSeats, Phase 5c). Logs and resolves on failure, like the phase it applies.
+ */
+export async function rebuildSatelliteOverwrites(client: Client, satellite: SatelliteRoom): Promise<void> {
+	const channel = await resolveSatelliteChannel(client, satellite);
+	if (channel) await applySatellitePhase(client, channel, satellite, "playing");
 }
 
 /**
@@ -440,8 +461,7 @@ async function seatInSatellite(room: IGameRoom, remoteGuild: Guild, seated: read
 	const updated = await gameRoomStore.addSatellitePlayers(room.guildId, room.roomId, remoteGuild.id, seated).catch(() => null);
 	const satellite = updated ? satelliteIn(updated, remoteGuild.id) : null;
 	if (!updated || !satellite) return { ok: false, reason: "roomClosed" };
-	const channel = await resolveSatelliteChannel(remoteGuild.client, satellite);
-	if (channel) await applySatellitePhase(remoteGuild.client, channel, satellite, "playing");
+	await rebuildSatelliteOverwrites(remoteGuild.client, satellite);
 	return { ok: true, room: updated, channelId: satellite.channelId };
 }
 
@@ -468,5 +488,6 @@ export const satelliteRooms = {
 	relayMove,
 	lockSatellites,
 	deleteSatellites,
+	rebuildSatelliteOverwrites,
 	whenRelayed,
 };

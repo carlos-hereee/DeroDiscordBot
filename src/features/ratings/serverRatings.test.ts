@@ -13,7 +13,7 @@ vi.mock("@db/stores/networkBanStore.js", () => ({ networkBanStore: { findAll: mo
 vi.mock("@db/stores/networkConsentStore.js", () => ({ networkConsentStore: { allConsentingUserIds: mocks.allConsenting } }));
 vi.mock("@db/stores/playerRatingStore.js", () => ({ playerRatingStore: { findForPlayersInAllGames: mocks.ratingsOf } }));
 
-import { eligibleServers, rankServers, serverBoard, topMeanRating, type EligibleServer, type TagWearer } from "./serverRatings.js";
+import { eligibleServers, rankServers, serverBoard, serverBoardsByGame, topMeanRating, type EligibleServer, type TagWearer } from "./serverRatings.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 // ── server ratings (2026-10 item 244 Phase 5b) ─────────────────────────────
@@ -145,5 +145,26 @@ describe("serverBoard", () => {
 	it("leaves out a player the owner banned from the network", async () => {
 		mocks.findAllBans.mockResolvedValue([{ kind: "user", targetId: players[0] }]);
 		expect(await serverBoard(clientWithPlayers(Object.fromEntries(players.map((id) => [id, wearing]))), "holdem")).toEqual([]);
+	});
+
+	// Phase 5c: the Castle's platform report ranks every rated game from one read.
+	it("ranks every rated game from one read of the consents, bans and ratings", async () => {
+		// The file keeps its mocks' calls between cases, so count only this one's.
+		mocks.allConsenting.mockClear();
+		mocks.ratingsOf.mockClear();
+		const boards = await serverBoardsByGame(clientWithPlayers(Object.fromEntries(players.map((id) => [id, wearing]))));
+		expect([...boards.keys()]).toEqual(["holdem", "battleship", "monopoly"]);
+		expect(boards.get("holdem")).toEqual([{ guildId: TAGGED, name: "Tagged", tag: "TG", rating: 1100, members: MIN }]);
+		expect(boards.get("battleship")).toEqual([]);
+		expect(mocks.allConsenting).toHaveBeenCalledOnce();
+		expect(mocks.ratingsOf).toHaveBeenCalledOnce();
+	});
+
+	it("answers an empty board for every game when no server is eligible, before reading any rating", async () => {
+		mocks.findNetworkBoardConfigs.mockResolvedValue([]);
+		mocks.ratingsOf.mockClear();
+		const boards = await serverBoardsByGame(clientWithPlayers({}));
+		expect([...boards.values()].every((rows) => rows.length === 0)).toBe(true);
+		expect(mocks.ratingsOf).not.toHaveBeenCalled();
 	});
 });

@@ -14,7 +14,8 @@ import { RATED_GAMES, type RatedGame } from "./ratingEngine.js";
 //        the mean of the top SERVER_BOARD_MIN_MEMBERS display ratings among its tag
 //        wearers who accepted the network notice; across every game, it is the mean of
 //        its per game ratings. /rating servers reads it.
-// Who:   /rating servers [game].
+// Who:   /rating servers [game], and the platform ratings report Dero's Castle reads
+//        (platformRatings, Phase 5c), through serverBoardsByGame.
 // Does NOT: store anything. A server's rating is recomputed on read from who wears its tag
 //        right now (the plan's risk R11): a member who changes their tag moves their
 //        points at the next read, with no stale row to clean up.
@@ -115,20 +116,47 @@ function rateServer(
 }
 
 // ── reading the board ─────────────────────────────────────────────────
+/** What every server board is ranked from, read once: the eligible servers, their tag wearers, and the ratings behind them. */
+interface ServerBoardInputs {
+	servers: EligibleServer[];
+	wearers: TagWearer[];
+	ratings: IPlayerRating[];
+}
+
 /** The server board, best first, at most SERVER_BOARD_SIZE servers. */
 export async function serverBoard(client: Client, game: RatedGame | null): Promise<ServerRatingRow[]> {
+	const inputs = await readServerBoardInputs(client);
+	return inputs ? rankServers(inputs.servers, inputs.wearers, inputs.ratings, game).slice(0, NETWORK.SERVER_BOARD_SIZE) : [];
+}
+
+/**
+ * Every rated game's server board from ONE read, for the platform ratings report in Dero's
+ * Castle (2026-10 item 244 Phase 5c). Three calls to serverBoard would read the same
+ * consents, bans and ratings three times and walk the same tag wearers three times.
+ */
+export async function serverBoardsByGame(client: Client): Promise<Map<RatedGame, ServerRatingRow[]>> {
+	const inputs = await readServerBoardInputs(client);
+	const boards = new Map<RatedGame, ServerRatingRow[]>();
+	for (const game of RATED_GAMES) {
+		boards.set(game, inputs ? rankServers(inputs.servers, inputs.wearers, inputs.ratings, game).slice(0, NETWORK.SERVER_BOARD_SIZE) : []);
+	}
+	return boards;
+}
+
+// Null when no server is eligible, before any rating or tag is read.
+async function readServerBoardInputs(client: Client): Promise<ServerBoardInputs | null> {
 	const [configs, bans, consenting] = await Promise.all([
 		guildConfigStore.findNetworkBoardConfigs() as Promise<NetworkGuildConfig[]>,
 		networkBanStore.findAll(),
 		networkConsentStore.allConsentingUserIds(NETWORK.CONSENT_VERSION),
 	]);
 	const servers = eligibleServers(client, configs, (guildId) => isGuildBanned(bans, guildId));
-	if (servers.length === 0) return [];
+	if (servers.length === 0) return null;
 
 	const players = consenting.filter((userId) => !isUserBanned(bans, userId));
 	const ratings = await playerRatingStore.findForPlayersInAllGames(players);
 	const wearers = await tagWearers(client, [...new Set(ratings.map((row) => row.userId))], new Set(servers.map((server) => server.guildId)));
-	return rankServers(servers, wearers, ratings, game).slice(0, NETWORK.SERVER_BOARD_SIZE);
+	return { servers, wearers, ratings };
 }
 
 /** The servers that may be ranked at all: on the network, given server tags by Discord, and not banned. */

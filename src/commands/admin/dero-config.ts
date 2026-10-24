@@ -5,6 +5,7 @@ import {
 	type RepliableInteraction,
 	MessageFlags,
 	ChannelType,
+	type Client,
 	type EmbedBuilder,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -22,6 +23,7 @@ import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
 import { ratingsCopy } from "@features/ratings/ratingsCopy.js";
 import { asChallengeReach, isChallengeReach } from "@features/game-rooms/challengeReach.js";
 import { scheduleNetworkBoardRefresh } from "@features/game-rooms/networkBoard.js";
+import { seatOutBlockedServers } from "@features/game-rooms/satelliteSeats.js";
 import { CHALLENGE_REACHES, type ChallengeReach } from "@features/game-rooms/roomTypes.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
@@ -45,7 +47,9 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 //        GuildConfig.arcadeMonthlyPost, read by features/ratings/monthlyArcadePost.ts,
 //        GuildConfig.challengeReach, read by features/game-rooms/challengeReach.ts, and
 //        GuildConfig.blockedNetworkGuildIds, read by the network board and every
-//        remote join (features/game-rooms/networkBoard.ts and networkJoin.ts).
+//        remote join (features/game-rooms/networkBoard.ts and networkJoin.ts); a new
+//        block also ends the satellites already linking the two servers, both ways
+//        (satelliteSeats, Phase 5c).
 // How:   ① guild gate (rejects DM use); ② setup gate (a guild that never ran
 //        /setup has no admin role for the runtime gate to check); ③ dispatch on
 //        the subcommand group or subcommand; ④ one ephemeral embed reply.
@@ -288,8 +292,12 @@ async function setReachFromOption(guildId: string, storedValue: unknown, mode: s
 // The network block list (2026-10 item 244 Phase 5b), the same idempotent shape: an
 // unchanged list says so and writes nothing. The id is user input, so it is checked for a
 // snowflake's shape, and this server's own id is refused, since a server cannot keep
-// itself off its own tables. A change redraws the network boards.
+// itself off its own tables. A change redraws the network boards, and a new block seats
+// out the seats already taken between the two servers (Phase 5c, owner decision
+// 2026-10-24), fire and forget after the write, since the sweep can outrun Discord's
+// three second reply window and the block stands whatever it finds.
 async function editNetworkBlock(
+	client: Client,
 	guildId: string,
 	storedList: readonly string[] | null | undefined,
 	sub: "block-server" | "unblock-server",
@@ -305,6 +313,9 @@ async function editNetworkBlock(
 		if (present) return info(ratingsCopy.config.alreadyBlocked(serverId), title);
 		await guildConfigStore.addBlockedNetworkGuild(guildId, serverId);
 		scheduleNetworkBoardRefresh();
+		void seatOutBlockedServers(client, guildId, serverId).catch((error) =>
+			console.error(`[dero-config] seating out the seats between ${guildId} and blocked server ${serverId} failed`, error)
+		);
 		return info(ratingsCopy.config.blocked(serverId), title);
 	}
 	if (!present) return info(ratingsCopy.config.notBlocked(serverId), title);
@@ -321,10 +332,16 @@ interface ArcadeSettings {
 }
 
 /** The arcade group's reply, one setting per subcommand. */
-async function arcadeAnswer(guildId: string, settings: ArcadeSettings, sub: string, options: CommandOptionReader): Promise<EmbedBuilder> {
+async function arcadeAnswer(
+	client: Client,
+	guildId: string,
+	settings: ArcadeSettings,
+	sub: string,
+	options: CommandOptionReader
+): Promise<EmbedBuilder> {
 	if (sub === "reach") return setReachFromOption(guildId, settings.challengeReach, options.getString("mode", true));
 	if (sub === "block-server" || sub === "unblock-server") {
-		return editNetworkBlock(guildId, settings.blockedNetworkGuildIds, sub, options.getString(SERVER_OPTION, true));
+		return editNetworkBlock(client, guildId, settings.blockedNetworkGuildIds, sub, options.getString(SERVER_OPTION, true));
 	}
 	return setMonthlyPost(guildId, settings.arcadeMonthlyPost, options.getBoolean("enabled", true));
 }
@@ -354,7 +371,7 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 		const group = options.getSubcommandGroup(false);
 		const sub = options.getSubcommand(true);
 		if (group === "arcade") {
-			const embed = await arcadeAnswer(guildId, guildConfig, sub, options);
+			const embed = await arcadeAnswer(interaction.client, guildId, guildConfig, sub, options);
 			await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 			return;
 		}

@@ -1391,6 +1391,10 @@ export const rokCommanderCopy = {
 			leftServer: (userId: string) => `🚪 <@${userId}> left their server, so their seat leaves the table.`,
 			serverRemovedDero: (userId: string) => `🚪 <@${userId}>'s server removed Dero, so their seat leaves the table.`,
 			channelGone: (userId: string) => `🚪 The channel <@${userId}> played from was deleted, so their seat leaves the table.`,
+			// A network ban or a block list entry (2026-10 item 244 Phase 5c). Neutral on purpose:
+			// neither names who acted or why, and the owner's ban note never reaches a member.
+			banned: (userId: string) => `🚪 This table can no longer seat <@${userId}> from another server, so their seat leaves the table.`,
+			blocked: (userId: string) => `🚪 <@${userId}>'s server and this table's server no longer share tables, so their seat leaves the table.`,
 		},
 		// The finished room's Rematch, for a table that seated other servers: a rematch
 		// plays on in the host's channel, which the other servers' players cannot see.
