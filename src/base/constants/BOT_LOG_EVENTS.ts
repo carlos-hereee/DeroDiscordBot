@@ -187,6 +187,30 @@ export const BOT_LOG_EVENTS = {
 	// ⚠️ PRIVACY: metadata carries ids, the saved text's LENGTH and whether the
 	// edit reset to the default, and NEVER the rules text itself.
 	RULES_EDITED: "rules_edited",
+	// ── community buttons pointer (2026-10 item 247 Phase 3) ───────
+	// What:  per-guild log that the one time #inner-sanctum post pointing at the
+	//        Enable Community and Configure Onboarding buttons went out.
+	// Who:   communityButtonsPointer reads it before posting and writes it once the
+	//        post succeeds, so a failure retries next boot.
+	// When:  read once per boot per setup complete guild; written once per guild.
+	// How:   a plain per-guild key, like MEMBER_ROLE_GATING_ANNOUNCED.
+	//
+	// ⚠️ PRIVACY: metadata carries the two channel ids and nothing else.
+	COMMUNITY_BUTTONS_AVAILABLE_NOTICE: "community_buttons_available_notice",
+	// ── Enable Community audit (2026-10 item 247 Phase 3) ──────────
+	// What:  one row per Enable Community Confirm that reached Discord: COMMUNITY
+	//        for the guild edit that switches Discord Community on, MEMBERSHIP
+	//        SCREENING for the screening form written after it. A refusal is a row
+	//        too, its outcome saying which ("refused-permissions", "refused-discord",
+	//        "failed"), so the name says what was attempted, not that it worked.
+	// Who:   enableCommunity, fire and forget, after each write. Nothing reads them
+	//        on a hot path; they answer "who switched Community on here, and when".
+	// When:  once per Confirm each. Not idempotent on purpose: every attempt is an event.
+	//
+	// ⚠️ PRIVACY: ids, outcome codes, the rules LENGTH and whether it was cut. NEVER
+	// the screening form's rules text.
+	COMMUNITY_ENABLED_BY_BOT: "community_enabled_by_bot",
+	MEMBERSHIP_SCREENING_ENABLED_BY_BOT: "membership_screening_enabled_by_bot",
 	// add more here as needed
 } as const;
 

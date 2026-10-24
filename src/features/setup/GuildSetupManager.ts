@@ -29,6 +29,7 @@ import { boardStartRows } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { buildGameRequestRow } from "@features/game-rooms/gameRequestHandlers.js";
 import { buildMemberControlButtons, buildAdminControlButtons, buildIcebreakerButton, buildFortuneButton, buildProfileButtons } from "@features/power-ups/PowerUps.js";
 import { buildAdminCommandRows } from "@features/command-buttons/adminGuideButtons.js";
+import { buildCommunityControlButtons } from "@features/community/communityButtons.js";
 import { buildVoiceRoomControlRow } from "@features/voice/voiceRoomControls.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { buildDeroGifAttachment } from "@base/copy/brand.js";
@@ -877,8 +878,8 @@ export class GuildSetupManager {
 	//        PowerUps.handlePowerUpButton routes them; suggestion box and self
 	//        destruct come from bare button factories so they share those rows.
 	// How:   compose the ActionRow(s) per channel: #command-center takes two rows
-	//        (the /account views, then the rest), the admin guide its command rows
-	//        above the control row. null means "no buttons."
+	//        (the /account views, then the rest), the admin guide its command rows,
+	//        then the community row, then the control row. null means "no buttons."
 	private static resolveIntroComponents(
 		field: (typeof GuildSetupManager.CHANNEL_FIELDS)[number],
 		// Pack selector for the rows whose labels live in the copy packs (the rules
@@ -900,10 +901,14 @@ export class GuildSetupManager {
 				];
 			case "adminCommandsChannelId":
 				// admin-controls guide: two rows of admin command buttons (each opens its
-				// command's own flow, gated at every step), then the control row, the
-				// owner only Self destruct and the admin controls.
+				// command's own flow, gated at every step), the community row (Enable
+				// Community and Configure Onboarding, 2026-10 item 247 Phase 3), then the
+				// control row, the owner only Self destruct and the admin controls. Four
+				// rows of Discord's five; the control row stays last, where the guide
+				// test reads it.
 				return [
 					...buildAdminCommandRows(),
+					buildCommunityControlButtons(),
 					new ActionRowBuilder<ButtonBuilder>().addComponents(buildSelfDestructButton(), ...buildAdminControlButtons()),
 				];
 			case "meetingVoiceChannelId":

@@ -46,6 +46,8 @@ import { sweepMonopolyAuctions } from "@features/game-rooms/roomMonopolyAuction.
 import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/polls/PollDispatcher.js";
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerRulesEditHandlers } from "@features/setup/rulesEdit.js";
+import { registerCommunityHandlers } from "@features/community/communityButtons.js";
+import { postCommunityButtonsPointers } from "@features/community/communityButtonsPointer.js";
 import { registerWelcomeLog } from "@features/setup/welcomeLog.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
 import { registerAdminCommandLauncher } from "@features/command-buttons/adminCommandLauncher.js";
@@ -352,6 +354,9 @@ process.on("uncaughtException", (err) => {
 	registerSelfDestructHandlers();
 	// The Edit rules button on the 📘rules post (2026-10 item 247 Phase 2).
 	registerRulesEditHandlers();
+	// Enable Community, its Confirm, and Configure Onboarding on the admin guide
+	// (2026-10 item 247 Phase 3), all on the one "community" prefix.
+	registerCommunityHandlers();
 	registerPowerUpHandlers();
 	// Every admin command's button on the admin guide, with the pick, the optional
 	// field pick and the form each one opens (2026-10 item 245 Phase 4b).
@@ -880,6 +885,13 @@ process.on("uncaughtException", (err) => {
 		// The satellite half of the same catch up: departures from a network table's
 		// satellites that happened while the bot was down. Never throws.
 		await reconcileSatellitesOnBoot(client);
+
+		// ── community buttons pointer (2026-10 item 247 Phase 3) ──
+		// Once per guild, an #inner-sanctum post pointing at the new Enable Community
+		// and Configure Onboarding buttons. After the homebase loop on purpose: the
+		// intro refresh there is what puts the buttons on each guide, and the pointer
+		// waits until a guide shows them. Never throws, per guild.
+		await postCommunityButtonsPointers(client);
 
 		// ── hold em turn clock ─────────────────────────────────────
 		// What: force-folds a player who has run out of time at a poker table, and
