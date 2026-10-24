@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { existsSync } from "node:fs";
 import { ButtonStyle, GuildExplicitContentFilter, GuildVerificationLevel, MessageFlags, type ButtonInteraction } from "discord.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 
@@ -6,7 +7,8 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 // The admin guide's community row, where it sits on the guide, and the router
 // every `community:<action>` press goes through: a stale customId, a guild with no
 // config, and a clicker who is neither the owner nor an admin are all refused
-// before any flow runs, and Configure Onboarding answers its honest stub line.
+// before any flow runs, and Configure Onboarding reaches its real flow (Phase 4
+// deleted the stub that stood in for it).
 
 const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
@@ -114,10 +116,22 @@ describe("the community router", () => {
 		expect(interaction.showModal).toHaveBeenCalledOnce();
 	});
 
-	it("answers Configure Onboarding with the next release line, privately, and no error", async () => {
+	it("routes Configure Onboarding to the real flow, whose first precondition answers a server without Community", async () => {
 		const interaction = press(OWNER, COMMUNITY_CUSTOM_IDS.configure);
 		await handleCommunityButton(interaction);
-		expect(interaction.reply).toHaveBeenCalledWith({ content: communityCopy.configureComingSoon, flags: MessageFlags.Ephemeral });
+		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ flags: MessageFlags.Ephemeral }));
+		expect(replyDescription(interaction)).toBe(communityCopy.onboarding.preconditions.communityOff);
+	});
+
+	it("has no Configure Onboarding stub left beside the real flow", () => {
+		expect(existsSync(new URL("./onboardingDraftStub.ts", import.meta.url))).toBe(false);
+	});
+
+	it("answers an argument on an action that takes none as retired", async () => {
+		const interaction = press(OWNER, `${COMMUNITY_CUSTOM_IDS.enable}:extra`);
+		await handleCommunityButton(interaction);
+		expect(interaction.showModal).not.toHaveBeenCalled();
+		expect(interaction.reply).toHaveBeenCalledWith({ content: communityCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
 	});
 
 	it("answers a stale customId as retired, before reading anything", async () => {

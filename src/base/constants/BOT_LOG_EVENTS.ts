@@ -211,6 +211,22 @@ export const BOT_LOG_EVENTS = {
 	// the screening form's rules text.
 	COMMUNITY_ENABLED_BY_BOT: "community_enabled_by_bot",
 	MEMBERSHIP_SCREENING_ENABLED_BY_BOT: "membership_screening_enabled_by_bot",
+	// ── Configure Onboarding audit (2026-10 item 247 Phase 4) ──────
+	// What:  CONFIGURED is one row per Onboarding Confirm that reached Discord, its
+	//        outcome saying how it ended ("configured", "refused-permissions",
+	//        "refused-discord", "failed"), plus whether the owner DM that follows a
+	//        success went out. PRECONDITION_FAILED is one row per press Dero refused
+	//        before writing anything: the clause that refused and its sentence.
+	// Who:   configureOnboarding, fire and forget. Nothing reads them on a hot path;
+	//        they answer "who set up Onboarding here, and why did it not work".
+	// When:  once per Confirm, and once per refused press. Not idempotent on purpose:
+	//        every attempt is an event.
+	//
+	// ⚠️ PRIVACY: ids, counts, outcome codes and the refusal sentence (which can name
+	// a role). NEVER a question's or an answer's text, and never any member's
+	// Onboarding answers, which Discord alone stores.
+	ONBOARDING_CONFIGURED_BY_BOT: "onboarding_configured_by_bot",
+	ONBOARDING_PRECONDITION_FAILED: "onboarding_precondition_failed",
 	// add more here as needed
 } as const;
 

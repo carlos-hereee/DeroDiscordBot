@@ -5,16 +5,24 @@ import { registerButton } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { communityCopy } from "./communityCopy.js";
-import { COMMUNITY_CUSTOM_IDS, COMMUNITY_PREFIX, buildConfigureOnboardingButton, buildEnableCommunityButton, type CommunityAction } from "./communityControls.js";
+import {
+	COMMUNITY_CUSTOM_IDS,
+	COMMUNITY_INDEXED_ACTIONS,
+	COMMUNITY_PREFIX,
+	buildConfigureOnboardingButton,
+	buildEnableCommunityButton,
+	type CommunityAction,
+} from "./communityControls.js";
 import { handleConfirm, handleEnableClick, type IEnableCommunityConfig } from "./enableCommunity.js";
-import { draftOnboarding } from "./onboardingDraftStub.js";
+import { handleCancelOnboarding, handleConfigureOnboardingButton, handleConfirmOnboarding, type IConfigureOnboardingConfig } from "./configureOnboarding.js";
+import { handleEditPromptButton } from "./promptEditModal.js";
 
 // ── communityButtons ─────────────────────────────────────────────────
 // What:  the admin guide's community row (Enable Community and Configure
 //        Onboarding, 2026-10 item 247 Phase 3) and the one router every
 //        `community:<action>` press goes through. The router gates and routes; the
-//        flows themselves live in enableCommunity (and, from Phase 4, Configure
-//        Onboarding's own module).
+//        flows themselves live in enableCommunity, configureOnboarding and
+//        promptEditModal (Phase 4).
 // Who:   GuildSetupManager.resolveIntroComponents puts the row on the pinned admin
 //        guide; main.ts registers the router once at boot.
 // When:  on every press. The row reaches existing guilds on their next boot, when
@@ -33,11 +41,14 @@ export function buildCommunityControlButtons(): ActionRowBuilder<ButtonBuilder> 
 
 // ── the router ───────────────────────────────────────────────────────
 
+/** The stored GuildConfig fields the community flows read, together. */
+type ICommunityConfig = IEnableCommunityConfig & IConfigureOnboardingConfig;
+
 /** Every `community:<action>` press: refuse what is stale or not allowed, then hand the press to its flow. */
 export async function handleCommunityButton(interaction: ButtonInteraction): Promise<void> {
-	const action = communityActionOf(interaction.customId);
+	const parsed = parseCommunityCustomId(interaction.customId);
 	// A button from an older layout, answered before any read since nothing runs.
-	if (!action) {
+	if (!parsed) {
 		await interaction.reply({ content: communityCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
 		return;
 	}
@@ -46,7 +57,7 @@ export async function handleCommunityButton(interaction: ButtonInteraction): Pro
 		await replyRefusal(interaction, communityCopy.errors.notInServer, null);
 		return;
 	}
-	const config = (await guildConfigStore.findByGuildId(guild.id)) as IEnableCommunityConfig | null;
+	const config = (await guildConfigStore.findByGuildId(guild.id)) as ICommunityConfig | null;
 	if (!config) {
 		await replyRefusal(interaction, communityCopy.errors.notSetUp, null);
 		return;
@@ -56,7 +67,7 @@ export async function handleCommunityButton(interaction: ButtonInteraction): Pro
 		return;
 	}
 
-	switch (action) {
+	switch (parsed.action) {
 		case "enable":
 			await handleEnableClick(interaction, guild, config);
 			return;
@@ -64,26 +75,34 @@ export async function handleCommunityButton(interaction: ButtonInteraction): Pro
 			await handleConfirm(interaction, guild, config);
 			return;
 		case "configure":
-			await handleConfigureOnboardingClick(interaction);
+			await handleConfigureOnboardingButton(interaction, guild, config);
+			return;
+		case "editPrompt":
+			await handleEditPromptButton(interaction, guild, config, parsed.argument);
+			return;
+		case "confirmOnboarding":
+			await handleConfirmOnboarding(interaction, guild, config);
+			return;
+		case "cancelOnboarding":
+			await handleCancelOnboarding(interaction, guild);
 			return;
 	}
 }
 
-// Until Phase 4 builds Configure Onboarding, its button answers with the honest
-// "next release" line rather than an error. The stub drafter stands where the real
-// one will, so Phase 4 replaces this function and deletes the stub together.
-async function handleConfigureOnboardingClick(interaction: ButtonInteraction): Promise<void> {
-	draftOnboarding();
-	await interaction.reply({ content: communityCopy.configureComingSoon, flags: MessageFlags.Ephemeral });
+// The action a customId names and the segment after it, or null when it is not one
+// this version answers. Every action matches its customId exactly, except an
+// indexed one, which also matches `<customId>:<argument>` (the Edit buttons). The
+// bare indexed id still parses, with no argument, so it is gated like every other
+// press and its flow answers it as retired.
+function parseCommunityCustomId(customId: string): { action: CommunityAction; argument: string | null } | null {
+	for (const [action, id] of Object.entries(COMMUNITY_CUSTOM_IDS) as Array<[CommunityAction, string]>) {
+		if (customId === id) return { action, argument: null };
+		if (COMMUNITY_INDEXED_ACTIONS.has(action) && customId.startsWith(`${id}:`)) return { action, argument: customId.slice(id.length + 1) };
+	}
+	return null;
 }
 
-// The action a customId names, or null when it is not one this version answers.
-function communityActionOf(customId: string): CommunityAction | null {
-	const entry = Object.entries(COMMUNITY_CUSTOM_IDS).find(([, id]) => id === customId);
-	return entry ? (entry[0] as CommunityAction) : null;
-}
-
-async function replyRefusal(interaction: ButtonInteraction, message: string, config: IEnableCommunityConfig | null): Promise<void> {
+async function replyRefusal(interaction: ButtonInteraction, message: string, config: ICommunityConfig | null): Promise<void> {
 	await interaction.reply({ embeds: [errorEmbed(message, config)], flags: MessageFlags.Ephemeral }).catch(() => undefined);
 }
 

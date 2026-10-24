@@ -8,7 +8,9 @@ import { GuildExplicitContentFilter, GuildVerificationLevel } from "discord.js";
 // would double the authoring for content that comes out the same twice.
 // Who:   communityControls (button labels), enableCommunity (the modal, the review,
 //        the replies and the screening form), communityButtons (the router's
-//        refusals and the Configure Onboarding stub), communityButtonsPointer.
+//        refusals), communityButtonsPointer, and the Configure Onboarding modules
+//        (onboardingPreconditions, onboardingDraft, configureOnboarding,
+//        promptEditModal), which read the `onboarding` section.
 //
 // House rule for every string below: no dashes in user-facing copy.
 
@@ -47,6 +49,54 @@ export interface ICommunityChangeSummary {
 /** How the Membership Screening write went, for the success reply. */
 export type ScreeningReplyOutcome = "enabled" | "skipped" | "refused";
 
+/** What the Configure Onboarding review says above its questions. */
+export interface IOnboardingReviewSummary {
+	memberRoleId: string;
+	defaultChannelIds: readonly string[];
+	startedFromExisting: boolean;
+	finalPromptAdded: boolean;
+}
+
+/** One question as the review shows it. */
+export interface IOnboardingPromptView {
+	required: boolean;
+	singleSelect: boolean;
+	isFinal: boolean;
+}
+
+/** One answer as the review shows it: its title, its description and what picking it gives. */
+export interface IOnboardingOptionView {
+	title: string;
+	description: string | null;
+	roleIds: readonly string[];
+	channelIds: readonly string[];
+}
+
+// How many default channels the review names before it counts the rest, so a
+// server with a hundred open channels still fits one embed description.
+const REVIEW_DEFAULT_CHANNELS_SHOWN = 20;
+
+const mentionList = (ids: readonly string[], shown: number, render: (id: string) => string): string => {
+	const named = ids.slice(0, shown).map(render).join(", ");
+	return ids.length > shown ? `${named} and ${ids.length - shown} more` : named;
+};
+
+// The review's opening line: a fresh draft, or the server's own questions kept,
+// with or without the final question Dero had to add.
+const onboardingReviewOpening = (summary: IOnboardingReviewSummary): string => {
+	if (!summary.startedFromExisting) return "Dero drafted these Onboarding questions for this server. New members answer them when they join.";
+	if (summary.finalPromptAdded) {
+		return "This server already has Onboarding questions, so the draft keeps every one of them as it is and adds the final question that gives the member role.";
+	}
+	return "This server already has Onboarding questions, so the draft keeps every one of them as it is.";
+};
+
+// What picking an answer gives, after its title: "(gives @Member, opens #general)".
+const optionGrants = (option: IOnboardingOptionView): string => {
+	const grants = [...option.roleIds.map((id) => `gives <@&${id}>`), ...option.channelIds.map((id) => `opens <#${id}>`)];
+	return grants.length > 0 ? ` (${grants.join(", ")})` : "";
+};
+
 // "Low to Medium" when Confirm raises it, "stays High" when it is already there.
 const settingLine = (label: string, change: ISettingChange): string =>
 	change.from === change.to ? `• ${label}: stays ${change.to}` : `• ${label}: ${change.from} to ${change.to}`;
@@ -77,6 +127,9 @@ export const communityCopy = {
 		enable: "Enable Community",
 		configure: "Configure Onboarding",
 		confirm: "Confirm",
+		editPrompt: (position: number): string => `Edit ${position}`,
+		confirmOnboarding: "Confirm",
+		cancelOnboarding: "Cancel",
 	},
 
 	// ── refusals the router and the flow share ──
@@ -178,9 +231,136 @@ export const communityCopy = {
 	// The reason Discord's audit log shows beside each change Dero makes here.
 	auditReason: "Enabled by Dero via Enable Community",
 
-	// ── Configure Onboarding, until it is built ──
-	configureComingSoon:
-		"Configure Onboarding is coming in the next Dero release. Until then you can set up Onboarding by hand in Server Settings, Onboarding.",
+	// ── Configure Onboarding (2026-10 item 247 Phase 4) ──
+	onboarding: {
+		// The starter questions a server with none gets. The owner can edit or remove
+		// the two optional ones in the review; the final one keeps its shape.
+		draft: {
+			heardAbout: { title: "Where did you hear about us?", options: ["Friend", "Twitter", "Reddit", "YouTube", "Other"] },
+			goals: { title: "What do you want to do here?", options: ["Play games", "Chat", "Lurk", "Build things"] },
+			// The owner's own wording (plan, Owner decisions). It must stay within the
+			// 100 character question title cap; onboardingDraft.test pins that.
+			final: {
+				title: "✨ You're officially part of the community! Thanks for being here and supporting the journey.",
+				optionTitle: "Glad to be here",
+			},
+		},
+
+		// One sentence per precondition, in the order they are checked. Dero speaks
+		// in the first person here, the plan's own wording for each refusal.
+		preconditions: {
+			communityOff: "Community is not enabled. Click Enable Community first.",
+			missingPermissions: "I need Manage Server and Manage Roles. Please re-invite me with those or check my role permissions.",
+			noMemberRole: "No member role is configured. Run /setup first.",
+			memberRoleIsEveryone: "The member role is set to @everyone, which every member already has, so Onboarding cannot give it. Run /setup and pick a member role.",
+			memberRoleGone: "The member role /setup saved no longer exists in this server. Run /setup and pick a member role.",
+			memberRoleAboveBot: (roleName: string): string => `My role must sit above the member role in Server Settings → Roles. Please move me above ${roleName}.`,
+			tooFewSendableChannels: (count: number, minimum: number): string =>
+				`Discord requires at least ${minimum} channels where everyone can send messages before I can turn on Onboarding. You currently have ${count}; please add ${minimum - count} more and try again.`,
+		},
+
+		// Why a draft cannot be written, found while drafting or again at Confirm.
+		draftErrors: {
+			roleAboveBot: (roleName: string): string =>
+				`An Onboarding answer gives ${roleName}, which sits above my highest role, so Discord would refuse it. Move my role above ${roleName} in Server Settings → Roles, or remove that answer, then try again.`,
+			roleGone: "An Onboarding answer gives a role that no longer exists. Remove that answer in Server Settings → Onboarding, then try again.",
+			// The edit flow cannot cause this; it guards the write in case a draft ever
+			// reaches Confirm without the question that gives the member role.
+			finalPromptInvalid: "The draft lost its final question, the one that gives the member role, so I stopped before changing anything. Press Configure Onboarding to start a fresh draft.",
+		},
+
+		// Reading the live config failed. Nothing is drafted over a config Dero could
+		// not read, or the review would offer to replace questions it never saw.
+		readFailed: (discordMessage: string): string =>
+			`I could not read this server's Onboarding settings, so I stopped before drafting anything over them.\n\nDiscord said: ${discordMessage}`,
+		expired: "That draft expired. Press Configure Onboarding to start over.",
+
+		// ── the review ──
+		review: {
+			title: "Review: Configure Onboarding",
+			description: (summary: IOnboardingReviewSummary): string => {
+				const channels = summary.defaultChannelIds.length > 0 ? mentionList(summary.defaultChannelIds, REVIEW_DEFAULT_CHANNELS_SHOWN, (id) => `<#${id}>`) : "none";
+				return [
+					onboardingReviewOpening(summary),
+					"",
+					`Confirm switches Onboarding on in Advanced mode, and the final question gives <@&${summary.memberRoleId}>.`,
+					"",
+					`**Default channels** (${summary.defaultChannelIds.length}), which every new member gets right away: ${channels}`,
+					"",
+					"Press Edit on a question to change or remove it. Nothing changes until you press Confirm.",
+				].join("\n");
+			},
+			promptFieldName: (position: number, title: string): string => `${position}. ${title}`,
+			promptRules: (prompt: IOnboardingPromptView): string => {
+				if (prompt.isFinal) return "Required, the last question. Its answer gives the member role.";
+				return `${prompt.required ? "Required" : "Optional"}, members pick ${prompt.singleSelect ? "one answer" : "any answers"}.`;
+			},
+			optionLine: (option: IOnboardingOptionView): string => `• ${option.title}${option.description ? `: ${option.description}` : ""}${optionGrants(option)}`,
+			// When a question has more answers than one embed field holds.
+			moreOptions: (count: number): string => `and ${count} more`,
+		},
+
+		// ── the edit modal ──
+		// Labels are capped at 45 characters, descriptions and placeholders at 100,
+		// and the modal title at 45, by Discord.
+		modal: {
+			title: (position: number): string => `Edit question ${position}`,
+			finalTitle: "Edit the final question",
+			promptTitleLabel: "Question",
+			promptTitleDescription: "The question new members read.",
+			optionsLabel: "Answers",
+			optionsDescription: "One answer per line, as title | description. Clear every line to remove this question.",
+			optionsPlaceholder: "Friend | A friend sent me an invite",
+			finalTitleDescription: "The last question. It stays required, and members pick its one answer.",
+			finalOptionLabel: "Answer",
+			finalOptionDescription: "Picking this answer gives the member role. Only its title can change.",
+		},
+
+		// A submit the edit modal refuses. Nothing in the draft changes.
+		editErrors: {
+			promptGone: "That question is no longer in the draft. Use the buttons on the latest review.",
+			tooLongToEdit: "This question has more answers than one edit box holds. Edit it in Server Settings, Onboarding, instead.",
+			emptyTitle: "A question needs a title.",
+			emptyOptionTitle: "Every answer needs a title before the | sign.",
+			titleTooLong: (max: number): string => `A question can be at most ${max} characters.`,
+			optionTitleTooLong: (title: string, max: number): string => `The answer "${title}" is longer than ${max} characters.`,
+			descriptionTooLong: (title: string, max: number): string => `The description of "${title}" is longer than ${max} characters.`,
+			tooManyOptions: (max: number): string => `A question can have at most ${max} answers.`,
+			duplicateOption: (title: string): string => `The answer "${title}" is there twice. Give each answer its own title.`,
+		},
+
+		// ── the result ──
+		success: {
+			title: "Onboarding is on",
+			description: (summary: { promptCount: number; defaultChannelCount: number; memberRoleId: string }): string =>
+				[
+					"Discord Onboarding is now switched on for this server, in Advanced mode.",
+					"",
+					`• Questions: ${summary.promptCount}, ending with the one that gives <@&${summary.memberRoleId}>`,
+					`• Default channels: ${summary.defaultChannelCount}`,
+					"",
+					"Members who already finished Onboarding stay in. Anyone who should answer the new questions can retake Onboarding from Channels & Roles.",
+				].join("\n"),
+		},
+		failures: {
+			// 50013 on the write. Discord's Modify Guild Onboarding needs both permissions.
+			missingPermission: "Discord refused: Dero is missing Manage Server or Manage Roles. Grant both in Server Settings, Roles, then press Confirm again.",
+			// Discord's own words, verbatim, because a 400 names the question or the
+			// channel rule it rejected and a paraphrase would hide which.
+			rejected: (discordMessage: string): string => `Discord refused the Onboarding change. Nothing was changed.\n\nDiscord said: ${discordMessage}`,
+			unconfirmed:
+				"Dero could not get an answer from Discord, so it cannot tell whether Onboarding changed. Check Server Settings, Onboarding, and press Configure Onboarding again if it did not.",
+		},
+		cancelled: "Cancelled.",
+
+		// The DM to the server owner after a successful write. editOnboarding does not
+		// reset anyone who already finished Onboarding, so the owner is told how a
+		// member sees the new questions.
+		ownerDm: "Onboarding configured. Members who already completed Onboarding stay in; if any of them need to retake, point them to Channels & Roles → Retake Onboarding.",
+
+		// The reason Discord's audit log shows beside the Onboarding change.
+		auditReason: "Configured by Dero via Configure Onboarding",
+	},
 
 	// ── the one time pointer in #inner-sanctum ──
 	pointer: {
@@ -191,7 +371,7 @@ export const communityCopy = {
 				"",
 				"**Enable Community** switches on Discord Community for this server. You pick the rules channel and a channel for moderator notices, and Membership Screening (on by default) asks new members to accept your rules before they can talk.",
 				"",
-				"**Configure Onboarding** has its button already, and it opens in the next Dero release.",
+				"**Configure Onboarding** drafts Discord Onboarding questions for this server, ending with one that gives the member role. You review and edit them before anything changes.",
 			].join("\n"),
 	},
 };

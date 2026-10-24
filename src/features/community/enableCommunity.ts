@@ -112,10 +112,18 @@ export interface IMembershipScreeningRequest {
 /** How a Discord write ended, for the audit row. */
 type WriteOutcome = "enabled" | "refused-permissions" | "refused-discord" | "failed";
 
-interface IWriteRefusal {
+/** A refused Discord write: the audit outcome, the sentence the owner reads, and Discord's error code when it sent one. */
+export interface IWriteRefusal {
 	outcome: Exclude<WriteOutcome, "enabled">;
 	ownerMessage: string;
 	discordCode: number | string | null;
+}
+
+/** The three sentences a refused write can end in, in each flow's own words (communityCopy.failures, communityCopy.onboarding.failures). */
+export interface IDiscordRefusalCopy {
+	missingPermission: string;
+	rejected(discordMessage: string): string;
+	unconfirmed: string;
 }
 
 // ── pending picks ────────────────────────────────────────────────────
@@ -379,21 +387,25 @@ async function enableMembershipScreening(guild: Guild, config: IEnableCommunityC
 	return refusal ? "refused" : "enabled";
 }
 
-// A 50013 gets a plain line naming the permission. It is NOT routed to
-// GuildSetupManager.handlePermissionFailure: that is the category build failure
-// tracker, which after seven days DMs the owner and makes Dero leave the guild,
-// and a refused settings change must never start that clock. Any other Discord
-// refusal shows Discord's own message verbatim.
-function describeRefusal(error: unknown): IWriteRefusal {
+/**
+ * What to tell the owner about a refused Discord write, for this flow and for
+ * Configure Onboarding's write (which passes its own copy). A 50013 gets a plain
+ * line naming the permission. It is NOT routed to
+ * GuildSetupManager.handlePermissionFailure: that is the category build failure
+ * tracker, which after seven days DMs the owner and makes Dero leave the guild,
+ * and a refused settings change must never start that clock. Any other Discord
+ * refusal shows Discord's own message verbatim.
+ */
+export function describeRefusal(error: unknown, copy: IDiscordRefusalCopy = communityCopy.failures): IWriteRefusal {
 	if (error instanceof DiscordAPIError) {
 		if (error.code === RESTJSONErrorCodes.MissingPermissions) {
-			return { outcome: "refused-permissions", ownerMessage: communityCopy.failures.missingPermission, discordCode: error.code };
+			return { outcome: "refused-permissions", ownerMessage: copy.missingPermission, discordCode: error.code };
 		}
-		return { outcome: "refused-discord", ownerMessage: communityCopy.failures.rejected(error.message), discordCode: error.code };
+		return { outcome: "refused-discord", ownerMessage: copy.rejected(error.message), discordCode: error.code };
 	}
 	// No Discord answer at all (a timeout, a dropped connection): the change may or
 	// may not have landed, so the owner is sent to look rather than told it did not.
-	return { outcome: "failed", ownerMessage: communityCopy.failures.unconfirmed, discordCode: null };
+	return { outcome: "failed", ownerMessage: copy.unconfirmed, discordCode: null };
 }
 
 // ── audit ────────────────────────────────────────────────────────────
