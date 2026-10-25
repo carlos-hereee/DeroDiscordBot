@@ -279,3 +279,90 @@ describe("an admin's flow", () => {
 		expect(firstReply(form.reply).embeds?.[0]?.data.description).toBe(commandButtonsCopy.launcher.staleButton);
 	});
 });
+
+// ── the settings panels (post-launch plan item 9) ────────────────────────────
+
+// A settings panel's fields: checked switch values, the radio pick, a text answer.
+function panelSubmit(customId: string, answers: { switches?: string[]; week?: string }, userId: string) {
+	const present = Object.keys(answers);
+	const fields = {
+		fields: new Map(present.map((id) => [id, {}])),
+		getCheckboxGroup: () => answers.switches ?? [],
+		getRadioGroup: () => answers.week ?? null,
+		getSelectedRoles: () => null,
+		getSelectedChannels: () => null,
+		getTextInputValue: () => "",
+	};
+	const fake = fakeInteraction(userId, { customId, fields });
+	Reflect.deleteProperty(fake.interaction, "showModal");
+	const editReply = fake.interaction.editReply as ReturnType<typeof vi.fn>;
+	return { ...fake, editReply, run: () => mocks.modals.get("admincmd_panel")!(fake.interaction as unknown as ModalSubmitInteraction) };
+}
+
+type EditedReply = { content?: string; embeds?: Array<{ data: { title?: string; description?: string } }>; components?: unknown[] };
+
+describe("the settings panels", () => {
+	it("open /configure's panel at once, preset to how the server stands", async () => {
+		mocks.findByGuildId.mockResolvedValue({ guildId: GUILD_ID, adminRoleId: ADMIN_ROLE, weekStart: "monday", autoHealEnabled: false });
+		const button = press("admincmd", "admincmd:configure", ADMIN_ID);
+		await button.run();
+		const [modal] = formModals(button.showModal) as unknown as Array<{ custom_id: string; components: Array<{ component: { options: Array<{ value: string; default?: boolean }> } }> }>;
+		expect(modal?.custom_id).toBe("admincmd_panel:configure");
+		const [switches, week] = modal?.components.map((label) => label.component.options) ?? [];
+		expect(switches?.map((option) => [option.value, Boolean(option.default)])).toEqual([
+			["auto-heal", false],
+			["leaderboard-tracking", true],
+		]);
+		expect(week?.find((option) => option.default)?.value).toBe("monday");
+		expect(button.reply).not.toHaveBeenCalled();
+	});
+
+	it("give an admin who is not the owner /channels' pick, since hide and show are the owner's", async () => {
+		const button = press("admincmd", "admincmd:channels", ADMIN_ID);
+		await button.run();
+		expect(firstReply(button.reply).content).toBe(commandButtonsCopy.launcher.pickLeafPrompt("channels"));
+		expect(formModals(button.showModal)).toEqual([]);
+	});
+
+	it("run each changed setting through the command's own handler and answer once", async () => {
+		const panel = panelSubmit("admincmd_panel:configure", { switches: ["leaderboard-tracking"], week: "monday" }, ADMIN_ID);
+		await panel.run();
+		// Auto heal was cleared and the week moved; tracking stayed on, so it never ran.
+		expect(mocks.update.mock.calls).toEqual([
+			[GUILD_ID, { autoHealEnabled: false }],
+			[GUILD_ID, { weekStart: "monday" }],
+		]);
+		expect(panel.reply).not.toHaveBeenCalled();
+		expect(panel.editReply).toHaveBeenCalledTimes(1);
+		const answer = panel.editReply.mock.calls[0]?.[0] as EditedReply;
+		expect(answer.embeds?.map((embed) => embed.data.title)).toEqual(["✋ Auto-heal OFF", "📅 Leaderboard week start updated"]);
+		// Every /configure leaf is on the panel, so there is nothing more to offer.
+		expect(answer.components).toEqual([]);
+	});
+
+	it("write nothing when every setting is as it was", async () => {
+		const panel = panelSubmit("admincmd_panel:configure", { switches: ["auto-heal", "leaderboard-tracking"], week: "sunday" }, ADMIN_ID);
+		await panel.run();
+		expect(mocks.update).not.toHaveBeenCalled();
+		const answer = panel.editReply.mock.calls[0]?.[0] as EditedReply;
+		expect(answer.embeds?.[0]?.data.description).toBe(commandButtonsCopy.panels.saved.nothingChanged);
+	});
+
+	it("offer the command's other subcommands after saving a panel that does not hold them all", async () => {
+		mocks.findByGuildId.mockResolvedValue({ guildId: GUILD_ID, adminRoleId: ADMIN_ROLE, categoryId: "cat", hiddenChannels: [] });
+		const panel = panelSubmit("admincmd_panel:channels", {}, OWNER_ID);
+		await panel.run();
+		const answer = panel.editReply.mock.calls[0]?.[0] as EditedReply;
+		const select = (answer.components?.[0] as { toJSON(): { components: Array<{ custom_id: string; options: Array<{ value: string }> }> } }).toJSON().components[0];
+		expect(answer.content).toBe(commandButtonsCopy.panels.saved.morePrompt("channels"));
+		expect(select?.custom_id).toBe("admincmd_leaf:channels");
+		expect(select?.options.map((option) => option.value)).toEqual(["rename"]);
+	});
+
+	it("refuse a submitted panel from a member and write nothing", async () => {
+		const panel = panelSubmit("admincmd_panel:configure", { switches: [] }, MEMBER_ID);
+		await panel.run();
+		expect(firstReply(panel.reply).embeds?.[0]?.data.description).toBe(refusal);
+		expect(mocks.update).not.toHaveBeenCalled();
+	});
+});

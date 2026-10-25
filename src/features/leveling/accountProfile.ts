@@ -12,6 +12,8 @@ import { buildAccountCardEmbed, buildAccountEmbed, type AccountView } from "@fea
 import { ACCOUNT_AVATAR_SIZE, renderAccountCard } from "@features/leveling/accountRenderer.js";
 import { LEVELING_GAME_SLUGS, type IGameRecord } from "@features/leveling/levelingTypes.js";
 import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
+import { memberLuckInGuild } from "@features/ratings/ratingBoards.js";
+import { utcMonthKey } from "@utils/utcMonthKey.js";
 
 // ── the account profile ────────────────────────────────────────────────────
 // What:  a member's full leveling profile: level and progress, standing, the
@@ -81,10 +83,12 @@ export async function showAccountProfile(interaction: RepliableInteraction, { ta
 	const guildSize = await memberLevelStore.countInGuild(guildId);
 	const guildRank = record ? await memberLevelStore.rankOf(guildId, totalXp) : guildSize + 1;
 
-	const { week, month } = periodKeysFor(new Date(), context.weekStart);
-	const [weekRank, monthRank] = await Promise.all([
+	const now = new Date();
+	const { week, month } = periodKeysFor(now, context.weekStart);
+	const [weekRank, monthRank, luck] = await Promise.all([
 		rankInPeriod(guildId, target.id, week),
 		rankInPeriod(guildId, target.id, month),
+		readLuck(guildId, target.id, now),
 	]);
 
 	const member = interaction.guild?.members.cache.get(target.id) ?? null;
@@ -107,6 +111,7 @@ export async function showAccountProfile(interaction: RepliableInteraction, { ta
 		reactionsGiven: record?.reactionsGiven ?? 0,
 		voiceMinutes: record?.voiceMinutes ?? 0,
 		games: readGames(record?.games),
+		luck,
 		unlocked: record?.unlocked ?? [],
 		avatar: avatarRequestFor(target, ACCOUNT_AVATAR_SIZE),
 	};
@@ -158,6 +163,18 @@ async function rankInPeriod(guildId: string, userId: string, period: string): Pr
 	const row = await xpPeriodStore.findOne(guildId, userId, period);
 	if (!row) return null;
 	return xpPeriodStore.rankInPeriod(guildId, period, row.xp);
+}
+
+// The luck board's numbers for this UTC month (the board's own month key, not the
+// leveling period, which follows the server's week start). A failed read leaves the
+// line out as "nothing decided" rather than failing the profile around it.
+async function readLuck(guildId: string, userId: string, now: Date): Promise<AccountView["luck"]> {
+	try {
+		return await memberLuckInGuild(guildId, userId, utcMonthKey(now));
+	} catch (error) {
+		console.error(`[account] reading the luck of ${userId} in guild ${guildId} failed`, error);
+		return null;
+	}
 }
 
 // The games map arrives as a Mongoose Map. Games the member has never played are

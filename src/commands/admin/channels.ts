@@ -12,6 +12,8 @@ import { getPluginCopy } from "@base/copy/getCopy.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { creatorId } from "@utils/config.js";
 import { addRenameChannelOptions, renameChannel, renameSlotChoices } from "@features/setup/renameChannel.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 import type { CommandOptionReader, FormChoicesProvider, OptionChoice } from "@handlers/commandOptions.js";
 
 /* /channels, v1.5.1 visibility-toggle command, and since 2026-10 item 245
@@ -94,19 +96,31 @@ export const data = new SlashCommandBuilder()
 async function visibilityChoices(guildId: string, subcommand: "hide" | "show"): Promise<OptionChoice[]> {
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) return [];
+	return hideableChannelStates(config)
+		.filter((channel) => (subcommand === "hide" ? !channel.hidden : channel.hidden))
+		.map((channel) => ({ name: channel.name, value: channel.value }));
+}
+
+/** One hideable channel this guild has, and whether members are kept from seeing it. */
+export interface HideableChannelState {
+	name: string;
+	value: HideableField;
+	hidden: boolean;
+}
+
+/**
+ * The hideable channels provisioned in this guild, with their visibility. Read by the
+ * hide and show picks above and by the /channels settings panel (post-launch plan
+ * item 9). A channel not provisioned yet is left out: hiding it would fail anyway.
+ */
+export function hideableChannelStates(config: GuildConfigDoc): HideableChannelState[] {
 	const hidden = new Set(config.hiddenChannels ?? []);
+	return HIDEABLE_CHANNELS.filter((c) => resolveChannelId(config, c.value) !== null).map((c) => ({ name: c.name, value: c.value, hidden: hidden.has(c.value) }));
+}
 
-	return HIDEABLE_CHANNELS.filter((c) => {
-		// Skip channels that have not been provisioned in this guild yet
-		// (resolveChannelId returns null for missing channel ids). Showing
-		// them in the dropdown is misleading because /channels hide on an
-		// unconfigured channel would fail anyway.
-		const channelId = resolveChannelId(config, c.value);
-		if (!channelId) return false;
-
-		const isCurrentlyHidden = hidden.has(c.value);
-		return subcommand === "hide" ? !isCurrentlyHidden : isCurrentlyHidden;
-	}).map((c) => ({ name: c.name, value: c.value }));
+/** Whether a member passes hide, show and list's gate: the server owner, or the bot's creator. */
+export function canChangeVisibility(userId: string, guildOwnerId: string | undefined): boolean {
+	return userId === guildOwnerId || userId === creatorId;
 }
 
 /* The choices one subcommand's option offers, for the autocomplete and the
@@ -140,10 +154,7 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 	const config = await guildConfigStore.findByGuildId(interaction.guildId!);
 	const { responses } = getPluginCopy(config);
 
-	const isOwner = interaction.user.id === interaction.guild?.ownerId;
-	const isCreator = interaction.user.id === creatorId;
-
-	if (!isOwner && !isCreator) {
+	if (!canChangeVisibility(interaction.user.id, interaction.guild?.ownerId)) {
 		await interaction.reply({ embeds: [errorEmbed(responses.ownerOnly)], ephemeral: true });
 		return;
 	}
@@ -264,6 +275,7 @@ async function handleHide(interaction: RepliableInteraction, options: CommandOpt
 
 	const hiddenChannels = Array.from(new Set([...(config.hiddenChannels ?? []), field]));
 	await guildConfigStore.update(interaction.guildId!, { hiddenChannels });
+	adminLog.emitFor(interaction, interaction.guildId!, "config.change", { subject: setupCopy.adminLog.subjects.channelVisibility(displayName), detail: setupCopy.adminLog.hidden });
 
 	await interaction.reply({
 		embeds: [
@@ -333,6 +345,7 @@ async function handleShow(interaction: RepliableInteraction, options: CommandOpt
 
 	const hiddenChannels = (config.hiddenChannels ?? []).filter((f) => f !== field);
 	await guildConfigStore.update(interaction.guildId!, { hiddenChannels });
+	adminLog.emitFor(interaction, interaction.guildId!, "config.change", { subject: setupCopy.adminLog.subjects.channelVisibility(displayName), detail: setupCopy.adminLog.shown });
 
 	await interaction.reply({
 		embeds: [

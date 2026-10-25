@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 	rankInPeriod: vi.fn(),
 	reconcileRewards: vi.fn(),
 	renderAccountCard: vi.fn(),
+	luckForMember: vi.fn(),
 }));
 
 vi.mock("@features/leveling/levelingConfig.js", () => ({ getLevelingConfig: mocks.getLevelingConfig }));
@@ -26,6 +27,7 @@ vi.mock("@db/stores/memberLevelStore.js", () => ({
 vi.mock("@db/stores/xpPeriodStore.js", () => ({
 	xpPeriodStore: { findOne: mocks.periodFindOne, rankInPeriod: mocks.rankInPeriod },
 }));
+vi.mock("@db/stores/luckStatStore.js", () => ({ luckStatStore: { findForMember: mocks.luckForMember } }));
 vi.mock("@features/leveling/roleRewards.js", () => ({ reconcileRewards: mocks.reconcileRewards }));
 vi.mock("@features/leveling/accountRenderer.js", () => ({ ACCOUNT_AVATAR_SIZE: 256, renderAccountCard: mocks.renderAccountCard }));
 
@@ -70,6 +72,7 @@ beforeEach(() => {
 	mocks.rankInPeriod.mockReset().mockResolvedValue(1);
 	mocks.reconcileRewards.mockReset().mockResolvedValue(null);
 	mocks.renderAccountCard.mockReset().mockResolvedValue(null);
+	mocks.luckForMember.mockReset().mockResolvedValue([]);
 });
 
 describe("/account", () => {
@@ -107,6 +110,43 @@ describe("/account", () => {
 		expect(payload.files).toEqual([attachment]);
 		expect(payload.embeds[0].data.image?.url).toBe("attachment://account-abc.png");
 		expect(payload.embeds[0].data.title).toBe("Silent Warrior");
+	});
+
+	// Post-launch plan item 7: the card draws only the overall record, so its embed
+	// carries the per game table and the month's luck, the luck board's own sum.
+	it("puts the per game record and this month's luck on the card's embed", async () => {
+		mocks.findOne.mockResolvedValue({
+			totalXp: 964,
+			messages: 10,
+			reactionsGiven: 2,
+			voiceMinutes: 5,
+			games: new Map([["rps", { played: 4, won: 3, lost: 1, drawn: 0, assists: 0 }]]),
+			unlocked: [],
+		});
+		mocks.luckForMember.mockResolvedValue([
+			{ guildId: "g1", userId: "u1", game: "coinflip", month: "2026-10", decided: 12, wins: 8 },
+			{ guildId: "g1", userId: "u1", game: "rps", month: "2026-10", decided: 10, wins: 6 },
+		]);
+		mocks.renderAccountCard.mockResolvedValue({ attachment: new AttachmentBuilder(Buffer.from("png"), { name: "a.png" }), ref: "attachment://a.png" });
+		const { interaction: command, editReply } = interaction();
+
+		await execute(command);
+
+		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
+		expect(fields.find((field) => field.name === "Record")?.value).toContain("rps");
+		expect(fields.find((field) => field.name === "Luck this month")?.value).toBe("**14** won of **22** decided, **3** above an even split.");
+		expect(mocks.luckForMember).toHaveBeenCalledWith("g1", "u1", expect.stringMatching(/^\d{4}-\d{2}$/));
+	});
+
+	it("says no luck game was decided, and keeps the profile, when the luck read fails", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		mocks.luckForMember.mockRejectedValue(new Error("db down"));
+		const { interaction: command, editReply } = interaction();
+
+		await execute(command);
+
+		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
+		expect(fields.find((field) => field.name === "Luck this month")?.value).toBe("No coin flip, dice or rps decided this month.");
 	});
 
 	it("hands the renderer the member's avatar request at the card's size", async () => {

@@ -1,5 +1,6 @@
-import { EmbedBuilder, type HexColorString } from "discord.js";
+import { EmbedBuilder, type APIEmbedField, type HexColorString } from "discord.js";
 import { AUTHOR, COLORS, FOOTER } from "@base/copy/brand.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { AvatarRequest } from "@features/renderer/index.js";
 import { levelingCopy } from "./levelingCopy.js";
 import type { IAchievementUnlock, IGameRecord } from "./levelingTypes.js";
@@ -128,9 +129,52 @@ export interface AccountView {
 	// Slug plus record, already ordered by the caller. Games the member has never
 	// played are omitted rather than rendered as a row of zeros.
 	games: Array<{ slug: string; record: IGameRecord }>;
+	// This UTC month's coin flip, dice and rps luck, the luck board's numbers, or
+	// null when the member decided none (post-launch plan item 7).
+	luck: AccountLuck | null;
 	unlocked: IAchievementUnlock[];
 	// Card only: the avatar the account card draws. The embed keeps avatarUrl.
 	avatar?: AvatarRequest | null;
+}
+
+/** A member's luck for the month: decided luck games, wins, and the board's score (null below its minimum). */
+export interface AccountLuck {
+	decided: number;
+	wins: number;
+	score: number | null;
+}
+
+// The per game record with its W/L ratio, shared by the text profile and the card's
+// embed (post-launch plan item 7), since a card at embed width cannot hold the
+// table legibly. A code block so the columns line up in both light and dark mode
+// and on mobile, where a markdown table does not exist and spaces inside normal
+// text collapse.
+function recordField(view: Pick<AccountView, "games">): APIEmbedField {
+	const c = levelingCopy.labels;
+	if (view.games.length === 0) return { name: c.record, value: c.noRecordYet, inline: false };
+	const rows = view.games.map((entry) => {
+		const r = entry.record;
+		return `${entry.slug.padEnd(11)}${String(r.played).padStart(4)}${String(r.won).padStart(5)}${String(r.lost).padStart(5)}${String(r.drawn).padStart(6)}${String(r.assists).padStart(8)}   ${ratio(r.won, r.lost)}`;
+	});
+	const totals = view.games.reduce(
+		(sum, entry) => ({
+			played: sum.played + entry.record.played,
+			won: sum.won + entry.record.won,
+			lost: sum.lost + entry.record.lost,
+			drawn: sum.drawn + entry.record.drawn,
+			assists: sum.assists + entry.record.assists,
+		}),
+		{ played: 0, won: 0, lost: 0, drawn: 0, assists: 0 }
+	);
+	const header = `${"".padEnd(11)}${c.played.slice(0, 4).padStart(4)}${c.won.padStart(5)}${c.lost.padStart(5)}${c.drawn.padStart(6)}${c.assists.padStart(8)}   ${c.ratio}`;
+	const overall = `${c.overall.padEnd(11)}${String(totals.played).padStart(4)}${String(totals.won).padStart(5)}${String(totals.lost).padStart(5)}${String(totals.drawn).padStart(6)}${String(totals.assists).padStart(8)}   ${ratio(totals.won, totals.lost)}`;
+	return { name: c.record, value: ["```", header, ...rows, overall, "```"].join("\n"), inline: false };
+}
+
+// The month's luck line, the luck board's own numbers (post-launch plan item 7).
+function luckField(view: Pick<AccountView, "luck">): APIEmbedField {
+	const c = levelingCopy.labels;
+	return { name: c.luck, value: view.luck ? c.luckLine(view.luck, BOT_CONSTANTS.RATINGS.LUCK_MIN_DECIDED) : c.noLuckYet, inline: false };
 }
 
 function ratio(won: number, lost: number): string {
@@ -169,34 +213,8 @@ export function buildAccountEmbed(view: AccountView): EmbedBuilder {
 		.join("\n");
 	embed.addFields({ name: c.rank, value: standing, inline: false });
 
-	// ③ The record. A code block so the columns line up in both light and dark
-	// mode and on mobile, where a markdown table does not exist and spaces inside
-	// normal text collapse.
-	if (view.games.length > 0) {
-		const rows = view.games.map((entry) => {
-			const r = entry.record;
-			return `${entry.slug.padEnd(11)}${String(r.played).padStart(4)}${String(r.won).padStart(5)}${String(r.lost).padStart(5)}${String(r.drawn).padStart(6)}${String(r.assists).padStart(8)}   ${ratio(r.won, r.lost)}`;
-		});
-		const totals = view.games.reduce(
-			(sum, entry) => ({
-				played: sum.played + entry.record.played,
-				won: sum.won + entry.record.won,
-				lost: sum.lost + entry.record.lost,
-				drawn: sum.drawn + entry.record.drawn,
-				assists: sum.assists + entry.record.assists,
-			}),
-			{ played: 0, won: 0, lost: 0, drawn: 0, assists: 0 }
-		);
-		const header = `${"".padEnd(11)}${c.played.slice(0, 4).padStart(4)}${c.won.padStart(5)}${c.lost.padStart(5)}${c.drawn.padStart(6)}${c.assists.padStart(8)}   ${c.ratio}`;
-		const overall = `${c.overall.padEnd(11)}${String(totals.played).padStart(4)}${String(totals.won).padStart(5)}${String(totals.lost).padStart(5)}${String(totals.drawn).padStart(6)}${String(totals.assists).padStart(8)}   ${ratio(totals.won, totals.lost)}`;
-		embed.addFields({
-			name: "Record",
-			value: ["```", header, ...rows, overall, "```"].join("\n"),
-			inline: false,
-		});
-	} else {
-		embed.addFields({ name: "Record", value: c.noRecordYet, inline: false });
-	}
+	// ③ The record and the month's luck.
+	embed.addFields(recordField(view), luckField(view));
 
 	// ④ Presence.
 	embed.addFields({
@@ -226,11 +244,13 @@ export function buildAccountEmbed(view: AccountView): EmbedBuilder {
 
 /**
  * The /account message when its card rendered: the member's name over the card,
- * which carries the profile itself. Title and color match buildAccountEmbed, so
- * only the body changes between the card and the text profile.
+ * which carries the profile itself, with the per game record and the month's luck
+ * as fields, since the card draws only the overall record (post-launch plan item 7).
+ * Title and color match buildAccountEmbed, so only the body changes between the
+ * card and the text profile.
  */
-export function buildAccountCardEmbed(view: Pick<AccountView, "displayName">, imageRef: string): EmbedBuilder {
-	return base().setTitle(view.displayName).setColor(COLORS.ACCOUNT).setImage(imageRef);
+export function buildAccountCardEmbed(view: Pick<AccountView, "displayName" | "games" | "luck">, imageRef: string): EmbedBuilder {
+	return base().setTitle(view.displayName).setColor(COLORS.ACCOUNT).addFields(recordField(view), luckField(view)).setImage(imageRef);
 }
 
 // ── the levels standings board ──────────────────────────────────────────────

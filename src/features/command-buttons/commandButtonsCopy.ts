@@ -26,6 +26,58 @@ export const commandButtonsCopy = {
 		staleButton: "This button is from an older layout. The slash command still works.",
 		outsideGuild: "These buttons only work inside a server.",
 	},
+	// The settings modals (post-launch plan item 9). Labels hold 45 characters and
+	// hints 100, Discord's ceilings; a hint the command already words (a voice or
+	// leveling option) is read from the command instead of repeated here.
+	panels: {
+		switchesLabel: "Switches",
+		switchesHint: "Checked is on. Clear a box to switch that setting off.",
+		configure: {
+			title: "Server switches",
+			autoHeal: "Auto heal channels",
+			autoHealHint: "Rebuild homebase channels that go missing",
+			tracking: "Leaderboard tracking",
+			trackingHint: "Record reactions and voice joins as participation",
+			weekLabel: "Leaderboard week starts on",
+			weekHint: "The day the leaderboard's \"this week\" window begins",
+		},
+		channels: {
+			title: "Channel visibility",
+			label: "Visible to members",
+			hint: "Clear a box to hide that channel from members. Dero still posts in it.",
+		},
+		deroConfig: {
+			title: "Dero settings",
+			voice: "Dero's voice",
+			listen: "Listen buttons",
+			monthlyPost: "Monthly arcade post",
+			roles: "Roles that may give Dero tasks",
+			rolesHint: "The server owner and the admin role always may, whatever this list holds",
+			channels: "Text channels Dero may post in",
+			voiceChannels: "Voice channels Dero may join",
+			cap: "Monthly speech budget, in dollars",
+		},
+		levelSystem: {
+			title: "Leveling settings",
+			leveling: "Leveling",
+			levelingHint: "Members earn XP. Off records nothing new and deletes nothing.",
+			stackRewards: "Keep every reward role",
+			stackRewardsHint: "Off keeps only the highest reward a member earned",
+			stackMultipliers: "Combine XP multipliers",
+			stackMultipliersHint: "Off pays only the highest multiplier that applies",
+			curve: "Level curve",
+			milestones: "Milestone levels",
+			announce: "Where level ups post",
+			reactionAwards: "Who a reaction pays",
+		},
+		saved: {
+			title: (command: string) => `/${command} settings`,
+			nothingChanged: "Every setting is as it was, so nothing was written.",
+			moreChanges: (count: number) => `${count} more changes were saved. Each one has a line in the admin log.`,
+			runFailed: (path: string) => `Saving \`${path}\` failed. Try it again from its subcommand, or check the bot's logs.`,
+			morePrompt: (command: string) => `More \`/${command}\` options:`,
+		},
+	},
 	problems: {
 		missing: (option: string) => `\`${option}\` is required. Open the form again and fill it in.`,
 		notWholeNumber: (option: string) => `\`${option}\` must be a whole number.`,

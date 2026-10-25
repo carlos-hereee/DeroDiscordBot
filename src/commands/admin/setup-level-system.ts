@@ -14,6 +14,8 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getLevelingConfig, invalidateLevelingConfig } from "@features/leveling/levelingConfig.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
 
 // ── /setup-level-system ────────────────────────────────────────────────────
 // What:  every per-guild knob of the leveling system. Rates, the curve, where
@@ -520,6 +522,7 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 		// ⚠️ Drop the cached read immediately. Without this the admin waits up to a
 		// TTL before their change takes effect, which reads as "did that save?".
 		invalidateLevelingConfig(guildId);
+		auditLevelingPatch(interaction, guildId, patch);
 
 		await interaction.reply({
 			embeds: [
@@ -537,6 +540,20 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 			embeds: [errorEmbed("Could not save those settings. Try again or check the bot's logs.")],
 			flags: MessageFlags.Ephemeral,
 		});
+	}
+}
+
+// One 🗒️admin-log line per setting the patch wrote (post-launch plan items 9 and 11),
+// named by its path under `leveling.`. A list is logged as changed rather than
+// spelled out, since a reward or multiplier list can run past one log line.
+function auditLevelingPatch(interaction: RepliableInteraction, guildId: string, patch: Record<string, unknown>): void {
+	const audited = setupCopy.adminLog;
+	for (const [path, value] of Object.entries(patch)) {
+		let detail: string = audited.listUpdated;
+		if (value === null) detail = audited.cleared;
+		else if (typeof value === "boolean") detail = value ? audited.on : audited.off;
+		else if (typeof value === "string" || typeof value === "number") detail = audited.set(String(value));
+		adminLog.emitFor(interaction, guildId, "config.change", { subject: audited.subjects.leveling(path.replace(/^leveling\./, "")), detail });
 	}
 }
 

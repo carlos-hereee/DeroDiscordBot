@@ -107,6 +107,22 @@ export async function luckBoardInGuild(query: GuildBoardQuery & { month: string 
 	return keepCurrentMembers(ranked, query.limit, query.resolveNames);
 }
 
+/** One member's luck for a month: their decided games and wins across the luck games, and the board's score (null below the minimum). */
+export interface MemberLuck extends LuckTally {
+	score: number | null;
+}
+
+/**
+ * One member's luck in one server for one UTC month, the same sum the luck board
+ * ranks, or null when they decided no luck game that month. Read by the /account
+ * profile (post-launch plan item 7), so the profile and the board cannot disagree.
+ */
+export async function memberLuckInGuild(guildId: string, userId: string, month: string): Promise<MemberLuck | null> {
+	const tally = sumLuckByPlayer(await luckStatStore.findForMember(guildId, userId, month)).get(userId);
+	if (!tally || tally.decided === 0) return null;
+	return { ...tally, score: luckScore(tally) };
+}
+
 // ── the network scope (2026-10 item 244 Phase 5b) ──
 
 /**

@@ -130,6 +130,16 @@ export const levelingCopy = {
 		nextMilestone: "Your next level is a milestone.",
 		noRecordYet: "No games played yet.",
 		noAchievementsYet: "No achievements yet. Keep going.",
+		record: "Record",
+		// The month's coin flip, dice and rps luck, as the luck board counts it.
+		luck: "Luck this month",
+		luckLine: ({ wins, decided, score }: { wins: number; decided: number; score: number | null }, minDecided: number): string => {
+			const tally = `**${wins}** won of **${decided}** decided`;
+			if (score === null) return `${tally}. A luck score shows from ${minDecided} decided games.`;
+			const margin = Math.abs(score).toLocaleString(undefined, { maximumFractionDigits: 1 });
+			return `${tally}, **${margin}** ${score >= 0 ? "above" : "below"} an even split.`;
+		},
+		noLuckYet: "No coin flip, dice or rps decided this month.",
 	},
 
 	// ── the two boards share a channel, so each one says what it measures ──

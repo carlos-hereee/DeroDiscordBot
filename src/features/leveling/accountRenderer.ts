@@ -12,9 +12,10 @@ import type { AccountView } from "./levelingEmbeds.js";
 // same AccountView buildAccountEmbed takes and answers the PNG, or null when the
 // text profile should post instead. /account calls it through withRenderFallback.
 //
-// The per game table and each achievement's "earned by" sentence stay on the
-// text profile only: a card at Discord's embed width cannot hold ten columns of
-// numbers legibly, so it shows the overall record and the tiers.
+// The per game table, the month's luck and each achievement's "earned by" sentence
+// are not drawn: a card at Discord's embed width cannot hold ten columns of
+// numbers legibly, so it shows the overall record and the tiers, and the card's
+// embed carries the table and the luck as fields (buildAccountCardEmbed).
 
 /** The avatar size the account card requests. The face draws at 150 pixels. */
 export const ACCOUNT_AVATAR_SIZE = 256;

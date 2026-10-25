@@ -5,17 +5,21 @@ import {
 	MessageFlags,
 	StringSelectMenuBuilder,
 	type ButtonInteraction,
+	type EmbedBuilder,
+	type InteractionEditReplyOptions,
 	type ModalSubmitInteraction,
+	type RepliableInteraction,
 	type RESTPostAPIChatInputApplicationCommandsJSONBody,
 	type StringSelectMenuInteraction,
 } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { COLORS } from "@base/copy/brand.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { registerButton, registerModal, registerSelectMenu } from "@handlers/interactionRegistry.js";
 import type { FormChoicesProvider, OptionChoice, SharedCommandHandler } from "@handlers/commandOptions.js";
-import { infoEmbed } from "@utils/embedBuilder.js";
+import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { showErrorNotice, showNotice } from "@utils/textModal.js";
 import * as channelsCommand from "@commands/admin/channels.js";
@@ -31,6 +35,9 @@ import { ADMIN_COMMAND_BUTTON_PREFIX } from "./adminGuideButtons.js";
 import { buildForm, findLeaf, listLeaves, readForm, type CommandLeaf, type FormField } from "./commandForm.js";
 import { FormOptionReader } from "./formOptionReader.js";
 import { commandButtonsCopy } from "./commandButtonsCopy.js";
+import { collectReplies, type CollectedReply } from "./replyCollector.js";
+import { buildSettingsModal, planSettingsChanges, readSettingsPanel, type LeafCall } from "./settingsPanel.js";
+import { SETTINGS_PANELS, type PanelDefinition } from "./settingsPanels.js";
 
 // ── the admin command launcher ───────────────────────────────────────────────
 // What:  every admin guide button's flow. A press opens the command the way its
@@ -50,6 +57,11 @@ import { commandButtonsCopy } from "./commandButtonsCopy.js";
 //        answered with a notice modal rather than a message left to dismiss
 //        (post-launch plan item 9), except after a modal submit, which cannot open
 //        a modal and gets the private reply.
+//        A command with a settings panel (settingsPanels.ts) opens it at ① instead
+//        of the pick: one modal of its switches and choices as they stand. Its
+//        submit runs the command's own leaf once per changed setting, through a
+//        reply collector, and answers once with every result and the pick of the
+//        command's other leaves.
 
 /** What the launcher needs of an admin command module: its builder, its shared run and its form picks. */
 export interface LaunchableCommand {
@@ -63,6 +75,7 @@ const PICK_LEAF_PREFIX = `${ADMIN_COMMAND_BUTTON_PREFIX}_leaf`;
 const PICK_FIELDS_PREFIX = `${ADMIN_COMMAND_BUTTON_PREFIX}_fields`;
 const REQUIRED_ONLY_PREFIX = `${ADMIN_COMMAND_BUTTON_PREFIX}_go`;
 const FORM_PREFIX = `${ADMIN_COMMAND_BUTTON_PREFIX}_form`;
+const PANEL_PREFIX = `${ADMIN_COMMAND_BUTTON_PREFIX}_panel`;
 // A leaf path carries a space ("role add"); a customId carries it as a slash.
 const PATH_SEPARATOR_IN_ID = "/";
 const MASK_SEPARATOR = ".";
@@ -137,7 +150,9 @@ async function resolveTarget(
 
 // ── ④ running the command ───────────────────────────────────────────────────
 
-async function runLeaf(interaction: LauncherInteraction, command: LaunchableCommand, reader: FormOptionReader): Promise<void> {
+// Takes any repliable interaction, not only the launcher's own, because a settings
+// panel runs it through a reply collector.
+async function runLeaf(interaction: RepliableInteraction, command: LaunchableCommand, reader: FormOptionReader): Promise<void> {
 	// The same early access gate main.ts runs after its admin gate, so a button can
 	// never open a command a slash command would still hold back.
 	const access = await checkEarlyAccess(command.data.name, interaction.guildId ?? "");
@@ -231,7 +246,17 @@ async function handleCommandButton(interaction: ButtonInteraction): Promise<void
 		await openLeaf(interaction, command, onlyLeaf);
 		return;
 	}
+	if (await openSettingsPanel(interaction, command)) return;
 	// ② the pick of what to do, private, labelled the way the slash command reads.
+	await interaction.reply({
+		content: commandButtonsCopy.launcher.pickLeafPrompt(command.data.name),
+		components: [leafPickRow(command, leaves)],
+		...PRIVATE,
+	});
+}
+
+/** ② The pick of a command's leaves, shared by the button's pick and a settings panel's saved reply. */
+function leafPickRow(command: LaunchableCommand, leaves: readonly CommandLeaf[]): ActionRowBuilder<StringSelectMenuBuilder> {
 	const select = new StringSelectMenuBuilder()
 		.setCustomId(`${PICK_LEAF_PREFIX}:${command.data.name}`)
 		.setPlaceholder(commandButtonsCopy.launcher.pickLeafPlaceholder)
@@ -242,11 +267,109 @@ async function handleCommandButton(interaction: ButtonInteraction): Promise<void
 				description: leaf.description.slice(0, LIMITS.MAX_SELECT_LABEL_LENGTH),
 			}))
 		);
-	await interaction.reply({
-		content: commandButtonsCopy.launcher.pickLeafPrompt(command.data.name),
-		components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
-		...PRIVATE,
-	});
+	return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+}
+
+// ── the settings panel ───────────────────────────────────────────────────────
+
+/**
+ * ① for a command with a settings panel: open it and answer true, or answer false
+ * so the press falls through to the pick. The pick also catches a command early
+ * access holds back (runLeaf answers that), a member the panel is not for (a non
+ * owner on /channels), an unset server, and a panel whose read failed.
+ */
+async function openSettingsPanel(interaction: ButtonInteraction, command: LaunchableCommand): Promise<boolean> {
+	const definition = SETTINGS_PANELS.get(command.data.name);
+	const guild = interaction.guild;
+	if (!definition || !guild) return false;
+	try {
+		const access = await checkEarlyAccess(command.data.name, guild.id);
+		if (!access.allowed && access.generalReleaseAt) return false;
+		const panel = await definition.load({ guild, userId: interaction.user.id });
+		if (!panel) return false;
+		await interaction.showModal(buildSettingsModal(`${PANEL_PREFIX}:${command.data.name}`, panel));
+		return true;
+	} catch (error) {
+		// A failed read or a modal Discord refused still leaves the press unanswered,
+		// so the pick answers it; a failed showModal has sent nothing.
+		console.error(`[admin-launcher] the /${command.data.name} settings panel did not open for guild ${guild.id}`, error);
+		return false;
+	}
+}
+
+// Each changed setting is one run of its leaf, in order and one at a time: two runs
+// of one handler read the row the run before them wrote (hiding two channels each
+// rewrites hiddenChannels), so running them together would lose one.
+async function runPanelCalls(interaction: ModalSubmitInteraction, command: LaunchableCommand, calls: readonly LeafCall[]): Promise<CollectedReply[]> {
+	const leaves = listLeaves(command.data.toJSON());
+	const collected: CollectedReply[] = [];
+	for (const leafCall of calls) {
+		const leaf = findLeaf(leaves, leafCall.path);
+		const run = collectReplies(interaction);
+		try {
+			if (!leaf) throw new Error(`no leaf "${leafCall.path}" on /${command.data.name}`);
+			await runLeaf(run.interaction, command, new FormOptionReader(leaf, leafCall.values));
+			collected.push(...run.replies);
+		} catch (error) {
+			console.error(`[admin-launcher] /${command.data.name} ${leafCall.path} from the settings panel failed`, error);
+			collected.push({ content: null, embeds: [errorEmbed(commandButtonsCopy.panels.saved.runFailed(`/${command.data.name} ${leafCall.path}`))], components: [] });
+		}
+	}
+	return collected;
+}
+
+// One answer for the whole submit: every run's own reply, then the pick of the
+// leaves the panel does not hold. Discord takes 10 embeds and 5 rows, so a submit
+// that changed more than that says how many more were saved (each has its admin
+// log line) and keeps the pick's row.
+function panelSavedReply(command: LaunchableCommand, definition: PanelDefinition, collected: readonly CollectedReply[]): InteractionEditReplyOptions {
+	const saved = commandButtonsCopy.panels.saved;
+	const title = saved.title(command.data.name);
+	const embeds: EmbedBuilder[] = [];
+	const answered = collected.flatMap((reply) => [...reply.embeds, ...(reply.content ? [infoEmbed(title, reply.content, COLORS.ADMIN)] : [])]);
+	if (answered.length === 0) embeds.push(infoEmbed(title, saved.nothingChanged, COLORS.ADMIN));
+	const kept = answered.length > LIMITS.MAX_REPLY_EMBEDS ? answered.slice(0, LIMITS.MAX_REPLY_EMBEDS - 1) : answered;
+	const overflow = answered.length - kept.length;
+	if (overflow > 0) embeds.push(infoEmbed(title, saved.moreChanges(overflow), COLORS.ADMIN));
+
+	const others = listLeaves(command.data.toJSON()).filter((leaf) => !definition.covered.includes(leaf.path));
+	const pickRows = others.length > 0 ? [leafPickRow(command, others)] : [];
+	const handlerRows = collected.flatMap((reply) => reply.components).slice(0, LIMITS.MAX_MESSAGE_ROWS - pickRows.length);
+	return {
+		content: pickRows.length > 0 ? saved.morePrompt(command.data.name) : "",
+		embeds: [...kept, ...embeds],
+		components: [...handlerRows, ...pickRows],
+	};
+}
+
+/** The submitted settings panel: run what changed, then answer once. */
+async function handlePanelSubmit(interaction: ModalSubmitInteraction): Promise<void> {
+	if (!(await admitAdmin(interaction))) return;
+	const [, commandName] = interaction.customId.split(":");
+	const command = commandName ? LAUNCHABLE_COMMANDS.get(commandName) : undefined;
+	const definition = commandName ? SETTINGS_PANELS.get(commandName) : undefined;
+	const guild = interaction.guild;
+	if (!command || !definition || !guild) {
+		await showErrorNotice(interaction, commandButtonsCopy.launcher.staleButton);
+		return;
+	}
+	// Several writes, some with Discord calls (a channel hidden, a call ended), can
+	// outrun the three second window, so the answer is deferred first.
+	await interaction.deferReply(PRIVATE);
+	// Read again rather than trusted from the modal: the comparison is with what is
+	// stored now, so only what this admin chose differently is written.
+	const panel = await definition.load({ guild, userId: interaction.user.id });
+	if (!panel) {
+		await interaction.editReply({ embeds: [errorEmbed(commandButtonsCopy.launcher.staleButton)] });
+		return;
+	}
+	const read = readSettingsPanel(interaction.fields, panel);
+	if (!read.ok) {
+		await interaction.editReply({ embeds: [errorEmbed(read.problem)] });
+		return;
+	}
+	const collected = await runPanelCalls(interaction, command, planSettingsChanges(panel, read.answers));
+	await interaction.editReply(panelSavedReply(command, definition, collected));
 }
 
 /** ② The pick of what to do. */
@@ -306,4 +429,5 @@ export function registerAdminCommandLauncher(): void {
 	registerSelectMenu(PICK_FIELDS_PREFIX, handleFieldPick);
 	registerButton(REQUIRED_ONLY_PREFIX, handleRequiredOnly);
 	registerModal(FORM_PREFIX, handleFormSubmit);
+	registerModal(PANEL_PREFIX, handlePanelSubmit);
 }

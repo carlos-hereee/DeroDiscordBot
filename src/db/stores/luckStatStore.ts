@@ -41,6 +41,11 @@ export const luckStatStore = {
 		return LuckStat.find({ guildId, month }).lean<ILuckStat[]>();
 	},
 
+	/** One player's rows in one guild for one UTC month, one per luck game. Served by the unique index's guildId and userId prefix. */
+	async findForMember(guildId: string, userId: string, month: string): Promise<ILuckStat[]> {
+		return LuckStat.find({ guildId, userId, month }).lean<ILuckStat[]>();
+	},
+
 	// Self destruct's server data delete (post-launch plan item 10): every row this guild owns.
 	async deleteGuild(guildId: string) {
 		return LuckStat.deleteMany({ guildId });

@@ -77,9 +77,17 @@ export const setupCopy = {
 			onboarding: "Discord Onboarding",
 			refreshStandings: "standings refreshed",
 			postHangman: "hangman round posted",
+			// /channels hide and show, and /setup-level-system (post-launch plan item 9).
+			channelVisibility: (channelName: string): string => `${channelName} channel`,
+			leveling: (setting: string): string => `leveling ${setting}`,
 		},
 		on: "on",
 		off: "off",
+		hidden: "hidden from members",
+		shown: "visible to members",
+		// A leveling list (rewards, multipliers, restrictions) changed; its entries are in the reply, not the log.
+		listUpdated: "list updated",
+		cleared: "cleared",
 		added: (mention: string): string => `added ${mention}`,
 		removed: (mention: string): string => `removed ${mention}`,
 		// Dero took a channel the server already had (post-launch plan item 2).

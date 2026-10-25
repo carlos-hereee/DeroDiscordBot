@@ -90,6 +90,11 @@ export const BOT_CONSTANTS = {
 		MAX_MODAL_TITLE_LENGTH: 45,
 		MAX_LABEL_LENGTH: 45,
 		MAX_SELECT_LABEL_LENGTH: 100,
+		// A modal's checkbox group holds 1 to 10 options and its radio group 2 to 10
+		// (the settings panels, post-launch plan item 9).
+		MAX_CHECKBOX_OPTIONS: 10,
+		MAX_REPLY_EMBEDS: 10,
+		MAX_RADIO_OPTIONS: 10,
 	},
 	// scheduler
 	SCHEDULER_CRON: "* * * * *", // every minute
