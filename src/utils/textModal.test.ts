@@ -1,0 +1,123 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { MessageFlags, type ModalBuilder, type ModalSubmitInteraction, type RepliableInteraction } from "discord.js";
+
+const mocks = vi.hoisted(() => ({ registerModal: vi.fn() }));
+vi.mock("@handlers/interactionRegistry.js", () => ({ registerModal: mocks.registerModal }));
+
+import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
+import { NOTICE_MODAL_PREFIX, acknowledgeTextModal, buildTextModal, registerNoticeModal, showErrorNotice, showNotice } from "./textModal.js";
+
+// ── textModal (post-launch plan items 9 and 16) ──────────────────────────────
+// The shared text modal: its shape within Discord's limits, the fallback when
+// Discord refuses it, the notice that knows when a modal cannot be shown (after a
+// modal submit, a defer or a reply), and the close that leaves no message behind.
+
+type ModalJson = { custom_id: string; title: string; components: Array<{ type: number; content?: string }> };
+const json = (modal: ModalBuilder): ModalJson => modal.toJSON() as unknown as ModalJson;
+
+// A press that can open a modal, or, with showModal left out, a modal submit.
+function interaction(options: { canShowModal?: boolean; deferred?: boolean; replied?: boolean; refuse?: boolean } = {}) {
+	const fake: Record<string, unknown> = {
+		id: "int-7",
+		deferred: options.deferred ?? false,
+		replied: options.replied ?? false,
+		reply: vi.fn(async () => undefined),
+		followUp: vi.fn(async () => undefined),
+	};
+	if (options.canShowModal ?? true) {
+		fake.showModal = options.refuse ? vi.fn(async () => Promise.reject(new Error("Invalid Form Body"))) : vi.fn(async () => undefined);
+	}
+	return fake as unknown as RepliableInteraction & Record<"reply" | "followUp" | "showModal", ReturnType<typeof vi.fn>>;
+}
+
+beforeEach(() => {
+	vi.clearAllMocks();
+	vi.spyOn(console, "warn").mockImplementation(() => undefined);
+});
+
+describe("buildTextModal", () => {
+	it("draws one text display per non empty section, at most five, each within 4000 characters", () => {
+		const modal = json(buildTextModal("x:1", { title: "t", sections: ["one", " ", "x".repeat(5000), "three", "four", "five", "six"] }));
+		expect(modal.custom_id).toBe("x:1");
+		expect(modal.components).toHaveLength(5);
+		// 10 is Discord's TextDisplay component type.
+		expect(modal.components.every((component) => component.type === 10)).toBe(true);
+		expect(modal.components[1]!.content).toHaveLength(4000);
+	});
+
+	it("cuts the title to Discord's 45 characters", () => {
+		expect(json(buildTextModal("x:1", { title: "t".repeat(60), sections: ["s"] })).title).toHaveLength(45);
+	});
+});
+
+describe("showNotice", () => {
+	it("opens a notice modal keyed by the interaction id, and replies nothing", async () => {
+		const press = interaction();
+		const fallback = vi.fn(() => ({ content: "private" }));
+		await showNotice(press, { title: "Heads up", sections: ["Nothing to do."] }, fallback);
+
+		const modal = json(press.showModal.mock.calls[0]![0] as ModalBuilder);
+		expect(modal.custom_id).toBe(`${NOTICE_MODAL_PREFIX}:int-7`);
+		expect(modal.components[0]!.content).toBe("Nothing to do.");
+		expect(fallback).not.toHaveBeenCalled();
+		expect(press.reply).not.toHaveBeenCalled();
+	});
+
+	it("answers with the fallback when Discord refuses the modal", async () => {
+		const press = interaction({ refuse: true });
+		await showNotice(press, { title: "t", sections: ["s"] }, () => ({ content: "private", flags: MessageFlags.Ephemeral }));
+		expect(press.reply).toHaveBeenCalledWith({ content: "private", flags: MessageFlags.Ephemeral });
+	});
+
+	it("replies privately to a modal submit, which cannot open a modal", async () => {
+		const submit = interaction({ canShowModal: false });
+		await showNotice(submit, { title: "t", sections: ["s"] }, () => ({ content: "private" }));
+		expect(submit.reply).toHaveBeenCalledWith({ content: "private" });
+	});
+
+	it("follows up on an interaction already deferred or answered, since a modal can only come first", async () => {
+		const deferred = interaction({ deferred: true });
+		await showNotice(deferred, { title: "t", sections: ["s"] }, () => ({ content: "private" }));
+		expect(deferred.showModal).not.toHaveBeenCalled();
+		expect(deferred.followUp).toHaveBeenCalledWith({ content: "private" });
+	});
+});
+
+describe("showErrorNotice", () => {
+	it("titles the notice with the pack's error title, and falls back to the private error embed", async () => {
+		const press = interaction();
+		await showErrorNotice(press, "Not allowed.");
+		const modal = json(press.showModal.mock.calls[0]![0] as ModalBuilder);
+		expect(modal.title).toBe(rokCommanderCopy.error.title);
+		expect(modal.components[0]!.content).toBe("Not allowed.");
+
+		const submit = interaction({ canShowModal: false });
+		await showErrorNotice(submit, "Not allowed.");
+		const reply = submit.reply.mock.calls[0]![0] as { embeds: Array<{ data: { description?: string } }>; flags: number };
+		expect(reply.embeds[0]!.data.description).toBe("Not allowed.");
+		expect(reply.flags).toBe(MessageFlags.Ephemeral);
+	});
+});
+
+describe("acknowledgeTextModal", () => {
+	it("acknowledges a modal opened from a message with deferUpdate, and survives a failed acknowledgement", async () => {
+		const deferUpdate = vi.fn(async () => Promise.reject(new Error("Unknown interaction")));
+		await expect(acknowledgeTextModal({ isFromMessage: () => true, deferUpdate } as unknown as ModalSubmitInteraction)).resolves.toBeUndefined();
+		expect(deferUpdate).toHaveBeenCalledOnce();
+	});
+
+	it("leaves no message behind for a modal opened from a slash command: a private defer, deleted at once", async () => {
+		const deferReply = vi.fn(async () => undefined);
+		const deleteReply = vi.fn(async () => undefined);
+		await acknowledgeTextModal({ isFromMessage: () => false, deferReply, deleteReply } as unknown as ModalSubmitInteraction);
+		expect(deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
+		expect(deleteReply).toHaveBeenCalledOnce();
+	});
+});
+
+describe("registerNoticeModal", () => {
+	it("routes every notice close on the bare prefix", () => {
+		registerNoticeModal();
+		expect(mocks.registerModal).toHaveBeenCalledWith(NOTICE_MODAL_PREFIX, acknowledgeTextModal);
+	});
+});

@@ -132,8 +132,10 @@ export const BOT_CONSTANTS = {
 	// How:   an EXACT match on the name after it is lowercased and stripped of its
 	//        leading emoji and symbols, never a substring, so "📋arcade-rules" and
 	//        "rules-lawyering" stay where they are (risk R2 in the plan). The lists
-	//        are the owner's, in the owner's order.
-	WELCOME_ADOPTION_PATTERNS: ["welcome", "welcomes", "join-log", "joins", "new-members", "arrivals"],
+	//        are the owner's, in the owner's order. "spawn-point" joined the welcome
+	//        list by the owner's decision (post-launch plan item 2), and Discord's
+	//        own system channel is looked at before any name (adoption.findWelcomeChannel).
+	WELCOME_ADOPTION_PATTERNS: ["spawn-point", "welcome", "welcomes", "join-log", "joins", "new-members", "arrivals"],
 	RULES_ADOPTION_PATTERNS: ["rules", "server-rules", "the-rules", "rulebook", "read-me", "read-this"],
 	// How many recent messages decide whether an adopted channel holds the owner's
 	// content. One fetch of this many: an empty channel, or one already carrying

@@ -4,9 +4,12 @@ import { ChannelType, Collection, TextChannel, VoiceChannel, type Client, type G
 vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: { findByGuildId: vi.fn(), create: vi.fn(), update: vi.fn(), deleteByGuildId: vi.fn() },
 }));
+vi.mock("./adminLog.js", () => ({ adminLog: { emit: vi.fn(), emitFor: vi.fn(), write: vi.fn() } }));
 
 import { GuildSetupManager } from "./GuildSetupManager.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { adminLog } from "./adminLog.js";
+import { setupCopy } from "./setupCopy.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { RULES_EDIT_CUSTOM_ID } from "./rulesContent.js";
 
@@ -17,7 +20,10 @@ import { RULES_EDIT_CUSTOM_ID } from "./rulesContent.js";
 //        the drift rename that must leave an adopted channel's name alone.
 // Why:   adoption is the one place setup reaches outside its own categories, so a
 //        mistake moves or writes into a channel the owner made. Each case pins
-//        either "no duplicate" or "no write over the owner's text".
+//        either "no duplicate" or "no write over the owner's text". Post-launch plan
+//        item 2 adds #spawn-point, Discord's system channel first (taken IN PLACE
+//        when it is the server's main chat), and the boot reconcile that moves a
+//        guild off Dero's own 👋welcome.
 
 const store = guildConfigStore as unknown as Record<"findByGuildId" | "create" | "update", ReturnType<typeof vi.fn>>;
 const channels = rokCommanderCopy.setup.channels;
@@ -128,6 +134,157 @@ describe("a fresh install", () => {
 		expect(ownWelcome.send).not.toHaveBeenCalled();
 		expect(payload.introMessageIds.welcomeChannelId).toBeNull();
 		expect(sentOf(ownRules).embeds[0]!.data.title).toBe(copy.rules.title);
+	});
+});
+
+// ── post-launch plan item 2: #spawn-point and the system channel ─────────────
+
+describe("a fresh install on a server with its own arrivals channel", () => {
+	function installGuild(own: TextChannel[], systemChannelId: string | null) {
+		const create = vi.fn(async (opts: { name: string; type: number }) => {
+			if (opts.type === ChannelType.GuildCategory) return { id: `cat-${opts.name}` };
+			if (opts.type === ChannelType.GuildVoice) {
+				const room = Object.create(VoiceChannel.prototype) as VoiceChannel;
+				return Object.assign(room, { id: `new-${opts.name}`, send: vi.fn(async () => ({ id: `card-${opts.name}` })) });
+			}
+			return textChannel(`new-${opts.name}`, opts.name);
+		});
+		const cache = new Map(own.map((channel) => [channel.id, channel]));
+		return {
+			guild: { id: "guild-1", ownerId: "owner-1", systemChannelId, roles: { everyone: { id: "everyone" } }, client: { user: { id: BOT } }, channels: { create, fetch: vi.fn(async () => null), cache } } as unknown as Guild,
+			create,
+		};
+	}
+
+	async function install(own: TextChannel[], systemChannelId: string | null = null) {
+		store.findByGuildId.mockResolvedValue(null);
+		const rig = installGuild(own, systemChannelId);
+		await GuildSetupManager.autoSetup(rig.guild, { guildId: "guild-1", ownerId: "owner-1" });
+		return { ...rig, payload: store.create.mock.calls[0]![0] as Record<string, unknown> };
+	}
+
+	it("adopts #spawn-point as the welcome log, moved into the notice board, and logs the decision", async () => {
+		const spawn = textChannel("spawn", "spawn-point", { parentId: "cat-lobby" });
+		const { create, payload } = await install([spawn]);
+
+		expect(create.mock.calls.map((call) => (call[0] as { name: string }).name)).not.toContain(channels.welcome);
+		expect(spawn.setParent).toHaveBeenCalledWith(NOTICE_BOARD, expect.objectContaining({ lockPermissions: false }));
+		expect(payload.welcomeChannelId).toBe("spawn");
+		expect(payload.adoptedChannelIds).toEqual(["spawn"]);
+		expect(adminLog.emit).toHaveBeenCalledWith(
+			expect.objectContaining({ kind: "config.change", actor: { source: "dero" }, payload: { subject: setupCopy.adminLog.subjects.welcomeLog, detail: setupCopy.adminLog.adopted("spawn") } })
+		);
+	});
+
+	it("takes the system channel before a name match", async () => {
+		const spawn = textChannel("spawn", "spawn-point");
+		const arrivals = textChannel("arrivals", "arrivals");
+		const { payload } = await install([arrivals, spawn], "spawn");
+		expect(payload.welcomeChannelId).toBe("spawn");
+		expect(arrivals.setParent).not.toHaveBeenCalled();
+	});
+
+	it("takes a system channel that is the server's main chat IN PLACE: never moved, its permissions never touched", async () => {
+		const general = textChannel("general", "general", { parentId: "cat-lobby", messages: [{ author: { id: "member-9" } }] });
+		const { create, payload } = await install([general], "general");
+
+		expect(create.mock.calls.map((call) => (call[0] as { name: string }).name)).not.toContain(channels.welcome);
+		expect(general.setParent).not.toHaveBeenCalled();
+		expect(general.permissionOverwrites.set).not.toHaveBeenCalled();
+		expect(payload.welcomeChannelId).toBe("general");
+		expect(payload.adoptedChannelIds).toEqual(["general"]);
+		// Members already chat there, so no intro lands over them.
+		expect(general.send).not.toHaveBeenCalled();
+	});
+});
+
+describe("the boot reconcile on a guild whose welcome log is Dero's own 👋welcome", () => {
+	const ALL_IDS = Object.fromEntries(
+		GuildSetupManager.CHANNEL_FIELDS.filter((field) => field !== "welcomeChannelId").map((field) => [field, `ch-${field}`])
+	);
+
+	async function boot(own: TextChannel[], options: { row?: Record<string, unknown>; systemChannelId?: string | null; features?: string[] } = {}) {
+		const derosWelcome = textChannel("ch-welcome", channels.welcome, { parentId: "cat-1" });
+		const row = {
+			guildId: "guild-1",
+			categoryId: "cat-1",
+			gamesCategoryId: "games-cat-1",
+			...ALL_IDS,
+			welcomeChannelId: "ch-welcome",
+			adoptedChannelIds: [],
+			introMessageIds: { welcomeChannelId: "intro-1", rulesChannelId: "intro-2" },
+			scheduleMessageId: null,
+			adminRoleId: null,
+			memberRoleId: "role-member",
+			setupComplete: true,
+			...options.row,
+		};
+		store.findByGuildId.mockResolvedValue(row);
+		const category = { id: "cat-1", type: ChannelType.GuildCategory, children: { cache: { find: () => undefined } } };
+		const present = new Map<string, unknown>(Object.values(ALL_IDS).map((id) => [id, { id }]));
+		present.set("cat-1", category);
+		present.set("games-cat-1", { id: "games-cat-1", type: ChannelType.GuildCategory });
+		present.set("ch-welcome", derosWelcome);
+		for (const channel of own) present.set(channel.id, channel);
+		const guild = {
+			id: "guild-1",
+			ownerId: "owner-1",
+			systemChannelId: options.systemChannelId ?? null,
+			features: options.features ?? [],
+			roles: { everyone: { id: "everyone" } },
+			client: { user: { id: BOT } },
+			channels: {
+				create: vi.fn(async (opts: { name: string }) => textChannel(`new-${opts.name}`, opts.name)),
+				fetch: vi.fn(async (id: string) => present.get(id) ?? null),
+				cache: new Map<string, unknown>([["ch-welcome", derosWelcome], ...own.map((channel): [string, unknown] => [channel.id, channel])]),
+			},
+		} as unknown as Guild;
+		const client = { user: { id: BOT }, channels: { fetch: vi.fn(async () => null) } } as unknown as Client;
+		await GuildSetupManager.ensureHomebase(client, guild);
+		return { derosWelcome };
+	}
+
+	const welcomeWrites = () => store.update.mock.calls.filter((call) => "welcomeChannelId" in (call[1] as object)).map((call) => call[1] as Record<string, unknown>);
+
+	it("moves the welcome log to #spawn-point and demotes 👋welcome to a plain channel, deleting and editing nothing in it", async () => {
+		const spawn = textChannel("spawn", "spawn-point", { parentId: null });
+		const { derosWelcome } = await boot([spawn]);
+
+		expect(spawn.setParent).toHaveBeenCalledWith("cat-1", expect.objectContaining({ lockPermissions: false }));
+		expect(welcomeWrites()).toEqual([
+			{ welcomeChannelId: "spawn", adoptedChannelIds: ["spawn"], introMessageIds: { welcomeChannelId: null, rulesChannelId: "intro-2" } },
+		]);
+		expect(derosWelcome.send).not.toHaveBeenCalled();
+		expect(derosWelcome.setParent).not.toHaveBeenCalled();
+		expect(derosWelcome.setName).not.toHaveBeenCalled();
+		expect(derosWelcome.permissionOverwrites.set).not.toHaveBeenCalled();
+	});
+
+	it("moves it to a system channel that is the server's main chat in place", async () => {
+		const general = textChannel("general", "general", { parentId: "cat-lobby" });
+		await boot([general], { systemChannelId: "general" });
+		expect(general.setParent).not.toHaveBeenCalled();
+		expect(welcomeWrites()[0]).toMatchObject({ welcomeChannelId: "general", adoptedChannelIds: ["general"] });
+	});
+
+	it("never gates a channel taken in place, even on a Community server whose member role gates the rest", async () => {
+		const general = textChannel("general", "general", { parentId: "cat-lobby" });
+		await boot([general], { row: { welcomeChannelId: "general", adoptedChannelIds: ["general"] }, features: ["COMMUNITY"] });
+		expect(general.permissionOverwrites.set).not.toHaveBeenCalled();
+		expect(welcomeWrites()).toEqual([]);
+	});
+
+	it("does nothing when the server has no channel of its own, when the slot is already adopted, or when auto heal is off", async () => {
+		await boot([]);
+		await boot([textChannel("own-welcome", "welcome"), textChannel("spawn", "spawn-point")], { row: { welcomeChannelId: "own-welcome", adoptedChannelIds: ["own-welcome"] } });
+		await boot([textChannel("spawn", "spawn-point")], { row: { autoHealEnabled: false } });
+		expect(welcomeWrites()).toEqual([]);
+	});
+
+	it("never adopts Dero's own renamed welcome channel as if the server had made it", async () => {
+		const renamed = textChannel("ch-welcome-2", "welcome");
+		await boot([renamed], { row: { channelNames: { welcomeChannelId: "welcome" } } });
+		expect(welcomeWrites()).toEqual([]);
 	});
 });
 

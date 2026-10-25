@@ -3,6 +3,7 @@ import { botLogStore } from "@db/stores/botLogStore.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { showErrorNotice } from "@utils/textModal.js";
 import { communityCopy } from "./communityCopy.js";
 import { buildOnboardingReviewRows } from "./communityControls.js";
 import { describeRefusal, type IWriteRefusal } from "./enableCommunity.js";
@@ -309,7 +310,11 @@ function audit(guildId: string, event: string, metadata: Record<string, unknown>
 
 // ── helpers ──────────────────────────────────────────────────────────
 
-/** A private error reply, the way every refusal in this flow and in promptEditModal is answered. */
+/**
+ * How every refusal in this flow and in promptEditModal is answered: a notice modal
+ * for a button press, the private error reply for a modal submit, which cannot open
+ * a modal (post-launch plan item 9).
+ */
 export async function replyOnboardingError(interaction: ButtonInteraction | ModalSubmitInteraction, message: string, config: ICopyConfig | null): Promise<void> {
-	await interaction.reply({ embeds: [errorEmbed(message, config)], flags: MessageFlags.Ephemeral }).catch(() => undefined);
+	await showErrorNotice(interaction, message, config);
 }

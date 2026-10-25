@@ -28,6 +28,7 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
 import { resolveRulesMarkdown, type IRulesConfig } from "@features/setup/rulesContent.js";
 import { communityCopy, type ICommunityChangeSummary, type ScreeningReplyOutcome } from "./communityCopy.js";
 import { COMMUNITY_PREFIX, buildConfigureOnboardingOfferRow, buildConfirmEnableRow } from "./communityControls.js";
@@ -241,8 +242,14 @@ export async function findMissingBotPermissions(guild: Guild): Promise<string[] 
 
 /** The Enable Community button, once the router has gated the clicker. */
 export async function handleEnableClick(interaction: ButtonInteraction, guild: Guild, config: IEnableCommunityConfig): Promise<void> {
+	// Reached from a guide drawn before Community went on (the row swaps on Discord's
+	// GuildUpdate, and a change made while Dero was offline waits for the next boot).
+	// A notice, not a message left to dismiss (post-launch plan item 9).
 	if (isCommunityEnabled(guild)) {
-		await interaction.reply({ ...alreadyOnReply(guild, config), flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: communityCopy.alreadyOn.title, sections: [alreadyOnDescription(guild)] }, () => ({
+			...alreadyOnReply(guild, config),
+			flags: MessageFlags.Ephemeral,
+		}));
 		return;
 	}
 	const refusal = await permissionRefusal(guild);
@@ -460,16 +467,19 @@ function summarizeChange(guild: Guild, picks: ICommunityPicks, config: IEnableCo
 
 // The status of a guild that is already Community, with the offer of the next step.
 function alreadyOnReply(guild: Guild, config: IEnableCommunityConfig): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
-	const description = communityCopy.alreadyOn.description({
+	return {
+		embeds: [infoEmbed(communityCopy.alreadyOn.title, alreadyOnDescription(guild), getPluginCopy(config).COLORS.ADMIN, config)],
+		components: [buildConfigureOnboardingOfferRow()],
+	};
+}
+
+function alreadyOnDescription(guild: Guild): string {
+	return communityCopy.alreadyOn.description({
 		rulesChannelId: guild.rulesChannelId,
 		publicUpdatesChannelId: guild.publicUpdatesChannelId,
 		verificationLevel: communityCopy.verificationLevelName(guild.verificationLevel),
 		contentFilter: communityCopy.contentFilterName(guild.explicitContentFilter),
 	});
-	return {
-		embeds: [infoEmbed(communityCopy.alreadyOn.title, description, getPluginCopy(config).COLORS.ADMIN, config)],
-		components: [buildConfigureOnboardingOfferRow()],
-	};
 }
 
 /** The one modal: both channel picks and the screening checkbox, which starts ticked. */
@@ -511,6 +521,8 @@ function existingTextChannelId(guild: Guild, channelId: string | null | undefine
 	return guild.channels.cache.get(channelId)?.type === ChannelType.GuildText ? channelId : null;
 }
 
+// A notice modal for a button press, the private error reply for a modal submit,
+// which cannot open a modal (post-launch plan item 9).
 async function replyError(interaction: ButtonInteraction | ModalSubmitInteraction, message: string, config: IEnableCommunityConfig | null): Promise<void> {
-	await interaction.reply({ embeds: [errorEmbed(message, config)], flags: MessageFlags.Ephemeral }).catch(() => undefined);
+	await showErrorNotice(interaction, message, config);
 }

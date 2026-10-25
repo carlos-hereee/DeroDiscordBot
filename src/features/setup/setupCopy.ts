@@ -72,6 +72,8 @@ export const setupCopy = {
 			leaderboardTracking: "leaderboard tracking",
 			weekStart: "leaderboard week",
 			community: "Discord Community",
+			welcomeLog: "welcome log",
+			rulesChannel: "rules channel",
 			onboarding: "Discord Onboarding",
 			refreshStandings: "standings refreshed",
 			postHangman: "hangman round posted",
@@ -80,6 +82,8 @@ export const setupCopy = {
 		off: "off",
 		added: (mention: string): string => `added ${mention}`,
 		removed: (mention: string): string => `removed ${mention}`,
+		// Dero took a channel the server already had (post-launch plan item 2).
+		adopted: (channelId: string): string => `now <#${channelId}>, the server's own channel`,
 		capSet: (usd: number): string => `$${usd} a month`,
 		set: (value: string): string => `set to ${value}`,
 		blocked: (serverId: string): string => `blocked ${serverId}`,

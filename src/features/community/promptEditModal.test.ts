@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ChannelType, Collection, GuildOnboardingPromptType, MessageFlags, PermissionFlagsBits, TextInputStyle, type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
+import { ChannelType, Collection, GuildOnboardingPromptType, PermissionFlagsBits, TextInputStyle, type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 
 // ── promptEditModal (2026-10 item 247 Phase 4) ──────────────────────────────
@@ -112,6 +112,18 @@ interface ISentMessage {
 }
 
 const sent = (fn: ReturnType<typeof vi.fn>, call = 0): ISentMessage => fn.mock.calls[call]![0] as ISentMessage;
+// What a refused press was told: the notice modal's text (post-launch plan item 9),
+// or the private reply's when no notice opened, as after a modal submit.
+type NoticeJson = { custom_id: string; components: Array<{ content?: string }> };
+const noticeModals = (interaction: { showModal?: ReturnType<typeof vi.fn> }): NoticeJson[] =>
+	(interaction.showModal?.mock.calls ?? [])
+		.map((call) => (call[0] as { toJSON(): unknown }).toJSON() as NoticeJson)
+		.filter((modal) => modal.custom_id.startsWith("notice:"));
+const refusalText = (interaction: { showModal?: ReturnType<typeof vi.fn>; reply: ReturnType<typeof vi.fn> }): string | undefined => {
+	const [notice] = noticeModals(interaction);
+	if (notice) return notice.components.map((component) => component.content).join("\n");
+	return sent(interaction.reply).embeds?.[0]?.data.description;
+};
 const fieldNames = (message: ISentMessage): string[] => message.embeds![0]!.data.fields!.map((field) => field.name);
 const customIdsOf = (message: ISentMessage): Array<string | undefined> =>
 	(message.components ?? []).flatMap((row) => row.toJSON().components.map((component) => component.custom_id));
@@ -309,7 +321,7 @@ describe("the edit round trip", () => {
 		await openReview(guild);
 		const { submitted } = await edit(guild, 0, { prompt_title: "Where from?", prompt_options: "Chat\nchat" });
 		expect(submitted.update).not.toHaveBeenCalled();
-		expect(sent(submitted.reply).embeds![0]!.data.description).toBe(errors.duplicateOption("chat"));
+		expect(refusalText(submitted)).toBe(errors.duplicateOption("chat"));
 
 		const payload = await confirmPayload(guild);
 		expect(payload.prompts[0]!.title).toBe(copy.draft.heardAbout.title);
@@ -325,7 +337,7 @@ describe("the edit round trip", () => {
 		await handleCommunityButton(interaction);
 
 		expect(submitted!.update).not.toHaveBeenCalled();
-		expect(sent(submitted!.reply).embeds![0]!.data.description).toBe(rokCommanderCopy.responses.noWizardPowers);
+		expect(refusalText(submitted!)).toBe(rokCommanderCopy.responses.noWizardPowers);
 	});
 
 	it("refuses a submit for a question the draft has moved past, such as after a fresh Configure Onboarding press", async () => {
@@ -338,24 +350,25 @@ describe("the edit round trip", () => {
 		await handleCommunityButton(interaction);
 
 		expect(submitted!.update).not.toHaveBeenCalled();
-		expect(sent(submitted!.reply).embeds![0]!.data.description).toBe(errors.promptGone);
+		expect(refusalText(submitted!)).toBe(errors.promptGone);
 	});
 
 	it("answers an Edit with no draft as expired, an Edit past the last question as gone, and a bare Edit id as retired", async () => {
 		const guild = makeGuild();
 		const { interaction: noDraft } = press(guild, OWNER, editPromptCustomId(0));
 		await handleCommunityButton(noDraft);
-		expect(sent(noDraft.reply).embeds![0]!.data.description).toBe(copy.expired);
+		expect(refusalText(noDraft)).toBe(copy.expired);
 
 		await openReview(guild);
 		const { interaction: past } = press(guild, OWNER, editPromptCustomId(9));
 		await handleCommunityButton(past);
-		expect(past.showModal).not.toHaveBeenCalled();
-		expect(sent(past.reply).embeds![0]!.data.description).toBe(errors.promptGone);
+		expect(past.showModal.mock.calls).toHaveLength(noticeModals(past).length);
+		expect(refusalText(past)).toBe(errors.promptGone);
 
 		const { interaction: bare } = press(guild, OWNER, COMMUNITY_CUSTOM_IDS.editPrompt);
 		await handleCommunityButton(bare);
-		expect(bare.reply).toHaveBeenCalledWith({ content: communityCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
+		expect(bare.reply).not.toHaveBeenCalled();
+		expect(refusalText(bare)).toBe(communityCopy.errors.controlRetired);
 	});
 
 	it("keeps a live question's own answers and attachments through an edit that only renames it", async () => {

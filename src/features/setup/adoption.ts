@@ -21,7 +21,9 @@ import type { IOverwriteEntry } from "./communityOverwrites.js";
 //        require an EXACT match with a pattern, never a substring, so
 //        "📋arcade-rules" or "rules-chat" are never taken (risk R2 in the plan);
 //        ② prefer a match already inside the notice board, then the lowest
-//        position; ③ moving keeps every overwrite Dero does not manage.
+//        position; ③ moving keeps every overwrite Dero does not manage. For the
+//        welcome slot, Discord's own system channel (where Discord already posts its
+//        join messages) is looked at before any name (post-launch plan item 2).
 
 // ── types ────────────────────────────────────────────────────────────
 
@@ -29,6 +31,16 @@ import type { IOverwriteEntry } from "./communityOverwrites.js";
 export interface IAdoptionExclusions {
 	ids?: ReadonlySet<string>;
 	names?: ReadonlySet<string>;
+}
+
+/**
+ * The server's own welcome channel, and whether Dero takes it IN PLACE: true for a
+ * system channel whose name is not a welcome name (a #general), which Dero posts its
+ * join log in without moving it or touching its permissions.
+ */
+export interface IWelcomeCandidate {
+	channel: TextChannel;
+	inPlace: boolean;
 }
 
 /** The slice of a fetched message the content gate reads. */
@@ -76,16 +88,32 @@ export function scanAndClaim(
 		(channel): channel is TextChannel =>
 			// A text channel only: the slot is typed TextChannel everywhere downstream,
 			// and an announcement or forum channel named "rules" cannot take Dero's posts.
-			channel instanceof TextChannel &&
-			!exclude.ids?.has(channel.id) &&
-			// A channel already carrying Dero's own name outside our category belongs to
-			// another Dero instance sharing this server (a dev bot beside prod), or is an
-			// orphan of our own; adopting it would move it out from under its owner.
-			!exclude.names?.has(channel.name) &&
-			matchesAdoptionPattern(channel.name, patterns)
+			channel instanceof TextChannel && isAdoptable(channel, exclude) && matchesAdoptionPattern(channel.name, patterns)
 	);
 	if (candidates.length === 0) return null;
 	return candidates.sort((a, b) => claimOrder(a, b, category.id))[0] ?? null;
+}
+
+/**
+ * The server's own welcome channel, or null. Discord's system channel comes first,
+ * because it is the one channel the server itself names as where members arrive;
+ * then the scan by name (scanAndClaim). A system channel carrying a welcome name is
+ * moved like any name match. One with another name (Discord's default is #general)
+ * is the server's main chat, so it is taken in place (IWelcomeCandidate.inPlace).
+ * Reads the cache only.
+ */
+export function findWelcomeChannel(
+	guild: Pick<Guild, "channels" | "systemChannelId">,
+	category: { id: string },
+	patterns: readonly string[],
+	exclude: IAdoptionExclusions = {}
+): IWelcomeCandidate | null {
+	const system = guild.systemChannelId ? guild.channels.cache?.get(guild.systemChannelId) : undefined;
+	if (system instanceof TextChannel && isAdoptable(system, exclude)) {
+		return { channel: system, inPlace: !matchesAdoptionPattern(system.name, patterns) };
+	}
+	const named = scanAndClaim(guild, category, patterns, exclude);
+	return named ? { channel: named, inPlace: false } : null;
 }
 
 // ── the claim ────────────────────────────────────────────────────────
@@ -152,6 +180,14 @@ export async function fetchAcceptsDeroContent(channel: Pick<TextChannel, "id" | 
 }
 
 // ── helpers ──────────────────────────────────────────────────────────
+
+// Not an id already stored under another slot, and not a channel carrying Dero's own
+// name: one outside our category belongs to another Dero instance sharing this
+// server (a dev bot beside prod), or is an orphan of our own, and adopting it would
+// move it out from under its owner.
+function isAdoptable(channel: TextChannel, exclude: IAdoptionExclusions): boolean {
+	return !exclude.ids?.has(channel.id) && !exclude.names?.has(channel.name);
+}
 
 // rawPosition, not position: discord.js derives position by walking the guild's
 // channel cache, while rawPosition is Discord's own sort value for the channel.

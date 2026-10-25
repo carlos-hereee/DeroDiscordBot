@@ -4,6 +4,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import {
 	acceptsDeroContent,
 	fetchAcceptsDeroContent,
+	findWelcomeChannel,
 	matchesAdoptionPattern,
 	moveIntoNoticeBoard,
 	normalizeAdoptionName,
@@ -168,5 +169,45 @@ describe("readAdoptedChannelIds", () => {
 
 	it("reads the ids, dropping anything that is not a string", () => {
 		expect(readAdoptedChannelIds({ adoptedChannelIds: ["a", 7, "b"] })).toEqual(["a", "b"]);
+	});
+});
+
+// ── findWelcomeChannel (post-launch plan item 2) ─────────────────────────────
+
+describe("findWelcomeChannel", () => {
+	const withSystem = (systemChannelId: string | null, ...channels: TextChannel[]) =>
+		({ ...guildWith(...channels), systemChannelId }) as unknown as Pick<Guild, "channels" | "systemChannelId">;
+	const byId = (...channels: TextChannel[]) => ({ channels: { cache: new Map(channels.map((channel) => [channel.id, channel])) } });
+
+	it("takes #spawn-point by name, to be moved", () => {
+		const spawn = textChannel("spawn", "🚪spawn-point");
+		expect(findWelcomeChannel(withSystem(null, spawn), NOTICE_BOARD, WELCOME)).toEqual({ channel: spawn, inPlace: false });
+	});
+
+	it("takes the system channel before any name match, moved when it carries a welcome name", () => {
+		const arrivals = textChannel("arrivals", "arrivals");
+		const spawn = textChannel("spawn", "spawn-point");
+		const guild = { ...byId(arrivals, spawn), systemChannelId: "spawn" } as unknown as Pick<Guild, "channels" | "systemChannelId">;
+		expect(findWelcomeChannel(guild, NOTICE_BOARD, WELCOME)).toEqual({ channel: spawn, inPlace: false });
+	});
+
+	it("takes a system channel with any other name IN PLACE, since it is the server's main chat", () => {
+		const general = textChannel("general", "general");
+		const guild = { ...byId(general), systemChannelId: "general" } as unknown as Pick<Guild, "channels" | "systemChannelId">;
+		expect(findWelcomeChannel(guild, NOTICE_BOARD, WELCOME)).toEqual({ channel: general, inPlace: true });
+	});
+
+	it("passes over a system channel already stored under another slot, or carrying Dero's own name, and scans by name instead", () => {
+		const derosWelcome = textChannel("dero", "👋welcome");
+		const spawn = textChannel("spawn", "spawn-point");
+		const guild = { ...byId(derosWelcome, spawn), systemChannelId: "dero" } as unknown as Pick<Guild, "channels" | "systemChannelId">;
+		expect(findWelcomeChannel(guild, NOTICE_BOARD, WELCOME, { names: new Set(["👋welcome"]) })).toEqual({ channel: spawn, inPlace: false });
+		expect(findWelcomeChannel(guild, NOTICE_BOARD, WELCOME, { ids: new Set(["dero", "spawn"]) })).toBeNull();
+	});
+
+	it("never takes a system channel that is not a text channel", () => {
+		const announcements = Object.assign(Object.create(VoiceChannel.prototype) as VoiceChannel, { id: "stage", name: "general" });
+		const guild = { channels: { cache: new Map([["stage", announcements]]) }, systemChannelId: "stage" } as unknown as Pick<Guild, "channels" | "systemChannelId">;
+		expect(findWelcomeChannel(guild, NOTICE_BOARD, WELCOME)).toBeNull();
 	});
 });

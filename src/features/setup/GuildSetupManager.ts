@@ -32,6 +32,7 @@ import { buildGameRequestRow } from "@features/game-rooms/gameRequestHandlers.js
 import { buildMemberControlButtons, buildAdminControlButtons, buildIcebreakerButton, buildFortuneButton, buildProfileButtons } from "@features/power-ups/PowerUps.js";
 import { buildAdminCommandRows } from "@features/command-buttons/adminGuideButtons.js";
 import { buildCommunityControlButtons } from "@features/community/communityButtons.js";
+import { isCommunityEnabled } from "@features/community/enableCommunity.js";
 import { buildVoiceRoomControlRow } from "@features/voice/voiceRoomControls.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { buildDeroGifAttachment } from "@base/copy/brand.js";
@@ -45,7 +46,9 @@ import {
 	type ManagedOverwriteKind,
 } from "./communityOverwrites.js";
 import { CommunityGatingAnnouncement } from "./CommunityGatingAnnouncement.js";
-import { fetchAcceptsDeroContent, moveIntoNoticeBoard, readAdoptedChannelIds, scanAndClaim } from "./adoption.js";
+import { fetchAcceptsDeroContent, findWelcomeChannel, moveIntoNoticeBoard, readAdoptedChannelIds, scanAndClaim, type IWelcomeCandidate } from "./adoption.js";
+import { adminLog } from "./adminLog.js";
+import { setupCopy } from "./setupCopy.js";
 import { buildRulesEditRow, carriesRulesEditButton, type IRulesConfig } from "./rulesContent.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
@@ -585,6 +588,9 @@ export class GuildSetupManager {
 		//    repairMissingChannels also posts the per channel notices so
 		//    this method stays focused on branching logic.
 		const repairedChannels = await GuildSetupManager.repairMissingChannels(client, guild, category as CategoryChannel);
+		// ④.5 a guild whose welcome log is still Dero's own 👋welcome moves it to the
+		//      server's own welcome channel when it has one (post-launch plan item 2).
+		await GuildSetupManager.reconcileWelcomeAdoption(guild, category as CategoryChannel);
 		if (repairedChannels.length > 0) {
 			await GuildSetupManager.reconcileCommunityGating(client, guild);
 			console.log(LOG_MESSAGES.setup.ensureHomebaseDone(guild.id, "repaired"));
@@ -622,6 +628,7 @@ export class GuildSetupManager {
 			if (!stored) return;
 			const ids = stored as unknown as Record<string, string | null | undefined>;
 			const gated = isMemberRoleGated(guild, stored.memberRoleId);
+			const adoptedIds = new Set(readAdoptedChannelIds(stored));
 
 			let moved = 0;
 			let failed = 0;
@@ -632,6 +639,10 @@ export class GuildSetupManager {
 				if (!dependsOnCommunityState(kind) || !channelId) continue;
 				const channel = await guild.channels.fetch(channelId).catch(() => null);
 				if (!(channel instanceof TextChannel || channel instanceof VoiceChannel)) continue;
+				// A channel adopted IN PLACE (a system channel that is the server's main
+				// chat, post-launch plan item 2) never sat under the notice board, and its
+				// permissions are the owner's: gating it would lock members out of it.
+				if (adoptedIds.has(channel.id) && channel.parentId !== stored.categoryId) continue;
 				try {
 					if (await reconcileChannelOverwrite(guild, channel, kind, stored)) moved += 1;
 					if (kind === "public") publicChannelsOnBranch += 1;
@@ -920,7 +931,11 @@ export class GuildSetupManager {
 		// card's ballot button and 🕹️games' play now rows), read exactly the way
 		// resolveIntroEmbed reads it: undefined is the rok-commander default, which is
 		// correct on a first build.
-		guildConfig?: ICopyConfig | null
+		guildConfig?: ICopyConfig | null,
+		// The live guild, read only for the admin guide's community row, which shows
+		// Enable Community or Configure Onboarding by Discord's Community state. Absent
+		// reads as Community off, which is every guild on its first build.
+		guild?: Pick<Guild, "features"> | null
 	): ActionRowBuilder<MessageActionRowComponentBuilder>[] | null {
 		switch (field) {
 			case "commandsChannelId":
@@ -936,13 +951,15 @@ export class GuildSetupManager {
 			case "adminCommandsChannelId":
 				// admin-controls guide: two rows of admin command buttons (each opens its
 				// command's own flow, gated at every step), the community row (Enable
-				// Community and Configure Onboarding, 2026-10 item 247 Phase 3), then the
+				// Community or Configure Onboarding, whichever the live state calls for,
+				// 2026-10 item 247 Phase 3 and post-launch plan item 8), then the
 				// control row, the owner only Self destruct and the admin controls. Four
 				// rows of Discord's five; the control row stays last, where the guide
 				// test reads it.
 				return [
 					...buildAdminCommandRows(),
-					buildCommunityControlButtons(),
+					// A partial guild (an unhydrated payload) carries no features, and reads as off.
+					buildCommunityControlButtons(Boolean(guild?.features && isCommunityEnabled(guild))),
 					new ActionRowBuilder<ButtonBuilder>().addComponents(buildSelfDestructButton(), ...buildAdminControlButtons()),
 				];
 			case "meetingVoiceChannelId":
@@ -1262,28 +1279,43 @@ export class GuildSetupManager {
 	};
 
 	/**
-	 * Adopt the server's own channel for one adoptable spec: scan, then move it into
-	 * the notice board onto the public shape. Null when the spec is not adoptable,
-	 * nothing matches, or the move failed, and the caller then builds Dero's own.
+	 * Adopt the server's own channel for one adoptable spec: find it, then move it
+	 * into the notice board onto the public shape, or, for a welcome channel taken in
+	 * place (findWelcomeChannel), leave it exactly where and as it is. Null when the
+	 * spec is not adoptable, nothing matches, or the move failed, and the caller then
+	 * builds Dero's own. `skipIds` are passed over too (the boot reconcile passes the
+	 * slot's current channel, which is Dero's own).
 	 */
 	private static async adoptExistingChannel(
 		guild: Guild,
 		category: CategoryChannel,
 		spec: (typeof GuildSetupManager.CHANNEL_SPECS)[number],
 		stored: Record<string, unknown> | null,
-		roles: { memberRoleId: string | null; adminRoleId: string | null }
+		roles: { memberRoleId: string | null; adminRoleId: string | null },
+		skipIds: readonly string[] = []
 	): Promise<TextChannel | null> {
 		const patterns = GuildSetupManager.ADOPTION_PATTERNS[spec.configField];
 		if (!patterns) return null;
-		const match = scanAndClaim(guild, category, patterns, {
+		const exclusions = {
 			// A channel already filling another slot on this row is never taken for this one.
-			ids: GuildSetupManager.idsStoredOutside(stored, spec.configField),
-			names: new Set([spec.displayName]),
-		});
-		if (!match) return null;
+			ids: new Set([...GuildSetupManager.idsStoredOutside(stored, spec.configField), ...skipIds]),
+			names: new Set([spec.displayName, GuildSetupManager.effectiveChannelName(stored, spec)]),
+		};
+		const candidate: IWelcomeCandidate | null =
+			spec.configField === "welcomeChannelId"
+				? findWelcomeChannel(guild, category, patterns, exclusions)
+				: GuildSetupManager.asMovedCandidate(scanAndClaim(guild, category, patterns, exclusions));
+		if (!candidate) return null;
+		const match = candidate.channel;
+		if (candidate.inPlace) {
+			console.log(`[adoption] guild ${guild.id} adopted its system channel ${match.id} as ${spec.configField} in place`);
+			GuildSetupManager.logAdoption(guild, spec.configField, match.id);
+			return match;
+		}
 		try {
 			const moved = await moveIntoNoticeBoard(match, category, communityOverwritesFor("public", guild, { ownerId: guild.ownerId }, roles));
 			console.log(`[adoption] guild ${guild.id} adopted channel ${match.id} as ${spec.configField}${moved ? ", moved into the notice board" : ""}`);
+			GuildSetupManager.logAdoption(guild, spec.configField, match.id);
 			return match;
 		} catch (error) {
 			// A channel Dero cannot move (a 50013 on a channel the owner locked down) is
@@ -1316,6 +1348,73 @@ export class GuildSetupManager {
 				message.author.id === selfId &&
 				(carriesRulesEditButton(message) || (introTitle !== null && message.embeds[0]?.title === introTitle))
 		);
+	}
+
+	private static asMovedCandidate(channel: TextChannel | null): IWelcomeCandidate | null {
+		return channel ? { channel, inPlace: false } : null;
+	}
+
+	// The name a slot's channel carries: the /channels rename override when one is set,
+	// else the spec's default. Excluded from adoption alongside the default, so Dero
+	// never adopts its own renamed channel as if the server had made it.
+	private static effectiveChannelName(stored: Record<string, unknown> | null, spec: (typeof GuildSetupManager.CHANNEL_SPECS)[number]): string {
+		const names = (stored as { channelNames?: Map<string, string> | Record<string, string> } | null)?.channelNames;
+		const override = names instanceof Map ? names.get(spec.configField) : names?.[spec.configField];
+		return override || spec.displayName;
+	}
+
+	// One admin log line per adoption (plan risk R4: the decision is logged so an admin
+	// who disagrees can see it and pick another channel with /channels). Dero is the
+	// actor: no member pressed anything. Fire and forget, like every admin log line.
+	private static logAdoption(guild: Guild, field: string, channelId: string): void {
+		const subject = field === "welcomeChannelId" ? setupCopy.adminLog.subjects.welcomeLog : setupCopy.adminLog.subjects.rulesChannel;
+		adminLog.emit({ guild: { id: guild.id, client: guild.client }, kind: "config.change", actor: { source: "dero" }, payload: { subject, detail: setupCopy.adminLog.adopted(channelId) } });
+	}
+
+	// ── welcome reconcile on boot (post-launch plan item 2) ────────────
+	// What:  move a guild whose welcome log is Dero's OWN 👋welcome onto the server's
+	//        own welcome channel (#spawn-point, a #welcome, or the system channel),
+	//        and demote Dero's to a plain channel: it leaves the slot, so the join log,
+	//        the intro sweep, the repair sweep and the drift rename stop touching it.
+	//        It is not deleted and nothing in it is edited (the owner's never edit,
+	//        never delete rule for intro channels); a self destruct still removes it
+	//        with the rest of the notice board, since Dero built it.
+	// Who:   ensureHomebase, on the repair and the happy path alike.
+	// When:  every boot. A guild whose slot already holds an adopted channel, or that
+	//        opted out (auto heal off, or the slot removed by hand), costs one read.
+	// How:   ① read the row; ② find the server's channel, passing over Dero's own;
+	//        ③ adopt it (moved, or in place); ④ persist the slot, the adopted list and
+	//        a null intro anchor in one write, so refreshIntroEmbeds, which runs after
+	//        this sweep, posts Dero's intro there only if the channel is empty.
+	//        Never throws: a failure is logged and the next boot retries.
+	static async reconcileWelcomeAdoption(guild: Guild, category: CategoryChannel): Promise<boolean> {
+		try {
+			const stored = (await guildConfigStore.findByGuildId(guild.id)) as
+				| (Record<string, unknown> & { welcomeChannelId?: string | null; autoHealEnabled?: boolean | null; userRemovedChannels?: string[] })
+				| null;
+			const currentId = stored?.welcomeChannelId;
+			if (!stored || !currentId || stored.autoHealEnabled === false) return false;
+			if ((stored.userRemovedChannels ?? []).includes("welcomeChannelId")) return false;
+			const adoptedIds = readAdoptedChannelIds(stored);
+			if (adoptedIds.includes(currentId)) return false;
+
+			const spec = GuildSetupManager.CHANNEL_SPECS.find((entry) => entry.configField === "welcomeChannelId")!;
+			const roles = { memberRoleId: typeof stored.memberRoleId === "string" ? stored.memberRoleId : null, adminRoleId: typeof stored.adminRoleId === "string" ? stored.adminRoleId : null };
+			const adopted = await GuildSetupManager.adoptExistingChannel(guild, category, spec, stored, roles, [currentId]);
+			if (!adopted) return false;
+
+			const priorIntroIds = (stored.introMessageIds as Record<string, string | null> | undefined) ?? {};
+			await guildConfigStore.update(guild.id, {
+				welcomeChannelId: adopted.id,
+				adoptedChannelIds: [...new Set([...adoptedIds, adopted.id])],
+				introMessageIds: { ...priorIntroIds, welcomeChannelId: null },
+			});
+			console.log(`[adoption] guild ${guild.id} moved its welcome log from Dero's channel ${currentId} to ${adopted.id}; ${currentId} is now a plain channel`);
+			return true;
+		} catch (error) {
+			console.warn(`[adoption] guild ${guild.id} welcome reconcile failed; the next boot retries`, error);
+			return false;
+		}
 	}
 
 	// Every channel id the row stores under a slot other than `field`.
@@ -1523,7 +1622,7 @@ export class GuildSetupManager {
 		adoptedExisting: boolean,
 		guildConfig: ICopyConfig | null
 	): Promise<{ id: string | null; posted: boolean }> {
-		const introComponents = GuildSetupManager.resolveIntroComponents(spec.configField, guildConfig);
+		const introComponents = GuildSetupManager.resolveIntroComponents(spec.configField, guildConfig, guild);
 		let introMessageId: string | null = null;
 		let posted = false;
 
@@ -2589,7 +2688,7 @@ export class GuildSetupManager {
 			// command center. Carries the owner-only Self destruct button row
 			// (gated in the handler). Pinning handled below alongside the
 			// schedule + next-decree pins.
-			adminCommandsChannel.send({ embeds: [ChannelContent.adminCommandGuide()], components: GuildSetupManager.resolveIntroComponents("adminCommandsChannelId") ?? [] }),
+			adminCommandsChannel.send({ embeds: [ChannelContent.adminCommandGuide()], components: GuildSetupManager.resolveIntroComponents("adminCommandsChannelId", null, guild) ?? [] }),
 			adminLogChannel.send({ embeds: [ChannelContent.adminLogIntro()] }),
 			postIntroUnlessOwnerContent(welcomeChannel, "welcomeChannelId"),
 			postIntroUnlessOwnerContent(rulesChannel, "rulesChannelId"),
@@ -2783,7 +2882,7 @@ export class GuildSetupManager {
 			// resolveIntroComponents returns null for the channels that
 			// have no component surface; we pass `[]` in that case so
 			// the send call is explicit about "no components."
-			const componentRows = GuildSetupManager.resolveIntroComponents(spec.configField, stored as unknown as ICopyConfig);
+			const componentRows = GuildSetupManager.resolveIntroComponents(spec.configField, stored as unknown as ICopyConfig, guild);
 			const storedMessageId = nextIntroIds[spec.configField];
 
 			// ── schedule channel exception: edit-in-place ──────────

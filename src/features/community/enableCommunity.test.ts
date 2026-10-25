@@ -10,6 +10,7 @@ import {
 	PermissionFlagsBits,
 	Routes,
 	type ButtonInteraction,
+	type ModalBuilder,
 	type ModalSubmitInteraction,
 } from "discord.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
@@ -22,7 +23,9 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 // Membership Screening write when its checkbox is ticked. Refusals: a 50013 gets a
 // plain line naming the permission, any other Discord refusal its own words.
 // ONLY THE REQUEST SHAPE of the screening write is tested here; the endpoint is
-// unstable in Discord's API and has never been called live from a test.
+// unstable in Discord's API and has never been called live from a test. A refusal
+// to a button press is a notice modal (post-launch plan item 9); one to a modal
+// submit is still a private reply, since a submit cannot open a modal.
 
 const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
@@ -157,6 +160,17 @@ interface ISentMessage {
 }
 
 const sent = (fn: ReturnType<typeof vi.fn>, call = 0): ISentMessage => fn.mock.calls[call]![0] as ISentMessage;
+
+type ModalJson = { custom_id: string; title: string; components: Array<{ content?: string }> };
+const modalsOf = (interaction: { showModal: ReturnType<typeof vi.fn> }): ModalJson[] =>
+	interaction.showModal.mock.calls.map((call) => (call[0] as ModalBuilder).toJSON() as unknown as ModalJson);
+// The notice modal a button press is answered with, or undefined when none opened.
+const noticeOf = (interaction: { showModal: ReturnType<typeof vi.fn> }): ModalJson | undefined =>
+	modalsOf(interaction).find((modal) => modal.custom_id.startsWith("notice:"));
+const noticeText = (interaction: { showModal: ReturnType<typeof vi.fn> }): string | undefined =>
+	noticeOf(interaction)
+		?.components.map((component) => component.content)
+		.join("\n");
 const customIdsOf = (message: ISentMessage): Array<string | undefined> =>
 	(message.components ?? []).flatMap((row) => row.toJSON().components.map((component) => component.custom_id));
 
@@ -189,19 +203,29 @@ afterEach(() => {
 });
 
 describe("pressing Enable Community", () => {
-	it("short circuits on a guild that is already Community: a status reply, the Configure Onboarding offer, no modal", async () => {
+	it("short circuits on a guild that is already Community: a status notice, no picks modal, no edit", async () => {
 		const guild = makeGuild({ features: ["COMMUNITY"], verificationLevel: GuildVerificationLevel.High });
 		guild.rulesChannelId = "rules-ch";
 		const interaction = press(guild, OWNER, COMMUNITY_CUSTOM_IDS.enable);
 		await handleCommunityButton(interaction);
 
-		expect(interaction.showModal).not.toHaveBeenCalled();
+		expect(interaction.showModal).toHaveBeenCalledOnce();
 		expect(guild.edit).not.toHaveBeenCalled();
+		expect(interaction.reply).not.toHaveBeenCalled();
+		expect(noticeOf(interaction)?.title).toBe(communityCopy.alreadyOn.title);
+		expect(noticeText(interaction)).toContain("<#rules-ch>");
+		expect(noticeText(interaction)).toContain("High");
+	});
+
+	it("falls back to the private status reply with the Configure Onboarding offer when Discord refuses the notice", async () => {
+		const guild = makeGuild({ features: ["COMMUNITY"] });
+		const interaction = press(guild, OWNER, COMMUNITY_CUSTOM_IDS.enable);
+		interaction.showModal.mockRejectedValueOnce(new Error("Invalid Form Body"));
+		await handleCommunityButton(interaction);
+
 		const reply = interaction.reply.mock.calls[0]![0] as ISentMessage & { flags: number };
 		expect(reply.flags).toBe(MessageFlags.Ephemeral);
 		expect(reply.embeds![0]!.data.title).toBe(communityCopy.alreadyOn.title);
-		expect(reply.embeds![0]!.data.description).toContain("<#rules-ch>");
-		expect(reply.embeds![0]!.data.description).toContain("High");
 		expect(customIdsOf(reply)).toEqual([COMMUNITY_CUSTOM_IDS.configure]);
 	});
 
@@ -210,9 +234,8 @@ describe("pressing Enable Community", () => {
 		const interaction = press(guild, OWNER, COMMUNITY_CUSTOM_IDS.enable);
 		await handleCommunityButton(interaction);
 
-		expect(interaction.showModal).not.toHaveBeenCalled();
-		const description = sent(interaction.reply).embeds![0]!.data.description!;
-		expect(description).toBe(communityCopy.errors.missingPermissions(["Manage Server", "Manage Roles"]));
+		expect(modalsOf(interaction).filter((modal) => !modal.custom_id.startsWith("notice:"))).toEqual([]);
+		expect(noticeText(interaction)).toBe(communityCopy.errors.missingPermissions(["Manage Server", "Manage Roles"]));
 	});
 
 	it("lets a Dero with Manage Server, Manage Roles and Manage Channels through without Administrator", async () => {
@@ -458,7 +481,7 @@ describe("Confirm", () => {
 		const interaction = await confirm(guild, OWNER);
 		expect(interaction.deferReply).not.toHaveBeenCalled();
 		expect(guild.edit).not.toHaveBeenCalled();
-		expect(sent(interaction.reply).embeds![0]!.data.description).toBe(communityCopy.errors.expired);
+		expect(noticeText(interaction)).toBe(communityCopy.errors.expired);
 	});
 
 	it("answers expired once the picks have waited past their window", async () => {
@@ -469,7 +492,7 @@ describe("Confirm", () => {
 		clock.mockReturnValue(start + 2 * 60_000 + 1);
 		const interaction = await confirm(guild, OWNER);
 		expect(guild.edit).not.toHaveBeenCalled();
-		expect(sent(interaction.reply).embeds![0]!.data.description).toBe(communityCopy.errors.expired);
+		expect(noticeText(interaction)).toBe(communityCopy.errors.expired);
 	});
 
 	it("does not edit twice when Confirm is pressed twice", async () => {
@@ -478,7 +501,7 @@ describe("Confirm", () => {
 		await confirm(guild, OWNER);
 		const second = await confirm(guild, OWNER);
 		expect(guild.edit).toHaveBeenCalledOnce();
-		expect(sent(second.reply).embeds![0]!.data.description).toBe(communityCopy.errors.expired);
+		expect(noticeText(second)).toBe(communityCopy.errors.expired);
 	});
 
 	it("re-checks the live guild: Community switched on since the review means a status reply and no edit", async () => {

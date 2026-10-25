@@ -109,6 +109,13 @@ interface ISentMessage {
 }
 const sent = (fn: ReturnType<typeof vi.fn>, call = 0): ISentMessage => fn.mock.calls[call]![0] as ISentMessage;
 const descriptionOf = (fn: ReturnType<typeof vi.fn>, call = 0): string | undefined => sent(fn, call).embeds?.[0]?.data.description;
+// A refused press is answered with a notice modal (post-launch plan item 9); its text.
+const noticeTextOf = (showModal: ReturnType<typeof vi.fn>): string | undefined =>
+	showModal.mock.calls
+		.map((call) => (call[0] as { toJSON(): { custom_id: string; components: Array<{ content?: string }> } }).toJSON())
+		.find((modal) => modal.custom_id.startsWith("notice:"))
+		?.components.map((component) => component.content)
+		.join("\n");
 const auditRows = (event: string): Array<Record<string, unknown>> =>
 	mocks.log.mock.calls.filter((call) => call[1] === event).map((call) => call[2] as Record<string, unknown>);
 
@@ -459,7 +466,7 @@ describe("R4: an Onboarding config Discord would refuse", () => {
 		const refused = communityPress(guild, COMMUNITY_CUSTOM_IDS.confirmOnboarding);
 		await handleCommunityButton(refused);
 		expect(guild.editOnboarding).not.toHaveBeenCalled();
-		expect(descriptionOf(refused.reply)).toBe(communityCopy.onboarding.preconditions.memberRoleAboveBot("Member"));
+		expect(noticeTextOf(refused.showModal)).toBe(communityCopy.onboarding.preconditions.memberRoleAboveBot("Member"));
 
 		guild.roles.cache.get(MEMBER_ROLE)!.position = 2;
 		await handleCommunityButton(communityPress(guild, COMMUNITY_CUSTOM_IDS.confirmOnboarding));

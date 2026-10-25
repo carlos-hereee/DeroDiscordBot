@@ -113,6 +113,18 @@ interface ISentMessage {
 }
 
 const sent = (fn: ReturnType<typeof vi.fn>, call = 0): ISentMessage => fn.mock.calls[call]![0] as ISentMessage;
+// What a refused press was told: the notice modal's text (post-launch plan item 9),
+// or the private reply's when no notice opened, as after a modal submit.
+type NoticeJson = { custom_id: string; components: Array<{ content?: string }> };
+const noticeModals = (interaction: { showModal?: ReturnType<typeof vi.fn> }): NoticeJson[] =>
+	(interaction.showModal?.mock.calls ?? [])
+		.map((call) => (call[0] as { toJSON(): unknown }).toJSON() as NoticeJson)
+		.filter((modal) => modal.custom_id.startsWith("notice:"));
+const refusalText = (interaction: { showModal?: ReturnType<typeof vi.fn>; reply: ReturnType<typeof vi.fn> }): string | undefined => {
+	const [notice] = noticeModals(interaction);
+	if (notice) return notice.components.map((component) => component.content).join("\n");
+	return sent(interaction.reply).embeds?.[0]?.data.description;
+};
 const customIdsOf = (message: ISentMessage): Array<string | undefined> =>
 	(message.components ?? []).flatMap((row) => row.toJSON().components.map((component) => component.custom_id));
 const auditRows = (event: string): Array<Record<string, unknown>> =>
@@ -146,7 +158,7 @@ describe("pressing Configure Onboarding", () => {
 		const guild = makeGuild();
 		const interaction = await openReview(guild, MEMBER);
 		expect(guild.fetchOnboarding).not.toHaveBeenCalled();
-		expect(sent(interaction.reply).embeds![0]!.data.description).toBe(rokCommanderCopy.responses.noWizardPowers);
+		expect(refusalText(interaction)).toBe(rokCommanderCopy.responses.noWizardPowers);
 	});
 
 	it("refuses a server with only 3 sendable channels with the exact count, audits it, and reads nothing", async () => {
@@ -155,10 +167,9 @@ describe("pressing Configure Onboarding", () => {
 
 		expect(guild.fetchOnboarding).not.toHaveBeenCalled();
 		expect(interaction.deferReply).not.toHaveBeenCalled();
-		const reply = sent(interaction.reply);
-		expect(reply.flags).toBe(MessageFlags.Ephemeral);
-		expect(reply.embeds![0]!.data.description).toBe(copy.preconditions.tooFewSendableChannels(3, 5));
-		expect(reply.embeds![0]!.data.description).toContain("You currently have 3; please add 2 more");
+		expect(interaction.reply).not.toHaveBeenCalled();
+		expect(refusalText(interaction)).toBe(copy.preconditions.tooFewSendableChannels(3, 5));
+		expect(refusalText(interaction)).toContain("You currently have 3; please add 2 more");
 		expect(auditRows(BOT_LOG_EVENTS.ONBOARDING_PRECONDITION_FAILED)).toEqual([
 			{ actorId: OWNER, step: "open", code: "too-few-sendable-channels", reason: copy.preconditions.tooFewSendableChannels(3, 5) },
 		]);
@@ -166,12 +177,12 @@ describe("pressing Configure Onboarding", () => {
 
 	it("refuses when the member role sits above Dero's role, naming the role to move", async () => {
 		const interaction = await openReview(makeGuild({ memberRolePosition: 9 }));
-		expect(sent(interaction.reply).embeds![0]!.data.description).toBe("My role must sit above the member role in Server Settings → Roles. Please move me above Member.");
+		expect(refusalText(interaction)).toBe("My role must sit above the member role in Server Settings → Roles. Please move me above Member.");
 	});
 
 	it("refuses on a server without Community", async () => {
 		const interaction = await openReview(makeGuild({ features: [] }));
-		expect(sent(interaction.reply).embeds![0]!.data.description).toBe(copy.preconditions.communityOff);
+		expect(refusalText(interaction)).toBe(copy.preconditions.communityOff);
 	});
 
 	it("shows the drafted review privately: 2 optional questions and the final one, one Edit each, then Confirm and Cancel", async () => {
@@ -237,7 +248,7 @@ describe("pressing Configure Onboarding", () => {
 
 		const confirm = await pressConfirm(guild);
 		expect(guild.editOnboarding).not.toHaveBeenCalled();
-		expect(sent(confirm.reply).embeds![0]!.data.description).toBe(copy.expired);
+		expect(refusalText(confirm)).toBe(copy.expired);
 	});
 });
 
@@ -315,7 +326,7 @@ describe("Confirm", () => {
 		await pressConfirm(guild);
 		const second = await pressConfirm(guild);
 		expect(guild.editOnboarding).toHaveBeenCalledOnce();
-		expect(sent(second.reply).embeds![0]!.data.description).toBe(copy.expired);
+		expect(refusalText(second)).toBe(copy.expired);
 	});
 
 	it("runs the preconditions again: Community switched off since the review refuses, keeps the draft, writes nothing", async () => {
@@ -325,7 +336,7 @@ describe("Confirm", () => {
 		const refused = await pressConfirm(guild);
 
 		expect(guild.editOnboarding).not.toHaveBeenCalled();
-		expect(sent(refused.reply).embeds![0]!.data.description).toBe(copy.preconditions.communityOff);
+		expect(refusalText(refused)).toBe(copy.preconditions.communityOff);
 		expect(auditRows(BOT_LOG_EVENTS.ONBOARDING_PRECONDITION_FAILED).at(-1)).toMatchObject({ step: "confirm", code: "community-off" });
 
 		guild.features = ["COMMUNITY"];
@@ -339,7 +350,7 @@ describe("Confirm", () => {
 		guild.roles.cache.get(MEMBER_ROLE)!.position = 8;
 		const refused = await pressConfirm(guild);
 		expect(guild.editOnboarding).not.toHaveBeenCalled();
-		expect(sent(refused.reply).embeds![0]!.data.description).toContain("Please move me above Member.");
+		expect(refusalText(refused)).toContain("Please move me above Member.");
 	});
 
 	it("on a 50013 shows a plain line under the review, audits it, DMs nobody, and keeps the draft for a retry", async () => {
@@ -391,7 +402,7 @@ describe("Confirm", () => {
 		vi.spyOn(Date, "now").mockReturnValue(start + ONBOARDING_DRAFT_TTL_MS + 1);
 		const late = await pressConfirm(guild);
 		expect(guild.editOnboarding).not.toHaveBeenCalled();
-		expect(sent(late.reply).embeds![0]!.data.description).toBe(copy.expired);
+		expect(refusalText(late)).toBe(copy.expired);
 	});
 
 	it("keeps two admins' drafts apart", async () => {
@@ -399,7 +410,7 @@ describe("Confirm", () => {
 		await openReview(guild, OWNER);
 		const adminConfirm = await pressConfirm(guild, ADMIN);
 		expect(guild.editOnboarding).not.toHaveBeenCalled();
-		expect(sent(adminConfirm.reply).embeds![0]!.data.description).toBe(copy.expired);
+		expect(refusalText(adminConfirm)).toBe(copy.expired);
 	});
 });
 
@@ -413,6 +424,6 @@ describe("Cancel", () => {
 		expect(cancel.update).toHaveBeenCalledWith({ content: "Cancelled.", embeds: [], components: [] });
 		const confirm = await pressConfirm(guild);
 		expect(guild.editOnboarding).not.toHaveBeenCalled();
-		expect(sent(confirm.reply).embeds![0]!.data.description).toBe(copy.expired);
+		expect(refusalText(confirm)).toBe(copy.expired);
 	});
 });

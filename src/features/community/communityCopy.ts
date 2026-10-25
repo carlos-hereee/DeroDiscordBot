@@ -364,14 +364,14 @@ export const communityCopy = {
 
 	// ── the one time pointer in #inner-sanctum ──
 	pointer: {
-		title: "New: Community buttons",
+		title: "New: Community button",
 		description: (adminCommandsChannelId: string): string =>
 			[
-				`The admin controls card in <#${adminCommandsChannelId}> has two new buttons.`,
+				`The admin controls card in <#${adminCommandsChannelId}> has a new Community button. It shows one of these two, whichever this server is ready for.`,
 				"",
 				"**Enable Community** switches on Discord Community for this server. You pick the rules channel and a channel for moderator notices, and Membership Screening (on by default) asks new members to accept your rules before they can talk.",
 				"",
-				"**Configure Onboarding** drafts Discord Onboarding questions for this server, ending with one that gives the member role. You review and edit them before anything changes.",
+				"**Configure Onboarding** takes its place once Community is on. It drafts Discord Onboarding questions for this server, ending with one that gives the member role. You review and edit them before anything changes.",
 			].join("\n"),
 	},
 };

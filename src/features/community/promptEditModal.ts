@@ -208,7 +208,7 @@ function textInput(customId: string, style: TextInputStyle, maxLength: number, v
 export async function handleEditPromptButton(interaction: ButtonInteraction, guild: Guild, config: IConfigureOnboardingConfig, indexArgument: string | null): Promise<void> {
 	// An Edit id with no index is from no layout this version draws.
 	if (!indexArgument || !INDEX_PATTERN.test(indexArgument)) {
-		await interaction.reply({ content: communityCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
+		await replyOnboardingError(interaction, communityCopy.errors.controlRetired, config);
 		return;
 	}
 	const draft = readPendingDraft(guild.id, interaction.user.id);

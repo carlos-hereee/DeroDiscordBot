@@ -9,7 +9,9 @@ import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInterac
 //        refused at EVERY step, because a select or a modal is reachable without the
 //        button that opened it; and an admin's submitted form runs the command's own
 //        handler (2026-10 item 245 Phase 4b). The stores are mocked; the commands,
-//        the form and the gate are real.
+//        the form and the gate are real. A refused or stale press is answered with
+//        a notice modal (post-launch plan item 9); a refused SUBMIT, which cannot
+//        open a modal, with the private reply.
 
 const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
@@ -98,11 +100,25 @@ function submit(customId: string, answers: Record<string, string | string[]>, us
 		getSelectedChannels: () => null,
 	};
 	const fake = fakeInteraction(userId, { customId, fields });
+	// A discord.js modal submit carries no showModal, which is how a notice knows it
+	// cannot answer with a modal.
+	Reflect.deleteProperty(fake.interaction, "showModal");
 	return { ...fake, run: () => mocks.modals.get("admincmd_form")!(fake.interaction as unknown as ModalSubmitInteraction) };
 }
 
 const refusal = rokCommanderCopy.responses.noWizardPowers;
 const firstReply = (reply: ReturnType<typeof vi.fn>): Replied => reply.mock.calls[0]?.[0] as Replied;
+type ShownModal = { custom_id: string; components: Array<{ content?: string }> };
+const shownModals = (showModal: ReturnType<typeof vi.fn>): ShownModal[] =>
+	showModal.mock.calls.map((call) => (call[0] as { toJSON(): unknown }).toJSON() as ShownModal);
+// The notice modal's text, the answer to a refused or stale press.
+const noticeText = (showModal: ReturnType<typeof vi.fn>): string | undefined =>
+	shownModals(showModal)
+		.find((modal) => modal.custom_id.startsWith("notice:"))
+		?.components.map((component) => component.content)
+		.join("\n");
+// The command's own forms, never a notice.
+const formModals = (showModal: ReturnType<typeof vi.fn>): ShownModal[] => shownModals(showModal).filter((modal) => !modal.custom_id.startsWith("notice:"));
 
 beforeAll(() => {
 	registerAdminCommandLauncher();
@@ -159,8 +175,9 @@ describe("every admin button refuses a member who is neither the owner nor an ad
 	it.each([...LAUNCHABLE_COMMANDS.keys()])("the /%s button refuses and opens nothing", async (commandName) => {
 		const button = press("admincmd", `admincmd:${commandName}`, MEMBER_ID);
 		await button.run();
-		expect(firstReply(button.reply).embeds?.[0]?.data.description).toBe(refusal);
-		expect(button.showModal).not.toHaveBeenCalled();
+		expect(noticeText(button.showModal)).toBe(refusal);
+		expect(formModals(button.showModal)).toEqual([]);
+		expect(button.reply).not.toHaveBeenCalled();
 	});
 
 	it("refuses the pick of what to do, the optional field pick and the required only button", async () => {
@@ -171,8 +188,8 @@ describe("every admin button refuses a member who is neither the owner nor an ad
 		];
 		for (const step of steps) {
 			await step.run();
-			expect(firstReply(step.reply).embeds?.[0]?.data.description).toBe(refusal);
-			expect(step.showModal).not.toHaveBeenCalled();
+			expect(noticeText(step.showModal)).toBe(refusal);
+			expect(formModals(step.showModal)).toEqual([]);
 		}
 	});
 
@@ -223,8 +240,8 @@ describe("an admin's flow", () => {
 	it("stops a required option with nothing to pick rather than opening an empty form", async () => {
 		const leaf = pick("admincmd_leaf", "admincmd_leaf:events", ["delete"], ADMIN_ID);
 		await leaf.run();
-		expect(firstReply(leaf.reply).embeds?.[0]?.data.description).toBe(commandButtonsCopy.problems.nothingToPick("event"));
-		expect(leaf.showModal).not.toHaveBeenCalled();
+		expect(noticeText(leaf.showModal)).toBe(commandButtonsCopy.problems.nothingToPick("event"));
+		expect(formModals(leaf.showModal)).toEqual([]);
 	});
 
 	it("runs the command's own handler from the submitted form", async () => {
@@ -252,6 +269,13 @@ describe("an admin's flow", () => {
 	it("answers a button from an older layout quietly", async () => {
 		const button = press("admincmd", "admincmd:pause-schedule", ADMIN_ID);
 		await button.run();
-		expect(firstReply(button.reply).content).toBe(commandButtonsCopy.launcher.staleButton);
+		expect(noticeText(button.showModal)).toBe(commandButtonsCopy.launcher.staleButton);
+		expect(button.reply).not.toHaveBeenCalled();
+	});
+
+	it("answers a stale form submit privately, since a submit cannot open a modal", async () => {
+		const form = submit("admincmd_form:configure:no-such-leaf:0", {}, ADMIN_ID);
+		await form.run();
+		expect(firstReply(form.reply).embeds?.[0]?.data.description).toBe(commandButtonsCopy.launcher.staleButton);
 	});
 });

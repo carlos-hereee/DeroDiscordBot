@@ -15,8 +15,9 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { registerButton, registerModal, registerSelectMenu } from "@handlers/interactionRegistry.js";
 import type { FormChoicesProvider, OptionChoice, SharedCommandHandler } from "@handlers/commandOptions.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
 import * as channelsCommand from "@commands/admin/channels.js";
 import * as configureCommand from "@commands/admin/configure.js";
 import * as deroConfigCommand from "@commands/admin/dero-config.js";
@@ -45,7 +46,10 @@ import { commandButtonsCopy } from "./commandButtonsCopy.js";
 //        to ③, otherwise a select lists its leaves; ③ a leaf with no options runs
 //        at once, one with more fields than a modal holds first asks which optional
 //        ones to fill, and the rest open the form; ④ the submit is read back into a
-//        FormOptionReader and the command runs.
+//        FormOptionReader and the command runs. A refusal or a stale control is
+//        answered with a notice modal rather than a message left to dismiss
+//        (post-launch plan item 9), except after a modal submit, which cannot open
+//        a modal and gets the private reply.
 
 /** What the launcher needs of an admin command module: its builder, its shared run and its form picks. */
 export interface LaunchableCommand {
@@ -108,12 +112,12 @@ function fieldsFromMask(leaf: CommandLeaf, mask: string): FormField[] | null {
  */
 async function admitAdmin(interaction: LauncherInteraction): Promise<boolean> {
 	if (!interaction.guild) {
-		await interaction.reply({ embeds: [errorEmbed(commandButtonsCopy.launcher.outsideGuild)], ...PRIVATE });
+		await showErrorNotice(interaction, commandButtonsCopy.launcher.outsideGuild);
 		return false;
 	}
 	const config = await guildConfigStore.findByGuildId(interaction.guild.id);
 	if (await gateOwnerOrAdmin(interaction, config)) return true;
-	await interaction.reply({ embeds: [errorEmbed(getPluginCopy(config).responses.noWizardPowers)], ...PRIVATE });
+	await showErrorNotice(interaction, getPluginCopy(config).responses.noWizardPowers);
 	return false;
 }
 
@@ -127,7 +131,7 @@ async function resolveTarget(
 	const command = commandName ? LAUNCHABLE_COMMANDS.get(commandName) : undefined;
 	const leaf = command ? findLeaf(listLeaves(command.data.toJSON()), idToPath(pathId ?? "")) : null;
 	if (command && leaf) return { command, leaf };
-	await interaction.reply({ content: commandButtonsCopy.launcher.staleButton, ...PRIVATE });
+	await showErrorNotice(interaction, commandButtonsCopy.launcher.staleButton);
 	return null;
 }
 
@@ -138,7 +142,8 @@ async function runLeaf(interaction: LauncherInteraction, command: LaunchableComm
 	// never open a command a slash command would still hold back.
 	const access = await checkEarlyAccess(command.data.name, interaction.guildId ?? "");
 	if (!access.allowed && access.generalReleaseAt) {
-		await interaction.reply({ embeds: [earlyAccessEmbed(access.generalReleaseAt)], ...PRIVATE });
+		const embed = earlyAccessEmbed(access.generalReleaseAt);
+		await showNotice(interaction, { title: embed.data.title ?? "", sections: [embed.data.description ?? ""] }, () => ({ embeds: [embed], ...PRIVATE }));
 		return;
 	}
 	await command.run(interaction, reader);
@@ -158,7 +163,7 @@ async function showForm(interaction: OpeningInteraction, command: LaunchableComm
 		const provided = field.autocomplete && !field.choices ? await command.formChoices?.(guild, leaf.path, field.name) : null;
 		if (provided && provided.length === 0) {
 			if (field.required) {
-				await interaction.reply({ embeds: [errorEmbed(commandButtonsCopy.problems.nothingToPick(field.name))], ...PRIVATE });
+				await showErrorNotice(interaction, commandButtonsCopy.problems.nothingToPick(field.name));
 				return;
 			}
 			continue;
@@ -217,7 +222,7 @@ async function handleCommandButton(interaction: ButtonInteraction): Promise<void
 	const [, commandName] = interaction.customId.split(":");
 	const command = commandName ? LAUNCHABLE_COMMANDS.get(commandName) : undefined;
 	if (!command) {
-		await interaction.reply({ content: commandButtonsCopy.launcher.staleButton, ...PRIVATE });
+		await showErrorNotice(interaction, commandButtonsCopy.launcher.staleButton);
 		return;
 	}
 	const leaves = listLeaves(command.data.toJSON());
@@ -280,12 +285,12 @@ async function handleFormSubmit(interaction: ModalSubmitInteraction): Promise<vo
 	if (!target) return;
 	const fields = fieldsFromMask(target.leaf, mask ?? "");
 	if (!fields) {
-		await interaction.reply({ content: commandButtonsCopy.launcher.staleButton, ...PRIVATE });
+		await showErrorNotice(interaction, commandButtonsCopy.launcher.staleButton);
 		return;
 	}
 	const read = readForm(interaction.fields, fields);
 	if (!read.ok) {
-		await interaction.reply({ embeds: [errorEmbed(read.problem)], ...PRIVATE });
+		await showErrorNotice(interaction, read.problem);
 		return;
 	}
 	await runLeaf(interaction, target.command, new FormOptionReader(target.leaf, read.values));

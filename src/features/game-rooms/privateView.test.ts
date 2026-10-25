@@ -60,7 +60,7 @@ describe("showPrivateView", () => {
 describe("closePrivateView", () => {
 	it("acknowledges the close without a reply, and survives a failed acknowledgement", async () => {
 		const deferUpdate = vi.fn().mockRejectedValue(new Error("Unknown interaction"));
-		await expect(closePrivateView({ deferUpdate } as unknown as ModalSubmitInteraction)).resolves.toBeUndefined();
+		await expect(closePrivateView({ deferUpdate, isFromMessage: () => true } as unknown as ModalSubmitInteraction)).resolves.toBeUndefined();
 		expect(deferUpdate).toHaveBeenCalledOnce();
 	});
 });

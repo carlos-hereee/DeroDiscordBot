@@ -21,7 +21,7 @@ import { COMMUNITY_CUSTOM_IDS } from "./communityControls.js";
 //        this one checks the guide it points at.
 // How:   ① skip a guild that is not set up, or whose homebase was self destructed;
 //        ② bail when the key is logged; ③ defer (no log) while the guide does not
-//        show Enable Community yet, so the post never points at a button nobody can
+//        show its community button yet, so the post never points at a button nobody can
 //        see; ④ post, then log. Never throws: a failure is logged and the next boot
 //        retries.
 
@@ -78,7 +78,9 @@ export async function postCommunityButtonsPointers(client: Client): Promise<void
 	}
 }
 
-// True when the tracked admin guide already carries Enable Community. The intro
+// True when the tracked admin guide already carries its community button: Enable
+// Community, or Configure Onboarding on a server where Community is on (the row shows
+// one of the two, post-launch plan item 8). The intro
 // refresh edits the guide earlier in the same boot, but an edit it could not make
 // (a 50013, a deleted guide awaiting its repost) would otherwise leave the pointer
 // naming a button that is not there.
@@ -93,7 +95,7 @@ async function guideShowsCommunityButtons(client: Client, stored: ICommunityPoin
 		// toJSON reads a live message row in the API shape, the way
 		// GuildSetupManager.componentsAreEquivalent reads it.
 		const json = row.toJSON() as { components?: Array<{ custom_id?: string }> };
-		return (json.components ?? []).some((component) => component.custom_id === COMMUNITY_CUSTOM_IDS.enable);
+		return (json.components ?? []).some((component) => component.custom_id === COMMUNITY_CUSTOM_IDS.enable || component.custom_id === COMMUNITY_CUSTOM_IDS.configure);
 	});
 }
 

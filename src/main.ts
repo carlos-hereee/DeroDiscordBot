@@ -49,7 +49,7 @@ import { sweepMonopolyAuctions } from "@features/game-rooms/roomMonopolyAuction.
 import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/polls/PollDispatcher.js";
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerRulesEditHandlers } from "@features/setup/rulesEdit.js";
-import { registerCommunityHandlers } from "@features/community/communityButtons.js";
+import { registerCommunityGuideSync, registerCommunityHandlers } from "@features/community/communityButtons.js";
 import { postCommunityButtonsPointers } from "@features/community/communityButtonsPointer.js";
 import { registerWelcomeLog } from "@features/setup/welcomeLog.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
@@ -66,6 +66,7 @@ import { runWeeklyDigest, startWeeklyDigest } from "@features/leveling/weeklyDig
 import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { isAdminCommand } from "@utils/permissions.js";
+import { registerNoticeModal } from "@utils/textModal.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
 import { registerMessageXp } from "@features/leveling/messageXp.js";
 import { registerReactionXp } from "@features/leveling/reactionXp.js";
@@ -363,6 +364,9 @@ process.on("uncaughtException", (err) => {
 	// Enable Community, its Confirm, and Configure Onboarding on the admin guide
 	// (2026-10 item 247 Phase 3), all on the one "community" prefix.
 	registerCommunityHandlers();
+	// The close of every notice modal an admin control answers with instead of a
+	// message left to dismiss (post-launch plan item 9), on the one "notice" prefix.
+	registerNoticeModal();
 	registerPowerUpHandlers();
 	// Every admin command's button on the admin guide, with the pick, the optional
 	// field pick and the form each one opens (2026-10 item 245 Phase 4b).
@@ -670,6 +674,9 @@ process.on("uncaughtException", (err) => {
 		// second GuildMemberAdd listener beside the greeter's on purpose: the greeter
 		// welcomes in introductions, this logs in 👋welcome, each throttled apart.
 		registerWelcomeLog(client);
+		// Swaps the admin guide's community row between Enable Community and Configure
+		// Onboarding when Discord's Community state changes (post-launch plan item 8).
+		registerCommunityGuideSync(client);
 
 		// ── legacy arcade field rename ─────────────────────────────
 		// What: renames gamesRulesChannelId / gamesChallengesChannelId (and their
