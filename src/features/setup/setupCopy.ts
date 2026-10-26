@@ -158,7 +158,7 @@ export const setupCopy = {
 		choiceModalBody: [
 			"**Self destruct deletes every Dero channel and its message history.**",
 			"",
-			"It does **not** delete stored data: announcements, schedules, settings, members' levels, game history and the rest stay. Delete my data also deletes the stored records and asks you to type CONFIRM first.",
+			"It does **not** delete stored data: announcements, schedules, settings, members' levels, game history and the rest stay. Delete my data also deletes the stored records, puts every setting back to its default, and asks you to type CONFIRM first.",
 			"",
 			"A welcome or rules channel your server had before Dero adopted it is kept.",
 		].join("\n"),
@@ -171,7 +171,7 @@ export const setupCopy = {
 			},
 			data: {
 				label: "Delete my data",
-				description: "Delete the channels and this server's stored data. Asks you to type CONFIRM.",
+				description: "Delete the channels, stored data and settings. Asks you to type CONFIRM.",
 				emoji: "🗑️",
 			},
 			arcade: {
@@ -184,9 +184,9 @@ export const setupCopy = {
 		channelsDone: "Done. Dero's channels are gone and every setting is kept. Run /setup to bring them back as they were.",
 		deleteDataTitle: "🗑️ Delete my data",
 		deleteDataBody: [
-			"This deletes both of Dero's categories and every channel in them, every match in progress, and this server's stored records (member levels and renown history, game rooms and their transcripts, game tallies and luck, game requests, poll votes, events and their attendance, and any unclaimed pairing code).",
+			"This deletes both of Dero's categories and every channel in them, every match in progress, and this server's stored records (member levels and renown history, game rooms and their transcripts, game tallies and luck, game requests, poll votes, events and their attendance, and any unclaimed pairing code), and puts every Dero setting back to how a new server starts (Dero's voice switch, lists and budget, the arcade's settings, auto heal, removed channels, channel renames, custom copy, your saved rules text, and the leaderboard and leveling settings).",
 			"",
-			"Kept on purpose: Dero's settings for this server (so /setup rebuilds with them), the audit trail, this month's voice spending, network bans and consent, and players' network ratings. A welcome or rules channel your server had before Dero adopted it is kept too. **This cannot be undone.**",
+			"Kept on purpose: the audit trail, this month's voice spending, network bans and consent, and players' network ratings. A welcome or rules channel your server had before Dero adopted it is kept too. **This cannot be undone.**",
 			"",
 			"Press **Type CONFIRM** to finish. Nothing is deleted until you do.",
 		].join("\n"),
@@ -197,11 +197,13 @@ export const setupCopy = {
 		confirmWord: "CONFIRM",
 		mismatch: "That was not CONFIRM, so nothing was deleted.",
 		deletingTitle: "💥 Deleting",
-		deletingBody: "Deleting Dero's channels and this server's data now.",
-		deleteDone: "Done. Dero's channels and this server's data are gone, and they stay gone until you run /setup.",
+		deletingBody: "Deleting Dero's channels and this server's data, and resetting its settings, now.",
+		deleteDone: "Done. Dero's channels and this server's data are gone and its settings are back to their defaults. The channels stay gone until you run /setup.",
 		deleteFailed: "The delete failed before anything was removed. Try again in a moment.",
 		deletePartial: (failed: readonly string[]): string =>
-			`Dero's channels are gone, but these records could not be deleted: ${failed.join(", ")}. Run self destruct again to retry them.`,
+			`Dero's channels are gone, but these could not be deleted or reset: ${failed.join(", ")}. Run self destruct again to retry them.`,
+		// How a failed settings reset is named in deletePartial, beside the records' labels.
+		settingsLabel: "settings",
 		// The audit line's detail for each step of the flow.
 		auditRefusedNotOwner: "refused, not the server owner",
 		auditChannelsConfirmed: "just delete channels, settings kept",

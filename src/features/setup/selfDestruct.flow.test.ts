@@ -3,14 +3,15 @@ import type { ButtonInteraction, ModalSubmitInteraction } from "discord.js";
 
 // ── selfDestruct, the three choices (2026-10 item 254) ──────────────────────
 // One modal asks what to do. Just delete channels tears the channels down and keeps
-// every setting; Arcade only runs the /arcade off path; Delete my data deletes only
-// after the owner types CONFIRM. Every step is owner only, and each choice is one
+// every setting; Arcade only runs the /arcade off path; Delete my data deletes the
+// records and resets the settings (owner decision 4a), only after the owner types CONFIRM. Every step is owner only, and each choice is one
 // line in the admin log.
 
 const mocks = vi.hoisted(() => ({
 	registerButton: vi.fn(),
 	registerModal: vi.fn(),
 	wipeServerData: vi.fn(),
+	resetConfigsToDefault: vi.fn(),
 	turnArcadeOff: vi.fn(),
 	emit: vi.fn(),
 	findByGuildId: vi.fn(),
@@ -18,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerModal: mocks.registerModal }));
-vi.mock("./serverReset.js", () => ({ wipeServerData: mocks.wipeServerData }));
+vi.mock("./serverReset.js", () => ({ wipeServerData: mocks.wipeServerData, resetConfigsToDefault: mocks.resetConfigsToDefault }));
 vi.mock("./arcadeSwitch.js", () => ({ turnArcadeOff: mocks.turnArcadeOff }));
 vi.mock("./adminLog.js", () => ({ adminLog: { emit: mocks.emit } }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update } }));
@@ -96,6 +97,7 @@ beforeEach(() => {
 	vi.spyOn(console, "warn").mockImplementation(() => undefined);
 	vi.spyOn(console, "error").mockImplementation(() => undefined);
 	mocks.wipeServerData.mockResolvedValue({ failed: [] });
+	mocks.resetConfigsToDefault.mockResolvedValue(undefined);
 	mocks.turnArcadeOff.mockResolvedValue("off");
 	mocks.findByGuildId.mockResolvedValue({ guildId: "g1", adoptedChannelIds: [] });
 	mocks.update.mockResolvedValue(undefined);
@@ -173,6 +175,7 @@ describe("Just delete channels", () => {
 		expect(mocks.update).toHaveBeenCalledOnce();
 		expect(mocks.update).toHaveBeenCalledWith("g1", { homebaseDestroyed: true, setupComplete: false, adoptedChannelIds: [] });
 		expect(mocks.wipeServerData).not.toHaveBeenCalled();
+		expect(mocks.resetConfigsToDefault).not.toHaveBeenCalled();
 		expect(mocks.turnArcadeOff).not.toHaveBeenCalled();
 		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.channelsDone }));
 		expect(auditDetails()).toEqual([c.auditChannelsConfirmed]);
@@ -187,6 +190,7 @@ describe("Arcade only", () => {
 		expect(mocks.turnArcadeOff).toHaveBeenCalledWith(GUILD);
 		expect(mocks.update).not.toHaveBeenCalled();
 		expect(mocks.wipeServerData).not.toHaveBeenCalled();
+		expect(mocks.resetConfigsToDefault).not.toHaveBeenCalled();
 		const done = (interaction.editReply.mock.calls.at(-1) as unknown as [Reply])[0];
 		expect(done.embeds![0]!.data.description).toBe(setupCopy.arcade.offBody);
 		expect(auditDetails()).toEqual([c.auditArcadeOff]);
@@ -228,6 +232,7 @@ describe("Delete my data", () => {
 
 		expect(mocks.update).not.toHaveBeenCalled();
 		expect(mocks.wipeServerData).not.toHaveBeenCalled();
+		expect(mocks.resetConfigsToDefault).not.toHaveBeenCalled();
 		expect(auditDetails()).toEqual([c.auditDeleteRefused]);
 	});
 
@@ -238,13 +243,15 @@ describe("Delete my data", () => {
 		expect(mocks.wipeServerData).not.toHaveBeenCalled();
 	});
 
-	it("on the exact word flags the homebase destroyed before wiping the stored records, with one log line", async () => {
+	it("on the exact word flags the homebase destroyed, wipes the stored records, then resets the settings, with one log line", async () => {
 		const interaction = confirmWord("CONFIRM");
 		await submitModal(interaction);
 
 		expect(mocks.update).toHaveBeenCalledWith("g1", expect.objectContaining({ homebaseDestroyed: true }));
 		expect(mocks.wipeServerData).toHaveBeenCalledWith("g1");
+		expect(mocks.resetConfigsToDefault).toHaveBeenCalledWith("g1");
 		expect(mocks.update.mock.invocationCallOrder[0]!).toBeLessThan(mocks.wipeServerData.mock.invocationCallOrder[0]!);
+		expect(mocks.wipeServerData.mock.invocationCallOrder[0]!).toBeLessThan(mocks.resetConfigsToDefault.mock.invocationCallOrder[0]!);
 		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.deleteDone }));
 		expect(auditDetails()).toEqual([c.auditDeleteConfirmed]);
 	});
@@ -255,5 +262,15 @@ describe("Delete my data", () => {
 		await submitModal(interaction);
 
 		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.deletePartial(["luck"]) }));
+	});
+
+	it("names the settings when their reset fails, after the records are already gone", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		mocks.resetConfigsToDefault.mockRejectedValue(new Error("mongo down"));
+		const interaction = confirmWord("CONFIRM");
+		await submitModal(interaction);
+
+		expect(mocks.wipeServerData).toHaveBeenCalledWith("g1");
+		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.deletePartial([c.settingsLabel]) }));
 	});
 });

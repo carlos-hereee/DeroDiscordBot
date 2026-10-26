@@ -60,7 +60,7 @@ vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { has: mocks.has, log
 vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerModal: mocks.registerModal }));
 // Self destruct now reaches its teardown through the CONFIRM modal and then wipes stored
 // records (post-launch plan item 10); R6 is about channels, so the wipe is a no-op here.
-vi.mock("@features/setup/serverReset.js", () => ({ wipeServerData: vi.fn(async () => ({ failed: [] })) }));
+vi.mock("@features/setup/serverReset.js", () => ({ resetConfigsToDefault: vi.fn(), wipeServerData: vi.fn(async () => ({ failed: [] })) }));
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";

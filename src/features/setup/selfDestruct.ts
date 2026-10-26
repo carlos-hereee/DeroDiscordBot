@@ -24,7 +24,7 @@ import { COLORS } from "@base/copy/brand.js";
 import { readAdoptedChannelIds } from "./adoption.js";
 import { adminLog } from "./adminLog.js";
 import { turnArcadeOff } from "./arcadeSwitch.js";
-import { wipeServerData } from "./serverReset.js";
+import { resetConfigsToDefault, wipeServerData } from "./serverReset.js";
 import { setupCopy } from "./setupCopy.js";
 
 // ── Self destruct ──────────────────────────────────────────────────────
@@ -39,7 +39,8 @@ import { setupCopy } from "./setupCopy.js";
 //        Delete my data        answers with one Type CONFIRM button, because a
 //                              modal cannot open from a modal submit.
 //   ② Type CONFIRM opens the CONFIRM modal. Only the exact word deletes:
-//      demolishHomebase, then wipeServerData.
+//      demolishHomebase, then wipeServerData, then resetConfigsToDefault, so the
+//      data AND the settings go (owner decision 4a).
 // GuildConfig.homebaseDestroyed keeps the homebase gone across restarts until
 // /setup runs again. The select IS the confirmation for the two choices that keep
 // the data, which is why it is required and has no default.
@@ -317,6 +318,14 @@ async function handleConfirmModal(interaction: ModalSubmitInteraction, guild: Gu
 	}
 
 	const { failed } = await wipeServerData(guild.id);
+	// The settings go last (owner decision 4a): a reset that fails still leaves the
+	// records gone, and is named beside any record that failed so a rerun finishes it.
+	try {
+		await resetConfigsToDefault(guild.id);
+	} catch (error) {
+		console.error(`[self-destruct] settings reset failed in guild ${guild.id}`, error);
+		failed.push(c.settingsLabel);
+	}
 	// Best-effort follow-up; the channel this ran in is already gone, and an
 	// ephemeral follow up may go with it.
 	await interaction

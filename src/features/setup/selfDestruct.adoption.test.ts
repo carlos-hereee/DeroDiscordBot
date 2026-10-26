@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update } }));
 vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerModal: mocks.registerModal }));
-vi.mock("./serverReset.js", () => ({ wipeServerData: mocks.wipeServerData }));
+vi.mock("./serverReset.js", () => ({ resetConfigsToDefault: vi.fn(), wipeServerData: mocks.wipeServerData }));
 vi.mock("./adminLog.js", () => ({ adminLog: { emit: vi.fn() } }));
 
 import { HOMEBASE_CHANNEL_FIELDS, registerSelfDestructHandlers } from "./selfDestruct.js";
