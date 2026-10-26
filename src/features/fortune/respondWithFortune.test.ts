@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
 	existsSync: vi.fn(),
 	renderFortuneScene: vi.fn(),
 	recordFortuneReading: vi.fn(),
+	claimFortuneSlot: vi.fn(),
+	releaseFortuneSlot: vi.fn(),
 }));
 
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: mocks.awardXp }));
@@ -30,14 +32,16 @@ vi.mock("./rollFortune.js", async (importOriginal) => {
 });
 vi.mock("node:fs", () => ({ existsSync: mocks.existsSync }));
 vi.mock("@features/ratings/luckStats.js", () => ({ recordFortuneReading: mocks.recordFortuneReading }));
+// The persisted 22 hour cooldown (2026-10 item 254) has its own tests; here every
+// reading claims its slot unless a case says otherwise.
+vi.mock("./fortuneCooldown.js", () => ({ claimFortuneSlot: mocks.claimFortuneSlot, releaseFortuneSlot: mocks.releaseFortuneSlot }));
 // The scene card (2026-10 item 243 Phase 4). Null by default, so the reading
 // falls back to the orb path every case above the scene describe was written for.
 vi.mock("./fortuneSceneRenderer.js", () => ({ FORTUNE_SCENE_AVATAR_SIZE: 128, renderFortuneScene: mocks.renderFortuneScene }));
 
 import { respondWithFortune } from "./respondWithFortune.js";
 
-// The cooldown is module scope and keyed per user, so every case uses a fresh
-// reader rather than reaching into it.
+// Every case uses a fresh reader, so no case leans on another's.
 let seq = 0;
 const nextUserId = (): string => `reader-${seq++}`;
 
@@ -56,7 +60,11 @@ function harness(overrides: { guildId?: string | null } = {}) {
 			guildId: overrides.guildId === undefined ? "g1" : overrides.guildId,
 			channelId: "c-general",
 			client: {},
+			id: `int-${userId}`,
+			deferred: false,
+			replied: false,
 			reply: vi.fn(async () => undefined),
+			showModal: vi.fn(async () => undefined),
 			deferReply: vi.fn(async () => undefined),
 			editReply: vi.fn(async () => undefined),
 		} as unknown as ChatInputCommandInteraction,
@@ -71,6 +79,11 @@ beforeEach(() => {
 	mocks.existsSync.mockReset().mockReturnValue(false);
 	mocks.renderFortuneScene.mockReset().mockResolvedValue(null);
 	mocks.recordFortuneReading.mockReset().mockResolvedValue(undefined);
+	mocks.claimFortuneSlot.mockReset().mockImplementation(async (guildId: string | null, userId: string) => ({
+		ok: true,
+		slot: { guildKey: guildId ?? "dm", userId, claimedAt: new Date(), previousAt: null },
+	}));
+	mocks.releaseFortuneSlot.mockReset().mockResolvedValue(undefined);
 });
 
 describe("the award fires from BOTH entry points", () => {
@@ -96,8 +109,7 @@ describe("the award fires from BOTH entry points", () => {
 
 describe("the award itself", () => {
 	it("is small, flat, and has no outcome to chase", async () => {
-		// Fortune is the most farmable award in the feature: a 10 second cooldown,
-		// no opponent, and no way to lose.
+		// Fortune has no opponent and no way to lose, so the award is small and flat.
 		const { interaction } = harness();
 		await respondWithFortune(interaction);
 
@@ -142,15 +154,35 @@ describe("the luck board", () => {
 });
 
 describe("the award cannot break a reading", () => {
-	it("still delivers the fortune when the reading is on cooldown, and awards nothing", async () => {
+	it("refuses a reading on cooldown before any roll, naming when the next is ready, and awards nothing", async () => {
+		const readyAt = new Date("2026-10-27T16:00:00Z");
+		mocks.claimFortuneSlot.mockResolvedValue({ ok: false, readyAt });
 		const { interaction } = harness();
 		await respondWithFortune(interaction);
-		mocks.awardXp.mockClear();
 
-		// Same user immediately again: the cooldown replies and returns before any
-		// roll, so no second award.
-		await respondWithFortune(interaction);
+		expect(mocks.rollFortune).not.toHaveBeenCalled();
+		expect(interaction.deferReply).not.toHaveBeenCalled();
 		expect(mocks.awardXp).not.toHaveBeenCalled();
+		const notice = (vi.mocked(interaction.showModal).mock.calls[0]![0] as unknown as { toJSON(): { components: Array<{ content?: string }> } }).toJSON();
+		expect(notice.components.map((component) => component.content).join("\n")).toContain(`<t:${readyAt.getTime() / 1000}:R>`);
+	});
+
+	it("gives the slot back when the reading fails to send, and never awards it", async () => {
+		const { interaction, userId } = harness();
+		vi.mocked(interaction.editReply).mockRejectedValue(new Error("Unknown interaction"));
+
+		await expect(respondWithFortune(interaction)).rejects.toThrow("Unknown interaction");
+		expect(mocks.releaseFortuneSlot).toHaveBeenCalledWith(expect.objectContaining({ guildKey: "g1", userId }));
+		expect(mocks.awardXp).not.toHaveBeenCalled();
+	});
+
+	it("keeps the slot once the reading reached the member, even if the pity write fails", async () => {
+		mocks.recordRoll.mockRejectedValue(new Error("mongo down"));
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const { interaction } = harness();
+
+		await respondWithFortune(interaction);
+		expect(mocks.releaseFortuneSlot).not.toHaveBeenCalled();
 	});
 
 	it("fires after the reply, so the member sees their reading either way", async () => {

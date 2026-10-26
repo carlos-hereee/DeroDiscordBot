@@ -1594,7 +1594,7 @@ describe("resolveIntroComponents: every host button lives in 🕹️games", () =
 			return components.map((component) => component.custom_id);
 		});
 
-	it("puts the host row, the solo luck row and the hangman category start on the games intro", () => {
+	it("puts the host row, the solo luck row, the hangman category start and the daily row on the games intro", () => {
 		const rows = internals.resolveIntroComponents("arcadeGamesChannelId") ?? [];
 		expect(customIdsOf(rows)).toEqual([
 			"arcade_host:hangman",
@@ -1606,7 +1606,17 @@ describe("resolveIntroComponents: every host button lives in 🕹️games", () =
 			"solo_luck:rps:paper",
 			"solo_luck:rps:scissors",
 			"arcade_host:hcategory",
+			// The daily row (2026-10 item 254): Fortune keeps its old customId, so a Fortune
+			// button left on an old message still reads, and Claim daily rewards beside it.
+			"powerup:member:fortune",
+			"powerup:member:claim",
 		]);
+	});
+
+	it("labels the daily row from the pack", () => {
+		const rows = internals.resolveIntroComponents("arcadeGamesChannelId") ?? [];
+		const daily = (rows.at(-1)!.toJSON() as unknown as { components: Array<{ label?: string }> }).components.map((component) => component.label);
+		expect(daily).toEqual([rokCommanderCopy.channelContent.arcadeGames.dailyLabels.fortune, rokCommanderCopy.channelContent.arcadeGames.dailyLabels.claim]);
 	});
 
 	it("puts every Challenge Board start button on the games channel's second message, in order", () => {

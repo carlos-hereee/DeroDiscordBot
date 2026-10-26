@@ -6,7 +6,9 @@ import { levelFromTotalXp } from "@features/leveling/levelCurve.js";
 import { periodKeysFor } from "@features/leveling/levelPeriod.js";
 import { getLevelingConfig } from "@features/leveling/levelingConfig.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
-import { buildLevelsBoardEmbed, type LevelsBoardEntry } from "@features/leveling/levelingEmbeds.js";
+import { buildLevelsBoardCardEmbed, buildLevelsBoardEmbed, type LevelsBoardEntry } from "@features/leveling/levelingEmbeds.js";
+import { LEVELS_BOARD_AVATAR_SIZE, renderLevelsBoardCard } from "@features/leveling/levelsBoardRenderer.js";
+import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { deferProfileReply } from "@features/leveling/accountProfile.js";
 
 // ── /account view:levels ───────────────────────────────────────────────────
@@ -26,7 +28,9 @@ import { deferProfileReply } from "@features/leveling/accountProfile.js";
 //        XpPeriod for the top ten, then resolve those ten to display names in
 //        ONE follow-up query, because XpPeriod deliberately stores no username:
 //        the period rows are disposable aggregates and denormalizing a name
-//        into them would mean two places to fix a nickname change.
+//        into them would mean two places to fix a nickname change. The answer
+//        is the pinned board's own card (levelsBoardRenderer, 2026-10 item 254),
+//        with the text board as the fallback when the canvas cannot draw.
 
 /** The stretch of time the standings rank, the /account window option's values. */
 export type LevelsWindow = "week" | "month" | "alltime";
@@ -69,8 +73,26 @@ export async function showLevelsStandings(interaction: RepliableInteraction, { w
 	}
 
 	const { entries, label } = await resolveWindow(guildId, window, context);
+	const withFaces = entries.map((entry) => ({ ...entry, avatar: cachedAvatar(interaction, entry.userId) }));
 
-	await interaction.editReply({ embeds: [buildLevelsBoardEmbed(label, entries)] });
+	// The card when it renders, the text board when it does not. Either way one reply.
+	const board = await withRenderFallback(
+		() => renderLevelsBoardCard(label, withFaces),
+		() => buildLevelsBoardEmbed(label, entries)
+	);
+	if (isRenderPayload(board)) {
+		await interaction.editReply({ embeds: [buildLevelsBoardCardEmbed(label, board.ref)], files: [board.attachment] });
+		return;
+	}
+	await interaction.editReply({ embeds: [board] });
+}
+
+// The faces of members already in the guild's cache. Unlike the pinned board's
+// sweep, a view answering a press does not fetch missing members: a member it
+// cannot see draws the placeholder rather than slowing the reply.
+function cachedAvatar(interaction: RepliableInteraction, userId: string): LevelsBoardEntry["avatar"] {
+	const member = interaction.guild?.members.cache.get(userId);
+	return member ? avatarRequestFor(member.user, LEVELS_BOARD_AVATAR_SIZE) : null;
 }
 
 async function resolveWindow(

@@ -133,6 +133,14 @@ export const BOT_CONSTANTS = {
 	// hammering Discord with dozens of edits. Read by scheduleLeaderboardRefresh.
 	LEADERBOARD_REFRESH_DEBOUNCE_MS: 60_000, // at most one activity-driven refresh per guild per 60s
 
+	// The fortune's cooldown, per member per server, shared by the 🕹️games Fortune
+	// button and /mini-game fortune, persisted so a deploy cannot reset it (2026-10
+	// item 254, the owner's call). A daily reading with two hours of slack: a member
+	// who reads at about the same time each day is never refused by a few minutes,
+	// while two readings in one evening still are. Read by features/fortune/
+	// fortuneCooldown.ts and the FortuneCooldown model's TTL.
+	FORTUNE_COOLDOWN_HOURS: 22,
+
 	// ── welcome and rules channel adoption (2026-10 item 247 Phase 2) ──
 	// What:  the base names that mark a server's OWN welcome or rules channel, so
 	//        setup moves that channel into 🪧 NOTICE BOARD instead of building a
@@ -754,9 +762,8 @@ export const BOT_CONSTANTS = {
 		// which is not a decision, it is a formality.
 		BLACKJACK_DOUBLE_WIN_MULTIPLIER: 2,
 
-		// Fortune is the most farmable award in the feature: it has a 10 second
-		// cooldown and no opponent, so its payout is small and flat and it has no
-		// win bonus to chase.
+		// Fortune has no opponent and no way to lose, so its payout is small and flat
+		// and it has no win bonus to chase, even at one reading a day.
 		FORTUNE_XP: 10,
 	},
 

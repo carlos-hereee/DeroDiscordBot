@@ -1,26 +1,29 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ButtonInteraction, ModalSubmitInteraction } from "discord.js";
 
-// ── selfDestruct, the two tiers (post-launch plan item 10) ──────────────────
-// Tier one resets every setting and keeps everything else; tier two deletes only
-// after the owner types CONFIRM. Every step is owner only and lands in the admin log.
+// ── selfDestruct, the three choices (2026-10 item 254) ──────────────────────
+// One modal asks what to do. Just delete channels tears the channels down and keeps
+// every setting; Arcade only runs the /arcade off path; Delete my data deletes only
+// after the owner types CONFIRM. Every step is owner only, and each choice is one
+// line in the admin log.
 
 const mocks = vi.hoisted(() => ({
 	registerButton: vi.fn(),
 	registerModal: vi.fn(),
-	resetConfigsToDefault: vi.fn(),
 	wipeServerData: vi.fn(),
+	turnArcadeOff: vi.fn(),
 	emit: vi.fn(),
 	findByGuildId: vi.fn(),
 	update: vi.fn(),
 }));
 
 vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerModal: mocks.registerModal }));
-vi.mock("./serverReset.js", () => ({ resetConfigsToDefault: mocks.resetConfigsToDefault, wipeServerData: mocks.wipeServerData }));
+vi.mock("./serverReset.js", () => ({ wipeServerData: mocks.wipeServerData }));
+vi.mock("./arcadeSwitch.js", () => ({ turnArcadeOff: mocks.turnArcadeOff }));
 vi.mock("./adminLog.js", () => ({ adminLog: { emit: mocks.emit } }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update } }));
 
-import { buildSelfDestructButton, registerSelfDestructHandlers } from "./selfDestruct.js";
+import { buildChoiceModal, buildSelfDestructButton, registerSelfDestructHandlers, SELF_DESTRUCT_CHOICES, type SelfDestructChoice } from "./selfDestruct.js";
 import { setupCopy } from "./setupCopy.js";
 
 const c = setupCopy.selfDestruct;
@@ -31,10 +34,13 @@ type Reply = { embeds?: Array<{ data: { title?: string; description?: string } }
 
 function press(customId: string, userId = OWNER) {
 	return {
+		id: "press-1",
 		customId,
 		user: { id: userId },
 		guild: GUILD,
 		client: {},
+		deferred: false,
+		replied: false,
 		reply: vi.fn(async () => undefined),
 		update: vi.fn(async () => undefined),
 		editReply: vi.fn(async () => undefined),
@@ -42,17 +48,26 @@ function press(customId: string, userId = OWNER) {
 	};
 }
 
-function submit(word: string, userId = OWNER) {
+// A modal submit carries no showModal, so every refusal on it answers privately.
+function submit(customId: string, values: { word?: string; choice?: string }, userId = OWNER) {
 	return {
-		customId: "self_destruct:modal",
+		id: "submit-1",
+		customId,
 		user: { id: userId },
 		guild: GUILD,
 		client: {},
-		fields: { getTextInputValue: () => word },
+		deferred: false,
+		replied: false,
+		fields: { getTextInputValue: () => values.word ?? "", getStringSelectValues: () => (values.choice ? [values.choice] : []) },
 		reply: vi.fn(async () => undefined),
+		deferReply: vi.fn(async () => undefined),
+		editReply: vi.fn(async () => undefined),
 		followUp: vi.fn(async () => undefined),
 	};
 }
+
+const choose = (choice: string, userId = OWNER) => submit("self_destruct:choose", { choice }, userId);
+const confirmWord = (word: string, userId = OWNER) => submit("self_destruct:modal", { word }, userId);
 
 async function clickButton(interaction: ReturnType<typeof press>): Promise<void> {
 	registerSelfDestructHandlers();
@@ -74,12 +89,14 @@ function buttonIds(reply: Reply): string[] {
 	return (reply.components ?? []).flatMap((row) => row.toJSON().components.map((component) => component.custom_id ?? ""));
 }
 
+const demolished = (): boolean => mocks.update.mock.calls.some((call) => (call[1] as { homebaseDestroyed?: boolean }).homebaseDestroyed === true);
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.spyOn(console, "warn").mockImplementation(() => undefined);
 	vi.spyOn(console, "error").mockImplementation(() => undefined);
-	mocks.resetConfigsToDefault.mockResolvedValue(undefined);
 	mocks.wipeServerData.mockResolvedValue({ failed: [] });
+	mocks.turnArcadeOff.mockResolvedValue("off");
 	mocks.findByGuildId.mockResolvedValue({ guildId: "g1", adoptedChannelIds: [] });
 	mocks.update.mockResolvedValue(undefined);
 });
@@ -90,67 +107,123 @@ describe("the self destruct button", () => {
 	});
 });
 
-describe("tier one, reset all configs", () => {
-	it("opens a private prompt that says it resets all configs, with Confirm and Cancel", async () => {
+describe("the choice modal", () => {
+	it("says what goes and what stays, over one required select of the three choices", () => {
+		const modal = buildChoiceModal().toJSON() as unknown as {
+			components: Array<{ type: number; content?: string; component?: { custom_id: string; required: boolean; min_values: number; max_values: number; options: Array<{ value: string; label: string; default?: boolean }> } }>;
+		};
+		const text = modal.components.find((component) => component.content)!.content!;
+		expect(text).toContain("deletes every Dero channel and its message history");
+		expect(text).toContain("does **not** delete stored data");
+		expect(text).toContain("adopted it is kept");
+
+		const select = modal.components.find((component) => component.component)!.component!;
+		expect(select.required).toBe(true);
+		expect([select.min_values, select.max_values]).toEqual([1, 1]);
+		expect(select.options.map((option) => option.label)).toEqual(["Just delete channels", "Delete my data", "Arcade only"]);
+		expect(select.options.some((option) => option.default)).toBe(false);
+		expect(modal.components.length).toBeLessThanOrEqual(5);
+	});
+
+	it("opens for the owner from the guide button, and nothing runs yet", async () => {
 		const interaction = press("self_destruct:prompt");
 		await clickButton(interaction);
 
-		const reply = (interaction.reply.mock.calls[0] as unknown as [Reply])[0];
-		expect(reply.embeds![0]!.data.description).toContain("resets all configs to default");
-		expect(buttonIds(reply)).toEqual(["self_destruct:reset", "self_destruct:cancel"]);
-		expect(mocks.resetConfigsToDefault).not.toHaveBeenCalled();
+		expect(interaction.showModal).toHaveBeenCalledOnce();
+		expect(mocks.update).not.toHaveBeenCalled();
+		expect(mocks.turnArcadeOff).not.toHaveBeenCalled();
+		expect(auditDetails()).toEqual([]);
 	});
 
-	it("refuses anyone but the server owner, and logs the attempt", async () => {
-		const interaction = press("self_destruct:reset", "admin-1");
+	it("refuses anyone but the server owner with a notice, and logs the attempt", async () => {
+		const interaction = press("self_destruct:prompt", "admin-1");
 		await clickButton(interaction);
 
-		expect(mocks.resetConfigsToDefault).not.toHaveBeenCalled();
+		const notice = (interaction.showModal.mock.calls[0] as unknown as [{ toJSON(): { custom_id: string } }])[0];
+		expect(notice.toJSON().custom_id).toBe("notice:press-1");
 		expect(auditDetails()).toEqual([c.auditRefusedNotOwner]);
 	});
 
-	it("resets on Confirm, keeps every channel, and then offers Delete server data", async () => {
-		const interaction = press("self_destruct:reset");
-		await clickButton(interaction);
+	it.each(SELF_DESTRUCT_CHOICES)("refuses a %s choice submitted by anyone but the owner", async (choice: SelfDestructChoice) => {
+		await submitModal(choose(choice, "admin-1"));
 
-		expect(mocks.resetConfigsToDefault).toHaveBeenCalledWith("g1");
-		expect(GUILD.channels.fetch).not.toHaveBeenCalled();
-		expect(mocks.wipeServerData).not.toHaveBeenCalled();
-		const done = (interaction.editReply.mock.calls.at(-1) as unknown as [Reply])[0];
-		expect(done.embeds![0]!.data.title).toBe(c.resetDoneTitle);
-		expect(buttonIds(done)).toEqual(["self_destruct:delete"]);
-		expect(auditDetails()).toEqual([c.auditReset]);
-	});
-
-	it("reports a failed reset and offers nothing further", async () => {
-		mocks.resetConfigsToDefault.mockRejectedValue(new Error("mongo down"));
-		const interaction = press("self_destruct:reset");
-		await clickButton(interaction);
-
-		const failed = (interaction.editReply.mock.calls.at(-1) as unknown as [Reply])[0];
-		expect(buttonIds(failed)).toEqual([]);
-		expect(auditDetails()).toEqual([c.auditResetFailed]);
-	});
-
-	it("answers the retired one click confirm as a stale control, deleting nothing", async () => {
-		const interaction = press("self_destruct:confirm");
-		await clickButton(interaction);
-
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: c.staleControl }));
-		expect(mocks.resetConfigsToDefault).not.toHaveBeenCalled();
 		expect(mocks.update).not.toHaveBeenCalled();
+		expect(mocks.turnArcadeOff).not.toHaveBeenCalled();
+		expect(mocks.wipeServerData).not.toHaveBeenCalled();
+		expect(auditDetails()).toEqual([c.auditRefusedNotOwner]);
+	});
+
+	it("answers a button from an older prompt as a stale control, changing nothing", async () => {
+		for (const stale of ["self_destruct:reset", "self_destruct:cancel", "self_destruct:confirm"]) {
+			const interaction = press(stale);
+			await clickButton(interaction);
+			expect(interaction.showModal).toHaveBeenCalledOnce();
+		}
+		expect(mocks.update).not.toHaveBeenCalled();
+		expect(mocks.wipeServerData).not.toHaveBeenCalled();
 	});
 });
 
-describe("tier two, delete server data", () => {
-	it("opens the CONFIRM modal for the owner", async () => {
-		const interaction = press("self_destruct:delete");
-		await clickButton(interaction);
-		expect(interaction.showModal).toHaveBeenCalledOnce();
+describe("Just delete channels", () => {
+	it("demolishes the channels, keeps every setting and record, and writes one log line", async () => {
+		const interaction = choose("channels");
+		await submitModal(interaction);
+
+		// The one write is demolishHomebase's flag: no setting is in it, and no record is wiped.
+		expect(mocks.update).toHaveBeenCalledOnce();
+		expect(mocks.update).toHaveBeenCalledWith("g1", { homebaseDestroyed: true, setupComplete: false, adoptedChannelIds: [] });
+		expect(mocks.wipeServerData).not.toHaveBeenCalled();
+		expect(mocks.turnArcadeOff).not.toHaveBeenCalled();
+		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.channelsDone }));
+		expect(auditDetails()).toEqual([c.auditChannelsConfirmed]);
+	});
+});
+
+describe("Arcade only", () => {
+	it("runs the /arcade off path alone and writes one log line", async () => {
+		const interaction = choose("arcade");
+		await submitModal(interaction);
+
+		expect(mocks.turnArcadeOff).toHaveBeenCalledWith(GUILD);
+		expect(mocks.update).not.toHaveBeenCalled();
+		expect(mocks.wipeServerData).not.toHaveBeenCalled();
+		const done = (interaction.editReply.mock.calls.at(-1) as unknown as [Reply])[0];
+		expect(done.embeds![0]!.data.description).toBe(setupCopy.arcade.offBody);
+		expect(auditDetails()).toEqual([c.auditArcadeOff]);
 	});
 
-	it("deletes nothing unless the owner typed CONFIRM exactly", async () => {
-		const interaction = submit("confirm");
+	it("says so when the arcade was already off", async () => {
+		mocks.turnArcadeOff.mockResolvedValue("already-off");
+		const interaction = choose("arcade");
+		await submitModal(interaction);
+
+		const done = (interaction.editReply.mock.calls.at(-1) as unknown as [Reply])[0];
+		expect(done.embeds![0]!.data.description).toBe(setupCopy.arcade.alreadyOff);
+		expect(auditDetails()).toEqual([c.auditArcadeAlreadyOff]);
+	});
+});
+
+describe("Delete my data", () => {
+	it("answers with one Type CONFIRM button and deletes nothing yet", async () => {
+		const interaction = choose("data");
+		await submitModal(interaction);
+
+		const reply = (interaction.reply.mock.calls[0] as unknown as [Reply])[0];
+		expect(buttonIds(reply)).toEqual(["self_destruct:delete"]);
+		expect(mocks.update).not.toHaveBeenCalled();
+		expect(mocks.wipeServerData).not.toHaveBeenCalled();
+		expect(auditDetails()).toEqual([]);
+	});
+
+	it("Type CONFIRM opens the CONFIRM modal for the owner", async () => {
+		const interaction = press("self_destruct:delete");
+		await clickButton(interaction);
+		const modal = (interaction.showModal.mock.calls[0] as unknown as [{ toJSON(): { custom_id: string } }])[0];
+		expect(modal.toJSON().custom_id).toBe("self_destruct:modal");
+	});
+
+	it.each(["confirm", "Confirm", "CONFIRMED", ""])("deletes nothing when the owner typed %j", async (word) => {
+		const interaction = confirmWord(word);
 		await submitModal(interaction);
 
 		expect(mocks.update).not.toHaveBeenCalled();
@@ -158,15 +231,15 @@ describe("tier two, delete server data", () => {
 		expect(auditDetails()).toEqual([c.auditDeleteRefused]);
 	});
 
-	it("refuses a modal submitted by anyone but the owner, even with the right word", async () => {
-		await submitModal(submit("CONFIRM", "admin-1"));
+	it("refuses a CONFIRM submitted by anyone but the owner, even with the right word", async () => {
+		await submitModal(confirmWord("CONFIRM", "admin-1"));
 
-		expect(mocks.update).not.toHaveBeenCalled();
+		expect(demolished()).toBe(false);
 		expect(mocks.wipeServerData).not.toHaveBeenCalled();
 	});
 
-	it("on CONFIRM flags the homebase destroyed before wiping the stored records", async () => {
-		const interaction = submit("CONFIRM");
+	it("on the exact word flags the homebase destroyed before wiping the stored records, with one log line", async () => {
+		const interaction = confirmWord("CONFIRM");
 		await submitModal(interaction);
 
 		expect(mocks.update).toHaveBeenCalledWith("g1", expect.objectContaining({ homebaseDestroyed: true }));
@@ -178,7 +251,7 @@ describe("tier two, delete server data", () => {
 
 	it("names the records it could not delete", async () => {
 		mocks.wipeServerData.mockResolvedValue({ failed: ["luck"] });
-		const interaction = submit("CONFIRM");
+		const interaction = confirmWord("CONFIRM");
 		await submitModal(interaction);
 
 		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.deletePartial(["luck"]) }));

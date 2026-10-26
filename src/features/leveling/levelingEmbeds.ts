@@ -194,7 +194,8 @@ function chipsFields(view: Pick<AccountView, "chips">): APIEmbedField[] {
 	return [{ name: levelingCopy.labels.chips, value: levelingCopy.labels.chipsLine(view.chips.balance, view.chips.claim), inline: false }];
 }
 
-function ratio(won: number, lost: number): string {
+/** A win/loss ratio as the text profile and the account card both show it. */
+export function ratio(won: number, lost: number): string {
 	// An undefeated member divides by zero, so the record is stated rather than
 	// computed in that case. "5/0" reads better than "Infinity" and better than a
 	// silent dash.
@@ -261,17 +262,12 @@ export function buildAccountEmbed(view: AccountView): EmbedBuilder {
 
 /**
  * The /account message when its card rendered: the member's name over the card,
- * which carries the profile itself, with the per game record, the month's luck and
- * the chips as fields, since the card draws only the overall record (post-launch plan item 7).
- * Title and color match buildAccountEmbed, so only the body changes between the
- * card and the text profile.
+ * which carries the whole profile, the per game record, the month's luck and the
+ * chips included (2026-10 item 254), so no data is left in text. Title and color
+ * match buildAccountEmbed, which keeps every field for the text fallback.
  */
-export function buildAccountCardEmbed(view: Pick<AccountView, "displayName" | "games" | "luck" | "chips">, imageRef: string): EmbedBuilder {
-	return base()
-		.setTitle(view.displayName)
-		.setColor(COLORS.ACCOUNT)
-		.addFields(recordField(view), luckField(view), ...chipsFields(view))
-		.setImage(imageRef);
+export function buildAccountCardEmbed(view: Pick<AccountView, "displayName">, imageRef: string): EmbedBuilder {
+	return base().setTitle(view.displayName).setColor(COLORS.ACCOUNT).setImage(imageRef);
 }
 
 // ── the levels standings board ──────────────────────────────────────────────
@@ -422,6 +418,11 @@ export interface AchievementProgressView {
 	current: number;
 	threshold: number;
 	nextTier: string;
+}
+
+/** The achievements message when its card rendered: the same title and color as the text view, with everything drawn on the card (2026-10 item 254). */
+export function buildAchievementsCardEmbed(displayName: string, imageRef: string): EmbedBuilder {
+	return base().setTitle(`${levelingCopy.labels.achievements} • ${displayName}`).setColor(COLORS.ACHIEVEMENT).setImage(imageRef);
 }
 
 export function buildAchievementsEmbed(

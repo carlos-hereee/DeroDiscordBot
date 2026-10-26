@@ -1,5 +1,3 @@
-import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { xpPeriodStore } from "@db/stores/xpPeriodStore.js";
 import { xpDailyStore } from "@db/stores/xpDailyStore.js";
@@ -15,65 +13,24 @@ import { eventOverrideStore } from "@db/stores/eventOverrideStore.js";
 import { pendingPairingStore } from "@db/stores/pendingPairingStore.js";
 import { activityStore } from "@db/stores/activityStore.js";
 import { eventStore } from "@db/stores/eventStore.js";
-import { voiceSessions } from "@features/voice/voiceSessions.js";
-import { invalidateLevelingConfig } from "@features/leveling/levelingConfig.js";
 
 // ── serverReset ───────────────────────────────────────────────────────────
-// What:  the two destructive halves of self destruct (post-launch plan item 10, the
-//        owner's choice of "reset, then optional delete" with "channels plus stored
-//        records"): resetConfigsToDefault puts every Dero setting back to how a new
-//        server starts, and wipeServerData deletes this guild's stored records.
-// Who:   selfDestruct.ts only, after its owner checks and confirmations. Neither
-//        function checks who is asking; the caller has already decided.
+// What:  the destructive data half of self destruct's Delete my data (2026-10 item
+//        254): wipeServerData deletes this guild's stored records.
+// Who:   selfDestruct.ts only, after its owner checks and the CONFIRM word. It never
+//        checks who is asking; the caller has already decided.
 // Where: deliberately NOT the channel teardown. demolishHomebase in selfDestruct.ts
 //        still owns that, and runs BEFORE wipeServerData so the homebaseDestroyed flag
 //        is set before any record goes.
 //
-// ⚠️ WHAT IS KEPT, AND WHY. The GuildConfig row stays (reset, flagged destroyed):
-// deleting it would make the next boot rebuild a fresh homebase, undoing "stays gone
-// until /setup". BotLog stays, because the audit trail is the record that this delete
+// ⚠️ WHAT IS KEPT, AND WHY. The GuildConfig row stays (flagged destroyed): deleting
+// it would make the next boot rebuild a fresh homebase, undoing "stays gone until
+// /setup". BotLog stays, because the audit trail is the record that this delete
 // happened. DeroVoiceSpend stays, because deleting a month's spend would restart the
 // paid speech budget. NetworkBan, NetworkConsent, TagNotice, PlayerRating and
 // MatchResult stay: they belong to players across the network, not to this server.
-// FortuneBuff is keyed by user alone, for the same reason.
-
-// Every GuildConfig setting and its schema default, in one table so the reset cannot
-// half apply. Ids, roles, message anchors, setup state and the plugin choice are NOT
-// here: they describe what exists, not how it is configured. schedulePaused is left
-// out too, because each event carries its own pause and resetting only the guild's
-// flag would leave the two disagreeing.
-export const CONFIG_DEFAULTS = {
-	customRulesMarkdown: null,
-	// The schema default for the whole subtree is an empty object, which every reader
-	// normalizes to the shipped values (levelingConfig.normalizeLevelingSettings).
-	leveling: {},
-	copyOverrides: {},
-	autoHealEnabled: true,
-	channelNames: {},
-	userRemovedChannels: [],
-	leaderboardTrackingEnabled: true,
-	weekStart: "sunday",
-	defaultEventImageUrl: null,
-	hiddenChannels: [],
-	arcadeMonthlyPost: true,
-	challengeReach: "server",
-	blockedNetworkGuildIds: [],
-	chipEconomyEnabled: true,
-	botOpponentsEnabled: true,
-} as const;
-
-/**
- * Put every Dero setting in this guild back to its default. Ends a live voice call
- * first, since deleting the voice config switches the voice off and a kill switch
- * that left Dero talking would not be one. Throws on a failed write; nothing here is
- * partial in a way a second run cannot finish.
- */
-export async function resetConfigsToDefault(guildId: string): Promise<void> {
-	voiceSessions.leave(guildId, "switched_off");
-	await deroVoiceConfigStore.deleteByGuildId(guildId);
-	await guildConfigStore.resetSettings(guildId, CONFIG_DEFAULTS);
-	invalidateLevelingConfig(guildId);
-}
+// FortuneBuff is keyed by user alone, for the same reason. FortuneCooldown stays
+// too, because wiping it would hand a member a second reading on the same day.
 
 /** One named deletion, so a failure can be reported by name. */
 interface WipeStep {

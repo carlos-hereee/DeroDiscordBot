@@ -29,7 +29,7 @@ import { buildPartyGamesRow } from "@features/game-rooms/partyGames.js";
 import { buildSoloLuckRow } from "@features/games/soloLuck.js";
 import { boardStartRows } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { buildGameRequestRow } from "@features/game-rooms/gameRequestHandlers.js";
-import { buildMemberControlButtons, buildAdminControlButtons, buildIcebreakerButton, buildFortuneButton, buildProfileButtons } from "@features/power-ups/PowerUps.js";
+import { buildMemberControlButtons, buildAdminControlButtons, buildIcebreakerButton, buildFortuneButton, buildClaimButton, buildProfileButtons } from "@features/power-ups/PowerUps.js";
 import { buildAdminCommandRows } from "@features/command-buttons/adminGuideButtons.js";
 import { buildCommunityControlButtons } from "@features/community/communityButtons.js";
 import { isCommunityEnabled } from "@features/community/enableCommunity.js";
@@ -940,13 +940,13 @@ export class GuildSetupManager {
 		switch (field) {
 			case "commandsChannelId":
 				// #command-center guide, two rows: the three /account views, then
-				// Suggestion Box, Toggle pings and Fortune. Each answers privately. The
-				// invite button and the Icebreaker button are NOT here: they live on the
-				// standalone Summon Dero card (inviteCardComponents), which keeps its
-				// own Fortune too, so neither card loses a button.
+				// Suggestion Box and Toggle pings. Each answers privately. The invite
+				// button and the Icebreaker button are NOT here: they live on the
+				// standalone Summon Dero card (inviteCardComponents). Fortune left both
+				// for the 🕹️games daily row (2026-10 item 254), since it is a game.
 				return [
 					new ActionRowBuilder<ButtonBuilder>().addComponents(...buildProfileButtons()),
-					new ActionRowBuilder<ButtonBuilder>().addComponents(buildSuggestionBoxButton(), ...buildMemberControlButtons(), buildFortuneButton()),
+					new ActionRowBuilder<ButtonBuilder>().addComponents(buildSuggestionBoxButton(), ...buildMemberControlButtons()),
 				];
 			case "adminCommandsChannelId":
 				// admin-controls guide: two rows of admin command buttons (each opens its
@@ -991,16 +991,23 @@ export class GuildSetupManager {
 	}
 
 	// ── 🕹️games, two messages ─────────────────────────────────────
-	// Every host button lives in 🕹️games, and they need SIX rows: the host row, the
+	// Every host button lives in 🕹️games, and they need SEVEN rows: the host row, the
 	// solo luck row against Dero, the hangman category select (a select takes a whole
-	// row to itself), and the Challenge Board's three rows of start buttons. Discord
-	// allows five rows a message and rejects the whole send past that, so the channel
-	// carries two messages: the intro with the three play now rows, and the board
-	// below it. The intro is this channel's anchor like every other spec's; the board
-	// is introMessageIds.arcadeGamesBoardId, kept by maintainGamesBoard.
+	// row to itself), the daily row (Fortune and Claim daily rewards, 2026-10 item
+	// 254), and the Challenge Board's three rows of start buttons. Discord allows five
+	// rows a message and rejects the whole send past that, so the channel carries two
+	// messages: the intro with the four play now rows, and the board below it. The
+	// intro is this channel's anchor like every other spec's; the board is
+	// introMessageIds.arcadeGamesBoardId, kept by maintainGamesBoard. A changed row
+	// set re-edits the intro on every existing guild's next boot (componentsAreEquivalent).
 	private static gamesIntroRows(guildConfig?: ICopyConfig | null): ActionRowBuilder<MessageActionRowComponentBuilder>[] {
 		const c = getPluginCopy(guildConfig).channelContent.arcadeGames;
-		return [buildArcadeHostRow(), buildSoloLuckRow(c.soloLuckLabels), buildHangmanCategoryStartRow(c.hangmanCategoryPlaceholder)];
+		return [
+			buildArcadeHostRow(),
+			buildSoloLuckRow(c.soloLuckLabels),
+			buildHangmanCategoryStartRow(c.hangmanCategoryPlaceholder),
+			new ActionRowBuilder<ButtonBuilder>().addComponents(buildFortuneButton(c.dailyLabels.fortune), buildClaimButton(c.dailyLabels.claim)),
+		];
 	}
 
 	// The board message's whole content. The start buttons are boardStartRows, the same
@@ -1126,18 +1133,15 @@ export class GuildSetupManager {
 
 	// ── invite card button row ────────────────────────────────────
 	// The Summon Dero card's buttons: the Summon (Link) button + the "Icebreaker"
-	// button (moved off the command guide row 2026-06) + the "Fortune" button
-	// (added 2026-07-02). Shared by the initial post (populateChannels) and boot
+	// button (moved off the command guide row 2026-06). The card is posted in
+	// #command-center, so its Fortune moved to the 🕹️games daily row with the
+	// guide's (2026-10 item 254). Shared by the initial post (populateChannels) and boot
 	// maintenance (refreshIntroEmbeds) so the two stay in lockstep, the
 	// componentsAreEquivalent check on boot keys off this exact row, so adding a
 	// button here re-edits the card on every existing guild's next boot.
 	private static inviteCardComponents(): ActionRowBuilder<ButtonBuilder>[] {
 		return [
-			new ActionRowBuilder<ButtonBuilder>().addComponents(
-				ChannelContent.buildInviteButton(),
-				buildIcebreakerButton(),
-				buildFortuneButton()
-			),
+			new ActionRowBuilder<ButtonBuilder>().addComponents(ChannelContent.buildInviteButton(), buildIcebreakerButton()),
 		];
 	}
 

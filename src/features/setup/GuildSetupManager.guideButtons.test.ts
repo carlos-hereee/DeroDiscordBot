@@ -4,7 +4,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { GuildSetupManager } from "./GuildSetupManager.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
 import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
-import { buildAdminControlButtons, buildFortuneButton, buildMemberControlButtons, buildProfileButtons } from "@features/power-ups/PowerUps.js";
+import { buildAdminControlButtons, buildMemberControlButtons, buildProfileButtons } from "@features/power-ups/PowerUps.js";
 import { ADMIN_GUIDE_COMMAND_ROWS } from "@features/command-buttons/adminGuideButtons.js";
 
 // ── the guides' buttons, by audience (2026-10 item 245 Phase 4b) ─────────────
@@ -19,6 +19,7 @@ const LIMITS = BOT_CONSTANTS.DISCORD_LIMITS;
 
 const internals = GuildSetupManager as unknown as {
 	resolveIntroComponents(field: string): Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }> | null;
+	inviteCardComponents(): Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }>;
 };
 
 const idsOf = (buttons: ButtonBuilder[]): Array<string | undefined> => buttons.map((button) => (button.toJSON() as { custom_id?: string }).custom_id);
@@ -26,10 +27,16 @@ const rowIds = (field: string): Array<Array<string | undefined>> =>
 	(internals.resolveIntroComponents(field) ?? []).map((row) => row.toJSON().components.map((component) => component.custom_id));
 
 describe("the guides' buttons", () => {
-	it("give #command-center the member buttons: Account, Levels, Achievements, Suggestion Box, Toggle pings and Fortune", () => {
-		expect(rowIds("commandsChannelId").flat()).toEqual(
-			idsOf([...buildProfileButtons(), buildSuggestionBoxButton(), ...buildMemberControlButtons(), buildFortuneButton()])
-		);
+	it("give #command-center the member buttons: Account, Levels, Achievements, Suggestion Box and Toggle pings, and no Fortune", () => {
+		expect(rowIds("commandsChannelId").flat()).toEqual(idsOf([...buildProfileButtons(), buildSuggestionBoxButton(), ...buildMemberControlButtons()]));
+	});
+
+	// 2026-10 item 254: the Summon Dero card is posted in #command-center, so its Fortune
+	// moved to the 🕹️games daily row with the guide's.
+	it("give the Summon Dero card in #command-center its invite and Icebreaker, and no Fortune", () => {
+		const ids = internals.inviteCardComponents().flatMap((row) => row.toJSON().components.map((component) => component.custom_id));
+		expect(ids).toContain("powerup:member:greet");
+		expect(ids).not.toContain("powerup:member:fortune");
 	});
 
 	it("give the admin guide a button per admin job above its control row", () => {

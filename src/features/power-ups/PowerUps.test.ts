@@ -11,12 +11,14 @@ const mocks = vi.hoisted(() => ({
 	showAccountProfile: vi.fn(),
 	showLevelsStandings: vi.fn(),
 	showAchievements: vi.fn(),
+	runChipClaim: vi.fn(),
 	buttons: new Map<string, (interaction: unknown) => Promise<void>>(),
 }));
 
 vi.mock("@features/leveling/accountProfile.js", () => ({ showAccountProfile: mocks.showAccountProfile }));
 vi.mock("@features/leveling/levelsStandings.js", () => ({ showLevelsStandings: mocks.showLevelsStandings }));
 vi.mock("@features/leveling/achievementsView.js", () => ({ showAchievements: mocks.showAchievements }));
+vi.mock("@features/economy/chipClaim.js", () => ({ runChipClaim: mocks.runChipClaim }));
 vi.mock("@handlers/interactionRegistry.js", () => ({
 	registerButton: (prefix: string, handler: (interaction: unknown) => Promise<void>) => mocks.buttons.set(prefix, handler),
 }));
@@ -59,6 +61,13 @@ describe("the profile buttons", () => {
 		const interaction = press("levels");
 		await mocks.buttons.get("powerup")!(interaction);
 		expect(mocks.showLevelsStandings).toHaveBeenCalledWith(interaction, { window: "alltime", isPrivate: true });
+	});
+
+	// 2026-10 item 254: Claim daily rewards on the 🕹️games daily row is the /claim flow.
+	it("answer Claim daily rewards with the /claim flow, chips off refusal included", async () => {
+		const interaction = press("claim");
+		await mocks.buttons.get("powerup")!(interaction);
+		expect(mocks.runChipClaim).toHaveBeenCalledWith(interaction);
 	});
 
 	it("open the presser's own achievements, privately", async () => {

@@ -33,7 +33,9 @@ import { renderAccountCard } from "./accountRenderer.js";
 import { renderLevelUpCard } from "./levelUpRenderer.js";
 import { renderLevelsBoardCard } from "./levelsBoardRenderer.js";
 import { renderAchievementUnlockCard } from "./achievementUnlockRenderer.js";
+import { renderAchievementsCard } from "./achievementsRenderer.js";
 import type { AccountView, LevelsBoardEntry } from "./levelingEmbeds.js";
+import { LEVELING_GAME_SLUGS } from "./levelingTypes.js";
 
 // ── reading the bytes ──
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -104,13 +106,24 @@ beforeEach(() => {
 });
 
 describe("accountRenderer", () => {
-	it("renders the seeded profile as a 960 by 540 PNG", async () => {
+	it("renders the seeded profile, with its record table, luck and chips band, as a 960 by 820 PNG", async () => {
 		const payload = await renderAccountCard(ACCOUNT_VIEW);
 
 		const bytes = attachmentBytes(payload);
 		expect(isPng(bytes)).toBe(true);
-		expect(imageSize(bytes)).toEqual({ width: 960, height: 540 });
+		expect(imageSize(bytes)).toEqual({ width: 960, height: 820 });
 		expect(payload?.ref).toMatch(/^attachment:\/\/account-[a-f0-9]{12}\.png$/);
+	});
+
+	it("draws the luck, its 8 ball readings and the chips with a claim countdown", async () => {
+		const now = new Date("2026-10-26T12:00:00Z");
+		const payload = await renderAccountCard({
+			...ACCOUNT_VIEW,
+			games: LEVELING_GAME_SLUGS.map((slug) => ({ slug, record: { played: 3, won: 2, lost: 1, drawn: 0, assists: 0 } })),
+			luck: { decided: 22, wins: 14, readings: 3, score: 3 },
+			chips: { balance: 26_000, claim: { nextClaimAt: new Date(now.getTime() + 5 * 3_600_000), now } },
+		});
+		expect(isPng(attachmentBytes(payload))).toBe(true);
 	});
 
 	it("renders a brand new member: no games, no achievements, no period rank, a capped bar", async () => {
@@ -193,5 +206,30 @@ describe("achievementUnlockRenderer", () => {
 			unlocks: [{ id: "mystery", tier: "obsidian", earnedBy: "found the secret" }],
 		});
 		expect(isPng(attachmentBytes(payload))).toBe(true);
+	});
+});
+
+describe("achievementsRenderer", () => {
+	const PROGRESS = [
+		{ id: "fan", label: "Fan", current: 120, threshold: 251, nextTier: "silver" },
+		{ id: "voice", label: "Voice", current: 40, threshold: 53, nextTier: "bronze" },
+	];
+
+	it("renders held achievements and the two closest tracks as a PNG whose height follows its rows", async () => {
+		const payload = await renderAchievementsCard({ displayName: "Silent Warrior", avatar: null, unlocked: UNLOCKS, inProgress: PROGRESS });
+		const bytes = attachmentBytes(payload);
+		expect(isPng(bytes)).toBe(true);
+		// 160 header, one row of four medallions at 200, the in progress title and two rows, 30 below.
+		expect(imageSize(bytes)).toEqual({ width: 960, height: 160 + 200 + 40 + 2 * 74 + 30 });
+		expect(payload?.ref).toMatch(/^attachment:\/\/achievements-[a-f0-9]{12}\.png$/);
+	});
+
+	it("shows at most eight medallions and draws a member with none", async () => {
+		const many = Array.from({ length: 11 }, (_, index) => ({ id: `track-${index}`, tier: "gold", earnedBy: "did a thing" }));
+		const full = await renderAchievementsCard({ displayName: "Silent Warrior", avatar: null, unlocked: many, inProgress: [] });
+		expect(imageSize(attachmentBytes(full))).toEqual({ width: 960, height: 160 + 2 * 200 + 30 });
+
+		const none = await renderAchievementsCard({ displayName: "New Member", avatar: null, unlocked: [], inProgress: PROGRESS });
+		expect(isPng(attachmentBytes(none))).toBe(true);
 	});
 });

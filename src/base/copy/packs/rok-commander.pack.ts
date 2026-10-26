@@ -705,7 +705,7 @@ export const rokCommanderCopy = {
 
 			playTitle: "🎯 Play now",
 			playBody:
-				"The first row sets a table for you alone, or a blackjack table others may join. The second plays me on the spot: flip, roll, or throw rock, paper or scissors. The list beneath them gives you a hangman word from the shelf you name.",
+				"The first row sets a table for you alone, or a blackjack table others may join. The second plays me on the spot: flip, roll, or throw rock, paper or scissors. The list beneath them gives you a hangman word from the shelf you name. The last row is your daily: one fortune a day, and your chips to claim.",
 
 			// The solo luck row. Rock, paper and scissors are the throw itself, so
 			// pressing one plays it against me at once.
@@ -717,6 +717,11 @@ export const rokCommanderCopy = {
 				scissors: "Scissors",
 			},
 			hangmanCategoryPlaceholder: "Hangman alone: choose a shelf of words",
+			// The daily row (2026-10 item 254): a fortune reading once a day and the daily chip claim.
+			dailyLabels: {
+				fortune: "Fortune",
+				claim: "Claim daily rewards",
+			},
 
 			// The second message: the Challenge Board's start buttons.
 			boardTitle: "⚔️ Challenge a Warrior",

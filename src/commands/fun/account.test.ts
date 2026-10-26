@@ -118,9 +118,9 @@ describe("/account", () => {
 		expect(payload.embeds[0].data.title).toBe("Silent Warrior");
 	});
 
-	// Post-launch plan item 7: the card draws only the overall record, so its embed
-	// carries the per game table and the month's luck, the luck board's own sum.
-	it("puts the per game record and this month's luck on the card's embed", async () => {
+	// 2026-10 item 254: the card draws the per game record, the month's luck and the
+	// chips, so its embed carries no data in text; the text profile keeps them all.
+	it("hands the record, the luck and the chips to the card, and leaves none of them in the card's embed", async () => {
 		mocks.findOne.mockResolvedValue({
 			totalXp: 964,
 			messages: 10,
@@ -138,9 +138,14 @@ describe("/account", () => {
 
 		await execute(command);
 
-		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
-		expect(fields.find((field) => field.name === "Record")?.value).toContain("rps");
-		expect(fields.find((field) => field.name === "Luck this month")?.value).toBe("**14** won of **22** decided, **3** above an even split.");
+		expect(mocks.renderAccountCard).toHaveBeenCalledWith(
+			expect.objectContaining({
+				games: [{ slug: "rps", record: { played: 4, won: 3, lost: 1, drawn: 0, assists: 0 } }],
+				luck: expect.objectContaining({ wins: 14, decided: 22 }),
+				chips: expect.objectContaining({ balance: 0 }),
+			})
+		);
+		expect((editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields ?? []).toEqual([]);
 		expect(mocks.luckForMember).toHaveBeenCalledWith("g1", "u1", expect.stringMatching(/^\d{4}-\d{2}$/));
 	});
 

@@ -511,7 +511,7 @@ export const generalEventsCopy: IPluginCopy = {
 
 			playTitle: "🎯 Play now",
 			playBody:
-				"The first row sets up a game for you alone, or a blackjack table others can join. The second plays Dero right away: flip, roll, or throw rock, paper or scissors. The list below them starts a solo hangman round from the category you pick.",
+				"The first row sets up a game for you alone, or a blackjack table others can join. The second plays Dero right away: flip, roll, or throw rock, paper or scissors. The list below them starts a solo hangman round from the category you pick. The last row is your daily: one fortune reading a day, and your daily chip claim.",
 
 			soloLuckLabels: {
 				coinflip: "Coin flip with Dero",
@@ -521,6 +521,10 @@ export const generalEventsCopy: IPluginCopy = {
 				scissors: "Scissors",
 			},
 			hangmanCategoryPlaceholder: "Solo hangman: pick a word category",
+			dailyLabels: {
+				fortune: "Fortune",
+				claim: "Claim daily rewards",
+			},
 
 			boardTitle: "⚔️ Challenge a member",
 			boardDescription:

@@ -4,8 +4,12 @@ import {
 	ButtonStyle,
 	CategoryChannel,
 	Guild,
+	LabelBuilder,
 	MessageFlags,
 	ModalBuilder,
+	StringSelectMenuBuilder,
+	StringSelectMenuOptionBuilder,
+	TextDisplayBuilder,
 	TextInputBuilder,
 	TextInputStyle,
 	type ButtonInteraction,
@@ -15,39 +19,54 @@ import {
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton, registerModal } from "@handlers/interactionRegistry.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { showErrorNotice } from "@utils/textModal.js";
 import { COLORS } from "@base/copy/brand.js";
 import { readAdoptedChannelIds } from "./adoption.js";
 import { adminLog } from "./adminLog.js";
-import { resetConfigsToDefault, wipeServerData } from "./serverReset.js";
+import { turnArcadeOff } from "./arcadeSwitch.js";
+import { wipeServerData } from "./serverReset.js";
 import { setupCopy } from "./setupCopy.js";
 
 // ── Self destruct ──────────────────────────────────────────────────────
-// Server-owner-only, in TWO tiers (post-launch plan item 10, the owner's choice):
-//   ① "Self destruct" opens a prompt that says it resets all configs to default.
-//      Confirm runs resetConfigsToDefault and keeps every channel and record.
-//   ② The reset's result carries "Delete server data", which opens a modal asking
-//      the owner to type CONFIRM. Only the exact word deletes: demolishHomebase
-//      takes both categories and every channel, then wipeServerData deletes this
-//      guild's stored records. GuildConfig.homebaseDestroyed keeps the homebase
-//      gone across restarts until /setup runs again.
+// Server owner only, as three honest choices (2026-10 item 254, the owner's
+// decision 4 in the Dero 2.0.0 debug checklist):
+//   ① "Self destruct" opens a modal that says what goes (every Dero channel and its
+//      message history) and what stays (stored data, and an adopted welcome or
+//      rules channel), and asks through one REQUIRED select:
+//        Just delete channels  demolishHomebase alone. Every setting is kept, so
+//                              /setup rebuilds the server as it was.
+//        Arcade only           the /arcade off path (arcadeSwitch.turnArcadeOff).
+//        Delete my data        answers with one Type CONFIRM button, because a
+//                              modal cannot open from a modal submit.
+//   ② Type CONFIRM opens the CONFIRM modal. Only the exact word deletes:
+//      demolishHomebase, then wipeServerData.
+// GuildConfig.homebaseDestroyed keeps the homebase gone across restarts until
+// /setup runs again. The select IS the confirmation for the two choices that keep
+// the data, which is why it is required and has no default.
 //
-// Two entry points pop the SAME prompt: the /self-destruct slash command, and the
-// owner-only "Self destruct" button on the admin command guide. Every step re-checks
-// the owner, and every outcome (a refusal included) is one line in 🗒️admin-log.
+// Two entry points open the SAME modal: the /self-destruct slash command, and the
+// owner only "Self destruct" button on the admin command guide. Every step re-checks
+// the owner, and each choice's outcome (a refusal included) is ONE line in
+// 🗒️admin-log. Delete my data writes its line at the CONFIRM step, never at the
+// choice, so confirming does not log it twice.
 //
 // customId scheme `self_destruct:<action>`, routed on the "self_destruct" prefix via
-// interactionRegistry: prompt (the guide button), reset (tier ① Confirm), cancel,
-// delete (opens the tier ② modal), and the modal itself. The tier ① Confirm is
-// `reset` rather than the old `confirm` on purpose: a prompt still open from before
-// this change carries `confirm`, which used to DEMOLISH, and it now answers as a
-// stale control instead of doing something its label never said.
+// interactionRegistry: prompt (the guide button), choose (the choice modal), delete
+// (Type CONFIRM, opens the CONFIRM modal) and modal (the CONFIRM modal). Anything
+// else, including `reset`, `cancel` and `confirm` from a prompt still open from an
+// older build, answers as a stale control and does nothing its label once said.
 
 const PREFIX = "self_destruct";
-const RESET_ID = `${PREFIX}:reset`;
-const CANCEL_ID = `${PREFIX}:cancel`;
+const PROMPT_ID = `${PREFIX}:prompt`;
+const CHOICE_MODAL_ID = `${PREFIX}:choose`;
 const DELETE_ID = `${PREFIX}:delete`;
 const MODAL_ID = `${PREFIX}:modal`;
 const CONFIRM_WORD_FIELD = "confirm_word";
+const CHOICE_FIELD = "self_destruct_choice";
+
+/** The three things self destruct can do, as the select's values. */
+export const SELF_DESTRUCT_CHOICES = ["channels", "data", "arcade"] as const;
+export type SelfDestructChoice = (typeof SELF_DESTRUCT_CHOICES)[number];
 
 const c = setupCopy.selfDestruct;
 
@@ -120,44 +139,34 @@ function auditAttempt(interaction: SelfDestructEntry, detail: string): void {
 
 async function refuseNonOwner(interaction: SelfDestructEntry): Promise<void> {
 	auditAttempt(interaction, c.auditRefusedNotOwner);
-	await interaction.reply({ embeds: [errorEmbed(c.ownerOnly)], flags: MessageFlags.Ephemeral });
+	await showErrorNotice(interaction, c.ownerOnly);
+}
+
+/** The choice modal: what self destruct deletes and keeps, over one required select of the three choices. Exported for the tests. */
+export function buildChoiceModal(): ModalBuilder {
+	const options = SELF_DESTRUCT_CHOICES.map((choice) =>
+		new StringSelectMenuOptionBuilder().setValue(choice).setLabel(c.choices[choice].label).setDescription(c.choices[choice].description).setEmoji(c.choices[choice].emoji)
+	);
+	// Required with no default: an owner must pick a choice by hand, so a stray
+	// Submit can never run one.
+	const select = new StringSelectMenuBuilder().setCustomId(CHOICE_FIELD).setRequired(true).setMinValues(1).setMaxValues(1).addOptions(options);
+	return new ModalBuilder()
+		.setCustomId(CHOICE_MODAL_ID)
+		.setTitle(c.choiceModalTitle)
+		.addTextDisplayComponents(new TextDisplayBuilder().setContent(c.choiceModalBody))
+		.addLabelComponents(new LabelBuilder().setLabel(c.choiceLabel).setStringSelectMenuComponent(select));
 }
 
 /**
- * Show tier ①, the reset prompt with Confirm and Cancel. Shared by the
- * /self-destruct command and the admin guide button. Owner-only (both callers also
- * gate; this is defense in depth).
+ * Open the choice modal. Shared by the /self-destruct command and the admin guide
+ * button. Owner only (both callers also gate; this is defense in depth).
  */
-export async function showSelfDestructConfirm(interaction: ButtonInteraction | ChatInputCommandInteraction): Promise<void> {
+export async function showSelfDestructChoices(interaction: ButtonInteraction | ChatInputCommandInteraction): Promise<void> {
 	if (!isServerOwner(interaction)) {
 		await refuseNonOwner(interaction);
 		return;
 	}
-
-	const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-		new ButtonBuilder().setCustomId(RESET_ID).setLabel(c.confirmLabel).setEmoji("💥").setStyle(ButtonStyle.Danger),
-		new ButtonBuilder().setCustomId(CANCEL_ID).setLabel(c.cancelLabel).setStyle(ButtonStyle.Secondary)
-	);
-	await interaction.reply({ embeds: [infoEmbed(c.resetPromptTitle, c.resetPromptBody, COLORS.ERROR)], components: [row], flags: MessageFlags.Ephemeral });
-}
-
-// Tier ①: reset every setting, then offer tier ②. The click is acknowledged first so
-// a slow reset never outlives Discord's three second window.
-async function runReset(interaction: ButtonInteraction): Promise<void> {
-	await interaction.update({ embeds: [infoEmbed(c.resettingTitle, c.resettingBody, COLORS.ERROR)], components: [] });
-	try {
-		await resetConfigsToDefault(interaction.guild!.id);
-	} catch (error) {
-		console.error(`[self-destruct] config reset failed in guild ${interaction.guild?.id}`, error);
-		auditAttempt(interaction, c.auditResetFailed);
-		await interaction.editReply({ embeds: [errorEmbed(c.resetFailed)] }).catch(() => undefined);
-		return;
-	}
-	auditAttempt(interaction, c.auditReset);
-	const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-		new ButtonBuilder().setCustomId(DELETE_ID).setLabel(c.deleteDataLabel).setEmoji("🗑️").setStyle(ButtonStyle.Danger)
-	);
-	await interaction.editReply({ embeds: [infoEmbed(c.resetDoneTitle, c.resetDoneBody, COLORS.ERROR)], components: [row] }).catch(() => undefined);
+	await interaction.showModal(buildChoiceModal());
 }
 
 function buildConfirmModal(): ModalBuilder {
@@ -188,17 +197,7 @@ async function handleSelfDestruct(interaction: ButtonInteraction): Promise<void>
 	}
 
 	if (action === "prompt") {
-		await showSelfDestructConfirm(interaction);
-		return;
-	}
-
-	if (action === "cancel") {
-		await interaction.update({ embeds: [infoEmbed(c.cancelledTitle, c.cancelledBody, COLORS.SCHEDULE)], components: [] });
-		return;
-	}
-
-	if (action === "reset") {
-		await runReset(interaction);
+		await showSelfDestructChoices(interaction);
 		return;
 	}
 
@@ -207,24 +206,98 @@ async function handleSelfDestruct(interaction: ButtonInteraction): Promise<void>
 		return;
 	}
 
-	// Unknown action, including the retired `confirm` (see the header).
-	await interaction.reply({ content: c.staleControl, flags: MessageFlags.Ephemeral });
+	// Unknown action, including the retired reset, cancel and confirm (see the header).
+	await showErrorNotice(interaction, c.staleControl);
 }
 
-// Tier ②: only the exact word deletes, and the owner is checked again, because a
-// modal submit is reachable without the button that opened it.
-async function handleConfirmModal(interaction: ModalSubmitInteraction): Promise<void> {
+// Both modals share the prefix, so one registered handler routes them by customId.
+async function handleSelfDestructModal(interaction: ModalSubmitInteraction): Promise<void> {
 	if (!interaction.guild) {
-		await interaction.reply({ embeds: [errorEmbed(c.notInGuild)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.notInGuild);
 		return;
 	}
+	// The owner is checked again on every submit, because a modal submit is
+	// reachable without the button that opened it.
 	if (!isServerOwner(interaction)) {
 		await refuseNonOwner(interaction);
 		return;
 	}
+	if (interaction.customId === CHOICE_MODAL_ID) {
+		await runChoice(interaction, interaction.guild);
+		return;
+	}
+	await handleConfirmModal(interaction, interaction.guild);
+}
+
+function readChoice(interaction: ModalSubmitInteraction): SelfDestructChoice | null {
+	const [value] = interaction.fields.getStringSelectValues(CHOICE_FIELD);
+	return SELF_DESTRUCT_CHOICES.find((choice) => choice === value) ?? null;
+}
+
+async function runChoice(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
+	const choice = readChoice(interaction);
+	if (choice === "channels") {
+		await runJustDeleteChannels(interaction, guild);
+		return;
+	}
+	if (choice === "arcade") {
+		await runArcadeOnly(interaction, guild);
+		return;
+	}
+	if (choice === "data") {
+		// Nothing is logged here: Delete my data writes its one line at the CONFIRM
+		// step, where it either deletes or is refused.
+		const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+			new ButtonBuilder().setCustomId(DELETE_ID).setLabel(c.typeConfirmLabel).setEmoji("🗑️").setStyle(ButtonStyle.Danger)
+		);
+		await interaction.reply({ embeds: [infoEmbed(c.deleteDataTitle, c.deleteDataBody, COLORS.ERROR)], components: [row], flags: MessageFlags.Ephemeral });
+		return;
+	}
+	// A required select always carries a value; this answers a submit Discord built
+	// from an older modal whose values no longer match.
+	await showErrorNotice(interaction, c.staleControl);
+}
+
+// Just delete channels: the teardown alone. Every setting stays on the row, so
+// /setup rebuilds the channels from it (autoSetup with force only rewrites ids).
+async function runJustDeleteChannels(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
+	// Logged BEFORE the teardown on purpose: the log channel is about to be deleted,
+	// and the BotLog row is written either way.
+	auditAttempt(interaction, c.auditChannelsConfirmed);
+	await interaction.reply({ embeds: [infoEmbed(c.deletingTitle, c.deletingChannelsBody, COLORS.ERROR)], flags: MessageFlags.Ephemeral });
+	try {
+		await demolishHomebase(guild, interaction.user.id);
+	} catch (error) {
+		console.error(`[self-destruct] channel demolish failed in guild ${guild.id}`, error);
+		await interaction.followUp({ content: c.deleteFailed, flags: MessageFlags.Ephemeral }).catch(() => undefined);
+		return;
+	}
+	// Best effort: the channel this ran in may already be gone.
+	await interaction.followUp({ content: c.channelsDone, flags: MessageFlags.Ephemeral }).catch(() => undefined);
+}
+
+// Arcade only: exactly what /arcade off runs, deferred because deleting a category
+// and its channels can outrun Discord's three second window.
+async function runArcadeOnly(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
+	const arcadeCopy = setupCopy.arcade;
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	try {
+		const outcome = await turnArcadeOff(guild);
+		auditAttempt(interaction, outcome === "off" ? c.auditArcadeOff : c.auditArcadeAlreadyOff);
+		const body = outcome === "off" ? arcadeCopy.offBody : arcadeCopy.alreadyOff;
+		await interaction.editReply({ embeds: [infoEmbed(arcadeCopy.offTitle, body, COLORS.ERROR)] });
+	} catch (error) {
+		console.error(`[self-destruct] arcade only failed in guild ${guild.id}`, error);
+		auditAttempt(interaction, c.auditArcadeFailed);
+		await interaction.editReply({ embeds: [errorEmbed(arcadeCopy.offFailed)] }).catch(() => undefined);
+	}
+}
+
+// Delete my data, step ②: only the exact word deletes.
+async function handleConfirmModal(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
 	if (interaction.fields.getTextInputValue(CONFIRM_WORD_FIELD).trim() !== c.confirmWord) {
 		auditAttempt(interaction, c.auditDeleteRefused);
-		await interaction.reply({ embeds: [errorEmbed(c.mismatch)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.mismatch);
 		return;
 	}
 
@@ -232,7 +305,6 @@ async function handleConfirmModal(interaction: ModalSubmitInteraction): Promise<
 	// and the BotLog row is written either way.
 	auditAttempt(interaction, c.auditDeleteConfirmed);
 	await interaction.reply({ embeds: [infoEmbed(c.deletingTitle, c.deletingBody, COLORS.ERROR)], flags: MessageFlags.Ephemeral });
-	const guild = interaction.guild;
 	try {
 		await demolishHomebase(guild, interaction.user.id);
 	} catch (error) {
@@ -349,11 +421,11 @@ export async function demolishCategory(
  * row (alongside the admin controls). Exported as a bare ButtonBuilder so
  * resolveIntroComponents can compose it with the other admin-controls buttons.
  * The `self_destruct:prompt` customId routes through handleSelfDestruct, which
- * gates owner-only and pops the reset prompt. Visible to admins but only the
+ * gates owner only and opens the choice modal. Visible to admins but only the
  * server owner can act on it.
  */
 export function buildSelfDestructButton(): ButtonBuilder {
-	return new ButtonBuilder().setCustomId(`${PREFIX}:prompt`).setLabel(c.buttonLabel).setEmoji("💥").setStyle(ButtonStyle.Danger);
+	return new ButtonBuilder().setCustomId(PROMPT_ID).setLabel(c.buttonLabel).setEmoji("💥").setStyle(ButtonStyle.Danger);
 }
 
 /**
@@ -362,5 +434,5 @@ export function buildSelfDestructButton(): ButtonBuilder {
  */
 export function registerSelfDestructHandlers(): void {
 	registerButton(PREFIX, handleSelfDestruct);
-	registerModal(PREFIX, handleConfirmModal);
+	registerModal(PREFIX, handleSelfDestructModal);
 }

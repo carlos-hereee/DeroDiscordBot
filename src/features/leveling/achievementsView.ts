@@ -5,7 +5,9 @@ import { levelFromTotalXp } from "@features/leveling/levelCurve.js";
 import { milestoneLevelsUpTo } from "@features/leveling/primeLevels.js";
 import { getLevelingConfig } from "@features/leveling/levelingConfig.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
-import { buildAchievementsEmbed, type AchievementProgressView } from "@features/leveling/levelingEmbeds.js";
+import { buildAchievementsCardEmbed, buildAchievementsEmbed, type AchievementProgressView } from "@features/leveling/levelingEmbeds.js";
+import { ACHIEVEMENTS_AVATAR_SIZE, renderAchievementsCard } from "@features/leveling/achievementsRenderer.js";
+import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { buildCounters, progressFor, unlockedKey } from "@features/leveling/achievementEngine.js";
 import { ACHIEVEMENTS_BY_ID } from "@features/leveling/achievements.js";
 import { deferProfileReply } from "@features/leveling/accountProfile.js";
@@ -18,6 +20,8 @@ import { deferProfileReply } from "@features/leveling/accountProfile.js";
 //        privately. Both call showAchievements (2026-10 item 245 Phase 4b folded
 //        the old /achievements command into /account).
 // When:  on demand. Read only, and it never writes.
+// How:   a drawn card (achievementsRenderer, 2026-10 item 254), with the text embed
+//        as the fallback when the canvas cannot draw.
 // Where: the counters it reads are the ones MemberLevel already maintains, so
 //        this view adds no listener and no write anywhere.
 //
@@ -95,5 +99,14 @@ export async function showAchievements(interaction: RepliableInteraction, { targ
 	// member has earned a secret, it is theirs to show off.
 	const shown = unlocked.filter((entry) => ACHIEVEMENTS_BY_ID.has(entry.id));
 
-	await interaction.editReply({ embeds: [buildAchievementsEmbed(displayName, shown, inProgress)] });
+	// The card when it renders, the text view when it does not. Either way one reply.
+	const reply = await withRenderFallback(
+		() => renderAchievementsCard({ displayName, avatar: avatarRequestFor(target, ACHIEVEMENTS_AVATAR_SIZE), unlocked: shown, inProgress }),
+		() => buildAchievementsEmbed(displayName, shown, inProgress)
+	);
+	if (isRenderPayload(reply)) {
+		await interaction.editReply({ embeds: [buildAchievementsCardEmbed(displayName, reply.ref)], files: [reply.attachment] });
+		return;
+	}
+	await interaction.editReply({ embeds: [reply] });
 }

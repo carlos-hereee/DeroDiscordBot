@@ -1,4 +1,5 @@
 import type { AdminLogKind } from "./adminLog.js";
+import type { BoardRefreshProblem } from "@base/interfaces/IBoardRefreshResult.js";
 
 // ── setup admin copy ─────────────────────────────────────────────────────
 // Feature-local copy for the admin surfaces this folder owns, the sibling of
@@ -6,7 +7,7 @@ import type { AdminLogKind } from "./adminLog.js";
 // admin in 🗒️admin-log, the admin guide or a private reply, and reads the same in
 // the kingdom voice and the streamer voice, so a two-pack split would double the
 // authoring for content that comes out the same twice.
-// Who:   adminLog (the audit line), selfDestruct (the reset prompt, the CONFIRM
+// Who:   adminLog (the audit line), selfDestruct (the choice modal, the CONFIRM
 //        modal and every reply) and /arcade off and on.
 //
 // House rule for every string below: no dashes in user-facing copy.
@@ -151,30 +152,45 @@ export const setupCopy = {
 		notInGuild: "Run this in a server, not a DM.",
 		ownerOnly: "Only the server owner can self destruct.",
 		staleControl: "This control is no longer available.",
-		resetPromptTitle: "💥 Self destruct?",
-		resetPromptBody: [
-			"**This resets all configs to default.** Dero's voice switch, lists and budget, the arcade's reach, network blocks and monthly post, auto heal, removed channels, channel renames, custom copy, your saved rules text, the leaderboard settings and the leveling settings all go back to how a new server starts.",
+		// The choice modal. A modal title holds 45 characters, a select label 45 and
+		// an option's description 100.
+		choiceModalTitle: "💥 Self destruct",
+		choiceModalBody: [
+			"**Self destruct deletes every Dero channel and its message history.**",
 			"",
-			"Your channels, roles, members' levels and game history stay as they are.",
+			"It does **not** delete stored data: announcements, schedules, settings, members' levels, game history and the rest stay. Delete my data also deletes the stored records and asks you to type CONFIRM first.",
 			"",
-			"After the reset you can also delete server data. That step is yours alone and asks you to type CONFIRM.",
+			"A welcome or rules channel your server had before Dero adopted it is kept.",
 		].join("\n"),
-		confirmLabel: "Confirm",
-		cancelLabel: "Cancel",
-		cancelledTitle: "Cancelled",
-		cancelledBody: "Nothing was changed.",
-		resettingTitle: "💥 Resetting",
-		resettingBody: "Putting every setting back to its default now.",
-		resetDoneTitle: "Configs reset",
-		resetDoneBody: [
-			"Dero's settings are back to their defaults. Your channels and data are untouched.",
+		choiceLabel: "What should Dero do?",
+		choices: {
+			channels: {
+				label: "Just delete channels",
+				description: "Delete Dero's channels, keep every setting. /setup brings them back as they were.",
+				emoji: "🧹",
+			},
+			data: {
+				label: "Delete my data",
+				description: "Delete the channels and this server's stored data. Asks you to type CONFIRM.",
+				emoji: "🗑️",
+			},
+			arcade: {
+				label: "Arcade only",
+				description: "Delete only the 🎮 ARCADE GAMES category and its channels, like /arcade off.",
+				emoji: "🎮",
+			},
+		},
+		deletingChannelsBody: "Deleting Dero's channels now. Every setting and record is kept.",
+		channelsDone: "Done. Dero's channels are gone and every setting is kept. Run /setup to bring them back as they were.",
+		deleteDataTitle: "🗑️ Delete my data",
+		deleteDataBody: [
+			"This deletes both of Dero's categories and every channel in them, every match in progress, and this server's stored records (member levels and renown history, game rooms and their transcripts, game tallies and luck, game requests, poll votes, events and their attendance, and any unclaimed pairing code).",
 			"",
-			"**Delete server data** goes further: it deletes both of Dero's categories and every channel in them, every match in progress, and this server's stored records (member levels and renown history, game rooms and their transcripts, game tallies and luck, game requests, poll votes, events and their attendance, and any unclaimed pairing code).",
+			"Kept on purpose: Dero's settings for this server (so /setup rebuilds with them), the audit trail, this month's voice spending, network bans and consent, and players' network ratings. A welcome or rules channel your server had before Dero adopted it is kept too. **This cannot be undone.**",
 			"",
-			"Kept on purpose: the audit trail, this month's voice spending, network bans and consent, and players' network ratings. A welcome or rules channel your server had before Dero adopted it is kept too. **This cannot be undone.**",
+			"Press **Type CONFIRM** to finish. Nothing is deleted until you do.",
 		].join("\n"),
-		resetFailed: "The reset failed partway. Run self destruct again to finish it; nothing was deleted.",
-		deleteDataLabel: "Delete server data",
+		typeConfirmLabel: "Type CONFIRM",
 		modalTitle: "Delete server data",
 		modalInputLabel: "Type CONFIRM to delete everything",
 		modalPlaceholder: "CONFIRM",
@@ -188,11 +204,32 @@ export const setupCopy = {
 			`Dero's channels are gone, but these records could not be deleted: ${failed.join(", ")}. Run self destruct again to retry them.`,
 		// The audit line's detail for each step of the flow.
 		auditRefusedNotOwner: "refused, not the server owner",
-		auditReset: "configs reset to default",
-		auditResetFailed: "config reset failed",
+		auditChannelsConfirmed: "just delete channels, settings kept",
+		auditArcadeOff: "arcade only, category and channels deleted",
+		auditArcadeAlreadyOff: "arcade only, the arcade was already off",
+		auditArcadeFailed: "arcade only failed, nothing deleted",
 		auditDeleteConfirmed: "server data delete confirmed",
 		auditDeleteRefused: "CONFIRM not typed, nothing deleted",
 		auditDeleteFailed: "server data delete failed",
+	},
+
+	// Refresh standings on the admin guide (2026-10 item 254): one line per board of
+	// the leaderboard channel, saying it refreshed or why not.
+	refreshStandings: {
+		boards: { participation: "Participation board", levels: "Levels board" },
+		refreshed: (board: string): string => `✅ ${board}: refreshed.`,
+		failed: (board: string, reason: string): string => `⚠️ ${board}: not refreshed, ${reason}.`,
+		problems: {
+			"homebase-destroyed": "Dero's channels were self destructed (run /setup)",
+			"not-set-up": "the leaderboard channel is not set up yet",
+			"channel-missing": "the leaderboard channel is missing or Dero cannot see it",
+			"foreign-message": "the stored board message belongs to another bot",
+			"edit-failed": "Discord refused the edit (check Dero's permissions there)",
+			"post-failed": "Discord refused the post (check Dero's permissions there)",
+			"unexpected-error": "the standings could not be read, try again in a moment",
+		} satisfies Record<BoardRefreshProblem, string>,
+		auditAllRefreshed: "both boards refreshed",
+		auditSomeFailed: (failed: readonly string[]): string => `not refreshed: ${failed.join(", ")}`,
 	},
 
 	arcade: {

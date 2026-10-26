@@ -5,8 +5,10 @@ import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { refreshLeaderboard } from "@features/leaderboard/LeaderboardBoard.js";
+import { refreshLevelsBoard } from "@features/leveling/LevelsBoard.js";
 import { welcomeNewMember } from "@features/greeter/welcomeNewMember.js";
 import { respondWithFortune } from "@features/fortune/respondWithFortune.js";
+import { runChipClaim } from "@features/economy/chipClaim.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import { showAccountProfile } from "@features/leveling/accountProfile.js";
 import { showLevelsStandings } from "@features/leveling/levelsStandings.js";
@@ -18,9 +20,11 @@ import { setupCopy } from "@features/setup/setupCopy.js";
 // The bot's common channel actions are one-click buttons in Discord, no slash
 // command required. They USED to live on standalone pinned "power-up" panel
 // messages; they are now BUTTONS on the pinned intro guides instead:
-//   • #command-center guide: "Account", "Levels", "Achievements", "Toggle pings"
-//     and "Fortune" (any member)
+//   • #command-center guide: "Account", "Levels", "Achievements" and "Toggle
+//     pings" (any member)
 //   • Summon Dero invite card: "Icebreaker" (any member)
+//   • 🕹️games intro's daily row: "Fortune" and "Claim daily rewards" (any member,
+//     2026-10 item 254)
 //   • admin-controls guide:  "Refresh standings" (owner/admin)
 // The admin "Post hangman" button moved to 🎉party-games as Host hangman
 // (post-launch plan item 3, features/game-rooms/partyGames); a stale one on an
@@ -51,6 +55,10 @@ const POWERUP_ACTIONS = {
 	// "Fortune" (member:fortune), any member can pull their own fortune reading,
 	// so it is NOT adminOnly.
 	"member:fortune": { adminOnly: false },
+	// "Claim daily rewards" (member:claim), the /claim chip claim as a button on the
+	// 🕹️games daily row (2026-10 item 254). Any member; with chips off the press gets
+	// runChipClaim's own refusal.
+	"member:claim": { adminOnly: false },
 	// The three /account views (2026-10 item 245 Phase 4b), each answered privately
 	// for the member who pressed it: a guide's buttons never post in its channel.
 	"member:account": { adminOnly: false },
@@ -91,12 +99,19 @@ export function buildIcebreakerButton(): ButtonBuilder {
 	return new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:greet`).setLabel("Icebreaker").setEmoji("🎲").setStyle(ButtonStyle.Secondary);
 }
 
-// "Fortune", pulls the clicking member a quick personal fortune reading
-// (ephemeral, so it never clutters the read-only #command-center guide).
-// Member-usable (member:fortune). Rides the Summon Dero invite card next to
-// Icebreaker, and the #command-center guide's second row.
-export function buildFortuneButton(): ButtonBuilder {
-	return new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:fortune`).setLabel("Fortune").setEmoji("🔮").setStyle(ButtonStyle.Secondary);
+// "Fortune", pulls the clicking member a quick personal fortune reading, privately.
+// Member-usable (member:fortune). Rides the 🕹️games daily row (2026-10 item 254),
+// since it is a game that feeds the luck board; its customId never changed, so an
+// old Fortune button left on a message still reads.
+export function buildFortuneButton(label: string): ButtonBuilder {
+	return new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:fortune`).setLabel(label).setEmoji("🔮").setStyle(ButtonStyle.Secondary);
+}
+
+// "Claim daily rewards", the member's daily chip claim (member:claim), beside
+// Fortune on the 🕹️games daily row. Always shown: a button cannot hide itself when a
+// server switches chips off, and the press then says so.
+export function buildClaimButton(label: string): ButtonBuilder {
+	return new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:claim`).setLabel(label).setEmoji("🪙").setStyle(ButtonStyle.Success);
 }
 
 // admin-controls guide row: refresh the leaderboard standings. Owner/admin gated
@@ -151,6 +166,9 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 		case "member:fortune":
 			await runFortune(interaction);
 			return;
+		case "member:claim":
+			await runChipClaim(interaction);
+			return;
 		case "member:subscribe":
 			await runToggleNotificationRole(interaction, guildId);
 			return;
@@ -171,16 +189,32 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 	}
 }
 
+// Refresh standings rebuilds EVERY board of the leaderboard channel (2026-10 item
+// 254): the participation board and the levels board share that channel, and an
+// admin who deleted both expects one press to bring both back. Each refresher
+// reposts a deleted message on its own and reports what it did, so the reply names
+// each board rather than claiming success for a refresh that posted nothing.
 async function runLeaderboardRefresh(interaction: ButtonInteraction, guildId: string): Promise<void> {
-	// Defer: refreshLeaderboard does Discord I/O (channel fetch + message edit)
-	// which can exceed the 3s interaction-ack window on a cold cache.
+	// Defer: both refreshes do Discord I/O (channel fetch, message edit or post, a
+	// card render) which can exceed the 3s interaction-ack window on a cold cache.
 	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-	// refreshLeaderboard is fire-and-forget by contract (swallows + logs its own
-	// errors), so we cannot tell success from a silently-handled failure; await
-	// it so the board is updated before we ack, then confirm generically.
-	await refreshLeaderboard(interaction.client, guildId);
-	adminLog.emitFor(interaction, guildId, "powerup.toggle", { subject: setupCopy.adminLog.subjects.refreshStandings });
-	await interaction.editReply({ content: "🔄 Standings refreshed." });
+	const copy = setupCopy.refreshStandings;
+	// The two boards write different anchors (leaderboardMessageId, levelsMessageId),
+	// so they can run side by side.
+	const [participation, levels] = await Promise.all([refreshLeaderboard(interaction.client, guildId), refreshLevelsBoard(interaction.client, guildId)]);
+	const outcomes = [
+		{ board: copy.boards.participation, result: participation },
+		{ board: copy.boards.levels, result: levels },
+	];
+	const lines = outcomes.map(({ board, result }) =>
+		result.posted ? copy.refreshed(board) : copy.failed(board, copy.problems[result.problem ?? "unexpected-error"])
+	);
+	const failed = outcomes.filter(({ result }) => !result.posted).map(({ board }) => board);
+	adminLog.emitFor(interaction, guildId, "powerup.toggle", {
+		subject: setupCopy.adminLog.subjects.refreshStandings,
+		detail: failed.length === 0 ? copy.auditAllRefreshed : copy.auditSomeFailed(failed),
+	});
+	await interaction.editReply({ content: lines.join("\n") });
 }
 
 async function runFireGreeting(interaction: ButtonInteraction): Promise<void> {
@@ -207,8 +241,8 @@ async function runFireGreeting(interaction: ButtonInteraction): Promise<void> {
 }
 
 async function runFortune(interaction: ButtonInteraction): Promise<void> {
-	// A quick personal reading, always ephemeral so it never clutters the
-	// read-only #command-center guide. A button cannot take text input without a
+	// A quick personal reading, always ephemeral so it never clutters the channel
+	// the button sits in. A button cannot take text input without a
 	// modal, so the button gives a no-question reading; /mini-game fortune is the
 	// path for a custom question. All reading logic (kill-switch, cooldown, roll, embed) is
 	// shared with the slash command via respondWithFortune, and the cooldown Map

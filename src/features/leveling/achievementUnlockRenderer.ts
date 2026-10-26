@@ -34,6 +34,7 @@ const MEDALLION_COLUMN_WIDTH = 300;
 const MEDALLION_DIAMETER = 150;
 // The inner disc leaves a ring of metal this wide around the tier name.
 const MEDALLION_RING = 14;
+const MEDALLION_TIER_TEXT_SIZE = 22;
 const MEDALLION_CENTER_Y = 228;
 const CAPTION_WIDTH = 270;
 
@@ -94,20 +95,31 @@ async function drawAchievementUnlockCard(context: SKRSContext2D, input: Achievem
 	return deroStandIn || faceStandIn ? { cacheable: false } : undefined;
 }
 
-function drawMedallion(context: SKRSContext2D, unlock: AchievementUnlockCardInput["unlocks"][number], centerX: number): void {
-	const metal = tierColor(unlock.tier);
-	fillCircle(context, centerX, MEDALLION_CENTER_Y, MEDALLION_DIAMETER, metal);
-	fillCircle(context, centerX, MEDALLION_CENTER_Y, MEDALLION_DIAMETER - MEDALLION_RING * 2, canvasColor(COLORS.CARD_BACKGROUND));
-	drawText(context, unlock.tier.toUpperCase(), {
+/**
+ * One tier medallion: a disc of the tier's metal around an inner disc carrying the
+ * tier's name. Its ring and lettering scale with the diameter from this card's 150
+ * pixel medallion, so the achievements card (2026-10 item 254) draws the same mark
+ * smaller instead of a second one.
+ */
+export function drawTierMedallion(context: SKRSContext2D, tier: string, centerX: number, centerY: number, diameter: number): void {
+	const metal = tierColor(tier);
+	const ring = Math.round((diameter * MEDALLION_RING) / MEDALLION_DIAMETER);
+	fillCircle(context, centerX, centerY, diameter, metal);
+	fillCircle(context, centerX, centerY, diameter - ring * 2, canvasColor(COLORS.CARD_BACKGROUND));
+	drawText(context, tier.toUpperCase(), {
 		x: centerX,
-		y: MEDALLION_CENTER_Y,
-		size: 22,
+		y: centerY,
+		size: Math.round((diameter * MEDALLION_TIER_TEXT_SIZE) / MEDALLION_DIAMETER),
 		weight: "bold",
 		color: metal,
 		align: "center",
 		baseline: "middle",
-		maxWidth: MEDALLION_DIAMETER - MEDALLION_RING * 4,
+		maxWidth: diameter - ring * 4,
 	});
+}
+
+function drawMedallion(context: SKRSContext2D, unlock: AchievementUnlockCardInput["unlocks"][number], centerX: number): void {
+	drawTierMedallion(context, unlock.tier, centerX, MEDALLION_CENTER_Y, MEDALLION_DIAMETER);
 	const captionTop = MEDALLION_CENTER_Y + MEDALLION_DIAMETER / 2;
 	drawText(context, unlock.id, {
 		x: centerX,

@@ -1,29 +1,31 @@
 import { COLORS } from "@base/copy/brand.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { canvasColor, drawBarSegment, drawCardBackground, drawDeroPose, drawMemberFace, drawPanel, drawPill, drawText, fillCircle, renderCard, type AvatarRequest, type DrawOutcome, type Rect, type RenderPayload } from "@features/renderer/index.js";
 import type { SKRSContext2D } from "@features/renderer/canvasModule.js";
 import { tierColor } from "./levelingCardParts.js";
 import { levelingCopy } from "./levelingCopy.js";
-import type { AccountView } from "./levelingEmbeds.js";
+import { ratio, type AccountChips, type AccountLuck, type AccountView } from "./levelingEmbeds.js";
 
 // ── accountRenderer ────────────────────────────────────────────────────────
 // The /account profile as a card: face, name and level, the progress bar, the
 // three standings, the overall game record, the presence counters and the most
-// recent achievement tiers, with Dero's account pose beside them. It takes the
-// same AccountView buildAccountEmbed takes and answers the PNG, or null when the
-// text profile should post instead. /account calls it through withRenderFallback.
+// recent achievement tiers, with Dero's account pose beside them, and below them
+// the per game record table, the month's luck and the chips (2026-10 item 254),
+// so the card's embed carries no data in text. It takes the same AccountView
+// buildAccountEmbed takes and answers the PNG, or null when the text profile
+// should post instead. /account calls it through withRenderFallback.
 //
-// The per game table, the month's luck and each achievement's "earned by" sentence
-// are not drawn: a card at Discord's embed width cannot hold ten columns of
-// numbers legibly, so it shows the overall record and the tiers, and the card's
-// embed carries the table and the luck as fields (buildAccountCardEmbed).
+// Each achievement's "earned by" sentence is not drawn: the tiers say what kind,
+// and the sentences live on the text profile and in /account view:achievements.
 
 /** The avatar size the account card requests. The face draws at 150 pixels. */
 export const ACCOUNT_AVATAR_SIZE = 256;
 
 // Bump whenever the drawing changes, or members keep seeing cached cards.
-const ACCOUNT_CARD_VERSION = 1;
+const ACCOUNT_CARD_VERSION = 2;
 const CARD_WIDTH = 960;
-const CARD_HEIGHT = 540;
+// 540 for the profile, then a band below it for the record table, the luck and the chips.
+const CARD_HEIGHT = 820;
 const MARGIN = 40;
 const FACE_DIAMETER = 150;
 const FACE_RING = 8;
@@ -42,6 +44,15 @@ const PANEL_RADIUS = 16;
 // The most achievement tiers the card shows as dots; the count says the rest.
 const MAX_TIER_DOTS = 8;
 const TIER_DOT_DIAMETER = 18;
+// The lower band: the record table on the left, the luck and the chips on the right.
+// The table fits every game LEVELING_GAME_SLUGS names (eight) plus the overall row.
+const RECORD_TABLE: Rect = { x: MARGIN, y: 530, width: LEFT_COLUMN_WIDTH, height: 270 };
+const RECORD_ROW_HEIGHT = 22;
+// Each column's right edge, from the table's left, so the numbers line up.
+const RECORD_COLUMNS = { played: 270, won: 330, lost: 390, drawn: 450, assists: 520, ratio: 610 } as const;
+const LUCK_PANEL: Rect = { x: 700, y: 530, width: 220, height: 125 };
+const CHIPS_PANEL: Rect = { x: 700, y: 675, width: 220, height: 125 };
+const MS_PER_MINUTE = 60_000;
 
 // Only what the card draws, as plain numbers and strings. The view can carry
 // Mongoose subdocuments (games, unlocked) that hashRenderInput refuses, and a
@@ -63,6 +74,9 @@ interface AccountCardInput {
 	voiceMinutes: number;
 	record: { won: number; lost: number; drawn: number } | null;
 	unlockedTiers: string[];
+	games: Array<{ slug: string; played: number; won: number; lost: number; drawn: number; assists: number }>;
+	luckLines: string[];
+	chips: { balance: string; claim: string | null } | null;
 }
 
 /** The /account card, or null when the text profile should post. Never throws. */
@@ -96,7 +110,35 @@ function toCardInput(view: AccountView): AccountCardInput {
 		voiceMinutes: view.voiceMinutes,
 		record,
 		unlockedTiers: view.unlocked.map((unlock) => String(unlock.tier)),
+		games: view.games.map(({ slug, record: game }) => ({ slug, played: game.played, won: game.won, lost: game.lost, drawn: game.drawn, assists: game.assists })),
+		luckLines: luckLines(view.luck),
+		chips: chipsLines(view.chips),
 	};
+}
+
+// The luck board's own numbers, as the text profile's luck line says them, in
+// plain words: what was won, the 8 ball readings when there are any, the score.
+function luckLines(luck: AccountLuck | null): string[] {
+	const cards = levelingCopy.cards;
+	if (!luck) return [cards.noLuck];
+	const lines = [cards.luckWins(luck.wins, luck.decided)];
+	if (luck.readings) lines.push(cards.luckReadings(luck.readings));
+	lines.push(luck.score === null ? cards.luckScoreLater(BOT_CONSTANTS.RATINGS.LUCK_MIN_DECIDED) : cards.luckScore(luck.score));
+	return lines;
+}
+
+// Null when the server has chips off, which leaves the panel out like the text
+// profile leaves the line out. The claim line is the member's own profile only.
+// Rounded to the minute, so the card cache is not split by the second.
+function chipsLines(chips: AccountChips | null): AccountCardInput["chips"] {
+	if (!chips) return null;
+	const cards = levelingCopy.cards;
+	const balance = cards.chipsBalance(chips.balance);
+	if (!chips.claim) return { balance, claim: null };
+	const { nextClaimAt, now } = chips.claim;
+	if (nextClaimAt === null || nextClaimAt.getTime() <= now.getTime()) return { balance, claim: cards.claimReady };
+	const minutes = Math.ceil((nextClaimAt.getTime() - now.getTime()) / MS_PER_MINUTE);
+	return { balance, claim: cards.nextClaimIn(Math.floor(minutes / 60), minutes % 60) };
 }
 
 function sumRecord(records: Array<{ won: number; lost: number; drawn: number }>): { won: number; lost: number; drawn: number } {
@@ -124,6 +166,9 @@ async function drawAccountCard(context: SKRSContext2D, input: AccountCardInput):
 	drawStandings(context, input);
 	drawRecordAndAchievements(context, input);
 	drawPresence(context, input);
+	drawRecordTable(context, input);
+	drawLuck(context, input);
+	if (input.chips) drawChips(context, input.chips);
 
 	return deroStandIn || faceStandIn ? { cacheable: false } : undefined;
 }
@@ -218,6 +263,71 @@ function drawPresence(context: SKRSContext2D, input: AccountCardInput): void {
 			weight: "bold",
 			color: canvasColor(COLORS.CARD_TEXT),
 			align: "right",
+		});
+	});
+}
+
+// The per game table the text profile shows as a code block: one row a game the
+// member has played, then the overall row, numbers right aligned in columns.
+function drawRecordTable(context: SKRSContext2D, input: AccountCardInput): void {
+	const columns = levelingCopy.cards.recordColumns;
+	const secondary = canvasColor(COLORS.CARD_TEXT_SECONDARY);
+	drawPanel(context, { ...RECORD_TABLE, radius: PANEL_RADIUS, fill: canvasColor(COLORS.CARD_PANEL) });
+	drawText(context, levelingCopy.cards.record, { x: RECORD_TABLE.x + 20, y: RECORD_TABLE.y + 34, size: 18, color: secondary });
+	if (input.games.length === 0) {
+		drawText(context, levelingCopy.labels.noRecordYet, { x: RECORD_TABLE.x + 20, y: RECORD_TABLE.y + 80, size: 20, color: canvasColor(COLORS.CARD_TEXT_MUTED) });
+		return;
+	}
+
+	const headerY = RECORD_TABLE.y + 64;
+	for (const [column, label] of Object.entries(columns) as Array<[keyof typeof RECORD_COLUMNS, string]>) {
+		drawText(context, label, { x: RECORD_TABLE.x + RECORD_COLUMNS[column], y: headerY, size: 15, weight: "bold", color: secondary, align: "right" });
+	}
+	const totals = input.games.reduce(
+		(sum, game) => ({ played: sum.played + game.played, won: sum.won + game.won, lost: sum.lost + game.lost, drawn: sum.drawn + game.drawn, assists: sum.assists + game.assists }),
+		{ played: 0, won: 0, lost: 0, drawn: 0, assists: 0 }
+	);
+	const rows = [...input.games, { slug: levelingCopy.labels.overall, ...totals }];
+	rows.forEach((row, index) => {
+		const y = headerY + (index + 1) * RECORD_ROW_HEIGHT;
+		const isOverall = index === rows.length - 1;
+		const color = canvasColor(isOverall ? COLORS.CARD_TEXT : COLORS.CARD_TEXT_SECONDARY);
+		const weight = isOverall ? "bold" : undefined;
+		drawText(context, row.slug, { x: RECORD_TABLE.x + 20, y, size: 16, weight, color });
+		const values: Record<keyof typeof RECORD_COLUMNS, string> = {
+			played: String(row.played),
+			won: String(row.won),
+			lost: String(row.lost),
+			drawn: String(row.drawn),
+			assists: String(row.assists),
+			ratio: ratio(row.won, row.lost),
+		};
+		for (const [column, value] of Object.entries(values) as Array<[keyof typeof RECORD_COLUMNS, string]>) {
+			drawText(context, value, { x: RECORD_TABLE.x + RECORD_COLUMNS[column], y, size: 16, weight, color, align: "right" });
+		}
+	});
+}
+
+function drawLuck(context: SKRSContext2D, input: AccountCardInput): void {
+	drawLinesPanel(context, LUCK_PANEL, levelingCopy.labels.luck, input.luckLines);
+}
+
+function drawChips(context: SKRSContext2D, chips: NonNullable<AccountCardInput["chips"]>): void {
+	drawLinesPanel(context, CHIPS_PANEL, levelingCopy.labels.chips, chips.claim ? [chips.balance, chips.claim] : [chips.balance]);
+}
+
+// A panel with a label and up to three short lines, the first one bold.
+function drawLinesPanel(context: SKRSContext2D, box: Rect, label: string, lines: readonly string[]): void {
+	drawPanel(context, { ...box, radius: PANEL_RADIUS, fill: canvasColor(COLORS.CARD_PANEL) });
+	drawText(context, label, { x: box.x + 20, y: box.y + 34, size: 18, color: canvasColor(COLORS.CARD_TEXT_SECONDARY), maxWidth: box.width - 40 });
+	lines.forEach((line, index) => {
+		drawText(context, line, {
+			x: box.x + 20,
+			y: box.y + 64 + index * 24,
+			size: index === 0 ? 18 : 15,
+			weight: index === 0 ? "bold" : undefined,
+			color: canvasColor(index === 0 ? COLORS.CARD_TEXT : COLORS.CARD_TEXT_MUTED),
+			maxWidth: box.width - 40,
 		});
 	});
 }

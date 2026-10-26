@@ -55,6 +55,8 @@ export interface IOnboardingReviewSummary {
 	defaultChannelIds: readonly string[];
 	startedFromExisting: boolean;
 	finalPromptAdded: boolean;
+	/** Roles given by answers in more than one question, which the review warns about. */
+	reusedRoleIds: readonly string[];
 }
 
 /** One question as the review shows it. */
@@ -92,10 +94,16 @@ const onboardingReviewOpening = (summary: IOnboardingReviewSummary): string => {
 };
 
 // What picking an answer gives, after its title: "(gives @Member, opens #general)".
-const optionGrants = (option: IOnboardingOptionView): string => {
-	const grants = [...option.roleIds.map((id) => `gives <@&${id}>`), ...option.channelIds.map((id) => `opens <#${id}>`)];
+// A role another question's answer also gives is marked ⚠️ (2026-10 item 254).
+const optionGrants = (option: IOnboardingOptionView, reusedRoleIds: ReadonlySet<string>): string => {
+	const grants = [...option.roleIds.map((id) => `gives ${reusedRoleIds.has(id) ? "⚠️ " : ""}<@&${id}>`), ...option.channelIds.map((id) => `opens <#${id}>`)];
 	return grants.length > 0 ? ` (${grants.join(", ")})` : "";
 };
+
+// The one warning line above the questions when answers in different questions give
+// the same role. Never a refusal: the owner may mean it (the owner's decision).
+const reusedRolesWarning = (roleIds: readonly string[]): string =>
+	`⚠️ ${roleIds.map((id) => `<@&${id}>`).join(", ")} ${roleIds.length === 1 ? "is" : "are"} given by answers in more than one question, so a member can get ${roleIds.length === 1 ? "it" : "them"} from either.`;
 
 // "Low to Medium" when Confirm raises it, "stays High" when it is already there.
 const settingLine = (label: string, change: ISettingChange): string =>
@@ -127,7 +135,16 @@ export const communityCopy = {
 		enable: "Enable Community",
 		configure: "Configure Onboarding",
 		confirm: "Confirm",
-		editPrompt: (position: number): string => `Edit ${position}`,
+		// The Onboarding review's editor (2026-10 item 254). Labels are capped at 80
+		// characters and placeholders at 150, by Discord.
+		pickPromptPlaceholder: "Pick a question to edit",
+		pickOptionPlaceholder: "Pick an answer to edit or delete",
+		editPrompt: "Edit question",
+		deletePrompt: "Delete question",
+		addPrompt: "Add question",
+		addOption: "Add answer",
+		editOption: "Edit answer",
+		deleteOption: "Delete answer",
 		confirmOnboarding: "Confirm",
 		cancelOnboarding: "Cancel",
 	},
@@ -287,7 +304,8 @@ export const communityCopy = {
 					"",
 					`**Default channels** (${summary.defaultChannelIds.length}), which every new member gets right away: ${channels}`,
 					"",
-					"Press Edit on a question to change or remove it. Nothing changes until you press Confirm.",
+					...(summary.reusedRoleIds.length > 0 ? [reusedRolesWarning(summary.reusedRoleIds), ""] : []),
+					"Pick a question below to edit it, delete it, or add and change its answers, each with its own roles. Nothing changes until you press Confirm.",
 				].join("\n");
 			},
 			promptFieldName: (position: number, title: string): string => `${position}. ${title}`,
@@ -295,38 +313,56 @@ export const communityCopy = {
 				if (prompt.isFinal) return "Required, the last question. Its answer gives the member role.";
 				return `${prompt.required ? "Required" : "Optional"}, members pick ${prompt.singleSelect ? "one answer" : "any answers"}.`;
 			},
-			optionLine: (option: IOnboardingOptionView): string => `• ${option.title}${option.description ? `: ${option.description}` : ""}${optionGrants(option)}`,
+			optionLine: (option: IOnboardingOptionView, reusedRoleIds: ReadonlySet<string>): string =>
+				`• ${option.title}${option.description ? `: ${option.description}` : ""}${optionGrants(option, reusedRoleIds)}`,
 			// When a question has more answers than one embed field holds.
 			moreOptions: (count: number): string => `and ${count} more`,
 		},
 
-		// ── the edit modal ──
+		// ── the edit modals ──
 		// Labels are capped at 45 characters, descriptions and placeholders at 100,
 		// and the modal title at 45, by Discord.
 		modal: {
 			title: (position: number): string => `Edit question ${position}`,
 			finalTitle: "Edit the final question",
+			addPromptTitle: "Add a question",
+			editOptionTitle: (position: number): string => `Edit an answer to question ${position}`,
+			addOptionTitle: (position: number): string => `Add an answer to question ${position}`,
 			promptTitleLabel: "Question",
 			promptTitleDescription: "The question new members read.",
-			optionsLabel: "Answers",
-			optionsDescription: "One answer per line, as title | description. Clear every line to remove this question.",
-			optionsPlaceholder: "Friend | A friend sent me an invite",
 			finalTitleDescription: "The last question. It stays required, and members pick its one answer.",
 			finalOptionLabel: "Answer",
 			finalOptionDescription: "Picking this answer gives the member role. Only its title can change.",
+			optionTitleLabel: "Answer",
+			optionTitleDescription: "What a member picks.",
+			firstOptionTitleDescription: "The question's first answer. Add more after.",
+			optionDescriptionLabel: "Description",
+			optionDescriptionDescription: "Optional, shown under the answer.",
+			optionRolesLabel: "Roles",
+			optionRolesDescription: "Roles a member gets for picking this answer. Each must sit below Dero.",
 		},
 
-		// A submit the edit modal refuses. Nothing in the draft changes.
+		// A submit or press the editor refuses. Nothing in the draft changes.
 		editErrors: {
 			promptGone: "That question is no longer in the draft. Use the buttons on the latest review.",
-			tooLongToEdit: "This question has more answers than one edit box holds. Edit it in Server Settings, Onboarding, instead.",
+			optionGone: "That answer is no longer in the draft. Use the buttons on the latest review.",
+			reviewOutdated: "This review is out of date. Use the controls on the latest review.",
+			tooLongToEdit: "This question or answer is longer than an edit box holds. Edit it in Server Settings, Onboarding, instead.",
 			emptyTitle: "A question needs a title.",
-			emptyOptionTitle: "Every answer needs a title before the | sign.",
+			emptyOptionTitle: "Every answer needs a title.",
 			titleTooLong: (max: number): string => `A question can be at most ${max} characters.`,
 			optionTitleTooLong: (title: string, max: number): string => `The answer "${title}" is longer than ${max} characters.`,
 			descriptionTooLong: (title: string, max: number): string => `The description of "${title}" is longer than ${max} characters.`,
 			tooManyOptions: (max: number): string => `A question can have at most ${max} answers.`,
+			tooManyPrompts: (max: number): string => `The review can hold at most ${max} questions.`,
+			tooManyRoles: (max: number): string => `An answer edited here can give at most ${max} roles.`,
 			duplicateOption: (title: string): string => `The answer "${title}" is there twice. Give each answer its own title.`,
+			finalPromptFixed: "The final question keeps its one answer and the member role. Edit its titles with Edit question.",
+			lastOption: "A question needs at least one answer. Delete the question instead.",
+			roleIsEveryone: "An answer cannot give @everyone, which every member already has. Pick another role.",
+			roleGone: "One of the picked roles no longer exists. Pick the roles again.",
+			roleAboveBot: (roleName: string): string =>
+				`${roleName} sits above my highest role, so Discord would refuse to give it. Move my role above ${roleName} in Server Settings → Roles, or pick another role.`,
 		},
 
 		// ── the result ──

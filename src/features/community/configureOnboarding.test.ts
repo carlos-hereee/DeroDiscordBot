@@ -185,7 +185,7 @@ describe("pressing Configure Onboarding", () => {
 		expect(refusalText(interaction)).toBe(copy.preconditions.communityOff);
 	});
 
-	it("shows the drafted review privately: 2 optional questions and the final one, one Edit each, then Confirm and Cancel", async () => {
+	it("shows the drafted review privately: 2 optional questions and the final one, a question select, then Add question, Confirm and Cancel", async () => {
 		const guild = makeGuild();
 		const interaction = await openReview(guild);
 
@@ -200,9 +200,8 @@ describe("pressing Configure Onboarding", () => {
 		expect(embed.description).toContain("<#intro>");
 		expect(embed.description).toContain("Default channels** (6)");
 		expect(customIdsOf(review)).toEqual([
-			"community:editprompt:0",
-			"community:editprompt:1",
-			"community:editprompt:2",
+			expect.stringMatching(/^community:pickprompt:\d+$/),
+			expect.stringMatching(/^community:addprompt:\d+$/),
 			COMMUNITY_CUSTOM_IDS.confirmOnboarding,
 			COMMUNITY_CUSTOM_IDS.cancelOnboarding,
 		]);

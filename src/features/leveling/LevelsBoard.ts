@@ -9,6 +9,7 @@ import { buildLevelsBoardCardEmbed, buildLevelsBoardEmbed, type LevelsBoardEntry
 import { getLevelingConfig } from "./levelingConfig.js";
 import { LEVELS_BOARD_AVATAR_SIZE, renderLevelsBoardCard } from "./levelsBoardRenderer.js";
 import { avatarRequestFor, isRenderPayload, withRenderFallback, type AvatarRequest } from "@features/renderer/index.js";
+import { BOARD_POSTED, boardNotPosted, type BoardRefreshResult } from "@base/interfaces/IBoardRefreshResult.js";
 
 // ── LevelsBoard ────────────────────────────────────────────────────────────
 // A SECOND self-refreshing message in the guild's leaderboard channel, beside
@@ -52,26 +53,28 @@ import { avatarRequestFor, isRenderPayload, withRenderFallback, type AvatarReque
 /**
  * Refresh one guild's levels board. Safe to call fire and forget: it swallows
  * every error and logs it, so a refresh failure can never block the level up,
- * boot sweep, or cron tick that triggered it.
+ * boot sweep, or cron tick that triggered it. Says whether the board was posted
+ * or edited, and why not when it was not; only Refresh standings reads that.
  */
-export async function refreshLevelsBoard(client: Client, guildId: string): Promise<void> {
+export async function refreshLevelsBoard(client: Client, guildId: string): Promise<BoardRefreshResult> {
 	try {
 		const context = await getLevelingConfig(guildId);
 		// Self destructed guild: the homebase channels are gone, nothing to refresh.
-		if (!context || context.homebaseDestroyed) return;
+		if (!context) return boardNotPosted("not-set-up");
+		if (context.homebaseDestroyed) return boardNotPosted("homebase-destroyed");
 		// A guild that turned leveling off keeps its board rather than having it
 		// wiped: the standings are history, and the toggle stops new writes, not
 		// old data. Same posture as leaderboardTrackingEnabled.
 		if (!context.leaderboardChannelId) {
 			// Setup has not finished. Silent bail is correct, autoSetup and
 			// ensureHomebase reach their own terminal state eventually.
-			return;
+			return boardNotPosted("not-set-up");
 		}
 
 		const channel = await client.channels.fetch(context.leaderboardChannelId).catch(() => null);
 		if (!channel || !(channel instanceof TextChannel)) {
 			console.error(LOG_MESSAGES.leveling.boardChannelMissing(context.leaderboardChannelId, guildId));
-			return;
+			return boardNotPosted("channel-missing");
 		}
 
 		const settings = context.settings;
@@ -97,9 +100,10 @@ export async function refreshLevelsBoard(client: Client, guildId: string): Promi
 			? { embeds: [buildLevelsBoardCardEmbed(windowLabel, board.ref)], files: [board.attachment] }
 			: { embeds: [board], files: [] };
 		const config = await guildConfigStore.findByGuildId(guildId);
-		await postOrEdit(channel, (config?.levelsMessageId as string | null) ?? null, message, guildId);
+		return await postOrEdit(channel, (config?.levelsMessageId as string | null) ?? null, message, guildId);
 	} catch (error) {
 		console.error(LOG_MESSAGES.leveling.boardPostFailed(guildId), error);
+		return boardNotPosted("unexpected-error");
 	}
 }
 
@@ -187,7 +191,7 @@ interface BoardMessage {
 	files: AttachmentBuilder[];
 }
 
-async function postOrEdit(channel: TextChannel, existingMessageId: string | null, board: BoardMessage, guildId: string): Promise<void> {
+async function postOrEdit(channel: TextChannel, existingMessageId: string | null, board: BoardMessage, guildId: string): Promise<BoardRefreshResult> {
 	const selfId = channel.client.user?.id;
 
 	if (existingMessageId) {
@@ -195,10 +199,10 @@ async function postOrEdit(channel: TextChannel, existingMessageId: string | null
 			const existing = await channel.messages.fetch(existingMessageId);
 			if (selfId && existing.author.id !== selfId) {
 				console.warn(LOG_MESSAGES.leveling.boardStaleAuthor(existingMessageId, guildId));
-				return;
+				return boardNotPosted("foreign-message");
 			}
 			await existing.edit({ embeds: board.embeds, files: board.files, attachments: [] });
-			return;
+			return BOARD_POSTED;
 		} catch (error) {
 			if (error instanceof DiscordAPIError && (error.code === 10008 || error.code === 10003)) {
 				console.warn(LOG_MESSAGES.leveling.boardStoredMessageDeleted(existingMessageId, guildId));
@@ -206,10 +210,10 @@ async function postOrEdit(channel: TextChannel, existingMessageId: string | null
 				// Cache race: the author pre-check missed it but Discord caught it on
 				// edit. Same posture as the pre-check, bail rather than repost.
 				console.warn(LOG_MESSAGES.leveling.boardStaleAuthor(existingMessageId, guildId));
-				return;
+				return boardNotPosted("foreign-message");
 			} else {
 				console.error(LOG_MESSAGES.leveling.boardEditFailed(existingMessageId, guildId), error);
-				return;
+				return boardNotPosted("edit-failed");
 			}
 		}
 	}
@@ -219,7 +223,7 @@ async function postOrEdit(channel: TextChannel, existingMessageId: string | null
 		message = await channel.send({ embeds: board.embeds, files: board.files });
 	} catch (error) {
 		console.error(LOG_MESSAGES.leveling.boardPostFailed(guildId), error);
-		return;
+		return boardNotPosted("post-failed");
 	}
 
 	// No pin, matching LeaderboardBoard: the leaderboard channel is read only so
@@ -229,4 +233,5 @@ async function postOrEdit(channel: TextChannel, existingMessageId: string | null
 	// ⚠️ levelsMessageId, never leaderboardMessageId. Writing the wrong field
 	// would make each board overwrite the other's message on every refresh.
 	await guildConfigStore.update(guildId, { levelsMessageId: message.id });
+	return BOARD_POSTED;
 }

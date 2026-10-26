@@ -9,7 +9,7 @@ import { everyoneSendableChannelIds, isRoleBelowBot } from "./onboardingPrecondi
 //        guild.editOnboarding's options. It never talks to Discord; it reads the
 //        cached guild and a snapshot of the live config.
 // Who:   configureOnboarding builds and validates the draft and turns it into the
-//        write; promptEditModal edits one question of it; the review renders it.
+//        write; promptEditModal edits its questions and answers; the review renders it.
 // When:  on the Configure Onboarding press (build), after each edit (the review
 //        redraws from it), and on Confirm (validate again, then write).
 // How:   ① a server with no questions gets the starter set: two optional questions
@@ -33,6 +33,14 @@ export const ONBOARDING_OPTION_TITLE_MAX_LENGTH = 50;
 export const ONBOARDING_OPTION_DESCRIPTION_MAX_LENGTH = 100;
 /** The most answers one question can carry. */
 export const ONBOARDING_OPTIONS_PER_PROMPT_MAX = 50;
+/**
+ * The most questions the review's editor holds: its question select shows 25 at
+ * most, Discord's cap on a select, so a 26th could never be picked to edit. Discord's
+ * own Onboarding cap may be lower; a refusal on it comes back verbatim at Confirm.
+ */
+export const ONBOARDING_PROMPTS_MAX = 25;
+/** The most roles one answer's role select holds, Discord's cap on a select. */
+export const ONBOARDING_OPTION_ROLES_MAX = 25;
 
 // ── types ────────────────────────────────────────────────────────────
 
@@ -144,16 +152,12 @@ function starterPrompts(memberRoleId: string, copy: OnboardingCopy): IDraftPromp
 }
 
 function optionalPrompt(title: string, optionTitles: readonly string[]): IDraftPrompt {
-	return {
-		id: null,
-		title,
-		singleSelect: false,
-		required: false,
-		inOnboarding: true,
-		type: GuildOnboardingPromptType.MultipleChoice,
-		options: optionTitles.map((optionTitle) => plainOption(optionTitle)),
-		isFinal: false,
-	};
+	return newOptionalPrompt(title, optionTitles.map((optionTitle) => plainOption(optionTitle)));
+}
+
+/** An optional, pick any question with these answers: the shape of every starter question and of one added in the review. */
+export function newOptionalPrompt(title: string, options: IDraftOption[]): IDraftPrompt {
+	return { id: null, title, singleSelect: false, required: false, inOnboarding: true, type: GuildOnboardingPromptType.MultipleChoice, options, isFinal: false };
 }
 
 function finalPrompt(memberRoleId: string, copy: OnboardingCopy): IDraftPrompt {
@@ -215,6 +219,22 @@ export function validateOnboardingDraft(guild: Guild, draft: PendingOnboardingDr
 		if (!isRoleBelowBot(guild, role)) return { ok: false, code: "role-above-bot", reason: copy.draftErrors.roleAboveBot(role.name) };
 	}
 	return null;
+}
+
+/**
+ * Roles given by answers in more than one question (2026-10 item 254), in the order
+ * they are first met. A member can then get one from either question, which the
+ * owner may mean, so the review warns and never refuses. Two answers of ONE question
+ * giving the same role do not count: a member picks within that question anyway.
+ */
+export function rolesReusedAcrossPrompts(prompts: readonly IDraftPrompt[]): string[] {
+	const questionsByRole = new Map<string, number>();
+	for (const prompt of prompts) {
+		for (const roleId of new Set(prompt.options.flatMap((option) => option.roleIds))) {
+			questionsByRole.set(roleId, (questionsByRole.get(roleId) ?? 0) + 1);
+		}
+	}
+	return [...questionsByRole].filter(([, questions]) => questions > 1).map(([roleId]) => roleId);
 }
 
 // ── reading and writing Discord's shape ──────────────────────────────

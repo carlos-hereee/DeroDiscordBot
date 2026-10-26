@@ -217,14 +217,14 @@ describe("the silent bails", () => {
 	it("renders the empty state rather than throwing on a guild with no data", async () => {
 		mocks.topByTotalXp.mockResolvedValue([]);
 		const { client, send } = harness();
-		await expect(refreshLevelsBoard(client, "g1")).resolves.toBeUndefined();
+		await expect(refreshLevelsBoard(client, "g1")).resolves.toEqual({ posted: true });
 		expect(send).toHaveBeenCalledTimes(1);
 	});
 
 	it("never throws when the store rejects", async () => {
 		mocks.topByTotalXp.mockRejectedValue(new Error("mongo is down"));
 		const { client } = harness();
-		await expect(refreshLevelsBoard(client, "g1")).resolves.toBeUndefined();
+		await expect(refreshLevelsBoard(client, "g1")).resolves.toEqual({ posted: false, problem: "unexpected-error" });
 	});
 });
 

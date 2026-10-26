@@ -1,4 +1,4 @@
-import { MessageFlags, type ActionRowBuilder, type ButtonBuilder, type ButtonInteraction, type EmbedBuilder, type Guild, type ModalSubmitInteraction } from "discord.js";
+import { MessageFlags, type ActionRowBuilder, type ButtonInteraction, type EmbedBuilder, type Guild, type MessageActionRowComponentBuilder, type ModalSubmitInteraction, type StringSelectMenuInteraction } from "discord.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
@@ -10,6 +10,7 @@ import { describeRefusal, type IWriteRefusal } from "./enableCommunity.js";
 import { checkOnboardingPreconditions } from "./onboardingPreconditions.js";
 import {
 	buildOnboardingDraft,
+	rolesReusedAcrossPrompts,
 	snapshotOnboarding,
 	toOnboardingEditOptions,
 	validateOnboardingDraft,
@@ -23,8 +24,9 @@ import { setupCopy } from "@features/setup/setupCopy.js";
 // ── configureOnboarding ──────────────────────────────────────────────
 // What:  the Configure Onboarding flow behind the admin guide's button (2026-10 item
 //        247 Phase 4): check the server can take Onboarding, read what it already
-//        has, draft the questions, show a private review with an Edit button per
-//        question, and on Confirm write the whole config in one guild.editOnboarding
+//        has, draft the questions, show a private review whose controls edit each
+//        question and each answer (promptEditModal, 2026-10 item 254), and on
+//        Confirm write the whole config in one guild.editOnboarding
 //        call. It never writes a role to a member (Discord Onboarding does, when the
 //        member answers the final question) and never stores anyone's answers.
 // Who:   communityButtons routes `community:configure`, `community:confirmOnboarding`
@@ -62,10 +64,16 @@ export interface IConfigureOnboardingConfig extends ICopyConfig {
 	introChannelId?: string | null;
 }
 
-/** The review message: one embed and its Edit, Confirm and Cancel rows. */
+/** The review message: one embed and its editor, Confirm and Cancel rows. */
 export interface IOnboardingReviewMessage {
 	embeds: EmbedBuilder[];
-	components: ActionRowBuilder<ButtonBuilder>[];
+	components: ActionRowBuilder<MessageActionRowComponentBuilder>[];
+}
+
+/** Which question and answer the review's controls are open on; both null shows the question select alone. */
+export interface IOnboardingReviewFocus {
+	prompt?: number | null;
+	option?: number | null;
 }
 
 type OwnerDmOutcome = "sent" | "failed";
@@ -74,29 +82,49 @@ type OwnerDmOutcome = "sent" | "failed";
 // Keyed guildId:userId, so two admins configuring at once never confirm each
 // other's draft. A second Configure Onboarding press from the same admin replaces
 // the first draft. Read by the edit modal, taken by Confirm, dropped by Cancel.
+// Every store gives the draft a new REVISION, which the review's controls carry,
+// so a control on an older review is refused instead of editing a newer draft.
 
 interface IPendingDraftEntry {
 	draft: PendingOnboardingDraft;
+	revision: number;
 	expiresAt: number;
+}
+
+/** A live draft and the revision its latest review carries. */
+export interface IPendingDraftState {
+	draft: PendingOnboardingDraft;
+	revision: number;
 }
 
 const pendingDrafts = new Map<string, IPendingDraftEntry>();
 
 const draftKey = (guildId: string, userId: string): string => `${guildId}:${userId}`;
 
-/** Hold this admin's draft for ONBOARDING_DRAFT_TTL_MS from now, replacing any earlier one. */
-export function storePendingDraft(guildId: string, userId: string, draft: PendingOnboardingDraft): void {
+// Counts every store in this process, so no two stores share a revision, even
+// across a Cancel and a fresh press. A restart drops every draft anyway.
+let lastRevision = 0;
+
+/** Hold this admin's draft for ONBOARDING_DRAFT_TTL_MS from now, replacing any earlier one. Returns its new revision. */
+export function storePendingDraft(guildId: string, userId: string, draft: PendingOnboardingDraft): number {
 	// Dropping expired entries on every write keeps the map from holding drafts
 	// nobody will confirm, without a timer of its own (enableCommunity does the same).
 	const now = Date.now();
 	for (const [key, entry] of pendingDrafts) if (entry.expiresAt <= now) pendingDrafts.delete(key);
-	pendingDrafts.set(draftKey(guildId, userId), { draft, expiresAt: now + ONBOARDING_DRAFT_TTL_MS });
+	lastRevision += 1;
+	pendingDrafts.set(draftKey(guildId, userId), { draft, revision: lastRevision, expiresAt: now + ONBOARDING_DRAFT_TTL_MS });
+	return lastRevision;
 }
 
-/** This admin's draft while it is live, or null. Read, not taken: an edit replaces it and the review keeps going. */
-export function readPendingDraft(guildId: string, userId: string): PendingOnboardingDraft | null {
+/** This admin's draft and its revision while it is live, or null. Read, not taken: an edit replaces it and the review keeps going. */
+export function readPendingDraftState(guildId: string, userId: string): IPendingDraftState | null {
 	const entry = pendingDrafts.get(draftKey(guildId, userId));
-	return entry && entry.expiresAt > Date.now() ? entry.draft : null;
+	return entry && entry.expiresAt > Date.now() ? { draft: entry.draft, revision: entry.revision } : null;
+}
+
+/** This admin's draft while it is live, or null. */
+export function readPendingDraft(guildId: string, userId: string): PendingOnboardingDraft | null {
+	return readPendingDraftState(guildId, userId)?.draft ?? null;
 }
 
 // Taken, not read: a double press of Confirm finds nothing the second time, so one
@@ -134,8 +162,8 @@ export async function handleConfigureOnboardingButton(interaction: ButtonInterac
 		await interaction.editReply({ embeds: [errorEmbed(result.reason, config)] });
 		return;
 	}
-	storePendingDraft(guild.id, interaction.user.id, result.draft);
-	await interaction.editReply(buildOnboardingReview(result.draft, config));
+	const revision = storePendingDraft(guild.id, interaction.user.id, result.draft);
+	await interaction.editReply(buildOnboardingReview(result.draft, config, revision));
 }
 
 // ② A config that cannot be read is never drafted over: an empty draft written on
@@ -176,11 +204,11 @@ export async function handleConfirmOnboarding(interaction: ButtonInteraction, gu
 	await interaction.deferUpdate();
 	const writeRefusal = await writeOnboarding(guild, draft);
 	if (writeRefusal) {
-		storePendingDraft(guild.id, interaction.user.id, draft);
+		const revision = storePendingDraft(guild.id, interaction.user.id, draft);
 		auditWrite(guild.id, interaction.user.id, draft, writeRefusal.outcome, writeRefusal.discordCode, null);
 		// The review stays with its buttons and the refusal under it, so the owner can
 		// fix the cause, edit, and press Confirm again without starting over.
-		const review = buildOnboardingReview(draft, config);
+		const review = buildOnboardingReview(draft, config, revision);
 		await interaction.editReply({ embeds: [...review.embeds, errorEmbed(writeRefusal.ownerMessage, config)], components: review.components });
 		return;
 	}
@@ -240,25 +268,32 @@ export async function handleCancelOnboarding(interaction: ButtonInteraction, gui
 
 // ── the review ───────────────────────────────────────────────────────
 
-/** The review of a draft: the summary, one field per question in order, and its Edit, Confirm and Cancel buttons. */
-export function buildOnboardingReview(draft: PendingOnboardingDraft, config: ICopyConfig | null): IOnboardingReviewMessage {
+/**
+ * The review of a draft: the summary (with the ⚠️ line when a role is reused across
+ * questions), one field per question in order, and the editor's controls for the
+ * draft at this revision, open on the focused question and answer.
+ */
+export function buildOnboardingReview(draft: PendingOnboardingDraft, config: ICopyConfig | null, revision: number, focus: IOnboardingReviewFocus = {}): IOnboardingReviewMessage {
 	const copy = communityCopy.onboarding.review;
+	const reusedRoleIds = rolesReusedAcrossPrompts(draft.prompts);
+	const reused = new Set(reusedRoleIds);
 	const shown = draft.prompts.slice(0, EMBED_FIELDS_MAX);
 	const fieldBudget = Math.floor(FIELDS_TEXT_BUDGET / Math.max(shown.length, 1));
 	const fields = shown.map((prompt, index) => {
 		const name = truncate(copy.promptFieldName(index + 1, prompt.title), Math.min(EMBED_FIELD_NAME_MAX, Math.floor(fieldBudget / 3)));
-		return { name, value: promptFieldValue(prompt, Math.min(EMBED_FIELD_VALUE_MAX, fieldBudget - name.length)) };
+		return { name, value: promptFieldValue(prompt, reused, Math.min(EMBED_FIELD_VALUE_MAX, fieldBudget - name.length)) };
 	});
-	const embed = infoEmbed(copy.title, copy.description(draft), getPluginCopy(config).COLORS.ADMIN, config).addFields(fields);
-	return { embeds: [embed], components: buildOnboardingReviewRows(draft.prompts.length) };
+	const embed = infoEmbed(copy.title, copy.description({ ...draft, reusedRoleIds }), getPluginCopy(config).COLORS.ADMIN, config).addFields(fields);
+	const components = buildOnboardingReviewRows({ revision, prompts: draft.prompts, focusedPrompt: focus.prompt ?? null, focusedOption: focus.option ?? null });
+	return { embeds: [embed], components };
 }
 
 // The question's rules, then its answers, as many as fit, then a count of the rest.
-function promptFieldValue(prompt: IDraftPrompt, maxLength: number): string {
+function promptFieldValue(prompt: IDraftPrompt, reusedRoleIds: ReadonlySet<string>, maxLength: number): string {
 	const copy = communityCopy.onboarding.review;
 	let value = copy.promptRules(prompt);
 	for (const [index, option] of prompt.options.entries()) {
-		const line = copy.optionLine(option);
+		const line = copy.optionLine(option, reusedRoleIds);
 		const remaining = prompt.options.length - index - 1;
 		// Room is kept for the "and N more" line whenever answers are still to come.
 		const reserve = remaining > 0 ? copy.moreOptions(remaining).length + 1 : 0;
@@ -315,6 +350,10 @@ function audit(guildId: string, event: string, metadata: Record<string, unknown>
  * for a button press, the private error reply for a modal submit, which cannot open
  * a modal (post-launch plan item 9).
  */
-export async function replyOnboardingError(interaction: ButtonInteraction | ModalSubmitInteraction, message: string, config: ICopyConfig | null): Promise<void> {
+export async function replyOnboardingError(
+	interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
+	message: string,
+	config: ICopyConfig | null
+): Promise<void> {
 	await showErrorNotice(interaction, message, config);
 }

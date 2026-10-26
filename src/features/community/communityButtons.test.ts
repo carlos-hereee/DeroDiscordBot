@@ -16,14 +16,15 @@ const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
 	log: vi.fn(),
 	registerButton: vi.fn(),
+	registerSelectMenu: vi.fn(),
 }));
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId } }));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: mocks.log, has: vi.fn(async () => false) } }));
-vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerModal: vi.fn() }));
+vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerSelectMenu: mocks.registerSelectMenu, registerModal: vi.fn() }));
 
 import { buildCommunityControlButtons, handleCommunityButton, registerCommunityGuideSync, registerCommunityHandlers, syncCommunityGuideRow } from "./communityButtons.js";
-import { COMMUNITY_CUSTOM_IDS } from "./communityControls.js";
+import { COMMUNITY_CUSTOM_IDS, COMMUNITY_SELECT_ACTIONS, type CommunityAction } from "./communityControls.js";
 import { communityCopy } from "./communityCopy.js";
 import { GuildSetupManager } from "@features/setup/GuildSetupManager.js";
 import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
@@ -125,9 +126,10 @@ describe("buildCommunityControlButtons", () => {
 
 describe("the community router", () => {
 	it("refuses a member who is neither the owner nor an admin, for every action, and runs nothing", async () => {
-		for (const customId of Object.values(COMMUNITY_CUSTOM_IDS)) {
+		for (const [action, customId] of Object.entries(COMMUNITY_CUSTOM_IDS) as Array<[CommunityAction, string]>) {
 			const guild = makeGuild();
-			const interaction = press(MEMBER, customId, guild);
+			// The review's two selects arrive as select presses, which carry their values.
+			const interaction = COMMUNITY_SELECT_ACTIONS.has(action) ? Object.assign(press(MEMBER, customId, guild), { values: ["0"] }) : press(MEMBER, customId, guild);
 			await handleCommunityButton(interaction);
 			expect(flowModals(interaction), customId).toEqual([]);
 			expect(interaction.deferReply, customId).not.toHaveBeenCalled();
@@ -240,5 +242,6 @@ describe("registerCommunityHandlers", () => {
 	it("routes on the bare prefix the registry slices customIds to", () => {
 		registerCommunityHandlers();
 		expect(mocks.registerButton).toHaveBeenCalledWith("community", handleCommunityButton);
+		expect(mocks.registerSelectMenu).toHaveBeenCalledWith("community", handleCommunityButton);
 	});
 });

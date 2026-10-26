@@ -214,6 +214,24 @@ export const levelingCopy = {
 		presence: "Presence",
 		winLoss: (won: number, lost: number, drawn: number): string => `${won}W  ${lost}L  ${drawn}D`,
 		moreUnlocks: (count: number): string => `and ${count} more`,
+		// ── the account card's record, luck and chips (2026-10 item 254) ──
+		// The text profile's lines carry bold marks and a Discord timestamp, neither of
+		// which a card can draw, so the card has its own plain words for them.
+		recordColumns: { played: "P", won: "W", lost: "L", drawn: "D", assists: "Ast", ratio: "W/L" },
+		luckWins: (wins: number, decided: number): string => `${wins.toLocaleString()} won of ${decided.toLocaleString()} decided`,
+		luckReadings: (readings: number): string => `${readings.toLocaleString()} magic 8 ball ${readings === 1 ? "reading" : "readings"}`,
+		luckScore: (score: number): string => `${Math.abs(score).toLocaleString(undefined, { maximumFractionDigits: 1 })} ${score >= 0 ? "above" : "below"} even`,
+		luckScoreLater: (minDecided: number): string => `Score from ${minDecided} decided`,
+		noLuck: "Nothing decided yet",
+		chipsBalance: (balance: number): string => `${balance.toLocaleString("en-US")} ${balance === 1 ? "chip" : "chips"}`,
+		claimReady: "Claim ready: /claim",
+		// ── the achievements card (2026-10 item 254) ──
+		achievementsTitle: "ACHIEVEMENTS",
+		heldCount: (count: number): string => `${count.toLocaleString()} held`,
+		inProgressLine: (label: string, nextTier: string): string => `${label} (${nextTier})`,
+		progressOf: (current: number, threshold: number): string => `${current.toLocaleString()} / ${threshold.toLocaleString()}`,
+		// Hours and minutes, since a card cannot count down the way a Discord timestamp does.
+		nextClaimIn: (hours: number, minutes: number): string => `Next claim in ${hours > 0 ? `${hours}h ` : ""}${minutes}m`,
 		// ── platform cards (2026-10 item 243 Phase 4) ──
 		roleUnlocked: "ROLE UNLOCKED",
 		unlockedAtLevel: (level: number): string => `Unlocked at level ${level}`,

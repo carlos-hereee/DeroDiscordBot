@@ -60,7 +60,7 @@ vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { has: mocks.has, log
 vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerModal: mocks.registerModal }));
 // Self destruct now reaches its teardown through the CONFIRM modal and then wipes stored
 // records (post-launch plan item 10); R6 is about channels, so the wipe is a no-op here.
-vi.mock("@features/setup/serverReset.js", () => ({ resetConfigsToDefault: vi.fn(), wipeServerData: vi.fn(async () => ({ failed: [] })) }));
+vi.mock("@features/setup/serverReset.js", () => ({ wipeServerData: vi.fn(async () => ({ failed: [] })) }));
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
@@ -81,7 +81,7 @@ import { COMMUNITY_CUSTOM_IDS } from "./communityControls.js";
 import { communityCopy } from "./communityCopy.js";
 import { MEMBERSHIP_SCREENING_RULES_MAX_LENGTH, buildMembershipScreeningRequest } from "./enableCommunity.js";
 import { buildOnboardingDraft, toOnboardingEditOptions, validateOnboardingDraft } from "./onboardingDraft.js";
-import { applyPromptEdit } from "./promptEditModal.js";
+import { deletePrompt } from "./promptEditModal.js";
 
 // ── shared fixtures ──────────────────────────────────────────────────
 
@@ -491,15 +491,15 @@ describe("R4: an Onboarding config Discord would refuse", () => {
 		expect(guild.editOnboarding).toHaveBeenCalledTimes(2);
 	});
 
-	it("lets the owner clear both optional questions and write the final one alone, if Discord refuses answers that give nothing", () => {
+	it("lets the owner delete both optional questions and write the final one alone, if Discord refuses answers that give nothing", () => {
 		const guild = onboardingGuild() as unknown as Guild;
 		const built = buildOnboardingDraft({ guild, stored: { memberRoleId: MEMBER_ROLE, introChannelId: "intro" }, copy: communityCopy.onboarding, current: null });
 		if (!built.ok) throw new Error(`the starter draft was refused: ${built.reason}`);
 
 		let draft = built.draft;
-		for (let cleared = 0; cleared < 2; cleared += 1) {
-			const edit = applyPromptEdit(draft, 0, { title: draft.prompts[0]!.title, optionsText: "" });
-			if (!edit.ok) throw new Error(`clearing a question was refused: ${edit.reason}`);
+		for (let deleted = 0; deleted < 2; deleted += 1) {
+			const edit = deletePrompt(draft, 0);
+			if (!edit.ok) throw new Error(`deleting a question was refused: ${edit.reason}`);
 			draft = edit.draft;
 		}
 

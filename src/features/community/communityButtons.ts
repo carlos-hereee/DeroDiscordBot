@@ -8,10 +8,11 @@ import {
 	type ButtonInteraction,
 	type Client,
 	type Guild,
+	type StringSelectMenuInteraction,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
-import { registerButton } from "@handlers/interactionRegistry.js";
+import { registerButton, registerSelectMenu } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { showErrorNotice } from "@utils/textModal.js";
 import { communityCopy } from "./communityCopy.js";
@@ -19,18 +20,29 @@ import {
 	COMMUNITY_CUSTOM_IDS,
 	COMMUNITY_INDEXED_ACTIONS,
 	COMMUNITY_PREFIX,
+	COMMUNITY_SELECT_ACTIONS,
 	buildConfigureOnboardingButton,
 	buildEnableCommunityButton,
 	type CommunityAction,
 } from "./communityControls.js";
 import { handleConfirm, handleEnableClick, isCommunityEnabled, type IEnableCommunityConfig } from "./enableCommunity.js";
 import { handleCancelOnboarding, handleConfigureOnboardingButton, handleConfirmOnboarding, type IConfigureOnboardingConfig } from "./configureOnboarding.js";
-import { handleEditPromptButton } from "./promptEditModal.js";
+import {
+	handleAddOption,
+	handleAddPrompt,
+	handleDeleteOption,
+	handleDeletePrompt,
+	handleEditOption,
+	handleEditPromptButton,
+	handlePickOption,
+	handlePickPrompt,
+} from "./promptEditModal.js";
 
 // ── communityButtons ─────────────────────────────────────────────────
 // What:  the admin guide's community row (Enable Community and Configure
 //        Onboarding, 2026-10 item 247 Phase 3) and the one router every
-//        `community:<action>` press goes through. The router gates and routes; the
+//        `community:<action>` press goes through, the Onboarding review's two
+//        selects included (2026-10 item 254). The router gates and routes; the
 //        flows themselves live in enableCommunity, configureOnboarding and
 //        promptEditModal (Phase 4).
 // Who:   GuildSetupManager.resolveIntroComponents puts the row on the pinned admin
@@ -59,11 +71,21 @@ export function buildCommunityControlButtons(communityOn: boolean): ActionRowBui
 /** The stored GuildConfig fields the community flows read, together. */
 type ICommunityConfig = IEnableCommunityConfig & IConfigureOnboardingConfig;
 
+/** A press on a community control: a button, or one of the Onboarding review's selects. */
+type CommunityPress = ButtonInteraction | StringSelectMenuInteraction;
+
+// A select carries its picked values; a button carries none. Read by shape rather
+// than isStringSelectMenu, so the router reads the same for a test's plain object.
+function isSelectPress(interaction: CommunityPress): interaction is StringSelectMenuInteraction {
+	return "values" in interaction;
+}
+
 /** Every `community:<action>` press: refuse what is stale or not allowed, then hand the press to its flow. */
-export async function handleCommunityButton(interaction: ButtonInteraction): Promise<void> {
+export async function handleCommunityButton(interaction: CommunityPress): Promise<void> {
 	const parsed = parseCommunityCustomId(interaction.customId);
-	// A button from an older layout, answered before any read since nothing runs.
-	if (!parsed) {
+	// A control from an older layout, answered before any read since nothing runs.
+	// A select's action reached as a button, or the reverse, is from no layout either.
+	if (!parsed || COMMUNITY_SELECT_ACTIONS.has(parsed.action) !== isSelectPress(interaction)) {
 		await showErrorNotice(interaction, communityCopy.errors.controlRetired, null);
 		return;
 	}
@@ -82,7 +104,20 @@ export async function handleCommunityButton(interaction: ButtonInteraction): Pro
 		return;
 	}
 
-	switch (parsed.action) {
+	if (isSelectPress(interaction)) {
+		await routeSelect(interaction, parsed.action, guild, config, parsed.argument);
+		return;
+	}
+	await routeButton(interaction, parsed.action, guild, config, parsed.argument);
+}
+
+async function routeSelect(interaction: StringSelectMenuInteraction, action: CommunityAction, guild: Guild, config: ICommunityConfig, argument: string | null): Promise<void> {
+	if (action === "pickPrompt") await handlePickPrompt(interaction, guild, config, argument);
+	else if (action === "pickOption") await handlePickOption(interaction, guild, config, argument);
+}
+
+async function routeButton(interaction: ButtonInteraction, action: CommunityAction, guild: Guild, config: ICommunityConfig, argument: string | null): Promise<void> {
+	switch (action) {
 		case "enable":
 			await handleEnableClick(interaction, guild, config);
 			return;
@@ -93,13 +128,32 @@ export async function handleCommunityButton(interaction: ButtonInteraction): Pro
 			await handleConfigureOnboardingButton(interaction, guild, config);
 			return;
 		case "editPrompt":
-			await handleEditPromptButton(interaction, guild, config, parsed.argument);
+			await handleEditPromptButton(interaction, guild, config, argument);
+			return;
+		case "deletePrompt":
+			await handleDeletePrompt(interaction, guild, config, argument);
+			return;
+		case "addPrompt":
+			await handleAddPrompt(interaction, guild, config, argument);
+			return;
+		case "addOption":
+			await handleAddOption(interaction, guild, config, argument);
+			return;
+		case "editOption":
+			await handleEditOption(interaction, guild, config, argument);
+			return;
+		case "deleteOption":
+			await handleDeleteOption(interaction, guild, config, argument);
 			return;
 		case "confirmOnboarding":
 			await handleConfirmOnboarding(interaction, guild, config);
 			return;
 		case "cancelOnboarding":
 			await handleCancelOnboarding(interaction, guild);
+			return;
+		// The two selects reach routeSelect; the router refuses them as buttons first.
+		case "pickPrompt":
+		case "pickOption":
 			return;
 	}
 }
@@ -117,7 +171,7 @@ function parseCommunityCustomId(customId: string): { action: CommunityAction; ar
 	return null;
 }
 
-async function replyRefusal(interaction: ButtonInteraction, message: string, config: ICommunityConfig | null): Promise<void> {
+async function replyRefusal(interaction: CommunityPress, message: string, config: ICommunityConfig | null): Promise<void> {
 	await showErrorNotice(interaction, message, config);
 }
 
@@ -181,7 +235,8 @@ export function registerCommunityGuideSync(client: Client): void {
 	});
 }
 
-/** Register the community router. Called once at boot from main.ts, before the InteractionCreate listener installs. */
+/** Register the community router, for buttons and the review's selects. Called once at boot from main.ts, before the InteractionCreate listener installs. */
 export function registerCommunityHandlers(): void {
 	registerButton(COMMUNITY_PREFIX, handleCommunityButton);
+	registerSelectMenu(COMMUNITY_PREFIX, handleCommunityButton);
 }

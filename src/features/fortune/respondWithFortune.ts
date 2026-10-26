@@ -1,8 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { AttachmentBuilder, MessageFlags, type InteractionEditReplyOptions, type RepliableInteraction } from "discord.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
-import { CooldownManager } from "@utils/cooldownManager.js";
+import { showErrorNotice } from "@utils/textModal.js";
 import { buildDeroImageAttachment } from "@base/copy/brand.js";
 import { rollFortune, fortuneLuck, EXPECTED_FORTUNE_LUCK, PITY_THRESHOLD } from "./rollFortune.js";
 import { recordFortuneReading } from "@features/ratings/luckStats.js";
@@ -15,42 +14,48 @@ import { awardXp } from "@features/leveling/awardXp.js";
 import { attachListenRow } from "@features/voice/listenButton.js";
 import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { FORTUNE_SCENE_AVATAR_SIZE, renderFortuneScene } from "./fortuneSceneRenderer.js";
-
-// One reading per user every 10 seconds, SHARED across every entry point: the
-// /mini-game fortune subcommand and the Fortune buttons on the #command-center
-// guide and its Summon Dero card all call
-// respondWithFortune, so a user cannot bypass the gate by alternating between
-// them. Module-scope Map persists for the life of the process.
-const FORTUNE_COOLDOWN_MS = 10_000;
-const cooldown = new CooldownManager(FORTUNE_COOLDOWN_MS);
+import { claimFortuneSlot, releaseFortuneSlot } from "./fortuneCooldown.js";
 
 // ── respondWithFortune ──────────────────────────────────────────────────────
 // The single fortune-reading path. Both the slash command and the button funnel
 // through here so the cooldown, tier roll, embed, and mention
 // safety are each defined exactly once (the interaction is a RepliableInteraction,
-// which both a ChatInputCommandInteraction and a ButtonInteraction satisfy).
+// which both a ChatInputCommandInteraction and a ButtonInteraction satisfy). The
+// cooldown is one reading per member per server every FORTUNE_COOLDOWN_HOURS,
+// persisted and shared by both entries (fortuneCooldown.ts, 2026-10 item 254), so
+// a member cannot bypass it by alternating between them or by waiting for a deploy.
 //   • question: echoed (with mention parsing disabled) when provided; the button
 //     passes none, since a button cannot take text input without a modal.
 //   • isPrivate: ephemeral reply. The button is always private so it never
-//     clutters the read-only #command-center guide; the command honours its own
-//     private toggle.
+//     clutters the 🕹️games intro it sits on; the command honours its own private
+//     toggle.
 export async function respondWithFortune(
 	interaction: RepliableInteraction,
 	options: { question?: string | null; isPrivate?: boolean } = {}
 ): Promise<void> {
-	// Per-user cooldown, guild-scoped key (falls back to "dm"). Checked before the
-	// roll; recorded only after a successful reply, so a thrown reply leaves the
-	// user free to retry.
-	const cooldownKey = `${interaction.guildId ?? "dm"}:${interaction.user.id}`;
-	const gate = cooldown.check(cooldownKey);
-	if (gate.onCooldown) {
-		await interaction.reply({
-			embeds: [errorEmbed(fortuneCopy.cooldownMessage(Math.ceil(gate.remainingMs / 1000)))],
-			flags: MessageFlags.Ephemeral,
-		});
+	// ① The slot is claimed BEFORE the roll, atomically, so two presses at once cannot
+	// both read. It runs ahead of the defer on purpose: a refusal is then the first
+	// answer, a notice only the member sees, rather than a public "thinking" that
+	// turns into a refusal. One indexed upsert fits Discord's three second window.
+	const claim = await claimFortuneSlot(interaction.guildId, interaction.user.id);
+	if (!claim.ok) {
+		await showErrorNotice(interaction, fortuneCopy.cooldownMessage(claim.readyAt));
 		return;
 	}
+	try {
+		await readFortune(interaction, options);
+	} catch (error) {
+		// ② The reading never reached the member, so the slot goes back and they can
+		// try again at once. Rethrown so the interaction listener still logs it.
+		await releaseFortuneSlot(claim.slot);
+		throw error;
+	}
+}
 
+// The reading itself, once the member's slot is claimed: defer, roll, draw and
+// reply, then the side effects (pity, luck board, xp) that follow a reading that
+// reached the member.
+async function readFortune(interaction: RepliableInteraction, options: { question?: string | null; isPrivate?: boolean }): Promise<void> {
 	// Acknowledge within Discord's 3-second window BEFORE the DB read and the orb
 	// upload, either of which can exceed it (a cold Mongo query, a multi-MB gif).
 	// deferReply reserves the reply and locks in visibility here; editReply below
@@ -63,7 +68,7 @@ export async function respondWithFortune(
 	// can never ping even if it contains @everyone.
 	const question = options.question ? options.question.trim() : null;
 
-	// Per-user luck state, read after the cooldown gate so spammers never hit the DB.
+	// Per-user luck state, read after the cooldown gate so a refused press never reads it.
 	// weight is the buff a redeemed code granted (undefined = the 0.03 base); dryStreak
 	// is the pity counter. Pity: once the streak reaches PITY_THRESHOLD, force a gold
 	// this reading (weight 1) so nobody stays cold forever. Read live each time, so a
@@ -122,9 +127,12 @@ export async function respondWithFortune(
 	if (!question) {
 		void attachListenRow(interaction.guildId, (components) => interaction.editReply({ components }));
 	}
-	// Advance the pity streak: reset to 0 on a gold, increment otherwise.
-	await fortuneBuffStore.recordRoll(interaction.user.id, tier === "ultra");
-	cooldown.record(cooldownKey);
+	// Advance the pity streak: reset to 0 on a gold, increment otherwise. Fire and
+	// forget: the reading has reached the member, so a failed write here must not
+	// give the cooldown slot back and hand out a second reading.
+	void fortuneBuffStore.recordRoll(interaction.user.id, tier === "ultra").catch((error: unknown) =>
+		console.error(`[fortune] recording the pity streak of ${interaction.user.id} failed`, error)
+	);
 
 	// ── leveling ──
 	// ⚠️ THE AWARD LIVES HERE, NOT IN fortuneHandler.ts, and that is the whole
@@ -133,9 +141,8 @@ export async function respondWithFortune(
 	// handler, so an award placed in the handler would leave the button path
 	// silently earning nothing.
 	//
-	// Fortune is the most farmable award in the feature: a 10 second cooldown, no
-	// opponent, and no way to lose. So it is small, flat, and has no win bonus to
-	// chase. The fortuneReadings counter rides along because the hidden dero-knows
+	// Fortune has no opponent and no way to lose, so the award is small, flat, and
+	// has no win bonus to chase, even at one reading a day. The fortuneReadings counter rides along because the hidden dero-knows
 	// achievement reads it and nothing else increments it.
 	if (interaction.guildId) {
 		// ── the luck board (2026-10 item 250 Phase 5) ──

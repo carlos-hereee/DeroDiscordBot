@@ -7,7 +7,7 @@ import { CategoryChannel, type ModalSubmitInteraction } from "discord.js";
 // demolition parent-less, with its permissions untouched, and the stored row must
 // let go of it in the same write that sets homebaseDestroyed. selfDestruct.test.ts
 // keeps the completeness guard; this file drives the teardown itself, through the
-// tier two CONFIRM modal that now reaches it (post-launch plan item 10).
+// CONFIRM modal behind Delete my data (2026-10 item 254).
 
 const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update } }));
 vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerModal: mocks.registerModal }));
-vi.mock("./serverReset.js", () => ({ resetConfigsToDefault: vi.fn(), wipeServerData: mocks.wipeServerData }));
+vi.mock("./serverReset.js", () => ({ wipeServerData: mocks.wipeServerData }));
 vi.mock("./adminLog.js", () => ({ adminLog: { emit: vi.fn() } }));
 
 import { HOMEBASE_CHANNEL_FIELDS, registerSelfDestructHandlers } from "./selfDestruct.js";
