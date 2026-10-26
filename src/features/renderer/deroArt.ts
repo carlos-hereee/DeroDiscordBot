@@ -22,24 +22,26 @@ import { canvasModule, type CanvasModule, type Image } from "./canvasModule.js";
 // answers `{ cacheable: false }` from its draw (see DrawOutcome in index.ts), so
 // the real pose replaces the stand in as soon as it lands on disk and deploys.
 //
-// Every slot draws the same chibi Dero (the owner's choice, post-launch plan item 5)
-// until a slot gets a pose of its own, which is one new file in assets/dero/v2 and
-// one entry below. The stand in is the original avatar in assets/dero/v1.
+// Every slot draws the mecha Dero, the display image (the owner's choice, post-launch
+// plan item 5), until a slot gets a pose of its own, which is one new file in
+// assets/dero/v2 and one entry below. The chibi Dero beside it (chibi-dero.png) is
+// the avatar icon's source, which the client hosts and the Discord portal carries;
+// no card draws it. The stand in is the original avatar in assets/dero/v1.
 
 const DERO_ART_DIR = join("assets", "dero");
 const DERO_V2_DIR = "v2";
 
-const CHIBI_POSE = "chibi-dero.png";
+const MECHA_POSE = "mecha-dero.png";
 
 // Relative to assets/dero/v2/: the file each slot draws.
 export const DERO_ART_FILES = {
-	account: CHIBI_POSE, // the /account default
-	battle: CHIBI_POSE, // arcade and battle surfaces
-	welcome: CHIBI_POSE, // the introductions welcome, sent whole
-	board: CHIBI_POSE, // the levels board header
-	levelUp: CHIBI_POSE, // an ordinary level up
-	prime: CHIBI_POSE, // a prime milestone and an achievement unlock
-	tiers: CHIBI_POSE, // the six color rank tiers
+	account: MECHA_POSE, // the /account default
+	battle: MECHA_POSE, // arcade and battle surfaces
+	welcome: MECHA_POSE, // the introductions welcome, sent whole
+	board: MECHA_POSE, // the levels board header
+	levelUp: MECHA_POSE, // an ordinary level up
+	prime: MECHA_POSE, // a prime milestone and an achievement unlock
+	tiers: MECHA_POSE, // the six color rank tiers
 } as const satisfies Record<string, string>;
 
 export type DeroArtSlot = keyof typeof DERO_ART_FILES;

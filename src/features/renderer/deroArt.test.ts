@@ -92,7 +92,7 @@ describe("loadDeroArt", () => {
 });
 
 describe("logDeroArtStatus, the boot asset check", () => {
-	// Every slot draws the one chibi file today, so the line names each file once.
+	// Every slot draws the one mecha file today, so the line names each file once.
 	it.each([
 		["present", false],
 		["opaque", true],
