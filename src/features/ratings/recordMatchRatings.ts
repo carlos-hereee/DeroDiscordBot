@@ -14,8 +14,9 @@ import { displayRating, isRatedGame, newRating, rateFinishingOrder, type SkillRa
 //
 // What is NOT rated, by owner decision: a room finished as abandoned (the caller
 // never calls this, and `abandoned` refuses it anyway), any game outside RATED_GAMES,
-// an excluded (kicked) player, and a match the caller marks unrated (a Hold'em
-// session under 10 dealt hands). An unrated match still writes its MatchResult.
+// an excluded (kicked) player, a match the caller marks unrated (a Hold'em session
+// under 10 dealt hands), a match a Dero bot played in, and a Casual match (2026-10
+// item 254). An unrated match still writes its MatchResult.
 //
 // How a rated match is written: ① read the players' stored ratings in one query,
 // ② compute every update in memory, ③ INSERT THE MATCH RESULT FIRST, because its
@@ -40,7 +41,7 @@ const MIN_RATED_PLAYERS = 2;
  * The slice of a room row this recorder reads. The channel and satellites are optional
  * and only passed on to a rated win's listeners, which post where the winner played.
  */
-export type RatingRoom = Pick<IGameRoom, "roomId" | "guildId" | "game"> & Partial<Pick<IGameRoom, "channelId" | "satellites">>;
+export type RatingRoom = Pick<IGameRoom, "roomId" | "guildId" | "game"> & Partial<Pick<IGameRoom, "channelId" | "satellites" | "casual">>;
 
 /** A rated match's winner, announced once its ratings moved. */
 export interface RatedWin {
@@ -211,7 +212,9 @@ async function writeMatchRatings(
 	// writes, unrated, like any other unrated match.
 	const hadBots = rankedUserIds.some(isBotSeatId);
 	const order = ratedOrder(memberIds(rankedUserIds), excludedUserIds);
-	const rated = options.rated !== false && !hadBots && order.length >= MIN_RATED_PLAYERS;
+	// ⚠️ NOR IS A CASUAL MATCH (2026-10 item 254, Arcade 6): the host chose unrated, and
+	// people who took every bot's seat before the start do not change that choice.
+	const rated = options.rated !== false && !hadBots && !room.casual && order.length >= MIN_RATED_PLAYERS;
 
 	if (!rated) {
 		await matchResultStore.insertOnce(buildMatchResult(room, order, excludedUserIds, null, finishedAt));

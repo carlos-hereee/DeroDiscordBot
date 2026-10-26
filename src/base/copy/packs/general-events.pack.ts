@@ -544,7 +544,7 @@ export const generalEventsCopy: IPluginCopy = {
 		partyGames: {
 			title: "🎉 Party Games",
 			description:
-				"When an admin starts a party game, everyone plays together here. A hangman round opens in this channel for the whole server at once.\n\n" +
+				"When an admin starts a party game, everyone plays together here. A hangman round opens in this channel for the whole server at once, and admins can host a Texas hold em table or a Monopoly match from here too, with its challenge posted in 🏆rated-challenges.\n\n" +
 				"Upcoming party games are announced in 📢announcements, and the list of who is coming lives in 🔜upcoming-events. RSVP there so the host knows to wait for you.",
 		},
 

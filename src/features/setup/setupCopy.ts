@@ -21,6 +21,7 @@ const ADMIN_LOG_LABELS: Record<AdminLogKind, string> = {
 	"event.create": "Event created",
 	"event.update": "Event changed",
 	"event.delete": "Event removed",
+	"party.open": "Party game not opened",
 	"config.change": "Setting changed",
 	"powerup.toggle": "Admin power-up",
 	"voice.allowlist": "Voice list edited",

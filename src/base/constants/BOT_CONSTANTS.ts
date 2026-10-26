@@ -253,6 +253,16 @@ export const BOT_CONSTANTS = {
 	PARTY_GAME_MAX_ATTENDEES: 100,
 	// How many attendees the card names before it summarises the rest.
 	PARTY_GAME_NAMES_SHOWN: 30,
+	// How many due party games one 5 minute sweep opens (2026-10 item 254, Arcade 4). Each
+	// open is a card post, so a bot back from a long outage spreads a backlog over a few
+	// ticks rather than flooding Discord in one; any left over are opened next tick.
+	PARTY_GAME_OPEN_BATCH: 20,
+
+	// ── Casual tables (2026-10 item 254, Arcade 6) ──
+	// The whole table, host included, that a Casual choice fills with Dero bots: four at
+	// Hold'em and Monopoly (the owner's number), and battleship's two, the host and one
+	// bot. Each person who joins before the start takes one bot's seat.
+	CASUAL_TABLE_SEATS: { holdem: 4, monopoly: 4, battleship: 2 },
 
 	// How long a Monopoly seat may sit on the clock before the idle sweep forfeits
 	// it (2026-10 item 241). Its own constant rather than the battleship budget

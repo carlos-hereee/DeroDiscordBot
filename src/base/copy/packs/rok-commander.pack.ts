@@ -748,7 +748,7 @@ export const rokCommanderCopy = {
 		partyGames: {
 			title: "🎉 The Revel Hall",
 			description:
-				"When the keepers call a party game, the whole kingdom plays together here. A hangman round opens in this hall for every warrior at once.\n\n" +
+				"When the keepers call a party game, the whole kingdom plays together here. A hangman round opens in this hall for every warrior at once, and the keepers may call a Texas hold em table or a Monopoly match from here too, whose challenge is cried in 🏆rated-challenges.\n\n" +
 				"Revels to come are cried in 📢announcements, and the roll of who will attend is kept in 🔜upcoming-events. Mark yourself there so the host knows to wait for you.",
 		},
 

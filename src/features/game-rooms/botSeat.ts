@@ -68,6 +68,19 @@ export function maxBotSeats(game: GameSlug): number {
 }
 
 /**
+ * How many bots a Casual table seats (2026-10 item 254, Arcade 6) with `poolSize` people
+ * gathered beside the host: the empty seats of BOT_CONSTANTS.CASUAL_TABLE_SEATS, never
+ * more than the game takes and never fewer than none. The casual fill writes this
+ * number, and each join before the start lowers the draft to it, so a person takes a
+ * bot's seat rather than sitting beside it.
+ */
+export function casualBotSeats(game: GameSlug, poolSize: number): number {
+	const tables: Partial<Record<GameSlug, number>> = BOT_CONSTANTS.CASUAL_TABLE_SEATS;
+	const table = tables[game] ?? 0;
+	return Math.min(maxBotSeats(game), Math.max(0, table - 1 - poolSize));
+}
+
+/**
  * The bot seat ids for `count` bots joining `humanSeats` members. In Monopoly a seat's
  * token is its place at the table (token 1 for seat 1), so a bot takes the variant of the
  * seat it sits in, which keeps "Dero Green" on the green token. Every other game takes

@@ -110,6 +110,9 @@ export function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState
 		},
 		// Play vs bots (2026-10 item 250 Phase 5), off the draft row.
 		...(room.botsOffered ? { bots: { count: room.botSeats ?? 0 } } : {}),
+		// The host's Casual choice (2026-10 item 254, Arcade 6), so even the closed card of a
+		// casual match keeps its CASUAL badge.
+		casual: room.casual ?? false,
 		...overrides,
 	};
 }

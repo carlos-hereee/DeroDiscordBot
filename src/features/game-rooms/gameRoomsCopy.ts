@@ -263,11 +263,14 @@ export const gameRoomsCopy = {
 	// announcement and the RSVP card are member facing, in the kingdom voice.
 	partyGames: {
 		hostHangmanLabel: "Host hangman",
+		// Hold'em and Monopoly from the party channel (2026-10 item 254, Arcade 4).
+		hostHoldemLabel: "Host Texas hold em",
+		hostMonopolyLabel: "Host Monopoly",
 		scheduleLabel: "Schedule a party game",
 		adminsOnly: "Only the server owner or an admin can host or schedule party games.",
 		noChannel: "There is no 🎉party-games channel yet. An admin can run /setup to build it.",
 		hostStarted: (channelId: string): string => `Hangman is open in <#${channelId}>.`,
-		gameLabels: { hangman: "Hangman" } as const,
+		gameLabels: { hangman: GAME_LABELS.hangman, holdem: GAME_LABELS.holdem, monopoly: GAME_LABELS.monopoly } as const,
 
 		// The schedule modal. Discord caps a modal title at 45 characters and a label at 45.
 		modalTitle: "Schedule a party game",
@@ -319,6 +322,27 @@ export const gameRoomsCopy = {
 			`<t:${startSeconds}:f>, ${minutes} min, ${max > 0 ? `up to ${max}` : "no limit"}`,
 		logFull: (max: number): string => `RSVP full at ${max}`,
 		logReopened: (max: number): string => `RSVP back under ${max}`,
+
+		// ── the timed open (2026-10 item 254, Arcade 4) ──
+		// The RSVP card's last line once the start time came: where the game is, or why
+		// Dero could not open it. A link and plain words, so the edit pings nobody.
+		openedLine: (link: string): string => `▶️ **It is open.** [Go to the game](${link})`,
+		notOpenedLine: (reason: string): string => `⚠️ **Dero could not open it at its time.** ${reason}`,
+		openFailures: {
+			alreadyHosting: "The host already had a room open, and a host can run one at a time. They can open it from 🎉party-games once that room is done.",
+			noChannel: "Its channel is missing. An admin can run /setup to build it.",
+			noAccess: "This server's plan does not include game rooms.",
+			alreadyRunning: "A hangman round was already running in 🎉party-games.",
+			failed: "Discord refused the post. The host can open it from 🎉party-games.",
+		},
+	},
+
+	// ── the host's answer to a join request (2026-10 item 254, Arcade 6) ──
+	// One DM line each, since the joiner's own press is long answered. It names the server
+	// because a DM arrives outside it, and pings nobody.
+	joinAnswer: {
+		accepted: (game: string, server: string): string => `✅ The host accepted your request to join **${game}**${server ? ` in **${server}**` : ""}. You are in.`,
+		declined: (game: string, server: string): string => `The host declined your request to join **${game}**${server ? ` in **${server}**` : ""}.`,
 	},
 
 	// ── the closed challenge card (post-launch plan item 21) ──
@@ -454,6 +478,15 @@ export const gameRoomsCopy = {
 		botsNotHere: "Dero bots can only join a Hold'em, Monopoly or Battleship challenge in this server.",
 		// The 🗒️admin-log detail when the host removes a bot mid match.
 		botRemovedDetail: (botName: string): string => `${botName} removed from the match`,
+		// ── Rated or Casual (2026-10 item 254, Arcade 6) ──
+		casual: {
+			toggleLabel: (isCasual: boolean): string => (isCasual ? "Make it rated" : "Make it casual"),
+			cardLine: "🎲 Casual: Dero bots fill the empty seats, and each person who joins before the start takes one bot's seat.",
+			// The admin log's detail for a bot seat that changed through the Casual choice.
+			logFilled: (bots: number): string => `Casual table: ${bots === 1 ? "1 Dero bot" : `${bots} Dero bots`}`,
+			logCleared: "Rated table: every Dero bot removed",
+			logSwapped: (bots: number): string => `A player took a Dero bot's seat, ${bots === 1 ? "1 bot" : `${bots} bots`} left`,
+		},
 		// Words drawn into the challenge card's picture (2026-10 item 243 Phase 4).
 		// A picture cannot carry a mention, so it names nobody by id; the embed
 		// text above it still does.

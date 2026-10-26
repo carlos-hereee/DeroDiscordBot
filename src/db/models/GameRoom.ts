@@ -110,6 +110,11 @@ export interface IGameRoom {
 	// bot driver finds the rooms to drive by botSeats.
 	botsOffered: boolean;
 	botSeats: number;
+	// The host's Casual (unrated) choice on a Hold'em, Monopoly or Battleship draft
+	// (2026-10 item 254, Arcade 6). A casual match is never rated, even once every bot
+	// seat went to a person, and the choice is what lets a joiner take a bot's seat
+	// before the start (challengeBoard).
+	casual: boolean;
 	// ── network tables (2026-10 item 244 Phase 5a) ──
 	// True for a table open to players from other servers. Only a network room may
 	// carry satellites, and its players are named by display name and server tag
@@ -223,6 +228,8 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		// Off and zero by default, so an older row reads as no bots and needs no backfill.
 		botsOffered: { type: Boolean, default: false },
 		botSeats: { type: Number, default: 0, min: 0 },
+		// Off by default, so an older row reads as the host's Rated choice and needs no backfill.
+		casual: { type: Boolean, default: false },
 		// Off and empty by default, so an older row reads as a server room with no window
 		// anywhere else, and needs no backfill.
 		network: { type: Boolean, default: false },

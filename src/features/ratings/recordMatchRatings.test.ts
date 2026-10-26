@@ -228,6 +228,24 @@ describe("what is never rated", () => {
 		expect(ratingStore.applyRating).not.toHaveBeenCalled();
 	});
 
+	// 2026-10 item 254, Arcade 6: the host chose Casual, and people taking every bot's seat
+	// before the start leaves an all member table that still does not rate.
+	it("records a Casual match unrated even with no Dero bot left at the table", async () => {
+		await recordMatchRatings({ ...room("monopoly"), casual: true }, ["a", "b", "c"], [], { now: NOW });
+
+		const result = insertedResult();
+		expect(result.rated).toBe(false);
+		expect(result.entries.map((entry) => entry.userId)).toEqual(["a", "b", "c"]);
+		expect(ratingStore.applyRating).not.toHaveBeenCalled();
+	});
+
+	it("still rates the same table when the host kept it Rated", async () => {
+		await recordMatchRatings({ ...room("monopoly"), casual: false }, ["a", "b", "c"], [], { now: NOW });
+
+		expect(insertedResult().rated).toBe(true);
+		expect(ratingStore.applyRating).toHaveBeenCalledTimes(3);
+	});
+
 	it("records a match left with one rated player unrated", async () => {
 		await recordMatchRatings(room("battleship"), ["a", "b"], ["b"], { now: NOW });
 

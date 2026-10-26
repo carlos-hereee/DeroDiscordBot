@@ -16,6 +16,7 @@ import {
 	isPartyOver,
 	parsePartyGameForm,
 	rsvpCard,
+	PARTY_GAMES,
 	PARTY_RSVP_PREFIX,
 } from "./partyGamesSchedule.js";
 import { partyGameStore } from "@db/stores/partyGameStore.js";
@@ -24,7 +25,7 @@ import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import type { IPartyGame } from "@db/models/PartyGame.js";
+import { PARTY_GAME_SLUGS, PartyGame, type IPartyGame } from "@db/models/PartyGame.js";
 
 // ── partyGamesSchedule (post-launch plan item 3) ─────────────────────
 // The schedule form's rules, the RSVP card, the cap that Mongo enforces and the two
@@ -59,6 +60,9 @@ function makeRow(overrides: Partial<IPartyGame> = {}): IPartyGame {
 		rsvpChannelId: null,
 		rsvpMessageId: null,
 		announcementMessageId: null,
+		openedAt: null,
+		openedLink: null,
+		openFailure: null,
 		createdAt: NOW,
 		...overrides,
 	};
@@ -111,6 +115,30 @@ describe("parsePartyGameForm", () => {
 	});
 });
 
+// ── Hold'em and Monopoly at a party (2026-10 item 254, Arcade 4) ──
+describe("the party game list", () => {
+	it("offers hangman, Texas hold em and Monopoly, the same list the model stores", () => {
+		expect([...PARTY_GAMES]).toEqual(["hangman", "holdem", "monopoly"]);
+		// The model cannot import the feature, so the two lists are a hand kept pair.
+		expect([...PARTY_GAMES]).toEqual([...PARTY_GAME_SLUGS]);
+		expect(PartyGame.schema.path("game").options.enum).toEqual([...PARTY_GAME_SLUGS]);
+	});
+
+	it("reads a Hold'em or a Monopoly party from the form", () => {
+		for (const game of ["holdem", "monopoly"]) {
+			const result = parsePartyGameForm(form({ game }), NOW);
+			expect(result.ok && result.form.game).toBe(game);
+		}
+	});
+
+	it("puts all three games in the schedule modal's list", () => {
+		const json = JSON.stringify(buildScheduleModal().toJSON());
+		for (const game of PARTY_GAMES) expect(json).toContain(`"value":"${game}"`);
+		expect(json).toContain(`"label":"${words.gameLabels.holdem}"`);
+		expect(json).toContain(`"label":"${words.gameLabels.monopoly}"`);
+	});
+});
+
 describe("buildScheduleModal", () => {
 	it("fills in the owner's defaults", () => {
 		const json = JSON.stringify(buildScheduleModal().toJSON());
@@ -127,6 +155,14 @@ describe("rsvpCard", () => {
 		expect(fields[1]).toEqual({ name: words.decliningTitle(2), value: "<@b>, <@c>" });
 		const ids = components[0].toJSON().components.map((button) => ("custom_id" in button ? button.custom_id : ""));
 		expect(ids).toEqual([`${PARTY_RSVP_PREFIX}:yes:pg-1`, `${PARTY_RSVP_PREFIX}:no:pg-1`]);
+	});
+
+	it("links the game once it opened, and says why when it could not", () => {
+		const description = (row: IPartyGame): string => rsvpCard(row, "ch-party").embeds[0].toJSON().description ?? "";
+		expect(description(makeRow())).not.toContain(words.openedLine(""));
+		const link = "https://discord.com/channels/guild-1/ch-rated/msg-1";
+		expect(description(makeRow({ game: "holdem", openedLink: link }))).toContain(words.openedLine(link));
+		expect(description(makeRow({ game: "holdem", openFailure: "alreadyHosting" }))).toContain(words.notOpenedLine(words.openFailures.alreadyHosting));
 	});
 
 	it("summarises a list longer than the card names", () => {
@@ -252,6 +288,18 @@ describe("handleScheduleSubmit", () => {
 		expect((channels.get("ch-upcoming") as unknown as { send: ReturnType<typeof vi.fn> }).send).toHaveBeenCalledOnce();
 		expect(logMock.emitFor).toHaveBeenCalledWith(interaction, "guild-1", "event.create", expect.objectContaining({ subject: words.logSubject("Hangman") }));
 		expect(interaction.editReply).toHaveBeenCalledWith({ content: words.scheduled("ch-upcoming") });
+	});
+
+	it("schedules a Hold'em or a Monopoly party the same way (2026-10 item 254, Arcade 4)", async () => {
+		for (const game of ["holdem", "monopoly"] as const) {
+			const interaction = submit(form({ game }));
+
+			await handleScheduleSubmit(interaction);
+
+			expect(storeMock.create).toHaveBeenLastCalledWith(expect.objectContaining({ game, hostId: "admin-1" }));
+			expect(logMock.emitFor).toHaveBeenLastCalledWith(interaction, "guild-1", "event.create", expect.objectContaining({ subject: words.logSubject(words.gameLabels[game]) }));
+			expect(interaction.editReply).toHaveBeenCalledWith({ content: words.scheduled("ch-upcoming") });
+		}
 	});
 
 	// A modal is reachable without the button that opened it.

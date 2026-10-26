@@ -14,6 +14,7 @@ import { refreshAllLeaderboards } from "@features/leaderboard/LeaderboardBoard.j
 import { refreshAllLevelsBoards } from "@features/leveling/LevelsBoard.js";
 import { sweepExpiredRooms } from "@features/game-rooms/roomArchiveSweep.js";
 import { sweepBattleshipTurns, sweepMonopolyIdle, sweepIdleRooms } from "@features/game-rooms/roomTurnSweep.js";
+import { openDuePartyGames } from "@features/game-rooms/partyGamesOpen.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { getOutboundLatencyStats } from "@utils/serverApi.js";
 import { noteFailure as noteServerFailure, noteSuccess as noteServerSuccess } from "./serverHealthNotifier.js";
@@ -225,6 +226,11 @@ export function startScheduler(client: Client): void {
 				// Last, so a match the turn sweeps just ended is already off the non
 				// terminal list this one reads, and keeps its own winner.
 				await sweepIdleRooms(client);
+				// Fifth, the scheduled party games whose time came (2026-10 item 254,
+				// Arcade 4), up to five minutes late by the owner's choice. After the idle
+				// sweep, so a host whose dead room it just closed is free to host the
+				// party. It never throws, and claims each game once (partyGamesOpen).
+				await openDuePartyGames(client);
 			} catch (err) {
 				// sweepExpiredRooms already isolates per room, so reaching this means the
 				// QUERY itself failed. Log and let the next tick retry; the rooms are

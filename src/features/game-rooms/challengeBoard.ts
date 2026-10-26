@@ -9,7 +9,9 @@ import {
 	type ButtonInteraction,
 	type CategoryChannel,
 	type EmbedBuilder,
+	type Client,
 	type Guild,
+	type Message,
 	type ModalSubmitInteraction,
 	type StringSelectMenuInteraction,
 } from "discord.js";
@@ -59,7 +61,7 @@ import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
 import { networkBanStore } from "@db/stores/networkBanStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import type { SoloLuckPlay } from "@features/games/soloLuck.js";
-import { botSeatIdsFor, botsAllowedIn, maxBotSeats, takesBots } from "./botSeat.js";
+import { botSeatIdsFor, botsAllowedIn, casualBotSeats, maxBotSeats, takesBots } from "./botSeat.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { RPS_CHOICES, type RpsChoice } from "@features/games/rpsWinner.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -117,77 +119,109 @@ export async function startChallengeDraft(
 	game: GameSlug
 ): Promise<IGameRoom | null> {
 	const guild = interaction.guild;
-	const guildId = interaction.guildId;
-	if (!guild || !guildId) {
+	if (!guild || !interaction.guildId) {
 		await interaction.reply({ embeds: [errorEmbed("This only works inside a server.")], flags: MessageFlags.Ephemeral });
 		return null;
 	}
 
-	// The paid-tier seam. Fails OPEN by design (see gameRoomAccess), and costs nothing
-	// at all while ENFORCE_GAME_ROOM_TIER is unset, which is production today.
-	const access = await checkGameRoomAccess(guildId, interaction.user.id);
-	if (!access.allowed) {
-		await interaction.reply({ embeds: [gameRoomUpgradeEmbed(access.upgradeUrl)], flags: MessageFlags.Ephemeral });
+	const opened = await openChallengeDraft(guild, interaction.user.id, game);
+	if (!opened.ok) {
+		await interaction.reply({ ...draftRefusalReply(opened), flags: MessageFlags.Ephemeral });
 		return null;
 	}
+	await interaction.reply({
+		content: gameRoomsCopy.board.cardStarted(opened.channel.id).replace("The match is under way in", "Your challenge card is in"),
+		flags: MessageFlags.Ephemeral,
+	});
+	return opened.room;
+}
+
+/** Why a challenge card could not be posted, for the press or the scheduled open to explain. */
+export type DraftOpenFailure =
+	| { ok: false; reason: "noAccess"; upgradeUrl?: string }
+	| { ok: false; reason: "alreadyHosting"; channelId: string | null }
+	| { ok: false; reason: "noChannel" }
+	| { ok: false; reason: "failed" };
+
+export type DraftOpenResult = { ok: true; room: IGameRoom; channel: TextChannel; card: Message } | DraftOpenFailure;
+
+// The private answer to a press the opener refused, the same words the press always had.
+function draftRefusalReply(failure: DraftOpenFailure): { content: string } | { embeds: EmbedBuilder[] } {
+	if (failure.reason === "noAccess") return { embeds: [gameRoomUpgradeEmbed(failure.upgradeUrl)] };
+	if (failure.reason === "alreadyHosting") return { content: gameRoomsCopy.errors.alreadyHosting(failure.channelId) };
+	if (failure.reason === "noChannel") return { embeds: [errorEmbed(gameRoomsCopy.errors.noArcadeCategory)] };
+	return { embeds: [errorEmbed(gameRoomsCopy.errors.createFailed)] };
+}
+
+/**
+ * Post one challenge card for `hostId` and create its draft row: the one opener behind a
+ * member's press (startChallengeDraft) and a scheduled party game Dero opens by itself at
+ * its time (partyGamesOpen, 2026-10 item 254, Arcade 4), so the two cannot drift into
+ * different rules about who may host what. It answers nobody; the caller says why.
+ *
+ * `openToAll` starts the card past its visibility step, Open to all, where the server's
+ * challenge reach allows it: a party game is called for everyone, and its host may not be
+ * at the keyboard when its time comes. Where the reach is invite only the card starts at
+ * the visibility step like any other, so the reach ceiling holds on this path too.
+ */
+export async function openChallengeDraft(guild: Guild, hostId: string, game: GameSlug, options: { openToAll?: boolean } = {}): Promise<DraftOpenResult> {
+	const guildId = guild.id;
+	// The paid-tier seam. Fails OPEN by design (see gameRoomAccess), and costs nothing
+	// at all while ENFORCE_GAME_ROOM_TIER is unset, which is production today.
+	const access = await checkGameRoomAccess(guildId, hostId);
+	if (!access.allowed) return { ok: false, reason: "noAccess", upgradeUrl: access.upgradeUrl };
 
 	// F11's friendly half, checked before anything is posted publicly. The partial
 	// unique index would throw on the insert below; this turns that into a jump link.
-	const existing = await gameRoomStore.findOpenByHost(guildId, interaction.user.id);
-	if (existing) {
-		await interaction.reply({
-			content: gameRoomsCopy.errors.alreadyHosting(existing.channelId),
-			flags: MessageFlags.Ephemeral,
-		});
-		return null;
-	}
+	const existing = await gameRoomStore.findOpenByHost(guildId, hostId);
+	if (existing) return { ok: false, reason: "alreadyHosting", channelId: existing.channelId ?? null };
 
 	// The game decides the channel, once, here: a rated game's card goes to
 	// 🏆rated-challenges and stays there whatever its badge later says.
 	const channel = await resolveChallengesChannel(guild, game);
-	if (!channel) {
-		await interaction.reply({ embeds: [errorEmbed(gameRoomsCopy.errors.noArcadeCategory)], flags: MessageFlags.Ephemeral });
-		return null;
-	}
+	if (!channel) return { ok: false, reason: "noChannel" };
 
 	// Whether this card offers Play vs bots (2026-10 item 250 Phase 5): a game a bot can
 	// play, in a server that lets hosts add bots. Decided once, here, so the card never
 	// offers a door it would refuse; the press reads the switch again.
 	const botsOffered = takesBots(game) && botsAllowedIn(await guildConfigStore.findByGuildId(guildId));
 
+	// The server's challenge reach decides whether Open to all is offered at all; the
+	// choice is still refused server side (chooseVisibility, checkRoomAdmission), since a
+	// card posted before an admin narrowed the reach still carries the button.
+	const reach = await readChallengeReach(guildId);
+	const allowPublic = isWithinReach(reach, "public");
+	const startsOpen = Boolean(options.openToAll) && allowPublic;
+
 	let room: IGameRoom;
 	try {
 		room = await gameRoomStore.create({
 			guildId,
 			game,
-			hostId: interaction.user.id,
-			visibility: "invite",
+			hostId,
+			visibility: startsOpen ? "public" : "invite",
 			botsOffered,
 		});
 	} catch (error) {
 		// Almost certainly the unique index catching a double click that outran the
 		// findOpenByHost above. The honest answer is the same as the friendly one.
 		console.error("[game-rooms] draft create failed", { guildId, error });
-		await interaction.reply({ content: gameRoomsCopy.errors.alreadyHosting(null), flags: MessageFlags.Ephemeral });
-		return null;
+		return { ok: false, reason: "alreadyHosting", channelId: null };
 	}
 
-	// The server's challenge reach decides whether Open to all is offered at all; the
-	// choice is still refused server side (chooseVisibility, checkRoomAdmission), since a
-	// card posted before an admin narrowed the reach still carries the button.
-	const reach = await readChallengeReach(guildId);
-	const allowPublic = isWithinReach(reach, "public");
 	// The network choice (2026-10 item 244 Phase 5b) is offered only where it could work:
 	// a server whose reach is network, for a game a satellite can mirror. chooseVisibility
 	// refuses it again on the press, for the same stale card reason as Open to all.
 	const allowNetwork = reach === "network" && isNetworkGame(game);
-	const state = cardStateFor(room, { visibility: null, pool: room.spectatorIds ?? [], allowPublic, allowNetwork });
+	const state = cardStateFor(room, { visibility: startsOpen ? "public" : null, pool: room.spectatorIds ?? [], allowPublic, allowNetwork });
 	const logo = roomOpenerLogo(game);
 	const card = await channel
 		.send({
 			embeds: [openerCardEmbed(state, undefined, logo?.ref)],
 			components: openerCardRows(room.roomId, state),
 			files: logo ? [logo.attachment] : [],
+			// A scheduled card names its host, and a card must never ping them.
+			allowedMentions: { parse: [] },
 		})
 		.catch(() => null);
 
@@ -195,19 +229,14 @@ export async function startChallengeDraft(
 		// The row exists and its card does not, so the host would hold a room slot they
 		// can never see or cancel. Roll the draft back rather than stranding them.
 		await gameRoomStore.markArchived(guildId, room.roomId);
-		await interaction.reply({ embeds: [errorEmbed(gameRoomsCopy.errors.createFailed)], flags: MessageFlags.Ephemeral });
-		return null;
+		return { ok: false, reason: "failed" };
 	}
 
 	await gameRoomStore.update(guildId, room.roomId, { boardMessageId: card.id });
-	await interaction.reply({
-		content: gameRoomsCopy.board.cardStarted(channel.id).replace("The match is under way in", "Your challenge card is in"),
-		flags: MessageFlags.Ephemeral,
-	});
-	// The card went up as text so the press was answered inside Discord's three
-	// second window; its picture follows in a second edit once it has drawn.
+	// The card went up as text so a press is answered inside Discord's three second
+	// window; its picture follows in a second edit once it has drawn.
 	void editOpenerCard(guild, room.roomId, card, state);
-	return room;
+	return { ok: true, room, channel, card };
 }
 
 // ── Monopoly's draft settings ─────────────────────────────────────────
@@ -369,7 +398,9 @@ export async function handleInviteSelect(interaction: StringSelectMenuInteractio
 	// opened before a removal cannot invite them back.
 	const picked = await refilterInvitees(interaction.guild, interaction.values, room.hostId, room.kickedIds ?? []);
 
-	const updated = (await gameRoomStore.update(guildId, roomId, { spectatorIds: picked })) ?? room;
+	const saved = (await gameRoomStore.update(guildId, roomId, { spectatorIds: picked })) ?? room;
+	// Each person the host invites onto a Casual draft takes a Dero bot's seat (Arcade 6).
+	const updated = await yieldBotSeatsTo(interaction.client, room, saved);
 	await interaction.reply({ content: gameRoomsCopy.board.pickerSaved(picked.length), flags: MessageFlags.Ephemeral });
 	await refreshCard(interaction.guild, updated, cardStateFor(updated, { visibility: "invite", pool: picked }));
 }
@@ -428,7 +459,8 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 		await interaction.reply({ content: hostWords.kick.refusedRejoin, flags: MessageFlags.Ephemeral });
 		return;
 	}
-	const updated = added ?? room;
+	// On a Casual draft the joiner takes a Dero bot's seat (2026-10 item 254, Arcade 6).
+	const updated = added ? await yieldBotSeatsTo(interaction.client, room, added) : room;
 
 	await interaction.deferUpdate();
 	await refreshCard(
@@ -821,8 +853,10 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 			ratingBand: finished.ratingBand ?? "any",
 			requireApproval: finished.requireApproval ?? false,
 			kickedIds: finished.kickedIds ?? [],
-			// The same Dero bots sit down again (2026-10 item 250 Phase 5).
+			// The same Dero bots sit down again (2026-10 item 250 Phase 5), and a Casual match's
+			// rematch stays unrated like it (2026-10 item 254, Arcade 6).
 			botSeats: finished.botSeats ?? 0,
+			casual: finished.casual ?? false,
 			// And the same people watch (2026-10 item 254, Arcade 11): the rematch's unlock
 			// and its invite follow the setting the host chose for the first match.
 			spectatorMode: finished.spectatorMode ?? null,
@@ -1011,19 +1045,94 @@ export async function handleBotSelect(interaction: StringSelectMenuInteraction):
 		return;
 	}
 
-	const updated = (await gameRoomStore.update(guildId, roomId, { botSeats: count })) ?? room;
+	const updated = await saveBotSeats(interaction, room, { botSeats: count }, gameRoomsCopy.board.botOptionCount(count));
 	await interaction.reply({ content: gameRoomsCopy.board.botsSaved(count), flags: MessageFlags.Ephemeral });
-	if ((room.botSeats ?? 0) !== count) {
-		adminLog.emitFor(interaction, guildId, "bot.slot", {
+	await refreshCard(interaction.guild, updated, cardStateFor(updated, { visibility: updated.visibility, pool: updated.spectatorIds ?? [] }));
+}
+
+// ⚠️ THE ONE WRITE BEHIND THE BOT DOOR. Play vs bots and the Casual choice both set a
+// draft's bot count here, so a bot sits down only through a host's own press and every
+// change of the count is one bot.slot line in 🗒️admin-log, whichever button made it.
+async function saveBotSeats(
+	interaction: ButtonInteraction | StringSelectMenuInteraction,
+	room: IGameRoom,
+	patch: { botSeats: number; casual?: boolean },
+	detail: string
+): Promise<IGameRoom> {
+	const updated = (await gameRoomStore.update(room.guildId, room.roomId, patch)) ?? room;
+	if ((room.botSeats ?? 0) !== patch.botSeats) {
+		adminLog.emitFor(interaction, room.guildId, "bot.slot", {
 			subject: gameRoomsCopy.gameLabel(room.game),
-			detail: gameRoomsCopy.board.botOptionCount(count),
+			detail,
 			game: room.game,
 			matchId: room.roomId,
-			botCount: count,
+			botCount: patch.botSeats,
 			actor: interaction.user.id,
 		});
 	}
-	await refreshCard(interaction.guild, updated, cardStateFor(updated, { visibility: updated.visibility, pool: updated.spectatorIds ?? [] }));
+	return updated;
+}
+
+// ── Rated or Casual (2026-10 item 254, Arcade 6) ──────────────────────
+// What:  the host's choice on a Hold'em, Monopoly or Battleship draft. Casual (unrated)
+//        fills the empty seats with Dero bots up to BOT_CONSTANTS.CASUAL_TABLE_SEATS;
+//        Rated, the default, takes every bot away, since a rated match cannot hold one.
+// Who:   the card's `casual` toggle, the host's alone (HOST_STRICT_ACTIONS), offered
+//        wherever Play vs bots is and refused by the same botRefusal.
+// Where: the fill goes through saveBotSeats, the write Play vs bots makes, so Casual is
+//        not a second bot door: it is the host choosing a number of bots by another
+//        button. The badge reads the flag through challengeBadge, and recordMatchRatings
+//        refuses to rate a casual row even once people took every bot's seat.
+export async function chooseCasual(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
+	// The arg is user input like the rest of a customId: anything but the two values a
+	// card renders is a retired or forged control.
+	if (choice !== "on" && choice !== "off") {
+		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	const refusal = await botRefusal(room);
+	if (refusal) {
+		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	const words = gameRoomsCopy.board.casual;
+	const casual = choice === "on";
+	const bots = casual ? casualBotSeats(room.game, (room.spectatorIds ?? []).length) : 0;
+	const updated = await saveBotSeats(interaction, room, { casual, botSeats: bots }, casual ? words.logFilled(bots) : words.logCleared);
+
+	// The card is the answer: its badge, its bots line and this button all change.
+	await interaction.deferUpdate();
+	await refreshCard(interaction.guild!, updated, cardStateFor(updated, { visibility: updated.visibility, pool: updated.spectatorIds ?? [] }));
+}
+
+/**
+ * A person came into a Casual draft's pool (Join, the invite picker, or the host
+ * accepting a request): each one takes one Dero bot's seat, never more, and a seat never
+ * swaps once the match has started (the store's draft filter). `before` is the row as the
+ * press read it and `after` the row the pool write returned, so the bots lost are the
+ * people gained between the two; a double click gains nobody and costs no bot. Answers
+ * the row to draw the card from, with one bot.slot line when a bot left. Dero is the
+ * actor, since the joiner pressed Join, not a bot control.
+ */
+export async function yieldBotSeatsTo(client: Client, before: IGameRoom, after: IGameRoom): Promise<IGameRoom> {
+	if (!after.casual || after.status !== "draft" || (after.botSeats ?? 0) === 0) return after;
+	const gained = (after.spectatorIds ?? []).length - (before.spectatorIds ?? []).length;
+	if (gained <= 0) return after;
+	const lowered = await gameRoomStore.lowerBotSeats(after.guildId, after.roomId, (before.botSeats ?? 0) - gained);
+	if (!lowered) return after;
+	adminLog.emit({
+		guild: { id: after.guildId, client },
+		kind: "bot.slot",
+		actor: { source: "dero" },
+		payload: {
+			subject: gameRoomsCopy.gameLabel(after.game),
+			detail: gameRoomsCopy.board.casual.logSwapped(lowered.botSeats ?? 0),
+			game: after.game,
+			matchId: after.roomId,
+			botCount: lowered.botSeats ?? 0,
+		},
+	});
+	return lowered;
 }
 
 // ── cancel ────────────────────────────────────────────────────────────
@@ -1051,4 +1160,5 @@ export const challengeBoard = {
 	handleDeroThrowModal,
 	openBotPicker,
 	handleBotSelect,
+	chooseCasual,
 };

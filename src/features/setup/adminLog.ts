@@ -37,6 +37,7 @@ export const ADMIN_LOG_KINDS = [
 	"event.create",
 	"event.update",
 	"event.delete",
+	"party.open",
 	"config.change",
 	"powerup.toggle",
 	"voice.allowlist",
@@ -64,6 +65,8 @@ const ADMIN_LOG_FAMILIES: Record<AdminLogKind, AdminLogFamily> = {
 	"event.create": "schedules",
 	"event.update": "schedules",
 	"event.delete": "schedules",
+	// A scheduled party game Dero could not open at its time (2026-10 item 254, Arcade 4).
+	"party.open": "schedules",
 	"config.change": "settings",
 	"powerup.toggle": "settings",
 	"voice.allowlist": "settings",

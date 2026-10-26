@@ -108,7 +108,7 @@ describe("adminLog.write", () => {
 		};
 		const families = [
 			["config.change", "powerup.toggle", "voice.allowlist", "voice.cap"],
-			["schedule.create", "schedule.update", "schedule.delete", "event.create", "event.update", "event.delete"],
+			["schedule.create", "schedule.update", "schedule.delete", "event.create", "event.update", "event.delete", "party.open"],
 			["selfdestruct.attempt"],
 			["chip.grant", "vault.topup"],
 			["bot.slot"],

@@ -14,7 +14,9 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 vi.mock("@utils/permissions.js", () => ({ gateOwnerOrAdmin: vi.fn() }));
-vi.mock("./challengeBoard.js", () => ({ refreshDraftCard: vi.fn(), challengeBoard: {} }));
+// The casual seat swap answers the pool write's row as it came, so a draft with no casual
+// flag reads exactly as it did before 2026-10 item 254 Arcade 6.
+vi.mock("./challengeBoard.js", () => ({ refreshDraftCard: vi.fn(), yieldBotSeatsTo: vi.fn(async (_client: unknown, _before: unknown, after: unknown) => after), challengeBoard: {} }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
@@ -266,6 +268,70 @@ describe("answering join requests on a draft", () => {
 
 		expect(replyText(interaction)).toBe(words.approval.requestsEmpty);
 		expectNoWrites();
+	});
+});
+
+// ── the joiner hears the answer (2026-10 item 254, Arcade 6) ──
+// The joiner's own press was answered long ago, so the answer is one DM line naming the
+// game and the server, pinging nobody; a closed DM is logged and the answer still lands.
+describe("telling the joiner the host's answer", () => {
+	function dmClient(send: Mock) {
+		return { channels: { fetch: vi.fn().mockResolvedValue(null) }, users: { fetch: vi.fn(async (userId: string) => ({ id: userId, send })) } };
+	}
+	const guildWithName = { ...guild, name: "Test Uno" };
+	const withGuild = (interaction: StringSelectMenuInteraction) => Object.assign(interaction, { guild: guildWithName });
+
+	it("DMs an accepted joiner one line naming the game, the server and the answer", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ game: "monopoly", pendingJoinIds: [THIRD] }));
+		storeMock.admitPendingJoin.mockResolvedValue(makeRoom({ game: "monopoly", spectatorIds: [THIRD] }));
+		const send = vi.fn().mockResolvedValue(undefined);
+		const interaction = withGuild(makeSelect("accept", [THIRD], HOST, dmClient(send)));
+
+		await hostControls.handleJoinRequestSelect(interaction);
+
+		expect(send).toHaveBeenCalledOnce();
+		expect(send).toHaveBeenCalledWith({ content: gameRoomsCopy.joinAnswer.accepted("Monopoly", "Test Uno"), allowedMentions: { parse: [] } });
+		expect(editedText(interaction)).toBe(words.approval.accepted(1));
+	});
+
+	it("DMs each declined joiner the decline", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ pendingJoinIds: [THIRD, OTHER] }));
+		storeMock.declinePendingJoins.mockResolvedValue(makeRoom({ pendingJoinIds: [] }));
+		const send = vi.fn().mockResolvedValue(undefined);
+		const interaction = withGuild(makeSelect("decline", [THIRD, OTHER], HOST, dmClient(send)));
+
+		await hostControls.handleJoinRequestSelect(interaction);
+
+		expect(send).toHaveBeenCalledTimes(2);
+		expect(send).toHaveBeenCalledWith({ content: gameRoomsCopy.joinAnswer.declined("Texas hold em", "Test Uno"), allowedMentions: { parse: [] } });
+		expect(editedText(interaction)).toBe(words.approval.declined(2));
+	});
+
+	it("logs a refused DM and still answers the host, since the card's player list is the answer", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ pendingJoinIds: [THIRD] }));
+		storeMock.admitPendingJoin.mockResolvedValue(makeRoom({ spectatorIds: [THIRD] }));
+		const send = vi.fn().mockRejectedValue(Object.assign(new Error("Cannot send messages to this user"), { code: 50007 }));
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const interaction = withGuild(makeSelect("accept", [THIRD], HOST, dmClient(send)));
+
+		await hostControls.handleJoinRequestSelect(interaction);
+
+		expect(send).toHaveBeenCalledOnce();
+		expect(warn).toHaveBeenCalledWith("[game-rooms] could not DM a joiner the host's answer", expect.objectContaining({ userId: THIRD, answer: "accepted" }));
+		expect(editedText(interaction)).toBe(words.approval.accepted(1));
+		expect(refreshMock).toHaveBeenCalled();
+		warn.mockRestore();
+	});
+
+	it("DMs nobody who was not actually admitted", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ pendingJoinIds: [THIRD] }));
+		storeMock.admitPendingJoin.mockResolvedValue(null);
+		const send = vi.fn().mockResolvedValue(undefined);
+		const interaction = withGuild(makeSelect("accept", [THIRD], HOST, dmClient(send)));
+
+		await hostControls.handleJoinRequestSelect(interaction);
+
+		expect(send).not.toHaveBeenCalled();
 	});
 });
 

@@ -182,6 +182,44 @@ describe("challengeBadge", () => {
 	it("is CASUAL for every game that is not rated", () => {
 		for (const game of ["coinflip", "diceroll", "rps", "hangman", "blackjack"] as const) expect(challengeBadge(game, 0)).toBe("casual");
 	});
+
+	// 2026-10 item 254, Arcade 6: the host's Casual choice, even once people took every bot's seat.
+	it("is CASUAL when the host chose Casual, with or without a bot left", () => {
+		expect(challengeBadge("holdem", 0, true)).toBe("casual");
+		expect(challengeBadge("monopoly", 2, true)).toBe("casual");
+		expect(challengeBadge("monopoly", 0, false)).toBe("rated");
+	});
+});
+
+// ── Rated or Casual on the card (2026-10 item 254, Arcade 6) ─────────────
+describe("the Rated or Casual toggle", () => {
+	const controls: DraftHostControls = { ratingBand: "any", requireApproval: false, pendingJoinCount: 0, spectatorMode: "open" };
+	const base: OpenerCardState = { game: "monopoly", hostId: "host-1", visibility: "public", pool: [], hostControls: controls, bots: { count: 0 } };
+	const customIds = (state: OpenerCardState): string[] =>
+		openerCardRows("room-1", state).flatMap((row) => row.toJSON().components.map((component) => ("custom_id" in component ? component.custom_id : "")));
+
+	it("offers Casual on a Rated card and Rated on a Casual one, beside Play vs bots", () => {
+		expect(customIds(base)).toContain(`${GAME_ROOM_PREFIX}:casual:room-1:on`);
+		expect(customIds({ ...base, casual: true, bots: { count: 3 } })).toContain(`${GAME_ROOM_PREFIX}:casual:room-1:off`);
+		// A bot seated by hand already makes the card casual, so the toggle offers Rated.
+		expect(customIds({ ...base, bots: { count: 1 } })).toContain(`${GAME_ROOM_PREFIX}:casual:room-1:off`);
+	});
+
+	it("is not offered where Play vs bots is not: a card without bots or a network table", () => {
+		expect(customIds({ ...base, bots: undefined }).some((id) => id.includes(":casual:"))).toBe(false);
+		expect(customIds({ ...base, network: true }).some((id) => id.includes(":casual:"))).toBe(false);
+	});
+
+	it("keeps the host row inside Discord's five buttons with every control showing", () => {
+		const busy: OpenerCardState = { ...base, hostControls: { ...controls, requireApproval: true, pendingJoinCount: 2 }, pool: ["p1"] };
+		for (const row of openerCardRows("room-1", busy)) expect(row.toJSON().components.length).toBeLessThanOrEqual(DISCORD_COMPONENTS_PER_ROW);
+	});
+
+	it("reads CASUAL on the card with its line while the draft gathers", () => {
+		const description = openerCardEmbed({ ...base, casual: true }).data.description ?? "";
+		expect(description.split("\n")[0]).toBe(gameRoomsCopy.board.badgeLine("casual", "monopoly"));
+		expect(description).toContain(gameRoomsCopy.board.casual.cardLine);
+	});
 });
 
 describe("the opener card's badge line", () => {

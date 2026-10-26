@@ -48,7 +48,7 @@ const satelliteWords = rokCommanderCopy.arcadeSatellites;
 // the status refusal below cannot drift from the routing switch. `requests` and `kick`
 // are host controls too but are NOT here: they also work in a live room, and each
 // refuses by the room's status itself.
-const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "dero", "cancel", "auctions", "referee", "approval", "bots"]);
+const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "dero", "cancel", "auctions", "referee", "approval", "bots", "casual"]);
 
 // ── gameRoomHandlers ─────────────────────────────────────────────────
 // What:  routes every `gameroom:` button to its action, after proving the clicker is
@@ -181,6 +181,9 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			return;
 		case "bots":
 			await challengeBoard.openBotPicker(interaction, room);
+			return;
+		case "casual":
+			await challengeBoard.chooseCasual(interaction, room, parsed.arg ?? "");
 			return;
 		case "cancel":
 			await challengeBoard.cancelDraft(interaction, room);

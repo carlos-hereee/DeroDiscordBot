@@ -39,10 +39,10 @@ import type { IPartyGame } from "@db/models/PartyGame.js";
 // How:   parsePartyGameForm is pure so its rules are testable without Discord; the
 //        handlers only translate between it, the store and the two channels.
 //
-// ⚠️ IT SCHEDULES; IT DOES NOT START. Nothing opens the game at the start time: the host
-// presses Host hangman in 🎉party-games when the time comes, the way the plan's flow
-// reads. An automatic start would need a timer that survives a deploy, which is a
-// plan of its own.
+// It schedules; partyGamesOpen.ts opens. At the start time the 5 minute game room sweep
+// opens the game by itself, hosted by the admin who scheduled it, through a claim on the
+// row that survives a deploy (2026-10 item 254, Arcade 4), and the RSVP card drawn here
+// says where the game is or why it could not open.
 //
 // 🔜upcoming-events is the homebase channel that already existed (nextDecreeChannelId,
 // read only for members, written by Dero), so the RSVP card joins the "what is coming
@@ -52,8 +52,12 @@ export const PARTY_MODAL_PREFIX = "party_games";
 export const PARTY_RSVP_PREFIX = "party_rsvp";
 const SCHEDULE_ACTION = "schedule";
 
-/** The games a party can be scheduled for. Hangman only for now; trivia is planned later. */
-export const PARTY_GAMES = ["hangman"] as const;
+/**
+ * The games a party can be scheduled for: hangman, and the two table games a party can
+ * fill (2026-10 item 254, Arcade 4). A hand kept mirror of PartyGame's PARTY_GAME_SLUGS
+ * (the model imports no feature), pinned equal by this module's test.
+ */
+export const PARTY_GAMES = ["hangman", "holdem", "monopoly"] as const;
 export type PartyGameSlug = (typeof PARTY_GAMES)[number];
 
 const FIELD = { game: "game", start: "start", duration: "duration", max: "max" } as const;
@@ -147,11 +151,10 @@ export function rsvpCard(row: IPartyGame, partyChannelId: string | null): { embe
 	const words = gameRoomsCopy.partyGames;
 	const shown = BOT_CONSTANTS.PARTY_GAME_NAMES_SHOWN;
 	const listOf = (ids: string[]): string => (ids.length ? words.names(ids, shown) : words.nobodyYet);
-	const embed = infoEmbed(
-		words.cardTitle(words.gameLabels[row.game]),
-		words.cardDescription(row.hostId, toSeconds(row.startAt), row.durationMinutes, partyChannelId),
-		COLORS.ARCADE as ColorResolvable
-	).addFields(
+	const description = [words.cardDescription(row.hostId, toSeconds(row.startAt), row.durationMinutes, partyChannelId)];
+	const outcome = openOutcomeLine(row);
+	if (outcome) description.push("", outcome);
+	const embed = infoEmbed(words.cardTitle(words.gameLabels[row.game]), description.join("\n"), COLORS.ARCADE as ColorResolvable).addFields(
 		{ name: words.attendingTitle(row.attendeeIds.length, row.maxAttendees), value: listOf(row.attendeeIds) },
 		{ name: words.decliningTitle(row.declinedIds.length), value: listOf(row.declinedIds) }
 	);
@@ -160,6 +163,15 @@ export function rsvpCard(row: IPartyGame, partyChannelId: string | null): { embe
 		new ButtonBuilder().setCustomId(`${PARTY_RSVP_PREFIX}:no:${row.partyGameId}`).setLabel(words.declineLabel).setEmoji("❌").setStyle(ButtonStyle.Secondary)
 	);
 	return { embeds: [embed], components: [buttons] };
+}
+
+// What the timed open did, read off the row so every redraw of the card keeps it: a link
+// to the game, why it could not open, or nothing before the start time.
+function openOutcomeLine(row: Pick<IPartyGame, "openedLink" | "openFailure">): string | null {
+	const words = gameRoomsCopy.partyGames;
+	if (row.openedLink) return words.openedLine(row.openedLink);
+	if (row.openFailure) return words.notOpenedLine(words.openFailures[row.openFailure]);
+	return null;
 }
 
 // ── the modal submit ─────────────────────────────────────────────────

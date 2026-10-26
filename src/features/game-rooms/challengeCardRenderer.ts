@@ -68,8 +68,8 @@ const MAX_CHALLENGER_FACES = 6;
 const CHALLENGERS_PER_ROW = 3;
 
 // Bump whenever the drawing changes, or members keep seeing cached cards. 3 added the
-// RATED or CASUAL badge pill (2026-10 item 254, Arcade 5).
-const CHALLENGE_CARD_VERSION = 3;
+// RATED or CASUAL badge pill (2026-10 item 254, Arcade 5); 4 the status watermark (Arcade 6).
+const CHALLENGE_CARD_VERSION = 4;
 const CARD_WIDTH = 960;
 const CARD_HEIGHT = 380;
 const PADDING = 32;
@@ -111,6 +111,19 @@ const BADGE_FILL: Record<ChallengeBadge, ColorResolvable> = {
 	rated: COLORS.CARD_OUTCOME_WIN,
 	casual: COLORS.CARD_TEXT_MUTED,
 };
+
+// ── the status watermark (2026-10 item 254, Arcade 6) ──
+// The pill's word, drawn again large and faint across the whole card on its diagonal, so
+// a member scrolling a challenge channel on a phone reads OPEN TO ALL or FINISHED without
+// finding the 200 pixel pill in the corner. The pill stays: it is the exact label, and
+// the watermark is the glance. Drawn in the card's near white text color rather than the
+// status accent: the accent on the card's dark ground of the same hue (a violet OPEN TO ALL
+// on violet) was too low in contrast to read on a phone (the owner's review). Translucent
+// enough that the faces under it still read.
+const WATERMARK_ALPHA = 0.3;
+const WATERMARK_SIZE = 120;
+// Of the card's diagonal, so a long word squeezes to fit rather than running off a corner.
+const WATERMARK_SPAN = 0.8;
 
 const STATUS_ACCENT: Record<ChallengeCardStatus, ColorResolvable> = {
 	choosing: COLORS.ARCADE,
@@ -182,16 +195,47 @@ async function drawChallengeCard(context: SKRSContext2D, view: ChallengeCardView
 	const accent = STATUS_ACCENT[view.status];
 	if (!art) {
 		drawCardBackground(context, accent, HOST_CENTER.x, HOST_CENTER.y, CARD_WIDTH * 0.6);
-		return drawFaces(context, view, accent);
+		const outcome = await drawFaces(context, view, accent);
+		drawStatusWatermark(context, view.status, CARD_WIDTH, CARD_HEIGHT);
+		return outcome;
 	}
 	drawCardBackground(context, accent, CARD_WIDTH / 2, ART_BAND_HEIGHT / 2, CARD_WIDTH * 0.6);
 	const artMissing = await drawArtBand(context, art);
 	// Below the band, the plain card's drawing moved down by the band's height.
 	context.save();
 	context.translate(0, ART_BAND_HEIGHT);
+	let outcome: DrawOutcome;
 	try {
-		const outcome = await drawFaces(context, view, accent);
-		return artMissing ? { cacheable: false } : outcome;
+		outcome = await drawFaces(context, view, accent);
+	} finally {
+		context.restore();
+	}
+	// Last, over the band and the faces alike, so it crosses the whole card.
+	drawStatusWatermark(context, view.status, CARD_WIDTH, CARD_HEIGHT + ART_BAND_HEIGHT);
+	return artMissing ? { cacheable: false } : outcome;
+}
+
+/**
+ * The status word, large and faint, centred on the card and turned to its diagonal
+ * (bottom left to top right). Every status the pill shows has one, from the same copy, so
+ * the two never disagree. Exported for the render test, which records what it draws.
+ */
+export function drawStatusWatermark(context: SKRSContext2D, status: ChallengeCardStatus, width: number, height: number): void {
+	context.save();
+	try {
+		context.globalAlpha = WATERMARK_ALPHA;
+		context.translate(width / 2, height / 2);
+		context.rotate(-Math.atan2(height, width));
+		drawText(context, gameRoomsCopy.board.cardImage.status[status], {
+			x: 0,
+			y: 0,
+			size: WATERMARK_SIZE,
+			weight: "bold",
+			color: canvasColor(COLORS.CARD_TEXT),
+			align: "center",
+			baseline: "middle",
+			maxWidth: Math.hypot(width, height) * WATERMARK_SPAN,
+		});
 	} finally {
 		context.restore();
 	}

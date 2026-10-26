@@ -18,7 +18,7 @@ import type { HoldemTable } from "@features/games/holdemTable.js";
 import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { REMOVABLE_IN_PLAY_GAMES } from "./gameRoomsEmbeds.js";
-import { refreshDraftCard } from "./challengeBoard.js";
+import { refreshDraftCard, yieldBotSeatsTo } from "./challengeBoard.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { roomTrail } from "./roomTrail.js";
 import { redrawTable, removeFromTable, seatAcceptedPlayer } from "./roomHoldemHandlers.js";
@@ -35,7 +35,8 @@ import type { StoredBattleship } from "./roomBattleship.js";
 //        band and the approval toggle on the challenge card, the Requests panel that
 //        accepts or declines who asked to join, and Remove a player, before the match
 //        (out of the pool) or during it (Hold'em, Battleship, Monopoly). And who may
-//        watch, the spectator select on the draft card (2026-10 item 254, Arcade 11).
+//        watch, the spectator select on the draft card (2026-10 item 254, Arcade 11). A
+//        joiner the host answers from Requests hears the answer by DM (Arcade 6).
 // Who:   gameRoomHandlers routes the `approval`, `requests` and `kick` buttons and the
 //        `band`, `accept`, `decline` and `kick` selects here. The router's hostOnly gate
 //        covers a button; every select is gated again in this file, because a select is
@@ -231,6 +232,7 @@ export async function handleJoinRequestSelect(interaction: StringSelectMenuInter
 async function declineRequests(interaction: StringSelectMenuInteraction, room: IGameRoom, userIds: string[]): Promise<string> {
 	const updated = (await gameRoomStore.declinePendingJoins(room.guildId, room.roomId, userIds)) ?? room;
 	await refreshRoomControls(interaction, updated);
+	await tellJoiners(interaction, room, userIds, "declined");
 	return words.approval.declined(userIds.length);
 }
 
@@ -240,7 +242,7 @@ async function acceptRequests(interaction: StringSelectMenuInteraction, room: IG
 	if (room.status === "draft") return acceptIntoPool(interaction, room, userIds);
 
 	const lines: string[] = [];
-	let accepted = 0;
+	const accepted: string[] = [];
 	let latest = room;
 	for (const userId of userIds) {
 		// Read BEFORE the admit, which takes the origin off the row with the request: a
@@ -249,7 +251,7 @@ async function acceptRequests(interaction: StringSelectMenuInteraction, room: IG
 		const origin = (room.pendingNetworkJoins ?? []).find((entry) => entry.userId === userId) ?? null;
 		const admitted = await gameRoomStore.admitPendingJoin(room.guildId, room.roomId, userId, "playerIds");
 		if (!admitted) continue;
-		accepted++;
+		accepted.push(userId);
 		latest = admitted;
 		const refusal = origin
 			? await seatAcceptedRemotePlayer(interaction.client, admitted, userId, origin.guildId)
@@ -258,12 +260,13 @@ async function acceptRequests(interaction: StringSelectMenuInteraction, room: IG
 	}
 	// A seat that landed redrew the table already; this catches the Requests count when none did.
 	await redrawTable(interaction.client, (await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? latest);
-	return [words.approval.accepted(accepted), ...lines].join("\n");
+	await tellJoiners(interaction, room, accepted, "accepted");
+	return [words.approval.accepted(accepted.length), ...lines].join("\n");
 }
 
 async function acceptIntoPool(interaction: StringSelectMenuInteraction, room: IGameRoom, userIds: string[]): Promise<string> {
 	let poolSize = (room.spectatorIds ?? []).length;
-	let accepted = 0;
+	const accepted: string[] = [];
 	let latest = room;
 	let poolFilled = false;
 	for (const userId of userIds) {
@@ -273,13 +276,39 @@ async function acceptIntoPool(interaction: StringSelectMenuInteraction, room: IG
 		}
 		const admitted = await gameRoomStore.admitPendingJoin(room.guildId, room.roomId, userId, "spectatorIds");
 		if (!admitted) continue;
-		accepted++;
+		accepted.push(userId);
 		poolSize++;
 		latest = admitted;
 	}
+	// Each accepted person takes a Dero bot's seat on a Casual draft (2026-10 item 254,
+	// Arcade 6), the same as a person who pressed Join with no approval to wait on.
+	latest = await yieldBotSeatsTo(interaction.client, room, latest);
 	await refreshDraftCard(interaction.guild!, latest);
-	const summary = words.approval.accepted(accepted);
+	await tellJoiners(interaction, room, accepted, "accepted");
+	const summary = words.approval.accepted(accepted.length);
 	return poolFilled ? `${summary}\n${words.approval.poolFull(BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS)}` : summary;
+}
+
+// ── telling a joiner the host's answer (2026-10 item 254, Arcade 6) ──
+// What:  one DM to each member the host accepted or declined from Requests, naming the
+//        game, the server and the answer.
+// Why a DM: the joiner's own press was answered long ago with "your request is with the
+//        host", and that interaction token is gone, so a private reply cannot reach them.
+// ⚠️ NEVER THROWS AND NEVER HOLDS THE ANSWER BACK. Many members close DMs from server
+// members; a refused DM is logged and skipped, since the card's player list (or the
+// table) already shows whether they are in. Mentions are switched off, as on every line.
+async function tellJoiners(interaction: StringSelectMenuInteraction, room: IGameRoom, userIds: readonly string[], answer: "accepted" | "declined"): Promise<void> {
+	const line = gameRoomsCopy.joinAnswer[answer](gameRoomsCopy.gameLabel(room.game), interaction.guild?.name ?? "");
+	await Promise.all(
+		userIds.map(async (userId) => {
+			try {
+				const user = await interaction.client.users.fetch(userId);
+				await user.send({ content: line, allowedMentions: { parse: [] } });
+			} catch (error) {
+				console.warn("[game-rooms] could not DM a joiner the host's answer", { guildId: room.guildId, roomId: room.roomId, userId, answer, error });
+			}
+		})
+	);
 }
 
 // After a request is answered: the draft's card, or the Hold'em table, shows the new count.

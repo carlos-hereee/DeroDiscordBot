@@ -50,6 +50,9 @@ interface ICreateGameRoom {
 	// number by a rematch, which seats the same bots again.
 	botsOffered?: boolean;
 	botSeats?: number;
+	// The host's Casual choice (2026-10 item 254, Arcade 6), carried by a rematch so it
+	// stays unrated like the match it follows.
+	casual?: boolean;
 	monopolyReferee?: boolean;
 	// The host controls, carried from the finished room by a rematch in the same
 	// channel, so a member removed from that channel stays removed. A board challenge
@@ -93,6 +96,7 @@ export const gameRoomStore = {
 			kickedIds: input.kickedIds ?? [],
 			botsOffered: input.botsOffered ?? false,
 			botSeats: input.botSeats ?? 0,
+			casual: input.casual ?? false,
 			spectatorMode: input.spectatorMode ?? null,
 			status: "draft",
 		});
@@ -276,6 +280,19 @@ export const gameRoomStore = {
 		return GameRoom.findOneAndUpdate(
 			{ guildId, roomId, kickedIds: { $ne: userId } },
 			{ $addToSet: { spectatorIds: userId } },
+			{ new: true }
+		);
+	},
+
+	// A person took a bot's seat on a casual draft (2026-10 item 254, Arcade 6): the bot
+	// count drops to `ceiling` and never rises. $min rather than a decrement, so a double
+	// click or two joins landing out of order cannot take two bots for one person, and the
+	// draft and casual filters mean a started match's seats never swap. Null when the
+	// write did not apply.
+	async lowerBotSeats(guildId: string, roomId: string, ceiling: number) {
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, status: "draft", casual: true, botSeats: { $gt: ceiling } },
+			{ $min: { botSeats: Math.max(0, ceiling) } },
 			{ new: true }
 		);
 	},

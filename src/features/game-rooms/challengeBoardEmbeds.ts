@@ -108,19 +108,21 @@ export type ChallengeBadge = "rated" | "casual";
 /**
  * The ONE helper that decides a challenge card's badge, read by the embed's badge line
  * and the picture's pill alike, so the two can never disagree: RATED for a rated game
- * (ratingEngine.RATED_GAMES) with no Dero bot seated, CASUAL otherwise, since a match
- * with a bot is never rated (botSeat). Phase 4a adds the host's Casual choice here.
+ * (ratingEngine.RATED_GAMES) with no Dero bot seated and the host's Rated choice, CASUAL
+ * otherwise, since a match with a bot is never rated (botSeat) and a Casual match is
+ * never rated even once every bot gave its seat to a person (2026-10 item 254, Arcade 6).
  *
  * ⚠️ THE BADGE NEVER MOVES A CARD. Which channel a card lives in is decided once, at the
  * draft, by the game alone (challengeCard.resolveChallengesChannel), so a rated game's
  * card stays in 🏆rated-challenges when its badge turns CASUAL.
  */
-export function challengeBadge(game: GameSlug, botCount: number): ChallengeBadge {
-	return isRatedGame(game) && botCount === 0 ? "rated" : "casual";
+export function challengeBadge(game: GameSlug, botCount: number, casual = false): ChallengeBadge {
+	return isRatedGame(game) && botCount === 0 && !casual ? "rated" : "casual";
 }
 
-/** The badge of one card state: its game and the bots the host seated. */
-export const badgeOfCard = (state: Pick<OpenerCardState, "game" | "bots">): ChallengeBadge => challengeBadge(state.game, state.bots?.count ?? 0);
+/** The badge of one card state: its game, the bots the host seated and the host's Casual choice. */
+export const badgeOfCard = (state: Pick<OpenerCardState, "game" | "bots" | "casual">): ChallengeBadge =>
+	challengeBadge(state.game, state.bots?.count ?? 0, state.casual ?? false);
 
 export function boardIntroEmbed(): EmbedBuilder {
 	return infoEmbed(
@@ -194,6 +196,9 @@ export interface OpenerCardState {
 	// Dero bot opponents (2026-10 item 250 Phase 5): present when this card offers Play vs
 	// bots, with the number the host chose. Absent offers none, the card as it was.
 	bots?: { count: number };
+	// The host's Casual (unrated) choice (2026-10 item 254, Arcade 6), off the row. Offered
+	// wherever Play vs bots is, since filling the empty seats is what Casual does.
+	casual?: boolean;
 }
 
 /** The draft's host controls the card shows: the band, approval, and how many wait for an answer. */
@@ -245,6 +250,9 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 	}
 	if (state.bots && state.bots.count > 0 && state.visibility && !state.cancelled && !state.startedChannelId && !state.resultLine) {
 		lines.push("", gameRoomsCopy.board.cardBots(state.bots.count));
+	}
+	if (state.casual && state.visibility && !state.cancelled && !state.startedChannelId && !state.resultLine) {
+		lines.push(gameRoomsCopy.board.casual.cardLine);
 	}
 	lines.push(...hostControlLines(state));
 	lines.push(...spectatorLines(state));
@@ -346,7 +354,8 @@ function hostControlRow(roomId: string, state: OpenerCardState, controls: DraftH
 				.setCustomId(`${GAME_ROOM_PREFIX}:bots:${roomId}`)
 				.setLabel(gameRoomsCopy.board.playBotsLabel)
 				.setEmoji("🤖")
-				.setStyle(ButtonStyle.Secondary)
+				.setStyle(ButtonStyle.Secondary),
+			casualToggle(roomId, state)
 		);
 	}
 	buttons.push(
@@ -359,6 +368,20 @@ function hostControlRow(roomId: string, state: OpenerCardState, controls: DraftH
 			.setDisabled(state.pool.length === 0 && controls.pendingJoinCount === 0)
 	);
 	return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(...buttons);
+}
+
+// Rated or Casual (2026-10 item 254, Arcade 6), beside Play vs bots and offered exactly
+// where it is. The choice in force is read through the ONE badge helper, so the button and
+// the badge never disagree; the label names the switch the press makes and the arg is the
+// value it SETS, like the Monopoly toggles, so a stale card does what its label says. Five buttons at most
+// on the row: approval, requests, bots, this and remove.
+function casualToggle(roomId: string, state: OpenerCardState): ButtonBuilder {
+	const isCasual = badgeOfCard(state) === "casual";
+	return new ButtonBuilder()
+		.setCustomId(`${GAME_ROOM_PREFIX}:casual:${roomId}:${isCasual ? "off" : "on"}`)
+		.setLabel(gameRoomsCopy.board.casual.toggleLabel(isCasual))
+		.setEmoji(isCasual ? "🏆" : "🎲")
+		.setStyle(ButtonStyle.Secondary);
 }
 
 // The band select, on rated games only, with the current band as its default so the
