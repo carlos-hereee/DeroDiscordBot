@@ -126,6 +126,9 @@ export const GAME_ROOM_ACTIONS = {
 	// I'm back, for a seat that sits out after two timeouts in a row. playersOnly,
 	// and the handler also requires that the clicker's own seat is sitting out.
 	hback: { hostOnly: false, playersOnly: true },
+	// Set the buy in on a chip table before anybody sits (2026-10 item 250 Phase 5). In
+	// HOST_STRICT_ACTIONS: it decides what every player pays from their wallet.
+	hbuyin: { hostOnly: true, playersOnly: false },
 	// Open seats or Close seats while the tournament runs (2026-10 item 244 Phase 4),
 	// with the value to set in the arg. The host's call, like dealing. A late joiner
 	// takes a seat through `hjoin`, the same door as Buy in.
@@ -178,7 +181,9 @@ export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;
 //        or removing a member is moderation. Starting a match is not: the host decides
 //        when their own challenge begins, so an admin pressing Start would play the
 //        host's hand for them. An admin may still kick, manage and cancel.
-export const HOST_STRICT_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["start", "dero"]);
+// The table's buy in (2026-10 item 250 Phase 5) is strict for the same reason: it is what
+// every player pays from their own wallet, the host's call and nobody else's.
+export const HOST_STRICT_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["start", "dero", "hbuyin"]);
 
 // ── the controls a satellite may press (2026-10 item 244 Phase 5a) ──
 // What:  the actions a member seated through a satellite channel may take there: their

@@ -24,11 +24,12 @@ import { buildPots, awardPots, uncalledPortion, type PlayerCommitment } from "./
 //        round builds its own seat array from them and is written back at the end
 //        of every action, so the two can never drift.
 //
-// ⚠️ CHIPS DIE WITH THE TABLE (A9, R22). Nothing here reads or writes a balance
-// outside this object. A persistent stack is an economy, and an economy players
-// can accumulate is a gambling moderation surface, which is why the plan's
-// recommendation for open question Q7 was "never" and this is what never looks
-// like in code: there is no store, no field, and nowhere to add one.
+// ⚠️ NOTHING HERE READS OR WRITES A BALANCE outside this object, at any table. A table
+// opened where the server has chips on carries `chips` (2026-10 item 250 Phase 5, the
+// owner's reversal of A9 and R22, which had chips die with every table): its buy in came
+// out of each player's wallet and its stacks go back when they leave or it ends, and
+// game-rooms/holdemChips.ts moves those chips. A table without `chips` is free play, and
+// its chips still die with it. Either way the engine only keeps the stacks.
 
 export type Street = "preflop" | "flop" | "turn" | "river" | "showdown";
 
@@ -93,12 +94,21 @@ export interface HoldemTable {
 	// both are optional and every reader goes through startingStackOf and seatCapOf.
 	startingStack?: number;
 	maxSeats?: number;
+	// Present when the table plays for the members' wallet chips (2026-10 item 250 Phase
+	// 5): the server whose wallets paid the buy ins, which holdemChips pays back. Absent
+	// on a free play table and on every row stored before chips existed.
+	chips?: TableChips;
 	// Late joiners who claimed a free seat while the host had seats open (2026-10 item
 	// 244 Phase 4), waiting for the next deal. ⚠️ NOT SEATS. Nothing that reads the
 	// hand, the pots, the blinds, the button or the bust order looks here, and the
 	// only code that turns one into a seat is seatLatePlayers at the top of dealHand,
 	// before the next hand exists. Absent on every table stored before it existed.
 	pendingSeats?: PendingSeat[];
+}
+
+/** Where a chip table's buy ins came from: the server whose wallets pay and are paid back. */
+export interface TableChips {
+	guildId: string;
 }
 
 /** A late joiner holding a seat for the next deal, with the name its seat will carry. */
@@ -175,14 +185,29 @@ function createStandardTable(now: number): HoldemTable {
 
 export type JoinResult = { ok: true } | { ok: false; reason: "alreadySeated" | "tableFull" | "started" };
 
-// Buy in. Every player starts with the same stack, because the alternative is a
-// buy-in amount, and a buy-in amount needs a balance to buy in FROM.
+// Buy in. Every player starts with the same stack, the table's one buy in: at a chip
+// table the host sets it before anybody sits (setBuyIn) and every player pays it, by the
+// owner's choice of equal stacks over a buy in each player picks (2026-10 item 250 Phase 5).
 export function joinTable(table: HoldemTable, userId: string, username: string): JoinResult {
 	if (table.status !== "joining") return { ok: false, reason: "started" };
 	if (seatOf(table, userId)) return { ok: false, reason: "alreadySeated" };
 	if (table.seats.length >= seatCapOf(table)) return { ok: false, reason: "tableFull" };
 
 	table.seats.push(freshSeat(userId, username, startingStackOf(table)));
+	return { ok: true };
+}
+
+export type SetBuyInResult = { ok: true } | { ok: false; reason: "notJoining" | "seated" };
+
+/**
+ * The host's one buy in for the table, the starting stack every seat gets. Only while
+ * the table is joining and nobody has sat down, so no player ever paid an amount the
+ * table no longer deals. The amount is validated by the caller (holdemChips' bounds).
+ */
+export function setBuyIn(table: HoldemTable, amount: number): SetBuyInResult {
+	if (table.status !== "joining") return { ok: false, reason: "notJoining" };
+	if (table.seats.length > 0) return { ok: false, reason: "seated" };
+	table.startingStack = amount;
 	return { ok: true };
 }
 
@@ -770,6 +795,10 @@ export function placements(table: HoldemTable): string[] {
 export interface LeaveOutcome extends ActionOutcome {
 	// True when the player still held cards in a live hand, which leaving folded.
 	foldedHand?: boolean;
+	// The stack the player walked away with, after any fold settled: what a chip table
+	// pays back to their wallet (2026-10 item 250 Phase 5). A seat removed before the
+	// first deal walks away with its whole buy in.
+	stackLeft?: number;
 }
 
 /**
@@ -779,8 +808,9 @@ export interface LeaveOutcome extends ActionOutcome {
  * buyer. Once the tournament runs the seat stays in the array marked out, exactly
  * like a bust, so finishing order survives (see TableSeat.out); a live hand is
  * folded first, so the chips already in the pot stay there. The player's stack
- * leaves with them: chips die with the table (A9), so there is nothing to cash out
- * to. When one seat is left the tournament ends the way a final bust ends it.
+ * leaves with them, reported as `stackLeft`: a chip table cashes it out to their
+ * wallet (holdemChips), and at a free table it dies with the table. When one seat is
+ * left the tournament ends the way a final bust ends it.
  * `narration` is never set, because the caller posts its own one line for the leave.
  */
 export function leaveTable(table: HoldemTable, userId: string, rng: () => number = Math.random): LeaveOutcome {
@@ -791,7 +821,7 @@ export function leaveTable(table: HoldemTable, userId: string, rng: () => number
 	if (table.status === "joining") {
 		table.seats = table.seats.filter((entry) => entry.userId !== userId);
 		table.lastActionAt = Date.now();
-		return { ok: true, foldedHand: false };
+		return { ok: true, foldedHand: false, stackLeft: seat.stack };
 	}
 
 	const holdsCards = handInProgress(table) && !seat.folded;
@@ -808,6 +838,7 @@ export function leaveTable(table: HoldemTable, userId: string, rng: () => number
 	// After the fold, because settling a hand can hand an uncalled bet back to this
 	// seat, and the betting round's copy is zeroed too so the next writeBack cannot
 	// put the chips back on a player who has gone.
+	const stackLeft = seat.stack;
 	seat.stack = 0;
 	const bettingSeat = table.betting?.seats.find((entry) => entry.userId === userId);
 	if (bettingSeat) bettingSeat.stack = 0;
@@ -816,7 +847,7 @@ export function leaveTable(table: HoldemTable, userId: string, rng: () => number
 		finishTournament(table);
 		outcome = { ...outcome, tournamentOver: true };
 	}
-	return { ...outcome, narration: undefined, foldedHand: holdsCards };
+	return { ...outcome, narration: undefined, foldedHand: holdsCards, stackLeft };
 }
 
 // buttonIndex counts LIVE seats, so a seat going out before the button would slide

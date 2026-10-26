@@ -17,6 +17,7 @@ import { createTable as createHoldemTable, type HoldemTerms } from "@features/ga
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
 import { createInitialState as createMonopolyState } from "@features/games/monopolyState.js";
+import { chipTableFor } from "./holdemChips.js";
 import { monopolyBoardEmbed, monopolyControlsRow } from "./roomMonopoly.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
@@ -467,6 +468,10 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 	// players are whoever buys in, which is not known until they do.
 	if (game === "holdem") {
 		const table = createHoldemTable(Date.now(), input.holdemTerms);
+		// Whether the table plays for the members' wallet chips (2026-10 item 250 Phase 5),
+		// decided once, here, so a table never changes what it plays for mid way.
+		const chips = await chipTableFor(room, false);
+		if (chips) table.chips = chips;
 		const boardMessage = await channel
 			.send({ embeds: [holdemTableEmbed(table, 0)], components: holdemJoiningRows(room.roomId, 0, table) })
 			.catch(() => null);

@@ -8,6 +8,7 @@ import {
 	whoActs,
 	handInProgress,
 	seatCapOf,
+	setBuyIn,
 	startingStackOf,
 	type HoldemTable,
 	type HoldemTerms,
@@ -187,5 +188,26 @@ describe("a full tournament with custom terms", () => {
 		const winner = table.seats.find((seat) => seat.userId === table.winnerId);
 		expect(winner?.stack).toBe(total);
 		expect(table.seats.filter((seat) => seat.userId !== table.winnerId).every((seat) => seat.stack === 0 && seat.out)).toBe(true);
+	});
+});
+
+// ── the host's one buy in (2026-10 item 250 Phase 5) ──────────────────
+// The buy in IS the starting stack, and it can only move while nobody has paid it.
+describe("setBuyIn", () => {
+	it("sets the starting stack every buy in gets, while the table is empty", () => {
+		const table = createTable();
+		expect(setBuyIn(table, 7_500)).toEqual({ ok: true });
+		joinTable(table, "a", "A");
+		expect(startingStackOf(table)).toBe(7_500);
+		expect(table.seats[0].stack).toBe(7_500);
+	});
+
+	it("refuses once anybody sat down, and once the table plays", () => {
+		const table = createTable();
+		joinTable(table, "a", "A");
+		expect(setBuyIn(table, 5_000)).toEqual({ ok: false, reason: "seated" });
+		table.status = "playing";
+		expect(setBuyIn(table, 5_000)).toEqual({ ok: false, reason: "notJoining" });
+		expect(startingStackOf(table)).toBe(BOT_CONSTANTS.HOLDEM_STARTING_STACK);
 	});
 });

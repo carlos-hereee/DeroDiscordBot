@@ -1,4 +1,15 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type ColorResolvable } from "discord.js";
+import {
+	ActionRowBuilder,
+	ButtonBuilder,
+	ButtonStyle,
+	EmbedBuilder,
+	LabelBuilder,
+	ModalBuilder,
+	StringSelectMenuBuilder,
+	TextInputBuilder,
+	TextInputStyle,
+	type ColorResolvable,
+} from "discord.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -13,7 +24,7 @@ import {
 	type HoldemTable,
 } from "@features/games/holdemTable.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
-import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
+import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import type { PrivateViewContent } from "./privateView.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -146,9 +157,19 @@ function seatRow(roomId: string, table: HoldemTable, host: TableHostState): Acti
 }
 
 // A table opened with terms says them while it waits for players, so nobody buys
-// in to a 5000 chip table thinking it is the standard 1000. A table without terms
-// keeps the line it always had.
+// in to a 5000 chip table thinking it is the standard 1000. A chip table says its buy
+// in comes out of the wallet and goes back (2026-10 item 250 Phase 5). A free table
+// without terms keeps the line it always had.
 function joiningHeader(table: HoldemTable): string {
+	if (table.chips) {
+		return gameRoomsCopy.holdem.chipsJoiningLine({
+			seated: table.seats.length,
+			seatCap: seatCapOf(table),
+			buyIn: startingStackOf(table),
+			smallBlind: table.smallBlind,
+			bigBlind: table.bigBlind,
+		});
+	}
 	if (table.startingStack === undefined) return gameRoomsCopy.holdem.joiningLine(table.seats.length);
 	return gameRoomsCopy.holdem.joiningTermsLine({
 		seated: table.seats.length,
@@ -242,11 +263,12 @@ export function joiningRows(roomId: string, seatCount: number, table?: HoldemTab
 	const stack = table ? startingStackOf(table) : BOT_CONSTANTS.HOLDEM_STARTING_STACK;
 	const seatCap = table ? seatCapOf(table) : BOT_CONSTANTS.HOLDEM_MAX_SEATS;
 	const requests = host?.showRequests ? [requestsButton(roomId, host)] : [];
+	const buyInLabel = table?.chips ? gameRoomsCopy.holdem.chipsBuyInLabel(stack) : gameRoomsCopy.holdem.buyInLabel(stack);
 	return [
 		new ActionRowBuilder<ButtonBuilder>().addComponents(
 			new ButtonBuilder()
 				.setCustomId(`${GAME_ROOM_PREFIX}:hjoin:${roomId}`)
-				.setLabel(gameRoomsCopy.holdem.buyInLabel(stack))
+				.setLabel(buyInLabel)
 				.setEmoji("🪙")
 				.setStyle(ButtonStyle.Success)
 				.setDisabled(seatCount >= seatCap),
@@ -259,7 +281,51 @@ export function joiningRows(roomId: string, seatCount: number, table?: HoldemTab
 			...tableExitButtons(roomId),
 			...requests
 		),
+		...buyInRow(roomId, table),
 	];
+}
+
+// The host's Set the buy in (2026-10 item 250 Phase 5), on a chip table only and only
+// before anybody sits, so no player ever paid an amount the table no longer deals. A row
+// of its own, because the joining row is already at Discord's five with Requests showing.
+function buyInRow(roomId: string, table?: HoldemTable): ActionRowBuilder<ButtonBuilder>[] {
+	if (!table?.chips || table.seats.length > 0) return [];
+	return [
+		new ActionRowBuilder<ButtonBuilder>().addComponents(
+			new ButtonBuilder()
+				.setCustomId(`${GAME_ROOM_PREFIX}:hbuyin:${roomId}`)
+				.setLabel(gameRoomsCopy.holdem.setBuyInLabel)
+				.setEmoji("🪙")
+				.setStyle(ButtonStyle.Secondary)
+		),
+	];
+}
+
+/** The two fields of the buy in modal: the preset select and the typed amount. */
+export const BUY_IN_FIELDS = { preset: "preset", custom: "custom" } as const;
+
+/**
+ * The host's buy in modal: the presets as a select with the table's current buy in
+ * chosen, and a field for any other amount, which wins when it is filled.
+ */
+export function buyInModal(roomId: string, current: number): ModalBuilder {
+	const copy = gameRoomsCopy.holdem;
+	const presets = [...new Set([...BOT_CONSTANTS.ECONOMY.HOLDEM_BUY_IN_PRESETS, current])].sort((first, second) => first - second);
+	return new ModalBuilder()
+		.setCustomId(`${GAME_ROOM_MODAL_PREFIX}:hbuyin:${roomId}`)
+		.setTitle(copy.buyInModalTitle)
+		.addLabelComponents(
+			new LabelBuilder().setLabel(copy.buyInPresetLabel).setStringSelectMenuComponent(
+				new StringSelectMenuBuilder()
+					.setCustomId(BUY_IN_FIELDS.preset)
+					.setMinValues(1)
+					.setMaxValues(1)
+					.addOptions(presets.map((amount) => ({ label: copy.buyInPresetOption(amount), value: String(amount), default: amount === current })))
+			),
+			new LabelBuilder().setLabel(copy.buyInCustomLabel).setTextInputComponent(
+				new TextInputBuilder().setCustomId(BUY_IN_FIELDS.custom).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(12).setPlaceholder(copy.buyInCustomPlaceholder)
+			)
+		);
 }
 
 // The controls BETWEEN hands: the tournament is still running, the last hand has

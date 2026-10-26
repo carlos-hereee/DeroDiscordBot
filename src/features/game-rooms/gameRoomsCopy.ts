@@ -4,6 +4,8 @@ import type { BuildingKind } from "@features/games/monopolyState.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import type { FlavorTable } from "./matchOutcome.js";
+// Aliased: Monopoly's copy below names its own parameters `chips`.
+import { chips as chipAmount } from "@features/economy/economyCopy.js";
 
 // ── game rooms user-facing copy ──────────────────────────────────────
 // Feature-local copy module, the exact sibling of gamesCopy.ts and fortuneCopy.ts,
@@ -671,6 +673,10 @@ export const gameRoomsCopy = {
 		// The joining line for a table opened with host defined terms (Dero's rules card).
 		joiningTermsLine: (terms: { seated: number; seatCap: number; stack: number; smallBlind: number; bigBlind: number }): string =>
 			`Buy in to take a seat. ${terms.seated} of ${terms.seatCap} seated so far. Everyone starts with ${terms.stack} chips, blinds start at ${terms.smallBlind} and ${terms.bigBlind}. Chips are for this table only and vanish when it ends.`,
+		// A table that plays for wallet chips (2026-10 item 250 Phase 5): the host's one buy
+		// in comes out of each player's wallet and their stack goes back when they leave.
+		chipsJoiningLine: (table: { seated: number; seatCap: number; buyIn: number; smallBlind: number; bigBlind: number }): string =>
+			`Buy in for **${chipAmount(table.buyIn)}** from your wallet to take a seat. ${table.seated} of ${table.seatCap} seated so far, blinds start at ${table.smallBlind} and ${table.bigBlind}. Your stack goes back to your wallet when you leave or the table ends. Need chips? \`/claim\`.`,
 		handLine: (hand: number, small: number, big: number): string => `Hand ${hand} · blinds ${small}/${big}`,
 		finishedLine: (winnerId: string | null): string =>
 			winnerId ? `👑 <@${winnerId}> takes the tournament.` : "The tournament is over.",
@@ -692,6 +698,8 @@ export const gameRoomsCopy = {
 		nextHandWaitingLine: "🃏 The next hand waits until two players are back at the table. The host can still deal it.",
 
 		buyInLabel: (stack: number): string => `Buy in (${stack})`,
+		chipsBuyInLabel: (amount: number): string => `Buy in (${chipAmount(amount)})`,
+		setBuyInLabel: "Set the buy in",
 		startLabel: "Deal",
 		// The same control between hands, worded so the host can tell the first deal
 		// from the ones after it.
@@ -731,9 +739,24 @@ export const gameRoomsCopy = {
 		handInProgress: "A hand is already running. Finish it before dealing again.",
 		// Somebody else's write landed first. Ordinary, so the copy is not an apology.
 		tableBusy: "The table just changed. Try that again.",
+		// ── the chip buy in (2026-10 item 250 Phase 5) ──
+		notEnoughChips: (buyIn: number): string => `The buy in is **${chipAmount(buyIn)}** and your wallet holds less. \`/claim\` your chips, then buy in again.`,
+		buyInChanged: "The host changed the buy in as you sat down. Press Buy in again.",
+		// Added after any refusal that came after the buy in left the wallet.
+		buyInBack: "Your buy in went back to your wallet.",
+		buyInModalTitle: "Set the buy in",
+		buyInPresetLabel: "Buy in",
+		buyInPresetOption: (amount: number): string => chipAmount(amount),
+		buyInCustomLabel: "Or type another amount",
+		buyInCustomPlaceholder: "for example 7500 or 7.5k",
+		buyInInvalid: (min: number, max: number): string => `A buy in is a whole number of chips from ${min.toLocaleString("en-US")} to ${max.toLocaleString("en-US")}.`,
+		buyInLocked: "Somebody already bought in, so the buy in stays as it is.",
+		buyInFreeTable: "This table plays for table chips only, so it has no buy in to set.",
 
 		// ── the trail ──
 		seatTaken: (userId: string, seated: number): string => `🪙 <@${userId}> bought in. ${seated} at the table.`,
+		chipsSeatTaken: (userId: string, buyIn: number, seated: number): string => `🪙 <@${userId}> bought in for ${chipAmount(buyIn)}. ${seated} at the table.`,
+		buyInSet: (hostId: string, buyIn: number): string => `🪙 <@${hostId}> set the buy in to ${chipAmount(buyIn)}.`,
 		handDealt: (hand: number, small: number, big: number): string =>
 			`🃏 **Hand ${hand}** is dealt. Blinds are ${small}/${big}.`,
 		blindsUp: (small: number, big: number): string => `⏫ Blinds are up: ${small}/${big}.`,
@@ -757,6 +780,12 @@ export const gameRoomsCopy = {
 		// hand or the tournament still posts that hand's usual lines after this one.
 		leftTable: (userId: string, foldedHand: boolean): string =>
 			foldedHand ? `🚪 <@${userId}> folded and left the table.` : `🚪 <@${userId}> left the table.`,
+		// A chip table's leave, saying what went back to the wallet.
+		chipsLeftTable: (userId: string, foldedHand: boolean, stackLeft: number): string =>
+			`🚪 <@${userId}> ${foldedHand ? "folded and left" : "left"} the table, and ${chipAmount(stackLeft)} went back to their wallet.`,
+		// The end of a chip table: every stack still on it, back to its wallet.
+		chipsReturned: (payouts: readonly { userId: string; amount: number }[]): string =>
+			[`🪙 The table closed and its chips went back to the wallets:`, ...payouts.map((payout) => `<@${payout.userId}> ${chipAmount(payout.amount)}`)].join("\n"),
 		// The host's End table line. `standings` is best first; a stack of null marks a
 		// seat that was already out. Before the first deal there is nothing to rank.
 		tableEnded: (hostId: string, standings: { userId: string; stack: number | null }[], anyHandDealt: boolean): string =>

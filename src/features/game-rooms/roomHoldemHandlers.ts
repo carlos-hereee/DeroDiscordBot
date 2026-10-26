@@ -1,4 +1,4 @@
-import { MessageFlags, TextChannel, type ButtonInteraction, type Client } from "discord.js";
+import { MessageFlags, TextChannel, type ButtonInteraction, type Client, type ModalSubmitInteraction } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { buildPots, potTotal, type PlayerCommitment } from "@features/games/holdemPots.js";
@@ -11,6 +11,7 @@ import {
 	endTable,
 	returnToTable,
 	requestLateSeat,
+	setBuyIn,
 	withdrawLateSeat,
 	handInProgress,
 	clockStartOf,
@@ -20,6 +21,7 @@ import {
 	whoActs,
 	type ActionOutcome,
 	type HoldemTable,
+	type JoinResult,
 	type LateSeatResult,
 	type ReturnResult,
 } from "@features/games/holdemTable.js";
@@ -31,6 +33,8 @@ import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
 import { recordShowdownHand } from "@features/ratings/gameResultCounts.js";
 import { isRatedHoldemSession } from "@features/ratings/ratingEngine.js";
 import { secureRandom } from "@utils/secureRng.js";
+import { parseChipAmount } from "@features/economy/chipWallet.js";
+import { cashOut, isValidBuyIn, payBuyIn, refundBuyIn } from "./holdemChips.js";
 import { showPrivateView } from "./privateView.js";
 import { chipsAtHandStart, holdemOutcome, shareOf, type FinishCause, type OutcomeBucket } from "./matchOutcome.js";
 import { HAND_CATEGORIES } from "@features/games/holdemHand.js";
@@ -53,6 +57,8 @@ import {
 	aggressiveActionFor,
 	resolveRaiseAmount,
 	tableHostStateOf,
+	buyInModal,
+	BUY_IN_FIELDS,
 } from "./roomHoldem.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -303,10 +309,46 @@ type SeatAttempt = { outcome: "landed"; table: HoldemTable } | { outcome: "refus
  * press would. Writes nothing to the trail; announceSeat does that.
  */
 export async function claimSeat(room: IGameRoom, userId: string, username: string): Promise<SeatClaim> {
+	const table = tableOf(room);
+	if (!table?.chips || table.status === "finished") return claimSeatOnTable(room, userId, username, null);
+
+	// ⚠️ A CHIP TABLE'S BUY IN LEAVES THE WALLET BEFORE THE SEAT IS CLAIMED (2026-10 item
+	// 250 Phase 5), and goes back when the seat never lands. The other order would seat a
+	// player whose debit could still fail, holding chips that came from nowhere. A seat
+	// the table would refuse anyway (taken, full, closed) is refused before any debit.
+	const refusal = seatRefusalFor(room, table, userId, username);
+	if (refusal) return { ok: false, refusal };
+	const buyIn = startingStackOf(table);
+	if (!(await payBuyIn(table, userId))) return { ok: false, refusal: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
+
+	const claim = await claimSeatOnTable(room, userId, username, buyIn);
+	if (claim.ok) return claim;
+	await refundBuyIn(table, userId, buyIn);
+	return { ok: false, refusal: `${claim.refusal} ${gameRoomsCopy.holdem.buyInBack}` };
+}
+
+// What the table would answer this seat, on a copy, so a chip table refuses a seat it
+// cannot give before any chips move. The same engine calls the claim makes for real.
+function seatRefusalFor(room: IGameRoom, table: HoldemTable, userId: string, username: string): string | null {
+	const probe = structuredClone(table);
+	if (probe.status === "playing") {
+		if (!room.seatsOpen) return hostWords.seats.closedRefused;
+		const late = requestLateSeat(probe, userId, username);
+		return late.ok ? null : LATE_SEAT_REFUSALS[late.reason];
+	}
+	const joined = joinTable(probe, userId, username);
+	return joined.ok ? null : joinRefusalFor(joined);
+}
+
+// The claim loop. `paidBuyIn` is what a chip table's player already paid, or null at a
+// free table: a re-read that finds the host changed the buy in meanwhile refuses rather
+// than seat a player at a stack they did not pay for.
+async function claimSeatOnTable(room: IGameRoom, userId: string, username: string, paidBuyIn: number | null): Promise<SeatClaim> {
 	let current: IGameRoom = room;
 	for (let attempt = 0; attempt < BOT_CONSTANTS.HOLDEM_SEAT_CLAIM_ATTEMPTS; attempt++) {
 		const table = tableOf(current);
 		if (!table || table.status === "finished") return { ok: false, refusal: gameRoomsCopy.holdem.tournamentOver };
+		if (paidBuyIn !== null && startingStackOf(table) !== paidBuyIn) return { ok: false, refusal: gameRoomsCopy.holdem.buyInChanged };
 
 		const late = table.status === "playing";
 		const result = late ? await tryLateSeat(current, table, userId, username) : await tryBuyIn(current, table, userId, username);
@@ -334,15 +376,7 @@ export async function claimSeat(room: IGameRoom, userId: string, username: strin
 // member the host removed after this read cannot be written back onto the table.
 async function tryBuyIn(room: IGameRoom, table: HoldemTable, userId: string, username: string): Promise<SeatAttempt> {
 	const result = joinTable(table, userId, username);
-	if (!result.ok) {
-		const refusal =
-			result.reason === "alreadySeated"
-				? gameRoomsCopy.holdem.alreadySeated
-				: result.reason === "tableFull"
-				  ? gameRoomsCopy.holdem.tableFull
-				  : gameRoomsCopy.holdem.alreadyStarted;
-		return { outcome: "refused", refusal };
-	}
+	if (!result.ok) return { outcome: "refused", refusal: joinRefusalFor(result) };
 	const written = await gameRoomStore.updateSecretIf(
 		room.guildId,
 		room.roomId,
@@ -352,6 +386,14 @@ async function tryBuyIn(room: IGameRoom, table: HoldemTable, userId: string, use
 	);
 	return written ? { outcome: "landed", table } : { outcome: "lost" };
 }
+
+const JOIN_REFUSALS: Record<Exclude<JoinResult, { ok: true }>["reason"], string> = {
+	alreadySeated: gameRoomsCopy.holdem.alreadySeated,
+	tableFull: gameRoomsCopy.holdem.tableFull,
+	started: gameRoomsCopy.holdem.alreadyStarted,
+};
+
+const joinRefusalFor = (result: Exclude<JoinResult, { ok: true }>): string => JOIN_REFUSALS[result.reason];
 
 const LATE_SEAT_REFUSALS: Record<Exclude<LateSeatResult, { ok: true }>["reason"], string> = {
 	notPlaying: hostWords.seats.notPlaying,
@@ -387,9 +429,15 @@ async function announceSeat(client: Client, room: IGameRoom, claim: Extract<Seat
 	await roomTrail.postMove(client, room, {
 		actorId: userId,
 		kind: "join",
-		text: claim.late ? hostWords.seats.heldLine(userId) : gameRoomsCopy.holdem.seatTaken(userId, claim.table.seats.length),
+		text: claim.late ? hostWords.seats.heldLine(userId) : seatTakenLine(claim.table, userId),
 	});
 	await redraw(client, room, claim.table);
+}
+
+// A chip table says what the seat cost; a free table keeps the line it always had.
+function seatTakenLine(table: HoldemTable, userId: string): string {
+	if (table.chips) return gameRoomsCopy.holdem.chipsSeatTaken(userId, startingStackOf(table), table.seats.length);
+	return gameRoomsCopy.holdem.seatTaken(userId, table.seats.length);
 }
 
 /**
@@ -466,20 +514,27 @@ async function claimDeal(room: IGameRoom, table: HoldemTable): Promise<ClaimedDe
 	const expected = { "secret.handNumber": table.handNumber, "secret.lastActionAt": table.lastActionAt };
 	const blindsBefore = table.bigBlind;
 	const before = toPublicView(table);
-	dropRemovedLateSeats(table, room);
+	const dropped = dropRemovedLateSeats(table, room);
 	const outcome = dealHand(table, secureRandom);
 	const lateSeated = outcome.lateSeated ?? [];
 	const written =
 		lateSeated.length > 0
 			? await gameRoomStore.updateSecretIf(room.guildId, room.roomId, expected, table, { $addToSet: { playerIds: { $each: lateSeated } } })
 			: await gameRoomStore.updateSecretIf(room.guildId, room.roomId, expected, table);
-	return written ? { before, blindsBefore, outcome } : null;
+	if (!written) return null;
+	// A late seat the host removed paid its buy in at a chip table; the deal that dropped
+	// it is the claim, so it is refunded only once this write landed.
+	for (const userId of dropped) await refundBuyIn(table, userId);
+	return { before, blindsBefore, outcome };
 }
 
-function dropRemovedLateSeats(table: HoldemTable, room: IGameRoom): void {
+// Answers the ids it dropped, for the refund once the deal's write lands.
+function dropRemovedLateSeats(table: HoldemTable, room: IGameRoom): string[] {
 	const removed = new Set(room.kickedIds ?? []);
-	if (removed.size === 0 || !table.pendingSeats?.length) return;
+	if (removed.size === 0 || !table.pendingSeats?.length) return [];
+	const dropped = table.pendingSeats.filter((entry) => removed.has(entry.userId)).map((entry) => entry.userId);
 	table.pendingSeats = table.pendingSeats.filter((entry) => !removed.has(entry.userId));
+	return dropped;
 }
 
 // Everything after a deal landed, whoever dealt it: the blinds and deal lines, then
@@ -774,10 +829,13 @@ export async function handleLeaveTable(interaction: ButtonInteraction, room: IGa
 	}
 
 	await interaction.deferUpdate();
+	// A chip table pays the stack the write above zeroed back to the wallet (2026-10 item
+	// 250 Phase 5); that write was the claim, so this runs once.
+	if (table.chips) await cashOut(table, interaction.user.id, outcome.stackLeft ?? 0);
 	await roomTrail.postMove(interaction.client, room, {
 		actorId: interaction.user.id,
 		kind: "system",
-		text: gameRoomsCopy.holdem.leftTable(interaction.user.id, outcome.foldedHand ?? false),
+		text: leftTableLine(table, interaction.user.id, outcome.foldedHand ?? false, outcome.stackLeft ?? 0),
 	});
 	// The same settle path a fold takes, so a leave that ends the hand pays the pot and
 	// one that leaves a single seat ends the tournament exactly the way a bust does.
@@ -785,6 +843,12 @@ export async function handleLeaveTable(interaction: ButtonInteraction, room: IGa
 	if (outcome.foldedHand) {
 		announceDealer({ client: interaction.client, roomId: room.roomId, before, after: toPublicView(table), outcome });
 	}
+}
+
+// A chip table's leave says what went back to the wallet; a free table's keeps its line.
+function leftTableLine(table: HoldemTable, userId: string, foldedHand: boolean, stackLeft: number): string {
+	if (table.chips) return gameRoomsCopy.holdem.chipsLeftTable(userId, foldedHand, stackLeft);
+	return gameRoomsCopy.holdem.leftTable(userId, foldedHand);
 }
 
 // ⚠️ NO PLACEMENT XP ON AN ENDED TABLE. payPlacements prizes a tournament that was
@@ -937,10 +1001,14 @@ export async function removeFromTable(client: Client, room: IGameRoom, userId: s
 		if (outcome && !outcome.ok) return "notAtTable";
 
 		if (await persistLeaveOrEnd(current, table, readAt, seatsRead)) {
+			// At a chip table the removed player keeps their chips: a waiting seat's buy in,
+			// or the stack the write above took off the table (2026-10 item 250 Phase 5).
 			if (!outcome) {
+				await refundBuyIn(table, userId);
 				await redraw(client, current, table);
 				return "removed";
 			}
+			if (table.chips) await cashOut(table, userId, outcome.stackLeft ?? 0);
 			await settleOutcome(client, current, table, outcome, actorId, { cause: "forfeit", handStartChips });
 			if (outcome.foldedHand) announceDealer({ client, roomId: current.roomId, before, after: toPublicView(table), outcome });
 			return "removed";
@@ -954,6 +1022,82 @@ export async function removeFromTable(client: Client, room: IGameRoom, userId: s
 export async function redrawTable(client: Client, room: IGameRoom): Promise<void> {
 	const table = tableOf(room);
 	if (table) await redraw(client, room, table);
+}
+
+// ── the host's buy in (2026-10 item 250 Phase 5) ──────────────────────
+// What:  Set the buy in, on a chip table's joining board before anybody sits: the
+//        host's one amount every player pays from their wallet and starts with.
+// Who:   the host alone (HOST_STRICT_ACTIONS), on the button and again on the submit,
+//        since a modal submit is reachable without the button.
+// How:   the write matches a joining table with no seat, so a buy in that landed first
+//        makes this refuse, and a buy in racing after it re-reads the new amount and
+//        refuses rather than seat a player at a stack they did not pay for.
+
+function buyInRefusal(table: HoldemTable | null): string | null {
+	if (!table?.chips) return gameRoomsCopy.holdem.buyInFreeTable;
+	if (table.status !== "joining" || table.seats.length > 0) return gameRoomsCopy.holdem.buyInLocked;
+	return null;
+}
+
+export async function handleSetBuyIn(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	const table = tableOf(room);
+	const refusal = buyInRefusal(table);
+	if (refusal || !table) {
+		await interaction.reply({ content: refusal ?? gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
+		return;
+	}
+	await interaction.showModal(buyInModal(room.roomId, startingStackOf(table)));
+}
+
+// The typed amount wins when it is filled; otherwise the preset select. Null when
+// neither reads as a whole number of chips.
+function submittedBuyIn(interaction: ModalSubmitInteraction): number | null {
+	const typed = interaction.fields.getTextInputValue(BUY_IN_FIELDS.custom).trim();
+	if (typed) return parseChipAmount(typed);
+	const preset = interaction.fields.getStringSelectValues(BUY_IN_FIELDS.preset)[0];
+	return preset ? parseChipAmount(preset) : null;
+}
+
+export async function handleBuyInModal(interaction: ModalSubmitInteraction): Promise<void> {
+	const [, , roomId] = interaction.customId.split(":");
+	const guildId = interaction.guildId;
+	if (!guildId || !roomId) return;
+
+	const room = await gameRoomStore.findByRoomId(guildId, roomId);
+	if (!room || room.game !== "holdem") {
+		await interaction.reply({ content: gameRoomsCopy.errors.notFound, ...PRIVATE });
+		return;
+	}
+	if (room.hostId !== interaction.user.id) {
+		await interaction.reply({ content: gameRoomsCopy.board.onlyHostStarts, ...PRIVATE });
+		return;
+	}
+	const table = tableOf(room);
+	const refusal = buyInRefusal(table);
+	if (refusal || !table) {
+		await interaction.reply({ content: refusal ?? gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
+		return;
+	}
+
+	const amount = submittedBuyIn(interaction);
+	const economy = BOT_CONSTANTS.ECONOMY;
+	if (amount === null || !isValidBuyIn(amount)) {
+		await interaction.reply({ content: gameRoomsCopy.holdem.buyInInvalid(economy.HOLDEM_MIN_BUY_IN, economy.HOLDEM_MAX_BUY_IN), ...PRIVATE });
+		return;
+	}
+	if (!setBuyIn(table, amount).ok) {
+		await interaction.reply({ content: gameRoomsCopy.holdem.buyInLocked, ...PRIVATE });
+		return;
+	}
+	const written = await gameRoomStore.updateSecretIf(guildId, roomId, { "secret.status": "joining", "secret.seats": { $size: 0 } }, table);
+	if (!written) {
+		await interaction.reply({ content: gameRoomsCopy.holdem.buyInLocked, ...PRIVATE });
+		return;
+	}
+
+	await interaction.deferUpdate();
+	await roomTrail.postMove(interaction.client, written, { actorId: interaction.user.id, kind: "system", text: gameRoomsCopy.holdem.buyInSet(interaction.user.id, amount) });
+	await redraw(interaction.client, written, table);
 }
 
 // ── the private peek ──────────────────────────────────────────────────
@@ -1088,6 +1232,8 @@ async function dealNextHandIfDue(client: Client, room: IGameRoom, table: HoldemT
 
 export const roomHoldemHandlers = {
 	handleBuyIn,
+	handleSetBuyIn,
+	handleBuyInModal,
 	handleDeal,
 	handleMove,
 	handleShowCards,

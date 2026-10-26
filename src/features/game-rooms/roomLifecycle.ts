@@ -11,6 +11,7 @@ import { deleteSatellites, labelEmbedForRoom, lockSatellites } from "./satellite
 import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
 import { challengeResultLine, closeChallengeCard } from "./challengeCard.js";
 import type { OutcomeBucket } from "./matchOutcome.js";
+import { settleTableChips } from "./holdemChips.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomLifecycle ────────────────────────────────────────────────────
@@ -96,6 +97,12 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	// admin deleted in the final seconds still happened, and the early return under
 	// `if (!channel)` would otherwise silently unpay everyone who played it.
 	payRoomRateTopUp(client, room, winnerId, input.abandoned ?? false);
+
+	// ①ᶜ A chip table's stacks go back to the wallets (2026-10 item 250 Phase 5), paid from
+	// the CLAIMED row, which holds the table as it was last persisted, so every path that
+	// ends a table pays it exactly once, whoever ended it. Awaited before the lock so its
+	// line lands above the result card; it catches its own failures.
+	await settleTableChips(client, claimed);
 
 	// A network table names its winner rather than mentioning them (satelliteRooms).
 	const resultEmbed = await labelEmbedForRoom(client, room, roomResultEmbed(winnerId, input.abandoned ?? false, input.art?.ref));

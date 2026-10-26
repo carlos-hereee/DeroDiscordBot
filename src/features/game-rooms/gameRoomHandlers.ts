@@ -213,6 +213,9 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		case "hjoin":
 			await roomHoldemHandlers.handleBuyIn(interaction, room);
 			return;
+		case "hbuyin":
+			await roomHoldemHandlers.handleSetBuyIn(interaction, room);
+			return;
 		case "hstart":
 			await roomHoldemHandlers.handleDeal(interaction, room);
 			return;
@@ -399,6 +402,8 @@ export function registerGameRoomHandlers(): void {
 		if (action === "mbid") return roomMonopolyAuction.handleBidModal(interaction);
 		// The host's throw against Dero (post-launch plan item 13).
 		if (action === "dero") return challengeBoard.handleDeroThrowModal(interaction);
+		// A chip table's buy in (2026-10 item 250 Phase 5).
+		if (action === "hbuyin") return roomHoldemHandlers.handleBuyInModal(interaction);
 		// The private view modals (battleship's board, hold em's hand) have nothing to
 		// submit; closing one is acknowledged and nothing else.
 		if (action === PRIVATE_VIEW_ACTION) return closePrivateView(interaction);

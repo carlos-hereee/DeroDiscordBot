@@ -70,7 +70,8 @@ describe("leaving before the first deal", () => {
 		joinTable(table, "a", "A");
 		joinTable(table, "b", "B");
 
-		expect(leaveTable(table, "a")).toEqual({ ok: true, foldedHand: false });
+		// stackLeft is the whole buy in: a chip table refunds it (2026-10 item 250 Phase 5).
+		expect(leaveTable(table, "a")).toEqual({ ok: true, foldedHand: false, stackLeft: START });
 		expect(table.seats.map((seat) => seat.userId)).toEqual(["b"]);
 		expect(table.status).toBe("joining");
 		expect(joinTable(table, "a", "A")).toEqual({ ok: true });
