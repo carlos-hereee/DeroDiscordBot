@@ -57,11 +57,14 @@ export const DERO_IMAGE_REF = `attachment://${DERO_IMAGE_FILE}`;
 export const DERO_GIF_FILE = "dero-default.gif";
 export const DERO_GIF_REF = `attachment://${DERO_GIF_FILE}`;
 
+/** The folder under assets/dero holding the original Dero art (both files above); the v2 lineup sits beside it in v2. */
+export const DERO_V1_DIR = "v1";
+
 // Build an upload for a bundled asset. process.cwd() is the bot's project root
-// (Railway start + nodemon both run from there), so assets/dero/<file> resolves
+// (Railway start + nodemon both run from there), so assets/dero/v1/<file> resolves
 // whether running from src or the compiled dist.
 function buildDeroAttachment(file: string): AttachmentBuilder {
-	return new AttachmentBuilder(join(process.cwd(), "assets", "dero", file), { name: file });
+	return new AttachmentBuilder(join(process.cwd(), "assets", "dero", DERO_V1_DIR, file), { name: file });
 }
 export function buildDeroImageAttachment(): AttachmentBuilder {
 	return buildDeroAttachment(DERO_IMAGE_FILE);

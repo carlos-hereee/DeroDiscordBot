@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DERO_IMAGE_FILE } from "@base/copy/brand.js";
+import { DERO_IMAGE_FILE, DERO_V1_DIR } from "@base/copy/brand.js";
 import { canvasModule, type CanvasModule } from "./canvasModule.js";
-import { clearDeroArtCache, DERO_ART_FILES, defaultDeroArtRoot, deroArtAttachment, loadDeroArt, logDeroArtStatus } from "./deroArt.js";
+import { clearDeroArtCache, DERO_ART_FILES, defaultDeroArtRoot, deroArtAttachment, loadDeroArt, logDeroArtStatus, standInPath } from "./deroArt.js";
 
 // ── deroArt ──────────────────────────────────────────────────────────
 // Pins the three ways a pose can stand: present with real transparency (drawn),
@@ -40,8 +40,9 @@ beforeEach(() => {
 	clearDeroArtCache();
 	root = mkdtempSync(join(tmpdir(), "dero-art-"));
 	mkdirSync(join(root, "v2"));
+	mkdirSync(join(root, DERO_V1_DIR));
 	// The real bundled stand in, so the fallback decodes what production decodes.
-	copyFileSync(join(defaultDeroArtRoot(), DERO_IMAGE_FILE), join(root, DERO_IMAGE_FILE));
+	copyFileSync(standInPath(defaultDeroArtRoot()), standInPath(root));
 });
 
 afterEach(() => {
@@ -91,18 +92,21 @@ describe("loadDeroArt", () => {
 });
 
 describe("logDeroArtStatus, the boot asset check", () => {
-	it("logs every pose by file name as present, missing or opaque", async () => {
+	// Every slot draws the one chibi file today, so the line names each file once.
+	it.each([
+		["present", false],
+		["opaque", true],
+		["missing", null],
+	] as const)("logs the lineup's file as %s, once however many slots share it", async (state, opaque) => {
 		const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-		await writePose(join(root, "v2", DERO_ART_FILES.account), false);
-		await writePose(join(root, "v2", DERO_ART_FILES.tiers), true);
+		if (opaque !== null) await writePose(join(root, "v2", DERO_ART_FILES.account), opaque);
 
 		await logDeroArtStatus(root);
 
 		const line = String(log.mock.calls[0]?.[0]);
-		expect(line).toContain(`${DERO_ART_FILES.account} present`);
-		expect(line).toContain(`${DERO_ART_FILES.tiers} opaque`);
-		expect(line).toContain(`${DERO_ART_FILES.prime} missing`);
-		for (const file of Object.values(DERO_ART_FILES)) expect(line).toContain(file);
+		expect(line).toContain(`${DERO_ART_FILES.account} ${state}`);
+		expect(line.split(DERO_ART_FILES.account)).toHaveLength(2);
+		expect(line).toContain(`${DERO_V1_DIR}/${DERO_IMAGE_FILE}`);
 	});
 
 	it("says the cards fall back when the canvas library did not load", async () => {

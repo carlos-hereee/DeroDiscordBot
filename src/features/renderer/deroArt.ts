@@ -1,12 +1,12 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { AttachmentBuilder } from "discord.js";
-import { DERO_IMAGE_FILE } from "@base/copy/brand.js";
+import { DERO_IMAGE_FILE, DERO_V1_DIR } from "@base/copy/brand.js";
 import { canvasModule, type CanvasModule, type Image } from "./canvasModule.js";
 
 // ── deroArt ──────────────────────────────────────────────────────────
 // The Dero v2 lineup every card draws its mascot from: one manifest naming the
-// seven poses, and a loader that answers the pose's decoded image or, while the
+// pose for each of seven slots, and a loader that answers the pose's decoded image or, while the
 // pose is not usable, the bundled Dero avatar as a stand in. It never throws and
 // never draws. The leveling cards of 2026-10 item 243 Phase 2 call loadDeroArt,
 // Phases 3 and 4 will too, and main.ts calls logDeroArtStatus once at boot.
@@ -21,25 +21,31 @@ import { canvasModule, type CanvasModule, type Image } from "./canvasModule.js";
 // The caller decides caching: a stand in reports `standIn: true`, and the card
 // answers `{ cacheable: false }` from its draw (see DrawOutcome in index.ts), so
 // the real pose replaces the stand in as soon as it lands on disk and deploys.
+//
+// Every slot draws the same chibi Dero (the owner's choice, post-launch plan item 5)
+// until a slot gets a pose of its own, which is one new file in assets/dero/v2 and
+// one entry below. The stand in is the original avatar in assets/dero/v1.
 
 const DERO_ART_DIR = join("assets", "dero");
 const DERO_V2_DIR = "v2";
 
-// Relative to assets/dero/v2/. The Figma frame each pose was exported from rides
-// beside it, so a re-export knows which frame lands in which file.
+const CHIBI_POSE = "chibi-dero.png";
+
+// Relative to assets/dero/v2/: the file each slot draws.
 export const DERO_ART_FILES = {
-	account: "dero-v2-account.png", // frame 1:2, the /account default
-	battle: "dero-v2-battle.png", // frame 2:2, arcade and battle surfaces (Phase 3)
-	welcome: "dero-v2-welcome.png", // frame 3:2, the greeter's welcome card (Phase 4)
-	board: "dero-v2-board.png", // frame 4:2, the levels board header
-	levelUp: "dero-v2-levelup.png", // frame 5:2, an ordinary level up
-	prime: "dero-v2-prime.png", // frame 7:2, a prime milestone and an achievement unlock
-	tiers: "dero-v2-tiers.png", // frame 8:2, the six color rank tiers in one strip
+	account: CHIBI_POSE, // the /account default
+	battle: CHIBI_POSE, // arcade and battle surfaces
+	welcome: CHIBI_POSE, // the introductions welcome, sent whole
+	board: CHIBI_POSE, // the levels board header
+	levelUp: CHIBI_POSE, // an ordinary level up
+	prime: CHIBI_POSE, // a prime milestone and an achievement unlock
+	tiers: CHIBI_POSE, // the six color rank tiers
 } as const satisfies Record<string, string>;
 
 export type DeroArtSlot = keyof typeof DERO_ART_FILES;
 
-const ALL_SLOTS = Object.keys(DERO_ART_FILES) as DeroArtSlot[];
+// Each file once, however many slots share it, for the boot line.
+const ALL_FILES: readonly string[] = [...new Set<string>(Object.values(DERO_ART_FILES))];
 
 /** A decoded pose, and whether it is the bundled avatar standing in for the real one. */
 export interface DeroArt {
@@ -54,7 +60,7 @@ type PoseState = "present" | "missing" | "opaque";
 const CORNER_SAMPLE_SIZE = 16;
 const FULLY_OPAQUE = 255;
 
-// Decoded once per process, keyed by the art root and the slot. A deploy restarts
+// Decoded once per process, keyed by the pose's path. A deploy restarts
 // the process, which is also how new art reaches Railway, so nothing here needs
 // to notice a file changing on disk.
 const poses = new Map<string, Promise<Image | null>>();
@@ -72,9 +78,10 @@ export function defaultDeroArtRoot(): string {
  */
 export async function loadDeroArt(slot: DeroArtSlot, root: string = defaultDeroArtRoot(), canvas: CanvasModule | null = canvasModule): Promise<DeroArt | null> {
 	if (!canvas) return null;
-	const pose = await cached(poses, `${root}:${slot}`, () => decodeUsablePose(canvas, posePath(root, slot)));
+	const path = posePath(root, slot);
+	const pose = await cached(poses, path, () => decodeUsablePose(canvas, path));
 	if (pose) return { image: pose, standIn: false };
-	const standIn = await cached(standIns, root, () => decodeQuietly(canvas, join(root, DERO_IMAGE_FILE)));
+	const standIn = await cached(standIns, root, () => decodeQuietly(canvas, standInPath(root)));
 	return standIn ? { image: standIn, standIn: true } : null;
 }
 
@@ -109,15 +116,14 @@ export async function logDeroArtStatus(root: string = defaultDeroArtRoot(), canv
 			console.log("[dero-art] unavailable (@napi-rs/canvas did not load); cards post their text embeds");
 			return;
 		}
-		const states = await Promise.all(ALL_SLOTS.map(async (slot) => `${DERO_ART_FILES[slot]} ${await poseState(canvas, root, slot)}`));
-		console.log(`[dero-art] v2 lineup in assets/dero/v2: ${states.join(", ")}; a pose that is not present draws the stand in ${DERO_IMAGE_FILE}`);
+		const states = await Promise.all(ALL_FILES.map(async (file) => `${file} ${await poseState(canvas, join(root, DERO_V2_DIR, file))}`));
+		console.log(`[dero-art] v2 lineup in assets/dero/v2: ${states.join(", ")}; a pose that is not present draws the stand in ${DERO_V1_DIR}/${DERO_IMAGE_FILE}`);
 	} catch (error) {
 		console.warn("[dero-art] the boot check of the Dero v2 lineup failed", error);
 	}
 }
 
-async function poseState(canvas: CanvasModule, root: string, slot: DeroArtSlot): Promise<PoseState> {
-	const path = posePath(root, slot);
+async function poseState(canvas: CanvasModule, path: string): Promise<PoseState> {
 	if (!existsSync(path)) return "missing";
 	const image = await decodeQuietly(canvas, path);
 	if (!image) return "missing";
@@ -126,6 +132,11 @@ async function poseState(canvas: CanvasModule, root: string, slot: DeroArtSlot):
 
 function posePath(root: string, slot: DeroArtSlot): string {
 	return join(root, DERO_V2_DIR, DERO_ART_FILES[slot]);
+}
+
+/** The bundled avatar a card draws while its pose is not usable, under a root's v1 folder. */
+export function standInPath(root: string): string {
+	return join(root, DERO_V1_DIR, DERO_IMAGE_FILE);
 }
 
 async function decodeUsablePose(canvas: CanvasModule, path: string): Promise<Image | null> {
