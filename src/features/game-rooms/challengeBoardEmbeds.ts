@@ -164,6 +164,9 @@ export interface OpenerCardState {
 	// The host's say over who joins (Phase 4), read off the draft row. Absent renders
 	// the card exactly as it was before the controls existed.
 	hostControls?: DraftHostControls;
+	// Dero bot opponents (2026-10 item 250 Phase 5): present when this card offers Play vs
+	// bots, with the number the host chose. Absent offers none, the card as it was.
+	bots?: { count: number };
 }
 
 /** The draft's host controls the card shows: the band, approval, and how many wait for an answer. */
@@ -207,6 +210,9 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 	if (state.game === "monopoly" && state.visibility && !state.cancelled && !state.startedChannelId && !state.resultLine) {
 		lines.push("", gameRoomsCopy.board.cardMonopolyAuctions(state.monopolyAuctions ?? false));
 		lines.push(gameRoomsCopy.board.cardMonopolyReferee(state.monopolyReferee ?? false));
+	}
+	if (state.bots && state.bots.count > 0 && state.visibility && !state.cancelled && !state.startedChannelId && !state.resultLine) {
+		lines.push("", gameRoomsCopy.board.cardBots(state.bots.count));
 	}
 	lines.push(...hostControlLines(state));
 
@@ -268,6 +274,18 @@ function hostControlRow(roomId: string, state: OpenerCardState, controls: DraftH
 					.setStyle(ButtonStyle.Secondary)
 			);
 		}
+	}
+	// Play vs bots (2026-10 item 250 Phase 5), the ONE way a bot sits down: the host's own
+	// press, on a card that offers it. Never on a network table, whose seats come from
+	// other servers.
+	if (state.bots && !state.network) {
+		buttons.push(
+			new ButtonBuilder()
+				.setCustomId(`${GAME_ROOM_PREFIX}:bots:${roomId}`)
+				.setLabel(gameRoomsCopy.board.playBotsLabel)
+				.setEmoji("🤖")
+				.setStyle(ButtonStyle.Secondary)
+		);
 	}
 	buttons.push(
 		new ButtonBuilder()

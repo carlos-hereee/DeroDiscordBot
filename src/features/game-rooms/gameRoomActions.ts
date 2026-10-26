@@ -54,6 +54,10 @@ export const GAME_ROOM_ACTIONS = {
 	dero: { hostOnly: true, playersOnly: false },
 	// Host abandons the draft before it becomes a room.
 	cancel: { hostOnly: true, playersOnly: false },
+	// Hold'em, Monopoly and Battleship drafts (2026-10 item 250 Phase 5): the host opens the
+	// private picker of how many Dero bots sit down at the start. The one door a bot comes
+	// through, and the host's alone, so strict like `start`.
+	bots: { hostOnly: true, playersOnly: false },
 	// Monopoly drafts only: the host turns auctions on or off for the match, with the
 	// value to set in the arg. hostOnly for the same reason as `vis`: it is their draft.
 	auctions: { hostOnly: true, playersOnly: false },
@@ -183,7 +187,7 @@ export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;
 //        host's hand for them. An admin may still kick, manage and cancel.
 // The table's buy in (2026-10 item 250 Phase 5) is strict for the same reason: it is what
 // every player pays from their own wallet, the host's call and nobody else's.
-export const HOST_STRICT_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["start", "dero", "hbuyin"]);
+export const HOST_STRICT_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["start", "dero", "hbuyin", "bots"]);
 
 // ── the controls a satellite may press (2026-10 item 244 Phase 5a) ──
 // What:  the actions a member seated through a satellite channel may take there: their

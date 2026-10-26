@@ -48,7 +48,7 @@ const satelliteWords = rokCommanderCopy.arcadeSatellites;
 // the status refusal below cannot drift from the routing switch. `requests` and `kick`
 // are host controls too but are NOT here: they also work in a live room, and each
 // refuses by the room's status itself.
-const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "dero", "cancel", "auctions", "referee", "approval"]);
+const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "dero", "cancel", "auctions", "referee", "approval", "bots"]);
 
 // ── gameRoomHandlers ─────────────────────────────────────────────────
 // What:  routes every `gameroom:` button to its action, after proving the clicker is
@@ -178,6 +178,9 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			return;
 		case "dero":
 			await challengeBoard.playDero(interaction, room);
+			return;
+		case "bots":
+			await challengeBoard.openBotPicker(interaction, room);
 			return;
 		case "cancel":
 			await challengeBoard.cancelDraft(interaction, room);
@@ -373,6 +376,7 @@ export function registerGameRoomHandlers(): void {
 		const action = interaction.customId.split(":")[1];
 		if (action === "invite") return challengeBoard.handleInviteSelect(interaction);
 		if (action === "opponent") return challengeBoard.handleOpponentSelect(interaction);
+		if (action === "bots") return challengeBoard.handleBotSelect(interaction);
 		// The host controls: the card's band, the Requests panel's answers, and the
 		// Remove a player picker. Each re-gates the host (or an admin) itself.
 		if (action === "band") return hostControls.handleBandSelect(interaction);

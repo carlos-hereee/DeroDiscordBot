@@ -13,11 +13,12 @@ import {
 	deserializeMatch,
 	battleshipBoardMessage,
 } from "./roomBattleship.js";
-import { createTable as createHoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
+import { createTable as createHoldemTable, joinTable as joinHoldemTable, type HoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
 import { createInitialState as createMonopolyState } from "@features/games/monopolyState.js";
 import { chipTableFor } from "./holdemChips.js";
+import { botSeatName, labelBotMentions } from "./botSeat.js";
 import { monopolyBoardEmbed, monopolyControlsRow } from "./roomMonopoly.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
@@ -169,6 +170,10 @@ export interface RoomOpenInput {
 	// The shelf a SOLO hangman word is drawn from, set only by the 🕹️games category
 	// start. Absent draws from the whole bank. Ignored for every other game.
 	hangmanCategory?: HangmanCategory;
+	// The Dero bot seats the host chose on the challenge card (2026-10 item 250 Phase 5),
+	// from botSeat.botSeatIdsFor. They sit in the game's own state and NEVER in playerIds,
+	// which carry channel permissions. Absent or empty seats no bot.
+	botIds?: string[];
 }
 
 export const RoomProvisioner = {
@@ -284,6 +289,7 @@ export const RoomProvisioner = {
 			holdemTerms: input.holdemTerms,
 			monopolyAuctions: input.monopolyAuctions,
 			hangmanCategory: input.hangmanCategory,
+			botIds: input.botIds,
 		});
 
 		return { ok: true, room: started, channel };
@@ -394,6 +400,10 @@ export interface RoomSeedInput {
 	holdemTerms?: HoldemTerms;
 	monopolyAuctions?: boolean;
 	hangmanCategory?: HangmanCategory;
+	// The Dero bot seats the host chose on the challenge card (2026-10 item 250 Phase 5),
+	// from botSeat.botSeatIdsFor. They sit in the game's own state and NEVER in playerIds,
+	// which carry channel permissions. Absent or empty seats no bot.
+	botIds?: string[];
 }
 
 // ── seeding: from a channel and a row to a playable match ─────────────
@@ -411,6 +421,7 @@ export interface RoomSeedInput {
 //        the solo path's decision rather than the provisioner's.
 export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 	const { guild, channel, room, game, hostId, playerIds, visibility } = input;
+	const botIds = input.botIds ?? [];
 
 	// ⑤ᵃ Mint the room's invite link, best effort, before the opener composes so the
 	// URL can ride the opener's LAST line. maxAge/maxUses 0 keeps the link alive for
@@ -446,7 +457,7 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 	const logo = roomOpenerLogo(game);
 	const opener = await channel
 		.send({
-			embeds: [roomOpenerEmbed(game, hostId, playerIds, visibility, inviteCode, logo?.ref)],
+			embeds: [roomOpenerEmbed(game, hostId, [...playerIds, ...botIds], visibility, inviteCode, logo?.ref)],
 			...(logo ? { files: [logo.attachment] } : {}),
 			...openerComponents(game, room.roomId),
 		})
@@ -469,11 +480,14 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 	if (game === "holdem") {
 		const table = createHoldemTable(Date.now(), input.holdemTerms);
 		// Whether the table plays for the members' wallet chips (2026-10 item 250 Phase 5),
-		// decided once, here, so a table never changes what it plays for mid way.
-		const chips = await chipTableFor(room, false);
+		// decided once, here, so a table never changes what it plays for mid way. A table
+		// with a bot seat plays free, so a bot never pays a member chips it never had.
+		const chips = await chipTableFor(room, botIds.length > 0);
 		if (chips) table.chips = chips;
+		// The host's Dero bots take their seats before anybody buys in.
+		for (const botId of botIds) joinHoldemTable(table, botId, botSeatName(botId));
 		const boardMessage = await channel
-			.send({ embeds: [holdemTableEmbed(table, 0)], components: holdemJoiningRows(room.roomId, 0, table) })
+			.send({ embeds: [firstTableEmbed(table)], components: holdemJoiningRows(room.roomId, table.seats.length, table) })
 			.catch(() => null);
 		await gameRoomStore.update(guild.id, room.roomId, {
 			secret: { ...table, boardMessageId: boardMessage?.id ?? null } as never,
@@ -487,7 +501,8 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 	// Auctions follow the host's choice on the challenge card; with them on, a pass
 	// opens a sealed bid round that roomMonopolyAuction runs and closes.
 	if (game === "monopoly") {
-		const state = createMonopolyState(playerIds, { auctionsEnabled: input.monopolyAuctions ?? false });
+		// The bots sit after the members, each on the token its name says (botSeat).
+		const state = createMonopolyState([...playerIds, ...botIds], { auctionsEnabled: input.monopolyAuctions ?? false });
 		// The board picture, when its art is on disk, rides the same message as the
 		// embed whose image points at it; with no art it is the text map alone.
 		const { embed, attachment } = await monopolyBoardEmbed(state);
@@ -530,7 +545,12 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 		const usernames = Object.fromEntries(
 			playerIds.map((id) => [id, guild.members.cache.get(id)?.displayName ?? id])
 		);
-		const match = startBattleshipMatch(started ?? room, usernames);
+		// Against a Dero bot (2026-10 item 250 Phase 5) the bot is the second captain; the
+		// row's playerIds stay the host alone, so the match names its two players itself.
+		const botCaptain = botIds[0];
+		if (botCaptain) usernames[botCaptain] = botSeatName(botCaptain);
+		const captains = botCaptain ? { ...(started ?? room), playerIds: [hostId, botCaptain] } : (started ?? room);
+		const match = startBattleshipMatch(captains as IGameRoom, usernames);
 		const boardMessage = await channel
 			.send(await battleshipBoardMessage(deserializeMatch(match), room.roomId))
 			.catch(() => null);
@@ -554,6 +574,13 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 		.catch((error) => console.error("[game-rooms] botLog for room create failed", error));
 
 	return started ?? room;
+}
+
+// The first table embed, with any Dero bot seats named rather than mentioned (2026-10
+// item 250 Phase 5); every later redraw names them through labelEmbedForRoom.
+function firstTableEmbed(table: HoldemTable) {
+	const embed = holdemTableEmbed(table, 0);
+	return embed.setDescription(labelBotMentions(embed.data.description ?? ""));
 }
 
 // Render a failure into the one sentence the member should read. Kept beside the

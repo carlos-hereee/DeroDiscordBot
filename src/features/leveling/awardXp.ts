@@ -1,4 +1,5 @@
 import type { Client } from "discord.js";
+import { isBotSeatId } from "@utils/botSeatId.js";
 import type { AnyBulkWriteOperation } from "mongoose";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { xpPeriodStore } from "@db/stores/xpPeriodStore.js";
@@ -77,6 +78,10 @@ export async function awardXp(input: AwardXpInput): Promise<void> {
 		// callers are encouraged to call unconditionally and let this decide.
 		if (offered === 0 && !hasCounters && !input.game) return;
 		if (!input.guildId || !input.userId) return;
+		// A Dero bot seat (2026-10 item 250 Phase 5) is not a member and earns nothing: no
+		// row, no level, no record. Here, at the one door every award passes, so no game's
+		// payout has to remember it.
+		if (isBotSeatId(input.userId)) return;
 
 		// Fails OPEN and, with ENFORCE_LEVELING_TIER unset (production today),
 		// returns immediately with zero I/O. See levelingAccess.ts for why it must

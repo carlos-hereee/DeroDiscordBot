@@ -4,6 +4,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { MonopolyState } from "@features/games/monopolyState.js";
 import { defaultCallAnnouncerDeps, speakInCall, type CallAnnouncerDeps } from "@features/voice/callAnnouncer.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { botSeatName, isBotSeatId, memberIdsOnly } from "./botSeat.js";
 
 // ── roomMonopolyReferee ──────────────────────────────────────────────
 // What:  Dero as a Monopoly match's voice referee: the key moments of each move
@@ -31,7 +32,8 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 // Every pattern matches a line the engine (features/games/monopoly*.ts) or the
 // idle sweep (gameRoomsCopy.monopoly.idle*) writes. The tests drive these from real
 // engine results, so a reworded trail line turns a test red rather than going quiet.
-const PLAYER = String.raw`<@!?\w+>`;
+// Hyphens too: a Dero bot seat's mention is `<@dero-bot-red>` (2026-10 item 250 Phase 5).
+const PLAYER = String.raw`<@!?[\w-]+>`;
 
 const TURN_HANDOFF = new RegExp(String.raw`^It is now ${PLAYER}'s turn\.$`);
 const RENT_PAID = new RegExp(String.raw`^${PLAYER} paid \$(\d+) rent to ${PLAYER}\.$`);
@@ -111,7 +113,7 @@ export function groupIntoClips(lines: readonly SpokenRefereeLine[]): string[] {
 }
 
 // ── ④ names for mentions ──
-const MENTION = /<@!?(\w+)>/g;
+const MENTION = /<@!?([\w-]+)>/g;
 
 function mentionedIds(clips: readonly string[]): string[] {
 	const ids = new Set<string>();
@@ -123,10 +125,13 @@ function mentionedIds(clips: readonly string[]): string[] {
 // fetch of everyone: this runs on every spoken move, and a fetch of a user list is a
 // gateway request each time, while seated players are almost always cached already.
 async function displayNamesIn(guild: Guild, userIds: readonly string[]): Promise<Map<string, string>> {
-	const missing = userIds.filter((userId) => !guild.members.cache.has(userId));
+	// A Dero bot is said by its name and never fetched: its id is not a member's, and one
+	// bad id in the list would fail the fetch for every member in it.
+	const missing = memberIdsOnly(userIds).filter((userId) => !guild.members.cache.has(userId));
 	if (missing.length > 0) await guild.members.fetch({ user: missing }).catch(() => null);
 	const fallback = gameRoomsCopy.monopoly.refereeUnknownPlayer;
-	return new Map(userIds.map((userId) => [userId, guild.members.cache.get(userId)?.displayName ?? fallback]));
+	const nameOf = (userId: string): string => (isBotSeatId(userId) ? botSeatName(userId) : (guild.members.cache.get(userId)?.displayName ?? fallback));
+	return new Map(userIds.map((userId) => [userId, nameOf(userId)]));
 }
 
 /** A clip with every mention replaced by that member's display name. */

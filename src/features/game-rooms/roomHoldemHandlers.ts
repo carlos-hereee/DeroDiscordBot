@@ -35,6 +35,9 @@ import { isRatedHoldemSession } from "@features/ratings/ratingEngine.js";
 import { secureRandom } from "@utils/secureRng.js";
 import { parseChipAmount } from "@features/economy/chipWallet.js";
 import { cashOut, isValidBuyIn, payBuyIn, refundBuyIn } from "./holdemChips.js";
+import { botViewOf, decideHoldemMove } from "@features/games/holdemBot.js";
+import { isBotSeatId } from "./botSeat.js";
+import type { BettingAction } from "@features/games/holdemBetting.js";
 import { showPrivateView } from "./privateView.js";
 import { chipsAtHandStart, holdemOutcome, shareOf, type FinishCause, type OutcomeBucket } from "./matchOutcome.js";
 import { HAND_CATEGORIES } from "@features/games/holdemHand.js";
@@ -227,7 +230,14 @@ function clockLine(table: HoldemTable): string | null {
 // to seats that all sit out would fold itself round and round with nobody there,
 // blinding absent players off and paying out a tournament nobody played. The host's
 // Next hand still deals, and the idle sweep closes a table nobody comes back to.
-const canDealItself = (table: HoldemTable): boolean => presentPlayers(table).length >= BOT_CONSTANTS.HOLDEM_MIN_SEATS;
+//
+// And only while a MEMBER is among them (2026-10 item 250 Phase 5): Dero bots alone at the
+// table would deal and play hand after hand for nobody. The bot driver ends a table no
+// member is left in; this keeps the deal waiting while the members sit out.
+const canDealItself = (table: HoldemTable): boolean => {
+	const present = presentPlayers(table);
+	return present.length >= BOT_CONSTANTS.HOLDEM_MIN_SEATS && present.some((seat) => !isBotSeatId(seat.userId));
+};
 
 // ── buying in, and taking a late seat ─────────────────────────────────
 // One button for both (`hjoin`): Buy in while the table is joining, Take a seat once
@@ -610,31 +620,75 @@ export async function handleMove(interaction: ButtonInteraction, room: IGameRoom
 	const action = aggressive ? aggressive.action : (choice as Exclude<HoldemPreset, "aggress">);
 	const amount = aggressive ? resolveRaiseAmount(table, interaction.user.id, preset, currentPot(table)) : 0;
 
+	const landed = await applySeatMove(interaction.client, room, table, interaction.user.id, action, amount, () => interaction.deferUpdate());
+	// Says what actually happened. Answering an illegal action with "it is not your turn"
+	// is how the raise bug stayed invisible: the message blamed the player for something
+	// that was not true and named nothing that could be searched for.
+	if (landed === "illegal") await interaction.reply({ content: gameRoomsCopy.holdem.illegalMove, ...PRIVATE });
+	if (landed === "busy") await interaction.reply({ content: gameRoomsCopy.holdem.tableBusy, ...PRIVATE });
+}
+
+/** How one seat's decision went: it landed, the engine refused it, or another write won. */
+type SeatMoveResult = "landed" | "illegal" | "busy";
+
+/**
+ * One seat's decision against the table, whoever made it: a member's press, or a Dero
+ * bot's turn (playHoldemBotTurn, 2026-10 item 250 Phase 5), so a bot's move is claimed,
+ * narrated and settled exactly like a member's. `acknowledge` runs once the move is
+ * claimed, where the button's deferUpdate always ran.
+ */
+async function applySeatMove(
+	client: Client,
+	room: IGameRoom,
+	table: HoldemTable,
+	userId: string,
+	action: BettingAction,
+	amount: number,
+	acknowledge: () => Promise<unknown>
+): Promise<SeatMoveResult> {
 	const readAt = table.lastActionAt;
 	const before = toPublicView(table);
 	const handStartChips = chipsAtHandStart(table.seats);
-	const outcome = act(table, interaction.user.id, action, amount, secureRandom);
-	if (!outcome.ok) {
-		// Says what actually happened. Answering an illegal action with "it is not your
-		// turn" is how the raise bug stayed invisible: the message blamed the player for
-		// something that was not true and named nothing that could be searched for.
-		await interaction.reply({ content: gameRoomsCopy.holdem.illegalMove, ...PRIVATE });
-		return;
-	}
+	const outcome = act(table, userId, action, amount, secureRandom);
+	if (!outcome.ok) return "illegal";
 
 	// Claim it BEFORE announcing it. Two clicks arrive as two interactions that both
 	// read the same table and both clear the whoActs check, and the turn clock may be
 	// mid-forceFold on this very seat. Only one write matches; the loser says nothing
 	// rather than posting a trail line for a move that never landed.
 	const written = await persistIfUnchanged(room, table, readAt);
-	if (!written) {
-		await interaction.reply({ content: gameRoomsCopy.holdem.tableBusy, ...PRIVATE });
-		return;
-	}
+	if (!written) return "busy";
 
-	await interaction.deferUpdate();
-	await settleOutcome(interaction.client, room, table, outcome, interaction.user.id, { cause: "played", handStartChips });
-	announceDealer({ client: interaction.client, roomId: room.roomId, before, after: toPublicView(table), outcome });
+	await acknowledge();
+	await settleOutcome(client, room, table, outcome, userId, { cause: "played", handStartChips });
+	announceDealer({ client, roomId: room.roomId, before, after: toPublicView(table), outcome });
+	return "landed";
+}
+
+// ── Dero bot seats (2026-10 item 250 Phase 5) ─────────────────────────
+// What:  a Dero bot's turn at a table, and the end of a table no member is left in.
+// Who:   botTurns.sweepBotTurns, on its tick; nothing a member presses reaches here.
+// How:   the bot waits BOT_CONSTANTS.BOT_TURNS.THINK_MS from when the board showed it the
+//        turn (the same clock a member's turn counts from), decides from its own view
+//        (holdemBot.botViewOf: its two cards and the public table, never another hand),
+//        and moves through applySeatMove like any seat.
+
+const hasLiveMember = (table: HoldemTable): boolean => table.seats.some((seat) => !seat.out && !isBotSeatId(seat.userId));
+
+/** Play the bot on the clock, or end a table only bots are left at. Answers whether anything landed. */
+export async function playHoldemBotTurn(client: Client, room: IGameRoom, now: Date = new Date()): Promise<boolean> {
+	const table = tableOf(room);
+	if (!table || table.status !== "playing") return false;
+	if (!hasLiveMember(table)) return (await closeTable(client, room, table, room.hostId, gameRoomsCopy.holdem.botsOnlyEnded)) === "ended";
+	if (!handInProgress(table)) return false;
+
+	const actor = whoActs(table);
+	if (!actor || !isBotSeatId(actor)) return false;
+	if (!isClockExpired(roomDrawingKey(room), clockStartOf(table), BOT_CONSTANTS.BOT_TURNS.THINK_MS, now.getTime())) return false;
+	const view = botViewOf(table, actor);
+	if (!view) return false;
+	const move = decideHoldemMove(view);
+	return (await applySeatMove(client, room, table, actor, move.action, move.amount, async () => undefined)) === "landed";
 }
 
 // How a tournament that ends on this action ended, for the closed challenge card
@@ -866,36 +920,50 @@ export async function handleEndTable(interaction: ButtonInteraction, room: IGame
 		await interaction.reply({ content: gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
 		return;
 	}
+	const ended = await closeTable(interaction.client, room, table, interaction.user.id, null, () => interaction.deferUpdate());
+	if (ended === "busy") await interaction.reply({ content: gameRoomsCopy.holdem.tableBusy, ...PRIVATE });
+}
 
+/**
+ * End the table now on its standings: the host's End table, or Dero closing a table only
+ * bots are left at (2026-10 item 250 Phase 5), whose trail line `endedLine` says so
+ * instead of naming an actor who ended it. `acknowledge` runs once the end is claimed.
+ */
+async function closeTable(
+	client: Client,
+	room: IGameRoom,
+	table: HoldemTable,
+	actorId: string,
+	endedLine: string | null,
+	acknowledge: () => Promise<unknown> = async () => undefined
+): Promise<"ended" | "busy"> {
 	const readAt = table.lastActionAt;
 	const seatsRead = table.seats.length;
 	const order = endTable(table);
 	const written = await persistLeaveOrEnd(room, table, readAt, seatsRead);
-	if (!written) {
-		await interaction.reply({ content: gameRoomsCopy.holdem.tableBusy, ...PRIVATE });
-		return;
-	}
+	if (!written) return "busy";
 
-	await interaction.deferUpdate();
+	await acknowledge();
 	const standings = order.map((userId) => {
 		const seat = table.seats.find((entry) => entry.userId === userId);
 		return { userId, stack: seat && !seat.out ? seat.stack : null };
 	});
-	await roomTrail.postMove(interaction.client, room, {
-		actorId: interaction.user.id,
+	await roomTrail.postMove(client, room, {
+		actorId,
 		kind: "system",
-		text: gameRoomsCopy.holdem.tableEnded(interaction.user.id, standings, table.handNumber > 0),
+		text: endedLine ?? gameRoomsCopy.holdem.tableEnded(actorId, standings, table.handNumber > 0),
 	});
 	// Redrawn before the finish so the board loses its controls; the result card that
 	// finish posts is the room's last word.
-	await redraw(interaction.client, room, table);
-	// Judged on the standings the host stopped at: a dominant chip lead reads decisive.
+	await redraw(client, room, table);
+	// Judged on the standings the table stopped at: a dominant chip lead reads decisive.
 	const endedBucket = holdemOutcome({ cause: "ended", bustedInFinalHand: 0, winnerHandCategory: null, winnerShare: shareOf(chipsAtHandStart(table.seats), table.winnerId) });
-	const claimed = await roomLifecycle.finish(interaction.client, room, { winnerId: table.winnerId, outcome: { bucket: endedBucket } });
+	const claimed = await roomLifecycle.finish(client, room, { winnerId: table.winnerId, outcome: { bucket: endedBucket } });
 	// Ranked by the standings endTable answered: chips first, then the reverse bust
-	// order. Only the press that won finish's claim records it, and a table ended before
+	// order. Only the call that won finish's claim records it, and a table ended before
 	// its first deal records nothing, because no match was played. Fire and forget.
 	if (claimed && table.handNumber > 0) void recordMatchRatings(room, order, room.kickedIds ?? [], { rated: isRatedHoldemSession(table.handNumber) });
+	return "ended";
 }
 
 // ── coming back ───────────────────────────────────────────────────────
@@ -1242,6 +1310,7 @@ export const roomHoldemHandlers = {
 	handleImBack,
 	handleSeatsToggle,
 	sweepHoldemClocks,
+	playHoldemBotTurn,
 };
 
 // Rendering helpers the provisioner needs to post the first board.

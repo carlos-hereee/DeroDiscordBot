@@ -112,6 +112,13 @@ describe("recordShowdownHand", () => {
 		expect(storeMock.increment).toHaveBeenCalledWith({ guildId: "guild-1", game: "holdem", month: "2026-11", label: "two pair:A" });
 	});
 
+	// 2026-10 item 250 Phase 5: a showdown with a Dero bot in it is practice, never a server hand.
+	it("counts nothing for a showdown a Dero bot was in", async () => {
+		const table = { board: cards("Ah Kd 7c 7h 2s"), holeCards: { a: cards("Ac 3d"), "dero-bot-red": cards("Kc Qd") } };
+		await recordShowdownHand({ guildId: "guild-1", table, shownUserIds: ["a", "dero-bot-red"], now: NOW });
+		expect(storeMock.increment).not.toHaveBeenCalled();
+	});
+
 	it("never rejects when the write fails", async () => {
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 		storeMock.increment.mockRejectedValue(new Error("atlas down"));

@@ -218,6 +218,16 @@ describe("what is never rated", () => {
 		]);
 	});
 
+	// 2026-10 item 250 Phase 5: a bot is beatable on purpose, so nothing earned off one rates.
+	it("records a match with a Dero bot unrated, with the bot left out of the result", async () => {
+		await recordMatchRatings(room("holdem"), ["a", "dero-bot-red", "b"], [], { now: NOW });
+
+		const result = insertedResult();
+		expect(result.rated).toBe(false);
+		expect(result.entries.map((entry) => entry.userId)).toEqual(["a", "b"]);
+		expect(ratingStore.applyRating).not.toHaveBeenCalled();
+	});
+
 	it("records a match left with one rated player unrated", async () => {
 		await recordMatchRatings(room("battleship"), ["a", "b"], ["b"], { now: NOW });
 

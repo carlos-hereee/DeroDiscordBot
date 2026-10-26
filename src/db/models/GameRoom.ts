@@ -93,6 +93,14 @@ export interface IGameRoom {
 	// Hold'em only: while true, a joiner may claim a free seat mid tournament and is
 	// dealt in at the start of the next hand. The host's Open seats and Close seats.
 	seatsOpen: boolean;
+	// ── Dero bot opponents (2026-10 item 250 Phase 5) ──
+	// botsOffered: whether this draft's card offers Play vs bots, decided when the card
+	// opens from the game and the server's switch. botSeats: how many Dero bots the host
+	// chose, read when the match is seeded and by a rematch. The bots themselves live in
+	// the game's own state, NEVER in playerIds (game-rooms/botSeat.ts says why), and the
+	// bot driver finds the rooms to drive by botSeats.
+	botsOffered: boolean;
+	botSeats: number;
 	// ── network tables (2026-10 item 244 Phase 5a) ──
 	// True for a table open to players from other servers. Only a network room may
 	// carry satellites, and its players are named by display name and server tag
@@ -200,6 +208,9 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		// No index: a lookup always arrives with its roomId, and the arrays stay small.
 		kickedIds: { type: [String], default: [] },
 		seatsOpen: { type: Boolean, default: false },
+		// Off and zero by default, so an older row reads as no bots and needs no backfill.
+		botsOffered: { type: Boolean, default: false },
+		botSeats: { type: Number, default: 0, min: 0 },
 		// Off and empty by default, so an older row reads as a server room with no window
 		// anywhere else, and needs no backfill.
 		network: { type: Boolean, default: false },

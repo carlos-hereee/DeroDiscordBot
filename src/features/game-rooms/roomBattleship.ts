@@ -37,6 +37,7 @@ import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js"
 import type { PrivateViewContent } from "./privateView.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { labelBotMentions } from "./botSeat.js";
 
 // ── roomBattleship ───────────────────────────────────────────────────
 // What:  the Discord half of a battleship match: how the match is stored on the
@@ -171,9 +172,10 @@ export function publicBoardEmbed(state: BattleshipState, imageRef?: string): Emb
 
 	const turnLine = statusLine(state);
 
+	// A Dero bot captain (2026-10 item 250 Phase 5) is named rather than mentioned.
 	const embed = infoEmbed(
 		gameRoomsCopy.battleship.boardTitle,
-		[turnLine, "", section(first, second), "", section(second, first)].join("\n"),
+		labelBotMentions([turnLine, "", section(first, second), "", section(second, first)].join("\n")),
 		COLORS.ARCADE as ColorResolvable
 	);
 	return imageRef ? embed.setImage(imageRef) : embed;

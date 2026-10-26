@@ -45,6 +45,10 @@ interface ICreateGameRoom {
 	// Monopoly's match settings, carried from the finished room by a rematch. A board
 	// challenge sets them on its draft with the card's toggles instead.
 	monopolyAuctions?: boolean;
+	// Dero bot opponents (2026-10 item 250 Phase 5): offered on a new card, carried in
+	// number by a rematch, which seats the same bots again.
+	botsOffered?: boolean;
+	botSeats?: number;
 	monopolyReferee?: boolean;
 	// The host controls, carried from the finished room by a rematch in the same
 	// channel, so a member removed from that channel stays removed. A board challenge
@@ -83,6 +87,8 @@ export const gameRoomStore = {
 			ratingBand: input.ratingBand ?? "any",
 			requireApproval: input.requireApproval ?? false,
 			kickedIds: input.kickedIds ?? [],
+			botsOffered: input.botsOffered ?? false,
+			botSeats: input.botSeats ?? 0,
 			status: "draft",
 		});
 	},
@@ -593,6 +599,12 @@ export const gameRoomStore = {
 	// since a draft has no match to time.
 	async findPlayingByGame(game: GameSlug) {
 		return GameRoom.find({ game, status: "playing" });
+	},
+
+	// The bot driver's tick (2026-10 item 250 Phase 5): every playing room with a Dero bot
+	// seat. Rides the status index; the bot rooms are a handful at any moment.
+	async findPlayingWithBots() {
+		return GameRoom.find({ status: "playing", botSeats: { $gt: 0 } });
 	},
 
 	// Called after the channel is gone, by both the sweep and the Archive now button, which

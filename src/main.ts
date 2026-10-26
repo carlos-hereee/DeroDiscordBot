@@ -43,6 +43,7 @@ import { reconcileSatellitesOnBoot, registerSatelliteWatchers } from "@features/
 import { startNetworkBoards } from "@features/game-rooms/networkBoard.js";
 import { registerTagNotice } from "@features/ratings/tagNotice.js";
 import { sweepHoldemClocks } from "@features/game-rooms/roomHoldemHandlers.js";
+import { sweepBotTurns } from "@features/game-rooms/botTurns.js";
 import { logMonopolyRendererStatus } from "@features/games/monopolyRenderer.js";
 import { logCanvasRendererStatus, logDeroArtStatus } from "@features/renderer/index.js";
 import { sweepMonopolyAuctions } from "@features/game-rooms/roomMonopolyAuction.js";
@@ -935,6 +936,13 @@ process.on("uncaughtException", (err) => {
 		setInterval(() => {
 			void sweepMonopolyAuctions(client).catch((error) => console.error("[game-rooms] monopoly auction tick failed", error));
 		}, BOT_CONSTANTS.MONOPOLY_AUCTION_TICK_MS).unref();
+
+		// ── Dero bot opponents (2026-10 item 250 Phase 5) ──────────
+		// Moves every bot seat one step per tick, through the same paths a member's press
+		// takes, and ends a match no member is left in. A no-op read when no room has a bot.
+		setInterval(() => {
+			void sweepBotTurns(client).catch((error) => console.error("[game-rooms] bot turn tick failed", error));
+		}, BOT_CONSTANTS.BOT_TURNS.TICK_MS).unref();
 
 		// ── feature announcement sweep ─────────────────────────────
 		// What: once-per-version broadcast to every setup-complete guild.

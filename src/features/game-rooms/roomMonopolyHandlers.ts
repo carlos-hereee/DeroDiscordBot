@@ -36,6 +36,7 @@ import { roomDrawingKey, withDrawingPause } from "./drawingPause.js";
 import { announceReferee } from "./roomMonopolyReferee.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { RoomMoveKind } from "./roomTypes.js";
+import { botSeatName, isBotSeatId, memberIdsOnly } from "./botSeat.js";
 
 // ── roomMonopolyHandlers ─────────────────────────────────────────────
 // What:  every Monopoly button: roll, buy, skip, end turn, the three ways out of
@@ -234,8 +235,11 @@ async function finishMonopolyMatch(client: Client, room: IGameRoom, state: Monop
  */
 export async function resolveParticipants(client: Client, guildId: string, userIds: string[]) {
 	const guild = await client.guilds.fetch(guildId).catch(() => null);
-	await guild?.members.fetch({ user: userIds }).catch(() => null);
-	return userIds.map((userId) => ({ userId, username: guild?.members.cache.get(userId)?.displayName }));
+	// A Dero bot seat (2026-10 item 250 Phase 5) is named, never fetched: one id that is not
+	// a member's would fail the fetch for every member in the list.
+	const members = memberIdsOnly(userIds);
+	if (members.length > 0) await guild?.members.fetch({ user: members }).catch(() => null);
+	return userIds.map((userId) => ({ userId, username: isBotSeatId(userId) ? botSeatName(userId) : guild?.members.cache.get(userId)?.displayName }));
 }
 
 // ── committing a move ─────────────────────────────────────────────────
@@ -349,7 +353,8 @@ export const handleMbuy = (interaction: ButtonInteraction, room: IGameRoom, tile
 export const handleMskip = (interaction: ButtonInteraction, room: IGameRoom): Promise<void> =>
 	runMonopolyAction(interaction, room, (state, actorId) => withAuctionNotice(applySkip(state, actorId)));
 
-function withAuctionNotice(result: MonopolyResult): MonopolyResult {
+/** A skip's result with the auction notice added when the skip opened an auction. Shared with a Dero bot's skip (botTurns). */
+export function withAuctionNotice(result: MonopolyResult): MonopolyResult {
 	const auction = result.ok ? result.state.pendingAuction : null;
 	if (!result.ok || !auction) return result;
 	const notice = gameRoomsCopy.monopoly.auctionOpened(ownableTileName(auction.tileId), auctionClosesAt(auction));

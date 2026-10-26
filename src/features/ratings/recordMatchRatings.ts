@@ -1,4 +1,5 @@
 import { matchResultStore } from "@db/stores/matchResultStore.js";
+import { isBotSeatId } from "@utils/botSeatId.js";
 import { playerRatingStore } from "@db/stores/playerRatingStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { IMatchResult, IMatchResultEntry } from "@db/models/MatchResult.js";
@@ -194,6 +195,8 @@ export function buildMatchResult(
 	};
 }
 
+const memberIds = (ids: readonly string[]): string[] => ids.filter((id) => !isBotSeatId(id));
+
 // ── the writer ────────────────────────────────────────────────────────
 async function writeMatchRatings(
 	room: RatingRoom,
@@ -202,8 +205,13 @@ async function writeMatchRatings(
 	options: MatchRatingOptions
 ): Promise<void> {
 	const finishedAt = options.now ?? new Date();
-	const order = ratedOrder(rankedUserIds, excludedUserIds);
-	const rated = options.rated !== false && order.length >= MIN_RATED_PLAYERS;
+	// ⚠️ A MATCH WITH A DERO BOT IS NEVER RATED (2026-10 item 250 Phase 5, the owner's
+	// decision), and the bots leave no entry: a bot is beatable on purpose, and a rating
+	// earned off it would let anyone farm the network ladder. The members' result still
+	// writes, unrated, like any other unrated match.
+	const hadBots = rankedUserIds.some(isBotSeatId);
+	const order = ratedOrder(memberIds(rankedUserIds), excludedUserIds);
+	const rated = options.rated !== false && !hadBots && order.length >= MIN_RATED_PLAYERS;
 
 	if (!rated) {
 		await matchResultStore.insertOnce(buildMatchResult(room, order, excludedUserIds, null, finishedAt));

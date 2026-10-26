@@ -871,6 +871,17 @@ export const BOT_CONSTANTS = {
 		HOLDEM_MAX_BUY_IN: 1_000_000,
 	},
 
+	// ── Dero bot opponents (2026-10 item 250 Phase 5) ─────────────
+	// The bot driver (game-rooms/botTurns.ts) wakes every TICK_MS and moves each room's
+	// bot at most once per tick, so a bot's turn reads at a human pace: a hold'em bot acts
+	// THINK_MS after the board showed it the turn, and a Monopoly or Battleship bot takes
+	// one step per tick. Fast enough that a member never waits on a bot, slow enough that
+	// the trail can be followed and Discord's rate limits are never close.
+	BOT_TURNS: {
+		TICK_MS: 3_000,
+		THINK_MS: 2_500,
+	},
+
 	// ── invite URL provenance ─────────────────────────────────────
 	// The actual OAuth install URL is composed in @utils/config as
 	// `botInviteLink` so dev and prod each serve their own client id.

@@ -26,6 +26,9 @@ import { monopolyStateOf, removeFromMonopolyMatch } from "./roomMonopolyHandlers
 import { seatAcceptedRemotePlayer } from "./networkJoin.js";
 import { RATING_BANDS, type RatingBand } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { botSeatName, isBotSeatId } from "./botSeat.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import type { StoredBattleship } from "./roomBattleship.js";
 
 // ── hostControls ─────────────────────────────────────────────────────
 // What:  the host's say over who is in a room (2026-10 item 244 Phase 4): the rating
@@ -89,6 +92,11 @@ const isRatingBand = (value: string | undefined): value is RatingBand => (RATING
 async function memberOptions(guild: Guild, userIds: readonly string[]): Promise<{ label: string; value: string }[]> {
 	const options: { label: string; value: string }[] = [];
 	for (const userId of [...new Set(userIds)].slice(0, BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS)) {
+		// A Dero bot seat (2026-10 item 250 Phase 5) is named, never fetched: its id is no member's.
+		if (isBotSeatId(userId)) {
+			options.push({ label: botSeatName(userId), value: userId });
+			continue;
+		}
 		const member = guild.members.cache.get(userId) ?? (await guild.members.fetch(userId).catch(() => null));
 		options.push({ label: (member?.displayName || member?.user.username || userId).slice(0, 100), value: userId });
 	}
@@ -278,7 +286,9 @@ export function removableMembers(room: IGameRoom): string[] | null {
 		const stillIn = (monopolyStateOf(room)?.seats ?? []).filter((seat) => !seat.bankrupt).map((seat) => seat.userId);
 		return othersIn([...players, ...stillIn]);
 	}
-	return othersIn(players);
+	// A battleship captain can be a Dero bot (2026-10 item 250 Phase 5), seated only in the match.
+	const captains = ((room.secret as StoredBattleship | null)?.players ?? []).map((player) => player.userId);
+	return othersIn([...players, ...captains]);
 }
 
 /** Remove a player: a private picker over removableMembers, one member per press. */
@@ -335,7 +345,10 @@ async function removeFromDraft(guild: Guild, room: IGameRoom, userId: string): P
 // seat go its own way. `room` is the row the removal returned, carrying kickedIds, which
 // is what keeps any finish this sets off from rating the removed player.
 async function removeFromMatch(client: Client, room: IGameRoom, userId: string, actorId: string): Promise<string> {
-	await revokeMemberOverwrite(client, room, userId);
+	// A Dero bot has no overwrite to take away, and its removal is a bot.slot line in
+	// 🗒️admin-log (2026-10 item 250 Phase 5), the same flow as removing a member otherwise.
+	if (isBotSeatId(userId)) logBotRemoved(client, room, userId, actorId);
+	else await revokeMemberOverwrite(client, room, userId);
 	await roomTrail.postMove(client, room, { actorId, kind: "system", text: words.kick.trailLine(actorId, userId) });
 
 	if (room.game === "battleship") {
@@ -353,6 +366,15 @@ async function removeFromMatch(client: Client, room: IGameRoom, userId: string, 
 	// board's Requests count and players, so the table redraws either way.
 	if (removal === "notAtTable") await redrawTable(client, room);
 	return removal === "busy" ? words.kick.seatStillHeld(userId) : words.kick.removed(userId);
+}
+
+function logBotRemoved(client: Client, room: IGameRoom, botId: string, actorId: string): void {
+	adminLog.emit({
+		guild: { id: room.guildId, client },
+		kind: "bot.slot",
+		actor: { userId: actorId },
+		payload: { subject: gameRoomsCopy.gameLabel(room.game), detail: gameRoomsCopy.board.botRemovedDetail(botSeatName(botId)), game: room.game, matchId: room.roomId, botId, actor: actorId },
+	});
 }
 
 // ⚠️ THE MEMBER'S OWN OVERWRITE IS DELETED, AND NOTHING ELSE. In a public room that

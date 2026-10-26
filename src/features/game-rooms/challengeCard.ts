@@ -8,6 +8,7 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { flavorGameOf, pickFlavor, type OutcomeBucket } from "./matchOutcome.js";
 import type { GameSlug } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { labelBotMentions } from "./botSeat.js";
 
 // ── challengeCard ────────────────────────────────────────────────────
 // What:  the challenge card in ⚔️challenges as a message: finding its channel,
@@ -48,6 +49,8 @@ export function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState
 			requireApproval: room.requireApproval ?? false,
 			pendingJoinCount: (room.pendingJoinIds ?? []).length,
 		},
+		// Play vs bots (2026-10 item 250 Phase 5), off the draft row.
+		...(room.botsOffered ? { bots: { count: room.botSeats ?? 0 } } : {}),
 		...overrides,
 	};
 }
@@ -148,7 +151,8 @@ export function challengeResultLine(result: ChallengeResult, rng: () => number =
 	if (result.abandoned) return words.abandonedLine;
 	const shelf = flavorGameOf(result.game);
 	const flavorFor = (bucket: OutcomeBucket): string => (shelf ? pickFlavor(words.flavor, shelf, bucket, rng) : "");
-	if (result.winnerId) return words.winnerLine(result.winnerId, flavorFor(result.bucket ?? "narrow")).trimEnd();
+	// A Dero bot can win (2026-10 item 250 Phase 5), and its mention resolves to nobody, so it is named.
+	if (result.winnerId) return labelBotMentions(words.winnerLine(result.winnerId, flavorFor(result.bucket ?? "narrow")).trimEnd());
 	if (result.roomWon) return words.roomWonLine(flavorFor(result.bucket ?? "narrow")).trimEnd();
 	if (result.bucket === "draw") return words.drawLine(flavorFor("draw")).trimEnd();
 	return words.noWinnerLine;

@@ -19,6 +19,7 @@ import {
 	privateBoardView,
 	PRIVATE,
 	type BattleshipSinking,
+	type FireOutcome,
 	type StoredBattleship,
 } from "./roomBattleship.js";
 import { showPrivateView } from "./privateView.js";
@@ -143,31 +144,50 @@ export async function handleFire(interaction: ButtonInteraction, room: IGameRoom
 		return;
 	}
 
-	// Clear this player's aim so the next turn starts from nothing rather than
+	const shooterName =
+		interaction.guild?.members.cache.get(interaction.user.id)?.displayName ?? interaction.user.globalName ?? interaction.user.username;
+	// A silent acknowledgement, not a reply: the trail line already tells the shooter
+	// and everyone watching what the shot did, so a private copy of the same sentence
+	// only doubled it. Without some acknowledgement Discord shows the shooter
+	// "interaction failed" after three seconds.
+	await commitShot(interaction.client, room, stored, { ...outcome, state: outcome.state }, { userId: interaction.user.id, name: shooterName }, () => interaction.deferUpdate());
+}
+
+/**
+ * Everything after a shot the engine accepted, whoever fired it: persist, narrate,
+ * redraw, the sink bonus, and the finish when it won. The Fire button and a Dero bot's
+ * turn (botTurns, 2026-10 item 250 Phase 5) both land here, so a bot's shot reads exactly
+ * like a member's. `acknowledge` runs right after the persist, where the button's
+ * deferUpdate always ran.
+ */
+export async function commitShot(
+	client: Client,
+	room: IGameRoom,
+	stored: StoredBattleship,
+	outcome: FireOutcome & { state: BattleshipState },
+	shooter: { userId: string; name: string },
+	acknowledge: () => Promise<unknown> = async () => undefined
+): Promise<void> {
+	// Clear the shooter's aim so the next turn starts from nothing rather than
 	// re-firing the previous coordinate on a stray press.
 	const pending = { ...(stored.pending ?? {}) };
-	delete pending[interaction.user.id];
+	delete pending[shooter.userId];
 	const next = serializeMatch(outcome.state, { pending, boardMessageId: stored.boardMessageId });
 	await persist(room, next);
-
-	// A silent acknowledgement, not a reply: the trail line below already tells the
-	// shooter and everyone watching what the shot did, so a private copy of the same
-	// sentence only doubled it. Without some acknowledgement Discord shows the shooter
-	// "interaction failed" after three seconds.
-	await interaction.deferUpdate();
+	await acknowledge();
 
 	// The narration is a MOVE: it belongs in the transcript that is the product, and
 	// it names only a coordinate that has now been fired on, never an unfired one.
-	await roomTrail.postMove(interaction.client, room, {
-		actorId: interaction.user.id,
+	await roomTrail.postMove(client, room, {
+		actorId: shooter.userId,
 		kind: "guess",
 		text: outcome.message,
 		meta: { sunk: outcome.sunk ?? null },
 	});
 
 	// A shot that sank a ship redraws with the sinking reveal on the card.
-	const sinking = outcome.sunk ? { shooterId: interaction.user.id, ship: outcome.sunk } : null;
-	await redrawBattleshipBoard(interaction.client, room, next, sinking);
+	const sinking = outcome.sunk ? { shooterId: shooter.userId, ship: outcome.sunk } : null;
+	await redrawBattleshipBoard(client, room, next, sinking);
 
 	// ── the per sink bonus ──
 	// ⚠️ AWARDED WITHOUT `game`, DELIBERATELY. awardXp increments
@@ -181,13 +201,10 @@ export async function handleFire(interaction: ButtonInteraction, room: IGameRoom
 	// landed and been narrated, and awardXp never throws by contract.
 	if (outcome.sunk) {
 		void awardXp({
-			client: interaction.client,
+			client,
 			guildId: room.guildId,
-			userId: interaction.user.id,
-			username:
-				interaction.guild?.members.cache.get(interaction.user.id)?.displayName ??
-				interaction.user.globalName ??
-				interaction.user.username,
+			userId: shooter.userId,
+			username: shooter.name,
 			amount: BOT_CONSTANTS.LEVELING.GAME_SINK_XP,
 			source: "game",
 			channelId: room.channelId,
@@ -196,34 +213,39 @@ export async function handleFire(interaction: ButtonInteraction, room: IGameRoom
 
 	if (!outcome.won) return;
 
+	// The captains off the match, not the row: against a Dero bot the row holds the host
+	// alone (2026-10 item 250 Phase 5). recordMatchRatings leaves a bot match unrated, and
+	// awardXp pays a bot nothing.
+	const captains = outcome.state.players.map((player) => player.userId);
+
 	// The result card shows the final board with the last sinking on it, when it draws.
 	const finalBoard = await battleshipBoardCard(outcome.state, sinking);
-	const claimed = await roomLifecycle.finish(interaction.client, room, {
-		winnerId: interaction.user.id,
+	const claimed = await roomLifecycle.finish(client, room, {
+		winnerId: shooter.userId,
 		...(finalBoard ? { art: finalBoard } : {}),
-		outcome: { bucket: battleshipWinOutcome(room, outcome.state, interaction.user.id) },
+		outcome: { bucket: battleshipWinOutcome(captains, room, outcome.state, shooter.userId) },
 	});
 	// Rated once, by the shot that won finish's claim: the shooter first, the other
 	// player second (2026-10 item 244). Fire and forget, never awaited.
-	if (claimed) void recordMatchRatings(room, twoPlayerFinishingOrder(room.playerIds, interaction.user.id));
+	if (claimed) void recordMatchRatings(room, twoPlayerFinishingOrder(captains, shooter.userId));
 
-	const [a, b] = room.playerIds;
+	const [a, b] = captains;
 	awardTwoPlayerResult({
-		client: interaction.client,
+		client,
 		guildId: room.guildId,
 		channelId: room.channelId,
 		game: "battleship",
 		challenger: { id: a } as never,
 		opponent: { id: b } as never,
-		winner: interaction.user.id === a ? "challenger" : "opponent",
+		winner: shooter.userId === a ? "challenger" : "opponent",
 	});
 }
 
 // How the winning shot's match was won (post-launch plan item 21): ships still afloat,
 // and whether the winner was ever behind, replayed from the sinkings in the trail. The
 // winning shot itself is not in `room.moves` yet, and it cannot put the winner behind.
-function battleshipWinOutcome(room: IGameRoom, state: BattleshipState, winnerId: string): OutcomeBucket {
-	const loserId = room.playerIds.find((id) => id !== winnerId) ?? "";
+function battleshipWinOutcome(captains: readonly string[], room: IGameRoom, state: BattleshipState, winnerId: string): OutcomeBucket {
+	const loserId = captains.find((id) => id !== winnerId) ?? "";
 	const sinkings = (room.moves ?? []).filter((move) => move.kind === "guess" && Boolean(move.meta?.sunk)).map((move) => move.actorId);
 	return battleshipOutcome({
 		cause: "played",
@@ -304,13 +326,27 @@ export async function handleReady(interaction: ButtonInteraction, room: IGameRoo
 		await interaction.reply({ content: SETUP_REFUSALS[result.reason], ...PRIVATE });
 		return;
 	}
+	await commitReady(interaction.client, room, interaction.user.id, result.index, () => interaction.deferUpdate());
+}
 
+/**
+ * Lock one captain's fleet in, after markReady accepted it, and start the battle on the
+ * second Ready. The Ready button and a Dero bot captain (botTurns, 2026-10 item 250 Phase
+ * 5) both land here. `acknowledge` runs where the button's deferUpdate always ran.
+ */
+export async function commitReady(
+	client: Client,
+	room: IGameRoom,
+	userId: string,
+	index: 0 | 1,
+	acknowledge: () => Promise<unknown> = async () => undefined
+): Promise<void> {
 	// ① This player's own slot only, so a Ready landing beside the opponent's cannot
 	// write theirs back to false. ② The start is a compare and swap on the status, so
 	// when both Readies land together and each sees both flags, one of them starts it.
 	// Writing the whole blob there is safe: with both captains ready nothing else in
 	// setup writes the secret (no aim exists yet and Randomize refuses a ready player).
-	const afterReady = await gameRoomStore.setSecretField(room.guildId, room.roomId, `ready.${result.index}`, true);
+	const afterReady = await gameRoomStore.setSecretField(room.guildId, room.roomId, `ready.${index}`, true);
 	const readied = (afterReady?.secret as StoredBattleship | null) ?? null;
 	const bothReady = readied?.ready?.[0] === true && readied?.ready?.[1] === true;
 	const started =
@@ -318,22 +354,22 @@ export async function handleReady(interaction: ButtonInteraction, room: IGameRoo
 			? await gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.status": "setup" }, { ...readied, status: "playing" })
 			: null;
 
-	await interaction.deferUpdate();
-	await roomTrail.postMove(interaction.client, room, { actorId: interaction.user.id, kind: "system", text: gameRoomsCopy.battleship.readyLine(interaction.user.id) });
+	await acknowledge();
+	await roomTrail.postMove(client, room, { actorId: userId, kind: "system", text: gameRoomsCopy.battleship.readyLine(userId) });
 
 	const latest = (started ?? afterReady)?.secret as StoredBattleship | null;
 	if (!latest) return;
 	if (started) {
-		await roomTrail.postMove(interaction.client, room, {
-			actorId: interaction.user.id,
+		await roomTrail.postMove(client, room, {
+			actorId: userId,
 			kind: "system",
 			text: gameRoomsCopy.battleship.battleBegins(latest.players[latest.turn].userId),
 		});
 	}
-	await redrawBattleshipBoard(interaction.client, room, latest);
+	await redrawBattleshipBoard(client, room, latest);
 }
 
-export const roomBattleshipHandlers = { handleAimSelect, handleFire, handleViewBoard, handleReroll, handleReady };
+export const roomBattleshipHandlers = { handleAimSelect, handleFire, handleViewBoard, handleReroll, handleReady, commitShot, commitReady };
 
 // Re-exported so the router's flag reads identically to every other ephemeral
 // surface in the feature.

@@ -105,6 +105,29 @@ describe("RoomProvisioner.open with holdemTerms", () => {
 	});
 });
 
+// 2026-10 item 250 Phase 5: the host's Dero bots sit down before anybody buys in, named
+// on the board rather than mentioned, and a table with a bot plays free.
+describe("RoomProvisioner.open with Dero bots", () => {
+	it("seats the bots on the table, names them on the board, and keeps them out of playerIds", async () => {
+		const { guild, send } = makeGuild();
+		await RoomProvisioner.open(input(guild, { botIds: ["dero-bot-red", "dero-bot-orange"] }));
+
+		const table = storedTable() as { seats: Array<{ userId: string; username: string }>; chips?: unknown };
+		expect(table.seats.map((seat) => [seat.userId, seat.username])).toEqual([
+			["dero-bot-red", "Dero Red"],
+			["dero-bot-orange", "Dero Orange"],
+		]);
+		expect(table.chips).toBeUndefined();
+		const created = storeMock.create.mock.calls[0][0] as { playerIds: string[] };
+		expect(created.playerIds).toEqual(["host-1"]);
+		const board = send.mock.calls.map((call) => call[0]).find((payload) => payload.embeds?.[0]?.data.title === gameRoomsCopy.holdem.tableTitle) as {
+			embeds: { data: { description?: string } }[];
+		};
+		expect(board.embeds[0].data.description).toContain("🤖 **Dero Red**");
+		expect(board.embeds[0].data.description).not.toContain("<@dero-bot-red>");
+	});
+});
+
 describe("the joining controls read the table's terms", () => {
 	it("disable Buy in at the table's own seat cap", () => {
 		const table = createTable(5, { ...OWNER_TERMS, maxSeats: 3 });

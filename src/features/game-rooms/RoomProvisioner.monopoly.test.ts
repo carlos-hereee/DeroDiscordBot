@@ -103,6 +103,16 @@ describe("RoomProvisioner.open for monopoly", () => {
 		expect(state.activeSeatIndex).toBe(0);
 	});
 
+	// 2026-10 item 250 Phase 5: the host's Dero bots sit after the members, each on the
+	// token its name says, and never in the row's playerIds.
+	it("seats the host's Dero bots after the members, on their own tokens", async () => {
+		const { guild } = makeGuild();
+		await RoomProvisioner.open({ ...input(guild), botIds: ["dero-bot-gold", "dero-bot-green"] });
+		const seats = storedState().seats.map((seat) => seat.userId);
+		expect(seats.slice(-2)).toEqual(["dero-bot-gold", "dero-bot-green"]);
+		expect(seats.slice(0, -2)).toEqual(input(guild).playerIds);
+	});
+
 	it("opens with auctions off when the host did not turn them on", async () => {
 		const { guild } = makeGuild();
 		await RoomProvisioner.open(input(guild));

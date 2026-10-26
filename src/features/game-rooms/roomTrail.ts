@@ -3,6 +3,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { labelForRoom, relayMove } from "./satelliteRooms.js";
 import type { RoomMoveKind } from "./roomTypes.js";
+import { memberIdsOnly } from "./botSeat.js";
 
 // ── roomTrail ────────────────────────────────────────────────────────
 // What:  posts one move into the room's channel AND appends it to the room's
@@ -71,7 +72,9 @@ export async function postMove(
 		// game passed in, on a per-move cadence.
 		await channel.send({
 			content: shown,
-			allowedMentions: { users: [move.actorId] },
+			// A Dero bot seat's id is not a snowflake, and Discord refuses the whole send
+			// when allowed_mentions names one (2026-10 item 250 Phase 5), so a bot's move pings nobody.
+			allowedMentions: { users: memberIdsOnly([move.actorId]) },
 		});
 	} catch (error) {
 		// The send failed, so the append must not happen. A transcript row for a move the

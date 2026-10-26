@@ -27,6 +27,7 @@ import { renderBoard } from "@features/games/monopolyRenderer.js";
 import type { ResolvedGameAsset } from "@features/games/gamesAssets.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { labelBotMentions } from "./botSeat.js";
 
 // ── roomMonopoly ─────────────────────────────────────────────────────
 // What:  how a Monopoly match looks in Discord, and what its controls are: the
@@ -92,7 +93,8 @@ export function monopolyBoardEmbedWith(state: MonopolyState, picture: ResolvedGa
 		`**${gameRoomsCopy.monopoly.lastMoveLabel}** ${lastMove}`,
 	];
 
-	const embed = infoEmbed(gameRoomsCopy.monopoly.boardTitle, description.join("\n"), COLORS.ARCADE as ColorResolvable);
+	// Dero bot seats (2026-10 item 250 Phase 5) are named rather than mentioned.
+	const embed = infoEmbed(gameRoomsCopy.monopoly.boardTitle, labelBotMentions(description.join("\n")), COLORS.ARCADE as ColorResolvable);
 	if (!picture) return { embed, attachment: null };
 	return { embed: embed.setImage(picture.ref), attachment: picture.attachment };
 }

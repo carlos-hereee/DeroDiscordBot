@@ -24,6 +24,7 @@ import { buildRoomChannelName, resolveRoomChannelName } from "./roomNaming.js";
 import { buildSatelliteOverwrites, type RoomPhase } from "./roomPermissions.js";
 import { NON_TERMINAL_ROOM_STATUSES, type SatelliteRoom } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { labelBotMentions } from "./botSeat.js";
 
 // ── satelliteRooms ───────────────────────────────────────────────────
 // What:  a network table's windows in other servers (2026-10 item 244 Phase 5a). Opens a
@@ -89,16 +90,20 @@ export async function labelMentions(client: Client, text: string): Promise<strin
 	return text.replace(USER_MENTION, (_mention, userId: string) => labels.get(userId) ?? words.unknownPlayer);
 }
 
-/** A line as a room shows it: labelled at a network table, untouched everywhere else. */
+/**
+ * A line as a room shows it: every Dero bot named (2026-10 item 250 Phase 5), since a bot
+ * seat's mention resolves to nobody, and every member labelled too at a network table.
+ */
 export async function labelForRoom(client: Client, room: Pick<IGameRoom, "network">, text: string): Promise<string> {
-	return room.network ? labelMentions(client, text) : text;
+	const withBots = labelBotMentions(text);
+	return room.network ? labelMentions(client, withBots) : withBots;
 }
 
-/** An embed as a room shows it: its description labelled at a network table, untouched everywhere else. */
+/** An embed as a room shows it: its description labelled the way labelForRoom labels a line. */
 export async function labelEmbedForRoom(client: Client, room: Pick<IGameRoom, "network">, embed: EmbedBuilder): Promise<EmbedBuilder> {
 	const description = embed.data.description;
-	if (!room.network || !description) return embed;
-	return embed.setDescription(await labelMentions(client, description));
+	if (!description) return embed;
+	return embed.setDescription(await labelForRoom(client, room, description));
 }
 
 // ── finding a satellite ───────────────────────────────────────────────

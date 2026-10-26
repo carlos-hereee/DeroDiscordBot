@@ -387,6 +387,20 @@ export const gameRoomsCopy = {
 		cardPlayedDero: (hostId: string): string => `🤖 <@${hostId}> took on Dero instead. The result is below.`,
 		deroThrowModalTitle: "Your throw against Dero",
 		deroThrowLabel: "Rock, paper or scissors",
+		// ── Play vs bots (2026-10 item 250 Phase 5) ──
+		// Hold'em, Monopoly and Battleship: the host fills seats with Dero bots, who sit
+		// down when the match starts. Bots never take a member's place and never rate.
+		playBotsLabel: "Play vs bots",
+		botPickerPrompt: "How many Dero bots should take a seat? They sit down when you press Start, and a match with a bot is never rated.",
+		botPickerPlaceholder: "Dero bots",
+		botOptionNone: "No bots",
+		botOptionCount: (count: number): string => (count === 1 ? "1 Dero bot" : `${count} Dero bots`),
+		botsSaved: (count: number): string => (count === 0 ? "No Dero bots will sit down." : `${count === 1 ? "1 Dero bot" : `${count} Dero bots`} will sit down when you press Start.`),
+		cardBots: (count: number): string => `🤖 ${count === 1 ? "1 Dero bot sits" : `${count} Dero bots sit`} down when the match starts. A match with a bot is never rated.`,
+		botsOff: "An admin switched Dero bot opponents off in this server.",
+		botsNotHere: "Dero bots can only join a Hold'em, Monopoly or Battleship challenge in this server.",
+		// The 🗒️admin-log detail when the host removes a bot mid match.
+		botRemovedDetail: (botName: string): string => `${botName} removed from the match`,
 		// Words drawn into the challenge card's picture (2026-10 item 243 Phase 4).
 		// A picture cannot carry a mention, so it names nobody by id; the embed
 		// text above it still does.
@@ -741,6 +755,8 @@ export const gameRoomsCopy = {
 		handInProgress: "A hand is already running. Finish it before dealing again.",
 		// Somebody else's write landed first. Ordinary, so the copy is not an apology.
 		tableBusy: "The table just changed. Try that again.",
+		// Dero closing a table only its bots are left at (2026-10 item 250 Phase 5).
+		botsOnlyEnded: "🏁 Every member has left the table, so Dero closes it. The bots go back in the box.",
 		// ── the chip buy in (2026-10 item 250 Phase 5) ──
 		notEnoughChips: (buyIn: number): string => `The buy in is **${chipAmount(buyIn)}** and your wallet holds less. \`/claim\` your chips, then buy in again.`,
 		buyInChanged: "The host changed the buy in as you sat down. Press Buy in again.",
@@ -992,6 +1008,9 @@ export const gameRoomsCopy = {
 		// is the extra seat, which is why the copy says "counting you".
 		tooManyPlayers: (maxSeats: number, joined: number): string =>
 			`Monopoly seats at most ${maxSeats} players, counting you, and ${joined} have joined. Call this one off and start a new challenge with fewer.`,
+		// The same refusal with Dero bots in the count (2026-10 item 250 Phase 5).
+		tooManyWithBots: (maxSeats: number, joined: number, bots: number): string =>
+			`Monopoly seats at most ${maxSeats} players, counting you, and ${joined} joined with ${bots} Dero ${bots === 1 ? "bot" : "bots"} on top. Choose fewer bots with Play vs bots, then start.`,
 
 		// ── the idle sweep ──
 		// Public, so the table knows why a seat left without anyone pressing anything.

@@ -16,6 +16,7 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
+import { labelBotMentions } from "./botSeat.js";
 
 // ── gameRoomsEmbeds ──────────────────────────────────────────────────
 // What:  every embed and button row a room renders: the pinned opener card and the
@@ -39,7 +40,8 @@ export function roomOpenerEmbed(
 	inviteCode?: string | null,
 	logoRef?: string
 ): EmbedBuilder {
-	const description = gameRoomsCopy.opener.description(hostId, playerIds, visibility, inviteCode);
+	// A Dero bot seat (2026-10 item 250 Phase 5) is named rather than mentioned.
+	const description = labelBotMentions(gameRoomsCopy.opener.description(hostId, playerIds, visibility, inviteCode));
 	// Monopoly's rules ride the pinned opener because its board message, edited
 	// every move, has no room left for them, and a match that runs for days is
 	// joined mid way by people who never saw the start.

@@ -50,6 +50,8 @@ import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
 import { networkBanStore } from "@db/stores/networkBanStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { playSoloLuck, type SoloLuckPlay } from "@features/games/soloLuck.js";
+import { botSeatIdsFor, botsAllowedIn, maxBotSeats, takesBots } from "./botSeat.js";
+import { adminLog } from "@features/setup/adminLog.js";
 import { RPS_CHOICES, type RpsChoice } from "@features/games/rpsWinner.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -134,6 +136,11 @@ export async function startChallengeDraft(
 		return null;
 	}
 
+	// Whether this card offers Play vs bots (2026-10 item 250 Phase 5): a game a bot can
+	// play, in a server that lets hosts add bots. Decided once, here, so the card never
+	// offers a door it would refuse; the press reads the switch again.
+	const botsOffered = takesBots(game) && botsAllowedIn(await guildConfigStore.findByGuildId(guildId));
+
 	let room: IGameRoom;
 	try {
 		room = await gameRoomStore.create({
@@ -141,6 +148,7 @@ export async function startChallengeDraft(
 			game,
 			hostId: interaction.user.id,
 			visibility: "invite",
+			botsOffered,
 		});
 	} catch (error) {
 		// Almost certainly the unique index catching a double click that outran the
@@ -438,7 +446,10 @@ export async function startMatch(interaction: ButtonInteraction, room: IGameRoom
 	// A network table may open with nobody else in the pool (2026-10 item 244 Phase 5b):
 	// its players come from the network board and the room's own Buy in once it opens,
 	// and a Hold'em table is built to open with no seat taken.
-	if (pool.length === 0 && !room.network) {
+	// Dero bots fill seats too (2026-10 item 250 Phase 5), so a host may start against
+	// bots alone.
+	const bots = room.botSeats ?? 0;
+	if (pool.length === 0 && !room.network && bots === 0) {
 		await interaction.reply({ content: gameRoomsCopy.board.poolEmpty, flags: MessageFlags.Ephemeral });
 		return;
 	}
@@ -448,11 +459,20 @@ export async function startMatch(interaction: ButtonInteraction, room: IGameRoom
 	// exists, because the engine throws on a seventh seat and the provisioner only
 	// builds the match after the channel is already up, which would strand a room
 	// with no board in it.
-	if (room.game === "monopoly" && pool.length + 1 > MONOPOLY_MAX_SEATS) {
-		await interaction.reply({
-			content: gameRoomsCopy.monopoly.tooManyPlayers(MONOPOLY_MAX_SEATS, pool.length),
-			flags: MessageFlags.Ephemeral,
-		});
+	if (room.game === "monopoly" && pool.length + 1 + bots > MONOPOLY_MAX_SEATS) {
+		const refusal =
+			bots > 0
+				? gameRoomsCopy.monopoly.tooManyWithBots(MONOPOLY_MAX_SEATS, pool.length, bots)
+				: gameRoomsCopy.monopoly.tooManyPlayers(MONOPOLY_MAX_SEATS, pool.length);
+		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		return;
+	}
+
+	// A battleship challenge with a Dero bot plays the bot: nobody in the pool is singled
+	// out, and the pool watches (2026-10 item 250 Phase 5).
+	if (room.game === "battleship" && bots > 0) {
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+		await provisionFromDraft(interaction, room, null);
 		return;
 	}
 
@@ -557,9 +577,13 @@ async function provisionFromDraft(
 	// to avoid.
 	const pool = room.spectatorIds ?? [];
 	const cooperative = isCooperativeGame(room.game);
-	const playerIds = cooperative ? [room.hostId, ...pool] : [room.hostId, opponentId as string];
+	// A head to head match against a Dero bot (battleship) seats the host alone; the bot is
+	// the opponent, in the match's own state, never in playerIds (botSeat.ts).
+	const humanOpponents = opponentId ? [opponentId] : [];
+	const playerIds = cooperative ? [room.hostId, ...pool] : [room.hostId, ...humanOpponents];
 	const others = cooperative ? [] : pool.filter((id) => id !== opponentId);
 	const spectatorIds = room.visibility === "public" ? [] : others;
+	const botIds = botSeatIdsFor(room.game, playerIds.length, room.botSeats ?? 0);
 
 	await gameRoomStore.update(room.guildId, room.roomId, { playerIds, spectatorIds });
 
@@ -578,6 +602,7 @@ async function provisionFromDraft(
 		// insert a second one and collide with the unique index.
 		existingRoomId: room.roomId,
 		monopolyAuctions: room.monopolyAuctions ?? false,
+		botIds,
 	});
 
 	if (!result.ok) {
@@ -717,6 +742,7 @@ async function playRematchInPlace(interaction: ButtonInteraction, finished: IGam
 		playerIds: next.playerIds,
 		visibility: next.visibility,
 		monopolyAuctions: next.monopolyAuctions,
+		botIds: botSeatIdsFor(next.game, next.playerIds.length, next.botSeats ?? 0),
 	});
 
 	if (next.game === "solo-blackjack") {
@@ -758,6 +784,8 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 			ratingBand: finished.ratingBand ?? "any",
 			requireApproval: finished.requireApproval ?? false,
 			kickedIds: finished.kickedIds ?? [],
+			// The same Dero bots sit down again (2026-10 item 250 Phase 5).
+			botSeats: finished.botSeats ?? 0,
 		});
 	} catch (error) {
 		// Almost certainly the partial unique index catching a room the presser opened
@@ -851,6 +879,94 @@ async function playDeroRound(interaction: ButtonInteraction | ModalSubmitInterac
 	await refreshCard(interaction.guild, room, cardStateFor(room, { visibility: room.visibility, resultLine: gameRoomsCopy.board.cardPlayedDero(room.hostId) }));
 }
 
+// ── Play vs bots (2026-10 item 250 Phase 5) ───────────────────────────
+// What:  the host chooses how many Dero bots sit down when the match starts: a private
+//        select of 0 to the game's most (botSeat.maxBotSeats), answered on the draft row.
+// Who:   the host alone (HOST_STRICT_ACTIONS), on the button and again on the select,
+//        since a select's customId is reachable without the button.
+// Where: ⚠️ THE ONLY DOOR A BOT COMES THROUGH. The invite picker and the Join button stay
+//        closed to bots, structurally, so a bot never sits down unless a member chose it.
+//        Every change is one bot.slot line in 🗒️admin-log.
+const BOT_COUNT_FIELD = "bots";
+
+// Why bots cannot join this draft, or null when they can: a game no bot plays, a network
+// table, or a server whose admin switched bots off since the card opened.
+async function botRefusal(room: IGameRoom): Promise<string | null> {
+	if (!takesBots(room.game) || room.network) return gameRoomsCopy.board.botsNotHere;
+	const config = await guildConfigStore.findByGuildId(room.guildId);
+	return botsAllowedIn(config) ? null : gameRoomsCopy.board.botsOff;
+}
+
+export async function openBotPicker(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	const refusal = await botRefusal(room);
+	if (refusal) {
+		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	const current = room.botSeats ?? 0;
+	const counts = Array.from({ length: maxBotSeats(room.game) + 1 }, (_, count) => count);
+	const select = new StringSelectMenuBuilder()
+		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:${BOT_COUNT_FIELD}:${room.roomId}`)
+		.setPlaceholder(gameRoomsCopy.board.botPickerPlaceholder)
+		.setMinValues(1)
+		.setMaxValues(1)
+		.addOptions(
+			counts.map((count) => ({
+				label: count === 0 ? gameRoomsCopy.board.botOptionNone : gameRoomsCopy.board.botOptionCount(count),
+				value: String(count),
+				default: count === current,
+			}))
+		);
+	await interaction.reply({
+		content: gameRoomsCopy.board.botPickerPrompt,
+		components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
+		flags: MessageFlags.Ephemeral,
+	});
+}
+
+/** The bot count select's submission: the host's, on a draft, a count the game takes. */
+export async function handleBotSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+	const [prefix, action, roomId] = interaction.customId.split(":");
+	if (prefix !== GAME_ROOM_SELECT_PREFIX || action !== BOT_COUNT_FIELD || !roomId) return;
+	const guildId = interaction.guildId;
+	if (!guildId || !interaction.guild) return;
+
+	const room = await gameRoomStore.findByRoomId(guildId, roomId);
+	if (!room || room.status !== "draft") {
+		await interaction.reply({ content: gameRoomsCopy.board.draftGone, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	if (room.hostId !== interaction.user.id) {
+		await interaction.reply({ content: gameRoomsCopy.board.onlyHostStarts, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	const refusal = await botRefusal(room);
+	if (refusal) {
+		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	// The value is user input whoever built the menu, so it is checked against the counts.
+	const count = Number.parseInt(interaction.values[0] ?? "", 10);
+	if (!Number.isInteger(count) || count < 0 || count > maxBotSeats(room.game)) {
+		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
+		return;
+	}
+
+	const updated = (await gameRoomStore.update(guildId, roomId, { botSeats: count })) ?? room;
+	await interaction.reply({ content: gameRoomsCopy.board.botsSaved(count), flags: MessageFlags.Ephemeral });
+	if ((room.botSeats ?? 0) !== count) {
+		adminLog.emitFor(interaction, guildId, "bot.slot", {
+			subject: gameRoomsCopy.gameLabel(room.game),
+			detail: gameRoomsCopy.board.botOptionCount(count),
+			game: room.game,
+			matchId: room.roomId,
+			botCount: count,
+			actor: interaction.user.id,
+		});
+	}
+	await refreshCard(interaction.guild, updated, cardStateFor(updated, { visibility: updated.visibility, pool: updated.spectatorIds ?? [] }));
+}
+
 // ── cancel ────────────────────────────────────────────────────────────
 export async function cancelDraft(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	// "archived" rather than a delete: the row is the audit trail, and the partial
@@ -874,4 +990,6 @@ export const challengeBoard = {
 	chooseMonopolyDraftSetting,
 	playDero,
 	handleDeroThrowModal,
+	openBotPicker,
+	handleBotSelect,
 };

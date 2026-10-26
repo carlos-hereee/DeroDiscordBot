@@ -97,6 +97,17 @@ describe("it never throws", () => {
 	});
 });
 
+// 2026-10 item 250 Phase 5: a Dero bot seat is not a member and earns nothing, at the
+// one door every award passes, so no game's payout has to remember it.
+describe("a Dero bot seat", () => {
+	it("earns nothing and writes nothing, not even a game record", async () => {
+		await awardXp(input({ userId: "dero-bot-red", game: "holdem", outcome: "won" }));
+		expect(mocks.incrementAndReturn).not.toHaveBeenCalled();
+		expect(mocks.stage).not.toHaveBeenCalled();
+		expect(mocks.getLevelingConfig).not.toHaveBeenCalled();
+	});
+});
+
 describe("the buffered / write-through fork", () => {
 	it("STAGES a message award instead of writing it", async () => {
 		// Messages arrive faster than a database round trip, which is the whole

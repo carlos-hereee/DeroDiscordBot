@@ -132,7 +132,9 @@ export async function sweepBattleshipTurns(client: Client, now: Date = new Date(
 			// The win still pays, because the opponent turning up and the other player
 			// not is exactly the behaviour being rewarded. No sink bonus is involved:
 			// nothing was sunk by walking away.
-			const [a, b] = room.playerIds;
+			// The captains off the match, not the row: against a Dero bot the row holds the
+			// host alone (2026-10 item 250 Phase 5), and awardXp pays the bot nothing.
+			const [a, b] = state.players.map((player) => player.userId);
 			awardTwoPlayerResult({
 				client,
 				guildId: room.guildId,

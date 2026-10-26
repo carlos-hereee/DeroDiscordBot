@@ -1,4 +1,5 @@
 import type { IPluginCopy, IRankName } from "@base/copy/types.js";
+import { isBotSeatId } from "@utils/botSeatId.js";
 import { gameResultCountStore } from "@db/stores/gameResultCountStore.js";
 import { compareHands, evaluateHand, HAND_CATEGORIES, RANK_LABELS, type Card, type HandCategory, type HandValue } from "@features/games/holdemHand.js";
 import { utcMonthKey } from "@utils/utcMonthKey.js";
@@ -87,6 +88,9 @@ export function winningShowdownHand(table: ShowdownTable, shownUserIds: readonly
 /** Count the winning hand of one Hold'em showdown. Resolves when written or failed; never rejects, so callers use `void`. */
 export async function recordShowdownHand(showdown: ShowdownCount): Promise<void> {
 	try {
+		// A showdown a Dero bot was in (2026-10 item 250 Phase 5) is practice, not one of
+		// the server's hands, so the monthly post's top hands never count it.
+		if (showdown.shownUserIds.some(isBotSeatId)) return;
 		const winning = winningShowdownHand(showdown.table, showdown.shownUserIds);
 		if (!winning) return;
 		await gameResultCountStore.increment({
