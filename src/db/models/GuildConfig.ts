@@ -796,6 +796,20 @@ const guildConfigSchema = new Schema(
 		//        deleted message is reposted on the next refresh.
 		blockedNetworkGuildIds: { type: [String], required: false, default: () => [] as string[] },
 		networkBoardMessageId: { type: String, required: false, default: null },
+
+		// ── chip economy and bot opponents (2026-10 item 250 Phase 5) ───
+		// What:  chipEconomyEnabled is whether members claim chips and buy into Hold'em
+		//        with them (off, a table deals the free stack it always did);
+		//        botOpponentsEnabled is whether a host may fill seats with Dero bots.
+		// Who:   chipEconomyEnabled is written by /economy toggle and read by /claim,
+		//        the /account chips line and the Hold'em table at open
+		//        (features/economy/). botOpponentsEnabled is written by /dero-config
+		//        arcade bots and read by the challenge card's Play vs bots button
+		//        (features/game-rooms/botSeat.ts), on the card and again on the press.
+		// How:   both default TRUE, the plan's owner decision, so every legacy row is on
+		//        with no backfill and an admin who wants neither turns it off.
+		chipEconomyEnabled: { type: Boolean, required: false, default: true },
+		botOpponentsEnabled: { type: Boolean, required: false, default: true },
 	},
 	{ timestamps: true }
 );

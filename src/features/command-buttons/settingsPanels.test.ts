@@ -73,6 +73,8 @@ beforeEach(() => {
 		leaderboardChannelId: "c2",
 		hiddenChannels: ["leaderboardChannelId"],
 		arcadeMonthlyPost: false,
+		botOpponentsEnabled: false,
+		chipEconomyEnabled: false,
 	});
 	mocks.findVoice.mockReset().mockResolvedValue({
 		enabled: true,
@@ -94,6 +96,7 @@ describe("/dero-config", () => {
 			["voice", true],
 			["listen", false],
 			["monthly-post", false],
+			["bots", false],
 		]);
 		const roles = control(panel, "roles");
 		expect(roles.kind === "roles" && [...roles.current.keys()]).toEqual(["r1"]);
@@ -115,6 +118,23 @@ describe("/dero-config", () => {
 		const added = { kind: "role" as const, value: { id: "r9" } as never };
 		const calls = roles.callsFor({ added: [added], removed: [...roles.current.values()] });
 		expect(calls.map((call) => call.path)).toEqual(["role add", "role remove"]);
+	});
+});
+
+// 2026-10 item 250 Phase 5: the bot opponents switch, and the /economy chip switch.
+describe("the Phase 5 switches", () => {
+	it("turns the bots switch into arcade bots with the value it sets", async () => {
+		const switches = control(await load("dero-config"), "switches");
+		if (switches.kind !== "switches") throw new Error("not switches");
+		const bots = switches.switches.find((item) => item.value === "bots");
+		expect(bots?.callsFor(true).map((call) => [call.path, call.values.get("enabled")])).toEqual([["arcade bots", { kind: "boolean", value: true }]]);
+	});
+
+	it("presets the /economy chip switch from the server and runs toggle", async () => {
+		const switches = control(await load("economy"), "switches");
+		if (switches.kind !== "switches") throw new Error("not switches");
+		expect(switches.switches.map((item) => [item.value, item.on])).toEqual([["economy", false]]);
+		expect(switches.switches[0].callsFor(true).map((call) => call.path)).toEqual(["toggle"]);
 	});
 });
 

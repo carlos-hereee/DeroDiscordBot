@@ -34,10 +34,14 @@ const SUBCOMMAND_GROUP_TYPE = 2;
 const FINAL_COMMANDS = [
 	"account",
 	"channels",
+	// The member's chip claim (2026-10 item 250 Phase 5).
+	"claim",
 	"configure",
 	"configure-kvk-season",
 	"dero",
 	"dero-config",
+	// The chip economy's admin command (2026-10 item 250 Phase 5), gated by ADMIN_COMMANDS.
+	"economy",
 	"events",
 	"leaderboard",
 	"mini-game",

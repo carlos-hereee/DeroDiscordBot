@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
 	reconcileRewards: vi.fn(),
 	renderAccountCard: vi.fn(),
 	luckForMember: vi.fn(),
+	findConfig: vi.fn(),
+	findWallet: vi.fn(),
 }));
 
 vi.mock("@features/leveling/levelingConfig.js", () => ({ getLevelingConfig: mocks.getLevelingConfig }));
@@ -28,6 +30,8 @@ vi.mock("@db/stores/xpPeriodStore.js", () => ({
 	xpPeriodStore: { findOne: mocks.periodFindOne, rankInPeriod: mocks.rankInPeriod },
 }));
 vi.mock("@db/stores/luckStatStore.js", () => ({ luckStatStore: { findForMember: mocks.luckForMember } }));
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findConfig } }));
+vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { findOne: mocks.findWallet } }));
 vi.mock("@features/leveling/roleRewards.js", () => ({ reconcileRewards: mocks.reconcileRewards }));
 vi.mock("@features/leveling/accountRenderer.js", () => ({ ACCOUNT_AVATAR_SIZE: 256, renderAccountCard: mocks.renderAccountCard }));
 
@@ -73,6 +77,8 @@ beforeEach(() => {
 	mocks.reconcileRewards.mockReset().mockResolvedValue(null);
 	mocks.renderAccountCard.mockReset().mockResolvedValue(null);
 	mocks.luckForMember.mockReset().mockResolvedValue([]);
+	mocks.findConfig.mockReset().mockResolvedValue({ chipEconomyEnabled: true });
+	mocks.findWallet.mockReset().mockResolvedValue(null);
 });
 
 describe("/account", () => {
@@ -147,6 +153,29 @@ describe("/account", () => {
 
 		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
 		expect(fields.find((field) => field.name === "Luck this month")?.value).toBe("No coin flip, dice or rps decided this month.");
+	});
+
+	// 2026-10 item 250 Phase 5: the chips line, beside the luck, completing Phase 4's scaffold.
+	it("shows the member's chips and that their claim is ready", async () => {
+		mocks.findWallet.mockResolvedValue({ guildId: "g1", userId: "u1", balance: 26_000, lastClaimAt: new Date("2020-01-01T00:00:00Z"), totalClaimed: 26_000 });
+		const { interaction: command, editReply } = interaction();
+
+		await execute(command);
+
+		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
+		expect(fields.find((field) => field.name === "Chips")?.value).toBe("**26,000** chips. Your claim is ready: `/claim`.");
+		expect(mocks.findWallet).toHaveBeenCalledWith({ guildId: "g1", userId: "u1" });
+	});
+
+	it("leaves the chips line out when the server has chips switched off", async () => {
+		mocks.findConfig.mockResolvedValue({ chipEconomyEnabled: false });
+		const { interaction: command, editReply } = interaction();
+
+		await execute(command);
+
+		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
+		expect(fields.some((field) => field.name === "Chips")).toBe(false);
+		expect(mocks.findWallet).not.toHaveBeenCalled();
 	});
 
 	it("hands the renderer the member's avatar request at the card's size", async () => {

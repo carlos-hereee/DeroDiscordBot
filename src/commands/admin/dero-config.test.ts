@@ -154,6 +154,22 @@ describe("arcade monthly-post (2026-10 item 244 Phase 3b)", () => {
 	});
 });
 
+describe("arcade bots (2026-10 item 250 Phase 5)", () => {
+	it("turns bot opponents off on GuildConfig, logs it, and never reads the voice config", async () => {
+		const text = await replyText({ group: "arcade", sub: "bots", enabled: false });
+		expect(mocks.guildConfigUpdate).toHaveBeenCalledWith("g1", { botOpponentsEnabled: false });
+		expect(mocks.findByGuildId).not.toHaveBeenCalled();
+		expect(mocks.emit).toHaveBeenCalledWith(expect.objectContaining({ kind: "config.change", payload: { subject: "Dero bot opponents", detail: "off" } }));
+		expect(text).toContain("Dero bot opponents: **OFF**");
+	});
+
+	it("reads a row that never stored the switch as ON, and writes nothing when it is unchanged", async () => {
+		expect(await replyText({ group: "arcade", sub: "bots", enabled: true })).toContain("already **ON**");
+		expect(mocks.guildConfigUpdate).not.toHaveBeenCalled();
+		expect(mocks.emit).not.toHaveBeenCalled();
+	});
+});
+
 describe("gates", () => {
 	it("refuses a DM", async () => {
 		expect(await replyText({ sub: "status" }, null)).toContain("not a DM");

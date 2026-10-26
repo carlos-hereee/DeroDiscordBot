@@ -73,6 +73,8 @@ const ACCOUNT_VIEW: AccountView = {
 	reactionsGiven: 389,
 	voiceMinutes: 1_290,
 	games: [{ slug: "rps", record: { played: 20, won: 12, lost: 6, drawn: 2, assists: 0 } }],
+	luck: null,
+	chips: null,
 	unlocked: [
 		{ id: "chatterbox", tier: "bronze", at: new Date("2026-10-01T00:00:00Z"), earnedBy: "sent 53 messages" },
 		{ id: "chatterbox", tier: "silver", at: new Date("2026-10-08T00:00:00Z"), earnedBy: "sent 251 messages" },

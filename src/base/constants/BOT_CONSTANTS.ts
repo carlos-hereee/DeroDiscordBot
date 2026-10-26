@@ -74,6 +74,9 @@ export const BOT_CONSTANTS = {
 		// /dero-config is the voice kill switch, the monthly speech spend cap and the
 		// lists of who may give Dero tasks.
 		"dero-config",
+		// ── chip economy (2026-10 item 250 Phase 5) ──
+		// /economy grants chips from the server vault and switches chips on or off.
+		"economy",
 	]),
 
 	// ── Discord's component limits ────────────────────────────────
@@ -830,6 +833,42 @@ export const BOT_CONSTANTS = {
 		// server's 5 s BOT_FETCH_TIMEOUT_MS in botApiClient.ts, so a slow tag lookup can cost the Castle its
 		// ratings widget but never the render analytics beside it.
 		PLATFORM_REPORT_TIMEOUT_MS: 3_000,
+	},
+
+	// ── chip economy (2026-10 item 250 Phase 5) ───────────────────
+	// The per server chips a member claims and buys into Hold'em with, and the server
+	// vault admins grant from. Every amount below is an owner decision of 2026-10-24
+	// (the plan's chip economy rounds) unless its line says otherwise. Chips are never
+	// sold, bought or cashed out of Discord: they are a scorekeeping currency only.
+	ECONOMY: {
+		// Owner decision 2026-10-24: a member's first ever claim in a server.
+		FIRST_CLAIM_CHIPS: 25_000,
+		// Owner decision 2026-10-24: every later claim, once per cooldown.
+		DAILY_CLAIM_CHIPS: 1_000,
+		// Owner decision 2026-10-24: a claim every 24 hours, counted from the last claim.
+		CLAIM_COOLDOWN_MS: 24 * 60 * 60 * 1000,
+		// Owner decision 2026-10-24: a server's vault starts here the first time anything reads it.
+		VAULT_STARTING_CHIPS: 100_000,
+		// Owner decision 2026-10-24 (the plan's data model): the vault keeps its 50 most recent grants.
+		VAULT_GRANT_HISTORY_LIMIT: 50,
+		// How many of those grants /economy status lists; the rest stay on the row for the dashboard.
+		VAULT_STATUS_GRANTS_SHOWN: 5,
+		// The largest single grant an admin may type. Far above any vault a month of awards
+		// builds, so it only refuses a typo (an extra zero), never a real grant.
+		MAX_GRANT_CHIPS: 1_000_000,
+		// Owner decision 2026-10-24: the monthly vault award by network server rating rank,
+		// rank 1 first. Ranks past the list award nothing.
+		VAULT_TOP_UP_AWARDS: [100_000, 50_000, 50_000, 50_000, 50_000, 25_000, 25_000, 25_000, 25_000, 25_000] as readonly number[],
+		// Owner decision 2026-10-24: the award runs on the 1st at 00:05 UTC.
+		VAULT_TOP_UP_CRON: "5 0 1 * *",
+		VAULT_TOP_UP_TIME_ZONE: "UTC",
+		// Owner decision 2026-10-25 (Phase 5, question 1): the host sets one buy in for the
+		// whole table. These are the modal's presets; the host may type any other amount
+		// between the two bounds, which keep a table between ten and fifty thousand big
+		// blinds of play at the standard 20 chip big blind.
+		HOLDEM_BUY_IN_PRESETS: [1_000, 2_500, 5_000, 10_000] as readonly number[],
+		HOLDEM_MIN_BUY_IN: 200,
+		HOLDEM_MAX_BUY_IN: 1_000_000,
 	},
 
 	// ── invite URL provenance ─────────────────────────────────────

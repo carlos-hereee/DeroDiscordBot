@@ -25,6 +25,7 @@ import { showErrorNotice, showNotice } from "@utils/textModal.js";
 import * as channelsCommand from "@commands/admin/channels.js";
 import * as configureCommand from "@commands/admin/configure.js";
 import * as deroConfigCommand from "@commands/admin/dero-config.js";
+import * as economyCommand from "@commands/admin/economy.js";
 import * as eventsCommand from "@commands/admin/events.js";
 import * as scheduleCommand from "@commands/admin/schedule.js";
 import * as levelSystemCommand from "@commands/admin/setup-level-system.js";
@@ -90,6 +91,7 @@ const COMMAND_MODULES: readonly LaunchableCommand[] = [
 	levelSystemCommand,
 	xpCommand,
 	deroConfigCommand,
+	economyCommand,
 ];
 
 /** Every command the launcher can open, by name. adminCommandLauncher.test.ts pins it against the guide. */

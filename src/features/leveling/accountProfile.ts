@@ -13,6 +13,8 @@ import { ACCOUNT_AVATAR_SIZE, renderAccountCard } from "@features/leveling/accou
 import { LEVELING_GAME_SLUGS, type IGameRecord } from "@features/leveling/levelingTypes.js";
 import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { memberLuckInGuild } from "@features/ratings/ratingBoards.js";
+import { isChipEconomyOn, readWallet } from "@features/economy/chipWallet.js";
+import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { utcMonthKey } from "@utils/utcMonthKey.js";
 
 // ── the account profile ────────────────────────────────────────────────────
@@ -85,10 +87,11 @@ export async function showAccountProfile(interaction: RepliableInteraction, { ta
 
 	const now = new Date();
 	const { week, month } = periodKeysFor(now, context.weekStart);
-	const [weekRank, monthRank, luck] = await Promise.all([
+	const [weekRank, monthRank, luck, chips] = await Promise.all([
 		rankInPeriod(guildId, target.id, week),
 		rankInPeriod(guildId, target.id, month),
 		readLuck(guildId, target.id, now),
+		readChips(guildId, target.id, isSelf, now),
 	]);
 
 	const member = interaction.guild?.members.cache.get(target.id) ?? null;
@@ -112,6 +115,7 @@ export async function showAccountProfile(interaction: RepliableInteraction, { ta
 		voiceMinutes: record?.voiceMinutes ?? 0,
 		games: readGames(record?.games),
 		luck,
+		chips,
 		unlocked: record?.unlocked ?? [],
 		avatar: avatarRequestFor(target, ACCOUNT_AVATAR_SIZE),
 	};
@@ -173,6 +177,21 @@ async function readLuck(guildId: string, userId: string, now: Date): Promise<Acc
 		return await memberLuckInGuild(guildId, userId, utcMonthKey(now));
 	} catch (error) {
 		console.error(`[account] reading the luck of ${userId} in guild ${guildId} failed`, error);
+		return null;
+	}
+}
+
+// The member's chips (2026-10 item 250 Phase 5): null when the server has chips off, and
+// a failed read leaves the line out rather than failing the profile around it, like the
+// luck. The claim hint is only for the member's own profile.
+async function readChips(guildId: string, userId: string, isSelf: boolean, now: Date): Promise<AccountView["chips"]> {
+	try {
+		const config = await guildConfigStore.findByGuildId(guildId);
+		if (!isChipEconomyOn(config)) return null;
+		const wallet = await readWallet({ guildId, userId });
+		return { balance: wallet.balance, claim: isSelf ? { nextClaimAt: wallet.nextClaimAt, now } : null };
+	} catch (error) {
+		console.error(`[account] reading the chips of ${userId} in guild ${guildId} failed`, error);
 		return null;
 	}
 }

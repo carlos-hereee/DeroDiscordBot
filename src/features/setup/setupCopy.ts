@@ -67,6 +67,7 @@ export const setupCopy = {
 			arcadeMonthlyPost: "arcade monthly post",
 			arcadeReach: "arcade reach",
 			networkBlock: "network block list",
+			botOpponents: "Dero bot opponents",
 			arcade: "the arcade",
 			autoHeal: "auto heal",
 			leaderboardTracking: "leaderboard tracking",

@@ -132,6 +132,9 @@ export interface AccountView {
 	// This UTC month's coin flip, dice and rps luck, the luck board's numbers, or
 	// null when the member decided none (post-launch plan item 7).
 	luck: AccountLuck | null;
+	// The member's chips in this server (2026-10 item 250 Phase 5), or null when the
+	// server has chips switched off, which leaves the line out.
+	chips: AccountChips | null;
 	unlocked: IAchievementUnlock[];
 	// Card only: the avatar the account card draws. The embed keeps avatarUrl.
 	avatar?: AvatarRequest | null;
@@ -142,6 +145,12 @@ export interface AccountLuck {
 	decided: number;
 	wins: number;
 	score: number | null;
+}
+
+/** A member's chips: the balance, and, on their own profile only, when they may claim next (null nextClaimAt: never claimed). */
+export interface AccountChips {
+	balance: number;
+	claim: { nextClaimAt: Date | null; now: Date } | null;
 }
 
 // The per game record with its W/L ratio, shared by the text profile and the card's
@@ -175,6 +184,13 @@ function recordField(view: Pick<AccountView, "games">): APIEmbedField {
 function luckField(view: Pick<AccountView, "luck">): APIEmbedField {
 	const c = levelingCopy.labels;
 	return { name: c.luck, value: view.luck ? c.luckLine(view.luck, BOT_CONSTANTS.RATINGS.LUCK_MIN_DECIDED) : c.noLuckYet, inline: false };
+}
+
+// The chips line, beside the luck (2026-10 item 250 Phase 5). Left out entirely when the
+// server has chips off, rather than showing a balance nothing in the server can spend.
+function chipsFields(view: Pick<AccountView, "chips">): APIEmbedField[] {
+	if (!view.chips) return [];
+	return [{ name: levelingCopy.labels.chips, value: levelingCopy.labels.chipsLine(view.chips.balance, view.chips.claim), inline: false }];
 }
 
 function ratio(won: number, lost: number): string {
@@ -213,8 +229,8 @@ export function buildAccountEmbed(view: AccountView): EmbedBuilder {
 		.join("\n");
 	embed.addFields({ name: c.rank, value: standing, inline: false });
 
-	// ③ The record and the month's luck.
-	embed.addFields(recordField(view), luckField(view));
+	// ③ The record, the month's luck and the chips.
+	embed.addFields(recordField(view), luckField(view), ...chipsFields(view));
 
 	// ④ Presence.
 	embed.addFields({
@@ -244,13 +260,17 @@ export function buildAccountEmbed(view: AccountView): EmbedBuilder {
 
 /**
  * The /account message when its card rendered: the member's name over the card,
- * which carries the profile itself, with the per game record and the month's luck
- * as fields, since the card draws only the overall record (post-launch plan item 7).
+ * which carries the profile itself, with the per game record, the month's luck and
+ * the chips as fields, since the card draws only the overall record (post-launch plan item 7).
  * Title and color match buildAccountEmbed, so only the body changes between the
  * card and the text profile.
  */
-export function buildAccountCardEmbed(view: Pick<AccountView, "displayName" | "games" | "luck">, imageRef: string): EmbedBuilder {
-	return base().setTitle(view.displayName).setColor(COLORS.ACCOUNT).addFields(recordField(view), luckField(view)).setImage(imageRef);
+export function buildAccountCardEmbed(view: Pick<AccountView, "displayName" | "games" | "luck" | "chips">, imageRef: string): EmbedBuilder {
+	return base()
+		.setTitle(view.displayName)
+		.setColor(COLORS.ACCOUNT)
+		.addFields(recordField(view), luckField(view), ...chipsFields(view))
+		.setImage(imageRef);
 }
 
 // ── the levels standings board ──────────────────────────────────────────────

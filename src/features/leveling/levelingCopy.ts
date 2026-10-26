@@ -140,6 +140,15 @@ export const levelingCopy = {
 			return `${tally}, **${margin}** ${score >= 0 ? "above" : "below"} an even split.`;
 		},
 		noLuckYet: "No coin flip, dice or rps decided this month.",
+		// The member's chips in this server (2026-10 item 250 Phase 5). The claim hint
+		// shows only on the member's own profile, since nobody claims for anyone else.
+		chips: "Chips",
+		chipsLine: (balance: number, claim: { nextClaimAt: Date | null; now: Date } | null): string => {
+			const amount = `**${balance.toLocaleString("en-US")}** ${balance === 1 ? "chip" : "chips"}`;
+			if (!claim) return `${amount}.`;
+			if (claim.nextClaimAt === null || claim.nextClaimAt.getTime() <= claim.now.getTime()) return `${amount}. Your claim is ready: \`/claim\`.`;
+			return `${amount}. Next claim <t:${Math.floor(claim.nextClaimAt.getTime() / 1000)}:R>.`;
+		},
 	},
 
 	// ── the two boards share a channel, so each one says what it measures ──

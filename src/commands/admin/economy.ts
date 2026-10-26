@@ -1,0 +1,119 @@
+import { MessageFlags, SlashCommandBuilder, type ChatInputCommandInteraction, type ColorResolvable, type RepliableInteraction } from "discord.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { COLORS } from "@base/copy/brand.js";
+import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { economyCopy } from "@features/economy/economyCopy.js";
+import { isChipEconomyOn } from "@features/economy/chipWallet.js";
+import { readVault } from "@features/economy/serverVault.js";
+import { runVaultGrant } from "@features/economy/vaultGrant.js";
+import { adminLog } from "@features/setup/adminLog.js";
+import { setupCopy } from "@features/setup/setupCopy.js";
+import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
+
+// ── /economy ──────────────────────────────────────────────────────────
+// What:  the chip economy's admin command (2026-10 item 250 Phase 5): `status` (the
+//        vault, its recent grants and the switch), `toggle` (chips on or off for the
+//        server) and `grant` (chips from the vault to a member).
+// Who:   admins, gated at runtime by ADMIN_COMMANDS in main.ts (the guild owner or the
+//        bot's admin role), from the slash command or the /economy button on the admin
+//        guide, whose settings panel holds the switch and runs `toggle` through this run.
+// Where: GuildConfig.chipEconomyEnabled is read by /claim, the /account chips line and
+//        every Hold'em table at open (features/economy/chipWallet.isChipEconomyOn). The
+//        vault lives in features/economy/serverVault.ts.
+// How:   ① guild gate; ② setup gate; ③ dispatch; ④ one private reply. A toggle and a
+//        grant each write one 🗒️admin-log line; an unchanged toggle writes nothing.
+//
+// ⚠️ OFF NEVER DELETES. Balances and the vault stay as they were, so turning chips back
+// on restores every member's chips; a table already open keeps the chips it was opened
+// with, since its players paid in.
+
+const copy = economyCopy.admin;
+const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
+const ECONOMY = BOT_CONSTANTS.ECONOMY;
+
+export const data = new SlashCommandBuilder()
+	.setName("economy")
+	.setDescription(copy.commandDescription)
+	.addSubcommand((sub) => sub.setName("status").setDescription(copy.statusDescription))
+	.addSubcommand((sub) =>
+		sub
+			.setName("toggle")
+			.setDescription(copy.toggleDescription)
+			.addBooleanOption((option) => option.setName("enabled").setDescription(copy.toggleOption).setRequired(true))
+	)
+	.addSubcommand((sub) =>
+		sub
+			.setName("grant")
+			.setDescription(copy.grantDescription)
+			.addUserOption((option) => option.setName("user").setDescription(copy.grantUserOption).setRequired(true))
+			.addIntegerOption((option) =>
+				option.setName("amount").setDescription(copy.grantAmountOption).setRequired(true).setMinValue(1).setMaxValue(ECONOMY.MAX_GRANT_CHIPS)
+			)
+	);
+
+const reply = (interaction: RepliableInteraction, body: string) =>
+	interaction.reply({ embeds: [infoEmbed(copy.title, body, COLORS.ADMIN as ColorResolvable)], ...PRIVATE });
+
+async function status(interaction: RepliableInteraction, guildId: string, on: boolean): Promise<void> {
+	const vault = await readVault(guildId);
+	const grants = [...vault.grantHistory].reverse().slice(0, ECONOMY.VAULT_STATUS_GRANTS_SHOWN);
+	await reply(interaction, copy.statusBody({ on, vaultBalance: vault.balance, lastAwardMonth: vault.lastAwardMonth, grants }));
+}
+
+// Idempotent like every switch in the bot: an unchanged value says so and writes nothing.
+async function toggle(interaction: RepliableInteraction, guildId: string, current: boolean, wanted: boolean): Promise<void> {
+	if (current === wanted) {
+		await reply(interaction, copy.unchanged(wanted));
+		return;
+	}
+	await guildConfigStore.update(guildId, { chipEconomyEnabled: wanted });
+	adminLog.emitFor(interaction, guildId, "config.change", {
+		subject: economyCopy.adminLog.economySubject,
+		detail: wanted ? setupCopy.adminLog.on : setupCopy.adminLog.off,
+	});
+	await reply(interaction, copy.toggled(wanted));
+}
+
+/** The one handler the slash command and the admin guide's /economy button share. */
+export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
+	// ①
+	const guildId = interaction.guildId;
+	if (!guildId) {
+		await interaction.reply({ embeds: [errorEmbed(copy.notInGuild)], ...PRIVATE });
+		return;
+	}
+
+	try {
+		// ②
+		const config = await guildConfigStore.findByGuildId(guildId);
+		if (!config) {
+			await interaction.reply({ embeds: [errorEmbed(copy.setupRequired)], ...PRIVATE });
+			return;
+		}
+		const on = isChipEconomyOn(config);
+
+		// ③
+		const sub = options.getSubcommand(true);
+		if (sub === "toggle") {
+			await toggle(interaction, guildId, on, options.getBoolean("enabled", true));
+			return;
+		}
+		if (sub === "grant") {
+			if (!on) {
+				await interaction.reply({ embeds: [errorEmbed(copy.economyOff)], ...PRIVATE });
+				return;
+			}
+			await runVaultGrant(interaction, guildId, options.getUser("user", true), options.getInteger("amount", true));
+			return;
+		}
+		await status(interaction, guildId, on);
+	} catch (error) {
+		console.error(`[economy] /economy failed guild=${guildId}`, error);
+		await interaction.reply({ embeds: [errorEmbed(copy.failed)], ...PRIVATE }).catch(() => undefined);
+	}
+}
+
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+	await run(interaction, interaction.options);
+}

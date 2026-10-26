@@ -5,10 +5,13 @@ import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import { getLevelingConfig } from "@features/leveling/levelingConfig.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
 import { ratingsCopy } from "@features/ratings/ratingsCopy.js";
+import { economyCopy } from "@features/economy/economyCopy.js";
+import { isChipEconomyOn } from "@features/economy/chipWallet.js";
 import type { OptionChoice } from "@handlers/commandOptions.js";
 import * as channelsCommand from "@commands/admin/channels.js";
 import * as configureCommand from "@commands/admin/configure.js";
 import * as deroConfigCommand from "@commands/admin/dero-config.js";
+import * as economyCommand from "@commands/admin/economy.js";
 import * as levelSystemCommand from "@commands/admin/setup-level-system.js";
 import { findLeaf, listLeaves, type FormField } from "./commandForm.js";
 import type { FormValue } from "./formOptionReader.js";
@@ -26,7 +29,8 @@ import { commandButtonsCopy } from "./commandButtonsCopy.js";
 //        that each modal holds only its command's real switches and choices, while
 //        numbers and lists that need several fields (rates, rewards, renames, the
 //        arcade's reach and block list, arcade on and off) stay on their subcommand
-//        forms. /economy waits for Phase 5, beside the chip economy it would switch.
+//        forms. /economy (2026-10 item 250 Phase 5) holds the chip switch; a grant names
+//        a member and an amount, so it stays on its subcommand form like the rest.
 // How:   every control's change is a call to one of the command's own leaves, with
 //        the options its slash command would send, so a panel never writes anything
 //        the command could not. Choices and channel types are read off the command's
@@ -166,7 +170,20 @@ const channelsPanel: PanelDefinition = {
 const voiceSub = voiceCopy.config.sub;
 
 const deroConfigPanel: PanelDefinition = {
-	covered: ["enable", "disable", "listen", "cap", "role add", "role remove", "channel add", "channel remove", "voicechannel add", "voicechannel remove", "arcade monthly-post"],
+	covered: [
+		"enable",
+		"disable",
+		"listen",
+		"cap",
+		"role add",
+		"role remove",
+		"channel add",
+		"channel remove",
+		"voicechannel add",
+		"voicechannel remove",
+		"arcade monthly-post",
+		"arcade bots",
+	],
 	async load({ guild }) {
 		const config = await guildConfigStore.findByGuildId(guild.id);
 		if (!config) return null;
@@ -181,6 +198,15 @@ const deroConfigPanel: PanelDefinition = {
 				description: ratingsCopy.config.monthlyPost,
 				on: config.arcadeMonthlyPost ?? true,
 				callsFor: (on) => [call("arcade monthly-post", { enabled: flag(on) })],
+			},
+			// Whether a host may fill seats with Dero bots (2026-10 item 250 Phase 5). A row
+			// that never stored it reads as on, the schema default.
+			{
+				value: "bots",
+				label: copy.deroConfig.bots,
+				description: ratingsCopy.config.bots,
+				on: config.botOpponentsEnabled ?? true,
+				callsFor: (on) => [call("arcade bots", { enabled: flag(on) })],
 			},
 		];
 		const controls: PanelControl[] = [
@@ -259,10 +285,33 @@ const levelSystemPanel: PanelDefinition = {
 	},
 };
 
+// ── /economy ─────────────────────────────────────────────────────────────────
+
+// The chip switch only (2026-10 item 250 Phase 5). Status and grant are offered on the
+// saved reply, since a grant names a member and an amount.
+const economyPanel: PanelDefinition = {
+	covered: ["toggle"],
+	async load({ guild }) {
+		const config = await guildConfigStore.findByGuildId(guild.id);
+		if (!config) return null;
+		const switches: PanelSwitch[] = [
+			{
+				value: "economy",
+				label: economyCopy.panel.economy,
+				description: economyCopy.panel.economyHint,
+				on: isChipEconomyOn(config),
+				callsFor: (on) => [call("toggle", { enabled: flag(on) })],
+			},
+		];
+		return { title: economyCopy.panel.title, controls: [{ id: "switches", kind: "switches", label: copy.switchesLabel, description: copy.switchesHint, switches }] };
+	},
+};
+
 /** The commands whose guide button opens a settings panel, by command name. */
 export const SETTINGS_PANELS: ReadonlyMap<string, PanelDefinition> = new Map([
 	[configureCommand.data.name, configurePanel],
 	[channelsCommand.data.name, channelsPanel],
 	[deroConfigCommand.data.name, deroConfigPanel],
 	[levelSystemCommand.data.name, levelSystemPanel],
+	[economyCommand.data.name, economyPanel],
 ]);

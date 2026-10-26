@@ -18,7 +18,7 @@ const REACH_NAMES: Record<ChallengeReach, string> = {
 
 export const ratingsCopy = {
 	config: {
-		group: "Arcade settings: the monthly arcade post, challenge reach and network block list",
+		group: "Arcade settings: the monthly post, challenge reach, network block list and bot opponents",
 		monthlyPost: "Post last month's arcade highlights in the leaderboard channel on the 1st",
 		monthlyPostOption: "On to post every month, off to stay quiet",
 		title: "🎮 Arcade settings",
@@ -27,6 +27,15 @@ export const ratingsCopy = {
 				? "Monthly arcade post: **ON**. On the 1st of each month, last month's top winning hands, top rated players and luckiest player post in the leaderboard channel."
 				: "Monthly arcade post: **OFF**. Nothing posts on the 1st. Ratings and boards keep counting, and `/rating` still answers.",
 		monthlyPostUnchanged: (on: boolean): string => `The monthly arcade post is already **${on ? "ON" : "OFF"}**. Nothing changed.`,
+
+		// ── bot opponents (2026-10 item 250 Phase 5) ──
+		bots: "Let a challenge host fill empty seats with Dero bots",
+		botsOption: "On to offer Play vs bots to challenge hosts, off to keep every seat for members",
+		botsSet: (on: boolean): string =>
+			on
+				? "Dero bot opponents: **ON**. Hold'em, Monopoly and Battleship challenge cards offer Play vs bots to their host. Matches with a bot are never rated."
+				: "Dero bot opponents: **OFF**. New challenge cards do not offer Play vs bots, and a press on an older card is refused. Matches already playing keep their bots.",
+		botsUnchanged: (on: boolean): string => `Dero bot opponents are already **${on ? "ON" : "OFF"}**. Nothing changed.`,
 
 		// ── challenge reach (2026-10 item 244 Phase 4, network tables in Phase 5b) ──
 		reach: "Choose how far a host's challenge may reach: invite only, this server, or the network",

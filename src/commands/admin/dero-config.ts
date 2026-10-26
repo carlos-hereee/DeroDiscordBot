@@ -50,6 +50,8 @@ import { turnArcadeOff, turnArcadeOn } from "@features/setup/arcadeSwitch.js";
 //        button and handler and by the spend meter. The arcade group writes
 //        GuildConfig.arcadeMonthlyPost, read by features/ratings/monthlyArcadePost.ts,
 //        GuildConfig.challengeReach, read by features/game-rooms/challengeReach.ts, and
+//        GuildConfig.botOpponentsEnabled, read by the challenge card's Play vs bots
+//        (game-rooms/botSeat.ts, 2026-10 item 250 Phase 5), and
 //        GuildConfig.blockedNetworkGuildIds, read by the network board and every
 //        remote join (features/game-rooms/networkBoard.ts and networkJoin.ts); a new
 //        block also ends the satellites already linking the two servers, both ways
@@ -185,6 +187,13 @@ export const data = new SlashCommandBuilder()
 					.setDescription(ratingsCopy.config.unblockServer)
 					.addStringOption((option) => option.setName(SERVER_OPTION).setDescription(ratingsCopy.config.serverIdOption).setRequired(true))
 			)
+			// Whether a challenge host may fill seats with Dero bots (2026-10 item 250 Phase 5).
+			.addSubcommand((sub) =>
+				sub
+					.setName("bots")
+					.setDescription(ratingsCopy.config.bots)
+					.addBooleanOption((option) => option.setName("enabled").setDescription(ratingsCopy.config.botsOption).setRequired(true))
+			)
 			// The arcade's on and off switch (post-launch plan item 14).
 			.addSubcommand((sub) => sub.setName("off").setDescription(arcadeCopy.offDescription))
 			.addSubcommand((sub) => sub.setName("on").setDescription(arcadeCopy.onDescription))
@@ -293,6 +302,17 @@ async function setMonthlyPost(guildId: string, storedValue: boolean | null | und
 	return info(ratingsCopy.config.monthlyPostSet(on), title);
 }
 
+// The bot opponents switch (2026-10 item 250 Phase 5), the same idempotent shape. Read
+// by the challenge card's Play vs bots button, on the card and again on the press, so a
+// match already playing keeps its bots.
+async function setBotOpponents(guildId: string, storedValue: boolean | null | undefined, on: boolean, audit: Audit): Promise<EmbedBuilder> {
+	const title = ratingsCopy.config.title;
+	if ((storedValue ?? true) === on) return info(ratingsCopy.config.botsUnchanged(on), title);
+	await guildConfigStore.update(guildId, { botOpponentsEnabled: on });
+	audit("config.change", audited.subjects.botOpponents, on ? audited.on : audited.off);
+	return info(ratingsCopy.config.botsSet(on), title);
+}
+
 // The same idempotent shape for the challenge reach (2026-10 item 244 Phase 4). A row
 // that never stored it reads as "server", the schema's default and today's behavior.
 // Rooms already playing are untouched; the next open, choice or rematch reads the new value.
@@ -358,6 +378,7 @@ interface ArcadeSettings {
 	challengeReach?: unknown;
 	arcadeMonthlyPost?: boolean | null;
 	blockedNetworkGuildIds?: readonly string[] | null;
+	botOpponentsEnabled?: boolean | null;
 }
 
 /** The arcade group's reply, one setting per subcommand. */
@@ -373,6 +394,7 @@ async function arcadeAnswer(
 	if (sub === "block-server" || sub === "unblock-server") {
 		return editNetworkBlock(client, guildId, settings.blockedNetworkGuildIds, sub, options.getString(SERVER_OPTION, true), audit);
 	}
+	if (sub === "bots") return setBotOpponents(guildId, settings.botOpponentsEnabled, options.getBoolean("enabled", true), audit);
 	return setMonthlyPost(guildId, settings.arcadeMonthlyPost, options.getBoolean("enabled", true), audit);
 }
 

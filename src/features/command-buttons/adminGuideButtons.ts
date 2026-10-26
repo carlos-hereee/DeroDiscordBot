@@ -15,9 +15,12 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
 /** The customId prefix every admin guide command button carries: `admincmd:<command>`. */
 export const ADMIN_COMMAND_BUTTON_PREFIX = "admincmd";
 
-/** The admin commands the guide offers, row by row: events and schedules, then the server. */
+/**
+ * The admin commands the guide offers, row by row: events, schedules and the chip
+ * economy, then the server. Five a row is Discord's ceiling, and both rows are full.
+ */
 export const ADMIN_GUIDE_COMMAND_ROWS: ReadonlyArray<readonly string[]> = [
-	["events", "schedule", "stream", "configure-kvk-season"],
+	["events", "schedule", "stream", "configure-kvk-season", "economy"],
 	["channels", "configure", "setup-level-system", "xp", "dero-config"],
 ];
 

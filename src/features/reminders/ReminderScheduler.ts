@@ -22,6 +22,7 @@ import { activityStore } from "@db/stores/activityStore.js";
 import { playerActivityRetentionDays } from "@utils/config.js";
 import { sendRenderAnalyticsDigest } from "@features/renderer/renderAnalyticsDigest.js";
 import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
+import { runVaultTopUp } from "@features/economy/vaultTopUp.js";
 
 // ── resolveOverride ────────────────────────────────────────────────
 // What:  given an event + an original occurrence (the cron-computed fire
@@ -261,6 +262,20 @@ export function startScheduler(client: Client): void {
 				void runMonthlyArcadePost(client);
 			},
 			{ timezone: BOT_CONSTANTS.RATINGS.MONTHLY_POST_TIME_ZONE }
+		)
+	);
+
+	// ── monthly server vault award (2026-10 item 250 Phase 5) ──
+	// The network's top servers by rating add chips to their vaults on the 1st at 00:05
+	// UTC. runVaultTopUp never throws and each vault's lastAwardMonth is matched and set
+	// in one write, so the void drops nothing and a second process pays nobody twice.
+	scheduledTasks.push(
+		cron.schedule(
+			BOT_CONSTANTS.ECONOMY.VAULT_TOP_UP_CRON,
+			() => {
+				void runVaultTopUp(client);
+			},
+			{ timezone: BOT_CONSTANTS.ECONOMY.VAULT_TOP_UP_TIME_ZONE }
 		)
 	);
 

@@ -41,4 +41,14 @@ export const matchResultStore = {
 			: { guildId, game };
 		return MatchResult.distinct<"entries.userId", string>("entries.userId", filter);
 	},
+
+	/**
+	 * Whether one guild finished at least one rated match inside a window, in any game.
+	 * The monthly vault award's activity gate (2026-10 item 250 Phase 5). Served by the
+	 * { guildId, game, finishedAt } index's guildId prefix.
+	 */
+	async hasRatedMatchInGuild(guildId: string, finishedBetween: IFinishedBetween): Promise<boolean> {
+		const found = await MatchResult.exists({ guildId, rated: true, finishedAt: { $gte: finishedBetween.start, $lt: finishedBetween.end } });
+		return found !== null;
+	},
 };
