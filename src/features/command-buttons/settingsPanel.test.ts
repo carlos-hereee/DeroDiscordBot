@@ -19,7 +19,7 @@ function panel(): SettingsPanel {
 				id: "switches",
 				kind: "switches",
 				label: "Switches",
-				description: "Checked is on",
+				description: "Selected is on",
 				switches: [
 					{ value: "heal", label: "Auto heal", on: true, callsFor: (on) => [{ path: "heal", values: new Map([["enabled", { kind: "boolean", value: on }]]) }] },
 					{ value: "track", label: "Tracking", on: false, callsFor: (on) => [{ path: on ? "track on" : "track off", values: new Map() }] },
@@ -57,8 +57,7 @@ function source(answers: { switches?: string[]; week?: string; roles?: string[];
 	const present = Object.keys(answers);
 	return {
 		fields: new Map(present.map((id) => [id, {}])),
-		getCheckboxGroup: () => answers.switches ?? [],
-		getRadioGroup: () => answers.week ?? null,
+		getStringSelectValues: (id: string) => (id === "week" ? (answers.week ? [answers.week] : []) : (answers.switches ?? [])),
 		getSelectedRoles: () => new Map((answers.roles ?? []).map((id) => [id, { id }])),
 		getSelectedChannels: () => null,
 		getTextInputValue: () => answers.cap ?? "",
@@ -71,7 +70,8 @@ describe("buildSettingsModal", () => {
 		expect(json.custom_id).toBe("admincmd_panel:sample");
 		const components = json.components.map((label) => (label as { component: Record<string, unknown> }).component);
 
-		expect(components[0]).toMatchObject({ type: ComponentType.CheckboxGroup, min_values: 0, required: false });
+		expect(components[0]).toMatchObject({ type: ComponentType.StringSelect, min_values: 0, max_values: 2, required: false });
+		expect(components[1]).toMatchObject({ type: ComponentType.StringSelect, min_values: 1, max_values: 1, required: true });
 		expect((components[0].options as Array<{ value: string; default?: boolean }>).map((option) => [option.value, option.default])).toEqual([
 			["heal", true],
 			["track", false],
@@ -113,7 +113,7 @@ describe("readSettingsPanel and planSettingsChanges", () => {
 		expect(planSettingsChanges(panel(), read.answers).map((call) => call.path)).toEqual(["week"]);
 	});
 
-	it("ignores a choice no radio group offered", () => {
+	it("ignores a choice no select offered", () => {
 		const read = readSettingsPanel(source({ week: "friday" }), panel());
 		if (!read.ok) throw new Error(read.problem);
 		expect(planSettingsChanges(panel(), read.answers)).toEqual([]);

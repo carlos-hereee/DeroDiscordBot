@@ -31,7 +31,7 @@ export const commandButtonsCopy = {
 	// leveling option) is read from the command instead of repeated here.
 	panels: {
 		switchesLabel: "Switches",
-		switchesHint: "Checked is on. Clear a box to switch that setting off.",
+		switchesHint: "Selected settings are on. Deselect one to switch it off.",
 		configure: {
 			title: "Server switches",
 			autoHeal: "Auto heal channels",
@@ -44,7 +44,7 @@ export const commandButtonsCopy = {
 		channels: {
 			title: "Channel visibility",
 			label: "Visible to members",
-			hint: "Clear a box to hide that channel from members. Dero still posts in it.",
+			hint: "Deselect a channel to hide it from members. Dero still posts in it.",
 		},
 		deroConfig: {
 			title: "Dero settings",

@@ -282,13 +282,12 @@ describe("an admin's flow", () => {
 
 // ── the settings panels (post-launch plan item 9) ────────────────────────────
 
-// A settings panel's fields: checked switch values, the radio pick, a text answer.
+// A settings panel's fields: the selected switch values, the chosen week, a text answer.
 function panelSubmit(customId: string, answers: { switches?: string[]; week?: string }, userId: string) {
 	const present = Object.keys(answers);
 	const fields = {
 		fields: new Map(present.map((id) => [id, {}])),
-		getCheckboxGroup: () => answers.switches ?? [],
-		getRadioGroup: () => answers.week ?? null,
+		getStringSelectValues: (id: string) => (id === "week" ? (answers.week ? [answers.week] : []) : (answers.switches ?? [])),
 		getSelectedRoles: () => null,
 		getSelectedChannels: () => null,
 		getTextInputValue: () => "",

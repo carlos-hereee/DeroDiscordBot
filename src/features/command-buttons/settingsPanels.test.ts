@@ -123,7 +123,7 @@ describe("/channels", () => {
 		expect(await load("channels", "admin")).toBeNull();
 	});
 
-	it("shows each provisioned channel checked when members can see it", async () => {
+	it("shows each provisioned channel selected when members can see it", async () => {
 		const visible = control(await load("channels"), "visible");
 		expect(visible.kind === "switches" && visible.switches.map((item) => [item.value, item.on])).toEqual([
 			["commandsChannelId", true],

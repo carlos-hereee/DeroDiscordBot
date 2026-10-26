@@ -213,7 +213,7 @@ const deroConfigPanel: PanelDefinition = {
 
 // ── /setup-level-system ──────────────────────────────────────────────────────
 
-// One fixed choice of a leveling subcommand, as a radio group. Each change is its
+// One fixed choice of a leveling subcommand, as a single select. Each change is its
 // own run of that subcommand, so two choices on one subcommand (the curve's preset
 // and its milestones) are two runs, each saving only its own option.
 function levelingChoice(id: string, path: string, option: string, label: string, current: string): PanelControl {

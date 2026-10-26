@@ -1,12 +1,10 @@
 import {
 	ChannelSelectMenuBuilder,
-	CheckboxGroupBuilder,
-	CheckboxGroupOptionBuilder,
 	LabelBuilder,
 	ModalBuilder,
-	RadioGroupBuilder,
-	RadioGroupOptionBuilder,
 	RoleSelectMenuBuilder,
+	StringSelectMenuBuilder,
+	StringSelectMenuOptionBuilder,
 	TextInputBuilder,
 	TextInputStyle,
 	type ChannelType,
@@ -27,8 +25,11 @@ import { commandButtonsCopy } from "./commandButtonsCopy.js";
 //        builders, so its tests need no client.
 // Why not the plan's button table: a modal cannot hold a button, and a message of
 //        buttons carries Discord's Dismiss link, which item 9 exists to remove. The
-//        owner chose a real modal (2026-10-25): a checkbox group stands in for the
-//        switches, a radio group for a choice, role and channel selects for a list.
+//        owner chose a real modal of dropdowns (2026-10-25): a multi select with the
+//        active settings preselected stands in for the switches, a single select for
+//        a choice, role and channel selects for a list. A dropdown over a checkbox
+//        group because it holds 25 entries to a checkbox group's 10, and one kind of
+//        control serves the switches and the choices alike.
 // How:   ① buildSettingsModal draws each control with its current value preset;
 //        ② readSettingsPanel reads the submit back into one answer per control;
 //        ③ planSettingsChanges compares each answer with the current value and
@@ -47,7 +48,7 @@ export interface LeafCall {
 	values: ReadonlyMap<string, FormValue>;
 }
 
-/** One switch in a checkbox group: checked means on. */
+/** One switch in a multi select: selected means on. */
 export interface PanelSwitch {
 	value: string;
 	label: string;
@@ -63,13 +64,13 @@ interface ControlBase {
 	description: string;
 }
 
-/** Several on or off settings as one checkbox group. */
+/** Several on or off settings as one multi select, the active ones preselected. */
 export interface SwitchesControl extends ControlBase {
 	kind: "switches";
 	switches: readonly PanelSwitch[];
 }
 
-/** One setting with a fixed list of values, as a radio group. */
+/** One setting with a fixed list of values, as a single select. */
 export interface ChoiceControl extends ControlBase {
 	kind: "choice";
 	choices: readonly OptionChoice[];
@@ -112,22 +113,22 @@ export type PanelAnswer =
 export type PanelReadResult = { ok: true; answers: Map<string, PanelAnswer> } | { ok: false; problem: string };
 
 /** The slice of a modal submit's fields the reader uses. A ModalSubmitFields fits it. */
-export type PanelFieldsSource = Pick<ModalSubmitFields, "fields" | "getCheckboxGroup" | "getRadioGroup" | "getSelectedRoles" | "getSelectedChannels" | "getTextInputValue">;
+export type PanelFieldsSource = Pick<ModalSubmitFields, "fields" | "getStringSelectValues" | "getSelectedRoles" | "getSelectedChannels" | "getTextInputValue">;
 
 // ── what a modal can show ────────────────────────────────────────────────────
 
 const clip = (text: string, max: number): string => (text.length > max ? text.slice(0, max) : text);
 
 // A control Discord would refuse is left out of the modal rather than sinking the
-// whole modal: a checkbox group holds 1 to 10 options, a select presets at most 25,
-// and a choice needs two values to be one. A control left out has no answer, so
+// whole modal: a select holds 1 to 25 options and presets at most 25, and a choice
+// needs two values to be one. A control left out has no answer, so
 // nothing is planned for it and its subcommand still changes it.
 function isShowable(control: PanelControl): boolean {
 	switch (control.kind) {
 		case "switches":
-			return control.switches.length > 0 && control.switches.length <= LIMITS.MAX_CHECKBOX_OPTIONS;
+			return control.switches.length > 0 && control.switches.length <= LIMITS.MAX_SELECT_OPTIONS;
 		case "choice":
-			return control.choices.length >= 2 && control.choices.length <= LIMITS.MAX_RADIO_OPTIONS;
+			return control.choices.length >= 2 && control.choices.length <= LIMITS.MAX_SELECT_OPTIONS;
 		case "roles":
 		case "channels":
 			return control.current.size <= LIMITS.MAX_SELECT_OPTIONS;
@@ -143,30 +144,30 @@ export function shownControls(panel: SettingsPanel): PanelControl[] {
 
 // ── ① the modal ──────────────────────────────────────────────────────────────
 
-function switchesGroup(control: SwitchesControl): CheckboxGroupBuilder {
+function switchesSelect(control: SwitchesControl): StringSelectMenuBuilder {
 	const options = control.switches.map((entry) => {
-		const option = new CheckboxGroupOptionBuilder().setValue(entry.value).setLabel(clip(entry.label, LIMITS.MAX_SELECT_LABEL_LENGTH)).setDefault(entry.on);
+		const option = new StringSelectMenuOptionBuilder().setValue(entry.value).setLabel(clip(entry.label, LIMITS.MAX_SELECT_LABEL_LENGTH)).setDefault(entry.on);
 		if (entry.description) option.setDescription(clip(entry.description, MAX_DESCRIPTION_LENGTH));
 		return option;
 	});
 	// Not required and no minimum: turning every switch off is a real answer.
-	return new CheckboxGroupBuilder().setCustomId(control.id).setRequired(false).setMinValues(0).setMaxValues(options.length).addOptions(options);
+	return new StringSelectMenuBuilder().setCustomId(control.id).setRequired(false).setMinValues(0).setMaxValues(options.length).addOptions(options);
 }
 
-function choiceGroup(control: ChoiceControl): RadioGroupBuilder {
+function choiceSelect(control: ChoiceControl): StringSelectMenuBuilder {
 	const options = control.choices.map((choice) =>
-		new RadioGroupOptionBuilder().setValue(choice.value).setLabel(clip(choice.name, LIMITS.MAX_SELECT_LABEL_LENGTH)).setDefault(choice.value === control.current)
+		new StringSelectMenuOptionBuilder().setValue(choice.value).setLabel(clip(choice.name, LIMITS.MAX_SELECT_LABEL_LENGTH)).setDefault(choice.value === control.current)
 	);
-	return new RadioGroupBuilder().setCustomId(control.id).setRequired(true).addOptions(options);
+	return new StringSelectMenuBuilder().setCustomId(control.id).setRequired(true).setMinValues(1).setMaxValues(1).addOptions(options);
 }
 
 function controlLabel(control: PanelControl): LabelBuilder {
 	const label = new LabelBuilder().setLabel(clip(control.label, LIMITS.MAX_LABEL_LENGTH)).setDescription(clip(control.description, MAX_DESCRIPTION_LENGTH));
 	switch (control.kind) {
 		case "switches":
-			return label.setCheckboxGroupComponent(switchesGroup(control));
+			return label.setStringSelectMenuComponent(switchesSelect(control));
 		case "choice":
-			return label.setRadioGroupComponent(choiceGroup(control));
+			return label.setStringSelectMenuComponent(choiceSelect(control));
 		case "roles":
 			return label.setRoleSelectMenuComponent(
 				new RoleSelectMenuBuilder()
@@ -233,14 +234,14 @@ export function readSettingsPanel(source: PanelFieldsSource, panel: SettingsPane
 		if (!has(source, control.id)) continue;
 		switch (control.kind) {
 			case "switches":
-				answers.set(control.id, { kind: "switches", on: new Set(source.getCheckboxGroup(control.id)) });
+				answers.set(control.id, { kind: "switches", on: new Set(source.getStringSelectValues(control.id)) });
 				break;
 			case "choice": {
-				const value = source.getRadioGroup(control.id);
-				// A value outside the list is user input that no radio group offered;
-				// it is ignored rather than written, the way the slash command's fixed
-				// choices would never have sent it.
-				if (value !== null && control.choices.some((choice) => choice.value === value)) answers.set(control.id, { kind: "choice", value });
+				const [value] = source.getStringSelectValues(control.id);
+				// A value outside the list is user input that no select offered; it is
+				// ignored rather than written, the way the slash command's fixed choices
+				// would never have sent it.
+				if (value !== undefined && control.choices.some((choice) => choice.value === value)) answers.set(control.id, { kind: "choice", value });
 				break;
 			}
 			case "roles":
