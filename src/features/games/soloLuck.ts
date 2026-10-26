@@ -4,6 +4,8 @@ import { registerButton } from "@handlers/interactionRegistry.js";
 import { resolveVersus, type CoinFace } from "./versusResolve.js";
 import { scoreRps, RPS_CHOICES, type RpsChoice } from "./rpsWinner.js";
 import { buildSoloLuckEmbed } from "./gamesEmbeds.js";
+import { renderDiceCard } from "./diceRenderer.js";
+import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { awardSoloLuckResult } from "./gameXp.js";
 import { gamesCopy } from "./gamesCopy.js";
 
@@ -93,6 +95,9 @@ export async function playSoloLuck(
 	// Mentions render as names without notifying: the member pressed the button and
 	// is looking at the result already.
 	await interaction.reply({ embeds: [buildSoloLuckEmbed(interaction.user.id, result)], allowedMentions: { parse: [] } });
+	// The Dero die card joins a dice round once it draws (2026-10 item 250 Phase 5), in an
+	// edit, so the reply above already landed inside Discord's three second window.
+	if (result.game === "diceroll") void addDiceCard(interaction, result);
 
 	// Fire and forget after the result is on screen (house rule 7); awardXp never
 	// throws, and the daily cap decides how much of this actually lands.
@@ -104,6 +109,30 @@ export async function playSoloLuck(
 		won: result.outcome === "won",
 	});
 }
+
+// Fire and forget after the result is on screen (house rule 7): a card that does not
+// draw, or an edit that fails, leaves the text result as it was.
+async function addDiceCard(interaction: RepliableInteraction, result: Extract<SoloLuckResult, { game: "diceroll" }>): Promise<void> {
+	try {
+		const memberName = interaction.inCachedGuild() ? interaction.member.displayName : (interaction.user.globalName ?? interaction.user.username);
+		const card = await withRenderFallback(
+			() =>
+				renderDiceCard({
+					left: { name: memberName, roll: result.memberRoll },
+					right: { name: gamesCopy.soloLuck.deroName, roll: result.deroRoll },
+					winner: DICE_CARD_WINNER[result.outcome],
+				}),
+			() => null
+		);
+		if (!isRenderPayload(card)) return;
+		const embed = buildSoloLuckEmbed(interaction.user.id, result).setImage(card.ref);
+		await interaction.editReply({ embeds: [embed], files: [card.attachment], allowedMentions: { parse: [] } });
+	} catch (error) {
+		console.warn("[games] adding the dice card to a dice round against Dero failed", error);
+	}
+}
+
+const DICE_CARD_WINNER: Record<SoloLuckOutcome, "left" | "right" | "tie"> = { won: "left", lost: "right", tie: "tie" };
 
 // ── the 🕹️games row ────────────────────────────────────────────────────────
 // Five buttons, Discord's ceiling for one row: the coin, the dice, and one button per

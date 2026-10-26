@@ -911,7 +911,7 @@ export const generalEventsCopy: IPluginCopy = {
 			networkEmpty: (minimum: number) => `Nobody on the network has ${minimum} decided games of chance this month yet.`,
 			title: "🍀 Luckiest players this month",
 			description:
-				"Coin flip, dice roll and rock paper scissors, scored by wins above an even split. Ties do not count.",
+				"Coin flip, dice roll and rock paper scissors, scored by wins above an even split, plus how far each magic 8 ball reading beat the average reading. Ties do not count, and readings never count toward the decided games.",
 			row: (place: number, name: string, score: string, wins: number, decided: number) =>
 				`${place}. **${name}**: ${score} (${wins} of ${decided} won)`,
 			empty: (minimum: number) => `Nobody has ${minimum} decided games of chance this month yet.`,

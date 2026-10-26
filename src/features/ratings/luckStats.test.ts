@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@db/stores/luckStatStore.js", () => ({ luckStatStore: { increment: vi.fn() } }));
+vi.mock("@db/stores/luckStatStore.js", () => ({ luckStatStore: { increment: vi.fn(), addReading: vi.fn() } }));
 
-import { luckIncrementsFor, luckScore, recordLuckResult } from "./luckStats.js";
+import { luckIncrementsFor, luckScore, recordFortuneReading, recordLuckResult } from "./luckStats.js";
 import { luckStatStore } from "@db/stores/luckStatStore.js";
 
 // ── luckStats ────────────────────────────────────────────────────────────
@@ -10,7 +10,7 @@ import { luckStatStore } from "@db/stores/luckStatStore.js";
 // nothing, a decided game counts for both players and a win for one, and the score
 // (wins minus half of decided) shows only from 20 decided games.
 
-const storeMock = luckStatStore as unknown as { increment: ReturnType<typeof vi.fn> };
+const storeMock = luckStatStore as unknown as { increment: ReturnType<typeof vi.fn>; addReading: ReturnType<typeof vi.fn> };
 const NOW = new Date("2026-10-31T23:59:00.000Z");
 
 beforeEach(() => {
@@ -29,6 +29,25 @@ describe("luckScore", () => {
 		expect(luckScore({ decided: 20, wins: 14 })).toBe(4);
 		expect(luckScore({ decided: 30, wins: 9 })).toBe(-6);
 		expect(luckScore({ decided: 21, wins: 11 })).toBe(0.5);
+	});
+
+	// 2026-10 item 250 Phase 5: the magic 8 ball's luck above the average reading.
+	it("adds the 8 ball's points, but readings never reach the 20 decided games", () => {
+		expect(luckScore({ decided: 20, wins: 10, readings: 40, fortunePoints: 3.5 })).toBe(3.5);
+		expect(luckScore({ decided: 19, wins: 10, readings: 400, fortunePoints: 30 })).toBeNull();
+	});
+});
+
+describe("recordFortuneReading", () => {
+	it("adds one reading and its luck above average to the month's fortune row", async () => {
+		await recordFortuneReading({ guildId: "g1", userId: "u1", luckAboveAverage: 1.25, now: NOW });
+		expect(storeMock.addReading).toHaveBeenCalledWith({ guildId: "g1", userId: "u1", game: "fortune", month: "2026-10" }, 1.25);
+	});
+
+	it("never rejects when the write fails", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		storeMock.addReading.mockRejectedValue(new Error("db down"));
+		await expect(recordFortuneReading({ guildId: "g1", userId: "u1", luckAboveAverage: -1, now: NOW })).resolves.toBeUndefined();
 	});
 });
 

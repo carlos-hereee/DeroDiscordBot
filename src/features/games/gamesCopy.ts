@@ -55,6 +55,11 @@ export const gamesCopy = {
 		subcommandDescription: "Roll a d20 against a member or against Dero. Highest wins, ties are possible",
 		label: "a dice roll",
 		resultTitle: "🎲 The dice have spoken",
+		// The Dero die card (2026-10 item 250 Phase 5): plain words, drawn on the canvas.
+		cardRolled: (roll: number): string => `rolled ${roll}`,
+		cardVersus: "VS",
+		cardWin: "WINS",
+		cardTie: "TIE",
 		diceLine: (challengerId: string, challengerRoll: number, opponentId: string, opponentRoll: number): string =>
 			`<@${challengerId}> rolled **${challengerRoll}**\n<@${opponentId}> rolled **${opponentRoll}**`,
 	},
@@ -119,6 +124,8 @@ export const gamesCopy = {
 		coinLine: (memberId: string, face: string): string =>
 			`Heads for <@${memberId}>, tails for Dero. The coin lands on **${face}**.`,
 		diceTitle: "🎲 Dice at Dero's table",
+		// Dero's side of the dice card (2026-10 item 250 Phase 5).
+		deroName: "Dero",
 		diceLine: (memberId: string, memberRoll: number, deroRoll: number): string =>
 			`<@${memberId}> rolled **${memberRoll}**\nDero rolled **${deroRoll}**`,
 		rpsTitle: "🪨 📄 ✂️ A duel of hands with Dero",

@@ -214,4 +214,23 @@ export const COLORS = {
 	// teal conflict in TECH_DEBT does not reach these.
 	VOICE_LISTENING: "#14b8a6",
 	VOICE_SPEAKING: "#2dd4bf",
+	// The one Dero variant no Monopoly group already names: the purple mecha, token six.
+	DERO_PURPLE: "#7c3aed",
 } satisfies Record<string, ColorResolvable>;
+
+// ── the six Dero color variants (2026-10 item 250 Phase 5) ──
+// The mecha Dero in six armors, in the order of the Monopoly tokens that draw them
+// (assets/games/monopoly/token-1.png is the red, token-6.png the purple). ONE list for
+// every place a variant shows, so a bot seat named Red, the red token and the red die
+// face can never disagree: the Monopoly bot seats, the Hold'em and Battleship bots,
+// and the dice card's faces all read it.
+export const DERO_VARIANTS = [
+	{ name: "Red", color: COLORS.MONOPOLY_RED },
+	{ name: "Orange", color: COLORS.MONOPOLY_ORANGE },
+	{ name: "Gold", color: COLORS.MONOPOLY_YELLOW },
+	{ name: "Green", color: COLORS.MONOPOLY_GREEN },
+	{ name: "Blue", color: COLORS.MONOPOLY_DARK_BLUE },
+	{ name: "Purple", color: COLORS.DERO_PURPLE },
+] as const;
+
+export type DeroVariant = (typeof DERO_VARIANTS)[number];

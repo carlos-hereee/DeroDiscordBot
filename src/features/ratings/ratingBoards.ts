@@ -9,7 +9,7 @@ import { playerRatingStore } from "@db/stores/playerRatingStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { consentingAmong } from "@features/game-rooms/networkConsent.js";
 import { phraseHoldemHandLabel } from "./gameResultCounts.js";
-import { luckScore, type LuckTally } from "./luckStats.js";
+import { FORTUNE_LUCK_GAME, luckScore, type LuckTally } from "./luckStats.js";
 import { isProvisional, RATED_GAMES, type RatedGame } from "./ratingEngine.js";
 
 // ── ratingBoards ─────────────────────────────────────────────────────
@@ -119,7 +119,7 @@ export interface MemberLuck extends LuckTally {
  */
 export async function memberLuckInGuild(guildId: string, userId: string, month: string): Promise<MemberLuck | null> {
 	const tally = sumLuckByPlayer(await luckStatStore.findForMember(guildId, userId, month)).get(userId);
-	if (!tally || tally.decided === 0) return null;
+	if (!tally || (tally.decided === 0 && !tally.readings)) return null;
 	return { ...tally, score: luckScore(tally) };
 }
 
@@ -168,14 +168,22 @@ export function rankRatings(rows: readonly IPlayerRating[]): Array<RatingSnapsho
 		.map((row) => ({ userId: row.userId, ...snapshotOf(row) }));
 }
 
-/** One tally per player, adding up their coin flip, dice and rock paper scissors rows for the month. */
+/**
+ * One tally per player, adding up their coin flip, dice and rock paper scissors rows for
+ * the month, with their magic 8 ball row kept apart as readings and points (2026-10 item
+ * 250 Phase 5), so a reading never counts as a decided game.
+ */
 export function sumLuckByPlayer(rows: readonly ILuckStat[]): Map<string, LuckTally> {
 	const tallies = new Map<string, LuckTally>();
 	for (const row of rows) {
 		const tally = tallies.get(row.userId) ?? { decided: 0, wins: 0 };
-		tallies.set(row.userId, { decided: tally.decided + row.decided, wins: tally.wins + row.wins });
+		tallies.set(row.userId, row.game === FORTUNE_LUCK_GAME ? addReadings(tally, row) : { ...tally, decided: tally.decided + row.decided, wins: tally.wins + row.wins });
 	}
 	return tallies;
+}
+
+function addReadings(tally: LuckTally, row: ILuckStat): LuckTally {
+	return { ...tally, readings: (tally.readings ?? 0) + row.decided, fortunePoints: (tally.fortunePoints ?? 0) + (row.points ?? 0) };
 }
 
 /**

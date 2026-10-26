@@ -4,7 +4,8 @@ import { AttachmentBuilder, MessageFlags, type InteractionEditReplyOptions, type
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { CooldownManager } from "@utils/cooldownManager.js";
 import { buildDeroImageAttachment } from "@base/copy/brand.js";
-import { rollFortune, PITY_THRESHOLD } from "./rollFortune.js";
+import { rollFortune, fortuneLuck, EXPECTED_FORTUNE_LUCK, PITY_THRESHOLD } from "./rollFortune.js";
+import { recordFortuneReading } from "@features/ratings/luckStats.js";
 import { buildFortuneEmbed, FORTUNE_ORB_FILE, FORTUNE_ORB_REF } from "./fortuneEmbed.js";
 import { verdictSlug } from "./fortunes.js";
 import { fortuneCopy } from "./fortuneCopy.js";
@@ -137,6 +138,15 @@ export async function respondWithFortune(
 	// chase. The fortuneReadings counter rides along because the hidden dero-knows
 	// achievement reads it and nothing else increments it.
 	if (interaction.guildId) {
+		// ── the luck board (2026-10 item 250 Phase 5) ──
+		// Here for the same reason as the award: the guide's Fortune button reaches this
+		// function without the command. Counted above the average reading, so reading the
+		// 8 ball over and over nets zero on average. Fire and forget.
+		void recordFortuneReading({
+			guildId: interaction.guildId,
+			userId: interaction.user.id,
+			luckAboveAverage: fortuneLuck(tier, verdict) - EXPECTED_FORTUNE_LUCK,
+		});
 		void awardXp({
 			client: interaction.client,
 			guildId: interaction.guildId,

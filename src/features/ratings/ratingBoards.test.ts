@@ -47,7 +47,7 @@ const rating = (userId: string, displayRating: number, ratedGames: number, game 
 	lastRatedAt: new Date("2026-10-20T00:00:00Z"),
 });
 
-const luckRow = (userId: string, game: string, decided: number, wins: number) => ({ guildId: "g1", userId, game, month: "2026-10", decided, wins });
+const luckRow = (userId: string, game: string, decided: number, wins: number) => ({ guildId: "g1", userId, game, month: "2026-10", decided, wins, points: 0 });
 
 // Names every id except the ones listed as gone, the way a guild's member list would.
 function resolverWithout(...gone: string[]): Mock<NameResolver> {
@@ -118,6 +118,14 @@ describe("the luck board", () => {
 		const tallies = sumLuckByPlayer([luckRow("a", "coinflip", 10, 7), luckRow("a", "rps", 12, 5), luckRow("b", "diceroll", 3, 1)]);
 		expect(tallies.get("a")).toEqual({ decided: 22, wins: 12 });
 		expect(tallies.get("b")).toEqual({ decided: 3, wins: 1 });
+	});
+
+	// 2026-10 item 250 Phase 5: the month's fortune row is readings and points, never decided games.
+	it("keeps a player's magic 8 ball readings apart from their decided games", () => {
+		const fortune = { ...luckRow("a", "fortune", 30, 0), points: 2.5 };
+		const tallies = sumLuckByPlayer([luckRow("a", "coinflip", 20, 12), fortune]);
+		expect(tallies.get("a")).toEqual({ decided: 20, wins: 12, readings: 30, fortunePoints: 2.5 });
+		expect(rankLuck(tallies).map((row) => row.score)).toEqual([4.5]);
 	});
 
 	it("hides anyone under 20 decided games and ranks the rest by wins above even", () => {

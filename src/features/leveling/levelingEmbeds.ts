@@ -140,10 +140,11 @@ export interface AccountView {
 	avatar?: AvatarRequest | null;
 }
 
-/** A member's luck for the month: decided luck games, wins, and the board's score (null below its minimum). */
+/** A member's luck for the month: decided luck games, wins, magic 8 ball readings, and the board's score (null below its minimum). */
 export interface AccountLuck {
 	decided: number;
 	wins: number;
+	readings?: number;
 	score: number | null;
 }
 

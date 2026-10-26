@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 	rollFortune: vi.fn(),
 	existsSync: vi.fn(),
 	renderFortuneScene: vi.fn(),
+	recordFortuneReading: vi.fn(),
 }));
 
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: mocks.awardXp }));
@@ -28,6 +29,7 @@ vi.mock("./rollFortune.js", async (importOriginal) => {
 	return { ...actual, rollFortune: mocks.rollFortune };
 });
 vi.mock("node:fs", () => ({ existsSync: mocks.existsSync }));
+vi.mock("@features/ratings/luckStats.js", () => ({ recordFortuneReading: mocks.recordFortuneReading }));
 // The scene card (2026-10 item 243 Phase 4). Null by default, so the reading
 // falls back to the orb path every case above the scene describe was written for.
 vi.mock("./fortuneSceneRenderer.js", () => ({ FORTUNE_SCENE_AVATAR_SIZE: 128, renderFortuneScene: mocks.renderFortuneScene }));
@@ -68,6 +70,7 @@ beforeEach(() => {
 	mocks.rollFortune.mockReset().mockReturnValue({ tier: "common", verdict: "yes", flavor: "Dero nods." });
 	mocks.existsSync.mockReset().mockReturnValue(false);
 	mocks.renderFortuneScene.mockReset().mockResolvedValue(null);
+	mocks.recordFortuneReading.mockReset().mockResolvedValue(undefined);
 });
 
 describe("the award fires from BOTH entry points", () => {
@@ -115,6 +118,26 @@ describe("the award itself", () => {
 		const { interaction } = harness({ guildId: null });
 		await respondWithFortune(interaction);
 		expect(mocks.awardXp).not.toHaveBeenCalled();
+	});
+});
+
+// 2026-10 item 250 Phase 5: every reading in a server counts on the luck board, above the
+// average reading, from both entry points.
+describe("the luck board", () => {
+	it("records the reading's luck above the average on both entry points", async () => {
+		mocks.rollFortune.mockReturnValue({ tier: "common", verdict: "IT IS CERTAIN", flavor: "Dero nods." });
+		const { interaction, userId } = harness();
+		await respondWithFortune(interaction as unknown as ButtonInteraction, { isPrivate: true });
+
+		const reading = mocks.recordFortuneReading.mock.calls[0][0] as { guildId: string; userId: string; luckAboveAverage: number };
+		expect(reading).toMatchObject({ guildId: "g1", userId });
+		expect(reading.luckAboveAverage).toBeCloseTo(2 - 0.5265, 4);
+	});
+
+	it("records nothing in a DM", async () => {
+		const { interaction } = harness({ guildId: null });
+		await respondWithFortune(interaction);
+		expect(mocks.recordFortuneReading).not.toHaveBeenCalled();
 	});
 });
 

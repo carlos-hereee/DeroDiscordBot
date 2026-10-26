@@ -25,6 +25,11 @@ export const luckStatStore = {
 		await LuckStat.updateOne(key, { $inc: { decided: increments.decided, wins: increments.wins } }, { upsert: true });
 	},
 
+	/** One magic 8 ball reading: one more reading on the month's fortune row, and its luck above the average. */
+	async addReading(key: ILuckStatKey, points: number): Promise<void> {
+		await LuckStat.updateOne(key, { $inc: { decided: 1, points } }, { upsert: true });
+	},
+
 	/**
 	 * Every row of one UTC month in every guild, for the network luck board (2026-10 item
 	 * 244 Phase 5b). No index leads with month (the unique one leads with guildId), so

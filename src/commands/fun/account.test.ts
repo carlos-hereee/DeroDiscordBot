@@ -144,6 +144,20 @@ describe("/account", () => {
 		expect(mocks.luckForMember).toHaveBeenCalledWith("g1", "u1", expect.stringMatching(/^\d{4}-\d{2}$/));
 	});
 
+	// 2026-10 item 250 Phase 5: the magic 8 ball's readings ride the luck line and its score.
+	it("names the month's magic 8 ball readings beside the luck games", async () => {
+		mocks.luckForMember.mockResolvedValue([
+			{ guildId: "g1", userId: "u1", game: "coinflip", month: "2026-10", decided: 20, wins: 10, points: 0 },
+			{ guildId: "g1", userId: "u1", game: "fortune", month: "2026-10", decided: 6, wins: 0, points: 2 },
+		]);
+		const { interaction: command, editReply } = interaction();
+
+		await execute(command);
+
+		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
+		expect(fields.find((field) => field.name === "Luck this month")?.value).toBe("**10** won of **20** decided and **6** magic 8 ball readings, **2** above an even split.");
+	});
+
 	it("says no luck game was decided, and keeps the profile, when the luck read fails", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => undefined);
 		mocks.luckForMember.mockRejectedValue(new Error("db down"));

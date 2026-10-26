@@ -10,6 +10,8 @@ import {
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { resolveVersus, type VersusFlip } from "@features/games/versusResolve.js";
 import { resolveGameAsset, type GameAssetKey } from "@features/games/gamesAssets.js";
+import { renderDiceCard } from "@features/games/diceRenderer.js";
+import { isRenderPayload, withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
 import { scoreRps, RPS_CHOICES, type RpsChoice } from "@features/games/rpsWinner.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { recordLuckResult } from "@features/ratings/luckStats.js";
@@ -110,10 +112,13 @@ async function runVersusMove(interaction: ButtonInteraction, room: IGameRoom): P
 	// reads as an outcome rather than a missing winner; a coin cannot tie, which the
 	// VersusResult union already guarantees.
 	const artKey: GameAssetKey = result.flip === "coin" ? "coinFlip" : result.winner === "tie" ? "diceTie" : "diceRoll";
+	// A dice result is drawn as the Dero die card (2026-10 item 250 Phase 5), and falls back
+	// to the static dice art when the card does not draw.
+	const diceCard = result.flip === "dice" ? await diceCardFor(interaction, { challengerId, opponentId, ...result }) : null;
 	// The closed challenge card's flavor (post-launch plan item 21): narrow, or a draw on a tie.
 	const ended = await roomLifecycle.finish(interaction.client, room, {
 		winnerId,
-		art: resolveGameAsset(artKey),
+		art: diceCard ?? resolveGameAsset(artKey),
 		outcome: { bucket: luckOutcome(result.winner === "tie") },
 	});
 
@@ -160,6 +165,28 @@ async function runVersusMove(interaction: ButtonInteraction, room: IGameRoom): P
 	// above so a double press counts once. A dice tie records nothing. Fire and forget.
 	void recordLuckResult({ guildId: room.guildId, game: room.game, playerIds: [challengerId, opponentId], winnerId });
 }
+
+// The Dero die card for one dice match, named by each player's display name, or null
+// when the card does not draw. Never throws: the static art takes over.
+async function diceCardFor(
+	interaction: ButtonInteraction,
+	dice: { challengerId: string; opponentId: string; challengerRoll: number; opponentRoll: number; winner: "challenger" | "opponent" | "tie" }
+): Promise<RenderPayload | null> {
+	const nameOf = (userId: string): string => interaction.guild?.members.cache.get(userId)?.displayName ?? gameRoomsCopy.games.unknownPlayer;
+	const card = await withRenderFallback(
+		() =>
+			renderDiceCard({
+				left: { name: nameOf(dice.challengerId), roll: dice.challengerRoll },
+				right: { name: nameOf(dice.opponentId), roll: dice.opponentRoll },
+				winner: ROOM_DICE_WINNER[dice.winner],
+			}),
+		() => null
+	);
+	return isRenderPayload(card) ? card : null;
+}
+
+// The challenger is drawn on the left, as the trail line names them first.
+const ROOM_DICE_WINNER = { challenger: "left", opponent: "right", tie: "tie" } as const;
 
 // ── rock paper scissors ───────────────────────────────────────────────
 // ⚠️ THE SECRECY PROPERTY IS THE ONE REGRESSION THE PLAN CALLS UNFORGIVABLE. A

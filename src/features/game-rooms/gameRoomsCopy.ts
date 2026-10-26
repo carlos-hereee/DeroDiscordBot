@@ -467,6 +467,8 @@ export const gameRoomsCopy = {
 
 	// ── the games, played inside a room (Phase 4) ──
 	games: {
+		// A player Discord no longer resolves, on the Dero die card (2026-10 item 250 Phase 5).
+		unknownPlayer: "A player",
 		coinLine: (face: string): string => `The coin lands on **${face}**.`,
 		// The double-press correction. Posted when a flip line landed AFTER another press had
 		// already decided the match, so the channel and the transcript both say which of the

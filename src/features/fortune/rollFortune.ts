@@ -15,6 +15,20 @@ export const ULTRA_WEIGHT = 0.03;
 // worst dry streak. The per-user streak lives in fortuneBuffStore.
 export const PITY_THRESHOLD = 23;
 
+// The average luck a reading is worth at the base gold rate (2026-10 item 250 Phase 5):
+// the luck board counts each reading's luck MINUS this, so a member who reads the 8 ball
+// a hundred times nets zero on average and only real luck moves them, which is the
+// owner's choice over raw weights (most readings are yeses, so raw weights would let the
+// 10 second cooldown climb the board). Computed from the pools, so it follows any edit.
+const meanLuck = (pool: readonly Fortune[]): number => pool.reduce((sum, fortune) => sum + fortune.luck, 0) / pool.length;
+export const EXPECTED_FORTUNE_LUCK = ULTRA_WEIGHT * meanLuck(ULTRA_FORTUNES) + (1 - ULTRA_WEIGHT) * meanLuck(COMMON_FORTUNES);
+
+/** The luck one reading is worth, looked up by its tier and verdict. 0 for a verdict no pool carries. */
+export function fortuneLuck(tier: FortuneTier, verdict: string): number {
+	const pool = tier === "ultra" ? ULTRA_FORTUNES : COMMON_FORTUNES;
+	return pool.find((fortune) => fortune.verdict === verdict)?.luck ?? 0;
+}
+
 // Pick a tier by weighted coin flip, then a line from that tier's pool.
 // `rng` is injectable ONLY so tests can drive the tier boundary deterministically;
 // production always uses Math.random. getRandom handles the within-tier uniform

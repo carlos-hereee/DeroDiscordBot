@@ -133,8 +133,11 @@ export const levelingCopy = {
 		record: "Record",
 		// The month's coin flip, dice and rps luck, as the luck board counts it.
 		luck: "Luck this month",
-		luckLine: ({ wins, decided, score }: { wins: number; decided: number; score: number | null }, minDecided: number): string => {
-			const tally = `**${wins}** won of **${decided}** decided`;
+		// Magic 8 ball readings join the score above the average reading (2026-10 item 250
+		// Phase 5), and are named beside the games once the member has read it this month.
+		luckLine: ({ wins, decided, readings, score }: { wins: number; decided: number; readings?: number; score: number | null }, minDecided: number): string => {
+			const games = `**${wins}** won of **${decided}** decided`;
+			const tally = readings ? `${games} and **${readings}** magic 8 ball ${readings === 1 ? "reading" : "readings"}` : games;
 			if (score === null) return `${tally}. A luck score shows from ${minDecided} decided games.`;
 			const margin = Math.abs(score).toLocaleString(undefined, { maximumFractionDigits: 1 });
 			return `${tally}, **${margin}** ${score >= 0 ? "above" : "below"} an even split.`;
