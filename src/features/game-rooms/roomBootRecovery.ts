@@ -7,6 +7,7 @@ import { finish } from "./roomLifecycle.js";
 import { sweepExpiredRooms } from "./roomArchiveSweep.js";
 import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { isBlackjackRoomGame } from "./roomTypes.js";
 
 // ── roomBootRecovery ─────────────────────────────────────────────────
 // What:  reconciles what the GameRoom rows CLAIM with what Discord actually has, once
@@ -50,7 +51,8 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 
 				const channel = await client.channels.fetch(room.channelId).catch(() => null);
 				if (channel) {
-					// ①ᵇ The channel is here; is the game? A solo blackjack hand lives only in
+					// ①ᵇ The channel is here; is the game? A blackjack hand, solo or at a room's
+					// multi seat table (2026-10 item 254, Arcade 1), lives only in
 					// blackjackHandler's process-scoped Map, and this process started with that
 					// Map empty, so a "playing" row this boot holds no table for is a match
 					// SIGTERM already ended: no button on its board reaches a handler, and
@@ -59,7 +61,7 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 					// Abandoned rather than a loss, because no hand was settled and nothing is
 					// owed; and abandoned pays nothing, so a redeploy is not farmable for xp.
 					// Any other game's room is untouched: their state lives on the row.
-					if (room.game !== "solo-blackjack" || hasLiveBlackjackTable(room.channelId)) return;
+					if (!isBlackjackRoomGame(room.game) || hasLiveBlackjackTable(room.channelId)) return;
 
 					await roomTrail.postMove(client, room, {
 						actorId: client.user?.id ?? room.hostId,

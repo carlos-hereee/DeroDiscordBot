@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
-import type { StringSelectMenuInteraction } from "discord.js";
+import type { ButtonInteraction, StringSelectMenuInteraction } from "discord.js";
 
 // ── the hangman category start on 🕹️games (2026-10 item 245 Phase 4a) ──────
 // The select is the one new way into a solo room this phase adds, so what is pinned is
@@ -10,15 +10,18 @@ vi.mock("@features/game-rooms/soloRooms.js", () => ({
 	describeSoloOpenFailure: vi.fn(() => "refused"),
 	readPrivateQuotaStatus: vi.fn(async () => null),
 }));
-vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
-vi.mock("./blackjackHandler.js", () => ({ startBlackjackTable: vi.fn() }));
+// The table's door is the challenge card (2026-10 item 254, Arcade 1), so the board is
+// mocked: what is pinned is that the press reaches it, not what the card then does.
+vi.mock("@features/game-rooms/challengeBoard.js", () => ({ startChallengeDraft: vi.fn() }));
 
 import { buildHangmanCategoryStartRow, registerArcadeHostHandlers } from "./arcadeHost.js";
-import { dispatchSelectMenu } from "@handlers/interactionRegistry.js";
+import { dispatchButton, dispatchSelectMenu } from "@handlers/interactionRegistry.js";
 import { openSoloRoom } from "@features/game-rooms/soloRooms.js";
+import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 import { HANGMAN_CATEGORIES } from "./hangmanWords.js";
 
 const openMock = openSoloRoom as unknown as ReturnType<typeof vi.fn>;
+const draftMock = startChallengeDraft as unknown as ReturnType<typeof vi.fn>;
 
 function makeSelect(values: string[]) {
 	return {
@@ -60,5 +63,42 @@ describe("the hangman category start", () => {
 		await dispatchSelectMenu(interaction as unknown as StringSelectMenuInteraction);
 
 		expect(openMock).not.toHaveBeenCalled();
+	});
+});
+
+// ── the host row (2026-10 item 254, Arcade 1): nothing is played in ⚔️challenges ──
+describe("the host row", () => {
+	function makeButton(choice: string) {
+		const challengesSend = vi.fn();
+		return {
+			challengesSend,
+			interaction: {
+				customId: `arcade_host:${choice}`,
+				guild: { id: "guild-1", members: { cache: new Map([["member-1", { displayName: "Member" }]]) }, channels: { fetch: vi.fn(async () => ({ send: challengesSend })) } },
+				user: { id: "member-1", username: "member", globalName: "Member" },
+				deferReply: vi.fn(async () => undefined),
+				editReply: vi.fn(async () => undefined),
+			},
+		};
+	}
+
+	it("posts a multi seat table as a challenge card, the door every room game uses, and posts no table", async () => {
+		const { interaction, challengesSend } = makeButton("blackjack-table");
+		await dispatchButton(interaction as unknown as ButtonInteraction);
+
+		expect(draftMock).toHaveBeenCalledWith(interaction, "blackjack");
+		// startChallengeDraft answers the press itself, so the host row must not defer first.
+		expect(interaction.deferReply).not.toHaveBeenCalled();
+		expect(openMock).not.toHaveBeenCalled();
+		expect(challengesSend).not.toHaveBeenCalled();
+	});
+
+	it("opens a table against Dero alone as a solo room with no card", async () => {
+		const { interaction, challengesSend } = makeButton("blackjack");
+		await dispatchButton(interaction as unknown as ButtonInteraction);
+
+		expect(openMock).toHaveBeenCalledWith(interaction.guild, "solo-blackjack", expect.objectContaining({ userId: "member-1" }), {});
+		expect(draftMock).not.toHaveBeenCalled();
+		expect(challengesSend).not.toHaveBeenCalled();
 	});
 });

@@ -12,6 +12,8 @@ import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
 import { challengeResultLine, closeChallengeCard } from "./challengeCard.js";
 import type { OutcomeBucket } from "./matchOutcome.js";
 import { settleTableChips } from "./holdemChips.js";
+import { revokeRoomInvite } from "./roomInvite.js";
+import { isSoloLuckGame } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomLifecycle ────────────────────────────────────────────────────
@@ -116,6 +118,14 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 		// ② Lock it.
 		await applyRoomPhase(client, channel, room, "finished");
 
+		// ②ᵇ The room's invite dies with the match (2026-10 item 254, Arcade 10), AFTER the
+		// persist and the lock and never awaited: it writes no row and no clock, so it can
+		// neither become a third archiveAt writer nor hold a finish up, and a failed delete
+		// is logged inside. Only here, where the channel still exists: a deleted channel
+		// took its invites with it. Read off the claimed row, which holds the code seedRoom
+		// stored.
+		void revokeRoomInvite(client, claimed);
+
 		// ③ The result card, carrying Archive now. Posted after the lock so the last message
 		// in the channel is the outcome rather than a move, and it lands at all only because
 		// the bot keeps its own SendMessages allow in the locked overwrite set.
@@ -124,7 +134,7 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 		await channel
 			.send({
 				embeds: [resultEmbed],
-				components: [roomArchiveRow(room.roomId)],
+				components: [roomArchiveRow(room.roomId, { rematch: !isSoloLuckGame(room.game) })],
 				...(input.art ? { files: [input.art.attachment] } : {}),
 			})
 			.catch((error) => console.error("[game-rooms] failed to post result card", { roomId: room.roomId, error }));
@@ -172,7 +182,7 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 export async function applyRoomPhase(
 	client: Client,
 	channel: TextChannel,
-	room: Pick<IGameRoom, "roomId" | "guildId" | "hostId" | "playerIds" | "spectatorIds" | "visibility">,
+	room: Pick<IGameRoom, "roomId" | "guildId" | "hostId" | "playerIds" | "spectatorIds" | "visibility"> & Partial<Pick<IGameRoom, "spectatorMode">>,
 	phase: RoomPhase
 ): Promise<void> {
 	const config = await guildConfigStore.findByGuildId(room.guildId).catch(() => null);
@@ -185,6 +195,9 @@ export async function applyRoomPhase(
 				playerIds: room.playerIds,
 				spectatorIds: room.spectatorIds,
 				visibility: room.visibility,
+				// The host's spectator setting, so the lock and a rematch's unlock keep who
+				// watches exactly as the room opened with it.
+				spectatorMode: room.spectatorMode ?? null,
 				phase,
 				adminRoleId: (config as { adminRoleId?: string | null } | null)?.adminRoleId ?? null,
 			})
@@ -237,6 +250,11 @@ export async function releaseChannel(room: Pick<IGameRoom, "guildId" | "roomId" 
 // win (see HOLDEM_PLACEMENT_XP's note: a tournament is worth "roughly a room win plus the
 // hands it took to get there"), so topping it up pays that win twice.
 //
+// ⚠️ SO IS A SOLO LUCK ROUND AGAINST DERO (2026-10 item 254, Arcade 1). Its room exists
+// only so nothing is played in ⚔️challenges, and the round already paid its own 3 or 1
+// inside the daily cap (soloLuck). A room rate on top would pay a single coin flip like a
+// whole match, outside that cap, as often as a member cared to press Play Dero instead.
+//
 // ABANDONED PAYS NOTHING, and it is the reason this function takes the flag at all.
 // `finish` is also called with abandoned:true by the boot recovery sweep and by the R14
 // path in ChannelDeleteWatcher, neither of which involves a match anyone played. Paying
@@ -245,7 +263,7 @@ export async function releaseChannel(room: Pick<IGameRoom, "guildId" | "roomId" 
 // an admin tidying channels pays its players nothing.
 function payRoomRateTopUp(client: Client, room: IGameRoom, winnerId: string | null, abandoned: boolean): void {
 	if (abandoned) return;
-	if (room.game === "holdem") return;
+	if (room.game === "holdem" || isSoloLuckGame(room.game)) return;
 	if (!room.guildId || room.playerIds.length === 0) return;
 
 	const { GAME_PLAY_XP, GAME_WIN_XP, GAME_ROOM_PLAY_XP, GAME_ROOM_WIN_XP } = BOT_CONSTANTS.LEVELING;

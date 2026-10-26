@@ -24,7 +24,7 @@ import { roomTrail } from "./roomTrail.js";
 import { redrawTable, removeFromTable, seatAcceptedPlayer } from "./roomHoldemHandlers.js";
 import { monopolyStateOf, removeFromMonopolyMatch } from "./roomMonopolyHandlers.js";
 import { seatAcceptedRemotePlayer } from "./networkJoin.js";
-import { RATING_BANDS, type RatingBand } from "./roomTypes.js";
+import { RATING_BANDS, SPECTATOR_MODES, type RatingBand, type SpectatorMode } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { botSeatName, isBotSeatId } from "./botSeat.js";
 import { adminLog } from "@features/setup/adminLog.js";
@@ -34,7 +34,8 @@ import type { StoredBattleship } from "./roomBattleship.js";
 // What:  the host's say over who is in a room (2026-10 item 244 Phase 4): the rating
 //        band and the approval toggle on the challenge card, the Requests panel that
 //        accepts or declines who asked to join, and Remove a player, before the match
-//        (out of the pool) or during it (Hold'em, Battleship, Monopoly).
+//        (out of the pool) or during it (Hold'em, Battleship, Monopoly). And who may
+//        watch, the spectator select on the draft card (2026-10 item 254, Arcade 11).
 // Who:   gameRoomHandlers routes the `approval`, `requests` and `kick` buttons and the
 //        `band`, `accept`, `decline` and `kick` selects here. The router's hostOnly gate
 //        covers a button; every select is gated again in this file, because a select is
@@ -129,6 +130,32 @@ export async function handleBandSelect(interaction: StringSelectMenuInteraction)
 		return;
 	}
 	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { ratingBand: band })) ?? room;
+	await interaction.deferUpdate();
+	await refreshDraftCard(interaction.guild!, updated);
+}
+
+// ── who may watch (2026-10 item 254, Arcade 11) ────────────────────────
+const isSpectatorMode = (value: string | undefined): value is SpectatorMode => (SPECTATOR_MODES as readonly (string | undefined)[]).includes(value);
+
+/**
+ * The spectator select on a draft card: Open to spectators, Invite only or No spectators.
+ * A draft control, stored on the row and read once, when the provisioner builds the room's
+ * matrix; a room already open keeps the permissions it opened with. Never on a network
+ * table, whose card offers no select, since its watchers elsewhere are its satellites.
+ */
+export async function handleSpectatorSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+	const room = await loadRoomForHost(interaction);
+	if (!room) return;
+	if (room.status !== "draft") {
+		await interaction.reply({ content: gameRoomsCopy.board.draftGone, ...PRIVATE });
+		return;
+	}
+	const mode = interaction.values[0];
+	if (!isSpectatorMode(mode) || room.network) {
+		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, ...PRIVATE });
+		return;
+	}
+	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { spectatorMode: mode })) ?? room;
 	await interaction.deferUpdate();
 	await refreshDraftCard(interaction.guild!, updated);
 }
@@ -377,11 +404,12 @@ function logBotRemoved(client: Client, room: IGameRoom, botId: string, actorId: 
 	});
 }
 
-// ⚠️ THE MEMBER'S OWN OVERWRITE IS DELETED, AND NOTHING ELSE. In a public room that
-// leaves the ONE @everyone overwrite exactly as it was (view, no send), so the removed
-// member falls back to it and can no longer type; rebuilding the whole set here would
-// re-derive every other entry for no reason. In an invite room they fall back to the
-// @everyone ViewChannel deny and lose sight of the room. Logged on failure: the row
+// ⚠️ THE MEMBER'S OWN OVERWRITE IS DELETED, AND NOTHING ELSE. In a room open to
+// spectators that leaves the ONE @everyone overwrite exactly as it was (view, no send,
+// no reactions), so the removed member falls back to it and can no longer type;
+// rebuilding the whole set here would re-derive every other entry for no reason. In a
+// room closed to spectators they fall back to the @everyone ViewChannel deny and lose
+// sight of the room. Logged on failure: the row
 // already refuses them everywhere, and a removal must not stop on a Discord hiccup.
 async function revokeMemberOverwrite(client: Client, room: IGameRoom, userId: string): Promise<void> {
 	if (!room.channelId) return;
@@ -393,6 +421,7 @@ async function revokeMemberOverwrite(client: Client, room: IGameRoom, userId: st
 }
 
 export const hostControls = {
+	handleSpectatorSelect,
 	handleBandSelect,
 	toggleApproval,
 	openJoinRequests,

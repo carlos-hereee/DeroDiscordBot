@@ -24,7 +24,8 @@ import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isWithinReach, readChallengeReach } from "./challengeReach.js";
-import type { GameSlug, RoomVisibility } from "./roomTypes.js";
+import { mintRoomInvite } from "./roomInvite.js";
+import type { GameSlug, RoomVisibility, SpectatorMode } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── RoomProvisioner ──────────────────────────────────────────────────
@@ -60,8 +61,8 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 //   cap. No queue is built yet, deliberately.
 //   Message send: 5 per 5s PER CHANNEL. Every room is its own channel, so 25 rooms
 //   firing turns concurrently is 25 independent buckets, never one shared one.
-//   Invite creation (⑤ᵃ below): one createInvite per room open, far under any
-//   plausible bucket. ⚠️ NOT yet measured live: read the X-RateLimit-* headers off
+//   Invite creation (⑤ᵃ below): at most one createInvite per room open (only a room
+//   everyone may watch takes one, roomInvite), far under any plausible bucket. ⚠️ NOT yet measured live: read the X-RateLimit-* headers off
 //   one createInvite against a test guild before raising any tier past 50.
 //   Mongo writes: ~3 to 5 per turn per room (row update, move append, opener edit,
 //   audit log). 25 rooms at a turn per 10s is ~12 writes/s worst case. Not a concern.
@@ -95,8 +96,20 @@ const inflightOpens = new Map<string, Promise<RoomOpenResult>>();
 // board message (posted by startBlackjackTable after the room opens), so its opener
 // stays a plain card exactly like battleship's and hold em's. solo-hangman is NOT
 // here: it rides the trail plus the pinned guess control, like room hangman.
-// monopoly rides its own board message too, edited after every move.
-const SELF_BOARDED_GAMES: readonly GameSlug[] = ["battleship", "holdem", "monopoly", "solo-blackjack"];
+// monopoly rides its own board message too, edited after every move, and so does a
+// multi seat blackjack table (2026-10 item 254, Arcade 1), dealt like the solo one. The
+// three solo luck rounds have no controls at all: the round is played the moment the room
+// opens and its result is the room's one message, so their opener stays a plain card.
+const SELF_BOARDED_GAMES: readonly GameSlug[] = [
+	"battleship",
+	"holdem",
+	"monopoly",
+	"blackjack",
+	"solo-blackjack",
+	"solo-coinflip",
+	"solo-diceroll",
+	"solo-rps",
+];
 
 // The controls a room's pinned opener carries, for every game that is not self boarded.
 // Hangman opens on the AUTHORING control plus the category select: there is no word
@@ -151,6 +164,9 @@ export interface RoomOpenInput {
 	playerIds: string[];
 	spectatorIds?: string[];
 	visibility: RoomVisibility;
+	// The host's spectator setting (2026-10 item 254, Arcade 11), off the draft row. Absent
+	// or null reads as the visibility's default (roomPermissions.effectiveSpectatorMode).
+	spectatorMode?: SpectatorMode | null;
 	adminRoleId?: string | null;
 	// Set when a DRAFT row already exists, which is the challenge board's path: the
 	// row was created the moment the host pressed Start a challenge, and this call is
@@ -228,6 +244,7 @@ export const RoomProvisioner = {
 					playerIds,
 					spectatorIds,
 					visibility,
+					spectatorMode: input.spectatorMode ?? null,
 					phase: "playing",
 					adminRoleId: input.adminRoleId ?? null,
 				}),
@@ -264,6 +281,7 @@ export const RoomProvisioner = {
 					visibility,
 					playerIds,
 					spectatorIds,
+					spectatorMode: input.spectatorMode ?? null,
 				});
 			}
 		} catch (error) {
@@ -286,6 +304,7 @@ export const RoomProvisioner = {
 			hostId,
 			playerIds,
 			visibility,
+			spectatorMode: input.spectatorMode ?? null,
 			holdemTerms: input.holdemTerms,
 			monopolyAuctions: input.monopolyAuctions,
 			hangmanCategory: input.hangmanCategory,
@@ -397,6 +416,9 @@ export interface RoomSeedInput {
 	hostId: string;
 	playerIds: string[];
 	visibility: RoomVisibility;
+	// Decides whether the room gets an invite link (roomInvite) and what the opener says
+	// about who can watch. Absent or null reads as the visibility's default.
+	spectatorMode?: SpectatorMode | null;
 	holdemTerms?: HoldemTerms;
 	monopolyAuctions?: boolean;
 	hangmanCategory?: HangmanCategory;
@@ -416,37 +438,20 @@ export interface RoomSeedInput {
 //        from how a first match opens it.
 // When:  once per room, right after its row exists and its channel is writable.
 // How:   ⑤ᵃ invite, ⑤ opener and status, then the per game state, then ⑥ the audit
-//        line. Solo blackjack's table is NOT here: soloRooms.startSoloBlackjackBoard
-//        posts it, because a table that fails to start closes the room, and that is
-//        the solo path's decision rather than the provisioner's.
+//        line. A blackjack table is NOT here, solo or multi seat: soloRooms deals it
+//        (startSoloBlackjackBoard, startBlackjackRoomBoard), because a table that fails
+//        to start closes the room, and that is the caller's decision rather than the
+//        provisioner's. Nor is a solo luck round, which soloRooms plays once the room is up.
 export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 	const { guild, channel, room, game, hostId, playerIds, visibility } = input;
 	const botIds = input.botIds ?? [];
 
-	// ⑤ᵃ Mint the room's invite link, best effort, before the opener composes so the
-	// URL can ride the opener's LAST line. maxAge/maxUses 0 keeps the link alive for
-	// the whole archive window; unique:true stops Discord handing back somebody
-	// else's cached invite for the channel.
-	//
-	// ⚠️ A GUILD INVITE, NOT A ROOM GRANT. The link brings a stranger into the
-	// SERVER pointing at this channel; it does not touch the permission overwrites,
-	// so an invite-only room stays hidden from whoever used it. The opener copy
-	// carries the caveat that makes that honest (see gameRoomsCopy.opener).
-	//
-	// Fire and forget in spirit (house rule 7): the members can already see the
-	// channel, so a failed mint (typically 50013 when the bot's CreateInstantInvite
-	// bit is missing) logs and degrades to a room without a link, never a failed open.
-	// Solo rooms mint nothing: the room admits exactly one member and a share link
-	// for a channel nobody else can ever see would be a lie in URL form.
-	let inviteCode: string | null = null;
-	if (visibility !== "solo") {
-		try {
-			const invite = await channel.createInvite({ maxAge: 0, maxUses: 0, unique: true, reason: `game room ${room.roomId}` });
-			inviteCode = invite?.code ?? null;
-		} catch (error) {
-			console.error("[game-rooms] failed to mint invite", { guildId: guild.id, roomId: room.roomId, error });
-		}
-	}
+	// ⑤ᵃ Mint the room's invite link before the opener composes so the URL can ride the
+	// opener's LAST line. Only a public room everyone may watch gets one, and finish
+	// deletes it the moment the match ends (roomInvite, 2026-10 item 254, Arcade 10); a
+	// rematch passes through here too, so it follows the same rule as a first open.
+	// Best effort: a failed mint is a room without a link, never a failed open.
+	const inviteCode = await mintRoomInvite(channel, room, visibility, input.spectatorMode);
 
 	// ⑤ Move to "playing" and record the ids that only exist now. Two writes rather
 	// than one because create() owns the shape of a new row and this owns the
@@ -457,7 +462,7 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 	const logo = roomOpenerLogo(game);
 	const opener = await channel
 		.send({
-			embeds: [roomOpenerEmbed(game, hostId, [...playerIds, ...botIds], visibility, inviteCode, logo?.ref)],
+			embeds: [roomOpenerEmbed(game, hostId, [...playerIds, ...botIds], visibility, input.spectatorMode ?? null, inviteCode, logo?.ref)],
 			...(logo ? { files: [logo.attachment] } : {}),
 			...openerComponents(game, room.roomId),
 		})

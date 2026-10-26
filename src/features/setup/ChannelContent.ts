@@ -233,6 +233,14 @@ export const ChannelContent = {
 		return infoEmbed(cc.arcadeChallenges.title, cc.arcadeChallenges.description, copy.COLORS.ARCADE);
 	},
 
+	// 🏆rated-challenges' intro (2026-10 item 254, Arcade 5): one line, like
+	// ⚔️challenges', above the rated games' cards and the network board.
+	arcadeRatedChallengesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.arcadeRatedChallenges.title, cc.arcadeRatedChallenges.description, copy.COLORS.ARCADE);
+	},
+
 	// 🎉party-games' intro (post-launch plan item 3), above the admin host and
 	// schedule buttons (features/game-rooms/partyGames).
 	partyGamesIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {

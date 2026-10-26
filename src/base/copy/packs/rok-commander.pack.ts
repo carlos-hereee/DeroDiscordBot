@@ -389,6 +389,11 @@ export const rokCommanderCopy = {
 			// games and the party game schedule. Members read and play through the
 			// buttons; only admins and Dero post. Universal across packs.
 			partyGames: "🎉party-games",
+			// The fifth (2026-10 item 254, Arcade 5): the challenge cards of the rated games
+			// (ratingEngine.RATED_GAMES) and the network board, so a member looking for a
+			// match that counts finds them apart from the luck games. A plain text channel,
+			// bot written like ⚔️challenges. Universal across packs.
+			arcadeRatedChallenges: "🏆rated-challenges",
 			// ── the two VOICE rooms, one per managed category ───────────
 			// Plain voice channels, groundwork for a later meeting notes feature:
 			// nothing listens in either, and neither is on Dero's voice allowlist
@@ -676,7 +681,15 @@ export const rokCommanderCopy = {
 		// channel now holds only the challenge posts themselves.
 		arcadeChallenges: {
 			title: "⚔️ Challenges of the Realm",
-			description: "Every challenge in the realm is posted here. Start one from 🕹️games.",
+			description: "Every challenge in the realm is posted here, save the rated ones, which go to 🏆rated-challenges. Start one from 🕹️games.",
+		},
+
+		// ── the 🏆rated-challenges intro (2026-10 item 254, Arcade 5) ──
+		// One short line, like ⚔️challenges: the channel holds the rated games' cards and
+		// the network board, each card wearing its RATED or CASUAL badge.
+		arcadeRatedChallenges: {
+			title: "🏆 Rated Challenges",
+			description: "Hold'em, Battleship and Monopoly challenges are posted here, each wearing its badge: **RATED** counts toward `/rating`, **CASUAL** does not. Start one from 🕹️games.",
 		},
 
 		// ── the 🕹️games channel (2026-10 item 245 Phase 4a) ─────────────
@@ -726,12 +739,7 @@ export const rokCommanderCopy = {
 			// The second message: the Challenge Board's start buttons.
 			boardTitle: "⚔️ Challenge a Warrior",
 			boardDescription:
-				"Pick a game below and I post its card in ⚔️challenges. You choose whether the room is **Invite only** or **Open to all**, and once the players are in I raise a room and the match plays out inside it.",
-
-			// The host buttons' replies, moved here with the buttons.
-			hostNoChannel: "The arcade is not built yet. An admin must run `/setup`.",
-			hostFailed: "I could not set that table. Try again in a moment.",
-			hostStarted: (game: string): string => `Your ${game} is live. Go and play.`,
+				"Pick a game below and I post its card in ⚔️challenges, or in 🏆rated-challenges for a rated game. You choose whether the room is **Invite only** or **Open to all** and who may watch, and once the players are in I raise a room and the match plays out inside it.",
 		},
 
 		// ── 🎉party-games' intro (post-launch plan item 3) ──────────────────

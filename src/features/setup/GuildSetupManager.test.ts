@@ -63,6 +63,9 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 		arcadeGamesChannelId: "ch-arcadegames",
 		// 🎉party-games (post-launch plan item 3), present for the same reason.
 		partyGamesChannelId: "ch-partygames",
+		// 🏆rated-challenges (2026-10 item 254, Arcade 5), present for the same reason; its
+		// boot test in GuildSetupManager.gamesChannel.test.ts nulls it.
+		arcadeRatedChallengesChannelId: "ch-ratedchallenges",
 		// The two voice rooms (2026-10 item 235), present for the same reason:
 		// a null id reads as "missing, rebuild too". Their own tests null them.
 		meetingVoiceChannelId: "ch-meetingvoice",
@@ -151,6 +154,7 @@ function makeGuild(options: {
 		"ch-arcadechallenges": { id: "ch-arcadechallenges" },
 		"ch-arcadegames": { id: "ch-arcadegames" },
 		"ch-partygames": { id: "ch-partygames" },
+		"ch-ratedchallenges": { id: "ch-ratedchallenges" },
 		"ch-meetingvoice": { id: "ch-meetingvoice" },
 		"ch-arcadevoice": { id: "ch-arcadevoice" },
 		...(options.channelFetchMap ?? {}),
@@ -923,7 +927,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		};
 	}
 
-	it("builds exactly two categories and fifteen channels", async () => {
+	it("builds exactly two categories and sixteen channels", async () => {
 		const { categories, textChannels } = await runFreshInstall();
 
 		// Both categories, in build order, with NO dev suffix: vitest runs under
@@ -935,7 +939,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 			rokCommanderCopy.setup.gamesCategoryName,
 		]);
 
-		expect(textChannels).toHaveLength(15);
+		expect(textChannels).toHaveLength(16);
 		expect(textChannels.map((channel) => channel.name).sort()).toEqual(
 			[
 				packChannels.intro,
@@ -953,6 +957,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 				packChannels.arcadeChallenges,
 				packChannels.arcadeGames,
 				packChannels.partyGames,
+				packChannels.arcadeRatedChallenges,
 			].sort()
 		);
 	});
@@ -961,7 +966,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 	// the compiler cannot tell them apart and a swapped parent.id is a silent
 	// misfile. CHANNEL_SPECS.categoryField protects every OTHER consumer;
 	// createChannels passes the parent literally, so only a test protects it.
-	it("files the eleven homebase channels and the four arcade channels under their own categories", async () => {
+	it("files the eleven homebase channels and the five arcade channels under their own categories", async () => {
 		const { textChannels } = await runFreshInstall();
 
 		const homebaseParent = `cat-${rokCommanderCopy.setup.categoryName}`;
@@ -984,14 +989,14 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 			expect(parentOf(name), `${name} belongs under the homebase category`).toBe(homebaseParent);
 		}
 
-		for (const name of [packChannels.arcadeRules, packChannels.arcadeChallenges, packChannels.arcadeGames, packChannels.partyGames]) {
+		for (const name of [packChannels.arcadeRules, packChannels.arcadeChallenges, packChannels.arcadeGames, packChannels.partyGames, packChannels.arcadeRatedChallenges]) {
 			expect(parentOf(name), `${name} belongs under the arcade category`).toBe(arcadeParent);
 		}
 
 		// No channel may land unparented or under a third parent, which a typo
 		// in a parent id would otherwise produce without failing either loop.
 		expect(textChannels.filter((channel) => channel.parent === homebaseParent)).toHaveLength(11);
-		expect(textChannels.filter((channel) => channel.parent === arcadeParent)).toHaveLength(4);
+		expect(textChannels.filter((channel) => channel.parent === arcadeParent)).toHaveLength(5);
 	});
 
 	// The three postures createChannels mints, expressed as what @everyone and
@@ -1055,6 +1060,8 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		[packChannels.arcadeGames, "public"],
 		// 🎉party-games: members play through buttons; admins and Dero post.
 		[packChannels.partyGames, "public"],
+		// 🏆rated-challenges: the rated half of ⚔️challenges, the same wall of bot cards.
+		[packChannels.arcadeRatedChallenges, "public"],
 	];
 
 	it("gives every channel the overwrite array its privacy posture requires", async () => {
@@ -1070,14 +1077,14 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		}
 	});
 
-	it("carries the bot self overwrite on all fifteen channels", async () => {
+	it("carries the bot self overwrite on all sixteen channels", async () => {
 		// Not decoration. Without it the @everyone SendMessages deny suppresses
 		// the bot's OWN posts on a public channel, and the @everyone ViewChannel
 		// deny hides an admin channel from the bot entirely. Both fail at post
 		// time, long after setup reported success, so the failure surfaces as a
 		// missing intro embed rather than as a setup error.
 		const { textChannels } = await runFreshInstall();
-		expect(textChannels).toHaveLength(15);
+		expect(textChannels).toHaveLength(16);
 
 		for (const created of textChannels) {
 			const botEntry = (created.permissionOverwrites ?? []).find((entry) => entry.id === BOT_ID);

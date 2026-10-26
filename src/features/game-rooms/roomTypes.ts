@@ -5,8 +5,9 @@
 // Who:   the GameRoom model, gameRoomStore, the provisioner, the archive sweep, the trail
 //        poster, the challenge board, and (later) the dashboard API route. Everything in
 //        features/game-rooms plus db/models/GameRoom.ts imports from here.
-// When:  compile time only. This module is deliberately types + frozen literal lists, so it
-//        can be imported from a Mongoose model without dragging feature code into the DB layer.
+// When:  compile time only. This module is deliberately types + frozen literal lists (and
+//        the pure membership checks of two of them), so it can be imported from a
+//        Mongoose model without dragging feature code into the DB layer.
 // Where: sits below the model in the dependency graph, so nothing here may import a store, a
 //        handler, or discord.js. Keeping it dependency-free is what lets the pure modules
 //        (roomPermissions, roomNaming) stay Discord-free and unit testable.
@@ -18,21 +19,47 @@
 
 // ── Which game a room is playing ──
 // Needing two or more humans is NECESSARY but not sufficient. Fortune is single player and
-// stays a plain slash command, so it is deliberately absent. Blackjack is the case that
-// shows the rest of the rule: it grew multi seat tables on 2026-08-11 and still does not
-// belong here, because a hand takes a minute and a table runs in place on one edited
-// message. A room is earned by DURATION and a transcript worth keeping, which is why
-// battleship and holdem will join this list and a blackjack table will not.
-// Monopoly is the longest of them all (2 to 6 players, played until one is left
-// standing), which is exactly the duration rule above.
-// The two solo- slugs are the arcade host's one-player forms, routed through the same
-// provisioner so they hold the host's one-room slot, count against the guild cap, and
-// count as PRIVATE rooms for the tier quota. They are their OWN slugs rather than a
-// `mode: "solo"` field on hangman/blackjack so every customId, enum validator and trail
-// entry is unambiguous about which form was played, and so SELF_BOARDED_GAMES can name
-// solo-blackjack (rides its own edited board message) without a mode branch.
-export const GAME_SLUGS = ["hangman", "coinflip", "diceroll", "rps", "battleship", "holdem", "monopoly", "solo-hangman", "solo-blackjack"] as const;
+// stays a plain slash command, so it is deliberately absent: a reading has no room.
+// Monopoly is the longest of them all (2 to 6 players, played until one is left standing).
+// Blackjack gets a room too, by the owner's decision on 2026-10-26 (2026-10 item 254,
+// Arcade 1): nothing is played in ⚔️challenges, so a table that once ran in place on one
+// edited message there now plays in a room of its own like every other game.
+// The solo- slugs are the arcade's one-player forms, routed through the same provisioner
+// so they hold the host's one-room slot, count against the guild cap, and count as
+// PRIVATE rooms for the tier quota. They are their OWN slugs rather than a `mode: "solo"`
+// field so every customId, enum validator and trail entry is unambiguous about which form
+// was played, and so SELF_BOARDED_GAMES can name solo-blackjack without a mode branch. The
+// three solo luck slugs are a round against Dero (Play Dero instead, and a /mini-game
+// against Dero typed in ⚔️challenges), played and finished the moment the room opens.
+export const GAME_SLUGS = [
+	"hangman",
+	"coinflip",
+	"diceroll",
+	"rps",
+	"battleship",
+	"holdem",
+	"monopoly",
+	"blackjack",
+	"solo-hangman",
+	"solo-blackjack",
+	"solo-coinflip",
+	"solo-diceroll",
+	"solo-rps",
+] as const;
 export type GameSlug = (typeof GAME_SLUGS)[number];
+
+// ── Game families several modules branch on (2026-10 item 254, Arcade 1) ──
+// Listed once, with their membership checks beside them, so the opener, the boot recovery,
+// the room-rate top up and the rematch check cannot drift into different lists. Pure list
+// membership, so they keep this module dependency free.
+// The rooms whose hand is dealt by blackjackHandler and lives only in its process Map.
+export const BLACKJACK_ROOM_GAMES = ["blackjack", "solo-blackjack"] as const satisfies readonly GameSlug[];
+// The one round solo rooms against Dero, played and finished the moment the room opens.
+export const SOLO_LUCK_GAMES = ["solo-coinflip", "solo-diceroll", "solo-rps"] as const satisfies readonly GameSlug[];
+export type SoloLuckSlug = (typeof SOLO_LUCK_GAMES)[number];
+
+export const isBlackjackRoomGame = (game: GameSlug): boolean => (BLACKJACK_ROOM_GAMES as readonly GameSlug[]).includes(game);
+export const isSoloLuckGame = (game: GameSlug): game is SoloLuckSlug => (SOLO_LUCK_GAMES as readonly GameSlug[]).includes(game);
 
 // ── Who may see the room ──
 // "invite": @everyone is denied ViewChannel and each accepted member gets an explicit
@@ -42,6 +69,16 @@ export type GameSlug = (typeof GAME_SLUGS)[number];
 // solo room is private by construction and counts as private wherever the tier quota asks.
 export const ROOM_VISIBILITIES = ["invite", "public", "solo"] as const;
 export type RoomVisibility = (typeof ROOM_VISIBILITIES)[number];
+
+// ── Who may watch the room (2026-10 item 254, Arcade 11) ──
+// The host's spectator setting, a second axis beside visibility: visibility says who may
+// PLAY (anyone who presses Join, or only the members the host picked), this says who may
+// WATCH. "open": everyone, through the one @everyone overwrite. "invite": only the members
+// the host invited, through spectatorIds. "none": only the players. A row stores null until
+// the host chooses, and roomPermissions.effectiveSpectatorMode reads null as the default its
+// visibility always had, so a room opened before the setting existed keeps its matrix.
+export const SPECTATOR_MODES = ["open", "invite", "none"] as const;
+export type SpectatorMode = (typeof SPECTATOR_MODES)[number];
 
 // ── Lifecycle ──
 // draft    the host is still choosing visibility and opponents; no channel exists yet

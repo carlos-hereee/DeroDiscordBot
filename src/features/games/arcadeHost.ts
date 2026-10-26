@@ -4,19 +4,18 @@ import {
 	ButtonStyle,
 	MessageFlags,
 	StringSelectMenuBuilder,
-	TextChannel,
 	type ButtonInteraction,
+	type ChatInputCommandInteraction,
 	type MessageComponentInteraction,
 	type StringSelectMenuInteraction,
 } from "discord.js";
-import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton, registerSelectMenu } from "@handlers/interactionRegistry.js";
-import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { openSoloRoom, describeSoloOpenFailure, readPrivateQuotaStatus, type SoloGameSlug } from "@features/game-rooms/soloRooms.js";
+import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
-import { startBlackjackTable } from "./blackjackHandler.js";
 import { HANGMAN_CATEGORIES, isHangmanCategory, type HangmanCategory } from "./hangmanWords.js";
+import type { SoloLuckPlay } from "./soloLuck.js";
 
 // ── arcadeHost ─────────────────────────────────────────────────────────────
 // What:  the "Host a game" controls and the hangman category start, both riding the
@@ -26,16 +25,17 @@ import { HANGMAN_CATEGORIES, isHangmanCategory, type HangmanCategory } from "./h
 // Who:   GuildSetupManager.resolveIntroComponents attaches both rows to the games
 //        intro; main.ts registers the handlers once at boot.
 // When:  on a button press or a category pick, any time.
-// Where: the solo forms open a room of their own; "Open a Blackjack table" posts its
-//        table into ⚔️challenges, where an open table is joined, never into 🕹️games,
-//        whose messages are the controls themselves.
+// Where: the solo forms open a room of their own; "Open a Blackjack table" posts a
+//        challenge card in ⚔️challenges with Join, like every room game, and its hands
+//        play in the room the card opens (2026-10 item 254, Arcade 1): nothing is played
+//        in ⚔️challenges, and nothing is posted into 🕹️games, whose messages are the
+//        controls themselves.
 // How:   the SOLO forms (Host Hangman, Play Blackjack, the hangman category start) open
 //        a solo GameRoom via soloRooms.openSoloRoom, so a one-player game holds the
 //        host's one-room slot, counts against the guild cap and counts as a PRIVATE
 //        room for the tier quota, exactly like every other room. "Open a Blackjack
-//        table" deliberately stays on the inline multi-seat path in ⚔️challenges: it
-//        is the DISCOVERABLE public form of blackjack, a hand takes a minute, and a
-//        table has never earned a room (see roomTypes' duration rule).
+//        table" goes through challengeBoard.startChallengeDraft, the same door every
+//        board button uses, so the table gets a card, a pool and a room the same way.
 //
 // ⚠️ ONLY GAMES THAT NEED NO NAMED OPPONENT ARE HOSTABLE HERE, and the omission
 // is honest rather than an oversight. Head-to-head games start from the
@@ -88,6 +88,13 @@ async function handleArcadeHost(interaction: ButtonInteraction): Promise<void> {
 	const choice = interaction.customId.split(":")[1] as HostableId;
 	if (!HOSTABLE.some((game) => game.id === choice)) return;
 
+	// ── the multi seat table: a challenge card, like every room game ──
+	// Before the defer below, because startChallengeDraft answers the press itself.
+	if (choice === "blackjack-table") {
+		await startChallengeDraft(interaction, "blackjack");
+		return;
+	}
+
 	// Ephemeral throughout: the PUBLIC artifact of pressing this is the room or the
 	// table that opens, so a second public "X pressed a button" message would just be
 	// noise beside it.
@@ -97,33 +104,7 @@ async function handleArcadeHost(interaction: ButtonInteraction): Promise<void> {
 	if (!guild) return;
 
 	// ── the solo forms: a private one-player room ──
-	if (choice === "hangman" || choice === "blackjack") {
-		await openSoloRoomForMember(interaction, choice === "hangman" ? "solo-hangman" : "solo-blackjack");
-		return;
-	}
-
-	// ── the inline multi-seat table, posted into ⚔️challenges ──
-	const stored = await guildConfigStore.findByGuildId(guild.id);
-	const copy = getPluginCopy(stored as unknown as ICopyConfig | null).channelContent.arcadeGames;
-	const challengesId = (stored as unknown as { arcadeChallengesChannelId?: string | null } | null)?.arcadeChallengesChannelId;
-	const channel = challengesId ? await guild.channels.fetch(challengesId).catch(() => null) : null;
-	if (!(channel instanceof TextChannel)) {
-		// The arcade was never built, or an admin removed the board. Say which,
-		// rather than failing silently on a button the member can plainly see.
-		await interaction.editReply({ embeds: [errorEmbed(copy.hostNoChannel)] });
-		return;
-	}
-
-	const host = { userId: interaction.user.id, username: interaction.user.globalName ?? interaction.user.username };
-	const result = await startBlackjackTable(channel, guild.id, host, false);
-
-	if (result === "started") {
-		await interaction.editReply({ content: copy.hostStarted(labelFor(choice)) });
-		return;
-	}
-	// "alreadyRunning" and "failed" both mean nothing was posted. The shared core
-	// already logs the failure cause, so the member gets the short version.
-	await interaction.editReply({ embeds: [errorEmbed(copy.hostFailed)] });
+	await openSoloRoomForMember(interaction, choice === "hangman" ? "solo-hangman" : "solo-blackjack");
 }
 
 // The category start's submit. The value is re-checked against the bank, because a
@@ -138,15 +119,17 @@ async function handleHangmanCategoryStart(interaction: StringSelectMenuInteracti
 	// updating it would edit that public message for everyone.
 	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 	if (!interaction.guild) return;
-	await openSoloRoomForMember(interaction, "solo-hangman", category);
+	await openSoloRoomForMember(interaction, "solo-hangman", { hangmanCategory: category });
 }
 
 // The shared tail of every solo form: open the room, then tell the member where it is
-// or, on a refusal, what to do about it. The interaction is already deferred.
-async function openSoloRoomForMember(
-	interaction: MessageComponentInteraction,
+// or, on a refusal, what to do about it. The interaction is already deferred, privately.
+// Exported for miniGameInChallenges (2026-10 item 254, Arcade 1), whose slash commands
+// typed in ⚔️challenges open the same solo rooms and answer the same way.
+export async function openSoloRoomForMember(
+	interaction: MessageComponentInteraction | ChatInputCommandInteraction,
 	game: SoloGameSlug,
-	hangmanCategory?: HangmanCategory
+	options: { hangmanCategory?: HangmanCategory; luckPlay?: SoloLuckPlay } = {}
 ): Promise<void> {
 	const guild = interaction.guild!;
 	const member = guild.members.cache.get(interaction.user.id);
@@ -156,8 +139,9 @@ async function openSoloRoomForMember(
 		{
 			userId: interaction.user.id,
 			displayName: member?.displayName ?? interaction.user.globalName ?? interaction.user.username,
+			user: interaction.user,
 		},
-		{ hangmanCategory }
+		options
 	);
 	if (result.ok) {
 		// The quota status line rides the confirmation when the tier surface is
@@ -171,10 +155,6 @@ async function openSoloRoomForMember(
 	// Every refusal names itself (room slot held, guild full, quota hit, no
 	// arcade), so the member learns what to do rather than that something failed.
 	await interaction.editReply({ embeds: [errorEmbed(describeSoloOpenFailure(result))] });
-}
-
-function labelFor(id: HostableId): string {
-	return HOSTABLE.find((game) => game.id === id)?.label ?? id;
 }
 
 /**

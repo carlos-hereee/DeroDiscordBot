@@ -11,6 +11,7 @@ import { runCoinFlip, runDiceRoll, runMonopoly, runRps } from "@features/games/c
 import { runHangman } from "@features/games/hangmanHandler.js";
 import { runBlackjack } from "@features/games/blackjackHandler.js";
 import { runFortune } from "@features/games/fortuneHandler.js";
+import { routeMiniGameInChallenges } from "@features/games/miniGameInChallenges.js";
 
 // ── /mini-game ─────────────────────────────────────────────────────────────
 // The single home for every Dero game. Four games ship as native Discord
@@ -180,6 +181,12 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	// reading, no cooldown checks, no embeds, no state maps. Business logic lives
 	// in src/features/games/.
 	const subcommand = interaction.options.getSubcommand();
+
+	// Nothing is played in a challenge channel (2026-10 item 254, Arcade 1): typed there,
+	// a game opens its room and a fortune answers privately. Everywhere else this returns
+	// false and the table below runs exactly as before.
+	if (await routeMiniGameInChallenges(interaction, subcommand)) return;
+
 	const handler = MINI_GAME_HANDLERS[subcommand as keyof typeof MINI_GAME_HANDLERS] as
 		| ((interaction: ChatInputCommandInteraction) => Promise<void>)
 		| undefined;

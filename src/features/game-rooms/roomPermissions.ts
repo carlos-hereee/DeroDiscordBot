@@ -1,6 +1,6 @@
 import { PermissionFlagsBits } from "discord.js";
 import { buildBotSelfOverwrite } from "@utils/channelOverwrites.js";
-import type { RoomVisibility } from "./roomTypes.js";
+import type { RoomVisibility, SpectatorMode } from "./roomTypes.js";
 
 // ── roomPermissions ──────────────────────────────────────────────────
 // What:  the complete permission overwrite array for one game room channel, for one
@@ -18,7 +18,9 @@ import type { RoomVisibility } from "./roomTypes.js";
 //        is the single thing in this feature that is genuinely hard to verify by hand:
 //        a wrong entry produces a channel that LOOKS right and leaks.
 // How:   one entry per actor, in a deterministic order (@everyone, bot, players,
-//        spectators, admin role) so a diff of two arrays reads cleanly.
+//        spectators, admin role) so a diff of two arrays reads cleanly. Who may WATCH is
+//        the host's spectator setting (effectiveSpectatorMode below, 2026-10 item 254,
+//        Arcade 11); who may PLAY is always the players' own entries.
 
 export type RoomPhase = "playing" | "finished";
 
@@ -37,9 +39,13 @@ export interface RoomPermissionInput {
 	hostId: string;
 	// Write access. Includes hostId; duplicates are tolerated and collapsed.
 	playerIds: string[];
-	// Explicit read-only watchers. Meaningful in "invite" visibility only.
+	// Explicit read-only watchers. Meaningful only while the spectator setting is "invite".
 	spectatorIds: string[];
 	visibility: RoomVisibility;
+	// The host's spectator setting off the row. Null or absent reads as the visibility's
+	// default (effectiveSpectatorMode), which is how a room opened before the setting
+	// existed keeps exactly the matrix it was opened with.
+	spectatorMode?: SpectatorMode | null;
 	phase: RoomPhase;
 	// The guild's admin role, when one has been configured. Omitted or null on a guild
 	// that has not run /setup's role step.
@@ -53,16 +59,39 @@ export interface RoomPermissionInput {
 // everywhere they are used, so they are named once.
 const THREAD_WRITE_DENIES = [PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.SendMessagesInThreads];
 
+// ── reactions belong to the players (2026-10 item 254, Arcade 11) ──
+// The owner's rule: in every room and every spectator setting, only the people playing may
+// react. ONE @everyone deny carries it for everybody else (watchers, admins, invited
+// spectators, whose own entries never mention the flag and so fall through to it), and the
+// players' existing entries carry the allow. Never an entry per member to deny it: that is
+// the O(members) cost the single @everyone overwrite exists to avoid.
+const REACTION_DENIES = [PermissionFlagsBits.AddReactions];
+
+/**
+ * The spectator setting a room actually has: the host's choice off the row, or the
+ * default its visibility always had when the host never chose. A solo room is "none"
+ * whatever the row says, because it admits exactly one member by construction.
+ *
+ * The one place the default is decided, read by the matrix below, the invite rule
+ * (roomInvite) and the challenge card, so the three can never disagree about who watches.
+ */
+export function effectiveSpectatorMode(visibility: RoomVisibility, stored: SpectatorMode | null | undefined): SpectatorMode {
+	if (visibility === "solo") return "none";
+	if (stored) return stored;
+	return visibility === "public" ? "open" : "invite";
+}
+
 export function buildRoomOverwrites(input: RoomPermissionInput): RoomOverwrite[] {
 	const { everyoneRoleId, botId, hostId, visibility, phase, adminRoleId } = input;
 	const locked = phase === "finished";
+	const spectators = effectiveSpectatorMode(visibility, input.spectatorMode);
 	const overwrites: RoomOverwrite[] = [];
 
 	// ── @everyone ─────────────────────────────────────────────────────
-	// ⚠️ THE LOAD BEARING LINE OF THE WHOLE FEATURE: the public case is ONE overwrite,
-	// never one per member. A 5000 member guild costs exactly what a 50 member guild
-	// costs, and Discord's own per-channel overwrite cap is never approached. Any change
-	// that starts emitting a per-member entry for a public room has re-broken the thing
+	// ⚠️ THE LOAD BEARING LINE OF THE WHOLE FEATURE: a room everyone may watch is ONE
+	// overwrite, never one per member. A 5000 member guild costs exactly what a 50 member
+	// guild costs, and Discord's own per-channel overwrite cap is never approached. Any
+	// change that starts emitting a per-member entry for watchers has re-broken the thing
 	// this design exists to get right.
 	//
 	// ⚠️ AND THE LOCK LIVES HERE, NOT ON THE PLAYERS. Removing a player's SendMessages
@@ -73,26 +102,27 @@ export function buildRoomOverwrites(input: RoomPermissionInput): RoomOverwrite[]
 	// is "playing minus every SendMessages allow"; taken literally that leaves an
 	// invite-only finished room fully writable by its players, which contradicts the
 	// phase's own completion criterion ("on finish, nobody can type"). The criterion wins.
-	// "solo" deliberately shares the else branch with "invite": identical @everyone deny,
-	// identical admin row below, and the spectator loop further down is invite-only so a
-	// solo room can never carry a per-member watcher entry.
-	if (visibility === "public") {
+	//
+	// Open to spectators is the only setting that lets @everyone see the room, whatever
+	// the visibility; Invite only and No spectators both hide it, the first then showing it
+	// to the invited spectators below. A solo room is always No spectators.
+	if (spectators === "open") {
 		overwrites.push({
 			id: everyoneRoleId,
 			allow: [PermissionFlagsBits.ViewChannel],
 			deny: locked
-				? [PermissionFlagsBits.SendMessages, ...THREAD_WRITE_DENIES]
-				: [PermissionFlagsBits.SendMessages],
+				? [PermissionFlagsBits.SendMessages, ...THREAD_WRITE_DENIES, ...REACTION_DENIES]
+				: [PermissionFlagsBits.SendMessages, ...REACTION_DENIES],
 		});
 	} else {
 		overwrites.push(hiddenEveryoneOverwrite(everyoneRoleId, locked));
 	}
 
 	// ── the bot ───────────────────────────────────────────────────────
-	// Required in EVERY phase and both visibilities. The room denies @everyone
-	// SendMessages (public) or ViewChannel (invite), and the bot is a member of
+	// Required in EVERY phase and every setting. The room denies @everyone
+	// SendMessages (open) or ViewChannel (hidden), and the bot is a member of
 	// @everyone like anyone else, so without its own entry it cannot post the move
-	// trail into a public room and cannot see an invite-only one at all. At "finished"
+	// trail into an open room and cannot see a hidden one at all. At "finished"
 	// it is also the only actor that may still write, which is what lets the result
 	// card land in a channel nobody else can type in.
 	overwrites.push(buildBotSelfOverwrite(botId));
@@ -106,16 +136,15 @@ export function buildRoomOverwrites(input: RoomPermissionInput): RoomOverwrite[]
 	for (const playerId of playerSet) overwrites.push(playerOverwrite(playerId, locked));
 
 	// ── explicit spectators ───────────────────────────────────────────
-	// Invite-only rooms ONLY. A public room expresses spectatorship with the single
-	// @everyone overwrite above, so emitting per-spectator entries here would quietly
-	// reintroduce the O(members) cost the public case exists to avoid. A caller that
-	// passes spectators alongside "public" gets them ignored, deliberately.
+	// The Invite only setting ONLY. Open to spectators expresses watching with the single
+	// @everyone overwrite above, so emitting per-spectator entries there would quietly
+	// reintroduce the O(members) cost it exists to avoid, and No spectators has nobody to
+	// list. A caller that passes spectators under either gets them ignored, deliberately.
 	//
 	// The denies: SendMessages so they cannot play, plus both thread flags so they
-	// cannot open a thread and type in that instead. AddReactions is NOT denied on
-	// purpose, a spectator reacting to a good move is the good kind of noise and is
-	// most of what watching a match is for.
-	if (visibility === "invite") {
+	// cannot open a thread and type in that instead. AddReactions is denied to them by the
+	// @everyone entry, which their entry never re-allows.
+	if (spectators === "invite") {
 		for (const spectatorId of new Set(input.spectatorIds)) {
 			// A member who is both cannot be both: write access wins, and emitting a
 			// second entry for them would overwrite the player grant with a deny.
@@ -143,22 +172,26 @@ export function buildRoomOverwrites(input: RoomPermissionInput): RoomOverwrite[]
 // invite room, and a second copy of any of them is a second matrix to keep in step.
 
 // A private channel's @everyone entry: invisible while playing, and once locked also
-// unwritable, threads included, for the lock reason the @everyone note above gives.
+// unwritable, threads included, for the lock reason the @everyone note above gives. It
+// carries the reactions deny too, since an admin or an invited spectator who can see the
+// channel falls through to it.
 function hiddenEveryoneOverwrite(everyoneRoleId: string, locked: boolean): RoomOverwrite {
 	return {
 		id: everyoneRoleId,
 		deny: locked
-			? [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, ...THREAD_WRITE_DENIES]
-			: [PermissionFlagsBits.ViewChannel],
+			? [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, ...THREAD_WRITE_DENIES, ...REACTION_DENIES]
+			: [PermissionFlagsBits.ViewChannel, ...REACTION_DENIES],
 	};
 }
 
+// A player may react while the match is played, the allow that beats the @everyone
+// reactions deny. Once locked nobody reacts, the same line the SendMessages lock draws.
 function playerOverwrite(playerId: string, locked: boolean): RoomOverwrite {
 	return {
 		id: playerId,
 		allow: locked
 			? [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
-			: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+			: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AddReactions],
 	};
 }
 

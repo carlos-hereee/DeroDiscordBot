@@ -14,15 +14,16 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, describeRoomOpenFailure: () => "nope" }));
-vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedValue(null) }));
+vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedValue(null), startBlackjackRoomBoard: vi.fn() }));
 // The opener card's picture (2026-10 item 243 Phase 4). The renderer answers null
 // unless a case says otherwise, so every case written before the picture still
 // sees the text card alone; the view is a fixed fake so no case needs avatars.
 const cardMocks = vi.hoisted(() => ({ renderChallengeCard: vi.fn(), challengeCardView: vi.fn() }));
 vi.mock("./challengeCardRenderer.js", () => cardMocks);
 
-import { openInvitePicker, handleInviteSelect, joinChallenge, startMatch, chooseMonopolyDraftSetting } from "./challengeBoard.js";
+import { openInvitePicker, handleInviteSelect, joinChallenge, startMatch, chooseMonopolyDraftSetting, handleOpponentSelect } from "./challengeBoard.js";
 import { RoomProvisioner } from "./RoomProvisioner.js";
+import { startBlackjackRoomBoard } from "./soloRooms.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -227,6 +228,91 @@ describe("starting the match", () => {
 
 		expect(interaction.reply).not.toHaveBeenCalled();
 		expect(interaction.deferReply).toHaveBeenCalledOnce();
+	});
+});
+
+// ── a Blackjack table plays in a room (2026-10 item 254, Arcade 1) ───────
+describe("starting a Blackjack table", () => {
+	const members = makeMembers([{ id: HOST, bot: false, name: "Host" }]);
+	const openMock = RoomProvisioner.open as unknown as ReturnType<typeof vi.fn>;
+	const boardMock = startBlackjackRoomBoard as unknown as ReturnType<typeof vi.fn>;
+
+	function arcadeButton() {
+		configMock.findByGuildId.mockResolvedValue({ gamesCategoryId: "arcade-cat", adminRoleId: null });
+		const interaction = makeButton(HOST, members);
+		Object.assign(interaction.guild as object, {
+			channels: { fetch: vi.fn(async () => ({ id: "arcade-cat", type: ChannelType.GuildCategory })) },
+		});
+		return interaction;
+	}
+
+	it("refuses a pool that would seat more than five, before anything is built", async () => {
+		const interaction = makeButton(HOST, members);
+		await startMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a", "b", "c", "d", "e"] }));
+
+		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
+		expect(reply.content).toBe(gameRoomsCopy.board.blackjackTooManyPlayers(5, 5));
+		expect(openMock).not.toHaveBeenCalled();
+	});
+
+	it("seats every joiner in a room of its own, then deals the table there", async () => {
+		const room = { roomId: "room-1" };
+		const channel = { id: "bj-room-1" };
+		openMock.mockResolvedValue({ ok: true, room, channel });
+		boardMock.mockResolvedValue(true);
+		const interaction = arcadeButton();
+
+		await startMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a", "b"] }));
+
+		// The whole pool plays, nobody is asked who: one table, every seat taken.
+		expect(interaction.reply).not.toHaveBeenCalled();
+		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ game: "blackjack", playerIds: [HOST, "a", "b"] }));
+		expect(boardMock).toHaveBeenCalledWith(interaction.guild, room, channel);
+		expect(interaction.editReply).toHaveBeenCalledWith({ content: gameRoomsCopy.board.cardStarted("bj-room-1") });
+	});
+
+	it("tells the host the table could not start when its board does not deal", async () => {
+		openMock.mockResolvedValue({ ok: true, room: { roomId: "room-1" }, channel: { id: "bj-room-1" } });
+		boardMock.mockResolvedValue(false);
+		const interaction = arcadeButton();
+
+		await startMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a"] }));
+
+		expect(interaction.editReply).toHaveBeenCalledWith({ embeds: [expect.anything()] });
+	});
+});
+
+// ── who watches once the match opens (2026-10 item 254, Arcade 11) ─────
+describe("the spectator setting at start", () => {
+	const members = makeMembers([{ id: HOST, bot: false, name: "Host" }, { id: "a", bot: false, name: "Ana" }, { id: "b", bot: false, name: "Ben" }]);
+	const openMock = RoomProvisioner.open as unknown as ReturnType<typeof vi.fn>;
+
+	// The host picks Ana; Ben joined too and is left over.
+	async function startWithAna(room: IGameRoom) {
+		configMock.findByGuildId.mockResolvedValue({ gamesCategoryId: "arcade-cat", adminRoleId: null });
+		openMock.mockResolvedValue({ ok: false, reason: "createFailed" });
+		storeMock.findByRoomId.mockResolvedValue(room);
+		const select = {
+			...makeSelect(HOST, ["a"], members),
+			customId: "gameroomSelect:opponent:room-1",
+			deferReply: vi.fn().mockResolvedValue(undefined),
+			editReply: vi.fn().mockResolvedValue(undefined),
+		};
+		Object.assign(select.guild as object, { channels: { fetch: vi.fn(async () => ({ id: "arcade-cat", type: ChannelType.GuildCategory })) } });
+		await handleOpponentSelect(select as unknown as StringSelectMenuInteraction);
+	}
+
+	it.each([
+		["public", null, []],
+		["public", "open", []],
+		["public", "invite", ["b"]],
+		["public", "none", []],
+		["invite", null, ["b"]],
+		["invite", "none", []],
+	] as const)("a %s room with setting %s keeps %j as spectators, and hands the setting on", async (visibility, spectatorMode, spectators) => {
+		await startWithAna(makeRoom({ visibility, spectatorMode, spectatorIds: ["a", "b"] }));
+
+		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ playerIds: [HOST, "a"], spectatorIds: [...spectators], spectatorMode }));
 	});
 });
 

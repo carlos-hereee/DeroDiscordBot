@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { PermissionFlagsBits } from "discord.js";
-import { buildRoomOverwrites, type RoomPermissionInput, type RoomOverwrite } from "./roomPermissions.js";
+import { buildRoomOverwrites, effectiveSpectatorMode, type RoomPermissionInput, type RoomOverwrite } from "./roomPermissions.js";
+import type { RoomVisibility, SpectatorMode } from "./roomTypes.js";
 import { buildBotSelfOverwrite } from "@utils/channelOverwrites.js";
 
 const EVERYONE = "everyone-role";
@@ -27,25 +28,26 @@ function makeInput(overrides: Partial<RoomPermissionInput> = {}): RoomPermission
 const entryFor = (overwrites: RoomOverwrite[], id: string) => overwrites.find((entry) => entry.id === id);
 
 describe("buildRoomOverwrites, invite only, playing", () => {
-	it("hides the room from @everyone", () => {
+	it("hides the room from @everyone, and denies reactions to everyone who is not playing", () => {
 		const everyone = entryFor(buildRoomOverwrites(makeInput()), EVERYONE);
-		expect(everyone?.deny).toEqual([PermissionFlagsBits.ViewChannel]);
+		expect(everyone?.deny).toEqual([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.AddReactions]);
 		// No ViewChannel allow: an invite room is invisible, not merely read-only.
 		expect(everyone?.allow).toBeUndefined();
 	});
 
-	it("gives the host and every player view, send and history", () => {
+	it("gives the host and every player view, send, history and reactions", () => {
 		const overwrites = buildRoomOverwrites(makeInput());
 		for (const id of [HOST, PLAYER]) {
 			expect(entryFor(overwrites, id)?.allow).toEqual([
 				PermissionFlagsBits.ViewChannel,
 				PermissionFlagsBits.SendMessages,
 				PermissionFlagsBits.ReadMessageHistory,
+				PermissionFlagsBits.AddReactions,
 			]);
 		}
 	});
 
-	it("lets a spectator watch and react but not type, and not open a thread to type in", () => {
+	it("lets a spectator watch but not type, and not open a thread to type in", () => {
 		const spectator = entryFor(buildRoomOverwrites(makeInput()), SPECTATOR);
 		expect(spectator?.allow).toEqual([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]);
 		expect(spectator?.deny).toEqual([
@@ -55,13 +57,15 @@ describe("buildRoomOverwrites, invite only, playing", () => {
 		]);
 	});
 
-	// ⚠️ THE DENY THAT MUST NOT BE ADDED. Reactions are most of what watching a match
-	// is for, and denying SendMessages does not touch them. A future tidy-up that
-	// "completes" the spectator deny list by adding AddReactions would silently make
-	// spectating pointless, and nothing else in the codebase would complain.
-	it("does NOT deny AddReactions to a spectator", () => {
-		const spectator = entryFor(buildRoomOverwrites(makeInput()), SPECTATOR);
+	// The owner reversed the old rule on 2026-10-26 (2026-10 item 254, Arcade 11): only the
+	// players react. The spectator's own entry neither allows nor denies it, so the one
+	// @everyone deny decides, and no per member deny is ever spent on it.
+	it("leaves a spectator unable to react, through the @everyone deny alone", () => {
+		const overwrites = buildRoomOverwrites(makeInput());
+		const spectator = entryFor(overwrites, SPECTATOR);
+		expect(spectator?.allow).not.toContain(PermissionFlagsBits.AddReactions);
 		expect(spectator?.deny).not.toContain(PermissionFlagsBits.AddReactions);
+		expect(entryFor(overwrites, EVERYONE)?.deny).toContain(PermissionFlagsBits.AddReactions);
 	});
 
 	it("grants the admin role read-only, never write", () => {
@@ -95,10 +99,10 @@ describe("buildRoomOverwrites, public, playing", () => {
 		expect(overwrites.filter((entry) => entry.id === EVERYONE)).toHaveLength(1);
 	});
 
-	it("lets everyone read and stops everyone writing", () => {
+	it("lets everyone read and stops everyone writing or reacting", () => {
 		const everyone = entryFor(buildRoomOverwrites(publicInput), EVERYONE);
 		expect(everyone?.allow).toEqual([PermissionFlagsBits.ViewChannel]);
-		expect(everyone?.deny).toEqual([PermissionFlagsBits.SendMessages]);
+		expect(everyone?.deny).toEqual([PermissionFlagsBits.SendMessages, PermissionFlagsBits.AddReactions]);
 	});
 
 	it("still grants only the players write access", () => {
@@ -188,5 +192,77 @@ describe("buildRoomOverwrites, shape guarantees", () => {
 	it("includes the host even when playerIds forgot them", () => {
 		const overwrites = buildRoomOverwrites(makeInput({ playerIds: [] }));
 		expect(entryFor(overwrites, HOST)?.allow).toContain(PermissionFlagsBits.SendMessages);
+	});
+});
+
+// ── the host's spectator setting (2026-10 item 254, Arcade 11) ──────────
+describe("effectiveSpectatorMode", () => {
+	it("reads a host who never chose as the default the visibility always had", () => {
+		expect(effectiveSpectatorMode("public", null)).toBe("open");
+		expect(effectiveSpectatorMode("invite", null)).toBe("invite");
+		expect(effectiveSpectatorMode("invite", undefined)).toBe("invite");
+	});
+
+	it("keeps the host's choice on a public or invite room", () => {
+		expect(effectiveSpectatorMode("public", "none")).toBe("none");
+		expect(effectiveSpectatorMode("invite", "open")).toBe("open");
+	});
+
+	it("makes a solo room No spectators whatever the row says", () => {
+		expect(effectiveSpectatorMode("solo", null)).toBe("none");
+		expect(effectiveSpectatorMode("solo", "open")).toBe("none");
+	});
+});
+
+describe("buildRoomOverwrites, the spectator setting matrix", () => {
+	// Who can see the room, by setting: open spreads it to @everyone with ONE entry,
+	// invite to the listed spectators, none to the players and admins only.
+	const cases: Array<[RoomVisibility, SpectatorMode | null, SpectatorMode]> = [
+		["public", null, "open"],
+		["public", "open", "open"],
+		["public", "invite", "invite"],
+		["public", "none", "none"],
+		["invite", null, "invite"],
+		["invite", "open", "open"],
+		["invite", "invite", "invite"],
+		["invite", "none", "none"],
+		["solo", null, "none"],
+		["solo", "open", "none"],
+	];
+
+	it.each(cases)("%s visibility with setting %s behaves as %s", (visibility, stored, effective) => {
+		const overwrites = buildRoomOverwrites(makeInput({ visibility, spectatorMode: stored, spectatorIds: [SPECTATOR, "s4"] }));
+		const everyone = entryFor(overwrites, EVERYONE);
+
+		// Exactly one @everyone entry in every setting, and it always denies reactions.
+		expect(overwrites.filter((entry) => entry.id === EVERYONE)).toHaveLength(1);
+		expect(everyone?.deny).toContain(PermissionFlagsBits.AddReactions);
+		// Only the players and the bot may type, whatever the setting.
+		const writers = overwrites.filter((entry) => entry.allow?.includes(PermissionFlagsBits.SendMessages));
+		expect(writers.map((entry) => entry.id).sort()).toEqual([BOT, HOST, PLAYER].sort());
+		// Only the players and the bot (whose shared overwrite carries reactions) may react.
+		const reactors = overwrites.filter((entry) => entry.allow?.includes(PermissionFlagsBits.AddReactions));
+		expect(reactors.map((entry) => entry.id).sort()).toEqual([BOT, HOST, PLAYER].sort());
+
+		if (effective === "open") {
+			expect(everyone?.allow).toEqual([PermissionFlagsBits.ViewChannel]);
+			expect(everyone?.deny).not.toContain(PermissionFlagsBits.ViewChannel);
+		} else {
+			expect(everyone?.allow).toBeUndefined();
+			expect(everyone?.deny).toContain(PermissionFlagsBits.ViewChannel);
+		}
+		// Per member watcher entries exist under Invite only and nowhere else.
+		const watcherIds = [SPECTATOR, "s4"].filter((id) => entryFor(overwrites, id));
+		expect(watcherIds).toEqual(effective === "invite" ? [SPECTATOR, "s4"] : []);
+	});
+
+	it("keeps a locked room unwritable and unreactable in every setting", () => {
+		for (const spectatorMode of ["open", "invite", "none"] as const) {
+			const overwrites = buildRoomOverwrites(makeInput({ visibility: "public", spectatorMode, phase: "finished" }));
+			const everyone = entryFor(overwrites, EVERYONE);
+			expect(everyone?.deny).toContain(PermissionFlagsBits.SendMessages);
+			expect(everyone?.deny).toContain(PermissionFlagsBits.AddReactions);
+			expect(overwrites.filter((entry) => entry.allow?.includes(PermissionFlagsBits.AddReactions)).map((entry) => entry.id)).not.toContain(HOST);
+		}
 	});
 });

@@ -241,6 +241,23 @@ describe("roomLifecycle.finish room-rate top up", () => {
 		}
 	});
 
+	// 2026-10 item 254, Arcade 1: a round against Dero plays in a solo room so nothing is
+	// played in ⚔️challenges, and it already paid its own capped solo luck award. A room rate
+	// on top would pay one coin flip like a whole match, outside the daily cap.
+	it.each(["solo-coinflip", "solo-diceroll", "solo-rps"] as const)("pays NO room rate for a %s round against Dero", async (game) => {
+		await finish(makeClient(makeChannel()), makeRoom({ game, visibility: "solo", playerIds: ["host-1"] }), { winnerId: "host-1" });
+		await new Promise((resolve) => setImmediate(resolve));
+		expect(awardMock).not.toHaveBeenCalled();
+	});
+
+	it("offers no Rematch on a solo luck room's result card, only Archive now", async () => {
+		const channel = makeChannel();
+		await finish(makeClient(channel), makeRoom({ game: "solo-rps", visibility: "solo", playerIds: ["host-1"] }));
+		const card = channel.send.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id: string }[] } }[] };
+		const ids = card.components[0].toJSON().components.map((button) => button.custom_id);
+		expect(ids).toEqual(["gameroom:archive:room-1"]);
+	});
+
 	it("pays NOTHING for an abandoned room, which is the farm this closes", async () => {
 		// Open a room, delete its channel, repeat. finish() is called with abandoned:true by
 		// both the boot recovery sweep and ChannelDeleteWatcher's R14 path.
@@ -295,6 +312,60 @@ describe("roomLifecycle.finish room-rate top up", () => {
 		// guild it could not fetch is a failure of the bookkeeping, not of ending the match.
 		await expect(finish(client, makeRoom(), { winnerId: "player-2" })).resolves.toBe(true);
 		expect(awardMock).not.toHaveBeenCalled();
+	});
+});
+
+// ── the room's invite dies with the match (2026-10 item 254, Arcade 10) ──
+describe("roomLifecycle.finish, the room invite", () => {
+	// A client whose guild can delete invites, recording the order of what finish does.
+	function makeInviteClient(channel: unknown, order: string[], deleteInvite = vi.fn().mockImplementation(async () => void order.push("invite"))) {
+		const guild = { ...makeGuild(), invites: { delete: deleteInvite } };
+		const client = {
+			user: { id: "bot-1" },
+			channels: { fetch: vi.fn().mockResolvedValue(channel) },
+			guilds: { cache: new Map([["guild-1", guild]]), fetch: vi.fn().mockResolvedValue(guild) },
+		} as unknown as Client;
+		return { client, deleteInvite };
+	}
+
+	it("deletes the stored invite AFTER the row is persisted and the channel is locked", async () => {
+		const order: string[] = [];
+		storeMock.finish.mockImplementation(async () => {
+			order.push("persist");
+			return makeRoom({ status: "finished", visibility: "public", inviteCode: "code-1" });
+		});
+		const channel = makeChannel();
+		channel.permissionOverwrites.set.mockImplementation(async () => void order.push("lock"));
+		const { client, deleteInvite } = makeInviteClient(channel, order);
+
+		await finish(client, makeRoom({ visibility: "public", inviteCode: "code-1" }));
+		await vi.waitFor(() => expect(deleteInvite).toHaveBeenCalled());
+
+		expect(deleteInvite).toHaveBeenCalledWith("code-1", expect.any(String));
+		expect(order.slice(0, 3)).toEqual(["persist", "lock", "invite"]);
+		// It writes nothing: the only row write is finish's own claim.
+		expect(storeMock.finish).toHaveBeenCalledTimes(1);
+	});
+
+	it("never blocks or fails the finish when the delete fails, and logs it", async () => {
+		storeMock.finish.mockResolvedValue(makeRoom({ status: "finished", visibility: "public", inviteCode: "code-1" }));
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const failing = vi.fn().mockRejectedValue(new Error("Unknown Invite"));
+		const { client } = makeInviteClient(makeChannel(), [], failing);
+
+		await expect(finish(client, makeRoom({ visibility: "public", inviteCode: "code-1" }))).resolves.toBe(true);
+		await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith("[game-rooms] failed to delete a finished room's invite", expect.anything()));
+		errorSpy.mockRestore();
+	});
+
+	it("deletes nothing for a room that never had an invite", async () => {
+		storeMock.finish.mockResolvedValue(makeRoom({ status: "finished", inviteCode: null }));
+		const { client, deleteInvite } = makeInviteClient(makeChannel(), []);
+
+		await finish(client, makeRoom({ inviteCode: null }));
+		await new Promise((resolve) => setImmediate(resolve));
+
+		expect(deleteInvite).not.toHaveBeenCalled();
 	});
 });
 

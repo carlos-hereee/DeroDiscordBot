@@ -68,7 +68,10 @@ function room(guildId: string, overrides: Partial<IGameRoom> = {}): IGameRoom {
 	} as unknown as IGameRoom;
 }
 
-const config = (guildId: string, extra: Partial<NetworkGuildConfig & { arcadeChallengesChannelId: string; networkBoardMessageId: string | null }> = {}) => ({
+const config = (
+	guildId: string,
+	extra: Partial<NetworkGuildConfig & { arcadeChallengesChannelId: string; arcadeRatedChallengesChannelId: string | null; networkBoardMessageId: string | null }> = {}
+) => ({
 	guildId,
 	challengeReach: "network",
 	blockedNetworkGuildIds: [],
@@ -244,6 +247,49 @@ describe("refreshing the boards", () => {
 		expect(remove).toHaveBeenCalled();
 		expect(mocks.updateConfig).toHaveBeenCalledWith(A, { networkBoardMessageId: null });
 		expect(send).not.toHaveBeenCalled();
+	});
+
+	// 2026-10 item 254, Arcade 5: every network table is rated, so the board lives in
+	// 🏆rated-challenges, and the one a server already had in ⚔️challenges goes once the new
+	// one is up, never before.
+	it("moves a board from ⚔️challenges to 🏆rated-challenges, deleting the old one only after the new one posts", async () => {
+		const order: string[] = [];
+		const legacyDelete = vi.fn(async () => void order.push("delete old"));
+		const ratedSend = vi.fn(async () => {
+			order.push("post new");
+			return { id: "board-new" };
+		});
+		const rated = Object.assign(Object.create(TextChannel.prototype) as TextChannel, { id: `rated-${A}`, send: ratedSend, messages: { fetch: vi.fn(async () => null) } });
+		const challenges = Object.assign(Object.create(TextChannel.prototype) as TextChannel, {
+			id: `challenges-${A}`,
+			send: vi.fn(),
+			messages: { fetch: vi.fn(async (id: string) => (id === "board-old" ? { delete: legacyDelete } : null)) },
+		});
+		const channels: Record<string, TextChannel> = { [rated.id]: rated, [challenges.id]: challenges };
+		const client = {
+			guilds: { cache: new Map([[A, { id: A, name: `Server ${A}` }]]) },
+			users: { cache: new Map(), fetch: vi.fn() },
+			channels: { fetch: vi.fn(async (id: string) => channels[id] ?? null) },
+		} as unknown as Client;
+		mocks.updateConfig.mockImplementation(async () => void order.push("store id"));
+		mocks.findNetworkBoardConfigs.mockResolvedValue([config(A, { arcadeRatedChallengesChannelId: rated.id, networkBoardMessageId: "board-old" })]);
+
+		await refreshNetworkBoards(client);
+
+		expect(ratedSend).toHaveBeenCalledTimes(1);
+		expect(challenges.send).not.toHaveBeenCalled();
+		expect(mocks.updateConfig).toHaveBeenCalledWith(A, { networkBoardMessageId: "board-new" });
+		expect(order).toEqual(["post new", "store id", "delete old"]);
+	});
+
+	it("posts a server's first board in 🏆rated-challenges when it has one", async () => {
+		const { client, send } = fakeClient();
+		mocks.findNetworkBoardConfigs.mockResolvedValue([config(A, { arcadeRatedChallengesChannelId: `rated-${A}` })]);
+
+		await refreshNetworkBoards(client);
+
+		expect(send).toHaveBeenCalledTimes(1);
+		expect((client.channels.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(`rated-${A}`);
 	});
 
 	it("starts no timer and reads nothing when asked to refresh before the boards were started", () => {

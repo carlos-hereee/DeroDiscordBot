@@ -286,6 +286,9 @@ export const generalEventsCopy: IPluginCopy = {
 			arcadeGames: "🕹️games",
 			// Admin hosted group games (mirrors rok-commander, post-launch plan item 3).
 			partyGames: "🎉party-games",
+			// The rated games' challenges and the network board (mirrors rok-commander,
+			// 2026-10 item 254, Arcade 5).
+			arcadeRatedChallenges: "🏆rated-challenges",
 			// The two voice rooms, universal names for the same reason (mirrors
 			// rok-commander, 2026-10 item 235).
 			meetingVoice: "🏛️ Meeting Hall",
@@ -488,7 +491,13 @@ export const generalEventsCopy: IPluginCopy = {
 
 		arcadeChallenges: {
 			title: "⚔️ Challenges",
-			description: "Every challenge shows up here. Start one from 🕹️games.",
+			description: "Every challenge shows up here, except rated ones, which go to 🏆rated-challenges. Start one from 🕹️games.",
+		},
+
+		// Same one line shape as rok-commander's, plain voice.
+		arcadeRatedChallenges: {
+			title: "🏆 Rated Challenges",
+			description: "Hold'em, Battleship and Monopoly challenges show up here, each with its badge: **RATED** counts toward `/rating`, **CASUAL** does not. Start one from 🕹️games.",
 		},
 
 		// Same two message structure as rok-commander's, plain voice.
@@ -528,11 +537,7 @@ export const generalEventsCopy: IPluginCopy = {
 
 			boardTitle: "⚔️ Challenge a member",
 			boardDescription:
-				"Pick a game below and its card gets posted in ⚔️challenges. You choose whether the room is **Invite only** or **Open to all**, and once the players are in, a room is created and the match plays out inside it.",
-
-			hostNoChannel: "The arcade is not built yet. An admin needs to run `/setup`.",
-			hostFailed: "That game could not be set up. Try again in a moment.",
-			hostStarted: (game: string): string => `Your ${game} is live. Go play.`,
+				"Pick a game below and its card gets posted in ⚔️challenges, or in 🏆rated-challenges for a rated game. You choose whether the room is **Invite only** or **Open to all** and who may watch, and once the players are in, a room is created and the match plays out inside it.",
 		},
 
 		// 🎉party-games' intro, plain voice (mirrors rok-commander, post-launch plan item 3).

@@ -32,6 +32,10 @@ vi.mock("@features/games/challengeEntry.js", () => ({
 vi.mock("@features/games/hangmanHandler.js", () => ({ runHangman: handlers.runHangman }));
 vi.mock("@features/games/blackjackHandler.js", () => ({ runBlackjack: handlers.runBlackjack }));
 vi.mock("@features/games/fortuneHandler.js", () => ({ runFortune: handlers.runFortune }));
+// The challenge channel router (2026-10 item 254, Arcade 1), mocked for the same reason.
+// It answers false by default, which is every channel but the two challenge channels.
+const router = vi.hoisted(() => ({ routeMiniGameInChallenges: vi.fn(async () => false) }));
+vi.mock("@features/games/miniGameInChallenges.js", () => router);
 
 import { data, execute, MINI_GAME_HANDLERS } from "./mini-game.js";
 
@@ -143,6 +147,15 @@ describe("/mini-game execute routing", () => {
 				expect(handler).not.toHaveBeenCalled();
 			}
 		}
+	});
+
+	it("lets the challenge channel router answer first, and then runs no handler", async () => {
+		router.routeMiniGameInChallenges.mockResolvedValueOnce(true);
+		const { interaction } = fakeInteraction("hangman");
+		await execute(interaction);
+
+		expect(router.routeMiniGameInChallenges).toHaveBeenCalledWith(interaction, "hangman");
+		for (const handler of Object.values(handlers)) expect(handler).not.toHaveBeenCalled();
 	});
 
 	describe("unknown subcommand", () => {

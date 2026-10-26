@@ -46,6 +46,7 @@ import {
 	SEATING_WINDOW_MS,
 	TABLE_TIMEOUT_MS,
 	MAX_SEATS,
+	roomWinnerOf,
 } from "./blackjackHandler.js";
 import { _resetDrawingPauses } from "@features/game-rooms/drawingPause.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
@@ -547,5 +548,21 @@ describe("drawing the table every turn", () => {
 
 		await vi.advanceTimersByTimeAsync(TABLE_TIMEOUT_MS);
 		expect(c.board().stopped()).toBe(true);
+	});
+});
+
+// ── a room's one winner (2026-10 item 254, Arcade 1) ─────────────────────
+// A multi seat table plays in a room now, whose result card names one winner at most.
+describe("roomWinnerOf", () => {
+	const seat = (userId: string, hands: Array<"win" | "blackjack" | "push" | "lose">) => ({ userId, username: userId, hands, doubled: hands.map(() => false) });
+
+	it("names the only seat that beat the dealer, a split seat counting once", () => {
+		expect(roomWinnerOf([seat("a", ["lose"]), seat("b", ["win", "lose"])])).toBe("b");
+		expect(roomWinnerOf([seat("a", ["blackjack"])])).toBe("a");
+	});
+
+	it("names nobody when several seats won, or none did", () => {
+		expect(roomWinnerOf([seat("a", ["win"]), seat("b", ["blackjack"])])).toBeNull();
+		expect(roomWinnerOf([seat("a", ["push"]), seat("b", ["lose"])])).toBeNull();
 	});
 });

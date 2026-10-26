@@ -126,10 +126,11 @@ describe("RoomProvisioner.open, happy path", () => {
 
 		// The row's channelId is written on the SAME transition that marks it playing,
 		// so a room is never "playing" with a null channel for any observable moment.
+		// An invite only room takes no invite link (2026-10 item 254, Arcade 10).
 		expect(storeMock.setStatus).toHaveBeenCalledWith("guild-1", "room-1", "playing", {
 			channelId: "room-channel-1",
 			openerMessageId: "opener-1",
-			inviteCode: "invite-1",
+			inviteCode: null,
 			startedAt: expect.any(Date),
 		});
 	});
@@ -191,28 +192,39 @@ describe("RoomProvisioner.open, the invite link", () => {
 		expect(opener.embeds[0].data.description).toContain("https://discord.gg/invite-1");
 	});
 
-	it("mints for an invite-only room too, with the hidden-from-newcomers caveat (fork a)", async () => {
-		const input = makeInput({ visibility: "invite" });
+	// 2026-10 item 254, Arcade 10: a link into a channel the newcomer cannot see is a lie,
+	// so only a public room everyone may watch mints one. Each case below mints nothing.
+	it.each([
+		["an invite only room", { visibility: "invite" as const }],
+		["an invite only room the host opened to spectators", { visibility: "invite" as const, spectatorMode: "open" as const }],
+		["a public room with Invite only spectators", { visibility: "public" as const, spectatorMode: "invite" as const }],
+		["a public room with no spectators", { visibility: "public" as const, spectatorMode: "none" as const }],
+	])("mints no invite for %s, and the opener shows no link", async (_label, overrides) => {
+		const input = makeInput(overrides);
 		await RoomProvisioner.open(input);
 
 		const channel = await createdChannelOf(input.guild);
+		expect(channel.createInvite).not.toHaveBeenCalled();
 		const opener = channel.send.mock.calls[0][0] as { embeds: { data: { description?: string } }[] };
-		// The link is a GUILD invite and does not touch the room's overwrites, so the
-		// caveat sentence is what keeps it from reading as broken.
-		expect(opener.embeds[0].data.description).toContain("https://discord.gg/invite-1");
-		expect(opener.embeds[0].data.description).toContain("hidden from members who were not invited");
-		expect(storeMock.setStatus).toHaveBeenCalledWith(
-			"guild-1",
-			"room-1",
-			"playing",
-			expect.objectContaining({ inviteCode: "invite-1" })
-		);
+		expect(opener.embeds[0].data.description).not.toContain("discord.gg");
+		expect(storeMock.setStatus).toHaveBeenCalledWith("guild-1", "room-1", "playing", expect.objectContaining({ inviteCode: null }));
+	});
+
+	it("mints for a public room open to spectators by the host's explicit choice", async () => {
+		const input = makeInput({ visibility: "public", spectatorMode: "open" });
+		await RoomProvisioner.open(input);
+
+		const channel = await createdChannelOf(input.guild);
+		expect(channel.createInvite).toHaveBeenCalledTimes(1);
+		const opener = channel.send.mock.calls[0][0] as { embeds: { data: { description?: string } }[] };
+		// The opener says the link stops working when the match ends, which is when finish deletes it.
+		expect(opener.embeds[0].data.description).toContain("until the match ends: https://discord.gg/invite-1");
 	});
 
 	it("degrades to inviteCode null when the mint throws, without failing the open", async () => {
 		// The 50013 shape: the bot's CreateInstantInvite bit is missing on the channel.
 		const denied = Object.assign(Object.create(DiscordAPIError.prototype), { code: 50013 });
-		const input = makeInput({ guild: makeGuild(undefined, async () => Promise.reject(denied)) });
+		const input = makeInput({ visibility: "public", guild: makeGuild(undefined, async () => Promise.reject(denied)) });
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
 		const result = await RoomProvisioner.open(input);

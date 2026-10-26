@@ -1,4 +1,4 @@
-import { TextChannel, type Client, type Guild, type MessageEditOptions } from "discord.js";
+import { TextChannel, type Client, type Guild, type Message, type MessageEditOptions } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { roomOpenerLogo } from "./gameRoomsEmbeds.js";
@@ -9,23 +9,79 @@ import { flavorGameOf, pickFlavor, type OutcomeBucket } from "./matchOutcome.js"
 import type { GameSlug } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { labelBotMentions } from "./botSeat.js";
+import { isRatedGame } from "@features/ratings/ratingEngine.js";
+import { effectiveSpectatorMode } from "./roomPermissions.js";
 
 // ── challengeCard ────────────────────────────────────────────────────
-// What:  the challenge card in ⚔️challenges as a message: finding its channel,
-//        building its state from the room row, and editing it in place with its
-//        picture. It decides nothing about the challenge itself.
+// What:  the challenge card as a message: finding its channel (⚔️challenges, or
+//        🏆rated-challenges for a rated game, 2026-10 item 254, Arcade 5), building its
+//        state from the room row, and editing it in place with its picture. It decides
+//        nothing about the challenge itself.
 // Who:   challengeBoard, at every step of a draft, and roomLifecycle.finish, which
 //        closes the card with the match's result (post-launch plan item 21).
 // Where: its own module because finish needs it and challengeBoard imports
 //        roomLifecycle, so leaving these in challengeBoard would make finish import
 //        its own importer.
 
-export async function resolveChallengesChannel(guild: Guild): Promise<TextChannel | null> {
-	const stored = await guildConfigStore.findByGuildId(guild.id);
-	const channelId = (stored as unknown as { arcadeChallengesChannelId?: string | null } | null)?.arcadeChallengesChannelId;
+// ── which channel a challenge lives in ────────────────────────────────
+// The two challenge channels' ids, off one GuildConfig read.
+interface ChallengeChannelIds {
+	arcadeChallengesChannelId?: string | null;
+	arcadeRatedChallengesChannelId?: string | null;
+}
+
+async function readChallengeChannelIds(guildId: string): Promise<ChallengeChannelIds> {
+	const stored = await guildConfigStore.findByGuildId(guildId);
+	return (stored as unknown as ChallengeChannelIds | null) ?? {};
+}
+
+async function fetchTextChannel(guild: Guild, channelId: string | null | undefined): Promise<TextChannel | null> {
 	if (!channelId) return null;
 	const channel = await guild.channels.fetch(channelId).catch(() => null);
 	return channel instanceof TextChannel ? channel : null;
+}
+
+/**
+ * The channel a challenge card for this game is posted in: 🏆rated-challenges for a rated
+ * game (ratingEngine.RATED_GAMES), ⚔️challenges for every other. Decided by the GAME alone,
+ * never by the card's badge, so a card never moves when its badge turns casual.
+ *
+ * A rated game falls back to ⚔️challenges while its guild has no 🏆rated-challenges yet
+ * (the boot repair builds it on the next boot, and an admin can remove it), so a rated
+ * challenge is never refused for a channel the member cannot do anything about.
+ */
+export async function resolveChallengesChannel(guild: Guild, game: GameSlug): Promise<TextChannel | null> {
+	const ids = await readChallengeChannelIds(guild.id);
+	if (isRatedGame(game)) {
+		const rated = await fetchTextChannel(guild, ids.arcadeRatedChallengesChannelId);
+		if (rated) return rated;
+	}
+	return fetchTextChannel(guild, ids.arcadeChallengesChannelId);
+}
+
+/**
+ * Whether a channel is one of the guild's two challenge channels, where nothing is
+ * played (2026-10 item 254, Arcade 1): /mini-game typed there opens a room instead.
+ */
+export async function isChallengeChannel(guildId: string, channelId: string | null): Promise<boolean> {
+	if (!channelId) return false;
+	const ids = await readChallengeChannelIds(guildId);
+	return channelId === ids.arcadeChallengesChannelId || channelId === ids.arcadeRatedChallengesChannelId;
+}
+
+// The card message, looked for in the channel its game posts in first and then in the
+// other challenge channel: a rated card posted before 🏆rated-challenges existed (or while
+// it was missing) lives in ⚔️challenges, and must keep updating until its match ends.
+async function findCardMessage(guild: Guild, room: IGameRoom): Promise<Message | null> {
+	if (!room.boardMessageId) return null;
+	const ids = await readChallengeChannelIds(guild.id);
+	const preferred = isRatedGame(room.game) ? [ids.arcadeRatedChallengesChannelId, ids.arcadeChallengesChannelId] : [ids.arcadeChallengesChannelId, ids.arcadeRatedChallengesChannelId];
+	for (const channelId of preferred) {
+		const channel = await fetchTextChannel(guild, channelId);
+		const message = channel ? await channel.messages.fetch(room.boardMessageId).catch(() => null) : null;
+		if (message) return message;
+	}
+	return null;
 }
 
 export function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState> = {}): OpenerCardState {
@@ -48,6 +104,9 @@ export function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState
 			ratingBand: room.ratingBand ?? "any",
 			requireApproval: room.requireApproval ?? false,
 			pendingJoinCount: (room.pendingJoinIds ?? []).length,
+			// Who may watch (2026-10 item 254, Arcade 11), resolved from the visibility the
+			// row holds, so the card's line and select show what the room will do.
+			spectatorMode: effectiveSpectatorMode(overrides.visibility ?? room.visibility, room.spectatorMode),
 		},
 		// Play vs bots (2026-10 item 250 Phase 5), off the draft row.
 		...(room.botsOffered ? { bots: { count: room.botSeats ?? 0 } } : {}),
@@ -58,10 +117,7 @@ export function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState
 // Re-render the opener card for a room's current state. Cosmetic, so a failure is
 // logged and swallowed: the draft row is the truth and the next edit will catch up.
 export async function refreshCard(guild: Guild, room: IGameRoom, state: OpenerCardState): Promise<void> {
-	if (!room.boardMessageId) return;
-	const channel = await resolveChallengesChannel(guild);
-	if (!channel) return;
-	const message = await channel.messages.fetch(room.boardMessageId).catch(() => null);
+	const message = await findCardMessage(guild, room);
 	if (!message) return;
 	await editOpenerCard(guild, room.roomId, message, state);
 }

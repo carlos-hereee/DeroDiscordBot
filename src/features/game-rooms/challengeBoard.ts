@@ -18,6 +18,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { MAX_SEATS as MONOPOLY_MAX_SEATS } from "@features/games/monopolyBoard.js";
+import { MAX_SEATS as BLACKJACK_MAX_SEATS } from "@features/games/blackjackHandler.js";
 import { checkGameRoomAccess, gameRoomUpgradeEmbed } from "@features/entitlements/gameRoomAccess.js";
 import {
 	RoomProvisioner,
@@ -26,7 +27,14 @@ import {
 	resolveRoomSeats,
 	seedRoom,
 } from "./RoomProvisioner.js";
-import { readPrivateQuotaStatus, startSoloBlackjackBoard } from "./soloRooms.js";
+import {
+	describeSoloOpenFailure,
+	openSoloRoom,
+	readPrivateQuotaStatus,
+	soloLuckSlugFor,
+	startBlackjackRoomBoard,
+	startSoloBlackjackBoard,
+} from "./soloRooms.js";
 import { resolveRoomChannel } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { rematchedResultEmbed, roomOpenerLogo, roomResultEmbed } from "./gameRoomsEmbeds.js";
@@ -41,6 +49,7 @@ import {
 	type MonopolyDraftSettingAction,
 } from "./challengeBoardEmbeds.js";
 import type { GameSlug, RoomVisibility } from "./roomTypes.js";
+import { effectiveSpectatorMode } from "./roomPermissions.js";
 import { cardStateFor, editOpenerCard, refreshCard, resolveChallengesChannel } from "./challengeCard.js";
 import { isWithinReach, readChallengeReach } from "./challengeReach.js";
 import { isKicked, judgeJoin } from "./joinGate.js";
@@ -49,7 +58,7 @@ import { hasNetworkConsent } from "./networkConsent.js";
 import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
 import { networkBanStore } from "@db/stores/networkBanStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
-import { playSoloLuck, type SoloLuckPlay } from "@features/games/soloLuck.js";
+import type { SoloLuckPlay } from "@features/games/soloLuck.js";
 import { botSeatIdsFor, botsAllowedIn, maxBotSeats, takesBots } from "./botSeat.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { RPS_CHOICES, type RpsChoice } from "@features/games/rpsWinner.js";
@@ -62,8 +71,11 @@ const hostWords = rokCommanderCopy.arcadeHostControls;
 const networkWords = rokCommanderCopy.arcadeNetwork;
 
 // ── challengeBoard ───────────────────────────────────────────────────
-// What:  the ⚔️challenges flow: start a challenge, choose who can see it, gather
-//        the people who want in, then hand the result to RoomProvisioner.
+// What:  the challenge flow: start a challenge (its card in ⚔️challenges, or in
+//        🏆rated-challenges for a rated game, 2026-10 item 254, Arcade 5), choose who can
+//        see it and who may watch, gather the people who want in, then hand the result to
+//        RoomProvisioner. Nothing is played on a card: every match, a round against Dero
+//        included, plays in a room (Arcade 1).
 // Who:   the board's own buttons, and the /mini-game two-player subcommands, which
 //        route here rather than keeping a second way to start a match.
 // When:  from the first press to the moment the room's channel exists.
@@ -130,7 +142,9 @@ export async function startChallengeDraft(
 		return null;
 	}
 
-	const channel = await resolveChallengesChannel(guild);
+	// The game decides the channel, once, here: a rated game's card goes to
+	// 🏆rated-challenges and stays there whatever its badge later says.
+	const channel = await resolveChallengesChannel(guild, game);
 	if (!channel) {
 		await interaction.reply({ embeds: [errorEmbed(gameRoomsCopy.errors.noArcadeCategory)], flags: MessageFlags.Ephemeral });
 		return null;
@@ -468,6 +482,13 @@ export async function startMatch(interaction: ButtonInteraction, room: IGameRoom
 		return;
 	}
 
+	// A Blackjack table has five seats (2026-10 item 254, Arcade 1), the host's among them,
+	// refused here for the same reason as Monopoly's six: before any channel exists.
+	if (room.game === "blackjack" && pool.length + 1 > BLACKJACK_MAX_SEATS) {
+		await interaction.reply({ content: gameRoomsCopy.board.blackjackTooManyPlayers(BLACKJACK_MAX_SEATS, pool.length), flags: MessageFlags.Ephemeral });
+		return;
+	}
+
 	// A battleship challenge with a Dero bot plays the bot: nobody in the pool is singled
 	// out, and the pool watches (2026-10 item 250 Phase 5).
 	if (room.game === "battleship" && bots > 0) {
@@ -568,13 +589,14 @@ async function provisionFromDraft(
 		return;
 	}
 
-	// Head to head: the chosen opponent plays and everyone else in the pool becomes an
-	// explicit spectator. Cooperative: the WHOLE pool plays and nobody is left over.
+	// Head to head: the chosen opponent plays and everyone else in the pool is left over.
+	// Cooperative: the WHOLE pool plays and nobody is left over.
 	//
-	// Either way, in a PUBLIC room the leftovers are dropped rather than written as
-	// overwrites, because the single @everyone entry already covers watching and
-	// per-member entries would reintroduce the O(members) cost the public case exists
-	// to avoid.
+	// The leftovers watch only under the host's Invite only spectator setting (2026-10
+	// item 254, Arcade 11), written as explicit spectators. Open to spectators drops them,
+	// because the single @everyone entry already covers watching and per-member entries
+	// would reintroduce the O(members) cost it exists to avoid; No spectators drops them
+	// because nobody but the players sees the room.
 	const pool = room.spectatorIds ?? [];
 	const cooperative = isCooperativeGame(room.game);
 	// A head to head match against a Dero bot (battleship) seats the host alone; the bot is
@@ -582,7 +604,7 @@ async function provisionFromDraft(
 	const humanOpponents = opponentId ? [opponentId] : [];
 	const playerIds = cooperative ? [room.hostId, ...pool] : [room.hostId, ...humanOpponents];
 	const others = cooperative ? [] : pool.filter((id) => id !== opponentId);
-	const spectatorIds = room.visibility === "public" ? [] : others;
+	const spectatorIds = effectiveSpectatorMode(room.visibility, room.spectatorMode) === "invite" ? others : [];
 	const botIds = botSeatIdsFor(room.game, playerIds.length, room.botSeats ?? 0);
 
 	await gameRoomStore.update(room.guildId, room.roomId, { playerIds, spectatorIds });
@@ -597,6 +619,7 @@ async function provisionFromDraft(
 		playerIds,
 		spectatorIds,
 		visibility: room.visibility,
+		spectatorMode: room.spectatorMode ?? null,
 		adminRoleId: config?.adminRoleId ?? null,
 		// The draft row already exists, so the provisioner must adopt it rather than
 		// insert a second one and collide with the unique index.
@@ -607,6 +630,13 @@ async function provisionFromDraft(
 
 	if (!result.ok) {
 		await interaction.editReply({ embeds: [errorEmbed(describeRoomOpenFailure(result))] });
+		return;
+	}
+
+	// A Blackjack table is dealt once its room is up (2026-10 item 254, Arcade 1), every
+	// gathered player seated; a table that cannot start has already closed its room.
+	if (room.game === "blackjack" && !(await startBlackjackRoomBoard(guild, result.room, result.channel))) {
+		await interaction.editReply({ embeds: [errorEmbed(gameRoomsCopy.errors.createFailed)] });
 		return;
 	}
 
@@ -675,8 +705,10 @@ async function checkRematch(interaction: ButtonInteraction, room: IGameRoom): Pr
 	// the message: refuse by STATUS, exactly like the board controls.
 	if (room.status !== "finished") return { ok: false, reply: { content: gameRoomsCopy.errors.notFound } };
 
-	// Solo visibility belongs to the two solo games only; any other game with it is a
-	// row no current path writes, and seeding it would open the wrong thing.
+	// Solo visibility rematches for the two solo games only. A solo luck round against Dero
+	// (2026-10 item 254, Arcade 1) has no rematch, its result card offers none, since its
+	// round is played as its room opens; any other game with solo visibility is a row no
+	// current path writes, and seeding it would open the wrong thing.
 	if (room.visibility === "solo" && room.game !== "solo-hangman" && room.game !== "solo-blackjack") {
 		return { ok: false, reply: { content: gameRoomsCopy.errors.notFound } };
 	}
@@ -741,6 +773,7 @@ async function playRematchInPlace(interaction: ButtonInteraction, finished: IGam
 		hostId,
 		playerIds: next.playerIds,
 		visibility: next.visibility,
+		spectatorMode: next.spectatorMode ?? null,
 		monopolyAuctions: next.monopolyAuctions,
 		botIds: botSeatIdsFor(next.game, next.playerIds.length, next.botSeats ?? 0),
 	});
@@ -751,6 +784,10 @@ async function playRematchInPlace(interaction: ButtonInteraction, finished: IGam
 		if (!(await startSoloBlackjackBoard(guild, started, channel, { userId: hostId, displayName }))) {
 			return gameRoomsCopy.errors.createFailed;
 		}
+	}
+	// A multi seat table deals its rematch the way its first match was dealt.
+	if (next.game === "blackjack" && !(await startBlackjackRoomBoard(guild, started, channel))) {
+		return gameRoomsCopy.errors.createFailed;
 	}
 	return null;
 }
@@ -786,6 +823,9 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 			kickedIds: finished.kickedIds ?? [],
 			// The same Dero bots sit down again (2026-10 item 250 Phase 5).
 			botSeats: finished.botSeats ?? 0,
+			// And the same people watch (2026-10 item 254, Arcade 11): the rematch's unlock
+			// and its invite follow the setting the host chose for the first match.
+			spectatorMode: finished.spectatorMode ?? null,
 		});
 	} catch (error) {
 		// Almost certainly the partial unique index catching a room the presser opened
@@ -806,16 +846,18 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 
 // ── Play Dero instead (post-launch plan item 13) ──────────────────────
 // What:  the host of a coin flip, dice roll or rps challenge plays one round against
-//        Dero instead of waiting on a member. The draft closes and soloLuck plays the
-//        round, its result card posted publicly in ⚔️challenges below the card.
+//        Dero instead of waiting on a member. The draft closes and the round plays in a
+//        solo room of the host's own (soloRooms, 2026-10 item 254, Arcade 1), so nothing
+//        is played in ⚔️challenges; the host is told privately where it is.
 // Who:   the card's `dero` button (strict host only: HOST_STRICT_ACTIONS), and for rps
 //        the throw modal it opens, whose submit re-checks the host and the draft
 //        because a modal is reachable without the button.
 // Where: soloLuck is the ONE solo round, shared with /mini-game against Dero and the
 //        🕹️games row, so the odds and the pay cannot drift between the three doors.
 // How:   ① refuse anything but a luck draft; ② archive the draft, which frees the
-//        host's one room slot exactly like Call it off; ③ play the round; ④ close the
-//        card with the line that points at the round.
+//        host's one room slot exactly like Call it off, so the solo room may take it;
+//        ③ open the solo room, which plays the round; ④ close the card with the line that
+//        points at the room.
 const DERO_THROW_FIELD = "throw";
 
 export async function playDero(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
@@ -873,10 +915,27 @@ export async function handleDeroThrowModal(interaction: ModalSubmitInteraction):
 }
 
 async function playDeroRound(interaction: ButtonInteraction | ModalSubmitInteraction, room: IGameRoom, play: SoloLuckPlay): Promise<void> {
+	const guild = interaction.guild;
+	if (!guild) return;
+	// Deferred first: opening a room is a channel create plus its opener, which can run
+	// past Discord's three second window.
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 	await gameRoomStore.markArchived(room.guildId, room.roomId);
-	await playSoloLuck(interaction, play);
-	if (!interaction.guild) return;
-	await refreshCard(interaction.guild, room, cardStateFor(room, { visibility: room.visibility, resultLine: gameRoomsCopy.board.cardPlayedDero(room.hostId) }));
+
+	const member = guild.members.cache.get(interaction.user.id);
+	const opened = await openSoloRoom(
+		guild,
+		soloLuckSlugFor(play),
+		{ userId: interaction.user.id, displayName: member?.displayName ?? interaction.user.globalName ?? interaction.user.username, user: interaction.user },
+		{ luckPlay: play }
+	);
+	if (!opened.ok) {
+		await interaction.editReply({ embeds: [errorEmbed(describeSoloOpenFailure(opened))] });
+		await refreshCard(guild, room, cardStateFor(room, { visibility: room.visibility, resultLine: gameRoomsCopy.board.cardDeroUnavailable(room.hostId) }));
+		return;
+	}
+	await interaction.editReply({ content: gameRoomsCopy.board.cardStarted(opened.channel.id) });
+	await refreshCard(guild, room, cardStateFor(room, { visibility: room.visibility, resultLine: gameRoomsCopy.board.cardPlayedDero(room.hostId, opened.channel.id) }));
 }
 
 // ── Play vs bots (2026-10 item 250 Phase 5) ───────────────────────────

@@ -51,6 +51,8 @@ export interface ICreatedChannels {
 	arcadeGamesChannelId: string;
 	// 🎉party-games, admin hosted group games (post-launch plan item 3).
 	partyGamesChannelId: string;
+	// 🏆rated-challenges, the rated games' challenges (2026-10 item 254, Arcade 5).
+	arcadeRatedChallengesChannelId: string;
 	// ── the two voice rooms (2026-10 item 235), one under each category ──
 	meetingVoiceChannelId: string;
 	arcadeVoiceChannelId: string;
@@ -76,6 +78,7 @@ export interface IChannelObjects {
 	arcadeChallengesChannel: TextChannel;
 	arcadeGamesChannel: TextChannel;
 	partyGamesChannel: TextChannel;
+	arcadeRatedChallengesChannel: TextChannel;
 	// The two voice rooms, so a fresh build can post their intros (2026-10 item 245).
 	meetingVoiceChannel: VoiceChannel;
 	arcadeVoiceChannel: VoiceChannel;

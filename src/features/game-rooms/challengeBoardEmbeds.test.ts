@@ -1,5 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { boardStartRows, CHALLENGE_GAMES, isCooperativeGame, openerCardEmbed, openerCardRows, type OpenerCardState } from "./challengeBoardEmbeds.js";
+import {
+	boardStartRows,
+	challengeBadge,
+	CHALLENGE_GAMES,
+	isCooperativeGame,
+	openerCardEmbed,
+	openerCardRows,
+	type DraftHostControls,
+	type OpenerCardState,
+} from "./challengeBoardEmbeds.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
@@ -155,5 +165,72 @@ describe("the opener card's Play Dero button and its closed state", () => {
 		const description = openerCardEmbed(closed).toJSON().description ?? "";
 		expect(description).toContain("A clean sweep.");
 		expect(description).not.toContain(gameRoomsCopy.board.cardStarted("ch-9"));
+	});
+});
+
+// ── the rated or casual badge (2026-10 item 254, Arcade 5) ──────────────
+describe("challengeBadge", () => {
+	it("is RATED for a rated game with no bot seated", () => {
+		for (const game of ["holdem", "battleship", "monopoly"] as const) expect(challengeBadge(game, 0)).toBe("rated");
+	});
+
+	it("is CASUAL once a Dero bot is seated, since a match with a bot is never rated", () => {
+		expect(challengeBadge("holdem", 1)).toBe("casual");
+		expect(challengeBadge("battleship", 1)).toBe("casual");
+	});
+
+	it("is CASUAL for every game that is not rated", () => {
+		for (const game of ["coinflip", "diceroll", "rps", "hangman", "blackjack"] as const) expect(challengeBadge(game, 0)).toBe("casual");
+	});
+});
+
+describe("the opener card's badge line", () => {
+	const base: OpenerCardState = { game: "battleship", hostId: "host-1", visibility: "public", pool: [] };
+	const firstLine = (state: OpenerCardState): string => (openerCardEmbed(state).data.description ?? "").split("\n")[0];
+
+	it("leads a rated card with RATED and a casual one with CASUAL, from the one helper", () => {
+		expect(firstLine(base)).toBe(gameRoomsCopy.board.badgeLine("rated", "battleship"));
+		expect(firstLine({ ...base, game: "rps" })).toBe(gameRoomsCopy.board.badgeLine("casual", "rps"));
+		// A bot seated turns the same card CASUAL; it does not move (that is the channel's call).
+		expect(firstLine({ ...base, bots: { count: 1 } })).toBe(gameRoomsCopy.board.badgeLine("casual", "battleship"));
+	});
+
+	it("says a Hold'em card counts from the hands a table must play to be rated", () => {
+		const line = firstLine({ ...base, game: "holdem" });
+		expect(line).toContain("RATED");
+		expect(line).toContain(`${BOT_CONSTANTS.RATINGS.HOLDEM_MIN_RATED_HANDS} hands`);
+	});
+
+	it("keeps the badge on a closed card too", () => {
+		expect(firstLine({ ...base, resultLine: "done" })).toBe(gameRoomsCopy.board.badgeLine("rated", "battleship"));
+	});
+});
+
+// ── who may watch (2026-10 item 254, Arcade 11) ─────────────────────────
+describe("the opener card's spectator setting", () => {
+	const controls = (spectatorMode: DraftHostControls["spectatorMode"]): DraftHostControls => ({ ratingBand: "any", requireApproval: false, pendingJoinCount: 0, spectatorMode });
+	const base: OpenerCardState = { game: "rps", hostId: "host-1", visibility: "invite", pool: [], hostControls: controls("invite") };
+	const spectatorSelectOf = (state: OpenerCardState) =>
+		openerCardRows("room-1", state)
+			.map((row) => row.toJSON().components[0] as { custom_id?: string; options?: Array<{ value: string; default?: boolean }> })
+			.find((component) => component.custom_id === "gameroomSelect:spectators:room-1");
+
+	it("offers the three settings once the host chose who can see it, with the one in force as default", () => {
+		const select = spectatorSelectOf({ ...base, hostControls: controls("none") });
+		expect(select?.options?.map((option) => option.value)).toEqual(["open", "invite", "none"]);
+		expect(select?.options?.find((option) => option.default)?.value).toBe("none");
+		expect(openerCardEmbed({ ...base, hostControls: controls("none") }).data.description).toContain(gameRoomsCopy.board.spectators.cardLine("none"));
+	});
+
+	it("is not offered before the visibility step, on a network table, or on a closed card", () => {
+		expect(spectatorSelectOf({ ...base, visibility: null })).toBeUndefined();
+		expect(spectatorSelectOf({ ...base, visibility: "public", network: true })).toBeUndefined();
+		expect(spectatorSelectOf({ ...base, startedChannelId: "room-ch-1" })).toBeUndefined();
+	});
+
+	it("keeps a rated public card inside Discord's five rows with every control showing", () => {
+		const rows = openerCardRows("room-1", { ...base, game: "holdem", visibility: "public", hostControls: controls("open") });
+		expect(rows.length).toBeLessThanOrEqual(5);
+		expect(spectatorSelectOf({ ...base, game: "holdem", visibility: "public", hostControls: controls("open") })).toBeDefined();
 	});
 });

@@ -7,6 +7,7 @@ import {
 	RATING_BANDS,
 	ROOM_STATUSES,
 	ROOM_VISIBILITIES,
+	SPECTATOR_MODES,
 	type GameSlug,
 	type PendingNetworkJoin,
 	type RatingBand,
@@ -15,6 +16,7 @@ import {
 	type RoomStatus,
 	type RoomVisibility,
 	type SatelliteRoom,
+	type SpectatorMode,
 } from "@features/game-rooms/roomTypes.js";
 
 // ── GameRoom ──
@@ -44,10 +46,15 @@ export interface IGameRoom {
 	hostId: string;
 	// Write access inside the room. Always includes hostId.
 	playerIds: string[];
-	// Explicit read-only spectators. Populated in "invite" mode only; a public room expresses
-	// spectatorship with a single @everyone overwrite instead, so this stays empty.
+	// Explicit read-only spectators. Populated only while the spectator setting is "invite";
+	// a room open to spectators expresses watching with a single @everyone overwrite instead,
+	// and a room with no spectators has none, so this stays empty in both.
 	spectatorIds: string[];
 	visibility: RoomVisibility;
+	// The host's spectator setting (2026-10 item 254, Arcade 11), chosen on the challenge
+	// card's draft. Null means the host never chose, which reads as the default its
+	// visibility always had (roomPermissions.effectiveSpectatorMode), so no backfill is owed.
+	spectatorMode: SpectatorMode | null;
 	// Null until RoomProvisioner creates the channel, and meaningful again only until the
 	// sweep deletes it, or until a rematch takes the channel over and this FINISHED row
 	// releases it (roomLifecycle.releaseChannel), after which only the rematch row points
@@ -56,8 +63,10 @@ export interface IGameRoom {
 	// The pinned opener card inside the room.
 	openerMessageId: string | null;
 	// The CODE of the guild invite minted at open (discord.gg/<code>), or null when the
-	// mint failed or was skipped. Stored as the code rather than the full URL so the
-	// renderer owns the URL shape. Nothing queries by it, so it carries no index.
+	// mint failed or was skipped (only a room everyone may watch mints one, roomInvite).
+	// Stored as the code rather than the full URL so the renderer owns the URL shape, and
+	// so finish can delete exactly this invite once the match is over. Nothing queries by
+	// it, so it carries no index.
 	inviteCode: string | null;
 	// The live card on the ⚔️challenges board, edited as the challenge progresses.
 	boardMessageId: string | null;
@@ -190,6 +199,9 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		playerIds: { type: [String], default: [] },
 		spectatorIds: { type: [String], default: [] },
 		visibility: { type: String, required: true, enum: [...ROOM_VISIBILITIES], default: "invite" },
+		// Null by default, so a row written before the setting existed keeps the matrix its
+		// visibility gave it. Mongoose skips the enum check for null.
+		spectatorMode: { type: String, enum: [...SPECTATOR_MODES, null], default: null },
 		channelId: { type: String, default: null },
 		openerMessageId: { type: String, default: null },
 		inviteCode: { type: String, default: null },

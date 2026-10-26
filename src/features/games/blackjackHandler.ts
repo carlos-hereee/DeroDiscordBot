@@ -31,8 +31,11 @@ import { drawingSettled, isClockExpired, pausedDeadline, withDrawingPause } from
 //        a one seat hand immediately. `table` posts a seating board others join.
 //        Joining is a BUTTON on that board rather than a subcommand, because
 //        "join the table I can see" is a click, not a command someone has to
-//        learn.
-// Who:   MINI_GAME_HANDLERS is the only caller.
+//        learn. A table in a ROOM (2026-10 item 254, Arcade 1) is the third shape:
+//        its players gathered on the challenge card, so it seats them all and deals
+//        at once, the way solo does, and only they can act.
+// Who:   MINI_GAME_HANDLERS for the slash forms typed outside the challenge channels,
+//        and soloRooms for a room's table, solo or multi seat.
 // When:  a table lives until the hand settles or the board times out.
 // Where: the board is a channel.send() message, NOT an interaction reply, and
 //        that is load bearing for the same reason it is in hangman: an
@@ -50,12 +53,12 @@ import { drawingSettled, isClockExpired, pausedDeadline, withDrawingPause } from
 // player their own hand ephemerally; there is nothing they can see that the
 // board does not already show them.
 //
-// ⚠️ A SOLO ROOM'S TABLE STILL DIES ON RAILWAY SIGTERM, AND THAT IS CLOSED OUT
-// HONESTLY RATHER THAN RECOVERED. Solo blackjack opens through RoomProvisioner (a
-// GameRoom row, a channel, the tier quota), but the HAND state stays in the
-// module-scoped `games` Map below, so a redeploy mid-hand loses the table while
+// ⚠️ A ROOM'S TABLE STILL DIES ON RAILWAY SIGTERM, AND THAT IS CLOSED OUT
+// HONESTLY RATHER THAN RECOVERED. A blackjack room, solo or multi seat, opens through
+// RoomProvisioner (a GameRoom row, a channel, the tier quota), but the HAND state stays
+// in the module-scoped `games` Map below, so a redeploy mid-hand loses the table while
 // the room row says "playing". The boot recovery sweep (roomBootRecovery) asks
-// hasLiveBlackjackTable for every solo blackjack room it finds and, for a room this
+// hasLiveBlackjackTable for every blackjack room it finds and, for a room this
 // process holds no table for, says so in the room, disarms the dead board and
 // finishes the room as abandoned: nothing was settled, so nothing is paid, and the
 // host's room slot is released. A resumable table means persisting the hand into
@@ -104,9 +107,9 @@ interface BlackjackGame {
 	// because the last action and the timeout can both reach settlement and paying
 	// a table twice is the one bug here that costs real xp.
 	settled: boolean;
-	// Set when this table was opened as a SOLO game room: the settle path then closes
-	// the room through roomLifecycle.finish (lock, result card, archive clock). Null
-	// for the inline table form, which lives in ⚔️challenges and owns no room.
+	// Set when this table plays inside a game room, solo or multi seat: the settle path
+	// then closes the room through roomLifecycle.finish (lock, result card, archive
+	// clock). Null for the inline slash forms, which own no room.
 	roomId: string | null;
 	seatingTimer: NodeJS.Timeout | null;
 	// The table's lifetime clock: when the board was posted, and the timer that ends
@@ -134,7 +137,7 @@ function clearGameTimers(game: BlackjackGame): void {
 export const _activeBlackjackGameCount = (): number => games.size;
 
 // True while this channel holds a live table in THIS process. The boot recovery sweep
-// asks this for every solo blackjack room it finds: a room row that says "playing"
+// asks this for every blackjack room it finds: a room row that says "playing"
 // while this answers false is a table Railway's SIGTERM already destroyed, and
 // nothing inside this file will ever finish it.
 export const hasLiveBlackjackTable = (channelId: string): boolean => games.has(channelId);
@@ -256,10 +259,15 @@ export async function startBlackjackTable(
 	channel: TextChannel,
 	guildId: string,
 	host: { userId: string; username: string },
-	solo: boolean,
-	// The GameRoom this table plays inside, when it was opened as a solo room via
-	// soloRooms.openSoloRoom. The inline forms pass nothing.
-	roomId: string | null = null
+	// True deals at once with whoever is seated: a solo hand, or a room's table whose
+	// players are already known. False posts the seating board and its join window.
+	dealNow: boolean,
+	// The GameRoom this table plays inside (soloRooms). The inline forms pass nothing.
+	roomId: string | null = null,
+	// The room's other players, seated after the host in this order. Only a room's table
+	// passes them; the engine refuses an action from anyone not seated, which is what
+	// keeps a watcher in an open room from playing a hand.
+	otherSeats: ReadonlyArray<{ userId: string; username: string }> = []
 ): Promise<BlackjackStartResult> {
 	// ① Claim the channel slot SYNCHRONOUSLY, the same discipline hangman uses:
 	// the check and the write sit adjacent with no await between them, so two
@@ -269,7 +277,7 @@ export async function startBlackjackTable(
 	const game: BlackjackGame = {
 		hostId: host.userId,
 		guildId,
-		seated: [host],
+		seated: [host, ...otherSeats.slice(0, MAX_SEATS - 1)],
 		table: null,
 		settled: false,
 		roomId,
@@ -282,10 +290,11 @@ export async function startBlackjackTable(
 
 	try {
 		// ② A solo game deals straight away. A join window for one player is a
-		// countdown to nothing, so solo never renders the seating board at all.
+		// countdown to nothing, so solo never renders the seating board at all, and
+		// neither does a room's table, whose seats were taken on the challenge card.
 		let board: Message;
 		let settledOnDeal = false;
-		if (solo) {
+		if (dealNow) {
 			const { table, embed } = dealAndRender(game);
 
 			// ⚠️ A NATURAL ENDS THE HAND BEFORE A SINGLE BUTTON EXISTS. createTable
@@ -324,7 +333,7 @@ export async function startBlackjackTable(
 		// ④ The window closes itself. Without this a table whose host never presses
 		// Deal would sit in the seating phase until the collector's own timeout,
 		// which is thirteen times longer.
-		if (!solo) {
+		if (!dealNow) {
 			game.seatingTimer = setTimeout(() => {
 				void closeSeating(channel.id, board);
 			}, SEATING_WINDOW_MS);
@@ -652,7 +661,7 @@ function settleGame(game: BlackjackGame, channelId: string, client: Message["cli
 		seats: results,
 	});
 
-	// A table that plays inside a SOLO ROOM closes its room here: finish stamps the
+	// A table that plays inside a ROOM closes its room here: finish stamps the
 	// row, locks the channel, posts the result card and starts the archive clock.
 	// Fire and forget after the settle (convention 7), and NO extra xp is paid by
 	// this call site: awardBlackjackResult above already paid the game's own award,
@@ -660,11 +669,7 @@ function settleGame(game: BlackjackGame, channelId: string, client: Message["cli
 	// convention every other room hosted game follows.
 	if (game.roomId) {
 		const roomId = game.roomId;
-		const seat = results.find((entry) => entry.userId === game.hostId);
-		// The room's winner is the solo seat when ANY of its hands beat the dealer
-		// (a split seat reports both halves); a push-only or losing hand ends the
-		// room with no winner, which finish renders honestly.
-		const winnerId = seat?.hands.some((outcome) => outcome === "win" || outcome === "blackjack") ? game.hostId : null;
+		const winnerId = roomWinnerOf(results);
 		void (async () => {
 			const room = await gameRoomStore.findByRoomId(game.guildId, roomId);
 			if (!room) return;
@@ -674,4 +679,14 @@ function settleGame(game: BlackjackGame, channelId: string, client: Message["cli
 
 	const anyDoubledLoss = results.some((seat) => seat.hands.some((outcome, index) => outcome === "lose" && seat.doubled[index]));
 	return { embed: buildBlackjackResultEmbed(game.table, results, anyDoubledLoss), table: game.table, results };
+}
+
+/**
+ * The one winner a room's result card can name: the only seat with a hand that beat the
+ * dealer (a split seat reports both halves). A table where several seats won, or none, ends
+ * with no single winner, which finish renders honestly; a solo seat is simply the only seat.
+ */
+export function roomWinnerOf(results: readonly SeatResult[]): string | null {
+	const winners = results.filter((seat) => seat.hands.some((outcome) => outcome === "win" || outcome === "blackjack"));
+	return winners.length === 1 ? winners[0].userId : null;
 }

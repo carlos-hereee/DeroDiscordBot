@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import type { Client } from "discord.js";
+import { TextChannel, type Client, type Guild } from "discord.js";
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 
-import { challengeResultLine, closeChallengeCard } from "./challengeCard.js";
+import { challengeResultLine, closeChallengeCard, isChallengeChannel, resolveChallengesChannel } from "./challengeCard.js";
+import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -53,5 +54,48 @@ describe("closeChallengeCard", () => {
 
 		expect((client.guilds.cache.get as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
 		expect(fetch).not.toHaveBeenCalled();
+	});
+});
+
+// ── which channel a challenge lives in (2026-10 item 254, Arcade 5) ──────
+describe("resolveChallengesChannel", () => {
+	const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
+	const textChannel = (id: string): TextChannel => Object.assign(Object.create(TextChannel.prototype), { id }) as TextChannel;
+
+	function guildWith(channels: Record<string, TextChannel>): Guild {
+		return { id: "guild-1", channels: { fetch: vi.fn(async (id: string) => channels[id] ?? null) } } as unknown as Guild;
+	}
+
+	const BOTH = { arcadeChallengesChannelId: "challenges-1", arcadeRatedChallengesChannelId: "rated-1" };
+
+	it.each(["holdem", "battleship", "monopoly"] as const)("posts a rated game's card (%s) in 🏆rated-challenges", async (game) => {
+		configMock.findByGuildId.mockResolvedValue(BOTH);
+		const channel = await resolveChallengesChannel(guildWith({ "challenges-1": textChannel("challenges-1"), "rated-1": textChannel("rated-1") }), game);
+		expect(channel?.id).toBe("rated-1");
+	});
+
+	it.each(["coinflip", "diceroll", "rps", "hangman", "blackjack"] as const)("keeps %s, which is not rated, in ⚔️challenges", async (game) => {
+		configMock.findByGuildId.mockResolvedValue(BOTH);
+		const channel = await resolveChallengesChannel(guildWith({ "challenges-1": textChannel("challenges-1"), "rated-1": textChannel("rated-1") }), game);
+		expect(channel?.id).toBe("challenges-1");
+	});
+
+	// A guild whose boot repair has not built 🏆rated-challenges yet still takes rated challenges.
+	it("falls back to ⚔️challenges for a rated game while the guild has no 🏆rated-challenges", async () => {
+		configMock.findByGuildId.mockResolvedValue({ arcadeChallengesChannelId: "challenges-1", arcadeRatedChallengesChannelId: null });
+		const channel = await resolveChallengesChannel(guildWith({ "challenges-1": textChannel("challenges-1") }), "holdem");
+		expect(channel?.id).toBe("challenges-1");
+	});
+});
+
+describe("isChallengeChannel", () => {
+	const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
+
+	it("knows both challenge channels, and nothing else", async () => {
+		configMock.findByGuildId.mockResolvedValue({ arcadeChallengesChannelId: "challenges-1", arcadeRatedChallengesChannelId: "rated-1" });
+		await expect(isChallengeChannel("guild-1", "challenges-1")).resolves.toBe(true);
+		await expect(isChallengeChannel("guild-1", "rated-1")).resolves.toBe(true);
+		await expect(isChallengeChannel("guild-1", "games-1")).resolves.toBe(false);
+		await expect(isChallengeChannel("guild-1", null)).resolves.toBe(false);
 	});
 });

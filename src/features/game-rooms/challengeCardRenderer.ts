@@ -20,7 +20,7 @@ import { loadGameArt } from "@features/games/gamesArt.js";
 import { gameAssetPath, type GameAssetKey } from "@features/games/gamesAssets.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { openerLogoKey } from "./gameRoomsEmbeds.js";
-import type { OpenerCardState } from "./challengeBoardEmbeds.js";
+import { badgeOfCard, type ChallengeBadge, type OpenerCardState } from "./challengeBoardEmbeds.js";
 import type { GameSlug } from "./roomTypes.js";
 
 // ── challengeCardRenderer ────────────────────────────────────────────
@@ -51,6 +51,8 @@ export type ChallengeCardStatus = keyof typeof gameRoomsCopy.board.cardImage.sta
 export interface ChallengeCardView {
 	game: GameSlug;
 	status: ChallengeCardStatus;
+	/** RATED or CASUAL, from challengeBadge, the helper the embed's badge line reads too. */
+	badge: ChallengeBadge;
 	host: ChallengeFace;
 	/** At most MAX_CHALLENGER_FACES joiners, in the order they joined. */
 	challengers: ChallengeFace[];
@@ -65,8 +67,9 @@ const CHALLENGE_AVATAR_SIZE = 256;
 const MAX_CHALLENGER_FACES = 6;
 const CHALLENGERS_PER_ROW = 3;
 
-// Bump whenever the drawing changes, or members keep seeing cached cards.
-const CHALLENGE_CARD_VERSION = 2;
+// Bump whenever the drawing changes, or members keep seeing cached cards. 3 added the
+// RATED or CASUAL badge pill (2026-10 item 254, Arcade 5).
+const CHALLENGE_CARD_VERSION = 3;
 const CARD_WIDTH = 960;
 const CARD_HEIGHT = 380;
 const PADDING = 32;
@@ -99,6 +102,16 @@ interface ChallengeArtKeys {
 	character: GameAssetKey | null;
 }
 
+// The badge pill sits left of the status pill, the same height. RATED takes the card's win
+// color so it reads as the stakes it is (not a gold: the brand keeps one gold, its top
+// rung); CASUAL stays muted, since most cards are casual.
+const BADGE_PILL_WIDTH = 150;
+const PILL_GAP = 12;
+const BADGE_FILL: Record<ChallengeBadge, ColorResolvable> = {
+	rated: COLORS.CARD_OUTCOME_WIN,
+	casual: COLORS.CARD_TEXT_MUTED,
+};
+
 const STATUS_ACCENT: Record<ChallengeCardStatus, ColorResolvable> = {
 	choosing: COLORS.ARCADE,
 	invite: COLORS.ARCADE,
@@ -129,6 +142,7 @@ export async function challengeCardView(guild: Guild, state: OpenerCardState): P
 	return {
 		game: state.game,
 		status: challengeCardStatus(state),
+		badge: badgeOfCard(state),
 		host,
 		challengers,
 		hiddenCount: Math.max(0, state.pool.length - shown.length),
@@ -220,7 +234,16 @@ function drawHeader(context: SKRSContext2D, view: ChallengeCardView, accent: Col
 		weight: "bold",
 		color: canvasColor(COLORS.CARD_TEXT),
 		baseline: "middle",
-		maxWidth: CARD_WIDTH - PADDING * 2 - 220,
+		maxWidth: CARD_WIDTH - PADDING * 2 - 220 - BADGE_PILL_WIDTH - PILL_GAP,
+	});
+	drawPill(context, {
+		x: CARD_WIDTH - PADDING - 200 - PILL_GAP - BADGE_PILL_WIDTH,
+		y: PADDING + 4,
+		width: BADGE_PILL_WIDTH,
+		height: 40,
+		fill: canvasColor(BADGE_FILL[view.badge]),
+		label: copy.badge[view.badge],
+		labelColor: canvasColor(COLORS.CARD_BACKGROUND),
 	});
 	drawPill(context, {
 		x: CARD_WIDTH - PADDING - 200,

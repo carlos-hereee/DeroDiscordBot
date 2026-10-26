@@ -472,7 +472,7 @@ describe("the arcade art", () => {
 		expect(pngSize(await renderBlackjackResultCard(settledBlackjack())).width).toBe(960);
 		expect(pngSize(await renderWinnerCard(finishedMonopoly())).width).toBe(960);
 		// The logo file is on disk but nothing decodes, so the band is drawn empty.
-		const challenge = { game: "battleship" as const, status: "open" as const, host: { name: "Host", avatar: null }, challengers: [], hiddenCount: 0 };
+		const challenge = { game: "battleship" as const, status: "open" as const, badge: "rated" as const, host: { name: "Host", avatar: null }, challengers: [], hiddenCount: 0 };
 		expect(pngSize(await renderChallengeCard(challenge))).toEqual({ width: 960, height: 620 });
 		expect(cachedCardCount()).toBe(0);
 	});

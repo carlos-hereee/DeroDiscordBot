@@ -14,7 +14,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { bandWidth, isRatedGame } from "@features/ratings/ratingEngine.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
-import { RATING_BANDS, type GameSlug, type RatingBand, type RoomVisibility } from "./roomTypes.js";
+import { RATING_BANDS, SPECTATOR_MODES, type GameSlug, type RatingBand, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
 
 // The host controls' words are shared by every pack, so the default pack is the right
 // one here and the card stays a pure function of its state.
@@ -36,9 +36,10 @@ type CardRow = ActionRowBuilder<MessageActionRowComponentBuilder>;
 //        posted a fresh message for each of visibility, join and start would bury
 //        the channel it lives in, and ⚔️challenges is meant to be scannable.
 
-// The games the board can start. Blackjack is absent on purpose: it needs no named
-// opponent and a hand takes a minute, so a table runs in place on one edited message
-// and never earns a room.
+// The games the board can start. Blackjack is absent from the BOARD on purpose: its one
+// door is 🕹️games' Open a Blackjack table (and /mini-game blackjack typed in ⚔️challenges),
+// which posts the same challenge card through startChallengeDraft (2026-10 item 254,
+// Arcade 1), so a second button would only be a second way to the same card.
 //
 // ⚠️ HANGMAN IS HERE BUT IS NOT HEAD TO HEAD, and the difference is load bearing at
 // the start step. Coin flip, dice roll and rps seat exactly TWO, so the host picks
@@ -65,7 +66,9 @@ export const CHALLENGE_GAMES: readonly GameSlug[] = [
 // A better name would be MULTI_PLAYER_GAMES; the set is what matters. Monopoly is
 // here for the same reason: two to six players share one board, so nobody is singled
 // out, and challengeBoard.startMatch caps the pool at the board's six seats.
-export const COOPERATIVE_GAMES: readonly GameSlug[] = ["hangman", "holdem", "monopoly"] as const;
+// Blackjack is here for the same reason (2026-10 item 254, Arcade 1): everyone who
+// joined takes a seat at the one table, and startMatch caps the pool at its five seats.
+export const COOPERATIVE_GAMES: readonly GameSlug[] = ["hangman", "holdem", "monopoly", "blackjack"] as const;
 
 export const isCooperativeGame = (game: GameSlug): boolean => COOPERATIVE_GAMES.includes(game);
 
@@ -91,9 +94,33 @@ export const GAME_EMOJI: Record<GameSlug, string> = {
 	battleship: "🚢",
 	holdem: "🃏",
 	monopoly: "🏠",
+	blackjack: "🃏",
 	"solo-hangman": "🪢",
 	"solo-blackjack": "🃏",
+	"solo-coinflip": "🪙",
+	"solo-diceroll": "🎲",
+	"solo-rps": "✊",
 };
+
+// ── the rated or casual badge (2026-10 item 254, Arcade 5) ──
+export type ChallengeBadge = "rated" | "casual";
+
+/**
+ * The ONE helper that decides a challenge card's badge, read by the embed's badge line
+ * and the picture's pill alike, so the two can never disagree: RATED for a rated game
+ * (ratingEngine.RATED_GAMES) with no Dero bot seated, CASUAL otherwise, since a match
+ * with a bot is never rated (botSeat). Phase 4a adds the host's Casual choice here.
+ *
+ * ⚠️ THE BADGE NEVER MOVES A CARD. Which channel a card lives in is decided once, at the
+ * draft, by the game alone (challengeCard.resolveChallengesChannel), so a rated game's
+ * card stays in 🏆rated-challenges when its badge turns CASUAL.
+ */
+export function challengeBadge(game: GameSlug, botCount: number): ChallengeBadge {
+	return isRatedGame(game) && botCount === 0 ? "rated" : "casual";
+}
+
+/** The badge of one card state: its game and the bots the host seated. */
+export const badgeOfCard = (state: Pick<OpenerCardState, "game" | "bots">): ChallengeBadge => challengeBadge(state.game, state.bots?.count ?? 0);
 
 export function boardIntroEmbed(): EmbedBuilder {
 	return infoEmbed(
@@ -174,6 +201,9 @@ export interface DraftHostControls {
 	ratingBand: RatingBand;
 	requireApproval: boolean;
 	pendingJoinCount: number;
+	// Who may watch once the room opens (2026-10 item 254, Arcade 11), already resolved
+	// by roomPermissions.effectiveSpectatorMode, so the card shows what the matrix will do.
+	spectatorMode: SpectatorMode;
 }
 
 // How many pool members the card names before it summarises the rest. Well under the
@@ -188,7 +218,9 @@ const POOL_NAMES_SHOWN = 8;
 // logo, and the text card a failed draw leaves behind should lead with it too
 // (2026-10 item 245 Phase 3b). Both refs need their files on the same message.
 export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoRef?: string): EmbedBuilder {
-	const lines: string[] = [];
+	// The badge leads every card, in every state, so a member scanning the channel sees at
+	// once whether a match counts.
+	const lines: string[] = [gameRoomsCopy.board.badgeLine(badgeOfCard(state), state.game), ""];
 
 	if (state.resultLine) {
 		lines.push(state.resultLine);
@@ -215,6 +247,7 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 		lines.push("", gameRoomsCopy.board.cardBots(state.bots.count));
 	}
 	lines.push(...hostControlLines(state));
+	lines.push(...spectatorLines(state));
 
 	const embed = infoEmbed(
 		gameRoomsCopy.board.cardTitle(state.game),
@@ -247,6 +280,35 @@ function hostControlLines(state: OpenerCardState): string[] {
 	if (showsBand(state)) lines.push(hostWords.band.cardLine(BAND_LABELS[controls.ratingBand], bandWidth(controls.ratingBand)));
 	if (controls.requireApproval) lines.push(hostWords.approval.cardLine(controls.pendingJoinCount));
 	return lines.length > 1 ? lines : [];
+}
+
+// ── who may watch (2026-10 item 254, Arcade 11) ──
+// Offered at step two on every visibility, since an invite only host chooses who watches
+// as much as an open one does, and never on a network table, whose watchers in other
+// servers are its satellites' business.
+const showsSpectators = (state: OpenerCardState): boolean =>
+	Boolean(state.hostControls && state.visibility && !state.network && !state.cancelled && !state.startedChannelId && !state.resultLine);
+
+function spectatorLines(state: OpenerCardState): string[] {
+	if (!showsSpectators(state) || !state.hostControls) return [];
+	return ["", gameRoomsCopy.board.spectators.cardLine(state.hostControls.spectatorMode)];
+}
+
+// The spectator select, with the setting in force as its default.
+function spectatorSelectRow(roomId: string, mode: SpectatorMode): CardRow {
+	const words = gameRoomsCopy.board.spectators;
+	const select = new StringSelectMenuBuilder()
+		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:spectators:${roomId}`)
+		.setPlaceholder(words.placeholder)
+		.addOptions(
+			SPECTATOR_MODES.map((option) => ({
+				label: words.options[option].label,
+				value: option,
+				description: words.options[option].description,
+				default: option === mode,
+			}))
+		);
+	return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(select);
 }
 
 // The host's row: Approve each joiner and Requests on an open challenge, then Remove a
@@ -406,13 +468,20 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 			: new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(gather, start, ...playDeroButtons(roomId, state.game), cancel);
 
 	// The host's controls ride their own rows below, so the gather row keeps its shape
-	// (and Monopoly keeps all five of its slots). Three rows at most, inside Discord's five.
+	// (and Monopoly keeps all five of its slots). Four rows at most, inside Discord's five:
+	// the gather row, the host row, the band select and the spectator select.
 	const controls = state.hostControls;
 	if (!controls) return [gatherRow];
-	return [gatherRow, hostControlRow(roomId, state, controls), ...(showsBand(state) ? [bandSelectRow(roomId, controls.ratingBand)] : [])];
+	return [
+		gatherRow,
+		hostControlRow(roomId, state, controls),
+		...(showsBand(state) ? [bandSelectRow(roomId, controls.ratingBand)] : []),
+		...(showsSpectators(state) ? [spectatorSelectRow(roomId, controls.spectatorMode)] : []),
+	];
 }
 
-// Play Dero instead (post-launch plan item 13), on a luck game's card at both steps.
+// Play Dero instead (post-launch plan item 13), on a luck game's card at both steps. The
+// round is played in a solo room of the host's own (2026-10 item 254, Arcade 1).
 // Never on any other game, which has no solo round to fall back to. Five buttons is
 // still the row's ceiling at step one: invite, open, network, Dero and cancel.
 function playDeroButtons(roomId: string, game: GameSlug): ButtonBuilder[] {

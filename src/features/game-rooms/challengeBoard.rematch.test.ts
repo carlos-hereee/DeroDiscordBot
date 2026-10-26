@@ -46,6 +46,8 @@ const fake = vi.hoisted(() => {
 				rematchedFromRoomId: input.rematchedFromRoomId ?? null,
 				monopolyAuctions: input.monopolyAuctions ?? false,
 				monopolyReferee: input.monopolyReferee ?? false,
+				// The host's spectator setting (2026-10 item 254, Arcade 11), as the real store writes it.
+				spectatorMode: input.spectatorMode ?? null,
 				secret: null,
 				moves: [],
 				winnerId: null,
@@ -307,6 +309,28 @@ beforeEach(() => {
 });
 
 describe("a rematch in the same channel", () => {
+	// 2026-10 item 254, Arcade 10: a rematch follows the same invite rule as an open.
+	it("mints a fresh invite for a public rematch everyone may watch, and carries the spectator setting", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({ visibility: "public", spectatorIds: [], spectatorMode: "open" });
+
+		await rematchFromRoom(pressRematch(world, P2), await roomOf(FINISHED));
+
+		const next = rematchRow();
+		expect(next).toMatchObject({ visibility: "public", spectatorMode: "open", inviteCode: "invite-2" });
+		expect(world.channel.createInvite).toHaveBeenCalledTimes(1);
+	});
+
+	it("mints no invite for a public rematch the host closed to spectators", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({ visibility: "public", spectatorIds: [], spectatorMode: "none" });
+
+		await rematchFromRoom(pressRematch(world, P2), await roomOf(FINISHED));
+
+		expect(rematchRow()).toMatchObject({ spectatorMode: "none", inviteCode: null });
+		expect(world.channel.createInvite).not.toHaveBeenCalled();
+	});
+
 	it("fakes the same live statuses the partial unique index covers", () => {
 		expect(fake.LIVE).toEqual([...NON_TERMINAL_ROOM_STATUSES]);
 	});
@@ -326,8 +350,11 @@ describe("a rematch in the same channel", () => {
 			visibility: "invite",
 			spectatorIds: [WATCHER],
 			status: "playing",
-			inviteCode: "invite-2",
+			// An invite only rematch mints no invite, like an invite only open (2026-10
+			// item 254, Arcade 10).
+			inviteCode: null,
 		});
+		expect(world.channel.createInvite).not.toHaveBeenCalled();
 		expect([...(next?.playerIds as string[])].sort()).toEqual([P1, P2]);
 		expect(next?.startedAt).toBeInstanceOf(Date);
 		expect(next?.openerMessageId).toBe("msg-1");
@@ -504,7 +531,7 @@ describe("solo rooms rematch in place", () => {
 		const next = rematchRow();
 		expect(next).toMatchObject({ channelId: CHANNEL, hostId: P1, playerIds: [P1], visibility: "solo", status: "playing" });
 		expect(world.guild.channels.create).not.toHaveBeenCalled();
-		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, { userId: P1, username: "Player One" }, true, next?.roomId);
+		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, { userId: P1, username: "Player One" }, true, next?.roomId, []);
 		// A solo room mints no invite, exactly like its first match.
 		expect(world.channel.createInvite).not.toHaveBeenCalled();
 	});

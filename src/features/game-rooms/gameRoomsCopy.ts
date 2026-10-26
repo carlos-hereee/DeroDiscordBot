@@ -1,7 +1,7 @@
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { STARTING_CHIPS } from "@features/games/monopolyBoard.js";
 import type { BuildingKind } from "@features/games/monopolyState.js";
-import type { GameSlug, RoomVisibility } from "./roomTypes.js";
+import type { GameSlug, RoomVisibility, SpectatorMode } from "./roomTypes.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import type { FlavorTable } from "./matchOutcome.js";
 // Aliased: Monopoly's copy below names its own parameters `chips`.
@@ -26,6 +26,15 @@ const monopolyAuctionSeconds = (): number => Math.round(BOT_CONSTANTS.MONOPOLY_A
 // own clock and which ticks down on its own.
 const discordRelativeTime = (epochMs: number): string => `<t:${Math.floor(epochMs / 1000)}:R>`;
 
+// Who can see a room, one sentence per setting. A solo room is its own sentence because
+// it is nobody's choice: it admits its one player and the admins, by construction.
+function openerAudienceLine(visibility: RoomVisibility, audience: SpectatorMode): string {
+	if (visibility === "solo") return "This is a solo room. Only you and the admins can see it.";
+	if (audience === "open") return "Anyone in the server can watch this room. Only the players can type or react.";
+	if (audience === "invite") return "Only the players and the spectators they invited can see this room. Only the players can type or react.";
+	return "No spectators: only the players and the admins can see this room.";
+}
+
 // Human labels for the slugs. Kept here rather than derived from the slug because
 // "coinflip" is not a phrase anyone writes, and a room's cards are read by members
 // who never see the slug.
@@ -37,8 +46,12 @@ const GAME_LABELS: Record<GameSlug, string> = {
 	battleship: "Battleship",
 	holdem: "Texas hold em",
 	monopoly: "Monopoly",
+	blackjack: "Blackjack",
 	"solo-hangman": "Hangman (solo)",
 	"solo-blackjack": "Blackjack (solo)",
+	"solo-coinflip": "Coin flip against Dero",
+	"solo-diceroll": "Dice roll against Dero",
+	"solo-rps": "Rock paper scissors against Dero",
 };
 
 // Human names for the server's tier keys, used only in quota copy. The keys are the
@@ -191,29 +204,20 @@ export const gameRoomsCopy = {
 	// ── the opener card, pinned inside the room ──
 	opener: {
 		title: (game: GameSlug): string => `${GAME_LABELS[game] ?? game} room`,
-		// Rendered once, at open. The visibility line matters because it is the only
-		// place a player is told who else can read what they type.
+		// Rendered once, at open. The audience line matters because it is the only place a
+		// player is told who else can read what they type: the room's spectator setting
+		// (2026-10 item 254, Arcade 11), resolved by roomPermissions.effectiveSpectatorMode
+		// so it always says what the permission matrix does.
 		//
-		// ⚠️ THE INVITE LINE IS HONEST ONLY WITH ITS CAVEAT. A discord.gg URL is a GUILD
-		// invite: it lets a stranger join the SERVER, and it does not touch the room's
-		// permission overwrites. A public room's @everyone allow already covers the
-		// newcomer; an invite-only room stays hidden from them even after they join
-		// through the link, so the caveat sentence is what keeps the link from reading
-		// as broken. Rendered as an inline URL rather than a button on purpose: a link
-		// component is not tap-to-copy on mobile the way an inline URL is.
-		description: (hostId: string, playerIds: string[], visibility: RoomVisibility, inviteCode?: string | null): string => {
+		// The invite link appears only on a public room everyone may watch (roomInvite), so
+		// a newcomer who follows it can see the room, and it says out loud that it stops
+		// working when the match ends, which is when finish deletes it (Arcade 10).
+		// Rendered as an inline URL rather than a button on purpose: a link component is not
+		// tap-to-copy on mobile the way an inline URL is.
+		description: (hostId: string, playerIds: string[], visibility: RoomVisibility, audience: SpectatorMode, inviteCode?: string | null): string => {
 			const roster = playerIds.map((id) => `<@${id}>`).join(" versus ");
-			const audience =
-				visibility === "public"
-					? "Anyone in the server can watch this room. Only the players can type."
-					: visibility === "solo"
-					  ? "This is a solo room. Only you and the admins can see it."
-					  : "This room is invite only. Only the players and the members they invited can see it.";
-			const lines = [`Host: <@${hostId}>`, "", roster, "", audience];
-			if (inviteCode) {
-				if (visibility === "invite") lines.push("", "Invite only rooms are hidden from members who were not invited.");
-				lines.push("", `Invite link: https://discord.gg/${inviteCode}`);
-			}
+			const lines = [`Host: <@${hostId}>`, "", roster, "", openerAudienceLine(visibility, audience)];
+			if (inviteCode) lines.push("", `Invite link, until the match ends: https://discord.gg/${inviteCode}`);
 			return lines.join("\n");
 		},
 	},
@@ -380,11 +384,46 @@ export const gameRoomsCopy = {
 		},
 		cardCancelled: (hostId: string): string => `<@${hostId}> called off the challenge.`,
 		cardStarted: (channelId: string): string => `The match is under way in <#${channelId}>.`,
+		// A Blackjack table's start refusal (2026-10 item 254, Arcade 1): the table has five
+		// seats, counted like Monopoly's, the host included.
+		blackjackTooManyPlayers: (maxSeats: number, joined: number): string =>
+			`A Blackjack table seats at most ${maxSeats} players, counting you, and ${joined} have joined. Call this one off and start a new table with fewer.`,
 		// ── Play Dero instead (post-launch plan item 13) ──
-		// Coin flip, dice roll and rps only: the host plays one round against Dero right
-		// here and the challenge closes. The round's own result card posts below the card.
+		// Coin flip, dice roll and rps only: the challenge closes and the host plays one
+		// round against Dero in a solo room of their own (2026-10 item 254, Arcade 1), so
+		// nothing is played in ⚔️challenges. The card points at the room.
 		playDeroLabel: "Play Dero instead",
-		cardPlayedDero: (hostId: string): string => `🤖 <@${hostId}> took on Dero instead. The result is below.`,
+		cardPlayedDero: (hostId: string, channelId: string): string => `🤖 <@${hostId}> took on Dero instead, in <#${channelId}>.`,
+		// The card's line when the solo room could not open: the challenge is still closed,
+		// since the host chose Dero, and the host was told why privately.
+		cardDeroUnavailable: (hostId: string): string => `🤖 <@${hostId}> chose to take on Dero instead.`,
+
+		// ── the rated or casual badge (2026-10 item 254, Arcade 5) ──
+		// One line at the top of every challenge card, from challengeBoardEmbeds.challengeBadge,
+		// the one helper that decides it. Hold'em says when a table starts to count, because
+		// a short table is recorded and never rated (ratingEngine.isRatedHoldemSession).
+		badgeLine: (badge: "rated" | "casual", game: GameSlug): string => {
+			if (badge === "casual") return "🎲 **CASUAL** · not rated";
+			if (game === "holdem") return `🏆 **RATED** · counts once the table has played ${BOT_CONSTANTS.RATINGS.HOLDEM_MIN_RATED_HANDS} hands`;
+			return "🏆 **RATED** · counts toward `/rating`";
+		},
+
+		// ── who may watch (2026-10 item 254, Arcade 11) ──
+		// The host's spectator setting on the draft card: a select, so it costs one row
+		// however many settings there are, with the current one as its default.
+		spectators: {
+			placeholder: "Who may watch",
+			options: {
+				open: { label: "Open to spectators", description: "Everyone in the server may watch." },
+				invite: { label: "Invite only", description: "Only the members you invited watch." },
+				none: { label: "No spectators", description: "Only the players see the room." },
+			} satisfies Record<SpectatorMode, { label: string; description: string }>,
+			cardLine: (mode: SpectatorMode): string => {
+				if (mode === "open") return "👀 Open to spectators: everyone in the server may watch.";
+				if (mode === "invite") return "👀 Invite only: the members who joined but do not play may watch.";
+				return "👀 No spectators: only the players will see the room.";
+			},
+		},
 		deroThrowModalTitle: "Your throw against Dero",
 		deroThrowLabel: "Rock, paper or scissors",
 		// ── Play vs bots (2026-10 item 250 Phase 5) ──
@@ -407,6 +446,9 @@ export const gameRoomsCopy = {
 		cardImage: {
 			kicker: (game: GameSlug): string => `${(GAME_LABELS[game] ?? game).toUpperCase()} CHALLENGE`,
 			versus: "VS",
+			// The badge pill beside the status (2026-10 item 254, Arcade 5), named by
+			// challengeBoardEmbeds.challengeBadge like the embed's badge line.
+			badge: { rated: "RATED", casual: "CASUAL" },
 			waiting: "Waiting for challengers",
 			more: (count: number): string => `+${count} more`,
 			status: {

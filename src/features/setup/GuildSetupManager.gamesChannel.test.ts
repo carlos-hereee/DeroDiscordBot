@@ -140,6 +140,12 @@ const EXISTING_IDS = {
 	arcadeChallengesChannelId: "ch-arcadechallenges",
 	// 🎉party-games (post-launch plan item 3), present so only 🕹️games is missing here.
 	partyGamesChannelId: "ch-partygames",
+	// 🏆rated-challenges (2026-10 item 254, Arcade 5), present for the same reason.
+	arcadeRatedChallengesChannelId: "ch-ratedchallenges",
+	// 🕹️games itself exists as a channel, so the 🏆rated-challenges suite below can boot a
+	// guild that has it; legacyRow stores its id as null, which is what the 🕹️games suite
+	// repairs.
+	arcadeGamesChannelId: "ch-games",
 	meetingVoiceChannelId: "ch-meetingvoice",
 	arcadeVoiceChannelId: "ch-arcadevoice",
 };
@@ -429,5 +435,55 @@ describe("🕹️games on an existing guild's boot", () => {
 
 		expect(oldIntro.edit).toHaveBeenCalledOnce();
 		expect(world.challenges.send).toHaveBeenCalledOnce();
+	});
+});
+
+// ── 🏆rated-challenges (2026-10 item 254, Arcade 5) ─────────────────────
+// The same boot repair path 🕹️games took: a guild set up before the channel existed loads
+// its id as null, and the next boot builds it once, under 🎮 ARCADE GAMES.
+describe("🏆rated-challenges on an existing guild's boot", () => {
+	const RATED_NAME = rokCommanderCopy.setup.channels.arcadeRatedChallenges;
+	const ratedLegacyRow = (overrides: Record<string, unknown> = {}) => legacyRow({ arcadeGamesChannelId: "ch-games", arcadeRatedChallengesChannelId: null, ...overrides });
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.spyOn(console, "log").mockImplementation(() => undefined);
+		vi.spyOn(console, "warn").mockImplementation(() => undefined);
+	});
+	afterEach(() => vi.restoreAllMocks());
+
+	it("builds it exactly once, under 🎮 ARCADE GAMES, with its intro, and persists its id", async () => {
+		const world = makeWorld(ratedLegacyRow());
+
+		await world.boot();
+
+		expect(world.create).toHaveBeenCalledOnce();
+		const call = world.create.mock.calls[0][0] as CreateCall;
+		expect(call).toMatchObject({ name: RATED_NAME, type: ChannelType.GuildText, parent: GAMES_CATEGORY_ID });
+		// A plain text channel with ⚔️challenges' posture: members read, only the bot writes.
+		expect(call.permissionOverwrites?.find((entry) => entry.id === "everyone")).toEqual({
+			id: "everyone",
+			allow: [PermissionFlagsBits.ViewChannel],
+			deny: [PermissionFlagsBits.SendMessages],
+		});
+		const rated = world.created[0];
+		expect(rated.send.mock.calls.map(titleOf)).toEqual([rokCommanderCopy.channelContent.arcadeRatedChallenges.title]);
+		const [intro] = [...rated.messages.values()];
+		const stored = world.readStored();
+		expect(stored.arcadeRatedChallengesChannelId).toBe(rated.channel.id);
+		expect(stored.introMessageIds).toMatchObject({ arcadeRatedChallengesChannelId: intro.id });
+
+		// A second boot builds nothing more.
+		await world.boot();
+		expect(world.create).toHaveBeenCalledOnce();
+	});
+
+	it("creates nothing when the admin turned auto heal off", async () => {
+		const world = makeWorld(ratedLegacyRow({ autoHealEnabled: false }));
+
+		await world.boot();
+
+		expect(world.create).not.toHaveBeenCalled();
+		expect(world.readStored().arcadeRatedChallengesChannelId).toBeNull();
 	});
 });

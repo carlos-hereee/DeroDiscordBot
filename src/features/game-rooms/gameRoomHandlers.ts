@@ -377,9 +377,10 @@ export function registerGameRoomHandlers(): void {
 		if (action === "invite") return challengeBoard.handleInviteSelect(interaction);
 		if (action === "opponent") return challengeBoard.handleOpponentSelect(interaction);
 		if (action === "bots") return challengeBoard.handleBotSelect(interaction);
-		// The host controls: the card's band, the Requests panel's answers, and the
-		// Remove a player picker. Each re-gates the host (or an admin) itself.
+		// The host controls: the card's band and spectator setting, the Requests panel's
+		// answers, and the Remove a player picker. Each re-gates the host (or an admin) itself.
 		if (action === "band") return hostControls.handleBandSelect(interaction);
+		if (action === "spectators") return hostControls.handleSpectatorSelect(interaction);
 		if (action === "accept" || action === "decline") return hostControls.handleJoinRequestSelect(interaction);
 		if (action === "kick") return hostControls.handleRemoveSelect(interaction);
 		if (action === "rps") return handleRpsSelect(interaction);

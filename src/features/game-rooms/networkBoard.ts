@@ -25,8 +25,10 @@ import type { RatingBand } from "./roomTypes.js";
 
 // ── networkBoard ─────────────────────────────────────────────────────
 // What:  the network board (2026-10 item 244 Phase 5b): ONE message per network server,
-//        in its challenges channel, edited in place, listing the tables other network
-//        servers are hosting that still take players, with a select to ask for a seat.
+//        in its 🏆rated-challenges channel (2026-10 item 254, Arcade 5: every network
+//        table is a rated Hold'em table, so the board lives beside the rated cards),
+//        edited in place, listing the tables other network servers are hosting that
+//        still take players, with a select to ask for a seat.
 // Who:   main.ts starts it at boot (startNetworkBoards). Every change that could move a
 //        listing asks for a refresh: a network table's redraw, its finish, an admin's
 //        reach or block list, the owner's bans, a satellite opening. The select itself
@@ -52,6 +54,7 @@ export const NETWORK_BOARD_SELECT_ID = `${NETWORK_BOARD_PREFIX}:join`;
 /** The slice of a GuildConfig row a board refresh reads. */
 export interface BoardGuildConfig extends NetworkGuildConfig {
 	arcadeChallengesChannelId?: string | null;
+	arcadeRatedChallengesChannelId?: string | null;
 	networkBoardMessageId?: string | null;
 }
 
@@ -279,9 +282,15 @@ async function runRefresh(client: Client): Promise<void> {
 
 // Post or edit this server's board message. A deleted message is posted again and its new
 // id remembered, the way the schedule board recovers.
+//
+// ⚠️ THE BOARD MOVED CHANNEL, AND THE OLD MESSAGE GOES ONLY ONCE THE NEW ONE IS UP. A
+// server's tracked board posted before 🏆rated-challenges existed lives in ⚔️challenges;
+// the board channel cannot find it, so a fresh board posts there, its id is stored, and
+// only then is the old message deleted from ⚔️challenges. In that order a failed post
+// leaves the old board working rather than no board at all.
 async function showBoard(client: Client, config: BoardGuildConfig, view: BoardView): Promise<void> {
 	if (config.networkBoardMessageId && lastShown.get(config.guildId) === view.signature) return;
-	const channel = await challengesChannelOf(client, config);
+	const channel = await boardChannelOf(client, config);
 	if (!channel) return;
 
 	const payload = { embeds: view.embeds, components: view.components };
@@ -292,8 +301,18 @@ async function showBoard(client: Client, config: BoardGuildConfig, view: BoardVi
 	else {
 		const posted = await channel.send(payload);
 		await guildConfigStore.update(config.guildId, { networkBoardMessageId: posted.id });
+		if (config.networkBoardMessageId) await deleteLegacyBoard(client, config, channel.id, config.networkBoardMessageId);
 	}
 	lastShown.set(config.guildId, view.signature);
+}
+
+// Delete a tracked board left in ⚔️challenges, when the board now lives elsewhere. Best
+// effort: a message already gone, or a channel the bot cannot reach, is the end state.
+async function deleteLegacyBoard(client: Client, config: BoardGuildConfig, boardChannelId: string, messageId: string): Promise<void> {
+	const legacy = await challengesChannelOf(client, config);
+	if (!legacy || legacy.id === boardChannelId) return;
+	const message = await legacy.messages.fetch(messageId).catch(() => null);
+	await message?.delete().catch(() => undefined);
 }
 
 // A server that left the network (its admin lowered the reach, or Dero left it) loses its
@@ -301,16 +320,28 @@ async function showBoard(client: Client, config: BoardGuildConfig, view: BoardVi
 async function retireBoard(client: Client, config: BoardGuildConfig): Promise<void> {
 	lastShown.delete(config.guildId);
 	if (!config.networkBoardMessageId) return;
-	const channel = await challengesChannelOf(client, config);
-	const message = channel ? await channel.messages.fetch(config.networkBoardMessageId).catch(() => null) : null;
-	await message?.delete().catch(() => undefined);
+	// Looked for in the board channel and then ⚔️challenges, its home before the move.
+	for (const channel of [await boardChannelOf(client, config), await challengesChannelOf(client, config)]) {
+		const message = channel ? await channel.messages.fetch(config.networkBoardMessageId).catch(() => null) : null;
+		if (!message) continue;
+		await message.delete().catch(() => undefined);
+		break;
+	}
 	await guildConfigStore.update(config.guildId, { networkBoardMessageId: null });
 }
 
-async function challengesChannelOf(client: Client, config: BoardGuildConfig): Promise<TextChannel | null> {
-	if (!config.arcadeChallengesChannelId) return null;
-	const channel = await client.channels.fetch(config.arcadeChallengesChannelId).catch(() => null);
+async function textChannelOf(client: Client, channelId: string | null | undefined): Promise<TextChannel | null> {
+	if (!channelId) return null;
+	const channel = await client.channels.fetch(channelId).catch(() => null);
 	return channel instanceof TextChannel ? channel : null;
+}
+
+const challengesChannelOf = (client: Client, config: BoardGuildConfig): Promise<TextChannel | null> => textChannelOf(client, config.arcadeChallengesChannelId);
+
+// Where the board lives: 🏆rated-challenges, or ⚔️challenges while a server has no
+// 🏆rated-challenges yet (the boot repair builds it), the same fallback a rated card takes.
+async function boardChannelOf(client: Client, config: BoardGuildConfig): Promise<TextChannel | null> {
+	return (await textChannelOf(client, config.arcadeRatedChallengesChannelId)) ?? challengesChannelOf(client, config);
 }
 
 /** Forget the client, any pending refresh and every remembered board. For tests only. */

@@ -94,6 +94,11 @@ const guildConfigSchema = new Schema(
 		// group games and the party game schedule. Nullable like its siblings, so every
 		// existing row loads and the boot sweep reads the null as "missing, build it".
 		partyGamesChannelId: { type: String, required: false, default: null },
+		// 🏆rated-challenges, the fifth arcade channel (2026-10 item 254, Arcade 5): the
+		// rated games' challenge cards and the network board. Nullable like its siblings,
+		// so every existing row loads and the boot sweep reads the null as "missing, build
+		// it", which is how existing guilds get the channel once, on their next boot.
+		arcadeRatedChallengesChannelId: { type: String, required: false, default: null },
 
 		// ── the two managed VOICE rooms (2026-10 item 235) ──
 		// 🏛️ Meeting Hall under the homebase category and 🎮 Arcade Lounge under the
@@ -442,6 +447,9 @@ const guildConfigSchema = new Schema(
 				// 🎉party-games' intro (post-launch plan item 3). Declared for the reason the
 				// post mortem gives: undeclared, it would repost on every boot.
 				partyGamesChannelId: { type: String, required: false, default: null },
+				// 🏆rated-challenges' intro (2026-10 item 254, Arcade 5). Declared for the
+				// reason the post mortem gives: undeclared, it would repost on every boot.
+				arcadeRatedChallengesChannelId: { type: String, required: false, default: null },
 				// The two voice rooms' cards (/dero's Join, Leave and Status, 2026-10 item
 				// 245 Phase 4b), one anchor per room. Declared for the reason the post
 				// mortem gives: undeclared, the card would repost on every boot.

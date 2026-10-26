@@ -28,8 +28,13 @@ import { respondWithFortune } from "@features/fortune/respondWithFortune.js";
 // there is no migration. The #command-center invite card's Fortune button never
 // routed through the command at all: it calls respondWithFortune directly from
 // PowerUps.ts and was unaffected in both directions.
-export async function runFortune(interaction: ChatInputCommandInteraction): Promise<void> {
+//
+// ── typed in a challenge channel (2026-10 item 254, Arcade 1) ──
+// A reading has no room, and nothing but challenge cards is posted in ⚔️challenges, so
+// miniGameInChallenges passes forcePrivate there and the reading is answered privately
+// whatever the member chose for `private`.
+export async function runFortune(interaction: ChatInputCommandInteraction, options: { forcePrivate?: boolean } = {}): Promise<void> {
 	const question = interaction.options.getString("question", false);
-	const isPrivate = interaction.options.getBoolean("private", false) ?? false;
+	const isPrivate = options.forcePrivate === true || (interaction.options.getBoolean("private", false) ?? false);
 	await respondWithFortune(interaction, { question, isPrivate });
 }

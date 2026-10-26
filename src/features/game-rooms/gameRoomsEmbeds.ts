@@ -15,8 +15,9 @@ import { COLORS } from "@base/copy/brand.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
-import type { GameSlug, RoomVisibility } from "./roomTypes.js";
+import type { GameSlug, RoomVisibility, SpectatorMode } from "./roomTypes.js";
 import { labelBotMentions } from "./botSeat.js";
+import { effectiveSpectatorMode } from "./roomPermissions.js";
 
 // ── gameRoomsEmbeds ──────────────────────────────────────────────────
 // What:  every embed and button row a room renders: the pinned opener card and the
@@ -37,11 +38,14 @@ export function roomOpenerEmbed(
 	hostId: string,
 	playerIds: string[],
 	visibility: RoomVisibility,
+	spectatorMode: SpectatorMode | null,
 	inviteCode?: string | null,
 	logoRef?: string
 ): EmbedBuilder {
-	// A Dero bot seat (2026-10 item 250 Phase 5) is named rather than mentioned.
-	const description = labelBotMentions(gameRoomsCopy.opener.description(hostId, playerIds, visibility, inviteCode));
+	// A Dero bot seat (2026-10 item 250 Phase 5) is named rather than mentioned. The
+	// audience line names who may watch, from the same helper the matrix reads.
+	const audience = effectiveSpectatorMode(visibility, spectatorMode);
+	const description = labelBotMentions(gameRoomsCopy.opener.description(hostId, playerIds, visibility, audience, inviteCode));
 	// Monopoly's rules ride the pinned opener because its board message, edited
 	// every move, has no room left for them, and a match that runs for days is
 	// joined mid way by people who never saw the start.
@@ -131,18 +135,23 @@ export function rematchedResultEmbed(posted: JSONEncodable<APIEmbed> | APIEmbed,
 // shape is a visible button whose handler refuses politely, which is what
 // GAME_ROOM_ACTIONS.archive.hostOnly does. Rematch leads because it is the action a
 // table that just finished actually wants; Archive stays for the player who does not.
-export function roomArchiveRow(roomId: string): ActionRowBuilder<ButtonBuilder> {
+// A solo luck round against Dero (2026-10 item 254, Arcade 1) offers no Rematch: its round
+// is played the moment its room opens, so a rematch would need a fresh press anyway, and a
+// button that only ever answers "not found" is worse than none. checkRematch refuses it too.
+export function roomArchiveRow(roomId: string, options: { rematch?: boolean } = {}): ActionRowBuilder<ButtonBuilder> {
+	const archive = new ButtonBuilder()
+		.setCustomId(`${GAME_ROOM_PREFIX}:archive:${roomId}`)
+		.setLabel(gameRoomsCopy.result.archiveButtonLabel)
+		.setEmoji("🗄️")
+		.setStyle(ButtonStyle.Secondary);
+	if (options.rematch === false) return new ActionRowBuilder<ButtonBuilder>().addComponents(archive);
 	return new ActionRowBuilder<ButtonBuilder>().addComponents(
 		new ButtonBuilder()
 			.setCustomId(`${GAME_ROOM_PREFIX}:rematch:${roomId}`)
 			.setLabel(gameRoomsCopy.result.rematchButtonLabel)
 			.setEmoji("🔁")
 			.setStyle(ButtonStyle.Primary),
-		new ButtonBuilder()
-			.setCustomId(`${GAME_ROOM_PREFIX}:archive:${roomId}`)
-			.setLabel(gameRoomsCopy.result.archiveButtonLabel)
-			.setEmoji("🗄️")
-			.setStyle(ButtonStyle.Secondary)
+		archive
 	);
 }
 

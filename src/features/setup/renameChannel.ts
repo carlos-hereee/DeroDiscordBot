@@ -74,6 +74,8 @@ export const SLOT_LABELS: ReadonlyArray<{ label: string; configField: string }> 
 	// command's registered shape, so no command redeploy is needed for it.
 	{ label: "Games", configField: "arcadeGamesChannelId" },
 	{ label: "Party games", configField: "partyGamesChannelId" },
+	// 🏆rated-challenges (2026-10 item 254, Arcade 5), an autocomplete row like Games.
+	{ label: "Rated challenges", configField: "arcadeRatedChallengesChannelId" },
 	// ── the two voice rooms (2026-10 item 235) ──
 	// Renameable like every other managed channel; the drift sweep and the
 	// repair path both honor the stored override for a voice room too.

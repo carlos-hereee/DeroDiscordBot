@@ -7,6 +7,7 @@ import {
 	type RoomStatus,
 	type RoomVisibility,
 	type SatelliteRoom,
+	type SpectatorMode,
 } from "@features/game-rooms/roomTypes.js";
 
 // ── gameRoomStore ──
@@ -56,6 +57,9 @@ interface ICreateGameRoom {
 	ratingBand?: RatingBand;
 	requireApproval?: boolean;
 	kickedIds?: string[];
+	// The host's spectator setting, carried from the finished room by a rematch so the
+	// rematch is watched by exactly who watched the match before it.
+	spectatorMode?: SpectatorMode | null;
 }
 
 // Where an accepted join request lands: the draft's pool, or a live room's players.
@@ -89,6 +93,7 @@ export const gameRoomStore = {
 			kickedIds: input.kickedIds ?? [],
 			botsOffered: input.botsOffered ?? false,
 			botSeats: input.botSeats ?? 0,
+			spectatorMode: input.spectatorMode ?? null,
 			status: "draft",
 		});
 	},

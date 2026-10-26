@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { RepliableInteraction } from "discord.js";
+import type { RepliableInteraction, TextChannel, User } from "discord.js";
 
 const mocks = vi.hoisted(() => ({ awardXp: vi.fn() }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: mocks.awardXp }));
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import { buildSoloLuckRow, parseSoloLuckButton, pickDeroThrow, playSoloLuck, resolveSoloLuck } from "./soloLuck.js";
+import { buildSoloLuckRow, parseSoloLuckButton, pickDeroThrow, playSoloLuck, playSoloLuckInChannel, resolveSoloLuck } from "./soloLuck.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gamesCopy } from "./gamesCopy.js";
 
@@ -138,6 +138,38 @@ describe("playSoloLuck", () => {
 // The buttons are the third way into playSoloLuck, after the two /mini-game paths, so
 // what is pinned here is the translation: every button the row builds parses back to
 // the round it names, and a replayed customId for anything else parses to nothing.
+// ── into a solo room (2026-10 item 254, Arcade 1) ──
+describe("playSoloLuckInChannel", () => {
+	const user = { id: "member-1", username: "member", globalName: "Member" } as unknown as User;
+
+	function fakeRoomChannel(send = vi.fn(async () => ({ edit: vi.fn(async () => undefined) }))) {
+		return { channel: { id: "room-1", guildId: "guild-1", client: {}, send } as unknown as TextChannel, send };
+	}
+
+	it("posts the round into the room as one message pinging nobody, pays it, and answers the result", async () => {
+		const { channel, send } = fakeRoomChannel();
+		const result = await playSoloLuckInChannel(channel, { user, displayName: "Member" }, { game: "coinflip" }, () => 0.1);
+
+		expect(result).toEqual({ game: "coinflip", face: "heads", outcome: "won" });
+		expect(send).toHaveBeenCalledTimes(1);
+		expect(send.mock.calls[0][0]).toMatchObject({ allowedMentions: { parse: [] } });
+		// Paid as the same solo luck round, inside the daily cap, in the room's channel.
+		await vi.waitFor(() => expect(mocks.awardXp).toHaveBeenCalled());
+		expect(mocks.awardXp.mock.calls[0][0]).toMatchObject({ guildId: "guild-1", channelId: "room-1", userId: "member-1" });
+	});
+
+	it("answers null and pays nothing when the round cannot be posted", async () => {
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const { channel } = fakeRoomChannel(vi.fn(async () => Promise.reject(new Error("Missing Access"))));
+		const result = await playSoloLuckInChannel(channel, { user, displayName: "Member" }, { game: "rps", memberThrow: "rock" });
+
+		expect(result).toBeNull();
+		await new Promise((resolve) => setImmediate(resolve));
+		expect(mocks.awardXp).not.toHaveBeenCalled();
+		warnSpy.mockRestore();
+	});
+});
+
 describe("the solo luck row on 🕹️games", () => {
 	const row = buildSoloLuckRow(rokCommanderCopy.channelContent.arcadeGames.soloLuckLabels).toJSON() as { components: Array<{ custom_id?: string; label?: string }> };
 

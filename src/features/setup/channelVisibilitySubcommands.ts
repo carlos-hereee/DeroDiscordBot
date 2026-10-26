@@ -51,6 +51,8 @@ export const HIDEABLE_CHANNELS = [
 	// they can with the leaderboard.
 	{ name: "Arcade rules", value: "arcadeRulesChannelId" },
 	{ name: "Challenge board", value: "arcadeChallengesChannelId" },
+	// 🏆rated-challenges (2026-10 item 254, Arcade 5), member facing like the board.
+	{ name: "Rated challenges", value: "arcadeRatedChallengesChannelId" },
 ] as const;
 
 // ⚠️ THIS LIST IS A DELIBERATE SUBSET OF CHANNEL_SPECS, NOT A MIRROR OF IT, and
@@ -210,6 +212,9 @@ function resolveChannelId(config: GuildConfigDoc, field: HideableField): string 
 			break;
 		case "arcadeChallengesChannelId":
 			value = (config as unknown as Record<string, string | null | undefined>).arcadeChallengesChannelId;
+			break;
+		case "arcadeRatedChallengesChannelId":
+			value = (config as unknown as Record<string, string | null | undefined>).arcadeRatedChallengesChannelId;
 			break;
 	}
 	return typeof value === "string" && value.length > 0 ? value : null;

@@ -199,6 +199,39 @@ describe("the band select", () => {
 	});
 });
 
+// ── who may watch (2026-10 item 254, Arcade 11) ─────────────────────────
+describe("the spectator select", () => {
+	it.each(["open", "invite", "none"] as const)("stores %s on the draft and redraws the card", async (mode) => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ game: "rps" }));
+		storeMock.update.mockResolvedValue(makeRoom({ game: "rps", spectatorMode: mode }));
+		const interaction = makeSelect("spectators", [mode]);
+
+		await hostControls.handleSpectatorSelect(interaction);
+
+		expect(storeMock.update).toHaveBeenCalledWith("guild-1", "room-1", { spectatorMode: mode });
+		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+		expect(refreshMock).toHaveBeenCalledOnce();
+	});
+
+	it("refuses anyone but the host, a forged value, a network table, and a room already open", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		const stranger = makeSelect("spectators", ["none"], OTHER);
+		await hostControls.handleSpectatorSelect(stranger);
+		expect(replyText(stranger)).toBe(gameRoomsCopy.errors.notYours);
+
+		await hostControls.handleSpectatorSelect(makeSelect("spectators", ["everyone"]));
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ network: true }));
+		await hostControls.handleSpectatorSelect(makeSelect("spectators", ["none"]));
+
+		// A room already open keeps the permissions it opened with: no migration, no change.
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "playing" }));
+		const late = makeSelect("spectators", ["none"]);
+		await hostControls.handleSpectatorSelect(late);
+		expect(replyText(late)).toBe(gameRoomsCopy.board.draftGone);
+		expectNoWrites();
+	});
+});
+
 describe("answering join requests on a draft", () => {
 	it("accepts into the pool, and only members still waiting, whatever the select sent", async () => {
 		storeMock.findByRoomId.mockResolvedValue(makeRoom({ pendingJoinIds: [THIRD] }));

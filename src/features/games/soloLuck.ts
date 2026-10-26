@@ -1,4 +1,14 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, type ButtonInteraction, type RepliableInteraction } from "discord.js";
+import {
+	ActionRowBuilder,
+	ButtonBuilder,
+	ButtonStyle,
+	MessageFlags,
+	type ButtonInteraction,
+	type MessageEditOptions,
+	type RepliableInteraction,
+	type TextChannel,
+	type User,
+} from "discord.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { resolveVersus, type CoinFace } from "./versusResolve.js";
@@ -10,21 +20,22 @@ import { awardSoloLuckResult } from "./gameXp.js";
 import { gamesCopy } from "./gamesCopy.js";
 
 // ── soloLuck ───────────────────────────────────────────────────────────────
-// What:  a coin flip, dice roll or rock paper scissors against Dero himself, played
-//        inline: one press, one public result message, no room and no challenge
-//        card (the 1.7.0 test fixes, item 14).
-// Who:   /mini-game coin-flip, dice-roll and rps with `against: Dero`, through
-//        challengeEntry, and the solo luck row on the 🕹️games intro (2026-10 item 245
-//        Phase 4a), through handleSoloLuckButton below. Both end in playSoloLuck.
+// What:  a coin flip, dice roll or rock paper scissors against Dero himself: one press,
+//        one result message, no challenge card (the 1.7.0 test fixes, item 14).
+// Who:   /mini-game coin-flip, dice-roll and rps with `against: Dero` typed outside the
+//        challenge channels, through challengeEntry, and the solo luck row on the
+//        🕹️games intro (2026-10 item 245 Phase 4a), through handleSoloLuckButton below;
+//        both end in playSoloLuck, answered in place. Play Dero instead and a round
+//        against Dero typed in ⚔️challenges end in playSoloLuckInChannel instead, posted
+//        into the solo room soloRooms opened for it (2026-10 item 254, Arcade 1), so
+//        nothing is played in ⚔️challenges.
 // Where: it reuses the two pure resolvers the member against member games use,
 //        with Dero as the second side: resolveVersus for the coin and the dice (the
 //        member is the challenger, Dero the opponent) and scoreRps for the throws.
 //        A second resolver would be a second set of odds to keep fair.
-// How:   resolveSoloLuck is pure (the rng is injectable, matching versusResolve);
-//        playSoloLuck posts the result and only then pays through gameXp.
-//
-// Deliberately NOT a room: a coin flip lasts a second, and a room is earned by
-// duration (see the game rooms section of the bot's CLAUDE.md).
+// How:   resolveSoloLuck is pure (the rng is injectable, matching versusResolve); both
+//        posting paths post the result and only then pay through gameXp, so the odds,
+//        the card and the pay are one round whichever door it came through.
 
 export type SoloLuckGame = "coinflip" | "diceroll" | "rps";
 
@@ -97,7 +108,10 @@ export async function playSoloLuck(
 	await interaction.reply({ embeds: [buildSoloLuckEmbed(interaction.user.id, result)], allowedMentions: { parse: [] } });
 	// The Dero die card joins a dice round once it draws (2026-10 item 250 Phase 5), in an
 	// edit, so the reply above already landed inside Discord's three second window.
-	if (result.game === "diceroll") void addDiceCard(interaction, result);
+	if (result.game === "diceroll") {
+		const memberName = (): string => (interaction.inCachedGuild() ? interaction.member.displayName : (interaction.user.globalName ?? interaction.user.username));
+		void addDiceCard(interaction.user.id, memberName, result, (payload) => interaction.editReply(payload));
+	}
 
 	// Fire and forget after the result is on screen (house rule 7); awardXp never
 	// throws, and the daily cap decides how much of this actually lands.
@@ -110,23 +124,65 @@ export async function playSoloLuck(
 	});
 }
 
+/** The member a round against Dero is posted for, when there is no interaction to reply to. */
+export interface SoloLuckPlayer {
+	user: User;
+	displayName: string;
+}
+
+/**
+ * Play one solo round into a channel, a solo room (2026-10 item 254, Arcade 1), then pay
+ * the member exactly as playSoloLuck does. Answers the result so the room can be finished
+ * with its winner, or null when the result could not be posted, so the caller closes the
+ * room as abandoned rather than paying for a round nobody saw.
+ */
+export async function playSoloLuckInChannel(
+	channel: TextChannel,
+	player: SoloLuckPlayer,
+	play: SoloLuckPlay,
+	rng: () => number = Math.random
+): Promise<SoloLuckResult | null> {
+	const result = resolveSoloLuck(play, rng);
+	const message = await channel.send({ embeds: [buildSoloLuckEmbed(player.user.id, result)], allowedMentions: { parse: [] } }).catch((error) => {
+		console.warn("[games] posting a round against Dero into its room failed", { channelId: channel.id, error });
+		return null;
+	});
+	if (!message) return null;
+	if (result.game === "diceroll") void addDiceCard(player.user.id, () => player.displayName, result, (payload) => message.edit(payload));
+
+	awardSoloLuckResult({
+		client: channel.client,
+		guildId: channel.guildId,
+		channelId: channel.id,
+		user: player.user,
+		won: result.outcome === "won",
+	});
+	return result;
+}
+
 // Fire and forget after the result is on screen (house rule 7): a card that does not
-// draw, or an edit that fails, leaves the text result as it was.
-async function addDiceCard(interaction: RepliableInteraction, result: Extract<SoloLuckResult, { game: "diceroll" }>): Promise<void> {
+// draw, or an edit that fails, leaves the text result as it was. `edit` is whichever way
+// the result was posted: the interaction's reply, or the room message itself. The name is
+// resolved inside the try, so a lookup that throws costs the card and never the round.
+async function addDiceCard(
+	userId: string,
+	memberName: () => string,
+	result: Extract<SoloLuckResult, { game: "diceroll" }>,
+	edit: (payload: MessageEditOptions) => Promise<unknown>
+): Promise<void> {
 	try {
-		const memberName = interaction.inCachedGuild() ? interaction.member.displayName : (interaction.user.globalName ?? interaction.user.username);
 		const card = await withRenderFallback(
 			() =>
 				renderDiceCard({
-					left: { name: memberName, roll: result.memberRoll },
+					left: { name: memberName(), roll: result.memberRoll },
 					right: { name: gamesCopy.soloLuck.deroName, roll: result.deroRoll },
 					winner: DICE_CARD_WINNER[result.outcome],
 				}),
 			() => null
 		);
 		if (!isRenderPayload(card)) return;
-		const embed = buildSoloLuckEmbed(interaction.user.id, result).setImage(card.ref);
-		await interaction.editReply({ embeds: [embed], files: [card.attachment], allowedMentions: { parse: [] } });
+		const embed = buildSoloLuckEmbed(userId, result).setImage(card.ref);
+		await edit({ embeds: [embed], files: [card.attachment], allowedMentions: { parse: [] } });
 	} catch (error) {
 		console.warn("[games] adding the dice card to a dice round against Dero failed", error);
 	}
