@@ -22,6 +22,7 @@ import { playSoloLuckInChannel } from "@features/games/soloLuck.js";
 import { RoomProvisioner } from "./RoomProvisioner.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 type Mock = ReturnType<typeof vi.fn>;
 const configMock = guildConfigStore as unknown as { findByGuildId: Mock };
@@ -33,6 +34,8 @@ const tableMock = startBlackjackTable as unknown as Mock;
 const HOST = { userId: "host-1", displayName: "Host", user: { id: "host-1" } as never };
 const ROOM = { roomId: "room-1", hostId: "host-1", playerIds: ["host-1"] } as unknown as IGameRoom;
 const CHANNEL = { id: "room-ch-1" } as unknown as TextChannel;
+// A solo luck room goes on the short window (owner's choice, 30 minutes), win or abandon.
+const SHORT = BOT_CONSTANTS.GAME_ROOM_SOLO_LUCK_ARCHIVE_DELAY_MS;
 
 function makeGuild(): Guild {
 	return {
@@ -66,7 +69,7 @@ describe("a round against Dero in its own room", () => {
 		expect(result.ok).toBe(true);
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ game: "solo-coinflip", visibility: "solo", playerIds: ["host-1"], spectatorIds: [] }));
 		expect(playMock).toHaveBeenCalledWith(CHANNEL, { user: HOST.user, displayName: "Host" }, { game: "coinflip" });
-		expect(finishMock).toHaveBeenCalledWith(guild.client, ROOM, { winnerId: "host-1" });
+		expect(finishMock).toHaveBeenCalledWith(guild.client, ROOM, { winnerId: "host-1", archiveDelayMs: SHORT });
 	});
 
 	it("finishes with no winner on a loss or a tie", async () => {
@@ -74,7 +77,7 @@ describe("a round against Dero in its own room", () => {
 
 		await openSoloRoom(makeGuild(), "solo-rps", HOST, { luckPlay: { game: "rps", memberThrow: "rock" } });
 
-		expect(finishMock).toHaveBeenCalledWith(expect.anything(), ROOM, { winnerId: null });
+		expect(finishMock).toHaveBeenCalledWith(expect.anything(), ROOM, { winnerId: null, archiveDelayMs: SHORT });
 	});
 
 	it("closes the room as abandoned, paying nothing, when the round could not be posted", async () => {
@@ -82,7 +85,7 @@ describe("a round against Dero in its own room", () => {
 
 		await openSoloRoom(makeGuild(), "solo-diceroll", HOST, { luckPlay: { game: "diceroll" } });
 
-		expect(finishMock).toHaveBeenCalledWith(expect.anything(), ROOM, { abandoned: true });
+		expect(finishMock).toHaveBeenCalledWith(expect.anything(), ROOM, { abandoned: true, archiveDelayMs: SHORT });
 	});
 
 	it("plays nothing when the room itself was refused", async () => {

@@ -258,6 +258,29 @@ describe("roomLifecycle.finish room-rate top up", () => {
 		expect(ids).toEqual(["gameroom:archive:room-1"]);
 	});
 
+	// The owner's 30 minute window for a solo luck round (2026-10 item 254): finish stamps
+	// it itself, so it stays the one writer of a date, and the card names that window.
+	it("stamps the shorter window a solo luck round passes, and its card says so", async () => {
+		const now = new Date("2026-10-26T10:00:00.000Z");
+		const channel = makeChannel();
+		const delay = BOT_CONSTANTS.GAME_ROOM_SOLO_LUCK_ARCHIVE_DELAY_MS;
+
+		await finish(makeClient(channel), makeRoom({ game: "solo-coinflip", visibility: "solo", playerIds: ["host-1"] }), { winnerId: "host-1", now, archiveDelayMs: delay });
+
+		expect(storeMock.finish).toHaveBeenCalledWith("guild-1", "room-1", { winnerId: "host-1", endedAt: now, archiveAt: new Date(now.getTime() + delay) });
+		const card = channel.send.mock.calls[0][0] as { embeds: { data: { description?: string } }[] };
+		expect(card.embeds[0].data.description).toContain("It disappears in 30 minutes");
+	});
+
+	it("keeps the ordinary four hour window, and says so, when no window is passed", async () => {
+		const channel = makeChannel();
+
+		await finish(makeClient(channel), makeRoom(), { winnerId: "host-1" });
+
+		const card = channel.send.mock.calls[0][0] as { embeds: { data: { description?: string } }[] };
+		expect(card.embeds[0].data.description).toContain("It disappears in 4 hours");
+	});
+
 	it("pays NOTHING for an abandoned room, which is the farm this closes", async () => {
 		// Open a room, delete its channel, repeat. finish() is called with abandoned:true by
 		// both the boot recovery sweep and ChannelDeleteWatcher's R14 path.

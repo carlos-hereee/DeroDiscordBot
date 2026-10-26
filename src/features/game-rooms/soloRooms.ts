@@ -1,5 +1,6 @@
 import { ChannelType, type CategoryChannel, type Guild, type TextChannel, type User } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { startBlackjackTable } from "@features/games/blackjackHandler.js";
@@ -33,6 +34,8 @@ import { isSoloLuckGame, type SoloLuckSlug } from "./roomTypes.js";
 //        play the luck round.
 
 export type SoloGameSlug = "solo-hangman" | "solo-blackjack" | SoloLuckSlug;
+
+const SOLO_LUCK_ARCHIVE_DELAY_MS = BOT_CONSTANTS.GAME_ROOM_SOLO_LUCK_ARCHIVE_DELAY_MS;
 
 // The solo room each luck game's round against Dero plays in.
 const SOLO_LUCK_SLUGS: Record<SoloLuckGame, SoloLuckSlug> = {
@@ -102,15 +105,17 @@ export async function openSoloRoom(guild: Guild, game: SoloGameSlug, host: SoloH
 // its result card. The pay is the round's own, through soloLuck (the daily cap included),
 // and finish adds no room rate on top for these slugs (roomLifecycle.payRoomRateTopUp).
 // A round that cannot be posted, or arrives with no play, closes the room as abandoned,
-// which pays nothing, rather than leaving the member's one room slot held.
+// which pays nothing, rather than leaving the member's one room slot held. Either way the
+// channel goes on the short solo luck window (GAME_ROOM_SOLO_LUCK_ARCHIVE_DELAY_MS), since
+// there is no match to scroll back and a long one would pile channels up in the arcade.
 async function playSoloLuckRoom(guild: Guild, room: IGameRoom, channel: TextChannel, host: SoloHost, play: SoloLuckPlay | undefined): Promise<void> {
 	const user = host.user ?? (await guild.client.users.fetch(host.userId).catch(() => null));
 	const result = play && user ? await playSoloLuckInChannel(channel, { user, displayName: host.displayName }, play) : null;
 	if (!result) {
-		await roomLifecycle.finish(guild.client, room, { abandoned: true });
+		await roomLifecycle.finish(guild.client, room, { abandoned: true, archiveDelayMs: SOLO_LUCK_ARCHIVE_DELAY_MS });
 		return;
 	}
-	await roomLifecycle.finish(guild.client, room, { winnerId: result.outcome === "won" ? host.userId : null });
+	await roomLifecycle.finish(guild.client, room, { winnerId: result.outcome === "won" ? host.userId : null, archiveDelayMs: SOLO_LUCK_ARCHIVE_DELAY_MS });
 }
 
 /**

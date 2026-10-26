@@ -188,6 +188,15 @@ export const BOT_CONSTANTS = {
 	// delete happens, so this window is about convenience, not durability.
 	GAME_ROOM_ARCHIVE_DELAY_MS: 4 * 60 * 60 * 1000, // 4 hours
 
+	// The same window for a solo luck round against Dero (2026-10 item 254, Arcade 1),
+	// whose room exists only so nothing is played in ⚔️challenges: the round is over the
+	// moment the room opens, so there is no match to scroll back. Owner's choice: 30
+	// minutes, long enough to read the result after looking away, short enough that a
+	// member pressing Play Dero instead again and again holds a handful of channels
+	// rather than dozens against the 50 per category cap. The sweep runs every 5 minutes
+	// (GAME_ROOM_SWEEP_CRON), so the channel goes 30 to 35 minutes after the round.
+	GAME_ROOM_SOLO_LUCK_ARCHIVE_DELAY_MS: 30 * 60 * 1000, // 30 minutes
+
 	// Concurrent non-terminal rooms allowed per guild, BOTH visibilities. This is
 	// the hard wall; the tier quota on PRIVATE rooms (server-resolved, up to 50 at
 	// Studio) is the softer wall inside it for invite and solo rooms specifically.

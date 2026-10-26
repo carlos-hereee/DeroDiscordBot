@@ -58,6 +58,11 @@ export interface FinishRoomInput {
 	// How the match was won (post-launch plan item 21), from the game that ended it. It
 	// only chooses the flavor line on the closed challenge card.
 	outcome?: { bucket: OutcomeBucket; roomWon?: boolean };
+	// How long the finished channel stays before the sweep deletes it. Absent is the
+	// ordinary GAME_ROOM_ARCHIVE_DELAY_MS; only a solo luck round against Dero passes
+	// the shorter GAME_ROOM_SOLO_LUCK_ARCHIVE_DELAY_MS (soloRooms). finish still stamps
+	// the date itself, so it stays the one writer of a date into archiveAt.
+	archiveDelayMs?: number;
 	now?: Date;
 }
 
@@ -70,6 +75,7 @@ export interface FinishRoomInput {
 export async function finish(client: Client, room: IGameRoom, input: FinishRoomInput = {}): Promise<boolean> {
 	const now = input.now ?? new Date();
 	const winnerId = input.winnerId ?? null;
+	const archiveDelayMs = input.archiveDelayMs ?? BOT_CONSTANTS.GAME_ROOM_ARCHIVE_DELAY_MS;
 
 	// ① PERSIST FIRST, LOCK SECOND, and the order is load bearing in one direction only.
 	// If the process dies between the two, this order leaves a row that is "finished"
@@ -90,7 +96,7 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	const claimed = await gameRoomStore.finish(room.guildId, room.roomId, {
 		winnerId,
 		endedAt: now,
-		archiveAt: new Date(now.getTime() + BOT_CONSTANTS.GAME_ROOM_ARCHIVE_DELAY_MS),
+		archiveAt: new Date(now.getTime() + archiveDelayMs),
 	});
 	if (!claimed) return false;
 
@@ -107,7 +113,7 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	await settleTableChips(client, claimed);
 
 	// A network table names its winner rather than mentioning them (satelliteRooms).
-	const resultEmbed = await labelEmbedForRoom(client, room, roomResultEmbed(winnerId, input.abandoned ?? false, input.art?.ref));
+	const resultEmbed = await labelEmbedForRoom(client, room, roomResultEmbed(winnerId, input.abandoned ?? false, input.art?.ref, archiveDelayMs));
 
 	const channel = await resolveRoomChannel(client, room.channelId);
 	// An already-deleted channel is the ordinary abandonment case, not an error. The

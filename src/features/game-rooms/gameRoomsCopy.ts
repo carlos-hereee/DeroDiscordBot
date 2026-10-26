@@ -26,6 +26,19 @@ const monopolyAuctionSeconds = (): number => Math.round(BOT_CONSTANTS.MONOPOLY_A
 // own clock and which ticks down on its own.
 const discordRelativeTime = (epochMs: number): string => `<t:${Math.floor(epochMs / 1000)}:R>`;
 
+// A room's archive window in words: whole hours when it is a whole number of hours, minutes
+// otherwise, so 4 hours reads "4 hours" and 30 minutes reads "30 minutes".
+const MS_PER_MINUTE = 60 * 1000;
+const MINUTES_PER_HOUR = 60;
+function archiveWindowWords(delayMs: number): string {
+	const minutes = Math.round(delayMs / MS_PER_MINUTE);
+	if (minutes >= MINUTES_PER_HOUR && minutes % MINUTES_PER_HOUR === 0) {
+		const hours = minutes / MINUTES_PER_HOUR;
+		return hours === 1 ? "1 hour" : `${hours} hours`;
+	}
+	return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+}
+
 // Who can see a room, one sentence per setting. A solo room is its own sentence because
 // it is nobody's choice: it admits its one player and the admins, by construction.
 function openerAudienceLine(visibility: RoomVisibility, audience: SpectatorMode): string {
@@ -231,11 +244,12 @@ export const gameRoomsCopy = {
 		noWinnerLine: "Nobody takes it.",
 		abandonedLine: "This room was abandoned, so Dero closed it.",
 		// The room stays readable for a while precisely so the players can scroll it
-		// back, and saying the window out loud is what stops "where did my game go".
-		archiveNotice: (): string => {
-			const hours = Math.round(BOT_CONSTANTS.GAME_ROOM_ARCHIVE_DELAY_MS / (60 * 60 * 1000));
-			return `This room is now read only. It disappears in ${hours} hours, or right now if the host presses Archive now.`;
-		},
+		// back, and saying the window out loud is what stops "where did my game go". It
+		// names the window finish actually stamped, which is shorter for a solo luck round
+		// against Dero (GAME_ROOM_SOLO_LUCK_ARCHIVE_DELAY_MS), so the card never promises
+		// hours the channel does not have.
+		archiveNotice: (delayMs: number = BOT_CONSTANTS.GAME_ROOM_ARCHIVE_DELAY_MS): string =>
+			`This room is now read only. It disappears in ${archiveWindowWords(delayMs)}, or right now if the host presses Archive now.`,
 		archiveButtonLabel: "Archive now",
 		rematchButtonLabel: "Rematch",
 		// Replaces the archive notice on the finished room's result card once a rematch

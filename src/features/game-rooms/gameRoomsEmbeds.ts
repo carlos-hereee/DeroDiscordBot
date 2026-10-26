@@ -94,7 +94,9 @@ export function roomOpenerLogo(game: GameSlug): { attachment: AttachmentBuilder;
 // text and embed, because a room can carry thirty of them and re-uploading a PNG per
 // move is bandwidth and a rate limit for no gain. This is the payoff moment and is
 // posted once, so it earns the weight.
-export function roomResultEmbed(winnerId: string | null, abandoned = false, imageRef?: string): EmbedBuilder {
+// archiveDelayMs is the window finish stamped, so the notice names it; absent is the
+// ordinary room's window.
+export function roomResultEmbed(winnerId: string | null, abandoned = false, imageRef?: string, archiveDelayMs?: number): EmbedBuilder {
 	const outcome = abandoned
 		? gameRoomsCopy.result.abandonedLine
 		: winnerId
@@ -103,7 +105,7 @@ export function roomResultEmbed(winnerId: string | null, abandoned = false, imag
 
 	const embed = infoEmbed(
 		gameRoomsCopy.result.title,
-		[outcome, "", gameRoomsCopy.result.archiveNotice()].join("\n"),
+		[outcome, "", gameRoomsCopy.result.archiveNotice(archiveDelayMs)].join("\n"),
 		COLORS.ARCADE as ColorResolvable
 	);
 
