@@ -2,8 +2,8 @@ import type { ChallengeReach } from "@features/game-rooms/roomTypes.js";
 
 // ── ratingsCopy ──────────────────────────────────────────────────────
 // Admin facing copy for the arcade settings (2026-10 item 244 Phases 3b, 4 and 5b):
-// the `/dero-config arcade` group's descriptions and its ephemeral replies, for
-// the monthly post, the challenge reach and the network block list. Plain and practical, the bot's rule
+// the `/arcade` command's descriptions and its ephemeral replies, for the monthly
+// post, the challenge reach and the network block list. Plain and practical, the bot's rule
 // for admin copy, so it lives here rather than in the copy packs. What MEMBERS
 // read (/rating, the monthly post, the host controls) lives in the packs under
 // arcadeRatings and arcadeHostControls.
@@ -18,7 +18,8 @@ const REACH_NAMES: Record<ChallengeReach, string> = {
 
 export const ratingsCopy = {
 	config: {
-		group: "Arcade settings: the monthly post, challenge reach, network block list and bot opponents",
+		group: "The arcade: on or off, bot opponents, challenge reach, the monthly post, network blocks and chips",
+		serverGroup: "Block a server from this server's network tables, or let it back",
 		monthlyPost: "Post last month's arcade highlights in the leaderboard channel on the 1st",
 		monthlyPostOption: "On to post every month, off to stay quiet",
 		title: "🎮 Arcade settings",
@@ -48,7 +49,7 @@ export const ratingsCopy = {
 			if (reach === "server") {
 				return "Challenge reach: **Server**. Hosts can open invite only rooms or rooms open to the whole server.";
 			}
-			return "Challenge reach: **Network**. Hosts can also open a Hold'em table to players from other network servers, and a network board in the challenges channel lists other servers' open tables. Each player accepts a one time network notice before anything of theirs is shown in another server. Block a server with `/dero-config arcade block-server`.";
+			return "Challenge reach: **Network**. Hosts can also open a Hold'em table to players from other network servers, and a network board in the challenges channel lists other servers' open tables. Each player accepts a one time network notice before anything of theirs is shown in another server. Block a server with `/arcade server block`.";
 		},
 		reachUnchanged: (reach: ChallengeReach): string => `Challenge reach is already **${REACH_NAMES[reach]}**. Nothing changed.`,
 		reachUnknown: "That is not a challenge reach. Choose Invite only, Server or Network. Nothing changed.",

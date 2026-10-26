@@ -164,7 +164,7 @@ describe("levelFromTotalXp never throws, whatever the row holds", () => {
 	});
 
 	it("treats a negative balance as level 1", () => {
-		// Reachable in production: /xp remove can drive totalXp below zero.
+		// Reachable in production: /leveling xp remove can drive totalXp below zero.
 		expect(levelFromTotalXp(-1, "dero")).toBe(1);
 	});
 });

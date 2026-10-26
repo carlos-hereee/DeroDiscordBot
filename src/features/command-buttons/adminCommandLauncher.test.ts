@@ -8,15 +8,18 @@ import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInterac
 //        inside Discord's limits; a member who is neither the owner nor an admin is
 //        refused at EVERY step, because a select or a modal is reachable without the
 //        button that opened it; and an admin's submitted form runs the command's own
-//        handler (2026-10 item 245 Phase 4b). The stores are mocked; the commands,
-//        the form and the gate are real. A refused or stale press is answered with
-//        a notice modal (post-launch plan item 9); a refused SUBMIT, which cannot
-//        open a modal, with the private reply.
+//        handler (2026-10 item 245 Phase 4b). Since the regroup by job (2026-10 item
+//        254 Phase 1) a button names a launch id, a panel id or /events, and every
+//        id an older guide carries still opens the job it opened. The stores are
+//        mocked; the commands, the form and the gate are real. A refused or stale
+//        press is answered with a notice modal (post-launch plan item 9); a refused
+//        SUBMIT, which cannot open a modal, with the private reply.
 
 const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
 	update: vi.fn(),
 	findEvents: vi.fn(),
+	findVoice: vi.fn(),
 	buttons: new Map<string, (interaction: unknown) => Promise<void>>(),
 	selects: new Map<string, (interaction: unknown) => Promise<void>>(),
 	modals: new Map<string, (interaction: unknown) => Promise<void>>(),
@@ -24,6 +27,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update } }));
 vi.mock("@db/stores/eventStore.js", () => ({ eventStore: { findByGuildId: mocks.findEvents } }));
+vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { findByGuildId: mocks.findVoice } }));
 vi.mock("@handlers/interactionRegistry.js", () => ({
 	registerButton: (prefix: string, handler: (interaction: unknown) => Promise<void>) => mocks.buttons.set(prefix, handler),
 	registerSelectMenu: (prefix: string, handler: (interaction: unknown) => Promise<void>) => mocks.selects.set(prefix, handler),
@@ -32,7 +36,7 @@ vi.mock("@handlers/interactionRegistry.js", () => ({
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
-import { LAUNCHABLE_COMMANDS, formCustomId, registerAdminCommandLauncher } from "./adminCommandLauncher.js";
+import { LAUNCHABLE_COMMANDS, formCustomId, registerAdminCommandLauncher, resolveLaunchTarget } from "./adminCommandLauncher.js";
 import { ADMIN_GUIDE_COMMAND_ROWS, buildAdminCommandRows } from "./adminGuideButtons.js";
 import { buildForm, listLeaves } from "./commandForm.js";
 import { commandButtonsCopy } from "./commandButtonsCopy.js";
@@ -128,26 +132,54 @@ beforeEach(() => {
 	mocks.findByGuildId.mockReset().mockResolvedValue({ guildId: GUILD_ID, adminRoleId: ADMIN_ROLE, weekStart: "sunday" });
 	mocks.update.mockReset().mockResolvedValue(undefined);
 	mocks.findEvents.mockReset().mockResolvedValue([]);
+	mocks.findVoice.mockReset().mockResolvedValue(null);
 });
 
+// Every launch id the guide offers, and every id an older guide still carries.
+const GUIDE_IDS = ADMIN_GUIDE_COMMAND_ROWS.flat().map((button) => button.id);
+const LEGACY_IDS = ["schedule", "stream", "configure-kvk-season", "configure", "channels", "setup-level-system", "xp", "economy", "dero-config"];
+
 describe("the admin guide's command buttons", () => {
-	it("offer exactly the commands the launcher opens, and every admin command among them", () => {
-		expect(ADMIN_GUIDE_COMMAND_ROWS.flat().sort()).toEqual([...LAUNCHABLE_COMMANDS.keys()].sort());
-		for (const entry of BOT_CONSTANTS.ADMIN_COMMANDS) {
-			const [commandName] = entry.split(" ");
-			expect(LAUNCHABLE_COMMANDS.has(commandName ?? ""), `${entry} has no button`).toBe(true);
-		}
+	it("offer six buttons in two rows: /events, /server, /server channels, /leveling, /dero-config, then /arcade", () => {
+		const labels = buildAdminCommandRows().map((row) => (row.toJSON().components as Array<{ label?: string }>).map((button) => button.label));
+		expect(labels).toEqual([["/events", "/server", "/server channels", "/leveling", "/dero-config"], ["/arcade"]]);
 	});
 
-	it("label each button with its command and fit Discord's row and message limits", () => {
+	it("open exactly the commands the launcher can, each under the path its label names, and every admin command among them", () => {
+		const opened = new Set<string>();
+		for (const button of ADMIN_GUIDE_COMMAND_ROWS.flat()) {
+			const target = resolveLaunchTarget(button.id);
+			expect(target?.path, button.id).toBe(button.path);
+			if (target) opened.add(target.command.data.name);
+		}
+		expect([...opened].sort()).toEqual([...LAUNCHABLE_COMMANDS.keys()].sort());
+		for (const commandName of BOT_CONSTANTS.ADMIN_COMMANDS) expect(LAUNCHABLE_COMMANDS.has(commandName), `${commandName} has no button`).toBe(true);
+	});
+
+	it("carry their launch id and fit Discord's row and message limits", () => {
 		const rows = buildAdminCommandRows();
 		// The guide adds its control row (Self destruct and the admin controls) below.
 		expect(rows.length + 1).toBeLessThanOrEqual(LIMITS.MAX_MESSAGE_ROWS);
-		for (const row of rows) {
-			const buttons = row.toJSON().components as Array<{ label?: string; custom_id?: string }>;
+		for (const [index, row] of rows.entries()) {
+			const buttons = row.toJSON().components as Array<{ custom_id?: string }>;
 			expect(buttons.length).toBeLessThanOrEqual(LIMITS.MAX_ROW_BUTTONS);
-			for (const button of buttons) expect(button.custom_id).toBe(`admincmd:${button.label?.slice(1)}`);
+			expect(buttons.map((button) => button.custom_id)).toEqual(ADMIN_GUIDE_COMMAND_ROWS[index]?.map((button) => `admincmd:${button.id}`));
 		}
+	});
+
+	it("map every id an older guide carries to the job it opened", () => {
+		expect(LEGACY_IDS.map((id) => [id, resolveLaunchTarget(id)?.path, resolveLaunchTarget(id)?.panelId ?? null])).toEqual([
+			["schedule", "events", null],
+			["stream", "events", null],
+			["configure-kvk-season", "events", null],
+			["configure", "server", "server"],
+			["channels", "server channels", "server-channels"],
+			["setup-level-system", "leveling", "leveling"],
+			["xp", "leveling", "leveling"],
+			["economy", "arcade", "arcade"],
+			["dero-config", "dero-config", "dero-config"],
+		]);
+		expect(resolveLaunchTarget("pause-schedule")).toBeNull();
 	});
 
 	it("build a form inside Discord's limits for every leaf of every admin command", () => {
@@ -172,8 +204,8 @@ describe("the admin guide's command buttons", () => {
 });
 
 describe("every admin button refuses a member who is neither the owner nor an admin", () => {
-	it.each([...LAUNCHABLE_COMMANDS.keys()])("the /%s button refuses and opens nothing", async (commandName) => {
-		const button = press("admincmd", `admincmd:${commandName}`, MEMBER_ID);
+	it.each([...GUIDE_IDS, ...LEGACY_IDS])("the admincmd:%s button refuses and opens nothing", async (launchId) => {
+		const button = press("admincmd", `admincmd:${launchId}`, MEMBER_ID);
 		await button.run();
 		expect(noticeText(button.showModal)).toBe(refusal);
 		expect(formModals(button.showModal)).toEqual([]);
@@ -182,9 +214,9 @@ describe("every admin button refuses a member who is neither the owner nor an ad
 
 	it("refuses the pick of what to do, the optional field pick and the required only button", async () => {
 		const steps = [
-			pick("admincmd_leaf", "admincmd_leaf:schedule", ["pause"], MEMBER_ID),
-			pick("admincmd_fields", "admincmd_fields:stream:setup", ["description"], MEMBER_ID),
-			press("admincmd_go", "admincmd_go:stream:setup", MEMBER_ID),
+			pick("admincmd_leaf", "admincmd_leaf:events", ["pause"], MEMBER_ID),
+			pick("admincmd_fields", "admincmd_fields:events:stream/weekly", ["description"], MEMBER_ID),
+			press("admincmd_go", "admincmd_go:events:stream/weekly", MEMBER_ID),
 		];
 		for (const step of steps) {
 			await step.run();
@@ -194,7 +226,7 @@ describe("every admin button refuses a member who is neither the owner nor an ad
 	});
 
 	it("refuses a submitted form and runs nothing", async () => {
-		const form = submit("admincmd_form:configure:week-start:0", { start: ["monday"] }, MEMBER_ID);
+		const form = submit("admincmd_form:server:leaderboard/week-start:0", { start: ["monday"] }, MEMBER_ID);
 		await form.run();
 		expect(firstReply(form.reply).embeds?.[0]?.data.description).toBe(refusal);
 		expect(mocks.update).not.toHaveBeenCalled();
@@ -202,38 +234,45 @@ describe("every admin button refuses a member who is neither the owner nor an ad
 
 	it("lets the server owner through even with no admin role configured", async () => {
 		mocks.findByGuildId.mockResolvedValue({ guildId: GUILD_ID, adminRoleId: null });
-		const button = press("admincmd", "admincmd:schedule", OWNER_ID);
+		const button = press("admincmd", "admincmd:events", OWNER_ID);
 		await button.run();
-		expect(firstReply(button.reply).content).toBe(commandButtonsCopy.launcher.pickLeafPrompt("schedule"));
+		expect(firstReply(button.reply).content).toBe(commandButtonsCopy.launcher.pickLeafPrompt("events"));
 	});
 });
 
 describe("an admin's flow", () => {
-	it("picks what a command with several subcommands should do", async () => {
-		const button = press("admincmd", "admincmd:schedule", ADMIN_ID);
+	it("picks what /events should do, from every leaf it has", async () => {
+		const button = press("admincmd", "admincmd:events", ADMIN_ID);
 		await button.run();
 		const select = firstReply(button.reply).components?.[0]?.toJSON().components[0];
-		expect(select?.custom_id).toBe("admincmd_leaf:schedule");
-		expect(select?.options?.map((option) => option.value)).toEqual(["pause", "resume"]);
+		expect(select?.custom_id).toBe("admincmd_leaf:events");
+		expect(select?.options?.map((option) => option.value)).toEqual(["list", "delete", "pause", "resume", "stream/announce", "stream/soon", "stream/weekly", "kvk-season"]);
 	});
 
-	it("opens the form at once for a command with one leaf", async () => {
-		const button = press("admincmd", "admincmd:configure-kvk-season", ADMIN_ID);
+	it.each(["schedule", "stream", "configure-kvk-season"])("opens the /events pick from an older guide's admincmd:%s", async (launchId) => {
+		const button = press("admincmd", `admincmd:${launchId}`, ADMIN_ID);
 		await button.run();
-		const modal = button.showModal.mock.calls[0]?.[0]?.toJSON();
-		expect(modal?.title).toBe("/configure-kvk-season");
+		expect(firstReply(button.reply).content).toBe(commandButtonsCopy.launcher.pickLeafPrompt("events"));
+		expect(firstReply(button.reply).components?.[0]?.toJSON().components[0]?.custom_id).toBe("admincmd_leaf:events");
+	});
+
+	it("opens a leaf's form at once when it fits, titled with its full path", async () => {
+		const leaf = pick("admincmd_leaf", "admincmd_leaf:events", ["kvk-season"], ADMIN_ID);
+		await leaf.run();
+		const modal = leaf.showModal.mock.calls[0]?.[0]?.toJSON();
+		expect(modal?.title).toBe("/events kvk-season");
 		expect(modal?.components).toHaveLength(4);
 	});
 
 	it("asks which optional settings to fill for a leaf bigger than one form", async () => {
-		const leaf = pick("admincmd_leaf", "admincmd_leaf:stream", ["setup"], ADMIN_ID);
+		const leaf = pick("admincmd_leaf", "admincmd_leaf:events", ["stream/weekly"], ADMIN_ID);
 		await leaf.run();
 		const [fieldRow, buttonRow] = firstReply(leaf.reply).components ?? [];
 		const select = fieldRow?.toJSON().components[0];
-		// /stream setup has three required options, so two optional ones fit beside them.
-		expect(select?.custom_id).toBe("admincmd_fields:stream:setup");
+		// /events stream weekly has three required options, so two optional ones fit beside them.
+		expect(select?.custom_id).toBe("admincmd_fields:events:stream/weekly");
 		expect(select?.max_values).toBe(LIMITS.MAX_MODAL_FIELDS - 3);
-		expect(buttonRow?.toJSON().components[0]?.custom_id).toBe("admincmd_go:stream:setup");
+		expect(buttonRow?.toJSON().components[0]?.custom_id).toBe("admincmd_go:events:stream/weekly");
 		expect(leaf.showModal).not.toHaveBeenCalled();
 	});
 
@@ -245,23 +284,23 @@ describe("an admin's flow", () => {
 	});
 
 	it("runs the command's own handler from the submitted form", async () => {
-		const form = submit("admincmd_form:configure:week-start:0", { start: ["monday"] }, ADMIN_ID);
+		const form = submit("admincmd_form:server:leaderboard/week-start:0", { start: ["monday"] }, ADMIN_ID);
 		await form.run();
-		// configureLeaderboardWeekStart, the handler /configure week-start runs, made the write.
+		// configureLeaderboardWeekStart, the handler /server leaderboard week-start runs, made the write.
 		expect(mocks.update).toHaveBeenCalledWith(GUILD_ID, { weekStart: "monday" });
 		expect(firstReply(form.reply).embeds?.[0]?.data.title).toBe("📅 Leaderboard week start updated");
 	});
 
 	it("names the field that failed instead of running the command", async () => {
-		// /schedule pause's `days` field alone (its index 1), answered with words.
-		const form = submit("admincmd_form:schedule:pause:1", { days: "two weeks" }, ADMIN_ID);
+		// /events pause's `days` field alone (its index 1), answered with words.
+		const form = submit("admincmd_form:events:pause:1", { days: "two weeks" }, ADMIN_ID);
 		await form.run();
 		expect(firstReply(form.reply).embeds?.[0]?.data.description).toBe(commandButtonsCopy.problems.notWholeNumber("days"));
 		expect(mocks.findEvents).not.toHaveBeenCalled();
 	});
 
 	it("holds a number to the command's own bounds", async () => {
-		const form = submit("admincmd_form:schedule:pause:1", { days: "0" }, ADMIN_ID);
+		const form = submit("admincmd_form:events:pause:1", { days: "0" }, ADMIN_ID);
 		await form.run();
 		expect(firstReply(form.reply).embeds?.[0]?.data.description).toBe(commandButtonsCopy.problems.outOfRange("days", "1 to 90"));
 	});
@@ -274,7 +313,7 @@ describe("an admin's flow", () => {
 	});
 
 	it("answers a stale form submit privately, since a submit cannot open a modal", async () => {
-		const form = submit("admincmd_form:configure:no-such-leaf:0", {}, ADMIN_ID);
+		const form = submit("admincmd_form:server:no-such-leaf:0", {}, ADMIN_ID);
 		await form.run();
 		expect(firstReply(form.reply).embeds?.[0]?.data.description).toBe(commandButtonsCopy.launcher.staleButton);
 	});
@@ -301,12 +340,12 @@ function panelSubmit(customId: string, answers: { switches?: string[]; week?: st
 type EditedReply = { content?: string; embeds?: Array<{ data: { title?: string; description?: string } }>; components?: unknown[] };
 
 describe("the settings panels", () => {
-	it("open /configure's panel at once, preset to how the server stands", async () => {
+	it("open /server's panel at once, preset to how the server stands", async () => {
 		mocks.findByGuildId.mockResolvedValue({ guildId: GUILD_ID, adminRoleId: ADMIN_ROLE, weekStart: "monday", autoHealEnabled: false });
-		const button = press("admincmd", "admincmd:configure", ADMIN_ID);
+		const button = press("admincmd", "admincmd:server", ADMIN_ID);
 		await button.run();
 		const [modal] = formModals(button.showModal) as unknown as Array<{ custom_id: string; components: Array<{ component: { options: Array<{ value: string; default?: boolean }> } }> }>;
-		expect(modal?.custom_id).toBe("admincmd_panel:configure");
+		expect(modal?.custom_id).toBe("admincmd_panel:server");
 		const [switches, week] = modal?.components.map((label) => label.component.options) ?? [];
 		expect(switches?.map((option) => [option.value, Boolean(option.default)])).toEqual([
 			["auto-heal", false],
@@ -316,15 +355,32 @@ describe("the settings panels", () => {
 		expect(button.reply).not.toHaveBeenCalled();
 	});
 
-	it("give an admin who is not the owner /channels' pick, since hide and show are the owner's", async () => {
-		const button = press("admincmd", "admincmd:channels", ADMIN_ID);
+	it("give an admin who is not the owner the /server channels pick, since hide and show are the owner's", async () => {
+		const button = press("admincmd", "admincmd:server-channels", ADMIN_ID);
 		await button.run();
-		expect(firstReply(button.reply).content).toBe(commandButtonsCopy.launcher.pickLeafPrompt("channels"));
+		expect(firstReply(button.reply).content).toBe(commandButtonsCopy.launcher.pickLeafPrompt("server channels"));
+		const select = firstReply(button.reply).components?.[0]?.toJSON().components[0];
+		expect(select?.options?.map((option) => option.value)).toEqual(["channels/hide", "channels/show", "channels/list", "channels/rename"]);
 		expect(formModals(button.showModal)).toEqual([]);
 	});
 
+	it.each([
+		["configure", "server"],
+		["channels", "server-channels"],
+		["setup-level-system", "leveling"],
+		["xp", "leveling"],
+		["economy", "arcade"],
+		["dero-config", "dero-config"],
+	])("open the panel an older guide's admincmd:%s now names (%s)", async (launchId, panelId) => {
+		mocks.findByGuildId.mockResolvedValue({ guildId: GUILD_ID, adminRoleId: ADMIN_ROLE, categoryId: "cat", commandsChannelId: "c1", hiddenChannels: [] });
+		const button = press("admincmd", `admincmd:${launchId}`, OWNER_ID);
+		await button.run();
+		expect(formModals(button.showModal).map((modal) => modal.custom_id)).toEqual([`admincmd_panel:${panelId}`]);
+		expect(button.reply).not.toHaveBeenCalled();
+	});
+
 	it("run each changed setting through the command's own handler and answer once", async () => {
-		const panel = panelSubmit("admincmd_panel:configure", { switches: ["leaderboard-tracking"], week: "monday" }, ADMIN_ID);
+		const panel = panelSubmit("admincmd_panel:server", { switches: ["leaderboard-tracking"], week: "monday" }, ADMIN_ID);
 		await panel.run();
 		// Auto heal was cleared and the week moved; tracking stayed on, so it never ran.
 		expect(mocks.update.mock.calls).toEqual([
@@ -335,12 +391,13 @@ describe("the settings panels", () => {
 		expect(panel.editReply).toHaveBeenCalledTimes(1);
 		const answer = panel.editReply.mock.calls[0]?.[0] as EditedReply;
 		expect(answer.embeds?.map((embed) => embed.data.title)).toEqual(["✋ Auto-heal OFF", "📅 Leaderboard week start updated"]);
-		// Every /configure leaf is on the panel, so there is nothing more to offer.
-		expect(answer.components).toEqual([]);
+		// The panel's other /server leaves, the channels group, are offered after it.
+		const select = (answer.components?.[0] as { toJSON(): { components: Array<{ options: Array<{ value: string }> }> } }).toJSON().components[0];
+		expect(select?.options.map((option) => option.value)).toEqual(["channels/hide", "channels/show", "channels/list", "channels/rename"]);
 	});
 
 	it("write nothing when every setting is as it was", async () => {
-		const panel = panelSubmit("admincmd_panel:configure", { switches: ["auto-heal", "leaderboard-tracking"], week: "sunday" }, ADMIN_ID);
+		const panel = panelSubmit("admincmd_panel:server", { switches: ["auto-heal", "leaderboard-tracking"], week: "sunday" }, ADMIN_ID);
 		await panel.run();
 		expect(mocks.update).not.toHaveBeenCalled();
 		const answer = panel.editReply.mock.calls[0]?.[0] as EditedReply;
@@ -349,17 +406,17 @@ describe("the settings panels", () => {
 
 	it("offer the command's other subcommands after saving a panel that does not hold them all", async () => {
 		mocks.findByGuildId.mockResolvedValue({ guildId: GUILD_ID, adminRoleId: ADMIN_ROLE, categoryId: "cat", hiddenChannels: [] });
-		const panel = panelSubmit("admincmd_panel:channels", {}, OWNER_ID);
+		const panel = panelSubmit("admincmd_panel:server-channels", {}, OWNER_ID);
 		await panel.run();
 		const answer = panel.editReply.mock.calls[0]?.[0] as EditedReply;
 		const select = (answer.components?.[0] as { toJSON(): { components: Array<{ custom_id: string; options: Array<{ value: string }> }> } }).toJSON().components[0];
-		expect(answer.content).toBe(commandButtonsCopy.panels.saved.morePrompt("channels"));
-		expect(select?.custom_id).toBe("admincmd_leaf:channels");
-		expect(select?.options.map((option) => option.value)).toEqual(["rename"]);
+		expect(answer.content).toBe(commandButtonsCopy.panels.saved.morePrompt("server channels"));
+		expect(select?.custom_id).toBe("admincmd_leaf:server");
+		expect(select?.options.map((option) => option.value)).toEqual(["channels/rename"]);
 	});
 
 	it("refuse a submitted panel from a member and write nothing", async () => {
-		const panel = panelSubmit("admincmd_panel:configure", { switches: [] }, MEMBER_ID);
+		const panel = panelSubmit("admincmd_panel:server", { switches: [] }, MEMBER_ID);
 		await panel.run();
 		expect(firstReply(panel.reply).embeds?.[0]?.data.description).toBe(refusal);
 		expect(mocks.update).not.toHaveBeenCalled();

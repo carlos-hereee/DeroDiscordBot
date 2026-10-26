@@ -34,7 +34,7 @@
 // this rule; this comment is the other half.
 //
 // House rule for every string below: no dashes in user-facing copy. Hyphens
-// inside slash command identifiers (setup-level-system, reset-member) are
+// inside slash command identifiers (set-level, reset-member) are
 // identifiers, not dashes, and are correct.
 
 // ── the level up template vocabulary ───────────────────────────────────────
@@ -98,7 +98,7 @@ export const levelingCopy = {
 			"",
 			"It is on by default and it never pings anyone.",
 			"",
-			"Run **/setup-level-system** to change the rates, pick which channels count, choose role rewards, approve voice channels, or turn the whole thing off.",
+			"Run **/leveling settings** to change the rates, pick which channels count, choose role rewards, approve voice channels, or turn the whole thing off.",
 		].join("\n"),
 	},
 

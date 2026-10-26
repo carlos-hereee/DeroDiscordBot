@@ -33,7 +33,7 @@ describe("isRestricted, only mode", () => {
 
 	it("earns NOWHERE when the list is empty, and that is the honest reading", () => {
 		// "only these channels" with no channels named means only nothing. It is a
-		// real state an admin can reach, which is why /setup-level-system echoes a
+		// real state an admin can reach, which is why /leveling settings echoes a
 		// live preview rather than letting them discover it from a complaint.
 		expect(isRestricted("only", [], ["c-general"])).toBe(true);
 	});

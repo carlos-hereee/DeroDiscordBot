@@ -65,7 +65,7 @@ export async function refreshSchedule(client: Client, guildId: string): Promise<
 		// When:  null when the guild has zero KvK events (regular-announcements
 		//        guild) or a fully-ended season (kvkEvents already swept).
 		//        scheduleBoardEmbed treats null as "omit the banner".
-		// How:   earliest is a defensive choice. /configure-kvk-season writes
+		// How:   earliest is a defensive choice. /events kvk-season writes
 		//        the same seasonEnd to every event, but if a future flow allows
 		//        per-event season extensions the earliest still represents the
 		//        season anchor every event respects.
@@ -160,7 +160,7 @@ function toField(event: IGameEvent): IScheduleField {
 		// to a clean boolean so IScheduleField stays narrow, the embed
 		// builder never needs to distinguish "false" from "unset". All
 		// three falsy states map to "not paused", which matches how the
-		// scheduler and /schedule pause both interpret the field.
+		// scheduler and /events pause both interpret the field.
 		paused: event.paused === true,
 		firstOccurrenceTs: Math.floor(firstOccurrenceMs / 1000),
 		isCompleted,

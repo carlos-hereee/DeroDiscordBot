@@ -1953,7 +1953,7 @@ describe("GuildSetupManager voice rooms", () => {
 		expect(room.setName).toHaveBeenCalledWith(packChannels.meetingVoice);
 	});
 
-	it("keeps a /channels rename override on a voice room, and writes nothing in steady state", async () => {
+	it("keeps a /server channels rename override on a voice room, and writes nothing in steady state", async () => {
 		const renamed = makeVoiceRoom("ch-meetingvoice", "old-hall");
 		const settled = makeVoiceRoom("ch-arcadevoice", packChannels.arcadeVoice);
 		await runRename(makeStoredConfig({ channelNames: new Map([["meetingVoiceChannelId", "War Room"]]) }), {

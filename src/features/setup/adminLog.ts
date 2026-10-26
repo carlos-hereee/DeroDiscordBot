@@ -1,16 +1,17 @@
-import { TextChannel, type Client } from "discord.js";
+import { EmbedBuilder, TextChannel, type Client, type ColorResolvable } from "discord.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { adminLogEvent } from "@base/constants/BOT_LOG_EVENTS.js";
-import { setupCopy } from "./setupCopy.js";
+import { COLORS } from "@base/copy/brand.js";
+import { setupCopy, type AdminLogLineInput } from "./setupCopy.js";
 
 // ── adminLog ──────────────────────────────────────────────────────────────
 // What:  the ONE admin audit emitter (post-launch plan item 11). Every admin action
 //        that changes what a server's members see becomes one row in BotLog and one
-//        line in that server's 🗒️admin-log channel.
-// Who:   schedule and event changes (Discord and the dashboard routes), /dero-config
-//        and /configure setting changes, Community and Onboarding, power-up toggles,
-//        voice list and budget edits, and every step of self destruct. Phase 5 adds
+//        embed in that server's 🗒️admin-log channel.
+// Who:   schedule and event changes (Discord and the dashboard routes), /dero-config,
+//        /server, /leveling and /arcade setting changes, Community and Onboarding,
+//        power-up toggles, voice list and budget edits, and every step of self destruct. Phase 5 adds
 //        chip grants, vault top ups and bot seats, whose kinds are declared here now so
 //        those callers have nothing to invent.
 // When:  AFTER the audited action succeeded, fire and forget: `emit` returns at once,
@@ -21,8 +22,9 @@ import { setupCopy } from "./setupCopy.js";
 //        GuildConfig.adminLogChannelId on every call rather than cached, because a
 //        repair or a self destruct moves it.
 // How:   ① persist the row; ② resolve the channel, skipping quietly when the guild
-//        has none yet (a legacy row before its first boot repair); ③ post one line
-//        with every mention disabled, since naming an admin must never ping them.
+//        has none yet (a legacy row before its first boot repair); ③ post one embed
+//        with every mention disabled, since naming an admin must never ping them,
+//        falling back to the plain text line when Discord refuses the embed.
 //
 // ⚠️ Do NOT add a second audit emitter elsewhere. The plan's reuse map names this
 // file as the only one, and two emitters would drift into two trails.
@@ -46,6 +48,39 @@ export const ADMIN_LOG_KINDS = [
 ] as const;
 
 export type AdminLogKind = (typeof ADMIN_LOG_KINDS)[number];
+
+// ── the embed's color, by the family a kind belongs to ──
+// A Record over the kind union, so a kind added above without a family is a compile
+// error here. The colors are existing brand keys, so the log reads like the rest of
+// the bot: the admin purple for settings, the schedule green for schedules and
+// events, the error red for the one destructive step, the leaderboard gold for chips,
+// and the arcade violet for bot seats.
+type AdminLogFamily = "settings" | "schedules" | "destructive" | "economy" | "bots";
+
+const ADMIN_LOG_FAMILIES: Record<AdminLogKind, AdminLogFamily> = {
+	"schedule.create": "schedules",
+	"schedule.update": "schedules",
+	"schedule.delete": "schedules",
+	"event.create": "schedules",
+	"event.update": "schedules",
+	"event.delete": "schedules",
+	"config.change": "settings",
+	"powerup.toggle": "settings",
+	"voice.allowlist": "settings",
+	"voice.cap": "settings",
+	"selfdestruct.attempt": "destructive",
+	"chip.grant": "economy",
+	"vault.topup": "economy",
+	"bot.slot": "bots",
+};
+
+const FAMILY_COLORS: Record<AdminLogFamily, ColorResolvable> = {
+	settings: COLORS.ADMIN,
+	schedules: COLORS.SCHEDULE,
+	destructive: COLORS.ERROR,
+	economy: COLORS.LEADERBOARD,
+	bots: COLORS.ARCADE,
+};
 
 /**
  * Who acted: a member, by their Discord id, or a source with no member behind it
@@ -109,10 +144,32 @@ async function resolveLogChannel(guild: AdminLogGuild): Promise<TextChannel | nu
 	return channel instanceof TextChannel ? channel : null;
 }
 
+/** The embed one audit entry posts as: its words from setupCopy, its color by family, its time. */
+export function buildAdminLogEmbed(entry: AdminLogLineInput): EmbedBuilder {
+	const { title, fields } = setupCopy.adminLog.embedParts(entry);
+	return new EmbedBuilder()
+		.setTitle(title)
+		.setColor(FAMILY_COLORS[ADMIN_LOG_FAMILIES[entry.kind]])
+		.addFields(fields)
+		.setTimestamp(entry.atSeconds * 1000);
+}
+
+// One embed per entry; when Discord refuses it (a missing Embed Links permission is the
+// usual cause), the same entry goes out as the plain line instead, so the channel never
+// loses an entry the embed could not carry. A failed fallback throws to write().
+async function postEntry(channel: TextChannel, entry: AdminLogLineInput): Promise<void> {
+	try {
+		await channel.send({ embeds: [buildAdminLogEmbed(entry)], allowedMentions: { parse: [] } });
+	} catch (error) {
+		console.warn(`[admin-log] the ${entry.kind} embed was refused in channel ${channel.id}; posting the text line instead`, error);
+		await channel.send({ content: setupCopy.adminLog.line(entry), allowedMentions: { parse: [] } });
+	}
+}
+
 // ── the emitter ──
 
 /**
- * Persist one audit row and post its line. Never throws: each step catches and
+ * Persist one audit row and post its embed. Never throws: each step catches and
  * logs its own failure, and the result says which steps landed.
  */
 async function write({ guild, kind, actor, payload = {} }: AdminLogEntry): Promise<AdminLogResult> {
@@ -128,14 +185,13 @@ async function write({ guild, kind, actor, payload = {} }: AdminLogEntry): Promi
 	try {
 		const channel = await resolveLogChannel(guild);
 		if (!channel) return result;
-		const line = setupCopy.adminLog.line({
+		await postEntry(channel, {
 			kind,
 			atSeconds: Math.floor(Date.now() / 1000),
 			actor: renderActor(actor),
 			subject: payload.subject,
 			detail: payload.detail,
 		});
-		await channel.send({ content: line, allowedMentions: { parse: [] } });
 		result.posted = true;
 	} catch (error) {
 		console.error(`[admin-log] posting ${kind} to the admin log of guild ${guild.id} failed`, error);

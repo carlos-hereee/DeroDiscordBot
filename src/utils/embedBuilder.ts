@@ -28,7 +28,7 @@ interface IListEventField {
 	// continue to compile.
 	paused?: boolean;
 	// unix seconds. null for indefinite pauses; set when the streamer
-	// passed `days:N` to /schedule pause so the row can show an auto-resume
+	// passed `days:N` to /events pause so the row can show an auto-resume
 	// timestamp instead of leaving readers guessing when reminders return.
 	pausedUntilTs?: number | null;
 }
@@ -57,7 +57,7 @@ export function listEventsEmbed(
 		// Mirrors the schedule board's pause vocabulary so the two surfaces
 		// stay consistent.
 		if (field.paused) {
-			lines.push("⏸️ _Reminders paused, resume with `/schedule resume`_");
+			lines.push("⏸️ _Reminders paused, resume with `/events resume`_");
 			if (field.pausedUntilTs !== null && field.pausedUntilTs !== undefined) {
 				// relative + absolute so the admin can scan "in 3 days" without
 				// doing timezone math, then confirm the exact moment.
@@ -303,7 +303,7 @@ function buildActiveField(field: IScheduleField, c: IPluginCopy["scheduleBoard"]
 	// pure schedule arithmetic) but readers should treat them as "would have
 	// fired" not "will fire".
 	if (field.paused) {
-		lines.push("⏸️ _Reminders paused, resume with `/schedule resume`_");
+		lines.push("⏸️ _Reminders paused, resume with `/events resume`_");
 	}
 
 	if (field.nextOccurrenceTs !== null) {

@@ -32,9 +32,9 @@ describe("the guides' buttons", () => {
 		);
 	});
 
-	it("give the admin guide a button per admin command above its control row", () => {
+	it("give the admin guide a button per admin job above its control row", () => {
 		const rows = rowIds("adminCommandsChannelId");
-		expect(rows.slice(0, ADMIN_GUIDE_COMMAND_ROWS.length)).toEqual(ADMIN_GUIDE_COMMAND_ROWS.map((names) => names.map((name) => `admincmd:${name}`)));
+		expect(rows.slice(0, ADMIN_GUIDE_COMMAND_ROWS.length)).toEqual(ADMIN_GUIDE_COMMAND_ROWS.map((buttons) => buttons.map((button) => `admincmd:${button.id}`)));
 		expect(rows.at(-1)).toEqual(idsOf([buildSelfDestructButton(), ...buildAdminControlButtons()]));
 	});
 

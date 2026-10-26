@@ -32,7 +32,7 @@ export const commandButtonsCopy = {
 	panels: {
 		switchesLabel: "Switches",
 		switchesHint: "Selected settings are on. Deselect one to switch it off.",
-		configure: {
+		server: {
 			title: "Server switches",
 			autoHeal: "Auto heal channels",
 			autoHealHint: "Rebuild homebase channels that go missing",
@@ -41,7 +41,7 @@ export const commandButtonsCopy = {
 			weekLabel: "Leaderboard week starts on",
 			weekHint: "The day the leaderboard's \"this week\" window begins",
 		},
-		channels: {
+		serverChannels: {
 			title: "Channel visibility",
 			label: "Visible to members",
 			hint: "Deselect a channel to hide it from members. Dero still posts in it.",
@@ -50,15 +50,18 @@ export const commandButtonsCopy = {
 			title: "Dero settings",
 			voice: "Dero's voice",
 			listen: "Listen buttons",
-			monthlyPost: "Monthly arcade post",
-			bots: "Dero bot opponents",
 			roles: "Roles that may give Dero tasks",
 			rolesHint: "The server owner and the admin role always may, whatever this list holds",
 			channels: "Text channels Dero may post in",
 			voiceChannels: "Voice channels Dero may join",
 			cap: "Monthly speech budget, in dollars",
 		},
-		levelSystem: {
+		arcade: {
+			title: "Arcade settings",
+			monthlyPost: "Monthly arcade post",
+			bots: "Dero bot opponents",
+		},
+		leveling: {
 			title: "Leveling settings",
 			leveling: "Leveling",
 			levelingHint: "Members earn XP. Off records nothing new and deletes nothing.",

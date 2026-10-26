@@ -5,7 +5,7 @@ import { readAdoptedChannelIds } from "./adoption.js";
 import { demolishCategory, demolishChannels } from "./selfDestruct.js";
 
 // ── arcadeSwitch ──────────────────────────────────────────────────────────
-// What:  /dero-config arcade off and on (post-launch plan item 14). Off deletes the
+// What:  /arcade off and on (post-launch plan item 14). Off deletes the
 //        🎮 ARCADE GAMES category and every channel in it, matches in progress
 //        included; on brings it back.
 // Who:   commands/admin/dero-config.ts, behind the ADMIN_COMMANDS runtime gate.

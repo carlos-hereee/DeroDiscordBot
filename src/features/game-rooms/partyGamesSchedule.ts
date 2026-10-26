@@ -80,7 +80,7 @@ const WHOLE_NUMBER = /^\d+$/;
 
 /**
  * Read the schedule modal's answers into a party game, or the first thing to fix. The
- * start is UTC "MM/DD @HH:MM" like /stream announce. A date already past this year that
+ * start is UTC "MM/DD @HH:MM" like /events stream announce. A date already past this year that
  * falls in an earlier month is read as next year (scheduling January in December); any
  * other past time is refused rather than quietly moved a year out.
  */

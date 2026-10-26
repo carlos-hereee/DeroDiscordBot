@@ -26,7 +26,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 //        and the host accepting one from Requests), and the test helper script.
 //        The watchers: main.ts, beside the room departure and channel delete watchers.
 //        The boot reconcile: main.ts, right after recoverGameRoomsOnBoot.
-//        The ban and block sweeps: /network ban and /dero-config arcade block-server.
+//        The ban and block sweeps: /platform network ban and /arcade server block.
 // Does NOT: open, relay to, lock or delete a satellite channel (satelliteRooms does, and
 //        sits below this module because this one needs the Hold'em table), or end the host
 //        room on a departure: a remote player leaving is not the host room's player leaving.

@@ -2,10 +2,9 @@ import {
 	ChannelType,
 	MessageFlags,
 	PermissionFlagsBits,
-	SlashCommandBuilder,
-	type ChatInputCommandInteraction,
 	type RepliableInteraction,
 	type Role,
+	type SlashCommandSubcommandGroupBuilder,
 } from "discord.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
@@ -17,239 +16,224 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 
-// ── /setup-level-system ────────────────────────────────────────────────────
+// ── /leveling settings ─────────────────────────────────────────────────────
 // What:  every per-guild knob of the leveling system. Rates, the curve, where
 //        level ups post, which channels and roles earn, approved voice
 //        channels, role rewards, multipliers, and the master switch.
-// Who:   admins only, gated THREE ways (see the note below).
+// Who:   commands/admin/leveling.ts adds this group to /leveling and runs it from
+//        the slash command or the /leveling button on the admin guide. Admins
+//        only, through /leveling in BOT_CONSTANTS.ADMIN_COMMANDS and nothing else:
+//        the builder carries no Discord default permission, which would hide it
+//        from the /setup admin role.
 // When:  on demand. Rare, which is why the config read elsewhere is TTL cached
-//        and why this command invalidates that cache on every write.
-// Where: writes GuildConfig.leveling only. It creates NOTHING.
-//
-// ⚠️ THE NAME BREAKS THE REPO'S configure FAMILY ON PURPOSE (the owner's
-// decision). Its siblings are /configure (auto-heal, leaderboard-tracking,
-// week-start) and /configure-kvk-season. This one is
-// setup-level-system so that an admin typing "/setup" in the picker sees the
-// homebase builder AND the leveling setup side by side, which is exactly the
-// moment they are most likely to want it. Do not "correct" it back.
-//
-// ⚠️ AND BECAUSE OF THAT NAME, THE DESCRIPTION MUST SAY IT BUILDS NOTHING.
-// /setup creates channels and roles. This one only writes config. An admin who
-// reads "setup" and expects provisioning will otherwise wonder why no channel
-// appeared.
-//
-// ⚠️ ADMIN GATING IS BOT_CONSTANTS.ADMIN_COMMANDS AND NOTHING ELSE. The runtime gate
-// in main.ts, checked against interaction.commandName, admits the server owner and
-// the /setup admin role. There is deliberately no Discord default permission on the
-// builder: it would hide the command from that admin role (see the note on the set).
+//        and why every write here invalidates that cache.
+// Where: writes GuildConfig.leveling only. It creates NOTHING: /setup builds
+//        channels and roles, this only writes config.
 //
 // ⚠️ SUBCOMMANDS, NOT 25 TOP LEVEL OPTIONS. Discord caps a command at 25 options
 // AND forbids a command from carrying both subcommands and top level options, so
 // the leveling subtree (which has more settings than that) has to be grouped.
 // The grouping is by CONCERN, so an admin changing rates never scrolls past
 // reward roles.
-//
-// `data` is deliberately UNANNOTATED: .addSubcommand() narrows the builder away
-// from SlashCommandBuilder, so an explicit annotation would not compile. Never
-// cast to any, never cast to SlashCommandBuilder. See mini-game.ts.
 
 const LEVELING = BOT_CONSTANTS.LEVELING;
 const LIMITS = LEVELING.LIMITS;
 
-export const data = new SlashCommandBuilder()
-	.setName("setup-level-system")
-	.setDescription("Configure XP and levels for this server. Writes settings only, creates no channels or roles.")
-	.addSubcommand((sub) =>
-		sub
-			.setName("show")
-			.setDescription("Show the current leveling settings and a live preview of what earns XP")
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("toggle")
-			.setDescription("Turn leveling on or off for this server. Turning it off destroys no data.")
-			.addBooleanOption((option) => option.setName("enabled").setDescription("On or off").setRequired(true))
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("rates")
-			// ⚠️ NO PER MESSAGE OR PER REACTION AMOUNT. Both pay a flat 1 XP inside the
-			// daily cap (BOT_CONSTANTS.LEVELING, the 1.7.0 test fixes, item 5), so the
-			// message-min, message-max, reaction-min and reaction-max options are gone
-			// and only how OFTEN they pay is a guild's to set.
-			.setDescription("Set how often messages and reactions pay, and what voice pays")
-			.addIntegerOption((option) =>
-				option.setName("message-cooldown").setDescription("Seconds between message awards").setRequired(false)
-			)
-			.addIntegerOption((option) =>
-				option.setName("reaction-cooldown").setDescription("Seconds between reaction awards").setRequired(false)
-			)
-			.addStringOption((option) =>
-				option
-					.setName("reaction-awards")
-					.setDescription("Who a reaction pays")
-					.setRequired(false)
-					.addChoices(
-						{ name: "The member who reacted", value: "reactor" },
-						{ name: "The member who was reacted to", value: "author" },
-						{ name: "Both", value: "both" }
-					)
-			)
-			.addIntegerOption((option) =>
-				option.setName("voice-per-minute").setDescription("XP per minute in an approved voice channel").setRequired(false)
-			)
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("curve")
-			.setDescription("Set how steeply levels get harder")
-			.addStringOption((option) =>
-				option
-					.setName("preset")
-					.setDescription("Which curve to use")
-					.setRequired(false)
-					.addChoices(
-						{ name: "Dero (the default, quadratic)", value: "dero" },
-						{ name: "Linear (gentler)", value: "linear" },
-						{ name: "Exponential (steeper)", value: "exponential" },
-						{ name: "Flat (every level costs the same)", value: "flat" }
-					)
-			)
-			.addNumberOption((option) =>
-				option.setName("multiplier").setDescription("Scale every level's cost. 1 is normal.").setRequired(false)
-			)
-			.addIntegerOption((option) =>
-				option.setName("max-level").setDescription("Highest reachable level. 0 means uncapped.").setRequired(false)
-			)
-			.addStringOption((option) =>
-				option
-					.setName("milestones")
-					.setDescription("Which levels get the loud celebration")
-					.setRequired(false)
-					.addChoices(
-						{ name: "Prime levels (2, 3, 5, 7, 11, ...)", value: "prime" },
-						{ name: "Every N levels", value: "everyN" }
-					)
-			)
-			.addIntegerOption((option) =>
-				option.setName("every-n").setDescription("Used only when milestones is Every N levels").setRequired(false)
-			)
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("announce")
-			.setDescription("Set where and how loudly level ups post. They never ping anyone.")
-			.addStringOption((option) =>
-				option
-					.setName("mode")
-					.setDescription("Where level ups post")
-					.setRequired(false)
-					.addChoices(
-						{ name: "The announcements channel", value: "announcements" },
-						{ name: "Wherever the XP was earned", value: "current" },
-						{ name: "Milestone levels only", value: "milestone" },
-						{ name: "Do not post at all", value: "off" }
-					)
-			)
-			.addChannelOption((option) =>
-				option
-					.setName("channel")
-					.setDescription("Post level ups here instead of the announcements channel")
-					.addChannelTypes(ChannelType.GuildText)
-					.setRequired(false)
-			)
-			.addStringOption((option) =>
-				option.setName("emoji").setDescription("The reaction Dero adds to a milestone card").setRequired(false)
-			)
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("restrictions")
-			.setDescription("Choose where XP is earned. One mode, one list.")
-			.addStringOption((option) =>
-				option
-					.setName("mode")
-					.setDescription("Whether the list blocks earning or is the only place it happens")
-					.setRequired(false)
-					.addChoices(
-						{ name: "Exclude: everything earns EXCEPT the list", value: "exclude" },
-						{ name: "Only: nothing earns EXCEPT the list", value: "only" }
-					)
-			)
-			.addChannelOption((option) =>
-				option.setName("add-channel").setDescription("Add a channel to the list").setRequired(false)
-			)
-			.addChannelOption((option) =>
-				option.setName("remove-channel").setDescription("Remove a channel from the list").setRequired(false)
-			)
-			.addRoleOption((option) => option.setName("add-role").setDescription("Add a role to the list").setRequired(false))
-			.addRoleOption((option) =>
-				option.setName("remove-role").setDescription("Remove a role from the list").setRequired(false)
-			)
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("voice")
-			.setDescription("Approve voice channels for XP. No channel is approved until you add one.")
-			.addChannelOption((option) =>
-				option
-					.setName("approve")
-					.setDescription("Start paying XP in this voice channel")
-					.addChannelTypes(ChannelType.GuildVoice, ChannelType.GuildStageVoice)
-					.setRequired(false)
-			)
-			.addChannelOption((option) =>
-				option
-					.setName("unapprove")
-					.setDescription("Stop paying XP in this voice channel")
-					.addChannelTypes(ChannelType.GuildVoice, ChannelType.GuildStageVoice)
-					.setRequired(false)
-			)
-			.addIntegerOption((option) =>
-				option.setName("min-members").setDescription("How many people must be present before anyone earns").setRequired(false)
-			)
-			.addIntegerOption((option) =>
-				option.setName("decay-after").setDescription("Minutes before a long session starts paying less").setRequired(false)
-			)
-			.addNumberOption((option) =>
-				option.setName("decay-factor").setDescription("What a decayed award is multiplied by, 0 to 1").setRequired(false)
-			)
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("rewards")
-			.setDescription("Grant a role when a member reaches a level")
-			.addIntegerOption((option) => option.setName("level").setDescription("The level that grants it").setRequired(false))
-			.addRoleOption((option) => option.setName("role").setDescription("The role to grant").setRequired(false))
-			.addIntegerOption((option) =>
-				option.setName("remove-level").setDescription("Remove the reward configured for this level").setRequired(false)
-			)
-			.addBooleanOption((option) =>
-				option
-					.setName("stack")
-					.setDescription("Keep every reward earned (on) or only the highest (off)")
-					.setRequired(false)
-			)
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("multipliers")
-			.setDescription("Pay a role or a channel more XP than the rest")
-			.addRoleOption((option) => option.setName("role").setDescription("The role to boost").setRequired(false))
-			.addChannelOption((option) => option.setName("channel").setDescription("The channel to boost").setRequired(false))
-			.addNumberOption((option) =>
-				option.setName("multiplier").setDescription("What to multiply by. 0 removes the boost.").setRequired(false)
-			)
-			.addBooleanOption((option) =>
-				option
-					.setName("stack")
-					.setDescription("Combine every applicable multiplier (on) or take the highest (off)")
-					.setRequired(false)
-			)
-	);
+/** The /leveling settings group's nine subcommands. */
+export function addLevelSettingsSubcommands(group: SlashCommandSubcommandGroupBuilder): SlashCommandSubcommandGroupBuilder {
+	return group
+		.addSubcommand((sub) =>
+			sub
+				.setName("show")
+				.setDescription("Show the current leveling settings and a live preview of what earns XP")
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("toggle")
+				.setDescription("Turn leveling on or off for this server. Turning it off destroys no data.")
+				.addBooleanOption((option) => option.setName("enabled").setDescription("On or off").setRequired(true))
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("rates")
+				// ⚠️ NO PER MESSAGE OR PER REACTION AMOUNT. Both pay a flat 1 XP inside the
+				// daily cap (BOT_CONSTANTS.LEVELING, the 1.7.0 test fixes, item 5), so the
+				// message-min, message-max, reaction-min and reaction-max options are gone
+				// and only how OFTEN they pay is a guild's to set.
+				.setDescription("Set how often messages and reactions pay, and what voice pays")
+				.addIntegerOption((option) =>
+					option.setName("message-cooldown").setDescription("Seconds between message awards").setRequired(false)
+				)
+				.addIntegerOption((option) =>
+					option.setName("reaction-cooldown").setDescription("Seconds between reaction awards").setRequired(false)
+				)
+				.addStringOption((option) =>
+					option
+						.setName("reaction-awards")
+						.setDescription("Who a reaction pays")
+						.setRequired(false)
+						.addChoices(
+							{ name: "The member who reacted", value: "reactor" },
+							{ name: "The member who was reacted to", value: "author" },
+							{ name: "Both", value: "both" }
+						)
+				)
+				.addIntegerOption((option) =>
+					option.setName("voice-per-minute").setDescription("XP per minute in an approved voice channel").setRequired(false)
+				)
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("curve")
+				.setDescription("Set how steeply levels get harder")
+				.addStringOption((option) =>
+					option
+						.setName("preset")
+						.setDescription("Which curve to use")
+						.setRequired(false)
+						.addChoices(
+							{ name: "Dero (the default, quadratic)", value: "dero" },
+							{ name: "Linear (gentler)", value: "linear" },
+							{ name: "Exponential (steeper)", value: "exponential" },
+							{ name: "Flat (every level costs the same)", value: "flat" }
+						)
+				)
+				.addNumberOption((option) =>
+					option.setName("multiplier").setDescription("Scale every level's cost. 1 is normal.").setRequired(false)
+				)
+				.addIntegerOption((option) =>
+					option.setName("max-level").setDescription("Highest reachable level. 0 means uncapped.").setRequired(false)
+				)
+				.addStringOption((option) =>
+					option
+						.setName("milestones")
+						.setDescription("Which levels get the loud celebration")
+						.setRequired(false)
+						.addChoices(
+							{ name: "Prime levels (2, 3, 5, 7, 11, ...)", value: "prime" },
+							{ name: "Every N levels", value: "everyN" }
+						)
+				)
+				.addIntegerOption((option) =>
+					option.setName("every-n").setDescription("Used only when milestones is Every N levels").setRequired(false)
+				)
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("announce")
+				.setDescription("Set where and how loudly level ups post. They never ping anyone.")
+				.addStringOption((option) =>
+					option
+						.setName("mode")
+						.setDescription("Where level ups post")
+						.setRequired(false)
+						.addChoices(
+							{ name: "The announcements channel", value: "announcements" },
+							{ name: "Wherever the XP was earned", value: "current" },
+							{ name: "Milestone levels only", value: "milestone" },
+							{ name: "Do not post at all", value: "off" }
+						)
+				)
+				.addChannelOption((option) =>
+					option
+						.setName("channel")
+						.setDescription("Post level ups here instead of the announcements channel")
+						.addChannelTypes(ChannelType.GuildText)
+						.setRequired(false)
+				)
+				.addStringOption((option) =>
+					option.setName("emoji").setDescription("The reaction Dero adds to a milestone card").setRequired(false)
+				)
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("restrictions")
+				.setDescription("Choose where XP is earned. One mode, one list.")
+				.addStringOption((option) =>
+					option
+						.setName("mode")
+						.setDescription("Whether the list blocks earning or is the only place it happens")
+						.setRequired(false)
+						.addChoices(
+							{ name: "Exclude: everything earns EXCEPT the list", value: "exclude" },
+							{ name: "Only: nothing earns EXCEPT the list", value: "only" }
+						)
+				)
+				.addChannelOption((option) =>
+					option.setName("add-channel").setDescription("Add a channel to the list").setRequired(false)
+				)
+				.addChannelOption((option) =>
+					option.setName("remove-channel").setDescription("Remove a channel from the list").setRequired(false)
+				)
+				.addRoleOption((option) => option.setName("add-role").setDescription("Add a role to the list").setRequired(false))
+				.addRoleOption((option) =>
+					option.setName("remove-role").setDescription("Remove a role from the list").setRequired(false)
+				)
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("voice")
+				.setDescription("Approve voice channels for XP. No channel is approved until you add one.")
+				.addChannelOption((option) =>
+					option
+						.setName("approve")
+						.setDescription("Start paying XP in this voice channel")
+						.addChannelTypes(ChannelType.GuildVoice, ChannelType.GuildStageVoice)
+						.setRequired(false)
+				)
+				.addChannelOption((option) =>
+					option
+						.setName("unapprove")
+						.setDescription("Stop paying XP in this voice channel")
+						.addChannelTypes(ChannelType.GuildVoice, ChannelType.GuildStageVoice)
+						.setRequired(false)
+				)
+				.addIntegerOption((option) =>
+					option.setName("min-members").setDescription("How many people must be present before anyone earns").setRequired(false)
+				)
+				.addIntegerOption((option) =>
+					option.setName("decay-after").setDescription("Minutes before a long session starts paying less").setRequired(false)
+				)
+				.addNumberOption((option) =>
+					option.setName("decay-factor").setDescription("What a decayed award is multiplied by, 0 to 1").setRequired(false)
+				)
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("rewards")
+				.setDescription("Grant a role when a member reaches a level")
+				.addIntegerOption((option) => option.setName("level").setDescription("The level that grants it").setRequired(false))
+				.addRoleOption((option) => option.setName("role").setDescription("The role to grant").setRequired(false))
+				.addIntegerOption((option) =>
+					option.setName("remove-level").setDescription("Remove the reward configured for this level").setRequired(false)
+				)
+				.addBooleanOption((option) =>
+					option
+						.setName("stack")
+						.setDescription("Keep every reward earned (on) or only the highest (off)")
+						.setRequired(false)
+				)
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("multipliers")
+				.setDescription("Pay a role or a channel more XP than the rest")
+				.addRoleOption((option) => option.setName("role").setDescription("The role to boost").setRequired(false))
+				.addChannelOption((option) => option.setName("channel").setDescription("The channel to boost").setRequired(false))
+				.addNumberOption((option) =>
+					option.setName("multiplier").setDescription("What to multiply by. 0 removes the boost.").setRequired(false)
+				)
+				.addBooleanOption((option) =>
+					option
+						.setName("stack")
+						.setDescription("Combine every applicable multiplier (on) or take the highest (off)")
+						.setRequired(false)
+				)
+		);
+}
 
-/** The one handler the slash command and the admin guide's /setup-level-system button share. */
-export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
+/** Runs one /leveling settings subcommand, for the slash command and the admin guide alike. */
+export async function runLevelSettings(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) {
 		await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.outsideGuild)], flags: MessageFlags.Ephemeral });
@@ -504,7 +488,7 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 			// Unreachable for a member: Discord will not send a subcommand the builder
 			// never declared. Only a developer adding one above without a branch here
 			// reaches it, so fail loudly rather than silently doing nothing.
-			console.error(`[setup-level-system] no branch for subcommand '${subcommand}'`);
+			console.error(`[leveling settings] no branch for subcommand '${subcommand}'`);
 			await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.noData)], flags: MessageFlags.Ephemeral });
 			return;
 	}
@@ -528,14 +512,14 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 			embeds: [
 				infoEmbed(
 					"Leveling settings updated",
-					[...notes, "", `Run \`/setup-level-system show\` to see everything as it stands now.`].join("\n"),
+					[...notes, "", `Run \`/leveling settings show\` to see everything as it stands now.`].join("\n"),
 					COLORS.ACCOUNT
 				),
 			],
 			flags: MessageFlags.Ephemeral,
 		});
 	} catch (error) {
-		console.error("[setup-level-system] update failed", error);
+		console.error("[leveling settings] update failed", error);
 		await interaction.reply({
 			embeds: [errorEmbed("Could not save those settings. Try again or check the bot's logs.")],
 			flags: MessageFlags.Ephemeral,
@@ -670,8 +654,4 @@ function refuseReward(interaction: RepliableInteraction, role: Role): string | n
 	if (me && me.roles.highest.comparePositionTo(role) <= 0) return levelingCopy.errors.rewardRoleTooHigh;
 
 	return null;
-}
-
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-	await run(interaction, interaction.options);
 }

@@ -81,7 +81,7 @@ describe("MemberLevel indexes", () => {
 describe("level is derived, never stored", () => {
 	it("declares no `level` path at all", () => {
 		// The single most likely "helpful" edit to this model, and the one that
-		// breaks it. A stored level drifts the instant an admin runs /xp set-level
+		// breaks it. A stored level drifts the instant an admin runs /leveling xp set-level
 		// or the guild changes its curve preset, and nothing recomputes it.
 		expect(MemberLevel.schema.path("level")).toBeUndefined();
 	});

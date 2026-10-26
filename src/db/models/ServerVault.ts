@@ -4,8 +4,8 @@ import mongoose from "mongoose";
 // ── ServerVault ──
 // What:  one server's chip reserve (2026-10 item 250 Phase 5): the balance admins grant
 //        from, the last month the network award paid it, and its most recent grants.
-// Who:   features/economy/ only, through serverVaultStore: /economy grant debits it,
-//        the monthly top up credits it, /economy status reads it.
+// Who:   features/economy/ only, through serverVaultStore: /arcade chips grant debits it,
+//        the monthly top up credits it, /arcade chips status reads it.
 // Where: one row per guild, created with the starting balance the first time anything
 //        reads it, so an existing server needs no backfill.
 //

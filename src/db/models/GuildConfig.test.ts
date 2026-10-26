@@ -190,7 +190,7 @@ describe("GuildConfig declares the LEVELING subtree", () => {
 
 	it("ships leveling ENABLED on every legacy row, with no backfill", () => {
 		// Locked decision D4: leveling is on in every guild immediately, no opt in.
-		// A legacy row that has never seen /setup-level-system must therefore load
+		// A legacy row that has never seen /leveling settings must therefore load
 		// with a complete working configuration, which is what these defaults are.
 		const doc = new GuildConfigModel(baseRow);
 		expect(doc.get("leveling.enabled")).toBe(true);
@@ -298,7 +298,7 @@ describe("GuildConfig declares the LEVELING subtree", () => {
 
 	it("exposes every leveling leaf as a real schema path, so $set updates are not stripped", () => {
 		// Document construction is only half the exposure. Strict mode also strips
-		// undeclared paths out of an UPDATE payload, so /setup-level-system would
+		// undeclared paths out of an UPDATE payload, so /leveling settings would
 		// silently no-op on any field missing here.
 		const paths = [
 			"leveling.enabled",

@@ -12,7 +12,7 @@ import { COLORS } from "@base/copy/brand.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
 
-// ── /channels rename ──────────────────────────────────────────────────
+// ── /server channels rename ──────────────────────────────────────────────────
 // What:  rename one of the bot-managed channels AND persist the new name
 //        so it survives the rebuild path. Without this command, admins
 //        could rename channels via Discord's UI but the rebuilds run by
@@ -20,8 +20,8 @@ import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions
 //        the pack default (eg "homebase-leaderboard") whenever a
 //        channel got deleted and re-created.
 // Who:   server admins: gated by BOT_CONSTANTS.ADMIN_COMMANDS in main.ts (the
-//        server owner or the /setup admin role), like the rest of /configure.
-//        /channels rename and the admin guide's /channels button both run it.
+//        server owner or the /setup admin role), like the rest of /server.
+//        /server channels rename and the admin guide's /server channels button both run it.
 // When:  on demand. Idempotent, running with the same name twice is a
 //        no-op write (we still emit a "no change made" reply rather
 //        than a silent success so the admin gets clear feedback).
@@ -99,7 +99,7 @@ export function addRenameChannelOptions(sub: SlashCommandSubcommandBuilder): Sla
 }
 
 /**
- * The channel slots /channels rename can name in this guild, each shown by its LIVE
+ * The channel slots /server channels rename can name in this guild, each shown by its LIVE
  * name. Read by the command's autocomplete and by the admin form's slot picker.
  */
 export async function renameSlotChoices(guild: Guild): Promise<OptionChoice[]> {
@@ -226,7 +226,7 @@ export async function renameChannel(interaction: RepliableInteraction, options: 
 		// permission missing, etc.) we bail before writing the override,
 		// otherwise the GuildConfig would claim a name that does not exist
 		// in Discord and rebuilds would propagate the false name forward.
-		await channel.setName(newName, "Renamed via /channels rename");
+		await channel.setName(newName, "Renamed via /server channels rename");
 
 		// Persist the override in the channelNames map. Mongoose Maps need
 		// to be cloned + written back; guildConfigStore.update wraps in
@@ -245,7 +245,7 @@ export async function renameChannel(interaction: RepliableInteraction, options: 
 			embeds: [
 				infoEmbed(
 					"✏️ Channel renamed",
-					`The channel is now named **${newName}** and the rename is persisted, so it will survive any future auto-heal rebuild.\n\nHeads up: renaming the channel directly in Discord works for the live channel but does NOT update the persisted override. Use /channels rename again any time you want the new name to stick across rebuilds.`,
+					`The channel is now named **${newName}** and the rename is persisted, so it will survive any future auto-heal rebuild.\n\nHeads up: renaming the channel directly in Discord works for the live channel but does NOT update the persisted override. Use /server channels rename again any time you want the new name to stick across rebuilds.`,
 					COLORS.SCHEDULE
 				),
 			],

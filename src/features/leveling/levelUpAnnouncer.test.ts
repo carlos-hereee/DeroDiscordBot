@@ -407,7 +407,7 @@ describe("the one time admin notice", () => {
 		await new Promise((resolve) => setImmediate(resolve));
 
 		expect(mocks.botLogLog).toHaveBeenCalledTimes(1);
-		expect(String(payloads(send)[0].content)).toContain("/setup-level-system");
+		expect(String(payloads(send)[0].content)).toContain("/leveling settings");
 	});
 
 	it("does not post again once the guild has been told", async () => {

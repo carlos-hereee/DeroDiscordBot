@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { RepliableInteraction } from "discord.js";
 
-// ── /setup-level-system's admin log lines ────────────────────────────────────
+// ── the /leveling settings admin log lines ──────────────────────────────────
 // Post-launch plan items 9 and 11: every setting a run writes is one config.change
 // line in 🗒️admin-log, named by its leveling path, and a run that writes nothing
 // logs nothing. The stores and the emitter are mocked.
@@ -23,7 +23,7 @@ vi.mock("@features/leveling/levelingConfig.js", async (original) => ({
 
 import { normalizeLevelingSettings } from "@features/leveling/levelingConfig.js";
 import { FormOptionReader, type FormValue } from "@features/command-buttons/formOptionReader.js";
-import { run } from "./setup-level-system.js";
+import { runLevelSettings as run } from "./levelSettingsSubcommands.js";
 
 function interaction(): RepliableInteraction {
 	return { guildId: "g1", guild: { id: "g1" }, user: { id: "u1" }, client: {}, reply: vi.fn(async () => undefined) } as unknown as RepliableInteraction;
@@ -38,7 +38,7 @@ beforeEach(() => {
 	mocks.getLevelingConfig.mockReset().mockResolvedValue({ settings: normalizeLevelingSettings({}), weekStart: "sunday" });
 });
 
-describe("/setup-level-system admin log", () => {
+describe("/leveling settings admin log", () => {
 	it("logs one line per setting the run wrote", async () => {
 		const ran = interaction();
 		await run(ran, reader("curve", { preset: { kind: "string", value: "flat" }, milestones: { kind: "string", value: "everyN" } }));

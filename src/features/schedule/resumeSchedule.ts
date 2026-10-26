@@ -10,12 +10,12 @@ import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 
-// ── /schedule resume, one event ───────────────────────────────────────
+// ── /events resume, one event ───────────────────────────────────────
 // What:  clears event.paused (and pausedUntil) so the scheduler resumes
 //        firing reminders on the next matching occurrence. Inverse of
 //        pauseOneSchedule. Same event choice pattern.
-// Who:   /schedule resume when it names an event, and the admin guide's
-//        /schedule button. Streamers and KvK admins resuming a previously
+// Who:   /events resume when it names an event, and the admin guide's
+//        /events button. Streamers and KvK admins resuming a previously
 //        paused event.
 // When:  on demand, typically right when the streamer is back from
 //        vacation. If they paused with a duration the scheduler will
@@ -30,7 +30,7 @@ import { setupCopy } from "@features/setup/setupCopy.js";
 const c = rokCommanderCopy.pauseSchedule;
 
 /**
- * The events /schedule resume can name: every paused event. Read by the command's
+ * The events /events resume can name: every paused event. Read by the command's
  * autocomplete and by the admin form's event picker.
  */
 export async function resumableEventChoices(guildId: string): Promise<OptionChoice[]> {
@@ -90,7 +90,7 @@ export async function resumeOneSchedule(interaction: RepliableInteraction, optio
 		});
 
 		refreshSchedule(interaction.client, guildId).catch((err) =>
-			console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/schedule resume"), err)
+			console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/events resume"), err)
 		);
 	} catch (err) {
 		console.error("[schedule resume] update failed", err);

@@ -5,13 +5,13 @@ import { DERO_IMAGE_REF, buildDeroImageAttachment } from "@base/copy/brand.js";
 import { pickRandomGoLiveGif } from "@base/constants/goLiveGifs.js";
 
 // ── lead-time table ─────────────────────────────────────────────────
-// Shared between /stream soon (slash command) and the Go Live Now
+// Shared between /events stream soon (slash command) and the Go Live Now
 // button on the schedule channel's control message. Both surfaces map
 // a key string to the same minutes / label pair, so an announcement
 // fired from either path renders identically.
 //
 // If a future surface (modal, dashboard, etc) adds new lead times,
-// add them here. The /stream soon slash command's option choices and
+// add them here. The /events stream soon slash command's option choices and
 // the button's hardcoded `now` key both depend on the keys staying in
 // sync with what is registered as a Discord option.
 export const GO_LIVE_LEAD_TIMES: Record<string, { minutes: number; label: string }> = {
@@ -32,12 +32,12 @@ export type TGoLiveResult =
 	| { ok: false; reason: "setup-required" | "invalid-lead-time" | "post-failed" };
 
 // Post a "going live soon" announcement to the guild's announcements
-// channel. Shared execution path for /stream soon and the schedule
+// channel. Shared execution path for /events stream soon and the schedule
 // channel control button.
 //
 // Why share: the announcement composition (embed shape, allowed
 // mentions discipline, fallback role precedence) is identical across
-// callers. Duplicating it risks drift; the /stream soon copy is the
+// callers. Duplicating it risks drift; the /events stream soon copy is the
 // canonical wording and both surfaces should render the same message.
 //
 // Callers handle their own interaction acking. This helper only owns
@@ -59,7 +59,7 @@ export async function postGoLiveAnnouncement(
 	// Role precedence: explicit override (slash command's mention-role
 	// option) wins, then the guild's memberRoleId default, then null
 	// (which the send block translates to @here). Mirrors the original
-	// /stream soon behavior exactly so a button-fired announcement is
+	// /events stream soon behavior exactly so a button-fired announcement is
 	// indistinguishable from a slash-command-fired one.
 	const roleId = mentionRoleIdOverride ?? config.memberRoleId ?? null;
 

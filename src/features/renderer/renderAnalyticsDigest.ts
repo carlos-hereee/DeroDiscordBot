@@ -1,7 +1,7 @@
 import type { Client } from "discord.js";
 import { creatorId, renderAnalyticsEnabled } from "@utils/config.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
-import { formatRenderAnalyticsReport } from "@commands/admin/render-analytics.js";
+import { formatRenderAnalyticsReport } from "@features/renderer/renderAnalyticsSubcommand.js";
 import { buildRenderAnalyticsReport } from "./renderAnalytics.js";
 import { renderAnalyticsCopy } from "./renderAnalyticsCopy.js";
 
@@ -11,7 +11,7 @@ import { renderAnalyticsCopy } from "./renderAnalyticsCopy.js";
 // BOT_CONSTANTS.RENDER_ANALYTICS.DIGEST_CRON in the owner's time zone; a test
 // fires it by hand through sendRenderAnalyticsDigest. It builds nothing of its
 // own: the report is Phase 1's buildRenderAnalyticsReport and the embed text is
-// the same formatter /render-analytics top10 uses, so the DM and the command can
+// the same formatter /platform analytics uses, so the DM and the command can
 // never disagree about a number. It never writes, and it never throws into the
 // cron, because a missed digest costs one DM and the scheduler must keep running.
 

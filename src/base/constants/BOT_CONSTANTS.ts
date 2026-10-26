@@ -40,44 +40,49 @@ export const BOT_CONSTANTS = {
 	// set refuses everyone who is not an admin. BOT_CONSTANTS.adminCommands.test.ts
 	// loads every command and fails when one carries a default without being here.
 	//
-	// An entry is a command name, which gates every subcommand under it, or a command
-	// name and ONE subcommand separated by a space ("events delete"), which gates that
-	// subcommand alone. The qualified form exists for /events, whose list is a member
-	// view and whose delete is not (2026-10 item 245 Phase 4b merged the two).
-	// isAdminCommand in utils/permissions.ts reads both forms, for the slash command
-	// gate and the admin buttons alike.
+	// An entry is a command name, which gates every leaf under it. A leaf that must stay
+	// open to members is named in MEMBER_SUBCOMMANDS below instead, so an admin command
+	// is closed by default. isAdminCommand in utils/permissions.ts reads both, for the
+	// slash command gate; the admin buttons re-run the owner or admin gate themselves.
 	//
 	// Deliberately NOT in the set:
 	//   /setup and /self-destruct are server owner only through their own inline checks
 	//   (commands/admin/setup.ts, features/setup/selfDestruct.ts) and keep their default
 	//   as a picker courtesy; main.ts skips /setup, which runs before an admin role exists.
-	//   /render-analytics is platform owner only (its execute checks CREATOR_DISCORD_ID),
-	//   and this gate would demand a /setup config in whatever server the owner uses.
-	//   /network (2026-10 item 244 Phase 5b) is the same: the owner's network bans,
-	//   behind the same CREATOR_DISCORD_ID check.
-	//   /events list, /leaderboard, /account, /rating and the games are member commands:
-	//   members seeing what is scheduled and where they stand is the whole point.
+	//   /platform is platform owner only (its network bans and its render analytics each
+	//   check CREATOR_DISCORD_ID through isPlatformOwner), and this gate would demand a
+	//   /setup config in whatever server the owner uses.
+	//   /leaderboard, /account, /rating and the games are member commands, like
+	//   /events list: members seeing what is scheduled and where they stand is the point.
 	ADMIN_COMMANDS: new Set<string>([
-		// ── events ──
-		"configure-kvk-season",
-		"events delete",
-		// ── streamer schedules ──
-		"schedule",
-		"stream",
-		// ── channels and server switches ──
-		"channels",
-		"configure",
+		// ── events, schedules and streams ──
+		// /events also holds pause and resume, the stream group and kvk-season. Its
+		// list is the one member view, kept open by MEMBER_SUBCOMMANDS below.
+		"events",
+		// ── the server ──
+		// /server: auto heal, the channels group and the leaderboard group. Its channels
+		// hide, show and list also keep their own server owner check.
+		"server",
 		// ── leveling ──
-		"setup-level-system",
-		"xp",
+		// /leveling: the settings group and the xp group.
+		"leveling",
+		// ── the arcade ──
+		// /arcade: on and off, bots, reach, the monthly post, the server block list and
+		// the chips group (2026-10 item 250 Phase 5).
+		"arcade",
 		// ── dero voice ──
 		// /dero-config is the voice kill switch, the monthly speech spend cap and the
 		// lists of who may give Dero tasks.
 		"dero-config",
-		// ── chip economy (2026-10 item 250 Phase 5) ──
-		// /economy grants chips from the server vault and switches chips on or off.
-		"economy",
 	]),
+
+	// ── member leaves of admin commands ──
+	// "command leaf" pairs, the leaf naming its group when it has one, that stay open to
+	// every member although their command is in ADMIN_COMMANDS. isAdminCommand checks
+	// this first. An allow list rather than an admin list per subcommand, so /events is
+	// admin by default and a subcommand added to it later is never open to members by
+	// accident: it has to be named here to be.
+	MEMBER_SUBCOMMANDS: new Set<string>(["events list"]),
 
 	// ── Discord's component limits ────────────────────────────────
 	// Discord's own ceilings, which it enforces by rejecting the whole send, never by
@@ -326,7 +331,7 @@ export const BOT_CONSTANTS = {
 	// ── network tables: consent, the board, server ratings (2026-10 item 244 Phase 5b) ──
 	// What:  the numbers the network around a satellite runs on.
 	// Who:   game-rooms/networkRules.ts, networkBoard.ts and networkJoin.ts;
-	//        ratings/serverRatings.ts and tagNotice.ts; /network and /dero-config arcade.
+	//        ratings/serverRatings.ts and tagNotice.ts; /platform network and /arcade.
 	NETWORK: {
 		// The network notice a member accepts before anything of theirs is shown in another
 		// server. Raise it when the notice's wording changes what crosses servers: every row
@@ -354,8 +359,8 @@ export const BOT_CONSTANTS = {
 		// consenting players, so a top heavy page of non consenting players costs one more
 		// read rather than an unbounded one.
 		NETWORK_BOARD_PAGE: 50,
-		// A Discord server id as an admin or the owner types it into /network or
-		// /dero-config arcade block-server. A snowflake is 17 to 20 digits today.
+		// A Discord server id as an admin or the owner types it into /platform network or
+		// /arcade server block. A snowflake is 17 to 20 digits today.
 		SERVER_ID_PATTERN: /^\d{17,20}$/,
 		// The longest note the owner may keep on a network ban. Only the owner reads it,
 		// and a short cap keeps a pasted wall of text out of the ban list.
@@ -585,11 +590,11 @@ export const BOT_CONSTANTS = {
 
 		// The longest cooldown an admin may configure, and therefore the age past
 		// which a cooldown entry can no longer block anything and is safe to sweep.
-		// /setup-level-system clamps every cooldown input to this ceiling, so the
+		// /leveling settings clamps every cooldown input to this ceiling, so the
 		// sweep and the config can never disagree about what "expired" means.
 		MAX_COOLDOWN_SECONDS: 3600,
 
-		// ── input bounds for /setup-level-system ──
+		// ── input bounds for /leveling settings ──
 		// Every numeric an admin can type is clamped into these ranges at the
 		// COMMAND layer, because guildConfigStore.update runs findOneAndUpdate
 		// without runValidators, so the schema's own constraints never see it.
@@ -605,7 +610,7 @@ export const BOT_CONSTANTS = {
 			MAX_CURVE_MULTIPLIER: 100,
 			MIN_VOICE_MEMBERS: 1,
 			MAX_VOICE_MEMBERS: 25,
-			// A level an admin may write with /xp set-level. Capped well inside
+			// A level an admin may write with /leveling xp set-level. Capped well inside
 			// levelCurve's own ceiling so nobody can set a level whose cumulative
 			// cost was never computed.
 			MAX_SETTABLE_LEVEL: 500,
@@ -666,7 +671,7 @@ export const BOT_CONSTANTS = {
 		// Messages and reactions pay a flat 1 XP each, the owner's decision of
 		// 2026-10-23 (the 1.7.0 test fixes, item 5). The old per guild 15 to 40 and
 		// 10 to 25 ranges let a chatty member outpace every game in the arcade, and
-		// the four rate options that set them are gone from /setup-level-system.
+		// the four rate options that set them are gone from /leveling settings.
 		// Role and channel multipliers still apply on top, floored, so a 2x role
 		// earns 2.
 		MESSAGE_XP: 1,
@@ -775,7 +780,7 @@ export const BOT_CONSTANTS = {
 
 	// ── render analytics (2026-10 item 244) ───────────────────────
 	// Counts every rendered card and avatar cache lookup per UTC month, read by
-	// features/renderer/renderAnalytics.ts and /render-analytics. Every number
+	// features/renderer/renderAnalytics.ts and /platform analytics. Every number
 	// below is an owner decision of 2026-10-23 (2026-10 item 244).
 	RENDER_ANALYTICS: {
 		// Owner decision 2026-10-23 (2026-10 item 244): at most this many upserts in flight; beyond it an event is dropped and counted, so a slow Mongo cannot grow memory without bound.
@@ -784,7 +789,7 @@ export const BOT_CONSTANTS = {
 		SUMMARY_INTERVAL_MS: 60_000,
 		// Owner decision 2026-10-23 (2026-10 item 244): a row expires 13 months (395 days) after its last lookup, enough for a year over year view.
 		RETENTION_SECONDS: 395 * 24 * 60 * 60,
-		// Owner decision 2026-10-23 (2026-10 item 244): how many keys /render-analytics top10 lists.
+		// Owner decision 2026-10-23 (2026-10 item 244): how many keys /platform analytics lists.
 		TOP_N: 10,
 		// Owner decision 2026-10-23 (2026-10 item 244): a surface earns a sizing hint only after this many renders (hits plus draws) in the period.
 		SIZING_MIN_RENDERS: 50,
@@ -851,7 +856,7 @@ export const BOT_CONSTANTS = {
 		VAULT_STARTING_CHIPS: 100_000,
 		// Owner decision 2026-10-24 (the plan's data model): the vault keeps its 50 most recent grants.
 		VAULT_GRANT_HISTORY_LIMIT: 50,
-		// How many of those grants /economy status lists; the rest stay on the row for the dashboard.
+		// How many of those grants /arcade chips status lists; the rest stay on the row for the dashboard.
 		VAULT_STATUS_GRANTS_SHOWN: 5,
 		// The largest single grant an admin may type. Far above any vault a month of awards
 		// builds, so it only refuses a typo (an extra zero), never a real grant.

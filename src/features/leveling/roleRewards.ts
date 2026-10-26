@@ -84,7 +84,7 @@ export function refuseReason(role: Role, me: GuildMember): RefusalReason | null 
 
 	// ⚠️ SECURITY REFUSALS, not convenience checks. A leveling bot handing out
 	// Administrator because somebody chatted a lot is a security incident, not a
-	// bug. Refused at config time in /setup-level-system AND again here, because a
+	// bug. Refused at config time in /leveling settings AND again here, because a
 	// config row can be edited directly in Mongo and never passes through the
 	// command.
 	if (role.permissions.has(PermissionFlagsBits.Administrator)) return "administrator";

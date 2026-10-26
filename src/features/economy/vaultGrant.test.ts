@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { RepliableInteraction, User } from "discord.js";
 
-// ── /economy grant ──────────────────────────────────────────────────────────
+// ── /arcade chips grant ──────────────────────────────────────────────────────────
 // A landed grant writes exactly one chip.grant line carrying the plan's payload; a
 // refused grant writes none; a bot account is refused before the vault is touched.
 

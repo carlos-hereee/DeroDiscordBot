@@ -96,8 +96,8 @@ export const rokCommanderCopy = {
 		title: "📅 Active KvK Events",
 		noEvents:
 			"📭 No active events are configured for this server yet.\n\n" +
-			"Streamers: run `/stream setup` for weekly streams or `/stream announce` for one-offs.\n" +
-			"ROK alliances: run `/configure-kvk-season` to set up the season schedule.",
+			"Streamers: run `/events stream weekly` for weekly streams or `/events stream announce` for one-offs.\n" +
+			"ROK alliances: run `/events kvk-season` to set up the season schedule.",
 		fieldName: (name: string, type: "recurring" | "one-time") => (type === "recurring" ? `🔁 ${name}` : `📌 ${name}`),
 		nextOccurrenceLabel: "Next occurrence",
 		scheduledDateLabel: "Scheduled date",
@@ -144,12 +144,12 @@ export const rokCommanderCopy = {
 		// What:  the single message posted in #announcements when a
 		//        guild's season expires. Voice leans kingdom-flavored
 		//        and motivational, not transactional. The previous copy
-		//        was "season concluded, run /configure-kvk-season" which
+		//        was "season concluded, run /events kvk-season" which
 		//        read like a system status line and ignored the fact
 		//        that members had spent weeks showing up for the bot.
 		// Who:   every member of the guild reads this. Tone has to honor
 		//        the work they put in, not just declare a state change.
-		//        The admin-only mechanic ("run /configure-kvk-season")
+		//        The admin-only mechanic ("run /events kvk-season")
 		//        is still present because the bot owner and the alliance
 		//        leadership reading this message often overlap, but it
 		//        is demoted to the closing line.
@@ -161,7 +161,7 @@ export const rokCommanderCopy = {
 		title: "🏁 KvK Season Concluded, Stand Down, Heroes",
 		description:
 			"The campaign closes. To every warrior who answered the bell, every commander who held the line, every governor who marched out when it counted, thank you. Your discipline shaped this season.\n\n" +
-			"Whether the kingdom feasts or rebuilds, the next decree always rises. When the call comes, an admin can summon the next schedule with `/configure-kvk-season`.\n\n" +
+			"Whether the kingdom feasts or rebuilds, the next decree always rises. When the call comes, an admin can summon the next schedule with `/events kvk-season`.\n\n" +
 			"Sharpen your blades. The realm remembers what you did here.",
 	},
 
@@ -196,7 +196,7 @@ export const rokCommanderCopy = {
 			"Once configured, upcoming events, streams, announcements, and community activities will be displayed here for all to see.\n\n" +
 			"Admins can set up the server's schedule from the dashboard, or the in-Discord setup commands.",
 		seasonEnded:
-			"🏁 The KvK season has ended. The kingdom stands down.\n\n" + "Run `/configure-kvk-season` when the next campaign begins.",
+			"🏁 The KvK season has ended. The kingdom stands down.\n\n" + "Run `/events kvk-season` when the next campaign begins.",
 		fieldName: (name: string, type: "recurring" | "one-time") => (type === "recurring" ? `🔁 ${name}` : `📌 ${name}`),
 		nextOccurrenceLabel: "Next",
 		scheduledDateLabel: "Scheduled",
@@ -215,7 +215,7 @@ export const rokCommanderCopy = {
 		completedDateLabel: "Concluded",
 		footer: "Updated automatically.",
 	},
-	// user-facing strings for the /configure-kvk-season command. lives
+	// user-facing strings for the /events kvk-season command. lives
 	// here so every line the warrior sees in Discord can be audited and
 	// adjusted from one place alongside the rest of the kingdom voice.
 	configureReminders: {
@@ -228,7 +228,7 @@ export const rokCommanderCopy = {
 		altarAfterSeason: "Altar date must be before the season end date",
 		kauAfterSeason: "Kau Karuak Easy date must be before the season end date",
 		dateConflictsHeader: "❌ Date conflicts:",
-		cancelled: "❌ Configuration cancelled, run `/configure-kvk-season` again with the correct dates.",
+		cancelled: "❌ Configuration cancelled, run `/events kvk-season` again with the correct dates.",
 		settingUp: "⏳ Setting up reminders...",
 		timedOut: "⏱️ Configuration timed out, please run the command again.",
 		confirmButtonLabel: "✅ Confirm, Dates are correct",
@@ -522,20 +522,20 @@ export const rokCommanderCopy = {
 					// leadership recognises their tools without scanning
 					// the stream-adjacent blocks below.
 					name: "⚔️ ROK KvK Commands",
-					value: ["`/configure-kvk-season`", "ROK (Rise of Kingdoms) specific. Event reminders for a KvK season."].join("\n"),
+					value: ["`/events kvk-season`", "ROK (Rise of Kingdoms) specific. Event reminders for a KvK season."].join("\n"),
 				},
 				{
 					name: "📺 Stream / General Schedule Commands",
 					value: [
-						"`/stream setup`",
+						"`/events stream weekly`",
 						"Set up a weekly recurring reminder on a fixed day and time.",
-						"`/stream announce`",
+						"`/events stream announce`",
 						"Schedule a one-off reminder for a specific future date and time.",
-						"`/stream soon`",
+						"`/events stream soon`",
 						"Post a quick going-live announcement. One-shot, no reminder.",
-						"`/schedule pause`",
+						"`/events pause`",
 						"Pause reminders for one event without deleting it, or for every event when you name none.",
-						"`/schedule resume`",
+						"`/events resume`",
 						"Resume one paused event, or every paused event when you name none.",
 					].join("\n"),
 				},
@@ -546,16 +546,18 @@ export const rokCommanderCopy = {
 				{
 					name: "🛠️ Server Settings",
 					value: [
-						"`/channels`",
+						"`/server channels`",
 						"Hide, show or rename the chambers I keep.",
-						"`/configure`",
+						"`/server`",
 						"Channel auto heal, leaderboard tracking and the day the leaderboard week starts.",
-						"`/setup-level-system`",
+						"`/leveling settings`",
 						"Leveling: rates, the curve, where level ups post, which channels count, rewards and boosts.",
-						"`/xp`",
+						"`/leveling xp`",
 						"Correct a member's XP or level, reset a member or the server, or export it all.",
 						"`/dero-config`",
 						"My voice: the switch, the monthly budget and who may give me tasks.",
+						"`/arcade`",
+						"The arcade: on or off, bot opponents, how far a challenge reaches, the monthly post, network blocks and chips.",
 					].join("\n"),
 				},
 			] satisfies IEmbedField[],
@@ -965,7 +967,7 @@ export const rokCommanderCopy = {
 		invalidTime: "Time invalid. Use 24h `HH:MM` like `19:30` or `09:00`.",
 		invalidDay: "Day invalid. Pick one of: monday, tuesday, wednesday, thursday, friday, saturday, sunday.",
 		alreadyExists: (name: string) =>
-			`A schedule named **${name}** already exists. Pause it with \`/schedule pause\` or pick a different name.`,
+			`A schedule named **${name}** already exists. Pause it with \`/events pause\` or pick a different name.`,
 		// Confirmation embed that previews the schedule before persisting.
 		// Times use Discord <t:UNIX:t> so each viewer sees their local time.
 		confirm: {
@@ -995,7 +997,7 @@ export const rokCommanderCopy = {
 	pauseSchedule: {
 		notFound: "No schedule by that name. Use `/events list` to see what is configured.",
 		alreadyPaused: (name: string) => `**${name}** is already paused.`,
-		paused: (name: string) => `⏸️ **${name}** paused. Resume it with \`/schedule resume\`.`,
+		paused: (name: string) => `⏸️ **${name}** paused. Resume it with \`/events resume\`.`,
 		pausedUntil: (name: string, untilUnix: number) =>
 			`⏸️ **${name}** paused until <t:${untilUnix}:F> (<t:${untilUnix}:R>). It will resume automatically.`,
 		invalidDuration: "Duration invalid. Use a positive number of days, max 90.",
@@ -1006,15 +1008,15 @@ export const rokCommanderCopy = {
 
 	// pause-all and resume-all act on every event in the guild at once.
 	// Skip-already-paused semantics on the pause path preserve any per-event
-	// pausedUntil dates the streamer set with /schedule pause earlier.
+	// pausedUntil dates the streamer set with /events pause earlier.
 	pauseAllSchedules: {
 		noEvents: "No schedules to pause, this server has no events configured.",
 		allAlreadyPaused: (total: number) =>
-			`All ${total} schedules are already paused. Use \`/schedule resume\` with no event to resume them.`,
+			`All ${total} schedules are already paused. Use \`/events resume\` with no event to resume them.`,
 		paused: (count: number, skipped: number) =>
 			skipped > 0
 				? `⏸️ Paused **${count}** schedule(s). Skipped ${skipped} already-paused schedule(s) so their existing auto-resume dates stay intact.`
-				: `⏸️ Paused **${count}** schedule(s). Resume one with \`/schedule resume\` and an event, or all of them with no event.`,
+				: `⏸️ Paused **${count}** schedule(s). Resume one with \`/events resume\` and an event, or all of them with no event.`,
 		pausedUntil: (count: number, skipped: number, untilUnix: number) =>
 			skipped > 0
 				? `⏸️ Paused **${count}** schedule(s) until <t:${untilUnix}:F> (<t:${untilUnix}:R>). Skipped ${skipped} already-paused schedule(s) so their existing auto-resume dates stay intact.`
@@ -1035,7 +1037,7 @@ export const rokCommanderCopy = {
 		failed: "Could not resume the schedules. Try again.",
 	},
 
-	// ── /stream soon (panic button) ──────────────────────────────
+	// ── /events stream soon (panic button) ──────────────────────────────
 	// Drops a one-off announcement for a stream starting in the next few
 	// hours. NOT a recurring event, this is a single now-ish nudge, the
 	// kind a streamer fires from the green room when life happened and
@@ -1121,12 +1123,12 @@ export const rokCommanderCopy = {
 		innerSanctum: {
 			title: "🏛️ THE ORACLE EXPLAINS WHAT CHANGED",
 			description:
-				"Those who hold the reins.\n\nMuch arrived with this release. Here is what each part does in your server and how to take it in hand.\n\n**Fewer commands, a button for each.** `/schedule pause` and `/schedule resume` act on one event, or on every event when you name none. `/stream announce`, `/stream soon` and `/stream setup` hold the stream tools, `/configure` holds auto heal, leaderboard tracking and the leaderboard week, `/events` lists and deletes events, and `/channels rename` renames a channel I keep. Every admin command also has a button on the guide in your admin channel that opens it with a form, and refuses anyone who is not the owner or an admin. Members get Account, Levels, Achievements, Suggestion Box, Toggle pings and Fortune buttons in #command-center.\n\n**Leveling is already running.** Messages, reactions, approved voice channels and games earn renown. A message or a reaction pays 1, and messages, reactions and solo games against me pay a member at most 50 a day, reset at midnight Central. I read no message text: I know that a message happened, where and by whom, and nothing else. Message renown has a sixty second cooldown. Voice renown is off until you approve a voice channel by name. Nothing I post pings anyone.\n`/setup-level-system` sets the cooldowns, the curve, which channels count, role rewards and where level ups post. `/setup-level-system toggle enabled:false` turns it all off, keeps every record, and resumes where it stopped when you switch it back on.\n`/xp` corrects, resets a member or the whole server (it asks first) and exports everything as a file.\nI will not hand out a role carrying Administrator or Manage Server, and I cannot grant a role above my own, so keep my role above any reward.\n\n**The arcade is open.** A 🎮 ARCADE GAMES category holds 🕹️games, where every game starts, 📋arcade-rules, ⚔️challenges and a 🎮 Arcade Lounge voice room, and the notice board gains a 🏛️ Meeting Hall voice room. Every match gets its own room under the arcade, seen only by its players unless the host opens it to all. A finished room clears four hours after the match ends unless its players start a rematch in it, and a room with no move for 30 minutes closes as abandoned, Monopoly and hangman aside. The match record is kept. Hold'em gives each decision 60 seconds, lets any player leave and lets the host end the table. Monopoly matches can run for days, and the host decides at the challenge card whether passed lots go to auction and whether I referee the match out loud.\n\n**Most posts are now drawn cards.** Profiles, level ups, the levels board, honors, role rewards, blackjack and Hold'em tables, match results, welcomes, fortunes, the challenge card and my voice calls each post as a picture, and each falls back to the text you know whenever a picture cannot be drawn. On Mondays at 9 am Central I send up to 25 of the week's most present members a private card of their week; no such message goes out in a server where level up announcements are off.\n\n**My voice is switched off here**, and nothing listens or speaks until you turn it on. I speak in George's voice from the start, so `/dero-config enable` is the only step. The role, text channel and voice channel lists decide who may give me tasks, where I may post and which calls I may join, and the Join, Leave and Status buttons in both voice rooms follow the same lists. A monthly speech budget, $5 by default, is checked before every paid speech call. `/dero-config disable` or `/dero-config cap dollars:0` stops every speech call at once and ends a live call. In a call I hear only members on the task list; their speech goes to ElevenLabs to become text, and I keep no audio and no transcript. The Monopoly voice referee follows all of this: it speaks only into a call someone has already brought me into, and from the same monthly budget.",
+				"Those who hold the reins.\n\nMuch arrived with this release. Here is what each part does in your server and how to take it in hand.\n\n**Fewer commands, a button for each.** `/events pause` and `/events resume` act on one event, or on every event when you name none. `/events stream announce`, `/events stream soon` and `/events stream weekly` hold the stream tools, `/server` holds auto heal, leaderboard tracking and the leaderboard week, `/events` lists and deletes events, and `/server channels rename` renames a channel I keep. Every admin command also has a button on the guide in your admin channel that opens it with a form, and refuses anyone who is not the owner or an admin. Members get Account, Levels, Achievements, Suggestion Box, Toggle pings and Fortune buttons in #command-center.\n\n**Leveling is already running.** Messages, reactions, approved voice channels and games earn renown. A message or a reaction pays 1, and messages, reactions and solo games against me pay a member at most 50 a day, reset at midnight Central. I read no message text: I know that a message happened, where and by whom, and nothing else. Message renown has a sixty second cooldown. Voice renown is off until you approve a voice channel by name. Nothing I post pings anyone.\n`/leveling settings` sets the cooldowns, the curve, which channels count, role rewards and where level ups post. `/leveling settings toggle enabled:false` turns it all off, keeps every record, and resumes where it stopped when you switch it back on.\n`/leveling xp` corrects, resets a member or the whole server (it asks first) and exports everything as a file.\nI will not hand out a role carrying Administrator or Manage Server, and I cannot grant a role above my own, so keep my role above any reward.\n\n**The arcade is open.** A 🎮 ARCADE GAMES category holds 🕹️games, where every game starts, 📋arcade-rules, ⚔️challenges and a 🎮 Arcade Lounge voice room, and the notice board gains a 🏛️ Meeting Hall voice room. Every match gets its own room under the arcade, seen only by its players unless the host opens it to all. A finished room clears four hours after the match ends unless its players start a rematch in it, and a room with no move for 30 minutes closes as abandoned, Monopoly and hangman aside. The match record is kept. Hold'em gives each decision 60 seconds, lets any player leave and lets the host end the table. Monopoly matches can run for days, and the host decides at the challenge card whether passed lots go to auction and whether I referee the match out loud.\n\n**Most posts are now drawn cards.** Profiles, level ups, the levels board, honors, role rewards, blackjack and Hold'em tables, match results, welcomes, fortunes, the challenge card and my voice calls each post as a picture, and each falls back to the text you know whenever a picture cannot be drawn. On Mondays at 9 am Central I send up to 25 of the week's most present members a private card of their week; no such message goes out in a server where level up announcements are off.\n\n**My voice is switched off here**, and nothing listens or speaks until you turn it on. I speak in George's voice from the start, so `/dero-config enable` is the only step. The role, text channel and voice channel lists decide who may give me tasks, where I may post and which calls I may join, and the Join, Leave and Status buttons in both voice rooms follow the same lists. A monthly speech budget, $5 by default, is checked before every paid speech call. `/dero-config disable` or `/dero-config cap dollars:0` stops every speech call at once and ends a live call. In a call I hear only members on the task list; their speech goes to ElevenLabs to become text, and I keep no audio and no transcript. The Monopoly voice referee follows all of this: it speaks only into a call someone has already brought me into, and from the same monthly budget.",
 		},
 	},
 
-	// ── /stream announce (planned standalone) ─────────────────────
-	// Different from /stream soon: this is for a planned one-off stream
+	// ── /events stream announce (planned standalone) ─────────────────────
+	// Different from /events stream soon: this is for a planned one-off stream
 	// happening hours or days from now. Same primitive (one-time event),
 	// stricter input (explicit date+time, optional title and description).
 	announceStream: {
@@ -1292,7 +1294,7 @@ export const rokCommanderCopy = {
 	// reuses this object rather than keeping a second copy that could drift. Game
 	// names come from gameRoomsCopy.gameLabel, so they are not repeated here.
 	arcadeHostControls: {
-		// The server's challenge reach (an admin's /dero-config arcade reach).
+		// The server's challenge reach (an admin's /arcade reach).
 		reach: {
 			publicRefused: "This server allows invite only challenges. Choose Invite only, or ask an admin about the server's challenge reach.",
 		},
@@ -1442,7 +1444,7 @@ export const rokCommanderCopy = {
 		// Why the network choice was refused.
 		hostRefusals: {
 			notHost: "Only the host can open their own table to the network.",
-			notOnNetwork: "This server is not on the network. An admin can open it with /dero-config arcade reach.",
+			notOnNetwork: "This server is not on the network. An admin can open it with /arcade reach.",
 			notNetworkGame: (game: string) => `A ${game} table cannot be opened to the network yet.`,
 			banned: "Network tables are closed to you.",
 			serverBanned: "Network tables are closed to this server.",
@@ -1510,7 +1512,7 @@ export const rokCommanderCopy = {
 			notInServer: (userId: string, tag: string, inviteUrl: string) =>
 				`🏷️ <@${userId}>, your server tag **${tag}** belongs to a server Dero is not in yet. Bring Dero there and its rated wins can count toward a server ranking: ${inviteUrl}`,
 			notOnNetwork: (userId: string, server: string) =>
-				`🏷️ <@${userId}>, your server tag belongs to **${server}**, which is not on the network yet. Ask its admins to open it with /dero-config arcade reach, and its rated wins can count toward a server ranking.`,
+				`🏷️ <@${userId}>, your server tag belongs to **${server}**, which is not on the network yet. Ask its admins to open it with /arcade reach, and its rated wins can count toward a server ranking.`,
 		},
 	},
 };

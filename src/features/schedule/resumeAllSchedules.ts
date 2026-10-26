@@ -7,7 +7,7 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 
-// /schedule resume with no event, the bulk equivalent of resumeOneSchedule.
+// /events resume with no event, the bulk equivalent of resumeOneSchedule.
 // Resumes every paused event in the guild, including ones that had a
 // pausedUntil set. The intent of running this is "everything back on right
 // now", so clearing pausedUntil alongside paused is correct.
@@ -53,7 +53,7 @@ export async function resumeAllSchedules(interaction: RepliableInteraction): Pro
 	if (succeeded > 0) adminLog.emitFor(interaction, guildId, "schedule.update", { subject: setupCopy.adminLog.allSchedules, detail: setupCopy.adminLog.resumedCount(succeeded) });
 
 	refreshSchedule(interaction.client, guildId).catch((err) =>
-		console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/schedule resume"), err)
+		console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/events resume"), err)
 	);
 
 	if (failed > 0 && succeeded === 0) {

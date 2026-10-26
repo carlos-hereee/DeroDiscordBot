@@ -18,13 +18,13 @@ const BOUNDARY_LABEL: Record<WeekStart, string> = {
 	monday: "Monday to Sunday",
 };
 
-// ── /configure week-start ─────────────────────────────────
+// ── /server leaderboard week-start ─────────────────────────────────
 // What:  sets which weekday the leaderboard's "This week" window is anchored
 //        to. "sunday" (default) runs Sun to Sat; "monday" runs Mon to Sun.
 // Who:   admins. Read at runtime by /leaderboard's thisWeekRange and embed
 //        title, and (once it ships) by Phase 2's LeaderboardBoard.
-// When:  on demand. Same idempotency contract as /configure leaderboard-tracking
-//        and /configure auto-heal: no silent re-writes, an explicit
+// When:  on demand. Same idempotency contract as /server leaderboard tracking
+//        and /server auto-heal: no silent re-writes, an explicit
 //        "already that way" reply on a no-op invocation.
 // Where: writes GuildConfig.weekStart via guildConfigStore.update.
 // How:   ① guildId gate; ② config existence gate; ③ value validation, because

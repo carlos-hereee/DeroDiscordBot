@@ -32,9 +32,13 @@ export const FOOTER = "Company Uno";
 // DEPLOY NOTE: these assets live in companyuno-client/nexious-client/public/dero and only render
 // once the web app is deployed with them. Until then companyuno.com/dero/* 200s
 // with the SPA's HTML (not the file), so Discord shows the name with no image.
+//
+// The `?v=2` is a cache key, not a parameter the site reads: Discord's image proxy
+// caches an icon by its URL, so the same URL kept showing the v1 avatar after the
+// file behind it changed. Bump it whenever the icon file is replaced.
 export const AUTHOR = {
 	name: "Dero",
-	iconURL: "https://www.companyuno.com/dero/dero-icon-128.png",
+	iconURL: "https://www.companyuno.com/dero/dero-icon-128.png?v=2",
 };
 
 // Animated Dero (default state), the introductions embed image only while the

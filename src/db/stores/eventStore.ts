@@ -91,8 +91,8 @@ export const eventStore = {
 	},
 
 	// ── create ──
-	// data shape varies between callers (/stream setup, /stream announce,
-	// GuildEventManager for /configure-kvk-season, and POST /api/events), they all
+	// data shape varies between callers (/events stream weekly, /events stream announce,
+	// GuildEventManager for /events kvk-season, and POST /api/events), they all
 	// build the document fields inline before calling. Accept the union here; remote mode requires guildId on
 	// the input (callers all pass it today).
 	async create(data: {

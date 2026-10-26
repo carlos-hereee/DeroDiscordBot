@@ -25,17 +25,17 @@ import {
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 
-// ── /stream setup ────────────────────────────────────────
+// ── /events stream weekly ────────────────────────────────────────
 // What:  creates a recurring weekly event on a fixed day + time of week
 //        in the streamer's chosen timezone. Every 168 hours from the
 //        first occurrence, the bot fires a reminder in the guild's
 //        announcements channel pinging an optional role override
 //        (defaults to the guild member role).
 // Who:   streamers (or anyone running a weekly recurring stream / call).
-//        Sibling to /configure-kvk-season, same primitive, simpler
+//        Sibling to /events kvk-season, same primitive, simpler
 //        input surface because the cadence is fixed at "weekly".
 // When:  the streamer runs this once per recurring schedule. Re-running
-//        with the same name short circuits with a "use /schedule pause"
+//        with the same name short circuits with a "use /events pause"
 //        hint so two schedules never collide on a guild.
 // Where: persists into the same Event collection as KvK events. Every
 //        downstream system (ReminderScheduler, ScheduleBoard, Test
@@ -146,7 +146,7 @@ export function addStreamScheduleOptions(sub: SlashCommandSubcommandBuilder): Sl
 
 // ── timezone choices ──────────────────────────────────────────
 // What:  IANA timezone names matching what the streamer typed.
-// Who:   /stream setup's autocomplete, on every keystroke in the
+// Who:   /events stream weekly's autocomplete, on every keystroke in the
 //        timezone input. Only the `timezone` option autocompletes in this
 //        subcommand: day has fixed choices and the rest are free text.
 //        The admin form keeps timezone a typed field instead, because a
@@ -309,7 +309,7 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 			// Fire and forget, schedule board refresh failure must not
 			// undo the successful save. Same pattern as the events route.
 			refreshSchedule(interaction.client, guildId).catch((err) =>
-				console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/stream setup"), err)
+				console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/events stream weekly"), err)
 			);
 		} catch (err) {
 			console.error("[stream setup] save failed", err);

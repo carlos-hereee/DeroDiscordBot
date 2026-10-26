@@ -1,6 +1,6 @@
 // ── economyCopy ──────────────────────────────────────────────────────
 // Every line the chip economy shows (2026-10 item 250 Phase 5): the member's /claim
-// replies, the admin's /economy replies and settings panel,
+// replies, the admin's /arcade chips replies and settings panel,
 // and the 🗒️admin-log lines a grant and the monthly award write. Kept beside the
 // feature like gameRoomsCopy and ratingsCopy rather than in the copy packs, because
 // both packs would carry it word for word. The /account chips line is leveling's
@@ -26,12 +26,12 @@ export const economyCopy = {
 		dailyClaim: (amount: number, balance: number): string => `Dero counts out your daily **${chips(amount)}**.\nYour balance: **${chips(balance)}**.`,
 		cooldown: (balance: number, nextClaimAt: Date): string =>
 			`You already claimed today. Your next claim opens ${relative(nextClaimAt)}.\nYour balance: **${chips(balance)}**.`,
-		economyOff: "Chips are switched off in this server. An admin can turn them back on with `/economy toggle`.",
+		economyOff: "Chips are switched off in this server. An admin can turn them back on with `/arcade chips toggle`.",
 		notInGuild: "Chips belong to a server, so `/claim` only works inside one.",
 		failed: "Dero could not reach the chip ledger just now. Try `/claim` again in a moment.",
 	},
 
-	// ── /economy (admin facing, plain and practical) ──
+	// ── /arcade chips (admin facing, plain and practical) ──
 	admin: {
 		commandDescription: "Chip economy: switch it on or off, see the server vault, and grant chips from it",
 		statusDescription: "Show the server vault, recent grants, and whether chips are on",
@@ -63,16 +63,16 @@ export const economyCopy = {
 		vaultShort: (vaultBalance: number): string => `The vault holds only **${chips(vaultBalance)}**, not enough for that grant.`,
 		invalidAmount: (max: number): string => `A grant is a whole number of chips from 1 to ${max.toLocaleString("en-US")}.`,
 		botTarget: "Bots do not hold chips. Pick a member.",
-		economyOff: "Chips are switched off in this server. Turn them on with `/economy toggle` before granting.",
+		economyOff: "Chips are switched off in this server. Turn them on with `/arcade chips toggle` before granting.",
 		grantFailed: "The grant did not land and the vault was refunded. Try again in a moment.",
 		failed: "Dero could not reach the chip ledger just now. Nothing changed; try again in a moment.",
 		notInGuild: "This only works inside a server.",
 		setupRequired: "Run `/setup` first, so Dero knows this server's admin role.",
 	},
 
-	// ── the /economy settings panel ──
+	// ── the /arcade chips settings panel ──
+	// The chip switch on the /arcade settings panel.
 	panel: {
-		title: "Chip economy",
 		economy: "Chips",
 		economyHint: "Members claim chips and buy into Hold'em with them",
 	},

@@ -8,10 +8,10 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 
-// /schedule pause with no event, the bulk equivalent of pauseOneSchedule.
+// /events pause with no event, the bulk equivalent of pauseOneSchedule.
 // Pauses every non-paused event in the guild in one shot. Already-paused
 // events are skipped on purpose so any pausedUntil the streamer set
-// individually earlier (e.g. /schedule pause event:X days:14) stays intact
+// individually earlier (e.g. /events pause event:X days:14) stays intact
 // and is not overwritten by a guild-wide days argument.
 
 const c = rokCommanderCopy.pauseAllSchedules;
@@ -34,7 +34,7 @@ export async function pauseAllSchedules(interaction: RepliableInteraction, optio
 
 	// Partition before the writes so the success message can report skipped
 	// counts honestly. Already-paused events get skipped to preserve any
-	// per-event pausedUntil the streamer set earlier with /schedule pause.
+	// per-event pausedUntil the streamer set earlier with /events pause.
 	const toPause = events.filter((e) => !e.paused);
 	const alreadyPaused = events.length - toPause.length;
 
@@ -70,7 +70,7 @@ export async function pauseAllSchedules(interaction: RepliableInteraction, optio
 
 	// Fire-and-forget board refresh so paused tags render right away.
 	refreshSchedule(interaction.client, guildId).catch((err) =>
-		console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/schedule pause"), err)
+		console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/events pause"), err)
 	);
 
 	if (failed > 0 && succeeded === 0) {

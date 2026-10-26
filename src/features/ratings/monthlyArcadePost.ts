@@ -24,7 +24,7 @@ import { RATED_GAMES, type RatedGame } from "./ratingEngine.js";
 //        BOT_CONSTANTS.RATINGS.MONTHLY_POST_CRON in America/Chicago. main.ts runs
 //        one PREVIEW pass at boot when ARCADE_MONTHLY_POST_RUN_ON_BOOT is 1, the
 //        owner's hand trigger for a test guild (see MonthlyPostOptions).
-// When:  a guild is skipped when /dero-config arcade monthly-post is off, when it
+// When:  a guild is skipped when /arcade monthly-post is off, when it
 //        has no config or its homebase is gone, when its leaderboard channel cannot
 //        be reached, and when the month left nothing to show (no showdown, no rated
 //        match, nobody past the luck minimum), since an empty card every month is noise.

@@ -563,7 +563,7 @@ export async function announceRoleUnlock(client: Client, guildId: string, userId
 // Leveling ships ON in every guild with no opt in, so without this some admin
 // meets the feature for the first time when a member asks what the new messages
 // are. Posted to the admin channel on the FIRST level up ever recorded in a
-// guild, naming /setup-level-system and how to turn it off.
+// guild, naming /leveling settings and how to turn it off.
 //
 // Idempotent through botLogStore, the same mechanism postFeatureAnnouncement
 // uses for its per version broadcast, plus an in-memory guard so this costs one

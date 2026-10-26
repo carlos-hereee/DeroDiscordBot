@@ -1,8 +1,8 @@
 import type { NetworkBanKind } from "@db/models/NetworkBan.js";
 
 // ── networkCopy ──────────────────────────────────────────────────────
-// Owner facing copy for the network bans (2026-10 item 244 Phase 5b): the /network
-// command's descriptions and its ephemeral replies. Only the platform owner ever reads
+// Owner facing copy for the network bans (2026-10 item 244 Phase 5b): the /platform
+// network group's descriptions and its ephemeral replies. Only the platform owner ever reads
 // these, so they are plain and practical, the bot's rule for admin copy, and live here
 // rather than in the copy packs. What MEMBERS read about the network lives in the
 // packs under arcadeNetwork.
@@ -14,18 +14,23 @@ const KIND_NAMES: Record<NetworkBanKind, string> = {
 
 export const networkCopy = {
 	command: {
-		description: "Platform owner only: keep a member or a server off every network table",
-		banGroup: "Ban a member or a server from network tables",
-		unbanGroup: "Lift a network ban",
-		user: "A member",
-		server: "A server, by its id",
-		userOption: "The member",
-		serverOption: "The server's id",
+		// /platform itself (commands/admin/platform.ts), whose network group is this file's.
+		platformDescription: "Platform owner only: network bans and render analytics",
+		description: "Keep a member or a server off every network table",
+		ban: "Ban a member or a server from network tables",
+		unban: "Lift a network ban",
+		targetOption: "Whether the ban names a member or a server",
+		targetChoices: { member: "A member", server: "A server, by its id" },
+		userOption: "The member, when the target is a member",
+		serverOption: "The server's id, when the target is a server",
 		reasonOption: "A note for yourself, shown only to you",
 	},
 	title: "🌐 Network bans",
 	notOwner: "Only the platform owner can manage network bans.",
 	serverIdInvalid: "That is not a server id. A server id is 17 to 20 digits. Nothing changed.",
+	// The target names which option the ban reads; that option left empty is refused, never guessed.
+	missingTargetOption: (target: "member" | "server"): string =>
+		target === "member" ? "The target is a member, so pick them in the user option. Nothing changed." : "The target is a server, so type its id in the server option. Nothing changed.",
 	unknownSubcommand: (name: string): string => `Unknown subcommand: ${name}.`,
 	banned: (kind: NetworkBanKind, label: string): string =>
 		kind === "user"

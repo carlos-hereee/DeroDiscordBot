@@ -10,12 +10,12 @@
 //        directions, under a selectable curve preset and a per guild multiplier.
 // Who:   xpWriter (level up detection on every flush), /account and /account view:levels (the
 //        progress bar and the standings), the achievement engine (the "level"
-//        and "milestoneLevels" metrics), /xp set-level (admin correction).
+//        and "milestoneLevels" metrics), /leveling xp set-level (admin correction).
 // When:  on the flush path, so several times a second on a busy guild. Every
 //        design choice below is about keeping that cheap.
 // Where: the durable truth is MemberLevel.totalXp and NOTHING else. `level` is
 //        deliberately not a stored field: a stored level is a second source of
-//        truth that drifts the instant an admin runs /xp set or a guild changes
+//        truth that drifts the instant an admin runs /leveling xp set or a guild changes
 //        its curve preset, so it is derived here every time it is needed.
 
 export type CurvePreset = "dero" | "linear" | "exponential" | "flat";
@@ -61,7 +61,7 @@ function costFor(preset: CurvePreset): (level: number) => number {
 
 // A multiplier that is zero, negative, NaN or Infinity would poison every level
 // derived from it AND the memo key, so it is normalized once, here, rather than
-// guarded at each of the five call sites. /setup-level-system clamps this to
+// guarded at each of the five call sites. /leveling settings clamps this to
 // 0.1 through 100 at the command layer; this is the last line of defense for a
 // row edited directly in Mongo.
 function normalizeMultiplier(multiplier: number): number {
@@ -144,7 +144,7 @@ export function totalXpForLevel(
 // member has already paid.
 //
 // Never throws, whatever it is handed: a negative balance (possible after an
-// admin /xp remove), zero, a NaN read back from a corrupted row, or an amount
+// admin /leveling xp remove), zero, a NaN read back from a corrupted row, or an amount
 // past the table's ceiling all resolve to a level inside [1, ceiling].
 export function levelFromTotalXp(
 	totalXp: number,

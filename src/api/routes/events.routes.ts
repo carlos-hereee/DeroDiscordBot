@@ -109,7 +109,7 @@ export function createEventsRouter(client: Client): Router {
 			//        strict mode does not drop it as a silent no-op.
 			// How:   ① if announcementType is "kvk" we look up the guild's
 			//        kvkSeasonEnd; missing → 400 with a hint pointing to
-			//        /configure-kvk-season. ② "regular" forces seasonEnd
+			//        /events kvk-season. ② "regular" forces seasonEnd
 			//        to null even if the body sent a stale date. ③ unset
 			//        keeps body.seasonEnd as the caller passed it (legacy
 			//        and slash command paths both supply it directly).
@@ -120,7 +120,7 @@ export function createEventsRouter(client: Client): Router {
 				if (!seasonEnd) {
 					res.status(400).json({
 						error: "No active KvK season",
-						detail: "Run /configure-kvk-season in Discord before creating KvK events.",
+						detail: "Run /events kvk-season in Discord before creating KvK events.",
 					});
 					return;
 				}

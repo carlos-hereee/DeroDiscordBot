@@ -131,7 +131,7 @@ async function handleScheduleControl(interaction: ButtonInteraction): Promise<vo
 }
 
 async function runGoLiveNow(interaction: ButtonInteraction, guildId: string): Promise<void> {
-	// Fire the equivalent of /stream soon when:now via the shared helper. Note +
+	// Fire the equivalent of /events stream soon when:now via the shared helper. Note +
 	// role override are null, the button is the one-tap shortcut; the slash
 	// command remains the path for richer inputs.
 	const result = await postGoLiveAnnouncement(interaction.client, guildId, "now", null, null);
@@ -151,9 +151,9 @@ async function runConfigureHowTo(interaction: ButtonInteraction): Promise<void> 
 	await interaction.reply({
 		content: [
 			"**Set up your schedule with one of these:**",
-			"• `/stream setup` for a recurring stream or event",
-			"• `/stream announce` for a one-off event at a specific date and time",
-			"• `/configure-kvk-season` for a full KvK season of events",
+			"• `/events stream weekly` for a recurring stream or event",
+			"• `/events stream announce` for a one-off event at a specific date and time",
+			"• `/events kvk-season` for a full KvK season of events",
 			"",
 			"Once at least one schedule exists, this button becomes a Pause/Resume toggle.",
 		].join("\n"),

@@ -8,26 +8,17 @@ import type { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 
 const mocks = vi.hoisted(() => ({
 	guildConfig: vi.fn(),
-	guildConfigUpdate: vi.fn(),
-	addBlocked: vi.fn(),
-	removeBlocked: vi.fn(),
 	findByGuildId: vi.fn(),
 	upsert: vi.fn(),
 	addToList: vi.fn(),
 	removeFromList: vi.fn(),
 	currentMonthCents: vi.fn(),
-	seatOutBlocked: vi.fn(),
 	emit: vi.fn(),
-	turnArcadeOff: vi.fn(),
-	turnArcadeOn: vi.fn(),
 }));
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: {
 		findByGuildId: mocks.guildConfig,
-		update: mocks.guildConfigUpdate,
-		addBlockedNetworkGuild: mocks.addBlocked,
-		removeBlockedNetworkGuild: mocks.removeBlocked,
 	},
 }));
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({
@@ -40,9 +31,7 @@ vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({
 }));
 vi.mock("@features/voice/spendMeter.js", () => ({ currentMonthCents: mocks.currentMonthCents }));
 vi.mock("@features/voice/elevenLabsTts.js", () => ({ isTtsKeyConfigured: () => true }));
-vi.mock("@features/game-rooms/satelliteSeats.js", () => ({ seatOutBlockedServers: mocks.seatOutBlocked }));
 vi.mock("@features/setup/adminLog.js", () => ({ adminLog: { emit: mocks.emit } }));
-vi.mock("@features/setup/arcadeSwitch.js", () => ({ turnArcadeOff: mocks.turnArcadeOff, turnArcadeOn: mocks.turnArcadeOn }));
 
 import { execute, voiceIdTail, data } from "./dero-config.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -92,18 +81,12 @@ async function replyText(options: Options, guildId: string | null = "g1"): Promi
 
 beforeEach(() => {
 	mocks.guildConfig.mockReset().mockResolvedValue({ guildId: "g1" });
-	mocks.guildConfigUpdate.mockReset().mockResolvedValue({ guildId: "g1" });
-	mocks.addBlocked.mockReset().mockResolvedValue({ guildId: "g1" });
-	mocks.removeBlocked.mockReset().mockResolvedValue({ guildId: "g1" });
 	mocks.findByGuildId.mockReset().mockResolvedValue(STORED);
 	mocks.upsert.mockReset().mockResolvedValue(STORED);
 	mocks.addToList.mockReset().mockResolvedValue(STORED);
 	mocks.removeFromList.mockReset().mockResolvedValue(STORED);
 	mocks.currentMonthCents.mockReset().mockResolvedValue(312);
-	mocks.seatOutBlocked.mockReset().mockResolvedValue(0);
 	mocks.emit.mockReset();
-	mocks.turnArcadeOff.mockReset().mockResolvedValue("off");
-	mocks.turnArcadeOn.mockReset().mockResolvedValue("on");
 });
 
 describe("the voice id tail", () => {
@@ -119,54 +102,7 @@ describe("the builder", () => {
 		const json = data.toJSON();
 		expect(json.default_member_permissions).toBeUndefined();
 		const names = (json.options ?? []).map((option) => option.name);
-		expect(names).toEqual(["status", "enable", "disable", "listen", "cap", "role", "channel", "voicechannel", "arcade"]);
-	});
-
-	it("carries the arcade group's monthly-post switch as a required boolean, like listen", () => {
-		const arcade = (data.toJSON().options ?? []).find((option) => option.name === "arcade") as
-			| { options?: Array<{ name: string; options?: Array<{ name: string; type: number; required?: boolean }> }> }
-			| undefined;
-		const monthlyPost = arcade?.options?.find((sub) => sub.name === "monthly-post");
-		// 5 is Discord's BOOLEAN option type.
-		expect(monthlyPost?.options).toEqual([expect.objectContaining({ name: "enabled", type: 5, required: true })]);
-	});
-});
-
-describe("arcade monthly-post (2026-10 item 244 Phase 3b)", () => {
-	it("turns the post off on GuildConfig and never reads the voice config", async () => {
-		const text = await replyText({ group: "arcade", sub: "monthly-post", enabled: false });
-		expect(mocks.guildConfigUpdate).toHaveBeenCalledWith("g1", { arcadeMonthlyPost: false });
-		expect(mocks.findByGuildId).not.toHaveBeenCalled();
-		expect(text).toContain("Monthly arcade post: **OFF**");
-	});
-
-	it("reads a row that never stored the switch as ON, so turning it on changes nothing", async () => {
-		expect(await replyText({ group: "arcade", sub: "monthly-post", enabled: true })).toContain("already **ON**");
-		expect(mocks.guildConfigUpdate).not.toHaveBeenCalled();
-	});
-
-	it("turns it back on, and repeats an OFF idempotently", async () => {
-		mocks.guildConfig.mockResolvedValue({ guildId: "g1", arcadeMonthlyPost: false });
-		expect(await replyText({ group: "arcade", sub: "monthly-post", enabled: true })).toContain("Monthly arcade post: **ON**");
-		expect(mocks.guildConfigUpdate).toHaveBeenCalledWith("g1", { arcadeMonthlyPost: true });
-		expect(await replyText({ group: "arcade", sub: "monthly-post", enabled: false })).toContain("already **OFF**");
-		expect(mocks.guildConfigUpdate).toHaveBeenCalledTimes(1);
-	});
-});
-
-describe("arcade bots (2026-10 item 250 Phase 5)", () => {
-	it("turns bot opponents off on GuildConfig, logs it, and never reads the voice config", async () => {
-		const text = await replyText({ group: "arcade", sub: "bots", enabled: false });
-		expect(mocks.guildConfigUpdate).toHaveBeenCalledWith("g1", { botOpponentsEnabled: false });
-		expect(mocks.findByGuildId).not.toHaveBeenCalled();
-		expect(mocks.emit).toHaveBeenCalledWith(expect.objectContaining({ kind: "config.change", payload: { subject: "Dero bot opponents", detail: "off" } }));
-		expect(text).toContain("Dero bot opponents: **OFF**");
-	});
-
-	it("reads a row that never stored the switch as ON, and writes nothing when it is unchanged", async () => {
-		expect(await replyText({ group: "arcade", sub: "bots", enabled: true })).toContain("already **ON**");
-		expect(mocks.guildConfigUpdate).not.toHaveBeenCalled();
-		expect(mocks.emit).not.toHaveBeenCalled();
+		expect(names).toEqual(["status", "enable", "disable", "listen", "cap", "role", "channel", "voicechannel"]);
 	});
 });
 
@@ -272,111 +208,7 @@ describe("a failed write", () => {
 	});
 });
 
-describe("arcade reach (2026-10 item 244 Phase 4)", () => {
-	it("carries the reach as a required string with exactly the three reaches as choices", () => {
-		const arcade = (data.toJSON().options ?? []).find((option) => option.name === "arcade") as
-			| { options?: { name: string; options?: { name: string; required?: boolean; choices?: { value: string }[] }[] }[] }
-			| undefined;
-		const reach = arcade?.options?.find((sub) => sub.name === "reach");
-		expect(reach?.options?.[0]).toMatchObject({ name: "mode", required: true });
-		expect(reach?.options?.[0].choices?.map((choice) => choice.value)).toEqual(["invite-only", "server", "network"]);
-	});
-
-	it("stores a new reach and says what hosts may now open", async () => {
-		const text = await replyText({ group: "arcade", sub: "reach", id: "invite-only" });
-		expect(mocks.guildConfigUpdate).toHaveBeenCalledWith("g1", { challengeReach: "invite-only" });
-		expect(text).toContain("Challenge reach: **Invite only**");
-	});
-
-	it("reads a row that never stored a reach as Server, and writes nothing when it is unchanged", async () => {
-		expect(await replyText({ group: "arcade", sub: "reach", id: "server" })).toContain("already **Server**");
-		expect(mocks.guildConfigUpdate).not.toHaveBeenCalled();
-	});
-
-	// Phase 5b (2026-10 item 244) built the network tables, so the reply now says what
-	// Network adds instead of promising it reads like Server until they arrive.
-	it("stores Network and says it opens Hold'em tables to other network servers, with the notice and the block list", async () => {
-		const text = await replyText({ group: "arcade", sub: "reach", id: "network" });
-		expect(mocks.guildConfigUpdate).toHaveBeenCalledWith("g1", { challengeReach: "network" });
-		expect(text).toContain("other network servers");
-		expect(text).toContain("network notice");
-		expect(text).toContain("block-server");
-		expect(text).not.toContain("the same as Server");
-	});
-
-	it("refuses an unknown reach rather than reading it as a default, and writes nothing", async () => {
-		mocks.guildConfig.mockResolvedValue({ guildId: "g1", challengeReach: "invite-only" });
-		expect(await replyText({ group: "arcade", sub: "reach", id: "everywhere" })).toContain("That is not a challenge reach");
-		expect(mocks.guildConfigUpdate).not.toHaveBeenCalled();
-	});
-});
-
-describe("arcade network block list (2026-10 item 244 Phase 5b)", () => {
-	const OTHER = "123456789012345678";
-
-	it("offers block-server and unblock-server, each with a required server id", () => {
-		const arcade = (data.toJSON().options ?? []).find((option) => option.name === "arcade") as
-			| { options?: { name: string; options?: { name: string; required?: boolean }[] }[] }
-			| undefined;
-		for (const name of ["block-server", "unblock-server"]) {
-			const sub = arcade?.options?.find((option) => option.name === name);
-			expect(sub?.options?.[0]).toMatchObject({ name: "server", required: true });
-		}
-	});
-
-	it("blocks a server once, and says so without writing when it is already blocked", async () => {
-		expect(await replyText({ group: "arcade", sub: "block-server", id: OTHER })).toContain(`Blocked server \`${OTHER}\``);
-		expect(mocks.addBlocked).toHaveBeenCalledWith("g1", OTHER);
-
-		mocks.addBlocked.mockClear();
-		mocks.guildConfig.mockResolvedValue({ guildId: "g1", blockedNetworkGuildIds: [OTHER] });
-		expect(await replyText({ group: "arcade", sub: "block-server", id: OTHER })).toContain("already blocked");
-		expect(mocks.addBlocked).not.toHaveBeenCalled();
-	});
-
-	// Phase 5c (owner decision 2026-10-24): a new block reaches the seats already taken between the two servers.
-	it("ends the satellites between this server and a newly blocked one, both ways, and says so", async () => {
-		const text = await replyText({ group: "arcade", sub: "block-server", id: OTHER });
-		expect(mocks.seatOutBlocked).toHaveBeenCalledWith(undefined, "g1", OTHER);
-		expect(text).toContain("both ways, leave their tables now");
-	});
-
-	it("sweeps nothing for a block that already stood, an unblock, or a refused id", async () => {
-		mocks.guildConfig.mockResolvedValue({ guildId: "g1", blockedNetworkGuildIds: [OTHER] });
-		await replyText({ group: "arcade", sub: "block-server", id: OTHER });
-		await replyText({ group: "arcade", sub: "unblock-server", id: OTHER });
-		await replyText({ group: "arcade", sub: "block-server", id: "not-a-server" });
-		expect(mocks.seatOutBlocked).not.toHaveBeenCalled();
-	});
-
-	it("replies to a new block even when the seat out fails", async () => {
-		const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-		mocks.seatOutBlocked.mockRejectedValue(new Error("atlas unreachable"));
-		expect(await replyText({ group: "arcade", sub: "block-server", id: OTHER })).toContain(`Blocked server \`${OTHER}\``);
-		await vi.waitFor(() => expect(consoleError).toHaveBeenCalled());
-		consoleError.mockRestore();
-	});
-
-	it("unblocks a blocked server, and says so without writing when it was never blocked", async () => {
-		mocks.guildConfig.mockResolvedValue({ guildId: "g1", blockedNetworkGuildIds: [OTHER] });
-		expect(await replyText({ group: "arcade", sub: "unblock-server", id: OTHER })).toContain(`Unblocked server \`${OTHER}\``);
-		expect(mocks.removeBlocked).toHaveBeenCalledWith("g1", OTHER);
-
-		mocks.removeBlocked.mockClear();
-		mocks.guildConfig.mockResolvedValue({ guildId: "g1", blockedNetworkGuildIds: [] });
-		expect(await replyText({ group: "arcade", sub: "unblock-server", id: OTHER })).toContain("is not blocked");
-		expect(mocks.removeBlocked).not.toHaveBeenCalled();
-	});
-
-	it("refuses anything that is not a server id, and this server's own id, writing nothing", async () => {
-		expect(await replyText({ group: "arcade", sub: "block-server", id: "not-a-server" })).toContain("is not a server id");
-		mocks.guildConfig.mockResolvedValue({ guildId: "111111111111111111" });
-		expect(await replyText({ group: "arcade", sub: "block-server", id: "111111111111111111" }, "111111111111111111")).toContain("this server's own id");
-		expect(mocks.addBlocked).not.toHaveBeenCalled();
-	});
-});
-
-// ── the admin log and the arcade switch (post-launch plan items 11 and 14) ──
+// ── the admin log (post-launch plan item 11) ──
 describe("admin log lines", () => {
 	const kinds = () => mocks.emit.mock.calls.map((call) => (call[0] as { kind: string }).kind);
 
@@ -393,27 +225,7 @@ describe("admin log lines", () => {
 
 	it("logs a real setting change as config.change and an unchanged one not at all", async () => {
 		await replyText({ sub: "enable" });
-		await replyText({ group: "arcade", sub: "monthly-post", enabled: true });
+		await replyText({ sub: "listen", enabled: true });
 		expect(kinds()).toEqual(["config.change"]);
-	});
-});
-
-describe("arcade off and on", () => {
-	it("turns the arcade off through arcadeSwitch and logs it", async () => {
-		const text = await replyText({ group: "arcade", sub: "off" });
-		expect(mocks.turnArcadeOff).toHaveBeenCalledOnce();
-		expect(text).toContain("deleted");
-		expect(mocks.emit).toHaveBeenCalledOnce();
-	});
-
-	it("says so and logs nothing when the arcade is already off", async () => {
-		mocks.turnArcadeOff.mockResolvedValue("already-off");
-		expect(await replyText({ group: "arcade", sub: "off" })).toContain("already off");
-		expect(mocks.emit).not.toHaveBeenCalled();
-	});
-
-	it("is honest when the arcade could not be rebuilt at once", async () => {
-		mocks.turnArcadeOn.mockResolvedValue("pending");
-		expect(await replyText({ group: "arcade", sub: "on" })).toContain("could not all be built");
 	});
 });

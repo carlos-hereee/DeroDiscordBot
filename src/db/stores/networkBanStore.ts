@@ -2,7 +2,7 @@
 import { NetworkBan, type INetworkBan, type NetworkBanKind } from "@db/models/NetworkBan.js";
 
 // ── Network ban store ──
-// Every DB touch for NetworkBan. Thin on purpose: the owner's /network command decides
+// Every DB touch for NetworkBan. Thin on purpose: the owner's /platform network command decides
 // who is banned, and features/game-rooms decides what a ban refuses. The store bans and
 // unbans one id, reads every ban for the network board (a short list, one query per
 // board refresh), and checks a handful of ids for a join in one query.

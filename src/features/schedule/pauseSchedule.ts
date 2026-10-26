@@ -10,18 +10,18 @@ import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 
-// ── /schedule pause, one event ────────────────────────────────────────
+// ── /events pause, one event ────────────────────────────────────────
 // What:  flips event.paused to true, optionally with a pausedUntil date.
 //        The schedule keeps existing in the DB (and on the schedule
 //        board, with a paused tag) but ReminderScheduler skips its fire
 //        decision until paused is cleared.
-// Who:   /schedule pause when it names an event, and the admin guide's
-//        /schedule button, which opens the same handler through a form.
+// Who:   /events pause when it names an event, and the admin guide's
+//        /events button, which opens the same handler through a form.
 //        Streamers and KvK admins both, anyone who needs to silence a
 //        recurring event without losing the configuration.
 // When:  on demand. The optional days arg lets the streamer say "pause
 //        for two weeks" and the scheduler will auto-resume; omitting it
-//        means "paused indefinitely, I'll come back and run /schedule resume".
+//        means "paused indefinitely, I'll come back and run /events resume".
 // Where: writes the Event document via eventStore.update, then kicks a
 //        schedule board refresh so the paused tag appears immediately.
 // How:   ① the event choices list active events; ② days arg gates
@@ -31,7 +31,7 @@ import { setupCopy } from "@features/setup/setupCopy.js";
 const c = rokCommanderCopy.pauseSchedule;
 
 /**
- * The events /schedule pause can name: every event not already paused. Read by the
+ * The events /events pause can name: every event not already paused. Read by the
  * command's autocomplete and by the admin form's event picker, so the two list the
  * same events.
  */
@@ -112,7 +112,7 @@ export async function pauseOneSchedule(interaction: RepliableInteraction, option
 		// away. Failure here is logged, not surfaced, the DB write is
 		// the source of truth and the next refresh tick will catch up.
 		refreshSchedule(interaction.client, guildId).catch((err) =>
-			console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/schedule pause"), err)
+			console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/events pause"), err)
 		);
 	} catch (err) {
 		console.error("[schedule pause] update failed", err);

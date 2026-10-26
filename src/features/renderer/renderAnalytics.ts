@@ -6,7 +6,7 @@ import { CARD_CACHE_CAPACITY, cachedCardCount, type CacheTier } from "./cardCach
 
 // ── render analytics ─────────────────────────────────────────────────
 // Counts every card and avatar cache lookup per UTC month (2026-10 item 244) and
-// builds the report /render-analytics shows. renderCard calls recordCardLookup
+// builds the report /platform analytics shows. renderCard calls recordCardLookup
 // and the shared avatar cache calls recordAvatarLookup; neither waits, because a
 // count must never slow, delay or break the card a member is waiting on. It does
 // not draw, cache or decide anything about a render, and it never writes a user

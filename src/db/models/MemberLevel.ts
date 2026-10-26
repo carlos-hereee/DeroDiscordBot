@@ -9,7 +9,7 @@ import type { IAchievementUnlock, IGameRecord } from "@features/leveling/levelin
 //        per game win/loss/draw/assist record, and the achievements they hold.
 // Who:   written ONLY through @features/leveling/awardXp.ts (which batches
 //        message xp through xpWriter and writes every other source through
-//        immediately) and by the /xp admin command. Read by /account, /account view:levels,
+//        immediately) and by the /leveling xp admin command. Read by /account, /account view:levels,
 //        LevelsBoard, roleRewards and the achievement engine.
 // When:  a row is born on the member's first xp award, upserted, and lives as
 //        long as the guild does. There is no TTL: this is the durable record,
@@ -92,7 +92,7 @@ const memberLevelSchema = new mongoose.Schema<IMemberLevel>(
 		// ⚠️ THE ONLY XP FIELD. `level` is deliberately NOT stored, it is DERIVED
 		// from totalXp through @features/leveling/levelCurve.ts on every read. A
 		// stored level is a second source of truth that drifts the instant an admin
-		// runs /xp set or the guild changes its curve preset or its multiplier, and
+		// runs /leveling xp set or the guild changes its curve preset or its multiplier, and
 		// the drift is silent because nothing recomputes it.
 		totalXp: { type: Number, default: 0 },
 
@@ -162,7 +162,7 @@ memberLevelSchema.index({ guildId: 1, totalXp: -1 });
 // per period aggregates and are meant to expire. Read the rule as "TTL only what
 // is derivable", not as "this repo does not TTL".
 //
-// Nothing in this feature deletes data. /xp reset-server is the single
+// Nothing in this feature deletes data. /leveling xp reset-server is the single
 // destructive operation, it is admin gated, it requires a confirm button, and it
 // is the guild's own data.
 

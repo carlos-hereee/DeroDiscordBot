@@ -6,7 +6,7 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 
-// ── /configure auto-heal ──────────────────────────────────────────────
+// ── /server auto-heal ──────────────────────────────────────────────
 // What:  master switch for the bot's channel auto-repair behavior.
 //        When ON (default), the boot sweep and the realtime
 //        ChannelDeleteWatcher rebuild missing homebase channels. When

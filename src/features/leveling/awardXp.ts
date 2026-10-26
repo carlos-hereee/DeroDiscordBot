@@ -17,7 +17,7 @@ import type { GameOutcome, LevelingGameSlug, LifetimeCounter, XpSource } from ".
 // ── awardXp ────────────────────────────────────────────────────────────────
 // THE ONE PUBLIC ENTRY POINT for granting xp. Every source in the codebase calls
 // this and nothing else: the three passive listeners, all four mini games, the
-// game room finish path, the achievement engine, and the admin /xp command.
+// game room finish path, the achievement engine, and the admin /leveling xp command.
 //
 // What:  applies one award, maintains the member's per game record in the same
 //        write, and hands any level crossing to the announcer.

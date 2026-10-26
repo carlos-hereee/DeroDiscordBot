@@ -1,5 +1,6 @@
 import type { ButtonInteraction, GuildMember, ModalSubmitInteraction, StringSelectMenuInteraction } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { creatorId } from "@utils/config.js";
 
 // ── permissions ─────────────────────────────────────────────────────
 // Centralized authorization helpers. Today only the decree-edit flow
@@ -89,16 +90,29 @@ export async function gateOwnerOrAdmin(
 /**
  * isAdminCommand
  *
- * Whether a slash command, or one subcommand of it, sits behind the owner or admin
- * gate. BOT_CONSTANTS.ADMIN_COMMANDS lists a bare command name to gate all of it, or
- * "command subcommand" to gate that one subcommand alone (/events delete, while
- * /events list stays a member view). main.ts's slash command gate asks this. The
- * admin command launcher does not need to: it offers only the admin guide's
- * commands and re-runs gateOwnerOrAdmin at every step, so a button refuses everyone
- * the slash command would, and a member view such as /events list stays on the
- * slash command.
+ * Whether a slash command, or one leaf of it, sits behind the owner or admin gate.
+ * BOT_CONSTANTS.ADMIN_COMMANDS lists the commands gated whole; MEMBER_SUBCOMMANDS lists
+ * the leaves of those commands that stay open to members ("events list"), and is checked
+ * FIRST, so everything else under an admin command is gated by default. The leaf is the
+ * group and the subcommand together, so a subcommand inside a group can never match a
+ * member leaf of the same name at the top level. main.ts's slash command gate asks this.
+ * The admin command launcher does not need to: it re-runs gateOwnerOrAdmin at every step,
+ * so a button refuses everyone the slash command would, and a member view such as
+ * /events list stays on the slash command.
  */
-export function isAdminCommand(commandName: string, subcommand: string | null): boolean {
-	if (BOT_CONSTANTS.ADMIN_COMMANDS.has(commandName)) return true;
-	return subcommand !== null && BOT_CONSTANTS.ADMIN_COMMANDS.has(`${commandName} ${subcommand}`);
+export function isAdminCommand(commandName: string, subcommand: string | null, group: string | null = null): boolean {
+	const leafPath = [group, subcommand].filter((part): part is string => part !== null).join(" ");
+	if (leafPath !== "" && BOT_CONSTANTS.MEMBER_SUBCOMMANDS.has(`${commandName} ${leafPath}`)) return false;
+	return BOT_CONSTANTS.ADMIN_COMMANDS.has(commandName);
+}
+
+/**
+ * isPlatformOwner
+ *
+ * True only for the platform owner (CREATOR_DISCORD_ID); an unset id refuses everyone.
+ * The one gate of /platform: its network bans and its render analytics each ask it, so
+ * the two cannot disagree about who the owner is.
+ */
+export function isPlatformOwner(userId: string): boolean {
+	return creatorId !== "" && userId === creatorId;
 }

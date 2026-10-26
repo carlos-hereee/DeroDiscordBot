@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TextChannel, type RepliableInteraction } from "discord.js";
 
-// ── /channels hide and show ──────────────────────────────────────────────────
+// ── /server channels hide and show ──────────────────────────────────────────────────
 // Post-launch plan items 9 and 11: a hide or show that landed is one config.change
 // line in 🗒️admin-log naming the channel, and the owner only gate the settings
 // panel shares refuses everyone else before anything is written.
@@ -17,7 +17,7 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGui
 vi.mock("@features/setup/adminLog.js", () => ({ adminLog: { emitFor: mocks.emitFor } }));
 
 import { FormOptionReader } from "@features/command-buttons/formOptionReader.js";
-import { canChangeVisibility, hideableChannelStates, run } from "./channels.js";
+import { canChangeVisibility, hideableChannelStates, runChannelsSubcommand as run } from "./channelVisibilitySubcommands.js";
 
 const OWNER_ID = "owner";
 
@@ -43,7 +43,7 @@ beforeEach(() => {
 	mocks.editOverwrite.mockReset().mockResolvedValue(undefined);
 });
 
-describe("/channels hide and show", () => {
+describe("/server channels hide and show", () => {
 	it("logs a hide that landed, naming the channel", async () => {
 		await run(interaction(OWNER_ID), reader("hide"));
 		expect(mocks.update).toHaveBeenCalledWith("g1", { hiddenChannels: ["leaderboardChannelId"] });

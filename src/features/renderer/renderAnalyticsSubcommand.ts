@@ -1,7 +1,7 @@
-import { MessageFlags, SlashCommandBuilder, type ChatInputCommandInteraction } from "discord.js";
+import { MessageFlags, type ChatInputCommandInteraction, type SlashCommandSubcommandBuilder } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import { creatorId } from "@utils/config.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { isPlatformOwner } from "@utils/permissions.js";
 import {
 	buildRenderAnalyticsReport,
 	RENDER_ANALYTICS_PERIODS,
@@ -10,62 +10,46 @@ import {
 } from "@features/renderer/renderAnalytics.js";
 import { renderAnalyticsCopy } from "@features/renderer/renderAnalyticsCopy.js";
 
-// ── /render-analytics ──────────────────────────────────────────────────────
+// ── /platform analytics ────────────────────────────────────────────────────
 // What:  the platform owner's read of render cache analytics (2026-10 item 244):
 //        per surface totals, the memory tier, and the most served cards.
-// Who:   the platform owner ONLY (CREATOR_DISCORD_ID). The rows are platform
-//        wide, so a guild admin seeing them would see every other server's
-//        traffic. It carries no Discord default permission, so it shows in every
-//        member's picker; the owner check in execute is the whole gate, and an
-//        empty creatorId refuses everyone.
+// Who:   commands/admin/platform.ts adds it to /platform as `analytics` and runs it.
+//        The platform owner ONLY (CREATOR_DISCORD_ID, through isPlatformOwner). The
+//        rows are platform wide, so a guild admin seeing them would see every other
+//        server's traffic. /platform carries no Discord default permission, so it
+//        shows in every member's picker; the owner check here is the whole gate, and
+//        an empty creatorId refuses everyone.
 // Where: deliberately NOT in BOT_CONSTANTS.ADMIN_COMMANDS: that runtime gate
 //        requires a /setup config in the guild, and the owner must be able to
 //        run this from any server the bot is in. It reads only; it never writes.
-//
-// ⚠️ `data` IS DELIBERATELY UNANNOTATED, for the same reason as xp.ts:
-// .addSubcommand() narrows the builder away from SlashCommandBuilder.
-
-export const RENDER_ANALYTICS_SUBCOMMANDS = ["top10"] as const;
+//        renderAnalyticsDigest.ts reuses formatRenderAnalyticsReport for the DM digest.
 
 // Discord rejects an embed whose description passes 4096 characters.
 const EMBED_DESCRIPTION_LIMIT = 4096;
 
 const copy = renderAnalyticsCopy;
 
-export const data = new SlashCommandBuilder()
-	.setName("render-analytics")
-	.setDescription(copy.command.description)
-	.addSubcommand((sub) =>
-		sub
-			.setName("top10")
-			.setDescription(copy.command.top10Description)
-			.addStringOption((option) => option.setName("surface").setDescription(copy.command.surfaceOption).setRequired(false))
-			.addStringOption((option) =>
-				option
-					.setName("period")
-					.setDescription(copy.command.periodOption)
-					.setRequired(false)
-					.addChoices(...RENDER_ANALYTICS_PERIODS.map((period) => ({ name: copy.command.periodChoices[period], value: period })))
-			)
-	);
-
-/** True only for the platform owner; an unset CREATOR_DISCORD_ID refuses everyone. */
-export function isPlatformOwner(userId: string): boolean {
-	return creatorId !== "" && userId === creatorId;
+/** The /platform analytics options: an optional surface and an optional period. */
+export function addRenderAnalyticsOptions(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
+	return sub
+		.addStringOption((option) => option.setName("surface").setDescription(copy.command.surfaceOption).setRequired(false))
+		.addStringOption((option) =>
+			option
+				.setName("period")
+				.setDescription(copy.command.periodOption)
+				.setRequired(false)
+				.addChoices(...RENDER_ANALYTICS_PERIODS.map((period) => ({ name: copy.command.periodChoices[period], value: period })))
+		);
 }
 
 function isPeriod(value: string | null): value is RenderAnalyticsPeriod {
 	return value !== null && (RENDER_ANALYTICS_PERIODS as readonly string[]).includes(value);
 }
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+/** Runs /platform analytics for the platform owner, refusing everyone else first. */
+export async function runRenderAnalyticsSubcommand(interaction: ChatInputCommandInteraction): Promise<void> {
 	if (!isPlatformOwner(interaction.user.id)) {
 		await interaction.reply({ embeds: [errorEmbed(copy.errors.notOwner)], flags: MessageFlags.Ephemeral });
-		return;
-	}
-	const subcommand = interaction.options.getSubcommand();
-	if (subcommand !== "top10") {
-		await interaction.reply({ embeds: [errorEmbed(copy.errors.unknownSubcommand(subcommand))], flags: MessageFlags.Ephemeral });
 		return;
 	}
 
@@ -80,7 +64,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		await interaction.editReply({ embeds: [infoEmbed(copy.title(period, surface), formatRenderAnalyticsReport(report))] });
 	}
 	catch (error) {
-		console.warn(`[render-analytics] building the ${period} report${surface ? ` for ${surface}` : ""} failed`, error);
+		console.warn(`[platform analytics] building the ${period} report${surface ? ` for ${surface}` : ""} failed`, error);
 		await interaction.editReply({ embeds: [errorEmbed(copy.errors.readFailed)] });
 	}
 }

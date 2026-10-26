@@ -102,7 +102,7 @@ export type DemolitionSource = "self-destruct" | "arcade-off";
 
 const DEMOLITION_REASONS: Record<DemolitionSource, string> = {
 	"self-destruct": "Homebase self-destruct",
-	"arcade-off": "Arcade switched off with /dero-config arcade off",
+	"arcade-off": "Arcade switched off with /arcade off",
 };
 
 type SelfDestructEntry = ButtonInteraction | ChatInputCommandInteraction | ModalSubmitInteraction;
@@ -313,7 +313,7 @@ export async function demolishChannels(
  * Delete one managed category and anything still parented to it. Best effort
  * throughout: a failed delete is logged and the rest proceed, because a partial
  * demolition that reports honestly beats one that aborts halfway. `source` says
- * which command asked (self destruct or /dero-config arcade off).
+ * which command asked (self destruct or /arcade off).
  */
 export async function demolishCategory(
 	guild: Guild,

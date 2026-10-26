@@ -6,7 +6,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 // One row per render cache key per UTC month, counting how often that card (or
 // that avatar size) was served from memory, served from S3, or drawn. Written
 // only by features/renderer/renderAnalytics.ts through renderAnalyticsStore, and
-// read by /render-analytics. It holds counts and sizes, never an image.
+// read by /platform analytics. It holds counts and sizes, never an image.
 //
 // ⚠️ NO USER ID, GUILD ID, USERNAME OR AVATAR KEY EVER LANDS HERE. A card key is
 // a hash of the card's input, and an avatar row is keyed by size alone

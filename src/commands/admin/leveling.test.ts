@@ -2,11 +2,11 @@ import { describe, it, expect } from "vitest";
 import { PermissionFlagsBits } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
-import { XP_SUBCOMMANDS, data as xpData } from "./xp.js";
-import { data as setupData } from "./setup-level-system.js";
+import { XP_SUBCOMMANDS } from "@features/leveling/xpSubcommands.js";
+import { data as levelingData } from "./leveling.js";
 import { data as accountData } from "@commands/fun/account.js";
 
-// ── the leveling command surface ───────────────────────────────────────────
+// ── the /leveling command surface ──────────────────────────────────────────
 // Two things are pinned here, and both fail SILENTLY when wrong.
 //
 // ① Subcommand drift. A subcommand declared on the builder with no branch
@@ -17,7 +17,7 @@ import { data as accountData } from "@commands/fun/account.js";
 // ② Admin gating, which is TWO INDEPENDENT MECHANISMS. Getting one and not the
 //    other produces no error and looks fine in testing:
 //      • .setDefaultMemberPermissions(Administrator) is what HIDES a command in
-//        a non-admin's picker. Missing it means every member SEES /xp.
+//        a non-admin's picker. Missing it means every member SEES /leveling.
 //      • BOT_CONSTANTS.ADMIN_COMMANDS is the runtime gate in main.ts. Missing it
 //        means anyone who reaches the command anyway (a permission overwrite, a
 //        stale client) can RUN it.
@@ -28,9 +28,17 @@ import { data as accountData } from "@commands/fun/account.js";
 
 type BuilderJSON = {
 	name: string;
+	description?: string;
 	default_member_permissions?: string | null;
-	options?: Array<{ name: string; type: number }>;
+	options?: Array<{ name: string; type: number; description?: string; options?: Array<{ name: string; type: number }> }>;
 };
+
+// One group of /leveling, shaped like a builder so the helpers below read it the same way.
+const groupOf = (name: string): { toJSON: () => unknown } => ({
+	toJSON: () => (levelingData.toJSON() as BuilderJSON).options?.find((option) => option.name === name),
+});
+const xpData = groupOf("xp");
+const setupData = groupOf("settings");
 
 // Discord's application command option type 1 is SUB_COMMAND.
 const SUB_COMMAND_TYPE = 1;
@@ -47,7 +55,7 @@ const hasAdminDefault = (builder: { toJSON: () => unknown }): boolean => {
 	return (BigInt(permissions) & PermissionFlagsBits.Administrator) === PermissionFlagsBits.Administrator;
 };
 
-describe("/xp declares exactly the subcommands it handles", () => {
+describe("/leveling xp declares exactly the subcommands it handles", () => {
 	it("declares every name in XP_SUBCOMMANDS", () => {
 		expect(subcommandsOf(xpData)).toEqual([...XP_SUBCOMMANDS].sort());
 	});
@@ -82,10 +90,7 @@ describe("/xp declares exactly the subcommands it handles", () => {
 // The runtime gate is the one gate. A Discord default would hide these from the
 // /setup admin role, which is exactly who they are for (see ADMIN_COMMANDS).
 describe("the admin commands are gated at runtime and visible to the admin role", () => {
-	it.each([
-		["xp", xpData],
-		["setup-level-system", setupData],
-	])("%s is in the runtime gate and hides behind no Discord default", (name, builder) => {
+	it.each([["leveling", levelingData]])("%s is in the runtime gate and hides behind no Discord default", (name, builder) => {
 		expect(hasAdminDefault(builder), `${name} must not carry setDefaultMemberPermissions`).toBe(false);
 		expect(BOT_CONSTANTS.ADMIN_COMMANDS.has(name), `${name} is missing from ADMIN_COMMANDS`).toBe(true);
 	});
@@ -101,12 +106,10 @@ describe("the member commands are PUBLIC, in neither mechanism", () => {
 	});
 });
 
-describe("/setup-level-system says what it does NOT do", () => {
+describe("/leveling settings says what it does NOT do", () => {
 	it("states in its description that it creates nothing", () => {
-		// The name deliberately breaks the repo's configure-* family so an admin
-		// typing /setup sees it beside the homebase builder. That is the whole
-		// upside, and the risk that comes with it is an admin expecting it to
-		// provision channels the way /setup does.
+		// /setup provisions channels and roles; an admin who reads "settings" for the
+		// leveling system could expect the same of it, so the group says it builds nothing.
 		const description = (setupData.toJSON() as { description: string }).description.toLowerCase();
 		expect(description).toContain("creates no");
 	});

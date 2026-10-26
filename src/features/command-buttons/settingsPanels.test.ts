@@ -3,9 +3,9 @@ import type { Guild } from "discord.js";
 
 // ── the admin settings panels ────────────────────────────────────────────────
 // Each panel is read from mocked stores and pinned on what an admin sees: the
-// current values preset, the owner only gate on /channels, and the leaf every
-// change runs. The last block is the drift guard: a leaf a panel names that its
-// command no longer has would fail only at a live submit, so it fails here.
+// current values preset, the owner only gate on /server channels, and the leaf every
+// change runs, keyed by panel id. The last block is the drift guard: a leaf a panel
+// names that its command no longer has would fail only at a live submit, so it fails here.
 
 const mocks = vi.hoisted(() => ({
 	findConfig: vi.fn(),
@@ -36,9 +36,9 @@ const guild = {
 	channels: { cache: new Map([["t1", { id: "t1" }]]) },
 } as unknown as Guild;
 
-async function load(command: string, userId = OWNER_ID): Promise<SettingsPanel | null> {
-	const definition = SETTINGS_PANELS.get(command);
-	if (!definition) throw new Error(`no panel for ${command}`);
+async function load(panelId: string, userId = OWNER_ID): Promise<SettingsPanel | null> {
+	const definition = SETTINGS_PANELS.get(panelId);
+	if (!definition) throw new Error(`no panel ${panelId}`);
 	return definition.load({ guild, userId });
 }
 
@@ -88,15 +88,25 @@ beforeEach(() => {
 	mocks.getLevelingConfig.mockReset().mockResolvedValue({ settings: normalizeLevelingSettings({ curve: "linear", announceMode: "off" }), weekStart: "sunday" });
 });
 
+describe("the panel ids", () => {
+	it("are the five the guide opens, each naming the command it calls", () => {
+		expect([...SETTINGS_PANELS.entries()].map(([id, definition]) => [id, definition.command, definition.group])).toEqual([
+			["server", "server", null],
+			["server-channels", "server", "channels"],
+			["leveling", "leveling", null],
+			["dero-config", "dero-config", null],
+			["arcade", "arcade", null],
+		]);
+	});
+});
+
 describe("/dero-config", () => {
-	it("presets the voice switches, the three lists and the budget", async () => {
+	it("presets the voice switches, the three lists and the budget, and holds no arcade switch", async () => {
 		const panel = await load("dero-config");
 		const switches = control(panel, "switches");
 		expect(switches.kind === "switches" && switches.switches.map((item) => [item.value, item.on])).toEqual([
 			["voice", true],
 			["listen", false],
-			["monthly-post", false],
-			["bots", false],
 		]);
 		const roles = control(panel, "roles");
 		expect(roles.kind === "roles" && [...roles.current.keys()]).toEqual(["r1"]);
@@ -121,30 +131,43 @@ describe("/dero-config", () => {
 	});
 });
 
-// 2026-10 item 250 Phase 5: the bot opponents switch, and the /economy chip switch.
-describe("the Phase 5 switches", () => {
-	it("turns the bots switch into arcade bots with the value it sets", async () => {
-		const switches = control(await load("dero-config"), "switches");
+// The arcade panel: the chip switch, the monthly post and bot opponents (2026-10 item 250
+// Phase 5), which left the /dero-config panel with the arcade's own command.
+describe("/arcade", () => {
+	it("presets the chip, monthly post and bots switches from the server", async () => {
+		const switches = control(await load("arcade"), "switches");
 		if (switches.kind !== "switches") throw new Error("not switches");
-		const bots = switches.switches.find((item) => item.value === "bots");
-		expect(bots?.callsFor(true).map((call) => [call.path, call.values.get("enabled")])).toEqual([["arcade bots", { kind: "boolean", value: true }]]);
+		expect(switches.switches.map((item) => [item.value, item.on])).toEqual([
+			["economy", false],
+			["monthly-post", false],
+			["bots", false],
+		]);
 	});
 
-	it("presets the /economy chip switch from the server and runs toggle", async () => {
-		const switches = control(await load("economy"), "switches");
+	it("runs each switch through its /arcade leaf with the value it sets", async () => {
+		const switches = control(await load("arcade"), "switches");
 		if (switches.kind !== "switches") throw new Error("not switches");
-		expect(switches.switches.map((item) => [item.value, item.on])).toEqual([["economy", false]]);
-		expect(switches.switches[0].callsFor(true).map((call) => call.path)).toEqual(["toggle"]);
+		expect(switches.switches.map((item) => item.callsFor(true).map((call) => [call.path, call.values.get("enabled")]))).toEqual([
+			[["chips toggle", { kind: "boolean", value: true }]],
+			[["monthly-post", { kind: "boolean", value: true }]],
+			[["bots", { kind: "boolean", value: true }]],
+		]);
 	});
 });
 
-describe("/channels", () => {
+describe("/server channels", () => {
 	it("is the owner's: an admin who is not the owner gets the pick instead", async () => {
-		expect(await load("channels", "admin")).toBeNull();
+		expect(await load("server-channels", "admin")).toBeNull();
+	});
+
+	it("runs a visibility change through the channels group", async () => {
+		const visible = control(await load("server-channels"), "visible");
+		if (visible.kind !== "switches") throw new Error("not switches");
+		expect(visible.switches[0]?.callsFor(false).map((call) => call.path)).toEqual(["channels hide"]);
 	});
 
 	it("shows each provisioned channel selected when members can see it", async () => {
-		const visible = control(await load("channels"), "visible");
+		const visible = control(await load("server-channels"), "visible");
 		expect(visible.kind === "switches" && visible.switches.map((item) => [item.value, item.on])).toEqual([
 			["commandsChannelId", true],
 			["leaderboardChannelId", false],
@@ -152,25 +175,34 @@ describe("/channels", () => {
 	});
 });
 
-describe("/setup-level-system and /configure", () => {
-	it("preset leveling's switches and choices from the stored settings", async () => {
-		const panel = await load("setup-level-system");
+describe("/leveling and /server", () => {
+	it("preset leveling's switches and choices from the stored settings, run through the settings group", async () => {
+		const panel = await load("leveling");
 		expect(control(panel, "curve")).toMatchObject({ kind: "choice", current: "linear" });
 		expect(control(panel, "announce")).toMatchObject({ kind: "choice", current: "off" });
+		const curve = control(panel, "curve");
+		expect(curve.kind === "choice" && curve.callsFor("flat").map((call) => call.path)).toEqual(["settings curve"]);
+	});
+
+	it("runs the server switches through auto-heal and the leaderboard group", async () => {
+		const switches = control(await load("server"), "switches");
+		if (switches.kind !== "switches") throw new Error("not switches");
+		expect(switches.switches.map((item) => item.callsFor(true)[0]?.path)).toEqual(["auto-heal", "leaderboard tracking"]);
 	});
 
 	it("give the pick instead to a server that never ran /setup", async () => {
 		mocks.findConfig.mockResolvedValue(null);
-		for (const command of SETTINGS_PANELS.keys()) expect(await load(command), command).toBeNull();
+		for (const panelId of SETTINGS_PANELS.keys()) expect(await load(panelId), panelId).toBeNull();
 	});
 });
 
 describe("every panel names only leaves its command has", () => {
-	it.each([...SETTINGS_PANELS.keys()])("/%s", async (commandName) => {
-		const command = LAUNCHABLE_COMMANDS.get(commandName);
-		const definition = SETTINGS_PANELS.get(commandName);
-		const panel = await load(commandName);
-		if (!command || !definition || !panel) throw new Error(`/${commandName} did not load`);
+	it.each([...SETTINGS_PANELS.keys()])("the %s panel", async (panelId) => {
+		const definition = SETTINGS_PANELS.get(panelId);
+		const command = definition ? LAUNCHABLE_COMMANDS.get(definition.command) : undefined;
+		const panel = await load(panelId);
+		const commandName = definition?.command ?? panelId;
+		if (!command || !definition || !panel) throw new Error(`the ${panelId} panel did not load`);
 		const leaves = listLeaves(command.data.toJSON());
 		for (const path of definition.covered) expect(findLeaf(leaves, path), `${commandName} covers ${path}`).not.toBeNull();
 		for (const entry of panel.controls) {

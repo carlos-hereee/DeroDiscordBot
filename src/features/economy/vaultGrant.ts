@@ -7,10 +7,10 @@ import { grantFromVault, type GrantResult } from "./serverVault.js";
 import { economyCopy } from "./economyCopy.js";
 
 // ── vaultGrant ───────────────────────────────────────────────────────
-// What:  /economy grant (2026-10 item 250 Phase 5): an admin moves chips from the server
+// What:  /arcade chips grant (2026-10 item 250 Phase 5): an admin moves chips from the server
 //        vault to a member's wallet, and the grant becomes one 🗒️admin-log line.
-// Who:   src/commands/admin/economy.ts, behind the ADMIN_COMMANDS gate, from the slash
-//        command or the /economy panel's grant form.
+// Who:   features/economy/chipEconomySubcommands.ts, behind /arcade's ADMIN_COMMANDS gate, from the slash
+//        command or the /arcade chips panel's grant form.
 // When:  on demand. The chip switch is checked by the command before this runs.
 //
 // Every grant is logged with the grantor and the amount (the plan's risk R6, chip grant

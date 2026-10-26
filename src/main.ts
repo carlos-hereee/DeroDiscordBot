@@ -485,9 +485,12 @@ process.on("uncaughtException", (err) => {
 		if (interaction.commandName !== "setup") {
 			const config = await guildConfigStore.findByGuildId(interaction.guildId!);
 
-			// A whole command or one subcommand of it (BOT_CONSTANTS.ADMIN_COMMANDS):
-			// /events list is a member view, /events delete is not.
-			if (isAdminCommand(interaction.commandName, interaction.options.getSubcommand(false))) {
+			// A command in BOT_CONSTANTS.ADMIN_COMMANDS, unless the leaf is a member one
+			// (MEMBER_SUBCOMMANDS): /events list is a member view, the rest of /events is
+			// not. The group is passed too, so a leaf inside a group is matched whole.
+			const subcommand = interaction.options.getSubcommand(false);
+			const group = interaction.options.getSubcommandGroup(false);
+			if (isAdminCommand(interaction.commandName, subcommand, group)) {
 				// guild hasn't run /setup yet, no config means no admin role is defined
 				if (!config) {
 					await interaction.reply({
@@ -775,7 +778,7 @@ process.on("uncaughtException", (err) => {
 
 				// Rename any homebase channel still on an old default name to the
 				// current default (e.g. 🛡️next-decree → 🔜upcoming-events), unless an
-				// admin set a custom name via /channels rename. Removes the "delete +
+				// admin set a custom name via /server channels rename. Removes the "delete +
 				// re-run /setup" friction for guilds on default channel names.
 				try {
 					await GuildSetupManager.renameDriftedChannels(client, guild);

@@ -1,6 +1,5 @@
 import {
-	SlashCommandBuilder,
-	ChatInputCommandInteraction,
+	type SlashCommandSubcommandBuilder,
 	type RepliableInteraction,
 	ActionRowBuilder,
 	ButtonBuilder,
@@ -20,40 +19,50 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
 const { configureReminders } = rokCommanderCopy;
 
-export const data = new SlashCommandBuilder()
-	.setName("configure-kvk-season")
-	.setDescription("ROK  specific command with prebuilt event reminders for the game")
+// ── /events kvk-season ───────────────────────────────────────────────────────
+// What:  the Rise of Kingdoms season builder: prebuilt reminders for a KvK
+//        season from the days left and the next ruins, altar and Kau dates.
+// Who:   commands/admin/events.ts adds it to /events as `kvk-season` and runs it
+//        from the slash command or the /events button on the admin guide. Admins
+//        only, through /events in BOT_CONSTANTS.ADMIN_COMMANDS. It reads the
+//        kingdom pack's copy directly and applies no pack check of its own.
+// Where: GuildEventManager creates the events; this module exports no `data` or
+//        `execute`, so neither command loader registers it.
 
-	// ── season ───────────────────────────────────────────────
-	.addIntegerOption((option) =>
-		option
-			.setName("days-remaining")
-			.setDescription("How many days remain in the current KvK season?")
-			.setRequired(true)
-			.setMinValue(1)
-			.setMaxValue(60)
-	)
+/** The /events kvk-season options: the season's days left and the three next dates. */
+export function addKvkSeasonOptions(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
+	return sub
+		// ── season ───────────────────────────────────────────────
+		.addIntegerOption((option) =>
+			option
+				.setName("days-remaining")
+				.setDescription("How many days remain in the current KvK season?")
+				.setRequired(true)
+				.setMinValue(1)
+				.setMaxValue(60)
+		)
 
-	// ── ancient ruins ────────────────────────────────────────────
-	.addStringOption((option) =>
-		option
-			.setName("ruins-date-time")
-			.setDescription("Next Ancient Ruins date, format: MM/DD @HH e.g. 03/20 @12")
-			.setRequired(true)
-	)
+		// ── ancient ruins ────────────────────────────────────────────
+		.addStringOption((option) =>
+			option
+				.setName("ruins-date-time")
+				.setDescription("Next Ancient Ruins date, format: MM/DD @HH e.g. 03/20 @12")
+				.setRequired(true)
+		)
 
-	// ── altar of darkness ────────────────────────────────────────
-	.addStringOption((option) =>
-		option
-			.setName("altar-date-time")
-			.setDescription("Next Altar of Darkness date, format: MM/DD @HH e.g. 03/20 @12")
-			.setRequired(true)
-	)
+		// ── altar of darkness ────────────────────────────────────────
+		.addStringOption((option) =>
+			option
+				.setName("altar-date-time")
+				.setDescription("Next Altar of Darkness date, format: MM/DD @HH e.g. 03/20 @12")
+				.setRequired(true)
+		)
 
-	// ── trial of kau karuak ──────────────────────────────────────
-	.addStringOption((option) =>
-		option.setName("kau-date").setDescription("Trial of Kau Karuak Easy date, format: MM/DD e.g. 03/14").setRequired(true)
-	);
+		// ── trial of kau karuak ──────────────────────────────────────
+		.addStringOption((option) =>
+			option.setName("kau-date").setDescription("Trial of Kau Karuak Easy date, format: MM/DD e.g. 03/14").setRequired(true)
+		);
+}
 
 // NOTE: the old `channel` option has been removed. reminders always post to
 // the guild's announcements channel (guildConfig.announcementsChannelId),
@@ -61,8 +70,8 @@ export const data = new SlashCommandBuilder()
 // channel every time they ran this command was dead weight since the home
 // base already has exactly one announcement channel.
 
-/** The one handler the slash command and the admin guide's /configure-kvk-season button share. */
-export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
+/** Runs /events kvk-season, for the slash command and the admin guide's /events button alike. */
+export async function runKvkSeason(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const daysRemaining = options.getInteger("days-remaining", true);
 	const ruinsInput = options.getString("ruins-date-time", true);
 	const altarInput = options.getString("altar-date-time", true);
@@ -372,8 +381,4 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 			components: [],
 		});
 	}
-}
-
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-	await run(interaction, interaction.options);
 }

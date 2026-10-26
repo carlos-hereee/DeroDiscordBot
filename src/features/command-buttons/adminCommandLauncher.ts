@@ -22,16 +22,11 @@ import type { FormChoicesProvider, OptionChoice, SharedCommandHandler } from "@h
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { showErrorNotice, showNotice } from "@utils/textModal.js";
-import * as channelsCommand from "@commands/admin/channels.js";
-import * as configureCommand from "@commands/admin/configure.js";
+import * as arcadeCommand from "@commands/admin/arcade.js";
 import * as deroConfigCommand from "@commands/admin/dero-config.js";
-import * as economyCommand from "@commands/admin/economy.js";
 import * as eventsCommand from "@commands/admin/events.js";
-import * as scheduleCommand from "@commands/admin/schedule.js";
-import * as levelSystemCommand from "@commands/admin/setup-level-system.js";
-import * as xpCommand from "@commands/admin/xp.js";
-import * as kvkSeasonCommand from "@commands/events/configure-rok-reminders.js";
-import * as streamCommand from "@commands/streamer/stream.js";
+import * as levelingCommand from "@commands/admin/leveling.js";
+import * as serverCommand from "@commands/admin/server.js";
 import { ADMIN_COMMAND_BUTTON_PREFIX } from "./adminGuideButtons.js";
 import { buildForm, findLeaf, listLeaves, readForm, type CommandLeaf, type FormField } from "./commandForm.js";
 import { FormOptionReader } from "./formOptionReader.js";
@@ -44,13 +39,14 @@ import { SETTINGS_PANELS, type PanelDefinition } from "./settingsPanels.js";
 // What:  every admin guide button's flow. A press opens the command the way its
 //        slash command would: a private pick of what to do when the command has
 //        several subcommands, then a modal for its options, then the command's own
-//        `run`, the very handler the slash command calls.
+//        `run`, the very handler the slash command calls. A button names a launch
+//        id: a settings panel id (settingsPanels.ts) or, for /events, the command.
 // Who:   the buttons adminGuideButtons builds on the admin command guide. Each step
 //        (press, pick, form) re-runs gateOwnerOrAdmin, because a select or a modal
 //        is reachable without the button that opened it.
 // When:  on every press, pick and submit; nothing here is held in memory, so a
 //        guide posted by an earlier deploy keeps working.
-// How:   ① the button names the command; ② a command with one leaf goes straight
+// How:   ① the button names the launch id; ② a command with one leaf goes straight
 //        to ③, otherwise a select lists its leaves; ③ a leaf with no options runs
 //        at once, one with more fields than a modal holds first asks which optional
 //        ones to fill, and the rest open the form; ④ the submit is read back into a
@@ -58,11 +54,11 @@ import { SETTINGS_PANELS, type PanelDefinition } from "./settingsPanels.js";
 //        answered with a notice modal rather than a message left to dismiss
 //        (post-launch plan item 9), except after a modal submit, which cannot open
 //        a modal and gets the private reply.
-//        A command with a settings panel (settingsPanels.ts) opens it at ① instead
+//        A launch id with a settings panel (settingsPanels.ts) opens it at ① instead
 //        of the pick: one modal of its switches and choices as they stand. Its
 //        submit runs the command's own leaf once per changed setting, through a
 //        reply collector, and answers once with every result and the pick of the
-//        command's other leaves.
+//        panel's other leaves.
 
 /** What the launcher needs of an admin command module: its builder, its shared run and its form picks. */
 export interface LaunchableCommand {
@@ -81,21 +77,51 @@ const PANEL_PREFIX = `${ADMIN_COMMAND_BUTTON_PREFIX}_panel`;
 const PATH_SEPARATOR_IN_ID = "/";
 const MASK_SEPARATOR = ".";
 
-const COMMAND_MODULES: readonly LaunchableCommand[] = [
-	eventsCommand,
-	scheduleCommand,
-	streamCommand,
-	kvkSeasonCommand,
-	channelsCommand,
-	configureCommand,
-	levelSystemCommand,
-	xpCommand,
-	deroConfigCommand,
-	economyCommand,
-];
+const COMMAND_MODULES: readonly LaunchableCommand[] = [eventsCommand, serverCommand, levelingCommand, deroConfigCommand, arcadeCommand];
 
 /** Every command the launcher can open, by name. adminCommandLauncher.test.ts pins it against the guide. */
 export const LAUNCHABLE_COMMANDS: ReadonlyMap<string, LaunchableCommand> = new Map(COMMAND_MODULES.map((command) => [command.data.name, command]));
+
+// The launch ids the guide carried before the admin commands were grouped by job
+// (2026-10 item 254 Phase 1), mapped to the launch id that opens the same job now. A
+// guide the boot has not refreshed yet still carries them, so a press on one opens
+// the new flow rather than the stale button notice. dero-config kept its id.
+const LEGACY_LAUNCH_IDS: Readonly<Record<string, string>> = {
+	schedule: "events",
+	stream: "events",
+	"configure-kvk-season": "events",
+	configure: "server",
+	channels: "server-channels",
+	"setup-level-system": "leveling",
+	xp: "leveling",
+	economy: "arcade",
+};
+
+/** What one launch id opens: its command, and its settings panel when it has one. */
+export interface LaunchTarget {
+	command: LaunchableCommand;
+	panelId: string | null;
+	panel: PanelDefinition | null;
+	/** The command path the flow is labelled with ("server channels"). */
+	path: string;
+}
+
+/** The command and panel a guide button's launch id opens, an old id mapped first, or null for an unknown one. */
+export function resolveLaunchTarget(launchId: string): LaunchTarget | null {
+	const current = LEGACY_LAUNCH_IDS[launchId] ?? launchId;
+	const panel = SETTINGS_PANELS.get(current) ?? null;
+	const command = LAUNCHABLE_COMMANDS.get(panel ? panel.command : current);
+	if (!command) return null;
+	const path = panel?.group ? `${command.data.name} ${panel.group}` : command.data.name;
+	return { command, panelId: panel ? current : null, panel, path };
+}
+
+// The leaves a launch offers: a panel scoped to a group offers only that group's.
+function launchLeaves(target: LaunchTarget): CommandLeaf[] {
+	const leaves = listLeaves(target.command.data.toJSON());
+	const group = target.panel?.group;
+	return group ? leaves.filter((leaf) => leaf.group === group) : leaves;
+}
 
 type LauncherInteraction = ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction;
 type OpeningInteraction = ButtonInteraction | StringSelectMenuInteraction;
@@ -233,26 +259,26 @@ async function openLeaf(interaction: OpeningInteraction, command: LaunchableComm
 
 // ── the handlers ─────────────────────────────────────────────────────────────
 
-/** ① An admin guide button: open its command, through a pick of what to do when it has several. */
+/** ① An admin guide button: open its launch id's panel, or a pick of what to do when its command has several leaves. */
 async function handleCommandButton(interaction: ButtonInteraction): Promise<void> {
 	if (!(await admitAdmin(interaction))) return;
-	const [, commandName] = interaction.customId.split(":");
-	const command = commandName ? LAUNCHABLE_COMMANDS.get(commandName) : undefined;
-	if (!command) {
+	const [, launchId] = interaction.customId.split(":");
+	const target = launchId ? resolveLaunchTarget(launchId) : null;
+	if (!target) {
 		await showErrorNotice(interaction, commandButtonsCopy.launcher.staleButton);
 		return;
 	}
-	const leaves = listLeaves(command.data.toJSON());
+	const leaves = launchLeaves(target);
 	const [onlyLeaf] = leaves;
 	if (leaves.length === 1 && onlyLeaf) {
-		await openLeaf(interaction, command, onlyLeaf);
+		await openLeaf(interaction, target.command, onlyLeaf);
 		return;
 	}
-	if (await openSettingsPanel(interaction, command)) return;
+	if (await openSettingsPanel(interaction, target)) return;
 	// ② the pick of what to do, private, labelled the way the slash command reads.
 	await interaction.reply({
-		content: commandButtonsCopy.launcher.pickLeafPrompt(command.data.name),
-		components: [leafPickRow(command, leaves)],
+		content: commandButtonsCopy.launcher.pickLeafPrompt(target.path),
+		components: [leafPickRow(target.command, leaves)],
 		...PRIVATE,
 	});
 }
@@ -275,26 +301,26 @@ function leafPickRow(command: LaunchableCommand, leaves: readonly CommandLeaf[])
 // ── the settings panel ───────────────────────────────────────────────────────
 
 /**
- * ① for a command with a settings panel: open it and answer true, or answer false
+ * ① for a launch id with a settings panel: open it and answer true, or answer false
  * so the press falls through to the pick. The pick also catches a command early
  * access holds back (runLeaf answers that), a member the panel is not for (a non
- * owner on /channels), an unset server, and a panel whose read failed.
+ * owner on /server channels), an unset server, and a panel whose read failed.
  */
-async function openSettingsPanel(interaction: ButtonInteraction, command: LaunchableCommand): Promise<boolean> {
-	const definition = SETTINGS_PANELS.get(command.data.name);
+async function openSettingsPanel(interaction: ButtonInteraction, target: LaunchTarget): Promise<boolean> {
+	const { command, panel: definition, panelId } = target;
 	const guild = interaction.guild;
-	if (!definition || !guild) return false;
+	if (!definition || !panelId || !guild) return false;
 	try {
 		const access = await checkEarlyAccess(command.data.name, guild.id);
 		if (!access.allowed && access.generalReleaseAt) return false;
 		const panel = await definition.load({ guild, userId: interaction.user.id });
 		if (!panel) return false;
-		await interaction.showModal(buildSettingsModal(`${PANEL_PREFIX}:${command.data.name}`, panel));
+		await interaction.showModal(buildSettingsModal(`${PANEL_PREFIX}:${panelId}`, panel));
 		return true;
 	} catch (error) {
 		// A failed read or a modal Discord refused still leaves the press unanswered,
 		// so the pick answers it; a failed showModal has sent nothing.
-		console.error(`[admin-launcher] the /${command.data.name} settings panel did not open for guild ${guild.id}`, error);
+		console.error(`[admin-launcher] the /${target.path} settings panel did not open for guild ${guild.id}`, error);
 		return false;
 	}
 }
@@ -324,9 +350,9 @@ async function runPanelCalls(interaction: ModalSubmitInteraction, command: Launc
 // leaves the panel does not hold. Discord takes 10 embeds and 5 rows, so a submit
 // that changed more than that says how many more were saved (each has its admin
 // log line) and keeps the pick's row.
-function panelSavedReply(command: LaunchableCommand, definition: PanelDefinition, collected: readonly CollectedReply[]): InteractionEditReplyOptions {
+function panelSavedReply(target: LaunchTarget, definition: PanelDefinition, collected: readonly CollectedReply[]): InteractionEditReplyOptions {
 	const saved = commandButtonsCopy.panels.saved;
-	const title = saved.title(command.data.name);
+	const title = saved.title(target.path);
 	const embeds: EmbedBuilder[] = [];
 	const answered = collected.flatMap((reply) => [...reply.embeds, ...(reply.content ? [infoEmbed(title, reply.content, COLORS.ADMIN)] : [])]);
 	if (answered.length === 0) embeds.push(infoEmbed(title, saved.nothingChanged, COLORS.ADMIN));
@@ -334,11 +360,11 @@ function panelSavedReply(command: LaunchableCommand, definition: PanelDefinition
 	const overflow = answered.length - kept.length;
 	if (overflow > 0) embeds.push(infoEmbed(title, saved.moreChanges(overflow), COLORS.ADMIN));
 
-	const others = listLeaves(command.data.toJSON()).filter((leaf) => !definition.covered.includes(leaf.path));
-	const pickRows = others.length > 0 ? [leafPickRow(command, others)] : [];
+	const others = launchLeaves(target).filter((leaf) => !definition.covered.includes(leaf.path));
+	const pickRows = others.length > 0 ? [leafPickRow(target.command, others)] : [];
 	const handlerRows = collected.flatMap((reply) => reply.components).slice(0, LIMITS.MAX_MESSAGE_ROWS - pickRows.length);
 	return {
-		content: pickRows.length > 0 ? saved.morePrompt(command.data.name) : "",
+		content: pickRows.length > 0 ? saved.morePrompt(target.path) : "",
 		embeds: [...kept, ...embeds],
 		components: [...handlerRows, ...pickRows],
 	};
@@ -347,11 +373,11 @@ function panelSavedReply(command: LaunchableCommand, definition: PanelDefinition
 /** The submitted settings panel: run what changed, then answer once. */
 async function handlePanelSubmit(interaction: ModalSubmitInteraction): Promise<void> {
 	if (!(await admitAdmin(interaction))) return;
-	const [, commandName] = interaction.customId.split(":");
-	const command = commandName ? LAUNCHABLE_COMMANDS.get(commandName) : undefined;
-	const definition = commandName ? SETTINGS_PANELS.get(commandName) : undefined;
+	const [, launchId] = interaction.customId.split(":");
+	const target = launchId ? resolveLaunchTarget(launchId) : null;
+	const definition = target?.panel;
 	const guild = interaction.guild;
-	if (!command || !definition || !guild) {
+	if (!target || !definition || !guild) {
 		await showErrorNotice(interaction, commandButtonsCopy.launcher.staleButton);
 		return;
 	}
@@ -370,8 +396,8 @@ async function handlePanelSubmit(interaction: ModalSubmitInteraction): Promise<v
 		await interaction.editReply({ embeds: [errorEmbed(read.problem)] });
 		return;
 	}
-	const collected = await runPanelCalls(interaction, command, planSettingsChanges(panel, read.answers));
-	await interaction.editReply(panelSavedReply(command, definition, collected));
+	const collected = await runPanelCalls(interaction, target.command, planSettingsChanges(panel, read.answers));
+	await interaction.editReply(panelSavedReply(target, definition, collected));
 }
 
 /** ② The pick of what to do. */

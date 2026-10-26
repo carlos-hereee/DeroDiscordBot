@@ -231,7 +231,7 @@ export const LOG_MESSAGES = {
 	// ── guild event manager ────────────────────────────────────────────
 	guildEvent: {
 		configureKvkFailed: "Failed to configure KvK season:",
-		// Logged when /configure-kvk-season runs against a guild with no
+		// Logged when /events kvk-season runs against a guild with no
 		// GuildConfig row, events still get created but kvkSeasonEnd cannot
 		// be persisted, so the dashboard's KvK toggle will read as
 		// "no active season" until /setup populates the config.

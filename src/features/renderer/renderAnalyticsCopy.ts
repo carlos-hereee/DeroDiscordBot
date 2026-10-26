@@ -1,7 +1,7 @@
 import type { RenderAnalyticsPeriod, SizingHint } from "./renderAnalytics.js";
 
 // ── render analytics admin copy ──────────────────────────────────────
-// Every string /render-analytics shows. Feature local and outside the copy packs,
+// Every string /platform analytics and the render digest show. Feature local and outside the copy packs,
 // like levelingCopy and gamesCopy, because only the platform owner ever reads it
 // and it has no kingdom or streamer voice to choose between (bot rule 5 lets
 // admin facing ephemeral copy be practical). It formats; it computes nothing.
@@ -28,8 +28,7 @@ function kilobytes(bytes: number): string {
 
 export const renderAnalyticsCopy = {
 	command: {
-		description: "Platform owner only: render cache analytics",
-		top10Description: "The most served cards, with per surface totals and the memory tier",
+		analyticsDescription: "The most served cards, with per surface totals and the memory tier",
 		surfaceOption: "One render surface, for example account or level-up",
 		periodOption: "Which months to count (default this month)",
 		periodChoices: {
@@ -41,7 +40,6 @@ export const renderAnalyticsCopy = {
 	errors: {
 		notOwner: "Only the platform owner can read render analytics. The counts are platform wide, not per server.",
 		readFailed: "Render analytics could not be read from the database. Nothing was changed; try again in a minute.",
-		unknownSubcommand: (name: string) => `There is no /render-analytics ${name}.`,
 	},
 	periodLabel: (period: RenderAnalyticsPeriod) => PERIOD_LABELS[period],
 	title: (period: RenderAnalyticsPeriod, surface: string | null) =>

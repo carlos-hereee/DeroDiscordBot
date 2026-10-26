@@ -19,15 +19,15 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 
-// ── /stream announce ──────────────────────────────────────────────────
+// ── /events stream announce ──────────────────────────────────────────────────
 // What:  schedules a one-time stream announcement at a specific future
 //        date+time. Creates a one-time Event so the existing
 //        ReminderScheduler fires the standard reminder offsets (default
 //        30 and 15 min before) automatically, no special-case logic
 //        needed downstream.
 // Who:   streamers planning a one-off (charity stream, special guest,
-//        scheduled premiere). Pairs with /stream soon for the
-//        forgot-to-announce case and /stream setup for
+//        scheduled premiere). Pairs with /events stream soon for the
+//        forgot-to-announce case and /events stream weekly for
 //        recurring weekly cadence.
 // When:  on demand. The streamer types the date once, the bot handles
 //        the reminders. After the stream the event auto-deactivates
@@ -102,7 +102,7 @@ export async function announceStream(interaction: RepliableInteraction, options:
 	const mentionRoleId = mentionRole?.id ?? null;
 
 	// ── confirmation preview ──
-	// Same two-line pattern as /stream setup so the streamer
+	// Same two-line pattern as /events stream weekly so the streamer
 	// sees a familiar form: when + where + who. Color reuses SCHEDULE so
 	// the preview matches the eventual schedule board entry.
 	const previewLines = [
@@ -164,7 +164,7 @@ export async function announceStream(interaction: RepliableInteraction, options:
 
 			adminLog.emitFor(interaction, guildId, "schedule.create", { subject: title, detail: setupCopy.adminLog.streamAnnounced });
 			refreshSchedule(interaction.client, guildId).catch((err) =>
-				console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/stream announce"), err)
+				console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/events stream announce"), err)
 			);
 		} catch (err) {
 			console.error("[stream announce] save failed", err);

@@ -69,7 +69,7 @@ export const generalEventsCopy: IPluginCopy = {
 		title: "📅 Active Events",
 		noEvents:
 			"📭 No active events are configured for this server yet.\n\n" +
-			"Run `/stream setup` for weekly streams or `/stream announce` for one-off events.",
+			"Run `/events stream weekly` for weekly streams or `/events stream announce` for one-off events.",
 		fieldName: (name: string, type: "recurring" | "one-time") => (type === "recurring" ? `🔁 ${name}` : `📌 ${name}`),
 		nextOccurrenceLabel: "Next occurrence",
 		scheduledDateLabel: "Scheduled date",
@@ -163,8 +163,8 @@ export const generalEventsCopy: IPluginCopy = {
 		footer: "Updated automatically.",
 	},
 
-	// Stubbed: /configure-kvk-season is a ROK-only command. General-events
-	// guilds use /stream setup instead, which has its own copy
+	// Stubbed: /events kvk-season is a ROK-only command. General-events
+	// guilds use /events stream weekly instead, which has its own copy
 	// block (streamSchedule below). Sentinels here surface the bug if any
 	// code path leaks ROK config flow into a general-events guild.
 	configureReminders: {
@@ -366,15 +366,15 @@ export const generalEventsCopy: IPluginCopy = {
 				{
 					name: "📺 Stream / Schedule Commands",
 					value: [
-						"`/stream setup`",
+						"`/events stream weekly`",
 						"Set up a weekly recurring reminder on a fixed day and time.",
-						"`/stream announce`",
+						"`/events stream announce`",
 						"Schedule a one-off reminder for a specific future date and time.",
-						"`/stream soon`",
+						"`/events stream soon`",
 						"Post a quick going-live announcement. One-shot, no reminder.",
-						"`/schedule pause`",
+						"`/events pause`",
 						"Pause reminders for one event without deleting it, or for every event when you name none.",
-						"`/schedule resume`",
+						"`/events resume`",
 						"Resume one paused event, or every paused event when you name none.",
 					].join("\n"),
 				},
@@ -385,16 +385,18 @@ export const generalEventsCopy: IPluginCopy = {
 				{
 					name: "🛠️ Server Settings",
 					value: [
-						"`/channels`",
+						"`/server channels`",
 						"Hide, show or rename the channels Dero manages.",
-						"`/configure`",
+						"`/server`",
 						"Channel auto heal, leaderboard tracking and the day the leaderboard week starts.",
-						"`/setup-level-system`",
+						"`/leveling settings`",
 						"Leveling: rates, the curve, where level ups post, which channels count, rewards and boosts.",
-						"`/xp`",
+						"`/leveling xp`",
 						"Correct a member's XP or level, reset a member or the server, or export it all.",
 						"`/dero-config`",
 						"Dero's voice: the switch, the monthly budget and who may give Dero tasks.",
+						"`/arcade`",
+						"The arcade: on or off, bot opponents, how far a challenge reaches, the monthly post, network blocks and chips.",
 					].join("\n"),
 				},
 			] satisfies IEmbedField[],
@@ -674,9 +676,9 @@ export const generalEventsCopy: IPluginCopy = {
 			description:
 				"🪧 **NOTICE BOARD has been built.**\n\n" +
 				`<@&${adminRoleId}> now has access to the admin channel.\n\n` +
-				"You can configure your first event with `/stream setup` or `/stream announce`.",
+				"You can configure your first event with `/events stream weekly` or `/events stream announce`.",
 		}),
-		// Stubbed, kvkConfigured is the success response for /configure-kvk-season,
+		// Stubbed, kvkConfigured is the success response for /events kvk-season,
 		// a ROK-only command. General-events guilds never reach this code path; if
 		// they do the sentinel surfaces the routing bug.
 		kvkConfigured: (_seasonEnd: number, _channelId: string) => STUB,
@@ -704,7 +706,7 @@ export const generalEventsCopy: IPluginCopy = {
 		invalidTime: "Time invalid. Use 24h `HH:MM` like `19:30` or `09:00`.",
 		invalidDay: "Day invalid. Pick one of: monday, tuesday, wednesday, thursday, friday, saturday, sunday.",
 		alreadyExists: (name: string) =>
-			`A schedule named **${name}** already exists. Pause it with \`/schedule pause\` or pick a different name.`,
+			`A schedule named **${name}** already exists. Pause it with \`/events pause\` or pick a different name.`,
 		confirm: {
 			title: "📺 Confirm stream schedule",
 			description: (name: string, dayLabel: string, nextOccurrenceUnix: number) =>
@@ -729,7 +731,7 @@ export const generalEventsCopy: IPluginCopy = {
 	pauseSchedule: {
 		notFound: "No schedule by that name. Use `/events list` to see what is configured.",
 		alreadyPaused: (name: string) => `**${name}** is already paused.`,
-		paused: (name: string) => `⏸️ **${name}** paused. Resume it with \`/schedule resume\`.`,
+		paused: (name: string) => `⏸️ **${name}** paused. Resume it with \`/events resume\`.`,
 		pausedUntil: (name: string, untilUnix: number) =>
 			`⏸️ **${name}** paused until <t:${untilUnix}:F> (<t:${untilUnix}:R>). It will resume automatically.`,
 		invalidDuration: "Duration invalid. Use a positive number of days, max 90.",
@@ -741,11 +743,11 @@ export const generalEventsCopy: IPluginCopy = {
 	pauseAllSchedules: {
 		noEvents: "No schedules to pause, this server has no events configured.",
 		allAlreadyPaused: (total: number) =>
-			`All ${total} schedules are already paused. Use \`/schedule resume\` with no event to resume them.`,
+			`All ${total} schedules are already paused. Use \`/events resume\` with no event to resume them.`,
 		paused: (count: number, skipped: number) =>
 			skipped > 0
 				? `⏸️ Paused **${count}** schedule(s). Skipped ${skipped} already-paused schedule(s) so their existing auto-resume dates stay intact.`
-				: `⏸️ Paused **${count}** schedule(s). Resume one with \`/schedule resume\` and an event, or all of them with no event.`,
+				: `⏸️ Paused **${count}** schedule(s). Resume one with \`/events resume\` and an event, or all of them with no event.`,
 		pausedUntil: (count: number, skipped: number, untilUnix: number) =>
 			skipped > 0
 				? `⏸️ Paused **${count}** schedule(s) until <t:${untilUnix}:F> (<t:${untilUnix}:R>). Skipped ${skipped} already-paused schedule(s) so their existing auto-resume dates stay intact.`
@@ -835,7 +837,7 @@ export const generalEventsCopy: IPluginCopy = {
 		innerSanctum: {
 			title: "🏛️ THE ORACLE EXPLAINS WHAT CHANGED",
 			description:
-				"Those who hold the reins.\n\nMuch arrived with this release. Here is what each part does in your server and how to take it in hand.\n\n**Fewer commands, a button for each.** `/schedule pause` and `/schedule resume` act on one event, or on every event when you name none. `/stream announce`, `/stream soon` and `/stream setup` hold the stream tools, `/configure` holds auto heal, leaderboard tracking and the leaderboard week, `/events` lists and deletes events, and `/channels rename` renames a channel I keep. Every admin command also has a button on the guide in your admin channel that opens it with a form, and refuses anyone who is not the owner or an admin. Members get Account, Levels, Achievements, Suggestion Box, Toggle pings and Fortune buttons in #command-center.\n\n**Leveling is already running.** Messages, reactions, approved voice channels and games earn renown. A message or a reaction pays 1, and messages, reactions and solo games against me pay a member at most 50 a day, reset at midnight Central. I read no message text: I know that a message happened, where and by whom, and nothing else. Message renown has a sixty second cooldown. Voice renown is off until you approve a voice channel by name. Nothing I post pings anyone.\n`/setup-level-system` sets the cooldowns, the curve, which channels count, role rewards and where level ups post. `/setup-level-system toggle enabled:false` turns it all off, keeps every record, and resumes where it stopped when you switch it back on.\n`/xp` corrects, resets a member or the whole server (it asks first) and exports everything as a file.\nI will not hand out a role carrying Administrator or Manage Server, and I cannot grant a role above my own, so keep my role above any reward.\n\n**The arcade is open.** A 🎮 ARCADE GAMES category holds 🕹️games, where every game starts, 📋arcade-rules, ⚔️challenges and a 🎮 Arcade Lounge voice room, and the notice board gains a 🏛️ Meeting Hall voice room. Every match gets its own room under the arcade, seen only by its players unless the host opens it to all. A finished room clears four hours after the match ends unless its players start a rematch in it, and a room with no move for 30 minutes closes as abandoned, Monopoly and hangman aside. The match record is kept. Hold'em gives each decision 60 seconds, lets any player leave and lets the host end the table. Monopoly matches can run for days, and the host decides at the challenge card whether passed lots go to auction and whether I referee the match out loud.\n\n**Most posts are now drawn cards.** Profiles, level ups, the levels board, honors, role rewards, blackjack and Hold'em tables, match results, welcomes, fortunes, the challenge card and my voice calls each post as a picture, and each falls back to the text you know whenever a picture cannot be drawn. On Mondays at 9 am Central I send up to 25 of the week's most present members a private card of their week; no such message goes out in a server where level up announcements are off.\n\n**My voice is switched off here**, and nothing listens or speaks until you turn it on. I speak in George's voice from the start, so `/dero-config enable` is the only step. The role, text channel and voice channel lists decide who may give me tasks, where I may post and which calls I may join, and the Join, Leave and Status buttons in both voice rooms follow the same lists. A monthly speech budget, $5 by default, is checked before every paid speech call. `/dero-config disable` or `/dero-config cap dollars:0` stops every speech call at once and ends a live call. In a call I hear only members on the task list; their speech goes to ElevenLabs to become text, and I keep no audio and no transcript. The Monopoly voice referee follows all of this: it speaks only into a call someone has already brought me into, and from the same monthly budget.",
+				"Those who hold the reins.\n\nMuch arrived with this release. Here is what each part does in your server and how to take it in hand.\n\n**Fewer commands, a button for each.** `/events pause` and `/events resume` act on one event, or on every event when you name none. `/events stream announce`, `/events stream soon` and `/events stream weekly` hold the stream tools, `/server` holds auto heal, leaderboard tracking and the leaderboard week, `/events` lists and deletes events, and `/server channels rename` renames a channel I keep. Every admin command also has a button on the guide in your admin channel that opens it with a form, and refuses anyone who is not the owner or an admin. Members get Account, Levels, Achievements, Suggestion Box, Toggle pings and Fortune buttons in #command-center.\n\n**Leveling is already running.** Messages, reactions, approved voice channels and games earn renown. A message or a reaction pays 1, and messages, reactions and solo games against me pay a member at most 50 a day, reset at midnight Central. I read no message text: I know that a message happened, where and by whom, and nothing else. Message renown has a sixty second cooldown. Voice renown is off until you approve a voice channel by name. Nothing I post pings anyone.\n`/leveling settings` sets the cooldowns, the curve, which channels count, role rewards and where level ups post. `/leveling settings toggle enabled:false` turns it all off, keeps every record, and resumes where it stopped when you switch it back on.\n`/leveling xp` corrects, resets a member or the whole server (it asks first) and exports everything as a file.\nI will not hand out a role carrying Administrator or Manage Server, and I cannot grant a role above my own, so keep my role above any reward.\n\n**The arcade is open.** A 🎮 ARCADE GAMES category holds 🕹️games, where every game starts, 📋arcade-rules, ⚔️challenges and a 🎮 Arcade Lounge voice room, and the notice board gains a 🏛️ Meeting Hall voice room. Every match gets its own room under the arcade, seen only by its players unless the host opens it to all. A finished room clears four hours after the match ends unless its players start a rematch in it, and a room with no move for 30 minutes closes as abandoned, Monopoly and hangman aside. The match record is kept. Hold'em gives each decision 60 seconds, lets any player leave and lets the host end the table. Monopoly matches can run for days, and the host decides at the challenge card whether passed lots go to auction and whether I referee the match out loud.\n\n**Most posts are now drawn cards.** Profiles, level ups, the levels board, honors, role rewards, blackjack and Hold'em tables, match results, welcomes, fortunes, the challenge card and my voice calls each post as a picture, and each falls back to the text you know whenever a picture cannot be drawn. On Mondays at 9 am Central I send up to 25 of the week's most present members a private card of their week; no such message goes out in a server where level up announcements are off.\n\n**My voice is switched off here**, and nothing listens or speaks until you turn it on. I speak in George's voice from the start, so `/dero-config enable` is the only step. The role, text channel and voice channel lists decide who may give me tasks, where I may post and which calls I may join, and the Join, Leave and Status buttons in both voice rooms follow the same lists. A monthly speech budget, $5 by default, is checked before every paid speech call. `/dero-config disable` or `/dero-config cap dollars:0` stops every speech call at once and ends a live call. In a call I hear only members on the task list; their speech goes to ElevenLabs to become text, and I keep no audio and no transcript. The Monopoly voice referee follows all of this: it speaks only into a call someone has already brought me into, and from the same monthly budget.",
 		},
 	},
 

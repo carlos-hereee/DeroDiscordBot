@@ -4,7 +4,7 @@ import { errorEmbed } from "@utils/embedBuilder.js";
 import { postGoLiveAnnouncement } from "@features/schedule/postGoLiveAnnouncement.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
-// ── /stream soon ─────────────────────────────────────────────────────
+// ── /events stream soon ─────────────────────────────────────────────────────
 // What:  one-shot panic-button announcement. Does NOT create an Event.
 //        Posts directly to the guild's announcements channel with a
 //        single embed pinging the configured role (or an override).
@@ -14,8 +14,8 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 //        notice when a streamer goes live without a heads-up; this is
 //        the 30-second escape hatch that fixes that.
 // When:  on demand, ad-hoc. No persistence, if the streamer wants
-//        recurring reminders they should run /stream setup.
-//        Two /stream soon calls in a row will produce two separate
+//        recurring reminders they should run /events stream weekly.
+//        Two /events stream soon calls in a row will produce two separate
 //        announcement messages on purpose: each one is a fresh "now-ish"
 //        signal, not an edit of the previous.
 // Where: posts to guildConfig.announcementsChannelId. Same channel that

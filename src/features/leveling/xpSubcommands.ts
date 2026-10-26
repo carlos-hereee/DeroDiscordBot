@@ -5,9 +5,8 @@ import {
 	ButtonStyle,
 	ComponentType,
 	MessageFlags,
-	SlashCommandBuilder,
-	type ChatInputCommandInteraction,
 	type RepliableInteraction,
+	type SlashCommandSubcommandGroupBuilder,
 	type User,
 } from "discord.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
@@ -21,21 +20,17 @@ import { getLevelingConfig } from "@features/leveling/levelingConfig.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
-// ── /xp ────────────────────────────────────────────────────────────────────
+// ── /leveling xp ───────────────────────────────────────────────────────────
 // What:  admin correction of a member's xp, plus the two reset paths and a
 //        full data export.
-// Who:   admins only, gated by BOT_CONSTANTS.ADMIN_COMMANDS in main.ts (the server
-//        owner or the /setup admin role). No Discord default permission, which
-//        would hide it from that admin role (see the note on the set).
+// Who:   commands/admin/leveling.ts adds this group to /leveling and runs it from
+//        the slash command or the /leveling button on the admin guide. Admins
+//        only, through /leveling in BOT_CONSTANTS.ADMIN_COMMANDS (the server owner
+//        or the /setup admin role); no Discord default permission, which would
+//        hide it from that admin role.
 // When:  rarely, and every destructive branch asks first.
 // Where: writes MemberLevel and XpPeriod through their stores. It never touches
 //        PlayerActivity or anything the participation leaderboard reads.
-//
-// ⚠️ `data` IS DELIBERATELY UNANNOTATED. .addSubcommand() narrows the builder
-// away from SlashCommandBuilder, so `: SlashCommandBuilder` would not compile.
-// Never cast to any and never cast to SlashCommandBuilder. Both loaders only
-// check that the string keys "data" and "execute" exist, so ICommand is
-// documentary rather than enforced. See the same note in mini-game.ts.
 //
 // ⚠️ THE TWO RESET SUBCOMMANDS ARE THE ONLY DESTRUCTIVE OPERATIONS IN THE WHOLE
 // LEVELING FEATURE. Both require a confirm click. Nothing else in leveling
@@ -45,7 +40,7 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 const LIMITS = BOT_CONSTANTS.LEVELING.LIMITS;
 
 // ── the declared subcommand set ────────────────────────────────────────────
-// Exported so xp.test.ts can assert the BUILDER below declares exactly these and
+// Exported so xpSubcommands.test.ts can assert the BUILDER below declares exactly these and
 // nothing else, in both directions. mini-game.ts uses a dispatch table for the
 // same guard; this command's branches are not uniform handlers (they take
 // different options and some ask for confirmation), so the list is the single
@@ -71,52 +66,53 @@ const CONFIRM_WINDOW_MS = 30_000;
 // (it scrapes their web leaderboard and drops everyone past the first 100).
 const EXPORT_ROW_CAP = 5000;
 
-export const data = new SlashCommandBuilder()
-	.setName("xp")
-	.setDescription("Correct, reset or export this server's XP data")
-	.addSubcommand((sub) =>
-		sub
-			.setName("add")
-			.setDescription("Give a member XP")
-			.addUserOption((option) => option.setName("member").setDescription("Who to give it to").setRequired(true))
-			.addIntegerOption((option) => option.setName("amount").setDescription("How much XP").setRequired(true))
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("remove")
-			.setDescription("Take XP away from a member")
-			.addUserOption((option) => option.setName("member").setDescription("Who to take it from").setRequired(true))
-			.addIntegerOption((option) => option.setName("amount").setDescription("How much XP").setRequired(true))
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("set-xp")
-			.setDescription("Set a member's total XP to an exact number")
-			.addUserOption((option) => option.setName("member").setDescription("Whose total to set").setRequired(true))
-			.addIntegerOption((option) => option.setName("amount").setDescription("Their new total XP").setRequired(true))
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("set-level")
-			.setDescription("Put a member at the start of a level")
-			.addUserOption((option) => option.setName("member").setDescription("Whose level to set").setRequired(true))
-			.addIntegerOption((option) => option.setName("level").setDescription("Their new level").setRequired(true))
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("reset-member")
-			.setDescription("Delete one member's XP, record and achievements. Asks first.")
-			.addUserOption((option) => option.setName("member").setDescription("Who to reset").setRequired(true))
-	)
-	.addSubcommand((sub) =>
-		sub.setName("reset-server").setDescription("Delete EVERY member's leveling data in this server. Asks first.")
-	)
-	.addSubcommand((sub) =>
-		sub.setName("export").setDescription("Download this server's leveling data as a JSON file")
-	);
+/** The /leveling xp group's seven subcommands. */
+export function addXpSubcommands(group: SlashCommandSubcommandGroupBuilder): SlashCommandSubcommandGroupBuilder {
+	return group
+		.addSubcommand((sub) =>
+			sub
+				.setName("add")
+				.setDescription("Give a member XP")
+				.addUserOption((option) => option.setName("member").setDescription("Who to give it to").setRequired(true))
+				.addIntegerOption((option) => option.setName("amount").setDescription("How much XP").setRequired(true))
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("remove")
+				.setDescription("Take XP away from a member")
+				.addUserOption((option) => option.setName("member").setDescription("Who to take it from").setRequired(true))
+				.addIntegerOption((option) => option.setName("amount").setDescription("How much XP").setRequired(true))
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("set-xp")
+				.setDescription("Set a member's total XP to an exact number")
+				.addUserOption((option) => option.setName("member").setDescription("Whose total to set").setRequired(true))
+				.addIntegerOption((option) => option.setName("amount").setDescription("Their new total XP").setRequired(true))
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("set-level")
+				.setDescription("Put a member at the start of a level")
+				.addUserOption((option) => option.setName("member").setDescription("Whose level to set").setRequired(true))
+				.addIntegerOption((option) => option.setName("level").setDescription("Their new level").setRequired(true))
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("reset-member")
+				.setDescription("Delete one member's XP, record and achievements. Asks first.")
+				.addUserOption((option) => option.setName("member").setDescription("Who to reset").setRequired(true))
+		)
+		.addSubcommand((sub) =>
+			sub.setName("reset-server").setDescription("Delete EVERY member's leveling data in this server. Asks first.")
+		)
+		.addSubcommand((sub) =>
+			sub.setName("export").setDescription("Download this server's leveling data as a JSON file")
+		);
+}
 
-/** The one handler the slash command and the admin guide's /xp button share. */
-export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
+/** Runs one /leveling xp subcommand, for the slash command and the admin guide alike. */
+export async function runXpSubcommand(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.outsideGuild)], flags: MessageFlags.Ephemeral });
@@ -217,7 +213,7 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 			const confirmed = await confirm(
 				interaction,
 				"Reset EVERY member?",
-				`This deletes leveling data for **${memberCount.toLocaleString()} members** in this server: every XP total, every game record, every achievement. It cannot be undone.\n\nIf you only want to stop leveling, run \`/setup-level-system toggle enabled:false\` instead. That keeps every row.`
+				`This deletes leveling data for **${memberCount.toLocaleString()} members** in this server: every XP total, every game record, every achievement. It cannot be undone.\n\nIf you only want to stop leveling, run \`/leveling settings toggle enabled:false\` instead. That keeps every row.`
 			);
 			if (!confirmed) return;
 
@@ -277,7 +273,7 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 			// Unreachable for a member: Discord will not send a subcommand the builder
 			// never declared. Only a developer adding one above without a branch here
 			// gets here, so fail loudly rather than silently doing nothing.
-			console.error(`[xp] no branch for subcommand '${subcommand}'`);
+			console.error(`[leveling xp] no branch for subcommand '${subcommand}'`);
 			await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.noData)], flags: MessageFlags.Ephemeral });
 	}
 }
@@ -368,8 +364,4 @@ async function confirm(interaction: RepliableInteraction, title: string, warning
 	// can outlast Discord's three second window on a large guild.
 	await click.deferUpdate().catch(() => undefined);
 	return true;
-}
-
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-	await run(interaction, interaction.options);
 }

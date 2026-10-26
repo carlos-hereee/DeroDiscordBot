@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
+import { SlashCommandSubcommandGroupBuilder, type EmbedBuilder, type RepliableInteraction } from "discord.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
-// ── /economy (2026-10 item 250 Phase 5) ─────────────────────────────────────
+// ── /arcade chips (2026-10 item 250 Phase 5) ────────────────────────────────
 // The switch is idempotent and logs only a real change; a grant needs chips on; status
 // lists the vault's newest grants first. The grant itself is vaultGrant.test.ts's.
 
@@ -18,7 +19,7 @@ vi.mock("@features/economy/serverVault.js", () => ({ readVault: mocks.readVault 
 vi.mock("@features/economy/vaultGrant.js", () => ({ runVaultGrant: mocks.runVaultGrant }));
 vi.mock("@features/setup/adminLog.js", () => ({ adminLog: { emitFor: mocks.emitFor } }));
 
-import { data, execute } from "./economy.js";
+import { addChipSubcommands, runChipSubcommand } from "./chipEconomySubcommands.js";
 
 type Options = { sub: string; enabled?: boolean; amount?: number };
 
@@ -29,14 +30,14 @@ async function replyText(options: Options): Promise<string> {
 		user: { id: "admin" },
 		client: {},
 		reply,
-		options: {
-			getSubcommand: () => options.sub,
-			getBoolean: () => options.enabled,
-			getInteger: () => options.amount,
-			getUser: () => ({ id: "u2", bot: false }),
-		},
-	} as unknown as ChatInputCommandInteraction;
-	await execute(interaction);
+	} as unknown as RepliableInteraction;
+	const reader = {
+		getSubcommand: () => options.sub,
+		getBoolean: () => options.enabled,
+		getInteger: () => options.amount,
+		getUser: () => ({ id: "u2", bot: false }),
+	} as unknown as CommandOptionReader;
+	await runChipSubcommand(interaction, reader);
 	const embed = (reply.mock.calls[0] as unknown as [{ embeds: EmbedBuilder[] }] | undefined)?.[0].embeds[0];
 	return embed?.data.description ?? "";
 }
@@ -47,9 +48,9 @@ beforeEach(() => {
 	mocks.update.mockResolvedValue({ guildId: "g1" });
 });
 
-describe("/economy", () => {
-	it("is an admin command with status, toggle and grant, and grant caps its amount", () => {
-		const json = data.toJSON();
+describe("/arcade chips", () => {
+	it("offers status, toggle and grant, and grant caps its amount", () => {
+		const json = addChipSubcommands(new SlashCommandSubcommandGroupBuilder().setName("chips").setDescription("chips")).toJSON();
 		expect((json.options ?? []).map((option) => option.name)).toEqual(["status", "toggle", "grant"]);
 		const grant = (json.options ?? []).find((option) => option.name === "grant") as { options?: Array<{ name: string; max_value?: number; min_value?: number }> };
 		expect(grant.options?.find((option) => option.name === "amount")).toMatchObject({ min_value: 1, max_value: 1_000_000 });

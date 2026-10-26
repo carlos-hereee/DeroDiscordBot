@@ -113,7 +113,7 @@ export function registerChannelDeleteWatcher(client: Client): void {
 			// the admin's decision.
 			if (!stored.autoHealEnabled) {
 				console.log(
-					`[realtime-repair] skipped channel delete in guild ${guild.id} because autoHealEnabled is false; run /configure auto-heal enabled:True to resume.`
+					`[realtime-repair] skipped channel delete in guild ${guild.id} because autoHealEnabled is false; run /server auto-heal enabled:True to resume.`
 				);
 				return;
 			}
@@ -151,7 +151,7 @@ export function registerChannelDeleteWatcher(client: Client): void {
 
 			// per-channel user-removed gate. when the admin explicitly removed
 			// THIS specific slot via a slash command's follow-up button (eg
-			// /configure leaderboard-tracking → Remove leaderboard channel),
+			// /server leaderboard tracking → Remove leaderboard channel),
 			// the configField is in userRemovedChannels and we skip rebuild
 			// even though autoHealEnabled is on. This supersedes auto-heal at
 			// the slot level. The boot sweep honors the same flag. Defense

@@ -18,7 +18,7 @@ import {
 // ?guildId=: the rows carry no guild at all (they are keyed by card hash), so a
 // guild scope would have nothing to filter. The signature is therefore the whole
 // gate. It reads only, and the report is Phase 1's buildRenderAnalyticsReport,
-// the same one /render-analytics and the Monday digest show.
+// the same one /platform analytics and the Monday digest show.
 //
 // Beside the report rides `ratings` (Phase 5c, features/ratings/platformRatings.ts):
 // each rated game's consenting players and their spread, and the server boards. It

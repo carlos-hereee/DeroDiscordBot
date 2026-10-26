@@ -6,7 +6,7 @@ import type { AnyBulkWriteOperation } from "mongoose";
 //        only; every decision about WHEN xp is awarded, whether a cooldown
 //        passed, and what a level up means lives in features/leveling.
 // Who:   awardXp and xpWriter (writes), /account, /account view:levels, LevelsBoard,
-//        roleRewards and the achievement engine (reads), /xp (admin correction).
+//        roleRewards and the achievement engine (reads), /leveling xp (admin correction).
 // When:  on every flush and on every profile or board render.
 // Where: guild scoping is a security boundary (invariant 2), so every method
 //        here takes guildId and filters on it. A userId that belongs to another
@@ -127,7 +127,7 @@ export const memberLevelStore = {
 	},
 
 	// ── admin correction ──
-	// /xp set-xp writes an absolute value, unlike every other path here. It also
+	// /leveling xp set-xp writes an absolute value, unlike every other path here. It also
 	// resets announcedLevel, because lowering a member's xp below a level they
 	// already reached must let that level announce again if they climb back.
 	async setTotalXp(guildId: string, userId: string, username: string, totalXp: number, announcedLevel: number) {
@@ -138,14 +138,14 @@ export const memberLevelStore = {
 		);
 	},
 
-	// /xp reset-member. Guild scoped, and the row is removed rather than zeroed so
+	// /leveling xp reset-member. Guild scoped, and the row is removed rather than zeroed so
 	// a reset member is genuinely absent from every board rather than sitting at
 	// the bottom of it.
 	async deleteMember(guildId: string, userId: string) {
 		return MemberLevel.deleteOne({ guildId, userId });
 	},
 
-	// /xp reset-server. The single destructive operation in the feature: admin
+	// /leveling xp reset-server. The single destructive operation in the feature: admin
 	// gated, confirm-button guarded at the command layer, and scoped to the
 	// guild's own data.
 	async deleteGuild(guildId: string) {

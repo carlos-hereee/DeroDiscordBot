@@ -14,7 +14,7 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 
-// ── /configure leaderboard-tracking ───────────────────────────────────
+// ── /server leaderboard tracking ───────────────────────────────────
 // What:  master switch for participation tracking. When ON (default),
 //        ActivityTracker writes PlayerActivity rows on ✅ reactions and
 //        voice-channel joins. When OFF, both listeners early-return so
@@ -24,7 +24,7 @@ import { setupCopy } from "@features/setup/setupCopy.js";
 // Who:   streamers who do not want participation tracked, or who want
 //        to pause tracking during a hiatus without losing prior data.
 //        Captured from 2026-05-11 streamer feedback.
-// When:  on demand. Same idempotency contract as /configure auto-heal,
+// When:  on demand. Same idempotency contract as /server auto-heal,
 //        no silent re-writes, explicit "already on / already off"
 //        feedback on repeat invocations.
 // Where: writes GuildConfig.leaderboardTrackingEnabled via

@@ -33,7 +33,7 @@ import { lastReminderTickAt } from "@features/reminders/ReminderScheduler.js";
 //        kvkSeasonEnd is only included on the success path. The dashboard
 //        reads it to decide whether the KvK announcement toggle should be
 //        enabled on EventCreatePage. null means "no active season, run
-//        /configure-kvk-season first" and the dashboard greys out the
+//        /events kvk-season first" and the dashboard greys out the
 //        toggle with a hint pointing at the slash command.
 export const healthRouter = Router();
 
@@ -60,7 +60,7 @@ healthRouter.get("/guild", async (req: Request, res: Response) => {
 		// copy) without a second round trip. ISO string keeps the wire
 		// format JSON friendly. null when no season has been configured
 		// yet, the dashboard treats that as "KvK toggle off, point user
-		// at /configure-kvk-season".
+		// at /events kvk-season".
 		// Surface the schedule-level pause state alongside kvkSeasonEnd so
 		// the Command Center can render its pause banner without an extra
 		// round trip. Same "single endpoint, multiple fields" pattern this

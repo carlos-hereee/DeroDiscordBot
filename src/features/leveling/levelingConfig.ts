@@ -33,7 +33,7 @@ import type { WeekStart } from "@features/leaderboard/leaderboardWindow.js";
 // can be a value the schema no longer knows.
 
 // How long a resolved answer is trusted. Short enough that an admin who just
-// ran /setup-level-system sees the change without wondering whether it saved,
+// ran /leveling settings sees the change without wondering whether it saved,
 // long enough that a busy channel is not re-reading config every few messages.
 // invalidate() below is the exact path for making a change visible instantly.
 const CONFIG_TTL_MS = 30_000;
@@ -118,7 +118,7 @@ const cache = new Map<string, CacheEntry>();
 export const _clearLevelingConfigCache = (): void => cache.clear();
 export const _levelingConfigCacheSize = (): number => cache.size;
 
-// Drop one guild's cached answer. Called by /setup-level-system after a write so
+// Drop one guild's cached answer. Called by /leveling settings after a write so
 // an admin sees their change immediately rather than up to a TTL later, which is
 // the difference between "it saved" and "did that work?".
 export function invalidateLevelingConfig(guildId: string): void {
@@ -157,7 +157,7 @@ function multiplierList(value: unknown, idKey: "roleId" | "channelId"): Multipli
 		.filter((rule) => rule.id.length > 0);
 }
 
-// Clamp a cooldown into the range /setup-level-system enforces, so a value
+// Clamp a cooldown into the range /leveling settings enforces, so a value
 // written straight into Mongo cannot exceed what the sweep considers expirable.
 function cooldown(value: unknown, fallback: number): number {
 	return Math.min(BOT_CONSTANTS.LEVELING.MAX_COOLDOWN_SECONDS, Math.max(1, num(value, fallback)));

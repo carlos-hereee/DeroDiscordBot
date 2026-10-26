@@ -50,7 +50,7 @@ export interface IGameEvent {
 	// `boolean | null | undefined`, and TypeScript will not assign that
 	// to a plain `boolean`. Treat falsy (false, null, undefined) as "not
 	// paused" at every call site, the schema default writes `false` on
-	// creation, legacy rows load as `undefined`, and /schedule resume
+	// creation, legacy rows load as `undefined`, and /events resume
 	// explicitly writes `false`, so the three states are semantically
 	// identical.
 	paused?: boolean | null;

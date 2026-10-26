@@ -1,4 +1,4 @@
-import { MessageFlags, SlashCommandBuilder, type ChatInputCommandInteraction, type ColorResolvable, type RepliableInteraction } from "discord.js";
+import { MessageFlags, type ColorResolvable, type RepliableInteraction, type SlashCommandSubcommandGroupBuilder } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { COLORS } from "@base/copy/brand.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -11,13 +11,14 @@ import { setupCopy } from "@features/setup/setupCopy.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
-// ── /economy ──────────────────────────────────────────────────────────
-// What:  the chip economy's admin command (2026-10 item 250 Phase 5): `status` (the
+// ── /arcade chips ─────────────────────────────────────────────────────
+// What:  the chip economy's admin subcommands (2026-10 item 250 Phase 5): `status` (the
 //        vault, its recent grants and the switch), `toggle` (chips on or off for the
 //        server) and `grant` (chips from the vault to a member).
-// Who:   admins, gated at runtime by ADMIN_COMMANDS in main.ts (the guild owner or the
-//        bot's admin role), from the slash command or the /economy button on the admin
-//        guide, whose settings panel holds the switch and runs `toggle` through this run.
+// Who:   commands/admin/arcade.ts adds this group to /arcade and runs it. Admins,
+//        gated at runtime by /arcade in ADMIN_COMMANDS (the guild owner or the bot's
+//        admin role), from the slash command or the /arcade button on the admin guide,
+//        whose settings panel holds the switch and runs `toggle` through this run.
 // Where: GuildConfig.chipEconomyEnabled is read by /claim, the /account chips line and
 //        every Hold'em table at open (features/economy/chipWallet.isChipEconomyOn). The
 //        vault lives in features/economy/serverVault.ts.
@@ -32,25 +33,26 @@ const copy = economyCopy.admin;
 const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 const ECONOMY = BOT_CONSTANTS.ECONOMY;
 
-export const data = new SlashCommandBuilder()
-	.setName("economy")
-	.setDescription(copy.commandDescription)
-	.addSubcommand((sub) => sub.setName("status").setDescription(copy.statusDescription))
-	.addSubcommand((sub) =>
-		sub
-			.setName("toggle")
-			.setDescription(copy.toggleDescription)
-			.addBooleanOption((option) => option.setName("enabled").setDescription(copy.toggleOption).setRequired(true))
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("grant")
-			.setDescription(copy.grantDescription)
-			.addUserOption((option) => option.setName("user").setDescription(copy.grantUserOption).setRequired(true))
-			.addIntegerOption((option) =>
-				option.setName("amount").setDescription(copy.grantAmountOption).setRequired(true).setMinValue(1).setMaxValue(ECONOMY.MAX_GRANT_CHIPS)
-			)
-	);
+/** The /arcade chips group's three subcommands. */
+export function addChipSubcommands(group: SlashCommandSubcommandGroupBuilder): SlashCommandSubcommandGroupBuilder {
+	return group
+		.addSubcommand((sub) => sub.setName("status").setDescription(copy.statusDescription))
+		.addSubcommand((sub) =>
+			sub
+				.setName("toggle")
+				.setDescription(copy.toggleDescription)
+				.addBooleanOption((option) => option.setName("enabled").setDescription(copy.toggleOption).setRequired(true))
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("grant")
+				.setDescription(copy.grantDescription)
+				.addUserOption((option) => option.setName("user").setDescription(copy.grantUserOption).setRequired(true))
+				.addIntegerOption((option) =>
+					option.setName("amount").setDescription(copy.grantAmountOption).setRequired(true).setMinValue(1).setMaxValue(ECONOMY.MAX_GRANT_CHIPS)
+				)
+		);
+}
 
 const reply = (interaction: RepliableInteraction, body: string) =>
 	interaction.reply({ embeds: [infoEmbed(copy.title, body, COLORS.ADMIN as ColorResolvable)], ...PRIVATE });
@@ -75,8 +77,8 @@ async function toggle(interaction: RepliableInteraction, guildId: string, curren
 	await reply(interaction, copy.toggled(wanted));
 }
 
-/** The one handler the slash command and the admin guide's /economy button share. */
-export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
+/** Runs one /arcade chips subcommand, for the slash command and the admin guide alike. */
+export async function runChipSubcommand(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	// ①
 	const guildId = interaction.guildId;
 	if (!guildId) {
@@ -109,11 +111,7 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 		}
 		await status(interaction, guildId, on);
 	} catch (error) {
-		console.error(`[economy] /economy failed guild=${guildId}`, error);
+		console.error(`[arcade chips] /arcade chips failed guild=${guildId}`, error);
 		await interaction.reply({ embeds: [errorEmbed(copy.failed)], ...PRIVATE }).catch(() => undefined);
 	}
-}
-
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-	await run(interaction, interaction.options);
 }

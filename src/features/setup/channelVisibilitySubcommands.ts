@@ -1,10 +1,10 @@
 import {
-	SlashCommandBuilder,
 	TextChannel,
 	EmbedBuilder,
 	type AutocompleteInteraction,
-	type ChatInputCommandInteraction,
+	type Guild,
 	type RepliableInteraction,
+	type SlashCommandSubcommandGroupBuilder,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { COLORS } from "@base/copy/brand.js";
@@ -14,10 +14,12 @@ import { creatorId } from "@utils/config.js";
 import { addRenameChannelOptions, renameChannel, renameSlotChoices } from "@features/setup/renameChannel.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
-import type { CommandOptionReader, FormChoicesProvider, OptionChoice } from "@handlers/commandOptions.js";
+import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
 
-/* /channels, v1.5.1 visibility-toggle command, and since 2026-10 item 245
-   Phase 4b the home of rename too (the old /rename-channel).
+/* /server channels: the homebase visibility toggles and rename, as one
+   subcommand group that commands/admin/server.ts adds to /server and
+   dispatches here. This module exports no `data` or `execute`, so neither
+   command loader registers it.
    Three subcommands let admins hide or show the member-facing homebase
    channels without deleting them. Hiding applies @everyone deny
    ViewChannel; showing clears the deny. Channels always exist and
@@ -26,14 +28,13 @@ import type { CommandOptionReader, FormChoicesProvider, OptionChoice } from "@ha
    handler lives in features/setup/renameChannel.ts.
 
    ⚠️ TWO GATES, ON PURPOSE. hide, show and list are server owner only
-   (the inline check in run), as they always were. rename keeps the gate
-   it had as /rename-channel: the admin role passes, through
-   BOT_CONSTANTS.ADMIN_COMMANDS alone. run dispatches rename BEFORE the
-   owner check so the merge changed neither command's audience.
+   (the inline check in runChannelsSubcommand). rename lets the admin role
+   pass, through /server in BOT_CONSTANTS.ADMIN_COMMANDS alone, so it is
+   dispatched BEFORE the owner check.
 
-   Autocomplete is dynamic per subcommand: /channels hide suggests only
-   currently-VISIBLE channels (the ones the admin can actually hide);
-   /channels show suggests only currently-HIDDEN channels. Avoids the
+   Autocomplete is dynamic per subcommand: /server channels hide suggests
+   only currently-VISIBLE channels (the ones the admin can actually hide);
+   /server channels show suggests only currently-HIDDEN channels. Avoids the
    UX trap where a static dropdown lets the admin pick a channel that
    is already in the desired state and the command silently no-ops. */
 
@@ -64,33 +65,34 @@ export const HIDEABLE_CHANNELS = [
 type HideableField = (typeof HIDEABLE_CHANNELS)[number]["value"];
 type GuildConfigDoc = NonNullable<Awaited<ReturnType<typeof guildConfigStore.findByGuildId>>>;
 
-export const data = new SlashCommandBuilder()
-	.setName("channels")
-	.setDescription("Hide or show homebase channels for members")
-	.addSubcommand((sub) =>
-		sub
-			.setName("hide")
-			.setDescription("Hide a channel from members (bot still posts in the background)")
-			.addStringOption((opt) =>
-				opt.setName("channel").setDescription("Which channel to hide").setRequired(true).setAutocomplete(true)
-			)
-	)
-	.addSubcommand((sub) =>
-		sub
-			.setName("show")
-			.setDescription("Make a hidden channel visible to members again")
-			.addStringOption((opt) =>
-				opt.setName("channel").setDescription("Which channel to show").setRequired(true).setAutocomplete(true)
-			)
-	)
-	.addSubcommand((sub) => sub.setName("list").setDescription("Show current visibility state of all hideable channels"))
-	.addSubcommand((sub) =>
-		addRenameChannelOptions(sub.setName("rename").setDescription("Rename a bot-managed channel so the new name persists across rebuilds"))
-	);
+/** The /server channels group's four subcommands. */
+export function addChannelsSubcommands(group: SlashCommandSubcommandGroupBuilder): SlashCommandSubcommandGroupBuilder {
+	return group
+		.addSubcommand((sub) =>
+			sub
+				.setName("hide")
+				.setDescription("Hide a channel from members (bot still posts in the background)")
+				.addStringOption((opt) =>
+					opt.setName("channel").setDescription("Which channel to hide").setRequired(true).setAutocomplete(true)
+				)
+		)
+		.addSubcommand((sub) =>
+			sub
+				.setName("show")
+				.setDescription("Make a hidden channel visible to members again")
+				.addStringOption((opt) =>
+					opt.setName("channel").setDescription("Which channel to show").setRequired(true).setAutocomplete(true)
+				)
+		)
+		.addSubcommand((sub) => sub.setName("list").setDescription("Show current visibility state of all hideable channels"))
+		.addSubcommand((sub) =>
+			addRenameChannelOptions(sub.setName("rename").setDescription("Rename a bot-managed channel so the new name persists across rebuilds"))
+		);
+}
 
 /* Visibility choices. Return only the channel-kinds that make sense for
    the operation: hide suggests visible channels, show suggests hidden
-   channels. Empty list on degenerate cases (eg /channels show when
+   channels. Empty list on degenerate cases (eg /server channels show when
    nothing is hidden) so Discord shows "no options match" rather than
    misleading suggestions. */
 async function visibilityChoices(guildId: string, subcommand: "hide" | "show"): Promise<OptionChoice[]> {
@@ -110,7 +112,7 @@ export interface HideableChannelState {
 
 /**
  * The hideable channels provisioned in this guild, with their visibility. Read by the
- * hide and show picks above and by the /channels settings panel (post-launch plan
+ * hide and show picks above and by the /server channels settings panel (post-launch plan
  * item 9). A channel not provisioned yet is left out: hiding it would fail anyway.
  */
 export function hideableChannelStates(config: GuildConfigDoc): HideableChannelState[] {
@@ -127,19 +129,20 @@ export function canChangeVisibility(userId: string, guildOwnerId: string | undef
    admin form alike: rename's slot lists the configured channel slots, hide
    and show's channel lists the hideable channels in the right state. list
    takes no option, so it answers nothing. */
-async function choicesFor(guild: RepliableInteraction["guild"], subcommand: string): Promise<OptionChoice[]> {
+async function choicesFor(guild: Guild | null, subcommand: string): Promise<OptionChoice[]> {
 	if (!guild) return [];
 	if (subcommand === "rename") return renameSlotChoices(guild);
 	if (subcommand === "hide" || subcommand === "show") return visibilityChoices(guild.id, subcommand);
 	return [];
 }
 
-export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
+/** The /server channels autocomplete: the leaf's own picks. */
+export async function channelsAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
 	await interaction.respond(await choicesFor(interaction.guild, interaction.options.getSubcommand()));
 }
 
-/** The one handler the slash command and the admin guide's /channels button share. */
-export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
+/** Runs one /server channels subcommand, for the slash command and the admin guide alike. */
+export async function runChannelsSubcommand(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	// rename keeps /rename-channel's admin gate, so it leaves before the owner
 	// check below (see the TWO GATES note at the top of this file).
 	const subcommand = options.getSubcommand();
@@ -176,10 +179,6 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 	}
 }
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-	await run(interaction, interaction.options);
-}
-
 /* Resolve a HideableField to the actual Discord channel id stored in
    GuildConfig. Switch statement instead of dynamic indexing because
    Mongoose Document types do not expose a string index signature. */
@@ -204,7 +203,7 @@ function resolveChannelId(config: GuildConfigDoc, field: HideableField): string 
 		// ⚠️ A CASE MISSING HERE IS SILENT. The switch has no default, so an
 		// unhandled field leaves `value` undefined, this returns null, and the
 		// autocomplete filter above drops the channel entirely: the option simply
-		// never appears and /channels hide quietly does not support it. Adding to
+		// never appears and /server channels hide quietly does not support it. Adding to
 		// HIDEABLE_CHANNELS without adding here looks like it works and does not.
 		case "arcadeRulesChannelId":
 			value = (config as unknown as Record<string, string | null | undefined>).arcadeRulesChannelId;
@@ -241,7 +240,7 @@ async function handleHide(interaction: RepliableInteraction, options: CommandOpt
 	const hidden = new Set(config.hiddenChannels ?? []);
 	if (hidden.has(field)) {
 		await interaction.reply({
-			embeds: [errorEmbed(`**${displayName}** is already hidden. Use /channels show ${field} to make it visible.`)],
+			embeds: [errorEmbed(`**${displayName}** is already hidden. Use /server channels show ${field} to make it visible.`)],
 			ephemeral: true,
 		});
 		return;
@@ -268,7 +267,7 @@ async function handleHide(interaction: RepliableInteraction, options: CommandOpt
 	try {
 		await channel.permissionOverwrites.edit(interaction.guild!.roles.everyone.id, { ViewChannel: false });
 	} catch (error) {
-		console.error(`[/channels hide] failed to apply overwrite`, error);
+		console.error(`[/server channels hide] failed to apply overwrite`, error);
 		await interaction.reply({ embeds: [errorEmbed("Failed to update channel permissions.")], ephemeral: true });
 		return;
 	}
@@ -281,7 +280,7 @@ async function handleHide(interaction: RepliableInteraction, options: CommandOpt
 		embeds: [
 			infoEmbed(
 				`Channel hidden`,
-				`Hid <#${channelId}> (${displayName}) from members. The bot still posts there in the background. Run /channels show to make it visible again.`,
+				`Hid <#${channelId}> (${displayName}) from members. The bot still posts there in the background. Run /server channels show to make it visible again.`,
 				COLORS.ARRIVAL
 			),
 		],
@@ -306,7 +305,7 @@ async function handleShow(interaction: RepliableInteraction, options: CommandOpt
 	const hidden = new Set(config.hiddenChannels ?? []);
 	if (!hidden.has(field)) {
 		await interaction.reply({
-			embeds: [errorEmbed(`**${displayName}** is already visible. Use /channels hide ${field} to hide it.`)],
+			embeds: [errorEmbed(`**${displayName}** is already visible. Use /server channels hide ${field} to hide it.`)],
 			ephemeral: true,
 		});
 		return;
@@ -338,7 +337,7 @@ async function handleShow(interaction: RepliableInteraction, options: CommandOpt
 	try {
 		await channel.permissionOverwrites.edit(interaction.guild!.roles.everyone.id, { ViewChannel: true });
 	} catch (error) {
-		console.error(`[/channels show] failed to clear overwrite`, error);
+		console.error(`[/server channels show] failed to clear overwrite`, error);
 		await interaction.reply({ embeds: [errorEmbed("Failed to update channel permissions.")], ephemeral: true });
 		return;
 	}
@@ -377,8 +376,11 @@ async function handleList(interaction: RepliableInteraction, config: GuildConfig
 	await interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
-/** The admin form's pickers read the same lists the autocomplete answers with. */
-export const formChoices: FormChoicesProvider = async (guild, leafPath, optionName) => {
-	if (leafPath === "rename") return optionName === "slot" ? renameSlotChoices(guild) : null;
-	return optionName === "channel" ? choicesFor(guild, leafPath) : null;
-};
+/**
+ * The admin form's pickers, which read the same lists the autocomplete answers with.
+ * `subcommand` is the leaf inside the channels group ("hide", "rename").
+ */
+export async function channelsFormChoices(guild: Guild, subcommand: string, optionName: string): Promise<OptionChoice[] | null> {
+	if (subcommand === "rename") return optionName === "slot" ? renameSlotChoices(guild) : null;
+	return optionName === "channel" ? choicesFor(guild, subcommand) : null;
+}

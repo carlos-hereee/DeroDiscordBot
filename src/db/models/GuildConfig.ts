@@ -171,7 +171,7 @@ const guildConfigSchema = new Schema(
 		// What:  every per-guild knob of the leveling system. The numbers an
 		//        OPERATOR would turn (flush intervals, xp amounts per game) live in
 		//        BOT_CONSTANTS.LEVELING instead; what lives here is what an ADMIN
-		//        configures through /setup-level-system.
+		//        configures through /leveling settings.
 		// Who:   messageXp, reactionXp and voiceXp (the earn rules), awardXp (the
 		//        curve), levelUpAnnouncer (where and how loudly), roleRewards.
 		// When:  read from a TTL cache on the message path, so this subtree is hit
@@ -194,7 +194,7 @@ const guildConfigSchema = new Schema(
 				// announcements channel every set up guild already has, restrictions
 				// exclude nothing by default so nothing silently earns zero, and the
 				// first level up in a guild posts a one time notice to the admin
-				// channel naming /setup-level-system and how to turn this off.
+				// channel naming /leveling settings and how to turn this off.
 				enabled: { type: Boolean, required: false, default: true },
 
 				// The xp curve. "dero" is 3n^2 + 47n + 101, all three coefficients
@@ -334,19 +334,19 @@ const guildConfigSchema = new Schema(
 		//        announcementType "kvk" inherit this value at the events
 		//        route, so admins never type the same date twice.
 		// Who:   written by GuildEventManager.configureKvKSeason when the
-		//        owner runs /configure-kvk-season. Read by the events route
+		//        owner runs /events kvk-season. Read by the events route
 		//        when a new event opts into KvK mode, and by the dashboard
 		//        health endpoint so the EventCreatePage can disable the
 		//        KvK toggle when no season is configured yet.
-		// When:  written once per season at /configure-kvk-season time.
+		// When:  written once per season at /events kvk-season time.
 		//        Cleared (back to null) when ReminderScheduler.announceSeasonEnd
 		//        flips the last KvK event inactive, but ONLY if no other
 		//        active KvK events still reference a future date. For v1
-		//        we leave the cleanup to the next /configure-kvk-season run
+		//        we leave the cleanup to the next /events kvk-season run
 		//        which overwrites the field; this avoids a multi guild race
 		//        where season end rolls over while events are still firing.
 		// Where: nullable so legacy guilds (any guild that has not run
-		//        /configure-kvk-season since this field was added) load
+		//        /events kvk-season since this field was added) load
 		//        cleanly. The dashboard treats null as "no active season"
 		//        and disables the KvK toggle on the event create form.
 		// How:   stored as a Date object so the date math at the events
@@ -532,7 +532,7 @@ const guildConfigSchema = new Schema(
 		//        want the bot reconstituting them. Asked for in 2026-05-11
 		//        streamer feedback.
 		// When:  read by ChannelDeleteWatcher and by GuildSetupManager.autoSetup
-		//        before the repair sweep. Toggled by /configure auto-heal.
+		//        before the repair sweep. Toggled by /server auto-heal.
 		// Where: nullable so legacy rows load cleanly. Default true preserves
 		//        existing behavior, no data migration needed.
 		// How:   plain Boolean. Schema bumps for additional repair-related
@@ -540,18 +540,18 @@ const guildConfigSchema = new Schema(
 		autoHealEnabled: { type: Boolean, required: false, default: true },
 
 		// ── custom channel names (streamer feedback 2026-05-11) ───────────
-		// What:  per-slot custom name overrides set by /channels rename.
+		// What:  per-slot custom name overrides set by /server channels rename.
 		//        Keyed by configField name (e.g., "leaderboardChannelId")
 		//        with the value being the admin's chosen channel name.
 		//        repairOneChannel reads this map before falling back to
 		//        spec.displayName so a rebuild after channel deletion
 		//        preserves whatever name the admin had chosen.
-		// Who:   written by /channels rename slash command (renames the
+		// Who:   written by /server channels rename slash command (renames the
 		//        live Discord channel AND persists the override here).
 		//        Read by GuildSetupManager.repairOneChannel and by any
 		//        future rebuild path that builds a channel from a spec.
-		// When:  written on every /channels rename invocation. Read at
-		//        rebuild time. Cleared by /channels rename if the admin
+		// When:  written on every /server channels rename invocation. Read at
+		//        rebuild time. Cleared by /server channels rename if the admin
 		//        sets the name back to the pack default (which is the
 		//        existing spec.displayName).
 		// Where: a Mongoose Map so adding a new slot in the future is a
@@ -580,7 +580,7 @@ const guildConfigSchema = new Schema(
 		// Who:   written by the per-channel deletion handlers (today only
 		//        leaderboardChannelHandlers.ts; future channel-lifecycle
 		//        work will add more). Cleared by the corresponding
-		//        toggle-back-on path on the related /configure-* command
+		//        toggle-back-on path of the related /server subcommand
 		//        so the channel rebuilds on the next sweep.
 		// When:  pushed when the admin clicks "Remove <channel>" on the
 		//        slash command's follow-up button. Pulled when the admin
@@ -604,7 +604,7 @@ const guildConfigSchema = new Schema(
 		// Who:   streamers who do not want participation tracked, or who want
 		//        to pause tracking during a hiatus without losing prior data.
 		// When:  read at the top of every MessageReactionAdd and voiceStateUpdate
-		//        handler in ActivityTracker. Toggled by /configure leaderboard-tracking.
+		//        handler in ActivityTracker. Toggled by /server leaderboard tracking.
 		// Where: same row as autoHealEnabled. Both are global per-guild
 		//        switches, not per-event or per-channel.
 		// How:   plain Boolean. Hide-history-on-disable was rejected as MVP
@@ -761,7 +761,7 @@ const guildConfigSchema = new Schema(
 		// What:  whether last month's arcade post (top winning Hold'em hands, the
 		//        top rated player per rated game, the luckiest player) goes to this
 		//        server's leaderboard channel on the 1st.
-		// Who:   written by /dero-config arcade monthly-post; read by
+		// Who:   written by /arcade monthly-post; read by
 		//        features/ratings/monthlyArcadePost.ts at post time.
 		// When:  read once a month per guild.
 		// How:   default TRUE, an owner decision, so every legacy row is opted in
@@ -773,7 +773,7 @@ const guildConfigSchema = new Schema(
 		//        allows invite rooms only, "server" adds public rooms, "network"
 		//        is stored now for Phase 5's network tables and reads like
 		//        "server" until they exist.
-		// Who:   written by /dero-config arcade reach; read by the challenge
+		// Who:   written by /arcade reach; read by the challenge
 		//        card (which choices it offers) and by every room open through
 		//        RoomProvisioner.checkRoomAdmission (the refusal that counts).
 		// When:  read on every visibility choice and every room open.
@@ -786,8 +786,8 @@ const guildConfigSchema = new Schema(
 		//        tables are not listed here, and their members cannot sit at this
 		//        server's tables), and the network board message in this server's
 		//        challenges channel.
-		// Who:   blockedNetworkGuildIds is written by /dero-config arcade
-		//        block-server and unblock-server and read by the network board and
+		// Who:   blockedNetworkGuildIds is written by /arcade server
+		//        block and unblock and read by the network board and
 		//        every remote join (game-rooms/networkJoin.ts). networkBoardMessageId
 		//        is written and read only by game-rooms/networkBoard.ts.
 		// How:   an empty list and null by default, so every legacy row blocks nobody
@@ -801,10 +801,10 @@ const guildConfigSchema = new Schema(
 		// What:  chipEconomyEnabled is whether members claim chips and buy into Hold'em
 		//        with them (off, a table deals the free stack it always did);
 		//        botOpponentsEnabled is whether a host may fill seats with Dero bots.
-		// Who:   chipEconomyEnabled is written by /economy toggle and read by /claim,
+		// Who:   chipEconomyEnabled is written by /arcade chips toggle and read by /claim,
 		//        the /account chips line and the Hold'em table at open
-		//        (features/economy/). botOpponentsEnabled is written by /dero-config
-		//        arcade bots and read by the challenge card's Play vs bots button
+		//        (features/economy/). botOpponentsEnabled is written by /arcade
+		//        bots and read by the challenge card's Play vs bots button
 		//        (features/game-rooms/botSeat.ts), on the card and again on the press.
 		// How:   both default TRUE, the plan's owner decision, so every legacy row is on
 		//        with no backfill and an admin who wants neither turns it off.

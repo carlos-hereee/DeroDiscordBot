@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 
 // ── NetworkBan ──
 // The platform owner's network bans (2026-10 item 244 Phase 5b): a member, or a whole
-// server, kept off every network table. Written only by the owner's /network command
+// server, kept off every network table. Written only by the owner's /platform network command
 // through networkBanStore; read by the network board (a banned host or server is not
 // listed) and by every remote join (a banned member, the server they click from, or
 // the hosting server refuses the seat). A ban placed while its target already sits at a

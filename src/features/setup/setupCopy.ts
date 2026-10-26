@@ -7,7 +7,7 @@ import type { AdminLogKind } from "./adminLog.js";
 // the kingdom voice and the streamer voice, so a two-pack split would double the
 // authoring for content that comes out the same twice.
 // Who:   adminLog (the audit line), selfDestruct (the reset prompt, the CONFIRM
-//        modal and every reply) and /dero-config's arcade off and on.
+//        modal and every reply) and /arcade off and on.
 //
 // House rule for every string below: no dashes in user-facing copy.
 
@@ -48,16 +48,48 @@ export interface AdminLogLineInput {
 	detail?: string;
 }
 
+// The field names of an audit embed: who acted, what it was about, what changed.
+const ADMIN_LOG_FIELD_NAMES = {
+	actor: "By",
+	subject: "What",
+	detail: "Change",
+} as const;
+
+/** One field of an audit embed. */
+export interface AdminLogEmbedField {
+	name: string;
+	value: string;
+}
+
+/** The words of one audit embed, without its color or time. */
+export interface AdminLogEmbedParts {
+	title: string;
+	fields: AdminLogEmbedField[];
+}
+
 export const setupCopy = {
 	adminLog: {
 		label: (kind: AdminLogKind): string => ADMIN_LOG_LABELS[kind],
 		actorDashboard: "the dashboard",
 		actorDero: "Dero",
-		/** One audit line: when, what, who, then the subject and detail when there are any. */
+		/** One audit line: when, what, who, then the subject and detail when there are any. The embed's fallback. */
 		line: ({ kind, atSeconds, actor, subject, detail }: AdminLogLineInput): string =>
 			[`<t:${atSeconds}:f>`, `**${ADMIN_LOG_LABELS[kind]}**`, `by ${actor}`, subject ? clip(subject) : null, detail ? clip(detail) : null]
 				.filter((part): part is string => part !== null)
 				.join(" · "),
+		/**
+		 * The words of one audit embed: the same label and the same clipped parts the
+		 * line uses, so the embed and its text fallback cannot say different things. An
+		 * empty subject or detail has no field. adminLog.ts adds the color and the time.
+		 */
+		embedParts: ({ kind, actor, subject, detail }: AdminLogLineInput): AdminLogEmbedParts => ({
+			title: ADMIN_LOG_LABELS[kind],
+			fields: ([
+				{ name: ADMIN_LOG_FIELD_NAMES.actor, value: actor },
+				subject ? { name: ADMIN_LOG_FIELD_NAMES.subject, value: clip(subject) } : null,
+				detail ? { name: ADMIN_LOG_FIELD_NAMES.detail, value: clip(detail) } : null,
+			] as Array<AdminLogEmbedField | null>).filter((field): field is AdminLogEmbedField => field !== null),
+		}),
 		// Subjects and details the setting writers pass, so every caller names a
 		// setting the same way in the log.
 		subjects: {
@@ -78,7 +110,7 @@ export const setupCopy = {
 			onboarding: "Discord Onboarding",
 			refreshStandings: "standings refreshed",
 			postHangman: "hangman round posted",
-			// /channels hide and show, and /setup-level-system (post-launch plan item 9).
+			// /server channels hide and show, and /leveling settings (post-launch plan item 9).
 			channelVisibility: (channelName: string): string => `${channelName} channel`,
 			leveling: (setting: string): string => `leveling ${setting}`,
 		},
@@ -165,13 +197,13 @@ export const setupCopy = {
 
 	arcade: {
 		offTitle: "🎮 Arcade off",
-		offBody: "The 🎮 ARCADE GAMES category and every channel in it are deleted, matches in progress included. It stays off across restarts until `/dero-config arcade on`.",
-		alreadyOff: "The arcade is already off. `/dero-config arcade on` brings it back.",
+		offBody: "The 🎮 ARCADE GAMES category and every channel in it are deleted, matches in progress included. It stays off across restarts until `/arcade on`.",
+		alreadyOff: "The arcade is already off. `/arcade on` brings it back.",
 		offFailed: "Turning the arcade off failed before anything was deleted. Try again in a moment.",
 		onTitle: "🎮 Arcade on",
 		onBody: "The 🎮 ARCADE GAMES category and its channels are back.",
 		onPending:
-			"The arcade is switched back on, but its channels could not all be built just now. If auto heal is off, `/configure` turns it back on; otherwise the next restart finishes them.",
+			"The arcade is switched back on, but its channels could not all be built just now. If auto heal is off, `/server auto-heal` turns it back on; otherwise the next restart finishes them.",
 		offDescription: "Delete the arcade category and every channel in it, matches included",
 		onDescription: "Bring the arcade category and its channels back",
 		alreadyOn: "The arcade is already on.",

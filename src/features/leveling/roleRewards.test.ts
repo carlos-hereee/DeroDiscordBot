@@ -54,7 +54,7 @@ describe("computeDesiredRoles", () => {
 	});
 
 	it("drops a reward role the member holds but no longer qualifies for", () => {
-		// Reachable through /xp set-level downward, and through an admin lowering a
+		// Reachable through /leveling xp set-level downward, and through an admin lowering a
 		// reward's level.
 		const { desired } = computeDesiredRoles(["role-gold", "role-member"], REWARDS, 5, true);
 		expect(desired.sort()).toEqual(["role-bronze", "role-member"]);

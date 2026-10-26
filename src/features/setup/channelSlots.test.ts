@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { GuildSetupManager } from "@features/setup/GuildSetupManager.js";
-import { HIDEABLE_CHANNELS } from "./channels.js";
+import { HIDEABLE_CHANNELS } from "./channelVisibilitySubcommands.js";
 import { SLOT_LABELS } from "@features/setup/renameChannel.js";
 
 // ── the two admin slot lists ───────────────────────────────────────────────

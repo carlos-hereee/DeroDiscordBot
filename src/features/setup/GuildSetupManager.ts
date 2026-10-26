@@ -553,7 +553,7 @@ export class GuildSetupManager {
 		// authored by a different bot). "unknown" (missing/deleted anchor) falls
 		// through to repair-in-place: rebuilding there would duplicate our OWN
 		// homebase on a benign missing schedule message, and clobber any
-		// /channels rename names (the rebuild path uses pack defaults). The schedule
+		// /server channels rename names (the rebuild path uses pack defaults). The schedule
 		// board reposts its missing message on the next refresh.
 		if (ownership === "foreign") {
 			console.warn(LOG_MESSAGES.setup.homebaseNotOwned(guild.id));
@@ -1354,7 +1354,7 @@ export class GuildSetupManager {
 		return channel ? { channel, inPlace: false } : null;
 	}
 
-	// The name a slot's channel carries: the /channels rename override when one is set,
+	// The name a slot's channel carries: the /server channels rename override when one is set,
 	// else the spec's default. Excluded from adoption alongside the default, so Dero
 	// never adopts its own renamed channel as if the server had made it.
 	private static effectiveChannelName(stored: Record<string, unknown> | null, spec: (typeof GuildSetupManager.CHANNEL_SPECS)[number]): string {
@@ -1364,7 +1364,7 @@ export class GuildSetupManager {
 	}
 
 	// One admin log line per adoption (plan risk R4: the decision is logged so an admin
-	// who disagrees can see it and pick another channel with /channels). Dero is the
+	// who disagrees can see it and pick another channel with /server channels). Dero is the
 	// actor: no member pressed anything. Fire and forget, like every admin log line.
 	private static logAdoption(guild: Guild, field: string, channelId: string): void {
 		const subject = field === "welcomeChannelId" ? setupCopy.adminLog.subjects.welcomeLog : setupCopy.adminLog.subjects.rulesChannel;
@@ -1484,7 +1484,7 @@ export class GuildSetupManager {
 		// How:   find by case-sensitive name match + TextChannel
 		//        instance check. Fall through to buildSingleChannel only
 		//        when no existing channel qualifies.
-		// Read the per-slot custom-name override (set by /channels rename)
+		// Read the per-slot custom-name override (set by /server channels rename)
 		// before falling back to spec.displayName. This is the rule the
 		// streamer-feedback announcement promises: admin renames persist
 		// across rebuilds. The Mongoose Map can be either a true Map (when
@@ -1719,7 +1719,7 @@ export class GuildSetupManager {
 			}
 			if (wouldRepairCount > 0) {
 				console.log(
-					`[auto-heal] skipped repair of ${wouldRepairCount} channel(s) in guild ${guild.id} because autoHealEnabled is false; run /configure auto-heal enabled:True to resume.`
+					`[auto-heal] skipped repair of ${wouldRepairCount} channel(s) in guild ${guild.id} because autoHealEnabled is false; run /server auto-heal enabled:True to resume.`
 				);
 			}
 			return [];
@@ -1748,7 +1748,7 @@ export class GuildSetupManager {
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 			// Honor per-channel user removal. If the admin removed this slot,
 			// skip it regardless of autoHealEnabled. The slot returns when the
-			// related toggle (eg /configure leaderboard-tracking enabled:True)
+			// related toggle (eg /server leaderboard tracking enabled:True)
 			// pulls the configField name back out of userRemovedChannels.
 			if (userRemovedSlots.includes(spec.configField)) {
 				console.log(
@@ -1830,7 +1830,7 @@ export class GuildSetupManager {
 				// the new channel which is exactly where we want the notice.
 				stored = result.stored as typeof stored;
 				// Audit notice uses the EFFECTIVE channel name (override if
-				// set via /channels rename, otherwise spec default). Without
+				// set via /server channels rename, otherwise spec default). Without
 				// this, "homebase-leaderboard rebuilt" would post in admin
 				// after the rebuild even though the live channel is named
 				// "stream-rankings" per the persisted override.
@@ -1863,10 +1863,10 @@ export class GuildSetupManager {
 	// Who:   every setup-complete guild on every boot (main.ts ready loop).
 	// When:  skipped for guilds that disabled auto-heal (autoHealEnabled === false
 	//        means "do not manage my homebase", same opt-out as the rebuild sweep).
-	//        A channel with a /channels rename override keeps that override (expected
+	//        A channel with a /server channels rename override keeps that override (expected
 	//        = the override, normally already its live name); a channel with NO
 	//        override is renamed to the current pack default. So the only way to
-	//        keep an old custom name is to have set it via /channels rename.
+	//        keep an old custom name is to have set it via /server channels rename.
 	// How:   expected = override || spec.displayName; rename only when the live name
 	//        differs, so steady state is one fetch per channel and zero API writes.
 	//        Discord rate-limits renames (2 / 10 min / channel), but a drift rename
@@ -1886,7 +1886,7 @@ export class GuildSetupManager {
 			if (!storedId) continue;
 			// An adopted channel keeps the name its server gave it (2026-10 item 247
 			// Phase 2): renaming the owner's #rules to 📘rules on every boot would be
-			// Dero overwriting the owner's choice. /channels rename still works on it.
+			// Dero overwriting the owner's choice. /server channels rename still works on it.
 			if (adoptedIds.includes(storedId)) continue;
 			const channel = await client.channels.fetch(storedId).catch(() => null);
 			// Both kinds rename the same way; the voice rooms are the only managed
@@ -2036,7 +2036,7 @@ export class GuildSetupManager {
 	// Treating "unknown" as "rebuild" was the auto-heal duplicate-homebase bug: a
 	// benign missing/deleted schedule message looked identical to a foreign one,
 	// so a deleted pinned message triggered a full rebuild (new duplicate category
-	// + fresh channels, losing /channels rename overrides). A missing anchor is not
+	// + fresh channels, losing /server channels rename overrides). A missing anchor is not
 	// evidence the homebase is someone else's; ScheduleBoard reposts the message on
 	// its next refresh.
 	static async isHomebaseOwnedByThisBot(

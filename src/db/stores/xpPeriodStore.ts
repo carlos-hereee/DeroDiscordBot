@@ -57,7 +57,7 @@ export const xpPeriodStore = {
 		return rows[0] ?? { activeMembers: 0, totalXp: 0 };
 	},
 
-	// /xp reset-member and reset-server clear a member's period history alongside
+	// /leveling xp reset-member and reset-server clear a member's period history alongside
 	// their lifetime row, so a reset leaves nothing behind on any board.
 	async deleteMember(guildId: string, userId: string) {
 		return XpPeriod.deleteMany({ guildId, userId });

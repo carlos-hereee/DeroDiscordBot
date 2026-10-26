@@ -102,7 +102,7 @@ export const BOT_LOG_EVENTS = {
 	//        in every guild with no opt in. Without it, some admin meets the
 	//        feature for the first time when a member asks them what the new
 	//        messages in #announcements are. With it, they meet it through a
-	//        message that names /setup-level-system and says how to turn it off.
+	//        message that names /leveling settings and says how to turn it off.
 	// How:   a plain per-guild key rather than a prefixed one: unlike the version
 	//        and poll keys there is nothing to namespace, the notice fires once
 	//        per guild for the life of the feature.

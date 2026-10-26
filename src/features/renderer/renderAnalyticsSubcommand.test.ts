@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
+import { MessageFlags, SlashCommandSubcommandBuilder, type ChatInputCommandInteraction } from "discord.js";
 
-// ── /render-analytics ─────────────────────────────────────────────────────
+// ── /platform analytics ────────────────────────────────────────────────────
 // Pins the owner gate (2026-10 item 244): the rows are platform wide, so only
 // CREATOR_DISCORD_ID may read them and an unset id refuses everyone; every reply
-// is ephemeral; the period defaults to this month; and the command stays out of
+// is ephemeral; the period defaults to this month; and /platform stays out of
 // BOT_CONSTANTS.ADMIN_COMMANDS, whose gate needs a /setup config the owner may
 // not have in the server they run it from.
 
@@ -23,7 +23,7 @@ vi.mock("@features/renderer/renderAnalytics.js", () => ({
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { buildRenderAnalyticsReport, type RenderAnalyticsReport } from "@features/renderer/renderAnalytics.js";
-import { data, execute, formatRenderAnalyticsReport, RENDER_ANALYTICS_SUBCOMMANDS } from "./render-analytics.js";
+import { addRenderAnalyticsOptions, formatRenderAnalyticsReport, runRenderAnalyticsSubcommand } from "./renderAnalyticsSubcommand.js";
 
 const buildMock = vi.mocked(buildRenderAnalyticsReport);
 
@@ -52,7 +52,6 @@ function fakeInteraction(userId: string, options: { period?: string; surface?: s
 	const interaction = {
 		user: { id: userId },
 		options: {
-			getSubcommand: () => "top10",
 			getString: (name: string) => (name === "period" ? options.period ?? null : options.surface ?? null),
 		},
 		reply,
@@ -68,11 +67,11 @@ beforeEach(() => {
 	buildMock.mockResolvedValue(EMPTY_REPORT);
 });
 
-describe("/render-analytics owner gate", () => {
+describe("/platform analytics owner gate", () => {
 	it("refuses a member who is not the platform owner, ephemerally, without reading anything", async () => {
 		const { interaction, reply } = fakeInteraction("123");
 
-		await execute(interaction);
+		await runRenderAnalyticsSubcommand(interaction);
 
 		expect(reply).toHaveBeenCalledWith(expect.objectContaining({ flags: MessageFlags.Ephemeral }));
 		expect(buildMock).not.toHaveBeenCalled();
@@ -82,7 +81,7 @@ describe("/render-analytics owner gate", () => {
 		owner.id = "";
 		const { interaction, reply } = fakeInteraction("");
 
-		await execute(interaction);
+		await runRenderAnalyticsSubcommand(interaction);
 
 		expect(reply).toHaveBeenCalledWith(expect.objectContaining({ flags: MessageFlags.Ephemeral }));
 		expect(buildMock).not.toHaveBeenCalled();
@@ -91,7 +90,7 @@ describe("/render-analytics owner gate", () => {
 	it("answers the owner ephemerally, defaulting the period to this month", async () => {
 		const { interaction, deferReply, editReply } = fakeInteraction(owner.id);
 
-		await execute(interaction);
+		await runRenderAnalyticsSubcommand(interaction);
 
 		expect(deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
 		expect(buildMock).toHaveBeenCalledWith({ period: "this-month", surface: null });
@@ -101,7 +100,7 @@ describe("/render-analytics owner gate", () => {
 	it("passes a chosen period and surface through", async () => {
 		const { interaction } = fakeInteraction(owner.id, { period: "all-time", surface: " Hangman " });
 
-		await execute(interaction);
+		await runRenderAnalyticsSubcommand(interaction);
 
 		expect(buildMock).toHaveBeenCalledWith({ period: "all-time", surface: "hangman" });
 	});
@@ -111,28 +110,32 @@ describe("/render-analytics owner gate", () => {
 		buildMock.mockRejectedValueOnce(new Error("Atlas down"));
 		const { interaction, deferReply, editReply } = fakeInteraction(owner.id);
 
-		await execute(interaction);
+		await runRenderAnalyticsSubcommand(interaction);
 
 		expect(deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
 		expect(editReply).toHaveBeenCalledTimes(1);
 	});
 });
 
-describe("/render-analytics builder", () => {
-	// No Discord default: the platform owner check in execute is the whole gate, and the
-	// admin command pin test allows a default only on /setup and /self-destruct.
-	it("declares only top10, with no Discord default permission", () => {
-		const json = data.toJSON() as { default_member_permissions?: string; options?: Array<{ name: string }> };
-		expect((json.options ?? []).map((option) => option.name)).toEqual([...RENDER_ANALYTICS_SUBCOMMANDS]);
-		expect(json.default_member_permissions).toBeUndefined();
+describe("/platform analytics builder", () => {
+	it("takes an optional surface and an optional period with the three fixed choices", () => {
+		const json = addRenderAnalyticsOptions(new SlashCommandSubcommandBuilder().setName("analytics").setDescription("analytics")).toJSON();
+		const options = (json.options ?? []) as Array<{ name: string; required?: boolean; choices?: Array<{ value: string }> }>;
+		expect(options.map((option) => [option.name, Boolean(option.required)])).toEqual([
+			["surface", false],
+			["period", false],
+		]);
+		expect(options[1]?.choices?.map((choice) => choice.value)).toEqual(["this-month", "last-month", "all-time"]);
 	});
 
-	it("is not in BOT_CONSTANTS.ADMIN_COMMANDS", () => {
-		expect(BOT_CONSTANTS.ADMIN_COMMANDS.has("render-analytics")).toBe(false);
+	// The owner check above is the whole gate: the /setup config ADMIN_COMMANDS needs may
+	// not exist in the server the owner runs it from.
+	it("leaves /platform out of BOT_CONSTANTS.ADMIN_COMMANDS", () => {
+		expect(BOT_CONSTANTS.ADMIN_COMMANDS.has("platform")).toBe(false);
 	});
 });
 
-describe("/render-analytics report text", () => {
+describe("/platform analytics report text", () => {
 	it("says so honestly when a surface has no rows in the period", () => {
 		const text = formatRenderAnalyticsReport({ ...EMPTY_REPORT, surface: "hangman" });
 		expect(text).toBe("No rows for hangman in this month.");

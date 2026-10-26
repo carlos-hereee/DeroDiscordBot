@@ -6,7 +6,7 @@ import { serverVaultStore } from "@db/stores/serverVaultStore.js";
 // ── serverVault ──────────────────────────────────────────────────────
 // What:  a server's chip reserve (2026-10 item 250 Phase 5): reading it (created at the
 //        starting balance on first read), and granting from it to a member's wallet.
-// Who:   /economy status and grant (vaultGrant.ts); the monthly award credits it
+// Who:   /arcade chips status and grant (vaultGrant.ts); the monthly award credits it
 //        through vaultTopUp.ts.
 // Does NOT: check who is granting (the ADMIN_COMMANDS gate in main.ts already did), or
 //        write the admin log line (the command does, after the grant landed).

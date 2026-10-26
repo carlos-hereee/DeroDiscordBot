@@ -23,7 +23,7 @@ interface IKvKSeasonInput {
 
 	// What:  optional admin-authored preparation checklist that overrides the
 	//        per-event-type defaults baked into rok-events.json.
-	// Who:   /configure-kvk-season command, populated only when the admin
+	// Who:   /events kvk-season command, populated only when the admin
 	//        picks "Customize" in the post confirmation button flow.
 	// When:  undefined means "use each event type's default prepSteps from
 	//        rok-events.json." A non-empty array means "apply this exact list
@@ -59,7 +59,7 @@ export class GuildEventManager {
 			//        announcementType is "kvk", and by the health endpoint that
 			//        the EventCreatePage hits to enable / disable the KvK
 			//        toggle.
-			// When:  every /configure-kvk-season invocation overwrites this so
+			// When:  every /events kvk-season invocation overwrites this so
 			//        rerunning the slash command rolls the season forward in a
 			//        single transaction with the new event rows below.
 			// Where: GuildConfig is created during /setup (autoSetup), so the
@@ -106,17 +106,17 @@ export class GuildEventManager {
 			//        any currently-active KvK events in this guild whose
 			//        name matches one of the rok-events.json canonical
 			//        names. Without this step, a second run of
-			//        /configure-kvk-season for a new season simply
+			//        /events kvk-season for a new season simply
 			//        accumulates duplicates: the bot then ends up with
 			//        TWO active "Ancient Ruins" documents, fires reminders
 			//        twice per cycle, and the schedule board shows two
 			//        rows that confuse members.
-			// Who:   the admin who re-runs /configure-kvk-season at the
+			// Who:   the admin who re-runs /events kvk-season at the
 			//        start of every new season. Streamer events created
-			//        via /stream setup are NOT touched,
+			//        via /events stream weekly are NOT touched,
 			//        the seasonEnd != null filter excludes them because
 			//        streamer schedules leave seasonEnd null by design.
-			// When:  exactly once per /configure-kvk-season invocation,
+			// When:  exactly once per /events kvk-season invocation,
 			//        before any of the create loops run. Soft-delete is
 			//        idempotent: events already inactive stay inactive
 			//        (the store's update is a no-op on already-flipped

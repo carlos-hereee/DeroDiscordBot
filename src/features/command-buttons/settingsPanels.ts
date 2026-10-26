@@ -8,33 +8,35 @@ import { ratingsCopy } from "@features/ratings/ratingsCopy.js";
 import { economyCopy } from "@features/economy/economyCopy.js";
 import { isChipEconomyOn } from "@features/economy/chipWallet.js";
 import type { OptionChoice } from "@handlers/commandOptions.js";
-import * as channelsCommand from "@commands/admin/channels.js";
-import * as configureCommand from "@commands/admin/configure.js";
+import { canChangeVisibility, hideableChannelStates } from "@features/setup/channelVisibilitySubcommands.js";
 import * as deroConfigCommand from "@commands/admin/dero-config.js";
-import * as economyCommand from "@commands/admin/economy.js";
-import * as levelSystemCommand from "@commands/admin/setup-level-system.js";
+import * as levelingCommand from "@commands/admin/leveling.js";
+import * as serverCommand from "@commands/admin/server.js";
 import { findLeaf, listLeaves, type FormField } from "./commandForm.js";
 import type { FormValue } from "./formOptionReader.js";
 import type { LeafCall, PanelControl, PanelSwitch, PickControl, SettingsPanel } from "./settingsPanel.js";
 import { commandButtonsCopy } from "./commandButtonsCopy.js";
 
 // ── the admin settings panels ────────────────────────────────────────────────
-// What:  what each admin command's settings modal holds (post-launch plan item 9):
-//        /configure, /channels, /dero-config and /setup-level-system, each read from
-//        the server as it stands now.
-// Who:   adminCommandLauncher, when an admin guide button names one of these
-//        commands: the panel opens first, and its saved reply offers the command's
-//        other subcommands.
+// What:  what each admin settings modal holds (post-launch plan item 9), keyed by a
+//        panel id rather than a command name, since /server carries two: server
+//        (auto heal and the leaderboard group), server-channels (the channels group),
+//        leveling (the settings group), dero-config (Dero's voice) and arcade (the
+//        chip switch, the monthly post and bot opponents). Each is read from the
+//        server as it stands now.
+// Who:   adminCommandLauncher, when an admin guide button names one of these panel
+//        ids: the panel opens first, and its saved reply offers the panel's other
+//        leaves of its command.
 // Why these settings and not the plan's lists: the owner's decision (2026-10-25) was
 //        that each modal holds only its command's real switches and choices, while
 //        numbers and lists that need several fields (rates, rewards, renames, the
 //        arcade's reach and block list, arcade on and off) stay on their subcommand
-//        forms. /economy (2026-10 item 250 Phase 5) holds the chip switch; a grant names
-//        a member and an amount, so it stays on its subcommand form like the rest.
-// How:   every control's change is a call to one of the command's own leaves, with
-//        the options its slash command would send, so a panel never writes anything
-//        the command could not. Choices and channel types are read off the command's
-//        own builder, so a panel cannot offer a value the command would refuse.
+//        forms. A chip grant names a member and an amount, so it stays on its form too.
+// How:   every control's change is a call to one of the command's own leaves, by its
+//        full path ("leaderboard tracking"), with the options its slash command would
+//        send, so a panel never writes anything the command could not. Choices and
+//        channel types are read off the command's own builder, so a panel cannot offer
+//        a value the command would refuse.
 
 /** Who opened the panel, and where. */
 export interface PanelContext {
@@ -42,9 +44,13 @@ export interface PanelContext {
 	userId: string;
 }
 
-/** One command's panel: the leaves it holds, and how to read it for a server. */
+/** One settings panel: the command and leaves it holds, and how to read it for a server. */
 export interface PanelDefinition {
-	/** Leaf paths the panel holds; the saved reply offers the command's other leaves. */
+	/** The command whose leaves the panel runs. */
+	command: string;
+	/** The subcommand group the panel belongs to, or null for the whole command. Scopes the pick of its other leaves. */
+	group: string | null;
+	/** Leaf paths the panel holds; the saved reply offers the panel's other leaves. */
 	covered: readonly string[];
 	/** The panel as the server stands now, or null when this member should get the command's pick list instead. */
 	load(context: PanelContext): Promise<SettingsPanel | null>;
@@ -111,21 +117,23 @@ function listControl(params: {
 	};
 }
 
-// ── /configure ───────────────────────────────────────────────────────────────
+// ── /server ──────────────────────────────────────────────────────────────────
 
-const configurePanel: PanelDefinition = {
-	covered: ["auto-heal", "leaderboard-tracking", "week-start"],
+const serverPanel: PanelDefinition = {
+	command: "server",
+	group: null,
+	covered: ["auto-heal", "leaderboard tracking", "leaderboard week-start"],
 	async load({ guild }) {
 		const config = await guildConfigStore.findByGuildId(guild.id);
 		if (!config) return null;
 		const switches: PanelSwitch[] = [
-			{ value: "auto-heal", label: copy.configure.autoHeal, description: copy.configure.autoHealHint, on: config.autoHealEnabled ?? true, callsFor: (on) => [call("auto-heal", { enabled: flag(on) })] },
+			{ value: "auto-heal", label: copy.server.autoHeal, description: copy.server.autoHealHint, on: config.autoHealEnabled ?? true, callsFor: (on) => [call("auto-heal", { enabled: flag(on) })] },
 			{
 				value: "leaderboard-tracking",
-				label: copy.configure.tracking,
-				description: copy.configure.trackingHint,
+				label: copy.server.tracking,
+				description: copy.server.trackingHint,
 				on: config.leaderboardTrackingEnabled ?? true,
-				callsFor: (on) => [call("leaderboard-tracking", { enabled: flag(on) })],
+				callsFor: (on) => [call("leaderboard tracking", { enabled: flag(on) })],
 			},
 		];
 		const controls: PanelControl[] = [
@@ -133,35 +141,37 @@ const configurePanel: PanelDefinition = {
 			{
 				id: "week",
 				kind: "choice",
-				label: copy.configure.weekLabel,
-				description: copy.configure.weekHint,
-				choices: choicesOf(configureCommand, "week-start", "start"),
+				label: copy.server.weekLabel,
+				description: copy.server.weekHint,
+				choices: choicesOf(serverCommand, "leaderboard week-start", "start"),
 				current: config.weekStart === "monday" ? "monday" : "sunday",
-				callsFor: (value) => [call("week-start", { start: word(value) })],
+				callsFor: (value) => [call("leaderboard week-start", { start: word(value) })],
 			},
 		];
-		return { title: copy.configure.title, controls };
+		return { title: copy.server.title, controls };
 	},
 };
 
-// ── /channels ────────────────────────────────────────────────────────────────
+// ── /server channels ─────────────────────────────────────────────────────────
 
-// Hide and show are the server owner's alone (channels.ts, TWO GATES), so an admin
-// who is not the owner gets the pick list, where rename is theirs and hide and show
-// still answer with the owner only refusal.
-const channelsPanel: PanelDefinition = {
-	covered: ["hide", "show", "list"],
+// Hide and show are the server owner's alone (channelVisibilitySubcommands.ts, TWO
+// GATES), so an admin who is not the owner gets the pick list, where rename is theirs
+// and hide and show still answer with the owner only refusal.
+const serverChannelsPanel: PanelDefinition = {
+	command: "server",
+	group: "channels",
+	covered: ["channels hide", "channels show", "channels list"],
 	async load({ guild, userId }) {
-		if (!channelsCommand.canChangeVisibility(userId, guild.ownerId)) return null;
+		if (!canChangeVisibility(userId, guild.ownerId)) return null;
 		const config = await guildConfigStore.findByGuildId(guild.id);
 		if (!config?.categoryId) return null;
-		const switches: PanelSwitch[] = channelsCommand.hideableChannelStates(config).map((channel) => ({
+		const switches: PanelSwitch[] = hideableChannelStates(config).map((channel) => ({
 			value: channel.value,
 			label: channel.name,
 			on: !channel.hidden,
-			callsFor: (visible) => [call(visible ? "show" : "hide", { channel: word(channel.value) })],
+			callsFor: (visible) => [call(visible ? "channels show" : "channels hide", { channel: word(channel.value) })],
 		}));
-		return { title: copy.channels.title, controls: [{ id: "visible", kind: "switches", label: copy.channels.label, description: copy.channels.hint, switches }] };
+		return { title: copy.serverChannels.title, controls: [{ id: "visible", kind: "switches", label: copy.serverChannels.label, description: copy.serverChannels.hint, switches }] };
 	},
 };
 
@@ -169,7 +179,10 @@ const channelsPanel: PanelDefinition = {
 
 const voiceSub = voiceCopy.config.sub;
 
+// Dero's voice and task list only; the arcade switches that sat here are the arcade panel's.
 const deroConfigPanel: PanelDefinition = {
+	command: "dero-config",
+	group: null,
 	covered: [
 		"enable",
 		"disable",
@@ -181,8 +194,6 @@ const deroConfigPanel: PanelDefinition = {
 		"channel remove",
 		"voicechannel add",
 		"voicechannel remove",
-		"arcade monthly-post",
-		"arcade bots",
 	],
 	async load({ guild }) {
 		const config = await guildConfigStore.findByGuildId(guild.id);
@@ -192,22 +203,6 @@ const deroConfigPanel: PanelDefinition = {
 		const switches: PanelSwitch[] = [
 			{ value: "voice", label: copy.deroConfig.voice, description: voiceSub.enable, on: voice?.enabled ?? false, callsFor: (on) => [call(on ? "enable" : "disable")] },
 			{ value: "listen", label: copy.deroConfig.listen, description: voiceSub.listen, on: voice?.listenEnabled ?? true, callsFor: (on) => [call("listen", { enabled: flag(on) })] },
-			{
-				value: "monthly-post",
-				label: copy.deroConfig.monthlyPost,
-				description: ratingsCopy.config.monthlyPost,
-				on: config.arcadeMonthlyPost ?? true,
-				callsFor: (on) => [call("arcade monthly-post", { enabled: flag(on) })],
-			},
-			// Whether a host may fill seats with Dero bots (2026-10 item 250 Phase 5). A row
-			// that never stored it reads as on, the schema default.
-			{
-				value: "bots",
-				label: copy.deroConfig.bots,
-				description: ratingsCopy.config.bots,
-				on: config.botOpponentsEnabled ?? true,
-				callsFor: (on) => [call("arcade bots", { enabled: flag(on) })],
-			},
 		];
 		const controls: PanelControl[] = [
 			{ id: "switches", kind: "switches", label: copy.switchesLabel, description: copy.switchesHint, switches },
@@ -237,13 +232,13 @@ const deroConfigPanel: PanelDefinition = {
 	},
 };
 
-// ── /setup-level-system ──────────────────────────────────────────────────────
+// ── /leveling settings ───────────────────────────────────────────────────────
 
-// One fixed choice of a leveling subcommand, as a single select. Each change is its
+// One fixed choice of a leveling settings subcommand, as a single select. Each change is its
 // own run of that subcommand, so two choices on one subcommand (the curve's preset
 // and its milestones) are two runs, each saving only its own option.
 function levelingChoice(id: string, path: string, option: string, label: string, current: string): PanelControl {
-	const field = fieldOf(levelSystemCommand, path, option);
+	const field = fieldOf(levelingCommand, path, option);
 	return {
 		id,
 		kind: "choice",
@@ -255,8 +250,13 @@ function levelingChoice(id: string, path: string, option: string, label: string,
 	};
 }
 
-const levelSystemPanel: PanelDefinition = {
-	covered: ["toggle"],
+const LEVELING_SETTINGS = "settings";
+const settingsPath = (subcommand: string): string => `${LEVELING_SETTINGS} ${subcommand}`;
+
+const levelingPanel: PanelDefinition = {
+	command: "leveling",
+	group: null,
+	covered: [settingsPath("toggle")],
 	async load({ guild }) {
 		const config = await guildConfigStore.findByGuildId(guild.id);
 		if (!config) return null;
@@ -264,33 +264,37 @@ const levelSystemPanel: PanelDefinition = {
 		if (!context) return null;
 		const settings = context.settings;
 		const switches: PanelSwitch[] = [
-			{ value: "leveling", label: copy.levelSystem.leveling, description: copy.levelSystem.levelingHint, on: settings.enabled, callsFor: (on) => [call("toggle", { enabled: flag(on) })] },
-			{ value: "stack-rewards", label: copy.levelSystem.stackRewards, description: copy.levelSystem.stackRewardsHint, on: settings.stackRewards, callsFor: (on) => [call("rewards", { stack: flag(on) })] },
+			{ value: "leveling", label: copy.leveling.leveling, description: copy.leveling.levelingHint, on: settings.enabled, callsFor: (on) => [call(settingsPath("toggle"), { enabled: flag(on) })] },
+			{ value: "stack-rewards", label: copy.leveling.stackRewards, description: copy.leveling.stackRewardsHint, on: settings.stackRewards, callsFor: (on) => [call(settingsPath("rewards"), { stack: flag(on) })] },
 			{
 				value: "stack-multipliers",
-				label: copy.levelSystem.stackMultipliers,
-				description: copy.levelSystem.stackMultipliersHint,
+				label: copy.leveling.stackMultipliers,
+				description: copy.leveling.stackMultipliersHint,
 				on: settings.stackMultipliers,
-				callsFor: (on) => [call("multipliers", { stack: flag(on) })],
+				callsFor: (on) => [call(settingsPath("multipliers"), { stack: flag(on) })],
 			},
 		];
 		const controls: PanelControl[] = [
 			{ id: "switches", kind: "switches", label: copy.switchesLabel, description: copy.switchesHint, switches },
-			levelingChoice("curve", "curve", "preset", copy.levelSystem.curve, settings.curve),
-			levelingChoice("milestones", "curve", "milestones", copy.levelSystem.milestones, settings.milestoneMode),
-			levelingChoice("announce", "announce", "mode", copy.levelSystem.announce, settings.announceMode),
-			levelingChoice("reaction-awards", "rates", "reaction-awards", copy.levelSystem.reactionAwards, settings.reaction.awards),
+			levelingChoice("curve", settingsPath("curve"), "preset", copy.leveling.curve, settings.curve),
+			levelingChoice("milestones", settingsPath("curve"), "milestones", copy.leveling.milestones, settings.milestoneMode),
+			levelingChoice("announce", settingsPath("announce"), "mode", copy.leveling.announce, settings.announceMode),
+			levelingChoice("reaction-awards", settingsPath("rates"), "reaction-awards", copy.leveling.reactionAwards, settings.reaction.awards),
 		];
-		return { title: copy.levelSystem.title, controls };
+		return { title: copy.leveling.title, controls };
 	},
 };
 
-// ── /economy ─────────────────────────────────────────────────────────────────
+// ── /arcade ──────────────────────────────────────────────────────────────────
 
-// The chip switch only (2026-10 item 250 Phase 5). Status and grant are offered on the
-// saved reply, since a grant names a member and an amount.
-const economyPanel: PanelDefinition = {
-	covered: ["toggle"],
+// The arcade's three switches: chips (2026-10 item 250 Phase 5), the monthly post and
+// bot opponents. A row that never stored the post or the bots switch reads as on, the
+// schema default. Status, grants, the reach, the block list and on and off are offered
+// on the saved reply, since each needs more than a switch.
+const arcadePanel: PanelDefinition = {
+	command: "arcade",
+	group: null,
+	covered: ["chips toggle", "monthly-post", "bots"],
 	async load({ guild }) {
 		const config = await guildConfigStore.findByGuildId(guild.id);
 		if (!config) return null;
@@ -300,18 +304,32 @@ const economyPanel: PanelDefinition = {
 				label: economyCopy.panel.economy,
 				description: economyCopy.panel.economyHint,
 				on: isChipEconomyOn(config),
-				callsFor: (on) => [call("toggle", { enabled: flag(on) })],
+				callsFor: (on) => [call("chips toggle", { enabled: flag(on) })],
+			},
+			{
+				value: "monthly-post",
+				label: copy.arcade.monthlyPost,
+				description: ratingsCopy.config.monthlyPost,
+				on: config.arcadeMonthlyPost ?? true,
+				callsFor: (on) => [call("monthly-post", { enabled: flag(on) })],
+			},
+			{
+				value: "bots",
+				label: copy.arcade.bots,
+				description: ratingsCopy.config.bots,
+				on: config.botOpponentsEnabled ?? true,
+				callsFor: (on) => [call("bots", { enabled: flag(on) })],
 			},
 		];
-		return { title: economyCopy.panel.title, controls: [{ id: "switches", kind: "switches", label: copy.switchesLabel, description: copy.switchesHint, switches }] };
+		return { title: copy.arcade.title, controls: [{ id: "switches", kind: "switches", label: copy.switchesLabel, description: copy.switchesHint, switches }] };
 	},
 };
 
-/** The commands whose guide button opens a settings panel, by command name. */
+/** Every settings panel, by panel id. A guide button's launch id names one of these, or /events. */
 export const SETTINGS_PANELS: ReadonlyMap<string, PanelDefinition> = new Map([
-	[configureCommand.data.name, configurePanel],
-	[channelsCommand.data.name, channelsPanel],
-	[deroConfigCommand.data.name, deroConfigPanel],
-	[levelSystemCommand.data.name, levelSystemPanel],
-	[economyCommand.data.name, economyPanel],
+	["server", serverPanel],
+	["server-channels", serverChannelsPanel],
+	["leveling", levelingPanel],
+	["dero-config", deroConfigPanel],
+	["arcade", arcadePanel],
 ]);

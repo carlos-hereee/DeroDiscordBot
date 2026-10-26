@@ -118,7 +118,7 @@ async function resolveWindow(
 			const member = byUserId.get(row.userId);
 			return {
 				userId: row.userId,
-				// A member whose lifetime row was reset by /xp but whose period row
+				// A member whose lifetime row was reset by /leveling xp but whose period row
 				// survives falls back to their id rather than rendering "undefined".
 				username: member?.username ?? row.userId,
 				level: levelOf(member?.totalXp ?? 0),

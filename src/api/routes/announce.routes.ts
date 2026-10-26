@@ -6,10 +6,10 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { requireGuildId } from "../middleware/requireGuildId.js";
 
 // ── /api/events/:eventId/go-live-now ──
-// What: HTTP twin of the /stream soon slash command. Mirrors the embed shape,
+// What: HTTP twin of the /events stream soon slash command. Mirrors the embed shape,
 //   the lead-time choices, and the allowedMentions discipline of the slash
 //   command exactly so the dashboard's "Go live now" button posts the same
-//   announcement a streamer would otherwise post manually with /stream soon.
+//   announcement a streamer would otherwise post manually with /events stream soon.
 // Who: called by the nexious-server plugin proxy when the dashboard hits
 //   POST /api/proxy/{pluginId}/events/{eventId}/go-live-now. The :eventId
 //   param is currently unused (the announcement is event-agnostic, it just

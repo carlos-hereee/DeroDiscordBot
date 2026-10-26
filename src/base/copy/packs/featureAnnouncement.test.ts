@@ -35,7 +35,8 @@ const LONGEST_VERSION_SUFFIX = " (v99.99.99)";
 const LONG_DASH = /[\u2013\u2014]/;
 const NAMED_COMMAND = /`\/([a-z][a-z-]*)/g;
 // The names Phase 4b folded into /schedule, /stream, /configure, /events, /channels
-// and /account, or removed. A deploy unregisters them, so naming one is a dead end.
+// and /account, or removed, and the fourteen admin and owner commands 2026-10 item 254
+// Phase 1 grouped by job into eight. A deploy unregisters them, so naming one is a dead end.
 const RETIRED_COMMANDS = [
 	"pause-schedule",
 	"continue-schedule",
@@ -54,6 +55,16 @@ const RETIRED_COMMANDS = [
 	"achievements",
 	"ping",
 	"user",
+	"schedule",
+	"stream",
+	"configure-kvk-season",
+	"configure",
+	"channels",
+	"setup-level-system",
+	"xp",
+	"economy",
+	"network",
+	"render-analytics",
 ];
 // Wording that tells a client the service depends on one person's machine.
 const UNPREPARED = /computer|\bPC\b|when it sleeps|when I am offline|is offline|my creator is online|honest word/i;
@@ -185,7 +196,7 @@ describe("the release announcement", () => {
 		expect(admins.description).toContain("George's voice");
 		expect(admins.description).toContain("`/dero-config enable` is the only step");
 		// The merged commands and the buttons that open them.
-		for (const merged of ["`/schedule pause`", "`/stream announce`", "`/configure`", "`/events`", "`/channels rename`"]) {
+		for (const merged of ["`/events pause`", "`/events stream announce`", "`/server`", "`/events`", "`/server channels rename`"]) {
 			expect(admins.description).toContain(merged);
 		}
 		expect(admins.description).toContain("Every admin command also has a button");
