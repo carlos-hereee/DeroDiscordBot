@@ -115,10 +115,12 @@ describe("the card's network choice", () => {
 });
 
 describe("choosing the network", () => {
-	it("opens the host's table to the network as a public room", async () => {
+	// A spectator choice made at the visibility step is dropped (2026-10 item 257 Phase 4b): a
+	// network table's card offers no select, so it keeps the default it always opened with.
+	it("opens the host's table to the network as a public room, dropping a spectator choice", async () => {
 		const interaction = makeButton(HOST);
 		await chooseVisibility(interaction, makeRoom(), "network");
-		expect(mocks.update).toHaveBeenCalledWith(GUILD, "room-1", { visibility: "public", network: true });
+		expect(mocks.update).toHaveBeenCalledWith(GUILD, "room-1", { visibility: "public", network: true, spectatorMode: null });
 		expect(interaction.deferUpdate).toHaveBeenCalled();
 	});
 

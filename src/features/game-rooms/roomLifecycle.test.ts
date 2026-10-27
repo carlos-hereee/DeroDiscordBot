@@ -250,12 +250,22 @@ describe("roomLifecycle.finish room-rate top up", () => {
 		expect(awardMock).not.toHaveBeenCalled();
 	});
 
-	it("offers no Rematch on a solo luck room's result card, only Archive now", async () => {
+	it.each(["solo-coinflip", "solo-diceroll"] as const)("offers no Rematch on a %s room's result card, only Archive now", async (game) => {
+		const channel = makeChannel();
+		await finish(makeClient(channel), makeRoom({ game, visibility: "solo", playerIds: ["host-1"] }));
+		const card = channel.send.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id: string }[] } }[] };
+		const ids = card.components[0].toJSON().components.map((button) => button.custom_id);
+		expect(ids).toEqual(["gameroom:archive:room-1"]);
+	});
+
+	// Rock paper scissors asks its throw in the room (2026-10 item 257 Phase 4b), so its result
+	// card offers the next round in the same channel, on the same short window.
+	it("offers Rematch on a solo rock paper scissors room's result card", async () => {
 		const channel = makeChannel();
 		await finish(makeClient(channel), makeRoom({ game: "solo-rps", visibility: "solo", playerIds: ["host-1"] }));
 		const card = channel.send.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id: string }[] } }[] };
 		const ids = card.components[0].toJSON().components.map((button) => button.custom_id);
-		expect(ids).toEqual(["gameroom:archive:room-1"]);
+		expect(ids).toContain("gameroom:rematch:room-1");
 	});
 
 	// The owner's 30 minute window for a solo luck round (2026-10 item 254): finish stamps

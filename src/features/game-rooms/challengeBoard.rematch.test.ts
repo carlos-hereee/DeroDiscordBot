@@ -46,6 +46,8 @@ const fake = vi.hoisted(() => {
 				rematchedFromRoomId: input.rematchedFromRoomId ?? null,
 				monopolyAuctions: input.monopolyAuctions ?? false,
 				monopolyReferee: input.monopolyReferee ?? false,
+				// The referee flag (2026-10 item 257 Phase 4b), as the real store writes it.
+				referee: input.referee ?? false,
 				// The host's spectator setting (2026-10 item 254, Arcade 11), as the real store writes it.
 				spectatorMode: input.spectatorMode ?? null,
 				secret: null,
@@ -157,8 +159,18 @@ vi.mock("./roomHangman.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("./roomHangman.js")>()),
 	startSoloHangmanRound: vi.fn(),
 }));
+// The turn prompt and the referee's start, so each case can see what the rematch asked for
+// without posting a prompt line or reaching for Dero's voice (2026-10 item 257 Phase 4b).
+vi.mock("./turnPrompt.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("./turnPrompt.js")>()),
+	syncTurnPrompt: vi.fn(),
+}));
+vi.mock("./roomReferee.js", () => ({ startRoomReferee: vi.fn() }));
 
 import { rematchFromRoom } from "./challengeBoard.js";
+import { syncTurnPrompt } from "./turnPrompt.js";
+import { startRoomReferee } from "./roomReferee.js";
+import { soloRpsTurnAdapter } from "./soloLuckRoom.js";
 import { sweepExpiredRooms } from "./roomArchiveSweep.js";
 import { buildRoomOverwrites } from "./roomPermissions.js";
 import { roomResultEmbed } from "./gameRoomsEmbeds.js";
@@ -281,6 +293,8 @@ function insertFinishedRoom(overrides: Partial<FakeRow> = {}): void {
 		rematchedFromRoomId: null,
 		monopolyAuctions: false,
 		monopolyReferee: false,
+		// A row from before the referee field existed: null, read through refereeOn.
+		referee: null,
 		secret: null,
 		moves: [{ actorId: P1, at: endedAt, kind: "move", text: "played rock" }],
 		winnerId: P1,
@@ -393,13 +407,17 @@ describe("a rematch in the same channel", () => {
 		expect(interaction.followUp).not.toHaveBeenCalled();
 	});
 
+	// A row from before the referee field carries only monopolyReferee; the rematch writes the
+	// new field, read through refereeOn (2026-10 item 257 Phase 4b), so the referee survives.
 	it("carries Monopoly's settings to the rematch row, where the referee is read every move", async () => {
 		const world = makeWorld();
 		insertFinishedRoom({ game: "monopoly", monopolyAuctions: true, monopolyReferee: true });
 
 		await rematchFromRoom(pressRematch(world, P2), await roomOf(FINISHED));
 
-		expect(rematchRow()).toMatchObject({ monopolyAuctions: true, monopolyReferee: true, status: "playing" });
+		expect(rematchRow()).toMatchObject({ monopolyAuctions: true, referee: true, status: "playing" });
+		// And the rematch starts its referee exactly as a first match does, through seedRoom.
+		expect(startRoomReferee).toHaveBeenCalledWith(world.client, expect.objectContaining({ roomId: rematchRow()?.roomId, referee: true }), world.channel);
 	});
 });
 
@@ -546,6 +564,30 @@ describe("solo rooms rematch in place", () => {
 
 		expect(rematchRow()?.status).toBe("finished");
 		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.errors.createFailed }));
+	});
+
+	// Rock paper scissors against Dero asks its throw in the room (2026-10 item 257 Phase 4b), so
+	// its rematch is the next round's prompt in the same channel, through seedRoom like a first room.
+	it("solo rock paper scissors asks for the next throw in the same channel, with no new channel", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({ game: "solo-rps", visibility: "solo", playerIds: [P1], spectatorIds: [], inviteCode: null });
+
+		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
+
+		const next = rematchRow();
+		expect(next).toMatchObject({ channelId: CHANNEL, hostId: P1, playerIds: [P1], visibility: "solo", status: "playing" });
+		expect(world.guild.channels.create).not.toHaveBeenCalled();
+		expect(syncTurnPrompt).toHaveBeenCalledWith(world.client, expect.objectContaining({ roomId: next?.roomId }), soloRpsTurnAdapter);
+		expect(world.channel.createInvite).not.toHaveBeenCalled();
+	});
+
+	it("still refuses a rematch of a coin flip against Dero, a single press from the card instead", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({ game: "solo-coinflip", visibility: "solo", playerIds: [P1], spectatorIds: [], inviteCode: null });
+
+		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
+
+		expect(rematchRow()).toBeUndefined();
 	});
 
 	it("solo hangman seeds a new round from the bank into the same channel, with no new channel", async () => {

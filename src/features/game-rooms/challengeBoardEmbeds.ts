@@ -14,7 +14,8 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { bandWidth, isRatedGame } from "@features/ratings/ratingEngine.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
-import { RATING_BANDS, SPECTATOR_MODES, type GameSlug, type RatingBand, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
+import { RATING_BANDS, SPECTATOR_MODES, offersReferee, type GameSlug, type RatingBand, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
+import type { SoloLuckGame } from "@features/games/soloLuck.js";
 
 // The host controls' words are shared by every pack, so the default pack is the right
 // one here and the card stays a pure function of its state.
@@ -76,7 +77,7 @@ export const isCooperativeGame = (game: GameSlug): boolean => COOPERATIVE_GAMES.
 // 13): the three one press luck games, whose solo round soloLuck already plays.
 export const DERO_PLAYABLE_GAMES: readonly GameSlug[] = ["coinflip", "diceroll", "rps"] as const;
 
-export const isDeroPlayable = (game: GameSlug): boolean => DERO_PLAYABLE_GAMES.includes(game);
+export const isDeroPlayable = (game: GameSlug): game is SoloLuckGame => DERO_PLAYABLE_GAMES.includes(game);
 
 /**
  * Every game's one emoji: the board's start buttons and the front of each room's
@@ -169,10 +170,11 @@ export interface OpenerCardState {
 	hostId: string;
 	visibility: RoomVisibility | null;
 	pool: string[];
-	// Monopoly only: the host's auction and voice referee choices, each shown on the
-	// card and switched by its own toggle. Ignored for every other game.
+	// Monopoly only: the host's auction choice, shown on the card and switched by its toggle.
 	monopolyAuctions?: boolean;
-	monopolyReferee?: boolean;
+	// The host's voice referee choice, on the games with voice lines (roomTypes.offersReferee:
+	// Monopoly and Hold'em, 2026-10 item 257 Phase 4b). Ignored for every other game.
+	referee?: boolean;
 	// Terminal states. When any is set the card stops offering controls.
 	cancelled?: boolean;
 	startedChannelId?: string | null;
@@ -212,6 +214,10 @@ export interface DraftHostControls {
 	// Who may watch once the room opens (2026-10 item 254, Arcade 11), already resolved
 	// by roomPermissions.effectiveSpectatorMode, so the card shows what the matrix will do.
 	spectatorMode: SpectatorMode;
+	// The host's own choice off the row, or null while they have made none. The visibility
+	// step shows only this, since the resolved default above depends on a visibility not
+	// chosen yet (2026-10 item 257 Phase 4b).
+	spectatorChoice?: SpectatorMode | null;
 }
 
 // How many pool members the card names before it summarises the rest. Well under the
@@ -245,12 +251,12 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 		lines.push(state.network ? networkWords.cardLine(state.hostId) : gameRoomsCopy.board.cardOpenToAll(state.hostId));
 		lines.push("", gameRoomsCopy.board.cardPool(state.pool, POOL_NAMES_SHOWN));
 	}
-	// The Monopoly choices are shown once the host is past the visibility step, the
-	// same step that offers their toggles, so each line and its button appear together.
-	if (state.game === "monopoly" && state.visibility && !state.cancelled && !state.startedChannelId && !state.resultLine) {
-		lines.push("", gameRoomsCopy.board.cardMonopolyAuctions(state.monopolyAuctions ?? false));
-		lines.push(gameRoomsCopy.board.cardMonopolyReferee(state.monopolyReferee ?? false));
-	}
+	// The draft settings are shown once the host is past the visibility step, the same step
+	// that offers their toggles, so each line and its button appear together.
+	const gathering = Boolean(state.visibility && !state.cancelled && !state.startedChannelId && !state.resultLine);
+	if (gathering && (state.game === "monopoly" || offersReferee(state.game))) lines.push("");
+	if (gathering && state.game === "monopoly") lines.push(gameRoomsCopy.board.cardMonopolyAuctions(state.monopolyAuctions ?? false));
+	if (gathering && offersReferee(state.game)) lines.push(gameRoomsCopy.board.cardReferee(state.referee ?? false));
 	if (state.bots && state.bots.count > 0 && state.visibility && !state.cancelled && !state.startedChannelId && !state.resultLine) {
 		lines.push("", gameRoomsCopy.board.cardBots(state.bots.count));
 	}
@@ -295,11 +301,12 @@ function hostControlLines(state: OpenerCardState): string[] {
 }
 
 // ── who may watch (2026-10 item 254, Arcade 11) ──
-// Offered at step two on every visibility, since an invite only host chooses who watches
-// as much as an open one does, and never on a network table, whose watchers in other
-// servers are its satellites' business.
+// Offered on every game's card from the visibility step on (2026-10 item 257 Phase 4b, owner
+// item 24), since an invite only host chooses who watches as much as an open one does, and
+// never on a network table, whose watchers in other servers are its satellites' business
+// (choosing the network drops a choice made at step one, challengeBoard.chooseNetworkTable).
 const showsSpectators = (state: OpenerCardState): boolean =>
-	Boolean(state.hostControls && state.visibility && !state.network && !state.cancelled && !state.startedChannelId && !state.resultLine);
+	Boolean(state.hostControls && !state.network && !state.cancelled && !state.startedChannelId && !state.resultLine);
 
 // A Hold'em card offers the buy in wherever a table could play for chips: not on a network
 // table (its seats come from other servers) and not with a Dero bot seat (it plays free). The
@@ -319,13 +326,17 @@ function buyInButtons(roomId: string, state: OpenerCardState): ButtonBuilder[] {
 	return [new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:hbuyin:${roomId}`).setLabel(gameRoomsCopy.holdem.setBuyInLabel).setEmoji("🪙").setStyle(ButtonStyle.Secondary)];
 }
 
+// The line names the setting in force, which needs a visibility: at the visibility step the
+// default is still undecided (Open for an open room, Invite only for an invite room), so the
+// line waits for step two and the select alone shows a choice the host already made.
 function spectatorLines(state: OpenerCardState): string[] {
-	if (!showsSpectators(state) || !state.hostControls) return [];
+	if (!showsSpectators(state) || !state.hostControls || !state.visibility) return [];
 	return ["", gameRoomsCopy.board.spectators.cardLine(state.hostControls.spectatorMode)];
 }
 
-// The spectator select, with the setting in force as its default.
-function spectatorSelectRow(roomId: string, mode: SpectatorMode): CardRow {
+// The spectator select, with the setting in force as its default, or with no default (its
+// placeholder) while the setting is still the undecided default of the visibility step.
+function spectatorSelectRow(roomId: string, mode: SpectatorMode | null): CardRow {
 	const words = gameRoomsCopy.board.spectators;
 	const select = new StringSelectMenuBuilder()
 		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:spectators:${roomId}`)
@@ -455,19 +466,20 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 						.setStyle(ButtonStyle.Primary),
 			  ]
 			: [];
-		return [
-			new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
-				new ButtonBuilder()
-					.setCustomId(`${GAME_ROOM_PREFIX}:vis:${roomId}:invite`)
-					.setLabel(gameRoomsCopy.board.visibilityInviteLabel)
-					.setEmoji("🔒")
-					.setStyle(ButtonStyle.Secondary),
-				...openToAll,
-				...openToNetwork,
-				...playDeroButtons(roomId, state.game),
-				cancel
-			),
-		];
+		const visibilityRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
+			new ButtonBuilder()
+				.setCustomId(`${GAME_ROOM_PREFIX}:vis:${roomId}:invite`)
+				.setLabel(gameRoomsCopy.board.visibilityInviteLabel)
+				.setEmoji("🔒")
+				.setStyle(ButtonStyle.Secondary),
+			...openToAll,
+			...openToNetwork,
+			...playDeroButtons(roomId, state.game),
+			cancel
+		);
+		// The spectator select from the first step (owner item 24), two rows in all.
+		const controls = state.hostControls;
+		return showsSpectators(state) && controls ? [visibilityRow, spectatorSelectRow(roomId, controls.spectatorChoice ?? null)] : [visibilityRow];
 	}
 
 	// Step 2: gather the pool, then start.
@@ -498,19 +510,21 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 		.setEmoji("⚔️")
 		.setStyle(ButtonStyle.Primary);
 
-	// Monopoly's choices sit beside Start because they have to be made before the match
-	// is seeded. That makes five buttons, Discord's cap for one row, so a sixth Monopoly
-	// setting needs a second row.
-	const gatherRow =
-		state.game === "monopoly"
-			? new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
-					gather,
-					start,
-					draftSettingToggle(roomId, "auctions", state.monopolyAuctions ?? false, gameRoomsCopy.board.monopolyAuctionsToggleLabel, "🔨"),
-					draftSettingToggle(roomId, "referee", state.monopolyReferee ?? false, gameRoomsCopy.board.monopolyRefereeToggleLabel, "🎙️"),
-					cancel
-			  )
-			: new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(gather, start, ...buyInButtons(roomId, state), ...playDeroButtons(roomId, state.game), cancel);
+	// The draft settings sit beside Start because they have to be made before the match is
+	// seeded. Monopoly's row is gather, Start, auctions, referee and cancel; Hold'em's is
+	// gather, Start, the buy in, referee and cancel: five buttons, Discord's cap for one row,
+	// so a sixth setting on either needs a second row.
+	const auctionToggle = state.game === "monopoly" ? [draftSettingToggle(roomId, "auctions", state.monopolyAuctions ?? false, gameRoomsCopy.board.monopolyAuctionsToggleLabel, "🔨")] : [];
+	const refereeToggle = offersReferee(state.game) ? [draftSettingToggle(roomId, "referee", state.referee ?? false, gameRoomsCopy.board.refereeToggleLabel, "🎙️")] : [];
+	const gatherRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
+		gather,
+		start,
+		...auctionToggle,
+		...buyInButtons(roomId, state),
+		...refereeToggle,
+		...playDeroButtons(roomId, state.game),
+		cancel
+	);
 
 	// The host's controls ride their own rows below, so the gather row keeps its shape
 	// (and Monopoly keeps all five of its slots). Four rows at most, inside Discord's five:
@@ -540,14 +554,14 @@ function playDeroButtons(roomId: string, game: GameSlug): ButtonBuilder[] {
 	];
 }
 
-/** The card actions that switch a Monopoly draft setting; challengeBoard maps each to its row field. */
-export type MonopolyDraftSettingAction = "auctions" | "referee";
+/** The card actions that switch an on or off draft setting; challengeBoard maps each to its row field. */
+export type DraftSettingAction = "auctions" | "referee";
 
 // One on or off draft setting. The arg is the value the press SETS, so a stale card's
 // button cannot flip the choice back the wrong way, and the label names that value.
 function draftSettingToggle(
 	roomId: string,
-	action: MonopolyDraftSettingAction,
+	action: DraftSettingAction,
 	enabled: boolean,
 	label: (enabled: boolean) => string,
 	emoji: string

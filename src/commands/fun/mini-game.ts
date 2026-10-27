@@ -95,7 +95,9 @@ export const data = new SlashCommandBuilder()
 			.setName("rps")
 			.setDescription(gamesCopy.rps.subcommandDescription)
 			.addStringOption(againstOption)
-			// Read only when `against` is Dero; a member's throw against another member is
+			// Read only when `against` is Dero and the command was typed outside the challenge
+			// channels. Typed in one, the round opens a solo room that asks for the throw in the
+			// room (2026-10 item 257 Phase 4b), and a member's throw against another member is
 			// still made in secret inside the room.
 			.addStringOption((option) =>
 				option

@@ -1,24 +1,26 @@
 import { ChannelType, type CategoryChannel, type Guild, type TextChannel, type User } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { startBlackjackTable } from "@features/games/blackjackHandler.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
-import { playSoloLuckInChannel, type SoloLuckGame, type SoloLuckPlay } from "@features/games/soloLuck.js";
+import type { SoloLuckGame, SoloLuckPlay } from "@features/games/soloLuck.js";
 import { RoomProvisioner, describeRoomOpenFailure, type RoomOpenResult } from "./RoomProvisioner.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
-import { isSoloLuckGame, type SoloLuckSlug } from "./roomTypes.js";
+import type { SoloLuckSlug } from "./roomTypes.js";
+import { playSoloLuckRoom } from "./soloLuckRoom.js";
 
 // ── soloRooms ────────────────────────────────────────────────────────
 // What:  the one-player path into a room: "Host Hangman", "Play Blackjack" and the
 //        hangman category start on the 🕹️games intro, and a round against Dero (Play
 //        Dero instead, or a /mini-game against Dero typed in ⚔️challenges, 2026-10 item
-//        254, Arcade 1), played and finished in its solo room the moment it opens. A
-//        rematch of a finished solo room does not come through here (it plays on in the
-//        same channel), but it deals its blackjack table through startSoloBlackjackBoard
+//        254, Arcade 1). A coin flip or a dice roll plays and finishes the moment its
+//        room opens; rock paper scissors opens first and asks for the throw in the room
+//        through the turn prompt (soloLuckRoom, 2026-10 item 257 Phase 4b). A rematch of
+//        a finished solo room does not come through here (it plays on in the same
+//        channel), but it deals its blackjack table through startSoloBlackjackBoard
 //        below. That dealing is shared with a multi seat blackjack room
 //        (startBlackjackRoomBoard), so a table is dealt one way wherever it plays.
 // Who:   arcadeHost (the buttons), challengeBoard (Play Dero instead, a blackjack
@@ -31,11 +33,10 @@ import { isSoloLuckGame, type SoloLuckSlug } from "./roomTypes.js";
 //        counts as PRIVATE everywhere private is counted.
 // How:   resolve the arcade category from GuildConfig exactly the way
 //        provisionFromDraft does, open the room, then hand solo-blackjack its board or
-//        play the luck round.
+//        play the coin or the dice. A solo-rps room's prompt is posted by seedRoom, so a
+//        rematch in the same channel posts it the same way.
 
 export type SoloGameSlug = "solo-hangman" | "solo-blackjack" | SoloLuckSlug;
-
-const SOLO_LUCK_ARCHIVE_DELAY_MS = BOT_CONSTANTS.GAME_ROOM_SOLO_LUCK_ARCHIVE_DELAY_MS;
 
 // The solo room each luck game's round against Dero plays in.
 const SOLO_LUCK_SLUGS: Record<SoloLuckGame, SoloLuckSlug> = {
@@ -45,7 +46,15 @@ const SOLO_LUCK_SLUGS: Record<SoloLuckGame, SoloLuckSlug> = {
 };
 
 /** The solo room slug a round against Dero opens. */
-export const soloLuckSlugFor = (play: SoloLuckPlay): SoloLuckSlug => SOLO_LUCK_SLUGS[play.game];
+export const soloLuckSlugFor = (game: SoloLuckGame): SoloLuckSlug => SOLO_LUCK_SLUGS[game];
+
+// The rounds that play the moment their room opens, by slug: neither asks the member
+// anything, so the slug is the whole play. Rock paper scissors is absent on purpose, since
+// its throw is the member's to make in the room.
+const PLAYED_AT_OPEN: Partial<Record<SoloLuckSlug, SoloLuckPlay>> = {
+	"solo-coinflip": { game: "coinflip" },
+	"solo-diceroll": { game: "diceroll" },
+};
 
 export interface SoloHost {
 	userId: string;
@@ -62,9 +71,6 @@ export interface SoloOpenOptions {
 	// (2026-10 item 245 Phase 4a). Absent draws from the whole bank, as Host Hangman
 	// always has. Ignored for solo blackjack.
 	hangmanCategory?: HangmanCategory;
-	// The round a solo luck room plays, required for its three slugs and ignored for the
-	// others: rps carries the member's throw, which they chose before the room existed.
-	luckPlay?: SoloLuckPlay;
 }
 
 export async function openSoloRoom(guild: Guild, game: SoloGameSlug, host: SoloHost, options: SoloOpenOptions = {}): Promise<SoloOpenResult> {
@@ -94,28 +100,14 @@ export async function openSoloRoom(guild: Guild, game: SoloGameSlug, host: SoloH
 	if (game === "solo-blackjack" && !(await startSoloBlackjackBoard(guild, result.room, result.channel, host))) {
 		return { ok: false, reason: "createFailed" };
 	}
-	if (isSoloLuckGame(game)) await playSoloLuckRoom(guild, result.room, result.channel, host, options.luckPlay);
+	// A coin flip or a dice roll is played the moment the room opens and the room finishes
+	// straight after, so the member reads one result in a room already locked, with Archive
+	// now on its result card. The pay is the round's own, through soloLuck (the daily cap
+	// included), and finish adds no room rate on top (roomLifecycle.payRoomRateTopUp).
+	const playedAtOpen = PLAYED_AT_OPEN[game as SoloLuckSlug];
+	if (playedAtOpen) await playSoloLuckRoom(guild.client, result.room, result.channel, host, playedAtOpen);
 
 	return result;
-}
-
-// ── a round against Dero in its own room (2026-10 item 254, Arcade 1) ──
-// The round is played the moment the room opens and the room finishes straight after,
-// so the member reads one result in a room that is already locked, with Archive now on
-// its result card. The pay is the round's own, through soloLuck (the daily cap included),
-// and finish adds no room rate on top for these slugs (roomLifecycle.payRoomRateTopUp).
-// A round that cannot be posted, or arrives with no play, closes the room as abandoned,
-// which pays nothing, rather than leaving the member's one room slot held. Either way the
-// channel goes on the short solo luck window (GAME_ROOM_SOLO_LUCK_ARCHIVE_DELAY_MS), since
-// there is no match to scroll back and a long one would pile channels up in the arcade.
-async function playSoloLuckRoom(guild: Guild, room: IGameRoom, channel: TextChannel, host: SoloHost, play: SoloLuckPlay | undefined): Promise<void> {
-	const user = host.user ?? (await guild.client.users.fetch(host.userId).catch(() => null));
-	const result = play && user ? await playSoloLuckInChannel(channel, { user, displayName: host.displayName }, play) : null;
-	if (!result) {
-		await roomLifecycle.finish(guild.client, room, { abandoned: true, archiveDelayMs: SOLO_LUCK_ARCHIVE_DELAY_MS });
-		return;
-	}
-	await roomLifecycle.finish(guild.client, room, { winnerId: result.outcome === "won" ? host.userId : null, archiveDelayMs: SOLO_LUCK_ARCHIVE_DELAY_MS });
 }
 
 /**

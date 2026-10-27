@@ -9,7 +9,7 @@ import type { ChatInputCommandInteraction } from "discord.js";
 // router answers nothing and the subcommand's own handler runs as before.
 vi.mock("@features/game-rooms/challengeCard.js", () => ({ isChallengeChannel: vi.fn() }));
 vi.mock("@features/game-rooms/challengeBoard.js", () => ({ startChallengeDraft: vi.fn() }));
-vi.mock("@features/game-rooms/soloRooms.js", () => ({ soloLuckSlugFor: (play: { game: string }) => `solo-${play.game}` }));
+vi.mock("@features/game-rooms/soloRooms.js", () => ({ soloLuckSlugFor: (game: string) => `solo-${game}` }));
 vi.mock("./arcadeHost.js", () => ({ openSoloRoomForMember: vi.fn() }));
 vi.mock("./fortuneHandler.js", () => ({ runFortune: vi.fn() }));
 
@@ -18,7 +18,6 @@ import { isChallengeChannel } from "@features/game-rooms/challengeCard.js";
 import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 import { openSoloRoomForMember } from "./arcadeHost.js";
 import { runFortune } from "./fortuneHandler.js";
-import { gamesCopy } from "./gamesCopy.js";
 
 const channelMock = isChallengeChannel as unknown as ReturnType<typeof vi.fn>;
 const draftMock = startChallengeDraft as unknown as ReturnType<typeof vi.fn>;
@@ -78,26 +77,20 @@ describe("routeMiniGameInChallenges, typed in a challenge channel", () => {
 		expect(channelSend).not.toHaveBeenCalled();
 	});
 
+	// The solo room plays the coin or the dice as it opens and asks for an rps throw in the room
+	// (2026-10 item 257 Phase 4b), so the room path reads no throw, given or not.
 	it.each([
-		["coin-flip", {}, { game: "coinflip" }],
-		["dice-roll", {}, { game: "diceroll" }],
-		["rps", { throw: "scissors" }, { game: "rps", memberThrow: "scissors" }],
-	] as const)("opens a solo room for %s against Dero, carrying the round", async (subcommand, extra, play) => {
+		["coin-flip", {}, "coinflip"],
+		["dice-roll", {}, "diceroll"],
+		["rps", {}, "rps"],
+		["rps", { throw: "scissors" }, "rps"],
+	] as const)("opens a solo room for %s against Dero, with the throw asked in the room", async (subcommand, extra, game) => {
 		const { interaction, channelSend } = typedInChallenges({ against: "dero", ...extra });
 
 		await expect(routeMiniGameInChallenges(interaction, subcommand)).resolves.toBe(true);
 
-		expect(soloMock).toHaveBeenCalledWith(interaction, `solo-${play.game}`, { luckPlay: play });
+		expect(soloMock).toHaveBeenCalledWith(interaction, `solo-${game}`);
 		expect(channelSend).not.toHaveBeenCalled();
-	});
-
-	it("asks for the throw, privately, when rps against Dero names none", async () => {
-		const { interaction, raw } = typedInChallenges({ against: "dero" });
-
-		await routeMiniGameInChallenges(interaction, "rps");
-
-		expect(raw.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gamesCopy.soloLuck.throwNeeded, flags: expect.any(Number) }));
-		expect(soloMock).not.toHaveBeenCalled();
 	});
 
 	it("answers a fortune privately whatever the member chose, since a reading has no room", async () => {

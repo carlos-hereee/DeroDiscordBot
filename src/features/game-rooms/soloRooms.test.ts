@@ -3,10 +3,11 @@ import { ChannelType, type Guild, type TextChannel } from "discord.js";
 
 // ── soloRooms (2026-10 item 254, Arcade 1) ─────────────────────────────────
 // The one solo path, widened to a round against Dero, and the table dealing it shares
-// with a multi seat blackjack room. What is pinned: a luck round opens a SOLO room
+// with a multi seat blackjack room. What is pinned: a coin or dice round opens a SOLO room
 // through the provisioner, plays there, and finishes the room with its winner (or as
-// abandoned when the round never posts); a room's table seats every player and deals at
-// once; and a table that cannot start closes its room.
+// abandoned when the round never posts); a rock paper scissors room opens and waits for its
+// throw, which is asked in the room (2026-10 item 257 Phase 4b); a room's table seats every
+// player and deals at once; and a table that cannot start closes its room.
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { countOpenInGuildByVisibility: vi.fn() } }));
 vi.mock("@features/entitlements/gameRoomAccess.js", () => ({ checkGameRoomAccess: vi.fn() }));
@@ -55,16 +56,16 @@ beforeEach(() => {
 
 describe("a round against Dero in its own room", () => {
 	it("names each luck game's solo room", () => {
-		expect(soloLuckSlugFor({ game: "coinflip" })).toBe("solo-coinflip");
-		expect(soloLuckSlugFor({ game: "diceroll" })).toBe("solo-diceroll");
-		expect(soloLuckSlugFor({ game: "rps", memberThrow: "rock" })).toBe("solo-rps");
+		expect(soloLuckSlugFor("coinflip")).toBe("solo-coinflip");
+		expect(soloLuckSlugFor("diceroll")).toBe("solo-diceroll");
+		expect(soloLuckSlugFor("rps")).toBe("solo-rps");
 	});
 
 	it("opens a SOLO room, plays the round in it, and finishes the room with the member as winner", async () => {
 		playMock.mockResolvedValue({ game: "coinflip", face: "heads", outcome: "won" });
 		const guild = makeGuild();
 
-		const result = await openSoloRoom(guild, "solo-coinflip", HOST, { luckPlay: { game: "coinflip" } });
+		const result = await openSoloRoom(guild, "solo-coinflip", HOST);
 
 		expect(result.ok).toBe(true);
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ game: "solo-coinflip", visibility: "solo", playerIds: ["host-1"], spectatorIds: [] }));
@@ -73,17 +74,27 @@ describe("a round against Dero in its own room", () => {
 	});
 
 	it("finishes with no winner on a loss or a tie", async () => {
-		playMock.mockResolvedValue({ game: "rps", memberThrow: "rock", deroThrow: "rock", outcome: "tie" });
+		playMock.mockResolvedValue({ game: "diceroll", memberRoll: 3, deroRoll: 3, outcome: "tie" });
 
-		await openSoloRoom(makeGuild(), "solo-rps", HOST, { luckPlay: { game: "rps", memberThrow: "rock" } });
+		await openSoloRoom(makeGuild(), "solo-diceroll", HOST);
 
+		expect(playMock).toHaveBeenCalledWith(CHANNEL, expect.anything(), { game: "diceroll" });
 		expect(finishMock).toHaveBeenCalledWith(expect.anything(), ROOM, { winnerId: null, archiveDelayMs: SHORT });
+	});
+
+	it("opens a rock paper scissors room and plays nothing yet: the throw is asked in the room", async () => {
+		const result = await openSoloRoom(makeGuild(), "solo-rps", HOST);
+
+		expect(result.ok).toBe(true);
+		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ game: "solo-rps", visibility: "solo" }));
+		expect(playMock).not.toHaveBeenCalled();
+		expect(finishMock).not.toHaveBeenCalled();
 	});
 
 	it("closes the room as abandoned, paying nothing, when the round could not be posted", async () => {
 		playMock.mockResolvedValue(null);
 
-		await openSoloRoom(makeGuild(), "solo-diceroll", HOST, { luckPlay: { game: "diceroll" } });
+		await openSoloRoom(makeGuild(), "solo-diceroll", HOST);
 
 		expect(finishMock).toHaveBeenCalledWith(expect.anything(), ROOM, { abandoned: true, archiveDelayMs: SHORT });
 	});
@@ -91,7 +102,7 @@ describe("a round against Dero in its own room", () => {
 	it("plays nothing when the room itself was refused", async () => {
 		openMock.mockResolvedValue({ ok: false, reason: "alreadyHosting", existingChannelId: null });
 
-		const result = await openSoloRoom(makeGuild(), "solo-coinflip", HOST, { luckPlay: { game: "coinflip" } });
+		const result = await openSoloRoom(makeGuild(), "solo-coinflip", HOST);
 
 		expect(result.ok).toBe(false);
 		expect(playMock).not.toHaveBeenCalled();

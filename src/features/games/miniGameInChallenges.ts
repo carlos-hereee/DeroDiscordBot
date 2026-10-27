@@ -3,11 +3,9 @@ import { isChallengeChannel } from "@features/game-rooms/challengeCard.js";
 import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 import { soloLuckSlugFor } from "@features/game-rooms/soloRooms.js";
 import { openSoloRoomForMember } from "./arcadeHost.js";
-import { readDeroPlay } from "./challengeEntry.js";
+import { isAgainstDero } from "./challengeEntry.js";
 import { runFortune } from "./fortuneHandler.js";
-import { gamesCopy } from "./gamesCopy.js";
 import type { SoloLuckGame } from "./soloLuck.js";
-import { showNotice } from "@utils/textModal.js";
 
 // ── miniGameInChallenges ───────────────────────────────────────────────────
 // What:  a /mini-game typed in one of the two challenge channels (⚔️challenges or
@@ -59,14 +57,11 @@ export async function routeMiniGameInChallenges(interaction: ChatInputCommandInt
 
 	const luckGame = LUCK_SUBCOMMANDS[subcommand];
 	if (!luckGame) return false;
-	const play = readDeroPlay(interaction, luckGame);
 	// Against a member, the luck game's handler posts its challenge card, which belongs here.
-	if (play === null) return false;
-	if (play === "throwMissing") {
-		await showNotice(interaction, { title: gamesCopy.notices.miniGame, sections: [gamesCopy.soloLuck.throwNeeded] });
-		return true;
-	}
-	await openPrivately(interaction, () => openSoloRoomForMember(interaction, soloLuckSlugFor(play), { luckPlay: play }));
+	if (!isAgainstDero(interaction)) return false;
+	// The solo room plays the coin or the dice as it opens, and asks for an rps throw in the
+	// room (2026-10 item 257 Phase 4b), so a throw option typed here is not read.
+	await openPrivately(interaction, () => openSoloRoomForMember(interaction, soloLuckSlugFor(luckGame)));
 	return true;
 }
 

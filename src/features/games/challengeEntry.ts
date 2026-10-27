@@ -39,13 +39,20 @@ const AGAINST_DERO = "dero";
 const THROW_OPTION = "throw";
 
 /**
- * The round against Dero a luck subcommand asks for: null when `against` is a member (the
- * challenge path), "throwMissing" for rps against Dero with no throw, the play otherwise.
- * Shared by the handlers below and miniGameInChallenges, so the option contract is read in
- * one place whichever channel the command was typed in.
+ * Whether a luck subcommand asks for a round against Dero rather than a member. Shared by
+ * readDeroPlay below and miniGameInChallenges, so the option contract is read in one place
+ * whichever channel the command was typed in.
+ */
+export const isAgainstDero = (interaction: ChatInputCommandInteraction): boolean => interaction.options.getString(AGAINST_OPTION) === AGAINST_DERO;
+
+/**
+ * The round against Dero a luck subcommand typed OUTSIDE the challenge channels asks for: null
+ * when `against` is a member (the challenge path), "throwMissing" for rps against Dero with no
+ * throw, the play otherwise. Typed in a challenge channel, the throw is asked in the room
+ * instead (2026-10 item 257 Phase 4b), so miniGameInChallenges reads isAgainstDero alone.
  */
 export function readDeroPlay(interaction: ChatInputCommandInteraction, game: SoloLuckGame): SoloLuckPlay | "throwMissing" | null {
-	if (interaction.options.getString(AGAINST_OPTION) !== AGAINST_DERO) return null;
+	if (!isAgainstDero(interaction)) return null;
 	if (game !== "rps") return { game };
 	// Discord cannot make `throw` required only when `against` is Dero, so a member who
 	// left it blank is told how to fix it rather than given a throw they did not choose.

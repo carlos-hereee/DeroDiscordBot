@@ -552,8 +552,11 @@ export const gameRoomsCopy = {
 				return "👀 No spectators: only the players will see the room.";
 			},
 		},
+		// The solo-rps room's turn modal (2026-10 item 257 Phase 4b): the throw is asked in the
+		// room, and Dero answers the moment the member submits.
 		deroThrowModalTitle: "Your throw against Dero",
 		deroThrowLabel: "Rock, paper or scissors",
+		deroThrowPrompt: "Pick your throw. Dero throws the moment you submit.",
 		// ── Play vs bots (2026-10 item 250 Phase 5) ──
 		// Hold'em, Monopoly and Battleship: the host fills seats with Dero bots, who sit
 		// down when the match starts. Bots never take a member's place and never rate.
@@ -621,14 +624,14 @@ export const gameRoomsCopy = {
 		// The toggle names the state it SWITCHES TO, so the press does what it says.
 		monopolyAuctionsToggleLabel: (enabled: boolean): string => (enabled ? "Turn auctions off" : "Turn auctions on"),
 
-		// ── Monopoly's voice referee (2026-10 item 241, Session 5c) ──
-		// Dero only speaks into a call somebody started, so the "on" line says how one
-		// starts; /dero join is gated to the members the server lets call Dero.
-		cardMonopolyReferee: (enabled: boolean): string =>
+		// ── the voice referee (2026-10 item 241, Session 5c; Hold'em too since item 257 Phase 4b) ──
+		// At the start Dero asks to join the host's voice channel when the server's voice is
+		// on (roomReferee), so the "on" line says to be in one.
+		cardReferee: (enabled: boolean): string =>
 			enabled
-				? "Voice referee is **on**: Dero calls the key moments out loud while it is in a voice call with a player. Someone allowed to call Dero starts one with `/dero join`."
+				? "Voice referee is **on**: Dero calls the key moments out loud. Be in a voice channel when the match starts and Dero joins you there."
 				: "Voice referee is **off**: the match plays in text only.",
-		monopolyRefereeToggleLabel: (enabled: boolean): string => (enabled ? "Turn referee off" : "Turn referee on"),
+		refereeToggleLabel: (enabled: boolean): string => (enabled ? "Turn referee off" : "Turn referee on"),
 
 		// ── the invite picker ──
 		pickerPlaceholder: "Choose who to invite",
@@ -1240,9 +1243,10 @@ export const gameRoomsCopy = {
 		noHostLeftEnd: "Everyone left in the match already hosts another room, so the match ends on the standings as they are.",
 
 		// ── the silent referee (2026-10 item 254, Arcade 7) ──
-		// Posted once per match when the referee is on and could not speak, saying why.
-		// The referee never joins a call by itself (the owner's decision 16), so each
-		// line names the one press that fixes it, or says plainly that nothing can.
+		// Posted once per match when the referee is on and could not speak, saying why, on
+		// Monopoly and Hold'em alike (2026-10 item 257 Phase 4b). The only join a match makes by
+		// itself is the request for the host's own call at the start (roomReferee), so each line
+		// names the one press that fixes it, or says plainly that nothing can.
 		refereeSilentTitle: "🔇 Dero's referee is silent",
 		refereeSilent: {
 			voiceOff: "Dero's voice is switched off in this server, so the referee cannot speak. A server admin can switch it on with the button below.",
@@ -1250,6 +1254,10 @@ export const gameRoomsCopy = {
 			noPlayerInCall: "Dero is in a voice call that no player in this match is in, so the referee stays quiet. A player can join that call, or bring Dero into theirs once it is free.",
 			budgetSpent: "Dero's voice has spent this month's budget in this server, so the referee stays quiet until next month or until an admin raises the cap.",
 		},
+		// The match start's request waits its turn when Dero is in another call (the voice
+		// queue), and the room is told its place, as a member who asks with /dero join is.
+		refereeQueued: (place: number, total: number): string =>
+			`🎙️ Dero is in another call right now. This match is number ${place} of ${total} in line, and Dero joins the host's voice channel when it is its turn.`,
 		enableVoiceLabel: "Enable Dero's voice",
 		bringIntoCallLabel: "Bring Dero into the call",
 		enableVoiceAdminOnly: "Only the server owner or an admin can switch Dero's voice on.",

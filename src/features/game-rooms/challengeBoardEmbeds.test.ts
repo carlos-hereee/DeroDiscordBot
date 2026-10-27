@@ -80,8 +80,8 @@ describe("the opener card's Monopoly auction toggle", () => {
 		expect(openerCardEmbed(card({ monopolyAuctions: true })).data.description).toContain(gameRoomsCopy.board.cardMonopolyAuctions(true));
 	});
 
-	it("shows neither before the visibility step, nor on another game's card, nor once the match has started", () => {
-		for (const state of [card({ visibility: null }), card({ game: "rps" }), card({ startedChannelId: "ch-1" })]) {
+	it("shows neither before the visibility step, nor on a game with no voice lines, nor once the match has started", () => {
+		for (const state of [card({ visibility: null }), card({ game: "rps" }), card({ game: "battleship" }), card({ startedChannelId: "ch-1" })]) {
 			expect(buttonsOf(state).some((button) => button.id?.includes(":auctions:"))).toBe(false);
 			expect(buttonsOf(state).some((button) => button.id?.includes(":referee:"))).toBe(false);
 			expect(openerCardEmbed(state).data.description ?? "").not.toContain("Auctions are");
@@ -100,19 +100,28 @@ describe("the opener card's Monopoly auction toggle", () => {
 	it("offers the referee toggle naming the value a press switches to", () => {
 		expect(buttonsOf(card())).toContainEqual({
 			id: `${GAME_ROOM_PREFIX}:referee:room-1:on`,
-			label: gameRoomsCopy.board.monopolyRefereeToggleLabel(false),
+			label: gameRoomsCopy.board.refereeToggleLabel(false),
 		});
-		expect(buttonsOf(card({ monopolyReferee: true }))).toContainEqual({
+		expect(buttonsOf(card({ referee: true }))).toContainEqual({
 			id: `${GAME_ROOM_PREFIX}:referee:room-1:off`,
-			label: gameRoomsCopy.board.monopolyRefereeToggleLabel(true),
+			label: gameRoomsCopy.board.refereeToggleLabel(true),
 		});
 	});
 
-	it("says on the card whether Dero referees, and how a call starts when it does", () => {
-		expect(openerCardEmbed(card()).data.description).toContain(gameRoomsCopy.board.cardMonopolyReferee(false));
-		const on = openerCardEmbed(card({ monopolyReferee: true })).data.description ?? "";
-		expect(on).toContain(gameRoomsCopy.board.cardMonopolyReferee(true));
-		expect(on).toContain("/dero join");
+	it("says on the card whether Dero referees, and that being in a voice channel brings Dero in", () => {
+		expect(openerCardEmbed(card()).data.description).toContain(gameRoomsCopy.board.cardReferee(false));
+		const on = openerCardEmbed(card({ referee: true })).data.description ?? "";
+		expect(on).toContain(gameRoomsCopy.board.cardReferee(true));
+		expect(on).toContain("voice channel");
+	});
+
+	// ── the referee on Hold'em (2026-10 item 257 Phase 4b, owner item 9) ──
+	it("offers Hold'em the referee too, on a row of Gather, Start, the buy in, Referee and Cancel", () => {
+		const holdem = card({ game: "holdem", referee: true });
+		expect(buttonsOf(holdem).map((button) => button.id?.split(":")[1])).toEqual(["join", "start", "hbuyin", "referee", "cancel"]);
+		expect(openerCardEmbed(holdem).data.description).toContain(gameRoomsCopy.board.cardReferee(true));
+		// No auctions on a Hold'em card: that setting is Monopoly's alone.
+		expect(openerCardEmbed(holdem).data.description ?? "").not.toContain("Auctions are");
 	});
 });
 
@@ -260,10 +269,20 @@ describe("the opener card's spectator setting", () => {
 		expect(openerCardEmbed({ ...base, hostControls: controls("none") }).data.description).toContain(gameRoomsCopy.board.spectators.cardLine("none"));
 	});
 
-	it("is not offered before the visibility step, on a network table, or on a closed card", () => {
-		expect(spectatorSelectOf({ ...base, visibility: null })).toBeUndefined();
+	it("is not offered on a network table or on a closed card", () => {
 		expect(spectatorSelectOf({ ...base, visibility: "public", network: true })).toBeUndefined();
 		expect(spectatorSelectOf({ ...base, startedChannelId: "room-ch-1" })).toBeUndefined();
+	});
+
+	// From the first step on every game (2026-10 item 257 Phase 4b, owner item 24). Its default is
+	// only the host's own choice there: the resolved default waits on a visibility not chosen yet.
+	it("is offered at the visibility step, defaulting only to a choice the host already made, with no line yet", () => {
+		const unchosen = spectatorSelectOf({ ...base, visibility: null });
+		expect(unchosen?.options?.map((option) => option.value)).toEqual(["open", "invite", "none"]);
+		expect(unchosen?.options?.some((option) => option.default)).toBe(false);
+		const chosen = spectatorSelectOf({ ...base, visibility: null, hostControls: { ...controls("invite"), spectatorChoice: "none" } });
+		expect(chosen?.options?.find((option) => option.default)?.value).toBe("none");
+		expect(openerCardEmbed({ ...base, visibility: null }).data.description ?? "").not.toContain("👀");
 	});
 
 	it("keeps a rated public card inside Discord's five rows with every control showing", () => {

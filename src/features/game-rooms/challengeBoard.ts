@@ -1,9 +1,7 @@
 import {
 	ActionRowBuilder,
 	ChannelType,
-	LabelBuilder,
 	MessageFlags,
-	ModalBuilder,
 	StringSelectMenuBuilder,
 	TextChannel,
 	type ButtonInteraction,
@@ -42,7 +40,7 @@ import { resolveRoomChannel } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { rematchedResultEmbed, roomOpenerLogo, roomResultEmbed } from "./gameRoomsEmbeds.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_SELECT_PREFIX, confirmCustomId } from "./gameRoomActions.js";
+import { GAME_ROOM_SELECT_PREFIX, confirmCustomId } from "./gameRoomActions.js";
 import { isPickerPrefix, pickedValues, showPicker } from "./pickerModal.js";
 import { buildInviteOptions, refilterInvitees } from "./invitePicker.js";
 import {
@@ -50,9 +48,9 @@ import {
 	openerCardRows,
 	isCooperativeGame,
 	isDeroPlayable,
-	type MonopolyDraftSettingAction,
+	type DraftSettingAction,
 } from "./challengeBoardEmbeds.js";
-import type { GameSlug, RoomVisibility } from "./roomTypes.js";
+import { isSoloRematchGame, offersReferee, refereeOn, type GameSlug, type RoomVisibility } from "./roomTypes.js";
 import { effectiveSpectatorMode } from "./roomPermissions.js";
 import { cardStateFor, editOpenerCard, refreshCard, resolveChallengesChannel } from "./challengeCard.js";
 import { isWithinReach, readChallengeReach } from "./challengeReach.js";
@@ -63,10 +61,8 @@ import { hasNetworkConsent } from "./networkConsent.js";
 import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
 import { networkBanStore } from "@db/stores/networkBanStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
-import type { SoloLuckPlay } from "@features/games/soloLuck.js";
 import { botSeatIdsFor, botsAllowedIn, casualBotSeats, maxBotSeats, takesBots } from "./botSeat.js";
 import { adminLog } from "@features/setup/adminLog.js";
-import { RPS_CHOICES, type RpsChoice } from "@features/games/rpsWinner.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { showConfirm, showEmbedNotice, showErrorNotice, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 
@@ -312,31 +308,28 @@ export async function openChallengeDraft(guild: Guild, hostId: string, game: Gam
 	return { ok: true, room, channel, card };
 }
 
-// ── Monopoly's draft settings ─────────────────────────────────────────
-// The host decides at open whether a lot a player passes on goes to auction (master
-// plan Section 1) and whether Dero referees the match out loud (Session 5c). Both
-// live on the draft row, which the provisioner adopts, so each reaches the match
-// without a second copy anywhere. One handler for both, keyed by the card action
-// that carries it, so the two toggles cannot drift into different rules.
-const MONOPOLY_DRAFT_SETTINGS = {
-	auctions: "monopolyAuctions",
-	referee: "monopolyReferee",
-} as const satisfies Record<MonopolyDraftSettingAction, keyof IGameRoom>;
+// ── the draft's on or off settings ────────────────────────────────────
+// The host decides at open whether a Monopoly lot a player passes on goes to auction
+// (master plan Section 1) and whether Dero referees the match out loud (Session 5c,
+// Monopoly and Hold'em since 2026-10 item 257 Phase 4b). Both live on the draft row,
+// which the provisioner adopts, so each reaches the match without a second copy anywhere.
+// One handler for both, keyed by the card action that carries it, so the toggles cannot
+// drift into different rules.
+const DRAFT_SETTINGS = {
+	auctions: { field: "monopolyAuctions", offeredFor: (game: GameSlug) => game === "monopoly" },
+	referee: { field: "referee", offeredFor: offersReferee },
+} as const satisfies Record<DraftSettingAction, { field: keyof IGameRoom; offeredFor: (game: GameSlug) => boolean }>;
 
-export async function chooseMonopolyDraftSetting(
-	interaction: ButtonInteraction,
-	room: IGameRoom,
-	action: MonopolyDraftSettingAction,
-	choice: string
-): Promise<void> {
-	// The arg is user input like the rest of a customId: anything but the two values
-	// a card renders is a retired or forged control.
-	if (room.game !== "monopoly" || (choice !== "on" && choice !== "off")) {
+export async function chooseDraftSetting(interaction: ButtonInteraction, room: IGameRoom, action: DraftSettingAction, choice: string): Promise<void> {
+	const setting = DRAFT_SETTINGS[action];
+	// The arg is user input like the rest of a customId: anything but the two values a card
+	// renders, or a setting this game's card never offers, is a retired or forged control.
+	if (!setting.offeredFor(room.game) || (choice !== "on" && choice !== "off")) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 	const patch: Partial<IGameRoom> = {};
-	patch[MONOPOLY_DRAFT_SETTINGS[action]] = choice === "on";
+	patch[setting.field] = choice === "on";
 	const updated = (await gameRoomStore.update(room.guildId, room.roomId, patch)) ?? room;
 
 	await interaction.deferUpdate();
@@ -401,7 +394,11 @@ async function chooseNetworkTable(interaction: ButtonInteraction, room: IGameRoo
 		return;
 	}
 
-	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { visibility: "public", network: true })) ?? room;
+	// A spectator choice made at the visibility step is dropped: a network table's card offers
+	// no spectator select (its watchers in other servers are its satellites' business), so it
+	// keeps the default a network table has always opened with rather than a choice its card
+	// no longer shows.
+	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { visibility: "public", network: true, spectatorMode: null })) ?? room;
 	await interaction.deferUpdate();
 	await refreshCard(interaction.guild!, updated, cardStateFor(updated, { visibility: "public", pool: updated.spectatorIds ?? [] }));
 }
@@ -861,11 +858,12 @@ async function checkRematch(interaction: ButtonInteraction, room: IGameRoom): Pr
 	// the message: refuse by STATUS, exactly like the board controls.
 	if (room.status !== "finished") return { ok: false, reply: { content: gameRoomsCopy.errors.notFound } };
 
-	// Solo visibility rematches for the two solo games only. A solo luck round against Dero
-	// (2026-10 item 254, Arcade 1) has no rematch, its result card offers none, since its
-	// round is played as its room opens; any other game with solo visibility is a row no
-	// current path writes, and seeding it would open the wrong thing.
-	if (room.visibility === "solo" && room.game !== "solo-hangman" && room.game !== "solo-blackjack") {
+	// Solo visibility rematches only for the solo games whose result card offers it
+	// (roomTypes.SOLO_REMATCH_GAMES). A coin flip or dice round against Dero is a single
+	// press from the card instead, and solo-rps asks its throw in the room, so its rematch is
+	// one more prompt (2026-10 item 257 Phase 4b); any other game with solo visibility is a
+	// row no current path writes, and seeding it would open the wrong thing.
+	if (room.visibility === "solo" && !isSoloRematchGame(room.game)) {
 		return { ok: false, reply: { content: gameRoomsCopy.errors.notFound } };
 	}
 
@@ -970,7 +968,7 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 			// The same match settings as the game it rematches. Nothing else carries
 			// them: Monopoly's referee in particular is read off the ROW on every move.
 			monopolyAuctions: finished.monopolyAuctions ?? false,
-			monopolyReferee: finished.monopolyReferee ?? false,
+			referee: refereeOn(finished),
 			// And the host controls (2026-10 item 244 Phase 4), above all who was removed:
 			// the rematch plays in the SAME channel, so a member removed from it stays
 			// removed, and a public Hold'em rematch's Buy in refuses them like the first.
@@ -1007,72 +1005,21 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 //        Dero instead of waiting on a member. The draft closes and the round plays in a
 //        solo room of the host's own (soloRooms, 2026-10 item 254, Arcade 1), so nothing
 //        is played in ⚔️challenges; the host is told privately where it is.
-// Who:   the card's `dero` button (strict host only: HOST_STRICT_ACTIONS), and for rps
-//        the throw modal it opens, whose submit re-checks the host and the draft
-//        because a modal is reachable without the button.
+// Who:   the card's `dero` button (strict host only: HOST_STRICT_ACTIONS).
 // Where: soloLuck is the ONE solo round, shared with /mini-game against Dero and the
-//        🕹️games row, so the odds and the pay cannot drift between the three doors.
+//        🕹️games row, so the odds and the pay cannot drift between the three doors. An rps
+//        round asks for its throw IN its room, through the turn prompt (soloLuckRoom,
+//        2026-10 item 257 Phase 4b), so the press asks nothing here and a rematch can ask
+//        again in the same channel.
 // How:   ① refuse anything but a luck draft; ② archive the draft, which frees the
 //        host's one room slot exactly like Call it off, so the solo room may take it;
-//        ③ open the solo room, which plays the round; ④ close the card with the line that
-//        points at the room.
-const DERO_THROW_FIELD = "throw";
-
+//        ③ open the solo room, which plays the coin or the dice at once and prompts the rps
+//        throw; ④ close the card with the line that points at the room.
 export async function playDero(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	if (!isDeroPlayable(room.game)) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
-	// rps needs the host's throw first: a modal with the three throws, so the press
-	// answers with the question rather than a message to dismiss.
-	if (room.game === "rps") {
-		await interaction.showModal(deroThrowModal(room.roomId));
-		return;
-	}
-	await playDeroRound(interaction, room, { game: room.game === "coinflip" ? "coinflip" : "diceroll" });
-}
-
-function deroThrowModal(roomId: string): ModalBuilder {
-	const words = gameRoomsCopy;
-	return new ModalBuilder()
-		.setCustomId(`${GAME_ROOM_MODAL_PREFIX}:dero:${roomId}`)
-		.setTitle(words.board.deroThrowModalTitle)
-		.addLabelComponents(
-			new LabelBuilder().setLabel(words.board.deroThrowLabel).setStringSelectMenuComponent(
-				new StringSelectMenuBuilder()
-					.setCustomId(DERO_THROW_FIELD)
-					.setMinValues(1)
-					.setMaxValues(1)
-					.addOptions(RPS_CHOICES.map((choice) => ({ label: words.games.rpsLabel(choice), value: choice })))
-			)
-		);
-}
-
-/** The rps throw modal's submit: the same gates as the button, then the round. */
-export async function handleDeroThrowModal(interaction: ModalSubmitInteraction): Promise<void> {
-	const [, , roomId] = interaction.customId.split(":");
-	const guildId = interaction.guildId;
-	if (!guildId || !roomId) return;
-
-	const room = await gameRoomStore.findByRoomId(guildId, roomId);
-	if (!room || room.status !== "draft" || room.game !== "rps") {
-		await interaction.reply({ content: gameRoomsCopy.board.draftGone, flags: MessageFlags.Ephemeral });
-		return;
-	}
-	if (room.hostId !== interaction.user.id) {
-		await interaction.reply({ content: gameRoomsCopy.board.onlyHostStarts, flags: MessageFlags.Ephemeral });
-		return;
-	}
-	// The value is user input whoever built the menu, so it is checked against the throws.
-	const memberThrow = interaction.fields.getStringSelectValues(DERO_THROW_FIELD)[0] as RpsChoice | undefined;
-	if (!memberThrow || !RPS_CHOICES.includes(memberThrow)) {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
-		return;
-	}
-	await playDeroRound(interaction, room, { game: "rps", memberThrow });
-}
-
-async function playDeroRound(interaction: ButtonInteraction | ModalSubmitInteraction, room: IGameRoom, play: SoloLuckPlay): Promise<void> {
 	const guild = interaction.guild;
 	if (!guild) return;
 	// Deferred first: opening a room is a channel create plus its opener, which can run
@@ -1081,12 +1028,11 @@ async function playDeroRound(interaction: ButtonInteraction | ModalSubmitInterac
 	await gameRoomStore.markArchived(room.guildId, room.roomId);
 
 	const member = guild.members.cache.get(interaction.user.id);
-	const opened = await openSoloRoom(
-		guild,
-		soloLuckSlugFor(play),
-		{ userId: interaction.user.id, displayName: member?.displayName ?? interaction.user.globalName ?? interaction.user.username, user: interaction.user },
-		{ luckPlay: play }
-	);
+	const opened = await openSoloRoom(guild, soloLuckSlugFor(room.game), {
+		userId: interaction.user.id,
+		displayName: member?.displayName ?? interaction.user.globalName ?? interaction.user.username,
+		user: interaction.user,
+	});
 	if (!opened.ok) {
 		await interaction.editReply({ embeds: [errorEmbed(describeSoloOpenFailure(opened))] });
 		await refreshCard(guild, room, cardStateFor(room, { visibility: room.visibility, resultLine: gameRoomsCopy.board.cardDeroUnavailable(room.hostId) }));
@@ -1338,9 +1284,8 @@ export const challengeBoard = {
 	handleOpponentSelect,
 	cancelDraft,
 	rematchFromRoom,
-	chooseMonopolyDraftSetting,
+	chooseDraftSetting,
 	playDero,
-	handleDeroThrowModal,
 	openBotPicker,
 	handleBotSelect,
 	chooseCasual,

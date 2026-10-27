@@ -234,7 +234,7 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			return;
 		case "auctions":
 		case "referee":
-			await challengeBoard.chooseMonopolyDraftSetting(interaction, room, parsed.action, parsed.arg ?? "");
+			await challengeBoard.chooseDraftSetting(interaction, room, parsed.action, parsed.arg ?? "");
 			return;
 		case "rematch":
 			// On the result card of a finished room. rematchFromRoom refuses by status
@@ -541,8 +541,6 @@ export function registerGameRoomHandlers(): void {
 		if (action === "turn") return handleTurnSubmit(interaction, turnAdapterFor);
 		if (action === "mtrade") return roomMonopolyTrade.handleTradeModal(interaction);
 		if (action === "mbid") return roomMonopolyAuction.handleBidModal(interaction);
-		// The host's throw against Dero (post-launch plan item 13).
-		if (action === "dero") return challengeBoard.handleDeroThrowModal(interaction);
 		// The single choice pickers shown as modals (2026-10 item 254 Phase 5b): the same
 		// action names and handlers as their select messages, which remain the fallback.
 		if (action === "opponent") return challengeBoard.handleOpponentSelect(interaction);

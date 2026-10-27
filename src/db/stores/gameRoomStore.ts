@@ -53,7 +53,7 @@ interface ICreateGameRoom {
 	// The host's Casual choice (2026-10 item 254, Arcade 6), carried by a rematch so it
 	// stays unrated like the match it follows.
 	casual?: boolean;
-	monopolyReferee?: boolean;
+	referee?: boolean;
 	// The host controls, carried from the finished room by a rematch in the same
 	// channel, so a member removed from that channel stays removed. A board challenge
 	// sets them on its draft with the card's controls instead.
@@ -93,7 +93,7 @@ export const gameRoomStore = {
 			rematchedFromRoomId: input.rematchedFromRoomId ?? null,
 			channelId: input.channelId ?? null,
 			monopolyAuctions: input.monopolyAuctions ?? false,
-			monopolyReferee: input.monopolyReferee ?? false,
+			referee: input.referee ?? false,
 			ratingBand: input.ratingBand ?? "any",
 			requireApproval: input.requireApproval ?? false,
 			kickedIds: input.kickedIds ?? [],

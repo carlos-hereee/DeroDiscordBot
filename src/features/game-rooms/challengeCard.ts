@@ -6,7 +6,7 @@ import { openerCardEmbed, openerCardRows, type OpenerCardState } from "./challen
 import { challengeCardView, renderChallengeCard } from "./challengeCardRenderer.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { flavorGameOf, pickFlavor, type OutcomeBucket } from "./matchOutcome.js";
-import type { GameSlug } from "./roomTypes.js";
+import { refereeOn, type GameSlug } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { labelBotMentions } from "./botSeat.js";
 import { isRatedGame } from "@features/ratings/ratingEngine.js";
@@ -96,7 +96,7 @@ export function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState
 		visibility: overrides.visibility ?? null,
 		pool: room.spectatorIds ?? [],
 		monopolyAuctions: room.monopolyAuctions ?? false,
-		monopolyReferee: room.monopolyReferee ?? false,
+		referee: refereeOn(room),
 		// A table the host opened to the network (2026-10 item 244 Phase 5b), off the row.
 		network: room.network ?? false,
 		// The host's say over who joins (2026-10 item 244 Phase 4), off the draft row.
@@ -107,6 +107,8 @@ export function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState
 			// Who may watch (2026-10 item 254, Arcade 11), resolved from the visibility the
 			// row holds, so the card's line and select show what the room will do.
 			spectatorMode: effectiveSpectatorMode(overrides.visibility ?? room.visibility, room.spectatorMode),
+			// The host's own choice, which the visibility step's select shows (2026-10 item 257 Phase 4b).
+			spectatorChoice: room.spectatorMode ?? null,
 		},
 		// Play vs bots (2026-10 item 250 Phase 5), off the draft row.
 		...(room.botsOffered ? { bots: { count: room.botSeats ?? 0 } } : {}),

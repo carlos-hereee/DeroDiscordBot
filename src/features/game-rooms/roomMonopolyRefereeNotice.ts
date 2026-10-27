@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, type ButtonInteraction, type Client, type ColorResolvable } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, type ButtonInteraction, type Client, type ColorResolvable, type MessageCreateOptions } from "discord.js";
 import { COLORS } from "@base/copy/brand.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -14,22 +14,27 @@ import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { moveMonopolyBoardToBottom } from "./roomMonopolyBoard.js";
 import type { RefereeSilence } from "./roomMonopolyReferee.js";
+import { resolveRoomChannel } from "./roomTrail.js";
 
 // ── roomMonopolyRefereeNotice ────────────────────────────────────────
-// What:  the one notice a Monopoly match gets when its voice referee is on and cannot
-//        speak (2026-10 item 254, Arcade 7): why, and the one press that fixes it.
+// What:  the one notice a refereed match gets when its voice referee is on and cannot
+//        speak (2026-10 item 254, Arcade 7; Hold'em too since 2026-10 item 257 Phase 4b):
+//        why, and the one press that fixes it.
 //        Voice off: Enable Dero's voice, admin gated, through the /dero-config enable
 //        handler the settings panel already runs. Dero in no call: Bring Dero into the
 //        call, through bringDeroIntoCall and every checkJoin gate. No player in Dero's
 //        call, or the month's budget spent: the notice alone, since no press here fixes it.
-// Who:   roomMonopolyHandlers.applyMonopolyOutcome hands postRefereeNotice to the
-//        referee as its onSilent; gameRoomHandlers routes the two buttons here.
+// Who:   roomReferee.startRoomReferee at match start, when voice is off or the host is in
+//        no call; roomMonopolyHandlers.applyMonopolyOutcome hands postRefereeNotice to the
+//        Monopoly referee as its onSilent; gameRoomHandlers routes the two buttons here.
 // When:  at most once per match: the claim on the row is what makes it once, so a second
 //        silent move, a restart or a racing sweep posts nothing.
-// Where: the referee NEVER joins a call by itself (the owner's decision 16). This file
-//        only says why it is quiet; joining stays a member's press.
-// How:   claim, then post the notice above the board and move the board below it, so the
-//        board stays the last message in the room (Arcade 8).
+// Where: the only join a match makes by itself is roomReferee's request for the host's own
+//        call at match start. This file only says why it is quiet; any other join stays a
+//        member's press.
+// How:   claim, then post the notice. A Monopoly board then moves below it, so the board
+//        stays the last message in the room (Arcade 8); a Hold'em table posts afresh at its
+//        next reveal anyway (roomBoardRepost), so the notice simply posts in the room.
 
 const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 
@@ -54,6 +59,19 @@ export function refereeNoticeMessage(reason: RefereeSilence, roomId: string) {
 }
 
 /**
+ * Post a line in a refereed room: above Monopoly's board, which then moves down so it stays
+ * the last message, or straight into any other room. `room` must carry its channel id.
+ */
+export async function postAboveBoard(client: Client, room: IGameRoom, payload: MessageCreateOptions): Promise<void> {
+	if (room.game === "monopoly") {
+		await moveMonopolyBoardToBottom(client, room, (channel) => channel.send(payload));
+		return;
+	}
+	const channel = await resolveRoomChannel(client, room.channelId);
+	await channel?.send(payload);
+}
+
+/**
  * Post the match's one silent referee notice, if this match has not had it. Fire and
  * forget: it never throws, because it runs off the referee's own promise chain.
  */
@@ -61,9 +79,9 @@ export async function postRefereeNotice(client: Client, room: IGameRoom, reason:
 	try {
 		const claimed = await gameRoomStore.claimRefereeNotice(room.guildId, room.roomId, new Date());
 		if (!claimed) return;
-		await moveMonopolyBoardToBottom(client, claimed, (channel) => channel.send({ ...refereeNoticeMessage(reason, room.roomId), allowedMentions: { parse: [] } }));
+		await postAboveBoard(client, claimed, { ...refereeNoticeMessage(reason, room.roomId), allowedMentions: { parse: [] } });
 	} catch (error) {
-		console.error("[monopoly-referee] the silent referee notice did not post", { roomId: room.roomId, reason, error });
+		console.error("[game-rooms] the silent referee notice did not post", { roomId: room.roomId, reason, error });
 	}
 }
 
@@ -91,11 +109,11 @@ export async function handleEnableVoice(interaction: ButtonInteraction): Promise
 
 /**
  * Bring Dero into the call: bringDeroIntoCall answers and gates the press itself. Its
- * join notice posts in this room, so the board then moves back below it.
+ * join notice posts in this room, so a Monopoly board then moves back below it.
  */
 export async function handleBringIntoCall(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	await bringDeroIntoCall(interaction);
-	await moveMonopolyBoardToBottom(interaction.client, room);
+	if (room.game === "monopoly") await moveMonopolyBoardToBottom(interaction.client, room);
 }
 
 export const roomMonopolyRefereeNotice = { postRefereeNotice, handleEnableVoice, handleBringIntoCall };

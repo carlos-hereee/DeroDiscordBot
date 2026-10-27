@@ -13,7 +13,7 @@ import { challengeResultLine, closeChallengeCard } from "./challengeCard.js";
 import type { OutcomeBucket } from "./matchOutcome.js";
 import { settleTableChips } from "./holdemChips.js";
 import { revokeRoomInvite } from "./roomInvite.js";
-import { isSoloLuckGame } from "./roomTypes.js";
+import { isSoloLuckGame, offersRematch } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomLifecycle ────────────────────────────────────────────────────
@@ -140,7 +140,7 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 		await channel
 			.send({
 				embeds: [resultEmbed],
-				components: [roomArchiveRow(room.roomId, { rematch: !isSoloLuckGame(room.game) })],
+				components: [roomArchiveRow(room.roomId, { rematch: offersRematch(room.game) })],
 				...(input.art ? { files: [input.art.attachment] } : {}),
 			})
 			.catch((error) => console.error("[game-rooms] failed to post result card", { roomId: room.roomId, error }));

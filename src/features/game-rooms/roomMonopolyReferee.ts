@@ -5,6 +5,7 @@ import type { MonopolyState } from "@features/games/monopolyState.js";
 import { defaultCallAnnouncerDeps, isVoiceEnabled, speakInCall, type CallAnnouncement, type CallAnnouncerDeps } from "@features/voice/callAnnouncer.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { displayNamesIn, isTurnHandoffLine, PLAYER_MENTION_PATTERN } from "./roomMonopolyBoard.js";
+import { refereeOn } from "./roomTypes.js";
 
 // ── roomMonopolyReferee ──────────────────────────────────────────────
 // What:  Dero as a Monopoly match's voice referee: the key moments of each move
@@ -201,7 +202,7 @@ export interface AnnounceRefereeInput {
  * referee costs one field read.
  */
 export function announceReferee({ client, room, state, lines, onSilent = () => undefined }: AnnounceRefereeInput, deps: CallAnnouncerDeps = defaultCallAnnouncerDeps): void {
-	if (!room.monopolyReferee) return;
+	if (!refereeOn(room)) return;
 	try {
 		const clips = groupIntoClips(pickRefereeLines(lines));
 		if (clips.length === 0) return;

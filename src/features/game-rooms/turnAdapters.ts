@@ -4,6 +4,7 @@ import { holdemTurnAdapter } from "./roomHoldemHandlers.js";
 import { monopolyTurnAdapter } from "./roomMonopolyHandlers.js";
 import { battleshipTurnAdapter } from "./roomBattleshipHandlers.js";
 import { blackjackTurnAdapter } from "@features/games/blackjackHandler.js";
+import { soloRpsTurnAdapter } from "./soloLuckRoom.js";
 
 // ── turnAdapters ─────────────────────────────────────────────────────
 // What:  which game answers to which turn adapter (2026-10 item 257 Phase 4a), in one table the
@@ -18,6 +19,8 @@ const ADAPTERS: Partial<Record<GameSlug, TurnAdapter>> = {
 	battleship: battleshipTurnAdapter,
 	// The multi seat room table only: a one seat Play Dero table (solo-blackjack) has no one to ping.
 	blackjack: blackjackTurnAdapter,
+	// Rock paper scissors against Dero asks for its throw in its room (2026-10 item 257 Phase 4b).
+	"solo-rps": soloRpsTurnAdapter,
 };
 
 /** The adapter of a game that prompts its turns, or undefined for one that does not. */

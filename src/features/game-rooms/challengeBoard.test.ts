@@ -27,7 +27,7 @@ import {
 	joinChallenge,
 	startMatch,
 	confirmStartMatch,
-	chooseMonopolyDraftSetting,
+	chooseDraftSetting,
 	handleOpponentSelect,
 	offerChallengeDraft,
 	confirmChallengeDraft,
@@ -361,13 +361,13 @@ describe("the spectator setting at start", () => {
 // ── Monopoly's auction choice ─────────────────────────────────────────
 // The host turns auctions on or off on the draft card; the choice rides the draft
 // row, which the provisioner adopts, so it is read once when the match is seeded.
-describe("the Monopoly auction toggle", () => {
+describe("the draft's on or off settings (auctions, and the referee on Monopoly and Hold'em)", () => {
 	const members = makeMembers([{ id: HOST, bot: false, name: "Host" }]);
 	const openMock = RoomProvisioner.open as unknown as ReturnType<typeof vi.fn>;
 
 	it("stores the value the press names on the draft and acknowledges without a new message", async () => {
 		const interaction = makeButton(HOST, members);
-		await chooseMonopolyDraftSetting(interaction, makeRoom({ game: "monopoly", visibility: "public" }), "auctions", "on");
+		await chooseDraftSetting(interaction, makeRoom({ game: "monopoly", visibility: "public" }), "auctions", "on");
 
 		expect(storeMock.update).toHaveBeenCalledWith("guild-1", "room-1", { monopolyAuctions: true });
 		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
@@ -375,33 +375,35 @@ describe("the Monopoly auction toggle", () => {
 	});
 
 	it("turns them back off", async () => {
-		await chooseMonopolyDraftSetting(makeButton(HOST, members), makeRoom({ game: "monopoly", monopolyAuctions: true }), "auctions", "off");
+		await chooseDraftSetting(makeButton(HOST, members), makeRoom({ game: "monopoly", monopolyAuctions: true }), "auctions", "off");
 		expect(storeMock.update).toHaveBeenCalledWith("guild-1", "room-1", { monopolyAuctions: false });
 	});
 
 	it("refuses the toggle on another game's draft, or with a value no card renders, and writes nothing", async () => {
 		for (const [game, choice] of [["rps", "on"], ["monopoly", "maybe"]] as const) {
 			const interaction = makeButton(HOST, members);
-			await chooseMonopolyDraftSetting(interaction, makeRoom({ game }), "auctions", choice);
+			await chooseDraftSetting(interaction, makeRoom({ game }), "auctions", choice);
 			expect(interaction.reply).toHaveBeenCalledOnce();
 		}
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
-	it("stores the voice referee choice through the same handler, in its own field", async () => {
+	it.each(["monopoly", "holdem"] as const)("stores %s's voice referee choice through the same handler, in its own field", async (game) => {
 		const interaction = makeButton(HOST, members);
-		await chooseMonopolyDraftSetting(interaction, makeRoom({ game: "monopoly", visibility: "public" }), "referee", "on");
-		expect(storeMock.update).toHaveBeenCalledWith("guild-1", "room-1", { monopolyReferee: true });
+		await chooseDraftSetting(interaction, makeRoom({ game, visibility: "public" }), "referee", "on");
+		expect(storeMock.update).toHaveBeenCalledWith("guild-1", "room-1", { referee: true });
 		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
 
-		await chooseMonopolyDraftSetting(makeButton(HOST, members), makeRoom({ game: "monopoly", monopolyReferee: true }), "referee", "off");
-		expect(storeMock.update).toHaveBeenLastCalledWith("guild-1", "room-1", { monopolyReferee: false });
+		await chooseDraftSetting(makeButton(HOST, members), makeRoom({ game, referee: true }), "referee", "off");
+		expect(storeMock.update).toHaveBeenLastCalledWith("guild-1", "room-1", { referee: false });
 	});
 
-	it("refuses the referee toggle on another game's draft and writes nothing", async () => {
-		const interaction = makeButton(HOST, members);
-		await chooseMonopolyDraftSetting(interaction, makeRoom({ game: "holdem" }), "referee", "on");
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.errors.controlRetired }));
+	it("refuses the referee toggle on a game with no voice lines, and the auctions on Hold'em, writing nothing", async () => {
+		for (const [game, action] of [["battleship", "referee"], ["rps", "referee"], ["holdem", "auctions"]] as const) {
+			const interaction = makeButton(HOST, members);
+			await chooseDraftSetting(interaction, makeRoom({ game }), action, "on");
+			expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.errors.controlRetired }));
+		}
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 

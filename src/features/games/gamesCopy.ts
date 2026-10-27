@@ -130,7 +130,8 @@ export const gamesCopy = {
 		againstOptionDescription: "Challenge a member on the board, or play Dero right here",
 		againstMemberLabel: "A member, on the challenge board",
 		againstDeroLabel: "Dero, right here and now",
-		throwOptionDescription: "Your throw, when you play Dero",
+		// In a challenge channel the throw is asked in the room instead (2026-10 item 257 Phase 4b).
+		throwOptionDescription: "Your throw against Dero; in a challenge channel you pick it in the room instead",
 		throwNeeded: "Pick your throw to face Dero: run it again with the throw option set to rock, paper or scissors.",
 
 		coinTitle: "🪙 Dero flips a royal coin",

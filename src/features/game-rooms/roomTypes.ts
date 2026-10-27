@@ -30,7 +30,8 @@
 // field so every customId, enum validator and trail entry is unambiguous about which form
 // was played, and so SELF_BOARDED_GAMES can name solo-blackjack without a mode branch. The
 // three solo luck slugs are a round against Dero (Play Dero instead, and a /mini-game
-// against Dero typed in ⚔️challenges), played and finished the moment the room opens.
+// against Dero typed in ⚔️challenges): the coin and the dice play the moment the room
+// opens, and rock paper scissors asks for its throw in the room.
 export const GAME_SLUGS = [
 	"hangman",
 	"coinflip",
@@ -54,12 +55,36 @@ export type GameSlug = (typeof GAME_SLUGS)[number];
 // membership, so they keep this module dependency free.
 // The rooms whose hand is dealt by blackjackHandler and lives only in its process Map.
 export const BLACKJACK_ROOM_GAMES = ["blackjack", "solo-blackjack"] as const satisfies readonly GameSlug[];
-// The one round solo rooms against Dero, played and finished the moment the room opens.
+// The one round solo rooms against Dero, each finished as soon as its round is played.
 export const SOLO_LUCK_GAMES = ["solo-coinflip", "solo-diceroll", "solo-rps"] as const satisfies readonly GameSlug[];
 export type SoloLuckSlug = (typeof SOLO_LUCK_GAMES)[number];
 
+// The solo rooms a finished match offers Rematch in. Rock paper scissors is the one luck
+// round here (2026-10 item 257 Phase 4b): its throw is asked in the room, so a second round
+// is one more prompt in the same channel; a coin flip or a dice roll is a single press from
+// the card or the 🕹️games row instead. Read by the result card and the rematch check alike.
+export const SOLO_REMATCH_GAMES = ["solo-hangman", "solo-blackjack", "solo-rps"] as const satisfies readonly GameSlug[];
+
 export const isBlackjackRoomGame = (game: GameSlug): boolean => (BLACKJACK_ROOM_GAMES as readonly GameSlug[]).includes(game);
 export const isSoloLuckGame = (game: GameSlug): game is SoloLuckSlug => (SOLO_LUCK_GAMES as readonly GameSlug[]).includes(game);
+export const isSoloRematchGame = (game: GameSlug): boolean => (SOLO_REMATCH_GAMES as readonly GameSlug[]).includes(game);
+
+/** Whether a finished room of this game offers Rematch on its result card. */
+export const offersRematch = (game: GameSlug): boolean => !isSoloLuckGame(game) || isSoloRematchGame(game);
+
+// The games whose matches Dero can referee out loud (2026-10 item 257 Phase 4b, decision 13):
+// the ones with voice lines. A game gains the challenge card's referee toggle only when its
+// lines exist, so this list grows with them and never ahead of them.
+export const REFEREE_GAMES = ["monopoly", "holdem"] as const satisfies readonly GameSlug[];
+export const offersReferee = (game: GameSlug): boolean => (REFEREE_GAMES as readonly GameSlug[]).includes(game);
+
+/**
+ * Whether Dero referees this match. The field is `referee`; a row written before it existed
+ * carries Monopoly's old `monopolyReferee` instead, so a null falls through to that, and a
+ * live draft or match keeps its referee across the deploy that introduced the new field.
+ * Structural rather than typed on IGameRoom, so this module stays import free.
+ */
+export const refereeOn = (room: { referee?: boolean | null; monopolyReferee?: boolean | null }): boolean => room.referee ?? room.monopolyReferee ?? false;
 
 // ── Who may see the room ──
 // "invite": @everyone is denied ViewChannel and each accepted member gets an explicit

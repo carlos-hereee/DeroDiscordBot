@@ -90,13 +90,20 @@ export interface IGameRoom {
 	// by the card's toggle and read once, when the provisioner seeds the match, which then
 	// carries it in its own settings; nothing reads this field after the match starts.
 	monopolyAuctions: boolean;
-	// Monopoly only: whether the host opened the match with Dero as its voice referee.
-	// Set on the DRAFT by the card's toggle like the auction choice, but unlike it,
-	// read on EVERY move (roomMonopolyReferee), because the match state never copies it.
+	// Whether the host opened the match with Dero as its voice referee, on Monopoly and
+	// Hold'em (2026-10 item 257 Phase 4b). Set on the DRAFT by the card's toggle and read off
+	// the ROW (Monopoly on every move), because no match state copies it. Null on a row
+	// written before it existed, which then reads monopolyReferee below: ALWAYS read the pair
+	// through roomTypes.refereeOn, never either field alone.
+	referee: boolean | null;
+	// The stored Monopoly flag the referee field replaced. Still read for a row written
+	// before the switch (a live draft or match keeps its referee across the deploy); nothing
+	// writes it any more.
 	monopolyReferee: boolean;
 	// When the referee's one silent notice posted (2026-10 item 254, Arcade 7): null until the
-	// referee was on and could not speak. On the ROW rather than in the match's `secret`,
-	// because every Monopoly move rewrites that blob from its own read and would drop it.
+	// referee was on and could not speak, on either referee game despite the name. On the ROW
+	// rather than in the match's `secret`, because every Monopoly move rewrites that blob
+	// from its own read and would drop it.
 	monopolyRefereeNoticeAt: Date | null;
 	// The prompt line that pings the member on the clock (2026-10 item 257 Phase 4a): which turn
 	// it was posted for, where it sits, and whether the turn was played through its modal. On the
@@ -245,7 +252,11 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		rematchedFromRoomId: { type: String, default: null },
 		// Off by default, so a row written before the field existed reads as auctions off.
 		monopolyAuctions: { type: Boolean, default: false },
-		// Off by default for the same reason: an older row reads as no referee.
+		// ⚠️ NULL by default, never false: Mongoose fills a default into a row that lacks the
+		// field when it loads, and a false there would hide an older Monopoly row's
+		// monopolyReferee: true. Null falls through to it in roomTypes.refereeOn.
+		referee: { type: Boolean, default: null },
+		// Off by default for the same reason as the auctions: an older row reads as no referee.
 		monopolyReferee: { type: Boolean, default: false },
 		// Null on every older row, which reads as no notice posted yet.
 		monopolyRefereeNoticeAt: { type: Date, default: null },

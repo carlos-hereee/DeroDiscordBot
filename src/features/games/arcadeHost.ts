@@ -15,7 +15,6 @@ import { openSoloRoom, describeSoloOpenFailure, readPrivateQuotaStatus, type Sol
 import { offerChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { HANGMAN_CATEGORIES, isHangmanCategory, type HangmanCategory } from "./hangmanWords.js";
-import type { SoloLuckPlay } from "./soloLuck.js";
 
 // ── arcadeHost ─────────────────────────────────────────────────────────────
 // What:  the "Host a game" controls and the hangman category start, both riding the
@@ -130,7 +129,7 @@ async function handleHangmanCategoryStart(interaction: StringSelectMenuInteracti
 export async function openSoloRoomForMember(
 	interaction: MessageComponentInteraction | ChatInputCommandInteraction,
 	game: SoloGameSlug,
-	options: { hangmanCategory?: HangmanCategory; luckPlay?: SoloLuckPlay } = {}
+	options: { hangmanCategory?: HangmanCategory } = {}
 ): Promise<void> {
 	const guild = interaction.guild!;
 	const member = guild.members.cache.get(interaction.user.id);

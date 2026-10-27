@@ -25,6 +25,8 @@ import { monopolyBoardEmbed, monopolyControlsRow } from "./roomMonopoly.js";
 import { seatNamesForBoard } from "./roomMonopolyBoard.js";
 import { monopolyTurnAdapter } from "./roomMonopolyHandlers.js";
 import { syncTurnPrompt } from "./turnPrompt.js";
+import { soloRpsTurnAdapter } from "./soloLuckRoom.js";
+import { startRoomReferee } from "./roomReferee.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -103,8 +105,9 @@ const inflightOpens = new Map<string, Promise<RoomOpenResult>>();
 // here: it rides the trail plus the pinned guess control, like room hangman.
 // monopoly rides its own board message too, edited after every move, and so does a
 // multi seat blackjack table (2026-10 item 254, Arcade 1), dealt like the solo one. The
-// three solo luck rounds have no controls at all: the round is played the moment the room
-// opens and its result is the room's one message, so their opener stays a plain card.
+// three solo luck rounds have no controls of their own: a coin flip or a dice roll is played
+// the moment the room opens, and rock paper scissors asks for its throw through the turn
+// prompt below its opener (2026-10 item 257 Phase 4b), so their opener stays a plain card.
 const SELF_BOARDED_GAMES: readonly GameSlug[] = [
 	"battleship",
 	"holdem",
@@ -451,7 +454,9 @@ export interface RoomSeedInput {
 //        line. A blackjack table is NOT here, solo or multi seat: soloRooms deals it
 //        (startSoloBlackjackBoard, startBlackjackRoomBoard), because a table that fails
 //        to start closes the room, and that is the caller's decision rather than the
-//        provisioner's. Nor is a solo luck round, which soloRooms plays once the room is up.
+//        provisioner's. Nor is a coin flip or dice round against Dero, which soloRooms
+//        plays once the room is up; a solo-rps room's throw prompt IS here, so a rematch in
+//        the same channel asks for the next throw exactly as the first room did.
 export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 	const { guild, channel, room, game, hostId, playerIds, visibility } = input;
 	const botIds = input.botIds ?? [];
@@ -588,6 +593,15 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 			secret: { ...match, boardMessageId: boardMessage?.id ?? null } as never,
 		});
 	}
+
+	// Rock paper scissors against Dero (2026-10 item 257 Phase 4b): the member is on the clock
+	// from the start, so the room pings them with Take your turn and Dero throws on the Submit.
+	if (game === "solo-rps") await syncTurnPrompt(guild.client, started ?? room, soloRpsTurnAdapter);
+
+	// The voice referee, when the host turned it on (Monopoly and Hold'em): Hold'em's dealer
+	// registers at once, and the join into the host's call is never awaited, so a slow join
+	// cannot hold the room's open up. It catches its own failures.
+	void startRoomReferee(guild.client, started ?? room, channel);
 
 	// ⑥ Fire and forget, per house rule 7: an audit write that failed must never take
 	// down a room the members can already see and play in.
