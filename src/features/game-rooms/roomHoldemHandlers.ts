@@ -64,7 +64,7 @@ import {
 	BUY_IN_FIELDS,
 } from "./roomHoldem.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
-import { showNotice } from "@utils/textModal.js";
+import { acknowledgeConfirm, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 
 // ── roomHoldemHandlers ───────────────────────────────────────────────
 // What:  every hold em interaction: buying in, dealing, acting, peeking at your
@@ -860,7 +860,8 @@ function persistLeaveOrEnd(room: IGameRoom, table: HoldemTable, readAt: number, 
 	);
 }
 
-export async function handleLeaveTable(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+/** Leave table's confirm (2026-10 item 257): its Submit, or the fallback reply's button. The press itself only asks. */
+export async function handleLeaveTable(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
 	const table = tableOf(room);
 	if (!table || table.status === "finished") {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tournamentOver] });
@@ -883,7 +884,7 @@ export async function handleLeaveTable(interaction: ButtonInteraction, room: IGa
 		return;
 	}
 
-	await interaction.deferUpdate();
+	await acknowledgeConfirm(interaction);
 	// A chip table pays the stack the write above zeroed back to the wallet (2026-10 item
 	// 250 Phase 5); that write was the claim, so this runs once.
 	if (table.chips) await cashOut(table, interaction.user.id, outcome.stackLeft ?? 0);
@@ -915,13 +916,14 @@ function leftTableLine(table: HoldemTable, userId: string, foldedHand: boolean, 
 // table is rated exactly like a finished session, ranked by its standings, and the
 // same 10 hand floor that keeps "deal, bust, repeat" unrated keeps "deal one hand,
 // press End" unrated too.
-export async function handleEndTable(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+// End table's confirm (2026-10 item 257): its Submit, or the fallback reply's button.
+export async function handleEndTable(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
 	const table = tableOf(room);
 	if (!table || table.status === "finished") {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tournamentOver] });
 		return;
 	}
-	const ended = await closeTable(interaction.client, room, table, interaction.user.id, null, () => interaction.deferUpdate());
+	const ended = await closeTable(interaction.client, room, table, interaction.user.id, null, () => acknowledgeConfirm(interaction));
 	if (ended === "busy") await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tableBusy] });
 }
 

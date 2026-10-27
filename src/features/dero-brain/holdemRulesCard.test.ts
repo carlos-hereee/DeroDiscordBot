@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ChannelType, type ButtonInteraction, type CategoryChannel, type Guild, type GuildMember, type ModalSubmitInteraction, type StringSelectMenuInteraction } from "discord.js";
+import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import type { RoomOpenInput, RoomOpenResult } from "@features/game-rooms/RoomProvisioner.js";
 import type { VoiceSessionView } from "@features/voice/voiceSessions.js";
@@ -346,11 +347,11 @@ describe("Open", () => {
 		expect(getHoldemRequest(request.id, NOW)).toBeNull();
 	});
 
-	it("says so when the server has no arcade category", async () => {
+	it("says so when the server has no arcade", async () => {
 		const { deps } = fakeDeps({ resolveArcade: vi.fn(async () => null) });
 		const interaction = button("public", newRequest().id);
 		await handleRulesCardButton(interaction, deps);
-		expect(description(interaction.editReply.mock.calls[0][0] as never)).toContain("no arcade category");
+		expect(description(interaction.editReply.mock.calls[0][0] as never)).toContain(gameRoomsCopy.errors.noArcadeCategory);
 		expect(deps.openRoom).not.toHaveBeenCalled();
 	});
 });

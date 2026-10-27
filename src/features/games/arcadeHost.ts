@@ -12,7 +12,7 @@ import {
 import { registerButton, registerSelectMenu } from "@handlers/interactionRegistry.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { openSoloRoom, describeSoloOpenFailure, readPrivateQuotaStatus, type SoloGameSlug } from "@features/game-rooms/soloRooms.js";
-import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
+import { offerChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { HANGMAN_CATEGORIES, isHangmanCategory, type HangmanCategory } from "./hangmanWords.js";
 import type { SoloLuckPlay } from "./soloLuck.js";
@@ -34,7 +34,7 @@ import type { SoloLuckPlay } from "./soloLuck.js";
 //        a solo GameRoom via soloRooms.openSoloRoom, so a one-player game holds the
 //        host's one-room slot, counts against the guild cap and counts as a PRIVATE
 //        room for the tier quota, exactly like every other room. "Open a Blackjack
-//        table" goes through challengeBoard.startChallengeDraft, the same door every
+//        table" goes through challengeBoard.offerChallengeDraft, the same door every
 //        board button uses, so the table gets a card, a pool and a room the same way.
 //
 // ⚠️ ONLY GAMES THAT NEED NO NAMED OPPONENT ARE HOSTABLE HERE, and the omission
@@ -89,9 +89,10 @@ async function handleArcadeHost(interaction: ButtonInteraction): Promise<void> {
 	if (!HOSTABLE.some((game) => game.id === choice)) return;
 
 	// ── the multi seat table: a challenge card, like every room game ──
-	// Before the defer below, because startChallengeDraft answers the press itself.
+	// Before the defer below, because the confirm answers the press itself; the card is
+	// posted only on its Submit (2026-10 item 257, owner item 12).
 	if (choice === "blackjack-table") {
-		await startChallengeDraft(interaction, "blackjack");
+		await offerChallengeDraft(interaction, "blackjack");
 		return;
 	}
 

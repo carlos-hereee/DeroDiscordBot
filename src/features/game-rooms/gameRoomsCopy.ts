@@ -389,21 +389,50 @@ export const gameRoomsCopy = {
 		// ways out, because "no" alone reads as the button being broken.
 		privateQuotaHit: (quota: number, tierName: string): string =>
 			`This server has reached its private room limit (${quota}) for the ${tierName} plan. Wait for one to finish, upgrade the plan, or start a public room.`,
-		// 50013. Names the missing permission, because the member who clicked cannot
-		// fix it and the admin who can needs to know what to grant.
-		missingPermissions: "Dero cannot create a channel in the arcade category. An admin needs to grant Manage Channels.",
+		// 50013. Names the missing permission and where to grant it (2026-10 item 257,
+		// owner item 15), because the member who clicked cannot fix it and the admin who
+		// can needs to know what to grant and where.
+		missingPermissions:
+			"Dero cannot create a channel in the 🎮 ARCADE GAMES category: it is missing the **Manage Channels** permission. An admin can grant it in Server Settings, Roles, on Dero's role, or on the category's own Permissions tab.",
 		// A button from an older message whose action no longer exists. Discord keeps
 		// every component clickable forever, so this is a normal thing for a member to
 		// hit rather than an error, and the copy says so without apologising.
 		controlRetired: "This control is no longer available.",
 		// Anything else. Deliberately does not promise a retry loop; there is none.
 		createFailed: "Something went wrong opening that room. Try again in a moment.",
-		noArcadeCategory: "This server has no arcade category yet. An admin can run /setup to build it.",
+		// The arcade switched off or never built (item 15): the command that builds it, as
+		// inline code a member can copy to an admin.
+		noArcadeCategory: "This server has no arcade yet. Send this command to an admin to build it:\n`/arcade on`",
 		notFound: "That room no longer exists.",
 		notYours: "Only the host or an admin can do that.",
 		// One rematch per finished room, ever. Without this the still clickable button
 		// on a scrolled back result card would spawn a room per press.
 		rematchAlreadyOffered: "Someone already started a rematch from this room.",
+	},
+
+	// ── the confirms (2026-10 item 257, owner items 12 and 15) ──
+	// Each one is a modal whose Submit performs the action (showConfirm in
+	// utils/textModal.ts); closing it does nothing. So every body names what Submit does,
+	// and none says it already happened.
+	confirms: {
+		archive: "Archive this room now? Its channel is deleted at once, and the match record is kept. Submit to archive it.",
+		forfeit: "Forfeit this match? It counts as a loss for you. Submit to forfeit.",
+		start: "Start the match? Dero opens its room now and seats the players. Submit to start.",
+		newChallenge: (game: GameSlug): string =>
+			`Start a ${GAME_LABELS[game] ?? game} challenge? Submit and Dero posts your challenge card, where you choose who can see it.`,
+		// Item 15: the one room per host refusal, offering its fix.
+		replaceDraft: "You already have a challenge open. Submit to close it and start this one.",
+		// A running match is never closed from here: it is finished or archived in its own room.
+		matchInPlay: (channelId: string | null): string =>
+			channelId
+				? `Your match is still in play in <#${channelId}>. Finish it or archive it there first, then start another.`
+				: "Your match is still in play. Finish it or archive it in its room first, then start another.",
+		// The pool grew past one while the start confirm stood open, so the host now picks
+		// who plays, which takes a picker a modal Submit cannot open.
+		startPickNeeded: "More players joined while you were deciding. Press Start match again to choose who plays.",
+		leaveTable: "Leave the table? A hand you are in is folded and your seat is given up. Submit to leave.",
+		endTable: "End the table now? It closes on the standings as they are. Submit to end it.",
+		matchOver: "That match is already over, so there is nothing to forfeit.",
 	},
 
 	// ── the challenge board (Phase 4) ──
@@ -1140,8 +1169,7 @@ export const gameRoomsCopy = {
 		// The private confirm, the first of the two presses.
 		surrenderConfirmTitle: "Surrender this match?",
 		surrenderConfirmPrompt:
-			"Your chips and lots go back to the bank and you are out of the match for good. The match goes on without you.",
-		surrenderConfirmLabel: "Yes, surrender",
+			"Your chips and lots go back to the bank and you are out of the match for good. The match goes on without you. Submit to surrender.",
 		surrenderDone: "You surrendered. The board shows the match going on without you.",
 		surrenderStillSeated: "The board kept changing, so your seat is still in the match. Press Surrender again.",
 		// Public trail lines, ahead of the engine's own forfeit line, which says where the

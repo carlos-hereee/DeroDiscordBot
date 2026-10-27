@@ -14,12 +14,15 @@ const mocks = vi.hoisted(() => ({
 	isBrainOnline: vi.fn(),
 	executeActions: vi.fn(),
 	buildJobInput: vi.fn(),
+	offerSwitchFix: vi.fn(),
 }));
 
 // The admin role read is a GuildConfig lookup; null keeps these suites on the allowlist only rule.
 vi.mock("@features/dero-brain/speakerAdminRole.js", () => ({ readSpeakerAdminRoleId: vi.fn(async () => null) }));
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { findByGuildId: mocks.findByGuildId } }));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: mocks.log } }));
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn(async () => ({ adminRoleId: null })) } }));
+vi.mock("@features/command-buttons/adminCommandLauncher.js", () => ({ offerSwitchFix: mocks.offerSwitchFix }));
 vi.mock("@features/dero-brain/brainQueue.js", () => ({ brainQueue: { enqueue: mocks.enqueue, isBrainOnline: mocks.isBrainOnline } }));
 vi.mock("@features/dero-brain/executor.js", () => ({ executeActions: mocks.executeActions }));
 vi.mock("@features/dero-brain/brainJob.js", () => ({ buildJobInput: mocks.buildJobInput }));
@@ -93,7 +96,6 @@ describe("/dero tell gates, in order", () => {
 	it.each([
 		["outside a cached guild", { cached: false }, () => undefined, deroBrainCopy.tell.notInGuild],
 		["with no config", {}, () => mocks.findByGuildId.mockResolvedValue(null), deroBrainCopy.tell.notSetUp],
-		["when switched off", {}, () => mocks.findByGuildId.mockResolvedValue({ ...CONFIG, enabled: false }), deroBrainCopy.tell.switchedOff],
 		["for a member without an allowlisted role", { roles: ["admin"] }, () => undefined, deroBrainCopy.tell.notAuthorized],
 		["while the brain is offline", {}, () => mocks.isBrainOnline.mockReturnValue(false), deroBrainCopy.tell.brainOffline],
 		["for a blank task", { task: "   " }, () => undefined, deroBrainCopy.tell.emptyTask],
@@ -105,6 +107,22 @@ describe("/dero tell gates, in order", () => {
 		expect(deferReply).not.toHaveBeenCalled();
 		expect(mocks.enqueue).not.toHaveBeenCalled();
 		expect(mocks.executeActions).not.toHaveBeenCalled();
+	});
+
+	// 2026-10 item 257, owner item 15: switched off answers with its fix, the /dero-config
+	// panel for an admin and the command for a member (offerSwitchFix, tested with the
+	// launcher), and still makes no job.
+	it("routes a switched off guild to the voice switch and makes no job", async () => {
+		mocks.findByGuildId.mockResolvedValue({ ...CONFIG, enabled: false });
+		const { interaction, deferReply } = interactionFor({});
+		await execute(interaction);
+		expect(mocks.offerSwitchFix).toHaveBeenCalledWith(
+			interaction,
+			{ launchId: "dero-config", title: expect.any(String), memberSections: [...voiceCopy.call.voiceOffForMember] },
+			expect.anything()
+		);
+		expect(deferReply).not.toHaveBeenCalled();
+		expect(mocks.enqueue).not.toHaveBeenCalled();
 	});
 
 	it("checks authorization before asking whether the brain is online", async () => {

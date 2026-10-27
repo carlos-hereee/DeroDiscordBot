@@ -4,7 +4,7 @@ import { registerButton, registerModal } from "@handlers/interactionRegistry.js"
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { startHangmanRound } from "@features/games/hangmanHandler.js";
-import { startChallengeDraft } from "./challengeBoard.js";
+import { offerChallengeDraft } from "./challengeBoard.js";
 import { gamesCopy } from "@features/games/gamesCopy.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
@@ -24,7 +24,7 @@ import { showNotice } from "@utils/textModal.js";
 //        controls card and post into #command-center; it moved here, so a group game is
 //        played where the party is announced. Both run the same startHangmanRound the
 //        /mini-game hangman slash path does, so the round cannot differ by door. The two
-//        table games go through challengeBoard.startChallengeDraft, the door every other
+//        table games go through challengeBoard.offerChallengeDraft, the door every other
 //        challenge uses, so their card posts in 🏆rated-challenges like any rated game's
 //        and its room opens when the host presses Start.
 //
@@ -69,10 +69,11 @@ async function handlePartyGamesButton(interaction: ButtonInteraction): Promise<v
 		await interaction.showModal(buildScheduleModal());
 		return;
 	}
-	// The table game's own challenge card, which answers the press itself, so nothing is
+	// The table game's own challenge card, posted only on its confirm's Submit (2026-10
+	// item 257, owner item 12). The confirm answers the press itself, so nothing is
 	// deferred first. The card's controls are the host's from here on.
 	if (action === "host" && isPartyTableGame(game)) {
-		await startChallengeDraft(interaction, game);
+		await offerChallengeDraft(interaction, game);
 		return;
 	}
 	if (action === "host") {

@@ -54,6 +54,13 @@ export const voiceCopy = {
 		connectFailed: (channelId: string): string =>
 			`Dero could not connect to <#${channelId}>, so Dero is not in the call. Try again in a moment.`,
 		notInCall: "Dero is not in a voice call in this server.",
+		// Voice switched off, for a member (2026-10 item 257, owner item 15): an admin gets
+		// the /dero-config panel instead, so this names the command to send one, as inline
+		// code they can copy.
+		voiceOffForMember: [
+			"Dero's voice is switched off in this server.",
+			"Send this command to an admin and ask them to switch it on:\n`/dero-config enable`",
+		],
 		left: (channelId: string): string => `Dero left <#${channelId}>.`,
 
 		// The private reply to whoever ran /dero join, one per greeting outcome,

@@ -295,6 +295,13 @@ export const rokCommanderCopy = {
 		title: "❌ Error",
 	},
 
+	// The one button a confirm carries when Discord refuses its modal (2026-10 item 257,
+	// owner item 12): showConfirm in utils/textModal.ts. Its Submit and this button run the
+	// same handler, so the word is the same in both packs.
+	confirm: {
+		button: "✅ Confirm",
+	},
+
 	// The title over a private text answer shown as a notice modal (2026-10 item 254
 	// Phase 5b), one per feature whose copy lives only in the packs. Discord cuts a modal
 	// title at 45 characters. Both packs carry the same words: a title names the feature.

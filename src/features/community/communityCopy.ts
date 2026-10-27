@@ -152,7 +152,7 @@ export const communityCopy = {
 	// ── refusals the router and the flow share ──
 	errors: {
 		notInServer: "This button only works inside a server.",
-		notSetUp: "This server is not set up yet. Run /setup first.",
+		notSetUp: "This server is not set up yet. Run this command first:\n`/setup`",
 		// A button from an older layout. Discord keeps every component clickable
 		// forever, so this is normal to hit and the copy says so plainly.
 		controlRetired: "This control is no longer available.",

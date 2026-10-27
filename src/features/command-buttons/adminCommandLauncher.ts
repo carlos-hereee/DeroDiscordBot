@@ -5,6 +5,7 @@ import {
 	MessageFlags,
 	StringSelectMenuBuilder,
 	type ButtonInteraction,
+	type ChatInputCommandInteraction,
 	type EmbedBuilder,
 	type InteractionEditReplyOptions,
 	type ModalSubmitInteraction,
@@ -21,7 +22,8 @@ import { registerButton, registerModal, registerSelectMenu } from "@handlers/int
 import type { FormChoicesProvider, OptionChoice, SharedCommandHandler } from "@handlers/commandOptions.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
-import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { showErrorNotice, showNotice, type ModalOpeningInteraction } from "@utils/textModal.js";
+import type { IGuildConfigPermissionShape } from "@utils/permissions.js";
 import * as arcadeCommand from "@commands/admin/arcade.js";
 import * as deroConfigCommand from "@commands/admin/dero-config.js";
 import * as eventsCommand from "@commands/admin/events.js";
@@ -274,7 +276,7 @@ async function handleCommandButton(interaction: ButtonInteraction): Promise<void
 		await openLeaf(interaction, target.command, onlyLeaf);
 		return;
 	}
-	if (await openSettingsPanel(interaction, target)) return;
+	if (await showSettingsPanel(interaction, target)) return;
 	// ② the pick of what to do, private, labelled the way the slash command reads.
 	await interaction.reply({
 		content: commandButtonsCopy.launcher.pickLeafPrompt(target.path),
@@ -306,7 +308,7 @@ function leafPickRow(command: LaunchableCommand, leaves: readonly CommandLeaf[])
  * access holds back (runLeaf answers that), a member the panel is not for (a non
  * owner on /server channels), an unset server, and a panel whose read failed.
  */
-async function openSettingsPanel(interaction: ButtonInteraction, target: LaunchTarget): Promise<boolean> {
+async function showSettingsPanel(interaction: ModalOpeningInteraction, target: LaunchTarget): Promise<boolean> {
 	const { command, panel: definition, panelId } = target;
 	const guild = interaction.guild;
 	if (!definition || !panelId || !guild) return false;
@@ -323,6 +325,47 @@ async function openSettingsPanel(interaction: ButtonInteraction, target: LaunchT
 		console.error(`[admin-launcher] the /${target.path} settings panel did not open for guild ${guild.id}`, error);
 		return false;
 	}
+}
+
+/**
+ * Open the settings panel `launchId` names, for the owner or an admin only: admitAdmin's
+ * rule, checked without answering, so a caller with another answer for a member gives
+ * it. True when the panel opened; false for a member, an unknown id, an interaction that
+ * can no longer open a modal, and every case showSettingsPanel answers false for.
+ * Exported for a refusal whose fix is a switch on a panel (2026-10 item 257, owner items
+ * 10 and 15): the presser who can flip it gets the panel at once.
+ */
+export async function openSettingsPanel(interaction: PanelOpeningInteraction, launchId: string, config: IGuildConfigPermissionShape | null): Promise<boolean> {
+	const target = resolveLaunchTarget(launchId);
+	if (!target || interaction.deferred || interaction.replied) return false;
+	if (!(await gateOwnerOrAdmin(interaction, config))) return false;
+	return showSettingsPanel(interaction, target);
+}
+
+/** The presses a settings panel can open from: a button, a select, a slash command. */
+export type PanelOpeningInteraction = ButtonInteraction | StringSelectMenuInteraction | ChatInputCommandInteraction;
+
+const canOpenPanel = (interaction: RepliableInteraction): interaction is PanelOpeningInteraction =>
+	interaction.isButton() || interaction.isStringSelectMenu() || interaction.isChatInputCommand();
+
+/** A switch that is off, and what each presser can do about it. */
+export interface SwitchFix {
+	/** The settings panel holding the switch (a SETTINGS_PANELS id). */
+	launchId: string;
+	/** The notice a member gets, its text naming the command to send an admin. */
+	title: string;
+	memberSections: string[];
+}
+
+/**
+ * Answer a press refused by a switch that is off (2026-10 item 257): an owner or admin
+ * gets that switch's settings panel at once, and anyone else a notice naming the command
+ * to send an admin. A modal cannot open after a defer or a reply, or from a modal Submit,
+ * so there the admin reads the member's notice too. Never throws past the notice.
+ */
+export async function offerSwitchFix(interaction: RepliableInteraction, fix: SwitchFix, config: IGuildConfigPermissionShape | null): Promise<void> {
+	if (canOpenPanel(interaction) && (await openSettingsPanel(interaction, fix.launchId, config))) return;
+	await showNotice(interaction, { title: fix.title, sections: fix.memberSections });
 }
 
 // Each changed setting is one run of its leaf, in order and one at a time: two runs

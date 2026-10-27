@@ -12,16 +12,16 @@ vi.mock("@features/game-rooms/soloRooms.js", () => ({
 }));
 // The table's door is the challenge card (2026-10 item 254, Arcade 1), so the board is
 // mocked: what is pinned is that the press reaches it, not what the card then does.
-vi.mock("@features/game-rooms/challengeBoard.js", () => ({ startChallengeDraft: vi.fn() }));
+vi.mock("@features/game-rooms/challengeBoard.js", () => ({ offerChallengeDraft: vi.fn() }));
 
 import { buildHangmanCategoryStartRow, registerArcadeHostHandlers } from "./arcadeHost.js";
 import { dispatchButton, dispatchSelectMenu } from "@handlers/interactionRegistry.js";
 import { openSoloRoom } from "@features/game-rooms/soloRooms.js";
-import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
+import { offerChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 import { HANGMAN_CATEGORIES } from "./hangmanWords.js";
 
 const openMock = openSoloRoom as unknown as ReturnType<typeof vi.fn>;
-const draftMock = startChallengeDraft as unknown as ReturnType<typeof vi.fn>;
+const draftMock = offerChallengeDraft as unknown as ReturnType<typeof vi.fn>;
 
 function makeSelect(values: string[]) {
 	return {
@@ -87,7 +87,7 @@ describe("the host row", () => {
 		await dispatchButton(interaction as unknown as ButtonInteraction);
 
 		expect(draftMock).toHaveBeenCalledWith(interaction, "blackjack");
-		// startChallengeDraft answers the press itself, so the host row must not defer first.
+		// offerChallengeDraft answers the press itself (its confirm), so the host row must not defer first.
 		expect(interaction.deferReply).not.toHaveBeenCalled();
 		expect(openMock).not.toHaveBeenCalled();
 		expect(challengesSend).not.toHaveBeenCalled();

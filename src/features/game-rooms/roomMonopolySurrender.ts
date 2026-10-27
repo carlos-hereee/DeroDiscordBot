@@ -1,10 +1,10 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, type ButtonInteraction, type Client } from "discord.js";
+import { MessageFlags, type ButtonInteraction, type Client } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
-import { showNotice } from "@utils/textModal.js";
+import { acknowledgeConfirm, showConfirm, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 import { applyForfeit, type MonopolyResult, type MonopolyState } from "@features/games/monopolyState.js";
-import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
+import { confirmCustomId } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isBotSeatId } from "./botSeat.js";
 import { isTurnHandoffLine } from "./roomMonopolyBoard.js";
@@ -12,7 +12,7 @@ import { commitMonopolyMove, monopolyStateOf } from "./roomMonopolyHandlers.js";
 
 // ── roomMonopolySurrender ────────────────────────────────────────────
 // What:  Surrender, every seat's way out of a Monopoly match (2026-10 item 254, Arcade
-//        12): the board's button opens a private confirm, and its Yes takes the seat out
+//        12): the board's button opens the shared confirm, and its Submit takes the seat out
 //        through applyForfeit, the forfeit the host's Remove a player and the idle sweep
 //        already use. Two presses in all.
 // Who:   gameRoomHandlers routes `msurrender` and `msurrenderok` here, after playersOnly.
@@ -33,7 +33,7 @@ import { commitMonopolyMove, monopolyStateOf } from "./roomMonopolyHandlers.js";
 const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 
 // ── the two presses ───────────────────────────────────────────────────
-/** The first press: a private confirm with the one button that surrenders. */
+/** The first press: the shared confirm (showConfirm, 2026-10 item 257), whose Submit surrenders. */
 export async function handleMsurrender(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const words = gameRoomsCopy.monopoly;
 	const refusal = surrenderRefusal(monopolyStateOf(room), interaction.user.id);
@@ -41,27 +41,18 @@ export async function handleMsurrender(interaction: ButtonInteraction, room: IGa
 		await showNotice(interaction, { title: words.surrenderConfirmTitle, sections: [refusal] }, () => ({ content: refusal, ...PRIVATE }));
 		return;
 	}
-	const confirm = new ButtonBuilder()
-		.setCustomId(`${GAME_ROOM_PREFIX}:msurrenderok:${room.roomId}`)
-		.setLabel(words.surrenderConfirmLabel)
-		.setStyle(ButtonStyle.Danger)
-		.setEmoji("🏳️");
-	await interaction.reply({
-		content: `**${words.surrenderConfirmTitle}**\n${words.surrenderConfirmPrompt}`,
-		components: [new ActionRowBuilder<ButtonBuilder>().addComponents(confirm)],
-		...PRIVATE,
-	});
+	await showConfirm(interaction, { title: words.surrenderConfirmTitle, sections: [words.surrenderConfirmPrompt], confirmId: confirmCustomId("msurrenderok", room.roomId) });
 }
 
-/** The second press, on the private confirm: surrender, then say how it went on the same message. */
-export async function handleMsurrenderConfirm(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+/** The confirm's Submit, or the fallback reply's button: surrender, then say how it went. */
+export async function handleMsurrenderConfirm(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
 	// Acknowledged first: the surrender re-reads, may hand hosting on and redraws the board.
-	await interaction.deferUpdate();
+	await acknowledgeConfirm(interaction);
 	const outcome = await surrenderMonopolySeat(interaction.client, room, interaction.user.id);
 	const words = gameRoomsCopy.monopoly;
 	const answers: Record<SurrenderOutcome, string> = { surrendered: words.surrenderDone, busy: words.surrenderStillSeated, notInMatch: words.matchOver };
 	const answer = outcome === "notInMatch" ? (surrenderRefusal(monopolyStateOf(room), interaction.user.id) ?? answers.notInMatch) : answers[outcome];
-	await interaction.editReply({ content: answer, components: [] });
+	await showNotice(interaction, { title: words.surrenderConfirmTitle, sections: [answer] });
 }
 
 // Why a seat cannot surrender now, or null when it can.

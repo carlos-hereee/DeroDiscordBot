@@ -8,7 +8,7 @@ vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedV
 vi.mock("./challengeCard.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./challengeCard.js")>()), refreshCard: vi.fn() }));
 vi.mock("@features/setup/adminLog.js", () => ({ adminLog: { emitFor: vi.fn() } }));
 
-import { handleBotSelect, openBotPicker, startMatch } from "./challengeBoard.js";
+import { handleBotSelect, openBotPicker, confirmStartMatch } from "./challengeBoard.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { RoomProvisioner } from "./RoomProvisioner.js";
@@ -126,25 +126,25 @@ describe("the bot count select", () => {
 
 describe("starting against bots", () => {
 	it("opens a Hold'em table with nobody else joined when bots are chosen, seating the bots", async () => {
-		await startMatch(button(), makeRoom("holdem", { botSeats: 2 }));
+		await confirmStartMatch(button(), makeRoom("holdem", { botSeats: 2 }));
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ playerIds: [HOST], botIds: ["dero-bot-red", "dero-bot-orange"] }));
 	});
 
 	it("still refuses an empty pool with no bots", async () => {
 		const interaction = button();
-		await startMatch(interaction, makeRoom("holdem"));
+		await confirmStartMatch(interaction, makeRoom("holdem"));
 		expect(replyText(interaction)).toBe(gameRoomsCopy.board.poolEmpty);
 		expect(openMock).not.toHaveBeenCalled();
 	});
 
 	it("makes the bot a battleship host's opponent, keeping the pool as spectators", async () => {
-		await startMatch(button(), makeRoom("battleship", { botSeats: 1, spectatorIds: ["friend"] }));
+		await confirmStartMatch(button(), makeRoom("battleship", { botSeats: 1, spectatorIds: ["friend"] }));
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ playerIds: [HOST], spectatorIds: ["friend"], botIds: ["dero-bot-red"] }));
 	});
 
 	it("counts bots against Monopoly's six seats", async () => {
 		const interaction = button();
-		await startMatch(interaction, makeRoom("monopoly", { botSeats: 5, spectatorIds: ["a"] }));
+		await confirmStartMatch(interaction, makeRoom("monopoly", { botSeats: 5, spectatorIds: ["a"] }));
 		expect(replyText(interaction)).toBe(gameRoomsCopy.monopoly.tooManyWithBots(6, 1, 5));
 	});
 });

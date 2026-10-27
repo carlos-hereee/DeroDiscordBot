@@ -36,7 +36,7 @@ vi.mock("@handlers/interactionRegistry.js", () => ({
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
-import { LAUNCHABLE_COMMANDS, formCustomId, registerAdminCommandLauncher, resolveLaunchTarget } from "./adminCommandLauncher.js";
+import { LAUNCHABLE_COMMANDS, formCustomId, offerSwitchFix, registerAdminCommandLauncher, resolveLaunchTarget } from "./adminCommandLauncher.js";
 import { ADMIN_GUIDE_COMMAND_ROWS, buildAdminCommandRows } from "./adminGuideButtons.js";
 import { buildForm, listLeaves } from "./commandForm.js";
 import { commandButtonsCopy } from "./commandButtonsCopy.js";
@@ -420,5 +420,40 @@ describe("the settings panels", () => {
 		await panel.run();
 		expect(firstReply(panel.reply).embeds?.[0]?.data.description).toBe(refusal);
 		expect(mocks.update).not.toHaveBeenCalled();
+	});
+});
+
+// ── a switch that is off, answered with its fix (2026-10 item 257, owner items 10 and 15) ──
+// Claim with chips off and Dero's voice switched off route here: whoever may flip the
+// switch gets its panel at once, everyone else the command to send an admin.
+describe("offerSwitchFix", () => {
+	const fix = { launchId: "arcade", title: "❌ Error", memberSections: ["Chips are off.", "`/arcade chips toggle enabled:True`"] };
+	const asButton = { isButton: () => true, isStringSelectMenu: () => false, isChatInputCommand: () => false };
+	const CONFIG = { guildId: GUILD_ID, adminRoleId: ADMIN_ROLE, chipEconomyEnabled: false };
+
+	it("opens the arcade panel at once for an admin, and no notice", async () => {
+		mocks.findByGuildId.mockResolvedValue(CONFIG);
+		const fake = fakeInteraction(ADMIN_ID, asButton);
+		await offerSwitchFix(fake.interaction as unknown as ButtonInteraction, fix, CONFIG);
+		expect(formModals(fake.showModal).map((modal) => modal.custom_id)).toEqual(["admincmd_panel:arcade"]);
+		expect(noticeText(fake.showModal)).toBeUndefined();
+	});
+
+	it("gives a member the command to send an admin, and no panel", async () => {
+		mocks.findByGuildId.mockResolvedValue(CONFIG);
+		const fake = fakeInteraction(MEMBER_ID, asButton);
+		await offerSwitchFix(fake.interaction as unknown as ButtonInteraction, fix, CONFIG);
+		expect(formModals(fake.showModal)).toEqual([]);
+		expect(noticeText(fake.showModal)).toBe(fix.memberSections.join("\n"));
+	});
+
+	// A modal opens only as the first answer: after a defer the admin reads the member's
+	// words, privately, rather than a panel Discord would refuse.
+	it("answers an admin with the member's words once the press was already deferred", async () => {
+		mocks.findByGuildId.mockResolvedValue(CONFIG);
+		const fake = fakeInteraction(ADMIN_ID, { ...asButton, deferred: true });
+		await offerSwitchFix(fake.interaction as unknown as ButtonInteraction, fix, CONFIG);
+		expect(fake.showModal).not.toHaveBeenCalled();
+		expect((fake.interaction.followUp as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toMatchObject({ content: fix.memberSections.join("\n\n") });
 	});
 });

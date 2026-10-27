@@ -42,7 +42,7 @@ import { resolveRoomChannel } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { rematchedResultEmbed, roomOpenerLogo, roomResultEmbed } from "./gameRoomsEmbeds.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
+import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_SELECT_PREFIX, confirmCustomId } from "./gameRoomActions.js";
 import { isPickerPrefix, pickedValues, showPicker } from "./pickerModal.js";
 import { buildInviteOptions, refilterInvitees } from "./invitePicker.js";
 import {
@@ -67,7 +67,7 @@ import { botSeatIdsFor, botsAllowedIn, casualBotSeats, maxBotSeats, takesBots } 
 import { adminLog } from "@features/setup/adminLog.js";
 import { RPS_CHOICES, type RpsChoice } from "@features/games/rpsWinner.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
-import { showEmbedNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
+import { showConfirm, showEmbedNotice, showErrorNotice, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 
 // The host controls' words are shared by every pack (2026-10 item 244 Phase 4), so
 // the default pack is the right one for every guild.
@@ -128,12 +128,73 @@ export async function startChallengeDraft(
 	}
 
 	const opened = await openChallengeDraft(guild, interaction.user.id, game);
+	if (!opened.ok && opened.reason === "alreadyHosting") {
+		// Item 15: the refusal offers its fix. Read again, since the opener reports only
+		// the channel and the offer needs to know whether the open room is a draft.
+		const existing = await gameRoomStore.findOpenByHost(guild.id, interaction.user.id);
+		if (existing) {
+			await offerToReplace(interaction, existing, game);
+			return null;
+		}
+	}
 	if (!opened.ok) {
 		await showRefusalNotice(interaction, draftRefusalReply(opened));
 		return null;
 	}
 	await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.cardStarted(opened.channel.id).replace("The match is under way in", "Your challenge card is in")] });
 	return opened.room;
+}
+
+/**
+ * A per game start button (the board's, the 🎉party-games Host buttons, the arcade host's
+ * Blackjack table): ask first, and post the card only on Submit (2026-10 item 257, owner
+ * item 12). A host who already holds a challenge is offered to close it instead, or told
+ * where their match is in play (item 15). Writes nothing.
+ */
+export async function offerChallengeDraft(interaction: RepliableInteraction, game: GameSlug): Promise<void> {
+	if (!interaction.guildId) {
+		await showErrorNotice(interaction, "This only works inside a server.");
+		return;
+	}
+	const existing = await gameRoomStore.findOpenByHost(interaction.guildId, interaction.user.id);
+	if (existing) {
+		await offerToReplace(interaction, existing, game);
+		return;
+	}
+	await showConfirm(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.confirms.newChallenge(game)], confirmId: confirmCustomId("newok", game) });
+}
+
+// Item 15, the one room per host refusal with its fix. A draft can be closed from here,
+// and the confirm carries its roomId so the Submit closes that draft and no other. A room
+// in play never is: it is finished or archived in its own channel, so this only says where.
+async function offerToReplace(interaction: RepliableInteraction, existing: IGameRoom, game: GameSlug): Promise<void> {
+	if (existing.status !== "draft") {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.confirms.matchInPlay(existing.channelId ?? null)] });
+		return;
+	}
+	await showConfirm(interaction, {
+		title: gameRoomsCopy.notices.challenge,
+		sections: [gameRoomsCopy.confirms.replaceDraft],
+		confirmId: confirmCustomId("newok", game, existing.roomId),
+	});
+}
+
+/**
+ * The per game start's confirm: close the draft it offered to replace, when there is one,
+ * then post the new card. The draft is closed only while it is still this presser's own
+ * draft, so a confirm left open while that draft started never touches the live match.
+ */
+export async function confirmChallengeDraft(interaction: ConfirmInteraction, game: GameSlug, replaceRoomId: string | null): Promise<void> {
+	const guild = interaction.guild;
+	if (!guild) {
+		await showErrorNotice(interaction, "This only works inside a server.");
+		return;
+	}
+	if (replaceRoomId) {
+		const open = await gameRoomStore.findByRoomId(guild.id, replaceRoomId);
+		if (open && open.status === "draft" && open.hostId === interaction.user.id) await closeDraft(guild, open);
+	}
+	await startChallengeDraft(interaction, game);
 }
 
 /** Why a challenge card could not be posted, for the press or the scheduled open to explain. */
@@ -495,7 +556,48 @@ async function askHostToJoin(interaction: ButtonInteraction, room: IGameRoom): P
 }
 
 // ── start the match ───────────────────────────────────────────────────
+// Start match asks first (2026-10 item 257, owner item 12): the room channel is made only
+// on the confirm's Submit (confirmStartMatch), or on the opponent picker's Submit when the
+// host has a choice to make, since choosing who plays is itself the yes.
 export async function startMatch(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	const refusal = startRefusal(room);
+	if (refusal) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
+		return;
+	}
+	if (needsOpponentPick(room)) {
+		await openOpponentPicker(interaction, room);
+		return;
+	}
+	await showConfirm(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.confirms.start], confirmId: confirmCustomId("startok", room.roomId) });
+}
+
+/**
+ * Start match's confirm: every refusal checked again on the row gatePress read again,
+ * since the pool may have moved while the confirm stood open, then the room is provisioned.
+ */
+export async function confirmStartMatch(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
+	const refusal = startRefusal(room);
+	if (refusal) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
+		return;
+	}
+	// A picker cannot open from a modal Submit, so a pool that grew past one sends the host
+	// back to the button, which opens it.
+	if (needsOpponentPick(room)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.confirms.startPickNeeded] });
+		return;
+	}
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	// A battleship match against a Dero bot and a cooperative game single nobody out; a
+	// head to head start with one candidate seats that one (none for a bots or network start).
+	const singlesOut = !isCooperativeGame(room.game) && !(room.game === "battleship" && (room.botSeats ?? 0) > 0);
+	await provisionFromDraft(interaction, room, singlesOut ? ((room.spectatorIds ?? [])[0] ?? null) : null);
+}
+
+// Every reason Start match is refused before any channel exists, the same on the press and
+// on its confirm. Null when the match may start.
+function startRefusal(room: IGameRoom): string | null {
 	const pool = room.spectatorIds ?? [];
 	// A network table may open with nobody else in the pool (2026-10 item 244 Phase 5b):
 	// its players come from the network board and the room's own Buy in once it opens,
@@ -503,10 +605,7 @@ export async function startMatch(interaction: ButtonInteraction, room: IGameRoom
 	// Dero bots fill seats too (2026-10 item 250 Phase 5), so a host may start against
 	// bots alone.
 	const bots = room.botSeats ?? 0;
-	if (pool.length === 0 && !room.network && bots === 0) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.poolEmpty] });
-		return;
-	}
+	if (pool.length === 0 && !room.network && bots === 0) return gameRoomsCopy.board.poolEmpty;
 
 	// Monopoly seats the host plus the whole pool, and its board has six seats while
 	// the pool can grow to GAME_ROOM_MAX_SPECTATORS. Refused HERE, before any channel
@@ -514,71 +613,58 @@ export async function startMatch(interaction: ButtonInteraction, room: IGameRoom
 	// builds the match after the channel is already up, which would strand a room
 	// with no board in it.
 	if (room.game === "monopoly" && pool.length + 1 + bots > MONOPOLY_MAX_SEATS) {
-		const refusal =
-			bots > 0
-				? gameRoomsCopy.monopoly.tooManyWithBots(MONOPOLY_MAX_SEATS, pool.length, bots)
-				: gameRoomsCopy.monopoly.tooManyPlayers(MONOPOLY_MAX_SEATS, pool.length);
-		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
-		return;
+		return bots > 0
+			? gameRoomsCopy.monopoly.tooManyWithBots(MONOPOLY_MAX_SEATS, pool.length, bots)
+			: gameRoomsCopy.monopoly.tooManyPlayers(MONOPOLY_MAX_SEATS, pool.length);
 	}
 
 	// A Blackjack table has five seats (2026-10 item 254, Arcade 1), the host's among them,
 	// refused here for the same reason as Monopoly's six: before any channel exists.
 	if (room.game === "blackjack" && pool.length + 1 > BLACKJACK_MAX_SEATS) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.blackjackTooManyPlayers(BLACKJACK_MAX_SEATS, pool.length)] });
-		return;
+		return gameRoomsCopy.board.blackjackTooManyPlayers(BLACKJACK_MAX_SEATS, pool.length);
 	}
+	return null;
+}
 
-	// A battleship challenge with a Dero bot plays the bot: nobody in the pool is singled
-	// out, and the pool watches (2026-10 item 250 Phase 5).
-	if (room.game === "battleship" && bots > 0) {
-		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-		await provisionFromDraft(interaction, room, null);
-		return;
-	}
+// Whether the host must choose who plays: more than one candidate in a head to head game.
+// A battleship challenge with a Dero bot plays the bot, nobody in the pool singled out
+// (2026-10 item 250 Phase 5), and ⚠️ A COOPERATIVE GAME NEVER ASKS WHO PLAYS: in hangman
+// the whole pool guesses together against the host's word, so picking one of them would
+// turn a party game into a duel. Everyone else stays in spectatorIds, already in the
+// right field.
+function needsOpponentPick(room: IGameRoom): boolean {
+	if (room.game === "battleship" && (room.botSeats ?? 0) > 0) return false;
+	if (isCooperativeGame(room.game)) return false;
+	return (room.spectatorIds ?? []).length > 1;
+}
 
-	// ⚠️ A COOPERATIVE GAME NEVER ASKS WHO PLAYS. In hangman the whole pool guesses
-	// together against the host's word, so picking one of them would turn a party
-	// game into a duel and leave the rest as spectators of a game they joined to
-	// play. provisionFromDraft handles the promotion; this just skips the question.
-	if (isCooperativeGame(room.game)) {
-		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-		await provisionFromDraft(interaction, room, null);
-		return;
-	}
-
-	// More than one candidate: the host chooses who plays, and everyone else stays in
-	// spectatorIds, already in the right field. One candidate needs no question.
-	if (pool.length > 1) {
-		const options = [];
-		for (const id of pool.slice(0, BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS)) {
-			const member =
-				interaction.guild!.members.cache.get(id) ?? (await interaction.guild!.members.fetch(id).catch(() => null));
-			options.push({
-				label: (member?.displayName || member?.user.username || id).slice(0, 100),
-				value: id,
-			});
-		}
-		const select = new StringSelectMenuBuilder()
-			.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:opponent:${room.roomId}`)
-			.setPlaceholder(gameRoomsCopy.board.chooseOpponentPlaceholder)
-			.setMinValues(1)
-			.setMaxValues(1)
-			.addOptions(options);
-
-		await showPicker(interaction, {
-			action: "opponent",
-			roomId: room.roomId,
-			title: gameRoomsCopy.notices.challenge,
-			prompt: gameRoomsCopy.board.chooseOpponentPrompt,
-			label: gameRoomsCopy.board.chooseOpponentPlaceholder,
-			select,
+// The host chooses who plays from the pool: a modal whose Submit (handleOpponentSelect)
+// starts the match, or the select message Discord falls back to.
+async function openOpponentPicker(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	const pool = room.spectatorIds ?? [];
+	const options = [];
+	for (const id of pool.slice(0, BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS)) {
+		const member = interaction.guild!.members.cache.get(id) ?? (await interaction.guild!.members.fetch(id).catch(() => null));
+		options.push({
+			label: (member?.displayName || member?.user.username || id).slice(0, 100),
+			value: id,
 		});
-		return;
 	}
+	const select = new StringSelectMenuBuilder()
+		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:opponent:${room.roomId}`)
+		.setPlaceholder(gameRoomsCopy.board.chooseOpponentPlaceholder)
+		.setMinValues(1)
+		.setMaxValues(1)
+		.addOptions(options);
 
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-	await provisionFromDraft(interaction, room, pool[0]);
+	await showPicker(interaction, {
+		action: "opponent",
+		roomId: room.roomId,
+		title: gameRoomsCopy.notices.challenge,
+		prompt: gameRoomsCopy.board.chooseOpponentPrompt,
+		label: gameRoomsCopy.board.chooseOpponentPlaceholder,
+		select,
+	});
 }
 
 // The opponent picker's submission, for the multi-joiner case: from its modal, or from
@@ -616,7 +702,7 @@ export async function handleOpponentSelect(interaction: StringSelectMenuInteract
 // out the card. One function so the two entry points cannot diverge about who ends up
 // a player and who ends up a spectator.
 async function provisionFromDraft(
-	interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
+	interaction: ConfirmInteraction | StringSelectMenuInteraction,
 	room: IGameRoom,
 	// Null for a cooperative game, where the whole pool plays and there is nobody to
 	// single out.
@@ -1157,11 +1243,26 @@ export async function cancelDraft(interaction: ButtonInteraction, room: IGameRoo
 	// frees the host's slot.
 	await gameRoomStore.markArchived(room.guildId, room.roomId);
 	await interaction.deferUpdate();
-	await refreshCard(interaction.guild!, room, cardStateFor(room, { visibility: room.visibility, cancelled: true }));
+	await refreshCard(interaction.guild!, room, cancelledCardState(room));
 }
+
+// Cancel's close, for the one room per host confirm (item 15): the same archive that frees
+// the slot, with the card redrawn as cancelled in the background, since the confirm still
+// has to post the new card inside Discord's three second window.
+async function closeDraft(guild: Guild, room: IGameRoom): Promise<void> {
+	await gameRoomStore.markArchived(room.guildId, room.roomId);
+	void refreshCard(guild, room, cancelledCardState(room)).catch((error: unknown) =>
+		console.error("[game-rooms] the replaced draft's card did not redraw", { guildId: room.guildId, roomId: room.roomId, error })
+	);
+}
+
+const cancelledCardState = (room: IGameRoom) => cardStateFor(room, { visibility: room.visibility, cancelled: true });
 
 export const challengeBoard = {
 	startChallengeDraft,
+	offerChallengeDraft,
+	confirmChallengeDraft,
+	confirmStartMatch,
 	chooseVisibility,
 	openInvitePicker,
 	handleInviteSelect,

@@ -10,7 +10,7 @@ vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedV
 vi.mock("./challengeCard.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./challengeCard.js")>()), refreshCard: vi.fn() }));
 vi.mock("@features/setup/adminLog.js", () => ({ adminLog: { emit: vi.fn(), emitFor: vi.fn() } }));
 
-import { chooseCasual, joinChallenge, startMatch, yieldBotSeatsTo } from "./challengeBoard.js";
+import { chooseCasual, joinChallenge, confirmStartMatch, yieldBotSeatsTo } from "./challengeBoard.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { RoomProvisioner } from "./RoomProvisioner.js";
@@ -117,7 +117,7 @@ describe("choosing Casual", () => {
 	it("starts the filled table with the bots in the match and only the host in playerIds", async () => {
 		current = makeRoom("holdem", { casual: true, botSeats: 3 });
 
-		await startMatch(button(), current);
+		await confirmStartMatch(button(), current);
 
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ playerIds: [HOST], botIds: ["dero-bot-red", "dero-bot-orange", "dero-bot-gold"] }));
 	});
@@ -177,7 +177,7 @@ describe("a person joining a Casual table", () => {
 	it("then sits as a player beside the bots that are left, never a bot in playerIds", async () => {
 		current = makeRoom("holdem", { casual: true, botSeats: 2, spectatorIds: [JOINER] });
 
-		await startMatch(button(), current);
+		await confirmStartMatch(button(), current);
 
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ playerIds: [HOST, JOINER], botIds: ["dero-bot-red", "dero-bot-orange"] }));
 	});
@@ -219,7 +219,7 @@ describe("a person joining a Casual table", () => {
 		await joinChallenge(button(JOINER), current);
 		expect(storeMock.lowerBotSeats).toHaveBeenCalledWith("guild-1", "room-1", 0);
 
-		await startMatch(button(), makeRoom("battleship", { casual: true, botSeats: 0, spectatorIds: [JOINER] }));
+		await confirmStartMatch(button(), makeRoom("battleship", { casual: true, botSeats: 0, spectatorIds: [JOINER] }));
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ playerIds: [HOST, JOINER], botIds: [] }));
 	});
 });

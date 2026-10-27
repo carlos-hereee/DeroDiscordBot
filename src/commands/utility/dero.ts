@@ -31,6 +31,8 @@ import { turnLatencyLog } from "@features/voice/turnLatency.js";
 import { liveVoicePresenceState, renderVoicePresenceCard } from "@features/voice/voicePresenceRenderer.js";
 import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
+import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 
 // ── /dero ─────────────────────────────────────────────────────────────────
 // What:  the text path to Dero's brain and Dero's way into a voice call. `tell`
@@ -101,6 +103,21 @@ async function refuse(interaction: RepliableInteraction, line: string): Promise<
 	await showErrorNotice(interaction, line);
 }
 
+// The settings panel holding the voice switch (settingsPanels.ts, SETTINGS_PANELS).
+const DERO_CONFIG_PANEL_ID = "dero-config";
+
+// Voice switched off, answered with its fix (2026-10 item 257, owner item 15): the owner or
+// an admin gets the /dero-config panel at once, whose switch turns the voice on; anyone
+// else gets the command to send an admin. Loaded on use, for the reason chipClaim gives:
+// the launcher builds its command table from the admin commands as it loads, and those
+// reach deep into setup and the arcade, so a static import back into it from a member
+// command risks a cycle with the table half built.
+async function refuseVoiceOff(interaction: RepliableInteraction, guildId: string): Promise<void> {
+	const config = await guildConfigStore.findByGuildId(guildId);
+	const { offerSwitchFix } = await import("@features/command-buttons/adminCommandLauncher.js");
+	await offerSwitchFix(interaction, { launchId: DERO_CONFIG_PANEL_ID, title: getPluginCopy(config).error.title, memberSections: [...voiceCopy.call.voiceOffForMember] }, config);
+}
+
 function taskEmbed(lines: string[]): EmbedBuilder {
 	return infoEmbed(tellCopy.replyTitle, lines.join("\n"));
 }
@@ -155,7 +172,7 @@ async function tell(interaction: ChatInputCommandInteraction): Promise<void> {
 		return;
 	}
 	if (!config.enabled) {
-		await refuse(interaction, tellCopy.switchedOff);
+		await refuseVoiceOff(interaction, guild.id);
 		return;
 	}
 
@@ -335,6 +352,12 @@ export async function bringDeroIntoCall(interaction: RepliableInteraction): Prom
 	}
 	const guild = interaction.guild;
 	const config = await deroVoiceConfigStore.findByGuildId(guild.id);
+	// The one join refusal with a fix a press can run: answered before checkJoin, which
+	// would refuse the same switched off guild with the bare line.
+	if (config && !config.enabled) {
+		await refuseVoiceOff(interaction, guild.id);
+		return;
+	}
 	const gate = checkJoin({
 		speaker: interaction.member,
 		guildOwnerId: guild.ownerId,

@@ -38,6 +38,13 @@ vi.mock("@utils/config.js", async (importOriginal) => ({
 }));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: hoisted.log } }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: async (guildId: string) => ({ guildId }) } }));
+// Voice switched off routes /dero join to the switch (2026-10 item 257): the launcher's
+// own tests cover the admin's panel; here the member's answer stands in for it.
+vi.mock("@features/command-buttons/adminCommandLauncher.js", () => ({
+	offerSwitchFix: vi.fn(async (interaction: { reply: (options: { content: string }) => Promise<unknown> }, fix: { memberSections: string[] }) => {
+		await interaction.reply({ content: fix.memberSections.join(" ") });
+	}),
+}));
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({
 	deroVoiceConfigStore: {
 		findByGuildId: async (guildId: string) => {
@@ -1052,7 +1059,7 @@ describe("privacy proof: the kill switch and a cap of 0 stop every provider call
 		// /dero join: refused outright when off; with a cap of 0 Dero joins in silence.
 		world.sessions.leave(GUILD_ID);
 		const join = await runJoinCommand(world);
-		if (kind === "off") expect(embedText(join.reply)).toContain(deroBrainCopy.tell.switchedOff);
+		if (kind === "off") expect((join.reply.mock.calls[0] as unknown as [{ content: string }])[0].content).toContain(voiceCopy.call.voiceOffForMember[0]);
 		else expect(embedText(join.editReply)).toBe(voiceCopy.call.joined.capReached(VC));
 
 		expect(world.tts.calls).toBe(0);

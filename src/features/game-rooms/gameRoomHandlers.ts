@@ -1,4 +1,4 @@
-import { type ButtonInteraction } from "discord.js";
+import { type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
 import { registerButton, registerSelectMenu, registerModal } from "@handlers/interactionRegistry.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -11,8 +11,11 @@ import {
 	GAME_ROOM_ACTIONS,
 	HOST_STRICT_ACTIONS,
 	SATELLITE_ACTIONS,
+	CONFIRM_ACTIONS,
+	confirmCustomId,
 	parseGameRoomCustomId,
 	type GameRoomAction,
+	type ParsedGameRoomCustomId,
 } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { roomLifecycle } from "./roomLifecycle.js";
@@ -42,15 +45,20 @@ import { satelliteAt } from "./satelliteRooms.js";
 import { registerNetworkHandlers } from "./networkJoin.js";
 import type { GameSlug, SatelliteRoom } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
-import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { acknowledgeConfirm, showConfirm, showErrorNotice, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 
 const satelliteWords = rokCommanderCopy.arcadeSatellites;
+
+// The games a per game start confirm may post a card for: the board's own, plus the
+// Blackjack table the arcade host's button opens (2026-10 item 257). Wider than
+// CHALLENGE_GAMES, which is only the board's buttons.
+const DRAFT_CONFIRM_GAMES: readonly string[] = [...CHALLENGE_GAMES, "blackjack"];
 
 // The actions that only make sense while a draft is still a draft. Listed once so
 // the status refusal below cannot drift from the routing switch. `requests` and `kick`
 // are host controls too but are NOT here: they also work in a live room, and each
 // refuses by the room's status itself.
-const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "dero", "cancel", "auctions", "referee", "approval", "bots", "casual"]);
+const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "startok", "dero", "cancel", "auctions", "referee", "approval", "bots", "casual"]);
 
 // ── gameRoomHandlers ─────────────────────────────────────────────────
 // What:  routes every `gameroom:` button to its action, after proving the clicker is
@@ -68,32 +76,35 @@ const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start",
 //        satellite, to the guild and channel it came from), apply the satellite's own
 //        gate and then the action's declared gate, then act.
 
-async function handleGameRoomButton(interaction: ButtonInteraction): Promise<void> {
-	const parsed = parseGameRoomCustomId(interaction.customId);
+/** A press, a confirm's Submit included, that passed every gate the router applies. */
+type GatedPress =
+	| { kind: "new"; parsed: ParsedGameRoomCustomId; game: GameSlug }
+	| { kind: "room"; parsed: ParsedGameRoomCustomId; room: IGameRoom; isAdmin: boolean };
 
-	// A retired or malformed control. The ordinary cause is a member scrolling back to
-	// a room from two deploys ago, not an attack, so the reply is an honest note rather
-	// than a refusal.
-	if (!parsed) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: ["This control is no longer available."] });
-		return;
-	}
+/** What reaches the router: a button press, or the Submit of a confirm it opened. */
+type GameRoomPress = ButtonInteraction | ModalSubmitInteraction;
 
+// Every gate a press passes before it acts, shared by a button and a confirm's Submit
+// (2026-10 item 257), because a modal Submit is reachable without the press that opened
+// it: the room is looked up again, scoped to the guild, and the action's own gate is run
+// again. Answers the refusal itself and returns null, so a caller only has to stop.
+async function gatePress(interaction: GameRoomPress, parsed: ParsedGameRoomCustomId): Promise<GatedPress | null> {
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) {
 		await showErrorNotice(interaction, "This button only works inside a server.");
-		return;
+		return null;
 	}
 
-	// `new` is the one action that runs before a room exists, so its tail is a game
-	// slug rather than a roomId and there is nothing to look up or gate against.
-	if (parsed.action === "new") {
-		if (!(CHALLENGE_GAMES as readonly string[]).includes(parsed.tail)) {
+	// `new` and its confirm `newok` are the actions that run before a room exists, so
+	// their tail is a game slug rather than a roomId and there is nothing to look up or
+	// gate against: anyone may start a challenge.
+	if (parsed.action === "new" || parsed.action === "newok") {
+		const games: readonly string[] = parsed.action === "new" ? CHALLENGE_GAMES : DRAFT_CONFIRM_GAMES;
+		if (!games.includes(parsed.tail)) {
 			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: ["This control is no longer available."] });
-			return;
+			return null;
 		}
-		await challengeBoard.startChallengeDraft(interaction, parsed.tail as GameSlug);
-		return;
+		return { kind: "new", parsed, game: parsed.tail as GameSlug };
 	}
 
 	// ⚠️ GUILD SCOPING IS A SECURITY BOUNDARY (invariant 2). The roomId rides the
@@ -105,7 +116,7 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 	const pressed = await resolvePressedRoom(interaction, guildId, parsed.tail);
 	if (!pressed) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.errors.notFound] });
-		return;
+		return null;
 	}
 	const { room, satellite } = pressed;
 	const actorId = interaction.user.id;
@@ -120,11 +131,11 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 	if (satellite) {
 		if (!SATELLITE_ACTIONS.has(parsed.action)) {
 			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [satelliteWords.hostRoomOnly] });
-			return;
+			return null;
 		}
 		if (!satellite.userIds.includes(actorId)) {
 			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [satelliteWords.notSeatedHere] });
-			return;
+			return null;
 		}
 	}
 
@@ -134,7 +145,7 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 	// stays scrollable forever.
 	if (BOARD_ACTIONS.has(parsed.action) && room.status !== "draft") {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.board.draftGone] });
-		return;
+		return null;
 	}
 
 	const action = GAME_ROOM_ACTIONS[parsed.action];
@@ -142,7 +153,7 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 	// playersOnly first: it is the cheaper check and needs no config read.
 	if (action.playersOnly && !room.playerIds.includes(actorId)) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.errors.notYours] });
-		return;
+		return null;
 	}
 
 	// hostOnly is host OR admin. The admin override is deliberate and is why this is not
@@ -154,15 +165,43 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		// config read and no override: an admin is refused like any other member.
 		if (HOST_STRICT_ACTIONS.has(parsed.action)) {
 			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.board.onlyHostStarts] });
-			return;
+			return null;
 		}
 		const config = await guildConfigStore.findByGuildId(guildId);
 		isAdmin = await gateOwnerOrAdmin(interaction, config);
 		if (!isAdmin) {
 			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.errors.notYours] });
-			return;
+			return null;
 		}
 	}
+
+	return { kind: "room", parsed, room, isAdmin };
+}
+
+async function handleGameRoomButton(interaction: ButtonInteraction): Promise<void> {
+	const parsed = parseGameRoomCustomId(interaction.customId);
+
+	// A retired or malformed control. The ordinary cause is a member scrolling back to
+	// a room from two deploys ago, not an attack, so the reply is an honest note rather
+	// than a refusal.
+	if (!parsed) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: ["This control is no longer available."] });
+		return;
+	}
+
+	const gated = await gatePress(interaction, parsed);
+	if (!gated) return;
+	// A confirm's own button, from the private reply a confirm falls back to when Discord
+	// will not show its modal: it acts exactly as the modal's Submit would.
+	if (CONFIRM_ACTIONS.has(parsed.action)) {
+		await runConfirmed(interaction, gated);
+		return;
+	}
+	if (gated.kind === "new") {
+		await challengeBoard.offerChallengeDraft(interaction, gated.game);
+		return;
+	}
+	const { room } = gated;
 
 	switch (parsed.action) {
 		// ── the board ──
@@ -233,11 +272,12 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		case "hcards":
 			await roomHoldemHandlers.handleShowCards(interaction, room);
 			return;
+		// Leave and End ask first (item 12); their confirms act in runConfirmed.
 		case "hleave":
-			await roomHoldemHandlers.handleLeaveTable(interaction, room);
+			await showConfirm(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.confirms.leaveTable], confirmId: confirmCustomId("hleaveok", room.roomId) });
 			return;
 		case "hend":
-			await roomHoldemHandlers.handleEndTable(interaction, room);
+			await showConfirm(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.confirms.endTable], confirmId: confirmCustomId("hendok", room.roomId) });
 			return;
 		case "hback":
 			await roomHoldemHandlers.handleImBack(interaction, room);
@@ -283,9 +323,6 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		case "msurrender":
 			await roomMonopolySurrender.handleMsurrender(interaction, room);
 			return;
-		case "msurrenderok":
-			await roomMonopolySurrender.handleMsurrenderConfirm(interaction, room);
-			return;
 		case "mrefvoice":
 			await roomMonopolyRefereeNotice.handleEnableVoice(interaction);
 			return;
@@ -323,34 +360,94 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			}
 			await runRoomMove(interaction, room);
 			return;
-		case "archive": {
-			// Acknowledge BEFORE the delete. The channel this button lives in is about to
-			// stop existing, and an editReply against a deleted channel throws; deferring
-			// ephemerally means the ack is already delivered when the floor disappears.
-			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: ["Archiving this room."] });
-			await roomLifecycle.archiveNow(interaction.client, room, actorId, isAdmin);
+		// Both ask first (2026-10 item 257, owner item 12): the press opens a confirm and
+		// only its Submit archives or forfeits, in runConfirmed below.
+		case "archive":
+			await showConfirm(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.confirms.archive], confirmId: confirmCustomId("archiveok", room.roomId) });
 			return;
-		}
-		case "forfeit": {
-			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: ["Forfeit recorded."] });
-			// The forfeit is a MOVE first: it belongs in the transcript that is the
-			// product, not only in the result card.
-			await roomTrail.postMove(interaction.client, room, {
-				actorId,
-				kind: "forfeit",
-				text: gameRoomsCopy.trail.forfeited(actorId),
-			});
-			// The winner is whoever did not forfeit, and only when exactly one player
-			// remains. A three seat room losing one player has no winner yet, so it
-			// resolves to null rather than to an arbitrary survivor.
-			const remaining = room.playerIds.filter((id) => id !== actorId);
-			await roomLifecycle.finish(interaction.client, room, {
-				winnerId: remaining.length === 1 ? remaining[0] : null,
-				outcome: { bucket: "forfeit" },
-			});
+		case "forfeit":
+			await showConfirm(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.confirms.forfeit], confirmId: confirmCustomId("forfeitok", room.roomId) });
 			return;
-		}
 	}
+}
+
+// ── the confirms (2026-10 item 257, owner item 12) ──
+// What:  the one place a confirmed action happens: a confirm modal's Submit, or the
+//        button of the private reply a confirm falls back to. Closing the modal never
+//        reaches here, so nothing happens without Submit.
+// Who:   handleGameRoomButton for the fallback button, handleGameRoomConfirm for Submit,
+//        each after gatePress ran the confirmed press's own gate again.
+async function runConfirmed(interaction: ConfirmInteraction, gated: GatedPress): Promise<void> {
+	if (gated.kind === "new") {
+		// The arg is the open draft the one room per host confirm offered to close (item 15).
+		await challengeBoard.confirmChallengeDraft(interaction, gated.game, gated.parsed.arg ?? null);
+		return;
+	}
+	const { parsed, room, isAdmin } = gated;
+	switch (parsed.action) {
+		case "startok":
+			await challengeBoard.confirmStartMatch(interaction, room);
+			return;
+		case "archiveok":
+			// Acknowledged BEFORE the delete: the channel the confirm was pressed in is about
+			// to stop existing, and an answer sent after it is gone throws.
+			await acknowledgeConfirm(interaction);
+			await roomLifecycle.archiveNow(interaction.client, room, interaction.user.id, isAdmin);
+			return;
+		case "forfeitok":
+			await confirmForfeit(interaction, room);
+			return;
+		case "hleaveok":
+			await roomHoldemHandlers.handleLeaveTable(interaction, room);
+			return;
+		case "hendok":
+			await roomHoldemHandlers.handleEndTable(interaction, room);
+			return;
+		case "msurrenderok":
+			await roomMonopolySurrender.handleMsurrenderConfirm(interaction, room);
+			return;
+		default:
+			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.errors.controlRetired] });
+	}
+}
+
+// A confirmed forfeit. The row was read again by gatePress, and a match that ended while
+// the confirm stood open is refused rather than given a forfeit line after its result.
+async function confirmForfeit(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
+	if (room.status === "finished" || room.status === "archived") {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.confirms.matchOver] });
+		return;
+	}
+	const actorId = interaction.user.id;
+	// The result card in the room is the answer, so the confirm closes with no message.
+	await acknowledgeConfirm(interaction);
+	// The forfeit is a MOVE first: it belongs in the transcript that is the
+	// product, not only in the result card. postMove sends, then appends (law).
+	await roomTrail.postMove(interaction.client, room, {
+		actorId,
+		kind: "forfeit",
+		text: gameRoomsCopy.trail.forfeited(actorId),
+	});
+	// The winner is whoever did not forfeit, and only when exactly one player
+	// remains. A three seat room losing one player has no winner yet, so it
+	// resolves to null rather than to an arbitrary survivor.
+	const remaining = room.playerIds.filter((id) => id !== actorId);
+	await roomLifecycle.finish(interaction.client, room, {
+		winnerId: remaining.length === 1 ? remaining[0] : null,
+		outcome: { bucket: "forfeit" },
+	});
+}
+
+// A confirm's Submit. Only the actions in CONFIRM_ACTIONS come this way; any other id
+// under this prefix arriving as a modal is forged or retired, and acts on nothing.
+async function handleGameRoomConfirm(interaction: ModalSubmitInteraction): Promise<void> {
+	const parsed = parseGameRoomCustomId(interaction.customId);
+	if (!parsed || !CONFIRM_ACTIONS.has(parsed.action)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.errors.controlRetired] });
+		return;
+	}
+	const gated = await gatePress(interaction, parsed);
+	if (gated) await runConfirmed(interaction, gated);
 }
 
 /** A pressed room, and the satellite the press came from when it was not the room's own channel. */
@@ -367,7 +464,7 @@ interface PressedRoom {
 // the clicking guild's rooms and never to the roomId alone. Discord sets both, so a roomId
 // replayed from any other channel still reads as not found; and the roomId must match the
 // row the channel belongs to, so a control from one table cannot act on another.
-async function resolvePressedRoom(interaction: ButtonInteraction, guildId: string, roomId: string): Promise<PressedRoom | null> {
+async function resolvePressedRoom(interaction: GameRoomPress, guildId: string, roomId: string): Promise<PressedRoom | null> {
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (room) return { room, satellite: null };
 
@@ -386,6 +483,9 @@ async function resolvePressedRoom(interaction: ButtonInteraction, guildId: strin
  */
 export function registerGameRoomHandlers(): void {
 	registerButton(GAME_ROOM_PREFIX, handleGameRoomButton);
+	// A confirm's modal carries the same customId as its fallback button (showConfirm), so
+	// its Submit arrives under the button prefix in the registry's modal map.
+	registerModal(GAME_ROOM_PREFIX, handleGameRoomConfirm);
 	// One select prefix, sub-routed on the same `<action>` position the buttons use.
 	// Each sub-handler re-checks its own action name and re-gates the actor, because a
 	// select's customId and its values are user input whoever built the menu.
@@ -445,3 +545,4 @@ export function registerGameRoomHandlers(): void {
 
 // Exported for the handler tests, which drive the routing without a live client.
 export const _handleGameRoomButton = handleGameRoomButton;
+export const _handleGameRoomConfirm = handleGameRoomConfirm;

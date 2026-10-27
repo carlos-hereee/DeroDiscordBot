@@ -2,15 +2,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { RepliableInteraction } from "discord.js";
 
 // ── /claim's reply ──────────────────────────────────────────────────────────
-// Private every time, refused when the server has chips off, and a failed ledger
+// Private every time, routed to the chips switch when the server has chips off, and a failed ledger
 // read answered rather than thrown. The wallet logic is chipWallet.test.ts's.
 
-const mocks = vi.hoisted(() => ({ findConfig: vi.fn(), claimChips: vi.fn() }));
+const mocks = vi.hoisted(() => ({ findConfig: vi.fn(), claimChips: vi.fn(), offerSwitchFix: vi.fn() }));
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findConfig } }));
+// The launcher's own tests prove an admin gets the panel and a member the notice.
+vi.mock("@features/command-buttons/adminCommandLauncher.js", () => ({ offerSwitchFix: mocks.offerSwitchFix }));
 vi.mock("./chipWallet.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./chipWallet.js")>()), claimChips: mocks.claimChips }));
 
 import { runChipClaim } from "./chipClaim.js";
+import { economyCopy } from "./economyCopy.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 type Reply = { embeds: Array<{ data: { description?: string } }>; flags?: number };
 
@@ -24,6 +28,7 @@ const textOf = (reply: ReturnType<typeof vi.fn>): string => (reply.mock.calls[0]
 beforeEach(() => {
 	mocks.findConfig.mockReset().mockResolvedValue({ chipEconomyEnabled: true });
 	mocks.claimChips.mockReset();
+	mocks.offerSwitchFix.mockReset();
 });
 
 describe("runChipClaim", () => {
@@ -47,14 +52,28 @@ describe("runChipClaim", () => {
 		expect(textOf(reply)).toContain("<t:1793016000:R>");
 	});
 
-	it("refuses when the server has chips off, paying nothing", async () => {
-		mocks.findConfig.mockResolvedValue({ chipEconomyEnabled: false });
+	// 2026-10 item 257, owner item 10: chips off routes to the switch, the arcade panel for
+	// an admin and the copyable command for a member, worded from the guild's own pack.
+	it("routes chips off to the arcade switch with the guild's config, paying nothing", async () => {
+		const config = { chipEconomyEnabled: false, pluginId: "general-events", adminRoleId: "r1" };
+		mocks.findConfig.mockResolvedValue(config);
 		const { fake, reply } = interaction();
 
 		await runChipClaim(fake);
 
-		expect(textOf(reply)).toContain("switched off");
+		expect(mocks.offerSwitchFix).toHaveBeenCalledWith(
+			fake,
+			{ launchId: "arcade", title: getPluginCopy(config).error.title, memberSections: [...economyCopy.claim.economyOffForMember] },
+			config
+		);
+		expect(reply).not.toHaveBeenCalled();
 		expect(mocks.claimChips).not.toHaveBeenCalled();
+	});
+
+	it("gives a member the switch's command as copyable inline code, and asks them to send it to an admin", () => {
+		const [, command] = economyCopy.claim.economyOffForMember;
+		expect(command).toContain("`/arcade chips toggle enabled:True`");
+		expect(command).toContain("admin");
 	});
 
 	it("answers a failed ledger read instead of throwing", async () => {

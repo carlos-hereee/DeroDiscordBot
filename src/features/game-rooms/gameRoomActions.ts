@@ -23,9 +23,9 @@ export const GAME_ROOM_MODAL_PREFIX = "gameroomModal";
 
 // customId shape: `gameroom:<action>:<tail>[:<arg>]`.
 //
-// `tail` is a roomId for every action except `new`, which carries a game slug because
-// no room exists yet at that point. `arg` is used by `vis`, `auctions`, `referee`, `approval`, `casual`,
-// `hmove`, `hseats`, `mbuy`, `mjail`, `mtradeAccept`, `mtradeReject` and `mauction`.
+// `tail` is a roomId for every action except `new` and `newok`, which carry a game slug
+// because no room exists yet at that point. `arg` is used by `vis`, `auctions`, `referee`, `approval`, `casual`,
+// `hmove`, `hseats`, `mbuy`, `mjail`, `mtradeAccept`, `mtradeReject`, `mauction` and `newok`.
 //
 // ⚠️ EVERY ENTRY HERE HAS A BUTTON THAT EMITS IT AND A BRANCH THAT ANSWERS IT. Phase 3
 // deliberately declared only archive and forfeit for that reason, and Phase 4 adds the
@@ -187,6 +187,20 @@ export const GAME_ROOM_ACTIONS = {
 	// Dero into the call runs bringDeroIntoCall, whose checkJoin gates decide who may.
 	mrefvoice: { hostOnly: false, playersOnly: false },
 	mrefcall: { hostOnly: false, playersOnly: false },
+
+	// ── the confirms (2026-10 item 257, owner item 12) ──
+	// The press above opens a confirm (showConfirm) and only its Submit, or the fallback
+	// reply's button, carries one of these: the action happens here and nowhere else. Each
+	// carries the gate of the press it confirms, because a modal Submit is reachable
+	// without that press. A gate change to one belongs to its pair.
+	// The per game start: a game slug as the tail, like `new`, and as the arg the roomId of
+	// an open draft the Submit closes first (the one room per host fix, item 15).
+	newok: { hostOnly: false, playersOnly: false },
+	startok: { hostOnly: true, playersOnly: false },
+	archiveok: { hostOnly: true, playersOnly: false },
+	forfeitok: { hostOnly: false, playersOnly: true },
+	hleaveok: { hostOnly: false, playersOnly: true },
+	hendok: { hostOnly: true, playersOnly: false },
 } as const satisfies Record<string, { hostOnly: boolean; playersOnly: boolean }>;
 
 export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;
@@ -200,7 +214,7 @@ export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;
 //        host's hand for them. An admin may still kick, manage and cancel.
 // The table's buy in (2026-10 item 250 Phase 5) is strict for the same reason: it is what
 // every player pays from their own wallet, the host's call and nobody else's.
-export const HOST_STRICT_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["start", "dero", "hbuyin", "bots", "casual"]);
+export const HOST_STRICT_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["start", "startok", "dero", "hbuyin", "bots", "casual"]);
 
 // ── the controls a satellite may press (2026-10 item 244 Phase 5a) ──
 // What:  the actions a member seated through a satellite channel may take there: their
@@ -215,7 +229,19 @@ export const HOST_STRICT_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoom
 //        their own server would pass it and run the host's table. A press from a satellite
 //        must never reach that gate, and a new action is refused there until somebody
 //        decides it belongs here. Satellite tests pin that no entry is hostOnly.
-export const SATELLITE_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["hjoin", "hmove", "hcards", "hleave", "hback"]);
+export const SATELLITE_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["hjoin", "hmove", "hcards", "hleave", "hleaveok", "hback"]);
+
+// ── the actions a confirm's Submit may carry (2026-10 item 257) ──
+// What:  the actions that perform what a confirm asked about. The router takes a modal
+//        Submit under GAME_ROOM_PREFIX for these alone; any other action arriving from a
+//        modal is a forged or retired id and is refused.
+// Who:   gameRoomHandlers, which routes the Submit and the fallback button alike.
+export const CONFIRM_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["newok", "startok", "archiveok", "forfeitok", "hleaveok", "hendok", "msurrenderok"]);
+
+/** The customId a confirm's modal and its fallback button both carry: `gameroom:<action>:<tail>[:<arg>]`. */
+export function confirmCustomId(action: GameRoomAction, tail: string, arg?: string): string {
+	return [GAME_ROOM_PREFIX, action, tail, ...(arg ? [arg] : [])].join(":");
+}
 
 export interface ParsedGameRoomCustomId {
 	action: GameRoomAction;

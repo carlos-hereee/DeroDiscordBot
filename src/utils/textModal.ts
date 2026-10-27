@@ -1,7 +1,12 @@
 import {
+	ActionRowBuilder,
+	ButtonBuilder,
+	ButtonStyle,
+	InteractionType,
 	MessageFlags,
 	ModalBuilder,
 	TextDisplayBuilder,
+	type ButtonInteraction,
 	type EmbedBuilder,
 	type InteractionReplyOptions,
 	type ModalSubmitInteraction,
@@ -183,6 +188,69 @@ export async function showErrorNotice(interaction: RepliableInteraction, message
 		embeds: [errorEmbed(message, guildConfig)],
 		flags: MessageFlags.Ephemeral,
 	}));
+}
+
+// ── the confirm ──────────────────────────────────────────────────────
+// What:  a text modal whose Submit performs an action (2026-10 item 257, owner item 12):
+//        archive, forfeit, start, leave, surrender, and an error whose fix Dero can run
+//        (item 15). Closing the modal does nothing at all, which is the whole point:
+//        nothing happens before Submit.
+// Who:   the game rooms today; any feature whose press needs a yes first.
+// How:   the modal and its fallback button carry the SAME customId, `confirmId`. The
+//        caller registers that id's prefix as a modal (registerModal) and as a button
+//        (registerButton), and both land in one handler, which re-gates the presser and
+//        then acts: a modal Submit is reachable without the press that opened it.
+// When a modal cannot open (a modal submit, an interaction already deferred or
+// answered, or Discord refusing it) the confirm is a private reply carrying that one
+// button, never the action done at once.
+
+/** What a confirm shows, and the customId its Submit and its fallback button carry. */
+export interface ConfirmContent extends TextModalContent {
+	confirmId: string;
+}
+
+/** The two ways a confirm comes back: its modal's Submit, or the fallback reply's button. */
+export type ConfirmInteraction = ModalSubmitInteraction | ButtonInteraction;
+
+/**
+ * Ask before acting: a text modal whose Submit is routed by `confirmId`, or, when a modal
+ * cannot be shown, a private reply with one confirm button carrying the same id. Never
+ * performs anything itself and never throws past a failed fallback.
+ */
+export async function showConfirm(interaction: RepliableInteraction, content: ConfirmContent, guildConfig?: ICopyConfig | null): Promise<void> {
+	const fallback = (): InteractionReplyOptions => confirmFallback(content, guildConfig);
+	if (canOpenModal(interaction)) {
+		await showTextModal(interaction, content.confirmId, content, fallback);
+		return;
+	}
+	await replyPrivately(interaction, fallback());
+}
+
+/** The private reply a confirm falls back to: its words, and the one button that confirms. Exported for the tests. */
+export function confirmFallback(content: ConfirmContent, guildConfig?: ICopyConfig | null): InteractionReplyOptions {
+	const button = new ButtonBuilder().setCustomId(content.confirmId).setLabel(getPluginCopy(guildConfig).confirm.button).setStyle(ButtonStyle.Primary);
+	const words = [`**${content.title}**`, ...content.sections.filter((section) => section.trim().length > 0)].join("\n\n");
+	return {
+		content: words.slice(0, MAX_SECTION_LENGTH),
+		components: [new ActionRowBuilder<ButtonBuilder>().addComponents(button)],
+		flags: MessageFlags.Ephemeral,
+	};
+}
+
+/**
+ * Acknowledge a confirm that answers with no message of its own (an archive whose channel
+ * is about to go, a forfeit whose answer is the result card): the modal closes as a text
+ * modal does, and the fallback reply's button press is deferred. A second press of that
+ * button reaches the same handler, which re-reads the row and refuses what already ran.
+ */
+export async function acknowledgeConfirm(interaction: ConfirmInteraction): Promise<void> {
+	if (interaction.type === InteractionType.ModalSubmit) {
+		await acknowledgeTextModal(interaction);
+		return;
+	}
+	// Swallowed on purpose, as in acknowledgeTextModal: the confirm was taken, and a failed
+	// acknowledgement costs at most Discord's own "interaction failed" note.
+	await interaction.deferUpdate().catch(() => undefined);
 }
 
 /** Register the notice modal's close. Called once at boot from main.ts, before the InteractionCreate listener installs. */

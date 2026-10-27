@@ -25,11 +25,11 @@ vi.mock("./roomMonopolyHandlers.js", async (importOriginal) => {
 		}),
 	};
 });
-vi.mock("@utils/textModal.js", () => ({ showNotice: vi.fn() }));
+vi.mock("@utils/textModal.js", () => ({ showNotice: vi.fn(), showConfirm: vi.fn(), acknowledgeConfirm: vi.fn() }));
 
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import { showNotice } from "@utils/textModal.js";
+import { acknowledgeConfirm, showConfirm, showNotice } from "@utils/textModal.js";
 import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { commitMonopolyMove } from "./roomMonopolyHandlers.js";
@@ -188,13 +188,12 @@ describe("the two presses", () => {
 		} as unknown as ButtonInteraction & { reply: ReturnType<typeof vi.fn>; deferUpdate: ReturnType<typeof vi.fn>; editReply: ReturnType<typeof vi.fn> };
 	}
 
-	it("answers the first press with a private confirm whose one button surrenders", async () => {
+	// 2026-10 item 257: the shared confirm, whose Submit (or fallback button) surrenders.
+	it("answers the first press with the shared confirm, and surrenders nothing", async () => {
 		const room = seed([A, B]);
 		const interaction = press(B);
 		await handleMsurrender(interaction, room);
-		const reply = interaction.reply.mock.calls[0][0] as { flags: number; components: { toJSON(): { components: { custom_id: string }[] } }[] };
-		expect(reply.flags).toBe(64);
-		expect(reply.components[0].toJSON().components.map((button) => button.custom_id)).toEqual(["gameroom:msurrenderok:room-1"]);
+		expect(showConfirm).toHaveBeenCalledWith(interaction, expect.objectContaining({ confirmId: "gameroom:msurrenderok:room-1" }));
 		expect(commitMock).not.toHaveBeenCalled();
 	});
 
@@ -204,15 +203,15 @@ describe("the two presses", () => {
 		const interaction = press(C);
 		await handleMsurrender(interaction, room);
 		expect(showNotice).toHaveBeenCalledOnce();
-		expect(interaction.reply).not.toHaveBeenCalled();
+		expect(showConfirm).not.toHaveBeenCalled();
 	});
 
-	it("surrenders on the second press and turns the confirm into the outcome", async () => {
+	it("surrenders on the confirm, acknowledged first, then says how it went", async () => {
 		const room = seed([A, B, C]);
 		const interaction = press(B);
 		await handleMsurrenderConfirm(interaction, room);
-		expect(interaction.deferUpdate.mock.invocationCallOrder[0]).toBeLessThan(commitMock.mock.invocationCallOrder[0]);
-		expect(interaction.editReply).toHaveBeenCalledWith({ content: words.surrenderDone, components: [] });
+		expect(vi.mocked(acknowledgeConfirm).mock.invocationCallOrder[0]).toBeLessThan(commitMock.mock.invocationCallOrder[0]);
+		expect(showNotice).toHaveBeenCalledWith(interaction, { title: words.surrenderConfirmTitle, sections: [words.surrenderDone] });
 		expect(seatOf(B)?.bankrupt).toBe(true);
 	});
 });

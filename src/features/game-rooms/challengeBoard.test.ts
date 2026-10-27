@@ -21,7 +21,17 @@ vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedV
 const cardMocks = vi.hoisted(() => ({ renderChallengeCard: vi.fn(), challengeCardView: vi.fn() }));
 vi.mock("./challengeCardRenderer.js", () => cardMocks);
 
-import { openInvitePicker, handleInviteSelect, joinChallenge, startMatch, chooseMonopolyDraftSetting, handleOpponentSelect } from "./challengeBoard.js";
+import {
+	openInvitePicker,
+	handleInviteSelect,
+	joinChallenge,
+	startMatch,
+	confirmStartMatch,
+	chooseMonopolyDraftSetting,
+	handleOpponentSelect,
+	offerChallengeDraft,
+	confirmChallengeDraft,
+} from "./challengeBoard.js";
 import { RoomProvisioner } from "./RoomProvisioner.js";
 import { startBlackjackRoomBoard } from "./soloRooms.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -223,9 +233,40 @@ describe("starting the match", () => {
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
+	// 2026-10 item 257, owner item 12: the press only asks. The room channel is made on the
+	// confirm's Submit (confirmStartMatch), so a host who closes the modal starts nothing.
+	it("only asks on the press, building nothing until the confirm's Submit", async () => {
+		const interaction = makeButton(HOST, members);
+		await startMatch(interaction, makeRoom({ game: "monopoly", spectatorIds: ["a"] }));
+
+		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { components: Array<{ components: Array<{ data: { custom_id: string } }> }> };
+		expect(reply.components[0].components[0].data.custom_id).toBe("gameroom:startok:room-1");
+		expect(interaction.deferReply).not.toHaveBeenCalled();
+		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(RoomProvisioner.open).not.toHaveBeenCalled();
+	});
+
+	it("refuses again on the confirm when the pool outgrew the board while it stood open", async () => {
+		const interaction = makeButton(HOST, members);
+		await confirmStartMatch(interaction, makeRoom({ game: "monopoly", spectatorIds: ["a", "b", "c", "d", "e", "f"] }));
+
+		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
+		expect(reply.content).toBe(gameRoomsCopy.monopoly.tooManyPlayers(6, 6));
+		expect(RoomProvisioner.open).not.toHaveBeenCalled();
+	});
+
+	it("sends the host back to the button when more joined, since a picker cannot open from Submit", async () => {
+		const interaction = makeButton(HOST, members);
+		await confirmStartMatch(interaction, makeRoom({ spectatorIds: ["a", "b"] }));
+
+		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
+		expect(reply.content).toBe(gameRoomsCopy.confirms.startPickNeeded);
+		expect(interaction.deferReply).not.toHaveBeenCalled();
+	});
+
 	it("starts a Monopoly pool of five, which seats six with the host, without asking who plays", async () => {
 		const interaction = makeButton(HOST, members);
-		await startMatch(interaction, makeRoom({ game: "monopoly", spectatorIds: ["a", "b", "c", "d", "e"] }));
+		await confirmStartMatch(interaction, makeRoom({ game: "monopoly", spectatorIds: ["a", "b", "c", "d", "e"] }));
 
 		expect(interaction.reply).not.toHaveBeenCalled();
 		expect(interaction.deferReply).toHaveBeenCalledOnce();
@@ -263,7 +304,7 @@ describe("starting a Blackjack table", () => {
 		boardMock.mockResolvedValue(true);
 		const interaction = arcadeButton();
 
-		await startMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a", "b"] }));
+		await confirmStartMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a", "b"] }));
 
 		// The whole pool plays, nobody is asked who: one table, every seat taken.
 		expect(interaction.reply).not.toHaveBeenCalled();
@@ -277,7 +318,7 @@ describe("starting a Blackjack table", () => {
 		boardMock.mockResolvedValue(false);
 		const interaction = arcadeButton();
 
-		await startMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a"] }));
+		await confirmStartMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a"] }));
 
 		expect(interaction.editReply).toHaveBeenCalledWith({ embeds: [expect.anything()] });
 	});
@@ -372,7 +413,7 @@ describe("the Monopoly auction toggle", () => {
 			channels: { fetch: vi.fn(async () => ({ id: "arcade-cat", type: ChannelType.GuildCategory })) },
 		});
 
-		await startMatch(interaction, makeRoom({ game: "monopoly", spectatorIds: ["a"], monopolyAuctions: true }));
+		await confirmStartMatch(interaction, makeRoom({ game: "monopoly", spectatorIds: ["a"], monopolyAuctions: true }));
 
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ game: "monopoly", monopolyAuctions: true }));
 	});
@@ -453,5 +494,74 @@ describe("the opener card's picture", () => {
 
 		expect(second.edit).toHaveBeenCalledTimes(1);
 		expect(first.edit).not.toHaveBeenCalled();
+	});
+});
+
+// ── the per game start asks first, and the one room per host refusal offers its fix ──
+// 2026-10 item 257, owner items 12 and 15. The press writes nothing; the confirm's Submit
+// closes the open draft it named (never a running match) and then posts the new card.
+describe("starting a challenge from a game button", () => {
+	const members = makeMembers([{ id: HOST, bot: false, name: "Host" }]);
+	type ConfirmReply = { content: string; components?: Array<{ components: Array<{ data: { custom_id: string } }> }> };
+	const replyOf = (interaction: ButtonInteraction): ConfirmReply => (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as ConfirmReply;
+	const confirmIdOf = (interaction: ButtonInteraction): string | undefined => replyOf(interaction).components?.[0]?.components[0]?.data.custom_id;
+	const markArchived = () => (gameRoomStore as unknown as { markArchived: ReturnType<typeof vi.fn> }).markArchived;
+
+	it("asks first and posts nothing on the press", async () => {
+		storeMock.findOpenByHost.mockResolvedValue(null);
+		const interaction = makeButton(HOST, members);
+
+		await offerChallengeDraft(interaction, "rps");
+
+		expect(confirmIdOf(interaction)).toBe("gameroom:newok:rps");
+		expect(storeMock.create).not.toHaveBeenCalled();
+	});
+
+	it("offers to close an open draft, naming that draft in the confirm, and closes nothing yet", async () => {
+		storeMock.findOpenByHost.mockResolvedValue(makeRoom({ roomId: "old-room", status: "draft" }));
+		const interaction = makeButton(HOST, members);
+
+		await offerChallengeDraft(interaction, "rps");
+
+		expect(replyOf(interaction).content).toContain(gameRoomsCopy.confirms.replaceDraft);
+		expect(confirmIdOf(interaction)).toBe("gameroom:newok:rps:old-room");
+		expect(markArchived()).not.toHaveBeenCalled();
+	});
+
+	it("never offers to close a match in play, and says where it is", async () => {
+		storeMock.findOpenByHost.mockResolvedValue(makeRoom({ roomId: "live-room", status: "playing", channelId: "ch-live" }));
+		const interaction = makeButton(HOST, members);
+
+		await offerChallengeDraft(interaction, "rps");
+
+		expect(replyOf(interaction).content).toBe(gameRoomsCopy.confirms.matchInPlay("ch-live"));
+		expect(confirmIdOf(interaction)).toBeUndefined();
+	});
+
+	it("closes the named draft on Submit, before it opens the new challenge", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ roomId: "old-room", status: "draft" }));
+		storeMock.findOpenByHost.mockResolvedValue(null);
+		const interaction = makeButton(HOST, members);
+		// No challenges channel, so the new card stops at its own honest refusal; this case
+		// is about the order of the close and the open.
+		Object.assign(interaction.guild as object, { channels: { cache: { find: () => undefined }, fetch: vi.fn(async () => null) } });
+
+		await confirmChallengeDraft(interaction, "rps", "old-room");
+
+		expect(markArchived()).toHaveBeenCalledWith("guild-1", "old-room");
+		expect(markArchived().mock.invocationCallOrder[0]).toBeLessThan(storeMock.findOpenByHost.mock.invocationCallOrder[0]);
+	});
+
+	it("refuses to touch the room on Submit once it started, answering with where it plays", async () => {
+		const live = makeRoom({ roomId: "old-room", status: "playing", channelId: "ch-live" });
+		storeMock.findByRoomId.mockResolvedValue(live);
+		storeMock.findOpenByHost.mockResolvedValue(live);
+		const interaction = makeButton(HOST, members);
+
+		await confirmChallengeDraft(interaction, "rps", "old-room");
+
+		expect(markArchived()).not.toHaveBeenCalled();
+		expect(storeMock.create).not.toHaveBeenCalled();
+		expect(replyOf(interaction).content).toBe(gameRoomsCopy.confirms.matchInPlay("ch-live"));
 	});
 });

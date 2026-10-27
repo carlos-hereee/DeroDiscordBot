@@ -22,7 +22,7 @@ vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, des
 vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedValue(null) }));
 vi.mock("./challengeCardRenderer.js", () => ({ renderChallengeCard: vi.fn().mockResolvedValue(null), challengeCardView: vi.fn().mockResolvedValue({}) }));
 
-import { chooseVisibility, joinChallenge, startMatch } from "./challengeBoard.js";
+import { chooseVisibility, joinChallenge, confirmStartMatch } from "./challengeBoard.js";
 import { openerCardEmbed, openerCardRows, type OpenerCardState } from "./challengeBoardEmbeds.js";
 import { consentAcceptId } from "./networkRules.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
@@ -176,12 +176,12 @@ describe("a network table's doors on the card", () => {
 
 	it("lets a network table start with nobody else in the pool, and still refuses that for a server room", async () => {
 		const network = makeButton(HOST);
-		await startMatch(network, makeRoom({ visibility: "public", network: true }));
+		await confirmStartMatch(network, makeRoom({ visibility: "public", network: true }));
 		expect(firstReply(network).content).not.toBe(gameRoomsCopy.board.poolEmpty);
 		expect(network.deferReply).toHaveBeenCalled();
 
 		const server = makeButton(HOST);
-		await startMatch(server, makeRoom({ visibility: "public" }));
+		await confirmStartMatch(server, makeRoom({ visibility: "public" }));
 		expect(firstReply(server).content).toBe(gameRoomsCopy.board.poolEmpty);
 	});
 });

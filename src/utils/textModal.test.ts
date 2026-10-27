@@ -1,18 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EmbedBuilder, MessageFlags, type ModalBuilder, type ModalSubmitInteraction, type RepliableInteraction } from "discord.js";
+import { EmbedBuilder, InteractionType, MessageFlags, type ButtonInteraction, type ModalBuilder, type ModalSubmitInteraction, type RepliableInteraction } from "discord.js";
 
 const mocks = vi.hoisted(() => ({ registerModal: vi.fn() }));
 vi.mock("@handlers/interactionRegistry.js", () => ({ registerModal: mocks.registerModal }));
 
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
+import { generalEventsCopy } from "@base/copy/packs/general-events.pack.js";
 import {
 	NOTICE_MODAL_PREFIX,
+	acknowledgeConfirm,
 	acknowledgeTextModal,
+	confirmFallback,
 	buildTextModal,
 	noticeFromEmbed,
 	registerNoticeModal,
 	showEmbedNotice,
 	showErrorNotice,
+	showConfirm,
 	showModalOrReply,
 	showNotice,
 	type ModalOpeningInteraction,
@@ -183,5 +187,55 @@ describe("registerNoticeModal", () => {
 	it("routes every notice close on the bare prefix", () => {
 		registerNoticeModal();
 		expect(mocks.registerModal).toHaveBeenCalledWith(NOTICE_MODAL_PREFIX, acknowledgeTextModal);
+	});
+});
+
+// ── showConfirm (2026-10 item 257, owner item 12) ──
+// A confirm only asks: its modal and its fallback button carry the caller's confirmId,
+// and nothing in this helper ever performs the action.
+describe("showConfirm", () => {
+	const content = { title: "Archive?", sections: ["Submit to archive it."], confirmId: "gameroom:archiveok:room-1" };
+	type FallbackReply = { content: string; flags: number; components: Array<{ toJSON(): { components: Array<{ custom_id: string; label: string }> } }> };
+	const buttonOf = (reply: FallbackReply) => reply.components[0]!.toJSON().components[0]!;
+
+	it("opens a text modal under the confirmId, so its Submit routes to the caller's handler", async () => {
+		const press = interaction();
+		await showConfirm(press, content);
+		const modal = json(press.showModal.mock.calls[0]![0] as ModalBuilder);
+		expect(modal.custom_id).toBe("gameroom:archiveok:room-1");
+		expect(modal.components[0]!.content).toBe("Submit to archive it.");
+		expect(press.reply).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["Discord refuses the modal", { refuse: true }, "reply"],
+		["the interaction is a modal submit", { canShowModal: false }, "reply"],
+		["the interaction was already deferred", { deferred: true }, "followUp"],
+	] as const)("falls back to a private reply with one confirm button when %s", async (_label, options, method) => {
+		const press = interaction(options);
+		await showConfirm(press, content);
+		const reply = press[method].mock.calls[0]![0] as FallbackReply;
+		expect(reply.flags).toBe(MessageFlags.Ephemeral);
+		expect(reply.content).toContain("Submit to archive it.");
+		expect(buttonOf(reply)).toMatchObject({ custom_id: "gameroom:archiveok:room-1", label: rokCommanderCopy.confirm.button });
+	});
+
+	it("labels the fallback button from the guild's pack", () => {
+		const reply = confirmFallback(content, { pluginId: "general-events" }) as FallbackReply;
+		expect(buttonOf(reply).label).toBe(generalEventsCopy.confirm.button);
+	});
+});
+
+describe("acknowledgeConfirm", () => {
+	it("closes a confirm modal the way a text modal closes", async () => {
+		const deferUpdate = vi.fn(async () => undefined);
+		await acknowledgeConfirm({ type: InteractionType.ModalSubmit, isFromMessage: () => true, deferUpdate } as unknown as ModalSubmitInteraction);
+		expect(deferUpdate).toHaveBeenCalledOnce();
+	});
+
+	it("defers the fallback button's press, swallowing a failure", async () => {
+		const deferUpdate = vi.fn(async () => Promise.reject(new Error("Unknown interaction")));
+		await expect(acknowledgeConfirm({ type: InteractionType.MessageComponent, deferUpdate } as unknown as ButtonInteraction)).resolves.toBeUndefined();
+		expect(deferUpdate).toHaveBeenCalledOnce();
 	});
 });

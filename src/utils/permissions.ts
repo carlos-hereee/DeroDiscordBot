@@ -1,4 +1,4 @@
-import type { ButtonInteraction, GuildMember, ModalSubmitInteraction, StringSelectMenuInteraction } from "discord.js";
+import type { ButtonInteraction, ChatInputCommandInteraction, GuildMember, ModalSubmitInteraction, StringSelectMenuInteraction } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { creatorId } from "@utils/config.js";
 
@@ -15,7 +15,7 @@ import { creatorId } from "@utils/config.js";
 // re-verify the actor on every interaction, and that re-verification
 // must match the gate the slash command would have applied.
 
-interface IGuildConfigPermissionShape {
+export interface IGuildConfigPermissionShape {
 	adminRoleId?: string | null;
 }
 
@@ -70,12 +70,14 @@ export function isOwnerOrAdmin(member: GuildMember, config: IGuildConfigPermissi
  * Accepts a string select and a modal submit too (the game request ballot, 2026-10
  * item 245 Phase 4a): their customIds and values are user input exactly like a
  * button press, and the gate reads only the guild and the clicker, which all carry.
+ * And a slash command (2026-10 item 257): /claim with chips off routes an admin to the
+ * switch, and the gate reads nothing a command lacks.
  *
  * Note: ScheduleControls and the main.ts command gate still inline this same
  * resolution; they could adopt this helper on a future cleanup pass.
  */
 export async function gateOwnerOrAdmin(
-	interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
+	interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction | ChatInputCommandInteraction,
 	config: IGuildConfigPermissionShape | null | undefined
 ): Promise<boolean> {
 	if (!interaction.guild) return false;

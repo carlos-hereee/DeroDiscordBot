@@ -27,6 +27,13 @@ export const economyCopy = {
 		cooldown: (balance: number, nextClaimAt: Date): string =>
 			`You already claimed today. Your next claim opens ${relative(nextClaimAt)}.\nYour balance: **${chips(balance)}**.`,
 		economyOff: "Chips are switched off in this server. An admin can turn them back on with `/arcade chips toggle`.",
+		// Item 10 (2026-10 item 257): what a member pressing Claim with chips off is told. An
+		// admin gets the arcade settings panel instead, so these lines are for members only:
+		// the command as inline code they can copy, and who to send it to.
+		economyOffForMember: [
+			"Chips are switched off on this server, so there is nothing to claim yet.",
+			"Send this command to an admin and ask them to switch chips on:\n`/arcade chips toggle enabled:True`",
+		],
 		notInGuild: "Chips belong to a server, so `/claim` only works inside one.",
 		failed: "Dero could not reach the chip ledger just now. Try `/claim` again in a moment.",
 	},

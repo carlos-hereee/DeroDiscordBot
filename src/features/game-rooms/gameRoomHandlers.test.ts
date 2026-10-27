@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ButtonInteraction } from "discord.js";
+import { InteractionType, type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findByRoomId: vi.fn(), markArchived: vi.fn() },
+	gameRoomStore: { findByRoomId: vi.fn(), markArchived: vi.fn(), findOpenByHost: vi.fn() },
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: { findByGuildId: vi.fn() },
@@ -13,7 +13,7 @@ vi.mock("./roomLifecycle.js", () => ({
 }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 
-import { _handleGameRoomButton } from "./gameRoomHandlers.js";
+import { _handleGameRoomButton, _handleGameRoomConfirm } from "./gameRoomHandlers.js";
 import { parseGameRoomCustomId } from "./gameRoomActions.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
@@ -139,15 +139,100 @@ describe("gameRoomHandlers routing", () => {
 	});
 });
 
+// ── the confirms (2026-10 item 257, owner item 12) ──
+// A press only asks; the action runs in the confirm's Submit (a modal under the button
+// prefix) or in the button of the private reply a confirm falls back to. Closing the modal
+// sends nothing to the bot, so "the press alone did nothing" is that case.
+
+// A press that can open a modal, as a real button can.
+function pressWithModal(customId: string, userId = "host-1"): ButtonInteraction & { showModal: ReturnType<typeof vi.fn> } {
+	return { ...makeInteraction(customId, userId), id: "int-1", showModal: vi.fn().mockResolvedValue(undefined) } as unknown as ButtonInteraction & {
+		showModal: ReturnType<typeof vi.fn>;
+	};
+}
+
+// A confirm's Submit, from a modal opened by a message button.
+function submit(customId: string, userId = "host-1"): ModalSubmitInteraction & { deferUpdate: ReturnType<typeof vi.fn>; reply: ReturnType<typeof vi.fn> } {
+	return {
+		type: InteractionType.ModalSubmit,
+		customId,
+		guildId: "guild-1",
+		guild: { id: "guild-1" },
+		channelId: "ch-room",
+		user: { id: userId },
+		client: { user: { id: "bot-1" } },
+		deferred: false,
+		replied: false,
+		isFromMessage: () => true,
+		deferUpdate: vi.fn().mockResolvedValue(undefined),
+		reply: vi.fn().mockResolvedValue(undefined),
+		followUp: vi.fn().mockResolvedValue(undefined),
+	} as unknown as ModalSubmitInteraction & { deferUpdate: ReturnType<typeof vi.fn>; reply: ReturnType<typeof vi.fn> };
+}
+
+const modalIdOf = (press: { showModal: ReturnType<typeof vi.fn> }): string => (press.showModal.mock.calls[0][0] as { data: { custom_id: string } }).data.custom_id;
+
+describe("archive and forfeit ask first", () => {
+	it.each([
+		["archive", "host-1", "gameroom:archiveok:room-1"],
+		["forfeit", "player-2", "gameroom:forfeitok:room-1"],
+	])("the %s press opens a confirm and touches nothing", async (action, userId, confirmId) => {
+		const press = pressWithModal(`gameroom:${action}:room-1`, userId);
+
+		await _handleGameRoomButton(press);
+
+		expect(modalIdOf(press)).toBe(confirmId);
+		expect(lifecycleMock.archiveNow).not.toHaveBeenCalled();
+		expect(lifecycleMock.finish).not.toHaveBeenCalled();
+		expect(trailMock.postMove).not.toHaveBeenCalled();
+	});
+
+	// Leave table and End table, Hold'em's two ways out, ask the same way: the press writes
+	// nothing and the table's own handlers run only from the confirm.
+	it.each([
+		["hleave", "player-2", "gameroom:hleaveok:room-1"],
+		["hend", "host-1", "gameroom:hendok:room-1"],
+	])("the Hold'em %s press opens a confirm and touches nothing", async (action, userId, confirmId) => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ game: "holdem", status: "playing" }));
+		const press = pressWithModal(`gameroom:${action}:room-1`, userId);
+
+		await _handleGameRoomButton(press);
+
+		expect(modalIdOf(press)).toBe(confirmId);
+		expect(storeMock.findByRoomId).toHaveBeenCalledOnce();
+		expect(lifecycleMock.finish).not.toHaveBeenCalled();
+		expect(trailMock.postMove).not.toHaveBeenCalled();
+	});
+
+	it("the board's per game button asks before posting a card", async () => {
+		const press = pressWithModal("gameroom:new:rps", "member-5");
+		(gameRoomStore as unknown as { findOpenByHost: ReturnType<typeof vi.fn> }).findOpenByHost.mockResolvedValue(null);
+
+		await _handleGameRoomButton(press);
+
+		expect(modalIdOf(press)).toBe("gameroom:newok:rps");
+	});
+
+	it("falls back to a private reply with the confirm button, never acting at once", async () => {
+		const press = makeInteraction("gameroom:archive:room-1", "host-1");
+
+		await _handleGameRoomButton(press);
+
+		const reply = (press.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { components: Array<{ components: Array<{ data: { custom_id: string } }> }> };
+		expect(reply.components[0].components[0].data.custom_id).toBe("gameroom:archiveok:room-1");
+		expect(lifecycleMock.archiveNow).not.toHaveBeenCalled();
+	});
+});
+
 describe("gameRoomHandlers gates", () => {
-	it("lets the host archive", async () => {
-		await _handleGameRoomButton(makeInteraction("gameroom:archive:room-1", "host-1"));
+	it("lets the host archive on Submit", async () => {
+		await _handleGameRoomConfirm(submit("gameroom:archiveok:room-1", "host-1"));
 		expect(lifecycleMock.archiveNow).toHaveBeenCalledOnce();
 	});
 
 	it("lets an admin archive somebody else's room", async () => {
 		gateMock.mockResolvedValue(true);
-		await _handleGameRoomButton(makeInteraction("gameroom:archive:room-1", "moderator-9"));
+		await _handleGameRoomConfirm(submit("gameroom:archiveok:room-1", "moderator-9"));
 
 		// Clearing an abandoned room is moderation, which is why hostOnly is not a bare
 		// equality check against hostId.
@@ -161,6 +246,21 @@ describe("gameRoomHandlers gates", () => {
 
 		expect(lifecycleMock.archiveNow).not.toHaveBeenCalled();
 		expect(replyText(interaction)).toContain("host or an admin");
+	});
+
+	// A modal Submit is reachable without the press that opened it, so the confirm runs
+	// the press's gate again: a forged archive confirm from a player does nothing.
+	it("gates the Submit again, refusing a forged archive confirm", async () => {
+		const forged = submit("gameroom:archiveok:room-1", "player-2");
+		await _handleGameRoomConfirm(forged);
+		expect(lifecycleMock.archiveNow).not.toHaveBeenCalled();
+		expect((forged.reply.mock.calls[0][0] as { content?: string }).content).toContain("host or an admin");
+	});
+
+	it("refuses a modal carrying an action that is not a confirm", async () => {
+		const forged = submit("gameroom:archive:room-1", "host-1");
+		await _handleGameRoomConfirm(forged);
+		expect(lifecycleMock.archiveNow).not.toHaveBeenCalled();
 	});
 
 	// Post-launch plan item 18: starting a match is the host's alone. The admin override
@@ -177,6 +277,17 @@ describe("gameRoomHandlers gates", () => {
 		expect(replyText(interaction)).toBe(gameRoomsCopy.board.onlyHostStarts);
 	});
 
+	it("refuses an admin's Start confirm the same way", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "draft" }));
+		gateMock.mockResolvedValue(true);
+		const forged = submit("gameroom:startok:room-1", "moderator-9");
+
+		await _handleGameRoomConfirm(forged);
+
+		expect(gateMock).not.toHaveBeenCalled();
+		expect((forged.reply.mock.calls[0][0] as { content?: string }).content).toBe(gameRoomsCopy.board.onlyHostStarts);
+	});
+
 	it("still lets an admin cancel somebody else's draft", async () => {
 		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "draft" }));
 		gateMock.mockResolvedValue(true);
@@ -191,14 +302,18 @@ describe("gameRoomHandlers gates", () => {
 	// ⚠️ main.ts DOES NOT GATE BUTTONS. Its permission checks live inside
 	// `if (interaction.isChatInputCommand())`, so this handler is the only gate a
 	// clicker passes. A spectator forfeiting somebody else's match is the obvious
-	// griefing shape.
-	it("refuses a forfeit from someone who is not a player", async () => {
-		const interaction = makeInteraction("gameroom:forfeit:room-1", "spectator-3");
-		await _handleGameRoomButton(interaction);
+	// griefing shape, and the forfeit confirm carries the same gate.
+	it.each([
+		["press", (id: string) => makeInteraction(id, "spectator-3"), "gameroom:forfeit:room-1"],
+		["confirm", (id: string) => submit(id, "spectator-3"), "gameroom:forfeitok:room-1"],
+	])("refuses a forfeit %s from someone who is not a player", async (_label, make, customId) => {
+		const interaction = make(customId);
+		await (customId.includes("ok") ? _handleGameRoomConfirm(interaction as ModalSubmitInteraction) : _handleGameRoomButton(interaction as ButtonInteraction));
 
 		expect(lifecycleMock.finish).not.toHaveBeenCalled();
 		expect(trailMock.postMove).not.toHaveBeenCalled();
-		expect(replyText(interaction)).toContain("host or an admin");
+		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content?: string };
+		expect(reply.content).toContain("host or an admin");
 	});
 });
 
@@ -211,7 +326,7 @@ describe("gameRoomHandlers forfeit", () => {
 		});
 		lifecycleMock.finish.mockImplementation(async () => void order.push("finish"));
 
-		await _handleGameRoomButton(makeInteraction("gameroom:forfeit:room-1", "player-2"));
+		await _handleGameRoomConfirm(submit("gameroom:forfeitok:room-1", "player-2"));
 
 		// The transcript is the product. A forfeit that only appeared on the result
 		// card would be missing from the history the dashboard reads back.
@@ -219,7 +334,7 @@ describe("gameRoomHandlers forfeit", () => {
 	});
 
 	it("hands the win to the one remaining player", async () => {
-		await _handleGameRoomButton(makeInteraction("gameroom:forfeit:room-1", "player-2"));
+		await _handleGameRoomConfirm(submit("gameroom:forfeitok:room-1", "player-2"));
 		expect(lifecycleMock.finish.mock.calls[0][2]).toEqual({ winnerId: "host-1", outcome: { bucket: "forfeit" } });
 	});
 
@@ -227,22 +342,39 @@ describe("gameRoomHandlers forfeit", () => {
 	// survivor would write a false result into a permanent transcript.
 	it("declares no winner when more than one player remains", async () => {
 		storeMock.findByRoomId.mockResolvedValue(makeRoom({ playerIds: ["host-1", "player-2", "player-3"] }));
-		await _handleGameRoomButton(makeInteraction("gameroom:forfeit:room-1", "player-2"));
+		await _handleGameRoomConfirm(submit("gameroom:forfeitok:room-1", "player-2"));
 		expect(lifecycleMock.finish.mock.calls[0][2]).toEqual({ winnerId: null, outcome: { bucket: "forfeit" } });
 	});
 
-	it("acknowledges before the room is torn down", async () => {
-		// The channel this button lives in is about to stop existing. Replying after
-		// the delete would throw against a channel that is no longer there.
-		const interaction = makeInteraction("gameroom:archive:room-1", "host-1");
+	it("refuses a forfeit confirm on a match that already ended", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished" }));
+		const late = submit("gameroom:forfeitok:room-1", "player-2");
+
+		await _handleGameRoomConfirm(late);
+
+		expect(trailMock.postMove).not.toHaveBeenCalled();
+		expect(lifecycleMock.finish).not.toHaveBeenCalled();
+		expect((late.reply.mock.calls[0][0] as { content?: string }).content).toBe(gameRoomsCopy.confirms.matchOver);
+	});
+
+	it("forfeits from the fallback reply's button exactly as from Submit", async () => {
+		const button = { ...makeInteraction("gameroom:forfeitok:room-1", "player-2"), deferUpdate: vi.fn().mockResolvedValue(undefined) } as unknown as ButtonInteraction;
+		await _handleGameRoomButton(button);
+		expect(lifecycleMock.finish).toHaveBeenCalledOnce();
+	});
+
+	it("acknowledges the archive confirm before the room is torn down", async () => {
+		// The channel the confirm was pressed in is about to stop existing. Answering
+		// after the delete would throw against a channel that is no longer there.
+		const interaction = submit("gameroom:archiveok:room-1", "host-1");
 		const order: string[] = [];
-		(interaction.reply as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => void order.push("ack"));
+		interaction.deferUpdate.mockImplementation(async () => void order.push("ack"));
 		lifecycleMock.archiveNow.mockImplementation(async () => {
 			order.push("archive");
 			return { ok: true };
 		});
 
-		await _handleGameRoomButton(interaction);
+		await _handleGameRoomConfirm(interaction);
 
 		expect(order).toEqual(["ack", "archive"]);
 	});
