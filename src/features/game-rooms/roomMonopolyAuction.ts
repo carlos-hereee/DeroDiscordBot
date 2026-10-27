@@ -26,6 +26,7 @@ import {
 	persistIfUnchanged,
 } from "./roomMonopolyHandlers.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── roomMonopolyAuction ──────────────────────────────────────────────
 // What:  the room side of a Monopoly auction: the bid button's sealed bid modal,
@@ -56,16 +57,16 @@ export async function handleMauction(interaction: ButtonInteraction, room: IGame
 	const state = monopolyStateOf(room);
 	const auction = state?.pendingAuction;
 	if (!state || state.phase !== "in-auction" || !auction) {
-		await interaction.reply({ content: gameRoomsCopy.monopoly.noAuction, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.noAuction] });
 		return;
 	}
 	if (!isSameRound(auction, roundArg) || Date.now() >= auctionClosesAt(auction)) {
-		await interaction.reply({ content: gameRoomsCopy.monopoly.auctionOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.auctionOver] });
 		return;
 	}
 	const seat = state.seats.find((candidate) => candidate.userId === interaction.user.id && !candidate.bankrupt);
 	if (!seat) {
-		await interaction.reply({ content: gameRoomsCopy.monopoly.inventoryOut, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.inventoryOut] });
 		return;
 	}
 

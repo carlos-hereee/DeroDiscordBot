@@ -26,6 +26,7 @@ import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IPartyGame } from "@db/models/PartyGame.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── partyGamesSchedule ───────────────────────────────────────────────
 // What:  scheduling a party game (post-launch plan item 3): the admin's modal, the
@@ -298,11 +299,11 @@ export async function handleRsvpButton(interaction: ButtonInteraction): Promise<
 
 	const before = await partyGameStore.findById(guildId, partyGameId);
 	if (!before) {
-		await interaction.reply({ content: words.gone, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.partyGames, sections: [words.gone] });
 		return;
 	}
 	if (isPartyOver(before)) {
-		await interaction.reply({ content: words.over, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.partyGames, sections: [words.over] });
 		return;
 	}
 
@@ -311,7 +312,7 @@ export async function handleRsvpButton(interaction: ButtonInteraction): Promise<
 			? await partyGameStore.attend(guildId, partyGameId, interaction.user.id, before.maxAttendees)
 			: await partyGameStore.decline(guildId, partyGameId, interaction.user.id);
 	if (!after) {
-		await interaction.reply({ content: choice === "yes" ? words.full : words.gone, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.partyGames, sections: [choice === "yes" ? words.full : words.gone] });
 		return;
 	}
 

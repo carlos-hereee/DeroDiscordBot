@@ -64,6 +64,7 @@ import {
 	BUY_IN_FIELDS,
 } from "./roomHoldem.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── roomHoldemHandlers ───────────────────────────────────────────────
 // What:  every hold em interaction: buying in, dealing, acting, peeking at your
@@ -257,7 +258,7 @@ export async function handleBuyIn(interaction: ButtonInteraction, room: IGameRoo
 			await interaction.reply(consentPrompt({ kind: "again" }));
 			return;
 		}
-		await interaction.reply({ content: joinRefusalText(room, verdict.reason), ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [joinRefusalText(room, verdict.reason)] });
 		return;
 	}
 	if (verdict.kind === "ask") {
@@ -268,11 +269,11 @@ export async function handleBuyIn(interaction: ButtonInteraction, room: IGameRoo
 	// ② The seat itself.
 	const claim = await claimSeat(room, userId, memberDisplayName(interaction));
 	if (!claim.ok) {
-		await interaction.reply({ content: claim.refusal, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [claim.refusal] });
 		return;
 	}
 	if (claim.late) {
-		await interaction.reply({ content: hostWords.seats.heldReply(startingStackOf(claim.table)), ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [hostWords.seats.heldReply(startingStackOf(claim.table))] });
 	} else {
 		await interaction.deferUpdate();
 	}
@@ -292,15 +293,15 @@ function joinRefusalText(room: IGameRoom, reason: "kicked" | "outsideBand"): str
 // moment between the gate above and this write.
 async function askHostForSeat(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	if ((room.pendingJoinIds ?? []).includes(interaction.user.id)) {
-		await interaction.reply({ content: hostWords.approval.alreadyAsked, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [hostWords.approval.alreadyAsked] });
 		return;
 	}
 	const updated = await gameRoomStore.addPendingJoin(room.guildId, room.roomId, interaction.user.id);
 	if (!updated) {
-		await interaction.reply({ content: hostWords.kick.refusedRejoin, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [hostWords.kick.refusedRejoin] });
 		return;
 	}
-	await interaction.reply({ content: hostWords.approval.asked, ...PRIVATE });
+	await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [hostWords.approval.asked] });
 	const table = tableOf(updated);
 	if (table) await redraw(interaction.client, updated, table);
 }
@@ -473,25 +474,25 @@ export async function handleDeal(interaction: ButtonInteraction, room: IGameRoom
 	// vaporises the pot standing in it. The joining branch sets the status to "playing"
 	// one line before the status test, so the test always passes and never saw this.
 	if (handInProgress(table)) {
-		await interaction.reply({ content: gameRoomsCopy.holdem.handInProgress, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.handInProgress] });
 		return;
 	}
 
 	if (table.status === "joining") {
 		if (table.seats.length < BOT_CONSTANTS.HOLDEM_MIN_SEATS) {
-			await interaction.reply({ content: gameRoomsCopy.holdem.needMorePlayers, ...PRIVATE });
+			await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.needMorePlayers] });
 			return;
 		}
 		table.status = "playing";
 	}
 	if (table.status !== "playing") {
-		await interaction.reply({ content: gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tournamentOver] });
 		return;
 	}
 
 	const deal = await claimDeal(room, table);
 	if (!deal) {
-		await interaction.reply({ content: gameRoomsCopy.holdem.handInProgress, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.handInProgress] });
 		return;
 	}
 
@@ -591,17 +592,17 @@ const PRESET_ACTIONS: Record<string, HoldemPreset> = {
 export async function handleMove(interaction: ButtonInteraction, room: IGameRoom, preset: string): Promise<void> {
 	const table = tableOf(room);
 	if (!table || table.status !== "playing") {
-		await interaction.reply({ content: gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tournamentOver] });
 		return;
 	}
 	if (whoActs(table) !== interaction.user.id) {
-		await interaction.reply({ content: gameRoomsCopy.holdem.notYourTurn, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.notYourTurn] });
 		return;
 	}
 
 	const choice = PRESET_ACTIONS[preset];
 	if (!choice) {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 
@@ -614,7 +615,7 @@ export async function handleMove(interaction: ButtonInteraction, room: IGameRoom
 	// it actually was.
 	const aggressive = choice === "aggress" ? aggressiveActionFor(table, interaction.user.id) : undefined;
 	if (choice === "aggress" && !aggressive) {
-		await interaction.reply({ content: gameRoomsCopy.holdem.illegalMove, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.illegalMove] });
 		return;
 	}
 	const action = aggressive ? aggressive.action : (choice as Exclude<HoldemPreset, "aggress">);
@@ -624,8 +625,8 @@ export async function handleMove(interaction: ButtonInteraction, room: IGameRoom
 	// Says what actually happened. Answering an illegal action with "it is not your turn"
 	// is how the raise bug stayed invisible: the message blamed the player for something
 	// that was not true and named nothing that could be searched for.
-	if (landed === "illegal") await interaction.reply({ content: gameRoomsCopy.holdem.illegalMove, ...PRIVATE });
-	if (landed === "busy") await interaction.reply({ content: gameRoomsCopy.holdem.tableBusy, ...PRIVATE });
+	if (landed === "illegal") await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.illegalMove] });
+	if (landed === "busy") await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tableBusy] });
 }
 
 /** How one seat's decision went: it landed, the engine refused it, or another write won. */
@@ -862,7 +863,7 @@ function persistLeaveOrEnd(room: IGameRoom, table: HoldemTable, readAt: number, 
 export async function handleLeaveTable(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const table = tableOf(room);
 	if (!table || table.status === "finished") {
-		await interaction.reply({ content: gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tournamentOver] });
 		return;
 	}
 
@@ -872,13 +873,13 @@ export async function handleLeaveTable(interaction: ButtonInteraction, room: IGa
 	const handStartChips = chipsAtHandStart(table.seats);
 	const outcome = leaveTable(table, interaction.user.id, secureRandom);
 	if (!outcome.ok) {
-		await interaction.reply({ content: gameRoomsCopy.holdem.notSeated, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.notSeated] });
 		return;
 	}
 
 	const written = await persistLeaveOrEnd(room, table, readAt, seatsRead);
 	if (!written) {
-		await interaction.reply({ content: gameRoomsCopy.holdem.tableBusy, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tableBusy] });
 		return;
 	}
 
@@ -917,11 +918,11 @@ function leftTableLine(table: HoldemTable, userId: string, foldedHand: boolean, 
 export async function handleEndTable(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const table = tableOf(room);
 	if (!table || table.status === "finished") {
-		await interaction.reply({ content: gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tournamentOver] });
 		return;
 	}
 	const ended = await closeTable(interaction.client, room, table, interaction.user.id, null, () => interaction.deferUpdate());
-	if (ended === "busy") await interaction.reply({ content: gameRoomsCopy.holdem.tableBusy, ...PRIVATE });
+	if (ended === "busy") await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tableBusy] });
 }
 
 /**
@@ -979,20 +980,20 @@ const RETURN_REFUSALS: Record<Exclude<ReturnResult, { ok: true }>["reason"], str
 export async function handleImBack(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const table = tableOf(room);
 	if (!table || table.status === "finished") {
-		await interaction.reply({ content: gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tournamentOver] });
 		return;
 	}
 
 	const readAt = table.lastActionAt;
 	const result = returnToTable(table, interaction.user.id);
 	if (!result.ok) {
-		await interaction.reply({ content: RETURN_REFUSALS[result.reason], ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [RETURN_REFUSALS[result.reason]] });
 		return;
 	}
 
 	const written = await persistIfUnchanged(room, table, readAt);
 	if (!written) {
-		await interaction.reply({ content: gameRoomsCopy.holdem.tableBusy, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tableBusy] });
 		return;
 	}
 
@@ -1014,18 +1015,18 @@ export async function handleImBack(interaction: ButtonInteraction, room: IGameRo
  */
 export async function handleSeatsToggle(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
 	if (choice !== "on" && choice !== "off") {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 	const table = tableOf(room);
 	if (!table || table.status !== "playing") {
 		const refusal = table?.status === "joining" ? hostWords.seats.notPlaying : gameRoomsCopy.holdem.tournamentOver;
-		await interaction.reply({ content: refusal, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [refusal] });
 		return;
 	}
 	const open = choice === "on";
 	if ((room.seatsOpen ?? false) === open) {
-		await interaction.reply({ content: open ? hostWords.seats.alreadyOpen : hostWords.seats.alreadyClosed, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [open ? hostWords.seats.alreadyOpen : hostWords.seats.alreadyClosed] });
 		return;
 	}
 
@@ -1111,7 +1112,7 @@ export async function handleSetBuyIn(interaction: ButtonInteraction, room: IGame
 	const table = tableOf(room);
 	const refusal = buyInRefusal(table);
 	if (refusal || !table) {
-		await interaction.reply({ content: refusal ?? gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [refusal ?? gameRoomsCopy.holdem.tournamentOver] });
 		return;
 	}
 	await interaction.showModal(buyInModal(room.roomId, startingStackOf(table)));
@@ -1172,7 +1173,7 @@ export async function handleBuyInModal(interaction: ModalSubmitInteraction): Pro
 export async function handleShowCards(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const table = tableOf(room);
 	if (!table) {
-		await interaction.reply({ content: gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tournamentOver] });
 		return;
 	}
 	// ⚠️ ONLY EVER THE CLICKER'S OWN CARDS. There is no code path here that takes

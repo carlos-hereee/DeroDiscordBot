@@ -102,6 +102,7 @@ function makeSelect(action: string, values: string[], userId = HOST, client: unk
 		guild,
 		user: { id: userId },
 		values,
+		isModalSubmit: () => false,
 		client,
 		reply: vi.fn().mockResolvedValue(undefined),
 		deferUpdate: vi.fn().mockResolvedValue(undefined),

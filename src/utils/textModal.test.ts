@@ -1,11 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { MessageFlags, type ModalBuilder, type ModalSubmitInteraction, type RepliableInteraction } from "discord.js";
+import { EmbedBuilder, MessageFlags, type ModalBuilder, type ModalSubmitInteraction, type RepliableInteraction } from "discord.js";
 
 const mocks = vi.hoisted(() => ({ registerModal: vi.fn() }));
 vi.mock("@handlers/interactionRegistry.js", () => ({ registerModal: mocks.registerModal }));
 
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
-import { NOTICE_MODAL_PREFIX, acknowledgeTextModal, buildTextModal, registerNoticeModal, showErrorNotice, showNotice } from "./textModal.js";
+import {
+	NOTICE_MODAL_PREFIX,
+	acknowledgeTextModal,
+	buildTextModal,
+	noticeFromEmbed,
+	registerNoticeModal,
+	showEmbedNotice,
+	showErrorNotice,
+	showModalOrReply,
+	showNotice,
+	type ModalOpeningInteraction,
+} from "./textModal.js";
 
 // ── textModal (post-launch plan items 9 and 16) ──────────────────────────────
 // The shared text modal: its shape within Discord's limits, the fallback when
@@ -96,6 +107,59 @@ describe("showErrorNotice", () => {
 		const reply = submit.reply.mock.calls[0]![0] as { embeds: Array<{ data: { description?: string } }>; flags: number };
 		expect(reply.embeds[0]!.data.description).toBe("Not allowed.");
 		expect(reply.flags).toBe(MessageFlags.Ephemeral);
+	});
+});
+
+// ── the private reply sweep (2026-10 item 254 Phase 5b) ──────────────────────
+describe("showNotice with no fallback", () => {
+	it("falls back to the notice's text as plain private content, the reply a text answer always gave", async () => {
+		const submit = interaction({ canShowModal: false });
+		await showNotice(submit, { title: "t", sections: ["Not your turn."] });
+		expect(submit.reply).toHaveBeenCalledWith({ content: "Not your turn.", flags: MessageFlags.Ephemeral });
+	});
+});
+
+describe("noticeFromEmbed and showEmbedNotice", () => {
+	it("reads a text only embed as its title over its description, with its footer last", () => {
+		const embed = new EmbedBuilder().setTitle("Channel visibility").setDescription("one\ntwo").setFooter({ text: "a footer" });
+		expect(noticeFromEmbed(embed)).toEqual({ title: "Channel visibility", sections: ["one\ntwo", "a footer"] });
+	});
+
+	it("refuses an embed a modal cannot show: fields, an image, a thumbnail, or no title", () => {
+		expect(noticeFromEmbed(new EmbedBuilder().setTitle("t").addFields({ name: "n", value: "v" }))).toBeNull();
+		expect(noticeFromEmbed(new EmbedBuilder().setTitle("t").setImage("attachment://card.png"))).toBeNull();
+		expect(noticeFromEmbed(new EmbedBuilder().setTitle("t").setThumbnail("https://example.com/a.png"))).toBeNull();
+		expect(noticeFromEmbed(new EmbedBuilder().setDescription("no title"))).toBeNull();
+	});
+
+	it("opens a text only embed as a notice, and keeps the embed as its private fallback", async () => {
+		const press = interaction({ refuse: true });
+		const embed = new EmbedBuilder().setTitle("Saved").setDescription("Done.");
+		await showEmbedNotice(press, embed);
+		expect(json(press.showModal.mock.calls[0]![0] as ModalBuilder).title).toBe("Saved");
+		expect(press.reply).toHaveBeenCalledWith({ embeds: [embed], flags: MessageFlags.Ephemeral });
+	});
+
+	it("answers an embed with fields as the private reply it always was, opening no modal", async () => {
+		const press = interaction();
+		const embed = new EmbedBuilder().setTitle("Standings").addFields({ name: "1", value: "Ana" });
+		await showEmbedNotice(press, embed);
+		expect(press.showModal).not.toHaveBeenCalled();
+		expect(press.reply).toHaveBeenCalledWith({ embeds: [embed], flags: MessageFlags.Ephemeral });
+	});
+});
+
+describe("showModalOrReply", () => {
+	it("opens the modal it is given, and on a refusal answers with the fallback instead", async () => {
+		const modal = buildTextModal("x:1", { title: "t", sections: ["s"] });
+		const press = interaction();
+		await showModalOrReply(press as unknown as ModalOpeningInteraction, modal, () => ({ content: "private" }));
+		expect(press.showModal).toHaveBeenCalledWith(modal);
+		expect(press.reply).not.toHaveBeenCalled();
+
+		const refused = interaction({ refuse: true });
+		await showModalOrReply(refused as unknown as ModalOpeningInteraction, modal, () => ({ content: "private" }));
+		expect(refused.reply).toHaveBeenCalledWith({ content: "private" });
 	});
 });
 

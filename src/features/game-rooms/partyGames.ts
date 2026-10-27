@@ -10,6 +10,7 @@ import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { PARTY_MODAL_PREFIX, PARTY_RSVP_PREFIX, buildScheduleModal, handleRsvpButton, handleScheduleSubmit } from "./partyGamesSchedule.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── partyGames ───────────────────────────────────────────────────────
 // What:  the 🎉party-games channel's admin controls (post-launch plan item 3): Host
@@ -60,7 +61,7 @@ async function handlePartyGamesButton(interaction: ButtonInteraction): Promise<v
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!(await gateOwnerOrAdmin(interaction, config))) {
-		await interaction.reply({ content: gameRoomsCopy.partyGames.adminsOnly, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.partyGames, sections: [gameRoomsCopy.partyGames.adminsOnly] });
 		return;
 	}
 
@@ -78,7 +79,7 @@ async function handlePartyGamesButton(interaction: ButtonInteraction): Promise<v
 		await hostHangman(interaction, guildId, (config as unknown as { partyGamesChannelId?: string | null } | null)?.partyGamesChannelId ?? null);
 		return;
 	}
-	await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
+	await showNotice(interaction, { title: gameRoomsCopy.notices.partyGames, sections: [gameRoomsCopy.errors.controlRetired] });
 }
 
 // Open a public hangman round in 🎉party-games. Deferred first: it resolves a channel

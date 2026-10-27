@@ -36,6 +36,7 @@ import { announceReferee } from "./roomMonopolyReferee.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { RoomMoveKind } from "./roomTypes.js";
 import { botSeatName, isBotSeatId, memberIdsOnly } from "./botSeat.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── roomMonopolyHandlers ─────────────────────────────────────────────
 // What:  every Monopoly button: roll, buy, skip, end turn, the three ways out of
@@ -360,11 +361,11 @@ export async function loadSeatedRoom(
 	const guildId = interaction.guildId;
 	const room = guildId && roomId ? await gameRoomStore.findByRoomId(guildId, roomId) : null;
 	if (!room || room.status !== "playing") {
-		await interaction.reply({ content: gameRoomsCopy.monopoly.matchOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.matchOver] });
 		return null;
 	}
 	if (!room.playerIds.includes(interaction.user.id)) {
-		await interaction.reply({ content: gameRoomsCopy.errors.notYours, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.errors.notYours] });
 		return null;
 	}
 	return room;
@@ -400,7 +401,7 @@ export async function handleMjail(interaction: ButtonInteraction, room: IGameRoo
 	// because nothing has been spent yet, so a plain reply still works.
 	const jailChoice = JAIL_CHOICES.find((candidate) => candidate === choice);
 	if (!jailChoice) {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 	await runMonopolyAction(interaction, room, (state) => applyJailChoice(state, jailChoice, secureRandom));
@@ -412,7 +413,7 @@ export async function handleMjail(interaction: ButtonInteraction, room: IGameRoo
 export async function handleMinventory(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const state = monopolyStateOf(room);
 	if (!state) {
-		await interaction.reply({ content: gameRoomsCopy.monopoly.noBoard, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.noBoard] });
 		return;
 	}
 	await interaction.reply({ ...monopolyInventoryReply(state, interaction.user.id, room.roomId), ...PRIVATE });

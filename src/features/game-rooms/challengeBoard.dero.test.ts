@@ -65,6 +65,16 @@ function makeThrowSubmit(userId: string, values: string[]): ModalSubmitInteracti
 const replyText = (interaction: { reply: unknown }): string =>
 	((interaction.reply as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string }).content;
 
+// The modals a press opened, and the text of its notice: a refusal or a short answer now
+// opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
+const shownModals = (interaction: { showModal: unknown }) =>
+	(interaction.showModal as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { toJSON(): { custom_id: string; components: { content?: string }[] } }).toJSON());
+const noticeText = (interaction: { showModal: unknown }): string =>
+	shownModals(interaction)
+		.filter((modal) => modal.custom_id.startsWith("notice:"))
+		.flatMap((modal) => modal.components.map((component) => component.content ?? ""))
+		.join("\n");
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.markArchived.mockResolvedValue({});
@@ -115,7 +125,7 @@ describe("playDero", () => {
 
 		await playDero(interaction, makeRoom("battleship"));
 
-		expect(replyText(interaction)).toBe(gameRoomsCopy.errors.controlRetired);
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.errors.controlRetired);
 		expect(storeMock.markArchived).not.toHaveBeenCalled();
 	});
 });

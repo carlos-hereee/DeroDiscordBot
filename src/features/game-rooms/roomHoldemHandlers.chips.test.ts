@@ -73,6 +73,16 @@ function makeInteraction(userId: string): ButtonInteraction {
 const replyText = (interaction: { reply: unknown }): string =>
 	(((interaction.reply as Mock).mock.calls[0]?.[0] ?? {}) as { content?: string }).content ?? "";
 
+// The modals a press opened, and the text of its notice: a refusal or a short answer now
+// opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
+const shownModals = (interaction: { showModal: unknown }) =>
+	(interaction.showModal as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { toJSON(): { custom_id: string; components: { content?: string }[] } }).toJSON());
+const noticeText = (interaction: { showModal: unknown }): string =>
+	shownModals(interaction)
+		.filter((modal) => modal.custom_id.startsWith("notice:"))
+		.flatMap((modal) => modal.components.map((component) => component.content ?? ""))
+		.join("\n");
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.updateSecretIf.mockResolvedValue({});
@@ -99,7 +109,7 @@ describe("buying in at a chip table", () => {
 
 		await handleBuyIn(interaction, makeRoom(chipTable()));
 
-		expect(replyText(interaction)).toBe(words.notEnoughChips(2_500));
+		expect(noticeText(interaction)).toBe(words.notEnoughChips(2_500));
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
@@ -108,7 +118,7 @@ describe("buying in at a chip table", () => {
 
 		await handleBuyIn(interaction, makeRoom(chipTable(["a"])));
 
-		expect(replyText(interaction)).toBe(words.alreadySeated);
+		expect(noticeText(interaction)).toBe(words.alreadySeated);
 		expect(walletMock.debit).not.toHaveBeenCalled();
 	});
 
@@ -120,7 +130,7 @@ describe("buying in at a chip table", () => {
 		await handleBuyIn(interaction, makeRoom(chipTable()));
 
 		expect(walletMock.credit).toHaveBeenCalledWith({ guildId: GUILD, userId: HOST }, 2_500);
-		expect(replyText(interaction)).toBe(`${words.buyInChanged} ${words.buyInBack}`);
+		expect(noticeText(interaction)).toBe(`${words.buyInChanged} ${words.buyInBack}`);
 	});
 
 	it("never touches a wallet at a free play table", async () => {
@@ -152,7 +162,7 @@ describe("cashing out", () => {
 		await handleLeaveTable(interaction, makeRoom(chipTable(["a", "b"])));
 
 		expect(walletMock.credit).not.toHaveBeenCalled();
-		expect(replyText(interaction)).toBe(words.tableBusy);
+		expect(noticeText(interaction)).toBe(words.tableBusy);
 	});
 
 	it("pays a player the host removes mid tournament what they walked away with", async () => {
@@ -180,11 +190,11 @@ describe("the host's buy in", () => {
 	it("refuses once somebody bought in, and on a free play table", async () => {
 		const seated = makeInteraction(HOST);
 		await handleSetBuyIn(seated, makeRoom(chipTable(["a"])));
-		expect(replyText(seated)).toBe(words.buyInLocked);
+		expect(noticeText(seated)).toBe(words.buyInLocked);
 
 		const free = makeInteraction(HOST);
 		await handleSetBuyIn(free, makeRoom(createTable()));
-		expect(replyText(free)).toBe(words.buyInFreeTable);
+		expect(noticeText(free)).toBe(words.buyInFreeTable);
 	});
 
 	function submit(userId: string, typed: string, preset = "1000"): ModalSubmitInteraction {

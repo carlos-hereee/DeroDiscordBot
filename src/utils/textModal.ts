@@ -2,6 +2,7 @@ import {
 	MessageFlags,
 	ModalBuilder,
 	TextDisplayBuilder,
+	type EmbedBuilder,
 	type InteractionReplyOptions,
 	type ModalSubmitInteraction,
 	type RepliableInteraction,
@@ -16,9 +17,12 @@ import { errorEmbed } from "./embedBuilder.js";
 //        presses Discord's "Dismiss message" (post-launch plan items 9 and 16). Also
 //        the shared notice: a text modal for a short answer to an admin control
 //        (a refusal, a stale button, "already on").
-// Who:   game-rooms privateView (a player's own board or hand) and the admin
-//        controls that answer a press with a notice: the community row and the admin
-//        command launcher. main.ts registers the notice's close once at boot.
+// Who:   game-rooms privateView (a player's own board or hand), the select modals that
+//        replaced a private single choice picker, and every first private text answer
+//        in the bot (2026-10 item 254 Phase 5b; the site list and what stays a private
+//        reply, with Discord's reason, is companyuno-discord/docs/handoffs/
+//        dero-private-reply-audit-2026-10.md). main.ts registers the notice's close once
+//        at boot.
 // When:  only as the FIRST answer to a press or a slash command. Discord shows a
 //        modal in no other place: never after a defer or a reply, and never in answer
 //        to a modal submit. Those callers get the ephemeral fallback, which carries
@@ -73,8 +77,23 @@ export async function showTextModal(
 	content: TextModalContent,
 	fallback: () => InteractionReplyOptions | Promise<InteractionReplyOptions>
 ): Promise<void> {
+	await showModalOrReply(interaction, buildTextModal(customId, content), fallback);
+}
+
+/**
+ * Open any modal (a text modal, or a select modal standing in for a private picker),
+ * or, when Discord refuses it, answer with the ephemeral reply `fallback` builds,
+ * which for a picker is the select message it replaced. Never throws past a failed
+ * fallback.
+ */
+export async function showModalOrReply(
+	interaction: ModalOpeningInteraction,
+	modal: ModalBuilder,
+	fallback: () => InteractionReplyOptions | Promise<InteractionReplyOptions>
+): Promise<void> {
+	const customId = modal.data.custom_id;
 	try {
-		await interaction.showModal(buildTextModal(customId, content));
+		await interaction.showModal(modal);
 		return;
 	} catch (error) {
 		console.warn("[text-modal] the modal was refused; answering privately instead", { customId, error });
@@ -104,23 +123,54 @@ export async function acknowledgeTextModal(interaction: ModalSubmitInteraction):
 // ── the notice ───────────────────────────────────────────────────────
 
 /**
- * Answer an admin control with a short notice: a text modal when the interaction can
- * still open one, and otherwise (a modal submit, or an interaction already deferred
- * or answered) the ephemeral reply `fallback` builds, with no button on it. The
- * interaction id keys the modal, so two notices are never confused.
+ * Answer a press or a command with a short notice: a text modal when the interaction
+ * can still open one, and otherwise (a modal submit, or an interaction already
+ * deferred or answered) the ephemeral reply `fallback` builds, with no button on it.
+ * With no `fallback`, the private reply is the notice's text as plain content, which
+ * is exactly the reply a text answer gave before it became a notice. The interaction
+ * id keys the modal, so two notices are never confused.
  */
 export async function showNotice(
 	interaction: RepliableInteraction,
 	content: TextModalContent,
-	fallback: () => InteractionReplyOptions | Promise<InteractionReplyOptions>
+	fallback: () => InteractionReplyOptions | Promise<InteractionReplyOptions> = () => ({
+		content: content.sections.join("\n\n"),
+		flags: MessageFlags.Ephemeral,
+	})
 ): Promise<void> {
 	if (canOpenModal(interaction)) {
 		await showTextModal(interaction, `${NOTICE_MODAL_PREFIX}:${interaction.id}`, content, fallback);
 		return;
 	}
-	const reply = await fallback();
-	const sent = interaction.deferred || interaction.replied ? interaction.followUp(reply) : interaction.reply(reply);
-	await sent.catch((error: unknown) => console.error("[text-modal] the private notice failed", { interactionId: interaction.id, error }));
+	await replyPrivately(interaction, await fallback());
+}
+
+/**
+ * The notice a text only embed reads as: its title over its description, with its
+ * footer as the last section so no word of it is lost. Null when the embed carries
+ * fields, an image or a thumbnail, which a modal cannot show, or has no title, which
+ * a modal cannot open without.
+ */
+export function noticeFromEmbed(embed: EmbedBuilder): TextModalContent | null {
+	const { title, description, fields, image, thumbnail, footer } = embed.data;
+	if (!title || (fields?.length ?? 0) > 0 || image || thumbnail) return null;
+	return { title, sections: [description ?? "", footer?.text ?? ""] };
+}
+
+/**
+ * Answer with an embed as a notice when it is text only, and otherwise as the private
+ * embed reply it always was (decision 4 of the private reply sweep keeps an embed with
+ * fields or an image a private message). An embed never pings, so the fallback needs
+ * no allowedMentions.
+ */
+export async function showEmbedNotice(interaction: RepliableInteraction, embed: EmbedBuilder): Promise<void> {
+	const fallback = (): InteractionReplyOptions => ({ embeds: [embed], flags: MessageFlags.Ephemeral });
+	const notice = noticeFromEmbed(embed);
+	if (notice) {
+		await showNotice(interaction, notice, fallback);
+		return;
+	}
+	await replyPrivately(interaction, fallback());
 }
 
 /**
@@ -138,6 +188,13 @@ export async function showErrorNotice(interaction: RepliableInteraction, message
 /** Register the notice modal's close. Called once at boot from main.ts, before the InteractionCreate listener installs. */
 export function registerNoticeModal(): void {
 	registerModal(NOTICE_MODAL_PREFIX, acknowledgeTextModal);
+}
+
+// The ephemeral answer for an interaction that cannot show a modal: a followUp once
+// it was deferred or answered, since a second reply is refused, and a reply otherwise.
+async function replyPrivately(interaction: RepliableInteraction, reply: InteractionReplyOptions): Promise<void> {
+	const sent = interaction.deferred || interaction.replied ? interaction.followUp(reply) : interaction.reply(reply);
+	await sent.catch((error: unknown) => console.error("[text-modal] the private notice failed", { interactionId: interaction.id, error }));
 }
 
 // A modal can only be the FIRST answer, and only to an interaction that carries

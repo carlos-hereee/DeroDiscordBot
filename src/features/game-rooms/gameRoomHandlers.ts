@@ -1,9 +1,8 @@
-import { MessageFlags, type ButtonInteraction } from "discord.js";
+import { type ButtonInteraction } from "discord.js";
 import { registerButton, registerSelectMenu, registerModal } from "@handlers/interactionRegistry.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import {
 	GAME_ROOM_PREFIX,
@@ -43,6 +42,7 @@ import { satelliteAt } from "./satelliteRooms.js";
 import { registerNetworkHandlers } from "./networkJoin.js";
 import type { GameSlug, SatelliteRoom } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
 
 const satelliteWords = rokCommanderCopy.arcadeSatellites;
 
@@ -75,13 +75,13 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 	// a room from two deploys ago, not an attack, so the reply is an honest note rather
 	// than a refusal.
 	if (!parsed) {
-		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: ["This control is no longer available."] });
 		return;
 	}
 
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) {
-		await interaction.reply({ embeds: [errorEmbed("This button only works inside a server.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "This button only works inside a server.");
 		return;
 	}
 
@@ -89,7 +89,7 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 	// slug rather than a roomId and there is nothing to look up or gate against.
 	if (parsed.action === "new") {
 		if (!(CHALLENGE_GAMES as readonly string[]).includes(parsed.tail)) {
-			await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
+			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: ["This control is no longer available."] });
 			return;
 		}
 		await challengeBoard.startChallengeDraft(interaction, parsed.tail as GameSlug);
@@ -104,7 +104,7 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 	// its satellite channels (resolvePressedRoom).
 	const pressed = await resolvePressedRoom(interaction, guildId, parsed.tail);
 	if (!pressed) {
-		await interaction.reply({ content: gameRoomsCopy.errors.notFound, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.errors.notFound] });
 		return;
 	}
 	const { room, satellite } = pressed;
@@ -119,11 +119,11 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 	// along may watch, not play. The playersOnly gate below still applies on top.
 	if (satellite) {
 		if (!SATELLITE_ACTIONS.has(parsed.action)) {
-			await interaction.reply({ content: satelliteWords.hostRoomOnly, flags: MessageFlags.Ephemeral });
+			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [satelliteWords.hostRoomOnly] });
 			return;
 		}
 		if (!satellite.userIds.includes(actorId)) {
-			await interaction.reply({ content: satelliteWords.notSeatedHere, flags: MessageFlags.Ephemeral });
+			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [satelliteWords.notSeatedHere] });
 			return;
 		}
 	}
@@ -133,7 +133,7 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 	// hiding the buttons, because a hidden button is a suggestion and the message
 	// stays scrollable forever.
 	if (BOARD_ACTIONS.has(parsed.action) && room.status !== "draft") {
-		await interaction.reply({ content: gameRoomsCopy.board.draftGone, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.board.draftGone] });
 		return;
 	}
 
@@ -141,7 +141,7 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 
 	// playersOnly first: it is the cheaper check and needs no config read.
 	if (action.playersOnly && !room.playerIds.includes(actorId)) {
-		await interaction.reply({ content: gameRoomsCopy.errors.notYours, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.errors.notYours] });
 		return;
 	}
 
@@ -153,13 +153,13 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		// Starting the match is the host's alone (post-launch plan item 18), so no
 		// config read and no override: an admin is refused like any other member.
 		if (HOST_STRICT_ACTIONS.has(parsed.action)) {
-			await interaction.reply({ content: gameRoomsCopy.board.onlyHostStarts, flags: MessageFlags.Ephemeral });
+			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.board.onlyHostStarts] });
 			return;
 		}
 		const config = await guildConfigStore.findByGuildId(guildId);
 		isAdmin = await gateOwnerOrAdmin(interaction, config);
 		if (!isAdmin) {
-			await interaction.reply({ content: gameRoomsCopy.errors.notYours, flags: MessageFlags.Ephemeral });
+			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.errors.notYours] });
 			return;
 		}
 	}
@@ -327,12 +327,12 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			// Acknowledge BEFORE the delete. The channel this button lives in is about to
 			// stop existing, and an editReply against a deleted channel throws; deferring
 			// ephemerally means the ack is already delivered when the floor disappears.
-			await interaction.reply({ content: "Archiving this room.", flags: MessageFlags.Ephemeral });
+			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: ["Archiving this room."] });
 			await roomLifecycle.archiveNow(interaction.client, room, actorId, isAdmin);
 			return;
 		}
 		case "forfeit": {
-			await interaction.reply({ content: "Forfeit recorded.", flags: MessageFlags.Ephemeral });
+			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: ["Forfeit recorded."] });
 			// The forfeit is a MOVE first: it belongs in the transcript that is the
 			// product, not only in the result card.
 			await roomTrail.postMove(interaction.client, room, {
@@ -411,7 +411,7 @@ export function registerGameRoomHandlers(): void {
 		if (action === "mmortgage") return roomMonopolyMortgage.handleMortgageSelect(interaction);
 		if (action === "munmortgage") return roomMonopolyMortgage.handleUnmortgageSelect(interaction);
 		if (action === "msell") return roomMonopolyMortgage.handleSellSelect(interaction);
-		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: ["This control is no longer available."] });
 	});
 	// Hangman's two modals and Monopoly's two. Same sub-routing shape, and each
 	// sub-handler re-gates the actor: a modal submit is reachable without the button
@@ -424,12 +424,18 @@ export function registerGameRoomHandlers(): void {
 		if (action === "mbid") return roomMonopolyAuction.handleBidModal(interaction);
 		// The host's throw against Dero (post-launch plan item 13).
 		if (action === "dero") return challengeBoard.handleDeroThrowModal(interaction);
+		// The single choice pickers shown as modals (2026-10 item 254 Phase 5b): the same
+		// action names and handlers as their select messages, which remain the fallback.
+		if (action === "opponent") return challengeBoard.handleOpponentSelect(interaction);
+		if (action === "bots") return challengeBoard.handleBotSelect(interaction);
+		if (action === "kick") return hostControls.handleRemoveSelect(interaction);
+		if (action === "rps") return handleRpsSelect(interaction);
 		// A chip table's buy in (2026-10 item 250 Phase 5).
 		if (action === "hbuyin") return roomHoldemHandlers.handleBuyInModal(interaction);
 		// The private view modals (battleship's board, hold em's hand) have nothing to
 		// submit; closing one is acknowledged and nothing else.
 		if (action === PRIVATE_VIEW_ACTION) return closePrivateView(interaction);
-		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: ["This control is no longer available."] });
 	});
 	// The network board's select and the network notice's buttons (2026-10 item 244 Phase
 	// 5b): their own prefixes, registered here so the network rides the same boot step as

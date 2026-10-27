@@ -25,6 +25,7 @@ import {
 import { showPrivateView } from "./privateView.js";
 import { battleshipOutcome, wasBehindOnShips, type OutcomeBucket } from "./matchOutcome.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── roomBattleshipHandlers ───────────────────────────────────────────
 // What:  the interaction half of battleship: aiming, firing, looking at your own
@@ -93,18 +94,18 @@ export async function handleAimSelect(interaction: StringSelectMenuInteraction):
 
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (!room || room.status !== "playing") {
-		await interaction.reply({ content: gameRoomsCopy.battleship.matchOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [gameRoomsCopy.battleship.matchOver] });
 		return;
 	}
 	// Re-gated: a select's customId is user input and this is reachable directly.
 	if (!room.playerIds.includes(interaction.user.id)) {
-		await interaction.reply({ content: gameRoomsCopy.errors.notYours, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [gameRoomsCopy.errors.notYours] });
 		return;
 	}
 
 	const stored = storedMatch(room);
 	if (!stored) {
-		await interaction.reply({ content: gameRoomsCopy.battleship.matchOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [gameRoomsCopy.battleship.matchOver] });
 		return;
 	}
 
@@ -122,25 +123,22 @@ export async function handleAimSelect(interaction: StringSelectMenuInteraction):
 	// Ephemeral, always: announcing an aim publicly would tell the opponent where
 	// the next shot is going before it is fired.
 	const ready = mine.x !== undefined && mine.y !== undefined;
-	await interaction.reply({
-		content: ready
+	await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [ready
 			? gameRoomsCopy.battleship.aimed(`${["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"][mine.x!]}${mine.y! + 1}`)
-			: gameRoomsCopy.battleship.aimedPartial,
-		...PRIVATE,
-	});
+			: gameRoomsCopy.battleship.aimedPartial] });
 }
 
 // ── firing ────────────────────────────────────────────────────────────
 export async function handleFire(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const stored = storedMatch(room);
 	if (!stored) {
-		await interaction.reply({ content: gameRoomsCopy.battleship.matchOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [gameRoomsCopy.battleship.matchOver] });
 		return;
 	}
 
 	const outcome = fire(stored, interaction.user.id);
 	if (!outcome.ok || !outcome.state) {
-		await interaction.reply({ content: outcome.message, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [outcome.message] });
 		return;
 	}
 
@@ -270,7 +268,7 @@ async function showOwnBoard(interaction: ButtonInteraction, room: IGameRoom, sta
 export async function handleViewBoard(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const stored = storedMatch(room);
 	if (!stored) {
-		await interaction.reply({ content: gameRoomsCopy.battleship.matchOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [gameRoomsCopy.battleship.matchOver] });
 		return;
 	}
 	await showOwnBoard(interaction, room, deserializeMatch(stored));
@@ -290,7 +288,7 @@ const SETUP_REFUSALS: Record<SetupRefusal, string> = {
 export async function handleReroll(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const stored = storedMatch(room);
 	if (!stored) {
-		await interaction.reply({ content: gameRoomsCopy.battleship.matchOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [gameRoomsCopy.battleship.matchOver] });
 		return;
 	}
 
@@ -300,7 +298,7 @@ export async function handleReroll(interaction: ButtonInteraction, room: IGameRo
 		// A board posted before setup existed is past its first shot or at it; its old
 		// Reroll button answers in the words it always did.
 		const refusal = result.reason === "not-in-setup" && stored.ready === undefined ? gameRoomsCopy.battleship.rerollTooLate : SETUP_REFUSALS[result.reason];
-		await interaction.reply({ content: refusal, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [refusal] });
 		return;
 	}
 
@@ -317,13 +315,13 @@ export async function handleReroll(interaction: ButtonInteraction, room: IGameRo
 export async function handleReady(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const stored = storedMatch(room);
 	if (!stored) {
-		await interaction.reply({ content: gameRoomsCopy.battleship.matchOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [gameRoomsCopy.battleship.matchOver] });
 		return;
 	}
 
 	const result = markReady(deserializeMatch(stored), interaction.user.id);
 	if (!result.ok) {
-		await interaction.reply({ content: SETUP_REFUSALS[result.reason], ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [SETUP_REFUSALS[result.reason]] });
 		return;
 	}
 	await commitReady(interaction.client, room, interaction.user.id, result.index, () => interaction.deferUpdate());

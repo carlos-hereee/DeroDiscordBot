@@ -113,6 +113,18 @@ function makeModal(userId: string, values: { texts?: Record<string, string>; sel
 	} as unknown as ModalSubmitInteraction & Record<"reply" | "deferReply" | "editReply", Spy>;
 }
 
+// The modals a press opened, and the text of its notice: a refusal or a short answer now
+// opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
+const shownModals = (interaction: { showModal: unknown }) =>
+	(interaction.showModal as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { toJSON(): { custom_id: string; components: { content?: string }[] } }).toJSON());
+const noticeText = (interaction: { showModal: unknown }): string =>
+	shownModals(interaction)
+		.filter((modal) => modal.custom_id.startsWith("notice:"))
+		.flatMap((modal) => modal.components.map((component) => component.content ?? ""))
+		.join("\n");
+// True when every modal the press opened is a notice, so no form or game modal opened.
+const onlyNoticesShown = (interaction: { showModal: unknown }): boolean => shownModals(interaction).every((modal) => modal.custom_id.startsWith("notice:"));
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.updateSecretIf.mockResolvedValue({} as never);
@@ -200,8 +212,8 @@ describe("the offer modal", () => {
 		seed(tradeMatch());
 		const interaction = pickPartner(A, A);
 		await handleTradePartnerSelect(interaction);
-		expect(interaction.showModal).not.toHaveBeenCalled();
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.monopoly.noTradePartners }));
+		expect(onlyNoticesShown(interaction)).toBe(true);
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.monopoly.noTradePartners);
 	});
 });
 

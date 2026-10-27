@@ -214,6 +214,21 @@ export const gameRoomsCopy = {
 		status: "🎨 Dero is drawing the table…",
 	},
 
+	// ── notice titles (2026-10 item 254 Phase 5b) ──
+	// The title over a private answer shown as a notice modal, one per part of the
+	// arcade. Discord cuts a modal title at 45 characters.
+	notices: {
+		challenge: "⚔️ Challenge",
+		room: "🎮 Game room",
+		host: "🎮 Host controls",
+		network: "🌐 Network tables",
+		partyGames: "🎉 Party games",
+		battleship: "🚢 Battleship",
+		hangman: "🪢 Hangman",
+		holdem: "🃏 Texas hold em",
+		monopoly: "🎩 Monopoly",
+	},
+
 	// ── the opener card, pinned inside the room ──
 	opener: {
 		title: (game: GameSlug): string => `${GAME_LABELS[game] ?? game} room`,

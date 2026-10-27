@@ -2,9 +2,9 @@ import {
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
-	MessageFlags,
 	StringSelectMenuBuilder,
 	type ButtonInteraction,
+	type ModalSubmitInteraction,
 	type StringSelectMenuInteraction,
 } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -21,7 +21,9 @@ import { roomLifecycle } from "./roomLifecycle.js";
 import { luckOutcome } from "./matchOutcome.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
+import { isPickerPrefix, pickedValues, showPicker } from "./pickerModal.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── roomGames ────────────────────────────────────────────────────────
 // What:  the in-room half of every two-player game: the control that appears in a
@@ -57,7 +59,7 @@ export function roomMoveRow(room: Pick<IGameRoom, "roomId" | "game">): ActionRow
 // a spectator resolving somebody else's match.
 export async function runRoomMove(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	if (room.status !== "playing") {
-		await interaction.reply({ content: gameRoomsCopy.errors.notFound, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.errors.notFound] });
 		return;
 	}
 
@@ -71,7 +73,7 @@ export async function runRoomMove(interaction: ButtonInteraction, room: IGameRoo
 	}
 
 	// hangman lands here once Phase 5 moves it into rooms. Honest until then.
-	await interaction.reply({ content: "This game has no room controls yet.", flags: MessageFlags.Ephemeral });
+	await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: ["This game has no room controls yet."] });
 }
 
 // ── coin flip and dice roll ───────────────────────────────────────────
@@ -192,7 +194,7 @@ const ROOM_CARD_WINNER = { challenger: "left", opponent: "right", tie: "tie" } a
 // The rps reveal card for one room match, or null when the card does not draw. Never
 // throws: the winning hand takes over. A room match is two members, so no side is Dero.
 async function rpsCardFor(
-	interaction: StringSelectMenuInteraction,
+	interaction: StringSelectMenuInteraction | ModalSubmitInteraction,
 	reveal: { challengerId: string; opponentId: string; challengerPick: RpsChoice; opponentPick: RpsChoice; outcome: RpsOutcome }
 ): Promise<RenderPayload | null> {
 	const nameOf = (userId: string): string => interaction.guild?.members.cache.get(userId)?.displayName ?? gameRoomsCopy.games.unknownPlayer;
@@ -223,7 +225,7 @@ interface RpsSecret {
 async function promptRpsChoice(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const picks = ((room.secret as RpsSecret | null)?.picks ?? {}) as Record<string, RpsChoice>;
 	if (picks[interaction.user.id]) {
-		await interaction.reply({ content: gameRoomsCopy.games.rpsAlreadyPicked, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.games.rpsAlreadyPicked] });
 		return;
 	}
 
@@ -234,35 +236,38 @@ async function promptRpsChoice(interaction: ButtonInteraction, room: IGameRoom):
 		.setMaxValues(1)
 		.addOptions(RPS_CHOICES.map((choice) => ({ label: gameRoomsCopy.games.rpsLabel(choice), value: choice })));
 
-	// Ephemeral, so the prompt itself gives nothing away to the channel either.
-	await interaction.reply({
-		content: gameRoomsCopy.games.rpsPrompt,
-		components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
-		flags: MessageFlags.Ephemeral,
+	// A modal (or its private select message), so the prompt gives nothing away to the channel either.
+	await showPicker(interaction, {
+		action: "rps",
+		roomId: room.roomId,
+		title: gameRoomsCopy.notices.room,
+		prompt: gameRoomsCopy.games.rpsPrompt,
+		label: gameRoomsCopy.games.rpsPlaceholder,
+		select,
 	});
 }
 
-// The secret pick's submission.
-export async function handleRpsSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+// The secret pick's submission, from its modal or its select message.
+export async function handleRpsSelect(interaction: StringSelectMenuInteraction | ModalSubmitInteraction): Promise<void> {
 	const [prefix, action, roomId] = interaction.customId.split(":");
-	if (prefix !== GAME_ROOM_SELECT_PREFIX || action !== "rps" || !roomId) return;
+	if (!isPickerPrefix(prefix) || action !== "rps" || !roomId) return;
 
 	const guildId = interaction.guildId;
 	if (!guildId) return;
 
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (!room || room.status !== "playing") {
-		await interaction.reply({ content: gameRoomsCopy.errors.notFound, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.errors.notFound] });
 		return;
 	}
 	// Re-gate here rather than trusting that the button was gated: a select's customId
 	// is user input and this handler is reachable directly.
 	if (!room.playerIds.includes(interaction.user.id)) {
-		await interaction.reply({ content: gameRoomsCopy.errors.notYours, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.errors.notYours] });
 		return;
 	}
 
-	const choice = interaction.values[0] as RpsChoice;
+	const choice = pickedValues(interaction)[0] as RpsChoice;
 	if (!RPS_CHOICES.includes(choice)) return;
 
 	// ⚠️ CLAIM THE SLOT, DO NOT READ-MODIFY-WRITE THE BLOB. `secret` is a single Mixed
@@ -277,12 +282,12 @@ export async function handleRpsSelect(interaction: StringSelectMenuInteraction):
 	// user input and this handler is reachable without it.
 	const claimed = await gameRoomStore.claimSecretField(guildId, roomId, `picks.${interaction.user.id}`, choice);
 	if (!claimed) {
-		await interaction.reply({ content: gameRoomsCopy.games.rpsAlreadyPicked, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.games.rpsAlreadyPicked] });
 		return;
 	}
 	// Ephemeral confirmation. Naming the choice back to the player who made it is
 	// safe; it is their own screen.
-	await interaction.reply({ content: gameRoomsCopy.games.rpsLocked(choice), flags: MessageFlags.Ephemeral });
+	await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.games.rpsLocked(choice)] });
 
 	// Off the RETURNED row, never off `room`. The row this handler read predates the other
 	// player's claim, so deciding `bothIn` from it is exactly how both players ended up

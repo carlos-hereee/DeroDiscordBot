@@ -91,6 +91,7 @@ function makeSelect(action: string, values: string[]): StringSelectMenuInteracti
 		guild,
 		user: { id: HOST },
 		values,
+		isModalSubmit: () => false,
 		client: {},
 		reply: vi.fn().mockResolvedValue(undefined),
 		deferReply: vi.fn().mockResolvedValue(undefined),

@@ -96,6 +96,16 @@ function makeRefusedModalInteraction(userId: string): ButtonInteraction {
 
 const client = { channels: { fetch: vi.fn().mockResolvedValue(null) } } as unknown as Client;
 
+// The modals a press opened, and the text of its notice: a refusal or a short answer now
+// opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
+const shownModals = (interaction: { showModal: unknown }) =>
+	(interaction.showModal as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { toJSON(): { custom_id: string; components: { content?: string }[] } }).toJSON());
+const noticeText = (interaction: { showModal: unknown }): string =>
+	shownModals(interaction)
+		.filter((modal) => modal.custom_id.startsWith("notice:"))
+		.flatMap((modal) => modal.components.map((component) => component.content ?? ""))
+		.join("\n");
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
@@ -218,8 +228,7 @@ describe("buying in", () => {
 
 		await handleBuyIn(interaction, makeRoom(table));
 
-		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
-		expect(reply.content).toMatch(/already have a seat/i);
+		expect(noticeText(interaction)).toMatch(/already have a seat/i);
 	});
 });
 
@@ -231,8 +240,7 @@ describe("acting", () => {
 
 		await handleMove(interaction, makeRoom(table), "fold");
 
-		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
-		expect(reply.content).toMatch(/not your turn/i);
+		expect(noticeText(interaction)).toMatch(/not your turn/i);
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
@@ -423,9 +431,7 @@ describe("dealing the next hand", () => {
 
 		await handleDeal(interaction, makeRoom(table));
 
-		expect(interaction.reply).toHaveBeenCalledWith(
-			expect.objectContaining({ content: gameRoomsCopy.holdem.handInProgress })
-		);
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.holdem.handInProgress);
 		expect(table.handNumber).toBe(1);
 	});
 
@@ -440,9 +446,7 @@ describe("dealing the next hand", () => {
 
 		await handleDeal(interaction, makeRoom(table));
 
-		expect(interaction.reply).toHaveBeenCalledWith(
-			expect.objectContaining({ content: gameRoomsCopy.holdem.handInProgress })
-		);
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.holdem.handInProgress);
 		expect(interaction.deferUpdate).not.toHaveBeenCalled();
 	});
 
@@ -547,7 +551,7 @@ describe("leaving and ending the table", () => {
 
 		await handleLeaveTable(interaction, hostedRoom(dealtTable(3)));
 
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.holdem.notSeated }));
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.holdem.notSeated);
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
@@ -557,7 +561,7 @@ describe("leaving and ending the table", () => {
 
 		await handleLeaveTable(interaction, hostedRoom(dealtTable(3)));
 
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.holdem.tableBusy }));
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.holdem.tableBusy);
 		expect(trailMock.postMove).not.toHaveBeenCalled();
 	});
 
@@ -599,7 +603,7 @@ describe("leaving and ending the table", () => {
 
 		await handleEndTable(interaction, hostedRoom(table));
 
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.holdem.tournamentOver }));
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.holdem.tournamentOver);
 		expect(finishMock).not.toHaveBeenCalled();
 	});
 });

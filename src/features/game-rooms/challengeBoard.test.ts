@@ -97,6 +97,7 @@ function makeSelect(userId: string, values: string[], members: ReturnType<typeof
 		guild: { id: "guild-1", members: { cache: members, fetch: vi.fn(async (id: string) => members.get(id) ?? null) } },
 		user: { id: userId },
 		values,
+		isModalSubmit: () => false,
 		client: {},
 		reply: vi.fn().mockResolvedValue(undefined),
 	} as unknown as StringSelectMenuInteraction;

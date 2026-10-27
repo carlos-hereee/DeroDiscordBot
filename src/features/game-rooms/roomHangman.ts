@@ -48,6 +48,7 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX, GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { RoomSecret } from "./roomTypes.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── roomHangman ──────────────────────────────────────────────────────
 // What:  hangman played inside a room: the host authors a word behind a modal or
@@ -281,23 +282,23 @@ export async function handleCategorySelect(interaction: StringSelectMenuInteract
 	// anyone can replay.
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (!room || room.status !== "playing" || room.game !== "hangman") {
-		await interaction.reply({ content: gameRoomsCopy.errors.notFound, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.hangman, sections: [gameRoomsCopy.errors.notFound] });
 		return;
 	}
 	// Re-gated here: the router does not gate selects, and a select's customId and
 	// values are user input whoever built the menu. Host only, like the modal.
 	if (room.hostId !== interaction.user.id) {
-		await interaction.reply({ content: gameRoomsCopy.errors.notYours, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.hangman, sections: [gameRoomsCopy.errors.notYours] });
 		return;
 	}
 	if ((room.secret as HangmanSecret | null)?.word) {
-		await interaction.reply({ content: gameRoomsCopy.hangman.wordAlreadySet, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.hangman, sections: [gameRoomsCopy.hangman.wordAlreadySet] });
 		return;
 	}
 
 	const category = interaction.values[0] ?? "";
 	if (!isHangmanCategory(category)) {
-		await interaction.reply({ content: gameRoomsCopy.errors.notFound, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.hangman, sections: [gameRoomsCopy.errors.notFound] });
 		return;
 	}
 
@@ -308,7 +309,7 @@ export async function handleCategorySelect(interaction: StringSelectMenuInteract
 		room,
 		bankSecret(pick),
 		{ actorId: interaction.user.id, text: gameRoomsCopy.hangman.categoryOpener(interaction.user.id, label, pick.hint) },
-		() => interaction.reply({ content: gameRoomsCopy.hangman.categoryPicked(label), flags: MessageFlags.Ephemeral })
+		() => showNotice(interaction, { title: gameRoomsCopy.notices.hangman, sections: [gameRoomsCopy.hangman.categoryPicked(label)] })
 	);
 }
 
@@ -440,7 +441,7 @@ async function stripGallowsControls(client: Client, room: Pick<IGameRoom, "roomI
 export async function openGuessModal(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const state = rehydrate(room);
 	if (!state) {
-		await interaction.reply({ content: gameRoomsCopy.hangman.waitingForWord(room.hostId), flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.hangman, sections: [gameRoomsCopy.hangman.waitingForWord(room.hostId)] });
 		return;
 	}
 
@@ -448,7 +449,7 @@ export async function openGuessModal(interaction: ButtonInteraction, room: IGame
 	// opener card. A host guessing their own word is the obvious exploit and the
 	// obvious complaint, and hiding the button would only be a suggestion.
 	if (state.authoredBy && state.authoredBy === interaction.user.id) {
-		await interaction.reply({ content: gameRoomsCopy.hangman.hostCannotGuess, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.hangman, sections: [gameRoomsCopy.hangman.hostCannotGuess] });
 		return;
 	}
 

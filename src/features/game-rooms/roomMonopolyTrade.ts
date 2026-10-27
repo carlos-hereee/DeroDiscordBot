@@ -42,6 +42,7 @@ import {
 	type MonopolyMove,
 } from "./roomMonopolyHandlers.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── roomMonopolyTrade ────────────────────────────────────────────────
 // What:  trading in Discord: the Trade button, the partner picker, the offer modal,
@@ -92,12 +93,12 @@ const JAIL_CARDS_SEPARATOR = /[\s,]+/;
 export async function handleMtrade(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const state = monopolyStateOf(room);
 	if (!state || state.phase === "finished") {
-		await interaction.reply({ content: state ? gameRoomsCopy.monopoly.matchOver : gameRoomsCopy.monopoly.noBoard, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [state ? gameRoomsCopy.monopoly.matchOver : gameRoomsCopy.monopoly.noBoard] });
 		return;
 	}
 	const actorId = interaction.user.id;
 	if (!isStillPlaying(state, actorId)) {
-		await interaction.reply({ content: gameRoomsCopy.monopoly.inventoryOut, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.inventoryOut] });
 		return;
 	}
 	if (state.pendingTrade) {
@@ -107,7 +108,7 @@ export async function handleMtrade(interaction: ButtonInteraction, room: IGameRo
 
 	const partners = state.seats.filter((seat) => !seat.bankrupt && seat.userId !== actorId);
 	if (partners.length === 0) {
-		await interaction.reply({ content: gameRoomsCopy.monopoly.noTradePartners, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.noTradePartners] });
 		return;
 	}
 	// Names take a member fetch, which can outrun Discord's three second window.
@@ -141,7 +142,7 @@ export async function handleTradePartnerSelect(interaction: StringSelectMenuInte
 	const initiatorId = interaction.user.id;
 	const partnerId = interaction.values[0] ?? "";
 	if (!state || state.phase === "finished") {
-		await interaction.reply({ content: gameRoomsCopy.monopoly.matchOver, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.matchOver] });
 		return;
 	}
 	if (state.pendingTrade) {
@@ -149,7 +150,7 @@ export async function handleTradePartnerSelect(interaction: StringSelectMenuInte
 		return;
 	}
 	if (!isStillPlaying(state, initiatorId) || !isStillPlaying(state, partnerId) || partnerId === initiatorId) {
-		await interaction.reply({ content: gameRoomsCopy.monopoly.noTradePartners, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.noTradePartners] });
 		return;
 	}
 	// The modal must be the first response to the pick, so nothing above defers.

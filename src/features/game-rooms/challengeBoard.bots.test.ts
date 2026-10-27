@@ -60,6 +60,7 @@ function select(userId: string, value: string): StringSelectMenuInteraction {
 		user: { id: userId },
 		client: {},
 		values: [value],
+		isModalSubmit: () => false,
 		reply: vi.fn().mockResolvedValue(undefined),
 	} as unknown as StringSelectMenuInteraction;
 }

@@ -175,6 +175,18 @@ const replyOf = (interaction: { reply: unknown }) =>
 // written and therefore the root of the guess gate covered further down.
 const savedSecret = () => storeMock.update.mock.calls[0][2].secret as Record<string, unknown>;
 
+// The modals a press opened, and the text of its notice: a refusal or a short answer now
+// opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
+const shownModals = (interaction: { showModal: unknown }) =>
+	(interaction.showModal as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { toJSON(): { custom_id: string; components: { content?: string }[] } }).toJSON());
+const noticeText = (interaction: { showModal: unknown }): string =>
+	shownModals(interaction)
+		.filter((modal) => modal.custom_id.startsWith("notice:"))
+		.flatMap((modal) => modal.components.map((component) => component.content ?? ""))
+		.join("\n");
+// True when every modal the press opened is a notice, so no form or game modal opened.
+const onlyNoticesShown = (interaction: { showModal: unknown }): boolean => shownModals(interaction).every((modal) => modal.custom_id.startsWith("notice:"));
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
@@ -525,8 +537,8 @@ describe("openGuessModal, the host gate", () => {
 
 		await openGuessModal(interaction, makeRoom());
 
-		expect(replyOf(interaction).content).toBe(gameRoomsCopy.hangman.hostCannotGuess);
-		expect(interaction.showModal).not.toHaveBeenCalled();
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.hangman.hostCannotGuess);
+		expect(onlyNoticesShown(interaction)).toBe(true);
 	});
 
 	it("opens the modal for anybody who is not the author", async () => {
@@ -580,7 +592,9 @@ describe("the refusal itself", () => {
 
 		await openGuessModal(interaction, makeRoom());
 
-		expect(replyOf(interaction).flags).toBe(MessageFlags.Ephemeral);
+		// A notice modal is shown only to the member who pressed, like an ephemeral reply.
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.hangman.hostCannotGuess);
+		expect(interaction.reply).not.toHaveBeenCalled();
 	});
 });
 

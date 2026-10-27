@@ -51,6 +51,18 @@ function press(customId: string): ButtonInteraction {
 registerPartyGameHandlers();
 const handle = (interaction: ButtonInteraction) => registry.buttons.get("party_games")!(interaction);
 
+// The modals a press opened, and the text of its notice: a refusal or a short answer now
+// opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
+const shownModals = (interaction: { showModal: unknown }) =>
+	(interaction.showModal as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { toJSON(): { custom_id: string; components: { content?: string }[] } }).toJSON());
+const noticeText = (interaction: { showModal: unknown }): string =>
+	shownModals(interaction)
+		.filter((modal) => modal.custom_id.startsWith("notice:"))
+		.flatMap((modal) => modal.components.map((component) => component.content ?? ""))
+		.join("\n");
+// True when every modal the press opened is a notice, so no form or game modal opened.
+const onlyNoticesShown = (interaction: { showModal: unknown }): boolean => shownModals(interaction).every((modal) => modal.custom_id.startsWith("notice:"));
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	gateMock.mockResolvedValue(true);
@@ -90,7 +102,7 @@ describe("hosting a table game from 🎉party-games", () => {
 
 		await handle(interaction);
 
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: words.adminsOnly }));
+		expect(noticeText(interaction)).toBe(words.adminsOnly);
 		expect(draftMock).not.toHaveBeenCalled();
 	});
 
@@ -111,9 +123,9 @@ describe("the party games buttons", () => {
 
 		await handle(interaction);
 
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: words.adminsOnly }));
+		expect(noticeText(interaction)).toBe(words.adminsOnly);
 		expect(hangmanMock).not.toHaveBeenCalled();
-		expect(interaction.showModal).not.toHaveBeenCalled();
+		expect(onlyNoticesShown(interaction)).toBe(true);
 	});
 
 	it("opens a hangman round in 🎉party-games for an admin and logs it", async () => {

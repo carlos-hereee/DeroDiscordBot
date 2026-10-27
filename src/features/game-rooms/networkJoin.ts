@@ -22,6 +22,7 @@ import { hasNetworkConsent } from "./networkConsent.js";
 import { redrawTable, seatAcceptedPlayer } from "./roomHoldemHandlers.js";
 import { describeSatelliteRefusal, satelliteIn } from "./satelliteRooms.js";
 import { openSatelliteWithTable } from "./satelliteSeats.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── networkJoin ──────────────────────────────────────────────────────
 // What:  a member of one network server asking for a seat at a table hosted in another
@@ -160,7 +161,7 @@ export function describeSeatRequest(outcome: Exclude<SeatRequestOutcome, { kind:
 export async function handleNetworkBoardSelect(interaction: StringSelectMenuInteraction): Promise<void> {
 	const target = parseTableValue(interaction.customId === NETWORK_BOARD_SELECT_ID ? interaction.values[0] : undefined);
 	if (!target || !interaction.guild) {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.network, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 	// A satellite opening talks to Discord several times, which can outrun three seconds,
@@ -193,7 +194,7 @@ function parseTableValue(value: string | undefined): { hostGuildId: string; room
 export async function handleNetworkConsentButton(interaction: ButtonInteraction): Promise<void> {
 	const parsed = parseConsentId(interaction.customId);
 	if (!parsed) {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.network, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 	if (!parsed.accepted) {

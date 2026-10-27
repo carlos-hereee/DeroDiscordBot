@@ -68,6 +68,7 @@ function makeSelect(userId: string, value: string): StringSelectMenuInteraction 
 		guildId: "guild-1",
 		user: { id: userId },
 		values: [value],
+		isModalSubmit: () => false,
 		client: {},
 		reply: vi.fn().mockResolvedValue(undefined),
 	} as unknown as StringSelectMenuInteraction;

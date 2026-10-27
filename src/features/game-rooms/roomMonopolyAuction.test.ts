@@ -101,6 +101,18 @@ function makeBid(userId: string, amount: string, round: number = ROUND) {
 const errorText = (interaction: { editReply: Spy }): string =>
 	(interaction.editReply.mock.calls[0][0] as { embeds: { data: { description: string } }[] }).embeds[0].data.description;
 
+// The modals a press opened, and the text of its notice: a refusal or a short answer now
+// opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
+const shownModals = (interaction: { showModal: unknown }) =>
+	(interaction.showModal as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { toJSON(): { custom_id: string; components: { content?: string }[] } }).toJSON());
+const noticeText = (interaction: { showModal: unknown }): string =>
+	shownModals(interaction)
+		.filter((modal) => modal.custom_id.startsWith("notice:"))
+		.flatMap((modal) => modal.components.map((component) => component.content ?? ""))
+		.join("\n");
+// True when every modal the press opened is a notice, so no form or game modal opened.
+const onlyNoticesShown = (interaction: { showModal: unknown }): boolean => shownModals(interaction).every((modal) => modal.custom_id.startsWith("notice:"));
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.updateSecretIf.mockResolvedValue({} as never);
@@ -129,19 +141,19 @@ describe("the bid button", () => {
 		state.pendingAuction = null;
 		const interaction = makeButton(B);
 		await handleMauction(interaction, makeRoom(state), String(ROUND));
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.monopoly.noAuction }));
-		expect(interaction.showModal).not.toHaveBeenCalled();
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.monopoly.noAuction);
+		expect(onlyNoticesShown(interaction)).toBe(true);
 	});
 
 	it("turns away a button from an earlier round, and a press after the close", async () => {
 		const stale = makeButton(B);
 		await handleMauction(stale, makeRoom(auctionMatch()), String(ROUND - 1));
-		expect(stale.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.monopoly.auctionOver }));
+		expect(noticeText(stale)).toBe(gameRoomsCopy.monopoly.auctionOver);
 
 		vi.spyOn(Date, "now").mockReturnValue(CLOSES);
 		const late = makeButton(B);
 		await handleMauction(late, makeRoom(auctionMatch()), String(ROUND));
-		expect(late.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.monopoly.auctionOver }));
+		expect(noticeText(late)).toBe(gameRoomsCopy.monopoly.auctionOver);
 	});
 });
 

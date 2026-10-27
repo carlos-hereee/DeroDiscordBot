@@ -12,6 +12,7 @@ import {
 	type Client,
 	type Guild,
 	type Message,
+	type RepliableInteraction,
 	type ModalSubmitInteraction,
 	type StringSelectMenuInteraction,
 } from "discord.js";
@@ -42,6 +43,7 @@ import { roomLifecycle } from "./roomLifecycle.js";
 import { rematchedResultEmbed, roomOpenerLogo, roomResultEmbed } from "./gameRoomsEmbeds.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
+import { isPickerPrefix, pickedValues, showPicker } from "./pickerModal.js";
 import { buildInviteOptions, refilterInvitees } from "./invitePicker.js";
 import {
 	openerCardEmbed,
@@ -65,6 +67,7 @@ import { botSeatIdsFor, botsAllowedIn, casualBotSeats, maxBotSeats, takesBots } 
 import { adminLog } from "@features/setup/adminLog.js";
 import { RPS_CHOICES, type RpsChoice } from "@features/games/rpsWinner.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { showEmbedNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
 
 // The host controls' words are shared by every pack (2026-10 item 244 Phase 4), so
 // the default pack is the right one for every guild.
@@ -115,24 +118,21 @@ export async function refreshDraftCard(guild: Guild, room: IGameRoom): Promise<v
 // drift into different rules about who may start what. Returns the draft row when one
 // was created, or null when the press was refused (the refusal has already replied).
 export async function startChallengeDraft(
-	interaction: ButtonInteraction | { guild: Guild | null; guildId: string | null; user: { id: string }; reply: ButtonInteraction["reply"] },
+	interaction: RepliableInteraction,
 	game: GameSlug
 ): Promise<IGameRoom | null> {
 	const guild = interaction.guild;
 	if (!guild || !interaction.guildId) {
-		await interaction.reply({ embeds: [errorEmbed("This only works inside a server.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "This only works inside a server.");
 		return null;
 	}
 
 	const opened = await openChallengeDraft(guild, interaction.user.id, game);
 	if (!opened.ok) {
-		await interaction.reply({ ...draftRefusalReply(opened), flags: MessageFlags.Ephemeral });
+		await showRefusalNotice(interaction, draftRefusalReply(opened));
 		return null;
 	}
-	await interaction.reply({
-		content: gameRoomsCopy.board.cardStarted(opened.channel.id).replace("The match is under way in", "Your challenge card is in"),
-		flags: MessageFlags.Ephemeral,
-	});
+	await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.cardStarted(opened.channel.id).replace("The match is under way in", "Your challenge card is in")] });
 	return opened.room;
 }
 
@@ -144,6 +144,17 @@ export type DraftOpenFailure =
 	| { ok: false; reason: "failed" };
 
 export type DraftOpenResult = { ok: true; room: IGameRoom; channel: TextChannel; card: Message } | DraftOpenFailure;
+
+// A refusal is a line of text or one text only embed, and either answers as a notice;
+// showEmbedNotice keeps the upgrade embed a private reply should it ever carry fields.
+async function showRefusalNotice(interaction: RepliableInteraction, refusal: { content: string } | { embeds: EmbedBuilder[] }): Promise<void> {
+	if ("content" in refusal) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal.content] });
+		return;
+	}
+	const [embed] = refusal.embeds;
+	if (embed) await showEmbedNotice(interaction, embed);
+}
 
 // The private answer to a press the opener refused, the same words the press always had.
 function draftRefusalReply(failure: DraftOpenFailure): { content: string } | { embeds: EmbedBuilder[] } {
@@ -259,7 +270,7 @@ export async function chooseMonopolyDraftSetting(
 	// The arg is user input like the rest of a customId: anything but the two values
 	// a card renders is a retired or forged control.
 	if (room.game !== "monopoly" || (choice !== "on" && choice !== "off")) {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 	const patch: Partial<IGameRoom> = {};
@@ -283,7 +294,7 @@ export async function chooseVisibility(interaction: ButtonInteraction, room: IGa
 	// admin changed the setting still has the button, and a hidden button is a suggestion,
 	// not a gate. checkRoomAdmission refuses the open again, for every other way in.
 	if (!isWithinReach(await readChallengeReach(room.guildId), visibility)) {
-		await interaction.reply({ content: hostWords.reach.publicRefused, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [hostWords.reach.publicRefused] });
 		return;
 	}
 
@@ -320,7 +331,7 @@ const isNetworkGame = (game: GameSlug): boolean => (BOT_CONSTANTS.NETWORK_GAMES 
 async function chooseNetworkTable(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const refusal = interaction.user.id === room.hostId ? await networkChoiceRefusal(interaction, room) : networkWords.hostRefusals.notHost;
 	if (refusal) {
-		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
 	}
 	if (!(await hasNetworkConsent(room.hostId))) {
@@ -354,7 +365,7 @@ export async function openInvitePicker(interaction: ButtonInteraction, room: IGa
 	const options = await buildInviteOptions(guild, room.hostId, room.kickedIds ?? []);
 
 	if (options.length === 0) {
-		await interaction.reply({ content: gameRoomsCopy.board.pickerEmpty, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.pickerEmpty] });
 		return;
 	}
 
@@ -383,11 +394,11 @@ export async function handleInviteSelect(interaction: StringSelectMenuInteractio
 
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (!room) {
-		await interaction.reply({ content: gameRoomsCopy.board.draftGone, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.draftGone] });
 		return;
 	}
 	if (room.hostId !== interaction.user.id) {
-		await interaction.reply({ content: gameRoomsCopy.board.notYourChallenge, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.notYourChallenge] });
 		return;
 	}
 
@@ -401,7 +412,7 @@ export async function handleInviteSelect(interaction: StringSelectMenuInteractio
 	const saved = (await gameRoomStore.update(guildId, roomId, { spectatorIds: picked })) ?? room;
 	// Each person the host invites onto a Casual draft takes a Dero bot's seat (Arcade 6).
 	const updated = await yieldBotSeatsTo(interaction.client, room, saved);
-	await interaction.reply({ content: gameRoomsCopy.board.pickerSaved(picked.length), flags: MessageFlags.Ephemeral });
+	await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.pickerSaved(picked.length)] });
 	await refreshCard(interaction.guild, updated, cardStateFor(updated, { visibility: "invite", pool: picked }));
 }
 
@@ -413,22 +424,19 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 	const actorId = interaction.user.id;
 
 	if (actorId === room.hostId) {
-		await interaction.reply({ content: gameRoomsCopy.board.hostCannotJoin, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.hostCannotJoin] });
 		return;
 	}
 	if ((room.spectatorIds ?? []).includes(actorId)) {
-		await interaction.reply({ content: gameRoomsCopy.board.alreadyJoined, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.alreadyJoined] });
 		return;
 	}
 	if ((room.pendingJoinIds ?? []).includes(actorId)) {
-		await interaction.reply({ content: hostWords.approval.alreadyAsked, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [hostWords.approval.alreadyAsked] });
 		return;
 	}
 	if ((room.spectatorIds ?? []).length >= BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS) {
-		await interaction.reply({
-			content: gameRoomsCopy.board.poolFull(BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS),
-			flags: MessageFlags.Ephemeral,
-		});
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.poolFull(BOT_CONSTANTS.GAME_ROOM_MAX_SPECTATORS)] });
 		return;
 	}
 
@@ -443,7 +451,7 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 			return;
 		}
 		const refusal = verdict.reason === "kicked" ? hostWords.kick.refusedRejoin : hostWords.band.refused(gameRoomsCopy.gameLabel(room.game));
-		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
 	}
 	if (verdict.kind === "ask") {
@@ -456,7 +464,7 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 	// in the moment since the read above (the store's kickedIds filter).
 	const added = await gameRoomStore.addPoolMember(room.guildId, room.roomId, actorId);
 	if (!added && isKicked((await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? room, actorId)) {
-		await interaction.reply({ content: hostWords.kick.refusedRejoin, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [hostWords.kick.refusedRejoin] });
 		return;
 	}
 	// On a Casual draft the joiner takes a Dero bot's seat (2026-10 item 254, Arcade 6).
@@ -479,10 +487,10 @@ async function askHostToJoin(interaction: ButtonInteraction, room: IGameRoom): P
 	if (!updated) {
 		const fresh = (await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? room;
 		const refusal = isKicked(fresh, interaction.user.id) ? hostWords.kick.refusedRejoin : gameRoomsCopy.board.draftGone;
-		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
 	}
-	await interaction.reply({ content: hostWords.approval.asked, flags: MessageFlags.Ephemeral });
+	await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [hostWords.approval.asked] });
 	await refreshDraftCard(interaction.guild!, updated);
 }
 
@@ -496,7 +504,7 @@ export async function startMatch(interaction: ButtonInteraction, room: IGameRoom
 	// bots alone.
 	const bots = room.botSeats ?? 0;
 	if (pool.length === 0 && !room.network && bots === 0) {
-		await interaction.reply({ content: gameRoomsCopy.board.poolEmpty, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.poolEmpty] });
 		return;
 	}
 
@@ -510,14 +518,14 @@ export async function startMatch(interaction: ButtonInteraction, room: IGameRoom
 			bots > 0
 				? gameRoomsCopy.monopoly.tooManyWithBots(MONOPOLY_MAX_SEATS, pool.length, bots)
 				: gameRoomsCopy.monopoly.tooManyPlayers(MONOPOLY_MAX_SEATS, pool.length);
-		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
 	}
 
 	// A Blackjack table has five seats (2026-10 item 254, Arcade 1), the host's among them,
 	// refused here for the same reason as Monopoly's six: before any channel exists.
 	if (room.game === "blackjack" && pool.length + 1 > BLACKJACK_MAX_SEATS) {
-		await interaction.reply({ content: gameRoomsCopy.board.blackjackTooManyPlayers(BLACKJACK_MAX_SEATS, pool.length), flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.blackjackTooManyPlayers(BLACKJACK_MAX_SEATS, pool.length)] });
 		return;
 	}
 
@@ -558,10 +566,13 @@ export async function startMatch(interaction: ButtonInteraction, room: IGameRoom
 			.setMaxValues(1)
 			.addOptions(options);
 
-		await interaction.reply({
-			content: gameRoomsCopy.board.chooseOpponentPrompt,
-			components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
-			flags: MessageFlags.Ephemeral,
+		await showPicker(interaction, {
+			action: "opponent",
+			roomId: room.roomId,
+			title: gameRoomsCopy.notices.challenge,
+			prompt: gameRoomsCopy.board.chooseOpponentPrompt,
+			label: gameRoomsCopy.board.chooseOpponentPlaceholder,
+			select,
 		});
 		return;
 	}
@@ -570,29 +581,30 @@ export async function startMatch(interaction: ButtonInteraction, room: IGameRoom
 	await provisionFromDraft(interaction, room, pool[0]);
 }
 
-// The opponent picker's submission, for the multi-joiner case.
-export async function handleOpponentSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+// The opponent picker's submission, for the multi-joiner case: from its modal, or from
+// the select message Discord falls back to when it refuses the modal.
+export async function handleOpponentSelect(interaction: StringSelectMenuInteraction | ModalSubmitInteraction): Promise<void> {
 	const [prefix, action, roomId] = interaction.customId.split(":");
-	if (prefix !== GAME_ROOM_SELECT_PREFIX || action !== "opponent" || !roomId) return;
+	if (!isPickerPrefix(prefix) || action !== "opponent" || !roomId) return;
 
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) return;
 
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (!room) {
-		await interaction.reply({ content: gameRoomsCopy.board.draftGone, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.draftGone] });
 		return;
 	}
 	if (room.hostId !== interaction.user.id) {
-		await interaction.reply({ content: gameRoomsCopy.board.notYourChallenge, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.notYourChallenge] });
 		return;
 	}
 
 	// A member the host removed after this picker opened is out of the pool by now, so
 	// the pool check refuses them; isKicked says so outright rather than leaning on it.
-	const chosen = interaction.values[0];
+	const chosen = pickedValues(interaction)[0];
 	if (!chosen || !(room.spectatorIds ?? []).includes(chosen) || isKicked(room, chosen)) {
-		await interaction.reply({ content: gameRoomsCopy.board.poolEmpty, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.poolEmpty] });
 		return;
 	}
 
@@ -604,7 +616,7 @@ export async function handleOpponentSelect(interaction: StringSelectMenuInteract
 // out the card. One function so the two entry points cannot diverge about who ends up
 // a player and who ends up a spectator.
 async function provisionFromDraft(
-	interaction: ButtonInteraction | StringSelectMenuInteraction,
+	interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
 	room: IGameRoom,
 	// Null for a cooperative game, where the whole pool plays and there is nobody to
 	// single out.
@@ -706,7 +718,7 @@ async function provisionFromDraft(
 export async function rematchFromRoom(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const check = await checkRematch(interaction, room);
 	if (!check.ok) {
-		await interaction.reply({ ...check.reply, flags: MessageFlags.Ephemeral });
+		await showRefusalNotice(interaction, check.reply);
 		return;
 	}
 
@@ -896,7 +908,7 @@ const DERO_THROW_FIELD = "throw";
 
 export async function playDero(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	if (!isDeroPlayable(room.game)) {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 	// rps needs the host's throw first: a modal with the three throws, so the press
@@ -993,7 +1005,7 @@ async function botRefusal(room: IGameRoom): Promise<string | null> {
 export async function openBotPicker(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const refusal = await botRefusal(room);
 	if (refusal) {
-		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
 	}
 	const current = room.botSeats ?? 0;
@@ -1010,43 +1022,46 @@ export async function openBotPicker(interaction: ButtonInteraction, room: IGameR
 				default: count === current,
 			}))
 		);
-	await interaction.reply({
-		content: gameRoomsCopy.board.botPickerPrompt,
-		components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
-		flags: MessageFlags.Ephemeral,
+	await showPicker(interaction, {
+		action: BOT_COUNT_FIELD,
+		roomId: room.roomId,
+		title: gameRoomsCopy.notices.challenge,
+		prompt: gameRoomsCopy.board.botPickerPrompt,
+		label: gameRoomsCopy.board.botPickerPlaceholder,
+		select,
 	});
 }
 
-/** The bot count select's submission: the host's, on a draft, a count the game takes. */
-export async function handleBotSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+/** The bot count picker's submission, from its modal or its select message: the host's, on a draft, a count the game takes. */
+export async function handleBotSelect(interaction: StringSelectMenuInteraction | ModalSubmitInteraction): Promise<void> {
 	const [prefix, action, roomId] = interaction.customId.split(":");
-	if (prefix !== GAME_ROOM_SELECT_PREFIX || action !== BOT_COUNT_FIELD || !roomId) return;
+	if (!isPickerPrefix(prefix) || action !== BOT_COUNT_FIELD || !roomId) return;
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) return;
 
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (!room || room.status !== "draft") {
-		await interaction.reply({ content: gameRoomsCopy.board.draftGone, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.draftGone] });
 		return;
 	}
 	if (room.hostId !== interaction.user.id) {
-		await interaction.reply({ content: gameRoomsCopy.board.onlyHostStarts, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.onlyHostStarts] });
 		return;
 	}
 	const refusal = await botRefusal(room);
 	if (refusal) {
-		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
 	}
 	// The value is user input whoever built the menu, so it is checked against the counts.
-	const count = Number.parseInt(interaction.values[0] ?? "", 10);
+	const count = Number.parseInt(pickedValues(interaction)[0] ?? "", 10);
 	if (!Number.isInteger(count) || count < 0 || count > maxBotSeats(room.game)) {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 
 	const updated = await saveBotSeats(interaction, room, { botSeats: count }, gameRoomsCopy.board.botOptionCount(count));
-	await interaction.reply({ content: gameRoomsCopy.board.botsSaved(count), flags: MessageFlags.Ephemeral });
+	await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.botsSaved(count)] });
 	await refreshCard(interaction.guild, updated, cardStateFor(updated, { visibility: updated.visibility, pool: updated.spectatorIds ?? [] }));
 }
 
@@ -1054,7 +1069,7 @@ export async function handleBotSelect(interaction: StringSelectMenuInteraction):
 // draft's bot count here, so a bot sits down only through a host's own press and every
 // change of the count is one bot.slot line in 🗒️admin-log, whichever button made it.
 async function saveBotSeats(
-	interaction: ButtonInteraction | StringSelectMenuInteraction,
+	interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
 	room: IGameRoom,
 	patch: { botSeats: number; casual?: boolean },
 	detail: string
@@ -1087,12 +1102,12 @@ export async function chooseCasual(interaction: ButtonInteraction, room: IGameRo
 	// The arg is user input like the rest of a customId: anything but the two values a
 	// card renders is a retired or forged control.
 	if (choice !== "on" && choice !== "off") {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 	const refusal = await botRefusal(room);
 	if (refusal) {
-		await interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
 	}
 	const words = gameRoomsCopy.board.casual;

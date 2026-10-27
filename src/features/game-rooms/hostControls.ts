@@ -6,6 +6,7 @@ import {
 	type ButtonInteraction,
 	type Client,
 	type Guild,
+	type ModalSubmitInteraction,
 	type StringSelectMenuInteraction,
 } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -17,6 +18,7 @@ import { isRatedGame } from "@features/ratings/ratingEngine.js";
 import type { HoldemTable } from "@features/games/holdemTable.js";
 import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { answerPick, deferPick, pickedValues, showPicker } from "./pickerModal.js";
 import { REMOVABLE_IN_PLAY_GAMES } from "./gameRoomsEmbeds.js";
 import { refreshDraftCard, yieldBotSeatsTo } from "./challengeBoard.js";
 import { roomLifecycle } from "./roomLifecycle.js";
@@ -29,6 +31,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 import { botSeatName, isBotSeatId } from "./botSeat.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import type { StoredBattleship } from "./roomBattleship.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── hostControls ─────────────────────────────────────────────────────
 // What:  the host's say over who is in a room (2026-10 item 244 Phase 4): the rating
@@ -60,7 +63,7 @@ const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 // ── who may press ─────────────────────────────────────────────────────
 // The host, or an admin: the same override the router gives every hostOnly button,
 // because clearing a room a host abandoned is moderation.
-async function isHostOrAdmin(interaction: StringSelectMenuInteraction, room: IGameRoom): Promise<boolean> {
+async function isHostOrAdmin(interaction: StringSelectMenuInteraction | ModalSubmitInteraction, room: IGameRoom): Promise<boolean> {
 	if (interaction.user.id === room.hostId) return true;
 	return gateOwnerOrAdmin(interaction, await guildConfigStore.findByGuildId(room.guildId));
 }
@@ -68,20 +71,20 @@ async function isHostOrAdmin(interaction: StringSelectMenuInteraction, room: IGa
 // A host control select's room, read fresh and scoped to the clicking guild (a room in
 // another guild reads as not found, invariant 2), with the press gated. Replies and
 // answers null on every refusal.
-async function loadRoomForHost(interaction: StringSelectMenuInteraction): Promise<IGameRoom | null> {
+async function loadRoomForHost(interaction: StringSelectMenuInteraction | ModalSubmitInteraction): Promise<IGameRoom | null> {
 	const roomId = interaction.customId.split(":")[2];
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild || !roomId) {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.errors.controlRetired] });
 		return null;
 	}
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (!room) {
-		await interaction.reply({ content: gameRoomsCopy.errors.notFound, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.errors.notFound] });
 		return null;
 	}
 	if (!(await isHostOrAdmin(interaction, room))) {
-		await interaction.reply({ content: gameRoomsCopy.errors.notYours, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.errors.notYours] });
 		return null;
 	}
 	return room;
@@ -105,15 +108,17 @@ async function memberOptions(guild: Guild, userIds: readonly string[]): Promise<
 	return options;
 }
 
+function pickerSelect(action: string, roomId: string, placeholder: string, options: { label: string; value: string }[], maxValues: number): StringSelectMenuBuilder {
+	return new StringSelectMenuBuilder()
+		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:${action}:${roomId}`)
+		.setPlaceholder(placeholder)
+		.setMinValues(1)
+		.setMaxValues(maxValues)
+		.addOptions(options);
+}
+
 function pickerRow(action: string, roomId: string, placeholder: string, options: { label: string; value: string }[], maxValues: number) {
-	return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-		new StringSelectMenuBuilder()
-			.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:${action}:${roomId}`)
-			.setPlaceholder(placeholder)
-			.setMinValues(1)
-			.setMaxValues(maxValues)
-			.addOptions(options)
-	);
+	return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(pickerSelect(action, roomId, placeholder, options, maxValues));
 }
 
 // ── the rating band ───────────────────────────────────────────────────
@@ -122,12 +127,12 @@ export async function handleBandSelect(interaction: StringSelectMenuInteraction)
 	const room = await loadRoomForHost(interaction);
 	if (!room) return;
 	if (room.status !== "draft") {
-		await interaction.reply({ content: gameRoomsCopy.board.draftGone, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.board.draftGone] });
 		return;
 	}
 	const band = interaction.values[0];
 	if (!isRatedGame(room.game) || !isRatingBand(band)) {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { ratingBand: band })) ?? room;
@@ -148,12 +153,12 @@ export async function handleSpectatorSelect(interaction: StringSelectMenuInterac
 	const room = await loadRoomForHost(interaction);
 	if (!room) return;
 	if (room.status !== "draft") {
-		await interaction.reply({ content: gameRoomsCopy.board.draftGone, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.board.draftGone] });
 		return;
 	}
 	const mode = interaction.values[0];
 	if (!isSpectatorMode(mode) || room.network) {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { spectatorMode: mode })) ?? room;
@@ -169,7 +174,7 @@ export async function handleSpectatorSelect(interaction: StringSelectMenuInterac
  */
 export async function toggleApproval(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
 	if (choice !== "on" && choice !== "off") {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { requireApproval: choice === "on" })) ?? room;
@@ -184,12 +189,12 @@ const canAnswerRequests = (room: IGameRoom): boolean => room.status === "draft" 
 /** The Requests button: a private panel with an Accept and a Decline select over everyone waiting. */
 export async function openJoinRequests(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	if (!canAnswerRequests(room)) {
-		await interaction.reply({ content: gameRoomsCopy.board.draftGone, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.board.draftGone] });
 		return;
 	}
 	const waiting = room.pendingJoinIds ?? [];
 	if (waiting.length === 0) {
-		await interaction.reply({ content: words.approval.requestsEmpty, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [words.approval.requestsEmpty] });
 		return;
 	}
 	const options = await memberOptions(interaction.guild!, waiting);
@@ -209,7 +214,7 @@ export async function handleJoinRequestSelect(interaction: StringSelectMenuInter
 	const room = await loadRoomForHost(interaction);
 	if (!room) return;
 	if (!canAnswerRequests(room)) {
-		await interaction.reply({ content: gameRoomsCopy.board.draftGone, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.board.draftGone] });
 		return;
 	}
 	// ⚠️ RE-FILTERED AGAINST THE ROW. The values arrive from the client, so only members
@@ -218,7 +223,7 @@ export async function handleJoinRequestSelect(interaction: StringSelectMenuInter
 	const waiting = new Set(room.pendingJoinIds ?? []);
 	const chosen = [...new Set(interaction.values)].filter((userId) => waiting.has(userId));
 	if (chosen.length === 0) {
-		await interaction.reply({ content: words.approval.requestsEmpty, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [words.approval.requestsEmpty] });
 		return;
 	}
 
@@ -351,44 +356,45 @@ export function removableMembers(room: IGameRoom): string[] | null {
 export async function openRemovePicker(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const candidates = removableMembers(room);
 	if (candidates === null) {
-		await interaction.reply({ content: gameRoomsCopy.errors.controlRetired, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
 	if (candidates.length === 0) {
-		await interaction.reply({ content: words.kick.empty, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [words.kick.empty] });
 		return;
 	}
 	const options = await memberOptions(interaction.guild!, candidates);
-	await interaction.reply({ content: words.kick.prompt, components: [pickerRow("kick", room.roomId, words.kick.placeholder, options, 1)], ...PRIVATE });
+	const select = pickerSelect("kick", room.roomId, words.kick.placeholder, options, 1);
+	await showPicker(interaction, { action: "kick", roomId: room.roomId, title: gameRoomsCopy.notices.host, prompt: words.kick.prompt, label: words.kick.placeholder, select });
 }
 
 /**
- * The picker's submission. Re-gated and re-read, and the chosen member must still be
- * removable by the fresh row, so the host (never in the list) and anyone already gone
- * are refused whatever the select sent.
+ * The picker's submission, from its modal or its select message. Re-gated and re-read,
+ * and the chosen member must still be removable by the fresh row, so the host (never in
+ * the list) and anyone already gone are refused whatever the select sent.
  */
-export async function handleRemoveSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+export async function handleRemoveSelect(interaction: StringSelectMenuInteraction | ModalSubmitInteraction): Promise<void> {
 	const room = await loadRoomForHost(interaction);
 	if (!room) return;
-	const target = interaction.values[0];
+	const target = pickedValues(interaction)[0];
 	if (!target || !(removableMembers(room) ?? []).includes(target)) {
-		await interaction.reply({ content: words.kick.gone, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [words.kick.gone] });
 		return;
 	}
 
 	// A removal in play talks to Discord and may retry a busy table, so the picker is
 	// acknowledged first and edited with the outcome.
-	await interaction.deferUpdate();
+	await deferPick(interaction);
 	const updated = await gameRoomStore.removeMember(room.guildId, room.roomId, target);
 	if (!updated) {
-		await interaction.editReply({ content: words.kick.gone, components: [] });
+		await answerPick(interaction, words.kick.gone);
 		return;
 	}
 	const outcome =
 		updated.status === "draft"
 			? await removeFromDraft(interaction.guild!, updated, target)
 			: await removeFromMatch(interaction.client, updated, target, interaction.user.id);
-	await interaction.editReply({ content: outcome, components: [] });
+	await answerPick(interaction, outcome);
 }
 
 async function removeFromDraft(guild: Guild, room: IGameRoom, userId: string): Promise<string> {

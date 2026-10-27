@@ -12,6 +12,7 @@ import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { commitMonopolyMove, loadSeatedRoom, monopolyStateOf } from "./roomMonopolyHandlers.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── roomMonopolyBuild ────────────────────────────────────────────────
 // What:  the Build button: a private picker of every lot the seat on the clock can
@@ -39,12 +40,12 @@ const MAX_SELECT_OPTIONS = 25;
 export async function handleMbuild(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const state = monopolyStateOf(room);
 	if (!state) {
-		await interaction.reply({ content: gameRoomsCopy.monopoly.noBoard, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.noBoard] });
 		return;
 	}
 	const options = listBuildOptions(state, interaction.user.id);
 	if (options.length === 0) {
-		await interaction.reply({ content: gameRoomsCopy.monopoly.nothingToBuild, ...PRIVATE });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.nothingToBuild] });
 		return;
 	}
 	await interaction.reply({ content: gameRoomsCopy.monopoly.buildPickerPrompt, components: [buildPickerRow(room.roomId, options)], ...PRIVATE });

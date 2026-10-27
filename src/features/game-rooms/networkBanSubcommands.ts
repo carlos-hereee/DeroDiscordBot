@@ -1,6 +1,5 @@
 import {
 	escapeMarkdown,
-	MessageFlags,
 	type ChatInputCommandInteraction,
 	type Client,
 	type EmbedBuilder,
@@ -14,8 +13,9 @@ import type { NetworkBanKind } from "@db/models/NetworkBan.js";
 import { networkCopy } from "@features/game-rooms/networkCopy.js";
 import { scheduleNetworkBoardRefresh } from "@features/game-rooms/networkBoard.js";
 import { seatOutBannedMember, seatOutBannedServer } from "@features/game-rooms/satelliteSeats.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { isPlatformOwner } from "@utils/permissions.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /platform network ──────────────────────────────────────────────────────
 // What:  the platform owner's network bans (2026-10 item 244 Phase 5b): `ban` and
@@ -86,20 +86,20 @@ type TargetRead = { ok: true; target: BanTarget } | { ok: false; problem: string
 /** Runs /platform network ban or unban for the platform owner, refusing everyone else first. */
 export async function runNetworkBanSubcommand(interaction: ChatInputCommandInteraction): Promise<void> {
 	if (!isPlatformOwner(interaction.user.id)) {
-		await interaction.reply({ embeds: [errorEmbed(copy.notOwner)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, copy.notOwner);
 		return;
 	}
 
 	const sub = interaction.options.getSubcommand(true);
 	const targetKind = interaction.options.getString(TARGET_OPTION, true);
 	if ((sub !== "ban" && sub !== "unban") || !isTargetKind(targetKind)) {
-		await interaction.reply({ embeds: [errorEmbed(copy.unknownSubcommand(`${sub} ${targetKind}`))], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, copy.unknownSubcommand(`${sub} ${targetKind}`));
 		return;
 	}
 
 	const read = readTarget(interaction, targetKind);
 	if (!read.ok) {
-		await interaction.reply({ embeds: [errorEmbed(read.problem)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, read.problem);
 		return;
 	}
 
@@ -107,11 +107,11 @@ export async function runNetworkBanSubcommand(interaction: ChatInputCommandInter
 	try {
 		const embed = sub === "ban" ? await ban(interaction.client, target, interaction.options.getString(REASON_OPTION) ?? "") : await unban(target);
 		// No ping: the reply names a member only for the owner's eyes.
-		await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+		await showEmbedNotice(interaction, embed);
 	}
 	catch (error) {
 		console.error(`[platform network] ${sub} failed for ${target.targetId}`, error);
-		await interaction.reply({ embeds: [errorEmbed(copy.saveFailed)], flags: MessageFlags.Ephemeral }).catch(() => undefined);
+		await showErrorNotice(interaction, copy.saveFailed);
 	}
 }
 

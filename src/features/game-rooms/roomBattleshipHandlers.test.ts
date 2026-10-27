@@ -74,6 +74,16 @@ function aimedAt(match: StoredBattleship, shooter: string, x: number, y: number)
 const setupMatch = () => startMatch({ playerIds: [A, B] } as IGameRoom, { [A]: "A", [B]: "B" }, seededRng());
 const freshMatch = (): StoredBattleship => ({ ...setupMatch(), status: "playing", ready: [true, true] });
 
+// The modals a press opened, and the text of its notice: a refusal or a short answer now
+// opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
+const shownModals = (interaction: { showModal: unknown }) =>
+	(interaction.showModal as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { toJSON(): { custom_id: string; components: { content?: string }[] } }).toJSON());
+const noticeText = (interaction: { showModal: unknown }): string =>
+	shownModals(interaction)
+		.filter((modal) => modal.custom_id.startsWith("notice:"))
+		.flatMap((modal) => modal.components.map((component) => component.content ?? ""))
+		.join("\n");
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
@@ -93,8 +103,7 @@ describe("firing", () => {
 		const interaction = makeInteraction(A);
 		await handleFire(interaction, makeRoom(freshMatch()));
 
-		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
-		expect(reply.content).toMatch(/column and a row/i);
+		expect(noticeText(interaction)).toMatch(/column and a row/i);
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
@@ -260,8 +269,7 @@ describe("reroll", () => {
 		await handleReroll(interaction, room);
 
 		expect(storeMock.setSecretField).not.toHaveBeenCalled();
-		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
-		expect(reply.content).toBe(gameRoomsCopy.battleship.alreadyReady);
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.battleship.alreadyReady);
 	});
 
 	// Re-laying mid-match would move ships out from under hits the opponent has
@@ -276,8 +284,7 @@ describe("reroll", () => {
 		await handleReroll(interaction, room);
 
 		expect(storeMock.setSecretField).not.toHaveBeenCalled();
-		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
-		expect(reply.content).toMatch(/first shot/i);
+		expect(noticeText(interaction)).toMatch(/first shot/i);
 	});
 });
 
@@ -325,8 +332,7 @@ describe("ready (post-launch plan item 17)", () => {
 		await handleReady(interaction, makeRoom({ ...setupMatch(), ready: [true, false] }));
 
 		expect(storeMock.setSecretField).not.toHaveBeenCalled();
-		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
-		expect(reply.content).toBe(gameRoomsCopy.battleship.alreadyReady);
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.battleship.alreadyReady);
 	});
 
 	it("refuses a shot while the fleets are being laid", async () => {
@@ -334,8 +340,7 @@ describe("ready (post-launch plan item 17)", () => {
 		await handleFire(interaction, makeRoom(aimedAt(setupMatch(), A, 0, 0)));
 
 		expect(storeMock.update).not.toHaveBeenCalled();
-		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
-		expect(reply.content).toBe(gameRoomsCopy.battleship.setupFirst);
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.battleship.setupFirst);
 	});
 });
 
