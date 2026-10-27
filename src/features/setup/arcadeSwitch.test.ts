@@ -72,9 +72,19 @@ describe("turnArcadeOn", () => {
 		m.findByGuildId.mockResolvedValueOnce({ ...OFF, userRemovedChannels: [...OFF.userRemovedChannels, "leaderboardChannelId"] }).mockResolvedValueOnce(LIVE);
 
 		expect(await turnArcadeOn(client, guild)).toBe("on");
-		expect(m.update).toHaveBeenCalledWith("g1", { userRemovedChannels: ["leaderboardChannelId"] });
+		// The rebuilt arcade also starts with its switches on (2026-10 item 257, owner item 11).
+		expect(m.update).toHaveBeenCalledWith("g1", { userRemovedChannels: ["leaderboardChannelId"], chipEconomyEnabled: true, arcadeMonthlyPost: true, botOpponentsEnabled: true });
 		expect(m.ensureHomebase).toHaveBeenCalledWith(client, guild);
 		expect(m.refreshIntroEmbeds).toHaveBeenCalledWith(client, guild);
+	});
+
+	it("keeps a switch this server turned off: a stored false stays false", async () => {
+		m.findByGuildId.mockResolvedValueOnce({ ...OFF, chipEconomyEnabled: false }).mockResolvedValueOnce(LIVE);
+
+		await turnArcadeOn(client, guild);
+		const write = m.update.mock.calls[0]![1] as Record<string, unknown>;
+		expect(write).not.toHaveProperty("chipEconomyEnabled");
+		expect(write).toMatchObject({ arcadeMonthlyPost: true, botOpponentsEnabled: true });
 	});
 
 	it("reports pending when the sweep did not build the channels", async () => {

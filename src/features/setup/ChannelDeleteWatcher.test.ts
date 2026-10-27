@@ -469,7 +469,7 @@ describe("ChannelDeleteWatcher, game rooms (R14)", () => {
 	});
 
 	function makeRoom() {
-		return { roomId: "room-1", guildId: "guild-1", channelId: "ch-room", hostId: "host-1" };
+		return { roomId: "room-1", guildId: "guild-1", channelId: "ch-room", hostId: "host-1", status: "playing" };
 	}
 
 	// The room path bails long before any homebase machinery, so the client only has
@@ -492,6 +492,42 @@ describe("ChannelDeleteWatcher, game rooms (R14)", () => {
 		expect(finishRoomMock).toHaveBeenCalledOnce();
 		expect(finishRoomMock.mock.calls[0][2]).toEqual({ abandoned: true });
 		logSpy.mockRestore();
+	});
+
+	// roomLifecycle.archiveRoom deletes the channel before markArchived clears channelId,
+	// so a normal archive reaches this watcher with the finished row still on the channel
+	// (2026-10 item 257, Log 5). That is no abandonment and must not read as one.
+	it.each(["finished", "archived"])("leaves a %s room alone: no abandonment line, no finish", async (status) => {
+		const { captured, guild } = driveRoomDelete();
+		gameRoomMock.findByChannelId.mockResolvedValue({ ...makeRoom(), status });
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+		await captured.handler!(makeDeletedChannel("ch-room", guild, "hangman-qwerty"));
+
+		expect(finishRoomMock).not.toHaveBeenCalled();
+		expect(logSpy.mock.calls.flat().join(" ")).not.toContain("abandoned");
+		expect(guild.channels.create).not.toHaveBeenCalled();
+		logSpy.mockRestore();
+	});
+
+	// A self destruct deletes every managed channel at once; one summary line in
+	// selfDestruct.ts replaces the line per channel this watcher used to print.
+	it("prints no line per channel while a self destruct tears the homebase down", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ homebaseDestroyed: true }));
+		gameRoomMock.findByChannelId.mockResolvedValue(null);
+		const captured = makeClientCapturing({ selfId: "bot-1" });
+		registerChannelDeleteWatcher(captured.client);
+		const guild = makeGuild({});
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+		await captured.handler!(makeDeletedChannel("ch-admin", guild, "inner-sanctum"));
+
+		expect(logSpy).not.toHaveBeenCalled();
+		expect(warnSpy).not.toHaveBeenCalled();
+		expect(guild.channels.create).not.toHaveBeenCalled();
+		logSpy.mockRestore();
+		warnSpy.mockRestore();
 	});
 
 	// A room is a per-match channel, not a managed slot. Rebuilding one would

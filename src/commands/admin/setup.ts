@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from "discord.js";
+import { SlashCommandBuilder, ChatInputCommandInteraction, MessageFlags, PermissionFlagsBits } from "discord.js";
 import { GuildSetupManager } from "@features/setup/GuildSetupManager.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
@@ -48,7 +48,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 		const memberRole = interaction.options.getRole("member-role", true);
 		await interaction.reply({
 			embeds: [infoEmbed(responses.setupPending.title, responses.setupPending.description, copy.COLORS.ARRIVAL)],
-			ephemeral: true,
+			flags: MessageFlags.Ephemeral,
 		});
 		try {
 			await GuildSetupManager.autoSetup(
@@ -117,7 +117,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
 	await interaction.reply({
 		embeds: [infoEmbed(responses.setupPending.title, responses.setupPending.description, copy.COLORS.ARRIVAL)],
-		ephemeral: true,
+		flags: MessageFlags.Ephemeral,
 	});
 
 	try {

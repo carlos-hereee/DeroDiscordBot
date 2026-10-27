@@ -362,15 +362,18 @@ async function demolishHomebase(guild: Guild, actorId: string): Promise<void> {
 
 	console.warn(`[self-destruct] demolishing homebase in guild ${guild.id}, requested by ${actorId}; keeping ${adoptedIds.size} adopted channel(s)`);
 
-	await demolishChannels(guild, HOMEBASE_CHANNEL_FIELDS.map((field) => ids[field]), adoptedIds, "self-destruct");
+	let deleted = await demolishChannels(guild, HOMEBASE_CHANNEL_FIELDS.map((field) => ids[field]), adoptedIds, "self-destruct");
 
 	// Both managed categories, through one helper so the arcade cannot be
 	// demolished less thoroughly than the homebase.
 	for (const field of MANAGED_CATEGORY_FIELDS) {
-		await demolishCategory(guild, ids[field], field, adoptedIds, "self-destruct");
+		deleted += await demolishCategory(guild, ids[field], field, adoptedIds, "self-destruct");
 	}
 
-	console.warn(`[self-destruct] homebase demolished in guild ${guild.id}`);
+	// The ONE line for the whole teardown: ChannelDeleteWatcher stays silent on each of
+	// these deletes because the homebase flag is set, so this summary is where an
+	// operator reads what happened (2026-10 item 257, Log 5).
+	console.warn(`[self-destruct] homebase demolished in guild ${guild.id}: ${deleted} channel(s) deleted, none rebuilt until /setup runs`);
 }
 
 /**
@@ -383,13 +386,22 @@ export async function demolishChannels(
 	channelIds: ReadonlyArray<string | null | undefined>,
 	keepIds: ReadonlySet<string>,
 	source: DemolitionSource
-): Promise<void> {
+): Promise<number> {
+	let deleted = 0;
 	for (const id of channelIds) {
 		if (!id || keepIds.has(id)) continue;
 		const channel = await guild.channels.fetch(id).catch(() => null);
 		if (!channel) continue;
-		await channel.delete(DEMOLITION_REASONS[source]).catch((err) => console.warn(`[${source}] failed to delete channel ${id} in guild ${guild.id}`, err));
+		const removed = await channel.delete(DEMOLITION_REASONS[source]).then(
+			() => true,
+			(err) => {
+				console.warn(`[${source}] failed to delete channel ${id} in guild ${guild.id}`, err);
+				return false;
+			}
+		);
+		if (removed) deleted += 1;
 	}
+	return deleted;
 }
 
 /**
@@ -404,11 +416,12 @@ export async function demolishCategory(
 	label: string,
 	keepIds: ReadonlySet<string>,
 	source: DemolitionSource
-): Promise<void> {
-	if (!categoryId) return;
+): Promise<number> {
+	if (!categoryId) return 0;
 	const category = await guild.channels.fetch(categoryId).catch(() => null);
-	if (!category) return;
+	if (!category) return 0;
 	const reason = DEMOLITION_REASONS[source];
+	let deleted = 0;
 
 	// Defensive: delete any channel still parented to the category before removing
 	// it (a tracked child whose delete above failed, one an admin filed under it,
@@ -420,11 +433,19 @@ export async function demolishCategory(
 	if (category instanceof CategoryChannel) {
 		for (const child of category.children.cache.values()) {
 			if (keepIds.has(child.id)) continue;
-			await child.delete(reason).catch((err) => console.warn(`[${source}] failed to delete orphan child ${child.id} in guild ${guild.id}`, err));
+			const removed = await child.delete(reason).then(
+				() => true,
+				(err) => {
+					console.warn(`[${source}] failed to delete orphan child ${child.id} in guild ${guild.id}`, err);
+					return false;
+				}
+			);
+			if (removed) deleted += 1;
 		}
 	}
 
 	await category.delete(reason).catch((err) => console.warn(`[${source}] failed to delete ${label} in guild ${guild.id}`, err));
+	return deleted;
 }
 
 /**

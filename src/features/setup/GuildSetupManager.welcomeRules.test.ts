@@ -5,6 +5,8 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: { findByGuildId: vi.fn(), create: vi.fn(), update: vi.fn(), deleteByGuildId: vi.fn() },
 }));
 vi.mock("./adminLog.js", () => ({ adminLog: { emit: vi.fn(), emitFor: vi.fn(), write: vi.fn() } }));
+// The one time gating announcement writes BotLog; a gated boot below reaches it, and it is not under test here.
+vi.mock("./CommunityGatingAnnouncement.js", () => ({ CommunityGatingAnnouncement: { post: vi.fn(async () => undefined) } }));
 
 import { GuildSetupManager } from "./GuildSetupManager.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -23,7 +25,10 @@ import { RULES_EDIT_CUSTOM_ID } from "./rulesContent.js";
 //        either "no duplicate" or "no write over the owner's text". Post-launch plan
 //        item 2 adds #spawn-point, Discord's system channel first (taken IN PLACE
 //        when it is the server's main chat), and the boot reconcile that moves a
-//        guild off Dero's own 👋welcome.
+//        guild off Dero's own 👋welcome. 2026-10 item 257 Phase 1a: an adopted
+//        channel stays IN PLACE until an admin chooses Move (adoptionChoice), a
+//        stored Move runs its overwrite before its parent, and a channel Discord
+//        Onboarding uses is never gated or made unreadable.
 
 const store = guildConfigStore as unknown as Record<"findByGuildId" | "create" | "update", ReturnType<typeof vi.fn>>;
 const channels = rokCommanderCopy.setup.channels;
@@ -115,7 +120,12 @@ describe("a fresh install", () => {
 		expect(payload.introMessageIds.rulesChannelId).toBe(`post-${rules.id}`);
 	});
 
-	it("adopts the server's own channels instead of building duplicates, and never posts over member content", async () => {
+	it("writes the arcade's switches on when it builds the arcade, instead of trusting schema defaults", async () => {
+		const { payload } = await install();
+		expect(payload).toMatchObject({ chipEconomyEnabled: true, arcadeMonthlyPost: true, botOpponentsEnabled: true });
+	});
+
+	it("adopts the server's own channels in place instead of building duplicates, and never posts over member content", async () => {
 		const ownWelcome = textChannel("own-welcome", "welcome", { parentId: "cat-lobby", messages: [{ author: { id: "member-9" } }] });
 		const ownRules = textChannel("own-rules", "server-rules", { parentId: "cat-lobby" });
 		const { create, payload } = await install([ownWelcome, ownRules]);
@@ -123,8 +133,11 @@ describe("a fresh install", () => {
 		const builtNames = create.mock.calls.map((call) => (call[0] as { name: string }).name);
 		expect(builtNames).not.toContain(channels.welcome);
 		expect(builtNames).not.toContain(channels.rules);
-		expect(ownWelcome.setParent).toHaveBeenCalledWith(NOTICE_BOARD, expect.objectContaining({ lockPermissions: false }));
-		expect(ownRules.setParent).toHaveBeenCalledWith(NOTICE_BOARD, expect.objectContaining({ lockPermissions: false }));
+		// Nobody chose Move yet, so neither channel moves or has its permissions touched.
+		for (const own of [ownWelcome, ownRules]) {
+			expect(own.setParent).not.toHaveBeenCalled();
+			expect(own.permissionOverwrites.set).not.toHaveBeenCalled();
+		}
 
 		expect(payload.welcomeChannelId).toBe("own-welcome");
 		expect(payload.rulesChannelId).toBe("own-rules");
@@ -163,17 +176,22 @@ describe("a fresh install on a server with its own arrivals channel", () => {
 		return { ...rig, payload: store.create.mock.calls[0]![0] as Record<string, unknown> };
 	}
 
-	it("adopts #spawn-point as the welcome log, moved into the notice board, and logs the decision", async () => {
+	it("adopts #spawn-point as the welcome log in place, and logs the decision once the row holds the admin log channel", async () => {
 		const spawn = textChannel("spawn", "spawn-point", { parentId: "cat-lobby" });
 		const { create, payload } = await install([spawn]);
 
 		expect(create.mock.calls.map((call) => (call[0] as { name: string }).name)).not.toContain(channels.welcome);
-		expect(spawn.setParent).toHaveBeenCalledWith(NOTICE_BOARD, expect.objectContaining({ lockPermissions: false }));
+		expect(spawn.setParent).not.toHaveBeenCalled();
 		expect(payload.welcomeChannelId).toBe("spawn");
 		expect(payload.adoptedChannelIds).toEqual(["spawn"]);
 		expect(adminLog.emit).toHaveBeenCalledWith(
 			expect.objectContaining({ kind: "config.change", actor: { source: "dero" }, payload: { subject: setupCopy.adminLog.subjects.welcomeLog, detail: setupCopy.adminLog.adopted("spawn") } })
 		);
+		// adminLog reads the admin log channel from the stored row, so on a first setup
+		// the line can only post AFTER the row holding that id is written (2026-10 item
+		// 257, decision 3): emitted before the create, it found no channel and posted nothing.
+		expect(payload.adminLogChannelId).toBeTruthy();
+		expect(vi.mocked(adminLog.emit).mock.invocationCallOrder[0]!).toBeGreaterThan(store.create.mock.invocationCallOrder[0]!);
 	});
 
 	it("takes the system channel before a name match", async () => {
@@ -203,7 +221,10 @@ describe("the boot reconcile on a guild whose welcome log is Dero's own 👋welc
 		GuildSetupManager.CHANNEL_FIELDS.filter((field) => field !== "welcomeChannelId").map((field) => [field, `ch-${field}`])
 	);
 
-	async function boot(own: TextChannel[], options: { row?: Record<string, unknown>; systemChannelId?: string | null; features?: string[] } = {}) {
+	async function boot(
+		own: TextChannel[],
+		options: { row?: Record<string, unknown>; systemChannelId?: string | null; features?: string[]; rulesChannelId?: string | null; onboardingDefaults?: string[] } = {}
+	) {
 		const derosWelcome = textChannel("ch-welcome", channels.welcome, { parentId: "cat-1" });
 		const row = {
 			guildId: "guild-1",
@@ -230,6 +251,8 @@ describe("the boot reconcile on a guild whose welcome log is Dero's own 👋welc
 			id: "guild-1",
 			ownerId: "owner-1",
 			systemChannelId: options.systemChannelId ?? null,
+			rulesChannelId: options.rulesChannelId ?? null,
+			fetchOnboarding: vi.fn(async () => ({ enabled: true, prompts: new Collection(), defaultChannels: new Collection((options.onboardingDefaults ?? []).map((id) => [id, undefined])) })),
 			features: options.features ?? [],
 			roles: { everyone: { id: "everyone" } },
 			client: { user: { id: BOT } },
@@ -246,11 +269,13 @@ describe("the boot reconcile on a guild whose welcome log is Dero's own 👋welc
 
 	const welcomeWrites = () => store.update.mock.calls.filter((call) => "welcomeChannelId" in (call[1] as object)).map((call) => call[1] as Record<string, unknown>);
 
-	it("moves the welcome log to #spawn-point and demotes 👋welcome to a plain channel, deleting and editing nothing in it", async () => {
+	it("moves the welcome log to #spawn-point in place and demotes 👋welcome to a plain channel, deleting and editing nothing in it", async () => {
 		const spawn = textChannel("spawn", "spawn-point", { parentId: null });
 		const { derosWelcome } = await boot([spawn]);
 
-		expect(spawn.setParent).toHaveBeenCalledWith("cat-1", expect.objectContaining({ lockPermissions: false }));
+		// The boot sweep never moves a channel no admin chose to move.
+		expect(spawn.setParent).not.toHaveBeenCalled();
+		expect(spawn.permissionOverwrites.set).not.toHaveBeenCalled();
 		expect(welcomeWrites()).toEqual([
 			{ welcomeChannelId: "spawn", adoptedChannelIds: ["spawn"], introMessageIds: { welcomeChannelId: null, rulesChannelId: "intro-2" } },
 		]);
@@ -274,6 +299,23 @@ describe("the boot reconcile on a guild whose welcome log is Dero's own 👋welc
 		expect(welcomeWrites()).toEqual([]);
 	});
 
+	// Log 1 of the 2026-10-27 live test: Discord refuses any overwrite that hides a
+	// channel Onboarding uses (350003), and the reconcile tried it on every boot.
+	it("never gates a rules channel Discord Onboarding uses: no overwrite call, one skip line", async () => {
+		const ownRules = textChannel("own-rules", "rules", { parentId: "cat-1" });
+		await boot([ownRules], {
+			row: { rulesChannelId: "own-rules", adoptedChannelIds: ["own-rules"] },
+			features: ["COMMUNITY"],
+			rulesChannelId: "own-rules",
+			onboardingDefaults: ["own-rules"],
+		});
+
+		expect(ownRules.permissionOverwrites.set).not.toHaveBeenCalled();
+		const skips = vi.mocked(console.log).mock.calls.filter((call) => String(call[0]).includes("[community-gating]") && String(call[0]).includes("skipped rulesChannelId"));
+		expect(skips).toHaveLength(1);
+		expect(skips[0]).toHaveLength(1);
+	});
+
 	it("does nothing when the server has no channel of its own, when the slot is already adopted, or when auto heal is off", async () => {
 		await boot([]);
 		await boot([textChannel("own-welcome", "welcome"), textChannel("spawn", "spawn-point")], { row: { welcomeChannelId: "own-welcome", adoptedChannelIds: ["own-welcome"] } });
@@ -285,6 +327,87 @@ describe("the boot reconcile on a guild whose welcome log is Dero's own 👋welc
 		const renamed = textChannel("ch-welcome-2", "welcome");
 		await boot([renamed], { row: { channelNames: { welcomeChannelId: "welcome" } } });
 		expect(welcomeWrites()).toEqual([]);
+	});
+});
+
+// ── an admin's stored choice, on a rebuild (2026-10 item 257 Phase 1a) ──────
+
+describe("a rebuild of a Community server whose rules channel Onboarding uses", () => {
+	const { ViewChannel } = { ViewChannel: 1n << 10n };
+
+	async function rebuild(choice: "move" | "stay" | null, options: { refuse?: boolean } = {}) {
+		const ownRules = textChannel("own-rules", "guidelines", { parentId: "cat-lobby" });
+		if (options.refuse) {
+			ownRules.permissionOverwrites.set = vi.fn(async () => {
+				throw Object.assign(new Error("Onboarding channels must be readable by everyone"), { code: 350003 });
+			});
+		}
+		const existing = {
+			guildId: "guild-1",
+			memberRoleId: "role-member",
+			adminRoleId: null,
+			adoptedChannelIds: ["own-rules"],
+			adoptedChannelChoices: choice ? new Map([["own-rules", choice]]) : new Map(),
+		};
+		store.findByGuildId.mockResolvedValue(existing);
+		const create = vi.fn(async (opts: { name: string; type: number }) => {
+			if (opts.type === ChannelType.GuildCategory) return { id: `cat-${opts.name}` };
+			if (opts.type === ChannelType.GuildVoice) {
+				const room = Object.create(VoiceChannel.prototype) as VoiceChannel;
+				return Object.assign(room, { id: `new-${opts.name}`, send: vi.fn(async () => ({ id: `card-${opts.name}` })) });
+			}
+			return textChannel(`new-${opts.name}`, opts.name);
+		});
+		const guild = {
+			id: "guild-1",
+			ownerId: "owner-1",
+			features: ["COMMUNITY"],
+			// The server's Community rules channel, under a name no pattern matches: it is
+			// still the server's rules, so Dero must not build a second one.
+			rulesChannelId: "own-rules",
+			systemChannelId: null,
+			fetchOnboarding: vi.fn(async () => ({ enabled: true, prompts: new Collection(), defaultChannels: new Collection([["own-rules", undefined]]) })),
+			roles: { everyone: { id: "everyone" } },
+			client: { user: { id: BOT } },
+			channels: { create, fetch: vi.fn(async () => null), cache: new Map([["own-rules", ownRules]]) },
+		} as unknown as Guild;
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true });
+		const payload = store.update.mock.calls.map((call) => call[1] as Record<string, unknown>).find((write) => "rulesChannelId" in write)!;
+		return { ownRules, create, payload };
+	}
+
+	const builtNames = (create: ReturnType<typeof vi.fn>) => create.mock.calls.map((call) => (call[0] as { name: string }).name);
+
+	it("with Move picked, moves it readable by everyone (overwrite first, then parent) and builds no second rules channel", async () => {
+		const { ownRules, create, payload } = await rebuild("move");
+
+		const [written] = ownRules.permissionOverwrites.set.mock.calls[0] as unknown as [Array<{ id: string; allow?: bigint[]; deny?: bigint[] }>];
+		const everyone = written.find((entry) => entry.id === "everyone")!;
+		expect(everyone.allow).toContain(ViewChannel);
+		expect(everyone.deny ?? []).not.toContain(ViewChannel);
+		expect(ownRules.setParent).toHaveBeenCalledWith(NOTICE_BOARD, expect.objectContaining({ lockPermissions: false }));
+		expect(ownRules.permissionOverwrites.set.mock.invocationCallOrder[0]!).toBeLessThan(ownRules.setParent.mock.invocationCallOrder[0]!);
+		expect(builtNames(create)).not.toContain(channels.rules);
+		expect(payload.rulesChannelId).toBe("own-rules");
+	});
+
+	it("with Leave picked, adopts it in place: no move, no overwrite, no second rules channel", async () => {
+		const { ownRules, create, payload } = await rebuild("stay");
+
+		expect(ownRules.setParent).not.toHaveBeenCalled();
+		expect(ownRules.permissionOverwrites.set).not.toHaveBeenCalled();
+		expect(builtNames(create)).not.toContain(channels.rules);
+		expect(payload.rulesChannelId).toBe("own-rules");
+	});
+
+	it("when Discord refuses the overwrite, leaves its parent unchanged and still builds no second rules channel", async () => {
+		const { ownRules, create, payload } = await rebuild("move", { refuse: true });
+
+		expect(ownRules.setParent).not.toHaveBeenCalled();
+		expect(ownRules.parentId).toBe("cat-lobby");
+		expect(builtNames(create)).not.toContain(channels.rules);
+		expect(payload.rulesChannelId).toBe("own-rules");
+		expect(payload.adoptedChannelIds).toEqual(["own-rules"]);
 	});
 });
 
@@ -318,12 +441,12 @@ describe("the boot sweep on a guild set up before welcome and rules existed", ()
 		return { result, create, guild };
 	}
 
-	it("sweeps the server's #welcome into the notice board, records it as adopted, and writes nothing over member content", async () => {
+	it("adopts the server's #welcome in place, records it as adopted, and writes nothing over member content", async () => {
 		const ownWelcome = textChannel("own-welcome", "welcome", { parentId: null, messages: [{ author: { id: "member-9" } }] });
 		const { result, create } = await boot([ownWelcome]);
 
 		expect(result.action).toBe("repaired");
-		expect(ownWelcome.setParent).toHaveBeenCalledWith("cat-1", expect.objectContaining({ lockPermissions: false }));
+		expect(ownWelcome.setParent).not.toHaveBeenCalled();
 		expect(ownWelcome.send).not.toHaveBeenCalled();
 		expect(store.update).toHaveBeenCalledWith("guild-1", expect.objectContaining({ welcomeChannelId: "own-welcome", adoptedChannelIds: ["own-welcome"] }));
 		// No #rules of its own, so 📘rules is built, and only 📘rules.

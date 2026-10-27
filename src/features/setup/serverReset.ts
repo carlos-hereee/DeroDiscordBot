@@ -17,6 +17,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { invalidateLevelingConfig } from "@features/leveling/levelingConfig.js";
+import { ARCADE_SWITCH_DEFAULTS } from "./arcadeDefaults.js";
 
 // ── serverReset ───────────────────────────────────────────────────────────
 // What:  the two destructive data halves of self destruct's Delete my data (2026-10
@@ -56,11 +57,11 @@ export const CONFIG_DEFAULTS = {
 	weekStart: "sunday",
 	defaultEventImageUrl: null,
 	hiddenChannels: [],
-	arcadeMonthlyPost: true,
 	challengeReach: "server",
 	blockedNetworkGuildIds: [],
-	chipEconomyEnabled: true,
-	botOpponentsEnabled: true,
+	// The arcade's switches come from the one table the arcade build writes too, so a
+	// reset arcade and a freshly built one start the same.
+	...ARCADE_SWITCH_DEFAULTS,
 } as const;
 
 /**

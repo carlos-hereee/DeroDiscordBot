@@ -9,6 +9,7 @@ import {
 	TextInputBuilder,
 	TextInputStyle,
 	EmbedBuilder,
+	MessageFlags,
 } from "discord.js";
 import { GuildEventManager } from "@features/events/GuildEventManager.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -157,7 +158,7 @@ export async function runKvkSeason(interaction: RepliableInteraction, options: C
 	const confirmMessage = await interaction.reply({
 		embeds: [confirmEmbed],
 		components: [row],
-		ephemeral: true,
+		flags: MessageFlags.Ephemeral,
 	});
 
 	// ── await button press ───────────────────────────────────
@@ -357,7 +358,7 @@ export async function runKvkSeason(interaction: RepliableInteraction, options: C
 			try {
 				await interaction.followUp({
 					content: resolutionMessage,
-					ephemeral: true,
+					flags: MessageFlags.Ephemeral,
 				});
 			} catch {
 				// Non critical, if the follow up fails the primary

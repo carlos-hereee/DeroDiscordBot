@@ -46,7 +46,10 @@ import {
 	type ManagedOverwriteKind,
 } from "./communityOverwrites.js";
 import { CommunityGatingAnnouncement } from "./CommunityGatingAnnouncement.js";
-import { fetchAcceptsDeroContent, findWelcomeChannel, moveIntoNoticeBoard, readAdoptedChannelIds, scanAndClaim, type IWelcomeCandidate } from "./adoption.js";
+import { fetchAcceptsDeroContent, findRulesChannel, findWelcomeChannel, readAdoptedChannelIds, readAdoptionChoice, type IAdoptionCandidate } from "./adoption.js";
+import { moveChosenChannel, offerAdoptionChoice } from "./adoptionChoice.js";
+import { arcadeSwitchesToWrite } from "./arcadeDefaults.js";
+import { mustStayReadable, readOnboardingSafeChannels } from "@features/community/onboardingChannels.js";
 import { adminLog } from "./adminLog.js";
 import { setupCopy } from "./setupCopy.js";
 import { buildRulesEditRow, carriesRulesEditButton, type IRulesConfig } from "./rulesContent.js";
@@ -237,7 +240,7 @@ export class GuildSetupManager {
 		// a channel that already fills another slot, and the rules post keeps the
 		// owner's saved rules through a forced rebuild.
 		const storedRow = existing as unknown as (Record<string, unknown> & IRulesConfig) | null;
-		const { ids, objects, adoptedChannelIds } = await GuildSetupManager.createChannels(guild, category, gamesCategory, config, storedRoles, storedRow);
+		const { ids, objects, adoptedChannelIds, adoptions } = await GuildSetupManager.createChannels(guild, category, gamesCategory, config, storedRoles, storedRow);
 		const { scheduleMessageId, introMessageIds } = await GuildSetupManager.populateChannels(guild, objects, { adoptedChannelIds, rulesConfig: storedRow });
 
 		// What: persist the freshly built channel ids.
@@ -302,6 +305,9 @@ export class GuildSetupManager {
 			// ── the two voice rooms (2026-10 item 235) ──
 			meetingVoiceChannelId: ids.meetingVoiceChannelId,
 			arcadeVoiceChannelId: ids.arcadeVoiceChannelId,
+			// The arcade is built, so its switches are written on (2026-10 item 257,
+			// owner item 11), except one this server already turned off.
+			...arcadeSwitchesToWrite(existing),
 			// v1.5.1 item 9: clear any previously-tracked permission failure
 			// so a guild that recovered from missing-permissions state stops
 			// being on the auto-leave countdown. Safe to set unconditionally
@@ -325,6 +331,7 @@ export class GuildSetupManager {
 			// (adminRoleId, memberRoleId, setupComplete) is intentionally
 			// not overwritten so a repair preserves it.
 			await guildConfigStore.update(config.guildId, persistPayload);
+			GuildSetupManager.afterAdoptionPersisted(guild, adoptions);
 			return;
 		}
 
@@ -338,6 +345,7 @@ export class GuildSetupManager {
 				...persistPayload,
 				setupComplete: false,
 			});
+			GuildSetupManager.afterAdoptionPersisted(guild, adoptions);
 		} catch (error) {
 			// MongoDB duplicate key (code 11000) means a row for this guildId
 			// already exists, almost certainly the shared DB scenario where
@@ -630,6 +638,9 @@ export class GuildSetupManager {
 			const ids = stored as unknown as Record<string, string | null | undefined>;
 			const gated = isMemberRoleGated(guild, stored.memberRoleId);
 			const adoptedIds = new Set(readAdoptedChannelIds(stored));
+			// Read only when the reconcile could hide something: an ungated shape keeps
+			// @everyone's ViewChannel, which Onboarding never refuses.
+			const safe = gated ? await readOnboardingSafeChannels(guild) : null;
 
 			let moved = 0;
 			let failed = 0;
@@ -644,6 +655,13 @@ export class GuildSetupManager {
 				// chat, post-launch plan item 2) never sat under the notice board, and its
 				// permissions are the owner's: gating it would lock members out of it.
 				if (adoptedIds.has(channel.id) && channel.parentId !== stored.categoryId) continue;
+				// A channel Discord Onboarding uses (or the guild's rules channel) must stay
+				// readable by everyone, and Discord refuses the gate with 350003 on every
+				// boot otherwise (2026-10 item 257, Log 1). One line, never a stack trace.
+				if (safe && mustStayReadable(safe, channel.id, adoptedIds.has(channel.id))) {
+					console.log(`[community-gating] guild ${guild.id} skipped ${spec.configField}: Discord Onboarding needs it readable by everyone`);
+					continue;
+				}
 				try {
 					if (await reconcileChannelOverwrite(guild, channel, kind, stored)) moved += 1;
 					if (kind === "public") publicChannelsOnBranch += 1;
@@ -1296,12 +1314,15 @@ export class GuildSetupManager {
 	};
 
 	/**
-	 * Adopt the server's own channel for one adoptable spec: find it, then move it
-	 * into the notice board onto the public shape, or, for a welcome channel taken in
-	 * place (findWelcomeChannel), leave it exactly where and as it is. Null when the
-	 * spec is not adoptable, nothing matches, or the move failed, and the caller then
-	 * builds Dero's own. `skipIds` are passed over too (the boot reconcile passes the
-	 * slot's current channel, which is Dero's own).
+	 * Adopt the server's own channel for one adoptable spec: find it, then use it IN
+	 * PLACE, unless an admin already chose to move that channel into the notice board
+	 * (adoptionChoice), in which case it moves now. Null only when the spec is not
+	 * adoptable or nothing matches, and the caller then builds Dero's own: a refused
+	 * move still adopts the channel where it is, so Dero never builds a second rules or
+	 * welcome channel while the server has one (2026-10 item 257, item 2). `skipIds`
+	 * are passed over too (the boot reconcile passes the slot's current channel, which
+	 * is Dero's own). The admin log line is written here unless `deferAdminLog` is set,
+	 * which a first build sets because its admin log channel is not stored yet.
 	 */
 	private static async adoptExistingChannel(
 		guild: Guild,
@@ -1309,7 +1330,8 @@ export class GuildSetupManager {
 		spec: (typeof GuildSetupManager.CHANNEL_SPECS)[number],
 		stored: Record<string, unknown> | null,
 		roles: { memberRoleId: string | null; adminRoleId: string | null },
-		skipIds: readonly string[] = []
+		skipIds: readonly string[] = [],
+		options: { deferAdminLog?: boolean } = {}
 	): Promise<TextChannel | null> {
 		const patterns = GuildSetupManager.ADOPTION_PATTERNS[spec.configField];
 		if (!patterns) return null;
@@ -1318,29 +1340,26 @@ export class GuildSetupManager {
 			ids: new Set([...GuildSetupManager.idsStoredOutside(stored, spec.configField), ...skipIds]),
 			names: new Set([spec.displayName, GuildSetupManager.effectiveChannelName(stored, spec)]),
 		};
-		const candidate: IWelcomeCandidate | null =
+		const candidate: IAdoptionCandidate | null =
 			spec.configField === "welcomeChannelId"
 				? findWelcomeChannel(guild, category, patterns, exclusions)
-				: GuildSetupManager.asMovedCandidate(scanAndClaim(guild, category, patterns, exclusions));
+				: findRulesChannel(guild, category, patterns, exclusions);
 		if (!candidate) return null;
 		const match = candidate.channel;
-		if (candidate.inPlace) {
-			console.log(`[adoption] guild ${guild.id} adopted its system channel ${match.id} as ${spec.configField} in place`);
-			GuildSetupManager.logAdoption(guild, spec.configField, match.id);
-			return match;
-		}
-		try {
-			const moved = await moveIntoNoticeBoard(match, category, communityOverwritesFor("public", guild, { ownerId: guild.ownerId }, roles));
-			console.log(`[adoption] guild ${guild.id} adopted channel ${match.id} as ${spec.configField}${moved ? ", moved into the notice board" : ""}`);
-			GuildSetupManager.logAdoption(guild, spec.configField, match.id);
-			return match;
-		} catch (error) {
-			// A channel Dero cannot move (a 50013 on a channel the owner locked down) is
-			// left where it is, and Dero builds its own: a working channel beside the
-			// owner's beats a setup that throws on every boot.
-			console.warn(`[adoption] guild ${guild.id} could not adopt channel ${match.id}; building ${spec.configField} instead`, error);
-			return null;
-		}
+		const movedByChoice = !candidate.inPlace && readAdoptionChoice(stored, match.id) === "move";
+		const outcome = movedByChoice ? await moveChosenChannel(guild, match, category, roles) : null;
+		console.log(`[adoption] guild ${guild.id} adopted channel ${match.id} as ${spec.configField}${outcome === "moved" ? ", moved into the notice board as an admin chose" : " in place"}`);
+		if (!options.deferAdminLog) GuildSetupManager.logAdoption(guild, spec.configField, match.id);
+		return match;
+	}
+
+	// After a build's row is stored: the adoption admin log lines, which need the admin
+	// log channel id the row now holds, and the card asking where each adopted channel
+	// goes. Fire and forget, like every line after a primary write.
+	private static afterAdoptionPersisted(guild: Guild, adoptions: ReadonlyArray<{ field: string; channelId: string }>): void {
+		if (adoptions.length === 0) return;
+		for (const adoption of adoptions) GuildSetupManager.logAdoption(guild, adoption.field, adoption.channelId);
+		void offerAdoptionChoice(guild);
 	}
 
 	/**
@@ -1365,10 +1384,6 @@ export class GuildSetupManager {
 				message.author.id === selfId &&
 				(carriesRulesEditButton(message) || (introTitle !== null && message.embeds[0]?.title === introTitle))
 		);
-	}
-
-	private static asMovedCandidate(channel: TextChannel | null): IWelcomeCandidate | null {
-		return channel ? { channel, inPlace: false } : null;
 	}
 
 	// The name a slot's channel carries: the /server channels rename override when one is set,
@@ -1400,7 +1415,7 @@ export class GuildSetupManager {
 	// When:  every boot. A guild whose slot already holds an adopted channel, or that
 	//        opted out (auto heal off, or the slot removed by hand), costs one read.
 	// How:   ① read the row; ② find the server's channel, passing over Dero's own;
-	//        ③ adopt it (moved, or in place); ④ persist the slot, the adopted list and
+	//        ③ adopt it (in place, or moved when an admin chose so); ④ persist the slot, the adopted list and
 	//        a null intro anchor in one write, so refreshIntroEmbeds, which runs after
 	//        this sweep, posts Dero's intro there only if the channel is empty.
 	//        Never throws: a failure is logged and the next boot retries.
@@ -1427,6 +1442,7 @@ export class GuildSetupManager {
 				introMessageIds: { ...priorIntroIds, welcomeChannelId: null },
 			});
 			console.log(`[adoption] guild ${guild.id} moved its welcome log from Dero's channel ${currentId} to ${adopted.id}; ${currentId} is now a plain channel`);
+			void offerAdoptionChoice(guild);
 			return true;
 		} catch (error) {
 			console.warn(`[adoption] guild ${guild.id} welcome reconcile failed; the next boot retries`, error);
@@ -1603,6 +1619,7 @@ export class GuildSetupManager {
 		}
 		await guildConfigStore.update(guild.id, update);
 		console.warn(LOG_MESSAGES.setup.channelRepaired(spec.displayName, guild.id));
+		if (adopted) void offerAdoptionChoice(guild);
 
 		// merge so caller sees the fresh ids without a second round trip.
 		return { newChannel, stored: { ...stored, ...update } };
@@ -2325,7 +2342,7 @@ export class GuildSetupManager {
 		// The row a forced rebuild replaces (null on a fresh install), read only by the
 		// welcome and rules adoption scan.
 		storedRow: Record<string, unknown> | null = null
-	): Promise<{ ids: ICreatedChannels; objects: IChannelObjects; adoptedChannelIds: string[] }> {
+	): Promise<{ ids: ICreatedChannels; objects: IChannelObjects; adoptedChannelIds: string[]; adoptions: Array<{ field: string; channelId: string }> }> {
 		const owner = { ownerId: config.ownerId };
 		const voiceRoomOverwrites = communityOverwritesFor("voice", guild, owner, storedRoles);
 
@@ -2354,9 +2371,11 @@ export class GuildSetupManager {
 		// (2026-10 item 247 Phase 2). The scan runs BEFORE the create, which is the
 		// whole guarantee against a duplicate: a match short circuits the build. The
 		// two pattern lists share no name, so their scans cannot race for one channel.
+		// The admin log line waits for the row (runAutoSetup), because adminLog reads
+		// the log channel from it and this build has not stored it yet.
 		const adoptOrCreate = async (field: "welcomeChannelId" | "rulesChannelId"): Promise<{ channel: TextChannel; adopted: boolean }> => {
 			const spec = GuildSetupManager.CHANNEL_SPECS.find((entry) => entry.configField === field)!;
-			const adopted = await GuildSetupManager.adoptExistingChannel(guild, category, spec, storedRow, textRoles);
+			const adopted = await GuildSetupManager.adoptExistingChannel(guild, category, spec, storedRow, textRoles, [], { deferAdminLog: true });
 			if (adopted) return { channel: adopted, adopted: true };
 			const channel = await guild.channels.create({ name: spec.displayName, type: ChannelType.GuildText, parent: category.id, permissionOverwrites: publicOverwrites });
 			return { channel, adopted: false };
@@ -2449,7 +2468,8 @@ export class GuildSetupManager {
 				permissionOverwrites: adminLogOverwrites,
 			}),
 			// 👋welcome and 📘rules: publicOverwrites, members read and the bot writes,
-			// whether built here or adopted and moved onto the same shape.
+			// when built here; an adopted one keeps its own place and permissions until
+			// an admin chooses to move it (adoptionChoice).
 			adoptOrCreate("welcomeChannelId"),
 			adoptOrCreate("rulesChannelId"),
 			// ── ninth and tenth, under 🎮 ARCADE GAMES ────────────
@@ -2562,6 +2582,12 @@ export class GuildSetupManager {
 				arcadeVoiceChannel,
 			},
 			adoptedChannelIds: [welcome, rules].filter((entry) => entry.adopted).map((entry) => entry.channel.id),
+			adoptions: [
+				{ field: "welcomeChannelId", entry: welcome },
+				{ field: "rulesChannelId", entry: rules },
+			]
+				.filter(({ entry }) => entry.adopted)
+				.map(({ field, entry }) => ({ field, channelId: entry.channel.id })),
 		};
 	}
 

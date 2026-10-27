@@ -2,6 +2,7 @@ import type { Client, Guild } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { GuildSetupManager } from "./GuildSetupManager.js";
 import { readAdoptedChannelIds } from "./adoption.js";
+import { arcadeSwitchesToWrite } from "./arcadeDefaults.js";
 import { demolishCategory, demolishChannels } from "./selfDestruct.js";
 
 // ── arcadeSwitch ──────────────────────────────────────────────────────────
@@ -88,7 +89,9 @@ export async function turnArcadeOn(client: Client, guild: Guild): Promise<Arcade
 	const removed = row.userRemovedChannels ?? [];
 	if (row.gamesCategoryId && !fields.some((field) => removed.includes(field))) return "already-on";
 
-	await guildConfigStore.update(guild.id, { userRemovedChannels: removed.filter((field) => !fields.includes(field)) });
+	// The rebuilt arcade starts with its switches on, except one this server turned off
+	// (2026-10 item 257, owner item 11).
+	await guildConfigStore.update(guild.id, { userRemovedChannels: removed.filter((field) => !fields.includes(field)), ...arcadeSwitchesToWrite(row) });
 	await GuildSetupManager.ensureHomebase(client, guild);
 	// The intros come back with the channels; this also posts 🕹️games' Challenge Board.
 	await GuildSetupManager.refreshIntroEmbeds(client, guild);

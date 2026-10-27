@@ -235,6 +235,43 @@ export const setupCopy = {
 		auditSomeFailed: (failed: readonly string[]): string => `not refreshed: ${failed.join(", ")}`,
 	},
 
+	// The server's own welcome and rules channels (2026-10 item 257 Phase 1a): the card
+	// Dero posts in the admin channel when it adopts one, the modal its Choose button
+	// opens, and the result the card shows after Submit. A modal title, a select label
+	// and an option label hold 45 characters, an option description 100.
+	adoptionChoice: {
+		cardTitle: "📌 Your server's own channels",
+		cardBody: (lines: readonly string[]): string =>
+			[
+				"Your server already had these channels, so Dero uses them instead of building its own:",
+				...lines,
+				"",
+				"Nothing has moved. Press **Choose** to move each one into 🪧 NOTICE BOARD or leave it where it is. A channel Discord Onboarding uses stays readable by everyone either way.",
+			].join("\n"),
+		channelLine: (channelId: string, slot: string): string => `• <#${channelId}> as the ${slot}`,
+		slots: { welcomeChannelId: "welcome log", rulesChannelId: "rules channel" },
+		buttonLabel: "Choose",
+		modalTitle: "Your server's own channels",
+		modalPrompt: "Pick where each channel goes. Leave where it is changes nothing about it.",
+		selectLabel: (channelName: string): string => `#${channelName}`,
+		options: {
+			move: { label: "Move into the notice board", description: "Dero moves it under 🪧 NOTICE BOARD and manages its permissions" },
+			stay: { label: "Leave where it is", description: "Dero uses it where it is and leaves its permissions alone" },
+		},
+		notAllowed: "Only the server owner or an admin can choose where these channels go.",
+		nothingToChoose: "There is no channel of your server's own left to place.",
+		modalRefused: "The choice could not open. Press Choose again in a moment.",
+		results: {
+			moved: (channelId: string): string => `✅ <#${channelId}> moved into the notice board.`,
+			already: (channelId: string): string => `✅ <#${channelId}> is already in the notice board.`,
+			stayed: (channelId: string): string => `• <#${channelId}> stays where it is.`,
+			refused: (channelId: string): string => `⚠️ <#${channelId}> could not be moved (Discord refused its permissions), so it stays where it is.`,
+		},
+		auditMoved: "moved into the notice board",
+		auditStayed: "left where it is",
+		auditRefused: "move refused, left where it is",
+	},
+
 	arcade: {
 		offTitle: "🎮 Arcade off",
 		offBody: "The 🎮 ARCADE GAMES category and every channel in it are deleted, matches in progress included. It stays off across restarts until `/arcade on`.",

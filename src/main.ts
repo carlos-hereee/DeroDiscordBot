@@ -1,6 +1,6 @@
 import { GatewayIntentBits, Collection, Events, MessageFlags, Client, Partials } from "discord.js";
 import { arcadeMonthlyPostRunOnBoot, deroVoiceSamplerEnabled, discordToken, weeklyDigestRunOnBoot } from "@utils/config.js";
-import clientReady from "@commands/utility/ready.js";
+import clientReady from "@handlers/clientReady.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -50,6 +50,7 @@ import { sweepMonopolyAuctions } from "@features/game-rooms/roomMonopolyAuction.
 import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/polls/PollDispatcher.js";
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerRulesEditHandlers } from "@features/setup/rulesEdit.js";
+import { registerAdoptionChoiceHandlers } from "@features/setup/adoptionChoice.js";
 import { registerCommunityGuideSync, registerCommunityHandlers } from "@features/community/communityButtons.js";
 import { postCommunityButtonsPointers } from "@features/community/communityButtonsPointer.js";
 import { registerWelcomeLog } from "@features/setup/welcomeLog.js";
@@ -362,6 +363,9 @@ process.on("uncaughtException", (err) => {
 	registerSelfDestructHandlers();
 	// The Edit rules button on the 📘rules post (2026-10 item 247 Phase 2).
 	registerRulesEditHandlers();
+	// The Choose button on the card listing the server's own welcome and rules
+	// channels, and its modal (2026-10 item 257 Phase 1a).
+	registerAdoptionChoiceHandlers();
 	// Enable Community, its Confirm, and Configure Onboarding on the admin guide
 	// (2026-10 item 247 Phase 3), all on the one "community" prefix.
 	registerCommunityHandlers();

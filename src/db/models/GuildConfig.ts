@@ -129,6 +129,13 @@ const guildConfigSchema = new Schema(
 		// instead of deleting a channel Dero never built. Default empty so a legacy
 		// row reads as "adopted nothing", which is true of every row before this.
 		adoptedChannelIds: { type: [String], required: false, default: () => [] as string[] },
+		// The admin's answer, per adopted channel id, to "Move into the notice board" or
+		// "Leave where it is" (2026-10 item 257 Phase 1a): "move" or "stay". A channel
+		// with no answer is adopted IN PLACE and never moved, because Dero moves a
+		// channel it did not build only when an admin said so. Written by adoptionChoice;
+		// read by every adoption path (createChannels, repairOneChannel and the boot
+		// welcome reconcile) through adoption.readAdoptionChoice.
+		adoptedChannelChoices: { type: Map, of: String, required: false, default: () => new Map<string, string>() },
 
 		// id of the pinned message inside scheduleChannelId that ScheduleBoard
 		// keeps up to date. null until autoSetup finishes posting the intro,

@@ -11,13 +11,13 @@ import { checkOnboardingPreconditions } from "./onboardingPreconditions.js";
 import {
 	buildOnboardingDraft,
 	rolesReusedAcrossPrompts,
-	snapshotOnboarding,
 	toOnboardingEditOptions,
 	validateOnboardingDraft,
 	type IDraftPrompt,
 	type IOnboardingSnapshot,
 	type PendingOnboardingDraft,
 } from "./onboardingDraft.js";
+import { fetchOnboardingSnapshot } from "./onboardingChannels.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 
@@ -171,7 +171,7 @@ export async function handleConfigureOnboardingButton(interaction: ButtonInterac
 // overwrite this flow exists to avoid.
 async function readLiveOnboarding(guild: Guild): Promise<IOnboardingSnapshot | { readError: string }> {
 	try {
-		return snapshotOnboarding(await guild.fetchOnboarding());
+		return await fetchOnboardingSnapshot(guild);
 	}
 	catch (error) {
 		console.warn(`[configure-onboarding] guild ${guild.id} fetchOnboarding failed`, error);

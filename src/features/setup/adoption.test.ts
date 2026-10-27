@@ -4,11 +4,13 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import {
 	acceptsDeroContent,
 	fetchAcceptsDeroContent,
+	findRulesChannel,
 	findWelcomeChannel,
 	matchesAdoptionPattern,
 	moveIntoNoticeBoard,
 	normalizeAdoptionName,
 	readAdoptedChannelIds,
+	readAdoptionChoice,
 	scanAndClaim,
 } from "./adoption.js";
 
@@ -126,6 +128,22 @@ describe("moveIntoNoticeBoard", () => {
 		// Dero's entries replace the @everyone one; the owner's own role stays.
 		expect(set).toHaveBeenCalledWith([...SHAPE, ownerRole], expect.any(String));
 	});
+
+	// 2026-10 item 257, item 2: the parent went first, so a refused overwrite (350003 on
+	// a channel Onboarding uses) left the channel half moved and setup built a second one.
+	it("writes the overwrite before the parent", async () => {
+		const { channel, setParent, set } = movable("cat-elsewhere");
+		await moveIntoNoticeBoard(channel, NOTICE_BOARD, SHAPE);
+		expect(set.mock.invocationCallOrder[0]!).toBeLessThan(setParent.mock.invocationCallOrder[0]!);
+	});
+
+	it("leaves the parent unchanged when Discord refuses the overwrite", async () => {
+		const { channel, setParent, set } = movable("cat-elsewhere");
+		set.mockRejectedValueOnce(Object.assign(new Error("Onboarding channels must be readable by everyone"), { code: 350003 }));
+		await expect(moveIntoNoticeBoard(channel, NOTICE_BOARD, SHAPE)).rejects.toThrow();
+		expect(setParent).not.toHaveBeenCalled();
+		expect(channel.parentId).toBe("cat-elsewhere");
+	});
 });
 
 describe("the content gate", () => {
@@ -169,6 +187,36 @@ describe("readAdoptedChannelIds", () => {
 
 	it("reads the ids, dropping anything that is not a string", () => {
 		expect(readAdoptedChannelIds({ adoptedChannelIds: ["a", 7, "b"] })).toEqual(["a", "b"]);
+	});
+});
+
+describe("readAdoptionChoice", () => {
+	it("reads an admin's answer from a hydrated Map or a lean object, and null when nobody chose", () => {
+		expect(readAdoptionChoice({ adoptedChannelChoices: new Map([["c1", "move"]]) }, "c1")).toBe("move");
+		expect(readAdoptionChoice({ adoptedChannelChoices: { c1: "stay" } }, "c1")).toBe("stay");
+		expect(readAdoptionChoice({ adoptedChannelChoices: { c1: "sideways" } }, "c1")).toBeNull();
+		expect(readAdoptionChoice({}, "c1")).toBeNull();
+		expect(readAdoptionChoice(null, "c1")).toBeNull();
+	});
+});
+
+// ── findRulesChannel (2026-10 item 257 Phase 1a) ─────────────────────────────
+
+describe("findRulesChannel", () => {
+	const byId = (rulesChannelId: string | null, ...channels: TextChannel[]) =>
+		({ channels: { cache: new Map(channels.map((channel) => [channel.id, channel])) }, rulesChannelId }) as unknown as Pick<Guild, "channels" | "rulesChannelId">;
+
+	it("takes the server's Community rules channel before any name match, whatever it is called", () => {
+		const guidelines = textChannel("guidelines", "📜guidelines");
+		const rules = textChannel("rules", "rules");
+		expect(findRulesChannel(byId("guidelines", guidelines, rules), NOTICE_BOARD, RULES)).toEqual({ channel: guidelines, inPlace: false });
+	});
+
+	it("scans by name when the server names no rules channel, or when that one is Dero's own", () => {
+		const derosRules = textChannel("dero", "📘rules");
+		const rulebook = textChannel("rulebook", "rulebook");
+		expect(findRulesChannel(byId(null, rulebook), NOTICE_BOARD, RULES)).toEqual({ channel: rulebook, inPlace: false });
+		expect(findRulesChannel(byId("dero", derosRules, rulebook), NOTICE_BOARD, RULES, { names: new Set(["📘rules"]) })).toEqual({ channel: rulebook, inPlace: false });
 	});
 });
 

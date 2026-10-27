@@ -33,7 +33,7 @@ function makeGuild(defaults: string[]): { guild: Guild; send: ReturnType<typeof 
 		id: "guild-1",
 		name: "Test Guild",
 		features: ["COMMUNITY"],
-		fetchOnboarding: async () => ({ enabled: true, defaultChannels: new Set(defaults) }),
+		fetchOnboarding: async () => ({ enabled: true, prompts: new Map(), defaultChannels: new Set(defaults) }),
 		fetchOwner: async () => ({ send }),
 	} as unknown as Guild;
 	return { guild, send };

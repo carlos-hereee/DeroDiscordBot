@@ -6,6 +6,7 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 // universal across packs (the 2026-05-22 decision), which is why this reads the
 // rok-commander pack directly, exactly as resolveCategoryName does.
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
+import { fetchOnboardingSnapshot } from "@features/community/onboardingChannels.js";
 
 // ── Discord Onboarding compatibility (FUTURE_PLANS item 35) ─────────
 // When a guild has Discord Onboarding enabled (Community Server feature),
@@ -61,9 +62,11 @@ export async function checkOnboardingAndNotifyOwner(_client: Client, guild: Guil
 	// restart retries after the admin grants permission or the outage
 	// clears. The non-community case is already handled by the
 	// guild.features check above.
+	// Through the one shared read (onboardingChannels), so every Onboarding consumer
+	// sees the same plain snapshot.
 	let onboarding;
 	try {
-		onboarding = await guild.fetchOnboarding();
+		onboarding = await fetchOnboardingSnapshot(guild);
 	} catch (error) {
 		console.warn(`[onboarding] fetchOnboarding failed for guild ${guild.id}, skipping check`, error);
 		return;
@@ -89,7 +92,7 @@ export async function checkOnboardingAndNotifyOwner(_client: Client, guild: Guil
 		{ id: (stored as unknown as { gamesCategoryId?: string | null }).gamesCategoryId, name: rokCommanderCopy.setup.gamesCategoryName },
 	].filter((category): category is { id: string; name: string } => Boolean(category.id));
 
-	const hidden = managed.filter((category) => !onboarding.defaultChannels.has(category.id));
+	const hidden = managed.filter((category) => !onboarding.defaultChannelIds.includes(category.id));
 
 	// All managed categories already in defaults → new members see the bot on
 	// join, no warning needed. Same "do not log idempotency" rule: if the admin

@@ -5,10 +5,11 @@ import type { IOverwriteEntry } from "./communityOverwrites.js";
 // ── adoption ─────────────────────────────────────────────────────────
 // What:  finds a channel the server ALREADY has for a job Dero is about to build
 //        a channel for (a welcome log, a rules channel), moves it into 🪧 NOTICE
-//        BOARD, and decides whether Dero may post its own intro there
-//        (2026-10 item 247 Phase 2). It never deletes, renames or rewrites a
-//        message, and it never decides which channels are adoptable: the pattern
-//        lists live in BOT_CONSTANTS and the overwrite shape in communityOverwrites.
+//        BOARD when an admin chose that, and decides whether Dero may post its own
+//        intro there (2026-10 item 247 Phase 2). It never deletes, renames or
+//        rewrites a message, and it never decides which channels are adoptable or
+//        whether one moves: the pattern lists live in BOT_CONSTANTS, the overwrite
+//        shape in communityOverwrites, and the admin's choice in adoptionChoice.
 // Who:   GuildSetupManager: createChannels (fresh install and forced rebuild) and
 //        repairOneChannel (the boot sweep and ChannelDeleteWatcher), before either
 //        builds the welcome or rules channel; populateChannels, repairOneChannel and
@@ -21,9 +22,13 @@ import type { IOverwriteEntry } from "./communityOverwrites.js";
 //        require an EXACT match with a pattern, never a substring, so
 //        "📋arcade-rules" or "rules-chat" are never taken (risk R2 in the plan);
 //        ② prefer a match already inside the notice board, then the lowest
-//        position; ③ moving keeps every overwrite Dero does not manage. For the
-//        welcome slot, Discord's own system channel (where Discord already posts its
-//        join messages) is looked at before any name (post-launch plan item 2).
+//        position; ③ moving keeps every overwrite Dero does not manage, and writes
+//        the overwrites BEFORE the parent, so a refusal leaves the channel untouched.
+//        For the welcome slot, Discord's own system channel (where Discord already
+//        posts its join messages) is looked at before any name (post-launch plan
+//        item 2); for the rules slot, the server's Community rules channel is, so
+//        Dero never builds a second rules channel while the server has one
+//        (2026-10 item 257).
 
 // ── types ────────────────────────────────────────────────────────────
 
@@ -34,11 +39,12 @@ export interface IAdoptionExclusions {
 }
 
 /**
- * The server's own welcome channel, and whether Dero takes it IN PLACE: true for a
- * system channel whose name is not a welcome name (a #general), which Dero posts its
- * join log in without moving it or touching its permissions.
+ * The server's own welcome or rules channel, and whether it must stay IN PLACE: true
+ * for a system channel whose name is not a welcome name (a #general), the server's
+ * main chat, which is never offered a move because the notice board's read only
+ * shape would silence it. Any other candidate moves only when an admin chose so.
  */
-export interface IWelcomeCandidate {
+export interface IAdoptionCandidate {
 	channel: TextChannel;
 	inPlace: boolean;
 }
@@ -107,11 +113,29 @@ export function findWelcomeChannel(
 	category: { id: string },
 	patterns: readonly string[],
 	exclude: IAdoptionExclusions = {}
-): IWelcomeCandidate | null {
+): IAdoptionCandidate | null {
 	const system = guild.systemChannelId ? guild.channels.cache?.get(guild.systemChannelId) : undefined;
 	if (system instanceof TextChannel && isAdoptable(system, exclude)) {
 		return { channel: system, inPlace: !matchesAdoptionPattern(system.name, patterns) };
 	}
+	const named = scanAndClaim(guild, category, patterns, exclude);
+	return named ? { channel: named, inPlace: false } : null;
+}
+
+/**
+ * The server's own rules channel, or null. Discord's Community rules channel comes
+ * first, whatever it is named, because it is the one the server itself names as its
+ * rules; then the scan by name (scanAndClaim). Never in place: it is offered a move
+ * like any name match. Reads the cache only.
+ */
+export function findRulesChannel(
+	guild: Pick<Guild, "channels" | "rulesChannelId">,
+	category: { id: string },
+	patterns: readonly string[],
+	exclude: IAdoptionExclusions = {}
+): IAdoptionCandidate | null {
+	const own = guild.rulesChannelId ? guild.channels.cache?.get(guild.rulesChannelId) : undefined;
+	if (own instanceof TextChannel && isAdoptable(own, exclude)) return { channel: own, inPlace: false };
 	const named = scanAndClaim(guild, category, patterns, exclude);
 	return named ? { channel: named, inPlace: false } : null;
 }
@@ -122,17 +146,22 @@ export function findWelcomeChannel(
  * Move an adopted channel under the notice board and onto Dero's managed entries,
  * keeping every overwrite Dero does not manage (a role the owner set by hand).
  * A channel already in the notice board is left exactly as it is. Resolves true
- * when it moved; throws what Discord throws so the caller can fall back to a build.
+ * when it moved; throws what Discord throws, and a refused overwrite throws before
+ * anything changed.
  */
 export async function moveIntoNoticeBoard(channel: TextChannel, category: { id: string }, overwrites: IOverwriteEntry[]): Promise<boolean> {
 	if (channel.parentId === category.id) return false;
 
-	// Read before the move. lockPermissions false keeps the channel's own entries
+	// Read before the write. lockPermissions false keeps the channel's own entries
 	// rather than syncing them to the category, which would wipe what the owner set.
 	const managedIds = new Set(overwrites.map((entry) => entry.id));
 	const foreign = [...channel.permissionOverwrites.cache.values()].filter((overwrite) => !managedIds.has(overwrite.id));
-	await channel.setParent(category.id, { lockPermissions: false, reason: ADOPTION_REASON });
+	// The overwrite FIRST: Discord can refuse it (350003 on a channel Onboarding uses,
+	// 50013 on one the owner locked down), and with the parent set first that refusal
+	// left the channel half moved, which made setup build a second rules channel
+	// (2026-10 item 257, item 2). Refused here, the channel has not moved at all.
 	await channel.permissionOverwrites.set([...overwrites, ...foreign], ADOPTION_REASON);
+	await channel.setParent(category.id, { lockPermissions: false, reason: ADOPTION_REASON });
 	return true;
 }
 
@@ -146,6 +175,20 @@ export async function moveIntoNoticeBoard(channel: TextChannel, category: { id: 
 export function readAdoptedChannelIds(stored: unknown): string[] {
 	const ids = (stored as { adoptedChannelIds?: unknown } | null | undefined)?.adoptedChannelIds;
 	return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+}
+
+/** An admin's answer for one adopted channel: move it into the notice board, or leave it where it is. */
+export type AdoptionChoice = "move" | "stay";
+
+/**
+ * The admin's stored answer for one adopted channel, or null when nobody has chosen.
+ * A hydrated document hands back a Map and a lean read a plain object, so both shapes
+ * are read here rather than at every caller.
+ */
+export function readAdoptionChoice(stored: unknown, channelId: string): AdoptionChoice | null {
+	const choices = (stored as { adoptedChannelChoices?: unknown } | null | undefined)?.adoptedChannelChoices;
+	const value = choices instanceof Map ? choices.get(channelId) : (choices as Record<string, unknown> | undefined)?.[channelId];
+	return value === "move" || value === "stay" ? value : null;
 }
 
 // ── the content gate ─────────────────────────────────────────────────

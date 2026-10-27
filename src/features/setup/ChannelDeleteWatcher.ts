@@ -2,6 +2,7 @@ import { Client, Events, DMChannel, NonThreadGuildBasedChannel, GuildChannel, Ca
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { finish as finishGameRoom } from "@features/game-rooms/roomLifecycle.js";
+import { NON_TERMINAL_ROOM_STATUSES } from "@features/game-rooms/roomTypes.js";
 import { GuildSetupManager } from "./GuildSetupManager.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
@@ -94,6 +95,13 @@ export function registerChannelDeleteWatcher(client: Client): void {
 			//        along with everything else, which is exactly when a pile of rooms
 			//        needs finishing.
 			const liveRoom = await gameRoomStore.findByChannelId(guild.id, channel.id).catch(() => null);
+			// A finished room is no abandonment: roomLifecycle.archiveRoom deletes the
+			// channel BEFORE markArchived clears channelId, so every normal archive (and a
+			// self destruct sweeping finished rooms) lands here with the row still pointing
+			// at the channel. Only a room still holding its host's slot (draft, open or
+			// playing) is closed, so the abandonment line means a real one. The room's
+			// channel is never a managed slot either, so it stops here too.
+			if (liveRoom && !(NON_TERMINAL_ROOM_STATUSES as readonly string[]).includes(liveRoom.status)) return;
 			if (liveRoom) {
 				console.log(`[realtime-repair] channel ${channel.id} in guild ${guild.id} was a game room; closing it as abandoned.`);
 				// finish() looks the channel up itself, finds it gone, and simply stamps
@@ -122,12 +130,10 @@ export function registerChannelDeleteWatcher(client: Client): void {
 			// BEFORE deleting any channel, so this fires for every channel it
 			// removes, skip rebuild so the teardown is not undone mid-demolish.
 			// Run /setup to rebuild. The boot sweep honors the same flag.
-			if (stored.homebaseDestroyed) {
-				console.log(
-					`[realtime-repair] skipped channel delete in guild ${guild.id} because the homebase was self-destructed; run /setup to rebuild.`
-				);
-				return;
-			}
+			// Silent on purpose: a self destruct deletes every managed channel at once, and
+			// a line per channel buried the boot log (2026-10 item 257, Log 5).
+			// demolishHomebase in selfDestruct.ts prints the one summary line instead.
+			if (stored.homebaseDestroyed) return;
 
 			// ③ match the deleted channel id to one of the six homebase fields.
 			//    also short circuit if the deleted channel IS the category,
