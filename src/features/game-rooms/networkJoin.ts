@@ -1,4 +1,4 @@
-import { MessageFlags, type ButtonInteraction, type Client, type Guild, type StringSelectMenuInteraction } from "discord.js";
+import { type ButtonInteraction, type Client, type Guild, type StringSelectMenuInteraction } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -6,6 +6,7 @@ import { networkBanStore } from "@db/stores/networkBanStore.js";
 import { networkConsentStore } from "@db/stores/networkConsentStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { registerButton, registerSelectMenu } from "@handlers/interactionRegistry.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { judgeJoin } from "./joinGate.js";
 import { NETWORK_BOARD_PREFIX, NETWORK_BOARD_SELECT_ID, scheduleNetworkBoardRefresh, takingPlayers } from "./networkBoard.js";
@@ -42,8 +43,6 @@ import { showNotice } from "@utils/textModal.js";
 // and approval (joinGate); ⑥ only then a satellite opens.
 
 const words = rokCommanderCopy.arcadeNetwork;
-
-const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 
 /** What a request for a seat came to. The caller turns it into a private reply. */
 export type SeatRequestOutcome =
@@ -165,15 +164,15 @@ export async function handleNetworkBoardSelect(interaction: StringSelectMenuInte
 		return;
 	}
 	// A satellite opening talks to Discord several times, which can outrun three seconds,
-	// so the press is acknowledged privately first and the outcome edited in.
-	await interaction.deferReply(PRIVATE);
+	// so the press is acknowledged first and the outcome posts in 💬dero-commands (2026-10
+	// item 257 Phase 5).
+	const answer = await beginChannelAnswer(interaction, "member");
 	const outcome = await requestNetworkSeat(interaction.client, interaction.guild, interaction.user.id, target.hostGuildId, target.roomId);
 	if (outcome.kind === "consent") {
-		const prompt = consentPrompt({ kind: "join", ...target });
-		await interaction.editReply({ embeds: prompt.embeds, components: prompt.components });
+		await answer.send(consentPrompt({ kind: "join", ...target }));
 		return;
 	}
-	await interaction.editReply({ content: describeSeatRequest(outcome) });
+	await answer.send({ content: describeSeatRequest(outcome) });
 }
 
 // A board option's value, `<hostGuildId>:<roomId>`, checked for shape only; everything it

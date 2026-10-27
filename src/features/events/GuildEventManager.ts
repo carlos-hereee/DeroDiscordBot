@@ -38,8 +38,13 @@ interface IKvKSeasonInput {
 	customChecklist?: readonly string[];
 }
 
+/** Where configureKvKSeason's one result line goes: the caller's prompt, or the interaction's own reply. */
+export type KvKSeasonReport = (answer: { content: string }) => Promise<unknown>;
+
 export class GuildEventManager {
-	static async configureKvKSeason(interaction: RepliableInteraction, input: IKvKSeasonInput): Promise<void> {
+	// `report` defaults to the interaction's own reply; /events kvk-season passes the edit of
+	// its prompt, which posts in 🎛️admin-controls (2026-10 item 257 Phase 5).
+	static async configureKvKSeason(interaction: RepliableInteraction, input: IKvKSeasonInput, report: KvKSeasonReport = (answer) => interaction.editReply(answer)): Promise<void> {
 		try {
 			const guildId = interaction.guildId!;
 
@@ -203,7 +208,7 @@ export class GuildEventManager {
 				});
 			}
 
-			await interaction.editReply({
+			await report({
 				content: rokCommanderCopy.responses.kvkConfigured(
 					Math.floor(input.seasonEnd.getTime() / 1000),
 					announcementsChannelId
@@ -220,7 +225,7 @@ export class GuildEventManager {
 			);
 		} catch (error) {
 			console.error(LOG_MESSAGES.guildEvent.configureKvkFailed, error);
-			await interaction.editReply({
+			await report({
 				content: rokCommanderCopy.responses.kvkConfigureFailed,
 			});
 		}

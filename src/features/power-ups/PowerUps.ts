@@ -1,4 +1,4 @@
-import { ButtonBuilder, ButtonStyle, Client, Guild, MessageFlags, Role, TextChannel, type ButtonInteraction } from "discord.js";
+import { ButtonBuilder, ButtonStyle, Client, Guild, Role, TextChannel, type ButtonInteraction } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
@@ -14,6 +14,7 @@ import { showLevelsStandings } from "@features/leveling/levelsStandings.js";
 import { showAchievements } from "@features/leveling/achievementsView.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showErrorNotice, showNotice } from "@utils/textModal.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 
@@ -175,14 +176,14 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 			await runToggleNotificationRole(interaction, guildId);
 			return;
 		case "member:account":
-			await showAccountProfile(interaction, { target: interaction.user, isPrivate: true });
+			await showAccountProfile(interaction, { target: interaction.user });
 			return;
 		case "member:levels":
 			// The all time standings, the slash command's own default window.
-			await showLevelsStandings(interaction, { window: "alltime", isPrivate: true });
+			await showLevelsStandings(interaction, { window: "alltime" });
 			return;
 		case "member:achievements":
-			await showAchievements(interaction, { target: interaction.user, isPrivate: true });
+			await showAchievements(interaction, { target: interaction.user });
 			return;
 		default:
 			// In POWERUP_ACTIONS but not wired here, should not happen for shipped
@@ -197,9 +198,10 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 // reposts a deleted message on its own and reports what it did, so the reply names
 // each board rather than claiming success for a refresh that posted nothing.
 async function runLeaderboardRefresh(interaction: ButtonInteraction, guildId: string): Promise<void> {
-	// Defer: both refreshes do Discord I/O (channel fetch, message edit or post, a
-	// card render) which can exceed the 3s interaction-ack window on a cold cache.
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	// Acknowledge first: both refreshes do Discord I/O (channel fetch, message edit or
+	// post, a card render) which can exceed the 3s interaction-ack window on a cold cache.
+	// The report posts in 🎛️admin-controls (2026-10 item 257 Phase 5).
+	const answer = await beginChannelAnswer(interaction, "admin");
 	const copy = setupCopy.refreshStandings;
 	// The two boards write different anchors (leaderboardMessageId, levelsMessageId),
 	// so they can run side by side.
@@ -216,7 +218,7 @@ async function runLeaderboardRefresh(interaction: ButtonInteraction, guildId: st
 		subject: setupCopy.adminLog.subjects.refreshStandings,
 		detail: failed.length === 0 ? copy.auditAllRefreshed : copy.auditSomeFailed(failed),
 	});
-	await interaction.editReply({ content: lines.join("\n") });
+	await answer.send({ content: lines.join("\n") });
 }
 
 async function runFireGreeting(interaction: ButtonInteraction): Promise<void> {
@@ -228,23 +230,22 @@ async function runFireGreeting(interaction: ButtonInteraction): Promise<void> {
 	// Silent ack: the posted greeting IS the visible feedback, so there is no
 	// ephemeral success reply (it was just clutter). deferUpdate acknowledges the
 	// click without a "thinking" state and buys time for welcomeNewMember's
-	// channel I/O; we only speak up (ephemeral followUp) when nothing got posted
-	// so a dud click is not left silent.
+	// channel I/O; we only speak up (in 💬dero-commands, 2026-10 item 257 Phase 5)
+	// when nothing got posted so a dud click is not left silent.
 	await interaction.deferUpdate();
 	let member = interaction.guild?.members.cache.get(interaction.user.id) ?? null;
 	if (!member) member = (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null)) ?? null;
 	const sent = member ? await welcomeNewMember(member) : false;
 	if (!sent) {
-		await interaction.followUp({
+		await answerInChannel(interaction, "member", {
 			content: "Could not post a greeting. Check that the introductions channel exists and the bot can post there.",
-			flags: MessageFlags.Ephemeral,
 		});
 	}
 }
 
 async function runFortune(interaction: ButtonInteraction): Promise<void> {
-	// A quick personal reading, always ephemeral so it never clutters the channel
-	// the button sits in. A button cannot take text input without a
+	// A quick personal reading, always posted in 💬dero-commands so it never clutters
+	// the channel the button sits in. A button cannot take text input without a
 	// modal, so the button gives a no-question reading; /mini-game fortune is the
 	// path for a custom question. All reading logic (kill-switch, cooldown, roll, embed) is
 	// shared with the slash command via respondWithFortune, and the cooldown Map

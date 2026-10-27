@@ -53,17 +53,17 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
 	const view = interaction.options.getString("view");
 	if (view === "levels") {
-		await showLevelsStandings(interaction, { window: toLevelsWindow(interaction.options.getString("window")), isPrivate: false });
+		await showLevelsStandings(interaction, { window: toLevelsWindow(interaction.options.getString("window")) });
 		return;
 	}
 	const target = interaction.options.getUser("member") ?? interaction.user;
 	if (view === "achievements") {
-		await showAchievements(interaction, { target, isPrivate: false });
+		await showAchievements(interaction, { target });
 		return;
 	}
 	if (view === "saved") {
 		await showSavedMatches(interaction, target);
 		return;
 	}
-	await showAccountProfile(interaction, { target, isPrivate: false });
+	await showAccountProfile(interaction, { target });
 }

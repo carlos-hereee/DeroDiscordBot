@@ -7,6 +7,8 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 vi.mock("@db/stores/playerRatingStore.js", () => ({ playerRatingStore: { findForPlayers: vi.fn() } }));
 vi.mock("@db/stores/networkConsentStore.js", () => ({ networkConsentStore: { findByUserId: vi.fn() } }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+// Read by answerInChannel (2026-10 item 257 Phase 5) for the channel the notice posts in.
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 vi.mock("@features/ratings/recordMatchRatings.js", async (importOriginal) => ({
@@ -17,6 +19,7 @@ vi.mock("@features/ratings/recordMatchRatings.js", async (importOriginal) => ({
 import { handleBuyIn, removeFromTable } from "./roomHoldemHandlers.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { networkConsentStore } from "@db/stores/networkConsentStore.js";
+import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { consentAcceptId } from "./networkRules.js";
@@ -100,24 +103,35 @@ beforeEach(() => {
 	storeMock.findByRoomId.mockResolvedValue(null);
 	finishMock.mockResolvedValue(true);
 	consentMock.mockResolvedValue({ userId: REMOTE, version: BOT_CONSTANTS.NETWORK.CONSENT_VERSION });
+	(guildConfigStore.findByGuildId as ReturnType<typeof vi.fn>).mockResolvedValue({ commandOutputChannelId: "c-commands" });
 });
 
 describe("Buy in at a network table", () => {
-	it("shows the network notice to a member who never accepted it, and seats nobody", async () => {
+	it("shows the network notice to a member who never accepted it, in the commands channel, and seats nobody", async () => {
 		consentMock.mockResolvedValue(null);
+		const send = vi.fn(async () => ({ id: "m1", edit: vi.fn() }));
+		const commands = { id: "c-commands", isSendable: () => true, send };
 		const reply = vi.fn().mockResolvedValue(undefined);
 		const interaction = {
+			id: "press-1",
 			guildId: HOST_GUILD,
 			guild: { members: { cache: { get: () => null } } },
 			user: { id: "newcomer", username: "newcomer", globalName: "newcomer" },
-			client: { channels: { fetch: vi.fn().mockResolvedValue(null) } },
+			client: { channels: { fetch: vi.fn(async (id: string) => (id === "c-commands" ? commands : null)) } },
+			deferred: false,
+			replied: false,
 			reply,
-			deferUpdate: vi.fn(),
+			deferUpdate: vi.fn().mockResolvedValue(undefined),
+			isModalSubmit: () => false,
+			isMessageComponent: () => true,
 		} as unknown as ButtonInteraction;
 
 		await handleBuyIn(interaction, makeRoom(createTable(), { playerIds: [LOCAL] }));
 
-		const payload = reply.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id?: string }[] } }[] };
+		expect(reply).not.toHaveBeenCalled();
+		const payload = send.mock.calls[0][0] as { content: string; allowedMentions: unknown; components: { toJSON(): { components: { custom_id?: string }[] } }[] };
+		expect(payload.content.startsWith("<@newcomer>")).toBe(true);
+		expect(payload.allowedMentions).toEqual({ parse: [] });
 		const ids = payload.components.flatMap((row) => row.toJSON().components.map((component) => component.custom_id));
 		expect(ids).toContain(consentAcceptId({ kind: "again" }));
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();

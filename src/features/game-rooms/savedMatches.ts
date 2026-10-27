@@ -1,4 +1,5 @@
 import { type Client, type RepliableInteraction, type User } from "discord.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { confirmSelectValues, showErrorNotice, type ConfirmInteraction, type ConfirmSelect } from "@utils/textModal.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -93,9 +94,10 @@ export async function savedMatchLine(client: Client, room: SavedMatchRow, userId
 }
 
 /**
- * Answer /account view:saved with the target's last saved matches, newest finish first. A reply
- * the way /account's other views answer: public from the command, deferred because the
- * opponent labels may fetch. Never throws; a failed read answers with the pack's error line.
+ * Answer /account view:saved with the target's last saved matches, newest finish first, the
+ * way /account's other views answer: in 💬dero-commands (2026-10 item 257 Phase 5), acknowledged
+ * first because the opponent labels may fetch. Never throws; a failed read answers with the
+ * pack's error line.
  */
 export async function showSavedMatches(interaction: RepliableInteraction, target: User): Promise<void> {
 	const guildId = interaction.guildId;
@@ -108,20 +110,20 @@ export async function showSavedMatches(interaction: RepliableInteraction, target
 		return;
 	}
 
-	await interaction.deferReply();
+	const answer = await beginChannelAnswer(interaction, "member");
 	try {
 		const rooms = await gameRoomStore.findSavedBy(guildId, target.id, SAVED_MATCHES_SHOWN);
 		const member = interaction.guild?.members.cache.get(target.id) ?? null;
 		const name = member?.displayName ?? target.globalName ?? target.username;
 		if (rooms.length === 0) {
-			await interaction.editReply({ embeds: [infoEmbed(copy.title(name), copy.empty)] });
+			await answer.send({ embeds: [infoEmbed(copy.title(name), copy.empty)] });
 			return;
 		}
 		const lines = await Promise.all(rooms.map((room) => savedMatchLine(interaction.client, room, target.id)));
-		await interaction.editReply({ embeds: [infoEmbed(copy.title(name), `${lines.join("\n")}\n\n${copy.footer(rooms.length)}`)] });
+		await answer.send({ embeds: [infoEmbed(copy.title(name), `${lines.join("\n")}\n\n${copy.footer(rooms.length)}`)] });
 	} catch (error) {
 		console.error("[saved-matches] reading the saved matches failed", { guildId, userId: target.id, error });
-		// Swallowed: the read already failed and was logged, and a failed edit costs only Discord's own note.
-		await interaction.editReply({ content: copy.readFailed }).catch(() => undefined);
+		// send never throws: the read already failed and was logged, and a failed answer is logged too.
+		await answer.send({ content: copy.readFailed });
 	}
 }

@@ -25,7 +25,9 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 // ONLY THE REQUEST SHAPE of the screening write is tested here; the endpoint is
 // unstable in Discord's API and has never been called live from a test. A refusal
 // to a button press is a notice modal (post-launch plan item 9); one to a modal
-// submit is still a private reply, since a submit cannot open a modal.
+// submit is still a private reply, since a submit cannot open a modal. The review
+// posts in 🧭onboarding, privately only where setup never stored that channel, and
+// Confirm turns that review into the result (2026-10 item 257 Phase 5).
 
 const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
@@ -116,10 +118,19 @@ function makeGuild(options: IGuildOptions = {}) {
 
 type FakeGuild = ReturnType<typeof makeGuild>;
 
+// 🧭onboarding, where the review posts once setup has stored its id.
+const onboardingChannel = { id: "onboarding-ch", isSendable: () => true, send: vi.fn(async () => ({ id: "review-msg" })) };
+
 function submission(guild: FakeGuild, userId: string, picks: { rules?: string; updates?: string; screening?: boolean }) {
 	const channelsFor = (id: string | undefined) => (id ? new Collection([[id, { id }]]) : null);
 	return {
 		guild,
+		client: { channels: { fetch: vi.fn(async (id: string) => (id === onboardingChannel.id ? onboardingChannel : null)) } },
+		deferred: false,
+		replied: false,
+		isModalSubmit: () => true,
+		isFromMessage: () => true,
+		deferUpdate: vi.fn(async () => undefined),
 		user: { id: userId },
 		customId: "community:modal:int-1",
 		fields: {
@@ -143,12 +154,14 @@ function press(guild: FakeGuild, userId: string, customId: string, awaited: Moda
 		}),
 		reply: vi.fn(async () => undefined),
 		deferReply: vi.fn(async () => undefined),
+		deferUpdate: vi.fn(async () => undefined),
 		editReply: vi.fn(async () => undefined),
 	} as unknown as ButtonInteraction & {
 		showModal: ReturnType<typeof vi.fn>;
 		awaitModalSubmit: ReturnType<typeof vi.fn>;
 		reply: ReturnType<typeof vi.fn>;
 		deferReply: ReturnType<typeof vi.fn>;
+		deferUpdate: ReturnType<typeof vi.fn>;
 		editReply: ReturnType<typeof vi.fn>;
 	};
 }
@@ -275,7 +288,20 @@ describe("pressing Enable Community", () => {
 });
 
 describe("the review", () => {
-	it("lists what will change, privately, with Confirm, and changes nothing yet", async () => {
+	it("posts what will change in 🧭onboarding, with Confirm, and changes nothing yet", async () => {
+		mocks.findByGuildId.mockResolvedValue({ ...storedRow, onboardingConfigChannelId: onboardingChannel.id });
+		const guild = makeGuild();
+		const { submit } = await pickChannels(guild, OWNER);
+
+		expect(guild.edit).not.toHaveBeenCalled();
+		expect(submit.reply).not.toHaveBeenCalled();
+		const review = sent(onboardingChannel.send) as ISentMessage & { content: string };
+		expect(review.content).toBe(`<@${OWNER}>`);
+		expect(review.embeds![0]!.data.title).toBe(communityCopy.review.title);
+		expect(customIdsOf(review)).toEqual([COMMUNITY_CUSTOM_IDS.confirm]);
+	});
+
+	it("lists what will change privately, with Confirm, where setup never stored 🧭onboarding, and changes nothing yet", async () => {
 		const guild = makeGuild();
 		const { submit } = await pickChannels(guild, OWNER);
 
@@ -329,7 +355,9 @@ describe("Confirm", () => {
 		await pickChannels(guild, OWNER);
 		const interaction = await confirm(guild, OWNER);
 
-		expect(interaction.deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
+		// An update: the review becomes the result, so no new private reply is opened.
+		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+		expect(interaction.deferReply).not.toHaveBeenCalled();
 		expect(guild.edit).toHaveBeenCalledOnce();
 		expect(guild.edit).toHaveBeenCalledWith({
 			features: ["NEWS", "COMMUNITY"],
@@ -480,6 +508,7 @@ describe("Confirm", () => {
 		const guild = makeGuild();
 		const interaction = await confirm(guild, OWNER);
 		expect(interaction.deferReply).not.toHaveBeenCalled();
+		expect(interaction.deferUpdate).not.toHaveBeenCalled();
 		expect(guild.edit).not.toHaveBeenCalled();
 		expect(noticeText(interaction)).toBe(communityCopy.errors.expired);
 	});

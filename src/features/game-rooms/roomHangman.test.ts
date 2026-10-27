@@ -6,6 +6,10 @@ vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() }, resolveRoom
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 vi.mock("@features/games/gamesAssets.js", () => ({ resolveGameAsset: vi.fn(() => null) }));
+// A modal Submit's answer posts in 💬dero-commands through answerInChannel (2026-10 item 257
+// Phase 5); where it lands is that helper's own suite, so here only WHAT is answered, and
+// to whom, is under test.
+vi.mock("@utils/answerInChannel.js", () => ({ answerInChannel: vi.fn(async () => ({ channelId: "c-commands" })) }));
 // The gallows card's drawing is the shared board module's business and is covered with
 // the channel game; here only WHEN a card is posted is under test.
 vi.mock("@features/games/hangmanBoard.js", () => ({
@@ -23,6 +27,7 @@ import {
 	handleGuessModal,
 } from "./roomHangman.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { roomTrail, resolveRoomChannel } from "./roomTrail.js";
 import { playingBoardPicture } from "@features/games/hangmanBoard.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -137,6 +142,9 @@ function makeSubmit(userId: string, letter = "p"): ModalSubmitInteraction {
 		guild: { members: { cache: { get: () => undefined } } },
 		fields: { getTextInputValue: (key: string) => (key === "letter" ? letter : "") },
 		reply: vi.fn().mockResolvedValue(undefined),
+		// A played guess only closes the modal (acknowledgeTextModal): the room's move line answers it.
+		isFromMessage: () => true,
+		deferUpdate: vi.fn().mockResolvedValue(undefined),
 	} as unknown as ModalSubmitInteraction;
 }
 
@@ -170,6 +178,14 @@ function makeAuthorSubmit(
 
 const replyOf = (interaction: { reply: unknown }) =>
 	(interaction.reply as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string; flags?: number };
+
+// The answer a modal Submit gave through answerInChannel: who it was for and what it said.
+const answerMock = answerInChannel as unknown as ReturnType<typeof vi.fn>;
+const answerOf = (interaction: unknown) => {
+	const call = answerMock.mock.calls.find((args) => args[0] === interaction);
+	if (!call) throw new Error("the submit gave no answer through answerInChannel");
+	return { audience: call[1] as string, content: (call[2] as { content: string }).content };
+};
 
 // What the store was asked to persist, which is the only place `authoredBy` is ever
 // written and therefore the root of the guess gate covered further down.
@@ -251,7 +267,7 @@ describe("handleAuthoringModal, the write gate", () => {
 
 		await handleAuthoringModal(interaction);
 
-		expect(replyOf(interaction).content).toBe(gameRoomsCopy.errors.notYours);
+		expect(answerOf(interaction).content).toBe(gameRoomsCopy.errors.notYours);
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
@@ -263,7 +279,7 @@ describe("handleAuthoringModal, the write gate", () => {
 
 		await handleAuthoringModal(interaction);
 
-		expect(replyOf(interaction).content).toBe(gameRoomsCopy.errors.notYours);
+		expect(answerOf(interaction).content).toBe(gameRoomsCopy.errors.notYours);
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
@@ -273,7 +289,7 @@ describe("handleAuthoringModal, the write gate", () => {
 
 		await handleAuthoringModal(interaction);
 
-		expect(replyOf(interaction).content).toBe(gameRoomsCopy.errors.notFound);
+		expect(answerOf(interaction).content).toBe(gameRoomsCopy.errors.notFound);
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
@@ -338,7 +354,7 @@ describe("handleAuthoringModal, validation wiring", () => {
 		for (const [reason, fields] of cases) {
 			const interaction = makeAuthorSubmit(HOST, fields);
 			await handleAuthoringModal(interaction);
-			const message = replyOf(interaction).content;
+			const message = answerOf(interaction).content;
 
 			expect(message, `${reason} produced no message`).toBeTruthy();
 			// Naming the collision beats a bare count: a failure here should say WHICH
@@ -394,7 +410,7 @@ describe("handleAuthoringModal, starting the round", () => {
 
 		await handleAuthoringModal(interaction);
 
-		expect(replyOf(interaction).content).toContain(HINT);
+		expect(answerOf(interaction).content).toContain(HINT);
 		expect(channelSend).toHaveBeenCalledOnce();
 	});
 
@@ -504,15 +520,15 @@ describe("handleAuthoringModal, acceptance", () => {
 	});
 
 	// ⚠️ RISK R12, AND THIS IS THE ASSERTION THAT GUARDS IT. The word is in scope on
-	// both of these lines and neither may render it: the private reply echoes the
+	// both of these lines and neither may render it: the confirmation echoes the
 	// HINT back to a host who already knows the word, and the opener is a real
 	// message in a channel the whole room can read.
-	it("puts the word in NEITHER the private confirmation nor the public opener", async () => {
+	it("puts the word in NEITHER the host's confirmation nor the public opener", async () => {
 		const interaction = makeAuthorSubmit(HOST);
 
 		await handleAuthoringModal(interaction);
 
-		const confirmation = replyOf(interaction);
+		const confirmation = answerOf(interaction);
 		const opener = trailMock.postMove.mock.calls[0][2] as { text: string };
 
 		expect(confirmation.content).toContain(HINT);
@@ -521,12 +537,13 @@ describe("handleAuthoringModal, acceptance", () => {
 		expect(opener.text).not.toMatch(new RegExp(WORD, "i"));
 	});
 
-	it("keeps the confirmation ephemeral, so the room does not watch the host author", async () => {
+	it("posts the confirmation in the commands channel, so the room does not watch the host author", async () => {
 		const interaction = makeAuthorSubmit(HOST);
 
 		await handleAuthoringModal(interaction);
 
-		expect(replyOf(interaction).flags).toBe(MessageFlags.Ephemeral);
+		expect(answerOf(interaction).audience).toBe("member");
+		expect(interaction.reply).not.toHaveBeenCalled();
 	});
 });
 
@@ -561,7 +578,7 @@ describe("handleGuessModal, the host gate", () => {
 
 		await handleGuessModal(interaction);
 
-		expect(replyOf(interaction).content).toBe(gameRoomsCopy.hangman.hostCannotGuess);
+		expect(answerOf(interaction).content).toBe(gameRoomsCopy.hangman.hostCannotGuess);
 	});
 
 	it("writes nothing when it refuses, so a refused guess cannot burn a letter", async () => {
@@ -580,6 +597,17 @@ describe("handleGuessModal, the host gate", () => {
 
 		expect(storeMock.update).toHaveBeenCalledOnce();
 		expect(trailMock.postMove).toHaveBeenCalledOnce();
+	});
+
+	it("closes a played guess's modal without a message of its own: the move line answers it", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		const interaction = makeSubmit(GUESSER);
+
+		await handleGuessModal(interaction);
+
+		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+		expect(interaction.reply).not.toHaveBeenCalled();
+		expect(answerMock).not.toHaveBeenCalled();
 	});
 });
 

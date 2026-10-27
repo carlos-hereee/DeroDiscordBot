@@ -1,4 +1,4 @@
-import { escapeMarkdown, MessageFlags, SlashCommandBuilder, type ChatInputCommandInteraction, type EmbedBuilder, type Guild } from "discord.js";
+import { escapeMarkdown, SlashCommandBuilder, type ChatInputCommandInteraction, type EmbedBuilder, type Guild } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { COLORS } from "@base/copy/brand.js";
 import { getPluginCopy, type IPluginCopy } from "@base/copy/index.js";
@@ -25,6 +25,7 @@ import { serverBoard } from "@features/ratings/serverRatings.js";
 import { isRatedGame, RATED_GAMES, type RatedGame } from "@features/ratings/ratingEngine.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { utcMonthKey } from "@utils/utcMonthKey.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showErrorNotice } from "@utils/textModal.js";
 
 // ── /rating ────────────────────────────────────────────────────────────────
@@ -234,26 +235,27 @@ async function serversAnswer({ interaction, words: copy }: RatingRequest): Promi
 // ── network leave (2026-10 item 244 Phase 5b) ──
 
 /**
- * Delete the member's network consent and every rating they hold, privately. Their luck
+ * Delete the member's network consent and every rating they hold, answering in
+ * 💬dero-commands (2026-10 item 257 Phase 5: a count of deleted ratings is no secret). Their luck
  * rows stay, because luck is kept per server and was never shown across servers without
  * consent. Consent goes FIRST, so a failure part way leaves them off the network rather
  * than shown there; running it again deletes whatever is left. The network boards are
  * redrawn, since a host who left is no longer listed.
  */
 async function leaveNetwork(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 	const guildConfig = await guildConfigStore.findByGuildId(guild.id).catch(() => null);
+	const answer = await beginChannelAnswer(interaction, "member", { config: guildConfig });
 	const copy = getPluginCopy(guildConfig).arcadeRatings;
 	try {
 		const hadConsent = await networkConsentStore.deleteForUser(interaction.user.id);
 		const ratingsDeleted = await playerRatingStore.deleteAllForPlayer(interaction.user.id);
 		scheduleNetworkBoardRefresh();
 		const text = !hadConsent && ratingsDeleted === 0 ? copy.leave.nothing : copy.leave.done(ratingsDeleted);
-		await interaction.editReply({ content: text });
+		await answer.send({ content: text });
 	}
 	catch (error) {
 		console.error(`[rating] network leave failed for user ${interaction.user.id} in guild ${guild.id}`, error);
-		await interaction.editReply({ content: copy.leave.failed }).catch(() => undefined);
+		await answer.send({ content: copy.leave.failed });
 	}
 }
 

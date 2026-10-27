@@ -1,6 +1,5 @@
 import {
 	SlashCommandBuilder,
-	MessageFlags,
 	PermissionFlagsBits,
 	type ChatInputCommandInteraction,
 	type RepliableInteraction,
@@ -32,6 +31,7 @@ import { voiceCopy } from "@features/voice/voiceCopy.js";
 import { turnLatencyLog } from "@features/voice/turnLatency.js";
 import { liveVoicePresenceState, renderVoicePresenceCard } from "@features/voice/voicePresenceRenderer.js";
 import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
+import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -215,8 +215,9 @@ async function tell(interaction: ChatInputCommandInteraction): Promise<void> {
 		return;
 	}
 
-	// ⑦ the brain can take up to 20 seconds, far past Discord's 3 second window
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	// ⑦ the brain can take up to 20 seconds, far past Discord's 3 second window, so a
+	// notice names 💬dero-commands and the answer posts there (2026-10 item 257 Phase 5)
+	const answer = await beginChannelAnswer(interaction, "member");
 	const startedAt = Date.now();
 
 	try {
@@ -227,19 +228,19 @@ async function tell(interaction: ChatInputCommandInteraction): Promise<void> {
 
 		// ⑨
 		if (turn.status === "unanswered") {
-			await interaction.editReply({ embeds: [errorEmbed(UNANSWERED_LINES[turn.reason])] });
+			await answer.send({ embeds: [errorEmbed(UNANSWERED_LINES[turn.reason])] });
 			auditAction(guild.id, { ...audit, durationMs: Date.now() - startedAt });
 			return;
 		}
 		tellCooldown.record(cooldownKey);
-		await interaction.editReply(await answerPayload(guild, turn.reports));
+		await answer.send(await answerPayload(guild, turn.reports));
 
 		// ⑩
 		auditAction(guild.id, { ...audit, durationMs: Date.now() - startedAt });
 	}
 	catch (err) {
 		console.error(`[dero-brain] tell failed guild=${guild.id} user=${speaker.id}`, err);
-		await interaction.editReply({ embeds: [errorEmbed(tellCopy.failed)] }).catch(() => undefined);
+		await answer.send({ embeds: [errorEmbed(tellCopy.failed)] });
 	}
 }
 
@@ -296,9 +297,10 @@ export async function showDeroStatus(interaction: RepliableInteraction): Promise
 				() => null
 			)
 		: null;
+	// A modal shows no image, so the card posts in 💬dero-commands (2026-10 item 257 Phase 5).
 	if (isRenderPayload(card)) {
 		embed.setImage(card.ref);
-		await interaction.reply({ embeds: [embed], files: [card.attachment], flags: MessageFlags.Ephemeral });
+		await answerInChannel(interaction, "member", { embeds: [embed], files: [card.attachment] });
 		return;
 	}
 	await showEmbedNotice(interaction, embed);
@@ -396,8 +398,9 @@ export async function bringDeroIntoCall(interaction: RepliableInteraction): Prom
 	}
 	joinCooldown.record(guild.id);
 
-	// Ready can take up to 20 seconds, far past Discord's 3 second window.
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	// Ready can take up to 20 seconds, far past Discord's 3 second window, so a notice
+	// names 💬dero-commands and the answer posts there (2026-10 item 257 Phase 5).
+	const answer = await beginChannelAnswer(interaction, "member");
 	const voiceChannelId = gate.channel.id;
 	// The channel the request came from carries the join notice. A slash command
 	// and a button always have one; only an interaction with no channel at all falls
@@ -407,11 +410,11 @@ export async function bringDeroIntoCall(interaction: RepliableInteraction): Prom
 		const outcome = await voiceSessions.join({ guild, channel: gate.channel, controlChannelId });
 		if (outcome.status === "alreadyInGuild") {
 			// Another join won the race between the gate and here.
-			await interaction.editReply({ embeds: [errorEmbed(callCopy.alreadyElsewhere(outcome.channelId))] });
+			await answer.send({ embeds: [errorEmbed(callCopy.alreadyElsewhere(outcome.channelId))] });
 			return;
 		}
 		if (outcome.status === "failed") {
-			await interaction.editReply({ embeds: [errorEmbed(callCopy.connectFailed(voiceChannelId))] });
+			await answer.send({ embeds: [errorEmbed(callCopy.connectFailed(voiceChannelId))] });
 			return;
 		}
 
@@ -422,11 +425,11 @@ export async function bringDeroIntoCall(interaction: RepliableInteraction): Prom
 			voiceId: gate.voiceId,
 			speaker: outcome.session.speaker,
 		});
-		await interaction.editReply({ embeds: [infoEmbed(callCopy.replyTitle, callCopy.joined[greeting](voiceChannelId))] });
+		await answer.send({ embeds: [infoEmbed(callCopy.replyTitle, callCopy.joined[greeting](voiceChannelId))] });
 	}
 	catch (err) {
 		console.error(`[dero-voice] join command failed guild=${guild.id} channel=${voiceChannelId}`, err);
-		await interaction.editReply({ embeds: [errorEmbed(tellCopy.failed)] }).catch(() => undefined);
+		await answer.send({ embeds: [errorEmbed(tellCopy.failed)] });
 	}
 }
 

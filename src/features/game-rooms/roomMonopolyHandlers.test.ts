@@ -23,9 +23,13 @@ vi.mock("@utils/secureRng.js", () => ({ secureRandom: vi.fn() }));
 vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn() }));
 // The voice referee has its own suite; here only its call from the shared tail matters.
 vi.mock("./roomMonopolyReferee.js", () => ({ announceReferee: vi.fn() }));
+// Where an answer posts has its own suite (utils/answerInChannel.test.ts); here only that a
+// refusal or the peek goes there, for a member, with what it says (2026-10 item 257 Phase 5).
+vi.mock("@utils/answerInChannel.js", () => ({ answerInChannel: vi.fn() }));
 
 import { renderBoard } from "@features/games/monopolyRenderer.js";
 import { announceReferee } from "./roomMonopolyReferee.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { handleMroll, handleMbuy, handleMskip, handleMend, handleMjail, handleMinventory, handleMpaydebt, turnFingerprint } from "./roomMonopolyHandlers.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
@@ -40,7 +44,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // ── roomMonopolyHandlers ─────────────────────────────────────────────
 // Each button: acknowledged first (risk M1), re-read, applied through the pure
 // engine, persisted by compare and swap, then the board redrawn and the trail
-// posted, in that order. And each refusal: ephemeral, with nothing written.
+// posted, in that order. And each refusal: in 💬dero-commands, with nothing written.
 
 const storeMock = gameRoomStore as unknown as {
 	findByRoomId: ReturnType<typeof vi.fn>;
@@ -54,6 +58,7 @@ const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
 const awardMock = awardMultiPlayerResult as unknown as ReturnType<typeof vi.fn>;
 const diceMock = secureRandom as unknown as ReturnType<typeof vi.fn>;
 const renderMock = renderBoard as unknown as ReturnType<typeof vi.fn>;
+const answerMock = answerInChannel as unknown as ReturnType<typeof vi.fn>;
 
 const A = "player-a";
 const B = "player-b";
@@ -121,8 +126,14 @@ const trailTexts = (): string[] =>
 	[...moveLogMock.mock.calls.map((call) => (call[2] as { moves: RecordedMove[] }).moves), ...carriedMock.mock.calls.map((call) => call[1] as RecordedMove[])]
 		.flat()
 		.map((move) => move.text);
-const followUpText = (interaction: ReturnType<typeof makeInteraction>): string =>
-	(interaction.followUp.mock.calls[0][0] as { embeds: { data: { description?: string } }[] }).embeds[0].data.description ?? "";
+// What this interaction answered through answerInChannel, which must be the member's channel.
+function answered(interaction: ReturnType<typeof makeInteraction>): { embeds: { data: { description?: string } }[]; components: { toJSON(): { components: { custom_id: string }[] } }[] } {
+	const call = answerMock.mock.calls.find((args) => args[0] === interaction);
+	if (!call) throw new Error("the interaction was not answered through answerInChannel");
+	expect(call[1]).toBe("member");
+	return call[2] as ReturnType<typeof answered>;
+}
+const followUpText = (interaction: ReturnType<typeof makeInteraction>): string => answered(interaction).embeds[0].data.description ?? "";
 
 function seed(state: MonopolyState): IGameRoom {
 	const room = makeRoom(state);
@@ -260,14 +271,14 @@ describe("handleMroll", () => {
 		expect(payload.embeds[0].data.image).toBeUndefined();
 	});
 
-	it("refuses a seat that is not on the clock, ephemerally, and writes nothing", async () => {
+	it("refuses a seat that is not on the clock, in the commands channel, and writes nothing", async () => {
 		const room = seed(freshMatch());
 		const interaction = makeInteraction(B);
 
 		await handleMroll(interaction, room);
 
 		expect(followUpText(interaction)).toBe(gameRoomsCopy.monopoly.notYourTurn);
-		expect((interaction.followUp.mock.calls[0][0] as { flags?: number }).flags).toBe(64);
+		expect(interaction.followUp).not.toHaveBeenCalled();
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 		expect(postMoveMock).not.toHaveBeenCalled();
 	});
@@ -486,15 +497,15 @@ describe("handleMjail", () => {
 });
 
 describe("handleMinventory", () => {
-	it("replies ephemerally with the clicker's own holdings and writes nothing", async () => {
+	it("answers in the commands channel with the clicker's own holdings and writes nothing", async () => {
 		const state = freshMatch();
 		state.seats[1].chips = 777;
 		const interaction = makeInteraction(B);
 
 		await handleMinventory(interaction, makeRoom(state));
 
-		const payload = interaction.reply.mock.calls[0][0] as { flags?: number; embeds: { data: { description?: string } }[] };
-		expect(payload.flags).toBe(64);
+		const payload = answered(interaction);
+		expect(interaction.reply).not.toHaveBeenCalled();
 		expect(payload.embeds[0].data.description).toContain(gameRoomsCopy.monopoly.inventoryChips(777));
 		expect(interaction.deferUpdate).not.toHaveBeenCalled();
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
@@ -507,7 +518,7 @@ describe("handleMinventory", () => {
 
 		await handleMinventory(interaction, makeRoom(state));
 
-		const payload = interaction.reply.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id: string }[] } }[] };
+		const payload = answered(interaction);
 		expect(payload.components.map((row) => row.toJSON().components[0].custom_id)).toEqual(["gameroomSelect:mmortgage:room-1"]);
 	});
 });

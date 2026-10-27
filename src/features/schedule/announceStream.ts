@@ -2,8 +2,6 @@ import {
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
-	ComponentType,
-	MessageFlags,
 	EmbedBuilder,
 	type RepliableInteraction,
 	type SlashCommandSubcommandBuilder,
@@ -18,6 +16,7 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { askInChannel } from "@utils/answerInChannel.js";
 import { showErrorNotice } from "@utils/textModal.js";
 
 // ── /events stream announce ──────────────────────────────────────────────────
@@ -122,18 +121,12 @@ export async function announceStream(interaction: RepliableInteraction, options:
 		new ButtonBuilder().setCustomId("announce_cancel").setLabel(c.confirm.cancelButtonLabel).setStyle(ButtonStyle.Secondary)
 	);
 
-	const confirmMessage = await interaction.reply({
-		embeds: [confirmEmbed],
-		components: [row],
-		flags: MessageFlags.Ephemeral,
-	});
+	// Posted in 🎛️admin-controls (2026-10 item 257 Phase 5); only this admin's press counts.
+	const prompt = await askInChannel(interaction, "admin", { embeds: [confirmEmbed], components: [row] });
 
 	try {
-		const press = await confirmMessage.awaitMessageComponent({
-			componentType: ComponentType.Button,
-			time: 120_000,
-			filter: (i) => i.user.id === interaction.user.id,
-		});
+		const press = await prompt.awaitPress(120_000);
+		if (!press) throw new Error("the stream announce prompt timed out");
 
 		if (press.customId === "announce_cancel") {
 			await press.update({ embeds: [errorEmbed(c.cancelled)], components: [] });
@@ -172,6 +165,6 @@ export async function announceStream(interaction: RepliableInteraction, options:
 			await press.update({ embeds: [errorEmbed(c.saveFailed)], components: [] });
 		}
 	} catch {
-		await interaction.editReply({ embeds: [errorEmbed(c.timedOut)], components: [] });
+		await prompt.edit({ embeds: [errorEmbed(c.timedOut)], components: [] });
 	}
 }

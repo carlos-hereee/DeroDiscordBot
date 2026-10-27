@@ -260,17 +260,24 @@ type World = ReturnType<typeof makeWorld>;
 // The Rematch press, carrying the posted result card it lives on.
 function pressRematch(world: World, userId: string): ButtonInteraction {
 	const posted = roomResultEmbed(P1).toJSON() as APIEmbed;
-	return {
+	// As discord.js does: deferUpdate marks the press deferred, which is what sends a refusal
+	// answerInChannel cannot post (no 💬dero-commands stored here) as a private followUp.
+	const press: Record<string, unknown> = {
 		guildId: GUILD,
 		guild: world.guild,
 		client: world.client,
 		user: { id: userId, globalName: null, username: userId },
 		message: { embeds: [posted] },
+		deferred: false,
+		replied: false,
 		reply: vi.fn().mockResolvedValue(undefined),
-		deferUpdate: vi.fn().mockResolvedValue(undefined),
+		deferUpdate: vi.fn(async () => {
+			press.deferred = true;
+		}),
 		editReply: vi.fn().mockResolvedValue(undefined),
 		followUp: vi.fn().mockResolvedValue(undefined),
-	} as unknown as ButtonInteraction;
+	};
+	return press as unknown as ButtonInteraction;
 }
 
 const ARCHIVE_DELAY = BOT_CONSTANTS.GAME_ROOM_ARCHIVE_DELAY_MS;

@@ -51,16 +51,16 @@ describe("the profile buttons", () => {
 		]);
 	});
 
-	it("open the presser's own profile, privately", async () => {
+	it("open the presser's own profile", async () => {
 		const interaction = press("account");
 		await mocks.buttons.get("powerup")!(interaction);
-		expect(mocks.showAccountProfile).toHaveBeenCalledWith(interaction, { target: USER, isPrivate: true });
+		expect(mocks.showAccountProfile).toHaveBeenCalledWith(interaction, { target: USER });
 	});
 
-	it("open the all time standings, the slash command's default window, privately", async () => {
+	it("open the all time standings, the slash command's default window", async () => {
 		const interaction = press("levels");
 		await mocks.buttons.get("powerup")!(interaction);
-		expect(mocks.showLevelsStandings).toHaveBeenCalledWith(interaction, { window: "alltime", isPrivate: true });
+		expect(mocks.showLevelsStandings).toHaveBeenCalledWith(interaction, { window: "alltime" });
 	});
 
 	// 2026-10 item 254: Claim daily rewards on the 🕹️games daily row is the /claim flow.
@@ -70,9 +70,9 @@ describe("the profile buttons", () => {
 		expect(mocks.runChipClaim).toHaveBeenCalledWith(interaction);
 	});
 
-	it("open the presser's own achievements, privately", async () => {
+	it("open the presser's own achievements", async () => {
 		const interaction = press("achievements");
 		await mocks.buttons.get("powerup")!(interaction);
-		expect(mocks.showAchievements).toHaveBeenCalledWith(interaction, { target: USER, isPrivate: true });
+		expect(mocks.showAchievements).toHaveBeenCalledWith(interaction, { target: USER });
 	});
 });

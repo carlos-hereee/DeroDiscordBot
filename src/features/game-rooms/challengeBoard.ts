@@ -1,7 +1,6 @@
 import {
 	ActionRowBuilder,
 	ChannelType,
-	MessageFlags,
 	StringSelectMenuBuilder,
 	TextChannel,
 	type ButtonInteraction,
@@ -64,6 +63,7 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { botSeatIdsFor, botsAllowedIn, casualBotSeats, maxBotSeats, takesBots } from "./botSeat.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { answerInChannel, beginChannelAnswer, type PendingChannelAnswer } from "@utils/answerInChannel.js";
 import { showConfirm, showEmbedNotice, showErrorNotice, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 
 // The host controls' words are shared by every pack (2026-10 item 244 Phase 4), so
@@ -361,12 +361,13 @@ export async function chooseVisibility(interaction: ButtonInteraction, room: IGa
 	// A host choosing the PRIVATE form sees the ceiling before the refusal ever
 	// could: "Your server has 6/10 private rooms open on the Starter plan." Null
 	// (and therefore silent) while the tier surface is not enforcing, which is
-	// production today. Fire and forget after the card edit; a failed followUp must
-	// not undo a visibility choice that already landed.
+	// production today. Fire and forget after the card edit; a failed post must
+	// not undo a visibility choice that already landed. It posts in 💬dero-commands
+	// (2026-10 item 257 Phase 5), the card's own update having acknowledged the press.
 	if (visibility === "invite") {
 		readPrivateQuotaStatus(room.guildId, interaction.user.id)
 			.then((status) =>
-				status ? interaction.followUp({ content: `Invite only. ${status}`, flags: MessageFlags.Ephemeral }) : undefined
+				status ? answerInChannel(interaction, "member", { content: `Invite only. ${status}` }) : undefined
 			)
 			.catch((error) => console.warn("[game-rooms] private quota status failed", error));
 	}
@@ -390,7 +391,7 @@ async function chooseNetworkTable(interaction: ButtonInteraction, room: IGameRoo
 		return;
 	}
 	if (!(await hasNetworkConsent(room.hostId))) {
-		await interaction.reply(consentPrompt({ kind: "again" }));
+		await answerInChannel(interaction, "member", consentPrompt({ kind: "again" }));
 		return;
 	}
 
@@ -435,10 +436,11 @@ export async function openInvitePicker(interaction: ButtonInteraction, room: IGa
 		.setMaxValues(options.length)
 		.addOptions(options);
 
-	await interaction.reply({
+	// A pick of several members is no single choice a modal holds, so it posts in
+	// 💬dero-commands (2026-10 item 257 Phase 5); handleInviteSelect refuses anyone but the host.
+	await answerInChannel(interaction, "member", {
 		content: gameRoomsCopy.board.pickerPrompt,
 		components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
-		flags: MessageFlags.Ephemeral,
 	});
 }
 
@@ -506,7 +508,7 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 		// A network table needs the network notice first (2026-10 item 244 Phase 5b); the
 		// member presses Join again once they accept it.
 		if (verdict.reason === "noConsent") {
-			await interaction.reply(consentPrompt({ kind: "again" }));
+			await answerInChannel(interaction, "member", consentPrompt({ kind: "again" }));
 			return;
 		}
 		const refusal = verdict.reason === "kicked" ? hostWords.kick.refusedRejoin : hostWords.band.refused(gameRoomsCopy.gameLabel(room.game));
@@ -598,11 +600,11 @@ export async function confirmStartMatch(interaction: ConfirmInteraction, room: I
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.confirms.startPickNeeded] });
 		return;
 	}
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	const answer = await beginChannelAnswer(interaction, "member");
 	// A battleship match against a Dero bot and a cooperative game single nobody out; a
 	// head to head start with one candidate seats that one (none for a bots or network start).
 	const singlesOut = !isCooperativeGame(room.game) && !(room.game === "battleship" && (room.botSeats ?? 0) > 0);
-	await provisionFromDraft(interaction, room, singlesOut ? ((room.spectatorIds ?? [])[0] ?? null) : null);
+	await provisionFromDraft(interaction, answer, room, singlesOut ? ((room.spectatorIds ?? [])[0] ?? null) : null);
 }
 
 // Every reason Start match is refused before any channel exists, the same on the press and
@@ -704,8 +706,8 @@ export async function handleOpponentSelect(interaction: StringSelectMenuInteract
 		return;
 	}
 
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-	await provisionFromDraft(interaction, room, chosen);
+	const answer = await beginChannelAnswer(interaction, "member");
+	await provisionFromDraft(interaction, answer, room, chosen);
 }
 
 // Shared tail of both start paths: promote the chosen member, provision, and close
@@ -713,6 +715,9 @@ export async function handleOpponentSelect(interaction: StringSelectMenuInteract
 // a player and who ends up a spectator.
 async function provisionFromDraft(
 	interaction: ConfirmInteraction | StringSelectMenuInteraction,
+	// The start's slow answer, already acknowledged: it posts in 💬dero-commands (2026-10
+	// item 257 Phase 5), or privately where that channel does not exist.
+	answer: PendingChannelAnswer,
 	room: IGameRoom,
 	// Null for a cooperative game, where the whole pool plays and there is nobody to
 	// single out.
@@ -725,7 +730,7 @@ async function provisionFromDraft(
 	const categoryId = config?.gamesCategoryId;
 	const category = categoryId ? await guild.channels.fetch(categoryId).catch(() => null) : null;
 	if (!category || category.type !== ChannelType.GuildCategory) {
-		await interaction.editReply({ embeds: [errorEmbed(gameRoomsCopy.errors.noArcadeCategory)] });
+		await answer.send({ embeds: [errorEmbed(gameRoomsCopy.errors.noArcadeCategory)] });
 		return;
 	}
 
@@ -751,7 +756,7 @@ async function provisionFromDraft(
 	// seat here (item 257 Phase 4a); a short wallet stops the start before any channel exists.
 	const settled = await settleDraftBuyIns(room, pool);
 	if (!settled.ok) {
-		await interaction.editReply({ embeds: [errorEmbed(settled.reason)] });
+		await answer.send({ embeds: [errorEmbed(settled.reason)] });
 		return;
 	}
 	const paidSeats = settled.seats;
@@ -780,7 +785,7 @@ async function provisionFromDraft(
 
 	if (!result.ok) {
 		if (paidSeats) await refundOpenedSeats(room, paidSeats);
-		await interaction.editReply({ embeds: [errorEmbed(describeRoomOpenFailure(result))] });
+		await answer.send({ embeds: [errorEmbed(describeRoomOpenFailure(result))] });
 		return;
 	}
 	// The ledger is settled: those buy ins are stacks at the table now, paid back by the table.
@@ -789,11 +794,11 @@ async function provisionFromDraft(
 	// A Blackjack table is dealt once its room is up (2026-10 item 254, Arcade 1), every
 	// gathered player seated; a table that cannot start has already closed its room.
 	if (room.game === "blackjack" && !(await startBlackjackRoomBoard(guild, result.room, result.channel))) {
-		await interaction.editReply({ embeds: [errorEmbed(gameRoomsCopy.errors.createFailed)] });
+		await answer.send({ embeds: [errorEmbed(gameRoomsCopy.errors.createFailed)] });
 		return;
 	}
 
-	await interaction.editReply({ content: gameRoomsCopy.board.cardStarted(result.channel.id) });
+	await answer.send({ content: gameRoomsCopy.board.cardStarted(result.channel.id) });
 	// A network table is now playing and taking players, which is what the board lists.
 	if (room.network) scheduleNetworkBoardRefresh();
 	await refreshCard(
@@ -837,13 +842,13 @@ export async function rematchFromRoom(interaction: ButtonInteraction, room: IGam
 	await interaction.deferUpdate();
 	try {
 		const failure = await playRematchInPlace(interaction, room, check.channel);
-		if (failure) await interaction.followUp({ content: failure, flags: MessageFlags.Ephemeral });
+		if (failure) await answerInChannel(interaction, "member", { content: failure });
 	} catch (error) {
 		// A Mongo or Discord failure mid way. Whatever was written is safe to leave (see
 		// Where above): a new row that never reached "playing" is a draft the idle sweep
 		// closes, and its channel is archived through it.
 		console.error("[game-rooms] rematch failed", { guildId: room.guildId, roomId: room.roomId, error });
-		await interaction.followUp({ content: gameRoomsCopy.errors.createFailed, flags: MessageFlags.Ephemeral }).catch(() => undefined);
+		await answerInChannel(interaction, "member", { content: gameRoomsCopy.errors.createFailed });
 	}
 }
 
@@ -1004,7 +1009,7 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 // What:  the host of a coin flip, dice roll or rps challenge plays one round against
 //        Dero instead of waiting on a member. The draft closes and the round plays in a
 //        solo room of the host's own (soloRooms, 2026-10 item 254, Arcade 1), so nothing
-//        is played in ⚔️challenges; the host is told privately where it is.
+//        is played in ⚔️challenges; the host is told in 💬dero-commands where it is.
 // Who:   the card's `dero` button (strict host only: HOST_STRICT_ACTIONS).
 // Where: soloLuck is the ONE solo round, shared with /mini-game against Dero and the
 //        🕹️games row, so the odds and the pay cannot drift between the three doors. An rps
@@ -1022,9 +1027,10 @@ export async function playDero(interaction: ButtonInteraction, room: IGameRoom):
 	}
 	const guild = interaction.guild;
 	if (!guild) return;
-	// Deferred first: opening a room is a channel create plus its opener, which can run
-	// past Discord's three second window.
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	// Acknowledged first: opening a room is a channel create plus its opener, which can run
+	// past Discord's three second window. The line pointing at the room posts in
+	// 💬dero-commands (2026-10 item 257 Phase 5).
+	const answer = await beginChannelAnswer(interaction, "member");
 	await gameRoomStore.markArchived(room.guildId, room.roomId);
 
 	const member = guild.members.cache.get(interaction.user.id);
@@ -1034,11 +1040,11 @@ export async function playDero(interaction: ButtonInteraction, room: IGameRoom):
 		user: interaction.user,
 	});
 	if (!opened.ok) {
-		await interaction.editReply({ embeds: [errorEmbed(describeSoloOpenFailure(opened))] });
+		await answer.send({ embeds: [errorEmbed(describeSoloOpenFailure(opened))] });
 		await refreshCard(guild, room, cardStateFor(room, { visibility: room.visibility, resultLine: gameRoomsCopy.board.cardDeroUnavailable(room.hostId) }));
 		return;
 	}
-	await interaction.editReply({ content: gameRoomsCopy.board.cardStarted(opened.channel.id) });
+	await answer.send({ content: gameRoomsCopy.board.cardStarted(opened.channel.id) });
 	await refreshCard(guild, room, cardStateFor(room, { visibility: room.visibility, resultLine: gameRoomsCopy.board.cardPlayedDero(room.hostId, opened.channel.id) }));
 }
 

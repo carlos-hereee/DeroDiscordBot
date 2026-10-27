@@ -2,16 +2,15 @@ import {
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
-	MessageFlags,
 	type Client,
 	type ColorResolvable,
 	type EmbedBuilder,
-	type InteractionReplyOptions,
 } from "discord.js";
 import { COLORS } from "@base/copy/brand.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import type { INetworkBan } from "@db/models/NetworkBan.js";
+import type { ChannelAnswer } from "@utils/answerInChannel.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { asChallengeReach } from "./challengeReach.js";
 
@@ -104,14 +103,16 @@ export function consentEmbed(): EmbedBuilder {
 }
 
 /**
- * The private reply that shows the network notice with I agree and Not now. Every door
- * that meets a member without consent answers with this, so the notice reads the same
- * wherever a member first meets the network.
+ * The answer that shows the network notice with I agree and Not now, posted through
+ * answerInChannel in 💬dero-commands (2026-10 item 257 Phase 5). Every door that meets a
+ * member without consent answers with this, so the notice reads the same wherever a member
+ * first meets the network. Either button speaks only for its presser: I agree records the
+ * presser's own consent, so a member who presses another's prompt consents for themselves.
  */
-export function consentPrompt(next: ConsentNext): InteractionReplyOptions & { flags: MessageFlags.Ephemeral } {
+export function consentPrompt(next: ConsentNext): ChannelAnswer {
 	const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
 		new ButtonBuilder().setCustomId(consentAcceptId(next)).setLabel(words.consent.acceptLabel).setStyle(ButtonStyle.Success),
 		new ButtonBuilder().setCustomId(`${NETWORK_CONSENT_PREFIX}:no`).setLabel(words.consent.declineLabel).setStyle(ButtonStyle.Secondary)
 	);
-	return { embeds: [consentEmbed()], components: [row], flags: MessageFlags.Ephemeral };
+	return { embeds: [consentEmbed()], components: [row] };
 }

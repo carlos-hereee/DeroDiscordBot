@@ -23,7 +23,8 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 // ── partyGames (post-launch plan item 3) ─────────────────────────────
 // The 🎉party-games card's two admin buttons. The buttons are public, so the gate is
 // the handler's, and Host hangman opens the round in the party channel, never in the
-// channel the press came from.
+// channel the press came from. The admin's answer posts in 🎰arcade-control (2026-10 item
+// 257 Phase 5), and privately only where setup never stored that channel.
 
 const words = gameRoomsCopy.partyGames;
 const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
@@ -33,6 +34,8 @@ const logMock = adminLog as unknown as { emitFor: ReturnType<typeof vi.fn> };
 const draftMock = offerChallengeDraft as unknown as ReturnType<typeof vi.fn>;
 
 const partyChannel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, { id: "ch-party" });
+const arcadeControl = { id: "ch-arcade", isSendable: () => true, send: vi.fn(async () => ({ id: "answer-msg" })) };
+const channelsById: Record<string, unknown> = { "ch-party": partyChannel, "ch-arcade": arcadeControl };
 
 function press(customId: string): ButtonInteraction {
 	return {
@@ -40,7 +43,10 @@ function press(customId: string): ButtonInteraction {
 		guildId: "guild-1",
 		guild: { id: "guild-1" },
 		user: { id: "admin-1" },
-		client: { channels: { fetch: vi.fn(async (id: string) => (id === "ch-party" ? partyChannel : null)) } },
+		client: { channels: { fetch: vi.fn(async (id: string) => channelsById[id] ?? null) } },
+		isModalSubmit: () => false,
+		isMessageComponent: () => true,
+		deferUpdate: vi.fn().mockResolvedValue(undefined),
 		reply: vi.fn().mockResolvedValue(undefined),
 		deferReply: vi.fn().mockResolvedValue(undefined),
 		editReply: vi.fn().mockResolvedValue(undefined),
@@ -66,7 +72,7 @@ const onlyNoticesShown = (interaction: { showModal: unknown }): boolean => shown
 beforeEach(() => {
 	vi.clearAllMocks();
 	gateMock.mockResolvedValue(true);
-	configMock.findByGuildId.mockResolvedValue({ partyGamesChannelId: "ch-party" });
+	configMock.findByGuildId.mockResolvedValue({ partyGamesChannelId: "ch-party", arcadeControlChannelId: "ch-arcade" });
 	hangmanMock.mockResolvedValue("started");
 });
 
@@ -135,7 +141,19 @@ describe("the party games buttons", () => {
 
 		expect(hangmanMock).toHaveBeenCalledWith(partyChannel, "admin-1");
 		expect(logMock.emitFor).toHaveBeenCalledWith(interaction, "guild-1", "powerup.toggle", expect.anything());
-		expect(interaction.editReply).toHaveBeenCalledWith({ content: words.hostStarted("ch-party") });
+		expect(arcadeControl.send).toHaveBeenCalledWith(expect.objectContaining({ content: `<@admin-1> ${words.hostStarted("ch-party")}`, allowedMentions: { parse: [] } }));
+		expect(interaction.deferReply).not.toHaveBeenCalled();
+		expect(interaction.editReply).not.toHaveBeenCalled();
+	});
+
+	it("answers the admin privately where setup never stored 🎰arcade-control", async () => {
+		configMock.findByGuildId.mockResolvedValue({ partyGamesChannelId: "ch-party", arcadeControlChannelId: null });
+		const interaction = press("party_games:host:hangman");
+
+		await handle(interaction);
+
+		expect(arcadeControl.send).not.toHaveBeenCalled();
+		expect(interaction.editReply).toHaveBeenCalledWith(expect.objectContaining({ content: words.hostStarted("ch-party") }));
 	});
 
 	it("says so when the party channel is not built yet", async () => {

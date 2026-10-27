@@ -10,8 +10,13 @@ const mocks = vi.hoisted(() => ({
 	getLevelingConfig: vi.fn(),
 	findOne: vi.fn(),
 	renderAchievementsCard: vi.fn(),
+	beginChannelAnswer: vi.fn(),
+	send: vi.fn(async (_payload: unknown) => ({ channelId: "c-commands" })),
 }));
 
+// Every /account view posts in 💬dero-commands (2026-10 item 257 Phase 5): the helper is
+// mocked, so the payload is read off its send and the audience off its call.
+vi.mock("@utils/answerInChannel.js", () => ({ beginChannelAnswer: mocks.beginChannelAnswer }));
 vi.mock("@features/leveling/levelingConfig.js", () => ({ getLevelingConfig: mocks.getLevelingConfig }));
 vi.mock("@db/stores/memberLevelStore.js", () => ({ memberLevelStore: { findOne: mocks.findOne } }));
 vi.mock("@features/leveling/achievementsRenderer.js", () => ({ ACHIEVEMENTS_AVATAR_SIZE: 128, renderAchievementsCard: mocks.renderAchievementsCard }));
@@ -25,20 +30,19 @@ const TARGET = { id: "u1", bot: false, avatar: "a1", username: "silent", globalN
 const VISIBLE_TRACK = ACHIEVEMENTS.find((track) => !track.hidden)!;
 
 function press() {
-	const editReply = vi.fn(async (_payload: unknown) => undefined);
 	const interaction = {
 		guildId: "g1",
 		user: TARGET,
 		guild: { members: { cache: new Map([["u1", { displayName: "Silent Warrior" }]]) } },
 		deferReply: vi.fn(async () => undefined),
 		reply: vi.fn(async () => undefined),
-		editReply,
 	};
-	return { interaction: interaction as unknown as RepliableInteraction, editReply };
+	return { interaction: interaction as unknown as RepliableInteraction, editReply: mocks.send };
 }
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mocks.beginChannelAnswer.mockResolvedValue({ channelId: "c-commands", send: mocks.send });
 	mocks.getLevelingConfig.mockResolvedValue({ settings: { curve: "dero", curveMultiplier: 1, maxLevel: null } });
 	mocks.findOne.mockResolvedValue({
 		totalXp: 964,
@@ -55,7 +59,7 @@ describe("the Achievements view", () => {
 		mocks.renderAchievementsCard.mockResolvedValue({ attachment, ref: "attachment://achievements-abc.png" });
 		const { interaction, editReply } = press();
 
-		await showAchievements(interaction, { target: TARGET, isPrivate: true });
+		await showAchievements(interaction, { target: TARGET });
 
 		const view = mocks.renderAchievementsCard.mock.calls[0]![0] as { displayName: string; unlocked: Array<{ id: string }>; inProgress: Array<{ id: string }> };
 		expect(view.displayName).toBe("Silent Warrior");
@@ -63,6 +67,7 @@ describe("the Achievements view", () => {
 		const hiddenIds = new Set(ACHIEVEMENTS.filter((track) => track.hidden).map((track) => track.id));
 		expect(view.inProgress.some((row) => hiddenIds.has(row.id))).toBe(false);
 
+		expect(mocks.beginChannelAnswer).toHaveBeenCalledWith(interaction, "member");
 		const payload = editReply.mock.calls[0]![0] as ReplyPayload;
 		expect(payload.files).toEqual([attachment]);
 		expect(payload.embeds[0]!.data.image?.url).toBe("attachment://achievements-abc.png");
@@ -73,7 +78,7 @@ describe("the Achievements view", () => {
 		mocks.renderAchievementsCard.mockResolvedValue(null);
 		const { interaction, editReply } = press();
 
-		await showAchievements(interaction, { target: TARGET, isPrivate: true });
+		await showAchievements(interaction, { target: TARGET });
 
 		const payload = editReply.mock.calls[0]![0] as ReplyPayload;
 		expect(payload.files).toBeUndefined();

@@ -2,14 +2,13 @@ import {
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
-	MessageFlags,
 	StringSelectMenuBuilder,
 	type ButtonInteraction,
 	type ChatInputCommandInteraction,
-	type MessageComponentInteraction,
 	type StringSelectMenuInteraction,
 } from "discord.js";
 import { registerButton, registerSelectMenu } from "@handlers/interactionRegistry.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { openSoloRoom, describeSoloOpenFailure, readPrivateQuotaStatus, type SoloGameSlug } from "@features/game-rooms/soloRooms.js";
 import { offerChallengeDraft } from "@features/game-rooms/challengeBoard.js";
@@ -95,13 +94,7 @@ async function handleArcadeHost(interaction: ButtonInteraction): Promise<void> {
 		return;
 	}
 
-	// Ephemeral throughout: the PUBLIC artifact of pressing this is the room or the
-	// table that opens, so a second public "X pressed a button" message would just be
-	// noise beside it.
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-	const guild = interaction.guild;
-	if (!guild) return;
+	if (!interaction.guild) return;
 
 	// ── the solo forms: a private one-player room ──
 	await openSoloRoomForMember(interaction, choice === "hangman" ? "solo-hangman" : "solo-blackjack");
@@ -115,23 +108,26 @@ async function handleHangmanCategoryStart(interaction: StringSelectMenuInteracti
 	const category = interaction.values[0] ?? "";
 	if (!isHangmanCategory(category)) return;
 
-	// A reply rather than an update: the select lives on the shared games intro, and
-	// updating it would edit that public message for everyone.
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	// Answered apart from the select rather than as an update: the select lives on the
+	// shared games intro, and updating it would edit that public message for everyone.
 	if (!interaction.guild) return;
 	await openSoloRoomForMember(interaction, "solo-hangman", { hangmanCategory: category });
 }
 
 // The shared tail of every solo form: open the room, then tell the member where it is
-// or, on a refusal, what to do about it. The interaction is already deferred, privately.
+// or, on a refusal, what to do about it. Acknowledged first, because opening a room is a
+// channel create plus its opener, past Discord's three second window: a notice names
+// 💬dero-commands and the line pointing at the room posts there (2026-10 item 257 Phase 5),
+// beside the room itself, which is the press's public artifact.
 // Exported for miniGameInChallenges (2026-10 item 254, Arcade 1), whose slash commands
 // typed in ⚔️challenges open the same solo rooms and answer the same way.
 export async function openSoloRoomForMember(
-	interaction: MessageComponentInteraction | ChatInputCommandInteraction,
+	interaction: ButtonInteraction | StringSelectMenuInteraction | ChatInputCommandInteraction,
 	game: SoloGameSlug,
 	options: { hangmanCategory?: HangmanCategory } = {}
 ): Promise<void> {
 	const guild = interaction.guild!;
+	const answer = await beginChannelAnswer(interaction, "member");
 	const member = guild.members.cache.get(interaction.user.id);
 	const result = await openSoloRoom(
 		guild,
@@ -149,12 +145,12 @@ export async function openSoloRoomForMember(
 		// does on the visibility chooser. Null (and skipped) in production today.
 		const status = await readPrivateQuotaStatus(guild.id, interaction.user.id).catch(() => null);
 		const started = gameRoomsCopy.board.cardStarted(result.channel.id);
-		await interaction.editReply({ content: status ? `${started} ${status}` : started });
+		await answer.send({ content: status ? `${started} ${status}` : started });
 		return;
 	}
 	// Every refusal names itself (room slot held, guild full, quota hit, no
 	// arcade), so the member learns what to do rather than that something failed.
-	await interaction.editReply({ embeds: [errorEmbed(describeSoloOpenFailure(result))] });
+	await answer.send({ embeds: [errorEmbed(describeSoloOpenFailure(result))] });
 }
 
 /**

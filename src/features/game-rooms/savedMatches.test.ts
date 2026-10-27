@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { InteractionType, type Client, type ModalSubmitInteraction, type RepliableInteraction, type User } from "discord.js";
 
-const mocks = vi.hoisted(() => ({ addSavedBy: vi.fn(), findSavedBy: vi.fn() }));
+const mocks = vi.hoisted(() => ({ addSavedBy: vi.fn(), findSavedBy: vi.fn(), findByGuildId: vi.fn() }));
+// The view posts in 💬dero-commands (2026-10 item 257 Phase 5). With no commands channel
+// stored it answers privately, which is what most tests below read; one posts in the channel.
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId } }));
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { addSavedBy: mocks.addSavedBy, findSavedBy: mocks.findSavedBy } }));
 
 import { SAVED_MATCHES_SHOWN, archiveSaveSelect, canSaveMatch, resultFor, saveMatchIfChosen, savedMatchLine, showSavedMatches } from "./savedMatches.js";
@@ -34,6 +37,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	mocks.addSavedBy.mockResolvedValue({});
 	mocks.findSavedBy.mockResolvedValue([]);
+	mocks.findByGuildId.mockResolvedValue(null);
 });
 
 describe("canSaveMatch", () => {
@@ -154,6 +158,27 @@ describe("showSavedMatches", () => {
 		expect(bot.deferReply).not.toHaveBeenCalled();
 		expect(bot.showModal).toHaveBeenCalledOnce();
 		expect(dm.showModal).toHaveBeenCalledOnce();
+	});
+
+	it("posts the list in the commands channel, naming the member without a ping, when the server has one", async () => {
+		mocks.findByGuildId.mockResolvedValue({ commandOutputChannelId: "c-commands" });
+		const send = vi.fn(async (_payload: unknown) => ({ id: "m-1" }));
+		const commands = { id: "c-commands", isSendable: () => true, send };
+		const fake: Record<string, unknown> = { ...command(), id: "int-1", user: { id: "me" }, isModalSubmit: () => false, client: { channels: { fetch: vi.fn(async () => commands) } } };
+		// As discord.js does: an opened modal is the interaction's one answer.
+		fake.showModal = vi.fn(async () => {
+			fake.replied = true;
+		});
+		const interaction = fake as unknown as ReturnType<typeof command>;
+
+		await showSavedMatches(interaction, target);
+
+		expect(interaction.showModal).toHaveBeenCalledOnce();
+		expect(interaction.deferReply).not.toHaveBeenCalled();
+		const posted = send.mock.calls[0]![0] as { content: string; embeds: Embed[]; allowedMentions: unknown };
+		expect(posted.content).toBe("<@me>");
+		expect(posted.allowedMentions).toEqual({ parse: [] });
+		expect(posted.embeds[0]!.data.description).toContain("No saved matches yet");
 	});
 
 	it("answers a failed read with the error line instead of throwing", async () => {

@@ -2,9 +2,7 @@ import {
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
-	ComponentType,
 	EmbedBuilder,
-	MessageFlags,
 	ModalBuilder,
 	StringSelectMenuBuilder,
 	TextInputBuilder,
@@ -28,6 +26,7 @@ import type { Client } from "discord.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { answerInChannel, askInChannel, type ChannelPrompt } from "@utils/answerInChannel.js";
 import { showErrorNotice } from "@utils/textModal.js";
 
 // ── customId prefixes ───────────────────────────────────────────────
@@ -442,11 +441,14 @@ async function handleEditButton(interaction: ButtonInteraction): Promise<void> {
 // ── handler: modal submit ───────────────────────────────────────────
 // Two-step flow because Discord modals cannot host StringSelectMenu:
 //   ① validate the modal text fields via extractAndValidate.
-//   ② if a new time-of-day was provided, post an ephemeral with a
-//      timezone select dropdown + cancel button. Resolve the override
-//      Date with resolveOverrideTime once the editor picks a zone.
+//   ② if a new time-of-day was provided, post a prompt with a timezone
+//      select dropdown. Resolve the override Date with resolveOverrideTime
+//      once the editor picks a zone.
 //   ③ render the proposed-changes embed + apply-scope buttons (apply
-//      once, apply permanent, cancel) on the same ephemeral.
+//      once, apply permanent, cancel) on the same prompt.
+// The prompt and every refusal post in 🎛️admin-controls, a refused
+// non-editor's in 💬dero-commands (2026-10 item 257 Phase 5); only the
+// editor who submitted can answer the prompt (askInChannel).
 // When step ② is skipped (no time change), step ③ replies directly.
 // The apply-scope buttons and the timezone select live inside this
 // collector, they are NOT registered globally because their lifetime
@@ -455,27 +457,19 @@ async function handleEditButton(interaction: ButtonInteraction): Promise<void> {
 async function handleEditModalSubmit(submission: ModalSubmitInteraction): Promise<void> {
 	const parsed = parseDecreeCustomId(submission.customId);
 	if (!parsed) {
-		await submission.reply({
-			embeds: [errorEmbed("This edit modal is malformed and cannot be processed.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await answerInChannel(submission, "member", { embeds: [errorEmbed("This edit modal is malformed and cannot be processed.")] });
 		return;
 	}
 
+	// No guild means no channel to post in, so this one answers privately by the fallback.
 	if (!submission.guildId) {
-		await submission.reply({
-			embeds: [errorEmbed("Decree edits can only be applied inside a guild.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await answerInChannel(submission, "member", { embeds: [errorEmbed("Decree edits can only be applied inside a guild.")] }, { config: null });
 		return;
 	}
 
 	const config = await guildConfigStore.findByGuildId(submission.guildId);
 	if (!config) {
-		await submission.reply({
-			embeds: [errorEmbed(rokCommanderCopy.responses.setupRequired)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await answerInChannel(submission, "member", { embeds: [errorEmbed(rokCommanderCopy.responses.setupRequired)] }, { config: null });
 		return;
 	}
 
@@ -484,19 +478,13 @@ async function handleEditModalSubmit(submission: ModalSubmitInteraction): Promis
 	// gate must run twice for defense in depth.
 	const member = submission.member as GuildMember | null;
 	if (!member || !canEditDecree(member, config)) {
-		await submission.reply({
-			embeds: [errorEmbed(rokCommanderCopy.responses.noWizardPowers)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await answerInChannel(submission, "member", { embeds: [errorEmbed(rokCommanderCopy.responses.noWizardPowers)] }, { config });
 		return;
 	}
 
 	const event = await eventStore.findByIdInGuild(parsed.eventId, submission.guildId);
 	if (!event) {
-		await submission.reply({
-			embeds: [errorEmbed("That decree no longer exists.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await answerInChannel(submission, "admin", { embeds: [errorEmbed("That decree no longer exists.")] }, { config });
 		return;
 	}
 
@@ -507,10 +495,7 @@ async function handleEditModalSubmit(submission: ModalSubmitInteraction): Promis
 		submission.fields.getTextInputValue(FIELD_TIME)
 	);
 	if (!extracted.ok) {
-		await submission.reply({
-			embeds: [errorEmbed(extracted.reason)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await answerInChannel(submission, "admin", { embeds: [errorEmbed(extracted.reason)] }, { config });
 		return;
 	}
 
@@ -557,13 +542,12 @@ async function runTimezoneThenApply(
 	//        without a time change skip this branch entirely.
 	// When:  immediately after handleEditModalSubmit dispatches into
 	//        runTimezoneThenApply.
-	// Where: pairs with the explicit `componentType: ComponentType.StringSelect`
-	//        filter on awaitMessageComponent below, the explicit filter
-	//        is what actually fixes the 14.25 silent-drop bug, the
-	//        cancel-button removal just keeps the flow simple. If the
-	//        editor wants to bail out, they can dismiss the ephemeral
-	//        or let the 5-minute timeout fire (and the timed-out edit
-	//        message tells them what to do).
+	// Where: pairs with the select collector below (askInChannel's
+	//        awaitSelect), which is what actually fixes the 14.25
+	//        silent-drop bug, the cancel-button removal just keeps the
+	//        flow simple. If the editor wants to bail out, they let the
+	//        5-minute timeout fire (and the timed-out edit message tells
+	//        them what to do).
 	// How:   25-option dropdown sourced from TIMEZONE_OPTIONS (Discord's
 	//        hard cap on StringSelectMenu). UTC sits first as the safe
 	//        default. min/max values both 1 so the editor must pick
@@ -577,10 +561,9 @@ async function runTimezoneThenApply(
 			.addOptions(TIMEZONE_OPTIONS.map((opt) => ({ label: opt.label, value: opt.value, description: opt.description })))
 	);
 
-	await submission.reply({
+	const prompt = await askInChannel(submission, "admin", {
 		content: `Time **${formatTimeOfDay(values.timeOfDay)}**, which timezone is that in?`,
 		components: [selectRow],
-		flags: MessageFlags.Ephemeral,
 	});
 
 	// ── collector-based select wait ──
@@ -598,43 +581,13 @@ async function runTimezoneThenApply(
 	//        picks anything within APPLY_SCOPE_TIMEOUT_MS.
 	// Where: pairs with the explicit filter on customId so a stray
 	//        click from a different message instance cannot match.
-	// How:   collector emits 'collect' with the StringSelectMenuInteraction.
-	//        We capture it via a one-shot Promise resolved from inside
-	//        the listener. 'end' resolves with null to signal timeout.
-	const fetched = await submission.fetchReply();
-	let selectInteraction: StringSelectMenuInteraction | null = null;
-	await new Promise<void>((resolve) => {
-		const collector = fetched.createMessageComponentCollector({
-			componentType: ComponentType.StringSelect,
-			filter: (i) => i.user.id === submission.user.id && i.customId === TIMEZONE_SELECT_LOCAL_ID,
-			time: APPLY_SCOPE_TIMEOUT_MS,
-			max: 1,
-		});
-		collector.on("collect", (interaction) => {
-			selectInteraction = interaction as StringSelectMenuInteraction;
-		});
-		collector.on("end", () => {
-			resolve();
-		});
-	});
-
-	if (!selectInteraction) {
-		await submission
-			.editReply({
-				content: "Timezone selection timed out, re-run the edit to retry.",
-				components: [],
-			})
-			.catch(() => undefined);
+	// How:   askInChannel's awaitSelect wraps that collector (max 1, the
+	//        editor's pick only) and resolves null on timeout.
+	const tzInteraction = await prompt.awaitSelect(APPLY_SCOPE_TIMEOUT_MS);
+	if (!tzInteraction) {
+		await prompt.edit({ content: "Timezone selection timed out, re-run the edit to retry.", components: [] });
 		return;
 	}
-
-	// Reassign through a const so TypeScript narrows correctly after this
-	// point. The let-binding above was assigned inside a Promise callback,
-	// which defeats control-flow analysis, TS would otherwise type the
-	// variable as `never` past the null guard above. The const captures
-	// the narrowed value once and gives every subsequent reference a
-	// stable StringSelectMenuInteraction type.
-	const tzInteraction: StringSelectMenuInteraction = selectInteraction;
 	const selectedTimezone = tzInteraction.values[0];
 	const resolved = resolveOverrideTime(values.timeOfDay, selectedTimezone, originalOccurrence);
 	if (!resolved.ok) {
@@ -648,10 +601,10 @@ async function runTimezoneThenApply(
 		return;
 	}
 
-	// Hand off to the apply-scope step. We pass the existing message
-	// reference and the select interaction so runApplyScope can update
-	// the SAME ephemeral instead of replying to a fresh one, the editor
-	// experiences a single in-place prompt change, not a new message.
+	// Hand off to the apply-scope step. We pass the prompt and the select
+	// interaction so runApplyScope can update the SAME prompt instead of
+	// posting a fresh one, the editor experiences a single in-place
+	// prompt change, not a new message.
 	await runApplyScope(
 		submission,
 		event,
@@ -661,22 +614,22 @@ async function runTimezoneThenApply(
 			overrideTime: resolved.date,
 		},
 		originalOccurrence,
-		tzInteraction
+		{ prompt, selectInteraction: tzInteraction }
 	);
 }
 
 // ── runApplyScope ───────────────────────────────────────────────────
 // Renders the proposed-changes embed and the apply-scope buttons.
-// When called from the no-timezone branch the function replies to the
-// modal submission. When called from runTimezoneThenApply it updates
-// the existing select-menu ephemeral via the passed-through select
+// When called from the no-timezone branch the function posts the prompt
+// for the modal submission. When called from runTimezoneThenApply it
+// updates the existing select-menu prompt via the passed-through select
 // interaction so the editor sees one continuous flow.
 async function runApplyScope(
 	submission: ModalSubmitInteraction,
 	event: { eventId: string; name: string; description: string; guildId: string },
 	values: IParsedModalValues,
 	originalOccurrence: Date,
-	selectInteraction?: StringSelectMenuInteraction
+	fromTimezone?: { prompt: ChannelPrompt; selectInteraction: StringSelectMenuInteraction }
 ): Promise<void> {
 	const guildId = submission.guildId!;
 	const previewEmbed = proposedChangesEmbed(event.name, event.description ?? "", originalOccurrence, values);
@@ -687,8 +640,10 @@ async function runApplyScope(
 		new ButtonBuilder().setCustomId(CANCEL_LOCAL_ID).setLabel("Cancel").setStyle(ButtonStyle.Secondary)
 	);
 
-	if (selectInteraction) {
-		// Came from the timezone select, update the existing ephemeral
+	let prompt: ChannelPrompt;
+	if (fromTimezone) {
+		prompt = fromTimezone.prompt;
+		// Came from the timezone select, update the existing prompt
 		// in place so the editor sees the prompt morph from "pick a tz"
 		// into "confirm scope" without a new message. content omitted on
 		// purpose: passing an empty string here was rejected on the wire
@@ -696,39 +651,20 @@ async function runApplyScope(
 		// "Time **HH:MM**, which timezone is that in?" line untouched,
 		// which actually reads fine alongside the proposed-changes embed
 		// as a confirmation breadcrumb.
-		await selectInteraction.update({
+		await fromTimezone.selectInteraction.update({
 			embeds: [previewEmbed],
 			components: [applyRow],
 		});
 	} else {
-		// First reply path (no timezone needed). InteractionResponse
-		// supports awaitMessageComponent directly, same as the legacy
-		// flow.
-		await submission.reply({
-			embeds: [previewEmbed],
-			components: [applyRow],
-			flags: MessageFlags.Ephemeral,
-		});
+		// First prompt path (no timezone needed).
+		prompt = await askInChannel(submission, "admin", { embeds: [previewEmbed], components: [applyRow] });
 	}
 
-	let choice: ButtonInteraction;
-	try {
-		// In both branches the ephemeral is the same Discord message
-		// (interaction.update reuses the original reply), so awaitMessageComponent
-		// on the original reply token surfaces the apply-scope click.
-		const fetched = await submission.fetchReply();
-		choice = (await fetched.awaitMessageComponent({
-			componentType: ComponentType.Button,
-			time: APPLY_SCOPE_TIMEOUT_MS,
-			filter: (i) => i.user.id === submission.user.id,
-		})) as ButtonInteraction;
-	} catch {
-		await submission
-			.editReply({
-				embeds: [previewEmbed.setFooter({ text: "Edit timed out, re-run the edit to retry." })],
-				components: [],
-			})
-			.catch(() => undefined);
+	// In both branches the prompt is the same Discord message (update reuses it), so
+	// waiting on the prompt surfaces the apply-scope click.
+	const choice = await prompt.awaitPress(APPLY_SCOPE_TIMEOUT_MS);
+	if (!choice) {
+		await prompt.edit({ embeds: [previewEmbed.setFooter({ text: "Edit timed out, re-run the edit to retry." })], components: [] });
 		return;
 	}
 

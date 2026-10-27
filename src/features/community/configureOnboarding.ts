@@ -1,8 +1,9 @@
-import { MessageFlags, type ActionRowBuilder, type ButtonInteraction, type EmbedBuilder, type Guild, type MessageActionRowComponentBuilder, type ModalSubmitInteraction, type StringSelectMenuInteraction } from "discord.js";
+import { type ActionRowBuilder, type ButtonInteraction, type EmbedBuilder, type Guild, type MessageActionRowComponentBuilder, type ModalSubmitInteraction, type StringSelectMenuInteraction } from "discord.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showErrorNotice } from "@utils/textModal.js";
 import { communityCopy } from "./communityCopy.js";
 import { buildOnboardingReviewRows } from "./communityControls.js";
@@ -145,25 +146,27 @@ export async function handleConfigureOnboardingButton(interaction: ButtonInterac
 		await replyOnboardingError(interaction, precondition.reason, config);
 		return;
 	}
-	// Deferred: fetchOnboarding is a Discord round trip. A new private reply rather
+	// Acknowledged first: fetchOnboarding is a Discord round trip. A new message rather
 	// than an update, because the press can come from the pinned admin guide, and
-	// updating that message would overwrite the guide.
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	// updating that message would overwrite the guide. The review posts in 🧭onboarding
+	// (2026-10 item 257 Phase 5); its controls answer only the admin who drafted it,
+	// because the draft is kept per guild and per presser.
+	const answer = await beginChannelAnswer(interaction, "onboarding");
 
 	const current = await readLiveOnboarding(guild);
 	if ("readError" in current) {
-		await interaction.editReply({ embeds: [errorEmbed(communityCopy.onboarding.readFailed(current.readError), config)] });
+		await answer.send({ embeds: [errorEmbed(communityCopy.onboarding.readFailed(current.readError), config)] });
 		return;
 	}
 
 	const result = buildOnboardingDraft({ guild, stored: config, copy: communityCopy.onboarding, current });
 	if (!result.ok) {
 		auditRefusedPress(guild.id, interaction.user.id, "draft", result);
-		await interaction.editReply({ embeds: [errorEmbed(result.reason, config)] });
+		await answer.send({ embeds: [errorEmbed(result.reason, config)] });
 		return;
 	}
 	const revision = storePendingDraft(guild.id, interaction.user.id, result.draft);
-	await interaction.editReply(buildOnboardingReview(result.draft, config, revision));
+	await answer.send(buildOnboardingReview(result.draft, config, revision));
 }
 
 // ② A config that cannot be read is never drafted over: an empty draft written on

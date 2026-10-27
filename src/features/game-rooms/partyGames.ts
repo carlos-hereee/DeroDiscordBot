@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, TextChannel, type ButtonInteraction } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel, type ButtonInteraction } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton, registerModal } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
@@ -10,6 +10,7 @@ import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { PARTY_MODAL_PREFIX, PARTY_RSVP_PREFIX, buildScheduleModal, handleRsvpButton, handleScheduleSubmit } from "./partyGamesSchedule.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showNotice } from "@utils/textModal.js";
 
 // ── partyGames ───────────────────────────────────────────────────────
@@ -83,30 +84,31 @@ async function handlePartyGamesButton(interaction: ButtonInteraction): Promise<v
 	await showNotice(interaction, { title: gameRoomsCopy.notices.partyGames, sections: [gameRoomsCopy.errors.controlRetired] });
 }
 
-// Open a public hangman round in 🎉party-games. Deferred first: it resolves a channel
-// and posts a board, which can run past Discord's three second window on a cold cache.
+// Open a public hangman round in 🎉party-games. Acknowledged first: it resolves a channel
+// and posts a board, which can run past Discord's three second window on a cold cache. The
+// admin's answer posts in 🎰arcade-control (2026-10 item 257 Phase 5).
 async function hostHangman(interaction: ButtonInteraction, guildId: string, channelId: string | null): Promise<void> {
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	const answer = await beginChannelAnswer(interaction, "arcade");
 	const channel = channelId ? await interaction.client.channels.fetch(channelId).catch(() => null) : null;
 	if (!(channel instanceof TextChannel)) {
-		await interaction.editReply({ embeds: [errorEmbed(gameRoomsCopy.partyGames.noChannel)] });
+		await answer.send({ embeds: [errorEmbed(gameRoomsCopy.partyGames.noChannel)] });
 		return;
 	}
 
 	const result = await startHangmanRound(channel, interaction.user.id);
 	if (result === "alreadyRunning") {
-		await interaction.editReply({ embeds: [errorEmbed(gamesCopy.hangman.alreadyRunning)] });
+		await answer.send({ embeds: [errorEmbed(gamesCopy.hangman.alreadyRunning)] });
 		return;
 	}
 	if (result === "failed") {
-		await interaction.editReply({ embeds: [errorEmbed(gameRoomsCopy.partyGames.noChannel)] });
+		await answer.send({ embeds: [errorEmbed(gameRoomsCopy.partyGames.noChannel)] });
 		return;
 	}
 
 	// The same audit line the admin card's Post hangman wrote, so the trail reads the
 	// same before and after the move.
 	adminLog.emitFor(interaction, guildId, "powerup.toggle", { subject: setupCopy.adminLog.subjects.postHangman });
-	await interaction.editReply({ content: gameRoomsCopy.partyGames.hostStarted(channel.id) });
+	await answer.send({ content: gameRoomsCopy.partyGames.hostStarted(channel.id) });
 }
 
 /**

@@ -3,8 +3,7 @@ import {
 	AttachmentBuilder,
 	ButtonBuilder,
 	ButtonStyle,
-	ComponentType,
-	MessageFlags,
+	type ButtonInteraction,
 	type RepliableInteraction,
 	type SlashCommandSubcommandGroupBuilder,
 	type User,
@@ -19,6 +18,7 @@ import { levelFromTotalXp, totalXpForLevel } from "@features/leveling/levelCurve
 import { getLevelingConfig } from "@features/leveling/levelingConfig.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { askInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /leveling xp ───────────────────────────────────────────────────────────
@@ -191,18 +191,18 @@ export async function runXpSubcommand(interaction: RepliableInteraction, options
 		}
 
 		case "reset-member": {
-			const confirmed = await confirm(
+			const click = await confirm(
 				interaction,
 				"Reset this member?",
 				`This deletes <@${target!.id}>'s XP, their per game record and every achievement they hold in this server. It cannot be undone.`
 			);
-			if (!confirmed) return;
+			if (!click) return;
 
 			await memberLevelStore.deleteMember(guildId, target!.id);
 			// Their period rows go too, so a reset member is genuinely absent from
 			// this week's board rather than lingering at the bottom of it.
 			await xpPeriodStore.deleteMember(guildId, target!.id);
-			await interaction.editReply({
+			await click.editReply({
 				embeds: [infoEmbed("Member reset", `<@${target!.id}> now has no leveling data in this server.`, COLORS.ACCOUNT)],
 				components: [],
 			});
@@ -211,16 +211,16 @@ export async function runXpSubcommand(interaction: RepliableInteraction, options
 
 		case "reset-server": {
 			const memberCount = await memberLevelStore.countInGuild(guildId);
-			const confirmed = await confirm(
+			const click = await confirm(
 				interaction,
 				"Reset EVERY member?",
 				`This deletes leveling data for **${memberCount.toLocaleString()} members** in this server: every XP total, every game record, every achievement. It cannot be undone.\n\nIf you only want to stop leveling, run \`/leveling settings toggle enabled:false\` instead. That keeps every row.`
 			);
-			if (!confirmed) return;
+			if (!click) return;
 
 			await memberLevelStore.deleteGuild(guildId);
 			await xpPeriodStore.deleteGuild(guildId);
-			await interaction.editReply({
+			await click.editReply({
 				embeds: [infoEmbed("Server reset", `Cleared leveling data for ${memberCount.toLocaleString()} members.`, COLORS.ACCOUNT)],
 				components: [],
 			});
@@ -228,7 +228,9 @@ export async function runXpSubcommand(interaction: RepliableInteraction, options
 		}
 
 		case "export": {
-			await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+			// The file posts in 🎛️admin-controls (2026-10 item 257 Phase 5): every admin there
+			// may run this same export, so it shows them nothing they could not already fetch.
+			const answer = await beginChannelAnswer(interaction, "admin");
 
 			const rows = await memberLevelStore.topByTotalXp(guildId, EXPORT_ROW_CAP);
 			const payload = {
@@ -255,7 +257,7 @@ export async function runXpSubcommand(interaction: RepliableInteraction, options
 				name: `leveling-${guildId}-${payload.exportedAt.slice(0, 10)}.json`,
 			});
 
-			await interaction.editReply({
+			await answer.send({
 				embeds: [
 					infoEmbed(
 						"Leveling data export",
@@ -314,19 +316,20 @@ async function setExactly(
 }
 
 // ── the confirm gate ───────────────────────────────────────────────────────
-// An inline collector on this interaction's own ephemeral reply, matching the
-// pattern configure-rok-reminders and challengeFlow already use. Not a
-// registered persistent button: the prompt is meaningful only inside this one
-// invocation, and a persistent handler would have to re-verify the admin and
-// re-resolve the target from a customId.
+// An inline collector on the prompt, which posts in 🎛️admin-controls (2026-10 item
+// 257 Phase 5) and answers only the admin who ran the command (askInChannel), the
+// pattern the KvK season and event delete prompts use. Not a registered persistent
+// button: the prompt is meaningful only inside this one invocation, and a persistent
+// handler would have to re-verify the admin and re-resolve the target from a customId.
 //
-// Returns false on decline AND on timeout, and in both cases the prompt is
+// Returns the confirming click, already acknowledged, whose editReply turns the prompt
+// into the result; null on decline AND on timeout, and in both cases the prompt is
 // rewritten so a stale message can never be clicked into a deletion later.
-async function confirm(interaction: RepliableInteraction, title: string, warning: string): Promise<boolean> {
+async function confirm(interaction: RepliableInteraction, title: string, warning: string): Promise<ButtonInteraction | null> {
 	const confirmId = `xp:confirm:${interaction.id}`;
 	const cancelId = `xp:cancel:${interaction.id}`;
 
-	await interaction.reply({
+	const prompt = await askInChannel(interaction, "admin", {
 		embeds: [infoEmbed(title, `${warning}\n\nThis prompt expires in ${CONFIRM_WINDOW_MS / 1000} seconds.`, COLORS.ERROR)],
 		components: [
 			new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -334,32 +337,20 @@ async function confirm(interaction: RepliableInteraction, title: string, warning
 				new ButtonBuilder().setCustomId(cancelId).setLabel("Cancel").setStyle(ButtonStyle.Secondary)
 			),
 		],
-		flags: MessageFlags.Ephemeral,
 	});
 
-	const message = await interaction.fetchReply();
-	const click = await message
-		.awaitMessageComponent({
-			componentType: ComponentType.Button,
-			// Pins the clicker AND this invocation, so an admin cannot be caught by
-			// somebody else's prompt and a stale prompt cannot resolve this one.
-			filter: (i) => i.user.id === interaction.user.id && (i.customId === confirmId || i.customId === cancelId),
-			time: CONFIRM_WINDOW_MS,
-		})
-		.catch(() => null);
-
-	if (!click || click.customId === cancelId) {
-		await interaction
-			.editReply({
-				embeds: [infoEmbed("Cancelled", "Nothing was deleted.", COLORS.ACCOUNT)],
-				components: [],
-			})
-			.catch(() => undefined);
-		return false;
+	// The wait only ever resolves with the asker's press on THIS prompt, so neither another
+	// admin nor a stale prompt can resolve this invocation.
+	const click = await prompt.awaitPress(CONFIRM_WINDOW_MS);
+	if (!click || click.customId !== confirmId) {
+		const cancelled = { embeds: [infoEmbed("Cancelled", "Nothing was deleted.", COLORS.ACCOUNT)], components: [] };
+		if (click) await click.update(cancelled).catch(() => undefined);
+		else await prompt.edit(cancelled);
+		return null;
 	}
 
 	// Acknowledge the click before the deletion runs, because the delete itself
 	// can outlast Discord's three second window on a large guild.
 	await click.deferUpdate().catch(() => undefined);
-	return true;
+	return click;
 }

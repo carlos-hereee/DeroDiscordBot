@@ -1,11 +1,11 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, type ButtonInteraction, type Client, type ColorResolvable, type MessageCreateOptions } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, type ButtonInteraction, type Client, type ColorResolvable, type MessageCreateOptions } from "discord.js";
 import { COLORS } from "@base/copy/brand.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
-import { showNotice } from "@utils/textModal.js";
+import { showEmbedNotice, showNotice } from "@utils/textModal.js";
 import * as deroConfigCommand from "@commands/admin/dero-config.js";
 import { bringDeroIntoCall } from "@commands/utility/dero.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
@@ -35,8 +35,6 @@ import { resolveRoomChannel } from "./roomTrail.js";
 // How:   claim, then post the notice. A Monopoly board then moves below it, so the board
 //        stays the last message in the room (Arcade 8); a Hold'em table posts afresh at its
 //        next reveal anyway (roomBoardRepost), so the notice simply posts in the room.
-
-const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 
 /** The fix button a silence offers, if any. */
 function fixButton(reason: RefereeSilence, roomId: string): ButtonBuilder | null {
@@ -95,13 +93,12 @@ export async function handleEnableVoice(interaction: ButtonInteraction): Promise
 	const config = interaction.guildId ? await guildConfigStore.findByGuildId(interaction.guildId) : null;
 	if (!(await gateOwnerOrAdmin(interaction, config))) {
 		const words = gameRoomsCopy.monopoly;
-		await showNotice(interaction, { title: words.refereeSilentTitle, sections: [words.enableVoiceAdminOnly] }, () => ({ content: words.enableVoiceAdminOnly, ...PRIVATE }));
+		await showNotice(interaction, { title: words.refereeSilentTitle, sections: [words.enableVoiceAdminOnly] });
 		return;
 	}
 	const access = await checkEarlyAccess(deroConfigCommand.data.name, interaction.guildId ?? "");
 	if (!access.allowed && access.generalReleaseAt) {
-		const embed = earlyAccessEmbed(access.generalReleaseAt);
-		await showNotice(interaction, { title: embed.data.title ?? "", sections: [embed.data.description ?? ""] }, () => ({ embeds: [embed], ...PRIVATE }));
+		await showEmbedNotice(interaction, earlyAccessEmbed(access.generalReleaseAt));
 		return;
 	}
 	await deroConfigCommand.run(interaction, new FormOptionReader({ subcommand: "enable", group: null }, new Map()));

@@ -9,7 +9,7 @@ import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import { buildLevelsBoardCardEmbed, buildLevelsBoardEmbed, type LevelsBoardEntry } from "@features/leveling/levelingEmbeds.js";
 import { LEVELS_BOARD_AVATAR_SIZE, renderLevelsBoardCard } from "@features/leveling/levelsBoardRenderer.js";
 import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
-import { deferProfileReply } from "@features/leveling/accountProfile.js";
+import { beginProfileAnswer } from "@features/leveling/accountProfile.js";
 import { showErrorNotice } from "@utils/textModal.js";
 
 // ── /account view:levels ───────────────────────────────────────────────────
@@ -36,10 +36,9 @@ import { showErrorNotice } from "@utils/textModal.js";
 /** The stretch of time the standings rank, the /account window option's values. */
 export type LevelsWindow = "week" | "month" | "alltime";
 
-/** Which window to rank, and whether only the asker sees it. */
+/** Which window to rank. */
 export interface LevelsStandingsRequest {
 	window: LevelsWindow;
-	isPrivate: boolean;
 }
 
 /** The window choices, in the order the slash command offers them. */
@@ -55,18 +54,18 @@ export function toLevelsWindow(value: string | null): LevelsWindow {
 }
 
 /** Reply with the standings for one window. */
-export async function showLevelsStandings(interaction: RepliableInteraction, { window, isPrivate }: LevelsStandingsRequest): Promise<void> {
+export async function showLevelsStandings(interaction: RepliableInteraction, { window }: LevelsStandingsRequest): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await showErrorNotice(interaction, levelingCopy.errors.outsideGuild);
 		return;
 	}
 
-	await deferProfileReply(interaction, isPrivate);
+	const answer = await beginProfileAnswer(interaction);
 
 	const context = await getLevelingConfig(guildId);
 	if (!context) {
-		await interaction.editReply({ embeds: [errorEmbed(levelingCopy.errors.noData)] });
+		await answer.send({ embeds: [errorEmbed(levelingCopy.errors.noData)] });
 		return;
 	}
 
@@ -79,10 +78,10 @@ export async function showLevelsStandings(interaction: RepliableInteraction, { w
 		() => buildLevelsBoardEmbed(label, entries)
 	);
 	if (isRenderPayload(board)) {
-		await interaction.editReply({ embeds: [buildLevelsBoardCardEmbed(label, board.ref)], files: [board.attachment] });
+		await answer.send({ embeds: [buildLevelsBoardCardEmbed(label, board.ref)], files: [board.attachment] });
 		return;
 	}
-	await interaction.editReply({ embeds: [board] });
+	await answer.send({ embeds: [board] });
 }
 
 // The faces of members already in the guild's cache. Unlike the pinned board's

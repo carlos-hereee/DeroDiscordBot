@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { AttachmentBuilder, MessageFlags, type InteractionEditReplyOptions, type RepliableInteraction } from "discord.js";
+import { AttachmentBuilder, type RepliableInteraction } from "discord.js";
+import { beginAnswerInPlace, beginChannelAnswer, type ChannelAnswer } from "@utils/answerInChannel.js";
 import { showErrorNotice } from "@utils/textModal.js";
 import { buildDeroImageAttachment } from "@base/copy/brand.js";
 import { rollFortune, fortuneLuck, EXPECTED_FORTUNE_LUCK, PITY_THRESHOLD } from "./rollFortune.js";
@@ -26,9 +27,10 @@ import { claimFortuneSlot, releaseFortuneSlot } from "./fortuneCooldown.js";
 // a member cannot bypass it by alternating between them or by waiting for a deploy.
 //   • question: echoed (with mention parsing disabled) when provided; the button
 //     passes none, since a button cannot take text input without a modal.
-//   • isPrivate: ephemeral reply. The button is always private so it never
-//     clutters the 🕹️games intro it sits on; the command honours its own private
-//     toggle.
+//   • isPrivate: the reading posts in 💬dero-commands instead of where it was asked
+//     (2026-10 item 257 Phase 5; privately only where that channel does not exist).
+//     The button always takes it so it never clutters the 🕹️games intro it sits on;
+//     the command honours its own private toggle.
 export async function respondWithFortune(
 	interaction: RepliableInteraction,
 	options: { question?: string | null; isPrivate?: boolean } = {}
@@ -58,10 +60,10 @@ export async function respondWithFortune(
 async function readFortune(interaction: RepliableInteraction, options: { question?: string | null; isPrivate?: boolean }): Promise<void> {
 	// Acknowledge within Discord's 3-second window BEFORE the DB read and the orb
 	// upload, either of which can exceed it (a cold Mongo query, a multi-MB gif).
-	// deferReply reserves the reply and locks in visibility here; editReply below
-	// fills it in with up to 15 minutes. Without this the interaction token expires
-	// mid-reply and Discord returns error 10062 (Unknown interaction).
-	await interaction.deferReply(options.isPrivate ? { flags: MessageFlags.Ephemeral } : undefined);
+	// A public reading defers in place; a private one opens with the notice naming
+	// 💬dero-commands. Without this the interaction token expires mid-reply and
+	// Discord returns error 10062 (Unknown interaction).
+	const answer = options.isPrivate ? await beginChannelAnswer(interaction, "member") : await beginAnswerInPlace(interaction);
 
 	// Trim only, the command caps length via setMaxLength(200), and the question
 	// is rendered ONLY inside an embed with mention parsing disabled below, so it
@@ -100,12 +102,9 @@ async function readFortune(interaction: RepliableInteraction, options: { questio
 	else if (hasOrb) imageRef = FORTUNE_ORB_REF;
 	const embed = buildFortuneEmbed(flavor, tier, question, imageRef);
 
-	const editOptions: InteractionEditReplyOptions = {
-		embeds: [embed],
-		// Belt-and-suspenders: embeds never ping, but disabling all mention parsing
-		// guarantees an echoed question can never smuggle a mass ping.
-		allowedMentions: { parse: [] },
-	};
+	// Embeds never ping, and both ways of answering send with all mention parsing off,
+	// so an echoed question can never smuggle a mass ping.
+	const reading: ChannelAnswer = { embeds: [embed] };
 	// Attach the scene or the orb (the embed image) and, on ultra, the bundled Dero
 	// avatar its thumbnail points at. All must ride the same reply for the
 	// references to resolve.
@@ -113,10 +112,9 @@ async function readFortune(interaction: RepliableInteraction, options: { questio
 	if (isRenderPayload(scene)) files.push(scene.attachment);
 	if (hasOrb) files.push(new AttachmentBuilder(orbPath, { name: FORTUNE_ORB_FILE }));
 	if (tier === "ultra") files.push(buildDeroImageAttachment());
-	if (files.length > 0) editOptions.files = files;
+	if (files.length > 0) reading.files = files;
 
-	// Visibility was already locked in at deferReply, so editReply carries no flags.
-	await interaction.editReply(editOptions);
+	const place = await answer.send(reading);
 
 	// ── Listen ──
 	// Dero's voice can read the reading aloud, but ONLY a reading with no typed
@@ -125,7 +123,7 @@ async function readFortune(interaction: RepliableInteraction, options: { questio
 	// (owner decision, 2026-10-14). Attached after the reply and fire and forget,
 	// so the voice config read can never delay or break the reading itself.
 	if (!question) {
-		void attachListenRow(interaction.guildId, (components) => interaction.editReply({ components }));
+		void attachListenRow(interaction.guildId, (components) => (place.channelId ? place.message.edit({ components }) : interaction.editReply({ components })));
 	}
 	// Advance the pity streak: reset to 0 on a gold, increment otherwise. Fire and
 	// forget: the reading has reached the member, so a failed write here must not

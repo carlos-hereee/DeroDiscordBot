@@ -310,7 +310,9 @@ describe("starting a Blackjack table", () => {
 		expect(interaction.reply).not.toHaveBeenCalled();
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ game: "blackjack", playerIds: [HOST, "a", "b"] }));
 		expect(boardMock).toHaveBeenCalledWith(interaction.guild, room, channel);
-		expect(interaction.editReply).toHaveBeenCalledWith({ content: gameRoomsCopy.board.cardStarted("bj-room-1") });
+		// This server stores no 💬dero-commands, so the start answers through answerInChannel's
+		// private fallback, the edit of its private defer (2026-10 item 257 Phase 5).
+		expect(interaction.editReply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.board.cardStarted("bj-room-1") }));
 	});
 
 	it("tells the host the table could not start when its board does not deal", async () => {
@@ -320,7 +322,7 @@ describe("starting a Blackjack table", () => {
 
 		await confirmStartMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a"] }));
 
-		expect(interaction.editReply).toHaveBeenCalledWith({ embeds: [expect.anything()] });
+		expect(interaction.editReply).toHaveBeenCalledWith(expect.objectContaining({ embeds: [expect.anything()] }));
 	});
 });
 

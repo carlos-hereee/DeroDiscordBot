@@ -1,4 +1,5 @@
-import { ActionRowBuilder, MessageFlags, StringSelectMenuBuilder, type ButtonInteraction, type StringSelectMenuInteraction } from "discord.js";
+import { ActionRowBuilder, StringSelectMenuBuilder, type ButtonInteraction, type StringSelectMenuInteraction } from "discord.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import {
 	applyBuild,
@@ -30,13 +31,17 @@ import { showNotice } from "@utils/textModal.js";
 //        build would then refuse; after each build it refreshes in place so a player
 //        can build round a whole group without reopening it.
 
-const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 
 // Discord's ceiling on options in one select. The board has 22 color lots, so the
 // slice never bites today; it is here so a future board cannot make the select throw.
 const MAX_SELECT_OPTIONS = 25;
 
-/** The Build button: answers with the private picker, or says why there is nothing to build. */
+/**
+ * The Build button: answers with the picker, or says why there is nothing to build. The
+ * picker rebuilds itself after each build, which a modal cannot, so it posts in
+ * 💬dero-commands (2026-10 item 257 Phase 5); every pick builds only for its presser's own
+ * seat, re-checked by loadSeatedRoom and the engine.
+ */
 export async function handleMbuild(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const state = monopolyStateOf(room);
 	if (!state) {
@@ -48,7 +53,7 @@ export async function handleMbuild(interaction: ButtonInteraction, room: IGameRo
 		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.nothingToBuild] });
 		return;
 	}
-	await interaction.reply({ content: gameRoomsCopy.monopoly.buildPickerPrompt, components: [buildPickerRow(room.roomId, options)], ...PRIVATE });
+	await answerInChannel(interaction, "member", { content: gameRoomsCopy.monopoly.buildPickerPrompt, components: [buildPickerRow(room.roomId, options)] });
 }
 
 /** A pick from the picker: build on that lot, then refresh the picker with what is left. */
@@ -69,7 +74,7 @@ export async function handleBuildSelect(interaction: StringSelectMenuInteraction
 		{ onTurnOnly: true }
 	);
 	if (!outcome.ok) {
-		await interaction.followUp({ embeds: [errorEmbed(outcome.reason)], ...PRIVATE });
+		await answerInChannel(interaction, "member", { embeds: [errorEmbed(outcome.reason)] });
 		return;
 	}
 

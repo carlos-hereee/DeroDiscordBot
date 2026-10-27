@@ -1,9 +1,10 @@
-import { MessageFlags, type RepliableInteraction } from "discord.js";
+import type { RepliableInteraction } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { listEventsEmbed } from "@utils/embedBuilder.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { getUpcomingOccurrences } from "@features/events/occurrenceCalculator.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { showNotice } from "@utils/textModal.js";
 
 // ── /events list ──────────────────────────────────────────────────────
@@ -69,8 +70,7 @@ export async function listEvents(interaction: RepliableInteraction): Promise<voi
 		};
 	});
 
-	await interaction.reply({
-		embeds: [listEventsEmbed(fields, announcementsChannelId, config)],
-		flags: MessageFlags.Ephemeral,
-	});
+	// One field per event, which a notice modal cannot show, so the list posts in
+	// 🎛️admin-controls (2026-10 item 257 Phase 5).
+	await answerInChannel(interaction, "admin", { embeds: [listEventsEmbed(fields, announcementsChannelId, config)] }, { config });
 }

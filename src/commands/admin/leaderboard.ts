@@ -1,9 +1,10 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction, MessageFlags } from "discord.js";
+import { SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction, type EmbedBuilder } from "discord.js";
 import { activityStore } from "@db/stores/activityStore.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { leaderboardEmbed } from "@utils/embedBuilder.js";
 import { thisWeekRange, thisMonthRange, weekBoundaryTitle, type WeekStart } from "@features/leaderboard/leaderboardWindow.js";
+import { answerInChannel, type AnswerChannelConfig } from "@utils/answerInChannel.js";
 import { showNotice } from "@utils/textModal.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 
@@ -150,11 +151,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 				totalAcknowledged: r.totalAcknowledged,
 			})
 		);
-		const embed = leaderboardEmbed(title, ranked, config);
-		await interaction.reply({
-			embeds: [embed],
-			flags: isPublic ? undefined : MessageFlags.Ephemeral,
-		});
+		await answerWithStandings(interaction, leaderboardEmbed(title, ranked, config), isPublic, config);
 		return;
 	}
 
@@ -189,10 +186,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 		})
 	);
 
-	const embed = leaderboardEmbed(event.name, ranked, config);
+	await answerWithStandings(interaction, leaderboardEmbed(event.name, ranked, config), isPublic, config);
+}
 
-	await interaction.reply({
-		embeds: [embed],
-		flags: isPublic ? undefined : MessageFlags.Ephemeral,
-	});
+// The standings: posted where the command ran when the member asked for a public answer,
+// and otherwise in 💬dero-commands (2026-10 item 257 Phase 5) instead of the private reply
+// they were, since a table with fields cannot ride a notice modal.
+async function answerWithStandings(interaction: ChatInputCommandInteraction, embed: EmbedBuilder, isPublic: boolean, config: AnswerChannelConfig | null): Promise<void> {
+	if (isPublic) {
+		await interaction.reply({ embeds: [embed] });
+		return;
+	}
+	await answerInChannel(interaction, "member", { embeds: [embed] }, { config });
 }

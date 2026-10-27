@@ -1,11 +1,11 @@
 import {
-	MessageFlags,
 	type ButtonInteraction,
 	type Client,
 	type ModalSubmitInteraction,
 	type StringSelectMenuInteraction,
 } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { secureRandom } from "@utils/secureRng.js";
 import { BOARD, JAIL_BAIL, describeTile, isOwnableTile, ownableTileName } from "@features/games/monopolyBoard.js";
@@ -57,7 +57,6 @@ import { showNotice } from "@utils/textModal.js";
 //        clock, ④ apply the pure action, ⑤ persist only if nobody moved first,
 //        ⑥ ⑦ place the board, which carries the trail, ⑧ finish and pay if it ended.
 
-const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 
 const JAIL_CHOICES: readonly JailChoice[] = ["bail", "card", "roll"];
 
@@ -309,9 +308,9 @@ export async function removeFromMonopolyMatch(client: Client, room: IGameRoom, u
 
 // ── the button path ───────────────────────────────────────────────────
 async function refuse(interaction: ButtonInteraction, reason: string): Promise<void> {
-	// followUp, not reply: every refusal below comes after the deferUpdate, and a
-	// deferred interaction has spent its one reply.
-	await interaction.followUp({ embeds: [errorEmbed(reason)], ...PRIVATE });
+	// Every refusal below comes after the deferUpdate, which has spent the one reply and
+	// any notice, so it posts in 💬dero-commands (2026-10 item 257 Phase 5).
+	await answerInChannel(interaction, "member", { embeds: [errorEmbed(reason)] });
 }
 
 async function runMonopolyAction(
@@ -423,16 +422,18 @@ export async function handleMjail(interaction: ButtonInteraction, room: IGameRoo
 	await runMonopolyAction(interaction, room, jailMove(jailChoice));
 }
 
-// ── the private peek ──────────────────────────────────────────────────
-// No defer and no write: it reads the row the router loaded and answers at once.
-// Its mortgage selects are answered in roomMonopolyMortgage.
+// ── the peek ──────────────────────────────────────────────────────────
+// No defer and no write: it reads the row the router loaded and answers at once. A
+// Monopoly seat's holdings are on the board for every player already, and the peek
+// carries selects, so it posts in 💬dero-commands (2026-10 item 257 Phase 5). Its
+// mortgage selects are answered in roomMonopolyMortgage, each for its presser's own seat.
 export async function handleMinventory(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const state = monopolyStateOf(room);
 	if (!state) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.noBoard] });
 		return;
 	}
-	await interaction.reply({ ...monopolyInventoryReply(state, interaction.user.id, room.roomId), ...PRIVATE });
+	await answerInChannel(interaction, "member", monopolyInventoryReply(state, interaction.user.id, room.roomId));
 }
 
 // ── the turn prompt (turnPrompt.ts, 2026-10 item 257 Phase 4a) ────────

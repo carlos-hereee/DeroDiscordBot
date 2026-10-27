@@ -1,4 +1,4 @@
-import { MessageFlags, type RepliableInteraction, type User } from "discord.js";
+import type { RepliableInteraction, User } from "discord.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { xpPeriodStore } from "@db/stores/xpPeriodStore.js";
@@ -19,6 +19,7 @@ import { ULTRA_WEIGHT } from "@features/fortune/rollFortune.js";
 import { fortuneBuffStore } from "@db/stores/fortuneBuffStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { utcMonthKey } from "@utils/utcMonthKey.js";
+import { beginChannelAnswer, type PendingChannelAnswer } from "@utils/answerInChannel.js";
 import { showErrorNotice } from "@utils/textModal.js";
 
 // ── the account profile ────────────────────────────────────────────────────
@@ -35,14 +36,13 @@ import { showErrorNotice } from "@utils/textModal.js";
 // How:   one document read, two index-only counts, and two period lookups. No
 //        sort of the guild anywhere.
 
-/** Whose profile to show, and whether only the asker sees it. */
+/** Whose profile to show. */
 export interface AccountProfileRequest {
 	target: User;
-	isPrivate: boolean;
 }
 
 /** Reply with `target`'s profile card, or the text profile when the card cannot draw. */
-export async function showAccountProfile(interaction: RepliableInteraction, { target, isPrivate }: AccountProfileRequest): Promise<void> {
+export async function showAccountProfile(interaction: RepliableInteraction, { target }: AccountProfileRequest): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await showErrorNotice(interaction, levelingCopy.errors.outsideGuild);
@@ -58,11 +58,11 @@ export async function showAccountProfile(interaction: RepliableInteraction, { ta
 
 	// The profile is a handful of round trips, comfortably past Discord's three
 	// second window on a cold connection, so acknowledge first.
-	await deferProfileReply(interaction, isPrivate);
+	const answer = await beginProfileAnswer(interaction);
 
 	const context = await getLevelingConfig(guildId);
 	if (!context) {
-		await interaction.editReply({ embeds: [errorEmbed(levelingCopy.errors.noData)] });
+		await answer.send({ embeds: [errorEmbed(levelingCopy.errors.noData)] });
 		return;
 	}
 
@@ -72,7 +72,7 @@ export async function showAccountProfile(interaction: RepliableInteraction, { ta
 	// profile is worth rendering: a level 1 card with an empty bar is an
 	// invitation, and an error reads as the feature being broken.
 	if (!record && !isSelf) {
-		await interaction.editReply({ embeds: [errorEmbed(levelingCopy.errors.memberNoData)] });
+		await answer.send({ embeds: [errorEmbed(levelingCopy.errors.memberNoData)] });
 		return;
 	}
 
@@ -132,9 +132,9 @@ export async function showAccountProfile(interaction: RepliableInteraction, { ta
 		() => buildAccountEmbed(view)
 	);
 	if (isRenderPayload(profile)) {
-		await interaction.editReply({ embeds: [buildAccountCardEmbed(view, profile.ref)], files: [profile.attachment] });
+		await answer.send({ embeds: [buildAccountCardEmbed(view, profile.ref)], files: [profile.attachment] });
 	} else {
-		await interaction.editReply({ embeds: [profile] });
+		await answer.send({ embeds: [profile] });
 	}
 
 	// ── reward role reconciliation, as a SIDE EFFECT of viewing a profile ──
@@ -154,16 +154,12 @@ export async function showAccountProfile(interaction: RepliableInteraction, { ta
 }
 
 /**
- * Acknowledge a profile, standings or achievements view before its reads run: a
- * public reply for the slash command, as it always was, and a private one for a
- * guide button. Shared by the three /account views.
+ * Acknowledge a profile, standings, achievements or saved matches view before its reads
+ * run. Every /account view, from the command or a guide button, posts in 💬dero-commands
+ * (2026-10 item 257, owner decision 3 of Phase 5), so one helper keeps the four alike.
  */
-export async function deferProfileReply(interaction: RepliableInteraction, isPrivate: boolean): Promise<void> {
-	if (isPrivate) {
-		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-		return;
-	}
-	await interaction.deferReply();
+export function beginProfileAnswer(interaction: RepliableInteraction): Promise<PendingChannelAnswer> {
+	return beginChannelAnswer(interaction, "member");
 }
 
 // Null rather than a number when the member earned nothing in the period, which

@@ -57,7 +57,7 @@ function press() {
 
 function submit(memberThrow: string, channel: { send: ReturnType<typeof vi.fn> } | null = { send: vi.fn(async () => ({ id: "m1" })) }) {
 	const followUp = vi.fn(async () => undefined);
-	const fake = {
+	const fake: Record<string, unknown> = {
 		guildId: "g1",
 		id: "submit1",
 		user: { id: "u1", username: "silent", globalName: "Silent" },
@@ -69,14 +69,18 @@ function submit(memberThrow: string, channel: { send: ReturnType<typeof vi.fn> }
 		isStringSelectMenu: () => false,
 		inCachedGuild: () => false,
 		fields: { getStringSelectValues: () => [memberThrow] },
-		deferUpdate: vi.fn(async () => undefined),
+		// As discord.js does: an acknowledged interaction reads as deferred, which is what
+		// sends a private fallback as a followUp rather than a second reply.
+		deferUpdate: vi.fn(async () => {
+			fake.deferred = true;
+		}),
 		deferReply: vi.fn(async () => undefined),
 		editReply: vi.fn(async () => undefined),
 		deleteReply: vi.fn(async () => undefined),
 		followUp,
 		reply: vi.fn(async () => undefined),
 	};
-	return { fake: fake as unknown as ModalSubmitInteraction, followUp, deferUpdate: fake.deferUpdate };
+	return { fake: fake as unknown as ModalSubmitInteraction, followUp, deferUpdate: fake.deferUpdate as ReturnType<typeof vi.fn> };
 }
 
 const descriptionOf = (send: ReturnType<typeof vi.fn>): string => (send.mock.calls[0][0] as Sent).embeds[0].data.description ?? "";
@@ -184,15 +188,21 @@ describe("playClaimRound, the Submit", () => {
 		expect(descriptionOf(channel.send)).toContain("paid already");
 	});
 
-	it("plays no round and pays nothing while the cooldown runs, and says when it opens", async () => {
+	// Every answer of the round posts in 💬dero-commands, the wait included (2026-10 item 257 Phase 5).
+	it("plays no round and pays nothing while the cooldown runs, and says in the commands channel when it opens", async () => {
 		mocks.findChipWallet.mockResolvedValue({ balance: 30_000, lastClaimAt: new Date() });
-		const { fake, followUp } = submit("paper");
+		const channel = { send: vi.fn(async () => ({ id: "m1" })) };
+		const { fake, followUp } = submit("paper", channel);
 
 		await playClaimRound(fake, DERO_THROWS_ROCK);
 
 		expect(mocks.claimDaily).not.toHaveBeenCalled();
 		expect(mocks.insertAward).not.toHaveBeenCalled();
-		expect((followUp.mock.calls[0] as unknown as [{ content: string }])[0].content).toContain("next claim opens");
+		const wait = channel.send.mock.calls[0][0] as { content: string; allowedMentions?: { parse: string[] } };
+		expect(wait.content).toMatch(/^<@u1> /);
+		expect(wait.content).toContain("next claim opens");
+		expect(wait.allowedMentions).toEqual({ parse: [] });
+		expect(followUp).not.toHaveBeenCalled();
 	});
 
 	it("never records the round on the luck board", async () => {

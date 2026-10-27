@@ -10,7 +10,7 @@ import { ACHIEVEMENTS_AVATAR_SIZE, renderAchievementsCard } from "@features/leve
 import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { buildCounters, progressFor, unlockedKey } from "@features/leveling/achievementEngine.js";
 import { ACHIEVEMENTS_BY_ID } from "@features/leveling/achievements.js";
-import { deferProfileReply } from "@features/leveling/accountProfile.js";
+import { beginProfileAnswer } from "@features/leveling/accountProfile.js";
 import { showErrorNotice } from "@utils/textModal.js";
 
 // ── /account view:achievements ─────────────────────────────────────────────
@@ -39,14 +39,13 @@ import { showErrorNotice } from "@utils/textModal.js";
 // than a checklist and a wall of twelve bars is neither.
 const IN_PROGRESS_SHOWN = 2;
 
-/** Whose honors to show, and whether only the asker sees them. */
+/** Whose honors to show. */
 export interface AchievementsRequest {
 	target: User;
-	isPrivate: boolean;
 }
 
 /** Reply with `target`'s held achievements and the two closest to unlocking. */
-export async function showAchievements(interaction: RepliableInteraction, { target, isPrivate }: AchievementsRequest): Promise<void> {
+export async function showAchievements(interaction: RepliableInteraction, { target }: AchievementsRequest): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await showErrorNotice(interaction, levelingCopy.errors.outsideGuild);
@@ -58,11 +57,11 @@ export async function showAchievements(interaction: RepliableInteraction, { targ
 		return;
 	}
 
-	await deferProfileReply(interaction, isPrivate);
+	const answer = await beginProfileAnswer(interaction);
 
 	const context = await getLevelingConfig(guildId);
 	if (!context) {
-		await interaction.editReply({ embeds: [errorEmbed(levelingCopy.errors.noData)] });
+		await answer.send({ embeds: [errorEmbed(levelingCopy.errors.noData)] });
 		return;
 	}
 
@@ -103,8 +102,8 @@ export async function showAchievements(interaction: RepliableInteraction, { targ
 		() => buildAchievementsEmbed(displayName, shown, inProgress)
 	);
 	if (isRenderPayload(reply)) {
-		await interaction.editReply({ embeds: [buildAchievementsCardEmbed(displayName, reply.ref)], files: [reply.attachment] });
+		await answer.send({ embeds: [buildAchievementsCardEmbed(displayName, reply.ref)], files: [reply.attachment] });
 		return;
 	}
-	await interaction.editReply({ embeds: [reply] });
+	await answer.send({ embeds: [reply] });
 }

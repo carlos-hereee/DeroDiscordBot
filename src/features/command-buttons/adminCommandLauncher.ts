@@ -2,12 +2,10 @@ import {
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
-	MessageFlags,
 	StringSelectMenuBuilder,
 	type ButtonInteraction,
 	type ChatInputCommandInteraction,
 	type EmbedBuilder,
-	type InteractionEditReplyOptions,
 	type ModalSubmitInteraction,
 	type RepliableInteraction,
 	type RESTPostAPIChatInputApplicationCommandsJSONBody,
@@ -22,7 +20,8 @@ import { registerButton, registerModal, registerSelectMenu } from "@handlers/int
 import type { FormChoicesProvider, OptionChoice, SharedCommandHandler } from "@handlers/commandOptions.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
-import { showErrorNotice, showNotice, type ModalOpeningInteraction } from "@utils/textModal.js";
+import { answerInChannel, beginChannelAnswer, type AnswerAudience, type ChannelAnswer } from "@utils/answerInChannel.js";
+import { showEmbedNotice, showErrorNotice, showNotice, type ModalOpeningInteraction } from "@utils/textModal.js";
 import type { IGuildConfigPermissionShape } from "@utils/permissions.js";
 import * as arcadeCommand from "@commands/admin/arcade.js";
 import * as deroConfigCommand from "@commands/admin/dero-config.js";
@@ -128,7 +127,15 @@ function launchLeaves(target: LaunchTarget): CommandLeaf[] {
 type LauncherInteraction = ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction;
 type OpeningInteraction = ButtonInteraction | StringSelectMenuInteraction;
 
-const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
+// The 🏰 DERO HEADQUARTERS channel each command's launcher answers post in (2026-10 item
+// 257, owner decision 7): Dero's config and voice in ⚙️dero-config, the arcade with its
+// economy, chips and network in 🎰arcade-control, every other command in 🎛️admin-controls.
+const ANSWER_AUDIENCE: Readonly<Record<string, AnswerAudience>> = {
+	[deroConfigCommand.data.name]: "deroConfig",
+	[arcadeCommand.data.name]: "arcade",
+};
+
+const answerAudienceFor = (command: LaunchableCommand): AnswerAudience => ANSWER_AUDIENCE[command.data.name] ?? "admin";
 
 // ── customIds ────────────────────────────────────────────────────────────────
 
@@ -187,8 +194,7 @@ async function runLeaf(interaction: RepliableInteraction, command: LaunchableCom
 	// never open a command a slash command would still hold back.
 	const access = await checkEarlyAccess(command.data.name, interaction.guildId ?? "");
 	if (!access.allowed && access.generalReleaseAt) {
-		const embed = earlyAccessEmbed(access.generalReleaseAt);
-		await showNotice(interaction, { title: embed.data.title ?? "", sections: [embed.data.description ?? ""] }, () => ({ embeds: [embed], ...PRIVATE }));
+		await showEmbedNotice(interaction, earlyAccessEmbed(access.generalReleaseAt));
 		return;
 	}
 	await command.run(interaction, reader);
@@ -240,10 +246,12 @@ async function askWhichFields(interaction: OpeningInteraction, command: Launchab
 		.setCustomId(`${REQUIRED_ONLY_PREFIX}:${command.data.name}:${pathId}`)
 		.setLabel(commandButtonsCopy.launcher.continueWithoutLabel)
 		.setStyle(ButtonStyle.Secondary);
-	await interaction.reply({
+	// A pick of several fields plus a button is no single choice a modal could hold, so it
+	// posts in the command's Headquarters channel (2026-10 item 257 Phase 5); every press on
+	// it passes admitAdmin again, so only an owner or admin can go on from it.
+	await answerInChannel(interaction, answerAudienceFor(command), {
 		embeds: [infoEmbed(`/${command.data.name} ${leaf.path}`.trim(), commandButtonsCopy.launcher.pickFieldsPrompt(command.data.name, room))],
 		components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select), new ActionRowBuilder<ButtonBuilder>().addComponents(requiredOnly)],
-		...PRIVATE,
 	});
 }
 
@@ -287,11 +295,12 @@ export async function openAdminLaunch(interaction: ButtonInteraction, launchId: 
 		return;
 	}
 	if (await showSettingsPanel(interaction, target)) return;
-	// ② the pick of what to do, private, labelled the way the slash command reads.
-	await interaction.reply({
+	// ② the pick of what to do, labelled the way the slash command reads, in the command's
+	// Headquarters channel (2026-10 item 257 Phase 5): its leaf opens a modal, which a modal
+	// pick could not, and handleLeafPick re-gates every presser through admitAdmin.
+	await answerInChannel(interaction, answerAudienceFor(target.command), {
 		content: commandButtonsCopy.launcher.pickLeafPrompt(target.path),
 		components: [leafPickRow(target.command, leaves)],
-		...PRIVATE,
 	});
 }
 
@@ -415,7 +424,7 @@ async function runPanelCalls(interaction: ModalSubmitInteraction, command: Launc
 // leaves the panel does not hold. Discord takes 10 embeds and 5 rows, so a submit
 // that changed more than that says how many more were saved (each has its admin
 // log line) and keeps the pick's row.
-function panelSavedReply(target: LaunchTarget, definition: PanelDefinition, collected: readonly CollectedReply[]): InteractionEditReplyOptions {
+function panelSavedReply(target: LaunchTarget, definition: PanelDefinition, collected: readonly CollectedReply[]): ChannelAnswer {
 	const saved = commandButtonsCopy.panels.saved;
 	const title = saved.title(target.path);
 	const embeds: EmbedBuilder[] = [];
@@ -447,22 +456,23 @@ async function handlePanelSubmit(interaction: ModalSubmitInteraction): Promise<v
 		return;
 	}
 	// Several writes, some with Discord calls (a channel hidden, a call ended), can
-	// outrun the three second window, so the answer is deferred first.
-	await interaction.deferReply(PRIVATE);
+	// outrun the three second window, so the Submit is acknowledged first and the one
+	// answer posts in the command's Headquarters channel (2026-10 item 257 Phase 5).
+	const answer = await beginChannelAnswer(interaction, answerAudienceFor(target.command));
 	// Read again rather than trusted from the modal: the comparison is with what is
 	// stored now, so only what this admin chose differently is written.
 	const panel = await definition.load({ guild, userId: interaction.user.id });
 	if (!panel) {
-		await interaction.editReply({ embeds: [errorEmbed(commandButtonsCopy.launcher.staleButton)] });
+		await answer.send({ embeds: [errorEmbed(commandButtonsCopy.launcher.staleButton)] });
 		return;
 	}
 	const read = readSettingsPanel(interaction.fields, panel);
 	if (!read.ok) {
-		await interaction.editReply({ embeds: [errorEmbed(read.problem)] });
+		await answer.send({ embeds: [errorEmbed(read.problem)] });
 		return;
 	}
 	const collected = await runPanelCalls(interaction, target.command, planSettingsChanges(panel, read.answers));
-	await interaction.editReply(panelSavedReply(target, definition, collected));
+	await answer.send(panelSavedReply(target, definition, collected));
 }
 
 /** ② The pick of what to do. */

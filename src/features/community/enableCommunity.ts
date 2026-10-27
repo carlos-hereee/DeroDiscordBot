@@ -28,6 +28,7 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { showErrorNotice, showNotice } from "@utils/textModal.js";
 import { resolveRulesMarkdown, type IRulesConfig } from "@features/setup/rulesContent.js";
 import { communityCopy, type ICommunityChangeSummary, type ScreeningReplyOutcome } from "./communityCopy.js";
@@ -295,14 +296,15 @@ export async function handleChannelsPicked(submission: ModalSubmitInteraction): 
 	const picks: ICommunityPicks = { rulesChannelId, publicUpdatesChannelId, membershipScreening: submission.fields.getCheckbox(SCREENING_FIELD) };
 	rememberPicks(guild.id, submission.user.id, picks);
 
-	// A new private reply rather than an update: the first modal opens from the
-	// pinned admin guide, and updating that message would overwrite the guide.
+	// A new message rather than an update: the first modal opens from the pinned admin
+	// guide, and updating that message would overwrite the guide. It posts in 🧭onboarding
+	// (2026-10 item 257 Phase 5); its Confirm answers only the admin who picked, because
+	// the picks are kept per guild and per presser.
 	const summary = summarizeChange(guild, picks, config);
-	await submission.reply({
+	await answerInChannel(submission, "onboarding", {
 		embeds: [infoEmbed(communityCopy.review.title, communityCopy.review.description(summary, MEMBERSHIP_SCREENING_RULES_MAX_LENGTH), getPluginCopy(config).COLORS.ADMIN, config)],
 		components: [buildConfirmEnableRow()],
-		flags: MessageFlags.Ephemeral,
-	});
+	}, { config });
 }
 
 // ── ④ ⑤ ⑥ Confirm ───────────────────────────────────────────────────
@@ -315,8 +317,11 @@ export async function handleConfirm(interaction: ButtonInteraction, guild: Guild
 		return;
 	}
 	// Deferred: the guild edit and the screening write are two Discord round trips,
-	// which can outlast the three second acknowledgement window.
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	// which can outlast the three second acknowledgement window. An update, as Configure
+	// Onboarding's Confirm is (2026-10 item 257 Phase 5): the review in 🧭onboarding
+	// becomes the result, and a refusal leaves its Confirm button in place, since an
+	// edit that names no components keeps them.
+	await interaction.deferUpdate();
 
 	// The review may be minutes old: another admin, or the owner in Server Settings,
 	// can have switched Community on or taken a permission away since.

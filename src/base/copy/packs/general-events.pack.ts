@@ -244,6 +244,16 @@ export const generalEventsCopy: IPluginCopy = {
 		schedule: "📅 Schedule",
 	},
 
+	// The notice a slow answer opens with when it posts in a channel instead of privately
+	// (2026-10 item 257 Phase 5, utils/answerInChannel.ts): it only names the channel, and
+	// the answer itself follows there once the work is done. Discord cuts the title at 45.
+	answerInChannel: {
+		noticeTitle: "📬 Your answer",
+		postsIn: (channelId: string) => `Your answer posts in <#${channelId}> in a moment.`,
+		// A press on someone else's confirm then act prompt, which only its asker may answer.
+		notYours: "This prompt belongs to the member who asked for it. Run the command yourself to get your own.",
+	},
+
 	arrival: {
 		title: "📺 The bot is here.",
 		description: (guildName: string, ownerId: string) =>

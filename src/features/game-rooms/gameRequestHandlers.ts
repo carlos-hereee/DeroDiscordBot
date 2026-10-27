@@ -3,7 +3,6 @@ import {
 	ButtonBuilder,
 	ButtonStyle,
 	EmbedBuilder,
-	MessageFlags,
 	ModalBuilder,
 	StringSelectMenuBuilder,
 	TextInputBuilder,
@@ -21,6 +20,7 @@ import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import type { IPluginCopy } from "@base/copy/types.js";
 import { COLORS } from "@base/copy/brand.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { NO_PINGS } from "@utils/mentions.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import type { IGameRequest } from "@db/models/GameRequest.js";
@@ -177,8 +177,11 @@ async function handleGameRequestButton(interaction: ButtonInteraction): Promise<
 	const context = await loadContext(interaction);
 	if (!context) return replyOutsideGuild(interaction);
 
+	// The ballot carries several independent controls, so it posts in 💬dero-commands
+	// (2026-10 item 257 Phase 5). Every vote is the presser's own and redraws the ballot as
+	// they see it, and Remove re-gates its presser in removeAsAdmin.
 	if (action === ACTION.open) {
-		await interaction.reply({ ...(await currentView(context, interaction.user.id)), flags: MessageFlags.Ephemeral, allowedMentions: NO_PINGS });
+		await answerInChannel(interaction, "member", await currentView(context, interaction.user.id));
 		return;
 	}
 	if (action === ACTION.add) {
@@ -217,12 +220,12 @@ async function handleGameRequestModal(interaction: ModalSubmitInteraction): Prom
 	const view = await currentView(context, interaction.user.id, addNotice(result, context.copy));
 
 	// Opened from the ballot's own button, so the ballot itself is redrawn; a submit
-	// with no message behind it gets a fresh ephemeral ballot instead.
+	// with no message behind it gets a fresh ballot in 💬dero-commands instead.
 	if (interaction.isFromMessage()) {
 		await interaction.update({ ...view, allowedMentions: NO_PINGS });
 		return;
 	}
-	await interaction.reply({ ...view, flags: MessageFlags.Ephemeral, allowedMentions: NO_PINGS });
+	await answerInChannel(interaction, "member", view);
 }
 
 function addNotice(result: Awaited<ReturnType<typeof addGameRequest>>, copy: BallotCopy): string {

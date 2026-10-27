@@ -1,4 +1,5 @@
 import { MessagePayload, type BaseMessageOptions, type RepliableInteraction } from "discord.js";
+import { RECORDS_ANSWERS } from "@utils/answerInChannel.js";
 
 // ── the reply collector ──────────────────────────────────────────────────────
 // What:  lets a settings panel run a command's shared handler several times on ONE
@@ -69,6 +70,9 @@ export function collectReplies(interaction: RepliableInteraction): { interaction
 
 	const collecting = new Proxy(interaction, {
 		get(target, property) {
+			// answerInChannel reads it and answers through reply and editReply, which this
+			// stand in records, instead of posting past it into a channel.
+			if (property === RECORDS_ANSWERS) return true;
 			if (property === "replied") return state.replied;
 			if (property === "deferred") return state.deferred;
 			if (intercepted.has(property)) return intercepted.get(property);

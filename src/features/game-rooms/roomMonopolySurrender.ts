@@ -1,7 +1,8 @@
-import { MessageFlags, type ButtonInteraction, type Client } from "discord.js";
+import type { ButtonInteraction, Client } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { acknowledgeConfirm, showConfirm, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 import { applyForfeit, type MonopolyResult, type MonopolyState } from "@features/games/monopolyState.js";
 import { confirmCustomId } from "./gameRoomActions.js";
@@ -30,15 +31,13 @@ import { commitMonopolyMove, monopolyStateOf } from "./roomMonopolyHandlers.js";
 // ⚠️ A SURRENDER IS A LOSS, NEVER A REMOVAL. The seat is not written to kickedIds, so a
 // rated match rates it like any seat out of the match, and it may join the next one.
 
-const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
-
 // ── the two presses ───────────────────────────────────────────────────
 /** The first press: the shared confirm (showConfirm, 2026-10 item 257), whose Submit surrenders. */
 export async function handleMsurrender(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const words = gameRoomsCopy.monopoly;
 	const refusal = surrenderRefusal(monopolyStateOf(room), interaction.user.id);
 	if (refusal) {
-		await showNotice(interaction, { title: words.surrenderConfirmTitle, sections: [refusal] }, () => ({ content: refusal, ...PRIVATE }));
+		await showNotice(interaction, { title: words.surrenderConfirmTitle, sections: [refusal] });
 		return;
 	}
 	await showConfirm(interaction, { title: words.surrenderConfirmTitle, sections: [words.surrenderConfirmPrompt], confirmId: confirmCustomId("msurrenderok", room.roomId) });
@@ -52,7 +51,9 @@ export async function handleMsurrenderConfirm(interaction: ConfirmInteraction, r
 	const words = gameRoomsCopy.monopoly;
 	const answers: Record<SurrenderOutcome, string> = { surrendered: words.surrenderDone, busy: words.surrenderStillSeated, notInMatch: words.matchOver };
 	const answer = outcome === "notInMatch" ? (surrenderRefusal(monopolyStateOf(room), interaction.user.id) ?? answers.notInMatch) : answers[outcome];
-	await showNotice(interaction, { title: words.surrenderConfirmTitle, sections: [answer] });
+	// The confirm was acknowledged above, so no notice can open; the answer posts in
+	// 💬dero-commands (2026-10 item 257 Phase 5) instead of a private reply.
+	await answerInChannel(interaction, "member", { content: answer });
 }
 
 // Why a seat cannot surrender now, or null when it can.

@@ -5,7 +5,7 @@ import type { ChatInputCommandInteraction } from "discord.js";
 // The owner's rule is that nothing is played in ⚔️challenges. What is pinned here is the
 // router's contract: typed in a challenge channel, every game opens its room or solo room
 // (or posts its challenge card, the one thing the channel holds), a fortune is answered
-// privately, and the channel itself is never sent anything; typed anywhere else, the
+// apart from it (in 💬dero-commands since 2026-10 item 257 Phase 5), and the channel itself is never sent anything; typed anywhere else, the
 // router answers nothing and the subcommand's own handler runs as before.
 vi.mock("@features/game-rooms/challengeCard.js", () => ({ isChallengeChannel: vi.fn() }));
 vi.mock("@features/game-rooms/challengeBoard.js", () => ({ startChallengeDraft: vi.fn() }));
@@ -47,12 +47,14 @@ beforeEach(() => {
 });
 
 describe("routeMiniGameInChallenges, typed in a challenge channel", () => {
-	it("opens a solo hangman room and answers privately", async () => {
+	// openSoloRoomForMember acknowledges and answers by itself, in 💬dero-commands (2026-10
+	// item 257 Phase 5), so the router no longer defers privately first.
+	it("opens a solo hangman room, leaving the answer to the solo room's own opener", async () => {
 		const { interaction, raw, channelSend } = typedInChallenges();
 
 		await expect(routeMiniGameInChallenges(interaction, "hangman")).resolves.toBe(true);
 
-		expect(raw.deferReply).toHaveBeenCalledWith(expect.objectContaining({ flags: expect.any(Number) }));
+		expect(raw.deferReply).not.toHaveBeenCalled();
 		expect(soloMock).toHaveBeenCalledWith(interaction, "solo-hangman");
 		expect(channelSend).not.toHaveBeenCalled();
 	});
@@ -93,7 +95,7 @@ describe("routeMiniGameInChallenges, typed in a challenge channel", () => {
 		expect(channelSend).not.toHaveBeenCalled();
 	});
 
-	it("answers a fortune privately whatever the member chose, since a reading has no room", async () => {
+	it("answers a fortune away from the challenge channel whatever the member chose, since a reading has no room", async () => {
 		const { interaction } = typedInChallenges({ private: null });
 
 		await expect(routeMiniGameInChallenges(interaction, "fortune")).resolves.toBe(true);

@@ -10,8 +10,13 @@ const mocks = vi.hoisted(() => ({
 	getLevelingConfig: vi.fn(),
 	topByTotalXp: vi.fn(),
 	renderLevelsBoardCard: vi.fn(),
+	beginChannelAnswer: vi.fn(),
+	send: vi.fn(async (_payload: unknown) => ({ channelId: "c-commands" })),
 }));
 
+// Every /account view posts in 💬dero-commands (2026-10 item 257 Phase 5): the helper is
+// mocked, so the payload is read off its send and the audience off its call.
+vi.mock("@utils/answerInChannel.js", () => ({ beginChannelAnswer: mocks.beginChannelAnswer }));
 vi.mock("@features/leveling/levelingConfig.js", () => ({ getLevelingConfig: mocks.getLevelingConfig }));
 vi.mock("@db/stores/memberLevelStore.js", () => ({ memberLevelStore: { topByTotalXp: mocks.topByTotalXp } }));
 vi.mock("@db/stores/xpPeriodStore.js", () => ({ xpPeriodStore: {} }));
@@ -23,20 +28,19 @@ import { levelingCopy } from "./levelingCopy.js";
 type ReplyPayload = { embeds: Array<{ data: { title?: string; image?: { url: string }; fields?: unknown[] } }>; files?: AttachmentBuilder[] };
 
 function press() {
-	const editReply = vi.fn(async (_payload: unknown) => undefined);
 	const member = { user: { id: "u1", avatar: "a1", displayAvatarURL: () => "https://cdn.discordapp.com/avatars/u1/a1.png" } };
 	const interaction = {
 		guildId: "g1",
 		guild: { members: { cache: new Map([["u1", member]]) } },
 		deferReply: vi.fn(async () => undefined),
 		reply: vi.fn(async () => undefined),
-		editReply,
 	};
-	return { interaction: interaction as unknown as RepliableInteraction, editReply };
+	return { interaction: interaction as unknown as RepliableInteraction, editReply: mocks.send };
 }
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mocks.beginChannelAnswer.mockResolvedValue({ channelId: "c-commands", send: mocks.send });
 	mocks.getLevelingConfig.mockResolvedValue({ settings: { curve: "dero", curveMultiplier: 1, maxLevel: null }, weekStart: "sunday" });
 	mocks.topByTotalXp.mockResolvedValue([
 		{ userId: "u1", username: "Silent", totalXp: 964 },
@@ -50,11 +54,12 @@ describe("the Levels view", () => {
 		mocks.renderLevelsBoardCard.mockResolvedValue({ attachment, ref: "attachment://levels-board-abc.png" });
 		const { interaction, editReply } = press();
 
-		await showLevelsStandings(interaction, { window: "alltime", isPrivate: true });
+		await showLevelsStandings(interaction, { window: "alltime" });
 
 		const [label, entries] = mocks.renderLevelsBoardCard.mock.calls[0] as [string, Array<{ userId: string; avatar: unknown }>];
 		expect(label).toBe(levelingCopy.board.allTime);
 		expect(entries.map((entry) => entry.avatar === null)).toEqual([false, true]);
+		expect(mocks.beginChannelAnswer).toHaveBeenCalledWith(interaction, "member");
 		const payload = editReply.mock.calls[0]![0] as ReplyPayload;
 		expect(payload.files).toEqual([attachment]);
 		expect(payload.embeds[0]!.data.image?.url).toBe("attachment://levels-board-abc.png");
@@ -65,7 +70,7 @@ describe("the Levels view", () => {
 		mocks.renderLevelsBoardCard.mockResolvedValue(null);
 		const { interaction, editReply } = press();
 
-		await showLevelsStandings(interaction, { window: "alltime", isPrivate: true });
+		await showLevelsStandings(interaction, { window: "alltime" });
 
 		const payload = editReply.mock.calls[0]![0] as ReplyPayload;
 		expect(payload.files).toBeUndefined();

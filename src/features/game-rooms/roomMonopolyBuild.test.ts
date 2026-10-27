@@ -8,8 +8,12 @@ vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), postMoveLog: 
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn(async () => null) }));
+// Where an answer posts has its own suite (utils/answerInChannel.test.ts); here only that the
+// picker and a refusal go there, for a member (2026-10 item 257 Phase 5).
+vi.mock("@utils/answerInChannel.js", () => ({ answerInChannel: vi.fn() }));
 
 import { handleMbuild, handleBuildSelect } from "./roomMonopolyBuild.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
 import { BANK_HOUSES, COLOR_GROUPS, MAX_HOUSES_PER_LOT } from "@features/games/monopolyBoard.js";
@@ -18,7 +22,7 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomMonopolyBuild ────────────────────────────────────────────────
-// The Build button answers with a private picker of exactly the legal builds; a
+// The Build button answers in 💬dero-commands with a picker of exactly the legal builds; a
 // pick builds through the same compare and swap as every move and refreshes the
 // picker with what is left.
 
@@ -26,6 +30,14 @@ const storeMock = gameRoomStore as unknown as { findByRoomId: ReturnType<typeof 
 const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
 const carriedMock = roomTrail.recordCarriedMoves as unknown as ReturnType<typeof vi.fn>;
 const moveLogMock = roomTrail.postMoveLog as unknown as ReturnType<typeof vi.fn>;
+const answerMock = answerInChannel as unknown as ReturnType<typeof vi.fn>;
+// What an interaction answered through answerInChannel, which must be the member's channel.
+function answered<T>(interaction: unknown): T {
+	const call = answerMock.mock.calls.find((args) => args[0] === interaction);
+	if (!call) throw new Error("the interaction was not answered through answerInChannel");
+	expect(call[1]).toBe("member");
+	return call[2] as T;
+}
 // Every line a move recorded, in order: the finished turn's log, then the board's.
 type RecordedMove = { actorId: string; kind: string; text: string };
 const recorded = (): RecordedMove[] =>
@@ -84,12 +96,12 @@ beforeEach(() => {
 });
 
 describe("handleMbuild", () => {
-	it("answers privately with a picker of every legal build, priced", async () => {
+	it("answers in the commands channel with a picker of every legal build, priced", async () => {
 		const interaction = makeButton(A);
 		await handleMbuild(interaction, seed(brownMatch()));
 
-		const payload = interaction.reply.mock.calls[0][0] as Picker & { flags: number };
-		expect(payload.flags).toBe(64);
+		const payload = answered<Picker>(interaction);
+		expect(interaction.reply).not.toHaveBeenCalled();
 		expect(payload.components[0].toJSON().components[0].custom_id).toBe("gameroomSelect:mbuild:room-1");
 		expect(pickerOptions(payload)).toEqual([
 			{ label: gameRoomsCopy.monopoly.buildOptionLabel("Vermillion Alley", "house", 50), value: "vermillion-alley" },
@@ -144,15 +156,15 @@ describe("handleBuildSelect", () => {
 		expect(interaction.editReply).toHaveBeenCalledWith({ content: gameRoomsCopy.monopoly.buildPickerDone, components: [] });
 	});
 
-	it("refuses a seat that is not on the clock, privately, and writes nothing", async () => {
+	it("refuses a seat that is not on the clock, in the commands channel, and writes nothing", async () => {
 		seed(brownMatch());
 		const interaction = makeSelect(B, "vermillion-alley");
 
 		await handleBuildSelect(interaction);
 
-		const followUp = interaction.followUp.mock.calls[0][0] as { embeds: { data: { description: string } }[]; flags: number };
-		expect(followUp.embeds[0].data.description).toBe(gameRoomsCopy.monopoly.notYourTurn);
-		expect(followUp.flags).toBe(64);
+		const refusal = answered<{ embeds: { data: { description: string } }[] }>(interaction);
+		expect(refusal.embeds[0].data.description).toBe(gameRoomsCopy.monopoly.notYourTurn);
+		expect(interaction.followUp).not.toHaveBeenCalled();
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
@@ -160,8 +172,8 @@ describe("handleBuildSelect", () => {
 		seed(brownMatch());
 		const interaction = makeSelect(A, "nowhere");
 		await handleBuildSelect(interaction);
-		const followUp = interaction.followUp.mock.calls[0][0] as { embeds: { data: { description: string } }[] };
-		expect(followUp.embeds[0].data.description).toBe("Only color lots take buildings.");
+		const refusal = answered<{ embeds: { data: { description: string } }[] }>(interaction);
+		expect(refusal.embeds[0].data.description).toBe("Only color lots take buildings.");
 	});
 
 	it("refuses a select from somebody who is not at the table before touching the match", async () => {

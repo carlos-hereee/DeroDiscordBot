@@ -2,8 +2,6 @@ import {
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
-	ComponentType,
-	MessageFlags,
 	EmbedBuilder,
 	type RepliableInteraction,
 	type SlashCommandSubcommandBuilder,
@@ -24,6 +22,7 @@ import {
 } from "@utils/tzParser.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { askInChannel } from "@utils/answerInChannel.js";
 import { showErrorNotice } from "@utils/textModal.js";
 
 // ── /events stream weekly ────────────────────────────────────────
@@ -234,9 +233,9 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 
 	// ── ③ confirmation embed ───────────────────────────────────────
 	// Two-line preview: cadence + next fire, plus the audience line so
-	// the streamer sees the role + channel before clicking save. Using
-	// MessageFlags.Ephemeral so the preview does not clutter the channel
-	// where the command was run. Timezone is rendered alongside the
+	// the streamer sees the role + channel before clicking save. Posted in
+	// 🎛️admin-controls (2026-10 item 257 Phase 5) so the preview does not clutter
+	// the channel where the command was run. Timezone is rendered alongside the
 	// cadence so the streamer can sanity-check that "Friday 7pm" got
 	// interpreted in the zone they meant.
 	const previewLines = [
@@ -256,23 +255,14 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 		new ButtonBuilder().setCustomId("stream_cancel").setLabel(c.confirm.cancelButtonLabel).setStyle(ButtonStyle.Secondary)
 	);
 
-	const confirmMessage = await interaction.reply({
-		embeds: [confirmEmbed],
-		components: [row],
-		flags: MessageFlags.Ephemeral,
-	});
+	const prompt = await askInChannel(interaction, "admin", { embeds: [confirmEmbed], components: [row] });
 
 	// ── ④ wait for confirm / cancel ─────────────────────────────────
 	try {
-		const press = await confirmMessage.awaitMessageComponent({
-			componentType: ComponentType.Button,
-			time: 120_000,
-			// Defensive filter: only the streamer who ran the command can
-			// resolve their own ephemeral. Discord scopes this already since
-			// the message is ephemeral, but the explicit user check is cheap
-			// insurance.
-			filter: (i) => i.user.id === interaction.user.id,
-		});
+		// Only the streamer who ran the command can resolve their own prompt:
+		// askInChannel turns every other presser away.
+		const press = await prompt.awaitPress(120_000);
+		if (!press) throw new Error("the stream schedule prompt timed out");
 
 		if (press.customId === "stream_cancel") {
 			await press.update({ embeds: [errorEmbed(c.cancelled)], components: [] });
@@ -314,10 +304,9 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 			await press.update({ embeds: [errorEmbed(c.saveFailed)], components: [] });
 		}
 	} catch {
-		// awaitMessageComponent rejects on timeout. Editing the original
-		// reply (instead of replying again) keeps the audit trail tidy:
-		// the streamer sees one ephemeral message that walked through
-		// preview → timed out.
-		await interaction.editReply({ embeds: [errorEmbed(c.timedOut)], components: [] });
+		// A timeout lands here. Editing the prompt (instead of posting again)
+		// keeps the audit trail tidy: the streamer sees one message that walked
+		// through preview, then timed out.
+		await prompt.edit({ embeds: [errorEmbed(c.timedOut)], components: [] });
 	}
 }

@@ -3,7 +3,6 @@ import {
 	ButtonBuilder,
 	ButtonStyle,
 	ChannelType,
-	MessageFlags,
 	ModalBuilder,
 	StringSelectMenuBuilder,
 	TextInputBuilder,
@@ -25,6 +24,7 @@ import { botLogStore } from "@db/stores/botLogStore.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton, registerModal, registerSelectMenu } from "@handlers/interactionRegistry.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { RoomProvisioner, describeRoomOpenFailure, type RoomOpenInput, type RoomOpenResult } from "@features/game-rooms/RoomProvisioner.js";
 import { buildInviteOptions, refilterInvitees, type InviteOption } from "@features/game-rooms/invitePicker.js";
@@ -473,9 +473,10 @@ export async function handleRulesCardModal(interaction: ModalSubmitInteraction, 
 	gate.request.terms = resolved.terms;
 	const card = await buildRulesCard(gate.guild, gate.request, deps);
 	// The modal was opened from the card's own button, so it edits the card in
-	// place; the reply branch is only for a submit Discord did not tie to it.
+	// place; a submit Discord did not tie to it posts the card in 💬dero-commands
+	// (2026-10 item 257 Phase 5), where passGate still holds it to its requester.
 	if (interaction.isFromMessage()) await interaction.update(card);
-	else await interaction.reply({ ...card, flags: MessageFlags.Ephemeral });
+	else await answerInChannel(interaction, "member", card);
 }
 
 /** Register the card's buttons, picker and modal. Called once at boot from main.ts. */

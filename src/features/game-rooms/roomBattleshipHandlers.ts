@@ -1,4 +1,4 @@
-import { MessageFlags, TextChannel, type ButtonInteraction, type Client } from "discord.js";
+import { TextChannel, type ButtonInteraction, type Client } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { COLUMNS, FLEET, GRID_SIZE, markReady, rerollFleet, shipsRemaining, type BattleshipState, type SetupRefusal } from "@features/games/battleshipState.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
@@ -433,7 +433,3 @@ export const battleshipTurnAdapter: TurnAdapter = {
 };
 
 export const roomBattleshipHandlers = { handleFire, handleViewBoard, handleReroll, handleReady, commitShot, commitReady };
-
-// Re-exported so the router's flag reads identically to every other ephemeral
-// surface in the feature.
-export const BATTLESHIP_PRIVATE_FLAGS = MessageFlags.Ephemeral;

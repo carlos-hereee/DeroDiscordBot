@@ -1,6 +1,5 @@
 import {
 	LabelBuilder,
-	MessageFlags,
 	ModalBuilder,
 	RoleSelectMenuBuilder,
 	TextInputBuilder,
@@ -12,6 +11,7 @@ import {
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { communityCopy } from "./communityCopy.js";
 import { COMMUNITY_PREFIX } from "./communityControls.js";
@@ -533,10 +533,11 @@ export async function handleEditSubmitted(
 	const revision = storePendingDraft(guild.id, submission.user.id, result.draft);
 
 	// The modal opened from the review's own control, so the submit updates that
-	// review in place; a new private reply covers the case where it did not.
+	// review in place; a fresh review in 🧭onboarding covers the case where it did not
+	// (2026-10 item 257 Phase 5).
 	const review = buildOnboardingReview(result.draft, config, revision, result.focus);
 	if (submission.isFromMessage()) await submission.update(review);
-	else await submission.reply({ ...review, flags: MessageFlags.Ephemeral });
+	else await answerInChannel(submission, "onboarding", review);
 }
 
 function answerValues(submission: ModalSubmitInteraction): IAnswerEdit {

@@ -19,6 +19,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { COLORS } from "@base/copy/brand.js";
 import { registerButton, registerModal } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
+import { beginChannelAnswer, type PendingChannelAnswer } from "@utils/answerInChannel.js";
 import { showErrorNotice, showModalOrReply } from "@utils/textModal.js";
 import { mustStayReadable, readOnboardingSafeChannels } from "@features/community/onboardingChannels.js";
 import { communityOverwritesFor, isMemberRoleGated, type IOverwriteRoles } from "./communityOverwrites.js";
@@ -218,10 +219,11 @@ export async function handleChoiceSubmit(interaction: ModalSubmitInteraction): P
 	// A move is a Discord round trip or two per channel, past the three second window.
 	// The result replaces the choice card only when the modal came from that card: from
 	// the 🧭onboarding steps card (2026-10 item 257 Phase 2b) an update would overwrite
-	// the steps card, so the result is a private reply there.
+	// the steps card, so the result posts as a new card in 🧭onboarding instead (Phase 5).
 	const fromChoiceCard = interaction.isFromMessage() && interaction.message.embeds[0]?.title === copy.cardTitle;
+	let answer: PendingChannelAnswer | null = null;
 	if (fromChoiceCard) await interaction.deferUpdate();
-	else await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	else answer = await beginChannelAnswer(interaction, "onboarding");
 
 	const category = row.categoryId ? await guild.channels.fetch(row.categoryId).catch(() => null) : null;
 	const roles = { memberRoleId: row.memberRoleId ?? null, adminRoleId: row.adminRoleId ?? null };
@@ -245,7 +247,9 @@ export async function handleChoiceSubmit(interaction: ModalSubmitInteraction): P
 	if (Object.keys(writes).length > 0) await guildConfigStore.update(guild.id, writes);
 
 	const result = new EmbedBuilder().setTitle(copy.cardTitle).setDescription(lines.join("\n") || copy.nothingToChoose).setColor(COLORS.ADMIN);
-	await interaction.editReply({ embeds: [result], components: [chooseButtonRow()] }).catch((error) => console.warn(`[adoption] guild ${guild.id} could not update the channel choice card`, error));
+	const card = { embeds: [result], components: [chooseButtonRow()] };
+	if (answer) await answer.send(card);
+	else await interaction.editReply(card).catch((error) => console.warn(`[adoption] guild ${guild.id} could not update the channel choice card`, error));
 	// 🧭onboarding's step 2 mark follows the answers. Loaded on use, because
 	// headquartersCards reads this module's channel list and a static import back would
 	// close a cycle.

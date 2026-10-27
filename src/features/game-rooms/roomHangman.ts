@@ -2,7 +2,6 @@ import {
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
-	MessageFlags,
 	ModalBuilder,
 	StringSelectMenuBuilder,
 	TextInputBuilder,
@@ -48,7 +47,8 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX, GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { RoomSecret } from "./roomTypes.js";
-import { showNotice } from "@utils/textModal.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
+import { acknowledgeTextModal, showNotice } from "@utils/textModal.js";
 
 // ── roomHangman ──────────────────────────────────────────────────────
 // What:  hangman played inside a room: the host authors a word behind a modal or
@@ -211,6 +211,8 @@ const REJECTION_COPY: Record<HangmanAuthoringRejection, string> = {
 	extraHintTooLong: `Keep each extra hint under ${HANGMAN_HINT_MAX} characters.`,
 };
 
+// The word modal's answers post in 💬dero-commands (2026-10 item 257 Phase 5): a modal Submit
+// cannot open a notice. None of them carries the word, only a refusal or the hint.
 export async function handleAuthoringModal(interaction: ModalSubmitInteraction): Promise<void> {
 	const [prefix, action, roomId] = interaction.customId.split(":");
 	if (prefix !== GAME_ROOM_MODAL_PREFIX || action !== "word" || !roomId) return;
@@ -220,13 +222,13 @@ export async function handleAuthoringModal(interaction: ModalSubmitInteraction):
 
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (!room || room.status !== "playing") {
-		await interaction.reply({ content: gameRoomsCopy.errors.notFound, flags: MessageFlags.Ephemeral });
+		await answerInChannel(interaction, "member", { content: gameRoomsCopy.errors.notFound });
 		return;
 	}
 	// Only the host sets the word, and only once. A second submit would replace a
 	// word the room has already been guessing at.
 	if (room.hostId !== interaction.user.id || (room.secret as HangmanSecret | null)?.word) {
-		await interaction.reply({ content: gameRoomsCopy.errors.notYours, flags: MessageFlags.Ephemeral });
+		await answerInChannel(interaction, "member", { content: gameRoomsCopy.errors.notYours });
 		return;
 	}
 
@@ -237,7 +239,7 @@ export async function handleAuthoringModal(interaction: ModalSubmitInteraction):
 	);
 
 	if (!result.ok) {
-		await interaction.reply({ content: REJECTION_COPY[result.reason], flags: MessageFlags.Ephemeral });
+		await answerInChannel(interaction, "member", { content: REJECTION_COPY[result.reason] });
 		return;
 	}
 
@@ -258,11 +260,7 @@ export async function handleAuthoringModal(interaction: ModalSubmitInteraction):
 		{ actorId: interaction.user.id, text: gameRoomsCopy.hangman.opener(interaction.user.id, result.hint) },
 		// ⚠️ THE HINT, NEVER THE WORD. The host knows the word already; echoing it buys
 		// nothing and puts it one mis-click from a public channel.
-		() =>
-			interaction.reply({
-				content: gameRoomsCopy.hangman.authored(result.hint, result.extraHints.length),
-				flags: MessageFlags.Ephemeral,
-			})
+		() => answerInChannel(interaction, "member", { content: gameRoomsCopy.hangman.authored(result.hint, result.extraHints.length) })
 	);
 }
 
@@ -479,26 +477,26 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (!room || room.status !== "playing") {
-		await interaction.reply({ content: gameRoomsCopy.hangman.closed, flags: MessageFlags.Ephemeral });
+		await answerInChannel(interaction, "member", { content: gameRoomsCopy.hangman.closed });
 		return;
 	}
 
 	const state = rehydrate(room);
 	if (!state) {
-		await interaction.reply({ content: gameRoomsCopy.hangman.waitingForWord(room.hostId), flags: MessageFlags.Ephemeral });
+		await answerInChannel(interaction, "member", { content: gameRoomsCopy.hangman.waitingForWord(room.hostId) });
 		return;
 	}
 	// Re-gated: a modal submit is reachable without the button that opened it.
 	if (state.authoredBy && state.authoredBy === interaction.user.id) {
-		await interaction.reply({ content: gameRoomsCopy.hangman.hostCannotGuess, flags: MessageFlags.Ephemeral });
+		await answerInChannel(interaction, "member", { content: gameRoomsCopy.hangman.hostCannotGuess });
 		return;
 	}
 
 	const outcome = applyGuess(state, interaction.fields.getTextInputValue("letter"));
 
-	// The three no-cost outcomes stay EPHEMERAL. A public "that is not a letter" per
-	// fat-fingered submit would bury the actual game in noise, and none of them
-	// changed the round.
+	// The three no-cost outcomes stay OUT OF THE ROOM. A "that is not a letter" there per
+	// fat-fingered submit would bury the actual game in noise, and none of them changed
+	// the round, so they post in 💬dero-commands (2026-10 item 257 Phase 5).
 	if (outcome.status === "invalid" || outcome.status === "repeat" || outcome.status === "closed") {
 		const message =
 			outcome.status === "invalid"
@@ -506,11 +504,13 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 				: outcome.status === "repeat"
 				  ? gameRoomsCopy.hangman.repeat(outcome.letter)
 				  : gameRoomsCopy.hangman.closed;
-		await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
+		await answerInChannel(interaction, "member", { content: message });
 		return;
 	}
 
-	await interaction.reply({ content: `You played ${outcome.letter.toUpperCase()}.`, flags: MessageFlags.Ephemeral });
+	// The move line posted in the room below IS the answer, so the Submit only closes
+	// (2026-10 item 257 Phase 5, replacing a private "You played" line).
+	await acknowledgeTextModal(interaction);
 	await persist(room, state);
 
 	const mask = maskedWord(state);

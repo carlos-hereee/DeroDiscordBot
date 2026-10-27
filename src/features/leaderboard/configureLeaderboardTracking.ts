@@ -1,5 +1,4 @@
 import {
-	MessageFlags,
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
@@ -13,6 +12,7 @@ import { buildLeaderboardChannelDeleteCustomId } from "@features/leaderboard/lea
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /server leaderboard tracking ───────────────────────────────────
@@ -86,9 +86,10 @@ export async function configureLeaderboardTracking(interaction: RepliableInterac
 			: undefined;
 
 		const embed = infoEmbed("Leaderboard tracking already that way", body, COLORS.SCHEDULE);
-		// The Remove button is an action, not a choice, so a reply that carries it stays a
-		// private message (2026-10 item 254 Phase 5b); without it the answer is a notice.
-		if (components) await interaction.reply({ embeds: [embed], components, flags: MessageFlags.Ephemeral });
+		// The Remove button is an action, not a choice, so a reply that carries it posts in
+		// 🎛️admin-controls (2026-10 item 257 Phase 5), where its own handler re-gates the
+		// presser; without it the answer is a notice.
+		if (components) await answerInChannel(interaction, "admin", { embeds: [embed], components });
 		else await showEmbedNotice(interaction, embed);
 		return;
 	}
@@ -147,8 +148,8 @@ export async function configureLeaderboardTracking(interaction: RepliableInterac
 				: undefined;
 
 		const embed = infoEmbed(heading, body, COLORS.SCHEDULE);
-		// As above: a reply carrying the Remove button stays a private message.
-		if (components) await interaction.reply({ embeds: [embed], components, flags: MessageFlags.Ephemeral });
+		// As above: a reply carrying the Remove button posts in 🎛️admin-controls.
+		if (components) await answerInChannel(interaction, "admin", { embeds: [embed], components });
 		else await showEmbedNotice(interaction, embed);
 	} catch (err) {
 		console.error("[configure leaderboard-tracking] update failed", err);

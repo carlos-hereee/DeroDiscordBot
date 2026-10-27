@@ -19,6 +19,7 @@ import {
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton, registerModal } from "@handlers/interactionRegistry.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showErrorNotice } from "@utils/textModal.js";
 import { COLORS } from "@base/copy/brand.js";
 import { DERO_VOICE_ROOM_FIELDS, revokeDeroVoiceRooms } from "@features/voice/deroVoiceRooms.js";
@@ -256,11 +257,13 @@ async function runChoice(interaction: ModalSubmitInteraction, guild: Guild): Pro
 	}
 	if (choice === "data") {
 		// Nothing is logged here: Delete my data writes its one line at the CONFIRM
-		// step, where it either deletes or is refused.
+		// step, where it either deletes or is refused. The prompt posts in
+		// 🎛️admin-controls (2026-10 item 257 Phase 5): a modal Submit opens no notice,
+		// and its button refuses everyone but the server owner (refuseNonOwner).
 		const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
 			new ButtonBuilder().setCustomId(DELETE_ID).setLabel(c.typeConfirmLabel).setEmoji("🗑️").setStyle(ButtonStyle.Danger)
 		);
-		await interaction.reply({ embeds: [infoEmbed(c.deleteDataTitle, c.deleteDataBody, COLORS.ERROR)], components: [row], flags: MessageFlags.Ephemeral });
+		await answerInChannel(interaction, "admin", { embeds: [infoEmbed(c.deleteDataTitle, c.deleteDataBody, COLORS.ERROR)], components: [row] });
 		return;
 	}
 	// A required select always carries a value; this answers a submit Discord built
@@ -270,6 +273,7 @@ async function runChoice(interaction: ModalSubmitInteraction, guild: Guild): Pro
 
 // Just delete channels: the teardown alone. Every setting stays on the row, so
 // /setup rebuilds the channels from it (autoSetup with force only rewrites ids).
+// Its answers stay private: every channel they could post in is the one being deleted.
 async function runJustDeleteChannels(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
 	// Logged BEFORE the teardown on purpose: the log channel is about to be deleted,
 	// and the BotLog row is written either way.
@@ -286,20 +290,21 @@ async function runJustDeleteChannels(interaction: ModalSubmitInteraction, guild:
 	await interaction.followUp({ content: c.channelsDone, flags: MessageFlags.Ephemeral }).catch(() => undefined);
 }
 
-// Arcade only: exactly what /arcade off runs, deferred because deleting a category
-// and its channels can outrun Discord's three second window.
+// Arcade only: exactly what /arcade off runs, acknowledged first because deleting a
+// category and its channels can outrun Discord's three second window. The outcome posts
+// in 🎰arcade-control, which sits in Dero Headquarters and outlives the arcade.
 async function runArcadeOnly(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
 	const arcadeCopy = setupCopy.arcade;
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	const answer = await beginChannelAnswer(interaction, "arcade");
 	try {
 		const outcome = await turnArcadeOff(guild);
 		auditAttempt(interaction, outcome === "off" ? c.auditArcadeOff : c.auditArcadeAlreadyOff);
 		const body = outcome === "off" ? arcadeCopy.offBody : arcadeCopy.alreadyOff;
-		await interaction.editReply({ embeds: [infoEmbed(arcadeCopy.offTitle, body, COLORS.ERROR)] });
+		await answer.send({ embeds: [infoEmbed(arcadeCopy.offTitle, body, COLORS.ERROR)] });
 	} catch (error) {
 		console.error(`[self-destruct] arcade only failed in guild ${guild.id}`, error);
 		auditAttempt(interaction, c.auditArcadeFailed);
-		await interaction.editReply({ embeds: [errorEmbed(arcadeCopy.offFailed)] }).catch(() => undefined);
+		await answer.send({ embeds: [errorEmbed(arcadeCopy.offFailed)] });
 	}
 }
 
@@ -312,7 +317,8 @@ async function handleConfirmModal(interaction: ModalSubmitInteraction, guild: Gu
 	}
 
 	// Logged BEFORE the teardown on purpose: the log channel is about to be deleted,
-	// and the BotLog row is written either way.
+	// and the BotLog row is written either way. The answers stay private for the same
+	// reason: every channel they could post in is being deleted.
 	auditAttempt(interaction, c.auditDeleteConfirmed);
 	await interaction.reply({ embeds: [infoEmbed(c.deletingTitle, c.deletingBody, COLORS.ERROR)], flags: MessageFlags.Ephemeral });
 	try {

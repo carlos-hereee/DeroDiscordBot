@@ -1,6 +1,5 @@
 import {
 	ActionRowBuilder,
-	MessageFlags,
 	ModalBuilder,
 	TextChannel,
 	TextInputBuilder,
@@ -17,6 +16,7 @@ import { getPluginCopy } from "@base/copy/getCopy.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { RULES_EDIT_CUSTOM_ID, RULES_PREFIX, resolveRulesMarkdown, rulesContent, type IRulesConfig } from "./rulesContent.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { showErrorNotice } from "@utils/textModal.js";
 
 // ── rulesEdit ────────────────────────────────────────────────────────
@@ -126,7 +126,9 @@ export async function handleRulesEditSubmit(submission: ModalSubmitInteraction, 
 
 	const outcome = await rerenderRulesPost(submission, saved, buttonMessage);
 	const reply = outcome === "edited" ? (isDefault ? copy.responses.rulesEdit.reset : copy.responses.rulesEdit.saved) : copy.responses.rulesEdit.savedNotRefreshed;
-	await submission.reply({ content: reply, flags: MessageFlags.Ephemeral });
+	// A modal Submit opens no notice, so the outcome posts in 🧭onboarding, the rules being
+	// part of the server's Community setup (2026-10 item 257 Phase 5).
+	await answerInChannel(submission, "onboarding", { content: reply }, { config: saved });
 
 	// Ids and a length only, never the rules text (the RULES_EDITED privacy note).
 	void botLogStore

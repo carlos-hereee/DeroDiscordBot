@@ -1,4 +1,4 @@
-import { GatewayIntentBits, Collection, Events, MessageFlags, Client, Partials } from "discord.js";
+import { GatewayIntentBits, Collection, Events, Client, Partials } from "discord.js";
 import { arcadeMonthlyPostRunOnBoot, deroVoiceSamplerEnabled, discordToken, weeklyDigestRunOnBoot } from "@utils/config.js";
 import clientReady from "@handlers/clientReady.js";
 import fs from "fs";
@@ -72,6 +72,7 @@ import { runWeeklyDigest, startWeeklyDigest } from "@features/leveling/weeklyDig
 import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { isAdminCommand } from "@utils/permissions.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { registerNoticeModal, showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
 import { registerMessageXp } from "@features/leveling/messageXp.js";
@@ -532,12 +533,10 @@ process.on("uncaughtException", (err) => {
 		} catch (error) {
 			console.error(LOG_MESSAGES.main.commandExecuteError(interaction.commandName), error);
 
-			// interaction might already be replied to
+			// An interaction already answered cannot open a notice, so the failure posts in
+			// 💬dero-commands (2026-10 item 257 Phase 5).
 			if (interaction.replied || interaction.deferred) {
-				await interaction.followUp({
-					embeds: [errorEmbed(rokCommanderCopy.responses.commandExecuteFailure)],
-					flags: MessageFlags.Ephemeral,
-				});
+				await answerInChannel(interaction, "member", { embeds: [errorEmbed(rokCommanderCopy.responses.commandExecuteFailure)] });
 			} else {
 				await showErrorNotice(interaction, rokCommanderCopy.responses.commandExecuteFailure);
 			}

@@ -1,5 +1,4 @@
 import {
-	MessageFlags,
 	type Client,
 	type EmbedBuilder,
 	type Guild,
@@ -22,6 +21,7 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog, type AdminLogKind } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import { turnArcadeOff, turnArcadeOn } from "@features/setup/arcadeSwitch.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /arcade settings ─────────────────────────────────────────────────────────
@@ -221,26 +221,26 @@ async function arcadeAnswer(
 }
 
 // ── arcade off and on (post-launch plan item 14) ──
-// Deferred, because building or deleting a category and its channels can outrun
-// Discord's three second reply window. Each outcome is a reply, and only a real
-// change is logged.
+// Acknowledged first, because building or deleting a category and its channels can
+// outrun Discord's three second reply window. Each outcome posts in 🎰arcade-control
+// (2026-10 item 257 Phase 5), and only a real change is logged.
 async function switchArcade(interaction: RepliableInteraction, guild: Guild, sub: "off" | "on", audit: Audit): Promise<void> {
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	const answer = await beginChannelAnswer(interaction, "arcade");
 	try {
 		if (sub === "off") {
 			const outcome = await turnArcadeOff(guild);
 			if (outcome === "off") audit("config.change", audited.subjects.arcade, arcadeCopy.auditOff);
 			const embed = outcome === "off" ? info(arcadeCopy.offBody, arcadeCopy.offTitle) : info(arcadeCopy.alreadyOff, arcadeCopy.offTitle);
-			await interaction.editReply({ embeds: [embed] });
+			await answer.send({ embeds: [embed] });
 			return;
 		}
 		const outcome = await turnArcadeOn(interaction.client, guild);
 		if (outcome !== "already-on") audit("config.change", audited.subjects.arcade, arcadeCopy.auditOn);
 		const body = { on: arcadeCopy.onBody, pending: arcadeCopy.onPending, "already-on": arcadeCopy.alreadyOn }[outcome];
-		await interaction.editReply({ embeds: [info(body, arcadeCopy.onTitle)] });
+		await answer.send({ embeds: [info(body, arcadeCopy.onTitle)] });
 	} catch (error) {
 		console.error(`[arcade] ${sub} failed guild=${guild.id}`, error);
-		await interaction.editReply({ embeds: [errorEmbed(sub === "off" ? arcadeCopy.offFailed : arcadeCopy.onFailed)] }).catch(() => undefined);
+		await answer.send({ embeds: [errorEmbed(sub === "off" ? arcadeCopy.offFailed : arcadeCopy.onFailed)] });
 	}
 }
 

@@ -64,6 +64,7 @@ import {
 	tableHostStateOf,
 } from "./roomHoldem.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { acknowledgeConfirm, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 import { syncTurnPrompt, type TurnAdapter } from "./turnPrompt.js";
 import { repostRoomBoard } from "./roomBoardRepost.js";
@@ -289,9 +290,10 @@ export async function handleBuyIn(interaction: ButtonInteraction, room: IGameRoo
 	const verdict = await judgeJoin(room, userId, { alreadyApproved: room.playerIds.includes(userId) });
 	if (verdict.kind === "refuse") {
 		// A network table's seat needs the network notice first (2026-10 item 244 Phase 5b):
-		// the member gets the notice, and presses Buy in again once they accept it.
+		// the member gets the notice in 💬dero-commands (2026-10 item 257 Phase 5), and presses
+		// Buy in again once they accept it.
 		if (verdict.reason === "noConsent") {
-			await interaction.reply(consentPrompt({ kind: "again" }));
+			await answerInChannel(interaction, "member", consentPrompt({ kind: "again" }));
 			return;
 		}
 		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [joinRefusalText(room, verdict.reason)] });

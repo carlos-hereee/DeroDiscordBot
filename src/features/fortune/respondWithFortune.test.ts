@@ -20,8 +20,12 @@ const mocks = vi.hoisted(() => ({
 	recordFortuneReading: vi.fn(),
 	claimFortuneSlot: vi.fn(),
 	releaseFortuneSlot: vi.fn(),
+	findByGuildId: vi.fn(),
 }));
 
+// A private reading posts in 💬dero-commands (2026-10 item 257 Phase 5). No commands channel
+// by default, so a private reading answers privately, the fallback; one case posts in the channel.
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId } }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: mocks.awardXp }));
 vi.mock("@db/stores/fortuneBuffStore.js", () => ({
 	fortuneBuffStore: { stateFor: mocks.stateFor, recordRoll: mocks.recordRoll },
@@ -84,6 +88,7 @@ beforeEach(() => {
 		slot: { guildKey: guildId ?? "dm", userId, claimedAt: new Date(), previousAt: null },
 	}));
 	mocks.releaseFortuneSlot.mockReset().mockResolvedValue(undefined);
+	mocks.findByGuildId.mockReset().mockResolvedValue(null);
 });
 
 describe("the award fires from BOTH entry points", () => {
@@ -97,7 +102,7 @@ describe("the award fires from BOTH entry points", () => {
 
 	it("awards on the BUTTON path, which is the whole reason this lives here", async () => {
 		// PowerUps calls respondWithFortune directly with no question and always
-		// private. If the award had gone into fortuneHandler.ts this case would fail
+		// private (posted in 💬dero-commands). If the award had gone into fortuneHandler.ts this case would fail
 		// and nobody would notice in production, because the button still works.
 		const { interaction, userId } = harness();
 		await respondWithFortune(interaction as unknown as ButtonInteraction, { isPrivate: true });
@@ -226,5 +231,39 @@ describe("respondWithFortune's scene card", () => {
 		const edited = editedWith(interaction);
 		expect(edited.embeds[0].data.image?.url).toBe("attachment://orb.gif");
 		expect(edited.files).toHaveLength(1);
+	});
+});
+
+describe("where a reading answers", () => {
+	it("answers a public reading in place, with a plain defer and its edit", async () => {
+		const { interaction } = harness();
+		await respondWithFortune(interaction, { question: "will it rain" });
+		expect(interaction.deferReply).toHaveBeenCalledWith();
+		expect(interaction.editReply).toHaveBeenCalledTimes(1);
+	});
+
+	it("posts a private reading in the commands channel after a notice naming it, without a ping", async () => {
+		mocks.findByGuildId.mockResolvedValue({ commandOutputChannelId: "c-commands" });
+		const send = vi.fn(async (_payload: unknown) => ({ id: "m-1", edit: vi.fn(async () => undefined) }));
+		const commands = { id: "c-commands", isSendable: () => true, send };
+		const { interaction } = harness();
+		const fake = interaction as unknown as Record<string, unknown>;
+		fake.client = { channels: { fetch: vi.fn(async () => commands) } };
+		fake.isModalSubmit = () => false;
+		// As discord.js does: an opened modal is the interaction's one answer.
+		fake.showModal = vi.fn(async () => {
+			fake.replied = true;
+		});
+
+		await respondWithFortune(interaction as unknown as ButtonInteraction, { isPrivate: true });
+
+		expect(fake.showModal).toHaveBeenCalledOnce();
+		expect(interaction.deferReply).not.toHaveBeenCalled();
+		expect(interaction.editReply).not.toHaveBeenCalled();
+		const posted = send.mock.calls[0]![0] as { content: string; embeds: unknown[]; allowedMentions: unknown };
+		expect(posted.content).toBe(`<@${interaction.user.id}>`);
+		expect(posted.embeds).toHaveLength(1);
+		expect(posted.allowedMentions).toEqual({ parse: [] });
+		expect(mocks.awardXp).toHaveBeenCalledTimes(1);
 	});
 });

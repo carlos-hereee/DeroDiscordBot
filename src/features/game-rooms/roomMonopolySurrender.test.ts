@@ -26,10 +26,14 @@ vi.mock("./roomMonopolyHandlers.js", async (importOriginal) => {
 	};
 });
 vi.mock("@utils/textModal.js", () => ({ showNotice: vi.fn(), showConfirm: vi.fn(), acknowledgeConfirm: vi.fn() }));
+// The confirm's answer posts in 💬dero-commands (2026-10 item 257 Phase 5); where it lands has
+// its own suite (utils/answerInChannel.test.ts).
+vi.mock("@utils/answerInChannel.js", () => ({ answerInChannel: vi.fn() }));
 
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { acknowledgeConfirm, showConfirm, showNotice } from "@utils/textModal.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { commitMonopolyMove } from "./roomMonopolyHandlers.js";
@@ -211,7 +215,8 @@ describe("the two presses", () => {
 		const interaction = press(B);
 		await handleMsurrenderConfirm(interaction, room);
 		expect(vi.mocked(acknowledgeConfirm).mock.invocationCallOrder[0]).toBeLessThan(commitMock.mock.invocationCallOrder[0]);
-		expect(showNotice).toHaveBeenCalledWith(interaction, { title: words.surrenderConfirmTitle, sections: [words.surrenderDone] });
+		expect(answerInChannel).toHaveBeenCalledWith(interaction, "member", { content: words.surrenderDone });
+		expect(showNotice).not.toHaveBeenCalled();
 		expect(seatOf(B)?.bankrupt).toBe(true);
 	});
 });

@@ -1,4 +1,4 @@
-import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
+import type { ChatInputCommandInteraction } from "discord.js";
 import { isChallengeChannel } from "@features/game-rooms/challengeCard.js";
 import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 import { soloLuckSlugFor } from "@features/game-rooms/soloRooms.js";
@@ -10,8 +10,9 @@ import type { SoloLuckGame } from "./soloLuck.js";
 // ── miniGameInChallenges ───────────────────────────────────────────────────
 // What:  a /mini-game typed in one of the two challenge channels (⚔️challenges or
 //        🏆rated-challenges), answered so nothing is played there (2026-10 item 254,
-//        Arcade 1): the game opens its room, or its solo room, and the member is told
-//        privately where it is; a fortune is read privately, since a reading has no room.
+//        Arcade 1): the game opens its room, or its solo room, and the member is told in
+//        💬dero-commands where it is; a fortune is read there too, since a reading has no
+//        room (2026-10 item 257 Phase 5).
 // Who:   /mini-game's execute, before its dispatch table, for every subcommand.
 // Does NOT: change a /mini-game typed anywhere else, which reaches its handler exactly as
 //        before. Nor does it handle what already only posts a challenge card (Monopoly, and
@@ -41,7 +42,7 @@ export async function routeMiniGameInChallenges(interaction: ChatInputCommandInt
 		return true;
 	}
 	if (subcommand === "hangman") {
-		await openPrivately(interaction, () => openSoloRoomForMember(interaction, "solo-hangman"));
+		await openSoloRoomForMember(interaction, "solo-hangman");
 		return true;
 	}
 	if (subcommand === "blackjack") {
@@ -51,7 +52,7 @@ export async function routeMiniGameInChallenges(interaction: ChatInputCommandInt
 			await startChallengeDraft(interaction, "blackjack");
 			return true;
 		}
-		await openPrivately(interaction, () => openSoloRoomForMember(interaction, "solo-blackjack"));
+		await openSoloRoomForMember(interaction, "solo-blackjack");
 		return true;
 	}
 
@@ -61,13 +62,6 @@ export async function routeMiniGameInChallenges(interaction: ChatInputCommandInt
 	if (!isAgainstDero(interaction)) return false;
 	// The solo room plays the coin or the dice as it opens, and asks for an rps throw in the
 	// room (2026-10 item 257 Phase 4b), so a throw option typed here is not read.
-	await openPrivately(interaction, () => openSoloRoomForMember(interaction, soloLuckSlugFor(luckGame)));
+	await openSoloRoomForMember(interaction, soloLuckSlugFor(luckGame));
 	return true;
-}
-
-// Defer privately first: opening a room is a channel create plus its opener, past
-// Discord's three second window, and the answer is the member's alone.
-async function openPrivately(interaction: ChatInputCommandInteraction, open: () => Promise<void>): Promise<void> {
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-	await open();
 }

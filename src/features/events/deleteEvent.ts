@@ -1,9 +1,7 @@
 import {
-	ComponentType,
 	ButtonBuilder,
 	ButtonStyle,
 	ActionRowBuilder,
-	MessageFlags,
 	type RepliableInteraction,
 	type SlashCommandSubcommandBuilder,
 } from "discord.js";
@@ -13,6 +11,7 @@ import { infoEmbed, errorEmbed } from "@utils/embedBuilder.js";
 import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { askInChannel } from "@utils/answerInChannel.js";
 import { showErrorNotice } from "@utils/textModal.js";
 
 // ── deleting an event ─────────────────────────────────────────────────
@@ -79,17 +78,15 @@ export async function deleteEvent(interaction: RepliableInteraction, options: Co
 
 	const row = new ActionRowBuilder<ButtonBuilder>().addComponents(cancel, confirm);
 
-	const confirmMessage = await interaction.reply({
+	// Posted in 🎛️admin-controls (2026-10 item 257 Phase 5); only this admin's press counts.
+	const prompt = await askInChannel(interaction, "admin", {
 		embeds: [infoEmbed(c.confirmTitle, c.confirmDescription(event.name), rokCommanderCopy.COLORS.ERROR)],
 		components: [row],
-		flags: MessageFlags.Ephemeral,
 	});
 
 	try {
-		const button = await confirmMessage.awaitMessageComponent({
-			componentType: ComponentType.Button,
-			time: 60_000,
-		});
+		const button = await prompt.awaitPress(60_000);
+		if (!button) throw new Error("the delete prompt timed out");
 
 		if (button.customId === "cancel_delete") {
 			await button.update({ embeds: [errorEmbed(c.cancelled)], components: [] });
@@ -104,7 +101,8 @@ export async function deleteEvent(interaction: RepliableInteraction, options: Co
 			components: [],
 		});
 	} catch {
-		// awaitMessageComponent throws on timeout
-		await interaction.editReply({ embeds: [errorEmbed(c.timedOut)], components: [] });
+		// A timeout, or a write that threw: the prompt is rewritten either way, so a stale
+		// Delete can never be pressed into a deletion later.
+		await prompt.edit({ embeds: [errorEmbed(c.timedOut)], components: [] });
 	}
 }

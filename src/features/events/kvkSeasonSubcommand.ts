@@ -4,12 +4,10 @@ import {
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
-	ComponentType,
 	ModalBuilder,
 	TextInputBuilder,
 	TextInputStyle,
 	EmbedBuilder,
-	MessageFlags,
 } from "discord.js";
 import { GuildEventManager } from "@features/events/GuildEventManager.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -17,6 +15,7 @@ import { kvkConfirmationEmbed } from "@utils/embedBuilder.js";
 import { addDays, parseEventDate, parseEventDateTime } from "@utils/dateParser.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { answerInChannel, askInChannel } from "@utils/answerInChannel.js";
 import { showErrorNotice, showNotice } from "@utils/textModal.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 
@@ -155,15 +154,17 @@ export async function runKvkSeason(interaction: RepliableInteraction, options: C
 			.setStyle(ButtonStyle.Secondary)
 	);
 
-	const confirmMessage = await interaction.reply({
+	// Posted in 🎛️admin-controls (2026-10 item 257 Phase 5); only this admin's press counts,
+	// at both steps.
+	const prompt = await askInChannel(interaction, "admin", {
 		embeds: [confirmEmbed],
 		components: [row],
-		flags: MessageFlags.Ephemeral,
 	});
 
 	// ── await button press ───────────────────────────────────
 	try {
-		const confirmation = await confirmMessage.awaitMessageComponent({ componentType: ComponentType.Button, time: 120_000 });
+		const confirmation = await prompt.awaitPress(120_000);
+		if (!confirmation) throw new Error("the KvK season prompt timed out");
 
 		if (confirmation.customId === "edit_rok_config") {
 			await confirmation.update({
@@ -225,10 +226,8 @@ export async function runKvkSeason(interaction: RepliableInteraction, options: C
 				// await the three way button press. 120s matches the
 				// earlier confirmation window for consistency. On timeout
 				// or modal error we fall through to defaults.
-				const choice = await confirmMessage.awaitMessageComponent({
-					componentType: ComponentType.Button,
-					time: 120_000,
-				});
+				const choice = await prompt.awaitPress(120_000);
+				if (!choice) throw new Error("the KvK checklist prompt timed out");
 
 				if (choice.customId === "checklist_accept") {
 					customChecklist = undefined;
@@ -308,15 +307,14 @@ export async function runKvkSeason(interaction: RepliableInteraction, options: C
 					resolutionMessage = configureReminders.checklistResolvedCustom(parsed.length);
 
 					// Ack the modal so Discord stops spinning, then edit the
-					// original slash command ephemeral into the "settingUp"
-					// state. ModalSubmitInteraction does not expose update()
-					// the way ButtonInteraction does (the types only permit
-					// it after isFromMessage() narrowing), so the clean path
-					// is deferUpdate on the submission + editReply on the
-					// parent interaction. End result is identical to the
-					// Accept/Skip branches above.
+					// prompt into the "settingUp" state. ModalSubmitInteraction
+					// does not expose update() the way ButtonInteraction does
+					// (the types only permit it after isFromMessage() narrowing),
+					// so the clean path is deferUpdate on the submission plus an
+					// edit of the prompt wherever it was posted. End result is
+					// identical to the Accept/Skip branches above.
 					await submission.deferUpdate();
-					await interaction.editReply({
+					await prompt.edit({
 						content: configureReminders.settingUp,
 						embeds: [],
 						components: [],
@@ -329,7 +327,7 @@ export async function runKvkSeason(interaction: RepliableInteraction, options: C
 				// per event type defaults from rok-events.json.
 				customChecklist = undefined;
 				resolutionMessage = configureReminders.checklistPromptTimedOut;
-				await interaction.editReply({
+				await prompt.edit({
 					content: configureReminders.settingUp,
 					embeds: [],
 					components: [],
@@ -339,34 +337,31 @@ export async function runKvkSeason(interaction: RepliableInteraction, options: C
 			// ── ③ persist the season ────────────────────────────
 			// GuildEventManager handles the "undefined means defaults"
 			// contract. All resolvePrepSteps logic lives there, not here.
-			await GuildEventManager.configureKvKSeason(interaction, {
-				seasonEnd,
-				ruinsFirst: ruinsFirst!,
-				altarFirst: altarFirst!,
-				kauEasy: kauEasy!,
-				kauNormal,
-				kauHard,
-				kauNightmare,
-				customChecklist,
-			});
+			await GuildEventManager.configureKvKSeason(
+				interaction,
+				{
+					seasonEnd,
+					ruinsFirst: ruinsFirst!,
+					altarFirst: altarFirst!,
+					kauEasy: kauEasy!,
+					kauNormal,
+					kauHard,
+					kauNightmare,
+					customChecklist,
+				},
+				prompt.edit
+			);
 
 			// ── ④ surface the checklist resolution ──────────────
-			// configureKvKSeason already edited the reply with the
+			// configureKvKSeason already edited the prompt with the
 			// "configured" message. We append the checklist resolution
 			// so the audit trail shows both: what was scheduled and
-			// which checklist was applied.
-			try {
-				await interaction.followUp({
-					content: resolutionMessage,
-					flags: MessageFlags.Ephemeral,
-				});
-			} catch {
-				// Non critical, if the follow up fails the primary
-				// reply still stands and the events are persisted.
-			}
+			// which checklist was applied. answerInChannel never throws, so
+			// a failed post leaves the primary reply and the events standing.
+			await answerInChannel(interaction, "admin", { content: resolutionMessage });
 		}
 	} catch {
-		await interaction.editReply({
+		await prompt.edit({
 			content: configureReminders.timedOut,
 			embeds: [],
 			components: [],

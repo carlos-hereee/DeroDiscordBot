@@ -42,6 +42,7 @@ import {
 	type MonopolyMove,
 } from "./roomMonopolyHandlers.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showNotice } from "@utils/textModal.js";
 
 // ── roomMonopolyTrade ────────────────────────────────────────────────
@@ -111,8 +112,10 @@ export async function handleMtrade(interaction: ButtonInteraction, room: IGameRo
 		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.noTradePartners] });
 		return;
 	}
-	// Names take a member fetch, which can outrun Discord's three second window.
-	await interaction.deferReply(PRIVATE);
+	// Names take a member fetch, which can outrun Discord's three second window. The picker
+	// names only the other seats, never a term, so it posts in 💬dero-commands (2026-10 item
+	// 257 Phase 5); its pick opens the offer modal for the presser's own seat alone.
+	const answer = await beginChannelAnswer(interaction, "member");
 	const named = await resolveParticipants(interaction.client, room.guildId, partners.map((seat) => seat.userId));
 	const picker = new StringSelectMenuBuilder()
 		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:mtradeWith:${room.roomId}`)
@@ -125,7 +128,7 @@ export async function handleMtrade(interaction: ButtonInteraction, room: IGameRo
 				value: userId,
 			}))
 		);
-	await interaction.editReply({
+	await answer.send({
 		content: gameRoomsCopy.monopoly.tradePartnerPrompt,
 		components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(picker)],
 	});

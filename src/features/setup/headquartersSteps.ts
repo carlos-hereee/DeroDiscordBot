@@ -12,6 +12,7 @@ import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import { registerButton, registerModal } from "@handlers/interactionRegistry.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { showErrorNotice, showModalOrReply } from "@utils/textModal.js";
 import { COLORS } from "@base/copy/brand.js";
 import { normalizePriorityOrder, VOICE_PRIORITY_CATEGORIES, type VoicePriorityCategory } from "@features/voice/voicePriority.js";
@@ -140,7 +141,9 @@ async function handlePrioritySubmit(interaction: ModalSubmitInteraction): Promis
 	}
 	await deroVoiceConfigStore.upsert(guild.id, { priorityOrder: order });
 	const labels = order.map((category) => voiceCopy.priority.label(category));
-	await interaction.reply({ embeds: [infoEmbed(voiceCopy.priority.modalTitle, voiceCopy.priority.saved(labels), COLORS.ADMIN)], flags: MessageFlags.Ephemeral });
+	// A modal Submit opens no notice, so the saved order posts in ⚙️dero-config (2026-10 item
+	// 257 Phase 5), the channel whose steps card the priority step sits on.
+	await answerInChannel(interaction, "deroConfig", { embeds: [infoEmbed(voiceCopy.priority.modalTitle, voiceCopy.priority.saved(labels), COLORS.ADMIN)] }, { config });
 	adminLog.emitFor(interaction, guild.id, "config.change", { subject: voiceCopy.priority.auditSubject, detail: labels.join(", ") });
 	refreshHeadquartersCards(guild, "deroConfig");
 }

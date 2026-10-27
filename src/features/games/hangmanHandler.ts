@@ -3,7 +3,6 @@ import {
 	ButtonBuilder,
 	ButtonStyle,
 	ComponentType,
-	MessageFlags,
 	ModalBuilder,
 	TextChannel,
 	TextInputBuilder,
@@ -23,6 +22,7 @@ import { pickWord } from "./hangmanWords.js";
 import { createHangmanState, applyGuess, type HangmanState } from "./hangmanState.js";
 import { awardMultiPlayerResult } from "./gameXp.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showNotice } from "@utils/textModal.js";
 
 // ── /mini-game hangman ─────────────────────────────────────────────────────
@@ -157,13 +157,15 @@ export async function startHangmanRound(channel: TextChannel, starterId: string)
 
 // ── the slash entry point ──────────────────────────────────────────────────
 export async function runHangman(interaction: ChatInputCommandInteraction): Promise<void> {
-	// Deferred first so every branch below answers the same way, and because
-	// posting the board is Discord I/O that eats into the three second ack window.
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	// Acknowledged first so every branch below answers the same way, and because
+	// posting the board is Discord I/O that eats into the three second ack window. The
+	// answer posts in 💬dero-commands (2026-10 item 257 Phase 5); the board, where the
+	// command ran.
+	const answer = await beginChannelAnswer(interaction, "member");
 
 	const channel = interaction.channel;
 	if (!(channel instanceof TextChannel)) {
-		await interaction.editReply({ embeds: [errorEmbed(gamesCopy.outsideGuild)] });
+		await answer.send({ embeds: [errorEmbed(gamesCopy.outsideGuild)] });
 		return;
 	}
 
@@ -183,7 +185,7 @@ export async function runHangman(interaction: ChatInputCommandInteraction): Prom
 	if (interaction.guildId) {
 		const room = await gameRoomStore.findByChannelId(interaction.guildId, channel.id).catch(() => null);
 		if (room && room.status === "playing") {
-			await interaction.editReply({ embeds: [errorEmbed(gamesCopy.hangmanInRoom)] });
+			await answer.send({ embeds: [errorEmbed(gamesCopy.hangmanInRoom)] });
 			return;
 		}
 	}
@@ -191,7 +193,7 @@ export async function runHangman(interaction: ChatInputCommandInteraction): Prom
 	const cooldownKey = `${interaction.guildId ?? "dm"}:${interaction.user.id}`;
 	const gate = cooldown.check(cooldownKey);
 	if (gate.onCooldown) {
-		await interaction.editReply({
+		await answer.send({
 			embeds: [errorEmbed(gamesCopy.hangman.cooldownMessage(Math.ceil(gate.remainingMs / 1000)))],
 		});
 		return;
@@ -199,11 +201,11 @@ export async function runHangman(interaction: ChatInputCommandInteraction): Prom
 
 	const result = await startHangmanRound(channel, interaction.user.id);
 	if (result === "alreadyRunning") {
-		await interaction.editReply({ embeds: [errorEmbed(gamesCopy.hangman.alreadyRunning)] });
+		await answer.send({ embeds: [errorEmbed(gamesCopy.hangman.alreadyRunning)] });
 		return;
 	}
 	if (result === "failed") {
-		await interaction.editReply({ embeds: [errorEmbed(gamesCopy.hangman.noChannel)] });
+		await answer.send({ embeds: [errorEmbed(gamesCopy.hangman.noChannel)] });
 		return;
 	}
 
@@ -212,7 +214,7 @@ export async function runHangman(interaction: ChatInputCommandInteraction): Prom
 	cooldown.record(cooldownKey);
 	// Ephemeral: the BOARD is the visible feedback, and a public "round started"
 	// on top of it would just be a second message saying the same thing.
-	await interaction.editReply({ content: gamesCopy.hangman.started });
+	await answer.send({ content: gamesCopy.hangman.started });
 }
 
 // ── private ────────────────────────────────────────────────────────────────

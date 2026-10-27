@@ -1,10 +1,8 @@
 import {
-	MessageFlags,
 	StringSelectMenuBuilder,
 	type ButtonInteraction,
 	type ChatInputCommandInteraction,
 	type ColorResolvable,
-	type InteractionEditReplyOptions,
 	type ModalSubmitInteraction,
 	type StringSelectMenuInteraction,
 } from "discord.js";
@@ -22,7 +20,8 @@ import { RPS_CHOICES, type RpsChoice, type RpsOutcome } from "@features/games/rp
 import { resolveSoloLuck, type SoloLuckOutcome } from "@features/games/soloLuck.js";
 import { isRenderPayload, withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
-import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { answerChannelId, answerInChannel } from "@utils/answerInChannel.js";
+import { acknowledgeTextModal, showErrorNotice, showNotice } from "@utils/textModal.js";
 import { nextUtcDayStart } from "@utils/utcMonthKey.js";
 import { claimChips, isChipEconomyOn, readWallet } from "./chipWallet.js";
 import { awardForClaim, hasClaimedCoinsToday } from "./deroCoins.js";
@@ -119,12 +118,10 @@ async function claimWaitText(guildId: string, userId: string, chipsOn: boolean, 
 
 // ── the Submit ──
 
-/** How the Submit was acknowledged, which decides how its private answer is sent. */
-type Acknowledged = "update" | "reply";
-
 /**
  * The round's Submit, from its modal or its fallback select: re-read the cooldown, let
- * Dero throw, pay both currencies, then post the reveal in 💬dero-commands. Never throws.
+ * Dero throw, pay both currencies, then post the reveal in 💬dero-commands. Every answer,
+ * a cooldown or a failure too, posts there (2026-10 item 257 Phase 5). Never throws.
  */
 export async function playClaimRound(interaction: ModalSubmitInteraction | StringSelectMenuInteraction, rng: () => number = Math.random): Promise<void> {
 	const guildId = interaction.guildId;
@@ -138,15 +135,16 @@ export async function playClaimRound(interaction: ModalSubmitInteraction | Strin
 		return;
 	}
 
-	const acknowledged = await acknowledgeSubmit(interaction);
+	await acknowledgeSubmit(interaction);
 	const userId = interaction.user.id;
+	let config: GuildConfigRow = null;
 	try {
-		const config = await guildConfigStore.findByGuildId(guildId);
+		config = await guildConfigStore.findByGuildId(guildId);
 		const chipsOn = isChipEconomyOn(config);
 		const now = new Date();
 		const wait = await claimWaitText(guildId, userId, chipsOn, now);
 		if (wait) {
-			await answerPrivately(interaction, acknowledged, { content: wait });
+			await answerInChannel(interaction, "member", { content: wait }, { config });
 			return;
 		}
 
@@ -162,7 +160,7 @@ export async function playClaimRound(interaction: ModalSubmitInteraction | Strin
 		if (chipsOn) {
 			const claimed = await claimChips({ guildId, userId }, now, multiplier);
 			if (claimed.kind === "cooldown") {
-				await answerPrivately(interaction, acknowledged, { content: copy.cooldown(claimed.balance, claimed.nextClaimAt) });
+				await answerInChannel(interaction, "member", { content: copy.cooldown(claimed.balance, claimed.nextClaimAt) }, { config });
 				return;
 			}
 			chipsPaid = claimed.amount;
@@ -171,42 +169,26 @@ export async function playClaimRound(interaction: ModalSubmitInteraction | Strin
 		const coinsPaid = await awardForClaim({ guildId, userId, multiplier, now });
 
 		const payout = [roundCopy.payout({ userId, chipsPaid, coinsPaid, multiplier }), chipsOn ? null : roundCopy.chipsOff].filter(Boolean).join("\n\n");
-		await postRound(interaction, acknowledged, { config, memberThrow, deroThrow: round.deroThrow, outcome: round.outcome, payout });
+		await postRound(interaction, { config, memberThrow, deroThrow: round.deroThrow, outcome: round.outcome, payout });
 	} catch (error) {
 		console.error(`[economy] the daily claim round for ${userId} in guild ${guildId} failed`, error);
-		await answerPrivately(interaction, acknowledged, { content: copy.failed });
+		await answerInChannel(interaction, "member", { content: copy.failed }, { config });
 	}
 }
 
 const parseThrow = (value: string | undefined): RpsChoice | null => (RPS_CHOICES as readonly string[]).includes(value ?? "") ? (value as RpsChoice) : null;
 
 // The Submit is acknowledged at once, before the reads and the draw, so the round never
-// misses Discord's three second window. A modal opened from the 🕹️games button is
-// deferred as an update, which leaves that message untouched; a modal opened by /claim
-// cannot be (Discord refuses deferUpdate there), and neither should the fallback select
-// message stay behind, so both take a private deferred reply that is edited or deleted.
-async function acknowledgeSubmit(interaction: ModalSubmitInteraction | StringSelectMenuInteraction): Promise<Acknowledged> {
-	if (interaction.isModalSubmit() && interaction.isFromMessage()) {
-		await interaction.deferUpdate();
-		return "update";
+// misses Discord's three second window, and it leaves no message of its own: the modal
+// closes as a text modal does (an update for one opened from the 🕹️games button, a defer
+// deleted at once for one opened by /claim), and the fallback select is deferred as an
+// update. Swallowed and logged: a failed acknowledgement must not stop the round.
+async function acknowledgeSubmit(interaction: ModalSubmitInteraction | StringSelectMenuInteraction): Promise<void> {
+	if (interaction.isModalSubmit()) {
+		await acknowledgeTextModal(interaction);
+		return;
 	}
-	if (interaction.isStringSelectMenu()) {
-		await interaction.deferUpdate();
-		return "reply";
-	}
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-	return "reply";
-}
-
-// A private answer after the acknowledgement: a follow up beside the untouched 🕹️games
-// message, or the edit of the deferred private reply (or the fallback select message).
-// Swallowed and logged: the round's writes already stand.
-async function answerPrivately(interaction: ModalSubmitInteraction | StringSelectMenuInteraction, acknowledged: Acknowledged, answer: InteractionEditReplyOptions): Promise<void> {
-	const sent =
-		acknowledged === "update"
-			? interaction.followUp({ ...answer, content: answer.content ?? undefined, flags: MessageFlags.Ephemeral })
-			: interaction.editReply({ ...answer, components: [] });
-	await sent.catch((error: unknown) => console.error("[economy] the daily claim's private answer failed", { interactionId: interaction.id, error }));
+	await interaction.deferUpdate().catch((error: unknown) => console.warn("[economy] acknowledging the daily claim's select failed", { interactionId: interaction.id, error }));
 }
 
 interface PlayedRound {
@@ -220,28 +202,14 @@ interface PlayedRound {
 // The drawn reveal (item 254 Phase 5a's card) with the payout under it, posted in
 // 💬dero-commands mentioning the member without a ping. A server with no commands
 // channel yet (setup not rerun) gets the same card privately, with the reason.
-async function postRound(interaction: ModalSubmitInteraction | StringSelectMenuInteraction, acknowledged: Acknowledged, round: PlayedRound): Promise<void> {
+async function postRound(interaction: ModalSubmitInteraction | StringSelectMenuInteraction, round: PlayedRound): Promise<void> {
 	const userId = interaction.user.id;
 	const art = await revealArt(interaction, round);
 	const embed = buildRpsRevealEmbed(userId, round.memberThrow, interaction.client.user.id, round.deroThrow, EMBED_OUTCOME[round.outcome], art.ref);
 	embed.setDescription(`${embed.data.description ?? ""}\n\n${round.payout}`);
-
-	const channelId = round.config?.commandOutputChannelId;
-	const channel = channelId ? await interaction.client.channels.fetch(channelId).catch(() => null) : null;
-	if (channel?.isSendable()) {
-		const sent = await channel.send({ embeds: [embed], files: [art.attachment], allowedMentions: { parse: [] } }).catch((error: unknown) => {
-			console.warn(`[economy] posting the daily claim round in channel ${channelId} failed`, error);
-			return null;
-		});
-		if (sent) {
-			if (acknowledged === "reply") await interaction.deleteReply().catch(() => undefined);
-			return;
-		}
-	}
-	await answerPrivately(interaction, acknowledged, {
-		embeds: [embed, infoEmbed(copy.title, roundCopy.noCommandsChannel, COLORS.ARCADE as ColorResolvable)],
-		files: [art.attachment],
-	});
+	const hasCommandsChannel = answerChannelId(round.config, "member") !== null;
+	const embeds = hasCommandsChannel ? [embed] : [embed, infoEmbed(copy.title, roundCopy.noCommandsChannel, COLORS.ARCADE as ColorResolvable)];
+	await answerInChannel(interaction, "member", { embeds, files: [art.attachment] }, { config: round.config });
 }
 
 // The drawn card when it draws, the winning throw's static art (or the tie's) when not.

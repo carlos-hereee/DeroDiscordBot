@@ -1,4 +1,5 @@
-import { MessageFlags, type StringSelectMenuInteraction } from "discord.js";
+import type { StringSelectMenuInteraction } from "discord.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { applyMortgage, applySellBuilding, applyUnmortgage, type MonopolyResult, type MonopolyState } from "@features/games/monopolyState.js";
 import { monopolyInventoryReply } from "./roomMonopoly.js";
@@ -19,8 +20,6 @@ import { commitMonopolyMove, loadSeatedRoom } from "./roomMonopolyHandlers.js";
 // How:   acknowledge the press on the peek, commit, then redraw the peek in place
 //        from the state just written, so the new balance and the refreshed
 //        options are what the player sees next.
-
-const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 
 type HoldingsAction = (state: MonopolyState, ownerId: string, tileId: string) => MonopolyResult;
 
@@ -46,7 +45,7 @@ async function runHoldingsSelect(interaction: StringSelectMenuInteraction, actio
 		onTurnOnly: false,
 	});
 	if (!outcome.ok) {
-		await interaction.followUp({ embeds: [errorEmbed(outcome.reason)], ...PRIVATE });
+		await answerInChannel(interaction, "member", { embeds: [errorEmbed(outcome.reason)] });
 		return;
 	}
 	await interaction.editReply(monopolyInventoryReply(outcome.state, interaction.user.id, room.roomId));

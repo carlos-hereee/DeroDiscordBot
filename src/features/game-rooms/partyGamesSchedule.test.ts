@@ -73,7 +73,13 @@ afterEach(() => vi.useRealTimers());
 beforeEach(() => {
 	vi.clearAllMocks();
 	gateMock.mockResolvedValue(true);
-	configMock.findByGuildId.mockResolvedValue({ partyGamesChannelId: "ch-party", announcementsChannelId: "ch-announce", nextDecreeChannelId: "ch-upcoming" });
+	configMock.findByGuildId.mockResolvedValue({
+		partyGamesChannelId: "ch-party",
+		announcementsChannelId: "ch-announce",
+		nextDecreeChannelId: "ch-upcoming",
+		arcadeControlChannelId: "ch-arcade",
+		commandOutputChannelId: "ch-commands",
+	});
 });
 
 describe("parsePartyGameForm", () => {
@@ -249,6 +255,8 @@ describe("handleRsvpButton", () => {
 	});
 });
 
+// The submit's answers post in 🎰arcade-control, and a refused member's in 💬dero-commands,
+// since they cannot read Headquarters (2026-10 item 257 Phase 5).
 describe("handleScheduleSubmit", () => {
 	beforeEach(() => vi.useFakeTimers({ now: NOW, toFake: ["Date"] }));
 
@@ -259,11 +267,19 @@ describe("handleScheduleSubmit", () => {
 			user: { id: "admin-1" },
 			client: { channels: { fetch: vi.fn(async (id: string) => channels.get(id) ?? null) } },
 			fields: { getStringSelectValues: () => (values.game ? [values.game] : []), getTextInputValue: (id: string) => (values as Record<string, string>)[id] },
+			deferred: false,
+			replied: false,
+			isModalSubmit: () => true,
+			isFromMessage: () => true,
+			deferUpdate: vi.fn().mockResolvedValue(undefined),
 			reply: vi.fn().mockResolvedValue(undefined),
 			deferReply: vi.fn().mockResolvedValue(undefined),
 			editReply: vi.fn().mockResolvedValue(undefined),
 		} as unknown as ModalSubmitInteraction;
 	}
+	// What a channel was sent, as its messages' content.
+	const sentIn = (id: string): string[] =>
+		(channels.get(id) as unknown as { send: ReturnType<typeof vi.fn> }).send.mock.calls.map((call) => (call[0] as { content?: string }).content ?? "");
 	const channels = new Map<string, TextChannel>();
 	const fakeChannel = (id: string) => {
 		const channel = Object.create(TextChannel.prototype) as TextChannel;
@@ -275,6 +291,8 @@ describe("handleScheduleSubmit", () => {
 		channels.clear();
 		channels.set("ch-upcoming", fakeChannel("ch-upcoming"));
 		channels.set("ch-announce", fakeChannel("ch-announce"));
+		channels.set("ch-arcade", fakeChannel("ch-arcade"));
+		channels.set("ch-commands", fakeChannel("ch-commands"));
 		storeMock.create.mockImplementation(async (row: Partial<IPartyGame>) => makeRow({ ...row, attendeeIds: [], declinedIds: [] }));
 		storeMock.setMessages.mockResolvedValue(null);
 	});
@@ -287,7 +305,8 @@ describe("handleScheduleSubmit", () => {
 		expect(storeMock.create).toHaveBeenCalledWith(expect.objectContaining({ guildId: "guild-1", game: "hangman", hostId: "admin-1", maxAttendees: 20, durationMinutes: 30 }));
 		expect((channels.get("ch-upcoming") as unknown as { send: ReturnType<typeof vi.fn> }).send).toHaveBeenCalledOnce();
 		expect(logMock.emitFor).toHaveBeenCalledWith(interaction, "guild-1", "event.create", expect.objectContaining({ subject: words.logSubject("Hangman") }));
-		expect(interaction.editReply).toHaveBeenCalledWith({ content: words.scheduled("ch-upcoming") });
+		expect(sentIn("ch-arcade")).toEqual([`<@admin-1> ${words.scheduled("ch-upcoming")}`]);
+		expect(interaction.editReply).not.toHaveBeenCalled();
 	});
 
 	it("schedules a Hold'em or a Monopoly party the same way (2026-10 item 254, Arcade 4)", async () => {
@@ -298,7 +317,7 @@ describe("handleScheduleSubmit", () => {
 
 			expect(storeMock.create).toHaveBeenLastCalledWith(expect.objectContaining({ game, hostId: "admin-1" }));
 			expect(logMock.emitFor).toHaveBeenLastCalledWith(interaction, "guild-1", "event.create", expect.objectContaining({ subject: words.logSubject(words.gameLabels[game]) }));
-			expect(interaction.editReply).toHaveBeenCalledWith({ content: words.scheduled("ch-upcoming") });
+			expect(sentIn("ch-arcade").at(-1)).toBe(`<@admin-1> ${words.scheduled("ch-upcoming")}`);
 		}
 	});
 
@@ -309,7 +328,8 @@ describe("handleScheduleSubmit", () => {
 
 		await handleScheduleSubmit(interaction);
 
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: words.adminsOnly }));
+		expect(sentIn("ch-commands")).toEqual([`<@admin-1> ${words.adminsOnly}`]);
+		expect(sentIn("ch-arcade")).toEqual([]);
 		expect(storeMock.create).not.toHaveBeenCalled();
 	});
 
@@ -318,7 +338,7 @@ describe("handleScheduleSubmit", () => {
 
 		await handleScheduleSubmit(interaction);
 
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: words.badStart }));
+		expect(sentIn("ch-arcade")).toEqual([`<@admin-1> ${words.badStart}`]);
 		expect(storeMock.create).not.toHaveBeenCalled();
 	});
 });

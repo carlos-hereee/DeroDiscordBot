@@ -8,7 +8,9 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 // The Edit rules round trip: who may open the modal, what it is preloaded with,
 // what a submit saves, how the rules post re-renders in place, and that the audit
 // row carries a length and never the rules text. The submitter is re-checked on
-// the submit itself, because a role can be taken away while the modal is open.
+// the submit itself, because a role can be taken away while the modal is open. A
+// saved edit is answered in 🧭onboarding (2026-10 item 257 Phase 5), and privately
+// only where setup never stored that channel.
 
 const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
@@ -36,6 +38,7 @@ const storedRow = {
 	rulesChannelId: "rules-ch",
 	introMessageIds: { rulesChannelId: "rules-msg" },
 	customRulesMarkdown: null as string | null,
+	onboardingConfigChannelId: "onboarding-ch" as string | null,
 };
 
 function rig(options: { trackedPost?: boolean } = {}) {
@@ -55,7 +58,9 @@ function rig(options: { trackedPost?: boolean } = {}) {
 		ownerId: OWNER,
 		members: { cache: new Map([[ADMIN, { roles: { cache: new Set(["role-admin"]) } }]]), fetch: vi.fn(async () => null) },
 	};
-	const client = { channels: { fetch: vi.fn(async (id: string) => (id === "rules-ch" ? rulesChannel : null)) } };
+	const onboarding = { id: "onboarding-ch", isSendable: () => true, send: vi.fn(async () => ({ id: "answer-msg" })) };
+	const channels: Record<string, unknown> = { "rules-ch": rulesChannel, "onboarding-ch": onboarding };
+	const client = { channels: { fetch: vi.fn(async (id: string) => channels[id] ?? null) } };
 
 	const submission = (userId: string, text: string) =>
 		({
@@ -64,8 +69,13 @@ function rig(options: { trackedPost?: boolean } = {}) {
 			user: { id: userId },
 			customId: "rules:modal:int-1",
 			fields: { getTextInputValue: vi.fn(() => text) },
+			deferred: false,
+			replied: false,
+			isModalSubmit: () => true,
+			isFromMessage: () => true,
+			deferUpdate: vi.fn(async () => undefined),
 			reply: vi.fn(async () => undefined),
-		}) as unknown as ModalSubmitInteraction & { reply: ReturnType<typeof vi.fn> };
+		}) as unknown as ModalSubmitInteraction & { reply: ReturnType<typeof vi.fn>; deferUpdate: ReturnType<typeof vi.fn> };
 
 	const button = (userId: string, awaited: ModalSubmitInteraction | null, customId = RULES_EDIT_CUSTOM_ID) =>
 		({
@@ -87,8 +97,11 @@ function rig(options: { trackedPost?: boolean } = {}) {
 			reply: ReturnType<typeof vi.fn>;
 		};
 
-	return { trackedPost, buttonMessage, submission, button };
+	return { trackedPost, buttonMessage, submission, button, onboarding };
 }
+
+// The answer a saved edit posted in 🧭onboarding, naming the submitter without a ping.
+const postedAnswer = (onboarding: { send: ReturnType<typeof vi.fn> }): string => (onboarding.send.mock.calls[0]![0] as { content: string }).content;
 
 // The modals a press opened, and the text of its notice: a refusal or a short answer now
 // opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
@@ -163,7 +176,7 @@ describe("the Edit rules button", () => {
 	});
 
 	it("round trips: an admin's submit saves the text and re-renders the rules post in place", async () => {
-		const { button, submission, trackedPost } = rig();
+		const { button, submission, trackedPost, onboarding } = rig();
 		const submit = submission(ADMIN, "  **1. Be kind**\n**2. No spam**  ");
 		await handleRulesEditButton(button(ADMIN, submit));
 
@@ -171,7 +184,19 @@ describe("the Edit rules button", () => {
 		const edit = trackedPost.edit.mock.calls[0]![0] as { embeds: Array<{ data: { description?: string } }>; components: Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }> };
 		expect(edit.embeds[0]!.data.description).toBe("**1. Be kind**\n**2. No spam**");
 		expect(edit.components[0]!.toJSON().components[0]!.custom_id).toBe(RULES_EDIT_CUSTOM_ID);
-		expect(submit.reply).toHaveBeenCalledWith({ content: editCopy.saved, flags: MessageFlags.Ephemeral });
+		expect(postedAnswer(onboarding)).toBe(`<@${ADMIN}> ${editCopy.saved}`);
+		expect(submit.deferUpdate).toHaveBeenCalledOnce();
+		expect(submit.reply).not.toHaveBeenCalled();
+	});
+
+	it("answers privately where setup never stored the 🧭onboarding channel", async () => {
+		mocks.findByGuildId.mockResolvedValue({ ...storedRow, onboardingConfigChannelId: null });
+		mocks.update.mockImplementation(async (_guildId: string, data: Record<string, unknown>) => ({ ...storedRow, onboardingConfigChannelId: null, ...data }));
+		const { button, submission, onboarding } = rig();
+		const submit = submission(ADMIN, "**1. Be kind**");
+		await handleRulesEditButton(button(ADMIN, submit));
+		expect(onboarding.send).not.toHaveBeenCalled();
+		expect(submit.reply).toHaveBeenCalledWith(expect.objectContaining({ content: editCopy.saved, flags: MessageFlags.Ephemeral }));
 	});
 
 	it("audits the edit with ids and a length, never the rules text", async () => {
@@ -189,11 +214,11 @@ describe("the Edit rules button", () => {
 describe("an Edit rules submit", () => {
 	it("stores null when the text is the default again, so the pack's wording keeps applying", async () => {
 		mocks.findByGuildId.mockResolvedValue({ ...storedRow, customRulesMarkdown: "old" });
-		const { submission } = rig();
+		const { submission, onboarding } = rig();
 		const submit = submission(OWNER, DEFAULT_RULES);
 		await handleRulesEditSubmit(submit, null);
 		expect(mocks.update).toHaveBeenCalledWith("g1", { customRulesMarkdown: null });
-		expect(submit.reply).toHaveBeenCalledWith({ content: editCopy.reset, flags: MessageFlags.Ephemeral });
+		expect(postedAnswer(onboarding)).toBe(`<@${OWNER}> ${editCopy.reset}`);
 	});
 
 	it("refuses a submit made only of whitespace and zero width characters", async () => {
@@ -214,19 +239,19 @@ describe("an Edit rules submit", () => {
 	});
 
 	it("falls back to the post the button sat on when the tracked anchor is gone", async () => {
-		const { submission, buttonMessage } = rig({ trackedPost: false });
+		const { submission, buttonMessage, onboarding } = rig({ trackedPost: false });
 		const submit = submission(OWNER, "**1. Be kind**");
 		await handleRulesEditSubmit(submit, buttonMessage);
 		expect(buttonMessage.edit).toHaveBeenCalledOnce();
-		expect(submit.reply).toHaveBeenCalledWith({ content: editCopy.saved, flags: MessageFlags.Ephemeral });
+		expect(postedAnswer(onboarding)).toBe(`<@${OWNER}> ${editCopy.saved}`);
 	});
 
 	it("says the save landed but the post did not when no rules post can be found", async () => {
-		const { submission } = rig({ trackedPost: false });
+		const { submission, onboarding } = rig({ trackedPost: false });
 		const submit = submission(OWNER, "**1. Be kind**");
 		await handleRulesEditSubmit(submit, null);
 		expect(mocks.update).toHaveBeenCalledOnce();
-		expect(submit.reply).toHaveBeenCalledWith({ content: editCopy.savedNotRefreshed, flags: MessageFlags.Ephemeral });
+		expect(postedAnswer(onboarding)).toBe(`<@${OWNER}> ${editCopy.savedNotRefreshed}`);
 	});
 
 	it("tells the admin nothing changed when the save fails", async () => {

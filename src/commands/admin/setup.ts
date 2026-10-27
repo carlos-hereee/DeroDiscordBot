@@ -1,10 +1,11 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, MessageFlags, PermissionFlagsBits } from "discord.js";
+import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from "discord.js";
 import { GuildSetupManager } from "@features/setup/GuildSetupManager.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { creatorId } from "@utils/config.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showErrorNotice } from "@utils/textModal.js";
 
 export const data = new SlashCommandBuilder()
@@ -46,10 +47,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 	if (config?.homebaseDestroyed) {
 		const adminRole = interaction.options.getRole("admin-role", true);
 		const memberRole = interaction.options.getRole("member-role", true);
-		await interaction.reply({
-			embeds: [infoEmbed(responses.setupPending.title, responses.setupPending.description, copy.COLORS.ARRIVAL)],
-			flags: MessageFlags.Ephemeral,
-		});
+		// A demolished homebase has no Headquarters channel left to name, so this answer
+		// takes answerInChannel's private fallback (its stored ids point at deleted channels).
+		const answer = await beginChannelAnswer(interaction, "admin", { config });
 		try {
 			await GuildSetupManager.autoSetup(
 				interaction.guild!,
@@ -68,7 +68,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 				: null;
 			if (!category) {
 				// Leave homebaseDestroyed=true so a retry re-enters this branch.
-				await interaction.editReply({ embeds: [errorEmbed(responses.setupFailed)] });
+				await answer.send({ embeds: [errorEmbed(responses.setupFailed)] });
 				return;
 			}
 
@@ -84,7 +84,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 			// retries the full rebuild rather than dead-ending.
 			await guildConfigStore.update(interaction.guildId!, { homebaseDestroyed: false });
 
-			await interaction.editReply({
+			await answer.send({
 				embeds: [
 					infoEmbed(
 						responses.setupSuccess(adminRole.id).title,
@@ -95,7 +95,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 			});
 		} catch (error) {
 			console.error(LOG_MESSAGES.setup.commandFailed, error);
-			await interaction.editReply({ embeds: [errorEmbed(responses.setupFailed)] });
+			await answer.send({ embeds: [errorEmbed(responses.setupFailed)] });
 		}
 		return;
 	}
@@ -115,10 +115,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 	const adminRole = interaction.options.getRole("admin-role", true);
 	const memberRole = interaction.options.getRole("member-role", true);
 
-	await interaction.reply({
-		embeds: [infoEmbed(responses.setupPending.title, responses.setupPending.description, copy.COLORS.ARRIVAL)],
-		flags: MessageFlags.Ephemeral,
-	});
+	// The result posts in 🎛️admin-controls (2026-10 item 257 Phase 5); the notice naming it
+	// stands in for the Setting up answer that used to be edited into the result.
+	const answer = await beginChannelAnswer(interaction, "admin", { config });
 
 	try {
 		await GuildSetupManager.applyAdminRole(interaction.guild!, {
@@ -128,7 +127,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 			memberRoleId: memberRole.id,
 		});
 
-		await interaction.editReply({
+		await answer.send({
 			embeds: [
 				infoEmbed(
 					responses.setupSuccess(adminRole.id).title,
@@ -139,6 +138,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 		});
 	} catch (error) {
 		console.error(LOG_MESSAGES.setup.commandFailed, error);
-		await interaction.editReply({ embeds: [errorEmbed(responses.setupFailed)] });
+		await answer.send({ embeds: [errorEmbed(responses.setupFailed)] });
 	}
 }

@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, type ButtonInteraction } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, type ButtonInteraction } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
@@ -8,6 +8,7 @@ import { pauseAllGuildEvents, resumeAllGuildEvents, IBulkScheduleResult } from "
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showErrorNotice, showNotice } from "@utils/textModal.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 
@@ -160,7 +161,9 @@ async function runConfigureHowTo(interaction: ButtonInteraction): Promise<void> 
 }
 
 async function runBulkSchedule(interaction: ButtonInteraction, guildId: string, action: "paused" | "resumed"): Promise<void> {
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	// Acknowledged first (a write per schedule), the summary posting in 🎛️admin-controls
+	// (2026-10 item 257 Phase 5).
+	const answer = await beginChannelAnswer(interaction, "admin");
 	const result = action === "paused" ? await pauseAllGuildEvents(guildId) : await resumeAllGuildEvents(guildId);
 	if (result.changed > 0) {
 		const detail = action === "paused" ? setupCopy.adminLog.pausedCount(result.changed) : setupCopy.adminLog.resumedCount(result.changed);
@@ -170,7 +173,7 @@ async function runBulkSchedule(interaction: ButtonInteraction, guildId: string, 
 	// update. Fire-and-forget, the DB writes are the source of truth and the
 	// next refresh tick reconciles regardless.
 	refreshSchedule(interaction.client, guildId).catch((err) => console.error(`[schedule-controls] refresh after ${action} failed`, err));
-	await interaction.editReply({ content: summarizeBulk(result, action) });
+	await answer.send({ content: summarizeBulk(result, action) });
 }
 
 function summarizeBulk(result: IBulkScheduleResult, action: "paused" | "resumed"): string {

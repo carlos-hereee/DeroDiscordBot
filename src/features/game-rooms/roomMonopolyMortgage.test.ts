@@ -8,8 +8,12 @@ vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), postMoveLog: 
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn(async () => null) }));
+// Where an answer posts has its own suite (utils/answerInChannel.test.ts); here only that a
+// refusal goes there, for a member (2026-10 item 257 Phase 5).
+vi.mock("@utils/answerInChannel.js", () => ({ answerInChannel: vi.fn() }));
 
 import { handleMortgageSelect, handleSellSelect, handleUnmortgageSelect } from "./roomMonopolyMortgage.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
 import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
@@ -116,15 +120,16 @@ describe("mortgaging from the Inventory peek", () => {
 		expect(persisted().seats[1].chips).toBe(1500 - 55);
 	});
 
-	it("passes the engine's refusal back privately, for a lot the seat does not own, and writes nothing", async () => {
+	it("passes the engine's refusal back in the commands channel, for a lot the seat does not own, and writes nothing", async () => {
 		seed(holdings());
 		const interaction = makeSelect("mmortgage", A, "vermillion-alley");
 
 		await handleMortgageSelect(interaction);
 
-		const followUp = interaction.followUp.mock.calls[0][0] as { embeds: { data: { description: string } }[]; flags: number };
-		expect(followUp.embeds[0].data.description).toBe("You do not own Vermillion Alley.");
-		expect(followUp.flags).toBe(64);
+		const call = (answerInChannel as unknown as ReturnType<typeof vi.fn>).mock.calls.find((args) => args[0] === interaction);
+		expect(call?.[1]).toBe("member");
+		expect((call?.[2] as { embeds: { data: { description: string } }[] }).embeds[0].data.description).toBe("You do not own Vermillion Alley.");
+		expect(interaction.followUp).not.toHaveBeenCalled();
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 

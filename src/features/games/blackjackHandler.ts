@@ -3,7 +3,6 @@ import {
 	ButtonBuilder,
 	ButtonStyle,
 	ComponentType,
-	MessageFlags,
 	TextChannel,
 	type AttachmentBuilder,
 	type ButtonInteraction,
@@ -28,6 +27,7 @@ import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
 import { roomTrail } from "@features/game-rooms/roomTrail.js";
 import { drawingSettled, isClockExpired, pausedDeadline, withDrawingPause } from "@features/game-rooms/drawingPause.js";
+import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showErrorNotice } from "@utils/textModal.js";
 import { syncTurnPrompt, type TurnAdapter } from "@features/game-rooms/turnPrompt.js";
 
@@ -226,18 +226,20 @@ function actionRow(channelId: string, table: BlackjackTable): ActionRowBuilder<B
 // ── the slash entry point ───────────────────────────────────────────────────
 
 export async function runBlackjack(interaction: ChatInputCommandInteraction): Promise<void> {
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	// The table itself posts where the command ran; the member's own answer (seated, or
+	// why not) posts in 💬dero-commands (2026-10 item 257 Phase 5).
+	const answer = await beginChannelAnswer(interaction, "member");
 	const c = gamesCopy.blackjack;
 
 	const channel = interaction.channel;
 	if (!(channel instanceof TextChannel) || !interaction.guildId) {
-		await interaction.editReply({ embeds: [errorEmbed(c.outsideGuild)] });
+		await answer.send({ embeds: [errorEmbed(c.outsideGuild)] });
 		return;
 	}
 
 	const gate = cooldown.check(`${interaction.guildId}:${interaction.user.id}`);
 	if (gate.onCooldown) {
-		await interaction.editReply({ embeds: [errorEmbed(c.cooldownMessage(Math.ceil(gate.remainingMs / 1000)))] });
+		await answer.send({ embeds: [errorEmbed(c.cooldownMessage(Math.ceil(gate.remainingMs / 1000)))] });
 		return;
 	}
 
@@ -246,16 +248,16 @@ export async function runBlackjack(interaction: ChatInputCommandInteraction): Pr
 	const result = await startBlackjackTable(channel, interaction.guildId, host, solo);
 
 	if (result === "alreadyRunning") {
-		await interaction.editReply({ embeds: [errorEmbed(c.alreadyRunning)] });
+		await answer.send({ embeds: [errorEmbed(c.alreadyRunning)] });
 		return;
 	}
 	if (result === "failed") {
-		await interaction.editReply({ embeds: [errorEmbed(c.noChannel)] });
+		await answer.send({ embeds: [errorEmbed(c.noChannel)] });
 		return;
 	}
 
 	cooldown.record(`${interaction.guildId}:${interaction.user.id}`);
-	await interaction.editReply({
+	await answer.send({
 		embeds: [infoEmbed(c.tableTitle, solo ? c.joined : c.seatingDescription(interaction.user.id), COLORS.GAME_BLACKJACK)],
 	});
 }
@@ -543,7 +545,7 @@ async function leaveDuringHand(click: ButtonInteraction, game: BlackjackGame, ch
 	if (result) await redrawResult(channelId, result, resultWriter(game, clickWriter(click)));
 	else await redrawTable(channelId, game.table, clickWriter(click));
 	await promptTurn(game, click.client);
-	await click.followUp({ content: c.leftHand, flags: MessageFlags.Ephemeral }).catch(() => undefined);
+	await answerInChannel(click, "member", { content: c.leftHand });
 	if (result) game.stop();
 }
 

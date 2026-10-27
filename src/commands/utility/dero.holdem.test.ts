@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EmbedBuilder, type ChatInputCommandInteraction } from "discord.js";
 
 // ── /dero tell: a table request ────────────────────────────────────────────
-// When the brain answers with open_holdem, the private reply of /dero tell IS
-// the rules card (its buttons are how the member answers), and any other
-// action's line rides in a second embed below it. A request that is already gone
+// When the brain answers with open_holdem, the answer of /dero tell IS the rules
+// card (its buttons are how the member answers), and any other action's line rides
+// in a second embed below it. The answer posts in 💬dero-commands (2026-10 item 257
+// Phase 5) through answerInChannel, mocked here, so its send carries the payload. A request that is already gone
 // falls back to the ordinary list of lines.
 
 const mocks = vi.hoisted(() => ({
@@ -15,6 +16,8 @@ const mocks = vi.hoisted(() => ({
 	executeActions: vi.fn(),
 	buildJobInput: vi.fn(),
 	rulesCardFor: vi.fn(),
+	beginChannelAnswer: vi.fn(),
+	answerInChannel: vi.fn(),
 }));
 
 // The admin role read is a GuildConfig lookup; null keeps these suites on the allowlist only rule.
@@ -25,6 +28,7 @@ vi.mock("@features/dero-brain/brainQueue.js", () => ({ brainQueue: { enqueue: mo
 vi.mock("@features/dero-brain/executor.js", () => ({ executeActions: mocks.executeActions }));
 vi.mock("@features/dero-brain/brainJob.js", () => ({ buildJobInput: mocks.buildJobInput }));
 vi.mock("@features/dero-brain/holdemRulesCard.js", () => ({ rulesCardFor: mocks.rulesCardFor }));
+vi.mock("@utils/answerInChannel.js", () => ({ beginChannelAnswer: mocks.beginChannelAnswer, answerInChannel: mocks.answerInChannel }));
 
 import { execute } from "./dero.js";
 
@@ -38,7 +42,8 @@ const TABLE_REPORT = { type: "open_holdem", outcome: "rules_card", line: "rules 
 let userCounter = 0;
 
 function interactionFor() {
-	const editReply = vi.fn(async () => undefined);
+	const editReply = vi.fn(async (_payload: unknown) => ({ channelId: "c-commands" }));
+	mocks.beginChannelAnswer.mockResolvedValue({ channelId: "c-commands", send: editReply });
 	const interaction = {
 		guildId: GUILD_ID,
 		inCachedGuild: () => true,
@@ -49,7 +54,6 @@ function interactionFor() {
 		deferred: false,
 		reply: vi.fn(async () => undefined),
 		deferReply: vi.fn(async () => undefined),
-		editReply,
 	} as unknown as ChatInputCommandInteraction;
 	return { interaction, editReply };
 }
@@ -67,10 +71,11 @@ beforeEach(() => {
 });
 
 describe("/dero tell with a table request", () => {
-	it("replaces the reply with the rules card", async () => {
+	it("answers in the commands channel with the rules card", async () => {
 		mocks.executeActions.mockResolvedValue([TABLE_REPORT]);
 		const { interaction, editReply } = interactionFor();
 		await execute(interaction);
+		expect(mocks.beginChannelAnswer).toHaveBeenCalledWith(interaction, "member");
 		expect(mocks.rulesCardFor).toHaveBeenCalledWith(interaction.guild, "req-1");
 		expect(editReply).toHaveBeenCalledWith({ embeds: [CARD_EMBED], components: CARD.components });
 	});
@@ -79,7 +84,7 @@ describe("/dero tell with a table request", () => {
 		mocks.executeActions.mockResolvedValue([TABLE_REPORT, { type: "post_message", outcome: "posted", line: "Posted in <#c1>." }]);
 		const { interaction, editReply } = interactionFor();
 		await execute(interaction);
-		const payload = editReply.mock.calls[0][0] as unknown as { embeds: EmbedBuilder[]; components: unknown[] };
+		const payload = editReply.mock.calls[0]![0] as unknown as { embeds: EmbedBuilder[]; components: unknown[] };
 		expect(payload.embeds[0]).toBe(CARD_EMBED);
 		expect(payload.embeds[1].data.description).toBe("Posted in <#c1>.");
 		expect(payload.components).toBe(CARD.components);
@@ -90,7 +95,7 @@ describe("/dero tell with a table request", () => {
 		mocks.rulesCardFor.mockResolvedValue(null);
 		const { interaction, editReply } = interactionFor();
 		await execute(interaction);
-		const payload = editReply.mock.calls[0][0] as unknown as { embeds: EmbedBuilder[]; components?: unknown[] };
+		const payload = editReply.mock.calls[0]![0] as unknown as { embeds: EmbedBuilder[]; components?: unknown[] };
 		expect(payload.embeds[0].data.description).toBe("rules question");
 		expect(payload.components).toBeUndefined();
 	});

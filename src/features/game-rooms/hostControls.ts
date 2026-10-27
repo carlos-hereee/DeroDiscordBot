@@ -1,6 +1,5 @@
 import {
 	ActionRowBuilder,
-	MessageFlags,
 	StringSelectMenuBuilder,
 	TextChannel,
 	type ButtonInteraction,
@@ -32,6 +31,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 import { botSeatName, isBotSeatId } from "./botSeat.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import type { StoredBattleship } from "./roomBattleship.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { showNotice } from "@utils/textModal.js";
 
 // ── hostControls ─────────────────────────────────────────────────────
@@ -58,8 +58,6 @@ import { showNotice } from "@utils/textModal.js";
 
 // Shared by every pack, so the default pack serves every guild (see the pack's note).
 const words = rokCommanderCopy.arcadeHostControls;
-
-const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 
 // ── who may press ─────────────────────────────────────────────────────
 // The host, or an admin: the same override the router gives every hostOnly button,
@@ -187,7 +185,11 @@ export async function toggleApproval(interaction: ButtonInteraction, room: IGame
 // a member can still ask to join once it is open.
 const canAnswerRequests = (room: IGameRoom): boolean => room.status === "draft" || (room.game === "holdem" && room.status === "playing");
 
-/** The Requests button: a private panel with an Accept and a Decline select over everyone waiting. */
+/**
+ * The Requests button: a panel with an Accept and a Decline select over everyone waiting,
+ * posted in 💬dero-commands (2026-10 item 257 Phase 5: two multi picks are no single choice a
+ * modal holds). Each select re-gates its presser through loadRoomForHost.
+ */
 export async function openJoinRequests(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	if (!canAnswerRequests(room)) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.board.draftGone] });
@@ -199,13 +201,12 @@ export async function openJoinRequests(interaction: ButtonInteraction, room: IGa
 		return;
 	}
 	const options = await memberOptions(interaction.guild!, waiting);
-	await interaction.reply({
+	await answerInChannel(interaction, "member", {
 		content: words.approval.requestsPrompt,
 		components: [
 			pickerRow("accept", room.roomId, words.approval.acceptPlaceholder, options, options.length),
 			pickerRow("decline", room.roomId, words.approval.declinePlaceholder, options, options.length),
 		],
-		...PRIVATE,
 	});
 }
 

@@ -4,7 +4,6 @@ import {
 	ButtonBuilder,
 	ButtonStyle,
 	LabelBuilder,
-	MessageFlags,
 	ModalBuilder,
 	StringSelectMenuBuilder,
 	TextChannel,
@@ -26,6 +25,7 @@ import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IPartyGame } from "@db/models/PartyGame.js";
+import { answerInChannel, beginChannelAnswer, type AnswerChannelConfig } from "@utils/answerInChannel.js";
 import { showNotice } from "@utils/textModal.js";
 
 // ── partyGamesSchedule ───────────────────────────────────────────────
@@ -177,7 +177,7 @@ function openOutcomeLine(row: Pick<IPartyGame, "openedLink" | "openFailure">): s
 
 // ── the modal submit ─────────────────────────────────────────────────
 
-interface PartyChannels {
+interface PartyChannels extends AnswerChannelConfig {
 	partyGamesChannelId: string | null;
 	announcementsChannelId: string | null;
 	nextDecreeChannelId: string | null;
@@ -194,6 +194,8 @@ async function textChannel(client: Client, channelId: string | null): Promise<Te
  * The schedule modal's submit: re-gate the admin (a modal is reachable without its
  * button), read the form, store the game, post the card and the announcement, and log
  * it. The announcement is fire and forget after the card, which is the part members act on.
+ * Its answers post in 🎰arcade-control, and a refused member's in 💬dero-commands, since
+ * they cannot read Headquarters (2026-10 item 257 Phase 5).
  */
 export async function handleScheduleSubmit(interaction: ModalSubmitInteraction): Promise<void> {
 	const [, action] = interaction.customId.split(":");
@@ -204,7 +206,7 @@ export async function handleScheduleSubmit(interaction: ModalSubmitInteraction):
 
 	const config = (await guildConfigStore.findByGuildId(guildId)) as unknown as PartyChannels | null;
 	if (!(await gateOwnerOrAdmin(interaction, config))) {
-		await interaction.reply({ content: words.adminsOnly, flags: MessageFlags.Ephemeral });
+		await answerInChannel(interaction, "member", { content: words.adminsOnly }, { config });
 		return;
 	}
 
@@ -215,16 +217,16 @@ export async function handleScheduleSubmit(interaction: ModalSubmitInteraction):
 		max: interaction.fields.getTextInputValue(FIELD.max),
 	});
 	if (!parsed.ok) {
-		await interaction.reply({ content: parsed.error, flags: MessageFlags.Ephemeral });
+		await answerInChannel(interaction, "arcade", { content: parsed.error }, { config });
 		return;
 	}
 
 	const rsvpChannel = await textChannel(interaction.client, config?.nextDecreeChannelId ?? null);
 	if (!rsvpChannel) {
-		await interaction.reply({ content: words.noRsvpChannel, flags: MessageFlags.Ephemeral });
+		await answerInChannel(interaction, "arcade", { content: words.noRsvpChannel }, { config });
 		return;
 	}
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	const answer = await beginChannelAnswer(interaction, "arcade", { config });
 
 	const { form } = parsed;
 	const row = await partyGameStore.create({
@@ -251,7 +253,7 @@ export async function handleScheduleSubmit(interaction: ModalSubmitInteraction):
 	});
 	void announce(interaction.client, config, row, gameLabel, rsvpChannel.id);
 
-	await interaction.editReply({ content: words.scheduled(rsvpChannel.id) });
+	await answer.send({ content: words.scheduled(rsvpChannel.id) });
 }
 
 // The 📢announcements line. Fire and forget after the card (house rule 7): a missing
