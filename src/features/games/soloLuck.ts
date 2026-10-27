@@ -15,7 +15,8 @@ import { resolveVersus, type CoinFace } from "./versusResolve.js";
 import { scoreRps, RPS_CHOICES, type RpsChoice } from "./rpsWinner.js";
 import { buildSoloLuckEmbed } from "./gamesEmbeds.js";
 import { renderDiceCard } from "./diceRenderer.js";
-import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
+import { renderRpsCard } from "./rpsRenderer.js";
+import { isRenderPayload, withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
 import { awardSoloLuckResult } from "./gameXp.js";
 import { gamesCopy } from "./gamesCopy.js";
 
@@ -106,11 +107,12 @@ export async function playSoloLuck(
 	// Mentions render as names without notifying: the member pressed the button and
 	// is looking at the result already.
 	await interaction.reply({ embeds: [buildSoloLuckEmbed(interaction.user.id, result)], allowedMentions: { parse: [] } });
-	// The Dero die card joins a dice round once it draws (2026-10 item 250 Phase 5), in an
-	// edit, so the reply above already landed inside Discord's three second window.
-	if (result.game === "diceroll") {
+	// The Dero die card (2026-10 item 250 Phase 5) or the rps reveal card (2026-10 item 254
+	// Phase 5a) joins its round once it draws, in an edit, so the reply above already landed
+	// inside Discord's three second window. A coin flip has no card.
+	if (result.game !== "coinflip") {
 		const memberName = (): string => (interaction.inCachedGuild() ? interaction.member.displayName : (interaction.user.globalName ?? interaction.user.username));
-		void addDiceCard(interaction.user.id, memberName, result, (payload) => interaction.editReply(payload));
+		void addRoundCard(interaction.user.id, memberName, result, (payload) => interaction.editReply(payload));
 	}
 
 	// Fire and forget after the result is on screen (house rule 7); awardXp never
@@ -148,7 +150,7 @@ export async function playSoloLuckInChannel(
 		return null;
 	});
 	if (!message) return null;
-	if (result.game === "diceroll") void addDiceCard(player.user.id, () => player.displayName, result, (payload) => message.edit(payload));
+	if (result.game !== "coinflip") void addRoundCard(player.user.id, () => player.displayName, result, (payload) => message.edit(payload));
 
 	awardSoloLuckResult({
 		client: channel.client,
@@ -164,31 +166,36 @@ export async function playSoloLuckInChannel(
 // draw, or an edit that fails, leaves the text result as it was. `edit` is whichever way
 // the result was posted: the interaction's reply, or the room message itself. The name is
 // resolved inside the try, so a lookup that throws costs the card and never the round.
-async function addDiceCard(
+async function addRoundCard(
 	userId: string,
 	memberName: () => string,
-	result: Extract<SoloLuckResult, { game: "diceroll" }>,
+	result: Exclude<SoloLuckResult, { game: "coinflip" }>,
 	edit: (payload: MessageEditOptions) => Promise<unknown>
 ): Promise<void> {
 	try {
-		const card = await withRenderFallback(
-			() =>
-				renderDiceCard({
-					left: { name: memberName(), roll: result.memberRoll },
-					right: { name: gamesCopy.soloLuck.deroName, roll: result.deroRoll },
-					winner: DICE_CARD_WINNER[result.outcome],
-				}),
-			() => null
-		);
+		const card = await withRenderFallback(() => renderRoundCard(memberName(), result), () => null);
 		if (!isRenderPayload(card)) return;
 		const embed = buildSoloLuckEmbed(userId, result).setImage(card.ref);
 		await edit({ embeds: [embed], files: [card.attachment], allowedMentions: { parse: [] } });
 	} catch (error) {
-		console.warn("[games] adding the dice card to a dice round against Dero failed", error);
+		console.warn(`[games] adding the ${result.game} card to a round against Dero failed`, error);
 	}
 }
 
-const DICE_CARD_WINNER: Record<SoloLuckOutcome, "left" | "right" | "tie"> = { won: "left", lost: "right", tie: "tie" };
+// The member is always the left side and Dero the right, on both cards.
+function renderRoundCard(memberName: string, result: Exclude<SoloLuckResult, { game: "coinflip" }>): Promise<RenderPayload | null> {
+	const winner = ROUND_CARD_WINNER[result.outcome];
+	if (result.game === "diceroll") {
+		return renderDiceCard({ left: { name: memberName, roll: result.memberRoll }, right: { name: gamesCopy.soloLuck.deroName, roll: result.deroRoll }, winner });
+	}
+	return renderRpsCard({
+		left: { name: memberName, choice: result.memberThrow, isDero: false },
+		right: { name: gamesCopy.soloLuck.deroName, choice: result.deroThrow, isDero: true },
+		winner,
+	});
+}
+
+const ROUND_CARD_WINNER: Record<SoloLuckOutcome, "left" | "right" | "tie"> = { won: "left", lost: "right", tie: "tie" };
 
 // ── the 🕹️games row ────────────────────────────────────────────────────────
 // Five buttons, Discord's ceiling for one row: the coin, the dice, and one button per

@@ -43,8 +43,9 @@ export interface DiceCardView {
 	winner: "left" | "right" | "tie";
 }
 
-// Bump whenever the drawing changes, or members keep seeing cached cards.
-const DICE_CARD_VERSION = 1;
+// Bump whenever the drawing changes, or members keep seeing cached cards. 2 the cleaned
+// Monopoly tokens the card draws its Dero from (2026-10 item 254, Arcade 2).
+const DICE_CARD_VERSION = 2;
 const CARD_WIDTH = 960;
 const CARD_HEIGHT = 400;
 const PADDING = 28;

@@ -96,6 +96,12 @@ export const gamesCopy = {
 		winnerLine: (winnerId: string): string => `\n\n👑 <@${winnerId}> takes it.`,
 		tieLine: "\n\nSame throw. Nobody takes it. Run it back.",
 
+		// ── the drawn reveal card (rpsRenderer, 2026-10 item 254 Phase 5a) ──
+		cardThrew: (choice: string): string => `threw ${choice}`,
+		cardVersus: "VS",
+		cardWin: "WINS",
+		cardTie: "TIE",
+
 		// ── the accepted but never thrown timeout ──
 		// Distinct from the challenge timeout: the challenge WAS accepted, so the
 		// channel watched this round start and deserves to see it end.

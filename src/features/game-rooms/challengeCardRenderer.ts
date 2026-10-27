@@ -68,8 +68,9 @@ const MAX_CHALLENGER_FACES = 6;
 const CHALLENGERS_PER_ROW = 3;
 
 // Bump whenever the drawing changes, or members keep seeing cached cards. 3 added the
-// RATED or CASUAL badge pill (2026-10 item 254, Arcade 5); 4 the status watermark (Arcade 6).
-const CHALLENGE_CARD_VERSION = 4;
+// RATED or CASUAL badge pill (2026-10 item 254, Arcade 5); 4 the status watermark (Arcade 6);
+// 5 the rock paper scissors logo (Arcade 3).
+const CHALLENGE_CARD_VERSION = 5;
 const CARD_WIDTH = 960;
 const CARD_HEIGHT = 380;
 const PADDING = 32;

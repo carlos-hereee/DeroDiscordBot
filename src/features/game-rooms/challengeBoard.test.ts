@@ -414,7 +414,9 @@ describe("the opener card's picture", () => {
 		vi.spyOn(console, "warn").mockImplementation(() => undefined);
 		const { interaction, edit } = rigBoard("joiner-2");
 
-		await joinChallenge(interaction, boardRoom());
+		// A game with no logo (rps took one in 2026-10 item 254 Phase 5a), so the text card
+		// carries no file at all.
+		await joinChallenge(interaction, makeRoom({ game: "coinflip", visibility: "public", boardMessageId: "card-1" }));
 
 		const payload = edit.mock.calls[0][0] as CardEdit;
 		expect(payload.embeds[0].data.image).toBeUndefined();

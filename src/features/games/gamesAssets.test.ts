@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { DERO_IMAGE_REF } from "@base/copy/brand.js";
 import { GAME_ASSET_FILES, gameAssetPath, resolveGameAsset, hangmanStageKey, missingGameAssets, missingPlayingCards, playingCardFile, type GameAssetKey } from "./gamesAssets.js";
 
@@ -43,6 +44,27 @@ describe("the owner's arcade art (2026-10 item 243 Phase 3b)", () => {
 		// not art still owed: the cards would quietly fall back to their drawings.
 		const dropped = (Object.keys(GAME_ASSET_FILES) as GameAssetKey[]).filter((key) => /^(hangman|battleship|cardBack)/.test(key));
 		expect(missingGameAssets(dropped)).toEqual([]);
+	});
+
+	// 2026-10 item 254 Phase 5a: prepare-rps-art.mjs writes these from the owner's export.
+	// The tie frame alone is still owed, so a tie's result card keeps the Dero avatar.
+	it("has every rock paper scissors file the manifest declares on disk, but the tie frame", () => {
+		const rps = (Object.keys(GAME_ASSET_FILES) as GameAssetKey[]).filter((key) => key.startsWith("rps"));
+		expect(rps).toHaveLength(9);
+		for (const key of rps) expect(GAME_ASSET_FILES[key]).toMatch(/^rps\/[a-z-]+\.png$/);
+		expect(missingGameAssets(rps)).toEqual(["rps/tie.png"]);
+	});
+
+	// clean-monopoly-tokens.mjs centres all six on one square, so the board draws every
+	// seat at one scale and none is stretched by drawCentred's square box.
+	it("has the six Monopoly tokens on disk at one square size", () => {
+		const sizes = [1, 2, 3, 4, 5, 6].map((seat) => {
+			const path = gameAssetPath(`monopolyToken${seat}` as GameAssetKey);
+			if (!path) throw new Error(`token-${seat}.png is not on disk`);
+			const header = readFileSync(path);
+			return `${header.readUInt32BE(16)}x${header.readUInt32BE(20)}`;
+		});
+		expect(new Set(sizes)).toEqual(new Set(["160x160"]));
 	});
 
 	it("has all 52 faces of the Dero deck on disk, named by suit and rank", () => {

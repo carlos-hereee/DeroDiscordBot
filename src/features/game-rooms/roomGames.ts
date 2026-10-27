@@ -11,8 +11,9 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { resolveVersus, type VersusFlip } from "@features/games/versusResolve.js";
 import { resolveGameAsset, type GameAssetKey } from "@features/games/gamesAssets.js";
 import { renderDiceCard } from "@features/games/diceRenderer.js";
+import { renderRpsCard } from "@features/games/rpsRenderer.js";
 import { isRenderPayload, withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
-import { scoreRps, RPS_CHOICES, type RpsChoice } from "@features/games/rpsWinner.js";
+import { scoreRps, RPS_CHOICES, type RpsChoice, type RpsOutcome } from "@features/games/rpsWinner.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { recordLuckResult } from "@features/ratings/luckStats.js";
 import { roomTrail } from "./roomTrail.js";
@@ -178,15 +179,34 @@ async function diceCardFor(
 			renderDiceCard({
 				left: { name: nameOf(dice.challengerId), roll: dice.challengerRoll },
 				right: { name: nameOf(dice.opponentId), roll: dice.opponentRoll },
-				winner: ROOM_DICE_WINNER[dice.winner],
+				winner: ROOM_CARD_WINNER[dice.winner],
 			}),
 		() => null
 	);
 	return isRenderPayload(card) ? card : null;
 }
 
-// The challenger is drawn on the left, as the trail line names them first.
-const ROOM_DICE_WINNER = { challenger: "left", opponent: "right", tie: "tie" } as const;
+// The challenger is drawn on the left of the dice and rps cards, as the trail line names them first.
+const ROOM_CARD_WINNER = { challenger: "left", opponent: "right", tie: "tie" } as const;
+
+// The rps reveal card for one room match, or null when the card does not draw. Never
+// throws: the winning hand takes over. A room match is two members, so no side is Dero.
+async function rpsCardFor(
+	interaction: StringSelectMenuInteraction,
+	reveal: { challengerId: string; opponentId: string; challengerPick: RpsChoice; opponentPick: RpsChoice; outcome: RpsOutcome }
+): Promise<RenderPayload | null> {
+	const nameOf = (userId: string): string => interaction.guild?.members.cache.get(userId)?.displayName ?? gameRoomsCopy.games.unknownPlayer;
+	const card = await withRenderFallback(
+		() =>
+			renderRpsCard({
+				left: { name: nameOf(reveal.challengerId), choice: reveal.challengerPick, isDero: false },
+				right: { name: nameOf(reveal.opponentId), choice: reveal.opponentPick, isDero: false },
+				winner: ROOM_CARD_WINNER[reveal.outcome],
+			}),
+		() => null
+	);
+	return isRenderPayload(card) ? card : null;
+}
 
 // ── rock paper scissors ───────────────────────────────────────────────
 // ⚠️ THE SECRECY PROPERTY IS THE ONE REGRESSION THE PLAN CALLS UNFORGIVABLE. A
@@ -293,15 +313,17 @@ export async function handleRpsSelect(interaction: StringSelectMenuInteraction):
 		meta: { picks, outcome },
 	});
 
-	// The WINNING throw, so the image says something the text does not already say
-	// twice. A tie has its own frame.
+	// The reveal is drawn as the rps card (2026-10 item 254 Phase 5a). When it does not
+	// draw, the result card falls back to the WINNING throw, so the image says something
+	// the text does not already say twice. A tie has its own frame.
 	const rpsArt: GameAssetKey =
 		outcome === "tie"
 			? "rpsTie"
 			: (`rps${(outcome === "challenger" ? picks[challengerId] : picks[opponentId]).replace(/^./, (c) => c.toUpperCase())}` as GameAssetKey);
+	const rpsCard = await rpsCardFor(interaction, { challengerId, opponentId, challengerPick: picks[challengerId], opponentPick: picks[opponentId], outcome });
 	const ended = await roomLifecycle.finish(interaction.client, room, {
 		winnerId,
-		art: resolveGameAsset(rpsArt),
+		art: rpsCard ?? resolveGameAsset(rpsArt),
 		outcome: { bucket: luckOutcome(outcome === "tie") },
 	});
 

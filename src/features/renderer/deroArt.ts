@@ -22,9 +22,14 @@ import { canvasModule, type CanvasModule, type Image } from "./canvasModule.js";
 // answers `{ cacheable: false }` from its draw (see DrawOutcome in index.ts), so
 // the real pose replaces the stand in as soon as it lands on disk and deploys.
 //
-// Every slot draws the mecha Dero, the display image (the owner's choice, post-launch
+// Every card slot draws the mecha Dero, the display image (the owner's choice, post-launch
 // plan item 5), until a slot gets a pose of its own, which is one new file in
-// assets/dero/v2 and one entry below. The chibi Dero beside it (chibi-dero.png) is
+// assets/dero/v2 and one entry below. The welcome alone draws the same mecha placed
+// on a wide 3:2 transparent banner (welcome-banner.png, written by
+// companyuno-growth/workspace-tools/prepare-welcome-banner.mjs, 2026-10 item 254
+// Phase 5a), because Discord sizes an embed to its large image's width and wraps
+// the description inside it, so the square pose squeezed the welcome text into a
+// narrow column. The chibi Dero beside it (chibi-dero.png) is
 // the avatar icon's source, which the client hosts and the Discord portal carries;
 // no card draws it. The stand in is the original avatar in assets/dero/v1.
 
@@ -32,12 +37,16 @@ const DERO_ART_DIR = join("assets", "dero");
 const DERO_V2_DIR = "v2";
 
 const MECHA_POSE = "mecha-dero.png";
+const WELCOME_BANNER = "welcome-banner.png";
 
 // Relative to assets/dero/v2/: the file each slot draws.
 export const DERO_ART_FILES = {
 	account: MECHA_POSE, // the /account default
 	battle: MECHA_POSE, // arcade and battle surfaces
-	welcome: MECHA_POSE, // the introductions welcome, sent whole
+	// The introductions welcome, sent whole. ⚠️ Its file name is also the attachment's
+	// name, so changing it makes refreshIntroEmbeds post one fresh welcome per guild and
+	// move the pin on the next boot, which is that function's designed behavior.
+	welcome: WELCOME_BANNER,
 	board: MECHA_POSE, // the levels board header
 	levelUp: MECHA_POSE, // an ordinary level up
 	prime: MECHA_POSE, // a prime milestone and an achievement unlock

@@ -118,13 +118,14 @@ describe("challengeCardRenderer", () => {
 	});
 
 	it("draws a card nobody has joined yet", async () => {
-		const card = await renderChallengeCard({ game: "rps", status: "choosing", badge: "casual", host: face("Host"), challengers: [], hiddenCount: 0 });
+		const card = await renderChallengeCard({ game: "coinflip", status: "choosing", badge: "casual", host: face("Host"), challengers: [], hiddenCount: 0 });
 		expect(pngSize(card)).toEqual({ width: 960, height: 380 });
 	});
 
 	// The art band (2026-10 item 245 Phase 3b) adds 240 pixels above the faces for
-	// a game with a logo; battleship's band also carries the admiral.
-	it.each(["battleship", "hangman"] as const)("leads a %s card with its art, 240 pixels taller", async (game) => {
+	// a game with a logo; battleship's band also carries the admiral. rps took its logo in
+	// 2026-10 item 254 Phase 5a.
+	it.each(["battleship", "hangman", "rps"] as const)("leads a %s card with its art, 240 pixels taller", async (game) => {
 		const card = await renderChallengeCard({ game, status: "open", badge: game === "battleship" ? "rated" : "casual", host: face("Host"), challengers: [face("Ana")], hiddenCount: 0 });
 		expect(pngSize(card)).toEqual({ width: 960, height: 620 });
 	});

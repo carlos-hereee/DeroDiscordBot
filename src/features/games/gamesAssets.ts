@@ -47,15 +47,23 @@ export const GAME_ASSET_FILES = {
 	// Reachable only from a dice roll. A single coin cannot tie.
 	diceTie: "dice-roll/tie.png",
 
-	// ── rock paper scissors (Phase 3, LIVE) ──
-	// The reveal embed carries the WINNING throw, so the image says something the
-	// text does not already say twice. A generic "both hands come down" reveal gif
-	// was considered and dropped: it cannot show who won, and declaring art that
-	// nothing renders would make this manifest lie about what needs drawing.
+	// ── rock paper scissors (the owner's art, 2026-10 item 254 Phase 5a) ──
+	// Trimmed and scaled by companyuno-growth/workspace-tools/prepare-rps-art.mjs.
+	// rpsRenderer draws the reveal card from the three hands inside the choice frame,
+	// with Dero's pose for the outcome when Dero plays; the logo leads the rps
+	// challenge card. When the card does not draw, a room's result card shows the
+	// WINNING hand whole, and a tie has no frame of its own yet (rpsTie stays the
+	// Dero avatar). Also on disk and NOT declared, because nothing draws it:
+	// dero-ready.png.
 	rpsRock: "rps/rock.png",
 	rpsPaper: "rps/paper.png",
 	rpsScissors: "rps/scissors.png",
 	rpsTie: "rps/tie.png",
+	rpsChoiceFrame: "rps/choice-frame.png",
+	rpsDeroWin: "rps/dero-win.png",
+	rpsDeroLose: "rps/dero-lose.png",
+	rpsDeroDraw: "rps/dero-draw.png",
+	rpsLogo: "rps/logo.png",
 
 	// ── hangman (the owner's art, 2026-10 item 243 Phase 3b) ──
 	// Seven gallows frames: stage 0 is the empty gallows, stage 6 is a full

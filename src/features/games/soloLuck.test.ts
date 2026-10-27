@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { RepliableInteraction, TextChannel, User } from "discord.js";
+import { AttachmentBuilder, type RepliableInteraction, type TextChannel, type User } from "discord.js";
 
-const mocks = vi.hoisted(() => ({ awardXp: vi.fn() }));
+const mocks = vi.hoisted(() => ({ awardXp: vi.fn(), renderRpsCard: vi.fn() }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: mocks.awardXp }));
+// The rps reveal card (2026-10 item 254 Phase 5a), mocked so a case chooses whether it draws.
+vi.mock("./rpsRenderer.js", () => ({ renderRpsCard: mocks.renderRpsCard }));
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { buildSoloLuckRow, parseSoloLuckButton, pickDeroThrow, playSoloLuck, playSoloLuckInChannel, resolveSoloLuck } from "./soloLuck.js";
@@ -43,6 +45,7 @@ const paidAmounts = (): number[] => mocks.awardXp.mock.calls.map((call) => (call
 
 beforeEach(() => {
 	mocks.awardXp.mockReset().mockResolvedValue(undefined);
+	mocks.renderRpsCard.mockReset().mockResolvedValue(null);
 });
 
 describe("resolveSoloLuck, with Dero as the second side", () => {
@@ -123,6 +126,58 @@ describe("playSoloLuck", () => {
 		const embed = sent.embeds[0].toJSON();
 		expect(embed.title).toBe(gamesCopy.soloLuck.diceTitle);
 		expect(embed.description).toContain(gamesCopy.soloLuck.memberWins("member-1"));
+	});
+
+	// 2026-10 item 254 Phase 5a: the rps card joins the round in an edit, with Dero on the
+	// right and the outcome read from the member's side; the text result stays when it fails.
+	describe("the rps reveal card", () => {
+		function cardInteraction() {
+			const { interaction, reply } = fakeInteraction();
+			const editReply = vi.fn(async () => undefined);
+			Object.assign(interaction, { inCachedGuild: () => false, editReply });
+			return { interaction, reply, editReply };
+		}
+
+		it("edits the drawn card into a round against Dero, Dero on the right", async () => {
+			const card = { attachment: new AttachmentBuilder(Buffer.from("png"), { name: "rps-1.png" }), ref: "attachment://rps-1.png" };
+			mocks.renderRpsCard.mockResolvedValue(card);
+			const { interaction, editReply } = cardInteraction();
+
+			// rng 0.5 makes Dero throw paper, which beats the member's rock.
+			await playSoloLuck(interaction, { game: "rps", memberThrow: "rock" }, () => 0.5);
+
+			await vi.waitFor(() => expect(editReply).toHaveBeenCalledOnce());
+			expect(mocks.renderRpsCard).toHaveBeenCalledWith({
+				left: { name: "Member", choice: "rock", isDero: false },
+				right: { name: gamesCopy.soloLuck.deroName, choice: "paper", isDero: true },
+				winner: "right",
+			});
+			const edited = editReply.mock.calls[0][0] as { files: unknown[]; embeds: { toJSON(): { image?: { url: string } } }[] };
+			expect(edited.files).toEqual([card.attachment]);
+			expect(edited.embeds[0].toJSON().image?.url).toBe(card.ref);
+		});
+
+		it("leaves the text result as it was when the card throws", async () => {
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+			mocks.renderRpsCard.mockRejectedValue(new Error("canvas exploded"));
+			const { interaction, reply, editReply } = cardInteraction();
+
+			await playSoloLuck(interaction, { game: "rps", memberThrow: "rock" }, () => 0.5);
+			await new Promise((resolve) => setImmediate(resolve));
+
+			expect(reply).toHaveBeenCalledOnce();
+			expect(editReply).not.toHaveBeenCalled();
+			warnSpy.mockRestore();
+		});
+
+		it("draws no card for a coin flip", async () => {
+			const { interaction, editReply } = cardInteraction();
+			await playSoloLuck(interaction, { game: "coinflip" }, () => 0.1);
+			await new Promise((resolve) => setImmediate(resolve));
+
+			expect(mocks.renderRpsCard).not.toHaveBeenCalled();
+			expect(editReply).not.toHaveBeenCalled();
+		});
 	});
 
 	it("refuses a DM and pays nothing", async () => {

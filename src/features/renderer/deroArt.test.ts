@@ -92,7 +92,7 @@ describe("loadDeroArt", () => {
 });
 
 describe("logDeroArtStatus, the boot asset check", () => {
-	// Every slot draws the one mecha file today, so the line names each file once.
+	// Every card slot draws the one mecha file today, so the line names each file once.
 	it.each([
 		["present", false],
 		["opaque", true],
@@ -124,6 +124,26 @@ describe("logDeroArtStatus, the boot asset check", () => {
 
 		const line = String(log.mock.calls[0]?.[0]);
 		for (const file of Object.values(DERO_ART_FILES)) expect(line).toContain(`${file} present`);
+	});
+});
+
+// The welcome alone moved to the wide banner (2026-10 item 254 Phase 5a): Discord sizes an
+// embed to its large image, so a square welcome squeezed the text into a narrow column.
+// The six card slots draw the square mecha, whose layout every card was measured on.
+describe("DERO_ART_FILES, the slot map", () => {
+	it("points only the welcome at the 3:2 banner and every card slot at the mecha", () => {
+		const { welcome, ...cardSlots } = DERO_ART_FILES;
+		expect(welcome).toBe("welcome-banner.png");
+		expect(Object.keys(cardSlots).sort()).toEqual(["account", "battle", "board", "levelUp", "prime", "tiers"]);
+		for (const file of Object.values(cardSlots)) expect(file).toBe("mecha-dero.png");
+	});
+
+	it("ships a welcome banner of 1200 by 800 with transparent corners", async () => {
+		const banner = await realCanvas().loadImage(join(defaultDeroArtRoot(), "v2", DERO_ART_FILES.welcome));
+		expect({ width: banner.width, height: banner.height }).toEqual({ width: 1200, height: 800 });
+		const sample = realCanvas().createCanvas(banner.width, banner.height).getContext("2d");
+		sample.drawImage(banner, 0, 0);
+		for (const [x, y] of [[0, 0], [1199, 0], [0, 799], [1199, 799]]) expect(sample.getImageData(x, y, 1, 1).data[3]).toBe(0);
 	});
 });
 

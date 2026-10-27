@@ -7,12 +7,17 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardTwoPlayerResult: vi.fn() }));
+// The rps reveal card, mocked so each test chooses whether it draws (2026-10 item 254 Phase
+// 5a). Resolving null by default sends every other rps test through the fallback art.
+vi.mock("@features/games/rpsRenderer.js", () => ({ renderRpsCard: vi.fn() }));
 
 import { runRoomMove, handleRpsSelect } from "./roomGames.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
+import { renderRpsCard } from "@features/games/rpsRenderer.js";
+import { AttachmentBuilder } from "discord.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 const storeMock = gameRoomStore as unknown as {
@@ -23,6 +28,7 @@ const storeMock = gameRoomStore as unknown as {
 const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn> };
 const lifecycleMock = roomLifecycle as unknown as { finish: ReturnType<typeof vi.fn> };
 const awardMock = awardTwoPlayerResult as unknown as ReturnType<typeof vi.fn>;
+const rpsCardMock = renderRpsCard as unknown as ReturnType<typeof vi.fn>;
 
 const HOST = "host-1";
 const OPPONENT = "player-2";
@@ -100,6 +106,7 @@ beforeEach(() => {
 	// versus award is gated on it. Resolving a falsy default here would silently make every
 	// versus test exercise the losing-press path.
 	lifecycleMock.finish.mockResolvedValue(true);
+	rpsCardMock.mockResolvedValue(null);
 });
 
 // ⚠️ THE ONE REGRESSION THE PLAN CALLS UNFORGIVABLE. A spectator must not learn
@@ -185,6 +192,35 @@ describe("rock paper scissors secrecy", () => {
 		for (const call of trailMock.postMove.mock.calls) {
 			expect(call[2]).not.toHaveProperty("files");
 		}
+	});
+
+	// 2026-10 item 254 Phase 5a: the reveal is drawn as the rps card, and the result card
+	// falls back to the winning hand whenever the card does not draw.
+	it("draws the reveal as the rps card on the result card, challenger on the left", async () => {
+		const card = { attachment: new AttachmentBuilder(Buffer.from("png"), { name: "rps-1.png" }), ref: "attachment://rps-1.png" };
+		rpsCardMock.mockResolvedValue(card);
+		seedRoom(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
+
+		await handleRpsSelect(makeSelect(OPPONENT, "paper"));
+
+		expect(rpsCardMock).toHaveBeenCalledWith({
+			left: { name: expect.any(String), choice: "rock", isDero: false },
+			right: { name: expect.any(String), choice: "paper", isDero: false },
+			winner: "right",
+		});
+		expect(lifecycleMock.finish.mock.calls[0][2]).toMatchObject({ art: card });
+	});
+
+	it("falls back to the winning hand when the rps card throws", async () => {
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		rpsCardMock.mockRejectedValue(new Error("canvas exploded"));
+		seedRoom(makeRoom({ secret: { picks: { [HOST]: "rock" } } as never }));
+
+		await handleRpsSelect(makeSelect(OPPONENT, "paper"));
+
+		const { art } = lifecycleMock.finish.mock.calls[0][2] as { art: { ref: string } };
+		expect(art.ref).toBe("attachment://paper.png");
+		warnSpy.mockRestore();
 	});
 
 	it("refuses a second pick from the same player", async () => {

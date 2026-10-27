@@ -62,6 +62,7 @@ const OPENER_LOGOS: Partial<Record<GameSlug, GameAssetKey>> = {
 	hangman: "hangmanLogoStacked",
 	"solo-hangman": "hangmanLogoStacked",
 	battleship: "battleshipLogo",
+	rps: "rpsLogo",
 };
 
 /** The art slot of a game's logo, or null for a game that has none. The challenge card draws it. */
