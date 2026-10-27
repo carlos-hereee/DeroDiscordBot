@@ -65,6 +65,9 @@ interface ICreateGameRoom {
 	spectatorMode?: SpectatorMode | null;
 }
 
+// Mongo's duplicate key error code, what the one open room per host index answers with.
+const DUPLICATE_KEY_CODE = 11000;
+
 // Where an accepted join request lands: the draft's pool, or a live room's players.
 export type AdmittedJoinField = "spectatorIds" | "playerIds";
 
@@ -199,6 +202,40 @@ export const gameRoomStore = {
 			{ $set: { secret }, ...extra },
 			{ new: true }
 		);
+	},
+
+	// ── Monopoly's board and referee (2026-10 item 254, Phase 4b) ──
+	// Point a Monopoly match at the board message just posted, but only while it still
+	// points at `fromMessageId`: a dotted $set, so it touches nothing a move wrote, and
+	// conditional, so a repost that lost to another one writes nothing. Null when it lost.
+	async moveMonopolyBoard(guildId: string, roomId: string, fromMessageId: string | null, toMessageId: string) {
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, "secret.boardMessageId": fromMessageId },
+			{ $set: { "secret.boardMessageId": toMessageId } },
+			{ new: true }
+		);
+	},
+
+	// Claim the referee's one silent notice for this match. Null when it was already claimed.
+	async claimRefereeNotice(guildId: string, roomId: string, at: Date) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId, monopolyRefereeNoticeAt: null }, { $set: { monopolyRefereeNoticeAt: at } }, { new: true });
+	},
+
+	// Hand an open room from one host to another. The partial unique index refuses a
+	// member who already hosts an open room with a duplicate key error, which reads as
+	// "taken" here so the caller can try the next seat; null means the room is no longer
+	// open or no longer hosted by `fromHostId`.
+	async transferHost(guildId: string, roomId: string, fromHostId: string, toHostId: string): Promise<IGameRoom | "taken" | null> {
+		try {
+			return await GameRoom.findOneAndUpdate(
+				{ guildId, roomId, hostId: fromHostId, status: { $in: [...NON_TERMINAL_ROOM_STATUSES] } },
+				{ $set: { hostId: toHostId } },
+				{ new: true }
+			);
+		} catch (error) {
+			if ((error as { code?: number })?.code === DUPLICATE_KEY_CODE) return "taken";
+			throw error;
+		}
 	},
 
 	// Claim ONE field inside the `secret` blob, and only if nobody has claimed it yet.

@@ -143,6 +143,8 @@ function fakeClick(channelId: string, action: string, userId: string): FakeClick
 		update,
 		editReply,
 		reply,
+		// Leave answers the leaver privately after the redraw (Arcade 12).
+		followUp: vi.fn(async () => undefined),
 	};
 	return {
 		click: click as unknown as ButtonInteraction,
@@ -254,7 +256,7 @@ describe("the two opening surfaces", () => {
 		const c = fakeChannel("chan-1");
 		await startBlackjackTable(c.channel, "g1", host, true);
 		const buttons = buttonsOf(c.sent());
-		expect(Object.keys(buttons).sort()).toEqual(["double", "hit", "split", "stand"]);
+		expect(Object.keys(buttons).sort()).toEqual(["double", "hit", "leave", "split", "stand"]);
 	});
 
 	it("posts a seating board for a table, with no cards dealt yet", async () => {
@@ -342,7 +344,7 @@ describe("seating a table", () => {
 		const deal = fakeClick("chan-1", "deal", host.userId);
 		c.board().collect(deal.click);
 		await flush();
-		expect(Object.keys(buttonsOf(deal.lastUpdate())).sort()).toEqual(["double", "hit", "split", "stand"]);
+		expect(Object.keys(buttonsOf(deal.lastUpdate())).sort()).toEqual(["double", "hit", "leave", "split", "stand"]);
 	});
 
 	it("deals itself when the window closes with nobody pressing Deal", async () => {
@@ -525,7 +527,7 @@ describe("drawing the table every turn", () => {
 		expect(board.files).toEqual([]);
 		expect(board.attachments).toEqual([]);
 		expect(board.embeds[0].data.image).toBeUndefined();
-		expect(Object.keys(buttonsOf(board)).sort()).toEqual(["double", "hit", "split", "stand"]);
+		expect(Object.keys(buttonsOf(board)).sort()).toEqual(["double", "hit", "leave", "split", "stand"]);
 	});
 
 	it("holds the table's lifetime while the board draws, and adds the held time back", async () => {
@@ -564,5 +566,32 @@ describe("roomWinnerOf", () => {
 	it("names nobody when several seats won, or none did", () => {
 		expect(roomWinnerOf([seat("a", ["win"]), seat("b", ["blackjack"])])).toBeNull();
 		expect(roomWinnerOf([seat("a", ["push"]), seat("b", ["lose"])])).toBeNull();
+	});
+});
+
+// ── leaving during a hand (2026-10 item 254, Arcade 12) ──
+describe("Leave during a hand", () => {
+	it("settles a solo seat that leaves as a loss, paid once, with nothing left to press", async () => {
+		const c = fakeChannel("chan-leave");
+		await startBlackjackTable(c.channel, "g1", host, true);
+		await flush();
+		const leave = fakeClick("chan-leave", "leave", host.userId);
+		c.board().collect(leave.click);
+		await flush();
+		expect(mocks.awardBlackjackResult).toHaveBeenCalledOnce();
+		const seats = (mocks.awardBlackjackResult.mock.calls[0][0] as { seats: { hands: string[] }[] }).seats;
+		expect(seats[0].hands.every((outcome) => outcome === "lose")).toBe(true);
+		expect(leave.lastUpdate().components).toEqual([]);
+	});
+
+	it("turns away a Leave from somebody with no seat", async () => {
+		const c = fakeChannel("chan-leave-2");
+		await startBlackjackTable(c.channel, "g1", host, true);
+		await flush();
+		const stranger = fakeClick("chan-leave-2", "leave", "stranger");
+		c.board().collect(stranger.click);
+		await flush();
+		expect(stranger.reply).toHaveBeenCalledOnce();
+		expect(mocks.awardBlackjackResult).not.toHaveBeenCalled();
 	});
 });

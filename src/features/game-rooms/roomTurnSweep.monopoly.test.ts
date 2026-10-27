@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Client } from "discord.js";
+import { TextChannel, type Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findPlayingByGame: vi.fn(), updateSecretIf: vi.fn() },
+	gameRoomStore: { findPlayingByGame: vi.fn(), updateSecretIf: vi.fn(), findByRoomId: vi.fn(), moveMonopolyBoard: vi.fn() },
 }));
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+// A Monopoly move's lines ride the board, or the finished turn's log message, rather
+// than one postMove each (2026-10 item 254, Arcade 8).
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), postMoveLog: vi.fn(), recordCarriedMoves: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardTwoPlayerResult: vi.fn(), awardMultiPlayerResult: vi.fn() }));
 
@@ -26,8 +28,12 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 const storeMock = gameRoomStore as unknown as {
 	findPlayingByGame: ReturnType<typeof vi.fn>;
 	updateSecretIf: ReturnType<typeof vi.fn>;
+	findByRoomId: ReturnType<typeof vi.fn>;
+	moveMonopolyBoard: ReturnType<typeof vi.fn>;
 };
 const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
+const carriedMock = roomTrail.recordCarriedMoves as unknown as ReturnType<typeof vi.fn>;
+const moveLogMock = roomTrail.postMoveLog as unknown as ReturnType<typeof vi.fn>;
 const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
 const awardMock = awardMultiPlayerResult as unknown as ReturnType<typeof vi.fn>;
 
@@ -37,9 +43,14 @@ const A = "player-a";
 const B = "player-b";
 const C = "player-c";
 
+// The room's channel, holding a board to edit or replace.
+const channel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, {
+	messages: { fetch: vi.fn().mockResolvedValue({ edit: vi.fn(), delete: vi.fn() }) },
+	send: vi.fn().mockResolvedValue({ id: "board-2", delete: vi.fn() }),
+});
 const client = {
-	channels: { fetch: vi.fn().mockResolvedValue(null) },
-	guilds: { fetch: vi.fn().mockResolvedValue(null) },
+	channels: { fetch: vi.fn().mockResolvedValue(channel) },
+	guilds: { cache: new Map(), fetch: vi.fn().mockResolvedValue(null) },
 } as unknown as Client;
 
 function makeRoom(players: string[], turnIdleHours: number, lastMoveHoursAgo: number | null = turnIdleHours): IGameRoom {
@@ -61,12 +72,19 @@ function makeRoom(players: string[], turnIdleHours: number, lastMoveHoursAgo: nu
 }
 
 const persisted = (): MonopolyState => storeMock.updateSecretIf.mock.calls[0][3] as MonopolyState;
-const trailTexts = (): string[] => postMoveMock.mock.calls.map((call) => (call[2] as { text: string }).text);
+// Every line the sweep recorded, in order: the finished turn's log, then the board's.
+type RecordedMove = { actorId: string; kind: string; text: string };
+const recorded = (): RecordedMove[] =>
+	[...moveLogMock.mock.calls.map((call) => (call[2] as { moves: RecordedMove[] }).moves), ...carriedMock.mock.calls.map((call) => call[1] as RecordedMove[])].flat();
+const trailTexts = (): string[] => recorded().map((move) => move.text);
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.updateSecretIf.mockResolvedValue({} as never);
+	storeMock.findByRoomId.mockResolvedValue(null);
+	storeMock.moveMonopolyBoard.mockResolvedValue({});
 	postMoveMock.mockResolvedValue(true);
+	moveLogMock.mockResolvedValue(true);
 	finishMock.mockResolvedValue(true);
 	vi.spyOn(console, "log").mockImplementation(() => undefined);
 });
@@ -90,7 +108,7 @@ describe("sweepMonopolyIdle", () => {
 		// The compare and swap is against the turn the sweep read.
 		expect(storeMock.updateSecretIf.mock.calls[0][2]).toEqual(turnFingerprint(room.secret as unknown as MonopolyState));
 		expect(trailTexts()[0]).toBe(gameRoomsCopy.monopoly.idleForfeit(A));
-		expect(postMoveMock.mock.calls[0][2]).toMatchObject({ actorId: A, kind: "system" });
+		expect(recorded()[0]).toMatchObject({ actorId: A, kind: "system" });
 		expect(finishMock).not.toHaveBeenCalled();
 	});
 
@@ -112,7 +130,7 @@ describe("sweepMonopolyIdle", () => {
 
 		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
-		expect(postMoveMock).not.toHaveBeenCalled();
+		expect(trailTexts()).toEqual([]);
 	});
 
 	it("leaves alone a seat whose turn began a day ago but which moved an hour ago", async () => {
@@ -126,7 +144,7 @@ describe("sweepMonopolyIdle", () => {
 		storeMock.updateSecretIf.mockResolvedValue(null);
 
 		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
-		expect(postMoveMock).not.toHaveBeenCalled();
+		expect(trailTexts()).toEqual([]);
 		expect(finishMock).not.toHaveBeenCalled();
 	});
 
@@ -156,6 +174,6 @@ describe("sweepMonopolyIdle", () => {
 		expect(persisted().properties["rail-one"].ownerId).toBe(A);
 		expect(trailTexts()[0]).toBe(gameRoomsCopy.monopoly.idleDebtDefault(B));
 		expect(trailTexts()[1]).toBe(`<@${B}> never paid the $100 they owed and is bankrupt.`);
-		expect(postMoveMock.mock.calls[0][2]).toMatchObject({ actorId: B, kind: "system" });
+		expect(recorded()[0]).toMatchObject({ actorId: B, kind: "system" });
 	});
 });

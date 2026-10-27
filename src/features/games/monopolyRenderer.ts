@@ -2,6 +2,7 @@ import { AttachmentBuilder, type ColorResolvable } from "discord.js";
 import { COLORS } from "@base/copy/brand.js";
 import { canvasModule, type CanvasModule, type Image, type SKRSContext2D } from "@features/renderer/canvasModule.js";
 import { canvasColor, drawCardBackground, drawPanel, drawPill, drawText, renderCard, type DrawOutcome, type Rect, type RenderPayload } from "@features/renderer/index.js";
+import { rendererFont } from "@features/renderer/fonts.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { BOARD, BOARD_SIZE, MAX_SEATS, findOwnableTile, ownableTileName, type ColorGroup, type TileId } from "./monopolyBoard.js";
 import type { AuctionState, MonopolyState, TradeProposal } from "./monopolyState.js";
@@ -23,6 +24,7 @@ import { clearGameArtCache, loadGameArt } from "./gamesArt.js";
 // How:   ① paint board-base.png, ② draw each built lot's houses or hotel along
 //        the tile edge facing the middle of the board, ③ draw each seat's token
 //        in that seat's fixed slot on its tile, then the jail stamp over it,
+//        then each token's name tag over everything (2026-10 item 254, Arcade 12),
 //        ④ encode a PNG and hand back an attachment plus the ref an embed's
 //        setImage points at.
 //
@@ -82,18 +84,44 @@ const INWARD_BY_SIDE: readonly Point[] = [
 
 // Sizes in the art's own pixels. A token's frame is drawn well above the 32
 // pixels the asset spec asks for, because Discord shows the whole board at
-// roughly a third of its size in the embed, and the token art fills only two
-// thirds of its frame's width (the figure is about 32 by 45 at this size).
-const TOKEN_SIZE = 48;
+// roughly a third of its size in the embed, and players read it on a phone: the
+// owner's decision 20 (2026-10 item 254, Arcade 12) set it at 1.5 times the old 48.
+const TOKEN_SIZE = 72;
+// The figure inside a token's frame: two thirds of its width and about fifteen
+// sixteenths of its height (32 by 45 in the old 48 pixel frame). The slot steps
+// below are measured from the figure, not the frame, whose corners are transparent.
+const TOKEN_FIGURE_WIDTH = (TOKEN_SIZE * 2) / 3;
+const TOKEN_FIGURE_HEIGHT = (TOKEN_SIZE * 15) / 16;
 // Half the distance between the two token columns on a tile, and the distance
-// between the three token rows. Two figures 19 either side of the centre span
-// about 70 pixels, inside the narrowest lot (76 pixels wide); their transparent
-// frames overlap, the figures do not.
-const TOKEN_COLUMN_STEP = 19;
-const TOKEN_ROW_STEP = 28;
+// between the three token rows. Tokens are drawn upright on every side, so on the
+// left and right columns the "columns" stack vertically and the rows run across:
+// each step therefore clears the figure's TALLER side, so no two tokens on one tile
+// cover each other on any side of the board. The price is that a full tile of six
+// spills onto its neighbours (the narrowest lot is 76 pixels wide), which the old
+// 48 pixel layout only just avoided by letting figures overlap.
+const TOKEN_COLUMN_STEP = Math.ceil(TOKEN_FIGURE_HEIGHT / 2) + 1;
+const TOKEN_ROW_STEP = Math.ceil(TOKEN_FIGURE_HEIGHT) + 2;
 // The stamp art is a wide band inside a square frame, so its frame is drawn
 // larger than a token's for the band to read as stamped across the figure.
-const JAIL_STAMP_SIZE = 56;
+const JAIL_STAMP_SIZE = 84;
+
+// ── the name tags (Arcade 12) ──
+// A dark rounded tag with an arrow under it, pointing down at the figure's head, so
+// a player finds their own token by name on a phone. Sized for Discord's third scale
+// view: a 26 pixel name reads at about 9 pixels in the embed and full size when tapped.
+const TAG_FONT_SIZE = 26;
+const TAG_HEIGHT = 36;
+const TAG_PADDING_X = 10;
+// The widest a tag may grow before its name is cut short with an ellipsis: about
+// two lot widths, so a long name cannot reach across half a side of the board.
+const TAG_MAX_WIDTH = 168;
+const TAG_ARROW_HEIGHT = 10;
+const TAG_ARROW_HALF_WIDTH = 9;
+// The gap between the arrow's tip and the figure's head, and between stacked tags.
+const TAG_GAP = 4;
+const TAG_FILL = "rgba(16, 18, 28, 0.88)";
+const TAG_INK = "#ffffff";
+const ELLIPSIS = "…";
 // Four houses at this step span 76 pixels, the narrowest lot. The house art
 // fills its whole frame, so neighbours touch rather than overlap.
 const HOUSE_SIZE = 22;
@@ -107,14 +135,16 @@ const BUILDING_INSET = 64;
 
 // Each seat keeps one fixed slot on whatever tile it stands on, as [column, row]
 // in steps across and into the tile, so six tokens on GO at the start read as six
-// tokens rather than one stack. The middle row fills first.
+// tokens rather than one stack. The middle row fills first, then the row toward the
+// middle of the board, so the outer row, whose tags have least room before the
+// edge of the art, is only ever a fifth and sixth seat's.
 const TOKEN_SLOTS: readonly Point[] = [
 	[-1, 0],
 	[1, 0],
-	[-1, -1],
-	[1, -1],
 	[-1, 1],
 	[1, 1],
+	[-1, -1],
+	[1, -1],
 ];
 
 // ── the art ───────────────────────────────────────────────────────────
@@ -150,10 +180,16 @@ export function isRendererAvailable(): boolean {
  * setImage, or null whenever the text board should be used instead. Never throws:
  * a render that fails part way costs the picture, not the move it was drawing.
  */
-export async function renderBoard(state: MonopolyState, now: number = Date.now()): Promise<ResolvedGameAsset | null> {
+export async function renderBoard(
+	state: MonopolyState,
+	now: number = Date.now(),
+	// Each seat's name for its tag, by user id, already as the room shows it (a Dero bot
+	// through labelForRoom). A seat with no entry is drawn with no tag.
+	names: ReadonlyMap<string, string> = new Map()
+): Promise<ResolvedGameAsset | null> {
 	if (!canvasModule || !isRendererAvailable()) return null;
 	try {
-		return await composeBoard(canvasModule, state, now);
+		return await composeBoard(canvasModule, state, now, names);
 	} catch (error) {
 		console.warn("[monopoly-renderer] the board render failed, so this redraw posts the text board", error);
 		return null;
@@ -175,7 +211,7 @@ export function logMonopolyRendererStatus(): void {
 }
 
 // ── composite ─────────────────────────────────────────────────────────
-async function composeBoard(canvas: CanvasModule, state: MonopolyState, now: number): Promise<ResolvedGameAsset> {
+async function composeBoard(canvas: CanvasModule, state: MonopolyState, now: number, names: ReadonlyMap<string, string>): Promise<ResolvedGameAsset> {
 	// ① The base, at the art's own size, so nothing is resampled but the pieces.
 	const board = await loadArt("monopolyBoardBase");
 	const surface = canvas.createCanvas(board.width, board.height);
@@ -186,7 +222,10 @@ async function composeBoard(canvas: CanvasModule, state: MonopolyState, now: num
 	// ② then ③: buildings before tokens, so a token standing on a built lot is
 	// drawn over its houses rather than under them.
 	await drawBuildings(context, state, scale);
-	await drawTokens(context, state, scale);
+	const placements = layoutTokens(state, names, (text) => measureTagText(context, text));
+	await drawTokens(context, state, placements, scale);
+	// The tags last, over every token and building, so no figure ever hides a name.
+	for (const placement of placements) if (placement.tag) drawTag(context, placement.tag, scale);
 
 	// ④ The name carries the time so each redraw is a new upload with its own
 	// ref, and an edit can never point an embed at the previous move's picture.
@@ -219,20 +258,154 @@ async function drawBuildings(context: SKRSContext2D, state: MonopolyState, scale
 	}
 }
 
-async function drawTokens(context: SKRSContext2D, state: MonopolyState, scale: number): Promise<void> {
+async function drawTokens(context: SKRSContext2D, state: MonopolyState, placements: readonly TokenPlacement[], scale: number): Promise<void> {
 	// Loaded only when someone is jailed, because the stamp is optional art.
 	const jailStamp = state.seats.some((seat) => seat.inJail && !seat.bankrupt) ? await loadOptionalArt("monopolyJailStamp") : null;
 
+	for (const { seatIndex, centre: artCentre } of placements) {
+		const centre = scalePoint(artCentre, scale);
+		drawCentred(context, await loadArt(TOKEN_ART[seatIndex]), centre, TOKEN_SIZE * scale);
+		if (state.seats[seatIndex].inJail && jailStamp) drawCentred(context, jailStamp, centre, JAIL_STAMP_SIZE * scale);
+	}
+}
+
+// ── token and tag layout ──────────────────────────────────────────────
+/** One name tag, in the art's own pixels: its box, the name as drawn, and where its arrow points. */
+export interface TagPlacement {
+	box: Rect;
+	text: string;
+	// The arrow's tip, at the figure's head (or its feet, for a tag that had no room above).
+	arrowTip: Point;
+	pointsDown: boolean;
+}
+
+/** Where one seat still in the match is drawn, in the art's own pixels. */
+export interface TokenPlacement {
+	seatIndex: number;
+	centre: Point;
+	// The figure inside the token's frame, which is what must never cover another's.
+	figure: Rect;
+	tag: TagPlacement | null;
+}
+
+/**
+ * Every token still on the board and its name tag, in seat order, laid out in the
+ * art's own pixels (the composite scales them). `measure` is the width of a name at
+ * the tag's font; the composite passes the canvas's own measure, and a test passes a
+ * fixed width per character. Exported so the tests can check the layout itself:
+ * figures on one tile never overlap, and no tag overlaps another tag or a figure.
+ */
+export function layoutTokens(state: MonopolyState, names: ReadonlyMap<string, string>, measure: (text: string) => number): TokenPlacement[] {
+	const tokens: TokenPlacement[] = [];
 	for (const [seatIndex, seat] of state.seats.entries()) {
 		// A bankrupt seat has left the board; the seat list still names it. The
 		// engine refuses a seventh seat, so the cap only stops a corrupt row from
 		// reaching past the six tokens there is art for.
 		if (seat.bankrupt || seatIndex >= MAX_SEATS) continue;
-
-		const centre = scalePoint(tokenCentre(seat.position, seatIndex), scale);
-		drawCentred(context, await loadArt(TOKEN_ART[seatIndex]), centre, TOKEN_SIZE * scale);
-		if (seat.inJail && jailStamp) drawCentred(context, jailStamp, centre, JAIL_STAMP_SIZE * scale);
+		const centre = tokenCentre(seat.position, seatIndex);
+		tokens.push({ seatIndex, centre, figure: figureOf(centre), tag: null });
 	}
+
+	// Placed after every figure is known, because a tag must clear the figures of the
+	// tokens beside its own, and in seat order, so a layout never depends on timing.
+	const placedTags: Rect[] = [];
+	for (const token of tokens) {
+		const name = names.get(state.seats[token.seatIndex].userId);
+		if (!name) continue;
+		const obstacles = [...placedTags, ...tokens.filter((other) => other !== token).map((other) => other.figure)];
+		token.tag = placeTag(token, fitWithEllipsis(name, TAG_MAX_WIDTH - TAG_PADDING_X * 2, measure), measure, obstacles);
+		placedTags.push(token.tag.box);
+	}
+	return tokens;
+}
+
+const figureOf = ([x, y]: Point): Rect => ({
+	x: x - TOKEN_FIGURE_WIDTH / 2,
+	y: y - TOKEN_FIGURE_HEIGHT / 2,
+	width: TOKEN_FIGURE_WIDTH,
+	height: TOKEN_FIGURE_HEIGHT,
+});
+
+// The name cut down, one character at a time, until it and the ellipsis fit.
+function fitWithEllipsis(name: string, maxWidth: number, measure: (text: string) => number): string {
+	if (measure(name) <= maxWidth) return name;
+	const characters = [...name];
+	while (characters.length > 1 && measure(`${characters.join("").trimEnd()}${ELLIPSIS}`) > maxWidth) characters.pop();
+	return `${characters.join("").trimEnd()}${ELLIPSIS}`;
+}
+
+// Above the head first, stepped further up past anything it would cover; when the art
+// runs out above (the top row), below the feet, stepped further down the same way. Each
+// step moves strictly away from the figure past one obstacle, so both searches end. A
+// tag with no clear spot either way keeps the first spot inside the art rather than
+// leaving the board.
+function placeTag(token: TokenPlacement, text: string, measure: (text: string) => number, obstacles: readonly Rect[]): TagPlacement {
+	const width = Math.min(TAG_MAX_WIDTH, Math.ceil(measure(text)) + TAG_PADDING_X * 2);
+	const x = clamp(token.centre[0] - width / 2, 0, BOARD_ART_SIZE - width);
+	const headTip: Point = [token.centre[0], token.figure.y - TAG_GAP];
+	const feetTip: Point = [token.centre[0], token.figure.y + token.figure.height + TAG_GAP];
+	const above = searchClearSpot({ x, y: headTip[1] - TAG_ARROW_HEIGHT - TAG_HEIGHT, width, height: TAG_HEIGHT }, "up", obstacles);
+	if (above.clear) return { box: above.box, text, arrowTip: headTip, pointsDown: true };
+	const below = searchClearSpot({ x, y: feetTip[1] + TAG_ARROW_HEIGHT, width, height: TAG_HEIGHT }, "down", obstacles);
+	if (below.clear || !above.inside) return { box: below.box, text, arrowTip: feetTip, pointsDown: false };
+	return { box: above.box, text, arrowTip: headTip, pointsDown: true };
+}
+
+// Step a tag box one way past each obstacle it covers until it covers none, or until the
+// next step would leave the art. `inside` says whether the starting spot fit at all.
+function searchClearSpot(start: Rect, direction: "up" | "down", obstacles: readonly Rect[]): { box: Rect; clear: boolean; inside: boolean } {
+	const fits = (box: Rect): boolean => box.y >= 0 && box.y + box.height <= BOARD_ART_SIZE;
+	let box = start;
+	if (!fits(box)) return { box, clear: false, inside: false };
+	for (let step = 0; step <= obstacles.length; step++) {
+		const blocking = obstacles.find((obstacle) => overlaps(box, obstacle));
+		if (!blocking) return { box, clear: true, inside: true };
+		const next = { ...box, y: direction === "up" ? blocking.y - TAG_GAP - box.height : blocking.y + blocking.height + TAG_GAP };
+		if (!fits(next)) break;
+		box = next;
+	}
+	return { box, clear: false, inside: true };
+}
+
+/** True when two boxes share any area. Touching edges do not count. */
+export function overlaps(first: Rect, second: Rect): boolean {
+	return first.x < second.x + second.width && second.x < first.x + first.width && first.y < second.y + second.height && second.y < first.y + first.height;
+}
+
+const clamp = (value: number, low: number, high: number): number => Math.min(Math.max(value, low), high);
+
+function measureTagText(context: SKRSContext2D, text: string): number {
+	context.font = rendererFont(TAG_FONT_SIZE, "bold");
+	return context.measureText(text).width;
+}
+
+// The tag's box, its arrow from the box's near edge to the tip, then the name. The
+// arrow's base stays inside the box even when the box was clamped at the art's edge.
+function drawTag(context: SKRSContext2D, tag: TagPlacement, scale: number): void {
+	const { box, arrowTip, pointsDown } = tag;
+	const baseY = pointsDown ? box.y + box.height : box.y;
+	const baseX = clamp(arrowTip[0], box.x + TAG_ARROW_HALF_WIDTH, box.x + box.width - TAG_ARROW_HALF_WIDTH);
+	context.save();
+	context.fillStyle = TAG_FILL;
+	context.beginPath();
+	context.roundRect(box.x * scale, box.y * scale, box.width * scale, box.height * scale, (box.height / 2) * scale);
+	context.fill();
+	context.beginPath();
+	context.moveTo((baseX - TAG_ARROW_HALF_WIDTH) * scale, baseY * scale);
+	context.lineTo((baseX + TAG_ARROW_HALF_WIDTH) * scale, baseY * scale);
+	context.lineTo(arrowTip[0] * scale, arrowTip[1] * scale);
+	context.closePath();
+	context.fill();
+	context.restore();
+	drawText(context, tag.text, {
+		x: (box.x + box.width / 2) * scale,
+		y: (box.y + box.height / 2) * scale,
+		size: TAG_FONT_SIZE * scale,
+		weight: "bold",
+		color: TAG_INK,
+		align: "center",
+		baseline: "middle",
+	});
 }
 
 // ── placement ─────────────────────────────────────────────────────────

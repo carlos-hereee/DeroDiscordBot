@@ -178,12 +178,12 @@ async function closeExpiredAuction(client: Client, room: IGameRoom, now: number)
 	if (!result.ok) return false;
 	// A bid that landed after this sweep read the row wins the compare and swap, and
 	// the next tick closes the round with that bid counted.
-	const written = await persistIfUnchanged(room, state, result.state);
+	const written = await persistIfUnchanged(room, state, result.state, result.trailLines);
 	if (!written) return false;
 
 	// "system": no player pressed anything; the close happens because the clock ran out.
-	const sellerId = result.state.seats[result.state.activeSeatIndex].userId;
-	await applyMonopolyOutcome(client, room, result.state, { actorId: sellerId, kind: "system", lines: result.trailLines });
+	const sellerId = written.seats[written.activeSeatIndex].userId;
+	await applyMonopolyOutcome(client, room, state, written, { actorId: sellerId, kind: "system", lines: result.trailLines });
 	return true;
 }
 

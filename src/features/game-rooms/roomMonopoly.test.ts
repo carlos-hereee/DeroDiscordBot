@@ -106,7 +106,7 @@ describe("monopolyBoardEmbed", () => {
 
 		const board = await monopolyBoardEmbed(state);
 
-		expect(renderMock).toHaveBeenCalledWith(state);
+		expect(renderMock).toHaveBeenCalledWith(state, expect.any(Number), expect.any(Map));
 		expect(board.attachment).toBe(attachment);
 		expect(board.embed.data.image?.url).toBe(PICTURE_REF);
 		const description = board.embed.data.description ?? "";
@@ -121,7 +121,8 @@ describe("monopolyBoardEmbed", () => {
 
 describe("monopolyControlsRow", () => {
 	const idsByRow = (state: MonopolyState, viewerId: string) => rowsJson(state, viewerId).map((row) => row.map((button) => button.custom_id));
-	const ANY_TIME = [`gameroom:mtrade:${ROOM}`, `gameroom:minventory:${ROOM}`];
+	// Surrender is every seat's, last on the row (2026-10 item 254, Arcade 12).
+	const ANY_TIME = [`gameroom:mtrade:${ROOM}`, `gameroom:minventory:${ROOM}`, `gameroom:msurrender:${ROOM}`];
 
 	// A owns the whole brown group, unimproved, so a house is legal on either lot.
 	const brownOwner = (): MonopolyState => {
@@ -253,7 +254,7 @@ describe("monopolyControlsRow", () => {
 				expect(rows.length).toBeLessThanOrEqual(MAX_ROWS);
 				for (const row of rows) expect(row.length).toBeLessThanOrEqual(DISCORD_COMPONENTS_PER_ROW);
 				for (const id of rows.flat().map((button) => button.custom_id ?? "")) {
-					expect(id).toMatch(/^gameroom:(mroll|mbuy|mskip|mend|mjail|minventory|mbuild|mtrade|mauction):/);
+					expect(id).toMatch(/^gameroom:(mroll|mbuy|mskip|mend|mjail|minventory|mbuild|mtrade|mauction|msurrender):/);
 				}
 			}
 		}

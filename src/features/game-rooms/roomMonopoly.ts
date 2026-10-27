@@ -40,7 +40,7 @@ import { labelBotMentions } from "./botSeat.js";
 //        row or calls the engine's actions; it does not decide what is legal, it
 //        only declines to offer what plainly is not (the engine still refuses).
 // How:   at most TWO rows: the turn row (whose widest form is jail's three) and the
-//        any time row (Build, Trade, Inventory), well inside Discord's five per row
+//        any time row (Build, Trade, Inventory, Surrender), well inside Discord's five per row
 //        and the plan's four rows (risk M10). Mortgage controls live in the
 //        private Inventory peek rather than on the shared board. The board is a
 //        picture from monopolyRenderer when its art is on disk and the monospaced
@@ -62,10 +62,11 @@ export interface MonopolyBoardMessage {
 
 /**
  * The board message's embed: whose turn, what they can do, the board (a rendered
- * picture, or the token map when there is none), the seats, and the last move.
+ * picture, or the token map when there is none), the seats, and the turn so far.
+ * `names` labels each token on the picture (roomMonopolyBoard.seatNamesForBoard).
  */
-export async function monopolyBoardEmbed(state: MonopolyState): Promise<MonopolyBoardMessage> {
-	return monopolyBoardEmbedWith(state, await renderBoard(state));
+export async function monopolyBoardEmbed(state: MonopolyState, names: ReadonlyMap<string, string> = new Map()): Promise<MonopolyBoardMessage> {
+	return monopolyBoardEmbedWith(state, await renderBoard(state, Date.now(), names));
 }
 
 /**
@@ -73,14 +74,12 @@ export async function monopolyBoardEmbed(state: MonopolyState): Promise<Monopoly
  * `picture` is null. For a redraw that drew its picture behind the drawing pause.
  */
 export function monopolyBoardEmbedWith(state: MonopolyState, picture: ResolvedGameAsset | null): MonopolyBoardMessage {
-	const lastMove = state.log[state.log.length - 1]?.text ?? gameRoomsCopy.monopoly.noMovesYet;
-
 	// The picture REPLACES the token map rather than joining it, because the two
 	// show the same positions. The seat lines stay either way: they name every
 	// seat's tile in words, so nobody has to read the picture to play.
 	const board = picture ? [] : ["", gameRoomsCopy.monopoly.boardMapLabel, tokenMap(state)];
 
-	// The last move is the bottom line of the DESCRIPTION rather than the embed's
+	// The turn's lines are the bottom of the DESCRIPTION rather than the embed's
 	// footer, for two reasons: a footer is plain text, so the mention every engine
 	// line carries would render as raw digits, and the footer already holds the
 	// Dero brand line that every embed shares.
@@ -90,13 +89,40 @@ export function monopolyBoardEmbedWith(state: MonopolyState, picture: ResolvedGa
 		"",
 		state.seats.map((seat, index) => seatLine(state, seat, index)).join("\n"),
 		"",
-		`**${gameRoomsCopy.monopoly.lastMoveLabel}** ${lastMove}`,
+		...moveLines(state),
 	];
 
 	// Dero bot seats (2026-10 item 250 Phase 5) are named rather than mentioned.
 	const embed = infoEmbed(gameRoomsCopy.monopoly.boardTitle, labelBotMentions(description.join("\n")), COLORS.ARCADE as ColorResolvable);
 	if (!picture) return { embed, attachment: null };
 	return { embed: embed.setImage(picture.ref), attachment: picture.attachment };
+}
+
+// How much of the embed's 4096 character description the turn's lines may take, so
+// the status, map and seat lines above them always fit beside a long turn.
+const TURN_LINES_BUDGET = 2400;
+
+// The board carries the turn on the clock as it happens (2026-10 item 254, Arcade 8):
+// every line so far, newest last, so the board can stay the last message in the room
+// rather than scrolling up under one message per line. A turn too long for the budget
+// shows its latest lines and counts the rest, which its log message posts in full once
+// the turn passes. A state from before the turn log, or a turn with no line yet, shows
+// the last move as the board always did.
+function moveLines(state: MonopolyState): string[] {
+	const turnLog = state.turnLog ?? [];
+	if (turnLog.length === 0) {
+		const lastMove = state.log[state.log.length - 1]?.text ?? gameRoomsCopy.monopoly.noMovesYet;
+		return [`**${gameRoomsCopy.monopoly.lastMoveLabel}** ${lastMove}`];
+	}
+	const shown: string[] = [];
+	let used = 0;
+	for (let index = turnLog.length - 1; index >= 0; index--) {
+		used += turnLog[index].length + 1;
+		if (used > TURN_LINES_BUDGET && shown.length > 0) break;
+		shown.unshift(turnLog[index]);
+	}
+	const hidden = turnLog.length - shown.length;
+	return [`**${gameRoomsCopy.monopoly.thisTurnLabel}**`, ...(hidden > 0 ? [gameRoomsCopy.monopoly.earlierThisTurn(hidden)] : []), ...shown];
 }
 
 // Who is on the clock and what they can do, or who won.
@@ -363,6 +389,9 @@ function anyTimeButtons(state: MonopolyState, active: MonopolySeat, viewerId: st
 	const tradeLabel = state.pendingTrade ? gameRoomsCopy.monopoly.tradeOpenLabel : gameRoomsCopy.monopoly.tradeLabel;
 	buttons.push(button(roomId, "mtrade", tradeLabel, ButtonStyle.Secondary, "🤝"));
 	buttons.push(button(roomId, "minventory", gameRoomsCopy.monopoly.inventoryLabel, ButtonStyle.Secondary, "🎒"));
+	// Every seat's way out (2026-10 item 254, Arcade 12), at most the fourth button of
+	// this row. The press only opens a private confirm, so a slip costs nothing.
+	buttons.push(button(roomId, "msurrender", gameRoomsCopy.monopoly.surrenderLabel, ButtonStyle.Danger, "🏳️"));
 	return buttons;
 }
 

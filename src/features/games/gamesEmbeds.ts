@@ -245,7 +245,7 @@ export function buildBlackjackTableEmbed(table: BlackjackTable, revealDealer: bo
 		// "which of these am I playing" is otherwise guesswork.
 		const lines = seat.hands.map((hand, index) => {
 			const active = table.phase === "playing" && table.seats[table.turn]?.userId === seat.userId && seat.activeHand === index;
-			const notes = [hand.status === "bust" ? c.bustNote : null, hand.doubled ? c.doubledNote : null].filter(Boolean).join(", ");
+			const notes = [hand.status === "bust" ? c.bustNote : null, hand.status === "left" ? c.leftNote : null, hand.doubled ? c.doubledNote : null].filter(Boolean).join(", ");
 			const label = c.handLabel(index, seat.hands.length);
 			return `${active ? "▶ " : ""}${label}: ${renderHand(hand.cards)}  •  ${renderTotal(hand.cards)}${notes ? `  (${notes})` : ""}`;
 		});

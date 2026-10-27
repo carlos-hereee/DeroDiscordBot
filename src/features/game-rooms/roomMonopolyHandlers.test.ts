@@ -7,9 +7,13 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		// The compare and swap every Monopoly write goes through. A truthy return means
 		// the caller's read was still current; null means somebody else moved first.
 		updateSecretIf: vi.fn(),
+		// Moving the board to a fresh message at a turn change (2026-10 item 254, Arcade 8).
+		moveMonopolyBoard: vi.fn(),
 	},
 }));
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+// The board carries a turn's lines and the finished turn posts as one log message, so
+// a Monopoly move records through these two rather than one postMove per line.
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), postMoveLog: vi.fn(), recordCarriedMoves: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 // The dice. Mocked so a test names the exact roll it needs.
@@ -41,8 +45,11 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 const storeMock = gameRoomStore as unknown as {
 	findByRoomId: ReturnType<typeof vi.fn>;
 	updateSecretIf: ReturnType<typeof vi.fn>;
+	moveMonopolyBoard: ReturnType<typeof vi.fn>;
 };
 const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
+const carriedMock = roomTrail.recordCarriedMoves as unknown as ReturnType<typeof vi.fn>;
+const moveLogMock = roomTrail.postMoveLog as unknown as ReturnType<typeof vi.fn>;
 const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
 const awardMock = awardMultiPlayerResult as unknown as ReturnType<typeof vi.fn>;
 const diceMock = secureRandom as unknown as ReturnType<typeof vi.fn>;
@@ -73,16 +80,17 @@ function makeRoom(state: MonopolyState): IGameRoom {
 }
 
 function makeBoardMessage() {
-	return { edit: vi.fn().mockResolvedValue(undefined) };
+	return { edit: vi.fn().mockResolvedValue(undefined), delete: vi.fn().mockResolvedValue(undefined) };
 }
 
 function makeClient(boardMessage = makeBoardMessage()) {
 	const channel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, {
 		messages: { fetch: vi.fn().mockResolvedValue(boardMessage) },
+		send: vi.fn().mockResolvedValue({ id: "board-2", delete: vi.fn() }),
 	});
 	return {
 		channels: { fetch: vi.fn().mockResolvedValue(channel) },
-		guilds: { fetch: vi.fn().mockResolvedValue(null) },
+		guilds: { cache: new Map(), fetch: vi.fn().mockResolvedValue(null) },
 	} as unknown as Client;
 }
 
@@ -106,7 +114,13 @@ const swappedBoard = (boardMessage: ReturnType<typeof makeBoardMessage>): unknow
 
 // The state the handler persisted, off the compare and swap call.
 const persisted = (): MonopolyState => storeMock.updateSecretIf.mock.calls[0][3] as MonopolyState;
-const trailTexts = (): string[] => postMoveMock.mock.calls.map((call) => (call[2] as { text: string }).text);
+// Every line the move recorded, in order: those the board carried and those a turn's
+// log message carried, which is the whole transcript a move writes.
+type RecordedMove = { text: string };
+const trailTexts = (): string[] =>
+	[...moveLogMock.mock.calls.map((call) => (call[2] as { moves: RecordedMove[] }).moves), ...carriedMock.mock.calls.map((call) => call[1] as RecordedMove[])]
+		.flat()
+		.map((move) => move.text);
 const followUpText = (interaction: ReturnType<typeof makeInteraction>): string =>
 	(interaction.followUp.mock.calls[0][0] as { embeds: { data: { description?: string } }[] }).embeds[0].data.description ?? "";
 
@@ -120,6 +134,9 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.updateSecretIf.mockResolvedValue({} as never);
 	postMoveMock.mockResolvedValue(true);
+	moveLogMock.mockResolvedValue(true);
+	carriedMock.mockResolvedValue(undefined);
+	storeMock.moveMonopolyBoard.mockResolvedValue({});
 	finishMock.mockResolvedValue(true);
 	diceMock.mockReturnValueOnce(ROLL_ONE).mockReturnValueOnce(ROLL_TWO);
 	renderMock.mockResolvedValue(null);
@@ -144,8 +161,9 @@ describe("handleMroll", () => {
 		const deferAt = interaction.deferUpdate.mock.invocationCallOrder[0];
 		const readAt = storeMock.findByRoomId.mock.invocationCallOrder[0];
 		const writeAt = storeMock.updateSecretIf.mock.invocationCallOrder[0];
-		const editAt = boardMessage.edit.mock.invocationCallOrder[0];
-		const trailAt = postMoveMock.mock.invocationCallOrder[0];
+		const editAt = boardMessage.edit.mock.invocationCallOrder.at(-1)!;
+		// The board carries the line, so its edit lands before the transcript row (send first).
+		const trailAt = carriedMock.mock.invocationCallOrder[0];
 		expect(deferAt).toBeLessThan(readAt);
 		expect(readAt).toBeLessThan(writeAt);
 		expect(writeAt).toBeLessThan(editAt);
@@ -159,11 +177,13 @@ describe("handleMroll", () => {
 		await handleMroll(makeInteraction(A), room);
 
 		expect(refereeMock).toHaveBeenCalledOnce();
-		const [input] = refereeMock.mock.calls[0] as [{ room: IGameRoom; state: MonopolyState; lines: string[] }];
+		const [input] = refereeMock.mock.calls[0] as [{ room: IGameRoom; state: MonopolyState; lines: string[]; onSilent?: unknown }];
 		expect(input.room).toBe(room);
 		expect(input.state).toEqual(persisted());
 		expect(input.lines).toEqual(trailTexts());
-		expect(refereeMock.mock.invocationCallOrder[0]).toBeGreaterThan(postMoveMock.mock.invocationCallOrder.at(-1)!);
+		// The referee is told how to post the match's one silent notice (Arcade 7).
+		expect(typeof input.onSilent).toBe("function");
+		expect(refereeMock.mock.invocationCallOrder[0]).toBeGreaterThan(carriedMock.mock.invocationCallOrder.at(-1)!);
 	});
 
 	it("persists only against the turn it read, so a double click cannot roll twice", async () => {
@@ -194,7 +214,7 @@ describe("handleMroll", () => {
 
 		const payload = swappedBoard(boardMessage) as { components: { toJSON(): { components: { custom_id?: string }[] } }[] };
 		const ids = payload.components.flatMap((row) => row.toJSON().components.map((button) => button.custom_id));
-		expect(ids).toEqual(["gameroom:mbuy:room-1:burnt-umber-row", "gameroom:mskip:room-1", "gameroom:mtrade:room-1", "gameroom:minventory:room-1"]);
+		expect(ids).toEqual(["gameroom:mbuy:room-1:burnt-umber-row", "gameroom:mskip:room-1", "gameroom:mtrade:room-1", "gameroom:minventory:room-1", "gameroom:msurrender:room-1"]);
 	});
 
 	it("swaps the board picture on a redraw rather than stacking one per move", async () => {
@@ -211,7 +231,7 @@ describe("handleMroll", () => {
 			embeds: { data: { image?: { url: string } } }[];
 		};
 		// The board drawn is the state just persisted, not the one read before the move.
-		expect(renderMock).toHaveBeenCalledWith(persisted());
+		expect(renderMock).toHaveBeenCalledWith(persisted(), expect.any(Number), expect.any(Map));
 		expect(payload.files).toEqual([attachment]);
 		expect(payload.embeds[0].data.image?.url).toBe("attachment://monopoly-board-7.png");
 		// `attachments: []` drops the previous move's picture from the message.

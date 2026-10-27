@@ -405,17 +405,23 @@ async function removeFromMatch(client: Client, room: IGameRoom, userId: string, 
 	// 🗒️admin-log (2026-10 item 250 Phase 5), the same flow as removing a member otherwise.
 	if (isBotSeatId(userId)) logBotRemoved(client, room, userId, actorId);
 	else await revokeMemberOverwrite(client, room, userId);
-	await roomTrail.postMove(client, room, { actorId, kind: "system", text: words.kick.trailLine(actorId, userId) });
+	const trailLine = words.kick.trailLine(actorId, userId);
+
+	// Monopoly carries the line on its board with the forfeit it causes, so the board stays
+	// the last message in the room (2026-10 item 254, Arcade 8); it posts on its own only
+	// when there was no seat left to take out.
+	if (room.game === "monopoly") {
+		const removal = await removeFromMonopolyMatch(client, room, userId, actorId, trailLine);
+		if (removal !== "removed") await roomTrail.postMove(client, room, { actorId, kind: "system", text: trailLine });
+		return removal === "busy" ? words.kick.seatStillHeld(userId) : words.kick.removed(userId);
+	}
+	await roomTrail.postMove(client, room, { actorId, kind: "system", text: trailLine });
 
 	if (room.game === "battleship") {
 		// A two player match with one player removed has nobody to play: it ends
 		// through the abandoned path, which rates nothing and pays no room top up.
 		await roomLifecycle.finish(client, room, { abandoned: true });
 		return words.kick.removed(userId);
-	}
-	if (room.game === "monopoly") {
-		const removal = await removeFromMonopolyMatch(client, room, userId, actorId);
-		return removal === "busy" ? words.kick.seatStillHeld(userId) : words.kick.removed(userId);
 	}
 	const removal = await removeFromTable(client, room, userId, actorId);
 	// Nothing to take off the table (an invitee who never bought in) still changes the

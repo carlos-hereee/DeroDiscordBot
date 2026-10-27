@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ButtonInteraction, Client, StringSelectMenuInteraction } from "discord.js";
+import { TextChannel, type ButtonInteraction, type Client, type StringSelectMenuInteraction } from "discord.js";
 
-vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn() } }));
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn(), moveMonopolyBoard: vi.fn(async () => ({})) } }));
+// A Monopoly move's lines ride the board, or the finished turn's log message, rather than
+// one postMove each (2026-10 item 254, Arcade 8).
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), postMoveLog: vi.fn(async () => true), recordCarriedMoves: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn(async () => null) }));
@@ -22,11 +24,22 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 
 const storeMock = gameRoomStore as unknown as { findByRoomId: ReturnType<typeof vi.fn>; updateSecretIf: ReturnType<typeof vi.fn> };
 const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
+const carriedMock = roomTrail.recordCarriedMoves as unknown as ReturnType<typeof vi.fn>;
+const moveLogMock = roomTrail.postMoveLog as unknown as ReturnType<typeof vi.fn>;
+// Every line a move recorded, in order: the finished turn's log, then the board's.
+type RecordedMove = { actorId: string; kind: string; text: string };
+const recorded = (): RecordedMove[] =>
+	[...moveLogMock.mock.calls.map((call) => (call[2] as { moves: RecordedMove[] }).moves), ...carriedMock.mock.calls.map((call) => call[1] as RecordedMove[])].flat();
 
 const A = "player-a";
 const B = "player-b";
 // The board message is not reachable here, so the redraw step is a no-op.
-const client = { channels: { fetch: vi.fn(async () => null) }, guilds: { fetch: vi.fn(async () => null) } } as unknown as Client;
+// The room's channel, holding a board to edit or replace.
+const roomChannel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, {
+	messages: { fetch: vi.fn(async () => ({ edit: vi.fn(), delete: vi.fn() })) },
+	send: vi.fn(async () => ({ id: "board-2", delete: vi.fn() })),
+});
+const client = { channels: { fetch: vi.fn(async () => roomChannel) }, guilds: { cache: new Map(), fetch: vi.fn(async () => null) } } as unknown as Client;
 
 // A owns the whole brown group, so both brown lots take a house.
 function brownMatch(): MonopolyState {
@@ -100,7 +113,7 @@ describe("handleBuildSelect", () => {
 
 		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
 		expect(persisted().properties["vermillion-alley"].houses).toBe(1);
-		expect((postMoveMock.mock.calls[0][2] as { text: string }).text).toBe(`<@${A}> built a house on Vermillion Alley for $50.`);
+		expect(recorded()[0].text).toBe(`<@${A}> built a house on Vermillion Alley for $50.`);
 		const refreshed = interaction.editReply.mock.calls[0][0] as Picker;
 		expect(refreshed.content).toBe(gameRoomsCopy.monopoly.buildPickerAgain);
 		// Even building: Vermillion Alley is a house ahead, so only Burnt Umber Row is left.

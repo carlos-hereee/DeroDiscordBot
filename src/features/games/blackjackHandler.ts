@@ -20,10 +20,11 @@ import { withRenderFallback, type RenderPayload } from "@features/renderer/index
 import { gamesCopy } from "./gamesCopy.js";
 import { blackjackResultView, blackjackTableView, renderBlackjackResultCard, renderBlackjackTableCard } from "./blackjackRenderer.js";
 import { buildBlackjackResultEmbed, buildBlackjackSeatingEmbed, buildBlackjackTableEmbed } from "./gamesEmbeds.js";
-import { applyAction, createTable, legalActions, playDealer, settle, type BlackjackAction, type BlackjackTable, type SeatResult } from "./blackjackState.js";
+import { applyAction, applyLeave, createTable, legalActions, playDealer, settle, type BlackjackAction, type BlackjackTable, type SeatResult } from "./blackjackState.js";
 import { awardBlackjackResult } from "./gameXp.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
+import { roomTrail } from "@features/game-rooms/roomTrail.js";
 import { drawingSettled, isClockExpired, pausedDeadline, withDrawingPause } from "@features/game-rooms/drawingPause.js";
 
 // ── /mini-game blackjack ───────────────────────────────────────────────────
@@ -207,6 +208,9 @@ function actionRow(channelId: string, table: BlackjackTable): ActionRowBuilder<B
 				.setDisabled(!allowed.includes(action))
 		);
 	}
+	// Leave is any seat's, on the clock or not (2026-10 item 254, Arcade 12), so it is never
+	// disabled; the engine refuses a member with no seat. The fifth and last button a row holds.
+	row.addComponents(new ButtonBuilder().setCustomId(customId(channelId, "leave")).setLabel(c.leaveHandLabel).setStyle(ButtonStyle.Danger));
 	return row;
 }
 
@@ -451,6 +455,10 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 	}
 
 	// ── playing phase ──
+	if (action === "leave") {
+		await leaveDuringHand(click, game, channelId);
+		return;
+	}
 	if (!(["hit", "stand", "double", "split"] as string[]).includes(action)) return;
 
 	const outcome = applyAction(game.table, click.user.id, action as BlackjackAction);
@@ -477,6 +485,31 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 	}
 
 	await redrawTable(channelId, game.table, clickWriter(click));
+}
+
+// ── leaving during a hand (2026-10 item 254, Arcade 12) ──
+// The seat gives its hand up as a loss (applyLeave), then the table goes on exactly as
+// after an action: settled if nobody is left to act, redrawn otherwise. In a room the
+// trail gets one line saying who left; the inline forms keep no trail. Blackjack plays
+// for no chips, so a loss here costs what any lost hand costs and refunds nothing.
+async function leaveDuringHand(click: ButtonInteraction, game: BlackjackGame, channelId: string): Promise<void> {
+	const c = gamesCopy.blackjack;
+	if (!game.table) return;
+	const outcome = applyLeave(game.table, click.user.id);
+	if (outcome.status !== "left") {
+		const refusal = outcome.status === "already-left" ? c.leftAlready : c.notPlaying;
+		await click.reply({ embeds: [errorEmbed(refusal)], flags: MessageFlags.Ephemeral });
+		return;
+	}
+	if (game.roomId) {
+		void roomTrail.postMove(click.client, { guildId: game.guildId, roomId: game.roomId, channelId }, { actorId: click.user.id, kind: "forfeit", text: c.leftTrail(click.user.id) });
+	}
+
+	const result = game.table.phase === "dealer" ? settleGame(game, channelId, click.client) : null;
+	if (result) await redrawResult(channelId, result, clickWriter(click));
+	else await redrawTable(channelId, game.table, clickWriter(click));
+	await click.followUp({ content: c.leftHand, flags: MessageFlags.Ephemeral }).catch(() => undefined);
+	if (result) game.stop();
 }
 
 // ── phase transitions ───────────────────────────────────────────────────────

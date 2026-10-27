@@ -15,6 +15,8 @@ import { memberIdsOnly } from "./botSeat.js";
 //        Mongo transcript are two renderings of one history, and the only way they
 //        cannot disagree is if exactly one function writes both (house rule 17).
 // How:   send FIRST, append SECOND, and never the reverse. See the ordering note below.
+//        Monopoly is the one game that gathers lines (postMoveLog, recordCarriedMoves),
+//        so its board can stay the last message; the same order binds both.
 
 export interface RoomMoveInput {
 	actorId: string;
@@ -114,4 +116,83 @@ export async function postMove(
 	return true;
 }
 
-export const roomTrail = { postMove };
+// ── several moves in one message (2026-10 item 254, Arcade 8) ─────────
+// Monopoly gathers a turn's lines rather than posting one message per line, so its
+// board can stay the last message in the room. The rule above holds unchanged: a
+// line reaches the transcript only after the message carrying it was sent or edited.
+
+// Discord's ceiling on a message's content.
+const MAX_CONTENT_LENGTH = 2000;
+
+// The lines packed into as few messages as fit. One turn almost always fits in one;
+// a turn long enough not to (a run of bids and trades) takes a second rather than
+// losing its tail to Discord's refusal of the whole send.
+function packLines(lines: readonly string[]): string[] {
+	const messages: string[] = [];
+	let current = "";
+	for (const line of lines) {
+		const clipped = line.slice(0, MAX_CONTENT_LENGTH);
+		const joined = current ? `${current}\n${clipped}` : clipped;
+		if (joined.length <= MAX_CONTENT_LENGTH) {
+			current = joined;
+			continue;
+		}
+		messages.push(current);
+		current = clipped;
+	}
+	if (current) messages.push(current);
+	return messages;
+}
+
+/**
+ * Append moves that a message the CALLER already sent or edited shows, in order. For a
+ * surface that carries its lines itself, such as the Monopoly board: call it only after
+ * that send or edit resolved, which is what keeps the send first rule. Never throws.
+ */
+export async function recordCarriedMoves(room: Pick<IGameRoom, "guildId" | "roomId">, moves: readonly RoomMoveInput[]): Promise<void> {
+	for (const move of moves) {
+		try {
+			await gameRoomStore.appendMove(room.guildId, room.roomId, { actorId: move.actorId, at: new Date(), kind: move.kind, text: move.text, meta: move.meta });
+		} catch (error) {
+			// The same tolerable direction as postMove: the players saw the line.
+			console.error("[game-rooms] carried move shown but transcript append failed", { guildId: room.guildId, roomId: room.roomId, error });
+		}
+	}
+}
+
+/**
+ * Post several lines as one message (two only past Discord's length limit), then
+ * append `moves`, the lines among them the transcript does not hold yet. `shown` may
+ * open with lines already recorded when an earlier message carried them, such as a
+ * Monopoly turn's lines that rode the board while the turn ran. Pings nobody: a log
+ * of a finished turn is read, not answered. False, with nothing appended, when a
+ * message did not reach the channel.
+ */
+export async function postMoveLog(
+	client: Client,
+	room: Pick<IGameRoom, "guildId" | "roomId" | "channelId"> & Partial<Pick<IGameRoom, "network" | "satellites">>,
+	log: { shown: readonly string[]; moves: readonly RoomMoveInput[] }
+): Promise<boolean> {
+	if (log.shown.length === 0) return true;
+	const channel = await resolveRoomChannel(client, room.channelId);
+	if (!channel) {
+		console.warn("[game-rooms] move log dropped, room channel unresolvable", { guildId: room.guildId, roomId: room.roomId, channelId: room.channelId });
+		return false;
+	}
+
+	const labelled = await Promise.all(log.shown.map((line) => labelForRoom(client, { network: room.network ?? false }, line)));
+	const messages = packLines(labelled);
+	try {
+		// The same pin as postMove's, emptied: a log names players, and none of them is asked to act on it.
+		for (const content of messages) await channel.send({ content, allowedMentions: { parse: [] } });
+	} catch (error) {
+		console.error("[game-rooms] move log send failed, transcript deliberately not written", { guildId: room.guildId, roomId: room.roomId, error });
+		return false;
+	}
+
+	await recordCarriedMoves(room, log.moves);
+	if (room.satellites?.length) for (const content of messages) void relayMove(client, { roomId: room.roomId, satellites: room.satellites }, content);
+	return true;
+}
+
+export const roomTrail = { postMove, postMoveLog, recordCarriedMoves };

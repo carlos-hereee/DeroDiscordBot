@@ -61,7 +61,7 @@ export interface BlackjackResultView {
 }
 
 /** Where a hand stands while the table plays: on the clock, not reached yet, or done. */
-export type BlackjackHandStanding = "acting" | "waiting" | "stood" | "bust" | "blackjack";
+export type BlackjackHandStanding = "acting" | "waiting" | "stood" | "bust" | "blackjack" | "left";
 
 export interface BlackjackTableHandRow {
 	name: string;
@@ -136,7 +136,8 @@ function handStanding(table: BlackjackTable, hand: Hand, isOnTheClock: boolean):
 
 // Bump whenever the drawing changes, or members keep seeing cached cards.
 const BLACKJACK_CARD_VERSION = 2;
-const BLACKJACK_TABLE_CARD_VERSION = 1;
+// 2: a hand whose seat left during the hand (2026-10 item 254, Arcade 12) wears LEFT.
+const BLACKJACK_TABLE_CARD_VERSION = 2;
 const CARD_WIDTH = 960;
 const PADDING = 32;
 const ROW_HEIGHT = 136;
@@ -171,6 +172,7 @@ const STANDING_FILL: Record<BlackjackHandStanding, ColorResolvable> = {
 	stood: COLORS.CARD_TEXT_SECONDARY,
 	bust: COLORS.CARD_OUTCOME_LOSE,
 	blackjack: COLORS.CARD_OUTCOME_WIN,
+	left: COLORS.CARD_OUTCOME_LOSE,
 };
 
 // A waiting hand's pill sits on the row in the nested shade, so its label takes the
@@ -181,6 +183,7 @@ const STANDING_INK: Record<BlackjackHandStanding, ColorResolvable> = {
 	stood: COLORS.CARD_BACKGROUND,
 	bust: COLORS.CARD_BACKGROUND,
 	blackjack: COLORS.CARD_BACKGROUND,
+	left: COLORS.CARD_BACKGROUND,
 };
 
 function outcomeLabel(outcome: HandOutcome): string {
@@ -197,6 +200,7 @@ function standingLabel(standing: BlackjackHandStanding): string {
 		stood: c.cardStood,
 		bust: c.cardBust,
 		blackjack: c.outcomeBlackjack,
+		left: c.cardLeft,
 	};
 	return labels[standing].toUpperCase();
 }

@@ -20,6 +20,7 @@ import { createInitialState as createMonopolyState } from "@features/games/monop
 import { chipTableFor } from "./holdemChips.js";
 import { botSeatName, labelBotMentions } from "./botSeat.js";
 import { monopolyBoardEmbed, monopolyControlsRow } from "./roomMonopoly.js";
+import { seatNamesForBoard } from "./roomMonopolyBoard.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -509,8 +510,9 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 		// The bots sit after the members, each on the token its name says (botSeat).
 		const state = createMonopolyState([...playerIds, ...botIds], { auctionsEnabled: input.monopolyAuctions ?? false });
 		// The board picture, when its art is on disk, rides the same message as the
-		// embed whose image points at it; with no art it is the text map alone.
-		const { embed, attachment } = await monopolyBoardEmbed(state);
+		// embed whose image points at it; with no art it is the text map alone. Each
+		// token wears its player's name from the first board on (2026-10 item 254, Arcade 12).
+		const { embed, attachment } = await monopolyBoardEmbed(state, await seatNamesForBoard(guild.client, room, state));
 		const boardMessage = await channel
 			.send({
 				embeds: [embed],

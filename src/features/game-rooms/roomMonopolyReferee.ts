@@ -1,10 +1,10 @@
-import type { Client, Guild } from "discord.js";
+import type { Client } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { MonopolyState } from "@features/games/monopolyState.js";
-import { defaultCallAnnouncerDeps, speakInCall, type CallAnnouncerDeps } from "@features/voice/callAnnouncer.js";
+import { defaultCallAnnouncerDeps, isVoiceEnabled, speakInCall, type CallAnnouncement, type CallAnnouncerDeps } from "@features/voice/callAnnouncer.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { botSeatName, isBotSeatId, memberIdsOnly } from "./botSeat.js";
+import { displayNamesIn, isTurnHandoffLine, PLAYER_MENTION_PATTERN } from "./roomMonopolyBoard.js";
 
 // ── roomMonopolyReferee ──────────────────────────────────────────────
 // What:  Dero as a Monopoly match's voice referee: the key moments of each move
@@ -33,9 +33,9 @@ import { botSeatName, isBotSeatId, memberIdsOnly } from "./botSeat.js";
 // idle sweep (gameRoomsCopy.monopoly.idle*) writes. The tests drive these from real
 // engine results, so a reworded trail line turns a test red rather than going quiet.
 // Hyphens too: a Dero bot seat's mention is `<@dero-bot-red>` (2026-10 item 250 Phase 5).
-const PLAYER = String.raw`<@!?[\w-]+>`;
-
-const TURN_HANDOFF = new RegExp(String.raw`^It is now ${PLAYER}'s turn\.$`);
+// The mention pattern and the handoff check live with the board, which splits a turn's
+// log on the same line (roomMonopolyBoard).
+const PLAYER = PLAYER_MENTION_PATTERN;
 const RENT_PAID = new RegExp(String.raw`^${PLAYER} paid \$(\d+) rent to ${PLAYER}\.$`);
 const CARD_DRAWN = new RegExp(String.raw`^${PLAYER} drew `);
 
@@ -74,7 +74,7 @@ function withoutCardFlavor(line: string): string {
 }
 
 function spokenForm(line: string): string | null {
-	if (TURN_HANDOFF.test(line)) return line;
+	if (isTurnHandoffLine(line)) return line;
 	if (CARD_DRAWN.test(line)) return withoutCardFlavor(line);
 	const rent = RENT_PAID.exec(line);
 	if (rent) return Number(rent[1]) >= BOT_CONSTANTS.MONOPOLY_REFEREE_BIG_RENT ? line : null;
@@ -87,7 +87,7 @@ export function pickRefereeLines(lines: readonly string[]): SpokenRefereeLine[] 
 	const spoken: SpokenRefereeLine[] = [];
 	for (const line of lines) {
 		const text = spokenForm(line);
-		if (text !== null) spoken.push({ text, handoff: TURN_HANDOFF.test(line) });
+		if (text !== null) spoken.push({ text, handoff: isTurnHandoffLine(line) });
 	}
 	return spoken;
 }
@@ -121,19 +121,6 @@ function mentionedIds(clips: readonly string[]): string[] {
 	return [...ids];
 }
 
-// The cache first, then ONE fetch for whoever it lacks, rather than resolveParticipants'
-// fetch of everyone: this runs on every spoken move, and a fetch of a user list is a
-// gateway request each time, while seated players are almost always cached already.
-async function displayNamesIn(guild: Guild, userIds: readonly string[]): Promise<Map<string, string>> {
-	// A Dero bot is said by its name and never fetched: its id is not a member's, and one
-	// bad id in the list would fail the fetch for every member in it.
-	const missing = memberIdsOnly(userIds).filter((userId) => !guild.members.cache.has(userId));
-	if (missing.length > 0) await guild.members.fetch({ user: missing }).catch(() => null);
-	const fallback = gameRoomsCopy.monopoly.refereeUnknownPlayer;
-	const nameOf = (userId: string): string => (isBotSeatId(userId) ? botSeatName(userId) : (guild.members.cache.get(userId)?.displayName ?? fallback));
-	return new Map(userIds.map((userId) => [userId, nameOf(userId)]));
-}
-
 /** A clip with every mention replaced by that member's display name. */
 export function withNames(clip: string, names: ReadonlyMap<string, string>): string {
 	return clip.replace(MENTION, (_mention, userId: string) => names.get(userId) ?? gameRoomsCopy.monopoly.refereeUnknownPlayer);
@@ -145,21 +132,57 @@ export function withNames(clip: string, names: ReadonlyMap<string, string>): str
 // leaves nothing behind.
 const refereeChains = new Map<string, Promise<void>>();
 
+/**
+ * Why the referee could not speak a move (2026-10 item 254, Arcade 7): the guild's voice
+ * is switched off, Dero is in no call, no seat still playing is in Dero's call, or the
+ * month's speech budget is spent. A failed render is none of these and says nothing.
+ */
+export type RefereeSilence = "voiceOff" | "noCall" | "noPlayerInCall" | "budgetSpent";
+
 // ④ Re-checked at delivery, not at announce, because a clip waits behind the ones
 // before it and the call can change in between. The call announcer checks the call
-// again, plus the voice config and the spend cap, for every clip.
-async function deliver(client: Client, guildId: string, seatIds: readonly string[], clips: readonly string[], deps: CallAnnouncerDeps): Promise<void> {
+// again, plus the voice config and the spend cap, for every clip. Every check that
+// stops a move's clips names its reason to `onSilent`; the referee never joins a call
+// to fix one (the owner's decision 16), it only says why.
+async function deliver(
+	client: Client,
+	guildId: string,
+	seatIds: readonly string[],
+	clips: readonly string[],
+	deps: CallAnnouncerDeps,
+	onSilent: (reason: RefereeSilence) => void
+): Promise<void> {
 	const call = deps.sessionIn(guildId);
-	if (!call) return;
+	if (!call) {
+		// Voice off is the cause worth naming first: switching it on is the first fix.
+		onSilent((await isVoiceEnabled(guildId, deps)) ? "noCall" : "voiceOff");
+		return;
+	}
 	const guild = client.guilds.cache.get(guildId);
 	if (!guild) return;
 	// Never call a match into a call nobody from the match is in.
 	const seatInCall = seatIds.some((userId) => guild.voiceStates.cache.get(userId)?.channelId === call.channelId);
-	if (!seatInCall) return;
+	if (!seatInCall) {
+		onSilent("noPlayerInCall");
+		return;
+	}
 
 	const names = await displayNamesIn(guild, mentionedIds(clips));
-	for (const clip of clips) await speakInCall(guildId, withNames(clip, names), deps);
+	for (const clip of clips) {
+		const outcome = await speakInCall(guildId, withNames(clip, names), deps);
+		if (outcome === "spoken" || outcome === "failed") continue;
+		onSilent(SILENCE_OF[outcome]);
+		return;
+	}
 }
+
+// The announcer's refusals that are a referee silence. A call that ended between two
+// clips reads as no call, since that is what the room now has.
+const SILENCE_OF: Record<Exclude<CallAnnouncement, "spoken" | "failed">, RefereeSilence> = {
+	noCall: "noCall",
+	voiceOff: "voiceOff",
+	budgetSpent: "budgetSpent",
+};
 
 export interface AnnounceRefereeInput {
 	client: Client;
@@ -168,6 +191,8 @@ export interface AnnounceRefereeInput {
 	state: MonopolyState;
 	/** The move's trail lines, exactly as posted. */
 	lines: readonly string[];
+	/** Told why, when a move's clips could not be spoken; roomMonopolyRefereeNotice posts the one notice. */
+	onSilent?: (reason: RefereeSilence) => void;
 }
 
 /**
@@ -175,7 +200,7 @@ export interface AnnounceRefereeInput {
  * forget: it never throws and never delays the caller, and a room without the
  * referee costs one field read.
  */
-export function announceReferee({ client, room, state, lines }: AnnounceRefereeInput, deps: CallAnnouncerDeps = defaultCallAnnouncerDeps): void {
+export function announceReferee({ client, room, state, lines, onSilent = () => undefined }: AnnounceRefereeInput, deps: CallAnnouncerDeps = defaultCallAnnouncerDeps): void {
 	if (!room.monopolyReferee) return;
 	try {
 		const clips = groupIntoClips(pickRefereeLines(lines));
@@ -185,7 +210,7 @@ export function announceReferee({ client, room, state, lines }: AnnounceRefereeI
 
 		const previous = refereeChains.get(roomId) ?? Promise.resolve();
 		const next = previous
-			.then(() => deliver(client, room.guildId, seatIds, clips, deps))
+			.then(() => deliver(client, room.guildId, seatIds, clips, deps, onSilent))
 			.catch((error) => console.error(`[monopoly-referee] announcement failed room=${roomId}`, error));
 		refereeChains.set(roomId, next);
 		void next.finally(() => {

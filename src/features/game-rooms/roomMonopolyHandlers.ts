@@ -1,6 +1,5 @@
 import {
 	MessageFlags,
-	TextChannel,
 	type ButtonInteraction,
 	type Client,
 	type ModalSubmitInteraction,
@@ -24,15 +23,15 @@ import {
 } from "@features/games/monopolyState.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { awardMultiPlayerResult } from "@features/games/gameXp.js";
-import { monopolyWinnerView, renderBoard, renderWinnerCard } from "@features/games/monopolyRenderer.js";
+import { monopolyWinnerView, renderWinnerCard } from "@features/games/monopolyRenderer.js";
 import { withRenderFallback } from "@features/renderer/index.js";
 import { monopolyFinishingOrder, recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
-import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { monopolyOutcome, type FinishCause, type OutcomeBucket } from "./matchOutcome.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { auctionClosesAt, monopolyBoardEmbedWith, monopolyControlsRow, monopolyInventoryReply } from "./roomMonopoly.js";
-import { roomDrawingKey, withDrawingPause } from "./drawingPause.js";
+import { auctionClosesAt, monopolyInventoryReply } from "./roomMonopoly.js";
+import { monopolyStateOf, placeMonopolyBoard, splitTurnLines, withTurnLog } from "./roomMonopolyBoard.js";
+import { postRefereeNotice } from "./roomMonopolyRefereeNotice.js";
 import { announceReferee } from "./roomMonopolyReferee.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { RoomMoveKind } from "./roomTypes.js";
@@ -41,7 +40,8 @@ import { botSeatName, isBotSeatId, memberIdsOnly } from "./botSeat.js";
 // ── roomMonopolyHandlers ─────────────────────────────────────────────
 // What:  every Monopoly button: roll, buy, skip, end turn, the three ways out of
 //        jail, and the private Inventory peek. Plus the shared tail (persist,
-//        redraw, trail, finish) the idle sweep in roomTurnSweep reuses.
+//        place the board with the trail, finish) the idle sweep in roomTurnSweep
+//        reuses; where the board goes is roomMonopolyBoard's.
 // Who:   routed from gameRoomHandlers after its playersOnly gate; the idle sweep
 //        calls applyMonopolyOutcome directly, and the trade, auction and build
 //        modules (roomMonopolyTrade, roomMonopolyAuction, roomMonopolyBuild) commit
@@ -52,22 +52,14 @@ import { botSeatName, isBotSeatId, memberIdsOnly } from "./botSeat.js";
 //        every rule; this file only loads, persists and announces.
 // How:   ① acknowledge, ② re-read the row, ③ refuse a seat that is not on the
 //        clock, ④ apply the pure action, ⑤ persist only if nobody moved first,
-//        ⑥ redraw the board, ⑦ post the trail, ⑧ finish and pay if it ended.
+//        ⑥ ⑦ place the board, which carries the trail, ⑧ finish and pay if it ended.
 
 const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 
 const JAIL_CHOICES: readonly JailChoice[] = ["bail", "card", "roll"];
 
-/**
- * The match stored on a room row, or null for a row with no board yet. Through
- * `unknown` because IGameRoom types `secret` as hangman's RoomSecret, the shape the
- * Mixed field was first written for; the `seats` check is what tells a Monopoly
- * state apart from a row whose secret was never seeded.
- */
-export function monopolyStateOf(room: IGameRoom | null): MonopolyState | null {
-	const stored = room?.secret as unknown as Partial<MonopolyState> | null | undefined;
-	return Array.isArray(stored?.seats) ? (stored as MonopolyState) : null;
-}
+// Re-exported so every caller keeps one import for the Monopoly room layer.
+export { monopolyStateOf };
 
 // ── persistence ───────────────────────────────────────────────────────
 // What the persist below compares against: the turn as the caller READ it.
@@ -84,11 +76,17 @@ export function monopolyStateOf(room: IGameRoom | null): MonopolyState | null {
 // they were, so without the revision a roll computed from a read taken before an
 // accepted trade would write the pre-trade lots and chips back over it. The turn
 // fields stay as a second check that costs nothing.
+//
+// The board's message id is in it too (2026-10 item 254, Arcade 8). Moving the board
+// writes only that one field and leaves the revision alone, so without it a move read
+// before the board moved would write the old id back with the rest of the blob, and the
+// match would point at the board that was just deleted.
 export function turnFingerprint(state: MonopolyState): Record<string, unknown> {
 	const index = state.activeSeatIndex;
 	const seat = state.seats[index];
 	return {
 		"secret.revision": state.revision,
+		"secret.boardMessageId": state.boardMessageId,
 		"secret.phase": state.phase,
 		"secret.activeSeatIndex": index,
 		"secret.doublesStreak": state.doublesStreak,
@@ -101,70 +99,43 @@ export function turnFingerprint(state: MonopolyState): Record<string, unknown> {
 	};
 }
 
-/** Persist `next` only if the row still holds the turn `read` describes. Null means somebody else moved first. */
-export async function persistIfUnchanged(room: IGameRoom, read: MonopolyState, next: MonopolyState) {
-	return gameRoomStore.updateSecretIf(room.guildId, room.roomId, turnFingerprint(read), next);
+/**
+ * Persist `next` only if the row still holds the turn `read` describes, stamped with the
+ * turn log the board will carry (`lines` are the move's trail lines, as they will post).
+ * Answers the state as written, which is what applyMonopolyOutcome takes, or null when
+ * somebody else moved first.
+ */
+export async function persistIfUnchanged(room: IGameRoom, read: MonopolyState, next: MonopolyState, lines: readonly string[]): Promise<MonopolyState | null> {
+	const stamped = withTurnLog(read, next, lines);
+	const written = await gameRoomStore.updateSecretIf(room.guildId, room.roomId, turnFingerprint(read), stamped);
+	return written ? stamped : null;
 }
 
 // ── the shared tail ───────────────────────────────────────────────────
-// Redraw the one board message. Cosmetic, so a failure is logged and swallowed:
-// the row is the truth and the next press redraws from it.
-export async function redrawMonopolyBoard(client: Client, room: IGameRoom, state: MonopolyState): Promise<void> {
-	if (!state.boardMessageId || !room.channelId) return;
-	const channel = await client.channels.fetch(room.channelId).catch(() => null);
-	if (!(channel instanceof TextChannel)) return;
-	const message = await channel.messages.fetch(state.boardMessageId).catch(() => null);
-	if (!message) return;
-
-	// Rendered for the seat on the clock, because the board is one shared message
-	// and that seat is the only one whose buttons do anything. Behind the drawing
-	// pause, so the idle and auction clocks hold while the picture renders.
-	const activeId = state.seats[state.activeSeatIndex].userId;
-	await withDrawingPause({
-		gameKey: roomDrawingKey(room),
-		showStatus: (status) => message.edit({ content: status }),
-		render: () => renderBoard(state),
-		fallback: () => null,
-		swapIn: (picture) => {
-			const { embed, attachment } = monopolyBoardEmbedWith(state, picture);
-			return message.edit({
-				content: null,
-				embeds: [embed],
-				components: monopolyControlsRow(state, activeId, room.roomId),
-				// ⚠️ `attachments: []` IS LOAD BEARING. An edit keeps the message's existing
-				// files unless told otherwise, so without it every move would stack one more
-				// board picture on the message, and a redraw that fell back to text would
-				// leave the last picture hanging under the embed. It must be a fresh array
-				// per call: discord.js pushes the new upload into the one it is given.
-				attachments: [],
-				files: attachment ? [attachment] : [],
-			});
-		},
-	}).catch((error) => console.warn("[game-rooms] failed to redraw the monopoly board", error));
-}
-
 /**
- * Everything after a move has been PERSISTED, whoever caused it: redraw, post each
- * trail line, hand them to the voice referee, then finish and pay if the match just
- * ended. The button path and the idle sweep both end here so a forfeit for
- * inactivity reads like any other move; the sweep puts its own "out for inactivity"
- * line ahead of the engine's in `lines`.
+ * Everything after a move has been PERSISTED, whoever caused it: place the board (which
+ * carries the turn's lines, or posts the finished turn's log above a new board), hand
+ * the lines to the voice referee, then finish and pay if the match just ended. The
+ * button path and the idle sweep both end here so a forfeit for inactivity reads like
+ * any other move; the sweep puts its own "out for inactivity" line ahead of the
+ * engine's in `lines`. `read` is the match the move was computed from and `state` what
+ * persistIfUnchanged wrote.
  */
 export async function applyMonopolyOutcome(
 	client: Client,
 	room: IGameRoom,
+	read: MonopolyState,
 	state: MonopolyState,
 	trail: { actorId: string; kind: RoomMoveKind; lines: string[] },
 	// "timeout" when the idle sweep's forfeit is what ended it (post-launch plan item 21).
 	cause: FinishCause = "played"
 ): Promise<void> {
-	await redrawMonopolyBoard(client, room, state);
-	for (const text of trail.lines) {
-		await roomTrail.postMove(client, room, { actorId: trail.actorId, kind: trail.kind, text });
-	}
+	const split = splitTurnLines(read, state, trail.lines);
+	await placeMonopolyBoard(client, room, state, { split, actorId: trail.actorId, kind: trail.kind });
 	// Voice only, for a room whose host turned the referee on. Fire and forget, so a
-	// slow render never holds up the finish below or the next press.
-	announceReferee({ client, room, state, lines: trail.lines });
+	// slow render never holds up the finish below or the next press. A move it cannot
+	// speak posts the match's one notice saying why (2026-10 item 254, Arcade 7).
+	announceReferee({ client, room, state, lines: trail.lines, onSilent: (reason) => void postRefereeNotice(client, room, reason) });
 	if (state.phase === "finished") await finishMonopolyMatch(client, room, state, cause);
 }
 
@@ -261,7 +232,9 @@ export async function commitMonopolyMove(
 	room: IGameRoom,
 	actorId: string,
 	move: MonopolyMove,
-	options: { onTurnOnly: boolean }
+	// `kind` is the transcript kind of the move's lines: "guess" unless the caller says
+	// otherwise, such as a removal's "system" or a surrender's "forfeit".
+	options: { onTurnOnly: boolean; kind?: RoomMoveKind }
 ): Promise<CommitOutcome> {
 	// ② Re-read rather than trust the row the router loaded: it is a few hundred
 	// milliseconds older, and a stale read only loses the compare and swap below.
@@ -283,14 +256,23 @@ export async function commitMonopolyMove(
 
 	// ⑤ Claim it BEFORE announcing it. The loser of a double click says nothing to
 	// the channel, rather than posting a trail line for a move that never landed.
-	const written = await persistIfUnchanged(fresh, state, result.state);
+	const written = await persistIfUnchanged(fresh, state, result.state, result.trailLines);
 	if (!written) return { ok: false, reason: gameRoomsCopy.monopoly.boardBusy };
 
-	// ⑥ ⑦ ⑧ Redraw, then the trail, then the ending. "guess" is the trail kind every
+	// ⑥ ⑦ ⑧ The board with the trail, then the ending. "guess" is the trail kind every
 	// player made move uses (hold em's narration too); "system" is for lines no
 	// player pressed for.
-	await applyMonopolyOutcome(client, fresh, result.state, { actorId, kind: "guess", lines: result.trailLines });
-	return { ok: true, state: result.state };
+	await applyMonopolyOutcome(client, fresh, state, written, { actorId, kind: options.kind ?? "guess", lines: result.trailLines });
+	return { ok: true, state: written };
+}
+
+/**
+ * A move's result with `lines` posted ahead of the engine's own, for the room layer's
+ * reason a move happened (the host removed a seat, a seat surrendered), so the reason
+ * rides the board with the move instead of posting as a message of its own below it.
+ */
+export function withLeadLines(result: MonopolyResult, lines: readonly string[]): MonopolyResult {
+	return result.ok ? { ...result, trailLines: [...lines, ...result.trailLines] } : result;
 }
 
 // ── the host removing a seat (2026-10 item 244 Phase 4) ───────────────
@@ -305,11 +287,14 @@ export type MatchRemoval = "removed" | "notInMatch" | "busy";
  * and commitMonopolyMove re-reads that row.
  *
  * A lost compare and swap (a move landed first) is retried up to GAME_ROOM_KICK_ATTEMPTS
- * times; any other refusal means the seat is already out or was never seated.
+ * times; any other refusal means the seat is already out or was never seated. The
+ * host's "removed" line leads the engine's lines on the board (`leadLine`), so the board
+ * stays the last message in the room; on any refusal it is the caller's to post.
  */
-export async function removeFromMonopolyMatch(client: Client, room: IGameRoom, userId: string, actorId: string): Promise<MatchRemoval> {
+export async function removeFromMonopolyMatch(client: Client, room: IGameRoom, userId: string, actorId: string, leadLine?: string): Promise<MatchRemoval> {
+	const lead = leadLine ? [leadLine] : [];
 	for (let attempt = 0; attempt < BOT_CONSTANTS.GAME_ROOM_KICK_ATTEMPTS; attempt++) {
-		const outcome = await commitMonopolyMove(client, room, actorId, (state) => applyForfeit(state, userId), { onTurnOnly: false });
+		const outcome = await commitMonopolyMove(client, room, actorId, (state) => withLeadLines(applyForfeit(state, userId), lead), { onTurnOnly: false, kind: "system" });
 		if (outcome.ok) return "removed";
 		if (outcome.reason !== gameRoomsCopy.monopoly.boardBusy) return "notInMatch";
 	}

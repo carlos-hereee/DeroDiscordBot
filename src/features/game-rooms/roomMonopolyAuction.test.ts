@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ButtonInteraction, Client, ModalSubmitInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn(), findPlayingByGame: vi.fn() },
+	gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn(), findPlayingByGame: vi.fn(), moveMonopolyBoard: vi.fn(async () => ({})) },
 }));
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+// A Monopoly move's lines ride the board, or the finished turn's log message, rather than
+// one postMove each (2026-10 item 254, Arcade 8).
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), postMoveLog: vi.fn(async () => true), recordCarriedMoves: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 // The auction card answers null unless a case hands one back, so the other cases
@@ -22,7 +24,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { renderAuctionCard } from "@features/games/monopolyRenderer.js";
-import { AttachmentBuilder } from "discord.js";
+import { AttachmentBuilder, TextChannel } from "discord.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomMonopolyAuction ──────────────────────────────────────────────
@@ -36,13 +38,24 @@ const storeMock = gameRoomStore as unknown as {
 	findPlayingByGame: ReturnType<typeof vi.fn>;
 };
 const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
+const carriedMock = roomTrail.recordCarriedMoves as unknown as ReturnType<typeof vi.fn>;
+const moveLogMock = roomTrail.postMoveLog as unknown as ReturnType<typeof vi.fn>;
+// Every line a move recorded, in order: the finished turn's log, then the board's.
+type RecordedMove = { actorId: string; kind: string; text: string };
+const recorded = (): RecordedMove[] =>
+	[...moveLogMock.mock.calls.map((call) => (call[2] as { moves: RecordedMove[] }).moves), ...carriedMock.mock.calls.map((call) => call[1] as RecordedMove[])].flat();
 
 const A = "player-a";
 const B = "player-b";
 const ROUND = 1_000_000;
 const CLOSES = ROUND + BOT_CONSTANTS.MONOPOLY_AUCTION_ROUND_MS;
 // The board message is not reachable here, so the redraw is a no-op.
-const client = { channels: { fetch: vi.fn(async () => null) }, guilds: { fetch: vi.fn(async () => null) } } as unknown as Client;
+// The room's channel, holding a board to edit or replace.
+const roomChannel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, {
+	messages: { fetch: vi.fn(async () => ({ edit: vi.fn(), delete: vi.fn() })) },
+	send: vi.fn(async () => ({ id: "board-2", delete: vi.fn() })),
+});
+const client = { channels: { fetch: vi.fn(async () => roomChannel) }, guilds: { cache: new Map(), fetch: vi.fn(async () => null) } } as unknown as Client;
 
 // A passed on Burnt Umber Row with auctions on; the round opened at ROUND.
 function auctionMatch(): MonopolyState {
@@ -64,7 +77,7 @@ function seed(state: MonopolyState): IGameRoom {
 }
 
 const persisted = (): MonopolyState => storeMock.updateSecretIf.mock.calls[0][3] as MonopolyState;
-const trailTexts = (): string[] => postMoveMock.mock.calls.map((call) => (call[2] as { text: string }).text);
+const trailTexts = (): string[] => recorded().map((move) => move.text);
 
 type Spy = ReturnType<typeof vi.fn>;
 function makeButton(userId: string) {
@@ -199,7 +212,7 @@ describe("sweepMonopolyAuctions", () => {
 		expect(persisted()).toMatchObject({ phase: "post-roll", pendingAuction: null });
 		expect(persisted().properties["burnt-umber-row"].ownerId).toBe(B);
 		expect(trailTexts()).toEqual([`<@${B}> won Burnt Umber Row at auction for $120.`]);
-		expect(postMoveMock.mock.calls[0][2]).toMatchObject({ actorId: A, kind: "system" });
+		expect(recorded()[0]).toMatchObject({ actorId: A, kind: "system" });
 	});
 
 	it("leaves a round with time left, and a match with no auction, alone", async () => {
@@ -215,7 +228,7 @@ describe("sweepMonopolyAuctions", () => {
 		storeMock.updateSecretIf.mockResolvedValue(null);
 
 		expect(await sweepMonopolyAuctions(client, new Date(CLOSES))).toEqual({ auctionsClosed: 0 });
-		expect(postMoveMock).not.toHaveBeenCalled();
+		expect(trailTexts()).toEqual([]);
 	});
 
 	it("keeps going past a room that throws", async () => {

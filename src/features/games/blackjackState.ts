@@ -114,8 +114,9 @@ export function buildShoe(deckCount: number = DEFAULT_DECK_COUNT, rng: () => num
 
 // "stood" covers both a deliberate Stand and the forced stand after a Double or
 // a split ace, because from every later pass they are the same thing: a hand
-// that is final and not bust.
-export type HandStatus = "playing" | "stood" | "bust" | "blackjack";
+// that is final and not bust. "left" is a hand whose seat left the table during
+// the hand (2026-10 item 254, Arcade 12): final, and a loss whatever its cards say.
+export type HandStatus = "playing" | "stood" | "bust" | "blackjack" | "left";
 
 export interface Hand {
 	cards: Card[];
@@ -328,6 +329,27 @@ export function applyAction(table: BlackjackTable, userId: string, action: Black
 	return { status: "ok", action, hand, busted: hand.status === "bust", handFinished: finished };
 }
 
+// ── Leaving during a hand (2026-10 item 254, Arcade 12) ──────────────────────
+
+export type LeaveOutcome = { status: "left" } | { status: "not-seated" } | { status: "already-left" };
+
+/**
+ * The seat gives up every hand it holds and leaves the table, whoever's turn it is.
+ * Each hand becomes "left", which settles as a loss, never a push: a seat that walked
+ * away from a bad hand must not get its stake back. The seat stays in `seats` so the
+ * settle pass still records that loss. If it was the seat on the clock the turn moves
+ * on, and a table with nobody left to act hands the round to the dealer.
+ */
+export function applyLeave(table: BlackjackTable, userId: string): LeaveOutcome {
+	if (table.phase !== "playing") return { status: "not-seated" };
+	const seat = table.seats.find((candidate) => candidate.userId === userId);
+	if (!seat) return { status: "not-seated" };
+	if (seat.hands.every((hand) => hand.status === "left")) return { status: "already-left" };
+	for (const hand of seat.hands) hand.status = "left";
+	settleTurn(table);
+	return { status: "left" };
+}
+
 // ── Turn advance ────────────────────────────────────────────────────────────
 
 // Walks forward from wherever the pointer is until it finds a hand that can act,
@@ -357,7 +379,8 @@ export function playDealer(table: BlackjackTable): void {
 	// A table where every hand busted needs no dealer draw: the house has already
 	// won every hand and drawing would only leak information about the shoe. A
 	// natural still needs the dealer played out, because a dealer natural pushes it.
-	const anyLive = table.seats.some((seat) => seat.hands.some((hand) => hand.status !== "bust"));
+	// A hand given up by a seat that left is as lost as a bust one.
+	const anyLive = table.seats.some((seat) => seat.hands.some((hand) => hand.status !== "bust" && hand.status !== "left"));
 
 	if (anyLive) {
 		for (;;) {
@@ -396,7 +419,8 @@ export interface SeatResult {
 // anything else is considered (a bust hand loses even to a bust dealer, which is
 // the house edge in its entirety), then naturals, then totals.
 export function resolveHand(hand: Hand, dealer: Hand): HandOutcome {
-	if (hand.status === "bust") return "lose";
+	// A seat that left gave its hand up, so it loses before the cards are even read.
+	if (hand.status === "bust" || hand.status === "left") return "lose";
 
 	const playerNatural = isNatural(hand);
 	const dealerNatural = isNatural(dealer);

@@ -85,6 +85,10 @@ export interface IGameRoom {
 	// Set on the DRAFT by the card's toggle like the auction choice, but unlike it,
 	// read on EVERY move (roomMonopolyReferee), because the match state never copies it.
 	monopolyReferee: boolean;
+	// When the referee's one silent notice posted (2026-10 item 254, Arcade 7): null until the
+	// referee was on and could not speak. On the ROW rather than in the match's `secret`,
+	// because every Monopoly move rewrites that blob from its own read and would drop it.
+	monopolyRefereeNoticeAt: Date | null;
 	// ── the host's say over who joins (2026-10 item 244 Phase 4) ──
 	// Set on the draft by the challenge card's host controls and read on every join,
 	// on the card and, for Hold'em, at the table's Buy in and Take a seat. Each
@@ -217,6 +221,8 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		monopolyAuctions: { type: Boolean, default: false },
 		// Off by default for the same reason: an older row reads as no referee.
 		monopolyReferee: { type: Boolean, default: false },
+		// Null on every older row, which reads as no notice posted yet.
+		monopolyRefereeNoticeAt: { type: Date, default: null },
 		// The host controls. Every default is the open door a room had before them, so
 		// no older row needs a backfill.
 		ratingBand: { type: String, enum: [...RATING_BANDS], default: "any" },

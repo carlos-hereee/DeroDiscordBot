@@ -248,6 +248,13 @@ export const gamesCopy = {
 		standLabel: "Stand",
 		doubleLabel: "Double",
 		splitLabel: "Split",
+		// Leave during a hand (2026-10 item 254, Arcade 12): the seat gives its hand up as a loss.
+		leaveHandLabel: "Leave",
+		leftHand: "You left the table. Your hand counts as a loss.",
+		leftAlready: "You already left this hand.",
+		leftNote: "left the table",
+		// The trail line in a room, so the table knows why a seat stopped playing.
+		leftTrail: (userId: string): string => `🚪 <@${userId}> left the table mid hand, and the hand counts as a loss.`,
 
 		notYourTurn: "It is not your turn at this table.",
 		notPlaying: "You are not playing at this table.",
@@ -275,6 +282,7 @@ export const gamesCopy = {
 		cardWaiting: "Waiting",
 		cardStood: "Stood",
 		cardBust: "Bust",
+		cardLeft: "Left",
 		// Stated on the result card because doubling is the one action whose cost is
 		// invisible in the cards themselves.
 		doubledLostAll: "A doubled hand that loses pays nothing at all.",

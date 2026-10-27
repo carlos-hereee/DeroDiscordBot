@@ -178,6 +178,15 @@ export const GAME_ROOM_ACTIONS = {
 	// Pay the debt the match is waiting on. The debtor need not be the seat on the
 	// clock (a card can charge a rival), so the engine checks the payer, not the turn.
 	mpaydebt: { hostOnly: false, playersOnly: true },
+	// Surrender (2026-10 item 254, Arcade 12): the board's button opens the private
+	// confirm, and the confirm's Yes takes the seat out. Any seat, any time.
+	msurrender: { hostOnly: false, playersOnly: true },
+	msurrenderok: { hostOnly: false, playersOnly: true },
+	// The silent referee notice's fixes (Arcade 7). Neither is playersOnly: Enable Dero's
+	// voice is for an admin, who need not be playing, and its handler gates that; Bring
+	// Dero into the call runs bringDeroIntoCall, whose checkJoin gates decide who may.
+	mrefvoice: { hostOnly: false, playersOnly: false },
+	mrefcall: { hostOnly: false, playersOnly: false },
 } as const satisfies Record<string, { hostOnly: boolean; playersOnly: boolean }>;
 
 export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;

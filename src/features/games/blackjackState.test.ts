@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
 	applyAction,
+	applyLeave,
 	buildShoe,
 	cardValue,
 	createTable,
@@ -382,5 +383,44 @@ describe("settle", () => {
 		const t = table({ seats: [seat("a", [hand(["10", "9"])])], dealer: hand(["10", "8"]), phase: "settled" });
 		expect(settle(t)).toEqual(settle(t));
 		expect(t.seats[0].hands[0].status).toBe("playing");
+	});
+});
+
+// ── leaving during a hand (2026-10 item 254, Arcade 12) ─────────────────────
+describe("applyLeave", () => {
+	it("gives up the seat on the clock as a loss and moves the turn on", () => {
+		const live = table({ seats: [seat("a", [hand(["10", "9"])]), seat("b", [hand(["5", "6"])])], dealer: hand(["10", "7"]) });
+		expect(applyLeave(live, "a")).toEqual({ status: "left" });
+		expect(live.seats[0].hands[0].status).toBe("left");
+		expect(live.turn).toBe(1);
+		expect(live.phase).toBe("playing");
+	});
+
+	it("counts the hand as a loss whatever its cards, a 20 included, never a push or a refund", () => {
+		const live = table({ seats: [seat("a", [hand(["10", "K"])])], dealer: hand(["10", "K"]) });
+		applyLeave(live, "a");
+		expect(resolveHand(live.seats[0].hands[0], live.dealer)).toBe("lose");
+		expect(settle(live)[0].hands).toEqual(["lose"]);
+	});
+
+	it("gives up every hand of a split seat, and lets a seat off the clock leave too", () => {
+		const live = table({ seats: [seat("a", [hand(["8", "3"])]), seat("b", [hand(["8", "2"], { fromSplit: true }), hand(["8", "9"], { fromSplit: true, status: "stood" })])] });
+		expect(applyLeave(live, "b")).toEqual({ status: "left" });
+		expect(live.seats[1].hands.map((each) => each.status)).toEqual(["left", "left"]);
+		expect(live.turn).toBe(0);
+	});
+
+	it("hands the round to the dealer when nobody is left to act", () => {
+		const live = table({ seats: [seat("a", [hand(["10", "6"])])], dealer: hand(["10", "7"]) });
+		applyLeave(live, "a");
+		expect(live.phase).toBe("dealer");
+	});
+
+	it("refuses a member with no seat, a seat that already left, and a table past play", () => {
+		const live = table({ seats: [seat("a", [hand(["10", "6"])]), seat("b", [hand(["4", "6"])])] });
+		expect(applyLeave(live, "z")).toEqual({ status: "not-seated" });
+		applyLeave(live, "b");
+		expect(applyLeave(live, "b")).toEqual({ status: "already-left" });
+		expect(applyLeave(table({ seats: [seat("a", [hand(["10", "6"])])], phase: "dealer" }), "a")).toEqual({ status: "not-seated" });
 	});
 });

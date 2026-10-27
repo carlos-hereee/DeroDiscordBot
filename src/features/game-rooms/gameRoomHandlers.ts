@@ -35,6 +35,8 @@ import { roomMonopolyBuild } from "./roomMonopolyBuild.js";
 import { roomMonopolyMortgage } from "./roomMonopolyMortgage.js";
 import { roomMonopolyTrade } from "./roomMonopolyTrade.js";
 import { roomMonopolyAuction } from "./roomMonopolyAuction.js";
+import { roomMonopolySurrender } from "./roomMonopolySurrender.js";
+import { roomMonopolyRefereeNotice } from "./roomMonopolyRefereeNotice.js";
 import { hostControls } from "./hostControls.js";
 import { PRIVATE_VIEW_ACTION, closePrivateView } from "./privateView.js";
 import { satelliteAt } from "./satelliteRooms.js";
@@ -277,6 +279,18 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			return;
 		case "mauction":
 			await roomMonopolyAuction.handleMauction(interaction, room, parsed.arg ?? "");
+			return;
+		case "msurrender":
+			await roomMonopolySurrender.handleMsurrender(interaction, room);
+			return;
+		case "msurrenderok":
+			await roomMonopolySurrender.handleMsurrenderConfirm(interaction, room);
+			return;
+		case "mrefvoice":
+			await roomMonopolyRefereeNotice.handleEnableVoice(interaction);
+			return;
+		case "mrefcall":
+			await roomMonopolyRefereeNotice.handleBringIntoCall(interaction, room);
 			return;
 		case "mpaydebt":
 			await roomMonopolyHandlers.handleMpaydebt(interaction, room);

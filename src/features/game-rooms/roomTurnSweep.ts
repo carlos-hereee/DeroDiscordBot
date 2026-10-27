@@ -214,22 +214,13 @@ export async function sweepMonopolyIdle(client: Client, now: Date = new Date()):
 			// ⚠️ THE PLAYER WINS A TIE. A move that landed after this sweep read the row
 			// changes the turn, so the compare and swap finds nothing and the seat that
 			// just woke up keeps playing instead of being forfeited on a stale read.
-			const written = await persistIfUnchanged(room, state, result.state);
+			const lines = [reason, ...result.trailLines];
+			const written = await persistIfUnchanged(room, state, result.state, lines);
 			if (!written) return;
 
 			seatsForfeited++;
-			if (result.state.phase === "finished") matchesFinished++;
-			await applyMonopolyOutcome(
-				client,
-				room,
-				result.state,
-				{
-					actorId: idleId,
-					kind: "system",
-					lines: [reason, ...result.trailLines],
-				},
-				"timeout"
-			);
+			if (written.phase === "finished") matchesFinished++;
+			await applyMonopolyOutcome(client, room, state, written, { actorId: idleId, kind: "system", lines }, "timeout");
 		} catch (error) {
 			// Isolated per ROOM, for the same reason as the battleship sweep above.
 			console.error("[game-rooms] monopoly idle sweep failed for one room", {

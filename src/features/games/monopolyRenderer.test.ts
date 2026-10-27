@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Every drawImage lands in `drawn` with the image it drew, so a case reads the
 // composite as a sequence of placements instead of comparing pixels. loadImage
 // hands back a fake image that remembers which file it came from.
-const canvasState = vi.hoisted(() => ({ boardWidth: 1254, drawn: [] as unknown[][] }));
+const canvasState = vi.hoisted(() => ({ boardWidth: 1254, drawn: [] as unknown[][], texts: [] as string[] }));
 
 vi.mock("@napi-rs/canvas", () => ({
 	loadImage: vi.fn(async (path: string) => {
@@ -15,7 +15,20 @@ vi.mock("@napi-rs/canvas", () => ({
 	createCanvas: vi.fn((width: number, height: number) => ({
 		width,
 		height,
-		getContext: () => ({ drawImage: (...args: unknown[]) => canvasState.drawn.push(args) }),
+		getContext: () => ({
+			drawImage: (...args: unknown[]) => canvasState.drawn.push(args),
+			// The name tags draw shapes and text; each name is 14 pixels a character here.
+			measureText: (text: string) => ({ width: [...text].length * 14 }),
+			fillText: (text: string) => canvasState.texts.push(text),
+			save: () => undefined,
+			restore: () => undefined,
+			beginPath: () => undefined,
+			roundRect: () => undefined,
+			moveTo: () => undefined,
+			lineTo: () => undefined,
+			closePath: () => undefined,
+			fill: () => undefined,
+		}),
 		encode: vi.fn(async () => Buffer.from("composited-png")),
 	})),
 }));
@@ -40,7 +53,7 @@ vi.mock("@features/renderer/renderAnalytics.js", () => ({
 }));
 
 import * as canvas from "@napi-rs/canvas";
-import { BOARD_PIXEL_COORDS, clearRenderCache, isRendererAvailable, logMonopolyRendererStatus, renderBoard } from "./monopolyRenderer.js";
+import { BOARD_PIXEL_COORDS, clearRenderCache, isRendererAvailable, layoutTokens, logMonopolyRendererStatus, overlaps, renderBoard } from "./monopolyRenderer.js";
 import { GAME_ASSET_FILES, gameAssetPath, missingGameAssets, type GameAssetKey } from "./gamesAssets.js";
 import { BOARD_SIZE, MAX_SEATS } from "./monopolyBoard.js";
 import { createInitialState, type MonopolyState } from "./monopolyState.js";
@@ -80,9 +93,16 @@ function placements(): Placement[] {
 	});
 }
 
-const isOnTile = ([x, y]: [number, number], position: number, scale = 1): boolean => {
+// A token's centre on its tile: within ON_TILE along the tile's edge, and within half
+// the shallowest lot's depth across it, since the 72 pixel tokens (2026-10 item 254,
+// Arcade 12) stack their rows a figure's height apart into the tile.
+const isTokenOnTile = ([x, y]: [number, number], position: number, scale = 1): boolean => {
 	const [tileX, tileY] = BOARD_PIXEL_COORDS[position];
-	return Math.abs(x - tileX * scale) <= ON_TILE * scale && Math.abs(y - tileY * scale) <= ON_TILE * scale;
+	const dx = Math.abs(x - tileX * scale);
+	const dy = Math.abs(y - tileY * scale);
+	const horizontalSide = Math.floor(position / 10) % 2 === 0;
+	const [along, across] = horizontalSide ? [dx, dy] : [dy, dx];
+	return along <= ON_TILE * scale && across <= HALF_LOT_DEPTH * scale;
 };
 
 // Three seats: one on GO, one in jail, one on Free Parking.
@@ -98,6 +118,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	clearRenderCache();
 	canvasState.drawn = [];
+	canvasState.texts = [];
 	canvasState.boardWidth = 1254;
 	// clearAllMocks keeps implementations, so a case that hid a file would leak
 	// into the next one without these two resets.
@@ -177,12 +198,12 @@ describe("renderBoard", () => {
 			"token-3.png",
 		]);
 		expect(drawn[0].centre).toEqual([0, 0]);
-		expect(isOnTile(drawn[1].centre, 0)).toBe(true);
-		expect(isOnTile(drawn[2].centre, 10)).toBe(true);
+		expect(isTokenOnTile(drawn[1].centre, 0)).toBe(true);
+		expect(isTokenOnTile(drawn[2].centre, 10)).toBe(true);
 		// The stamp sits on the jailed token itself, slightly larger so it covers it.
 		expect(drawn[3].centre).toEqual(drawn[2].centre);
 		expect(drawn[3].size).toBeGreaterThan(drawn[2].size);
-		expect(isOnTile(drawn[4].centre, 20)).toBe(true);
+		expect(isTokenOnTile(drawn[4].centre, 20)).toBe(true);
 	});
 
 	it("gives every seat its own slot, so six tokens on one tile are six visible tokens", async () => {
@@ -192,7 +213,7 @@ describe("renderBoard", () => {
 		const tokens = placements().filter((placement) => placement.file.startsWith("token-"));
 		expect(tokens).toHaveLength(MAX_SEATS);
 		expect(new Set(tokens.map((token) => token.centre.join(","))).size).toBe(MAX_SEATS);
-		for (const token of tokens) expect(isOnTile(token.centre, 0)).toBe(true);
+		for (const token of tokens) expect(isTokenOnTile(token.centre, 0)).toBe(true);
 	});
 
 	it("leaves a bankrupt seat off the board", async () => {
@@ -250,8 +271,8 @@ describe("renderBoard", () => {
 
 		const drawn = placements();
 		expect(createCanvasMock).toHaveBeenCalledWith(627, 627);
-		expect(isOnTile(drawn[1].centre, 0, 0.5)).toBe(true);
-		expect(isOnTile(drawn[4].centre, 20, 0.5)).toBe(true);
+		expect(isTokenOnTile(drawn[1].centre, 0, 0.5)).toBe(true);
+		expect(isTokenOnTile(drawn[4].centre, 20, 0.5)).toBe(true);
 	});
 
 	it("decodes the board once per process, and again only after the cache is cleared", async () => {
@@ -340,5 +361,77 @@ describe("when the canvas library does not load", () => {
 		expect(warn).toHaveBeenCalled();
 		warn.mockRestore();
 		vi.doUnmock("@napi-rs/canvas");
+	});
+});
+
+// ── the tokens and their name tags (2026-10 item 254, Arcade 12) ──
+// Laid out in the art's own pixels, so these read the layout itself rather than pixels.
+describe("layoutTokens", () => {
+	// Fourteen pixels a character, the same width the canvas mock above measures.
+	const measure = (text: string): number => [...text].length * 14;
+	const SIX = ["s1", "s2", "s3", "s4", "s5", "s6"];
+	const named = (ids: readonly string[]): Map<string, string> => new Map(ids.map((id, index) => [id, `Player ${index + 1}`]));
+	const onOneTile = (ids: readonly string[], position: number): MonopolyState => {
+		const state = createInitialState([...ids], { auctionsEnabled: false }, 1_000, 1);
+		for (const seat of state.seats) seat.position = position;
+		return state;
+	};
+	const pairs = <T>(items: readonly T[]): [T, T][] => items.flatMap((first, index) => items.slice(index + 1).map((second): [T, T] => [first, second]));
+
+	// GO (a corner), a narrow lot on each side, and the top row, whose outer slot has no
+	// room above it for a tag.
+	for (const position of [0, 3, 13, 23, 33]) {
+		it(`keeps six tokens on tile ${position} from covering each other, and every tag clear of the others and of every figure`, () => {
+			const laidOut = layoutTokens(onOneTile(SIX, position), named(SIX), measure);
+			expect(laidOut).toHaveLength(MAX_SEATS);
+			for (const [first, second] of pairs(laidOut)) expect(overlaps(first.figure, second.figure)).toBe(false);
+
+			const tags = laidOut.map((placement) => placement.tag).filter((tag) => tag !== null);
+			expect(tags).toHaveLength(MAX_SEATS);
+			for (const [first, second] of pairs(tags)) expect(overlaps(first.box, second.box)).toBe(false);
+			for (const placement of laidOut) {
+				for (const other of laidOut) if (other !== placement) expect(overlaps(placement.tag!.box, other.figure)).toBe(false);
+				const { box } = placement.tag!;
+				expect(box.x).toBeGreaterThanOrEqual(0);
+				expect(box.y).toBeGreaterThanOrEqual(0);
+				expect(box.x + box.width).toBeLessThanOrEqual(1254);
+				expect(box.y + box.height).toBeLessThanOrEqual(1254);
+			}
+		});
+	}
+
+	it("points each tag's arrow at its own token's head, from above it when there is room", () => {
+		const laidOut = layoutTokens(onOneTile(["a", "b"], 3), named(["a", "b"]), measure);
+		for (const { figure, tag } of laidOut) {
+			expect(tag?.pointsDown).toBe(true);
+			expect(tag!.arrowTip[0]).toBeCloseTo(figure.x + figure.width / 2);
+			expect(tag!.arrowTip[1]).toBeLessThan(figure.y);
+			expect(tag!.box.y + tag!.box.height).toBeLessThan(tag!.arrowTip[1]);
+		}
+	});
+
+	it("names a token by its display name, cut short with an ellipsis when it would not fit", () => {
+		const state = onOneTile(["a", "b"], 3);
+		const names = new Map([["a", "Short"], ["b", "A display name far too long for any tag on the board"]]);
+		const [short, long] = layoutTokens(state, names, measure);
+		expect(short.tag?.text).toBe("Short");
+		expect(long.tag?.text.endsWith("…")).toBe(true);
+		expect(measure(long.tag!.text)).toBeLessThanOrEqual(168);
+		expect("A display name far too long for any tag on the board".startsWith(long.tag!.text.slice(0, -1))).toBe(true);
+	});
+
+	it("draws no tag for a seat with no name and leaves a bankrupt seat off entirely", () => {
+		const state = onOneTile(["a", "b", "c"], 3);
+		state.seats[2].bankrupt = true;
+		const laidOut = layoutTokens(state, new Map([["a", "Alpha"]]), measure);
+		expect(laidOut.map((placement) => placement.seatIndex)).toEqual([0, 1]);
+		expect(laidOut[0].tag?.text).toBe("Alpha");
+		expect(laidOut[1].tag).toBeNull();
+	});
+
+	it("draws each tag's name on the board picture, over the tokens", async () => {
+		const state = onOneTile(["a", "b"], 3);
+		await renderBoard(state, NOW, new Map([["a", "Alpha"], ["b", "Dero Red"]]));
+		expect(canvasState.texts).toEqual(["Alpha", "Dero Red"]);
 	});
 });

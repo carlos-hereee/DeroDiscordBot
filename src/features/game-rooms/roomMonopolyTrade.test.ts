@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ButtonInteraction, Client, ModalSubmitInteraction, StringSelectMenuInteraction } from "discord.js";
 
-vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn() } }));
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn(), moveMonopolyBoard: vi.fn(async () => ({})) } }));
+// A Monopoly move's lines ride the board, or the finished turn's log message, rather than
+// one postMove each (2026-10 item 254, Arcade 8).
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), postMoveLog: vi.fn(async () => true), recordCarriedMoves: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 // The cards answer null unless a case hands one back, so every other case reads the
@@ -19,7 +21,7 @@ import { roomTrail } from "./roomTrail.js";
 import { createInitialState, type MonopolyState, type TradeProposal } from "@features/games/monopolyState.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { renderTradeCard } from "@features/games/monopolyRenderer.js";
-import { AttachmentBuilder } from "discord.js";
+import { AttachmentBuilder, TextChannel } from "discord.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── roomMonopolyTrade ────────────────────────────────────────────────
@@ -29,6 +31,12 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 
 const storeMock = gameRoomStore as unknown as { findByRoomId: ReturnType<typeof vi.fn>; updateSecretIf: ReturnType<typeof vi.fn> };
 const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
+const carriedMock = roomTrail.recordCarriedMoves as unknown as ReturnType<typeof vi.fn>;
+const moveLogMock = roomTrail.postMoveLog as unknown as ReturnType<typeof vi.fn>;
+// Every line a move recorded, in order: the finished turn's log, then the board's.
+type RecordedMove = { actorId: string; kind: string; text: string };
+const recorded = (): RecordedMove[] =>
+	[...moveLogMock.mock.calls.map((call) => (call[2] as { moves: RecordedMove[] }).moves), ...carriedMock.mock.calls.map((call) => call[1] as RecordedMove[])].flat();
 
 const A = "player-a";
 const B = "player-b";
@@ -36,7 +44,12 @@ const C = "player-c";
 const OPENED_AT = 5_000;
 // The board message and the members are not reachable here, so the redraw is a no-op
 // and the partner picker falls back to seat numbers.
-const client = { channels: { fetch: vi.fn(async () => null) }, guilds: { fetch: vi.fn(async () => null) } } as unknown as Client;
+// The room's channel, holding a board to edit or replace.
+const roomChannel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, {
+	messages: { fetch: vi.fn(async () => ({ edit: vi.fn(), delete: vi.fn() })) },
+	send: vi.fn(async () => ({ id: "board-2", delete: vi.fn() })),
+});
+const client = { channels: { fetch: vi.fn(async () => roomChannel) }, guilds: { cache: new Map(), fetch: vi.fn(async () => null) } } as unknown as Client;
 
 // A holds Reader Dock and a jail card; B holds both brown lots.
 function tradeMatch(): MonopolyState {
@@ -64,7 +77,7 @@ function seed(state: MonopolyState): IGameRoom {
 }
 
 const persisted = (): MonopolyState => storeMock.updateSecretIf.mock.calls[0][3] as MonopolyState;
-const trailTexts = (): string[] => postMoveMock.mock.calls.map((call) => (call[2] as { text: string }).text);
+const trailTexts = (): string[] => recorded().map((move) => move.text);
 
 type Spy = ReturnType<typeof vi.fn>;
 function makeButton(userId: string) {

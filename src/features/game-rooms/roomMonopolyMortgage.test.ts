@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Client, StringSelectMenuInteraction } from "discord.js";
+import { TextChannel, type Client, type StringSelectMenuInteraction } from "discord.js";
 
-vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn() } }));
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn(), moveMonopolyBoard: vi.fn(async () => ({})) } }));
+// A Monopoly move's lines ride the board, or the finished turn's log message, rather than
+// one postMove each (2026-10 item 254, Arcade 8).
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), postMoveLog: vi.fn(async () => true), recordCarriedMoves: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn(async () => null) }));
@@ -21,11 +23,22 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 
 const storeMock = gameRoomStore as unknown as { findByRoomId: ReturnType<typeof vi.fn>; updateSecretIf: ReturnType<typeof vi.fn> };
 const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
+const carriedMock = roomTrail.recordCarriedMoves as unknown as ReturnType<typeof vi.fn>;
+const moveLogMock = roomTrail.postMoveLog as unknown as ReturnType<typeof vi.fn>;
+// Every line a move recorded, in order: the finished turn's log, then the board's.
+type RecordedMove = { actorId: string; kind: string; text: string };
+const recorded = (): RecordedMove[] =>
+	[...moveLogMock.mock.calls.map((call) => (call[2] as { moves: RecordedMove[] }).moves), ...carriedMock.mock.calls.map((call) => call[1] as RecordedMove[])].flat();
 
 const A = "player-a";
 const B = "player-b";
 // The board message is not reachable here, so the redraw is a no-op.
-const client = { channels: { fetch: vi.fn(async () => null) }, guilds: { fetch: vi.fn(async () => null) } } as unknown as Client;
+// The room's channel, holding a board to edit or replace.
+const roomChannel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, {
+	messages: { fetch: vi.fn(async () => ({ edit: vi.fn(), delete: vi.fn() })) },
+	send: vi.fn(async () => ({ id: "board-2", delete: vi.fn() })),
+});
+const client = { channels: { fetch: vi.fn(async () => roomChannel) }, guilds: { cache: new Map(), fetch: vi.fn(async () => null) } } as unknown as Client;
 
 // B, who is NOT on the clock, owns Vermillion Alley and a mortgaged Reader Dock.
 function holdings(): MonopolyState {
@@ -87,7 +100,7 @@ describe("mortgaging from the Inventory peek", () => {
 		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
 		expect(persisted().properties["vermillion-alley"].mortgaged).toBe(true);
 		expect(persisted().seats[1].chips).toBe(1530);
-		expect((postMoveMock.mock.calls[0][2] as { text: string }).text).toBe(`<@${B}> mortgaged Vermillion Alley for $30.`);
+		expect(recorded()[0].text).toBe(`<@${B}> mortgaged Vermillion Alley for $30.`);
 		const peek = interaction.editReply.mock.calls[0][0] as PeekPayload;
 		expect(peek.embeds[0].data.description).toContain(gameRoomsCopy.monopoly.inventoryChips(1530));
 		expect(peek.embeds[0].data.description).toContain("• Vermillion Alley (mortgaged, $33 to lift)");

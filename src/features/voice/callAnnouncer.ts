@@ -33,18 +33,33 @@ export const defaultCallAnnouncerDeps: CallAnnouncerDeps = {
 	render: renderCallSpeech,
 };
 
-/** Speak `text` as one clip in the guild's live call, or do nothing when any check fails. */
-export async function speakInCall(guildId: string, text: string, deps: CallAnnouncerDeps = defaultCallAnnouncerDeps): Promise<void> {
+/**
+ * What became of one announcement. The Monopoly referee reads it to say why it is
+ * silent (2026-10 item 254, Arcade 7); the hold em dealer ignores it.
+ */
+export type CallAnnouncement = "spoken" | "noCall" | "voiceOff" | "budgetSpent" | "failed";
+
+/** Whether the guild's voice is switched on, by the same check ② below makes. */
+export async function isVoiceEnabled(guildId: string, deps: CallAnnouncerDeps = defaultCallAnnouncerDeps): Promise<boolean> {
+	// The guild id check guards a config store that ever answers for the wrong guild.
+	const config = await deps.loadConfig(guildId);
+	return config?.enabled === true && config.guildId === guildId;
+}
+
+/** Speak `text` as one clip in the guild's live call, or do nothing when any check fails, and say which. */
+export async function speakInCall(guildId: string, text: string, deps: CallAnnouncerDeps = defaultCallAnnouncerDeps): Promise<CallAnnouncement> {
 	// ①
 	const call = deps.sessionIn(guildId);
-	if (!call) return;
-	// ② The guild id check guards a config store that ever answers for the wrong guild.
+	if (!call) return "noCall";
+	// ②
 	const config = await deps.loadConfig(guildId);
-	if (!config?.enabled || config.guildId !== guildId) return;
+	if (!config?.enabled || config.guildId !== guildId) return "voiceOff";
 	// ③
 	const speech = await deps.render({ guildId, voiceId: resolveDeroVoiceId(config), text });
-	if (speech.status !== "ok") return;
+	if (speech.status === "capReached") return "budgetSpent";
+	if (speech.status !== "ok") return "failed";
 	// ④ A line for a call that is gone is dropped rather than played into the next one.
-	if (deps.sessionIn(guildId) !== call) return;
+	if (deps.sessionIn(guildId) !== call) return "noCall";
 	call.speaker.speak(speech.pcm48kStereo, "dealer");
+	return "spoken";
 }

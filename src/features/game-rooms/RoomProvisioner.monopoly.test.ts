@@ -132,7 +132,7 @@ describe("RoomProvisioner.open for monopoly", () => {
 		const board = sentPayloads(send).find((payload) => payload.embeds[0]?.data.title === gameRoomsCopy.monopoly.boardTitle);
 		expect(board).toBeDefined();
 		const ids = (board?.components ?? []).flatMap((row) => row.toJSON().components.map((button) => button.custom_id));
-		expect(ids).toEqual(["gameroom:mroll:room-1", "gameroom:mtrade:room-1", "gameroom:minventory:room-1"]);
+		expect(ids).toEqual(["gameroom:mroll:room-1", "gameroom:mtrade:room-1", "gameroom:minventory:room-1", "gameroom:msurrender:room-1"]);
 		expect(board?.embeds[0].data.description).toContain(gameRoomsCopy.monopoly.onTheClock("host-1"));
 		// The opener is message-1, the board message-2.
 		expect(storedState().boardMessageId).toBe("message-2");
@@ -172,7 +172,7 @@ describe("RoomProvisioner.open for monopoly", () => {
 		await RoomProvisioner.open(input(guild));
 
 		// The picture is of the match about to be stored, seated in player order.
-		expect(renderMock).toHaveBeenCalledWith(expect.objectContaining({ phase: "pre-roll", activeSeatIndex: 0 }));
+		expect(renderMock).toHaveBeenCalledWith(expect.objectContaining({ phase: "pre-roll", activeSeatIndex: 0 }), expect.any(Number), expect.any(Map));
 		const board = boardPayload(send);
 		expect(board?.files).toEqual([attachment]);
 		expect(board?.embeds[0].data.image?.url).toBe("attachment://monopoly-board-1.png");

@@ -293,7 +293,9 @@ describe("announceReferee", () => {
 		const room = refereeRoom();
 		announceReferee({ client: fakeClient().client, room, state: newMatch(), lines: RENT_THEN_HANDOFF }, noCall.deps);
 		await _refereeSettled(room.roomId);
-		expect(noCall.deps.loadConfig).not.toHaveBeenCalled();
+		// The config is read once, only to name why it is silent (Arcade 7); nothing renders.
+		expect(noCall.deps.loadConfig).toHaveBeenCalledOnce();
+		expect(noCall.deps.render).not.toHaveBeenCalled();
 
 		// Alice is in another voice channel, and the one seat in Dero's call is out.
 		const elsewhere = fakeDeps();
@@ -329,5 +331,48 @@ describe("announceReferee", () => {
 		await _refereeSettled(room.roomId);
 		expect(error).toHaveBeenCalledWith(expect.stringContaining("[monopoly-referee]"), expect.any(Error));
 		error.mockRestore();
+	});
+});
+
+// ── why it is silent (2026-10 item 254, Arcade 7) ──
+// Every check that stops a move's clips names its reason, once per move, so the room
+// layer can post the match's one notice. A move it speaks names none.
+describe("announceReferee's silence", () => {
+	async function silenceOf(deps: CallAnnouncerDeps, clientOptions: FakeGuildOptions = {}, state = newMatch()): Promise<string[]> {
+		const reasons: string[] = [];
+		const room = refereeRoom();
+		announceReferee({ client: fakeClient(clientOptions).client, room, state, lines: RENT_THEN_HANDOFF, onSilent: (reason) => reasons.push(reason) }, deps);
+		await _refereeSettled(room.roomId);
+		return reasons;
+	}
+
+	it("says the voice is off when Dero is in no call and the guild switched its voice off", async () => {
+		expect(await silenceOf(fakeDeps({ withCall: false, config: { enabled: false } }).deps)).toEqual(["voiceOff"]);
+	});
+
+	it("says Dero is in no call when the voice is on", async () => {
+		expect(await silenceOf(fakeDeps({ withCall: false }).deps)).toEqual(["noCall"]);
+	});
+
+	it("says no player is in Dero's call when only someone else is", async () => {
+		expect(await silenceOf(fakeDeps().deps, { inCall: { [ALICE]: "vc2" } })).toEqual(["noPlayerInCall"]);
+	});
+
+	it("says the budget is spent when the render hits the monthly cap, once for the move", async () => {
+		const capped = fakeDeps({ render: async () => ({ status: "capReached" }) });
+		expect(await silenceOf(capped.deps)).toEqual(["budgetSpent"]);
+		expect(capped.deps.render).toHaveBeenCalledOnce();
+	});
+
+	it("names nothing when every clip is spoken, or when a render merely fails", async () => {
+		expect(await silenceOf(fakeDeps().deps)).toEqual([]);
+		expect(await silenceOf(fakeDeps({ render: async () => ({ status: "failed", kind: "unexpected" }) }).deps)).toEqual([]);
+	});
+
+	it("never joins a call itself: no session is opened, whatever the reason", async () => {
+		const noCall = fakeDeps({ withCall: false });
+		await silenceOf(noCall.deps);
+		expect(noCall.speak).not.toHaveBeenCalled();
+		expect(noCall.deps.sessionIn).toHaveBeenCalled();
 	});
 });

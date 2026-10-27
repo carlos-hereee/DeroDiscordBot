@@ -1112,6 +1112,45 @@ export const gameRoomsCopy = {
 		idleDebtDefault: (userId: string): string =>
 			`⏳ <@${userId}> left a debt unpaid for ${monopolyIdleHours()} hours, so Dero settles it the only way left.`,
 
+		// ── the board stays last (2026-10 item 254, Arcade 8) ──
+		// Over the turn's lines on the board, which carries them until the turn passes
+		// and they post as one log message above the next board.
+		thisTurnLabel: "This turn:",
+		// Above the lines a board too long for one embed had to leave out; the turn's
+		// log message still carries every one of them once the turn passes.
+		earlierThisTurn: (count: number): string => `(${count} earlier ${count === 1 ? "line" : "lines"} this turn)`,
+
+		// ── Surrender (2026-10 item 254, Arcade 12) ──
+		surrenderLabel: "Surrender",
+		// The private confirm, the first of the two presses.
+		surrenderConfirmTitle: "Surrender this match?",
+		surrenderConfirmPrompt:
+			"Your chips and lots go back to the bank and you are out of the match for good. The match goes on without you.",
+		surrenderConfirmLabel: "Yes, surrender",
+		surrenderDone: "You surrendered. The board shows the match going on without you.",
+		surrenderStillSeated: "The board kept changing, so your seat is still in the match. Press Surrender again.",
+		// Public trail lines, ahead of the engine's own forfeit line, which says where the
+		// holdings went.
+		surrendered: (userId: string): string => `🏳️ <@${userId}> surrendered.`,
+		hostHandedOn: (userId: string): string => `👑 <@${userId}> hosts this match now.`,
+		botsAloneEnd: "Only Dero bots are left, so the match ends on the standings as they are.",
+		noHostLeftEnd: "Everyone left in the match already hosts another room, so the match ends on the standings as they are.",
+
+		// ── the silent referee (2026-10 item 254, Arcade 7) ──
+		// Posted once per match when the referee is on and could not speak, saying why.
+		// The referee never joins a call by itself (the owner's decision 16), so each
+		// line names the one press that fixes it, or says plainly that nothing can.
+		refereeSilentTitle: "🔇 Dero's referee is silent",
+		refereeSilent: {
+			voiceOff: "Dero's voice is switched off in this server, so the referee cannot speak. A server admin can switch it on with the button below.",
+			noCall: "Dero is not in a voice call, so the referee has nowhere to speak. Join a voice channel, then press the button below to bring Dero in.",
+			noPlayerInCall: "Dero is in a voice call that no player in this match is in, so the referee stays quiet. A player can join that call, or bring Dero into theirs once it is free.",
+			budgetSpent: "Dero's voice has spent this month's budget in this server, so the referee stays quiet until next month or until an admin raises the cap.",
+		},
+		enableVoiceLabel: "Enable Dero's voice",
+		bringIntoCallLabel: "Bring Dero into the call",
+		enableVoiceAdminOnly: "Only the server owner or an admin can switch Dero's voice on.",
+
 		// ── the voice referee (Session 5c) ──
 		// Spoken in place of a player whose display name cannot be found (they left the
 		// server), because Dero must never read a raw mention or snowflake aloud.
