@@ -15,6 +15,7 @@ import { getPluginCopy } from "@base/copy/getCopy.js";
 import { registerButton, registerSelectMenu } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { showErrorNotice } from "@utils/textModal.js";
+import { refreshHeadquartersCards } from "@features/setup/headquartersCards.js";
 import { communityCopy } from "./communityCopy.js";
 import {
 	COMMUNITY_CUSTOM_IDS,
@@ -109,7 +110,13 @@ export async function handleCommunityButton(interaction: CommunityPress): Promis
 		return;
 	}
 	await routeButton(interaction, parsed.action, guild, config, parsed.argument);
+	// The two presses that change what 🧭onboarding shows: Community turned on, and an
+	// Onboarding config written. Its steps card and chart follow, fire and forget
+	// (2026-10 item 257 Phase 2b).
+	if (ONBOARDING_CHANGING_ACTIONS.has(parsed.action)) refreshHeadquartersCards(guild, "onboarding");
 }
+
+const ONBOARDING_CHANGING_ACTIONS: ReadonlySet<CommunityAction> = new Set<CommunityAction>(["confirm", "confirmOnboarding"]);
 
 async function routeSelect(interaction: StringSelectMenuInteraction, action: CommunityAction, guild: Guild, config: ICommunityConfig, argument: string | null): Promise<void> {
 	if (action === "pickPrompt") await handlePickPrompt(interaction, guild, config, argument);

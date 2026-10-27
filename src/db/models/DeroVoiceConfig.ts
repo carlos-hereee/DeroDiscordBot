@@ -1,6 +1,7 @@
 // src/db/models/DeroVoiceConfig.ts
 import mongoose from "mongoose";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { DEFAULT_VOICE_PRIORITY_ORDER } from "@features/voice/voicePriority.js";
 
 // ── DeroVoiceConfig ──
 // What:  one row per guild holding everything Dero's voice needs: the kill
@@ -33,6 +34,11 @@ export interface IDeroVoiceConfig {
 	// Voice channels Dero may join (Phase 3 onward).
 	allowedVoiceChannelIds: string[];
 	monthlyCapUsd: number;
+	// Which requests for Dero's voice go first while he is in a call (2026-10 item 257,
+	// owner item 22). Read through normalizePriorityOrder (features/voice/voicePriority.ts),
+	// never directly: a row saved before this field, or before a category existed, is
+	// made whole there. Set by the ⚙️dero-config priority step.
+	priorityOrder: string[];
 	createdAt?: Date;
 	updatedAt?: Date;
 }
@@ -47,6 +53,7 @@ const deroVoiceConfigSchema = new mongoose.Schema<IDeroVoiceConfig>(
 		allowedChannelIds: { type: [String], default: [] },
 		allowedVoiceChannelIds: { type: [String], default: [] },
 		monthlyCapUsd: { type: Number, default: BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD },
+		priorityOrder: { type: [String], default: () => [...DEFAULT_VOICE_PRIORITY_ORDER] },
 	},
 	{ timestamps: true }
 );

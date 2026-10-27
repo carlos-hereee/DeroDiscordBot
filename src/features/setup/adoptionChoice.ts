@@ -50,7 +50,8 @@ import { setupCopy } from "./setupCopy.js";
 
 /** The interactionRegistry prefix of the card's button and of the modal. */
 export const ADOPTION_CHOICE_PREFIX = "adoption";
-const CHOOSE_BUTTON_ID = `${ADOPTION_CHOICE_PREFIX}:choose`;
+// Exported for the 🧭onboarding steps card, whose step 2 carries this same button (2026-10 item 257 Phase 2b).
+export const CHOOSE_BUTTON_ID = `${ADOPTION_CHOICE_PREFIX}:choose`;
 const SUBMIT_MODAL_ID = `${ADOPTION_CHOICE_PREFIX}:submit`;
 // Discord caps a select label at 45 characters.
 const MAX_SELECT_LABEL_LENGTH = 45;
@@ -215,7 +216,11 @@ export async function handleChoiceSubmit(interaction: ModalSubmitInteraction): P
 		return;
 	}
 	// A move is a Discord round trip or two per channel, past the three second window.
-	if (interaction.isFromMessage()) await interaction.deferUpdate();
+	// The result replaces the choice card only when the modal came from that card: from
+	// the 🧭onboarding steps card (2026-10 item 257 Phase 2b) an update would overwrite
+	// the steps card, so the result is a private reply there.
+	const fromChoiceCard = interaction.isFromMessage() && interaction.message.embeds[0]?.title === copy.cardTitle;
+	if (fromChoiceCard) await interaction.deferUpdate();
 	else await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
 	const category = row.categoryId ? await guild.channels.fetch(row.categoryId).catch(() => null) : null;
@@ -241,6 +246,10 @@ export async function handleChoiceSubmit(interaction: ModalSubmitInteraction): P
 
 	const result = new EmbedBuilder().setTitle(copy.cardTitle).setDescription(lines.join("\n") || copy.nothingToChoose).setColor(COLORS.ADMIN);
 	await interaction.editReply({ embeds: [result], components: [chooseButtonRow()] }).catch((error) => console.warn(`[adoption] guild ${guild.id} could not update the channel choice card`, error));
+	// 🧭onboarding's step 2 mark follows the answers. Loaded on use, because
+	// headquartersCards reads this module's channel list and a static import back would
+	// close a cycle.
+	void import("./headquartersCards.js").then((cards) => cards.refreshHeadquartersCards(guild, "onboarding"));
 }
 
 /** Register the Choose button and the modal's Submit. Called once at boot from main.ts. */

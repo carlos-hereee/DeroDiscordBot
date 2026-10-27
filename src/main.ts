@@ -51,6 +51,7 @@ import { registerPollHandlers, dispatchPolls, logPollTallies } from "@features/p
 import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerRulesEditHandlers } from "@features/setup/rulesEdit.js";
 import { registerAdoptionChoiceHandlers } from "@features/setup/adoptionChoice.js";
+import { registerHeadquartersStepHandlers } from "@features/setup/headquartersSteps.js";
 import { registerCommunityGuideSync, registerCommunityHandlers } from "@features/community/communityButtons.js";
 import { postCommunityButtonsPointers } from "@features/community/communityButtonsPointer.js";
 import { registerWelcomeLog } from "@features/setup/welcomeLog.js";
@@ -60,6 +61,8 @@ import { registerVoiceRoomControlHandlers } from "@features/voice/voiceRoomContr
 import { registerListenHandlers } from "@features/voice/listenHandler.js";
 import { registerHoldemRulesCardHandlers } from "@features/dero-brain/holdemRulesCard.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
+import { voiceQueue } from "@features/voice/voiceQueue.js";
+import { runQueuedJoin } from "@commands/utility/dero.js";
 import { registerVoiceSessionWatchers } from "@features/voice/voiceSessionWatchers.js";
 import { startVoiceListener } from "@features/voice/voiceListener.js";
 import { startSoakSampler } from "@features/voice/soakSampler.js";
@@ -366,6 +369,9 @@ process.on("uncaughtException", (err) => {
 	// The Choose button on the card listing the server's own welcome and rules
 	// channels, and its modal (2026-10 item 257 Phase 1a).
 	registerAdoptionChoiceHandlers();
+	// The 🏰 DERO HEADQUARTERS step buttons and the voice priority modal (2026-10 item
+	// 257 Phase 2b), on the one "hqstep" prefix.
+	registerHeadquartersStepHandlers();
 	// Enable Community, its Confirm, and Configure Onboarding on the admin guide
 	// (2026-10 item 247 Phase 3), all on the one "community" prefix.
 	registerCommunityHandlers();
@@ -640,6 +646,11 @@ process.on("uncaughtException", (err) => {
 		// Handed over here rather than imported by voiceSessions, which would
 		// close an import cycle through the executor.
 		voiceSessions.useListener(startVoiceListener);
+		// The voice queue (2026-10 item 257, owner item 22): when a call ends, the request
+		// at the head runs through the /dero join flow. Wired here because the flow lives
+		// in the command and a feature must not import a command.
+		voiceQueue.useRunner(runQueuedJoin);
+		voiceSessions.onEnd(voiceQueue.afterCallEnded);
 		// The soak test's numbers: one audit row a minute while a call is open,
 		// and only when DERO_VOICE_SAMPLER is 1. Off, it arms no timer at all.
 		soakSampler = startSoakSampler(deroVoiceSamplerEnabled);

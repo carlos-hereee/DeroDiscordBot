@@ -34,6 +34,8 @@ import { buildAdminCommandRows } from "@features/command-buttons/adminGuideButto
 import { buildCommunityControlButtons } from "@features/community/communityButtons.js";
 import { isCommunityEnabled } from "@features/community/enableCommunity.js";
 import { buildVoiceRoomControlRow } from "@features/voice/voiceRoomControls.js";
+import { allowDeroVoiceRooms, replaceDeroVoiceRoom } from "@features/voice/deroVoiceRooms.js";
+import { DOMAIN_CHANNEL_FIELDS, HEADQUARTERS_DOMAINS, syncAllHeadquarters, syncHeadquartersChannel } from "./headquartersCards.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { buildDeroGifAttachment } from "@base/copy/brand.js";
 import {
@@ -392,6 +394,8 @@ export class GuildSetupManager {
 			// not overwritten so a repair preserves it.
 			await guildConfigStore.update(config.guildId, persistPayload);
 			GuildSetupManager.afterAdoptionPersisted(guild, adoptions);
+			void allowDeroVoiceRooms(config.guildId, [ids.meetingVoiceChannelId, ids.arcadeVoiceChannelId]);
+			void syncAllHeadquarters(guild);
 			return;
 		}
 
@@ -406,6 +410,11 @@ export class GuildSetupManager {
 				setupComplete: false,
 			});
 			GuildSetupManager.afterAdoptionPersisted(guild, adoptions);
+			// Dero may join the voice rooms he just built (2026-10 item 257, owner item 8).
+			void allowDeroVoiceRooms(config.guildId, [ids.meetingVoiceChannelId, ids.arcadeVoiceChannelId]);
+			// Each 🏰 DERO HEADQUARTERS config channel gets its steps card and chart under
+			// the intro just posted (2026-10 item 257 Phase 2b), fire and forget.
+			void syncAllHeadquarters(guild);
 		} catch (error) {
 			// MongoDB duplicate key (code 11000) means a row for this guildId
 			// already exists, almost certainly the shared DB scenario where
@@ -1715,6 +1724,13 @@ export class GuildSetupManager {
 		await guildConfigStore.update(guild.id, update);
 		console.warn(LOG_MESSAGES.setup.channelRepaired(spec.displayName, guild.id));
 		if (adopted) void offerAdoptionChoice(guild);
+		// A rebuilt voice room keeps its place on Dero's voice allow list under its new id
+		// (2026-10 item 257, owner item 8); the dead id comes off.
+		if (spec.kind === "voice") void replaceDeroVoiceRoom(guild.id, stored[spec.configField] as string | null | undefined, newChannel.id);
+		// A rebuilt config channel gets its steps card and chart back at once, beneath a
+		// freshly posted intro, rather than waiting for the next boot.
+		const domain = HEADQUARTERS_DOMAINS.find((candidate) => DOMAIN_CHANNEL_FIELDS[candidate] === spec.configField);
+		if (domain) void syncHeadquartersChannel(guild, domain, { forcePost: intro.posted });
 
 		// merge so caller sees the fresh ids without a second round trip.
 		return { newChannel, stored: { ...stored, ...update } };
@@ -3160,6 +3176,9 @@ export class GuildSetupManager {
 		// Set when this sweep posts a FRESH 🕹️games intro, so the board block below
 		// posts a fresh board beneath it rather than keep the old one above it.
 		let gamesIntroPosted = false;
+		// The Headquarters config channels whose intro this pass posted fresh, so their
+		// steps card and chart go fresh beneath it (2026-10 item 257 Phase 2b).
+		const freshIntroFields = new Set<string>();
 		const adoptedIds = readAdoptedChannelIds(stored);
 
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
@@ -3360,6 +3379,7 @@ export class GuildSetupManager {
 				needsPersist = true;
 				reposted += 1;
 				if (spec.configField === "arcadeGamesChannelId") gamesIntroPosted = true;
+				freshIntroFields.add(spec.configField);
 				edited += await GuildSetupManager.stripMovedArcadeControls(spec.configField, [storedMessage, ...(recent?.values() ?? [])], {
 					keepId: message.id,
 					selfId,
@@ -3515,6 +3535,10 @@ export class GuildSetupManager {
 			}
 			await guildConfigStore.update(guild.id, update);
 		}
+
+		// After the intros are current and stored, so a steps card never sits above its
+		// intro. Fire and forget: the cards keep their own ids and log their own failures.
+		void syncAllHeadquarters(guild, freshIntroFields);
 
 		console.log(LOG_MESSAGES.setup.introRefreshDone(guild.id, edited, reposted));
 		return { edited, reposted };

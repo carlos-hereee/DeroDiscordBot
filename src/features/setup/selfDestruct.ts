@@ -21,6 +21,7 @@ import { registerButton, registerModal } from "@handlers/interactionRegistry.js"
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { showErrorNotice } from "@utils/textModal.js";
 import { COLORS } from "@base/copy/brand.js";
+import { DERO_VOICE_ROOM_FIELDS, revokeDeroVoiceRooms } from "@features/voice/deroVoiceRooms.js";
 import { readAdoptedChannelIds } from "./adoption.js";
 import { adminLog } from "./adminLog.js";
 import { turnArcadeOff } from "./arcadeSwitch.js";
@@ -367,6 +368,10 @@ async function demolishHomebase(guild: Guild, actorId: string): Promise<void> {
 	await guildConfigStore.update(guild.id, { homebaseDestroyed: true, setupComplete: false, ...releasedSlots, adoptedChannelIds: [] });
 
 	console.warn(`[self-destruct] demolishing homebase in guild ${guild.id}, requested by ${actorId}; keeping ${adoptedIds.size} adopted channel(s)`);
+
+	// The voice rooms about to go come off Dero's voice allow list, which setup put
+	// them on (2026-10 item 257, owner item 8); an admin's own entries stay.
+	void revokeDeroVoiceRooms(guild.id, DERO_VOICE_ROOM_FIELDS.map((field) => ids[field]));
 
 	let deleted = await demolishChannels(guild, HOMEBASE_CHANNEL_FIELDS.map((field) => ids[field]), adoptedIds, "self-destruct");
 

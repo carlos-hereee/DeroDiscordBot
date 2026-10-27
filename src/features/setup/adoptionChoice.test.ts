@@ -3,6 +3,7 @@ import { CategoryChannel, Collection, PermissionFlagsBits, TextChannel, type But
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn(), update: vi.fn() } }));
 vi.mock("./adminLog.js", () => ({ adminLog: { emit: vi.fn(), emitFor: vi.fn(), write: vi.fn() } }));
+vi.mock("./headquartersCards.js", () => ({ refreshHeadquartersCards: vi.fn() }));
 
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { adminLog } from "./adminLog.js";
@@ -76,8 +77,11 @@ function press(guild: Guild, userId = "owner-1") {
 	};
 }
 
-function submit(guild: Guild, picks: Record<string, string>) {
+// `fromTitle` is the title of the message the modal was opened from: the choice card by
+// default, or the 🧭onboarding steps card, whose step 2 opens the same modal.
+function submit(guild: Guild, picks: Record<string, string>, fromTitle: string = setupCopy.adoptionChoice.cardTitle) {
 	return {
+		message: { embeds: [{ title: fromTitle }] },
 		id: "submit-1",
 		guild,
 		user: { id: "owner-1" },
@@ -165,6 +169,22 @@ describe("the Choose button", () => {
 });
 
 describe("the Submit", () => {
+	// 2026-10 item 257 Phase 2b: the steps card's step 2 opens this modal too, and an
+	// update from there would overwrite the steps card with the choice result.
+	it("answers privately when the modal came from the 🧭onboarding steps card, never updating that card", async () => {
+		const { guild } = rig();
+		store.findByGuildId.mockResolvedValue(row());
+		const interaction = submit(guild, { "own-welcome": "stay", "own-rules": "stay" }, setupCopy.headquarters.onboarding.title) as unknown as {
+			deferUpdate: ReturnType<typeof vi.fn>;
+			deferReply: ReturnType<typeof vi.fn>;
+		};
+
+		await handleChoiceSubmit(interaction as unknown as ModalSubmitInteraction);
+
+		expect(interaction.deferUpdate).not.toHaveBeenCalled();
+		expect(interaction.deferReply).toHaveBeenCalledOnce();
+	});
+
 	it("Move on a channel Onboarding uses: overwrite first and readable by everyone, then the parent, and the answer is stored", async () => {
 		const { guild, ownRules } = rig();
 		store.findByGuildId.mockResolvedValue(row());

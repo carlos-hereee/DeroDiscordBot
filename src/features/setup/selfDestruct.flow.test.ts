@@ -16,12 +16,17 @@ const mocks = vi.hoisted(() => ({
 	emit: vi.fn(),
 	findByGuildId: vi.fn(),
 	update: vi.fn(),
+	revokeDeroVoiceRooms: vi.fn(),
 }));
 
 vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerModal: mocks.registerModal }));
 vi.mock("./serverReset.js", () => ({ wipeServerData: mocks.wipeServerData, resetConfigsToDefault: mocks.resetConfigsToDefault }));
 vi.mock("./arcadeSwitch.js", () => ({ turnArcadeOff: mocks.turnArcadeOff }));
 vi.mock("./adminLog.js", () => ({ adminLog: { emit: mocks.emit } }));
+vi.mock("@features/voice/deroVoiceRooms.js", () => ({
+	DERO_VOICE_ROOM_FIELDS: ["meetingVoiceChannelId", "arcadeVoiceChannelId"],
+	revokeDeroVoiceRooms: mocks.revokeDeroVoiceRooms,
+}));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update } }));
 
 import {
@@ -210,6 +215,8 @@ describe("Just delete channels, everything Dero built", () => {
 		for (const field of ["deroConfigChannelId", "onboardingConfigChannelId", "arcadeControlChannelId", "commandOutputChannelId"]) {
 			expect(deleted, field).toContain(`ch-${field}`);
 		}
+		// Dero's two voice rooms come off his voice allow list (2026-10 item 257 Phase 2b).
+		expect(mocks.revokeDeroVoiceRooms).toHaveBeenCalledWith("g1", ["ch-meetingVoiceChannelId", "ch-arcadeVoiceChannelId"]);
 		GUILD.channels.fetch.mockImplementation((async () => null) as never);
 	});
 });

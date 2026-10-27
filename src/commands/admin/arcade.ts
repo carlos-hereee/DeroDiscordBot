@@ -4,6 +4,7 @@ import { economyCopy } from "@features/economy/economyCopy.js";
 import { addChipSubcommands, runChipSubcommand } from "@features/economy/chipEconomySubcommands.js";
 import { addArcadeSettingSubcommands, addServerBlockSubcommands, runArcadeSettingSubcommand } from "@features/setup/arcadeSettingsSubcommands.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { refreshHeadquartersCards } from "@features/setup/headquartersCards.js";
 
 // ── /arcade ───────────────────────────────────────────────────────────
 // What:  the arcade in one command: `on` and `off`, `bots`, `reach` and
@@ -25,11 +26,11 @@ export const data = addArcadeSettingSubcommands(new SlashCommandBuilder().setNam
 
 /** The one handler the slash command and the admin guide's /arcade button share. */
 export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
-	if (options.getSubcommandGroup(false) === CHIPS_GROUP) {
-		await runChipSubcommand(interaction, options);
-		return;
-	}
-	await runArcadeSettingSubcommand(interaction, options);
+	if (options.getSubcommandGroup(false) === CHIPS_GROUP) await runChipSubcommand(interaction, options);
+	else await runArcadeSettingSubcommand(interaction, options);
+	// 🎰arcade-control's steps card and chart follow every arcade and economy change,
+	// fire and forget (2026-10 item 257 Phase 2b); the settings panel runs this handler.
+	refreshHeadquartersCards(interaction.guild, "arcadeControl");
 }
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {

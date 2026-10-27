@@ -25,8 +25,13 @@ vi.mock("@features/voice/voiceSessions.js", () => ({
 	voiceSessions: { get: mocks.sessionGet, join: mocks.sessionJoin, leave: mocks.sessionLeave },
 }));
 vi.mock("@features/voice/joinNotice.js", () => ({ announceJoin: mocks.announceJoin }));
+// The queue reads the Meeting Hall and Arcade Lounge ids from GuildConfig.
+vi.mock("@db/stores/guildConfigStore.js", () => ({
+	guildConfigStore: { findByGuildId: vi.fn(async () => ({ meetingVoiceChannelId: "vc-meeting", arcadeVoiceChannelId: "vc-lounge" })) },
+}));
 
-import { checkJoin, execute, type JoinGateInput } from "./dero.js";
+import { checkJoin, execute, runQueuedJoin, type JoinGateInput } from "./dero.js";
+import { voiceQueue, type VoiceQueueRequest } from "@features/voice/voiceQueue.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
 
@@ -86,13 +91,29 @@ describe("checkJoin, the /dero join gates", () => {
 		["when the kill switch is off", { config: configWith({ enabled: false }) }, deroBrainCopy.tell.switchedOff],
 		["for a member who is not authorized", { speaker: memberFor("g1", { roles: [], channel: voiceChannel(VC).channel }) }, deroBrainCopy.tell.notAuthorized],
 		["for a member who is not in a voice channel", { speaker: memberFor("g1") }, call.notInVoice],
-		["when Dero is already in another channel", { sessionChannelId: "vc-other" }, call.alreadyElsewhere("vc-other")],
 		["when Dero is already in this channel", { sessionChannelId: VC }, call.alreadyHere(VC)],
 		["for a channel that is not allowlisted", { speaker: memberFor("g1", { channel: voiceChannel("vc-unlisted").channel }) }, call.channelNotAllowed],
 		["when the bot lacks permission", { speaker: memberFor("g1", { channel: voiceChannel(VC, false).channel }) }, call.botLacksPermission],
 		["when the bot's own member is not cached", { botMember: null }, call.botLacksPermission],
 	])("refuses %s", (_label, overrides, line) => {
 		expect(checkJoin(gateInput(overrides as Partial<JoinGateInput>))).toEqual({ ok: false, line });
+	});
+
+	// The voice queue (2026-10 item 257, owner item 22): a request that passes every
+	// gate while Dero is in another call waits rather than being refused.
+	it("queues, never refuses, a join that passes every gate while Dero is in another channel", () => {
+		const { channel } = voiceChannel(VC);
+		expect(checkJoin(gateInput({ speaker: memberFor("g1", { channel }), sessionChannelId: "vc-other" }))).toEqual({
+			ok: false,
+			queue: true,
+			channel,
+			sessionChannelId: "vc-other",
+		});
+	});
+
+	it("refuses rather than queues a join that would fail a gate even once Dero is free", () => {
+		const gate = checkJoin(gateInput({ speaker: memberFor("g1", { channel: voiceChannel("vc-unlisted").channel }), sessionChannelId: "vc-other" }));
+		expect(gate).toEqual({ ok: false, line: call.channelNotAllowed });
 	});
 
 	it("lets the guild owner through without a role", () => {
@@ -262,5 +283,68 @@ describe("/dero status", () => {
 		const { interaction, reply } = interactionFor("status");
 		await execute(interaction);
 		expect(textOf(reply)).toContain(call.notInCall);
+	});
+});
+
+// ── the voice queue (2026-10 item 257 Phase 2b, owner item 22) ──
+
+describe("/dero join while Dero is in another call", () => {
+	it("queues the request with its place, joins nothing, and /dero status lists it", async () => {
+		mocks.sessionGet.mockReturnValue({ channelId: "vc-busy" });
+		const first = interactionFor("join");
+		await execute(first.interaction);
+		expect(mocks.sessionJoin).not.toHaveBeenCalled();
+		expect(first.deferReply).not.toHaveBeenCalled();
+		expect(textOf(first.reply)).toContain(call.queued(1, 1, "vc-busy"));
+
+		const second = interactionFor("join", { guildId: first.guildId });
+		const secondChannel = voiceChannel(VC).channel;
+		(second.interaction as unknown as { member: GuildMember }).member = memberFor(first.guildId, { id: "member-2", channel: secondChannel });
+		await execute(second.interaction);
+		expect(textOf(second.reply)).toContain(call.queued(2, 2, "vc-busy"));
+
+		const status = interactionFor("status", { guildId: first.guildId });
+		await execute(status.interaction);
+		expect(textOf(status.reply)).toContain(call.queueTitle);
+		expect(textOf(status.reply)).toContain(call.queueLine(1, "member", VC, "other"));
+	});
+});
+
+describe("runQueuedJoin, the queue's runner", () => {
+	function requestFor(options: { inChannel?: string | null } = {}): VoiceQueueRequest {
+		const { channel } = voiceChannel(VC);
+		const member = { ...memberFor("g-run", { channel }), voice: { channel, channelId: options.inChannel === undefined ? VC : options.inChannel } };
+		const guild = {
+			id: "g-run",
+			ownerId: OWNER_ID,
+			members: { me: BOT, cache: new Map([["member", member]]), fetch: vi.fn(async () => null) },
+		};
+		return { guild, requesterId: "member", channelId: VC, controlChannelId: "text-9", category: "other", requestedAt: 0 } as unknown as VoiceQueueRequest;
+	}
+
+	it("joins the requester's channel and posts the join notice where the request came from", async () => {
+		await expect(runQueuedJoin(requestFor())).resolves.toBe("joined");
+		expect(mocks.sessionJoin).toHaveBeenCalledWith(expect.objectContaining({ controlChannelId: "text-9" }));
+		expect(mocks.announceJoin).toHaveBeenCalledWith(expect.objectContaining({ controlChannelId: "text-9", voiceChannelId: VC }));
+	});
+
+	it("skips a request whose member is no longer in that voice channel", async () => {
+		await expect(runQueuedJoin(requestFor({ inChannel: "vc-elsewhere" }))).resolves.toBe("skipped");
+		expect(mocks.sessionJoin).not.toHaveBeenCalled();
+	});
+
+	it("skips a request once voice is switched off", async () => {
+		mocks.findByGuildId.mockImplementation(async (guildId: string) => configFor(guildId, { enabled: false }));
+		await expect(runQueuedJoin(requestFor())).resolves.toBe("skipped");
+	});
+
+	it("keeps the request's place when Dero is in a call again", async () => {
+		mocks.sessionGet.mockReturnValue({ channelId: "vc-busy" });
+		await expect(runQueuedJoin(requestFor())).resolves.toBe("busy");
+		expect(mocks.sessionJoin).not.toHaveBeenCalled();
+	});
+
+	it("is what the queue singleton runs", () => {
+		expect(typeof voiceQueue.useRunner).toBe("function");
 	});
 });

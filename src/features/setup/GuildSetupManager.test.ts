@@ -15,7 +15,17 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({
 	},
 }));
 
+// Dero's own voice rooms on his voice allow list (2026-10 item 257 Phase 2b): spied
+// here so no setup test reaches the DeroVoiceConfig model.
+vi.mock("@features/voice/deroVoiceRooms.js", () => ({
+	allowDeroVoiceRooms: vi.fn().mockResolvedValue(undefined),
+	replaceDeroVoiceRoom: vi.fn().mockResolvedValue(undefined),
+	revokeDeroVoiceRooms: vi.fn().mockResolvedValue(undefined),
+	DERO_VOICE_ROOM_FIELDS: ["meetingVoiceChannelId", "arcadeVoiceChannelId"],
+}));
+
 import { GuildSetupManager } from "./GuildSetupManager.js";
+import { allowDeroVoiceRooms, replaceDeroVoiceRoom } from "@features/voice/deroVoiceRooms.js";
 import { CHALLENGE_GAMES } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { ChannelContent } from "./ChannelContent.js";
 import { DERO_ART_FILES } from "@features/renderer/deroArt.js";
@@ -1948,6 +1958,16 @@ describe("GuildSetupManager voice rooms", () => {
 				introMessageIds: expect.objectContaining({ meetingVoiceChannelId: `msg-${packChannels.meetingVoice}` }),
 			})
 		);
+	});
+
+	it("puts both rooms a fresh install builds on Dero's voice allow list (owner item 8)", async () => {
+		await runAutoSetup(null);
+		expect(allowDeroVoiceRooms).toHaveBeenCalledWith("guild-1", [`new-${packChannels.meetingVoice}`, `new-${packChannels.arcadeVoice}`]);
+	});
+
+	it("swaps a rebuilt room's dead id for its new one on the allow list", async () => {
+		await runSweep({ stored: makeStoredConfig(), channelFetchMap: { "ch-arcadevoice": null } });
+		expect(replaceDeroVoiceRoom).toHaveBeenCalledWith("guild-1", "ch-arcadevoice", `new-${packChannels.arcadeVoice}`);
 	});
 
 	it("rebuilds a deleted Arcade Lounge under the ARCADE category, never under the homebase", async () => {

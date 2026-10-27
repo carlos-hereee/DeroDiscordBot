@@ -104,6 +104,13 @@ export interface ListenStart {
 /** Starts Dero's ears in a Ready call; voiceListener.startVoiceListener in production. */
 export type StartListening = (start: ListenStart) => { stop(): void };
 
+/** What an end listener hears about a call that just ended. */
+export interface CallEnded {
+	guildId: string;
+	channelId: string;
+	reason: SessionEndReason;
+}
+
 /** What callers may read about a live session. The speaker is the live object. */
 export interface VoiceSessionView {
 	readonly guildId: string;
@@ -238,6 +245,9 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 	// executor through the turn loop, and the executor imports this module, so a
 	// static import would close a cycle that only works by accident of load order.
 	let startListening: StartListening | null = null;
+	// Told after every call ends, so the voice queue can hand Dero to the next request
+	// (2026-10 item 257, owner item 22). Registered by main.ts for the same cycle reason.
+	const endListeners: Array<(ended: CallEnded) => void> = [];
 
 	// ── ending ──
 
@@ -283,6 +293,16 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 
 		const notice = END_NOTICES[reason];
 		if (notice) notify(session, notice(session.channelId));
+
+		// Last, after the session left the map, so a listener that joins again sees Dero free.
+		for (const listener of endListeners) {
+			try {
+				listener({ guildId: session.guildId, channelId: session.channelId, reason });
+			}
+			catch (error) {
+				console.warn(`[dero-voice] a call end listener failed guild=${session.guildId}`, error);
+			}
+		}
 	}
 
 	function notify(session: LiveSession, line: string): void {
@@ -509,12 +529,17 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 		startListening = factory;
 	}
 
+	/** Be told after every call ends, whatever ended it. main.ts registers the voice queue. */
+	function onEnd(listener: (ended: CallEnded) => void): void {
+		endListeners.push(listener);
+	}
+
 	/** Counts for the soak sampler: open calls (oldest first, by guild) and every rejoin so far. */
 	function stats(): { guildIds: string[]; rejoinsTotal: number } {
 		return { guildIds: [...sessions.keys()], rejoinsTotal };
 	}
 
-	return { get, join, leave, leaveAll, useListener, stats };
+	return { get, join, leave, leaveAll, useListener, onEnd, stats };
 }
 
 export type VoiceSessions = ReturnType<typeof createVoiceSessions>;

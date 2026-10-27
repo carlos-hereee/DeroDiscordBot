@@ -475,6 +475,10 @@ export const BOT_CONSTANTS = {
 	// Per guild, counted from every join ATTEMPT (not only a successful one),
 	// because each attempt costs gateway voice traffic whether or not it connects.
 	DERO_VOICE_JOIN_COOLDOWN_MS: 10_000,
+	// A /dero join waiting in the voice queue (2026-10 item 257, owner item 22) is dropped
+	// after this long: a request older than half an hour is a call its member has most
+	// likely given up on, and joining it would put Dero in a room nobody expects him in.
+	DERO_VOICE_QUEUE_EXPIRY_MS: 30 * 60_000,
 	// Dero leaves this long after the last authorized member left its call (Phase
 	// 3a Part B). Long enough to survive a member's reconnect or a quick channel
 	// hop, short enough that an empty call does not keep a voice session open.

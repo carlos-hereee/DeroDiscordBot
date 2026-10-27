@@ -12,6 +12,29 @@
 //
 // House rule for every string below: no dashes in user-facing copy.
 
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import type { VoicePriorityCategory } from "./voicePriority.js";
+
+const QUEUE_EXPIRY_MINUTES = BOT_CONSTANTS.DERO_VOICE_QUEUE_EXPIRY_MS / 60_000;
+
+// What each voice priority category reads as, on the queue lines, the priority
+// step's selects and the ⚙️dero-config chart (2026-10 item 257, owner item 22). A
+// Record over the union, so a category added without a label is a compile error.
+const PRIORITY_LABELS: Record<VoicePriorityCategory, string> = {
+	"meeting-hall": "Meeting Hall",
+	"rated-match": "Rated match",
+	"casual-match": "Casual match",
+	"arcade-lounge": "Arcade Lounge",
+	other: "Any other allowed channel",
+};
+
+const ordinal = (place: number): string => {
+	const lastTwo = place % 100;
+	if (lastTwo >= 11 && lastTwo <= 13) return `${place}th`;
+	const suffix = { 1: "st", 2: "nd", 3: "rd" }[place % 10] ?? "th";
+	return `${place}${suffix}`;
+};
+
 const onOff = (on: boolean): string => (on ? "ON" : "OFF");
 
 export const voiceCopy = {
@@ -103,6 +126,16 @@ export const voiceCopy = {
 
 		// One line of /dero status. The other half is notInCall above.
 		statusInCall: (channelId: string): string => `Dero is in a voice call in <#${channelId}>.`,
+
+		// ── the voice queue (2026-10 item 257, owner item 22) ──
+		// A join while Dero is in another call waits its turn instead of being refused;
+		// Dero never leaves a call for it.
+		queued: (place: number, total: number, busyChannelId: string): string =>
+			`Dero is in <#${busyChannelId}> right now, so your request waits. You are ${ordinal(place)} of ${total} in line. Dero joins you when that call ends, if you are still in your voice channel. A request waits ${QUEUE_EXPIRY_MINUTES} minutes at most.`,
+		queueTitle: "Waiting for Dero:",
+		queueLine: (place: number, requesterId: string, channelId: string, category: VoicePriorityCategory): string =>
+			`${place}. <@${requesterId}> in <#${channelId}> (${PRIORITY_LABELS[category]})`,
+		queueEmpty: "Nobody is waiting for Dero.",
 		// Shown only to members on the task list, once there is a voice turn to
 		// measure: from the end of their speech to the start of Dero's answer.
 		statusLatency: (medianSeconds: string, slowestSeconds: string, turns: number): string =>
@@ -234,5 +267,18 @@ export const voiceCopy = {
 			channels: "Allowed text channels",
 			voiceChannels: "Allowed voice channels",
 		},
+	},
+
+	// ── the voice priority order, step 5 of ⚙️dero-config (2026-10 item 257, owner item 22) ──
+	// Admin facing. A modal title and a select label hold 45 characters each.
+	priority: {
+		label: (category: VoicePriorityCategory): string => PRIORITY_LABELS[category],
+		modalTitle: "Voice priority order",
+		intro: "Pick what gets Dero's voice first while he is busy in a call. A request waits its turn; Dero never leaves a call for it. The category you leave out goes last.",
+		placeLabels: ["First", "Second", "Third", "Fourth"],
+		duplicate: "Each place needs a different choice. Nothing was saved, so open the step again and pick four different ones.",
+		saved: (labels: string[]): string => `Voice priority saved: ${labels.join(", then ")}.`,
+		notAdmin: "Only the server owner or an admin can set the voice priority.",
+		auditSubject: "voice priority",
 	},
 };

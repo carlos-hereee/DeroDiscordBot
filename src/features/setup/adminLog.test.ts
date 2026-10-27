@@ -87,7 +87,7 @@ describe("adminLog.write", () => {
 		expect(sent.allowedMentions).toEqual({ parse: [] });
 		expect(sent.content).toBeUndefined();
 		const embed = sentEmbed(channel);
-		expect(embed.title).toBe(setupCopy.adminLog.label("voice.allowlist"));
+		expect(embed.title).toBe(setupCopy.adminLog.title("voice.allowlist"));
 		expect(embed.fields?.map((field) => field.value)).toEqual(["<@user-1>", "roles", "added <@&role-1>"]);
 		expect(embed.timestamp).toBeDefined();
 	});
@@ -190,7 +190,7 @@ describe("adminLog.write", () => {
 		const sent = channel.send.mock.calls[0]![0] as SentPayload;
 		expect(sent.allowedMentions).toEqual({ parse: [] });
 		expect(sent.embeds).toHaveLength(1);
-		expect(sentEmbed(channel).title).toBe(setupCopy.adminLog.label(kind));
+		expect(sentEmbed(channel).title).toBe(setupCopy.adminLog.title(kind));
 	});
 
 	it.each(ADMIN_LOG_KINDS)("keeps the %s row when its post fails", async (kind) => {
@@ -203,6 +203,62 @@ describe("adminLog.write", () => {
 
 	it("gives every declared kind its own label", () => {
 		expect(new Set(ADMIN_LOG_KINDS.map((kind) => setupCopy.adminLog.label(kind))).size).toBe(ADMIN_LOG_KINDS.length);
+	});
+});
+
+// ── the designed card (2026-10 item 257 Phase 2b) ──
+describe("adminLog embed design", () => {
+	// A guild the client has cached, holding one member with a server nickname and avatar.
+	function makeGuildWithMember(channel: unknown): { id: string; client: Client } {
+		const member = { displayName: "Server Nick", displayAvatarURL: () => "https://cdn.example/member.png" };
+		const guild = makeGuild(channel);
+		Object.assign(guild.client, {
+			guilds: { cache: new Map([[GUILD_ID, { members: { cache: new Map([["user-1", member]]), fetch: vi.fn() } }]]) },
+		});
+		return guild;
+	}
+
+	it.each(ADMIN_LOG_KINDS)("posts %s with its emoji title, the acting admin as author, its family footer and its time", async (kind) => {
+		const channel = makeLogChannel();
+		await adminLog.write({ guild: makeGuildWithMember(channel), kind, actor: { userId: "user-1" }, payload: { subject: "s", detail: "d" } });
+		const embed = sentEmbed(channel);
+		expect(embed.title?.startsWith(`${setupCopy.adminLog.emoji(kind)} `)).toBe(true);
+		expect(embed.author).toEqual({ name: "Server Nick", icon_url: "https://cdn.example/member.png" });
+		expect(embed.footer?.text).toMatch(/^Admin log · /);
+		expect(embed.timestamp).toBeDefined();
+	});
+
+	it("lays By and What side by side and Change full width", async () => {
+		const channel = makeLogChannel();
+		await adminLog.write({ guild: makeGuild(channel), kind: "config.change", actor: { userId: "user-1" }, payload: { subject: "auto heal", detail: "off" } });
+		expect(sentEmbed(channel).fields?.map((field) => field.inline)).toEqual([true, true, false]);
+	});
+
+	it("falls back to the user Discord knows when the member is not cached, and posts with no author when both fail", async () => {
+		const channel = makeLogChannel();
+		const guild = makeGuild(channel);
+		Object.assign(guild.client, { users: { fetch: vi.fn().mockResolvedValue({ displayName: "Global Name", displayAvatarURL: () => "https://cdn.example/user.png" }) } });
+		await adminLog.write({ guild, kind: "config.change", actor: { userId: "user-1" } });
+		expect(sentEmbed(channel).author?.name).toBe("Global Name");
+
+		const bare = makeLogChannel();
+		const result = await adminLog.write({ guild: makeGuild(bare), kind: "config.change", actor: { userId: "user-1" } });
+		expect(result.posted).toBe(true);
+		expect(sentEmbed(bare).author).toBeUndefined();
+	});
+
+	it("shows Dero as the author of his own work and the dashboard by name", async () => {
+		const deroChannel = makeLogChannel();
+		await adminLog.write({ guild: makeGuild(deroChannel), kind: "party.open", actor: { source: "dero" } });
+		expect(sentEmbed(deroChannel).author?.name).toBe("Dero");
+
+		const dashboardChannel = makeLogChannel();
+		await adminLog.write({ guild: makeGuild(dashboardChannel), kind: "event.create", actor: { source: "dashboard" } });
+		expect(sentEmbed(dashboardChannel).author?.name).toBe(setupCopy.adminLog.authorDashboard);
+	});
+
+	it("gives every kind an emoji", () => {
+		for (const kind of ADMIN_LOG_KINDS) expect(setupCopy.adminLog.emoji(kind).length).toBeGreaterThan(0);
 	});
 });
 

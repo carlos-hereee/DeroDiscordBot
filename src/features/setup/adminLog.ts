@@ -2,7 +2,7 @@ import { EmbedBuilder, TextChannel, type Client, type ColorResolvable } from "di
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { adminLogEvent } from "@base/constants/BOT_LOG_EVENTS.js";
-import { COLORS } from "@base/copy/brand.js";
+import { AUTHOR, COLORS } from "@base/copy/brand.js";
 import { setupCopy, type AdminLogLineInput } from "./setupCopy.js";
 
 // ── adminLog ──────────────────────────────────────────────────────────────
@@ -22,7 +22,8 @@ import { setupCopy, type AdminLogLineInput } from "./setupCopy.js";
 //        GuildConfig.adminLogChannelId on every call rather than cached, because a
 //        repair or a self destruct moves it.
 // How:   ① persist the row; ② resolve the channel, skipping quietly when the guild
-//        has none yet (a legacy row before its first boot repair); ③ post one embed
+//        has none yet (a legacy row before its first boot repair), and the author who
+//        acted, best effort, since an entry posts without one; ③ post one embed
 //        with every mention disabled, since naming an admin must never ping them,
 //        falling back to the plain text line when Discord refuses the embed.
 //
@@ -56,7 +57,7 @@ export type AdminLogKind = (typeof ADMIN_LOG_KINDS)[number];
 // the bot: the admin purple for settings, the schedule green for schedules and
 // events, the error red for the one destructive step, the leaderboard gold for chips,
 // and the arcade violet for bot seats.
-type AdminLogFamily = "settings" | "schedules" | "destructive" | "economy" | "bots";
+export type AdminLogFamily = "settings" | "schedules" | "destructive" | "economy" | "bots";
 
 const ADMIN_LOG_FAMILIES: Record<AdminLogKind, AdminLogFamily> = {
 	"schedule.create": "schedules",
@@ -147,22 +148,60 @@ async function resolveLogChannel(guild: AdminLogGuild): Promise<TextChannel | nu
 	return channel instanceof TextChannel ? channel : null;
 }
 
-/** The embed one audit entry posts as: its words from setupCopy, its color by family, its time. */
-export function buildAdminLogEmbed(entry: AdminLogLineInput): EmbedBuilder {
+/** Who an audit embed's author line shows: a name, and a picture when there is one. */
+export interface AdminLogAuthor {
+	name: string;
+	iconURL?: string;
+}
+
+// The slice of a member or user the author line reads. discord.js GuildMember and User both fit.
+interface AuthorSource {
+	displayName: string;
+	displayAvatarURL(): string;
+}
+
+// The acting admin as the server knows them (their server nickname and avatar), then
+// as Discord knows them, then nothing: a member who left or a fetch Discord refused
+// costs the entry its author line, never the entry itself.
+async function resolveMemberAuthor(guild: AdminLogGuild, userId: string): Promise<AdminLogAuthor | null> {
+	const cachedGuild = guild.client.guilds?.cache?.get(guild.id);
+	const member: AuthorSource | null =
+		cachedGuild?.members.cache.get(userId) ?? (await cachedGuild?.members.fetch(userId).catch(() => null)) ?? null;
+	const source: AuthorSource | null = member ?? (await guild.client.users?.fetch(userId).catch(() => null)) ?? null;
+	return source ? { name: source.displayName, iconURL: source.displayAvatarURL() } : null;
+}
+
+/** The author line of one audit embed: the acting admin, Dero himself, or the dashboard. */
+export async function resolveAdminLogAuthor(guild: AdminLogGuild, actor: AdminLogActor): Promise<AdminLogAuthor | null> {
+	if ("userId" in actor) return resolveMemberAuthor(guild, actor.userId).catch(() => null);
+	if (actor.source === "dero") return { name: AUTHOR.name, iconURL: AUTHOR.iconURL };
+	return { name: setupCopy.adminLog.authorDashboard };
+}
+
+/**
+ * The embed one audit entry posts as (2026-10 item 257 Phase 2b): the author who
+ * acted, a title opening with the kind's emoji, By and What side by side with Change
+ * below them, a color and a footer naming the kind's family, and its time.
+ */
+export function buildAdminLogEmbed(entry: AdminLogLineInput, author: AdminLogAuthor | null = null): EmbedBuilder {
 	const { title, fields } = setupCopy.adminLog.embedParts(entry);
-	return new EmbedBuilder()
+	const family = ADMIN_LOG_FAMILIES[entry.kind];
+	const embed = new EmbedBuilder()
 		.setTitle(title)
-		.setColor(FAMILY_COLORS[ADMIN_LOG_FAMILIES[entry.kind]])
+		.setColor(FAMILY_COLORS[family])
 		.addFields(fields)
+		.setFooter({ text: setupCopy.adminLog.footer(family) })
 		.setTimestamp(entry.atSeconds * 1000);
+	if (author) embed.setAuthor(author);
+	return embed;
 }
 
 // One embed per entry; when Discord refuses it (a missing Embed Links permission is the
 // usual cause), the same entry goes out as the plain line instead, so the channel never
 // loses an entry the embed could not carry. A failed fallback throws to write().
-async function postEntry(channel: TextChannel, entry: AdminLogLineInput): Promise<void> {
+async function postEntry(channel: TextChannel, entry: AdminLogLineInput, author: AdminLogAuthor | null): Promise<void> {
 	try {
-		await channel.send({ embeds: [buildAdminLogEmbed(entry)], allowedMentions: { parse: [] } });
+		await channel.send({ embeds: [buildAdminLogEmbed(entry, author)], allowedMentions: { parse: [] } });
 	} catch (error) {
 		console.warn(`[admin-log] the ${entry.kind} embed was refused in channel ${channel.id}; posting the text line instead`, error);
 		await channel.send({ content: setupCopy.adminLog.line(entry), allowedMentions: { parse: [] } });
@@ -188,13 +227,15 @@ async function write({ guild, kind, actor, payload = {} }: AdminLogEntry): Promi
 	try {
 		const channel = await resolveLogChannel(guild);
 		if (!channel) return result;
-		await postEntry(channel, {
+		const author = await resolveAdminLogAuthor(guild, actor);
+		const entry: AdminLogLineInput = {
 			kind,
 			atSeconds: Math.floor(Date.now() / 1000),
 			actor: renderActor(actor),
 			subject: payload.subject,
 			detail: payload.detail,
-		});
+		};
+		await postEntry(channel, entry, author);
 		result.posted = true;
 	} catch (error) {
 		console.error(`[admin-log] posting ${kind} to the admin log of guild ${guild.id} failed`, error);

@@ -263,8 +263,18 @@ async function openLeaf(interaction: OpeningInteraction, command: LaunchableComm
 
 /** ① An admin guide button: open its launch id's panel, or a pick of what to do when its command has several leaves. */
 async function handleCommandButton(interaction: ButtonInteraction): Promise<void> {
-	if (!(await admitAdmin(interaction))) return;
 	const [, launchId] = interaction.customId.split(":");
+	await openAdminLaunch(interaction, launchId ?? "");
+}
+
+/**
+ * ① for a launch id named anywhere, not only on the guide: the owner or admin gate,
+ * then the launch id's settings panel, or the pick of what to do. Exported for the
+ * 🏰 DERO HEADQUARTERS steps cards (2026-10 item 257 Phase 2b), whose steps open the
+ * very flow the guide's button does.
+ */
+export async function openAdminLaunch(interaction: ButtonInteraction, launchId: string): Promise<void> {
+	if (!(await admitAdmin(interaction))) return;
 	const target = launchId ? resolveLaunchTarget(launchId) : null;
 	if (!target) {
 		await showErrorNotice(interaction, commandButtonsCopy.launcher.staleButton);
@@ -283,6 +293,18 @@ async function handleCommandButton(interaction: ButtonInteraction): Promise<void
 		components: [leafPickRow(target.command, leaves)],
 		...PRIVATE,
 	});
+}
+
+/**
+ * ③ for one leaf named by its command and path ("server block"): the owner or admin
+ * gate, then the leaf's form, or its run when it has no options. Exported for the
+ * 🏰 DERO HEADQUARTERS steps cards (2026-10 item 257 Phase 2b), so a step opens the
+ * same form the pick would.
+ */
+export async function openAdminLeaf(interaction: ButtonInteraction, commandName: string, path: string): Promise<void> {
+	if (!(await admitAdmin(interaction))) return;
+	const target = await resolveTarget(interaction, commandName, pathToId(path));
+	if (target) await openLeaf(interaction, target.command, target.leaf);
 }
 
 /** ② The pick of a command's leaves, shared by the button's pick and a settings panel's saved reply. */

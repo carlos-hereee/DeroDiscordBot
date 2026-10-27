@@ -25,6 +25,8 @@ import type { ActionReport } from "@features/dero-brain/executor.js";
 import { rulesCardFor } from "@features/dero-brain/holdemRulesCard.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
+import { voiceQueue, type QueuedJoinOutcome, type VoiceQueueRequest } from "@features/voice/voiceQueue.js";
+import { categoryForChannel, normalizePriorityOrder } from "@features/voice/voicePriority.js";
 import { announceJoin, type GreetingOutcome } from "@features/voice/joinNotice.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
 import { turnLatencyLog } from "@features/voice/turnLatency.js";
@@ -55,9 +57,11 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 //        (build and enqueue the job, wait, execute an "ok" answer); ⑨ answer
 //        busy, timeout or not understood plainly, or list what happened;
 //        ⑩ audit, fire and forget.
-// How (join): the gates in joinRefusal, in order; then the per guild
+// How (join): the gates in checkJoin, in order; then the per guild
 //        cooldown; defer; join and wait for Ready; post the join notice and
-//        speak the greeting; one private line saying how it went.
+//        speak the greeting; one private line saying how it went. While Dero
+//        is in another call here the request waits in voiceQueue instead, and
+//        runQueuedJoin runs it when that call ends (2026-10 item 257, item 22).
 //
 // ⚠️ PRIVACY: the task text goes to the brain and nowhere else. It is never
 // logged, stored, or put in an error; the audit row carries its length. In a
@@ -254,6 +258,8 @@ export async function showDeroStatus(interaction: RepliableInteraction): Promise
 	const call = interaction.guildId ? voiceSessions.get(interaction.guildId) : null;
 	const callChannelId = call?.channelId;
 	lines.push(callChannelId ? callCopy.statusInCall(callChannelId) : callCopy.notInCall);
+	// The queue matters only while Dero is busy: with no call, nothing waits.
+	if (callChannelId && interaction.guildId) lines.push(...(await queueStatusLines(interaction.guildId)));
 
 	// Whether YOU may give tasks is shown only to members who may: a refused
 	// member learns that from /dero tell, and the list itself is never shown.
@@ -300,7 +306,11 @@ export async function showDeroStatus(interaction: RepliableInteraction): Promise
 
 // ── /dero join ──
 
-export type JoinGate = { ok: true; channel: VoiceBasedChannel; voiceId: string } | { ok: false; line: string };
+export type JoinGate =
+	| { ok: true; channel: VoiceBasedChannel; voiceId: string }
+	| { ok: false; line: string }
+	// Dero is in another call here: the request may wait in the voice queue (owner item 22).
+	| { ok: false; queue: true; channel: VoiceBasedChannel; sessionChannelId: string };
 
 export interface JoinGateInput {
 	speaker: GuildMember;
@@ -317,10 +327,12 @@ const refuseJoin = (line: string): JoinGate => ({ ok: false, line });
 
 /**
  * The /dero join gates, in order, with nothing joined and nothing spent: the
- * kill switch, an authorized speaker, the speaker in
- * a voice channel, Dero not already in a call here, the channel on the voice
- * allowlist, and the bot able to see, connect and speak there. Every refusal
- * reuses the line that already says it, from the tell gates or the Listen copy.
+ * kill switch, an authorized speaker, the speaker in a voice channel, Dero not
+ * already in that same channel, the channel on the voice allowlist, and the bot
+ * able to see, connect and speak there. Every refusal reuses the line that already
+ * says it, from the tell gates or the Listen copy. A request that passes all of
+ * them while Dero is in ANOTHER call here comes back as `queue` (2026-10 item 257,
+ * owner item 22), checked last so only a request that could run is ever queued.
  */
 export function checkJoin({ speaker, guildOwnerId, adminRoleId, botMember, config, sessionChannelId }: JoinGateInput): JoinGate {
 	if (!config) return refuseJoin(voiceCopy.listen.notSetUp);
@@ -331,12 +343,11 @@ export function checkJoin({ speaker, guildOwnerId, adminRoleId, botMember, confi
 	// by construction and there is no channel option to spoof.
 	const channel = speaker.voice.channel;
 	if (!channel) return refuseJoin(callCopy.notInVoice);
-	// One call per guild: name where Dero already is rather than move it.
-	if (sessionChannelId) {
-		return refuseJoin(sessionChannelId === channel.id ? callCopy.alreadyHere(sessionChannelId) : callCopy.alreadyElsewhere(sessionChannelId));
-	}
+	if (sessionChannelId === channel.id) return refuseJoin(callCopy.alreadyHere(sessionChannelId));
 	if (!config.allowedVoiceChannelIds.includes(channel.id)) return refuseJoin(callCopy.channelNotAllowed);
 	if (!botMember || !channel.permissionsFor(botMember)?.has(BOT_VOICE_PERMISSIONS)) return refuseJoin(callCopy.botLacksPermission);
+	// One call per guild, and waiting never moves Dero: the request queues instead.
+	if (sessionChannelId) return { ok: false, queue: true, channel, sessionChannelId };
 	return { ok: true, channel, voiceId: resolveDeroVoiceId(config) };
 }
 
@@ -366,6 +377,10 @@ export async function bringDeroIntoCall(interaction: RepliableInteraction): Prom
 		config,
 		sessionChannelId: voiceSessions.get(guild.id)?.channelId ?? null,
 	});
+	if ("queue" in gate) {
+		await queueJoin(interaction, gate.channel.id, gate.sessionChannelId, config?.priorityOrder);
+		return;
+	}
 	if (!gate.ok) {
 		await refuse(interaction, gate.line);
 		return;
@@ -413,6 +428,78 @@ export async function bringDeroIntoCall(interaction: RepliableInteraction): Prom
 		console.error(`[dero-voice] join command failed guild=${guild.id} channel=${voiceChannelId}`, err);
 		await interaction.editReply({ embeds: [errorEmbed(tellCopy.failed)] }).catch(() => undefined);
 	}
+}
+
+// ── the voice queue (2026-10 item 257, owner item 22) ──
+
+// A join that passed every gate while Dero is in another call here waits its turn,
+// and the member hears their place. Its category comes from the channel: the Meeting
+// Hall and the Arcade Lounge by their GuildConfig ids, any other allowed channel last.
+async function queueJoin(
+	interaction: RepliableInteraction<"cached">,
+	voiceChannelId: string,
+	busyChannelId: string,
+	storedOrder: string[] | undefined
+): Promise<void> {
+	const guild = interaction.guild;
+	const rooms = await guildConfigStore.findByGuildId(guild.id);
+	const place = voiceQueue.enqueue(
+		{
+			guild,
+			requesterId: interaction.member.id,
+			channelId: voiceChannelId,
+			controlChannelId: interaction.channelId ?? voiceChannelId,
+			category: categoryForChannel(voiceChannelId, rooms),
+		},
+		normalizePriorityOrder(storedOrder)
+	);
+	await showEmbedNotice(interaction, infoEmbed(callCopy.replyTitle, callCopy.queued(place.place, place.total, busyChannelId)));
+}
+
+/**
+ * The voice queue's runner, handed over by main.ts: the request at the head runs
+ * when the call before it ended. Every gate runs again on the member as they stand
+ * now, so a member who left their voice channel, lost their place on the task list
+ * or whose channel left the allow list is skipped. The join notice posts in the
+ * channel the request came from, which is how the member learns Dero is there.
+ */
+export async function runQueuedJoin(request: VoiceQueueRequest): Promise<QueuedJoinOutcome> {
+	const { guild } = request;
+	const member = guild.members.cache.get(request.requesterId) ?? (await guild.members.fetch(request.requesterId).catch(() => null));
+	if (!member || member.voice.channelId !== request.channelId) return "skipped";
+	const gate = checkJoin({
+		speaker: member,
+		guildOwnerId: guild.ownerId,
+		adminRoleId: await readSpeakerAdminRoleId(guild.id),
+		botMember: guild.members.me,
+		config: await deroVoiceConfigStore.findByGuildId(guild.id),
+		sessionChannelId: voiceSessions.get(guild.id)?.channelId ?? null,
+	});
+	if ("queue" in gate) return "busy";
+	if (!gate.ok) return "skipped";
+
+	// The same per guild window a typed join records, since this attempt costs the same traffic.
+	joinCooldown.record(guild.id);
+	const outcome = await voiceSessions.join({ guild, channel: gate.channel, controlChannelId: request.controlChannelId });
+	if (outcome.status === "alreadyInGuild") return "busy";
+	if (outcome.status === "failed") return "skipped";
+	await announceJoin({
+		guild,
+		controlChannelId: request.controlChannelId,
+		voiceChannelId: gate.channel.id,
+		voiceId: gate.voiceId,
+		speaker: outcome.session.speaker,
+	});
+	return "joined";
+}
+
+// The queue lines /dero status shows: every waiting request in its place. Shown to
+// every member, for the reason the call line is: who waits where is visible anyway.
+async function queueStatusLines(guildId: string): Promise<string[]> {
+	const order = normalizePriorityOrder((await deroVoiceConfigStore.findByGuildId(guildId))?.priorityOrder);
+	const waiting = voiceQueue.list(guildId, order);
+	if (waiting.length === 0) return [callCopy.queueEmpty];
+	return [callCopy.queueTitle, ...waiting.map((request, index) => callCopy.queueLine(index + 1, request.requesterId, request.channelId, request.category))];
 }
 
 // ── /dero leave ──

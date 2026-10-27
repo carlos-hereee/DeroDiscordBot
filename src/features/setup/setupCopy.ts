@@ -1,4 +1,4 @@
-import type { AdminLogKind } from "./adminLog.js";
+import type { AdminLogFamily, AdminLogKind } from "./adminLog.js";
 import type { BoardRefreshProblem } from "@base/interfaces/IBoardRefreshResult.js";
 
 // ── setup admin copy ─────────────────────────────────────────────────────
@@ -32,6 +32,37 @@ const ADMIN_LOG_LABELS: Record<AdminLogKind, string> = {
 	"bot.slot": "Bot seat changed",
 };
 
+// The emoji each audit kind's embed title opens with (2026-10 item 257 Phase 2b), so
+// an admin scrolling the log finds a kind by its picture before reading a word. A
+// Record over the kind union for the same compile time reason as the labels.
+const ADMIN_LOG_EMOJIS: Record<AdminLogKind, string> = {
+	"schedule.create": "🗓️",
+	"schedule.update": "✏️",
+	"schedule.delete": "🗑️",
+	"event.create": "📣",
+	"event.update": "📝",
+	"event.delete": "❌",
+	"party.open": "🎉",
+	"config.change": "⚙️",
+	"powerup.toggle": "⚡",
+	"voice.allowlist": "🎙️",
+	"voice.cap": "💸",
+	"selfdestruct.attempt": "💥",
+	"chip.grant": "🪙",
+	"vault.topup": "🏦",
+	"bot.slot": "🤖",
+};
+
+// The footer an audit embed carries, naming the family its color stands for, so the
+// color has a word beside it for a reader who cannot tell the colors apart.
+const ADMIN_LOG_FAMILY_LABELS: Record<AdminLogFamily, string> = {
+	settings: "Settings",
+	schedules: "Schedules and events",
+	destructive: "Destructive action",
+	economy: "Economy",
+	bots: "Bot opponents",
+};
+
 // Discord caps a message at 2000 characters; one audit line stays far below that
 // even with a long event name, and a cut keeps a pasted title from flooding the log.
 const MAX_LINE_PART_LENGTH = 200;
@@ -61,6 +92,8 @@ const ADMIN_LOG_FIELD_NAMES = {
 export interface AdminLogEmbedField {
 	name: string;
 	value: string;
+	// By and What sit side by side; Change takes the full width, since it is the longest.
+	inline: boolean;
 }
 
 /** The words of one audit embed, without its color or time. */
@@ -72,8 +105,15 @@ export interface AdminLogEmbedParts {
 export const setupCopy = {
 	adminLog: {
 		label: (kind: AdminLogKind): string => ADMIN_LOG_LABELS[kind],
+		emoji: (kind: AdminLogKind): string => ADMIN_LOG_EMOJIS[kind],
+		/** The embed's title: the kind's emoji, then its label. */
+		title: (kind: AdminLogKind): string => `${ADMIN_LOG_EMOJIS[kind]} ${ADMIN_LOG_LABELS[kind]}`,
+		/** The embed's footer: the family the kind's color stands for. */
+		footer: (family: AdminLogFamily): string => `Admin log · ${ADMIN_LOG_FAMILY_LABELS[family]}`,
 		actorDashboard: "the dashboard",
 		actorDero: "Dero",
+		// The embed author when a dashboard route acted: no member stands behind it.
+		authorDashboard: "Company Uno dashboard",
 		/** One audit line: when, what, who, then the subject and detail when there are any. The embed's fallback. */
 		line: ({ kind, atSeconds, actor, subject, detail }: AdminLogLineInput): string =>
 			[`<t:${atSeconds}:f>`, `**${ADMIN_LOG_LABELS[kind]}**`, `by ${actor}`, subject ? clip(subject) : null, detail ? clip(detail) : null]
@@ -85,11 +125,11 @@ export const setupCopy = {
 		 * empty subject or detail has no field. adminLog.ts adds the color and the time.
 		 */
 		embedParts: ({ kind, actor, subject, detail }: AdminLogLineInput): AdminLogEmbedParts => ({
-			title: ADMIN_LOG_LABELS[kind],
+			title: `${ADMIN_LOG_EMOJIS[kind]} ${ADMIN_LOG_LABELS[kind]}`,
 			fields: ([
-				{ name: ADMIN_LOG_FIELD_NAMES.actor, value: actor },
-				subject ? { name: ADMIN_LOG_FIELD_NAMES.subject, value: clip(subject) } : null,
-				detail ? { name: ADMIN_LOG_FIELD_NAMES.detail, value: clip(detail) } : null,
+				{ name: ADMIN_LOG_FIELD_NAMES.actor, value: actor, inline: true },
+				subject ? { name: ADMIN_LOG_FIELD_NAMES.subject, value: clip(subject), inline: true } : null,
+				detail ? { name: ADMIN_LOG_FIELD_NAMES.detail, value: clip(detail), inline: false } : null,
 			] as Array<AdminLogEmbedField | null>).filter((field): field is AdminLogEmbedField => field !== null),
 		}),
 		// Subjects and details the setting writers pass, so every caller names a
@@ -287,5 +327,71 @@ export const setupCopy = {
 		onFailed: "Turning the arcade on failed. Try again in a moment.",
 		auditOff: "arcade off, category and channels deleted",
 		auditOn: "arcade on, category and channels rebuilt",
+	},
+
+	// ── 🏰 DERO HEADQUARTERS steps cards and settings charts (2026-10 item 257 Phase 2b) ──
+	// Admin facing. A button label holds 80 characters; the step labels stay short so the
+	// card reads as a checklist.
+	headquarters: {
+		done: "✅",
+		todo: "⬜",
+		stepLine: (mark: string, step: number, label: string): string => `${mark} **Step ${step}** ${label}`,
+		optional: "(optional)",
+		buttonLabel: (step: number): string => `Step ${step}`,
+		footer: "Press a step to open its settings. The marks update after every change.",
+		on: "ON",
+		off: "OFF",
+		notSet: "not set",
+		unknown: "unknown",
+		count: (count: number): string => String(count),
+		dollars: (usd: number): string => `$${usd} a month`,
+		stepUnavailable: "That step could not open just now. Try again in a moment.",
+		staleStep: "This step is no longer available. The card refreshes on the next change.",
+		deroConfig: {
+			title: "⚙️ Dero's voice setup",
+			steps: ["Switch Dero's voice on", "Pick the voice channels Dero may join", "Listen, and who may give Dero tasks", "Set the monthly speech budget", "Set the voice priority order"],
+			chartTitle: "⚙️ Dero's voice settings",
+			chartSubtitle: "Every switch and setting of Dero's voice in this server.",
+			rows: {
+				voice: "Dero's voice",
+				listen: "Listen buttons",
+				roles: "Task list roles",
+				textChannels: "Text channels Dero posts in",
+				voiceChannels: "Voice channels Dero may join",
+				cap: "Monthly speech budget",
+				priority: "Voice priority",
+			},
+		},
+		onboarding: {
+			title: "🧭 Onboarding setup",
+			steps: ["Turn on Discord Community", "Place your own rules and welcome channels", "Configure Discord Onboarding", "Gate Dero's channels behind the member role"],
+			// Step 4 has no button: the member role is named in /setup, and the gate follows
+			// on its own once Community is on (2026-10 item 257, the orchestrator's option A).
+			gatingNote: "The member role is named in /setup; the gate follows on its own once Community is on.",
+			chartTitle: "🧭 Onboarding settings",
+			chartSubtitle: "Community, Onboarding and who sees Dero's channels.",
+			rows: {
+				community: "Discord Community",
+				onboarding: "Discord Onboarding",
+				memberRole: "Member role",
+				gating: "Channels gated by the member role",
+				adoptedPlaced: "Your own channels placed",
+			},
+		},
+		arcadeControl: {
+			title: "🎰 Arcade setup",
+			steps: ["Turn the arcade on", "Chips and the daily claim", "The monthly post and Dero bot opponents", "Rated network reach and registration", "Block servers from your network"],
+			chartTitle: "🎰 Arcade settings",
+			chartSubtitle: "Every switch and setting of the arcade in this server.",
+			rows: {
+				arcade: "The arcade",
+				chips: "Chips and the daily claim",
+				monthlyPost: "Monthly post",
+				bots: "Dero bot opponents",
+				reach: "Challenge reach",
+				blocked: "Blocked servers",
+			},
+			reach: { "invite-only": "invite only", server: "this server", network: "the rated network" } as Record<string, string>,
+		},
 	},
 } as const;

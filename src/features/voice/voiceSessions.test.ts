@@ -350,6 +350,22 @@ describe("leave and leaveAll", () => {
 		expect(rig.audit).toHaveBeenCalledWith("g2", BOT_LOG_EVENTS.DERO_VOICE_LEFT, expect.objectContaining({ reason: "shutdown" }));
 		expect(rig.sessions.leaveAll()).toBe(0);
 	});
+
+	// The voice queue's hook (2026-10 item 257 Phase 2b): told after the session left
+	// the map, so a listener that joins again finds Dero free; a throwing listener
+	// never breaks the ending.
+	it("tells every end listener after the call is gone, whatever ended it", async () => {
+		await joined(rig);
+		const seen: Array<{ guildId: string; channelId: string; reason: string; stillListed: boolean }> = [];
+		rig.sessions.onEnd(() => {
+			throw new Error("a broken listener");
+		});
+		rig.sessions.onEnd((ended) => seen.push({ ...ended, stillListed: rig.sessions.get(ended.guildId) !== null }));
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		rig.sessions.leave("g1");
+		expect(seen).toEqual([{ guildId: "g1", channelId: "vc-g1", reason: "left", stillListed: false }]);
+		warn.mockRestore();
+	});
 });
 
 describe("listening", () => {

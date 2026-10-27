@@ -21,6 +21,7 @@ import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog, type AdminLogKind } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { refreshHeadquartersCards } from "@features/setup/headquartersCards.js";
 import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /dero-config ──────────────────────────────────────────────────────
@@ -265,6 +266,9 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 
 		// ④
 		await showEmbedNotice(interaction, embed);
+		// ⑤ ⚙️dero-config's steps card and chart follow every change, fire and forget
+		// (2026-10 item 257 Phase 2b); the settings panel runs this same handler.
+		refreshHeadquartersCards(interaction.guild, "deroConfig");
 	}
 	catch (err) {
 		console.error(`[dero-config] failed guild=${guildId}`, err);

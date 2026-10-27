@@ -102,9 +102,11 @@ const guildConfigSchema = new Schema(
 
 		// ── the two managed VOICE rooms (2026-10 item 235) ──
 		// 🏛️ Meeting Hall under the homebase category and 🎮 Arcade Lounge under the
-		// arcade category. Plain voice channels: nothing listens in them, and they
-		// are deliberately NOT written to DeroVoiceConfig.allowedVoiceChannelIds.
-		// Nullable for the same reason as the arcade ids above, so legacy rows load
+		// arcade category. Setup and repair put both on DeroVoiceConfig.allowedVoiceChannelIds
+		// so Dero may join the rooms he built, and self destruct takes them off
+		// (features/voice/deroVoiceRooms.ts, 2026-10 item 257, owner item 8). That only
+		// lets him join: nothing is heard until the master voice switch is on and a
+		// member passes the speaker allow list. Nullable for the same reason as the arcade ids above, so legacy rows load
 		// and the boot sweep reads null as "missing, build it". Each room's /dero
 		// card has its own introMessageIds slot below (2026-10 item 245 Phase 4b).
 		meetingVoiceChannelId: { type: String, required: false, default: null },
@@ -497,6 +499,32 @@ const guildConfigSchema = new Schema(
 				onboardingConfigChannelId: { type: String, required: false, default: null },
 				arcadeControlChannelId: { type: String, required: false, default: null },
 				commandOutputChannelId: { type: String, required: false, default: null },
+			},
+			required: false,
+			default: () => ({}),
+		},
+
+		// ── 🏰 DERO HEADQUARTERS steps cards and settings charts (2026-10 item 257 Phase 2b) ──
+		// Each config channel holds two messages under its intro: the pinned steps card
+		// and the drawn settings chart, both kept by features/setup/headquartersCards.ts
+		// and edited in place after every change in their domain. Keyed by the channel's
+		// own field, like introMessageIds. Declared key by key for the reason the intro
+		// post mortem gives: an undeclared key is dropped in silence and the message
+		// would repost on every boot.
+		setupStepsMessageIds: {
+			type: {
+				deroConfigChannelId: { type: String, required: false, default: null },
+				onboardingConfigChannelId: { type: String, required: false, default: null },
+				arcadeControlChannelId: { type: String, required: false, default: null },
+			},
+			required: false,
+			default: () => ({}),
+		},
+		settingsChartMessageIds: {
+			type: {
+				deroConfigChannelId: { type: String, required: false, default: null },
+				onboardingConfigChannelId: { type: String, required: false, default: null },
+				arcadeControlChannelId: { type: String, required: false, default: null },
 			},
 			required: false,
 			default: () => ({}),
