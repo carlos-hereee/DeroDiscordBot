@@ -36,11 +36,11 @@ describe("self-destruct demolishes every managed channel", () => {
 });
 
 describe("self-destruct demolishes every managed category", () => {
-	it("covers both categories, not just the homebase", () => {
+	it("covers every category, not just the homebase", () => {
 		// An orphan CATEGORY is the worse half of R13: it survives, it is visible
 		// at the top of the server, and homebaseDestroyed guarantees nothing will
 		// ever clean it up.
-		expect([...MANAGED_CATEGORY_FIELDS].sort()).toEqual(["categoryId", "gamesCategoryId"]);
+		expect([...MANAGED_CATEGORY_FIELDS].sort()).toEqual(["categoryId", "gamesCategoryId", "headquartersCategoryId"]);
 	});
 
 	it("names a category for every categoryField the specs use", () => {

@@ -27,7 +27,9 @@ import { buildBotSelfOverwrite } from "@utils/channelOverwrites.js";
 
 /** Which overwrite shape a managed channel takes. CHANNEL_SPECS' kind, with introductions split out of "public". */
 // "adminLog" is the bot write only audit channel (post-launch plan item 11).
-export type ManagedOverwriteKind = "public" | "intro" | "admin" | "adminLog" | "voice";
+// "commandOutput" is 💬dero-commands, the public channel members also write in
+// (2026-10 item 257 Phase 2a).
+export type ManagedOverwriteKind = "public" | "intro" | "admin" | "adminLog" | "voice" | "commandOutput";
 
 /** One overwrite entry, in the form guild.channels.create and permissionOverwrites.set both accept. */
 export interface IOverwriteEntry {
@@ -57,6 +59,8 @@ const COMMUNITY_FEATURE = "COMMUNITY";
 // cannot disagree.
 const MEMBER_VOICE_ALLOW = JOIN_AND_SPEAK;
 const MEMBER_GATED_TEXT_ALLOW = [ViewChannel];
+// 💬dero-commands is where members run commands, so a gated member role sends there too.
+const MEMBER_GATED_CHAT_ALLOW = [ViewChannel, SendMessages];
 
 // The admin role's allow on each text kind, layered on once /setup has named it.
 // applyAdminRole keeps its own option-form copy of these two (left as it was by
@@ -85,12 +89,16 @@ export function isMemberRoleGated(guild: Guild, memberRoleId: string | null | un
 
 /** The overwrite kind a CHANNEL_SPECS row takes: its own, except introductions, the one public channel members may write in. */
 export function overwriteKindOf(spec: { configField: string; kind: "public" | "admin" | "adminLog" | "voice" }): ManagedOverwriteKind {
-	return spec.configField === "introChannelId" ? "intro" : spec.kind;
+	if (spec.configField === "introChannelId") return "intro";
+	// 💬dero-commands is a "public" spec everywhere a spec's kind is read (the admin
+	// grant, the visibility list), but it is the one public channel members may send in.
+	if (spec.configField === "commandOutputChannelId") return "commandOutput";
+	return spec.kind;
 }
 
 /** Whether a kind's shape changes with the Community branch. Introductions and the admin channels read the same either way. */
 export function dependsOnCommunityState(kind: ManagedOverwriteKind): boolean {
-	return kind === "public" || kind === "voice";
+	return kind === "public" || kind === "voice" || kind === "commandOutput";
 }
 
 // ── the shapes ───────────────────────────────────────────────────────
@@ -133,7 +141,24 @@ export function introCommunityOverwrites(guild: Guild, config: IOverwriteOwner, 
 	return overwrites;
 }
 
-/** The two admin channels: hidden from @everyone on every guild. */
+/**
+ * 💬dero-commands (2026-10 item 257 Phase 2a): the member facing channel members also
+ * write in, because they run their commands there. Open to everyone on an ungated
+ * guild; on a gated one, hidden from everyone without the member role, like every
+ * public channel, so a newcomer who has not finished Onboarding sees only introductions.
+ */
+export function commandOutputCommunityOverwrites(guild: Guild, config: IOverwriteOwner, roles: IOverwriteRoles): IOverwriteEntry[] {
+	const gated = isMemberRoleGated(guild, roles.memberRoleId);
+	const everyone: IOverwriteEntry = gated
+		? { id: guild.roles.everyone.id, deny: [ViewChannel] }
+		: { id: guild.roles.everyone.id, allow: [ViewChannel, SendMessages] };
+	const overwrites: IOverwriteEntry[] = [everyone, buildBotSelfOverwrite(guild.client.user!.id), { id: config.ownerId, allow: [ViewChannel, SendMessages] }];
+	if (gated) grant(overwrites, roles.memberRoleId!, MEMBER_GATED_CHAT_ALLOW);
+	if (roles.adminRoleId) grant(overwrites, roles.adminRoleId, ADMIN_TEXT_ALLOW);
+	return overwrites;
+}
+
+/** The admin channels and 🏰 DERO HEADQUARTERS itself: hidden from @everyone on every guild. */
 export function adminCommunityOverwrites(guild: Guild, config: IOverwriteOwner, roles: IOverwriteRoles): IOverwriteEntry[] {
 	const overwrites: IOverwriteEntry[] = [
 		{ id: guild.roles.everyone.id, deny: [ViewChannel] },
@@ -195,6 +220,20 @@ export function voiceCommunityOverwrites(guild: Guild, config: IOverwriteOwner, 
 	return overwrites;
 }
 
+/**
+ * 🏰 DERO HEADQUARTERS itself (2026-10 item 257 Phase 2a): the admin channels' shape
+ * on the category, so the category is hidden from members too, with ONE departure.
+ * The bot's entry here is view, send and read history only, not the shared self
+ * overwrite: runAutoSetup's category comment records a category create that refused
+ * with 50013 when its bot entry carried Manage Roles and Manage Channels. The bot's
+ * ViewChannel allow is still required, or the @everyone deny reaches it through its
+ * @everyone membership and every child create under the category fails.
+ */
+export function headquartersCategoryOverwrites(guild: Guild, config: IOverwriteOwner, roles: IOverwriteRoles): IOverwriteEntry[] {
+	const botId = guild.client.user!.id;
+	return adminCommunityOverwrites(guild, config, roles).map((entry) => (entry.id === botId ? { id: botId, allow: ADMIN_PRIVATE_ALLOW } : entry));
+}
+
 /** The shape for any kind; the one call the create, repair and reconcile paths share. */
 export function communityOverwritesFor(kind: ManagedOverwriteKind, guild: Guild, config: IOverwriteOwner, roles: IOverwriteRoles): IOverwriteEntry[] {
 	switch (kind) {
@@ -208,6 +247,8 @@ export function communityOverwritesFor(kind: ManagedOverwriteKind, guild: Guild,
 			return adminLogCommunityOverwrites(guild, config, roles);
 		case "voice":
 			return voiceCommunityOverwrites(guild, config, roles);
+		case "commandOutput":
+			return commandOutputCommunityOverwrites(guild, config, roles);
 	}
 }
 
@@ -219,6 +260,7 @@ export function communityOverwritesFor(kind: ManagedOverwriteKind, guild: Guild,
 export function memberRoleGrant(guild: Guild, kind: ManagedOverwriteKind, memberRoleId: string): PermissionOverwriteOptions | null {
 	if (kind === "voice") return allowOptions(MEMBER_VOICE_ALLOW);
 	if (kind === "public" && isMemberRoleGated(guild, memberRoleId)) return allowOptions(MEMBER_GATED_TEXT_ALLOW);
+	if (kind === "commandOutput" && isMemberRoleGated(guild, memberRoleId)) return allowOptions(MEMBER_GATED_CHAT_ALLOW);
 	return null;
 }
 

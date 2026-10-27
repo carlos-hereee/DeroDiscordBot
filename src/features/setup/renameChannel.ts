@@ -81,6 +81,12 @@ export const SLOT_LABELS: ReadonlyArray<{ label: string; configField: string }> 
 	// repair path both honor the stored override for a voice room too.
 	{ label: "Meeting Hall voice room", configField: "meetingVoiceChannelId" },
 	{ label: "Arcade Lounge voice room", configField: "arcadeVoiceChannelId" },
+	// ── 🏰 DERO HEADQUARTERS and 💬dero-commands (2026-10 item 257 Phase 2a) ──
+	// Autocomplete rows, so no command redeploy.
+	{ label: "Dero config", configField: "deroConfigChannelId" },
+	{ label: "Onboarding config", configField: "onboardingConfigChannelId" },
+	{ label: "Arcade control", configField: "arcadeControlChannelId" },
+	{ label: "Dero commands", configField: "commandOutputChannelId" },
 ];
 const VALID_SLOTS = new Set(SLOT_LABELS.map((s) => s.configField));
 

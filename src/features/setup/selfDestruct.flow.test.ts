@@ -24,7 +24,15 @@ vi.mock("./arcadeSwitch.js", () => ({ turnArcadeOff: mocks.turnArcadeOff }));
 vi.mock("./adminLog.js", () => ({ adminLog: { emit: mocks.emit } }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update } }));
 
-import { buildChoiceModal, buildSelfDestructButton, registerSelfDestructHandlers, SELF_DESTRUCT_CHOICES, type SelfDestructChoice } from "./selfDestruct.js";
+import {
+	buildChoiceModal,
+	buildSelfDestructButton,
+	HOMEBASE_CHANNEL_FIELDS,
+	MANAGED_CATEGORY_FIELDS,
+	registerSelfDestructHandlers,
+	SELF_DESTRUCT_CHOICES,
+	type SelfDestructChoice,
+} from "./selfDestruct.js";
 import { setupCopy } from "./setupCopy.js";
 
 const c = setupCopy.selfDestruct;
@@ -179,6 +187,30 @@ describe("Just delete channels", () => {
 		expect(mocks.turnArcadeOff).not.toHaveBeenCalled();
 		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: c.channelsDone }));
 		expect(auditDetails()).toEqual([c.auditChannelsConfirmed]);
+	});
+});
+
+describe("Just delete channels, everything Dero built", () => {
+	// 🏰 DERO HEADQUARTERS (2026-10 item 257 Phase 2a): every channel goes, its six
+	// included, then the three categories, Headquarters last, so no category is
+	// deleted while a tracked channel still sits under it.
+	it("deletes every tracked channel, then the categories, Headquarters last", async () => {
+		const row: Record<string, unknown> = { guildId: "g1", adoptedChannelIds: [] };
+		for (const field of HOMEBASE_CHANNEL_FIELDS) row[field] = `ch-${field}`;
+		for (const field of MANAGED_CATEGORY_FIELDS) row[field] = `cat-${field}`;
+		mocks.findByGuildId.mockResolvedValue(row);
+		const deleted: string[] = [];
+		GUILD.channels.fetch.mockImplementation((async (id: string) => ({ id, delete: vi.fn(async () => deleted.push(id)) })) as never);
+
+		await submitModal(choose("channels"));
+
+		const categories = MANAGED_CATEGORY_FIELDS.map((field) => `cat-${field}`);
+		expect(deleted).toEqual([...HOMEBASE_CHANNEL_FIELDS.map((field) => `ch-${field}`), ...categories]);
+		expect(deleted.at(-1)).toBe("cat-headquartersCategoryId");
+		for (const field of ["deroConfigChannelId", "onboardingConfigChannelId", "arcadeControlChannelId", "commandOutputChannelId"]) {
+			expect(deleted, field).toContain(`ch-${field}`);
+		}
+		GUILD.channels.fetch.mockImplementation((async () => null) as never);
 	});
 });
 

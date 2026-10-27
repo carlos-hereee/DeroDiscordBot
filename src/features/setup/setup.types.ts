@@ -56,6 +56,15 @@ export interface ICreatedChannels {
 	// ── the two voice rooms (2026-10 item 235), one under each category ──
 	meetingVoiceChannelId: string;
 	arcadeVoiceChannelId: string;
+	// ── 🏰 DERO HEADQUARTERS, the THIRD managed category (2026-10 item 257 Phase 2a) ──
+	// The three admin channels above live under it on a fresh install; these are its
+	// own id and the three admin config channels it adds.
+	headquartersCategoryId: string;
+	deroConfigChannelId: string;
+	onboardingConfigChannelId: string;
+	arcadeControlChannelId: string;
+	// 💬dero-commands under the notice board, where member command answers post.
+	commandOutputChannelId: string;
 }
 
 // live channel objects returned from createChannels
@@ -82,6 +91,11 @@ export interface IChannelObjects {
 	// The two voice rooms, so a fresh build can post their intros (2026-10 item 245).
 	meetingVoiceChannel: VoiceChannel;
 	arcadeVoiceChannel: VoiceChannel;
+	// 🏰 DERO HEADQUARTERS' config channels and 💬dero-commands (2026-10 item 257 Phase 2a).
+	deroConfigChannel: TextChannel;
+	onboardingConfigChannel: TextChannel;
+	arcadeControlChannel: TextChannel;
+	commandOutputChannel: TextChannel;
 }
 
 // return shape of GuildSetupManager.ensureHomebase. the ready sweep in main.ts

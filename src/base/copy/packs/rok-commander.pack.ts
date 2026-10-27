@@ -358,6 +358,10 @@ export const rokCommanderCopy = {
 		// categoryName is: a category is the bot's brand mark in every server.
 		// Single leading emoji, matching the NOTICE BOARD convention.
 		gamesCategoryName: "🎮 ARCADE GAMES",
+		// The THIRD managed category (2026-10 item 257 Phase 2a): admin only, holding
+		// every admin channel and the three admin config channels, so admin controls sit
+		// apart from member controls. Universal across packs like the other two.
+		headquartersCategoryName: "🏰 DERO HEADQUARTERS",
 		// appended to categoryName when NODE_ENV=development so a dev instance
 		// sharing a guild with prod builds a visually distinct home base.
 		// GuildSetupManager reads this and composes the final name. Applies to
@@ -388,6 +392,15 @@ export const rokCommanderCopy = {
 			// The audit trail (post-launch plan item 11): admins read, only Dero writes,
 			// one line per admin action. Universal across packs like every channel name.
 			adminLog: "🗒️admin-log",
+			// ── the three admin config channels (2026-10 item 257 Phase 2a) ──
+			// Under headquartersCategoryName with the three admin channels above, which
+			// move there too. Universal across packs like every channel name.
+			deroConfig: "⚙️dero-config",
+			onboardingConfig: "🧭onboarding",
+			arcadeControl: "🎰arcade-control",
+			// Under the notice board: the public channel member command answers post in
+			// (owner decision 7). Members may send here, since they run commands here.
+			commandOutput: "💬dero-commands",
 			// ── the join log and the rules post (2026-10 item 247 Phase 2) ──
 			// Both under the homebase category, read only for members. Universal
 			// across packs like every channel name. A server's own welcome or rules
@@ -637,6 +650,35 @@ export const rokCommanderCopy = {
 			description:
 				"One line for every admin action Dero sees: schedule and event changes, settings changes, power-up toggles, voice list edits and self destruct attempts.\n\n" +
 				"Each line names who did it and when. Only Dero posts here, so the trail stays complete.",
+		},
+
+		// ── 🏰 DERO HEADQUARTERS config channels (2026-10 item 257 Phase 2a) ──
+		// Practical rather than kingdom voice, like every admin surface. Each says what
+		// the channel is for and that its setup steps arrive here.
+		deroConfig: {
+			title: "⚙️ Dero Config",
+			description:
+				"Dero's voice and Dero's own settings live here: which voice rooms Dero may join, the voice switch and the rest of `/dero-config`.\n\n" +
+				"This channel's setup steps arrive here, one step at a time.",
+		},
+		onboardingConfig: {
+			title: "🧭 Onboarding",
+			description:
+				"Discord Community and Onboarding for this server: the member role, the channels a newcomer sees first and how they get in.\n\n" +
+				"This channel's setup steps arrive here, one step at a time.",
+		},
+		arcadeControl: {
+			title: "🎰 Arcade Control",
+			description:
+				"The arcade and its economy: chips, the arcade switches, registering for the rated network, this server's rating standing and the `/server` settings.\n\n" +
+				"This channel's setup steps arrive here, one step at a time.",
+		},
+		// 💬dero-commands' intro, member facing, so the kingdom voice returns.
+		commandOutput: {
+			title: "💬 Dero Commands",
+			description:
+				"Summon Dero here, warrior: this is the hall for running Dero's commands.\n\n" +
+				"Speak freely, for it is open to every member of the realm.",
 		},
 
 		// ── the arcade rules card (2026-10 item 245 Phase 4a) ────────────

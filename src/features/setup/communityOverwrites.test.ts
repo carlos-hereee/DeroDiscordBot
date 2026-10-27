@@ -87,6 +87,9 @@ const TODAY = {
 		{ id: BOT_ID, allow: [...BOT.allow, Connect, Speak] },
 		{ id: OWNER_ID, allow: JOIN_AND_SPEAK },
 	],
+	// 💬dero-commands (2026-10 item 257 Phase 2a): new, not a pre-Community shape. On
+	// a non-Community guild it reads exactly like introductions, members read and send.
+	commandOutput: [{ id: EVERYONE_ID, allow: [ViewChannel, SendMessages] }, BOT, { id: OWNER_ID, allow: [ViewChannel, SendMessages] }],
 	// The grants layered on top once /setup has named the roles.
 	voiceMemberGrant: { id: MEMBER_ROLE_ID, allow: JOIN_AND_SPEAK },
 	voiceAdminGrant: { id: ADMIN_ROLE_ID, allow: [...JOIN_AND_SPEAK, SendMessages] },
@@ -146,6 +149,7 @@ const packNamesByField = Object.fromEntries(GuildSetupManager.CHANNEL_SPECS.map(
 // The shape TODAY gives each managed channel at create time, by its config field.
 function todayCreateShape(field: string): readonly IOverwrite[] {
 	if (field === "introChannelId") return TODAY.intro;
+	if (field === "commandOutputChannelId") return TODAY.commandOutput;
 	const spec = GuildSetupManager.CHANNEL_SPECS.find((entry) => entry.configField === field)!;
 	if (spec.kind === "admin") return TODAY.admin;
 	if (spec.kind === "adminLog") return TODAY.adminLog;
@@ -267,7 +271,7 @@ const COMMUNITY = ["COMMUNITY"];
 const OWNER = { ownerId: OWNER_ID };
 const SET_UP = { memberRoleId: MEMBER_ROLE_ID, adminRoleId: ADMIN_ROLE_ID };
 const NO_ROLES = { memberRoleId: null, adminRoleId: null };
-const KINDS: ManagedOverwriteKind[] = ["public", "intro", "admin", "voice"];
+const KINDS: ManagedOverwriteKind[] = ["public", "intro", "admin", "voice", "commandOutput"];
 
 const GATED = {
 	public: [
@@ -283,6 +287,15 @@ const GATED = {
 		{ id: OWNER_ID, allow: JOIN_AND_SPEAK },
 		TODAY.voiceMemberGrant,
 		TODAY.voiceAdminGrant,
+	],
+	// 💬dero-commands gated: hidden from @everyone, and the member role reads AND sends,
+	// because members run their commands there.
+	commandOutput: [
+		{ id: EVERYONE_ID, deny: [ViewChannel] },
+		BOT,
+		{ id: OWNER_ID, allow: [ViewChannel, SendMessages] },
+		{ id: MEMBER_ROLE_ID, allow: [ViewChannel, SendMessages] },
+		TODAY.publicAdminGrant,
 	],
 } as const;
 
@@ -350,10 +363,16 @@ describe("communityOverwritesFor", () => {
 		}
 	});
 
-	it("gives introductions its own kind, every other spec its own", () => {
+	it("gives introductions and 💬dero-commands their own kinds, every other spec its own", () => {
+		const ownKinds: Record<string, ManagedOverwriteKind> = { introChannelId: "intro", commandOutputChannelId: "commandOutput" };
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
-			expect(overwriteKindOf(spec), spec.configField).toBe(spec.configField === "introChannelId" ? "intro" : spec.kind);
+			expect(overwriteKindOf(spec), spec.configField).toBe(ownKinds[spec.configField] ?? spec.kind);
 		}
+	});
+
+	it("gates 💬dero-commands like a public channel, but members still send there", () => {
+		expect(communityOverwritesFor("commandOutput", makeGuild(COMMUNITY), OWNER, SET_UP)).toEqual(GATED.commandOutput);
+		expect(communityOverwritesFor("commandOutput", makeGuild(), OWNER, NO_ROLES)).toEqual(TODAY.commandOutput);
 	});
 });
 
@@ -519,6 +538,7 @@ describe("GuildSetupManager on a Community guild", () => {
 			adminLog: TODAY.adminLog,
 			public: gatedPublicWithoutAdmin,
 			voice: GATED.voice,
+			commandOutput: GATED.commandOutput.filter((entry) => entry.id !== ADMIN_ROLE_ID),
 		};
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 			const call = calls.find((entry) => entry.name === packNamesByField[spec.configField]);
@@ -574,6 +594,10 @@ describe("GuildSetupManager on a Community guild", () => {
 				[MEMBER_ROLE_ID, { ViewChannel: true, Connect: true, Speak: true }],
 				[ADMIN_ROLE_ID, { ViewChannel: true, Connect: true, Speak: true, SendMessages: true }],
 			],
+			commandOutput: [
+				[MEMBER_ROLE_ID, { ViewChannel: true, SendMessages: true }],
+				[ADMIN_ROLE_ID, { ViewChannel: true, SendMessages: true }],
+			],
 		};
 		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 			expect(grants[`ch-${spec.configField}`], spec.configField).toEqual(expectedByKind[overwriteKindOf(spec)]);
@@ -590,6 +614,7 @@ describe("ensureHomebase reconciles the gate and hands the guild to the announce
 		admin: TODAY.admin,
 		adminLog: [...TODAY.adminLog, TODAY.adminLogAdminGrant],
 		voice: TODAY.voice,
+		commandOutput: [...TODAY.commandOutput, TODAY.publicAdminGrant],
 	};
 
 	function makeBootWorld(features: string[], memberRoleId: string | null) {
@@ -617,7 +642,7 @@ describe("ensureHomebase reconciles the gate and hands the guild to the announce
 
 	const isBranchKind = (field: string): boolean => {
 		const kind = overwriteKindOf(GuildSetupManager.CHANNEL_SPECS.find((spec) => spec.configField === field)!);
-		return kind === "public" || kind === "voice";
+		return kind === "public" || kind === "voice" || kind === "commandOutput";
 	};
 
 	beforeEach(() => {

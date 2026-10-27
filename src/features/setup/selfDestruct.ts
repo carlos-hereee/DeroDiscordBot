@@ -108,13 +108,19 @@ export const HOMEBASE_CHANNEL_FIELDS = [
 	// The two voice rooms, one per category (2026-10 item 235)
 	"meetingVoiceChannelId",
 	"arcadeVoiceChannelId",
+	// 🏰 DERO HEADQUARTERS' three config channels and 💬dero-commands (2026-10 item 257 Phase 2a)
+	"deroConfigChannelId",
+	"onboardingConfigChannelId",
+	"arcadeControlChannelId",
+	"commandOutputChannelId",
 ] as const;
 
-// Both managed categories, deleted last and in this order. Per-match ROOM
+// Every managed category, deleted after every channel and in this order, 🏰 DERO
+// HEADQUARTERS last (2026-10 item 257 Phase 2a). Per-match ROOM
 // channels are deliberately absent: they live on GameRoom rows rather than on
 // GuildConfig, and the children sweep inside demolishCategory catches them
 // anyway, which is the correct outcome for a self-destruct.
-export const MANAGED_CATEGORY_FIELDS = ["categoryId", "gamesCategoryId"] as const;
+export const MANAGED_CATEGORY_FIELDS = ["categoryId", "gamesCategoryId", "headquartersCategoryId"] as const;
 
 /**
  * Who asked for a demolition. It becomes the reason Discord's own audit log shows
@@ -364,8 +370,8 @@ async function demolishHomebase(guild: Guild, actorId: string): Promise<void> {
 
 	let deleted = await demolishChannels(guild, HOMEBASE_CHANNEL_FIELDS.map((field) => ids[field]), adoptedIds, "self-destruct");
 
-	// Both managed categories, through one helper so the arcade cannot be
-	// demolished less thoroughly than the homebase.
+	// Every managed category, through one helper so neither the arcade nor
+	// Headquarters can be demolished less thoroughly than the homebase.
 	for (const field of MANAGED_CATEGORY_FIELDS) {
 		deleted += await demolishCategory(guild, ids[field], field, adoptedIds, "self-destruct");
 	}

@@ -164,6 +164,34 @@ export const ChannelContent = {
 		return infoEmbed(cc.adminLog.title, cc.adminLog.description, copy.COLORS.ADMIN);
 	},
 
+	// ── 🏰 DERO HEADQUARTERS config channels (2026-10 item 257 Phase 2a) ──
+	// One header each, saying what the channel is for. The setup steps card that
+	// Phase 2b posts beneath it is a second message, not part of this intro.
+	deroConfigIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.deroConfig.title, cc.deroConfig.description, copy.COLORS.ADMIN);
+	},
+
+	onboardingConfigIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.onboardingConfig.title, cc.onboardingConfig.description, copy.COLORS.ADMIN);
+	},
+
+	arcadeControlIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.arcadeControl.title, cc.arcadeControl.description, copy.COLORS.ADMIN);
+	},
+
+	// 💬dero-commands' intro, pinned because members write in the channel.
+	commandOutputIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.commandOutput.title, cc.commandOutput.description, copy.COLORS.COMMANDS);
+	},
+
 	// ── 🎮 ARCADE GAMES intros ──────────────────────────────────
 	// The rules card: rules ONLY since 2026-10 item 245 Phase 4a. The roster and the
 	// host buttons moved to 🕹️games (arcadeGamesIntro below), so this card is one

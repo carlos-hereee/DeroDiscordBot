@@ -147,7 +147,8 @@ export function registerChannelDeleteWatcher(client: Client): void {
 			// Recognising it is what produces the honest log line, and the boot
 			// sweep is what rebuilds it.
 			const storedIds = stored as unknown as Record<string, string | null | undefined>;
-			if (channel.id === stored.categoryId || channel.id === storedIds.gamesCategoryId) {
+			// 🏰 DERO HEADQUARTERS (2026-10 item 257 Phase 2a) is the third, for the same reason.
+			if (channel.id === stored.categoryId || channel.id === storedIds.gamesCategoryId || channel.id === storedIds.headquartersCategoryId) {
 				console.warn(LOG_MESSAGES.setup.realtimeRepairCategoryGone(guild.id));
 				return;
 			}

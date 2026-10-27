@@ -148,6 +148,11 @@ const EXISTING_IDS = {
 	arcadeGamesChannelId: "ch-games",
 	meetingVoiceChannelId: "ch-meetingvoice",
 	arcadeVoiceChannelId: "ch-arcadevoice",
+	// 🏰 DERO HEADQUARTERS' config channels and 💬dero-commands (2026-10 item 257 Phase 2a).
+	deroConfigChannelId: "ch-deroconfig",
+	onboardingConfigChannelId: "ch-onboardingconfig",
+	arcadeControlChannelId: "ch-arcadecontrol",
+	commandOutputChannelId: "ch-commandoutput",
 };
 
 // A guild set up before Phase 4a: both categories, every older channel, no games

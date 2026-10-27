@@ -281,6 +281,8 @@ export const generalEventsCopy: IPluginCopy = {
 		// is the bot's brand mark in every server. Keep this identical to
 		// rok-commander's.
 		gamesCategoryName: "🎮 ARCADE GAMES",
+		// The admin only third category (mirrors rok-commander, 2026-10 item 257 Phase 2a).
+		headquartersCategoryName: "🏰 DERO HEADQUARTERS",
 		devSuffix: " (dev)",
 		channels: {
 			// Same channel keys as rok-commander so GuildSetupManager.populateChannels
@@ -296,6 +298,12 @@ export const generalEventsCopy: IPluginCopy = {
 			adminCommands: "🎛️admin-controls",
 			// The audit trail (mirrors rok-commander, post-launch plan item 11).
 			adminLog: "🗒️admin-log",
+			// The three admin config channels and the public commands channel (mirrors
+			// rok-commander, 2026-10 item 257 Phase 2a).
+			deroConfig: "⚙️dero-config",
+			onboardingConfig: "🧭onboarding",
+			arcadeControl: "🎰arcade-control",
+			commandOutput: "💬dero-commands",
 			// The join log and the rules post (mirrors rok-commander, 2026-10 item 247).
 			welcome: "👋welcome",
 			rules: "📘rules",
@@ -462,6 +470,32 @@ export const generalEventsCopy: IPluginCopy = {
 			description:
 				"One line for every admin action Dero sees: schedule and event changes, settings changes, power-up toggles, voice list edits and self destruct attempts.\n\n" +
 				"Each line names who did it and when. Only Dero posts here, so the trail stays complete.",
+		},
+
+		// The 🏰 DERO HEADQUARTERS config channels (mirrors rok-commander, 2026-10 item 257
+		// Phase 2a). Admin copy is practical in both packs, so these three match it.
+		deroConfig: {
+			title: "⚙️ Dero Config",
+			description:
+				"Dero's voice and Dero's own settings live here: which voice rooms Dero may join, the voice switch and the rest of `/dero-config`.\n\n" +
+				"This channel's setup steps arrive here, one step at a time.",
+		},
+		onboardingConfig: {
+			title: "🧭 Onboarding",
+			description:
+				"Discord Community and Onboarding for this server: the member role, the channels a newcomer sees first and how they get in.\n\n" +
+				"This channel's setup steps arrive here, one step at a time.",
+		},
+		arcadeControl: {
+			title: "🎰 Arcade Control",
+			description:
+				"The arcade and its economy: chips, the arcade switches, registering for the rated network, this server's rating standing and the `/server` settings.\n\n" +
+				"This channel's setup steps arrive here, one step at a time.",
+		},
+		// 💬dero-commands' intro, plain voice.
+		commandOutput: {
+			title: "💬 Dero Commands",
+			description: "This is the place to run Dero's commands.\n\nIt is open to every member, so chat away.",
 		},
 
 		// Rules only, same structure as rok-commander's, plain voice. The two packs

@@ -110,6 +110,25 @@ const guildConfigSchema = new Schema(
 		meetingVoiceChannelId: { type: String, required: false, default: null },
 		arcadeVoiceChannelId: { type: String, required: false, default: null },
 
+		// ── 🏰 DERO HEADQUARTERS, the THIRD managed category (2026-10 item 257 Phase 2a) ──
+		// Admin only. It holds the three admin channels that used to sit under the notice
+		// board (adminChannelId, adminCommandsChannelId, adminLogChannelId keep their own
+		// fields and only change parent) and the three admin config channels below. Every
+		// id is nullable like gamesCategoryId, so every legacy row loads and the boot sweep
+		// reads the null as "missing, build it", which is how existing guilds get the
+		// category and its new channels once, on their next boot.
+		headquartersCategoryId: { type: String, required: false, default: null },
+		// ⚙️dero-config (Dero's voice and the dero config commands), 🧭onboarding (the
+		// Community and Onboarding configs) and 🎰arcade-control (the economy and arcade
+		// configs, rated network registration, the server's standing and server configs).
+		deroConfigChannelId: { type: String, required: false, default: null },
+		onboardingConfigChannelId: { type: String, required: false, default: null },
+		arcadeControlChannelId: { type: String, required: false, default: null },
+		// 💬dero-commands under the notice board: where member command answers post
+		// (2026-10 item 257, owner decision 7). Not commandsChannelId, which stays the
+		// 📖command-center guide.
+		commandOutputChannelId: { type: String, required: false, default: null },
+
 		// ── 👋welcome and 📘rules (2026-10 item 247 Phase 2) ──
 		// What:  the join and leave log and the server rules post, both under the
 		//        homebase category. Either may be a channel the server already had
@@ -471,6 +490,13 @@ const guildConfigSchema = new Schema(
 				// 📜admin-log's intro (post-launch plan item 11). Declared for the reason
 				// the post mortem gives: undeclared, it would repost on every boot.
 				adminLogChannelId: { type: String, required: false, default: null },
+				// The 🏰 DERO HEADQUARTERS config channels' intros and 💬dero-commands'
+				// (2026-10 item 257 Phase 2a). Declared for the reason the post mortem
+				// gives: undeclared, each would repost on every boot.
+				deroConfigChannelId: { type: String, required: false, default: null },
+				onboardingConfigChannelId: { type: String, required: false, default: null },
+				arcadeControlChannelId: { type: String, required: false, default: null },
+				commandOutputChannelId: { type: String, required: false, default: null },
 			},
 			required: false,
 			default: () => ({}),

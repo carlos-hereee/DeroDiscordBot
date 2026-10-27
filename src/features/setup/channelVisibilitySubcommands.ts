@@ -54,6 +54,9 @@ export const HIDEABLE_CHANNELS = [
 	{ name: "Challenge board", value: "arcadeChallengesChannelId" },
 	// 🏆rated-challenges (2026-10 item 254, Arcade 5), member facing like the board.
 	{ name: "Rated challenges", value: "arcadeRatedChallengesChannelId" },
+	// 💬dero-commands (2026-10 item 257 Phase 2a), member facing. The three 🏰 DERO
+	// HEADQUARTERS config channels are left out by the rule below: they are admin only.
+	{ name: "Dero commands", value: "commandOutputChannelId" },
 ] as const;
 
 // ⚠️ THIS LIST IS A DELIBERATE SUBSET OF CHANNEL_SPECS, NOT A MIRROR OF IT, and
@@ -216,6 +219,9 @@ function resolveChannelId(config: GuildConfigDoc, field: HideableField): string 
 			break;
 		case "arcadeRatedChallengesChannelId":
 			value = (config as unknown as Record<string, string | null | undefined>).arcadeRatedChallengesChannelId;
+			break;
+		case "commandOutputChannelId":
+			value = (config as unknown as Record<string, string | null | undefined>).commandOutputChannelId;
 			break;
 	}
 	return typeof value === "string" && value.length > 0 ? value : null;

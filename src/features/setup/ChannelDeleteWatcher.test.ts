@@ -635,6 +635,12 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			// The two voice rooms, one per category (2026-10 item 235).
 			"meetingVoiceChannelId",
 			"arcadeVoiceChannelId",
+			// 🏰 DERO HEADQUARTERS' three config channels and 💬dero-commands (2026-10 item
+			// 257 Phase 2a).
+			"deroConfigChannelId",
+			"onboardingConfigChannelId",
+			"arcadeControlChannelId",
+			"commandOutputChannelId",
 		];
 		const actualFields = GuildSetupManager.CHANNEL_SPECS.map((s) => s.configField);
 		expect(actualFields.sort()).toEqual(expectedFields.sort());
@@ -643,7 +649,8 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 	// ⚠️ THE R2 GUARD. Every spec has to name the category it belongs under, and
 	// getting one wrong builds the channel in the wrong place without throwing.
 	// The compiler enforces that the field is PRESENT; only a test can enforce
-	// that its VALUE is right, because both categories are the same type.
+	// that its VALUE is right, because all three categories are the same type.
+	// 🏰 DERO HEADQUARTERS made it three (2026-10 item 257 Phase 2a).
 	it("files every spec under the correct category", () => {
 		const byCategory = (field: string) =>
 			GuildSetupManager.CHANNEL_SPECS.filter((s) => s.categoryField === field)
@@ -658,17 +665,42 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			"arcadeVoiceChannelId",
 			"partyGamesChannelId",
 		]);
-		// Eleven text channels (welcome, rules and admin-log among them) plus the 🏛️ Meeting Hall voice room.
-		expect(byCategory("categoryId")).toHaveLength(12);
+		// Every admin channel lives under Headquarters: the three that moved out of the
+		// notice board and the three config channels.
+		expect(byCategory("headquartersCategoryId")).toEqual([
+			"adminChannelId",
+			"adminCommandsChannelId",
+			"adminLogChannelId",
+			"arcadeControlChannelId",
+			"deroConfigChannelId",
+			"onboardingConfigChannelId",
+		]);
+		// Nine text channels (welcome, rules and 💬dero-commands among them) plus the 🏛️ Meeting Hall voice room.
+		expect(byCategory("categoryId")).toHaveLength(10);
 		expect(byCategory("categoryId")).toContain("meetingVoiceChannelId");
+		expect(byCategory("categoryId")).toContain("commandOutputChannelId");
 		// No spec may be left unfiled, which a typo in the union would otherwise
 		// produce silently.
-		expect(byCategory("categoryId").length + byCategory("gamesCategoryId").length).toBe(GuildSetupManager.CHANNEL_SPECS.length);
+		expect(byCategory("categoryId").length + byCategory("gamesCategoryId").length + byCategory("headquartersCategoryId").length).toBe(
+			GuildSetupManager.CHANNEL_SPECS.length
+		);
 	});
 
-	it("marks the admin channel and the admin command center as kind 'admin'", () => {
+	// ⚠️ RISK R2, stated as a rule over every spec rather than a list of today's: each
+	// one names a categoryField, and that field is one of the three managed categories.
+	// A spec without one, or with a field nothing builds, fails here by name.
+	it("gives every spec a categoryField naming one of the three managed categories", () => {
+		const managed = ["categoryId", "gamesCategoryId", "headquartersCategoryId"];
+		for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+			expect(managed, `${spec.configField} has no managed categoryField`).toContain(spec.categoryField);
+		}
+	});
+
+	it("marks the admin channel, the admin command center and the three Headquarters config channels as kind 'admin'", () => {
 		const adminEntries = GuildSetupManager.CHANNEL_SPECS.filter((s) => s.kind === "admin");
-		expect(adminEntries.map((s) => s.configField).sort()).toEqual(["adminChannelId", "adminCommandsChannelId"].sort());
+		expect(adminEntries.map((s) => s.configField).sort()).toEqual(
+			["adminChannelId", "adminCommandsChannelId", "deroConfigChannelId", "onboardingConfigChannelId", "arcadeControlChannelId"].sort()
+		);
 	});
 
 	it("marks exactly the two voice rooms as kind 'voice'", () => {
