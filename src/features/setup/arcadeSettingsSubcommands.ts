@@ -22,6 +22,7 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog, type AdminLogKind } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import { turnArcadeOff, turnArcadeOn } from "@features/setup/arcadeSwitch.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /arcade settings ─────────────────────────────────────────────────────────
 // What:  the arcade's own settings, stored on GuildConfig: `on` and `off` (the
@@ -248,14 +249,14 @@ export async function runArcadeSettingSubcommand(interaction: RepliableInteracti
 	// ① guild gate
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ embeds: [errorEmbed(configCopy.notInGuild)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, configCopy.notInGuild);
 		return;
 	}
 
 	// ② setup gate
 	const guildConfig = await guildConfigStore.findByGuildId(guildId);
 	if (!guildConfig) {
-		await interaction.reply({ embeds: [errorEmbed(configCopy.setupRequired)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, configCopy.setupRequired);
 		return;
 	}
 
@@ -274,10 +275,10 @@ export async function runArcadeSettingSubcommand(interaction: RepliableInteracti
 		}
 		const embed = await arcadeAnswer(interaction.client, guildId, guildConfig, { group, sub }, options, audit);
 		// ④
-		await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+		await showEmbedNotice(interaction, embed);
 	}
 	catch (err) {
 		console.error(`[arcade] failed guild=${guildId}`, err);
-		await interaction.reply({ embeds: [errorEmbed(configCopy.saveFailed)], flags: MessageFlags.Ephemeral }).catch(() => undefined);
+		await showErrorNotice(interaction, configCopy.saveFailed);
 	}
 }

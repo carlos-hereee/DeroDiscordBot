@@ -1,4 +1,4 @@
-import { MessageFlags, type RepliableInteraction, type User } from "discord.js";
+import { type RepliableInteraction, type User } from "discord.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { levelFromTotalXp } from "@features/leveling/levelCurve.js";
@@ -11,6 +11,7 @@ import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features
 import { buildCounters, progressFor, unlockedKey } from "@features/leveling/achievementEngine.js";
 import { ACHIEVEMENTS_BY_ID } from "@features/leveling/achievements.js";
 import { deferProfileReply } from "@features/leveling/accountProfile.js";
+import { showErrorNotice } from "@utils/textModal.js";
 
 // ── /account view:achievements ─────────────────────────────────────────────
 // What:  which achievement tiers a member holds, with the action that earned
@@ -48,15 +49,12 @@ export interface AchievementsRequest {
 export async function showAchievements(interaction: RepliableInteraction, { target, isPrivate }: AchievementsRequest): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({
-			embeds: [errorEmbed(levelingCopy.errors.outsideGuild)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, levelingCopy.errors.outsideGuild);
 		return;
 	}
 
 	if (target.bot) {
-		await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.botMember)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, levelingCopy.errors.botMember);
 		return;
 	}
 

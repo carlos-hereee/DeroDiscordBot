@@ -24,6 +24,8 @@ export const commandButtonsCopy = {
 			return "a number";
 		},
 		staleButton: "This button is from an older layout. The slash command still works.",
+		// The notice title over staleButton (2026-10 item 254 Phase 5b).
+		staleTitle: "🎛️ Controls",
 		outsideGuild: "These buttons only work inside a server.",
 	},
 	// The settings modals (post-launch plan item 9). Labels hold 45 characters and

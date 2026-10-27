@@ -16,8 +16,8 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
 import { RULES_EDIT_CUSTOM_ID, RULES_PREFIX, resolveRulesMarkdown, rulesContent, type IRulesConfig } from "./rulesContent.js";
+import { showErrorNotice } from "@utils/textModal.js";
 
 // ── rulesEdit ────────────────────────────────────────────────────────
 // What:  the Edit rules button on the 📘rules post (2026-10 item 247 Phase 2): it
@@ -193,7 +193,7 @@ async function fetchTrackedRulesPost(submission: ModalSubmitInteraction, config:
 }
 
 async function replyPrivately(interaction: ButtonInteraction | ModalSubmitInteraction, message: string, config: IRulesConfig | null): Promise<void> {
-	await interaction.reply({ embeds: [errorEmbed(message, config)], flags: MessageFlags.Ephemeral }).catch(() => undefined);
+	await showErrorNotice(interaction, message, config);
 }
 
 /** Register the Edit rules button. Called once at boot from main.ts, before the InteractionCreate listener installs. */

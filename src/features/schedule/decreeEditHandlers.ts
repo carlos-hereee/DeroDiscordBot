@@ -28,6 +28,7 @@ import type { Client } from "discord.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showErrorNotice } from "@utils/textModal.js";
 
 // ── customId prefixes ───────────────────────────────────────────────
 // What:  the wire format every persistent decree-edit interaction uses.
@@ -362,10 +363,7 @@ async function logAudit(
 async function handleEditButton(interaction: ButtonInteraction): Promise<void> {
 	const parsed = parseDecreeCustomId(interaction.customId);
 	if (!parsed) {
-		await interaction.reply({
-			embeds: [errorEmbed("This decree button is malformed and cannot be processed.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "This decree button is malformed and cannot be processed.");
 		return;
 	}
 
@@ -373,37 +371,25 @@ async function handleEditButton(interaction: ButtonInteraction): Promise<void> {
 		// Buttons posted to a guild channel always have guildId; this guard
 		// satisfies the type narrowing and protects against a future change
 		// that exposes the bot to DMs without anchoring config lookups.
-		await interaction.reply({
-			embeds: [errorEmbed("Decree edits can only be applied inside a guild.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "Decree edits can only be applied inside a guild.");
 		return;
 	}
 
 	const config = await guildConfigStore.findByGuildId(interaction.guildId);
 	if (!config) {
-		await interaction.reply({
-			embeds: [errorEmbed(rokCommanderCopy.responses.setupRequired)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, rokCommanderCopy.responses.setupRequired);
 		return;
 	}
 
 	const member = interaction.member as GuildMember | null;
 	if (!member || !canEditDecree(member, config)) {
-		await interaction.reply({
-			embeds: [errorEmbed(rokCommanderCopy.responses.noWizardPowers)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, rokCommanderCopy.responses.noWizardPowers);
 		return;
 	}
 
 	const event = await eventStore.findByIdInGuild(parsed.eventId, interaction.guildId);
 	if (!event) {
-		await interaction.reply({
-			embeds: [errorEmbed("That decree no longer exists.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "That decree no longer exists.");
 		return;
 	}
 

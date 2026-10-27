@@ -1,8 +1,9 @@
-import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
+import { type ChatInputCommandInteraction } from "discord.js";
 import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 import { playSoloLuck, type SoloLuckGame, type SoloLuckPlay } from "./soloLuck.js";
 import { RPS_CHOICES, type RpsChoice } from "./rpsWinner.js";
 import { gamesCopy } from "./gamesCopy.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── challengeEntry ─────────────────────────────────────────────────────────
 // What:  the slash-command doorway into the challenge board, for the three head to
@@ -62,7 +63,7 @@ async function runLuckGame(interaction: ChatInputCommandInteraction, game: SoloL
 		return;
 	}
 	if (play === "throwMissing") {
-		await interaction.reply({ content: gamesCopy.soloLuck.throwNeeded, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gamesCopy.notices.miniGame, sections: [gamesCopy.soloLuck.throwNeeded] });
 		return;
 	}
 	await playSoloLuck(interaction, play);

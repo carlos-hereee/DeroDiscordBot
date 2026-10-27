@@ -21,6 +21,13 @@ export const gamesCopy = {
 	// only ever read inside the command picker, above the four game entries.
 	commandDescription: "Play a quick game with Dero",
 
+	// The titles over a private answer shown as a notice modal (2026-10 item 254
+	// Phase 5b). Discord cuts a modal title at 45 characters.
+	notices: {
+		miniGame: "🎲 Mini game",
+		hangman: "🪢 Hangman",
+	},
+
 	// ── coin flip and dice roll ──
 	// ONE game until 2026-08-12, when "duel" was split in two. It had asked
 	// "dice or coin?" as a required option, which meant its name could never

@@ -1,12 +1,13 @@
-import { MessageFlags, type RepliableInteraction } from "discord.js";
+import { type RepliableInteraction } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // /events pause with no event, the bulk equivalent of pauseOneSchedule.
 // Pauses every non-paused event in the guild in one shot. Already-paused
@@ -20,7 +21,7 @@ const c = rokCommanderCopy.pauseAllSchedules;
 export async function pauseAllSchedules(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ embeds: [errorEmbed("Run this in a server, not a DM.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "Run this in a server, not a DM.");
 		return;
 	}
 
@@ -28,7 +29,7 @@ export async function pauseAllSchedules(interaction: RepliableInteraction, optio
 
 	const events = await eventStore.findByGuildId(guildId);
 	if (events.length === 0) {
-		await interaction.reply({ embeds: [errorEmbed(c.noEvents)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.noEvents);
 		return;
 	}
 
@@ -39,7 +40,7 @@ export async function pauseAllSchedules(interaction: RepliableInteraction, optio
 	const alreadyPaused = events.length - toPause.length;
 
 	if (toPause.length === 0) {
-		await interaction.reply({ embeds: [errorEmbed(c.allAlreadyPaused(events.length))], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.allAlreadyPaused(events.length));
 		return;
 	}
 
@@ -74,15 +75,12 @@ export async function pauseAllSchedules(interaction: RepliableInteraction, optio
 	);
 
 	if (failed > 0 && succeeded === 0) {
-		await interaction.reply({ embeds: [errorEmbed(c.failed)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.failed);
 		return;
 	}
 
 	if (failed > 0) {
-		await interaction.reply({
-			embeds: [infoEmbed("⏸️ Partially paused", c.partialFailure(succeeded, failed), rokCommanderCopy.COLORS.SCHEDULE)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showEmbedNotice(interaction, infoEmbed("⏸️ Partially paused", c.partialFailure(succeeded, failed), rokCommanderCopy.COLORS.SCHEDULE));
 		return;
 	}
 
@@ -90,8 +88,5 @@ export async function pauseAllSchedules(interaction: RepliableInteraction, optio
 		? c.pausedUntil(succeeded, alreadyPaused, Math.floor(pausedUntil.getTime() / 1000))
 		: c.paused(succeeded, alreadyPaused);
 
-	await interaction.reply({
-		embeds: [infoEmbed("⏸️ All schedules paused", successText, rokCommanderCopy.COLORS.SCHEDULE)],
-		flags: MessageFlags.Ephemeral,
-	});
+	await showEmbedNotice(interaction, infoEmbed("⏸️ All schedules paused", successText, rokCommanderCopy.COLORS.SCHEDULE));
 }

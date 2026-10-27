@@ -30,6 +30,7 @@ import { voiceCopy } from "@features/voice/voiceCopy.js";
 import { turnLatencyLog } from "@features/voice/turnLatency.js";
 import { liveVoicePresenceState, renderVoicePresenceCard } from "@features/voice/voicePresenceRenderer.js";
 import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /dero ─────────────────────────────────────────────────────────────────
 // What:  the text path to Dero's brain and Dero's way into a voice call. `tell`
@@ -97,7 +98,7 @@ export const data = new SlashCommandBuilder()
 // ── replies ──
 
 async function refuse(interaction: RepliableInteraction, line: string): Promise<void> {
-	await interaction.reply({ embeds: [errorEmbed(line)], flags: MessageFlags.Ephemeral });
+	await showErrorNotice(interaction, line);
 }
 
 function taskEmbed(lines: string[]): EmbedBuilder {
@@ -277,7 +278,7 @@ export async function showDeroStatus(interaction: RepliableInteraction): Promise
 		await interaction.reply({ embeds: [embed], files: [card.attachment], flags: MessageFlags.Ephemeral });
 		return;
 	}
-	await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+	await showEmbedNotice(interaction, embed);
 }
 
 // ── /dero join ──
@@ -421,7 +422,7 @@ export async function sendDeroAwayFromCall(interaction: RepliableInteraction): P
 	}
 
 	voiceSessions.leave(guild.id);
-	await interaction.reply({ embeds: [infoEmbed(callCopy.replyTitle, callCopy.left(session.channelId))], flags: MessageFlags.Ephemeral });
+	await showEmbedNotice(interaction, infoEmbed(callCopy.replyTitle, callCopy.left(session.channelId)));
 }
 
 async function runSubcommand(interaction: ChatInputCommandInteraction): Promise<void> {

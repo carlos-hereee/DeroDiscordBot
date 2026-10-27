@@ -67,7 +67,7 @@ import { runWeeklyDigest, startWeeklyDigest } from "@features/leveling/weeklyDig
 import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { isAdminCommand } from "@utils/permissions.js";
-import { registerNoticeModal } from "@utils/textModal.js";
+import { registerNoticeModal, showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
 import { registerMessageXp } from "@features/leveling/messageXp.js";
 import { registerReactionXp } from "@features/leveling/reactionXp.js";
@@ -411,12 +411,7 @@ process.on("uncaughtException", (err) => {
 			} catch (error) {
 				console.error(`[interactions] button handler threw for customId='${interaction.customId}'`, error);
 				if (!interaction.replied && !interaction.deferred) {
-					await interaction
-						.reply({
-							embeds: [errorEmbed(rokCommanderCopy.responses.commandExecuteFailure)],
-							flags: MessageFlags.Ephemeral,
-						})
-						.catch(() => undefined);
+					await showErrorNotice(interaction, rokCommanderCopy.responses.commandExecuteFailure);
 				}
 			}
 			return;
@@ -439,12 +434,7 @@ process.on("uncaughtException", (err) => {
 			} catch (error) {
 				console.error(`[interactions] select handler threw for customId='${interaction.customId}'`, error);
 				if (!interaction.replied && !interaction.deferred) {
-					await interaction
-						.reply({
-							embeds: [errorEmbed(rokCommanderCopy.responses.commandExecuteFailure)],
-							flags: MessageFlags.Ephemeral,
-						})
-						.catch(() => undefined);
+					await showErrorNotice(interaction, rokCommanderCopy.responses.commandExecuteFailure);
 				}
 			}
 			return;
@@ -461,12 +451,7 @@ process.on("uncaughtException", (err) => {
 			} catch (error) {
 				console.error(`[interactions] modal handler threw for customId='${interaction.customId}'`, error);
 				if (!interaction.replied && !interaction.deferred) {
-					await interaction
-						.reply({
-							embeds: [errorEmbed(rokCommanderCopy.responses.commandExecuteFailure)],
-							flags: MessageFlags.Ephemeral,
-						})
-						.catch(() => undefined);
+					await showErrorNotice(interaction, rokCommanderCopy.responses.commandExecuteFailure);
 				}
 			}
 			return;
@@ -493,10 +478,7 @@ process.on("uncaughtException", (err) => {
 			if (isAdminCommand(interaction.commandName, subcommand, group)) {
 				// guild hasn't run /setup yet, no config means no admin role is defined
 				if (!config) {
-					await interaction.reply({
-						embeds: [errorEmbed(rokCommanderCopy.responses.setupRequired)],
-						flags: MessageFlags.Ephemeral,
-					});
+					await showErrorNotice(interaction, rokCommanderCopy.responses.setupRequired);
 					return;
 				}
 
@@ -514,10 +496,7 @@ process.on("uncaughtException", (err) => {
 				const hasAdminRole = (config.adminRoleId && member?.roles.cache.has(config.adminRoleId)) ?? false;
 
 				if (!isOwner && !hasAdminRole) {
-					await interaction.reply({
-						embeds: [errorEmbed(rokCommanderCopy.responses.noWizardPowers)],
-						flags: MessageFlags.Ephemeral,
-					});
+					await showErrorNotice(interaction, rokCommanderCopy.responses.noWizardPowers);
 					return;
 				}
 			}
@@ -531,10 +510,7 @@ process.on("uncaughtException", (err) => {
 		if (interaction.guildId) {
 			const access = await checkEarlyAccess(interaction.commandName, interaction.guildId);
 			if (!access.allowed && access.generalReleaseAt) {
-				await interaction.reply({
-					embeds: [earlyAccessEmbed(access.generalReleaseAt)],
-					flags: MessageFlags.Ephemeral,
-				});
+				await showEmbedNotice(interaction, earlyAccessEmbed(access.generalReleaseAt));
 				return;
 			}
 		}
@@ -551,10 +527,7 @@ process.on("uncaughtException", (err) => {
 					flags: MessageFlags.Ephemeral,
 				});
 			} else {
-				await interaction.reply({
-					embeds: [errorEmbed(rokCommanderCopy.responses.commandExecuteFailure)],
-					flags: MessageFlags.Ephemeral,
-				});
+				await showErrorNotice(interaction, rokCommanderCopy.responses.commandExecuteFailure);
 			}
 		}
 	}); // start the scheduler after commands are loaded

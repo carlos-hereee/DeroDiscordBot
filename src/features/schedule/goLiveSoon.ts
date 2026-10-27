@@ -1,8 +1,9 @@
-import { MessageFlags, type RepliableInteraction, type SlashCommandSubcommandBuilder } from "discord.js";
+import { type RepliableInteraction, type SlashCommandSubcommandBuilder } from "discord.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
 import { postGoLiveAnnouncement } from "@features/schedule/postGoLiveAnnouncement.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /events stream soon ─────────────────────────────────────────────────────
 // What:  one-shot panic-button announcement. Does NOT create an Event.
@@ -61,7 +62,7 @@ export function addGoLiveSoonOptions(sub: SlashCommandSubcommandBuilder): SlashC
 export async function goLiveSoon(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ embeds: [errorEmbed("Run this in a server, not a DM.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "Run this in a server, not a DM.");
 		return;
 	}
 
@@ -73,7 +74,7 @@ export async function goLiveSoon(interaction: RepliableInteraction, options: Com
 	const result = await postGoLiveAnnouncement(interaction.client, guildId, whenKey, note, mentionRoleIdOverride);
 
 	if (result.ok) {
-		await interaction.reply({ content: c.posted, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.posted] });
 		return;
 	}
 
@@ -89,8 +90,5 @@ export async function goLiveSoon(interaction: RepliableInteraction, options: Com
 				? c.invalidLeadTime
 				: c.postFailed;
 
-	await interaction.reply({
-		embeds: [errorEmbed(errorMsg)],
-		flags: MessageFlags.Ephemeral,
-	});
+	await showErrorNotice(interaction, errorMsg);
 }

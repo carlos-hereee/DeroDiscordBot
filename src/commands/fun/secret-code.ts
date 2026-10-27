@@ -1,6 +1,8 @@
-import { SlashCommandBuilder, MessageFlags, type ChatInputCommandInteraction } from "discord.js";
+import { SlashCommandBuilder, type ChatInputCommandInteraction } from "discord.js";
 import { redeemCode } from "@features/fortune/secretCodes.js";
 import { secretCodeCopy } from "@features/fortune/fortuneCopy.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /secret-code ───────────────────────────────────────────────────────────
 // Redeem a secret phrase for a PERMANENT fortune luck buff. Open to every
@@ -31,5 +33,5 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 				? secretCodeCopy.granted(outcome.percent)
 				: secretCodeCopy.unchanged(outcome.percent);
 
-	await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+	await showNotice(interaction, { title: getPluginCopy(null).notice.secretCode, sections: [content] });
 }

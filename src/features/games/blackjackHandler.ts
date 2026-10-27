@@ -26,6 +26,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
 import { roomTrail } from "@features/game-rooms/roomTrail.js";
 import { drawingSettled, isClockExpired, pausedDeadline, withDrawingPause } from "@features/game-rooms/drawingPause.js";
+import { showErrorNotice } from "@utils/textModal.js";
 
 // ── /mini-game blackjack ───────────────────────────────────────────────────
 // What:  three surfaces on ONE engine, exactly as the owner asked. `solo` deals
@@ -417,11 +418,11 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 	if (!game.table) {
 		if (action === "join") {
 			if (game.seated.some((seat) => seat.userId === click.user.id)) {
-				await click.reply({ embeds: [errorEmbed(c.alreadySeated)], flags: MessageFlags.Ephemeral });
+				await showErrorNotice(click, c.alreadySeated);
 				return;
 			}
 			if (game.seated.length >= MAX_SEATS) {
-				await click.reply({ embeds: [errorEmbed(c.tableFull)], flags: MessageFlags.Ephemeral });
+				await showErrorNotice(click, c.tableFull);
 				return;
 			}
 			game.seated.push({ userId: click.user.id, username: click.user.globalName ?? click.user.username });
@@ -433,7 +434,7 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 			const before = game.seated.length;
 			game.seated = game.seated.filter((seat) => seat.userId !== click.user.id);
 			if (game.seated.length === before) {
-				await click.reply({ embeds: [errorEmbed(c.notSeated)], flags: MessageFlags.Ephemeral });
+				await showErrorNotice(click, c.notSeated);
 				return;
 			}
 			await click.update({ embeds: [seatingEmbed(game)], components: [seatingRow(channelId)] });
@@ -444,7 +445,7 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 			// Only the host may cut the window short. Any seated member could
 			// otherwise deal the moment they sat, which defeats the window.
 			if (click.user.id !== game.hostId) {
-				await click.reply({ embeds: [errorEmbed(c.hostOnlyDeal)], flags: MessageFlags.Ephemeral });
+				await showErrorNotice(click, c.hostOnlyDeal);
 				return;
 			}
 			if (game.seatingTimer) clearTimeout(game.seatingTimer);
@@ -464,11 +465,11 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 	const outcome = applyAction(game.table, click.user.id, action as BlackjackAction);
 	if (outcome.status === "not-your-turn") {
 		const seated = game.table.seats.some((seat) => seat.userId === click.user.id);
-		await click.reply({ embeds: [errorEmbed(seated ? c.notYourTurn : c.notPlaying)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(click, seated ? c.notYourTurn : c.notPlaying);
 		return;
 	}
 	if (outcome.status === "illegal") {
-		await click.reply({ embeds: [errorEmbed(c.illegalAction)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(click, c.illegalAction);
 		return;
 	}
 
@@ -498,7 +499,7 @@ async function leaveDuringHand(click: ButtonInteraction, game: BlackjackGame, ch
 	const outcome = applyLeave(game.table, click.user.id);
 	if (outcome.status !== "left") {
 		const refusal = outcome.status === "already-left" ? c.leftAlready : c.notPlaying;
-		await click.reply({ embeds: [errorEmbed(refusal)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(click, refusal);
 		return;
 	}
 	if (game.roomId) {

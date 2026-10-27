@@ -18,6 +18,7 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showErrorNotice } from "@utils/textModal.js";
 
 // ── /events stream announce ──────────────────────────────────────────────────
 // What:  schedules a one-time stream announcement at a specific future
@@ -69,13 +70,13 @@ export function addAnnounceStreamOptions(sub: SlashCommandSubcommandBuilder): Sl
 export async function announceStream(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ embeds: [errorEmbed("Run this in a server, not a DM.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "Run this in a server, not a DM.");
 		return;
 	}
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config?.announcementsChannelId) {
-		await interaction.reply({ embeds: [errorEmbed(c.setupRequired)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.setupRequired);
 		return;
 	}
 
@@ -90,11 +91,11 @@ export async function announceStream(interaction: RepliableInteraction, options:
 	// so accepting it would silently swallow the streamer's input.
 	const startDate = parseEventDateTimeMinutes(whenRaw);
 	if (!startDate) {
-		await interaction.reply({ embeds: [errorEmbed(c.invalidDateTime)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.invalidDateTime);
 		return;
 	}
 	if (startDate.getTime() <= Date.now()) {
-		await interaction.reply({ embeds: [errorEmbed(c.dateInPast)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.dateInPast);
 		return;
 	}
 

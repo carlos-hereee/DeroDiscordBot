@@ -16,6 +16,7 @@ import { memberLuckInGuild } from "@features/ratings/ratingBoards.js";
 import { isChipEconomyOn, readWallet } from "@features/economy/chipWallet.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { utcMonthKey } from "@utils/utcMonthKey.js";
+import { showErrorNotice } from "@utils/textModal.js";
 
 // ── the account profile ────────────────────────────────────────────────────
 // What:  a member's full leveling profile: level and progress, standing, the
@@ -41,17 +42,14 @@ export interface AccountProfileRequest {
 export async function showAccountProfile(interaction: RepliableInteraction, { target, isPrivate }: AccountProfileRequest): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({
-			embeds: [errorEmbed(levelingCopy.errors.outsideGuild)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, levelingCopy.errors.outsideGuild);
 		return;
 	}
 
 	const isSelf = target.id === interaction.user.id;
 
 	if (target.bot) {
-		await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.botMember)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, levelingCopy.errors.botMember);
 		return;
 	}
 

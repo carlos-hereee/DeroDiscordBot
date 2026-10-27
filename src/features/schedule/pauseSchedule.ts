@@ -1,14 +1,15 @@
-import { MessageFlags, type RepliableInteraction } from "discord.js";
+import { type RepliableInteraction } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /events pause, one event ────────────────────────────────────────
 // What:  flips event.paused to true, optionally with a pausedUntil date.
@@ -48,7 +49,7 @@ export async function pausableEventChoices(guildId: string): Promise<OptionChoic
 export async function pauseOneSchedule(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ embeds: [errorEmbed("Run this in a server, not a DM.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "Run this in a server, not a DM.");
 		return;
 	}
 
@@ -66,10 +67,7 @@ export async function pauseOneSchedule(interaction: RepliableInteraction, option
 		// and still read from the shim above. Config is loaded lazily here so the
 		// happy path takes no extra read.
 		const config = await guildConfigStore.findByGuildId(guildId);
-		await interaction.reply({
-			embeds: [errorEmbed(getPluginCopy(config).pauseSchedule.notFound)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, getPluginCopy(config).pauseSchedule.notFound);
 		return;
 	}
 
@@ -77,7 +75,7 @@ export async function pauseOneSchedule(interaction: RepliableInteraction, option
 	// the "already paused" message rather than silently re-writing, the
 	// streamer probably forgot they paused it last week.
 	if (event.paused) {
-		await interaction.reply({ embeds: [errorEmbed(c.alreadyPaused(event.name))], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.alreadyPaused(event.name));
 		return;
 	}
 
@@ -103,10 +101,7 @@ export async function pauseOneSchedule(interaction: RepliableInteraction, option
 			? c.pausedUntil(event.name, Math.floor(pausedUntil.getTime() / 1000))
 			: c.paused(event.name);
 
-		await interaction.reply({
-			embeds: [infoEmbed("⏸️ Schedule paused", successText, rokCommanderCopy.COLORS.SCHEDULE)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showEmbedNotice(interaction, infoEmbed("⏸️ Schedule paused", successText, rokCommanderCopy.COLORS.SCHEDULE));
 
 		// Fire-and-forget board refresh so the paused tag renders right
 		// away. Failure here is logged, not surfaced, the DB write is
@@ -116,6 +111,6 @@ export async function pauseOneSchedule(interaction: RepliableInteraction, option
 		);
 	} catch (err) {
 		console.error("[schedule pause] update failed", err);
-		await interaction.reply({ embeds: [errorEmbed(c.failed)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.failed);
 	}
 }

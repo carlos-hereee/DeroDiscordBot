@@ -1,9 +1,10 @@
-import { MessageFlags, type ColorResolvable, type RepliableInteraction } from "discord.js";
+import { type ColorResolvable, type RepliableInteraction } from "discord.js";
 import { COLORS } from "@base/copy/brand.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { claimChips, isChipEconomyOn, type ClaimResult } from "./chipWallet.js";
 import { economyCopy } from "./economyCopy.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── chipClaim ────────────────────────────────────────────────────────
 // What:  the /claim reply (2026-10 item 250 Phase 5): pay the member's claim, or say
@@ -16,7 +17,6 @@ import { economyCopy } from "./economyCopy.js";
 // day from every member would turn the channel into a ledger.
 
 const copy = economyCopy.claim;
-const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 
 function claimText(result: ClaimResult): string {
 	if (result.kind === "cooldown") return copy.cooldown(result.balance, result.nextClaimAt);
@@ -30,20 +30,20 @@ const claimEmbed = (result: ClaimResult) => infoEmbed(copy.title, claimText(resu
 export async function runChipClaim(interaction: RepliableInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ embeds: [errorEmbed(copy.notInGuild)], ...PRIVATE });
+		await showErrorNotice(interaction, copy.notInGuild);
 		return;
 	}
 
 	try {
 		const config = await guildConfigStore.findByGuildId(guildId);
 		if (!isChipEconomyOn(config)) {
-			await interaction.reply({ embeds: [errorEmbed(copy.economyOff)], ...PRIVATE });
+			await showErrorNotice(interaction, copy.economyOff);
 			return;
 		}
 		const result = await claimChips({ guildId, userId: interaction.user.id });
-		await interaction.reply({ embeds: [claimEmbed(result)], ...PRIVATE });
+		await showEmbedNotice(interaction, claimEmbed(result));
 	} catch (error) {
 		console.error(`[economy] /claim for ${interaction.user.id} in guild ${guildId} failed`, error);
-		await interaction.reply({ embeds: [errorEmbed(copy.failed)], ...PRIVATE }).catch(() => undefined);
+		await showErrorNotice(interaction, copy.failed);
 	}
 }

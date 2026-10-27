@@ -1,14 +1,15 @@
-import { MessageFlags, type RepliableInteraction } from "discord.js";
+import { type RepliableInteraction } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /events resume, one event ───────────────────────────────────────
 // What:  clears event.paused (and pausedUntil) so the scheduler resumes
@@ -47,7 +48,7 @@ export async function resumableEventChoices(guildId: string): Promise<OptionChoi
 export async function resumeOneSchedule(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ embeds: [errorEmbed("Run this in a server, not a DM.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "Run this in a server, not a DM.");
 		return;
 	}
 
@@ -64,15 +65,12 @@ export async function resumeOneSchedule(interaction: RepliableInteraction, optio
 		// and still read from the shim above. Config is loaded lazily here so the
 		// happy path takes no extra read.
 		const config = await guildConfigStore.findByGuildId(guildId);
-		await interaction.reply({
-			embeds: [errorEmbed(getPluginCopy(config).pauseSchedule.notFound)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, getPluginCopy(config).pauseSchedule.notFound);
 		return;
 	}
 
 	if (!event.paused) {
-		await interaction.reply({ embeds: [errorEmbed(c.alreadyActive(event.name))], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.alreadyActive(event.name));
 		return;
 	}
 
@@ -84,16 +82,13 @@ export async function resumeOneSchedule(interaction: RepliableInteraction, optio
 		await eventStore.updateInGuild(event.eventId, guildId, { paused: false, pausedUntil: null });
 		adminLog.emitFor(interaction, guildId, "schedule.update", { subject: event.name, detail: setupCopy.adminLog.resumed, eventId: event.eventId });
 
-		await interaction.reply({
-			embeds: [infoEmbed("▶️ Schedule resumed", c.resumed(event.name), rokCommanderCopy.COLORS.SCHEDULE)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showEmbedNotice(interaction, infoEmbed("▶️ Schedule resumed", c.resumed(event.name), rokCommanderCopy.COLORS.SCHEDULE));
 
 		refreshSchedule(interaction.client, guildId).catch((err) =>
 			console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/events resume"), err)
 		);
 	} catch (err) {
 		console.error("[schedule resume] update failed", err);
-		await interaction.reply({ embeds: [errorEmbed(c.failed)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.failed);
 	}
 }

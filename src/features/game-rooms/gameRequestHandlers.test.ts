@@ -69,6 +69,16 @@ beforeAll(() => {
 	registerGameRequestHandlers();
 });
 
+// The modals a press opened, and the text of its notice: a refusal or a short answer now
+// opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
+const shownModals = (interaction: { showModal: unknown }) =>
+	(interaction.showModal as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { toJSON(): { custom_id: string; components: { content?: string }[] } }).toJSON());
+const noticeText = (interaction: { showModal: unknown }): string =>
+	shownModals(interaction)
+		.filter((modal) => modal.custom_id.startsWith("notice:"))
+		.flatMap((modal) => modal.components.map((component) => component.content ?? ""))
+		.join("\n");
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	listMock.mockResolvedValue(POOL);
@@ -160,7 +170,7 @@ describe("the Remove select", () => {
 
 		expect(removeMock).not.toHaveBeenCalled();
 		expect(interaction.update).not.toHaveBeenCalled();
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: copy.adminOnly }));
+		expect(noticeText(interaction)).toBe(copy.adminOnly);
 	});
 });
 

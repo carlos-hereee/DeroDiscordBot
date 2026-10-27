@@ -33,6 +33,7 @@ import {
 	removeGameRequest,
 	toggleGameRequestVote,
 } from "./gameRequests.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── gameRequestHandlers ────────────────────────────────────────────────────
 // What:  the Discord half of the game request ballot (2026-10 item 245 Phase 4a):
@@ -167,7 +168,7 @@ async function currentView(context: BallotContext, viewerId: string, notice?: st
 }
 
 async function replyOutsideGuild(interaction: BallotInteraction): Promise<void> {
-	await interaction.reply({ content: getPluginCopy(null).gameRequests.outsideGuild, flags: MessageFlags.Ephemeral });
+	await showNotice(interaction, { title: getPluginCopy(null).notice.gameRequests, sections: [getPluginCopy(null).gameRequests.outsideGuild] });
 }
 
 // ── the button: open the ballot, or open the Add a game modal ───────────────
@@ -259,7 +260,7 @@ function voteNotice(vote: Awaited<ReturnType<typeof toggleGameRequestVote>>, cop
 // member who is neither is refused here and nothing is deleted.
 async function removeAsAdmin(interaction: StringSelectMenuInteraction, context: BallotContext, nameKey: string): Promise<void> {
 	if (!context.canRemove) {
-		await interaction.reply({ content: context.copy.adminOnly, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.gameRequests, sections: [context.copy.adminOnly] });
 		return;
 	}
 	const removed = await removeGameRequest(context.guildId, nameKey);

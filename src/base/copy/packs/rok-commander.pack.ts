@@ -295,6 +295,20 @@ export const rokCommanderCopy = {
 		title: "❌ Error",
 	},
 
+	// The title over a private text answer shown as a notice modal (2026-10 item 254
+	// Phase 5b), one per feature whose copy lives only in the packs. Discord cuts a modal
+	// title at 45 characters. Both packs carry the same words: a title names the feature.
+	notice: {
+		leaderboard: "🏆 Leaderboard",
+		secretCode: "🔐 Secret code",
+		kvkSeason: "⚔️ KvK season",
+		events: "📅 Events",
+		gameRequests: "🗳️ Game requests",
+		poll: "🗳️ Poll",
+		powerUps: "⚡ Power ups",
+		schedule: "📅 Schedule",
+	},
+
 	arrival: {
 		title: "🔱 I Have Arrived.",
 		description: (guildName: string, ownerId: string) =>

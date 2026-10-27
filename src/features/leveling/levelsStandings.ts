@@ -1,4 +1,4 @@
-import { MessageFlags, type RepliableInteraction } from "discord.js";
+import { type RepliableInteraction } from "discord.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { xpPeriodStore } from "@db/stores/xpPeriodStore.js";
@@ -10,6 +10,7 @@ import { buildLevelsBoardCardEmbed, buildLevelsBoardEmbed, type LevelsBoardEntry
 import { LEVELS_BOARD_AVATAR_SIZE, renderLevelsBoardCard } from "@features/leveling/levelsBoardRenderer.js";
 import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { deferProfileReply } from "@features/leveling/accountProfile.js";
+import { showErrorNotice } from "@utils/textModal.js";
 
 // ── /account view:levels ───────────────────────────────────────────────────
 // What:  the guild's xp standings for this week, this month, or all time.
@@ -57,10 +58,7 @@ export function toLevelsWindow(value: string | null): LevelsWindow {
 export async function showLevelsStandings(interaction: RepliableInteraction, { window, isPrivate }: LevelsStandingsRequest): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({
-			embeds: [errorEmbed(levelingCopy.errors.outsideGuild)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, levelingCopy.errors.outsideGuild);
 		return;
 	}
 

@@ -1,8 +1,9 @@
-import { ButtonInteraction, PermissionFlagsBits, MessageFlags, TextChannel } from "discord.js";
+import { ButtonInteraction, PermissionFlagsBits, TextChannel } from "discord.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── leaderboard channel handlers ──────────────────────────────────────
 // What:  persistent button handlers that follow up the
@@ -43,10 +44,7 @@ export function buildLeaderboardChannelDeleteCustomId(guildId: string): string {
 async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({
-			embeds: [errorEmbed("Run this in a server, not a DM.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "Run this in a server, not a DM.");
 		return;
 	}
 
@@ -55,10 +53,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 	const customIdParts = interaction.customId.split(":");
 	const buttonGuildId = customIdParts[1];
 	if (buttonGuildId && buttonGuildId !== guildId) {
-		await interaction.reply({
-			embeds: [errorEmbed("This button was issued for a different server.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "This button was issued for a different server.");
 		return;
 	}
 
@@ -69,19 +64,13 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 	// suspenders, but the cost is zero.)
 	const member = interaction.member;
 	if (!member || typeof member.permissions === "string" || !member.permissions.has(PermissionFlagsBits.Administrator)) {
-		await interaction.reply({
-			embeds: [errorEmbed("You need Administrator permission to remove the leaderboard channel.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "You need Administrator permission to remove the leaderboard channel.");
 		return;
 	}
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
-		await interaction.reply({
-			embeds: [errorEmbed("This server has not been set up yet. Run /setup first.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "This server has not been set up yet. Run /setup first.");
 		return;
 	}
 
@@ -89,16 +78,11 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 	if (!channelId) {
 		// Already deleted (or never set). Idempotent reply, surface what
 		// the admin probably wanted to hear rather than a confusing error.
-		await interaction.reply({
-			embeds: [
-				infoEmbed(
+		await showEmbedNotice(interaction, infoEmbed(
 					"Already removed",
 					"The leaderboard channel is already gone from this server. To restore it later, run /server leaderboard tracking enabled:True with auto-heal enabled.",
 					COLORS.SCHEDULE
-				),
-			],
-			flags: MessageFlags.Ephemeral,
-		});
+				));
 		return;
 	}
 
@@ -160,22 +144,14 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 			console.warn(`[leaderboard-channel-delete] admin audit notice failed for guild ${guildId}`, noticeErr);
 		}
 
-		await interaction.reply({
-			embeds: [
-				infoEmbed(
+		await showEmbedNotice(interaction, infoEmbed(
 					"🗑️ Leaderboard channel removed",
 					"The leaderboard channel has been deleted from this server and flagged so auto-heal will not rebuild it. To restore it later, run /server leaderboard tracking enabled:True, that re-enables tracking AND clears the removal flag, so the channel rebuilds on the next boot sweep (assuming autoHealEnabled is on).",
 					COLORS.SCHEDULE
-				),
-			],
-			flags: MessageFlags.Ephemeral,
-		});
+				));
 	} catch (err) {
 		console.error("[leaderboard-channel-delete] failed", err);
-		await interaction.reply({
-			embeds: [errorEmbed("Could not remove the leaderboard channel. Check the bot's permissions or delete it manually in Discord.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "Could not remove the leaderboard channel. Check the bot's permissions or delete it manually in Discord.");
 	}
 }
 

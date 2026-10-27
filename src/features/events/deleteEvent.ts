@@ -13,6 +13,7 @@ import { infoEmbed, errorEmbed } from "@utils/embedBuilder.js";
 import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showErrorNotice } from "@utils/textModal.js";
 
 // ── deleting an event ─────────────────────────────────────────────────
 // What:  soft deletes one active event after a private Delete or Cancel
@@ -57,7 +58,7 @@ export async function deletableEventChoices(guildId: string, typed: string): Pro
 export async function deleteEvent(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ embeds: [errorEmbed("Run this in a server, not a DM.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "Run this in a server, not a DM.");
 		return;
 	}
 
@@ -67,10 +68,7 @@ export async function deleteEvent(interaction: RepliableInteraction, options: Co
 	const event = await eventStore.findByIdInGuild(eventId, guildId);
 
 	if (!event) {
-		await interaction.reply({
-			embeds: [errorEmbed(c.notFound(eventId))],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, c.notFound(eventId));
 		return;
 	}
 

@@ -6,7 +6,6 @@ import {
 	ButtonBuilder,
 	ButtonStyle,
 	EmbedBuilder,
-	MessageFlags,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
@@ -16,6 +15,8 @@ import { registerButton } from "@handlers/interactionRegistry.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { ACTIVE_POLLS, IPollDefinition } from "./pollDefinitions.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── PollDispatcher ────────────────────────────────────────────────────
 // Reusable audience-poll mechanism (v1.6 Phase 3, item 34a). Broadcasts each
@@ -55,7 +56,7 @@ async function handlePollVote(interaction: ButtonInteraction): Promise<void> {
 	// message left over from an older deploy). Acknowledge quietly so the click
 	// does not surface a generic interaction error.
 	if (!poll || !option) {
-		await interaction.reply({ content: "This poll is no longer active.", flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.poll, sections: ["This poll is no longer active."] });
 		return;
 	}
 
@@ -63,19 +64,16 @@ async function handlePollVote(interaction: ButtonInteraction): Promise<void> {
 	// from a forwarded/DM context, guard so we never write a null guildId row.
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ content: "Please vote from within the server.", flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.poll, sections: ["Please vote from within the server."] });
 		return;
 	}
 
 	try {
 		await pollResultStore.recordVote(poll.pollId, guildId, interaction.user.id, option.key);
-		await interaction.reply({
-			content: `Thanks, your vote for "${option.label}" is recorded. Tap another option anytime to change it.`,
-			flags: MessageFlags.Ephemeral,
-		});
+		await showNotice(interaction, { title: getPluginCopy(null).notice.poll, sections: [`Thanks, your vote for "${option.label}" is recorded. Tap another option anytime to change it.`] });
 	} catch (error) {
 		console.error(`[poll] failed to record vote for ${poll.pollId} in guild ${guildId}`, error);
-		await interaction.reply({ content: "Could not record your vote. Try again in a moment.", flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.poll, sections: ["Could not record your vote. Try again in a moment."] });
 	}
 }
 

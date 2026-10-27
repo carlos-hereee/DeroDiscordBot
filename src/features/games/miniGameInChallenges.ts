@@ -7,6 +7,7 @@ import { readDeroPlay } from "./challengeEntry.js";
 import { runFortune } from "./fortuneHandler.js";
 import { gamesCopy } from "./gamesCopy.js";
 import type { SoloLuckGame } from "./soloLuck.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── miniGameInChallenges ───────────────────────────────────────────────────
 // What:  a /mini-game typed in one of the two challenge channels (⚔️challenges or
@@ -62,7 +63,7 @@ export async function routeMiniGameInChallenges(interaction: ChatInputCommandInt
 	// Against a member, the luck game's handler posts its challenge card, which belongs here.
 	if (play === null) return false;
 	if (play === "throwMissing") {
-		await interaction.reply({ content: gamesCopy.soloLuck.throwNeeded, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: gamesCopy.notices.miniGame, sections: [gamesCopy.soloLuck.throwNeeded] });
 		return true;
 	}
 	await openPrivately(interaction, () => openSoloRoomForMember(interaction, soloLuckSlugFor(play), { luckPlay: play }));

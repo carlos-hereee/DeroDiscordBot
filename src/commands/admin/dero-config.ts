@@ -3,14 +3,13 @@ import {
 	SlashCommandSubcommandGroupBuilder,
 	ChatInputCommandInteraction,
 	type RepliableInteraction,
-	MessageFlags,
 	ChannelType,
 	type EmbedBuilder,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { deroVoiceConfigStore, type DeroVoiceListField } from "@db/stores/deroVoiceConfigStore.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
@@ -22,6 +21,7 @@ import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog, type AdminLogKind } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /dero-config ──────────────────────────────────────────────────────
 // What:  Dero's voice and task list, one per guild, in one admin command: the kill
@@ -228,14 +228,14 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 	// ① guild gate
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ embeds: [errorEmbed(c.notInGuild)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.notInGuild);
 		return;
 	}
 
 	// ② setup gate
 	const guildConfig = await guildConfigStore.findByGuildId(guildId);
 	if (!guildConfig) {
-		await interaction.reply({ embeds: [errorEmbed(c.setupRequired)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.setupRequired);
 		return;
 	}
 
@@ -264,13 +264,11 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 		else embed = await status(guildId, current);
 
 		// ④
-		await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+		await showEmbedNotice(interaction, embed);
 	}
 	catch (err) {
 		console.error(`[dero-config] failed guild=${guildId}`, err);
-		await interaction
-			.reply({ embeds: [errorEmbed(c.saveFailed)], flags: MessageFlags.Ephemeral })
-			.catch(() => undefined);
+		await showErrorNotice(interaction, c.saveFailed);
 	}
 }
 

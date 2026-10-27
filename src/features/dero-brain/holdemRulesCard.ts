@@ -37,6 +37,7 @@ import { registerDealerTable, type RegisterDealerInput } from "./dealerNarration
 import { deroBrainCopy } from "./deroBrainCopy.js";
 import { describeTerms, describeTermsRefusal, resolveTerms, type HoldemTermsRequest } from "./holdemTerms.js";
 import { dropHoldemRequest, getHoldemRequest, type HoldemRequest, type HoldemVisibilityChoice } from "./holdemRequests.js";
+import { showErrorNotice } from "@utils/textModal.js";
 
 // ── holdemRulesCard ───────────────────────────────────────────────────────
 // What:  the card that stands between "Dero, open a Hold'em table" and a real
@@ -246,7 +247,7 @@ interface PassedGate {
 }
 
 async function replyPrivately(interaction: AnyCardInteraction, line: string): Promise<void> {
-	await interaction.reply({ embeds: [errorEmbed(line)], flags: MessageFlags.Ephemeral });
+	await showErrorNotice(interaction, line);
 }
 
 function parseCustomId(raw: string): { action: string; requestId: string } | null {

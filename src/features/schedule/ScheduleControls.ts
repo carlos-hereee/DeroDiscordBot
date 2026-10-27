@@ -2,13 +2,14 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, type Button
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { postGoLiveAnnouncement } from "@features/schedule/postGoLiveAnnouncement.js";
 import { pauseAllGuildEvents, resumeAllGuildEvents, IBulkScheduleResult } from "@features/schedule/scheduleBulkControls.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── Schedule channel controls (item 36) ────────────────────────────────
 // The pinned schedule board carries ONE dynamic, phase-gated control row,
@@ -97,7 +98,7 @@ export function buildScheduleControlRow(state: IScheduleControlState): ActionRow
 async function handleScheduleControl(interaction: ButtonInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) {
-		await interaction.reply({ embeds: [errorEmbed("This button only works inside a server.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "This button only works inside a server.");
 		return;
 	}
 
@@ -106,7 +107,7 @@ async function handleScheduleControl(interaction: ButtonInteraction): Promise<vo
 	const config = await guildConfigStore.findByGuildId(guildId);
 	const allowed = await gateOwnerOrAdmin(interaction, config);
 	if (!allowed) {
-		await interaction.reply({ embeds: [errorEmbed(rokCommanderCopy.responses.noWizardPowers)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, rokCommanderCopy.responses.noWizardPowers);
 		return;
 	}
 
@@ -126,7 +127,7 @@ async function handleScheduleControl(interaction: ButtonInteraction): Promise<vo
 			return;
 		default:
 			// Stale button from an older board (customId no longer recognized).
-			await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
+			await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["This control is no longer available."] });
 	}
 }
 
@@ -137,28 +138,25 @@ async function runGoLiveNow(interaction: ButtonInteraction, guildId: string): Pr
 	const result = await postGoLiveAnnouncement(interaction.client, guildId, "now", null, null);
 	const c = rokCommanderCopy.goLiveSoon;
 	if (result.ok) {
-		await interaction.reply({ content: c.posted, flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.posted] });
 		return;
 	}
 	const errorMsg =
 		result.reason === "setup-required" ? c.setupRequired : result.reason === "invalid-lead-time" ? c.invalidLeadTime : c.postFailed;
-	await interaction.reply({ embeds: [errorEmbed(errorMsg)], flags: MessageFlags.Ephemeral });
+	await showErrorNotice(interaction, errorMsg);
 }
 
 async function runConfigureHowTo(interaction: ButtonInteraction): Promise<void> {
 	// A button cannot launch a slash command, so the "set up your schedule"
 	// affordance points the admin at the commands that do.
-	await interaction.reply({
-		content: [
+	await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [[
 			"**Set up your schedule with one of these:**",
 			"• `/events stream weekly` for a recurring stream or event",
 			"• `/events stream announce` for a one-off event at a specific date and time",
 			"• `/events kvk-season` for a full KvK season of events",
 			"",
 			"Once at least one schedule exists, this button becomes a Pause/Resume toggle.",
-		].join("\n"),
-		flags: MessageFlags.Ephemeral,
-	});
+		].join("\n")] });
 }
 
 async function runBulkSchedule(interaction: ButtonInteraction, guildId: string, action: "paused" | "resumed"): Promise<void> {

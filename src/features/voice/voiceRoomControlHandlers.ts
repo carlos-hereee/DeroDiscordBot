@@ -1,8 +1,9 @@
-import { MessageFlags, type ButtonInteraction } from "discord.js";
+import { type ButtonInteraction } from "discord.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { bringDeroIntoCall, sendDeroAwayFromCall, showDeroStatus } from "@commands/utility/dero.js";
 import { commandButtonsCopy } from "@features/command-buttons/commandButtonsCopy.js";
 import { VOICE_ROOM_CONTROL_PREFIX, voiceRoomActionOf } from "./voiceRoomControls.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── the voice rooms' Dero buttons, answered ──────────────────────────────────
 // What:  routes Join, Leave and Status on a voice room's intro to /dero join,
@@ -23,7 +24,7 @@ async function handleVoiceRoomControl(interaction: ButtonInteraction): Promise<v
 			await showDeroStatus(interaction);
 			return;
 		default:
-			await interaction.reply({ content: commandButtonsCopy.launcher.staleButton, flags: MessageFlags.Ephemeral });
+			await showNotice(interaction, { title: commandButtonsCopy.launcher.staleTitle, sections: [commandButtonsCopy.launcher.staleButton] });
 	}
 }
 

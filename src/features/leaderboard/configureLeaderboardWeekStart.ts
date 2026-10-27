@@ -1,10 +1,11 @@
-import { MessageFlags, type RepliableInteraction, type SlashCommandSubcommandBuilder } from "discord.js";
+import { type RepliableInteraction, type SlashCommandSubcommandBuilder } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // Mirrors the GuildConfig weekStart enum. Local union (zero runtime) so the
 // command, the schema, and /leaderboard's thisWeekRange all speak the same two
@@ -50,10 +51,7 @@ export function addWeekStartOptions(sub: SlashCommandSubcommandBuilder): SlashCo
 export async function configureLeaderboardWeekStart(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({
-			embeds: [errorEmbed("Run this in a server, not a DM.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "Run this in a server, not a DM.");
 		return;
 	}
 
@@ -63,20 +61,14 @@ export async function configureLeaderboardWeekStart(interaction: RepliableIntera
 	// than silently written to the enum field.
 	const startRaw = options.getString("start", true);
 	if (startRaw !== "sunday" && startRaw !== "monday") {
-		await interaction.reply({
-			embeds: [errorEmbed("Pick Sunday or Monday from the dropdown.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "Pick Sunday or Monday from the dropdown.");
 		return;
 	}
 	const start: WeekStart = startRaw;
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
-		await interaction.reply({
-			embeds: [errorEmbed("This server has not been set up yet. Run /setup first.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "This server has not been set up yet. Run /setup first.");
 		return;
 	}
 
@@ -85,37 +77,24 @@ export async function configureLeaderboardWeekStart(interaction: RepliableIntera
 	// before the first write.
 	const current: WeekStart = config.weekStart === "monday" ? "monday" : "sunday";
 	if (current === start) {
-		await interaction.reply({
-			embeds: [
-				infoEmbed(
+		await showEmbedNotice(interaction, infoEmbed(
 					"Leaderboard week start already set",
 					`The leaderboard week already starts on ${start === "monday" ? "Monday" : "Sunday"} (weeks run ${BOUNDARY_LABEL[start]}). No change made.`,
 					COLORS.SCHEDULE
-				),
-			],
-			flags: MessageFlags.Ephemeral,
-		});
+				));
 		return;
 	}
 
 	try {
 		await guildConfigStore.update(guildId, { weekStart: start });
 		adminLog.emitFor(interaction, guildId, "config.change", { subject: setupCopy.adminLog.subjects.weekStart, detail: setupCopy.adminLog.set(start) });
-		await interaction.reply({
-			embeds: [
-				infoEmbed(
+		await showEmbedNotice(interaction, infoEmbed(
 					"📅 Leaderboard week start updated",
 					`The leaderboard's "This week" view now runs ${BOUNDARY_LABEL[start]}. The boundary is shown in the leaderboard title so members always know the window.`,
 					COLORS.SCHEDULE
-				),
-			],
-			flags: MessageFlags.Ephemeral,
-		});
+				));
 	} catch (err) {
 		console.error("[configure week-start] update failed", err);
-		await interaction.reply({
-			embeds: [errorEmbed("Could not save the setting. Try again or check the bot's logs.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "Could not save the setting. Try again or check the bot's logs.");
 	}
 }

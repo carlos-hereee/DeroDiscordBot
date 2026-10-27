@@ -12,10 +12,12 @@ import {
 } from "discord.js";
 import { GuildEventManager } from "@features/events/GuildEventManager.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { kvkConfirmationEmbed, errorEmbed } from "@utils/embedBuilder.js";
+import { kvkConfirmationEmbed } from "@utils/embedBuilder.js";
 import { addDays, parseEventDate, parseEventDateTime } from "@utils/dateParser.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 const { configureReminders } = rokCommanderCopy;
 
@@ -83,10 +85,7 @@ export async function runKvkSeason(interaction: RepliableInteraction, options: C
 	// /setup has not run yet this command cannot proceed.
 	const config = await guildConfigStore.findByGuildId(interaction.guildId!);
 	if (!config?.announcementsChannelId) {
-		await interaction.reply({
-			embeds: [errorEmbed(configureReminders.setupRequired)],
-			ephemeral: true,
-		});
+		await showErrorNotice(interaction, configureReminders.setupRequired);
 		return;
 	}
 	const announcementsChannelId = config.announcementsChannelId;
@@ -104,10 +103,7 @@ export async function runKvkSeason(interaction: RepliableInteraction, options: C
 	if (!kauEasy) errors.push(configureReminders.kauInvalid);
 
 	if (errors.length > 0) {
-		await interaction.reply({
-			content: `${configureReminders.invalidInputsHeader}\n${configureReminders.bulletList(errors)}`,
-			ephemeral: true,
-		});
+		await showNotice(interaction, { title: getPluginCopy(null).notice.kvkSeason, sections: [`${configureReminders.invalidInputsHeader}\n${configureReminders.bulletList(errors)}`] });
 		return;
 	}
 
@@ -128,10 +124,7 @@ export async function runKvkSeason(interaction: RepliableInteraction, options: C
 	if (kauEasy! >= seasonEnd) rangeErrors.push(configureReminders.kauAfterSeason);
 
 	if (rangeErrors.length > 0) {
-		await interaction.reply({
-			content: `${configureReminders.dateConflictsHeader}\n${configureReminders.bulletList(rangeErrors)}`,
-			ephemeral: true,
-		});
+		await showNotice(interaction, { title: getPluginCopy(null).notice.kvkSeason, sections: [`${configureReminders.dateConflictsHeader}\n${configureReminders.bulletList(rangeErrors)}`] });
 		return;
 	}
 
@@ -306,10 +299,7 @@ export async function runKvkSeason(interaction: RepliableInteraction, options: C
 						// stop the whole command, safer than silently
 						// falling back to defaults, because the admin
 						// clearly intended to customize.
-						await submission.reply({
-							content: configureReminders.checklistEmptyError,
-							ephemeral: true,
-						});
+						await showNotice(submission, { title: getPluginCopy(null).notice.kvkSeason, sections: [configureReminders.checklistEmptyError] });
 						return;
 					}
 

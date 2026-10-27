@@ -4,6 +4,8 @@ import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { leaderboardEmbed } from "@utils/embedBuilder.js";
 import { thisWeekRange, thisMonthRange, weekBoundaryTitle, type WeekStart } from "@features/leaderboard/leaderboardWindow.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /leaderboard ──────────────────────────────────────────────────────
 // What:  show participation rankings for an event or across every event
@@ -88,7 +90,7 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
 export async function execute(interaction: ChatInputCommandInteraction) {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ content: "❌ Run this in a server, not a DM.", ephemeral: true });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["❌ Run this in a server, not a DM."] });
 		return;
 	}
 
@@ -137,7 +139,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
 		const records = await activityStore.findAllGroupedByPlayerInEvents(eventIds, dateRange);
 		if (!records.length) {
-			await interaction.reply({ content: emptyMessage, ephemeral: true });
+			await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: [emptyMessage] });
 			return;
 		}
 		const ranked = records.slice(0, 10).map(
@@ -164,7 +166,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 	// typing a free-form value into the field.
 	const event = await eventStore.findByIdInGuild(eventValue, guildId);
 	if (!event) {
-		await interaction.reply({ content: "❌ Event not found. Pick one from the dropdown.", ephemeral: true });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["❌ Event not found. Pick one from the dropdown."] });
 		return;
 	}
 
@@ -174,7 +176,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 	// two branches sharing one code path through the embed render.
 	const records = await activityStore.findAllGroupedByPlayerInEvents([event.eventId]);
 	if (!records.length) {
-		await interaction.reply({ content: "No activity recorded for this event yet.", ephemeral: true });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["No activity recorded for this event yet."] });
 		return;
 	}
 

@@ -90,6 +90,18 @@ function rig(options: { trackedPost?: boolean } = {}) {
 	return { trackedPost, buttonMessage, submission, button };
 }
 
+// The modals a press opened, and the text of its notice: a refusal or a short answer now
+// opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
+const shownModals = (interaction: { showModal: unknown }) =>
+	(interaction.showModal as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { toJSON(): { custom_id: string; components: { content?: string }[] } }).toJSON());
+const noticeText = (interaction: { showModal: unknown }): string =>
+	shownModals(interaction)
+		.filter((modal) => modal.custom_id.startsWith("notice:"))
+		.flatMap((modal) => modal.components.map((component) => component.content ?? ""))
+		.join("\n");
+// True when every modal the press opened is a notice, so no form or game modal opened.
+const onlyNoticesShown = (interaction: { showModal: unknown }): boolean => shownModals(interaction).every((modal) => modal.custom_id.startsWith("notice:"));
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	mocks.findByGuildId.mockResolvedValue({ ...storedRow });
@@ -102,17 +114,17 @@ describe("the Edit rules button", () => {
 		const { button } = rig();
 		const press = button(MEMBER, null);
 		await handleRulesEditButton(press);
-		expect(press.showModal).not.toHaveBeenCalled();
-		expect(press.reply).toHaveBeenCalledWith(expect.objectContaining({ flags: MessageFlags.Ephemeral }));
+		expect(onlyNoticesShown(press)).toBe(true);
+		expect(noticeText(press)).not.toBe("");
+		expect(press.reply).not.toHaveBeenCalled();
 	});
 
 	it("answers a stale customId as expired", async () => {
 		const { button } = rig();
 		const press = button(OWNER, null, "rules:somethingold");
 		await handleRulesEditButton(press);
-		expect(press.showModal).not.toHaveBeenCalled();
-		const embed = (press.reply.mock.calls[0]![0] as { embeds: Array<{ data: { description?: string } }> }).embeds[0]!;
-		expect(embed.data.description).toBe(editCopy.expired);
+		expect(onlyNoticesShown(press)).toBe(true);
+		expect(noticeText(press)).toBe(editCopy.expired);
 	});
 
 	it("opens a modal preloaded with the rules as they stand, capped at Discord's input limit", async () => {

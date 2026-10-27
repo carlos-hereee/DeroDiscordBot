@@ -7,12 +7,13 @@ import {
 	type SlashCommandSubcommandBuilder,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { buildLeaderboardChannelDeleteCustomId } from "@features/leaderboard/leaderboardChannelHandlers.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /server leaderboard tracking ───────────────────────────────────
 // What:  master switch for participation tracking. When ON (default),
@@ -48,10 +49,7 @@ export function addLeaderboardTrackingOptions(sub: SlashCommandSubcommandBuilder
 export async function configureLeaderboardTracking(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({
-			embeds: [errorEmbed("Run this in a server, not a DM.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "Run this in a server, not a DM.");
 		return;
 	}
 
@@ -59,10 +57,7 @@ export async function configureLeaderboardTracking(interaction: RepliableInterac
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
-		await interaction.reply({
-			embeds: [errorEmbed("This server has not been set up yet. Run /setup first.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "This server has not been set up yet. Run /setup first.");
 		return;
 	}
 
@@ -90,17 +85,11 @@ export async function configureLeaderboardTracking(interaction: RepliableInterac
 			  ]
 			: undefined;
 
-		await interaction.reply({
-			embeds: [
-				infoEmbed(
-					"Leaderboard tracking already that way",
-					body,
-					COLORS.SCHEDULE
-				),
-			],
-			components,
-			flags: MessageFlags.Ephemeral,
-		});
+		const embed = infoEmbed("Leaderboard tracking already that way", body, COLORS.SCHEDULE);
+		// The Remove button is an action, not a choice, so a reply that carries it stays a
+		// private message (2026-10 item 254 Phase 5b); without it the answer is a notice.
+		if (components) await interaction.reply({ embeds: [embed], components, flags: MessageFlags.Ephemeral });
+		else await showEmbedNotice(interaction, embed);
 		return;
 	}
 
@@ -157,16 +146,12 @@ export async function configureLeaderboardTracking(interaction: RepliableInterac
 				  ]
 				: undefined;
 
-		await interaction.reply({
-			embeds: [infoEmbed(heading, body, COLORS.SCHEDULE)],
-			components,
-			flags: MessageFlags.Ephemeral,
-		});
+		const embed = infoEmbed(heading, body, COLORS.SCHEDULE);
+		// As above: a reply carrying the Remove button stays a private message.
+		if (components) await interaction.reply({ embeds: [embed], components, flags: MessageFlags.Ephemeral });
+		else await showEmbedNotice(interaction, embed);
 	} catch (err) {
 		console.error("[configure leaderboard-tracking] update failed", err);
-		await interaction.reply({
-			embeds: [errorEmbed("Could not save the toggle. Try again or check the bot's logs.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "Could not save the toggle. Try again or check the bot's logs.");
 	}
 }

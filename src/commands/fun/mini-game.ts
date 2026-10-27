@@ -1,10 +1,8 @@
 import {
 	SlashCommandBuilder,
-	MessageFlags,
 	type ChatInputCommandInteraction,
 	type SlashCommandStringOption,
 } from "discord.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
 import { gamesCopy } from "@features/games/gamesCopy.js";
 import { fortuneCopy } from "@features/fortune/fortuneCopy.js";
 import { runCoinFlip, runDiceRoll, runMonopoly, runRps } from "@features/games/challengeEntry.js";
@@ -12,6 +10,7 @@ import { runHangman } from "@features/games/hangmanHandler.js";
 import { runBlackjack } from "@features/games/blackjackHandler.js";
 import { runFortune } from "@features/games/fortuneHandler.js";
 import { routeMiniGameInChallenges } from "@features/games/miniGameInChallenges.js";
+import { showErrorNotice } from "@utils/textModal.js";
 
 // ── /mini-game ─────────────────────────────────────────────────────────────
 // The single home for every Dero game. Four games ship as native Discord
@@ -198,7 +197,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	// mistake ships as a game that does nothing when clicked.
 	if (!handler) {
 		console.error(`[mini-game] no handler registered for subcommand '${subcommand}'`);
-		await interaction.reply({ embeds: [errorEmbed(gamesCopy.unknownSubcommand)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, gamesCopy.unknownSubcommand);
 		return;
 	}
 

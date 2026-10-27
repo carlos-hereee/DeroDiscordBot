@@ -2,14 +2,12 @@ import {
 	ActionRowBuilder,
 	ButtonBuilder,
 	ButtonStyle,
-	MessageFlags,
 	type ButtonInteraction,
 	type MessageEditOptions,
 	type RepliableInteraction,
 	type TextChannel,
 	type User,
 } from "discord.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { resolveVersus, type CoinFace } from "./versusResolve.js";
 import { scoreRps, RPS_CHOICES, type RpsChoice } from "./rpsWinner.js";
@@ -19,6 +17,7 @@ import { renderRpsCard } from "./rpsRenderer.js";
 import { isRenderPayload, withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
 import { awardSoloLuckResult } from "./gameXp.js";
 import { gamesCopy } from "./gamesCopy.js";
+import { showErrorNotice } from "@utils/textModal.js";
 
 // ── soloLuck ───────────────────────────────────────────────────────────────
 // What:  a coin flip, dice roll or rock paper scissors against Dero himself: one press,
@@ -99,7 +98,7 @@ export async function playSoloLuck(
 ): Promise<void> {
 	// XP is per server, and a DM has no server to rank in.
 	if (!interaction.inGuild()) {
-		await interaction.reply({ embeds: [errorEmbed(gamesCopy.outsideGuild)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, gamesCopy.outsideGuild);
 		return;
 	}
 

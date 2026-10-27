@@ -4,6 +4,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { listEventsEmbed } from "@utils/embedBuilder.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { getUpcomingOccurrences } from "@features/events/occurrenceCalculator.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── /events list ──────────────────────────────────────────────────────
 // What:  every active event in this server, each with its next occurrence,
@@ -23,10 +24,7 @@ export async function listEvents(interaction: RepliableInteraction): Promise<voi
 	const config = await guildConfigStore.findByGuildId(interaction.guildId!);
 
 	if (!events.length) {
-		await interaction.reply({
-			content: getPluginCopy(config).listEvents.noEvents,
-			flags: MessageFlags.Ephemeral,
-		});
+		await showNotice(interaction, { title: getPluginCopy(null).notice.events, sections: [getPluginCopy(config).listEvents.noEvents] });
 		return;
 	}
 

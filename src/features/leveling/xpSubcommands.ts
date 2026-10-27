@@ -9,7 +9,7 @@ import {
 	type SlashCommandSubcommandGroupBuilder,
 	type User,
 } from "discord.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
@@ -19,6 +19,7 @@ import { levelFromTotalXp, totalXpForLevel } from "@features/leveling/levelCurve
 import { getLevelingConfig } from "@features/leveling/levelingConfig.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /leveling xp ───────────────────────────────────────────────────────────
 // What:  admin correction of a member's xp, plus the two reset paths and a
@@ -115,13 +116,13 @@ export function addXpSubcommands(group: SlashCommandSubcommandGroupBuilder): Sla
 export async function runXpSubcommand(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.outsideGuild)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, levelingCopy.errors.outsideGuild);
 		return;
 	}
 
 	const context = await getLevelingConfig(guildId);
 	if (!context) {
-		await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.noData)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, levelingCopy.errors.noData);
 		return;
 	}
 	const settings = context.settings;
@@ -132,7 +133,7 @@ export async function runXpSubcommand(interaction: RepliableInteraction, options
 	const target = subcommand === "reset-server" || subcommand === "export" ? null : options.getUser("member", true);
 
 	if (target?.bot) {
-		await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.botMember)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, levelingCopy.errors.botMember);
 		return;
 	}
 
@@ -274,7 +275,7 @@ export async function runXpSubcommand(interaction: RepliableInteraction, options
 			// never declared. Only a developer adding one above without a branch here
 			// gets here, so fail loudly rather than silently doing nothing.
 			console.error(`[leveling xp] no branch for subcommand '${subcommand}'`);
-			await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.noData)], flags: MessageFlags.Ephemeral });
+			await showErrorNotice(interaction, levelingCopy.errors.noData);
 	}
 }
 
@@ -286,10 +287,7 @@ const displayNameOf = (interaction: RepliableInteraction, user: User): string =>
 	interaction.guild?.members.cache.get(user.id)?.displayName ?? user.globalName ?? user.username;
 
 async function reply(interaction: RepliableInteraction, title: string, description: string): Promise<void> {
-	await interaction.reply({
-		embeds: [infoEmbed(title, description, COLORS.ACCOUNT)],
-		flags: MessageFlags.Ephemeral,
-	});
+	await showEmbedNotice(interaction, infoEmbed(title, description, COLORS.ACCOUNT));
 }
 
 // Write an absolute total and move the announcement high water mark with it.

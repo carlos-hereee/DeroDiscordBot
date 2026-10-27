@@ -1,4 +1,4 @@
-import { MessageFlags, type ColorResolvable, type RepliableInteraction, type SlashCommandSubcommandGroupBuilder } from "discord.js";
+import { type ColorResolvable, type RepliableInteraction, type SlashCommandSubcommandGroupBuilder } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { COLORS } from "@base/copy/brand.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -8,8 +8,9 @@ import { readVault } from "@features/economy/serverVault.js";
 import { runVaultGrant } from "@features/economy/vaultGrant.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /arcade chips ─────────────────────────────────────────────────────
 // What:  the chip economy's admin subcommands (2026-10 item 250 Phase 5): `status` (the
@@ -30,7 +31,6 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 // with, since its players paid in.
 
 const copy = economyCopy.admin;
-const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 const ECONOMY = BOT_CONSTANTS.ECONOMY;
 
 /** The /arcade chips group's three subcommands. */
@@ -55,7 +55,7 @@ export function addChipSubcommands(group: SlashCommandSubcommandGroupBuilder): S
 }
 
 const reply = (interaction: RepliableInteraction, body: string) =>
-	interaction.reply({ embeds: [infoEmbed(copy.title, body, COLORS.ADMIN as ColorResolvable)], ...PRIVATE });
+	showEmbedNotice(interaction, infoEmbed(copy.title, body, COLORS.ADMIN as ColorResolvable));
 
 async function status(interaction: RepliableInteraction, guildId: string, on: boolean): Promise<void> {
 	const vault = await readVault(guildId);
@@ -82,7 +82,7 @@ export async function runChipSubcommand(interaction: RepliableInteraction, optio
 	// ①
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ embeds: [errorEmbed(copy.notInGuild)], ...PRIVATE });
+		await showErrorNotice(interaction, copy.notInGuild);
 		return;
 	}
 
@@ -90,7 +90,7 @@ export async function runChipSubcommand(interaction: RepliableInteraction, optio
 		// ②
 		const config = await guildConfigStore.findByGuildId(guildId);
 		if (!config) {
-			await interaction.reply({ embeds: [errorEmbed(copy.setupRequired)], ...PRIVATE });
+			await showErrorNotice(interaction, copy.setupRequired);
 			return;
 		}
 		const on = isChipEconomyOn(config);
@@ -103,7 +103,7 @@ export async function runChipSubcommand(interaction: RepliableInteraction, optio
 		}
 		if (sub === "grant") {
 			if (!on) {
-				await interaction.reply({ embeds: [errorEmbed(copy.economyOff)], ...PRIVATE });
+				await showErrorNotice(interaction, copy.economyOff);
 				return;
 			}
 			await runVaultGrant(interaction, guildId, options.getUser("user", true), options.getInteger("amount", true));
@@ -112,6 +112,6 @@ export async function runChipSubcommand(interaction: RepliableInteraction, optio
 		await status(interaction, guildId, on);
 	} catch (error) {
 		console.error(`[arcade chips] /arcade chips failed guild=${guildId}`, error);
-		await interaction.reply({ embeds: [errorEmbed(copy.failed)], ...PRIVATE }).catch(() => undefined);
+		await showErrorNotice(interaction, copy.failed);
 	}
 }

@@ -133,6 +133,11 @@ const description = (payload: { embeds: { data: { description?: string } }[] }):
 // The line a private refusal or a card edit carried.
 const replyLine = (mock: ReturnType<typeof vi.fn>): string => description(mock.mock.calls[0][0] as RulesCardPayload as never);
 
+// The text of the notice modal a refused press opens instead of a private reply (2026-10
+// item 254 Phase 5b).
+const noticeLine = (interaction: { showModal: ReturnType<typeof vi.fn> }): string =>
+	(interaction.showModal.mock.calls[0]?.[0] as { toJSON(): { components: { content?: string }[] } }).toJSON().components.map((component) => component.content ?? "").join("\n");
+
 const componentsJson = (payload: RulesCardPayload) => payload.components.map((row) => row.toJSON());
 
 beforeEach(() => _clearHoldemRequests());
@@ -224,7 +229,7 @@ describe("who may press", () => {
 		const { deps } = fakeDeps();
 		const interaction = button("public", newRequest().id, STRANGER_ID);
 		await handleRulesCardButton(interaction, deps);
-		expect(replyLine(interaction.reply)).toBe(card.notYours);
+		expect(noticeLine(interaction)).toBe(card.notYours);
 		expect(deps.openRoom).not.toHaveBeenCalled();
 	});
 
@@ -232,7 +237,7 @@ describe("who may press", () => {
 		const { deps } = fakeDeps({ fetchMember: vi.fn(async () => member(SPEAKER_ID, [])) });
 		const interaction = button("public", newRequest().id);
 		await handleRulesCardButton(interaction, deps);
-		expect(replyLine(interaction.reply)).toBe(card.notAuthorized);
+		expect(noticeLine(interaction)).toBe(card.notAuthorized);
 		expect(deps.openRoom).not.toHaveBeenCalled();
 	});
 
@@ -240,7 +245,7 @@ describe("who may press", () => {
 		const { deps } = fakeDeps({ loadConfig: vi.fn(async () => ({ ...CONFIG, enabled: false }) as IDeroVoiceConfig) });
 		const interaction = button("public", newRequest().id);
 		await handleRulesCardButton(interaction, deps);
-		expect(replyLine(interaction.reply)).toBe(card.switchedOff);
+		expect(noticeLine(interaction)).toBe(card.switchedOff);
 	});
 
 	it("answers an expired card plainly", async () => {
@@ -249,7 +254,7 @@ describe("who may press", () => {
 		advance(BOT_CONSTANTS.DERO_HOLDEM_REQUEST_TTL_MS);
 		const interaction = button("public", request.id);
 		await handleRulesCardButton(interaction, deps);
-		expect(replyLine(interaction.reply)).toBe(card.expired);
+		expect(noticeLine(interaction)).toBe(card.expired);
 		expect(deps.openRoom).not.toHaveBeenCalled();
 	});
 
@@ -259,7 +264,7 @@ describe("who may press", () => {
 		newRequest(STANDARD_HOLDEM_TERMS);
 		const interaction = button("public", first.id);
 		await handleRulesCardButton(interaction, deps);
-		expect(replyLine(interaction.reply)).toBe(card.expired);
+		expect(noticeLine(interaction)).toBe(card.expired);
 	});
 });
 
@@ -303,7 +308,7 @@ describe("Open", () => {
 		const { deps } = fakeDeps();
 		const interaction = button("invite", newRequest().id);
 		await handleRulesCardButton(interaction, deps);
-		expect(replyLine(interaction.reply)).toBe(card.pickInviteesFirst);
+		expect(noticeLine(interaction)).toBe(card.pickInviteesFirst);
 		expect(deps.openRoom).not.toHaveBeenCalled();
 	});
 

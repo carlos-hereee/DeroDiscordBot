@@ -1,12 +1,11 @@
 import {
 	ChannelType,
-	MessageFlags,
 	PermissionFlagsBits,
 	type RepliableInteraction,
 	type Role,
 	type SlashCommandSubcommandGroupBuilder,
 } from "discord.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -15,6 +14,7 @@ import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── /leveling settings ─────────────────────────────────────────────────────
 // What:  every per-guild knob of the leveling system. Rates, the curve, where
@@ -236,22 +236,19 @@ export function addLevelSettingsSubcommands(group: SlashCommandSubcommandGroupBu
 export async function runLevelSettings(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) {
-		await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.outsideGuild)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, levelingCopy.errors.outsideGuild);
 		return;
 	}
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
-		await interaction.reply({
-			embeds: [errorEmbed("This server has not been set up yet. Run /setup first.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "This server has not been set up yet. Run /setup first.");
 		return;
 	}
 
 	const context = await getLevelingConfig(guildId);
 	if (!context) {
-		await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.noData)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, levelingCopy.errors.noData);
 		return;
 	}
 
@@ -265,7 +262,7 @@ export async function runLevelSettings(interaction: RepliableInteraction, option
 
 	switch (subcommand) {
 		case "show":
-			await interaction.reply({ embeds: [buildPreview(interaction, context)], flags: MessageFlags.Ephemeral });
+			await showEmbedNotice(interaction, buildPreview(interaction, context));
 			return;
 
 		case "toggle": {
@@ -429,17 +426,14 @@ export async function runLevelSettings(interaction: RepliableInteraction, option
 			if (level !== null && role) {
 				const refusal = refuseReward(interaction, role as Role);
 				if (refusal) {
-					await interaction.reply({ embeds: [errorEmbed(refusal)], flags: MessageFlags.Ephemeral });
+					await showErrorNotice(interaction, refusal);
 					return;
 				}
 				const clampedLevel = clamp(level, 2, LIMITS.MAX_SETTABLE_LEVEL);
 				rewards = [...rewards.filter((reward) => reward.level !== clampedLevel), { level: clampedLevel, roleId: role.id }];
 				notes.push(`Reaching level ${clampedLevel} now grants <@&${role.id}>.`);
 			} else if ((level !== null) !== Boolean(role)) {
-				await interaction.reply({
-					embeds: [errorEmbed("Give both a level and a role to add a reward, or use remove-level on its own.")],
-					flags: MessageFlags.Ephemeral,
-				});
+				await showErrorNotice(interaction, "Give both a level and a role to add a reward, or use remove-level on its own.");
 				return;
 			}
 
@@ -456,10 +450,7 @@ export async function runLevelSettings(interaction: RepliableInteraction, option
 			const channel = options.getChannel("channel");
 
 			if ((role || channel) && multiplier === null) {
-				await interaction.reply({
-					embeds: [errorEmbed("Give a multiplier too. Use 0 to remove an existing boost.")],
-					flags: MessageFlags.Ephemeral,
-				});
+				await showErrorNotice(interaction, "Give a multiplier too. Use 0 to remove an existing boost.");
 				return;
 			}
 
@@ -489,15 +480,12 @@ export async function runLevelSettings(interaction: RepliableInteraction, option
 			// never declared. Only a developer adding one above without a branch here
 			// reaches it, so fail loudly rather than silently doing nothing.
 			console.error(`[leveling settings] no branch for subcommand '${subcommand}'`);
-			await interaction.reply({ embeds: [errorEmbed(levelingCopy.errors.noData)], flags: MessageFlags.Ephemeral });
+			await showErrorNotice(interaction, levelingCopy.errors.noData);
 			return;
 	}
 
 	if (Object.keys(patch).length === 0) {
-		await interaction.reply({
-			embeds: [infoEmbed("Nothing changed", "You did not set any option, so nothing was written.", COLORS.ACCOUNT)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showEmbedNotice(interaction, infoEmbed("Nothing changed", "You did not set any option, so nothing was written.", COLORS.ACCOUNT));
 		return;
 	}
 
@@ -508,22 +496,14 @@ export async function runLevelSettings(interaction: RepliableInteraction, option
 		invalidateLevelingConfig(guildId);
 		auditLevelingPatch(interaction, guildId, patch);
 
-		await interaction.reply({
-			embeds: [
-				infoEmbed(
+		await showEmbedNotice(interaction, infoEmbed(
 					"Leveling settings updated",
 					[...notes, "", `Run \`/leveling settings show\` to see everything as it stands now.`].join("\n"),
 					COLORS.ACCOUNT
-				),
-			],
-			flags: MessageFlags.Ephemeral,
-		});
+				));
 	} catch (error) {
 		console.error("[leveling settings] update failed", error);
-		await interaction.reply({
-			embeds: [errorEmbed("Could not save those settings. Try again or check the bot's logs.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "Could not save those settings. Try again or check the bot's logs.");
 	}
 }
 

@@ -24,6 +24,7 @@ import {
 } from "@utils/tzParser.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showErrorNotice } from "@utils/textModal.js";
 
 // ── /events stream weekly ────────────────────────────────────────
 // What:  creates a recurring weekly event on a fixed day + time of week
@@ -165,7 +166,7 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 		// makes sense inside a server. Discord's own permissioning blocks
 		// most of this path but the explicit guard keeps the rest of the
 		// function free of "what if guildId is null" branches.
-		await interaction.reply({ embeds: [errorEmbed("Run this in a server, not a DM.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "Run this in a server, not a DM.");
 		return;
 	}
 
@@ -176,7 +177,7 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 	// preview ("Pinging the guild member role").
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config?.announcementsChannelId) {
-		await interaction.reply({ embeds: [errorEmbed(c.setupRequired)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.setupRequired);
 		return;
 	}
 
@@ -193,13 +194,13 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 
 	const dayIndex = DAY_TO_INDEX[dayRaw];
 	if (dayIndex === undefined) {
-		await interaction.reply({ embeds: [errorEmbed(c.invalidDay)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.invalidDay);
 		return;
 	}
 
 	const time = parseFlexibleTime(timeRaw);
 	if (!time) {
-		await interaction.reply({ embeds: [errorEmbed(c.invalidTime)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.invalidTime);
 		return;
 	}
 
@@ -207,10 +208,7 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 	// trust an autocomplete pick blindly because Discord lets users
 	// type-and-submit a value that wasn't in the suggestion list.
 	if (!isValidTimezone(timezoneRaw)) {
-		await interaction.reply({
-			embeds: [errorEmbed(`Unknown timezone: \`${timezoneRaw}\`. Try names like \`America/New_York\`, \`Europe/London\`, or \`UTC\`.`)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, `Unknown timezone: \`${timezoneRaw}\`. Try names like \`America/New_York\`, \`Europe/London\`, or \`UTC\`.`);
 		return;
 	}
 
@@ -220,7 +218,7 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 	// so "Friday Night Stream" and "friday night stream" do not coexist.
 	const existing = await eventStore.findByGuildId(guildId);
 	if (existing.some((e) => e.name.toLowerCase() === name.toLowerCase())) {
-		await interaction.reply({ embeds: [errorEmbed(c.alreadyExists(name))], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.alreadyExists(name));
 		return;
 	}
 

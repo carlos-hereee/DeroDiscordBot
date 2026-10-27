@@ -1,11 +1,12 @@
-import { MessageFlags, type RepliableInteraction } from "discord.js";
+import { type RepliableInteraction } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // /events resume with no event, the bulk equivalent of resumeOneSchedule.
 // Resumes every paused event in the guild, including ones that had a
@@ -18,19 +19,19 @@ const c = rokCommanderCopy.continueAllSchedules;
 export async function resumeAllSchedules(interaction: RepliableInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await interaction.reply({ embeds: [errorEmbed("Run this in a server, not a DM.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "Run this in a server, not a DM.");
 		return;
 	}
 
 	const events = await eventStore.findByGuildId(guildId);
 	if (events.length === 0) {
-		await interaction.reply({ embeds: [errorEmbed(c.noEvents)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.noEvents);
 		return;
 	}
 
 	const toResume = events.filter((e) => e.paused);
 	if (toResume.length === 0) {
-		await interaction.reply({ embeds: [errorEmbed(c.noneCurrentlyPaused)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.noneCurrentlyPaused);
 		return;
 	}
 
@@ -57,20 +58,14 @@ export async function resumeAllSchedules(interaction: RepliableInteraction): Pro
 	);
 
 	if (failed > 0 && succeeded === 0) {
-		await interaction.reply({ embeds: [errorEmbed(c.failed)], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, c.failed);
 		return;
 	}
 
 	if (failed > 0) {
-		await interaction.reply({
-			embeds: [infoEmbed("▶️ Partially resumed", c.partialFailure(succeeded, failed), rokCommanderCopy.COLORS.SCHEDULE)],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showEmbedNotice(interaction, infoEmbed("▶️ Partially resumed", c.partialFailure(succeeded, failed), rokCommanderCopy.COLORS.SCHEDULE));
 		return;
 	}
 
-	await interaction.reply({
-		embeds: [infoEmbed("▶️ All schedules resumed", c.resumed(succeeded), rokCommanderCopy.COLORS.SCHEDULE)],
-		flags: MessageFlags.Ephemeral,
-	});
+	await showEmbedNotice(interaction, infoEmbed("▶️ All schedules resumed", c.resumed(succeeded), rokCommanderCopy.COLORS.SCHEDULE));
 }

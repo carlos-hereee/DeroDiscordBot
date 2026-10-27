@@ -2,7 +2,6 @@ import { ButtonBuilder, ButtonStyle, Client, Guild, MessageFlags, Role, TextChan
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { refreshLeaderboard } from "@features/leaderboard/LeaderboardBoard.js";
 import { refreshLevelsBoard } from "@features/leveling/LevelsBoard.js";
@@ -15,6 +14,8 @@ import { showLevelsStandings } from "@features/leveling/levelsStandings.js";
 import { showAchievements } from "@features/leveling/achievementsView.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── Channel controls (v1.6 item 36; folded into intro guides 2026-06) ──────
 // The bot's common channel actions are one-click buttons in Discord, no slash
@@ -135,13 +136,13 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 
 	// Unknown / retired control (a stale button from an older layout). Ack quietly.
 	if (!actionDef) {
-		await interaction.reply({ content: "This control is no longer available.", flags: MessageFlags.Ephemeral });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.powerUps, sections: ["This control is no longer available."] });
 		return;
 	}
 
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) {
-		await interaction.reply({ embeds: [errorEmbed("This button only works inside a server.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "This button only works inside a server.");
 		return;
 	}
 
@@ -151,7 +152,7 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 		const config = await guildConfigStore.findByGuildId(guildId);
 		const allowed = await gateOwnerOrAdmin(interaction, config);
 		if (!allowed) {
-			await interaction.reply({ embeds: [errorEmbed(rokCommanderCopy.responses.noWizardPowers)], flags: MessageFlags.Ephemeral });
+			await showErrorNotice(interaction, rokCommanderCopy.responses.noWizardPowers);
 			return;
 		}
 	}
@@ -185,7 +186,7 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 		default:
 			// In POWERUP_ACTIONS but not wired here, should not happen for shipped
 			// actions, but keeps the switch exhaustive and loud.
-			await interaction.reply({ content: "This control is not wired up yet.", flags: MessageFlags.Ephemeral });
+			await showNotice(interaction, { title: getPluginCopy(null).notice.powerUps, sections: ["This control is not wired up yet."] });
 	}
 }
 
@@ -294,12 +295,12 @@ async function resolveOrCreateNotificationsRole(guild: Guild, guildId: string, s
 
 async function runToggleNotificationRole(interaction: ButtonInteraction, guildId: string): Promise<void> {
 	if (!interaction.guild) {
-		await interaction.reply({ embeds: [errorEmbed("This only works inside a server.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "This only works inside a server.");
 		return;
 	}
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
-		await interaction.reply({ embeds: [errorEmbed("This server is not set up yet.")], flags: MessageFlags.Ephemeral });
+		await showErrorNotice(interaction, "This server is not set up yet.");
 		return;
 	}
 
@@ -314,10 +315,7 @@ async function runToggleNotificationRole(interaction: ButtonInteraction, guildId
 		role = await resolveOrCreateNotificationsRole(interaction.guild, guildId, config.notificationsRoleId ?? null);
 	} catch (err) {
 		console.error(`[powerup] could not resolve or create notifications role in guild ${guildId}`, err);
-		await interaction.reply({
-			embeds: [errorEmbed("Could not set up the announcements role. The bot may be missing Manage Roles, or its own role is too low to create one.")],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "Could not set up the announcements role. The bot may be missing Manage Roles, or its own role is too low to create one.");
 		return;
 	}
 
@@ -328,7 +326,7 @@ async function runToggleNotificationRole(interaction: ButtonInteraction, guildId
 		let member = interaction.guild.members.cache.get(interaction.user.id) ?? null;
 		if (!member) member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
 		if (!member) {
-			await interaction.reply({ embeds: [errorEmbed("Could not resolve your membership. Try again in a moment.")], flags: MessageFlags.Ephemeral });
+			await showErrorNotice(interaction, "Could not resolve your membership. Try again in a moment.");
 			return;
 		}
 
@@ -336,21 +334,14 @@ async function runToggleNotificationRole(interaction: ButtonInteraction, guildId
 		// label (a shared button label cannot be per-user).
 		if (member.roles.cache.has(role.id)) {
 			await member.roles.remove(role.id, "Announcement ping opt-out");
-			await interaction.reply({ content: "🔕 You're off the announcement ping list.", flags: MessageFlags.Ephemeral });
+			await showNotice(interaction, { title: getPluginCopy(null).notice.powerUps, sections: ["🔕 You're off the announcement ping list."] });
 		} else {
 			await member.roles.add(role.id, "Announcement ping opt-in");
-			await interaction.reply({ content: "🔔 You're on the announcement ping list. Tap again to opt out.", flags: MessageFlags.Ephemeral });
+			await showNotice(interaction, { title: getPluginCopy(null).notice.powerUps, sections: ["🔔 You're on the announcement ping list. Tap again to opt out."] });
 		}
 	} catch (err) {
 		console.error(`[powerup] toggle notifications role failed in guild ${guildId}`, err);
-		await interaction.reply({
-			embeds: [
-				errorEmbed(
-					"Could not update your notifications. The bot may be missing Manage Roles, or the announcements role sits above the bot's own role. Try again in a moment."
-				),
-			],
-			flags: MessageFlags.Ephemeral,
-		});
+		await showErrorNotice(interaction, "Could not update your notifications. The bot may be missing Manage Roles, or the announcements role sits above the bot's own role. Try again in a moment.");
 	}
 }
 

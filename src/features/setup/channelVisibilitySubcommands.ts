@@ -9,12 +9,13 @@ import {
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { COLORS } from "@base/copy/brand.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
-import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
+import { infoEmbed } from "@utils/embedBuilder.js";
 import { creatorId } from "@utils/config.js";
 import { addRenameChannelOptions, renameChannel, renameSlotChoices } from "@features/setup/renameChannel.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
+import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 /* /server channels: the homebase visibility toggles and rename, as one
    subcommand group that commands/admin/server.ts adds to /server and
@@ -160,12 +161,12 @@ export async function runChannelsSubcommand(interaction: RepliableInteraction, o
 	const { responses } = getPluginCopy(config);
 
 	if (!canChangeVisibility(interaction.user.id, interaction.guild?.ownerId)) {
-		await interaction.reply({ embeds: [errorEmbed(responses.ownerOnly)], ephemeral: true });
+		await showErrorNotice(interaction, responses.ownerOnly);
 		return;
 	}
 
 	if (!config?.categoryId) {
-		await interaction.reply({ embeds: [errorEmbed(responses.setupChannelsPending)], ephemeral: true });
+		await showErrorNotice(interaction, responses.setupChannelsPending);
 		return;
 	}
 
@@ -177,7 +178,7 @@ export async function runChannelsSubcommand(interaction: RepliableInteraction, o
 		case "list":
 			return handleList(interaction, config);
 		default:
-			await interaction.reply({ embeds: [errorEmbed("Unknown subcommand")], ephemeral: true });
+			await showErrorNotice(interaction, "Unknown subcommand");
 	}
 }
 
@@ -231,10 +232,7 @@ function isHideableField(value: string): value is HideableField {
 async function handleHide(interaction: RepliableInteraction, options: CommandOptionReader, config: GuildConfigDoc) {
 	const fieldInput = options.getString("channel", true);
 	if (!isHideableField(fieldInput)) {
-		await interaction.reply({
-			embeds: [errorEmbed(`Pick one of the channels from the dropdown.`)],
-			ephemeral: true,
-		});
+		await showErrorNotice(interaction, `Pick one of the channels from the dropdown.`);
 		return;
 	}
 	const field = fieldInput;
@@ -244,28 +242,19 @@ async function handleHide(interaction: RepliableInteraction, options: CommandOpt
 	// admin gets clear feedback instead of a silent no-op.
 	const hidden = new Set(config.hiddenChannels ?? []);
 	if (hidden.has(field)) {
-		await interaction.reply({
-			embeds: [errorEmbed(`**${displayName}** is already hidden. Use /server channels show ${field} to make it visible.`)],
-			ephemeral: true,
-		});
+		await showErrorNotice(interaction, `**${displayName}** is already hidden. Use /server channels show ${field} to make it visible.`);
 		return;
 	}
 
 	const channelId = resolveChannelId(config, field);
 	if (!channelId) {
-		await interaction.reply({
-			embeds: [errorEmbed(`That channel is not configured on this guild yet.`)],
-			ephemeral: true,
-		});
+		await showErrorNotice(interaction, `That channel is not configured on this guild yet.`);
 		return;
 	}
 
 	const channel = await interaction.guild!.channels.fetch(channelId).catch(() => null);
 	if (!channel || !(channel instanceof TextChannel)) {
-		await interaction.reply({
-			embeds: [errorEmbed(`Channel not found in Discord. It may have been deleted; let auto-heal rebuild it first.`)],
-			ephemeral: true,
-		});
+		await showErrorNotice(interaction, `Channel not found in Discord. It may have been deleted; let auto-heal rebuild it first.`);
 		return;
 	}
 
@@ -273,7 +262,7 @@ async function handleHide(interaction: RepliableInteraction, options: CommandOpt
 		await channel.permissionOverwrites.edit(interaction.guild!.roles.everyone.id, { ViewChannel: false });
 	} catch (error) {
 		console.error(`[/server channels hide] failed to apply overwrite`, error);
-		await interaction.reply({ embeds: [errorEmbed("Failed to update channel permissions.")], ephemeral: true });
+		await showErrorNotice(interaction, "Failed to update channel permissions.");
 		return;
 	}
 
@@ -281,25 +270,17 @@ async function handleHide(interaction: RepliableInteraction, options: CommandOpt
 	await guildConfigStore.update(interaction.guildId!, { hiddenChannels });
 	adminLog.emitFor(interaction, interaction.guildId!, "config.change", { subject: setupCopy.adminLog.subjects.channelVisibility(displayName), detail: setupCopy.adminLog.hidden });
 
-	await interaction.reply({
-		embeds: [
-			infoEmbed(
+	await showEmbedNotice(interaction, infoEmbed(
 				`Channel hidden`,
 				`Hid <#${channelId}> (${displayName}) from members. The bot still posts there in the background. Run /server channels show to make it visible again.`,
 				COLORS.ARRIVAL
-			),
-		],
-		ephemeral: true,
-	});
+			));
 }
 
 async function handleShow(interaction: RepliableInteraction, options: CommandOptionReader, config: GuildConfigDoc) {
 	const fieldInput = options.getString("channel", true);
 	if (!isHideableField(fieldInput)) {
-		await interaction.reply({
-			embeds: [errorEmbed(`Pick one of the channels from the dropdown.`)],
-			ephemeral: true,
-		});
+		await showErrorNotice(interaction, `Pick one of the channels from the dropdown.`);
 		return;
 	}
 	const field = fieldInput;
@@ -309,28 +290,19 @@ async function handleShow(interaction: RepliableInteraction, options: CommandOpt
 	// so the admin understands why nothing visibly changes.
 	const hidden = new Set(config.hiddenChannels ?? []);
 	if (!hidden.has(field)) {
-		await interaction.reply({
-			embeds: [errorEmbed(`**${displayName}** is already visible. Use /server channels hide ${field} to hide it.`)],
-			ephemeral: true,
-		});
+		await showErrorNotice(interaction, `**${displayName}** is already visible. Use /server channels hide ${field} to hide it.`);
 		return;
 	}
 
 	const channelId = resolveChannelId(config, field);
 	if (!channelId) {
-		await interaction.reply({
-			embeds: [errorEmbed(`That channel is not configured on this guild yet.`)],
-			ephemeral: true,
-		});
+		await showErrorNotice(interaction, `That channel is not configured on this guild yet.`);
 		return;
 	}
 
 	const channel = await interaction.guild!.channels.fetch(channelId).catch(() => null);
 	if (!channel || !(channel instanceof TextChannel)) {
-		await interaction.reply({
-			embeds: [errorEmbed(`Channel not found in Discord.`)],
-			ephemeral: true,
-		});
+		await showErrorNotice(interaction, `Channel not found in Discord.`);
 		return;
 	}
 
@@ -343,7 +315,7 @@ async function handleShow(interaction: RepliableInteraction, options: CommandOpt
 		await channel.permissionOverwrites.edit(interaction.guild!.roles.everyone.id, { ViewChannel: true });
 	} catch (error) {
 		console.error(`[/server channels show] failed to clear overwrite`, error);
-		await interaction.reply({ embeds: [errorEmbed("Failed to update channel permissions.")], ephemeral: true });
+		await showErrorNotice(interaction, "Failed to update channel permissions.");
 		return;
 	}
 
@@ -351,16 +323,11 @@ async function handleShow(interaction: RepliableInteraction, options: CommandOpt
 	await guildConfigStore.update(interaction.guildId!, { hiddenChannels });
 	adminLog.emitFor(interaction, interaction.guildId!, "config.change", { subject: setupCopy.adminLog.subjects.channelVisibility(displayName), detail: setupCopy.adminLog.shown });
 
-	await interaction.reply({
-		embeds: [
-			infoEmbed(
+	await showEmbedNotice(interaction, infoEmbed(
 				`Channel visible`,
 				`Made <#${channelId}> (${displayName}) visible to members again.`,
 				COLORS.ARRIVAL
-			),
-		],
-		ephemeral: true,
-	});
+			));
 }
 
 async function handleList(interaction: RepliableInteraction, config: GuildConfigDoc) {
@@ -378,7 +345,7 @@ async function handleList(interaction: RepliableInteraction, config: GuildConfig
 		.setColor(COLORS.ARRIVAL)
 		.setFooter({ text: "Hidden channels still receive bot posts; only member visibility is suppressed." });
 
-	await interaction.reply({ embeds: [embed], ephemeral: true });
+	await showEmbedNotice(interaction, embed);
 }
 
 /**

@@ -23,6 +23,7 @@ import { pickWord } from "./hangmanWords.js";
 import { createHangmanState, applyGuess, type HangmanState } from "./hangmanState.js";
 import { awardMultiPlayerResult } from "./gameXp.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── /mini-game hangman ─────────────────────────────────────────────────────
 // What:  a PUBLIC, channel wide round. The board is a normal channel message
@@ -260,7 +261,7 @@ function buildGuessModal(customId: string): ModalBuilder {
 async function onGuessClick(click: ButtonInteraction, channelId: string, board: Message): Promise<void> {
 	const round = hangmanRounds.get(channelId);
 	if (!round) {
-		await click.reply({ content: gamesCopy.hangman.closed, flags: MessageFlags.Ephemeral }).catch(swallow("hangman closed reply"));
+		await showNotice(click, { title: gamesCopy.notices.hangman, sections: [gamesCopy.hangman.closed] });
 		return;
 	}
 
@@ -290,7 +291,7 @@ async function onGuessClick(click: ButtonInteraction, channelId: string, board: 
 	// member sat in the modal.
 	const live = hangmanRounds.get(channelId);
 	if (!live) {
-		await submit.reply({ content: gamesCopy.hangman.closed, flags: MessageFlags.Ephemeral }).catch(swallow("hangman stale submit"));
+		await showNotice(submit, { title: gamesCopy.notices.hangman, sections: [gamesCopy.hangman.closed] });
 		return;
 	}
 
@@ -317,7 +318,7 @@ async function onGuessClick(click: ButtonInteraction, channelId: string, board: 
 					: result.status === "invalid"
 						? c.invalid
 						: c.closed;
-	await submit.reply({ content: feedback, flags: MessageFlags.Ephemeral }).catch(swallow("hangman guess feedback"));
+	await showNotice(submit, { title: gamesCopy.notices.hangman, sections: [feedback] });
 
 	// Only a real turn changes the board. A repeat, an invalid character, or a
 	// late submit leaves it exactly as it was, which is the visible half of
