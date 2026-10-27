@@ -9,10 +9,15 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 // hangman round that somebody else solved credits the other guessers with an
 // assist rather than a loss.
 
-const mocks = vi.hoisted(() => ({ awardXp: vi.fn() }));
+const mocks = vi.hoisted(() => ({ awardXp: vi.fn(), awardForResult: vi.fn() }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: mocks.awardXp }));
+// The coin amounts are deroCoins.test.ts's; this pins what each helper hands it.
+vi.mock("@features/economy/deroCoins.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@features/economy/deroCoins.js")>()),
+	awardForResult: mocks.awardForResult,
+}));
 
-import { awardBlackjackResult, awardMultiPlayerResult, awardTwoPlayerResult } from "./gameXp.js";
+import { awardBlackjackResult, awardMultiPlayerResult, awardSoloLuckResult, awardTwoPlayerResult } from "./gameXp.js";
 import type { SeatResult } from "./blackjackState.js";
 
 const { GAME_PLAY_XP, GAME_WIN_XP, GAME_TIE_XP, BLACKJACK_NATURAL_XP, BLACKJACK_DOUBLE_WIN_MULTIPLIER } = BOT_CONSTANTS.LEVELING;
@@ -33,6 +38,7 @@ const awardFor = (userId: string): Award | undefined => awards().find((award) =>
 
 beforeEach(() => {
 	mocks.awardXp.mockReset().mockResolvedValue(undefined);
+	mocks.awardForResult.mockReset().mockResolvedValue(undefined);
 });
 
 describe("two player results (duel and rps share this)", () => {
@@ -246,5 +252,57 @@ describe("blackjack results", () => {
 	it("awards nothing outside a guild", () => {
 		awardBlackjackResult({ client, guildId: null, seats: [seat("a", ["win"])] });
 		expect(awards()).toHaveLength(0);
+	});
+});
+
+// ── Dero coins ride the same seam (2026-10 item 257, Phase 3a) ──
+describe("the coins each helper hands deroCoins", () => {
+	const coinCall = () => mocks.awardForResult.mock.calls[0][0] as { game: string; resultKey: string; players: Array<{ userId: string; outcome: string }> };
+
+	it("pays a two player result by its room: the winner won, the loser played, a tie drawn", () => {
+		awardTwoPlayerResult({ client, guildId: "g1", game: "battleship", challenger: user("a"), opponent: user("b"), winner: "challenger", resultKey: "room1" });
+		expect(coinCall()).toEqual({ guildId: "g1", game: "battleship", resultKey: "room1", players: [{ userId: "a", outcome: "won" }, { userId: "b", outcome: "played" }] });
+
+		mocks.awardForResult.mockClear();
+		awardTwoPlayerResult({ client, guildId: "g1", game: "rps", challenger: user("a"), opponent: user("b"), winner: "tie", resultKey: "room2" });
+		expect(coinCall().players).toEqual([{ userId: "a", outcome: "drawn" }, { userId: "b", outcome: "drawn" }]);
+	});
+
+	it("hands a bot seat over with the humans, so deroCoins can tell a bot match", () => {
+		awardTwoPlayerResult({ client, guildId: "g1", game: "battleship", challenger: user("a"), opponent: user("dero-bot-red"), winner: "challenger", resultKey: "room1" });
+		expect(coinCall().players).toContainEqual({ userId: "dero-bot-red", outcome: "played" });
+	});
+
+	it("reads a hangman assist and a Monopoly loss as played, and prices solo hangman as a solo round", () => {
+		const participants = [{ userId: "solver" }, { userId: "helper" }];
+		awardMultiPlayerResult({ client, guildId: "g1", game: "hangman", participants, winnerId: "solver", resultKey: "room1", coinGame: "solo-hangman" });
+		expect(coinCall()).toEqual({ guildId: "g1", game: "solo-hangman", resultKey: "room1", players: [{ userId: "solver", outcome: "won" }, { userId: "helper", outcome: "played" }] });
+	});
+
+	it("pays blackjack per seat by its best hand, and a one seat table as solo blackjack", () => {
+		awardBlackjackResult({
+			client,
+			guildId: "g1",
+			resultKey: "room1",
+			seats: [
+				{ userId: "a", username: "a", hands: ["lose", "win"], doubled: [false, false] },
+				{ userId: "b", username: "b", hands: ["push"], doubled: [false] },
+			],
+		});
+		expect(coinCall()).toEqual({ guildId: "g1", game: "blackjack", resultKey: "room1", players: [{ userId: "a", outcome: "won" }, { userId: "b", outcome: "drawn" }] });
+
+		mocks.awardForResult.mockClear();
+		awardBlackjackResult({ client, guildId: "g1", resultKey: "room2", seats: [{ userId: "a", username: "a", hands: ["lose"], doubled: [false] }] });
+		expect(coinCall()).toEqual({ guildId: "g1", game: "solo-blackjack", resultKey: "room2", players: [{ userId: "a", outcome: "played" }] });
+	});
+
+	it("pays a solo luck round under its solo slug and key", () => {
+		awardSoloLuckResult({ client, guildId: "g1", user: user("a"), won: true, game: "solo-rps", resultKey: "interaction1" });
+		expect(coinCall()).toEqual({ guildId: "g1", game: "solo-rps", resultKey: "interaction1", players: [{ userId: "a", outcome: "won" }] });
+	});
+
+	it("pays no coins outside a guild", () => {
+		awardTwoPlayerResult({ client, guildId: null, game: "rps", challenger: user("a"), opponent: user("b"), winner: "challenger", resultKey: "room1" });
+		expect(mocks.awardForResult).not.toHaveBeenCalled();
 	});
 });

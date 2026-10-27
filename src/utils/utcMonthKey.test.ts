@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { currentUtcMonth, previousUtcMonth, utcMonthKey } from "./utcMonthKey.js";
+import { currentUtcMonth, nextUtcDayStart, previousUtcMonth, utcDayKey, utcDayStart, utcMonthKey } from "./utcMonthKey.js";
 
 // ── utcMonthKey ────────────────────────────────────────────────────────────
 // The month keys every ratings collection buckets by, and the month the monthly
@@ -43,5 +43,17 @@ describe("previousUtcMonth", () => {
 			start: new Date("2026-12-01T00:00:00Z"),
 			end: new Date("2027-01-01T00:00:00Z"),
 		});
+	});
+});
+
+describe("the UTC day", () => {
+	it("keys a moment by its UTC day, zero padded, whatever the local hour", () => {
+		expect(utcDayKey(new Date("2026-10-05T23:59:59Z"))).toBe("2026-10-05");
+		expect(utcDayKey(new Date("2026-10-06T00:00:00Z"))).toBe("2026-10-06");
+	});
+
+	it("answers the day's opening midnight and the next one, across a month end", () => {
+		expect(utcDayStart(new Date("2026-10-31T18:00:00Z"))).toEqual(new Date("2026-10-31T00:00:00Z"));
+		expect(nextUtcDayStart(new Date("2026-10-31T18:00:00Z"))).toEqual(new Date("2026-11-01T00:00:00Z"));
 	});
 });

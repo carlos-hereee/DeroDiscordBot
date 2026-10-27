@@ -6,6 +6,7 @@ import {
 	StringSelectMenuBuilder,
 	TextDisplayBuilder,
 	type ButtonInteraction,
+	type ChatInputCommandInteraction,
 	type ModalSubmitInteraction,
 	type StringSelectMenuInteraction,
 } from "discord.js";
@@ -17,7 +18,9 @@ import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActio
 //        player to remove, a rock paper scissors throw) shown as a modal with one
 //        required select, instead of a private select message that sits in the channel
 //        until it is dismissed (2026-10 item 254 Phase 5b, owner decision 3).
-// Who:   challengeBoard (opponent, bots), hostControls (kick) and roomGames (rps).
+// Who:   challengeBoard (opponent, bots), hostControls (kick) and roomGames (rps), and
+//        the daily claim's rock paper scissors round (economy/chipClaim.ts, 2026-10 item
+//        257 Phase 3a), which routes to its own handler rather than a room's.
 //        gameRoomHandlers routes the modal's submit, by the same action name, to the
 //        handler the select message has always used, so both paths share one handler
 //        and every re-gate in it.
@@ -33,21 +36,29 @@ import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActio
 /** The select's id inside a picker modal, which the submit reads its values back by. */
 const PICKER_FIELD = "pick";
 
+/**
+ * Where a picker's answer routes: a room action (the game room handlers' prefixes, by
+ * action name and room id), or a route of a picker's own, its modal's customId and its
+ * fallback select's, for a picker outside the rooms.
+ */
+export type PickerRouting = { action: string; roomId: string } | { route: { modalId: string; selectId: string } };
+
 /** What a picker asks: its routing, the modal's title, the prompt above the select, and the select itself. */
-export interface PickerContent {
-	action: string;
-	roomId: string;
+export type PickerContent = PickerRouting & {
 	title: string;
 	prompt: string;
 	label: string;
 	select: StringSelectMenuBuilder;
-}
+};
+
+const modalIdOf = (content: PickerRouting): string => ("route" in content ? content.route.modalId : `${GAME_ROOM_MODAL_PREFIX}:${content.action}:${content.roomId}`);
+const selectIdOf = (content: PickerRouting): string => ("route" in content ? content.route.selectId : `${GAME_ROOM_SELECT_PREFIX}:${content.action}:${content.roomId}`);
 
 /** The picker modal. Exported for the tests, which read it back with toJSON. */
 export function buildPickerModal(content: PickerContent): ModalBuilder {
 	const field = StringSelectMenuBuilder.from(content.select.toJSON()).setCustomId(PICKER_FIELD).setRequired(true);
 	return new ModalBuilder()
-		.setCustomId(`${GAME_ROOM_MODAL_PREFIX}:${content.action}:${content.roomId}`)
+		.setCustomId(modalIdOf(content))
 		.setTitle(content.title)
 		.addTextDisplayComponents(new TextDisplayBuilder().setContent(content.prompt))
 		.addLabelComponents(new LabelBuilder().setLabel(content.label).setStringSelectMenuComponent(field));
@@ -57,8 +68,8 @@ export function buildPickerModal(content: PickerContent): ModalBuilder {
  * Answer a press with the picker modal, or, when Discord refuses it, with the private
  * select message it replaced. Never throws past a failed fallback.
  */
-export async function showPicker(interaction: ButtonInteraction, content: PickerContent): Promise<void> {
-	const select = StringSelectMenuBuilder.from(content.select.toJSON()).setCustomId(`${GAME_ROOM_SELECT_PREFIX}:${content.action}:${content.roomId}`);
+export async function showPicker(interaction: ButtonInteraction | ChatInputCommandInteraction, content: PickerContent): Promise<void> {
+	const select = StringSelectMenuBuilder.from(content.select.toJSON()).setCustomId(selectIdOf(content));
 	await showModalOrReply(interaction, buildPickerModal(content), () => ({
 		content: content.prompt,
 		components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],

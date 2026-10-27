@@ -790,6 +790,34 @@ export const BOT_CONSTANTS = {
 		FORTUNE_XP: 10,
 	},
 
+	// ── Dero coins (2026-10 item 257, Phase 3a) ─────────────────────────
+	// The Verse currency: one global wallet per member, paid beside the XP above by every
+	// game result and by the daily claim. Kept beside the XP amounts so a retune of the
+	// economy reads both tables at once. Every amount is the owner's default of
+	// 2026-10-27 and the owner's to tune; features/economy/deroCoins.ts is the only
+	// reader, so no game pays a number of its own. Nothing spends coins in 2.0.0.
+	DERO_COINS: {
+		// The rated games (ratingEngine.RATED_GAMES: holdem, monopoly, battleship) pay
+		// most, because a match there is the longest and needs other players. A casual
+		// match of a rated game pays this full table too: the tier is the game's, never
+		// the badge's.
+		RATED: { WIN: 30, DRAW: 15, PLAY: 10 },
+		// The room games between members: hangman, blackjack, two player coin flip, dice
+		// roll and rps.
+		ROOM: { WIN: 12, DRAW: 6, PLAY: 4 },
+		// A round against Dero alone (every solo- room slug: the luck rooms, solo hangman and
+		// solo blackjack, plus the in place solo luck row and a one seat blackjack table)
+		// needs nobody else, so it pays least, and only up to the cap below.
+		SOLO: { WIN: 3, OTHER: 1 },
+		// The most coins solo rounds pay one member in one UTC day, across every server,
+		// since the wallet is global. Ten wins' worth: a member who farms flips earns
+		// what one rated win pays and no more.
+		SOLO_DAILY_CAP: 30,
+		// The daily claim's coin base, before the rock paper scissors multiplier
+		// (ECONOMY.CLAIM_ROUND_MULTIPLIERS).
+		CLAIM_BASE: 10,
+	},
+
 	// ── PINGABLE ──────────────────────────────────────────────────
 	// What:  the message kinds that are ALLOWED to mention members. Everything
 	//        not named here must send with
@@ -882,6 +910,12 @@ export const BOT_CONSTANTS = {
 		DAILY_CLAIM_CHIPS: 1_000,
 		// Owner decision 2026-10-24: a claim every 24 hours, counted from the last claim.
 		CLAIM_COOLDOWN_MS: 24 * 60 * 60 * 1000,
+		// Owner decision 2026-10-27 (2026-10 item 257, decision 11): the daily claim is a
+		// round of rock paper scissors against Dero, and its result multiplies the claim on
+		// BOTH currencies, the chips above and DERO_COINS.CLAIM_BASE. A loss still pays the
+		// base, so claiming is never worth less than before the round existed. The first
+		// claim's 25,000 is the base the multiplier applies to (risk R11 in the plan).
+		CLAIM_ROUND_MULTIPLIERS: { won: 2, tie: 1.5, lost: 1 },
 		// Owner decision 2026-10-24: a server's vault starts here the first time anything reads it.
 		VAULT_STARTING_CHIPS: 100_000,
 		// Owner decision 2026-10-24 (the plan's data model): the vault keeps its 50 most recent grants.

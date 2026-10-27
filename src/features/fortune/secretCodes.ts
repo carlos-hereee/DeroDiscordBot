@@ -1,7 +1,7 @@
 // ── secret codes (FUTURE_PLANS item 88, v1) ────────────────────────────────
 // The intentionally tiny v1: three hardcoded codes mapping to the permanent
 // ultra-reading weight each grants. All three weights are prime (19 / 43 / 83
-// percent), sitting above the prime 0.07 base (rollFortune.ULTRA_WEIGHT). The
+// percent), sitting above the prime 0.03 base (rollFortune.ULTRA_WEIGHT). The
 // generic create-code / configure-code builder and the dashboard toggle are
 // deferred (see item 88); nothing here assumes a reward beyond the weight, so the
 // same shape generalizes later.

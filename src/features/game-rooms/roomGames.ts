@@ -162,6 +162,7 @@ async function runVersusMove(interaction: ButtonInteraction, room: IGameRoom): P
 		challenger: { id: challengerId } as never,
 		opponent: { id: opponentId } as never,
 		winner: result.winner,
+		resultKey: room.roomId,
 	});
 
 	// The luck board's tally (2026-10 item 244), behind the same claim as the award
@@ -344,5 +345,6 @@ export async function handleRpsSelect(interaction: StringSelectMenuInteraction |
 		challenger: { id: challengerId } as never,
 		opponent: { id: opponentId } as never,
 		winner: outcome,
+		resultKey: room.roomId,
 	});
 }

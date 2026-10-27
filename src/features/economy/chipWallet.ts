@@ -37,15 +37,19 @@ export function nextClaimAt(lastClaimAt: Date): Date {
 /**
  * Claim chips. ① The first claim ever is the large one, and only a wallet that never
  * claimed can take it. ② Otherwise the daily claim, once its cooldown has run. ③
- * Otherwise nothing, and the answer says when the next claim opens.
+ * Otherwise nothing, and the answer says when the next claim opens. `multiplier` is the
+ * daily claim round's (ECONOMY.CLAIM_ROUND_MULTIPLIERS), applied to whichever base pays,
+ * the first claim's included, by owner decision (risk R11).
  */
-export async function claimChips(key: WalletKey, now: Date = new Date()): Promise<ClaimResult> {
-	const first = await chipWalletStore.claimFirst(key, ECONOMY.FIRST_CLAIM_CHIPS, now);
-	if (first) return { kind: "first", amount: ECONOMY.FIRST_CLAIM_CHIPS, balance: first.balance };
+export async function claimChips(key: WalletKey, now: Date = new Date(), multiplier: number = 1): Promise<ClaimResult> {
+	const firstAmount = Math.round(ECONOMY.FIRST_CLAIM_CHIPS * multiplier);
+	const first = await chipWalletStore.claimFirst(key, firstAmount, now);
+	if (first) return { kind: "first", amount: firstAmount, balance: first.balance };
 
 	const cooldownStart = new Date(now.getTime() - ECONOMY.CLAIM_COOLDOWN_MS);
-	const daily = await chipWalletStore.claimDaily(key, ECONOMY.DAILY_CLAIM_CHIPS, now, cooldownStart);
-	if (daily) return { kind: "daily", amount: ECONOMY.DAILY_CLAIM_CHIPS, balance: daily.balance };
+	const dailyAmount = Math.round(ECONOMY.DAILY_CLAIM_CHIPS * multiplier);
+	const daily = await chipWalletStore.claimDaily(key, dailyAmount, now, cooldownStart);
+	if (daily) return { kind: "daily", amount: dailyAmount, balance: daily.balance };
 
 	const wallet = await chipWalletStore.findOne(key);
 	return { kind: "cooldown", balance: wallet?.balance ?? 0, nextClaimAt: nextClaimAt(wallet?.lastClaimAt ?? now) };

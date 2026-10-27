@@ -56,9 +56,10 @@ const POWERUP_ACTIONS = {
 	// "Fortune" (member:fortune), any member can pull their own fortune reading,
 	// so it is NOT adminOnly.
 	"member:fortune": { adminOnly: false },
-	// "Claim daily rewards" (member:claim), the /claim chip claim as a button on the
-	// 🕹️games daily row (2026-10 item 254). Any member; with chips off the press gets
-	// runChipClaim's own refusal.
+	// "Claim daily rewards" (member:claim), /claim as a button on the 🕹️games daily row
+	// (2026-10 item 254): the rock paper scissors round against Dero that pays chips and
+	// Dero coins (item 257 Phase 3a). Any member; with chips off an admin's press opens
+	// the arcade panel and a member's plays for coins only, both inside runChipClaim.
 	"member:claim": { adminOnly: false },
 	// The three /account views (2026-10 item 245 Phase 4b), each answered privately
 	// for the member who pressed it: a guide's buttons never post in its channel.
@@ -108,9 +109,9 @@ export function buildFortuneButton(label: string): ButtonBuilder {
 	return new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:fortune`).setLabel(label).setEmoji("🔮").setStyle(ButtonStyle.Secondary);
 }
 
-// "Claim daily rewards", the member's daily chip claim (member:claim), beside
-// Fortune on the 🕹️games daily row. Always shown: a button cannot hide itself when a
-// server switches chips off, and the press then says so.
+// "Claim daily rewards", the member's daily claim round (member:claim), beside
+// Fortune on the 🕹️games daily row. Always shown: with chips off the round still pays
+// Dero coins, and its card says chips are off.
 export function buildClaimButton(label: string): ButtonBuilder {
 	return new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:claim`).setLabel(label).setEmoji("🪙").setStyle(ButtonStyle.Success);
 }

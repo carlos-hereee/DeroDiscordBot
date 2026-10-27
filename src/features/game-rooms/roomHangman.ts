@@ -591,5 +591,7 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 		game: "hangman",
 		participants,
 		winnerId: won ? interaction.user.id : null,
+		resultKey: room.roomId,
+		coinGame: room.game === "solo-hangman" ? "solo-hangman" : "hangman",
 	});
 }

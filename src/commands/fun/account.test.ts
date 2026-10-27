@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
 	luckForMember: vi.fn(),
 	findConfig: vi.fn(),
 	findWallet: vi.fn(),
+	findCoinWallet: vi.fn(),
+	buffState: vi.fn(),
 }));
 
 vi.mock("@features/leveling/levelingConfig.js", () => ({ getLevelingConfig: mocks.getLevelingConfig }));
@@ -32,6 +34,8 @@ vi.mock("@db/stores/xpPeriodStore.js", () => ({
 vi.mock("@db/stores/luckStatStore.js", () => ({ luckStatStore: { findForMember: mocks.luckForMember } }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findConfig } }));
 vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { findOne: mocks.findWallet } }));
+vi.mock("@db/stores/deroCoinStore.js", () => ({ deroCoinStore: { findWallet: mocks.findCoinWallet } }));
+vi.mock("@db/stores/fortuneBuffStore.js", () => ({ fortuneBuffStore: { stateFor: mocks.buffState } }));
 vi.mock("@features/leveling/roleRewards.js", () => ({ reconcileRewards: mocks.reconcileRewards }));
 vi.mock("@features/leveling/accountRenderer.js", () => ({ ACCOUNT_AVATAR_SIZE: 256, renderAccountCard: mocks.renderAccountCard }));
 
@@ -79,6 +83,8 @@ beforeEach(() => {
 	mocks.luckForMember.mockReset().mockResolvedValue([]);
 	mocks.findConfig.mockReset().mockResolvedValue({ chipEconomyEnabled: true });
 	mocks.findWallet.mockReset().mockResolvedValue(null);
+	mocks.findCoinWallet.mockReset().mockResolvedValue(null);
+	mocks.buffState.mockReset().mockResolvedValue({ weight: undefined, dryStreak: 0 });
 });
 
 describe("/account", () => {
@@ -143,6 +149,8 @@ describe("/account", () => {
 				games: [{ slug: "rps", record: { played: 4, won: 3, lost: 1, drawn: 0, assists: 0 } }],
 				luck: expect.objectContaining({ wins: 14, decided: 22 }),
 				chips: expect.objectContaining({ balance: 0 }),
+				coins: 0,
+				luckBoost: null,
 			})
 		);
 		expect((editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields ?? []).toEqual([]);
@@ -182,19 +190,32 @@ describe("/account", () => {
 		await execute(command);
 
 		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
-		expect(fields.find((field) => field.name === "Chips")?.value).toBe("**26,000** chips. Your claim is ready: `/claim`.");
+		expect(fields.find((field) => field.name === "Currencies")?.value).toBe("Hold'em chips: **26,000** chips. Your claim is ready: `/claim`.\nDero coins: **0**");
 		expect(mocks.findWallet).toHaveBeenCalledWith({ guildId: "g1", userId: "u1" });
 	});
 
-	it("leaves the chips line out when the server has chips switched off", async () => {
+	// 2026-10 item 257 Phase 3a: with chips off the currencies say so, beside the global coins.
+	it("says chips are off when the server switched them off, and still shows the Dero coins", async () => {
 		mocks.findConfig.mockResolvedValue({ chipEconomyEnabled: false });
+		mocks.findCoinWallet.mockResolvedValue({ userId: "u1", balance: 45, totalEarned: 45 });
 		const { interaction: command, editReply } = interaction();
 
 		await execute(command);
 
 		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
-		expect(fields.some((field) => field.name === "Chips")).toBe(false);
+		expect(fields.find((field) => field.name === "Currencies")?.value).toBe("Hold'em chips: off in this server\nDero coins: **45**");
 		expect(mocks.findWallet).not.toHaveBeenCalled();
+		expect(mocks.findCoinWallet).toHaveBeenCalledWith("u1");
+	});
+
+	it("adds the secret code luck boost as its own line under the game luck", async () => {
+		mocks.buffState.mockResolvedValue({ weight: 0.19, dryStreak: 0 });
+		const { interaction: command, editReply } = interaction();
+
+		await execute(command);
+
+		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
+		expect(fields.find((field) => field.name === "Luck this month")?.value).toBe("No coin flip, dice or rps decided this month.\nLuck boost: **+16%** gold chance");
 	});
 
 	it("hands the renderer the member's avatar request at the card's size", async () => {

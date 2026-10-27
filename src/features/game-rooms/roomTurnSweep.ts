@@ -143,6 +143,7 @@ export async function sweepBattleshipTurns(client: Client, now: Date = new Date(
 				challenger: { id: a } as never,
 				opponent: { id: b } as never,
 				winner: result.winnerId === a ? "challenger" : "opponent",
+				resultKey: room.roomId,
 			});
 		} catch (error) {
 			// Isolated per ROOM. This runs on a cron with nobody watching, so a throw

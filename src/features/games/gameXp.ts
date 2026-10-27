@@ -2,6 +2,9 @@ import type { Client, User } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import type { GameOutcome, LevelingGameSlug } from "@features/leveling/levelingTypes.js";
+import { awardForResult, coinOutcomeOf, type CoinGame } from "@features/economy/deroCoins.js";
+import type { CoinAwardOutcome } from "@db/models/CoinAward.js";
+import type { SoloLuckSlug } from "@features/game-rooms/roomTypes.js";
 import type { HandOutcome, SeatResult } from "./blackjackState.js";
 
 // ── gameXp ─────────────────────────────────────────────────────────────────
@@ -25,6 +28,19 @@ import type { HandOutcome, SeatResult } from "./blackjackState.js";
 // ⚠️ NO AMOUNT IS INLINED HERE OR IN ANY HANDLER. They all live in
 // BOT_CONSTANTS.LEVELING so an operator can retune the economy in one place and
 // a game cannot quietly pay differently from its siblings.
+//
+// Dero coins (2026-10 item 257, Phase 3a) ride the same seam: every helper below also
+// pays the result's coins through deroCoins.awardForResult, keyed by the REQUIRED
+// `resultKey`, so a game cannot pay XP and forget coins, and a result reported twice
+// (a double press, a sweep finishing a finished room) pays its coins once. Bot seats
+// are handed over with the humans: deroCoins pays them nothing and reads their
+// presence as a bot match.
+
+// One result's coins, fire and forget like the XP beside it: awardForResult logs and
+// never throws.
+function payCoins(guildId: string, game: CoinGame, resultKey: string, players: Array<{ userId: string; outcome: CoinAwardOutcome }>): void {
+	void awardForResult({ guildId, game, resultKey, players });
+}
 
 export type TwoPlayerWinner = "challenger" | "opponent" | "tie";
 
@@ -36,6 +52,8 @@ interface TwoPlayerResult {
 	challenger: User;
 	opponent: User;
 	winner: TwoPlayerWinner;
+	// The coin award's key: the room id (deroCoins.CoinResult.resultKey).
+	resultKey: string;
 }
 
 // The shared duel and rps payout. The winner takes play xp PLUS the win bonus,
@@ -67,6 +85,13 @@ export function awardTwoPlayerResult(result: TwoPlayerResult): void {
 			channelId: result.channelId ?? null,
 		});
 	}
+
+	payCoins(
+		result.guildId,
+		result.game,
+		result.resultKey,
+		players.map((player) => ({ userId: player.user.id, outcome: result.winner === "tie" ? "drawn" : player.won ? "won" : "played" }))
+	);
 }
 
 interface SoloLuckPayout {
@@ -75,6 +100,10 @@ interface SoloLuckPayout {
 	channelId?: string | null;
 	user: User;
 	won: boolean;
+	// The solo slug the coins are recorded under, which is what their daily cap counts.
+	game: SoloLuckSlug;
+	// The coin award's key: the round's interaction id in place, its result message in a solo room.
+	resultKey: string;
 }
 
 // The solo luck payout (the 1.7.0 test fixes, item 14): a coin flip, dice roll or
@@ -100,6 +129,7 @@ export function awardSoloLuckResult(result: SoloLuckPayout): void {
 		source: "soloLuck",
 		channelId: result.channelId ?? null,
 	});
+	payCoins(result.guildId, result.game, result.resultKey, [{ userId: result.user.id, outcome: result.won ? "won" : "played" }]);
 }
 
 interface MultiPlayerResult {
@@ -120,6 +150,11 @@ interface MultiPlayerResult {
 	// passes "lost", because a seat that went bankrupt did not help the last one
 	// standing win.
 	nonWinnerOutcome?: Extract<GameOutcome, "assist" | "lost">;
+	// The coin award's key: the room id, or a channel round's board message id.
+	resultKey: string;
+	// The game the coins are priced as, when it is not `game`: a solo hangman room records
+	// XP as hangman but pays coins as the solo round against Dero it is.
+	coinGame?: CoinGame;
 }
 
 // The hangman shape, and the reason the ASSIST outcome exists at all: a public
@@ -136,10 +171,13 @@ export function awardMultiPlayerResult(result: MultiPlayerResult): void {
 
 	const { GAME_PLAY_XP, GAME_WIN_XP } = BOT_CONSTANTS.LEVELING;
 	const nonWinnerOutcome = result.nonWinnerOutcome ?? "assist";
+	const coinPlayers: Array<{ userId: string; outcome: CoinAwardOutcome }> = [];
 
 	for (const participant of result.participants) {
 		const isWinner = result.winnerId !== null && participant.userId === result.winnerId;
 		const beatenByWinner = result.winnerId !== null && !isWinner;
+		const outcome: GameOutcome = isWinner ? "won" : beatenByWinner ? nonWinnerOutcome : "lost";
+		coinPlayers.push({ userId: participant.userId, outcome: coinOutcomeOf(outcome) });
 
 		void awardXp({
 			client: result.client,
@@ -149,10 +187,12 @@ export function awardMultiPlayerResult(result: MultiPlayerResult): void {
 			amount: GAME_PLAY_XP + (isWinner ? GAME_WIN_XP : 0),
 			source: "game",
 			game: result.game,
-			outcome: isWinner ? "won" : beatenByWinner ? nonWinnerOutcome : "lost",
+			outcome,
 			channelId: result.channelId ?? null,
 		});
 	}
+
+	payCoins(result.guildId, result.coinGame ?? result.game, result.resultKey, coinPlayers);
 }
 
 // ── blackjack ───────────────────────────────────────────────────────────────
@@ -205,6 +245,8 @@ interface BlackjackPayout {
 	// Straight from blackjackState.settle(), one entry per seat, each carrying one
 	// outcome per hand in hand order.
 	seats: SeatResult[];
+	// The coin award's key: the room id, or an inline table's channel and opening time.
+	resultKey: string;
 }
 
 // ONE AWARD PER HAND, not per seat, which is the honest reading: a seat that
@@ -233,4 +275,22 @@ export function awardBlackjackResult(result: BlackjackPayout): void {
 			});
 		});
 	}
+
+	// A table with one seat is a hand against Dero's dealer alone, which the coin table
+	// prices as a solo round (and caps), however the table was opened.
+	payCoins(
+		result.guildId,
+		result.seats.length === 1 ? "solo-blackjack" : "blackjack",
+		result.resultKey,
+		result.seats.map((seat) => ({ userId: seat.userId, outcome: blackjackSeatCoinOutcome(seat.hands) }))
+	);
+}
+
+// Coins are paid per SEAT, not per hand like the XP above: the coin table prices a
+// result, and a seat's result is its best hand. A split that won one half reads as a
+// win; a seat with no win but a push reads as a draw.
+export function blackjackSeatCoinOutcome(hands: readonly HandOutcome[]): CoinAwardOutcome {
+	if (hands.some((hand) => BLACKJACK_RECORD[hand] === "won")) return "won";
+	if (hands.some((hand) => BLACKJACK_RECORD[hand] === "drawn")) return "drawn";
+	return "played";
 }

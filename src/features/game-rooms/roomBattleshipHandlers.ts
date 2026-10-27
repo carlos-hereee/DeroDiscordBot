@@ -236,6 +236,7 @@ export async function commitShot(
 		challenger: { id: a } as never,
 		opponent: { id: b } as never,
 		winner: shooter.userId === a ? "challenger" : "opponent",
+		resultKey: room.roomId,
 	});
 }
 

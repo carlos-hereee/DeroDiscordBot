@@ -132,9 +132,16 @@ export interface AccountView {
 	// This UTC month's coin flip, dice and rps luck, the luck board's numbers, or
 	// null when the member decided none (post-launch plan item 7).
 	luck: AccountLuck | null;
-	// The member's chips in this server (2026-10 item 250 Phase 5), or null when the
-	// server has chips switched off, which leaves the line out.
-	chips: AccountChips | null;
+	// The member's chips in this server (2026-10 item 250 Phase 5), "off" when the server
+	// has chips switched off, which the currencies say (2026-10 item 257 Phase 3a), or null
+	// when the read failed, which leaves the line out.
+	chips: AccountChips | "off" | null;
+	// The member's Dero coins, global across servers (2026-10 item 257 Phase 3a), or null
+	// when the read failed.
+	coins: number | null;
+	// The secret code luck boost, in percentage points of gold reading chance above the
+	// base, or null when the member holds none.
+	luckBoost: number | null;
 	unlocked: IAchievementUnlock[];
 	// Card only: the avatar the account card draws. The embed keeps avatarUrl.
 	avatar?: AvatarRequest | null;
@@ -182,16 +189,25 @@ function recordField(view: Pick<AccountView, "games">): APIEmbedField {
 }
 
 // The month's luck line, the luck board's own numbers (post-launch plan item 7).
-function luckField(view: Pick<AccountView, "luck">): APIEmbedField {
+// The secret code boost is its own line under the game luck (2026-10 item 257 Phase 3a),
+// so a member can tell the luck they rolled from the luck a code gave them.
+function luckField(view: Pick<AccountView, "luck" | "luckBoost">): APIEmbedField {
 	const c = levelingCopy.labels;
-	return { name: c.luck, value: view.luck ? c.luckLine(view.luck, BOT_CONSTANTS.RATINGS.LUCK_MIN_DECIDED) : c.noLuckYet, inline: false };
+	const games = view.luck ? c.luckLine(view.luck, BOT_CONSTANTS.RATINGS.LUCK_MIN_DECIDED) : c.noLuckYet;
+	const value = view.luckBoost === null ? games : `${games}\n${c.luckBoostLine(view.luckBoost)}`;
+	return { name: c.luck, value, inline: false };
 }
 
-// The chips line, beside the luck (2026-10 item 250 Phase 5). Left out entirely when the
-// server has chips off, rather than showing a balance nothing in the server can spend.
-function chipsFields(view: Pick<AccountView, "chips">): APIEmbedField[] {
-	if (!view.chips) return [];
-	return [{ name: levelingCopy.labels.chips, value: levelingCopy.labels.chipsLine(view.chips.balance, view.chips.claim), inline: false }];
+// The currencies (2026-10 item 257 Phase 3a): Hold'em chips in this server, or "off"
+// where the server switched them off, and the global Dero coins. A read that failed
+// leaves its own line out, and both failing leaves the field out.
+function currenciesFields(view: Pick<AccountView, "chips" | "coins">): APIEmbedField[] {
+	const c = levelingCopy.labels;
+	const lines: string[] = [];
+	if (view.chips === "off") lines.push(`${c.holdemChips}: ${c.chipsOff}`);
+	else if (view.chips) lines.push(`${c.holdemChips}: ${c.chipsLine(view.chips.balance, view.chips.claim)}`);
+	if (view.coins !== null) lines.push(`${c.deroCoins}: ${c.coinsLine(view.coins)}`);
+	return lines.length === 0 ? [] : [{ name: c.currencies, value: lines.join("\n"), inline: false }];
 }
 
 /** A win/loss ratio as the text profile and the account card both show it. */
@@ -231,8 +247,8 @@ export function buildAccountEmbed(view: AccountView): EmbedBuilder {
 		.join("\n");
 	embed.addFields({ name: c.rank, value: standing, inline: false });
 
-	// ③ The record, the month's luck and the chips.
-	embed.addFields(recordField(view), luckField(view), ...chipsFields(view));
+	// ③ The record, the month's luck and the currencies.
+	embed.addFields(recordField(view), luckField(view), ...currenciesFields(view));
 
 	// ④ Presence.
 	embed.addFields({

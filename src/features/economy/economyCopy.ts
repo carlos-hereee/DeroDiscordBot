@@ -14,28 +14,47 @@ export function chips(amount: number): string {
 	return `${amount.toLocaleString("en-US")} ${amount === 1 ? "chip" : "chips"}`;
 }
 
+/** A number of Dero coins as members read it: "20 Dero coins", "1 Dero coin". */
+export function coins(amount: number): string {
+	return `${amount.toLocaleString("en-US")} ${amount === 1 ? "Dero coin" : "Dero coins"}`;
+}
+
 const relative = (at: Date): string => `<t:${Math.floor(at.getTime() / 1000)}:R>`;
 
 export const economyCopy = {
 	// ── /claim ──
 	claim: {
-		commandDescription: "Claim your chips: a big first claim, then a daily one",
 		title: "🪙 Chips",
-		firstClaim: (amount: number, balance: number): string =>
-			`Welcome to the table. Dero slides **${chips(amount)}** across to you.\nYour balance: **${chips(balance)}**. Come back tomorrow for more.`,
-		dailyClaim: (amount: number, balance: number): string => `Dero counts out your daily **${chips(amount)}**.\nYour balance: **${chips(balance)}**.`,
 		cooldown: (balance: number, nextClaimAt: Date): string =>
 			`You already claimed today. Your next claim opens ${relative(nextClaimAt)}.\nYour balance: **${chips(balance)}**.`,
-		economyOff: "Chips are switched off in this server. An admin can turn them back on with `/arcade chips toggle`.",
-		// Item 10 (2026-10 item 257): what a member pressing Claim with chips off is told. An
-		// admin gets the arcade settings panel instead, so these lines are for members only:
-		// the command as inline code they can copy, and who to send it to.
-		economyOffForMember: [
-			"Chips are switched off on this server, so there is nothing to claim yet.",
-			"Send this command to an admin and ask them to switch chips on:\n`/arcade chips toggle enabled:True`",
-		],
 		notInGuild: "Chips belong to a server, so `/claim` only works inside one.",
 		failed: "Dero could not reach the chip ledger just now. Try `/claim` again in a moment.",
+	},
+
+	// ── the daily claim round (2026-10 item 257, Phase 3a) ──
+	// Claim daily rewards and /claim are a round of rock paper scissors against Dero, paid
+	// on both currencies: a win doubles the claim, a draw pays it one and a half times, a
+	// loss pays it as it always was.
+	round: {
+		commandDescription: "Throw rock paper scissors against Dero for your daily chips and Dero coins",
+		modalTitle: "🪨 📄 ✂️ Daily claim",
+		prompt: "Throw against Dero. A win pays your daily claim twice over, a draw one and a half times, and a loss pays it as usual.",
+		selectLabel: "Your throw",
+		// The payout under the drawn reveal, in 💬dero-commands. The member is mentioned
+		// without a ping.
+		payout: (input: { userId: string; chipsPaid: number | null; coinsPaid: number; multiplier: number }): string => {
+			const pay = [input.chipsPaid === null ? null : `**${chips(input.chipsPaid)}**`, input.coinsPaid > 0 ? `**${coins(input.coinsPaid)}**` : null].filter(Boolean).join(" and ");
+			const head = pay ? `Dero pays <@${input.userId}> ${pay} (x${input.multiplier}).` : `<@${input.userId}> played today's round.`;
+			return input.coinsPaid > 0 ? head : `${head}\nToday's Dero coins from this server were paid already.`;
+		},
+		// Chips off: the round still pays coins, and the card says so with the command a
+		// member sends an admin (the same words Phase 1b gave the chips off notice).
+		chipsOff: "Chips are switched off on this server, so this round paid Dero coins only.\nSend this command to an admin and ask them to switch chips on:\n`/arcade chips toggle enabled:True`",
+		// The cooldown with chips off: only the coins' UTC day decides it.
+		coinsCooldown: (nextClaimAt: Date): string => `You already claimed today. Your next claim opens ${relative(nextClaimAt)}.`,
+		// No 💬dero-commands yet (setup not rerun since it was added): the result answers
+		// the member privately instead, with the reason.
+		noCommandsChannel: "This server has no Dero commands channel yet, so your round shows only to you.",
 	},
 
 	// ── /arcade chips (admin facing, plain and practical) ──

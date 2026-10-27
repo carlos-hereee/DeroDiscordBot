@@ -40,6 +40,18 @@ describe("claimChips", () => {
 		expect(mocks.claimDaily).toHaveBeenCalledWith(KEY, 1_000, NOW, new Date(NOW.getTime() - DAY_MS));
 	});
 
+	// 2026-10 item 257 Phase 3a: the rock paper scissors round multiplies whichever base pays.
+	it("multiplies the first and the daily claim by the round's multiplier", async () => {
+		mocks.claimFirst.mockResolvedValueOnce({ balance: 37_500 });
+		await expect(claimChips(KEY, NOW, 1.5)).resolves.toEqual({ kind: "first", amount: 37_500, balance: 37_500 });
+		expect(mocks.claimFirst).toHaveBeenCalledWith(KEY, 37_500, NOW);
+
+		mocks.claimFirst.mockResolvedValueOnce(null);
+		mocks.claimDaily.mockResolvedValueOnce({ balance: 39_500 });
+		await expect(claimChips(KEY, NOW, 2)).resolves.toEqual({ kind: "daily", amount: 2_000, balance: 39_500 });
+		expect(mocks.claimDaily).toHaveBeenCalledWith(KEY, 2_000, NOW, new Date(NOW.getTime() - DAY_MS));
+	});
+
 	it("answers the cooldown, with the balance and when the next claim opens, inside 24 hours", async () => {
 		const lastClaimAt = new Date(NOW.getTime() - 2 * 60 * 60 * 1000);
 		mocks.claimFirst.mockResolvedValue(null);

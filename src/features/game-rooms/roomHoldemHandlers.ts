@@ -27,6 +27,7 @@ import {
 } from "@features/games/holdemTable.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { awardXp, type AwardXpInput } from "@features/leveling/awardXp.js";
+import { awardForResult } from "@features/economy/deroCoins.js";
 import { announceDealer, toPublicView, type PublicView } from "@features/dero-brain/dealerNarration.js";
 import { holdemLiveView, renderHoldemLiveCard } from "@features/dero-brain/dealerShowdownRenderer.js";
 import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
@@ -827,6 +828,18 @@ async function payPlacements(client: Client, room: IGameRoom, table: HoldemTable
 			outcome: index === 0 ? "won" : "lost",
 		});
 	}
+
+	// The session's Dero coins (2026-10 item 257, Phase 3a), beside the one XP call that
+	// records the match: the winner wins, every other seat played. Keyed by the room, so
+	// the clock fold and a press racing to the same end pay once (risk R3). Every seat is
+	// handed over, bots included, so a table with a Dero bot pays the play amount only.
+	// Fire and forget: awardForResult logs and never throws.
+	void awardForResult({
+		guildId: room.guildId,
+		game: "holdem",
+		resultKey: room.roomId,
+		players: order.map((userId, index) => ({ userId, outcome: index === 0 ? "won" : "played" })),
+	});
 }
 
 // One Hold'em award, paid in the server the player earns it in (networkXp, 2026-10 item

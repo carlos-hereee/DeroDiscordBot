@@ -192,6 +192,12 @@ export const COLORS = {
 	// embed's side stripe.
 	CARD_OUTCOME_WIN: "#4ade80",
 	CARD_OUTCOME_LOSE: "#f87171",
+	// A signed number on a card (2026-10 item 257, owner decision 10): green above zero,
+	// red below, read only through signedNumberColor below so every card agrees. The same
+	// light green and red as the outcomes above, on purpose: on the dark sheet a gain
+	// should read like a win.
+	CARD_SIGNED_POSITIVE: "#4ade80",
+	CARD_SIGNED_NEGATIVE: "#f87171",
 	// The battleship grid. The water is a navy, not a cyan, because teal and cyan
 	// read as "AI or live" on the platform; a hit is the coin flip's orange and a
 	// sunk hull the reminder red, so a sinking reads hotter than a hit.
@@ -238,3 +244,14 @@ export const DERO_VARIANTS = [
 ] as const;
 
 export type DeroVariant = (typeof DERO_VARIANTS)[number];
+
+/**
+ * The color a signed number draws in on a card: green above zero, red below, the card's
+ * plain text at zero, which is neither a gain nor a loss. The one reader of the two
+ * CARD_SIGNED colors, so the account card's luck score and luck boost cannot disagree.
+ */
+export function signedNumberColor(value: number): ColorResolvable {
+	if (value > 0) return COLORS.CARD_SIGNED_POSITIVE;
+	if (value < 0) return COLORS.CARD_SIGNED_NEGATIVE;
+	return COLORS.CARD_TEXT;
+}

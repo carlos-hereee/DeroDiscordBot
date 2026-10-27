@@ -34,6 +34,7 @@ import { registerScheduleControlHandlers } from "@features/schedule/ScheduleCont
 import { registerSuggestionBoxHandlers } from "@features/suggestion-box/SuggestionBox.js";
 import { registerArcadeHostHandlers } from "@features/games/arcadeHost.js";
 import { registerSoloLuckHandlers } from "@features/games/soloLuck.js";
+import { registerClaimRoundHandlers } from "@features/economy/chipClaim.js";
 import { registerPartyGameHandlers } from "@features/game-rooms/partyGames.js";
 import { registerGameRequestHandlers } from "@features/game-rooms/gameRequestHandlers.js";
 import { registerGameRoomHandlers } from "@features/game-rooms/gameRoomHandlers.js";
@@ -379,6 +380,7 @@ process.on("uncaughtException", (err) => {
 	// message left to dismiss (post-launch plan item 9), on the one "notice" prefix.
 	registerNoticeModal();
 	registerPowerUpHandlers();
+	registerClaimRoundHandlers();
 	// Every admin command's button on the admin guide, with the pick, the optional
 	// field pick and the form each one opens (2026-10 item 245 Phase 4b).
 	registerAdminCommandLauncher();

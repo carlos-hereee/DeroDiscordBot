@@ -29,7 +29,7 @@ vi.mock("@features/renderer/gif.js", async (importOriginal) => {
 
 import { cachedCardCount, clearCardCache } from "@features/renderer/cardCache.js";
 import { clearDeroArtCache } from "@features/renderer/deroArt.js";
-import { renderAccountCard } from "./accountRenderer.js";
+import { accountCardLineColors, renderAccountCard } from "./accountRenderer.js";
 import { renderLevelUpCard } from "./levelUpRenderer.js";
 import { renderLevelsBoardCard } from "./levelsBoardRenderer.js";
 import { renderAchievementUnlockCard } from "./achievementUnlockRenderer.js";
@@ -77,6 +77,8 @@ const ACCOUNT_VIEW: AccountView = {
 	games: [{ slug: "rps", record: { played: 20, won: 12, lost: 6, drawn: 2, assists: 0 } }],
 	luck: null,
 	chips: null,
+	coins: null,
+	luckBoost: null,
 	unlocked: [
 		{ id: "chatterbox", tier: "bronze", at: new Date("2026-10-01T00:00:00Z"), earnedBy: "sent 53 messages" },
 		{ id: "chatterbox", tier: "silver", at: new Date("2026-10-08T00:00:00Z"), earnedBy: "sent 251 messages" },
@@ -106,24 +108,43 @@ beforeEach(() => {
 });
 
 describe("accountRenderer", () => {
-	it("renders the seeded profile, with its record table, luck and chips band, as a 960 by 820 PNG", async () => {
+	it("renders the seeded profile, with its record table, luck and currencies band, as a 960 by 850 PNG", async () => {
 		const payload = await renderAccountCard(ACCOUNT_VIEW);
 
 		const bytes = attachmentBytes(payload);
 		expect(isPng(bytes)).toBe(true);
-		expect(imageSize(bytes)).toEqual({ width: 960, height: 820 });
+		expect(imageSize(bytes)).toEqual({ width: 960, height: 850 });
 		expect(payload?.ref).toMatch(/^attachment:\/\/account-[a-f0-9]{12}\.png$/);
 	});
 
-	it("draws the luck, its 8 ball readings and the chips with a claim countdown", async () => {
+	it("draws the luck, its 8 ball readings, the luck boost, and the chips and coins with a claim countdown", async () => {
 		const now = new Date("2026-10-26T12:00:00Z");
 		const payload = await renderAccountCard({
 			...ACCOUNT_VIEW,
 			games: LEVELING_GAME_SLUGS.map((slug) => ({ slug, record: { played: 3, won: 2, lost: 1, drawn: 0, assists: 0 } })),
 			luck: { decided: 22, wins: 14, readings: 3, score: 3 },
 			chips: { balance: 26_000, claim: { nextClaimAt: new Date(now.getTime() + 5 * 3_600_000), now } },
+			coins: 1_250,
+			luckBoost: 16,
 		});
 		expect(isPng(attachmentBytes(payload))).toBe(true);
+	});
+
+	// 2026-10 item 257 Phase 3a: chips off still draws the currencies, with the coins.
+	it("draws the currencies with chips off", async () => {
+		const payload = await renderAccountCard({ ...ACCOUNT_VIEW, chips: "off", coins: 40 });
+		expect(isPng(attachmentBytes(payload))).toBe(true);
+	});
+
+	// Owner decision 10: every signed number on the card is green above zero and red below.
+	it("draws the luck score and the luck boost green when positive and red when negative", () => {
+		const green = "#4ade80";
+		const red = "#f87171";
+		expect(accountCardLineColors({ ...ACCOUNT_VIEW, luck: { decided: 22, wins: 14, score: 3 }, luckBoost: 16 })).toEqual([
+			{ text: "3 above even", color: green },
+			{ text: "Luck boost +16% gold chance", color: green },
+		]);
+		expect(accountCardLineColors({ ...ACCOUNT_VIEW, luck: { decided: 22, wins: 8, score: -3 } })).toEqual([{ text: "3 below even", color: red }]);
 	});
 
 	it("renders a brand new member: no games, no achievements, no period rank, a capped bar", async () => {

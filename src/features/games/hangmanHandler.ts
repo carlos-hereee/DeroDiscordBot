@@ -417,6 +417,9 @@ function awardHangmanRound(board: Message, round: HangmanRound, winnerId: string
 			username: guild?.members.cache.get(userId)?.displayName ?? userId,
 		})),
 		winnerId,
+		// A channel round owns no room, so its board message is the coin award's key: one
+		// message per round, and the expiry path and the solving guess both name it.
+		resultKey: board.id,
 	});
 }
 

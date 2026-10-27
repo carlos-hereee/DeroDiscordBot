@@ -693,6 +693,9 @@ function settleGame(game: BlackjackGame, channelId: string, client: Message["cli
 		guildId: game.guildId,
 		channelId,
 		seats: results,
+		// The room when the table plays in one; an inline slash table owns no room, so its
+		// channel and opening time key the coins, which no other table can share.
+		resultKey: game.roomId ?? `${channelId}:${game.openedAt}`,
 	});
 
 	// A table that plays inside a ROOM closes its room here: finish stamps the

@@ -42,3 +42,26 @@ function utcMonthAt(year: number, monthIndex: number): UtcMonth {
 	const end = new Date(Date.UTC(year, monthIndex + 1, 1));
 	return { key: utcMonthKey(start), start, end };
 }
+
+// ── the UTC day (2026-10 item 257, Phase 3a) ──
+// The daily claim's coin key and the solo coin cap both run on the UTC day, for the same
+// reason the months above do: a day must not move when a server changes its timezone,
+// and the coin wallet is global, so no one server's zone could own it.
+
+const DAY_DIGITS = 2;
+
+/** "YYYY-MM-DD" for the UTC day `date` falls in. */
+export function utcDayKey(date: Date): string {
+	const day = String(date.getUTCDate()).padStart(DAY_DIGITS, "0");
+	return `${utcMonthKey(date)}-${day}`;
+}
+
+/** Midnight UTC opening the day `date` falls in. */
+export function utcDayStart(date: Date): Date {
+	return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+/** Midnight UTC opening the day after the one `date` falls in. Date.UTC carries a 32nd on into the next month. */
+export function nextUtcDayStart(date: Date): Date {
+	return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1));
+}

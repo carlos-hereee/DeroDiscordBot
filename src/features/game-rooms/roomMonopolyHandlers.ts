@@ -196,6 +196,7 @@ async function finishMonopolyMatch(client: Client, room: IGameRoom, state: Monop
 		participants,
 		winnerId: state.winnerId,
 		nonWinnerOutcome: "lost",
+		resultKey: room.roomId,
 	});
 }
 

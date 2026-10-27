@@ -16,6 +16,7 @@ import { renderDiceCard } from "./diceRenderer.js";
 import { renderRpsCard } from "./rpsRenderer.js";
 import { isRenderPayload, withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
 import { awardSoloLuckResult } from "./gameXp.js";
+import type { SoloLuckSlug } from "@features/game-rooms/roomTypes.js";
 import { gamesCopy } from "./gamesCopy.js";
 import { showErrorNotice } from "@utils/textModal.js";
 
@@ -122,6 +123,10 @@ export async function playSoloLuck(
 		channelId: interaction.channelId,
 		user: interaction.user,
 		won: result.outcome === "won",
+		game: SOLO_SLUG[result.game],
+		// A round in place owns no room or message of its own until the reply lands, so the
+		// press that played it keys the coins: one interaction, one round.
+		resultKey: interaction.id,
 	});
 }
 
@@ -157,6 +162,8 @@ export async function playSoloLuckInChannel(
 		channelId: channel.id,
 		user: player.user,
 		won: result.outcome === "won",
+		game: SOLO_SLUG[result.game],
+		resultKey: message.id,
 	});
 	return result;
 }
@@ -193,6 +200,10 @@ function renderRoundCard(memberName: string, result: Exclude<SoloLuckResult, { g
 		winner,
 	});
 }
+
+// The slug a round's coins are recorded under, in place or in a solo room alike, so the
+// solo coin cap counts both doors as one.
+const SOLO_SLUG: Record<SoloLuckGame, SoloLuckSlug> = { coinflip: "solo-coinflip", diceroll: "solo-diceroll", rps: "solo-rps" };
 
 const ROUND_CARD_WINNER: Record<SoloLuckOutcome, "left" | "right" | "tie"> = { won: "left", lost: "right", tie: "tie" };
 

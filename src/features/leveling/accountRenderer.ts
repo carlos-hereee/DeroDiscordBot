@@ -1,4 +1,4 @@
-import { COLORS } from "@base/copy/brand.js";
+import { COLORS, signedNumberColor } from "@base/copy/brand.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { canvasColor, drawBarSegment, drawCardBackground, drawDeroPose, drawMemberFace, drawPanel, drawPill, drawText, fillCircle, renderCard, type AvatarRequest, type DrawOutcome, type Rect, type RenderPayload } from "@features/renderer/index.js";
 import type { SKRSContext2D } from "@features/renderer/canvasModule.js";
@@ -22,10 +22,10 @@ import { ratio, type AccountChips, type AccountLuck, type AccountView } from "./
 export const ACCOUNT_AVATAR_SIZE = 256;
 
 // Bump whenever the drawing changes, or members keep seeing cached cards.
-const ACCOUNT_CARD_VERSION = 2;
+const ACCOUNT_CARD_VERSION = 3;
 const CARD_WIDTH = 960;
-// 540 for the profile, then a band below it for the record table, the luck and the chips.
-const CARD_HEIGHT = 820;
+// 540 for the profile, then a band below it for the record table, the luck and the currencies.
+const CARD_HEIGHT = 850;
 const MARGIN = 40;
 const FACE_DIAMETER = 150;
 const FACE_RING = 8;
@@ -44,14 +44,17 @@ const PANEL_RADIUS = 16;
 // The most achievement tiers the card shows as dots; the count says the rest.
 const MAX_TIER_DOTS = 8;
 const TIER_DOT_DIAMETER = 18;
-// The lower band: the record table on the left, the luck and the chips on the right.
+// The lower band: the record table on the left, the luck and the currencies on the right.
 // The table fits every game LEVELING_GAME_SLUGS names (eight) plus the overall row.
-const RECORD_TABLE: Rect = { x: MARGIN, y: 530, width: LEFT_COLUMN_WIDTH, height: 270 };
+const RECORD_TABLE: Rect = { x: MARGIN, y: 530, width: LEFT_COLUMN_WIDTH, height: 300 };
 const RECORD_ROW_HEIGHT = 22;
 // Each column's right edge, from the table's left, so the numbers line up.
 const RECORD_COLUMNS = { played: 270, won: 330, lost: 390, drawn: 450, assists: 520, ratio: 610 } as const;
-const LUCK_PANEL: Rect = { x: 700, y: 530, width: 220, height: 125 };
-const CHIPS_PANEL: Rect = { x: 700, y: 675, width: 220, height: 125 };
+// The luck holds up to four lines (wins, readings, score, boost), the currencies three
+// (chips, coins, the claim hint); each line is 24 pixels below the one before.
+const LUCK_PANEL: Rect = { x: 700, y: 530, width: 220, height: 150 };
+const CURRENCIES_PANEL: Rect = { x: 700, y: 700, width: 220, height: 130 };
+const PANEL_LINE_HEIGHT = 24;
 const MS_PER_MINUTE = 60_000;
 
 // Only what the card draws, as plain numbers and strings. The view can carry
@@ -75,8 +78,14 @@ interface AccountCardInput {
 	record: { won: number; lost: number; drawn: number } | null;
 	unlockedTiers: string[];
 	games: Array<{ slug: string; played: number; won: number; lost: number; drawn: number; assists: number }>;
-	luckLines: string[];
-	chips: { balance: string; claim: string | null } | null;
+	luckLines: CardLine[];
+	currencyLines: CardLine[];
+}
+
+/** One line of a panel, with the sign of the number it shows when that number is signed. */
+interface CardLine {
+	text: string;
+	sign?: number;
 }
 
 /** The /account card, or null when the text profile should post. Never throws. */
@@ -111,34 +120,51 @@ function toCardInput(view: AccountView): AccountCardInput {
 		record,
 		unlockedTiers: view.unlocked.map((unlock) => String(unlock.tier)),
 		games: view.games.map(({ slug, record: game }) => ({ slug, played: game.played, won: game.won, lost: game.lost, drawn: game.drawn, assists: game.assists })),
-		luckLines: luckLines(view.luck),
-		chips: chipsLines(view.chips),
+		luckLines: luckLines(view.luck, view.luckBoost),
+		currencyLines: currencyLines(view.chips, view.coins),
 	};
 }
 
 // The luck board's own numbers, as the text profile's luck line says them, in
 // plain words: what was won, the 8 ball readings when there are any, the score.
-function luckLines(luck: AccountLuck | null): string[] {
+// The secret code boost follows as its own line (2026-10 item 257 Phase 3a). The
+// score and the boost are signed, so they carry their sign for the color.
+function luckLines(luck: AccountLuck | null, luckBoost: number | null): CardLine[] {
 	const cards = levelingCopy.cards;
-	if (!luck) return [cards.noLuck];
-	const lines = [cards.luckWins(luck.wins, luck.decided)];
-	if (luck.readings) lines.push(cards.luckReadings(luck.readings));
-	lines.push(luck.score === null ? cards.luckScoreLater(BOT_CONSTANTS.RATINGS.LUCK_MIN_DECIDED) : cards.luckScore(luck.score));
+	const lines: CardLine[] = [];
+	if (!luck) lines.push({ text: cards.noLuck });
+	else {
+		lines.push({ text: cards.luckWins(luck.wins, luck.decided) });
+		if (luck.readings) lines.push({ text: cards.luckReadings(luck.readings) });
+		lines.push(luck.score === null ? { text: cards.luckScoreLater(BOT_CONSTANTS.RATINGS.LUCK_MIN_DECIDED) } : { text: cards.luckScore(luck.score), sign: luck.score });
+	}
+	if (luckBoost !== null) lines.push({ text: cards.luckBoost(luckBoost), sign: luckBoost });
 	return lines;
 }
 
-// Null when the server has chips off, which leaves the panel out like the text
-// profile leaves the line out. The claim line is the member's own profile only.
-// Rounded to the minute, so the card cache is not split by the second.
-function chipsLines(chips: AccountChips | null): AccountCardInput["chips"] {
-	if (!chips) return null;
+// The currencies (2026-10 item 257 Phase 3a): the server's chips, or "off" where it
+// switched them off, then the global coins, then the member's own claim hint. A read
+// that failed leaves its own line out. Rounded to the minute, so the card cache is not
+// split by the second.
+function currencyLines(chips: AccountView["chips"], coins: number | null): CardLine[] {
 	const cards = levelingCopy.cards;
-	const balance = cards.chipsBalance(chips.balance);
-	if (!chips.claim) return { balance, claim: null };
+	const lines: CardLine[] = [];
+	if (chips === "off") lines.push({ text: cards.chipsOffCard });
+	else if (chips) lines.push({ text: cards.chipsCard(chips.balance) });
+	if (coins !== null) lines.push({ text: cards.coinsCard(coins) });
+	const claim = chips && chips !== "off" ? claimLine(chips) : null;
+	if (claim) lines.push({ text: claim });
+	return lines;
+}
+
+// The claim hint, on the member's own profile only.
+function claimLine(chips: AccountChips): string | null {
+	if (!chips.claim) return null;
+	const cards = levelingCopy.cards;
 	const { nextClaimAt, now } = chips.claim;
-	if (nextClaimAt === null || nextClaimAt.getTime() <= now.getTime()) return { balance, claim: cards.claimReady };
+	if (nextClaimAt === null || nextClaimAt.getTime() <= now.getTime()) return cards.claimReady;
 	const minutes = Math.ceil((nextClaimAt.getTime() - now.getTime()) / MS_PER_MINUTE);
-	return { balance, claim: cards.nextClaimIn(Math.floor(minutes / 60), minutes % 60) };
+	return cards.nextClaimIn(Math.floor(minutes / 60), minutes % 60);
 }
 
 function sumRecord(records: Array<{ won: number; lost: number; drawn: number }>): { won: number; lost: number; drawn: number } {
@@ -167,8 +193,8 @@ async function drawAccountCard(context: SKRSContext2D, input: AccountCardInput):
 	drawRecordAndAchievements(context, input);
 	drawPresence(context, input);
 	drawRecordTable(context, input);
-	drawLuck(context, input);
-	if (input.chips) drawChips(context, input.chips);
+	drawLinesPanel(context, LUCK_PANEL, levelingCopy.labels.luck, input.luckLines);
+	if (input.currencyLines.length > 0) drawLinesPanel(context, CURRENCIES_PANEL, levelingCopy.labels.currencies, input.currencyLines);
 
 	return deroStandIn || faceStandIn ? { cacheable: false } : undefined;
 }
@@ -308,28 +334,31 @@ function drawRecordTable(context: SKRSContext2D, input: AccountCardInput): void 
 	});
 }
 
-function drawLuck(context: SKRSContext2D, input: AccountCardInput): void {
-	drawLinesPanel(context, LUCK_PANEL, levelingCopy.labels.luck, input.luckLines);
-}
-
-function drawChips(context: SKRSContext2D, chips: NonNullable<AccountCardInput["chips"]>): void {
-	drawLinesPanel(context, CHIPS_PANEL, levelingCopy.labels.chips, chips.claim ? [chips.balance, chips.claim] : [chips.balance]);
-}
-
-// A panel with a label and up to three short lines, the first one bold.
-function drawLinesPanel(context: SKRSContext2D, box: Rect, label: string, lines: readonly string[]): void {
+// A panel with a label and up to four short lines, the first one bold. A line carrying a
+// sign draws green or red through signedNumberColor (owner decision 10); the rest keep
+// the plain text colors.
+function drawLinesPanel(context: SKRSContext2D, box: Rect, label: string, lines: readonly CardLine[]): void {
 	drawPanel(context, { ...box, radius: PANEL_RADIUS, fill: canvasColor(COLORS.CARD_PANEL) });
 	drawText(context, label, { x: box.x + 20, y: box.y + 34, size: 18, color: canvasColor(COLORS.CARD_TEXT_SECONDARY), maxWidth: box.width - 40 });
 	lines.forEach((line, index) => {
-		drawText(context, line, {
+		const plain = index === 0 ? COLORS.CARD_TEXT : COLORS.CARD_TEXT_MUTED;
+		drawText(context, line.text, {
 			x: box.x + 20,
-			y: box.y + 64 + index * 24,
+			y: box.y + 64 + index * PANEL_LINE_HEIGHT,
 			size: index === 0 ? 18 : 15,
 			weight: index === 0 ? "bold" : undefined,
-			color: canvasColor(index === 0 ? COLORS.CARD_TEXT : COLORS.CARD_TEXT_MUTED),
+			color: canvasColor(line.sign === undefined ? plain : signedNumberColor(line.sign)),
 			maxWidth: box.width - 40,
 		});
 	});
+}
+
+/** The colors the card's lines draw in, by text. Exported for the tests, which check the signed ones. */
+export function accountCardLineColors(view: AccountView): Array<{ text: string; color: string }> {
+	const input = toCardInput(view);
+	return [...input.luckLines, ...input.currencyLines]
+		.filter((line) => line.sign !== undefined)
+		.map((line) => ({ text: line.text, color: canvasColor(signedNumberColor(line.sign ?? 0)) }));
 }
 
 function drawStatPanel(context: SKRSContext2D, box: Rect, label: string, value: string): void {

@@ -14,6 +14,9 @@ import { LEVELING_GAME_SLUGS, type IGameRecord } from "@features/leveling/leveli
 import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { memberLuckInGuild } from "@features/ratings/ratingBoards.js";
 import { isChipEconomyOn, readWallet } from "@features/economy/chipWallet.js";
+import { readCoinBalance } from "@features/economy/deroCoins.js";
+import { ULTRA_WEIGHT } from "@features/fortune/rollFortune.js";
+import { fortuneBuffStore } from "@db/stores/fortuneBuffStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { utcMonthKey } from "@utils/utcMonthKey.js";
 import { showErrorNotice } from "@utils/textModal.js";
@@ -85,11 +88,13 @@ export async function showAccountProfile(interaction: RepliableInteraction, { ta
 
 	const now = new Date();
 	const { week, month } = periodKeysFor(now, context.weekStart);
-	const [weekRank, monthRank, luck, chips] = await Promise.all([
+	const [weekRank, monthRank, luck, chips, coins, luckBoost] = await Promise.all([
 		rankInPeriod(guildId, target.id, week),
 		rankInPeriod(guildId, target.id, month),
 		readLuck(guildId, target.id, now),
 		readChips(guildId, target.id, isSelf, now),
+		readCoins(target.id),
+		readLuckBoost(target.id),
 	]);
 
 	const member = interaction.guild?.members.cache.get(target.id) ?? null;
@@ -114,6 +119,8 @@ export async function showAccountProfile(interaction: RepliableInteraction, { ta
 		games: readGames(record?.games),
 		luck,
 		chips,
+		coins,
+		luckBoost,
 		unlocked: record?.unlocked ?? [],
 		avatar: avatarRequestFor(target, ACCOUNT_AVATAR_SIZE),
 	};
@@ -179,19 +186,51 @@ async function readLuck(guildId: string, userId: string, now: Date): Promise<Acc
 	}
 }
 
-// The member's chips (2026-10 item 250 Phase 5): null when the server has chips off, and
-// a failed read leaves the line out rather than failing the profile around it, like the
-// luck. The claim hint is only for the member's own profile.
+// The member's chips (2026-10 item 250 Phase 5): "off" when the server has chips off,
+// which the currencies say (2026-10 item 257 Phase 3a), and a failed read leaves the line
+// out rather than failing the profile around it, like the luck. The claim hint is only
+// for the member's own profile.
 async function readChips(guildId: string, userId: string, isSelf: boolean, now: Date): Promise<AccountView["chips"]> {
 	try {
 		const config = await guildConfigStore.findByGuildId(guildId);
-		if (!isChipEconomyOn(config)) return null;
+		if (!isChipEconomyOn(config)) return "off";
 		const wallet = await readWallet({ guildId, userId });
 		return { balance: wallet.balance, claim: isSelf ? { nextClaimAt: wallet.nextClaimAt, now } : null };
 	} catch (error) {
 		console.error(`[account] reading the chips of ${userId} in guild ${guildId} failed`, error);
 		return null;
 	}
+}
+
+// The member's Dero coins, global across servers (2026-10 item 257 Phase 3a). A failed
+// read leaves the line out, like the chips.
+async function readCoins(userId: string): Promise<number | null> {
+	try {
+		return await readCoinBalance(userId);
+	} catch (error) {
+		console.error(`[account] reading the Dero coins of ${userId} failed`, error);
+		return null;
+	}
+}
+
+// The secret code luck boost (FortuneBuff, global): the gold reading chance a redeemed
+// code granted above rollFortune's base ULTRA_WEIGHT, in whole percentage points, so
+// GILDED-BY-SILENT's 0.19 reads +16. Null with no code, or when the read fails, which
+// leaves the line out rather than failing the profile.
+async function readLuckBoost(userId: string): Promise<number | null> {
+	try {
+		const { weight } = await fortuneBuffStore.stateFor(userId);
+		return luckBoostPercent(weight);
+	} catch (error) {
+		console.error(`[account] reading the luck boost of ${userId} failed`, error);
+		return null;
+	}
+}
+
+/** A FortuneBuff weight as the account card's boost: percentage points above the base gold chance, or null for none. */
+export function luckBoostPercent(weight: number | undefined): number | null {
+	if (weight === undefined || weight <= ULTRA_WEIGHT) return null;
+	return Math.round((weight - ULTRA_WEIGHT) * 100);
 }
 
 // The games map arrives as a Mongoose Map. Games the member has never played are

@@ -1,72 +1,281 @@
-import { type ColorResolvable, type RepliableInteraction } from "discord.js";
+import {
+	MessageFlags,
+	StringSelectMenuBuilder,
+	type ButtonInteraction,
+	type ChatInputCommandInteraction,
+	type ColorResolvable,
+	type InteractionEditReplyOptions,
+	type ModalSubmitInteraction,
+	type StringSelectMenuInteraction,
+} from "discord.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { COLORS } from "@base/copy/brand.js";
-import { getPluginCopy } from "@base/copy/getCopy.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { registerModal, registerSelectMenu } from "@handlers/interactionRegistry.js";
+import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
+import { pickedValues, showPicker } from "@features/game-rooms/pickerModal.js";
+import { buildRpsRevealEmbed } from "@features/games/gamesEmbeds.js";
+import { resolveGameAsset, type GameAssetKey } from "@features/games/gamesAssets.js";
+import { gamesCopy } from "@features/games/gamesCopy.js";
+import { renderRpsCard } from "@features/games/rpsRenderer.js";
+import { RPS_CHOICES, type RpsChoice, type RpsOutcome } from "@features/games/rpsWinner.js";
+import { resolveSoloLuck, type SoloLuckOutcome } from "@features/games/soloLuck.js";
+import { isRenderPayload, withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
-import { claimChips, isChipEconomyOn, type ClaimResult } from "./chipWallet.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { nextUtcDayStart } from "@utils/utcMonthKey.js";
+import { claimChips, isChipEconomyOn, readWallet } from "./chipWallet.js";
+import { awardForClaim, hasClaimedCoinsToday } from "./deroCoins.js";
 import { economyCopy } from "./economyCopy.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 
 // ── chipClaim ────────────────────────────────────────────────────────
-// What:  the /claim reply (2026-10 item 250 Phase 5): pay the member's claim, or say
-//        when the next one opens, privately.
-// Who:   src/commands/fun/claim.ts, the member's command.
-// Does NOT: pay anything itself. claimChips in chipWallet.ts owns the amounts and the
-//        cooldown; this only asks the server's switch first and words the answer.
+// What:  the daily claim as a round of rock paper scissors against Dero (2026-10 item
+//        257, Phase 3a, owner decision 11). The press opens a modal with one throw
+//        select; on Submit Dero throws, and a win pays the daily claim twice, a draw one
+//        and a half times and a loss once, on BOTH currencies: chips (per server, only
+//        where chips are on) and Dero coins (global). The drawn reveal card with the
+//        payout posts in 💬dero-commands.
+// Who:   the Claim daily rewards button (PowerUps, `powerup:member:claim`) and /claim
+//        (commands/fun/claim.ts) call runChipClaim; main.ts registers the round's modal
+//        and its fallback select once at boot (registerClaimRoundHandlers).
+// Does NOT: own an amount or a cooldown. claimChips (chipWallet.ts) owns the chips and
+//        their 24 hour cooldown, awardForClaim (deroCoins.ts) the coins and their one
+//        claim per UTC day per server; this module plays the round and words it.
 //
-// Private on purpose: a balance is the member's own business, and a public reply every
-// day from every member would turn the channel into a ledger.
+// ⚠️ THE ROUND NEVER TOUCHES THE LUCK BOARD: no recordLuckResult and no XP here. A daily
+// claim is not a match, and every member playing it once a day would swamp the board.
 //
-// With chips off (2026-10 item 257, owner item 10) the press is routed to the switch: an
-// admin gets the arcade settings panel at once, a member the command to send an admin.
-// Every notice reads the guild's own pack. Phase 3a of that plan turns Claim into a rock
-// paper scissors round; the chips off routing below stays its first gate.
+// With chips off (Phase 1b, owner item 10) an admin's press still opens the arcade
+// settings panel first, since a modal can open only one thing; a member plays the round
+// for coins only, and the card names the command to send an admin.
 
 const copy = economyCopy.claim;
+const roundCopy = economyCopy.round;
 
 type GuildConfigRow = Awaited<ReturnType<typeof guildConfigStore.findByGuildId>>;
 
 // The settings panel holding the Chips switch (settingsPanels.ts, SETTINGS_PANELS).
 const ARCADE_PANEL_ID = "arcade";
 
-function claimText(result: ClaimResult): string {
-	if (result.kind === "cooldown") return copy.cooldown(result.balance, result.nextClaimAt);
-	if (result.kind === "first") return copy.firstClaim(result.amount, result.balance);
-	return copy.dailyClaim(result.amount, result.balance);
-}
+// The round's interactionRegistry prefix: its modal and its fallback select share it.
+const CLAIM_ROUND_PREFIX = "dailyclaim";
+const CLAIM_ROUND_ID = `${CLAIM_ROUND_PREFIX}:throw`;
 
-const claimEmbed = (result: ClaimResult) => infoEmbed(copy.title, claimText(result), COLORS.ARCADE as ColorResolvable);
+// The member is the challenger and Dero the opponent, on the embed and on the card alike.
+const EMBED_OUTCOME: Record<SoloLuckOutcome, RpsOutcome> = { won: "challenger", lost: "opponent", tie: "tie" };
+const CARD_WINNER: Record<SoloLuckOutcome, "left" | "right" | "tie"> = { won: "left", lost: "right", tie: "tie" };
 
-// Chips off: the arcade panel, whose Chips switch turns them on, for whoever may flip it;
-// the command to send an admin for everyone else. Loaded on use rather than imported at
-// the top: the launcher imports /arcade, which reaches this file back through arcadeSwitch,
-// GuildSetupManager and PowerUps, and it builds its command table as it loads, so a static
-// import here would close that cycle with the table half built.
-async function routeToChipSwitch(interaction: RepliableInteraction, config: GuildConfigRow): Promise<void> {
-	const { offerSwitchFix } = await import("@features/command-buttons/adminCommandLauncher.js");
-	await offerSwitchFix(interaction, { launchId: ARCADE_PANEL_ID, title: getPluginCopy(config).error.title, memberSections: [...copy.economyOffForMember] }, config);
-}
-
-/** Answer one /claim. Every refusal and every failure is a private reply; nothing throws to the caller. */
-export async function runChipClaim(interaction: RepliableInteraction): Promise<void> {
+/** The press: the throw modal, after the chips switch and the cooldown are read. Never throws. */
+export async function runChipClaim(interaction: ButtonInteraction | ChatInputCommandInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
 		await showErrorNotice(interaction, copy.notInGuild);
 		return;
 	}
 
-	// Read inside the try, kept outside it so the failure notice can still use the pack.
 	let config: GuildConfigRow = null;
 	try {
 		config = await guildConfigStore.findByGuildId(guildId);
-		if (!isChipEconomyOn(config)) {
-			await routeToChipSwitch(interaction, config);
+		const chipsOn = isChipEconomyOn(config);
+		if (!chipsOn && (await openChipSwitchForAdmin(interaction, config))) return;
+		// Read before the modal so a member never throws for nothing; the Submit reads it
+		// again, because the claim itself is what decides.
+		const wait = await claimWaitText(guildId, interaction.user.id, chipsOn, new Date());
+		if (wait) {
+			await showNotice(interaction, { title: copy.title, sections: [wait] });
 			return;
 		}
-		const result = await claimChips({ guildId, userId: interaction.user.id });
-		await showEmbedNotice(interaction, claimEmbed(result));
 	} catch (error) {
-		console.error(`[economy] /claim for ${interaction.user.id} in guild ${guildId} failed`, error);
+		console.error(`[economy] opening the daily claim for ${interaction.user.id} in guild ${guildId} failed`, error);
 		await showErrorNotice(interaction, copy.failed, config);
+		return;
 	}
+
+	await showPicker(interaction, {
+		route: { modalId: CLAIM_ROUND_ID, selectId: CLAIM_ROUND_ID },
+		title: roundCopy.modalTitle,
+		prompt: roundCopy.prompt,
+		label: roundCopy.selectLabel,
+		// toJSON validates the select, customId included, before showPicker swaps in the
+		// modal field's id, so it carries the round's id from the start.
+		select: new StringSelectMenuBuilder()
+			.setCustomId(CLAIM_ROUND_ID)
+			.setPlaceholder(gameRoomsCopy.games.rpsPlaceholder)
+			.setMinValues(1)
+			.setMaxValues(1)
+			.addOptions(RPS_CHOICES.map((choice) => ({ label: gameRoomsCopy.games.rpsLabel(choice), value: choice }))),
+	});
+}
+
+// Chips off: the arcade panel, whose Chips switch turns them on, for whoever may flip it.
+// True when it opened. Loaded on use rather than imported at the top: the launcher imports
+// /arcade, which reaches this file back through arcadeSwitch, GuildSetupManager and
+// PowerUps, and it builds its command table as it loads, so a static import here would
+// close that cycle with the table half built.
+async function openChipSwitchForAdmin(interaction: ButtonInteraction | ChatInputCommandInteraction, config: GuildConfigRow): Promise<boolean> {
+	const { openSettingsPanel } = await import("@features/command-buttons/adminCommandLauncher.js");
+	return openSettingsPanel(interaction, ARCADE_PANEL_ID, config);
+}
+
+// When the claim is not open yet, the words saying when it opens; null when it is open.
+// With chips on, the chip wallet's 24 hour cooldown decides (it always spans a UTC day,
+// so the coins are open whenever the chips are); with chips off, the coins' UTC day does.
+async function claimWaitText(guildId: string, userId: string, chipsOn: boolean, now: Date): Promise<string | null> {
+	if (chipsOn) {
+		const wallet = await readWallet({ guildId, userId });
+		if (wallet.nextClaimAt && wallet.nextClaimAt.getTime() > now.getTime()) return copy.cooldown(wallet.balance, wallet.nextClaimAt);
+		return null;
+	}
+	return (await hasClaimedCoinsToday(guildId, userId, now)) ? roundCopy.coinsCooldown(nextUtcDayStart(now)) : null;
+}
+
+// ── the Submit ──
+
+/** How the Submit was acknowledged, which decides how its private answer is sent. */
+type Acknowledged = "update" | "reply";
+
+/**
+ * The round's Submit, from its modal or its fallback select: re-read the cooldown, let
+ * Dero throw, pay both currencies, then post the reveal in 💬dero-commands. Never throws.
+ */
+export async function playClaimRound(interaction: ModalSubmitInteraction | StringSelectMenuInteraction, rng: () => number = Math.random): Promise<void> {
+	const guildId = interaction.guildId;
+	if (!guildId) {
+		await showErrorNotice(interaction, copy.notInGuild);
+		return;
+	}
+	const memberThrow = parseThrow(pickedValues(interaction)[0]);
+	if (!memberThrow) {
+		await showErrorNotice(interaction, copy.failed);
+		return;
+	}
+
+	const acknowledged = await acknowledgeSubmit(interaction);
+	const userId = interaction.user.id;
+	try {
+		const config = await guildConfigStore.findByGuildId(guildId);
+		const chipsOn = isChipEconomyOn(config);
+		const now = new Date();
+		const wait = await claimWaitText(guildId, userId, chipsOn, now);
+		if (wait) {
+			await answerPrivately(interaction, acknowledged, { content: wait });
+			return;
+		}
+
+		// The solo rps resolver, so Dero's throw has one set of odds wherever he plays. An rps
+		// play always resolves as rps; the check only narrows the union for the compiler.
+		const round = resolveSoloLuck({ game: "rps", memberThrow }, rng);
+		if (round.game !== "rps") return;
+		const multiplier = BOT_CONSTANTS.ECONOMY.CLAIM_ROUND_MULTIPLIERS[round.outcome];
+
+		// ① Chips first, only where chips are on (risk R11): its conditional write is the
+		// claim, so a second Submit racing this one lands on the cooldown and pays nothing.
+		let chipsPaid: number | null = null;
+		if (chipsOn) {
+			const claimed = await claimChips({ guildId, userId }, now, multiplier);
+			if (claimed.kind === "cooldown") {
+				await answerPrivately(interaction, acknowledged, { content: copy.cooldown(claimed.balance, claimed.nextClaimAt) });
+				return;
+			}
+			chipsPaid = claimed.amount;
+		}
+		// ② Then the coins, whose own unique claim key pays them once a day in this server.
+		const coinsPaid = await awardForClaim({ guildId, userId, multiplier, now });
+
+		const payout = [roundCopy.payout({ userId, chipsPaid, coinsPaid, multiplier }), chipsOn ? null : roundCopy.chipsOff].filter(Boolean).join("\n\n");
+		await postRound(interaction, acknowledged, { config, memberThrow, deroThrow: round.deroThrow, outcome: round.outcome, payout });
+	} catch (error) {
+		console.error(`[economy] the daily claim round for ${userId} in guild ${guildId} failed`, error);
+		await answerPrivately(interaction, acknowledged, { content: copy.failed });
+	}
+}
+
+const parseThrow = (value: string | undefined): RpsChoice | null => (RPS_CHOICES as readonly string[]).includes(value ?? "") ? (value as RpsChoice) : null;
+
+// The Submit is acknowledged at once, before the reads and the draw, so the round never
+// misses Discord's three second window. A modal opened from the 🕹️games button is
+// deferred as an update, which leaves that message untouched; a modal opened by /claim
+// cannot be (Discord refuses deferUpdate there), and neither should the fallback select
+// message stay behind, so both take a private deferred reply that is edited or deleted.
+async function acknowledgeSubmit(interaction: ModalSubmitInteraction | StringSelectMenuInteraction): Promise<Acknowledged> {
+	if (interaction.isModalSubmit() && interaction.isFromMessage()) {
+		await interaction.deferUpdate();
+		return "update";
+	}
+	if (interaction.isStringSelectMenu()) {
+		await interaction.deferUpdate();
+		return "reply";
+	}
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	return "reply";
+}
+
+// A private answer after the acknowledgement: a follow up beside the untouched 🕹️games
+// message, or the edit of the deferred private reply (or the fallback select message).
+// Swallowed and logged: the round's writes already stand.
+async function answerPrivately(interaction: ModalSubmitInteraction | StringSelectMenuInteraction, acknowledged: Acknowledged, answer: InteractionEditReplyOptions): Promise<void> {
+	const sent =
+		acknowledged === "update"
+			? interaction.followUp({ ...answer, content: answer.content ?? undefined, flags: MessageFlags.Ephemeral })
+			: interaction.editReply({ ...answer, components: [] });
+	await sent.catch((error: unknown) => console.error("[economy] the daily claim's private answer failed", { interactionId: interaction.id, error }));
+}
+
+interface PlayedRound {
+	config: GuildConfigRow;
+	memberThrow: RpsChoice;
+	deroThrow: RpsChoice;
+	outcome: SoloLuckOutcome;
+	payout: string;
+}
+
+// The drawn reveal (item 254 Phase 5a's card) with the payout under it, posted in
+// 💬dero-commands mentioning the member without a ping. A server with no commands
+// channel yet (setup not rerun) gets the same card privately, with the reason.
+async function postRound(interaction: ModalSubmitInteraction | StringSelectMenuInteraction, acknowledged: Acknowledged, round: PlayedRound): Promise<void> {
+	const userId = interaction.user.id;
+	const art = await revealArt(interaction, round);
+	const embed = buildRpsRevealEmbed(userId, round.memberThrow, interaction.client.user.id, round.deroThrow, EMBED_OUTCOME[round.outcome], art.ref);
+	embed.setDescription(`${embed.data.description ?? ""}\n\n${round.payout}`);
+
+	const channelId = round.config?.commandOutputChannelId;
+	const channel = channelId ? await interaction.client.channels.fetch(channelId).catch(() => null) : null;
+	if (channel?.isSendable()) {
+		const sent = await channel.send({ embeds: [embed], files: [art.attachment], allowedMentions: { parse: [] } }).catch((error: unknown) => {
+			console.warn(`[economy] posting the daily claim round in channel ${channelId} failed`, error);
+			return null;
+		});
+		if (sent) {
+			if (acknowledged === "reply") await interaction.deleteReply().catch(() => undefined);
+			return;
+		}
+	}
+	await answerPrivately(interaction, acknowledged, {
+		embeds: [embed, infoEmbed(copy.title, roundCopy.noCommandsChannel, COLORS.ARCADE as ColorResolvable)],
+		files: [art.attachment],
+	});
+}
+
+// The drawn card when it draws, the winning throw's static art (or the tie's) when not.
+async function revealArt(interaction: ModalSubmitInteraction | StringSelectMenuInteraction, round: PlayedRound): Promise<RenderPayload> {
+	const memberName = interaction.inCachedGuild() ? interaction.member.displayName : (interaction.user.globalName ?? interaction.user.username);
+	const card = await withRenderFallback(
+		() =>
+			renderRpsCard({
+				left: { name: memberName, choice: round.memberThrow, isDero: false },
+				right: { name: gamesCopy.soloLuck.deroName, choice: round.deroThrow, isDero: true },
+				winner: CARD_WINNER[round.outcome],
+			}),
+		() => null
+	);
+	if (isRenderPayload(card)) return card;
+	const winningThrow = round.outcome === "lost" ? round.deroThrow : round.memberThrow;
+	const key = round.outcome === "tie" ? "rpsTie" : (`rps${winningThrow.charAt(0).toUpperCase()}${winningThrow.slice(1)}` as GameAssetKey);
+	return resolveGameAsset(key);
+}
+
+/** Register the round's modal Submit and its fallback select. Called once at boot from main.ts. */
+export function registerClaimRoundHandlers(): void {
+	registerModal(CLAIM_ROUND_PREFIX, (interaction) => playClaimRound(interaction));
+	registerSelectMenu(CLAIM_ROUND_PREFIX, (interaction) => playClaimRound(interaction));
 }
