@@ -16,6 +16,10 @@ import type { AnyBulkWriteOperation } from "mongoose";
 //        no job that would call one. A new period is a new key, so last week
 //        simply stops being queried. That absence is the feature.
 
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+// "2026-W32": the weekly key shape levelPeriod.ts produces; a monthly key is "2026-08".
+const WEEK_PERIOD_KEY = /^d{4}-Wd{2}$/.source;
+
 export const xpPeriodStore = {
 	// The batched write behind every flush, one call per period key. ordered:false
 	// for the same reason as memberLevelStore.bulkWrite: a duplicate key from a
@@ -55,6 +59,27 @@ export const xpPeriodStore = {
 			{ $project: { _id: 0, activeMembers: 1, totalXp: 1 } },
 		]);
 		return rows[0] ?? { activeMembers: 0, totalXp: 0 };
+	},
+
+	// The owner's Verse view: members who earned xp OR coins since `since`, counted once each
+	// across every server. Weekly rows only: a flush writes the week and the month row together,
+	// so the week row is the one whose createdAt tracks recent activity (a week is seven days,
+	// so a week row updated inside the window was created no earlier than seven days before
+	// it), which lets the TTL index on createdAt narrow the scan before updatedAt filters. The
+	// coin side is unioned in the same pipeline so no id list ever reaches memory.
+	async countMembersActiveSince(since: Date, coinAwardCollection: string): Promise<number> {
+		const weekRowReach = new Date(since.getTime() - WEEK_MS);
+		const [row] = await XpPeriod.aggregate<{ total: number }>(
+			[
+				{ $match: { createdAt: { $gte: weekRowReach }, updatedAt: { $gte: since }, period: { $regex: WEEK_PERIOD_KEY } } },
+				{ $project: { _id: 0, userId: 1 } },
+				{ $unionWith: { coll: coinAwardCollection, pipeline: [{ $match: { at: { $gte: since } } }, { $project: { _id: 0, userId: 1 } }] } },
+				{ $group: { _id: "$userId" } },
+				{ $count: "total" },
+			],
+			{ allowDiskUse: true }
+		);
+		return row?.total ?? 0;
 	},
 
 	// /leveling xp reset-member and reset-server clear a member's period history alongside

@@ -58,4 +58,8 @@ coinAwardSchema.index({ source: 1, claimKey: 1, userId: 1 }, { unique: true, par
 // The solo daily cap's read: one member's game awards since midnight UTC.
 coinAwardSchema.index({ userId: 1, source: 1, at: -1 });
 
+// The owner's Verse view: coins paid inside the UTC month, and members active in the last 30
+// days. Without it both reads scan the whole ledger. Writes are one row per game result.
+coinAwardSchema.index({ at: -1 });
+
 export const CoinAward = mongoose.model<ICoinAward>("CoinAward", coinAwardSchema);

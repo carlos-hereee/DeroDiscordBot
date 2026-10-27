@@ -3,13 +3,14 @@ import type { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 
 // ── /platform ──────────────────────────────────────────────────────────────
 // The platform owner's command keeps its own check: ADMIN_COMMANDS never sees it, so
-// both of its doors, the network group and analytics, must refuse everyone but
+// all three of its doors, the network group, analytics and the Verse, must refuse everyone but
 // CREATOR_DISCORD_ID before they read or write anything.
 
 const mocks = vi.hoisted(() => ({
 	ban: vi.fn(),
 	unban: vi.fn(),
 	buildReport: vi.fn(),
+	buildVerse: vi.fn(),
 }));
 
 vi.mock("@utils/config.js", () => ({ creatorId: "owner-1" }));
@@ -20,6 +21,8 @@ vi.mock("@features/renderer/renderAnalytics.js", () => ({
 	RENDER_ANALYTICS_PERIODS: ["this-month", "last-month", "all-time"],
 	buildRenderAnalyticsReport: mocks.buildReport,
 }));
+
+vi.mock("@features/platform/verseProgress.js", () => ({ buildVerseProgress: mocks.buildVerse }));
 
 import { data, execute } from "./platform.js";
 
@@ -51,10 +54,10 @@ beforeEach(() => {
 });
 
 describe("/platform", () => {
-	it("holds the network group and analytics, with no Discord default permission", () => {
+	it("holds the network group, analytics and the Verse, with no Discord default permission", () => {
 		const json = data.toJSON();
 		expect(json.default_member_permissions).toBeUndefined();
-		expect((json.options ?? []).map((option) => option.name)).toEqual(["network", "analytics"]);
+		expect((json.options ?? []).map((option) => option.name)).toEqual(["network", "analytics", "verse"]);
 	});
 
 	it.each([
@@ -72,6 +75,14 @@ describe("/platform", () => {
 		const { fake, reply } = interaction("admin-1", null, "analytics");
 		await execute(fake);
 		expect(firstText(reply)).toContain("Only the platform owner");
+		expect(mocks.buildReport).not.toHaveBeenCalled();
+	});
+
+	it("refuses /platform verse to anybody but the platform owner, reading nothing and never reaching analytics", async () => {
+		const { fake, reply } = interaction("admin-1", null, "verse");
+		await execute(fake);
+		expect(firstText(reply)).toContain("Only the platform owner can read the Verse");
+		expect(mocks.buildVerse).not.toHaveBeenCalled();
 		expect(mocks.buildReport).not.toHaveBeenCalled();
 	});
 

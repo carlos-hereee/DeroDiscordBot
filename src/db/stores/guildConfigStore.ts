@@ -33,6 +33,16 @@ export const guildConfigStore = {
 		return GuildConfigModel.findOneAndUpdate({ guildId }, { $pull: { blockedNetworkGuildIds: blockedGuildId } }, { new: true });
 	},
 
+	// The owner's Verse view: how many servers finished setup, and how many of those chose
+	// the network as their challenge reach. Counts only, never the rows.
+	async countSetUp(): Promise<number> {
+		return GuildConfigModel.countDocuments({ setupComplete: true });
+	},
+
+	async countSetUpOnNetwork(): Promise<number> {
+		return GuildConfigModel.countDocuments({ setupComplete: true, challengeReach: "network" });
+	},
+
 	async isSetupComplete(guildId: string): Promise<boolean> {
 		const config = await GuildConfigModel.findOne({ guildId });
 		return config?.setupComplete ?? false;

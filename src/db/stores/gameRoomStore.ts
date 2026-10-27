@@ -686,6 +686,36 @@ export const gameRoomStore = {
 			.limit(limit);
 	},
 
+	// Save this match to a player's profile (2026-10 item 257 Phase 3b). $addToSet, so a double
+	// Submit is a no-op rather than a second entry, and the playerIds filter is the guarantee that
+	// only a player of the match can save it: the caller checks the row it read, but the filter is
+	// what holds if the row changed since. Null when the room is gone or the member did not play.
+	async addSavedBy(guildId: string, roomId: string, userId: string) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId, playerIds: userId }, { $addToSet: { savedBy: userId } }, { new: true });
+	},
+
+	// /account view:saved: the matches one member saved in this guild, newest finish first.
+	// Matches the { guildId, savedBy, endedAt } index. A row only gets savedBy on a finished
+	// match, but endedAt is still required so a hand written row never lists without a date.
+	async findSavedBy(guildId: string, userId: string, limit: number) {
+		return GameRoom.find({ guildId, savedBy: userId, endedAt: { $ne: null } })
+			.sort({ endedAt: -1 })
+			.limit(limit)
+			.lean();
+	},
+
+	// The owner's Verse view: matches completed across every server, by game. Finished and
+	// archived rows with an endedAt (finish stamps it), so a draft that was cancelled never
+	// counts. Rides the { status, archiveAt } index on its status prefix, and the group
+	// returns one row per game, never the rooms themselves.
+	async countCompletedByGame(): Promise<{ game: string; count: number }[]> {
+		return GameRoom.aggregate<{ game: string; count: number }>([
+			{ $match: { status: { $in: ["finished", "archived"] }, endedAt: { $ne: null } } },
+			{ $group: { _id: "$game", count: { $sum: 1 } } },
+			{ $project: { _id: 0, game: "$_id", count: 1 } },
+		]);
+	},
+
 	// Self destruct's server data delete (post-launch plan item 10): every row this guild owns.
 	async deleteGuild(guildId: string) {
 		return GameRoom.deleteMany({ guildId });

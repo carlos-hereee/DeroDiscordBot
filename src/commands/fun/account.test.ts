@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 	findWallet: vi.fn(),
 	findCoinWallet: vi.fn(),
 	buffState: vi.fn(),
+	showSavedMatches: vi.fn(),
 }));
 
 vi.mock("@features/leveling/levelingConfig.js", () => ({ getLevelingConfig: mocks.getLevelingConfig }));
@@ -37,6 +38,7 @@ vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { findOne: mo
 vi.mock("@db/stores/deroCoinStore.js", () => ({ deroCoinStore: { findWallet: mocks.findCoinWallet } }));
 vi.mock("@db/stores/fortuneBuffStore.js", () => ({ fortuneBuffStore: { stateFor: mocks.buffState } }));
 vi.mock("@features/leveling/roleRewards.js", () => ({ reconcileRewards: mocks.reconcileRewards }));
+vi.mock("@features/game-rooms/savedMatches.js", () => ({ showSavedMatches: mocks.showSavedMatches }));
 vi.mock("@features/leveling/accountRenderer.js", () => ({ ACCOUNT_AVATAR_SIZE: 256, renderAccountCard: mocks.renderAccountCard }));
 
 import { execute } from "./account.js";
@@ -85,6 +87,29 @@ beforeEach(() => {
 	mocks.findWallet.mockReset().mockResolvedValue(null);
 	mocks.findCoinWallet.mockReset().mockResolvedValue(null);
 	mocks.buffState.mockReset().mockResolvedValue({ weight: undefined, dryStreak: 0 });
+});
+
+describe("/account view:saved", () => {
+	// 2026-10 item 257 Phase 3b: the saved matches are their own view, answered by the games feature.
+	it("hands the asker, or the named member, to the saved matches view and draws no card", async () => {
+		const named = { id: "u2", bot: false };
+		const { interaction: command } = interaction();
+		(command as unknown as { options: unknown }).options = {
+			getUser: () => named,
+			getString: (name: string) => (name === "view" ? "saved" : null),
+		};
+
+		await execute(command);
+
+		expect(mocks.showSavedMatches).toHaveBeenCalledExactlyOnceWith(command, named);
+		expect(mocks.renderAccountCard).not.toHaveBeenCalled();
+	});
+
+	it("lists Saved matches among the view choices", async () => {
+		const { data } = await import("./account.js");
+		const view = data.toJSON().options?.find((option) => option.name === "view") as { choices: Array<{ name: string; value: string }> };
+		expect(view.choices).toContainEqual({ name: "Saved matches", value: "saved" });
+	});
 });
 
 describe("/account", () => {

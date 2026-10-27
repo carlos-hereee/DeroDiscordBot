@@ -10,7 +10,9 @@ import {
 	NOTICE_MODAL_PREFIX,
 	acknowledgeConfirm,
 	acknowledgeTextModal,
+	buildConfirmModal,
 	confirmFallback,
+	confirmSelectValues,
 	buildTextModal,
 	noticeFromEmbed,
 	registerNoticeModal,
@@ -223,6 +225,66 @@ describe("showConfirm", () => {
 	it("labels the fallback button from the guild's pack", () => {
 		const reply = confirmFallback(content, { pluginId: "general-events" }) as FallbackReply;
 		expect(buttonOf(reply).label).toBe(generalEventsCopy.confirm.button);
+	});
+});
+
+// A confirm may carry one select (a modal holds no button): the archive's Save this match to my profile.
+describe("a confirm with a select", () => {
+	const select = {
+		fieldId: "choice",
+		label: "Save it?",
+		options: [
+			{ label: "Yes", value: "yes" },
+			{ label: "No", value: "no", isDefault: true },
+		],
+	};
+	const content = { title: "Archive?", sections: ["Submit to archive it."], confirmId: "gameroom:archiveok:room-1", select };
+	type LabelJson = { type: number; label: string; component: { custom_id: string; required?: boolean; options: Array<{ value: string; default?: boolean }> } };
+	const labelOf = (modal: ModalBuilder): LabelJson => (modal.toJSON() as unknown as { components: LabelJson[] }).components.find((component) => component.type === 18)!;
+
+	it("adds the select under the text, labelled, required and defaulting to the safe option", () => {
+		const label = labelOf(buildConfirmModal(content));
+		expect(label.label).toBe("Save it?");
+		expect(label.component).toMatchObject({ custom_id: "choice", required: true });
+		expect(label.component.options.map((option) => [option.value, option.default ?? false])).toEqual([
+			["yes", false],
+			["no", true],
+		]);
+	});
+
+	it("keeps the whole modal within Discord's five components, cutting text rather than the select", () => {
+		const modal = buildConfirmModal({ ...content, sections: ["1", "2", "3", "4", "5", "6"] });
+		const components = (modal.toJSON() as unknown as { components: Array<{ type: number }> }).components;
+		expect(components).toHaveLength(5);
+		expect(components.filter((component) => component.type === 10)).toHaveLength(4);
+		expect(components[4]!.type).toBe(18);
+	});
+
+	it("adds nothing to a confirm that has no select, and its fallback stays the one button", () => {
+		const bare = { title: "Archive?", sections: ["Submit to archive it."], confirmId: "gameroom:archiveok:room-1" };
+		expect((buildConfirmModal(bare).toJSON() as unknown as { components: Array<{ type: number }> }).components.map((component) => component.type)).toEqual([10]);
+		const fallback = confirmFallback(content) as { components: Array<{ toJSON(): { components: unknown[] } }> };
+		expect(fallback.components[0]!.toJSON().components).toHaveLength(1);
+	});
+
+	it("opens the modal with the select through showConfirm", async () => {
+		const press = interaction();
+		await showConfirm(press, content);
+		expect(labelOf(press.showModal.mock.calls[0]![0] as ModalBuilder).component.custom_id).toBe("choice");
+	});
+
+	it("reads the select back from a modal submit, and reads empty for the fallback button or a missing field", () => {
+		const submit = (read: () => string[]) => ({ type: InteractionType.ModalSubmit, fields: { getStringSelectValues: read } }) as unknown as ModalSubmitInteraction;
+		expect(confirmSelectValues(submit(() => ["yes"]), "choice")).toEqual(["yes"]);
+		expect(
+			confirmSelectValues(
+				submit(() => {
+					throw new Error("Required field not found");
+				}),
+				"choice"
+			)
+		).toEqual([]);
+		expect(confirmSelectValues({ type: InteractionType.MessageComponent } as unknown as ButtonInteraction, "choice")).toEqual([]);
 	});
 });
 

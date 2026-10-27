@@ -433,6 +433,31 @@ export const gameRoomsCopy = {
 		leaveTable: "Leave the table? A hand you are in is folded and your seat is given up. Submit to leave.",
 		endTable: "End the table now? It closes on the standings as they are. Submit to end it.",
 		matchOver: "That match is already over, so there is nothing to forfeit.",
+		// The archive confirm's one choice (2026-10 item 257 Phase 3b): a modal holds no button,
+		// so keeping the match is a select applied on Submit, defaulting to no.
+		saveToProfile: {
+			label: "Save this match to my profile",
+			yes: "Yes, save it",
+			no: "No, just archive",
+		},
+	},
+
+	// ── saved matches (2026-10 item 257 Phase 3b) ──
+	// /account view:saved, the matches a member chose to keep when archiving a room.
+	saved: {
+		title: (name: string): string => `📌 ${name}'s saved matches`,
+		empty: "No saved matches yet. Choose Save this match to my profile when you archive a finished match, and it is kept here.",
+		// A bot cannot have saved matches, and the command can name any member.
+		botMember: "A bot has no saved matches.",
+		outsideGuild: "Saved matches belong to a server. Run this in a server.",
+		readFailed: "Dero could not read the saved matches just now. Try again in a moment.",
+		footer: (shown: number): string => `Showing the last ${shown}, newest first.`,
+		// One row: "Hangman · Won · against <@a>, 🤖 Dero Red · <t:...:D>". Solo rooms have no opponent
+		// to name, so the line says who the round was against.
+		line: (input: { game: string; result: string; opponents: string; date: string }): string =>
+			`**${input.game}** · ${input.result} · ${input.opponents} · ${input.date}`,
+		versus: (opponents: string): string => `against ${opponents}`,
+		results: { won: "Won", lost: "Lost", noWinner: "No winner" },
 	},
 
 	// ── the challenge board (Phase 4) ──

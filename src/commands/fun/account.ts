@@ -3,12 +3,14 @@ import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import { showAccountProfile } from "@features/leveling/accountProfile.js";
 import { LEVELS_WINDOW_CHOICES, showLevelsStandings, toLevelsWindow } from "@features/leveling/levelsStandings.js";
 import { showAchievements } from "@features/leveling/achievementsView.js";
+import { showSavedMatches } from "@features/game-rooms/savedMatches.js";
 
 // ── /account ───────────────────────────────────────────────────────────────
 // What:  a member's leveling surfaces behind one command: `view` picks the
-//        profile (the default), the server's levels standings, or a member's
-//        achievements. `member` names whose profile or achievements to show and
-//        `window` names which stretch the levels view ranks.
+//        profile (the default), the server's levels standings, a member's
+//        achievements, or the matches a member saved to their profile when archiving
+//        a room (2026-10 item 257 Phase 3b). `member` names whose profile, achievements
+//        or saved matches to show and `window` names which stretch the levels view ranks.
 // Who:   every member. PUBLIC replies, exactly as /levels and /achievements gave
 //        before 2026-10 item 245 Phase 4b folded them in here.
 // Where: the three views live in features/leveling, shared with the Account,
@@ -24,6 +26,7 @@ const VIEW_CHOICES = [
 	{ name: levelingCopy.accountViews.profile, value: "profile" },
 	{ name: levelingCopy.accountViews.levels, value: "levels" },
 	{ name: levelingCopy.accountViews.achievements, value: "achievements" },
+	{ name: levelingCopy.accountViews.saved, value: "saved" },
 ] as const;
 
 export const data = new SlashCommandBuilder()
@@ -37,7 +40,7 @@ export const data = new SlashCommandBuilder()
 			.addChoices(...VIEW_CHOICES)
 	)
 	.addUserOption((option) =>
-		option.setName("member").setDescription("Whose profile or achievements to show. Defaults to you.").setRequired(false)
+		option.setName("member").setDescription("Whose profile, achievements or saved matches to show. Defaults to you.").setRequired(false)
 	)
 	.addStringOption((option) =>
 		option
@@ -56,6 +59,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	const target = interaction.options.getUser("member") ?? interaction.user;
 	if (view === "achievements") {
 		await showAchievements(interaction, { target, isPrivate: false });
+		return;
+	}
+	if (view === "saved") {
+		await showSavedMatches(interaction, target);
 		return;
 	}
 	await showAccountProfile(interaction, { target, isPrivate: false });

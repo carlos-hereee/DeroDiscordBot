@@ -45,6 +45,7 @@ import { satelliteAt } from "./satelliteRooms.js";
 import { registerNetworkHandlers } from "./networkJoin.js";
 import type { GameSlug, SatelliteRoom } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { archiveSaveSelect, canSaveMatch, saveMatchIfChosen } from "./savedMatches.js";
 import { acknowledgeConfirm, showConfirm, showErrorNotice, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 
 const satelliteWords = rokCommanderCopy.arcadeSatellites;
@@ -363,7 +364,14 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		// Both ask first (2026-10 item 257, owner item 12): the press opens a confirm and
 		// only its Submit archives or forfeits, in runConfirmed below.
 		case "archive":
-			await showConfirm(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.confirms.archive], confirmId: confirmCustomId("archiveok", room.roomId) });
+			await showConfirm(interaction, {
+				title: gameRoomsCopy.notices.room,
+				sections: [gameRoomsCopy.confirms.archive],
+				confirmId: confirmCustomId("archiveok", room.roomId),
+				// Offered only to a player of a finished match (item 257 Phase 3b): an admin clearing
+				// someone else's room has no match of their own to keep.
+				select: canSaveMatch(room, interaction.user.id) ? archiveSaveSelect() : undefined,
+			});
 			return;
 		case "forfeit":
 			await showConfirm(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.confirms.forfeit], confirmId: confirmCustomId("forfeitok", room.roomId) });
@@ -389,6 +397,10 @@ async function runConfirmed(interaction: ConfirmInteraction, gated: GatedPress):
 			await challengeBoard.confirmStartMatch(interaction, room);
 			return;
 		case "archiveok":
+			// The save lands BEFORE the archive (item 257 Phase 3b): the row survives the
+			// archive either way, but a save is a write the member chose and must not race
+			// the delete. It never blocks the archive.
+			await saveMatchIfChosen(interaction, room);
 			// Acknowledged BEFORE the delete: the channel the confirm was pressed in is about
 			// to stop existing, and an answer sent after it is gone throws.
 			await acknowledgeConfirm(interaction);

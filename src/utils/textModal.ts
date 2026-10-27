@@ -3,8 +3,11 @@ import {
 	ButtonBuilder,
 	ButtonStyle,
 	InteractionType,
+	LabelBuilder,
 	MessageFlags,
 	ModalBuilder,
+	StringSelectMenuBuilder,
+	StringSelectMenuOptionBuilder,
 	TextDisplayBuilder,
 	type ButtonInteraction,
 	type EmbedBuilder,
@@ -59,15 +62,19 @@ export interface TextModalContent {
 /** The interactions Discord lets open a modal: a button, a select, a slash or context command. */
 export type ModalOpeningInteraction = Extract<RepliableInteraction, { showModal: unknown }>;
 
-/** The text modal under one customId. Exported for the tests, which read it back with toJSON. */
-export function buildTextModal(customId: string, content: TextModalContent): ModalBuilder {
+/**
+ * The text modal under one customId. Exported for the tests, which read it back with toJSON.
+ * `reservedComponents` leaves room under the five component cap for components the caller
+ * adds after the text (a confirm's select).
+ */
+export function buildTextModal(customId: string, content: TextModalContent, reservedComponents = 0): ModalBuilder {
 	return new ModalBuilder()
 		.setCustomId(customId)
 		.setTitle(content.title.slice(0, MAX_TITLE_LENGTH))
 		.addTextDisplayComponents(
 			...content.sections
 				.filter((section) => section.trim().length > 0)
-				.slice(0, MAX_SECTIONS)
+				.slice(0, MAX_SECTIONS - reservedComponents)
 				.map((section) => new TextDisplayBuilder().setContent(section.slice(0, MAX_SECTION_LENGTH)))
 		);
 }
@@ -204,9 +211,28 @@ export async function showErrorNotice(interaction: RepliableInteraction, message
 // answered, or Discord refusing it) the confirm is a private reply carrying that one
 // button, never the action done at once.
 
+/** One option of a confirm's select. `isDefault` is what the select shows before the member picks. */
+export interface ConfirmSelectOption {
+	label: string;
+	value: string;
+	isDefault?: boolean;
+}
+
+/**
+ * The one optional choice a confirm may carry (a modal holds no button, so a yes or no the
+ * member makes alongside the confirm is a select inside it). `fieldId` is what the Submit
+ * reads the answer back by.
+ */
+export interface ConfirmSelect {
+	fieldId: string;
+	label: string;
+	options: ConfirmSelectOption[];
+}
+
 /** What a confirm shows, and the customId its Submit and its fallback button carry. */
 export interface ConfirmContent extends TextModalContent {
 	confirmId: string;
+	select?: ConfirmSelect;
 }
 
 /** The two ways a confirm comes back: its modal's Submit, or the fallback reply's button. */
@@ -220,10 +246,39 @@ export type ConfirmInteraction = ModalSubmitInteraction | ButtonInteraction;
 export async function showConfirm(interaction: RepliableInteraction, content: ConfirmContent, guildConfig?: ICopyConfig | null): Promise<void> {
 	const fallback = (): InteractionReplyOptions => confirmFallback(content, guildConfig);
 	if (canOpenModal(interaction)) {
-		await showTextModal(interaction, content.confirmId, content, fallback);
+		await showModalOrReply(interaction, buildConfirmModal(content), fallback);
 		return;
 	}
 	await replyPrivately(interaction, fallback());
+}
+
+/**
+ * A confirm's modal: its text, then its one select when it has one. The fallback reply stays
+ * the single confirm button either way, because a button press carries no select value, so a
+ * member who lands there confirms without the choice (the choice's default).
+ */
+export function buildConfirmModal(content: ConfirmContent): ModalBuilder {
+	const modal = buildTextModal(content.confirmId, content, content.select ? 1 : 0);
+	if (!content.select) return modal;
+	const select = new StringSelectMenuBuilder()
+		.setCustomId(content.select.fieldId)
+		.setRequired(true)
+		.addOptions(content.select.options.map((option) => new StringSelectMenuOptionBuilder().setLabel(option.label).setValue(option.value).setDefault(option.isDefault ?? false)));
+	return modal.addLabelComponents(new LabelBuilder().setLabel(content.select.label).setStringSelectMenuComponent(select));
+}
+
+/**
+ * What a confirm's select was answered with. Empty for the fallback button, which carries no
+ * select, and for a modal submit without the field, which only a hand made submit can be since
+ * Discord enforces a required select; every caller reads empty as the choice's default.
+ */
+export function confirmSelectValues(interaction: ConfirmInteraction, fieldId: string): readonly string[] {
+	if (interaction.type !== InteractionType.ModalSubmit) return [];
+	try {
+		return interaction.fields.getStringSelectValues(fieldId);
+	} catch {
+		return [];
+	}
 }
 
 /** The private reply a confirm falls back to: its words, and the one button that confirms. Exported for the tests. */

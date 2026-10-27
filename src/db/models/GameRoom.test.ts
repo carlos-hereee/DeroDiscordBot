@@ -123,7 +123,7 @@ describe("GameRoom host controls (2026-10 item 244 Phase 4)", () => {
 
 	// Phase 4 added no index. Phase 5a (2026-10 item 244) adds exactly the two partial
 	// satellite indexes and nothing else, so the one open room per host index is still
-	// the same index it was.
+	// the same index it was. Phase 3b of item 257 adds the saved matches index, and only it.
 	it("adds only the partial satellite indexes, so the one open room per host index is the same index it was", () => {
 		const declared = indexes.map(([fields]) => JSON.stringify(fields)).sort();
 		expect(declared).toEqual(
@@ -133,6 +133,7 @@ describe("GameRoom host controls (2026-10 item 244 Phase 4)", () => {
 				{ guildId: 1, hostId: 1 },
 				{ status: 1, archiveAt: 1 },
 				{ guildId: 1, playerIds: 1, endedAt: -1 },
+				{ guildId: 1, savedBy: 1, endedAt: -1 },
 				{ "satellites.channelId": 1 },
 				{ "satellites.userIds": 1 },
 			]

@@ -126,6 +126,15 @@ export const memberLevelStore = {
 		return MemberLevel.countDocuments({ guildId });
 	},
 
+	// The owner's Verse view: members with a level row in ANY server, counted once each. A
+	// group on userId with a count, never distinct(), which would return every id in one
+	// 16MB reply; the { guildId, userId } index covers the scan, and allowDiskUse keeps a
+	// very large platform from hitting the group's memory cap.
+	async countDistinctMembers(): Promise<number> {
+		const [row] = await MemberLevel.aggregate<{ total: number }>([{ $group: { _id: "$userId" } }, { $count: "total" }], { allowDiskUse: true });
+		return row?.total ?? 0;
+	},
+
 	// ── admin correction ──
 	// /leveling xp set-xp writes an absolute value, unlike every other path here. It also
 	// resets announcedLevel, because lowering a member's xp below a level they

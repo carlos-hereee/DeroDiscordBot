@@ -173,11 +173,12 @@ export const levelingCopy = {
 		participation: "Who showed up for events. See /leaderboard.",
 	},
 
-	// The three views /account offers, its `view` option's choice labels.
+	// The views /account offers, its `view` option's choice labels.
 	accountViews: {
 		profile: "Profile",
 		levels: "Levels",
 		achievements: "Achievements",
+		saved: "Saved matches",
 	},
 	// The same three views as buttons on the #command-center guide (PowerUps).
 	guideButtons: {

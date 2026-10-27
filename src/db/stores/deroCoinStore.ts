@@ -47,6 +47,20 @@ export const deroCoinStore = {
 		return row?.total ?? 0;
 	},
 
+	/** The owner's Verse view: every coin ever paid, and the coins paid since `since` (the UTC month's start). */
+	async sumAllAwards(since?: Date): Promise<number> {
+		const [row] = await CoinAward.aggregate<{ total: number }>([
+			...(since ? [{ $match: { at: { $gte: since } } }] : []),
+			{ $group: { _id: null, total: { $sum: "$amount" } } },
+		]);
+		return row?.total ?? 0;
+	},
+
+	/** The collection name the Verse view's union reads from, so no caller retypes it. */
+	coinAwardCollectionName(): string {
+		return CoinAward.collection.name;
+	},
+
 	/** Whether a claim award already exists under one claim key for one member. */
 	async hasClaim(claimKey: string, userId: string): Promise<boolean> {
 		return (await CoinAward.exists({ source: "claim", claimKey, userId })) !== null;

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { InteractionType, type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findByRoomId: vi.fn(), markArchived: vi.fn(), findOpenByHost: vi.fn() },
+	gameRoomStore: { findByRoomId: vi.fn(), markArchived: vi.fn(), findOpenByHost: vi.fn(), addSavedBy: vi.fn() },
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: { findByGuildId: vi.fn() },
@@ -21,7 +21,7 @@ import { roomLifecycle } from "./roomLifecycle.js";
 import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
-const storeMock = gameRoomStore as unknown as { findByRoomId: ReturnType<typeof vi.fn> };
+const storeMock = gameRoomStore as unknown as { findByRoomId: ReturnType<typeof vi.fn>; addSavedBy: ReturnType<typeof vi.fn> };
 const gateMock = gateOwnerOrAdmin as unknown as ReturnType<typeof vi.fn>;
 const lifecycleMock = roomLifecycle as unknown as {
 	archiveNow: ReturnType<typeof vi.fn>;
@@ -221,6 +221,98 @@ describe("archive and forfeit ask first", () => {
 		const reply = (press.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { components: Array<{ components: Array<{ data: { custom_id: string } }> }> };
 		expect(reply.components[0].components[0].data.custom_id).toBe("gameroom:archiveok:room-1");
 		expect(lifecycleMock.archiveNow).not.toHaveBeenCalled();
+	});
+});
+
+// ── Save this match to my profile (2026-10 item 257 Phase 3b, owner item 23) ──
+// The archive confirm carries one select, applied on Submit and BEFORE the archive runs.
+describe("the archive confirm's save to profile choice", () => {
+	type SelectJson = { type: number; components: Array<{ type: number; component?: { custom_id: string; options: Array<{ value: string; default?: boolean }> } }> };
+	const modalJson = (press: { showModal: ReturnType<typeof vi.fn> }): { components: SelectJson["components"] } =>
+		(press.showModal.mock.calls[0][0] as { toJSON(): { components: SelectJson["components"] } }).toJSON();
+
+	// A Submit carrying the select's answer, the way discord.js reads one back.
+	function submitWith(userId: string, values: string[] | "throws") {
+		const fake = submit("gameroom:archiveok:room-1", userId) as unknown as Record<string, unknown>;
+		fake.fields = {
+			getStringSelectValues: (id: string) => {
+				if (values === "throws" || id !== "savematch") throw new Error("Required field not found");
+				return values;
+			},
+		};
+		return fake as unknown as ModalSubmitInteraction;
+	}
+
+	it("offers the choice to a player of a finished match, defaulting to no", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished" }));
+		const press = pressWithModal("gameroom:archive:room-1", "host-1");
+
+		await _handleGameRoomButton(press);
+
+		const label = modalJson(press).components.find((component) => component.type === 18);
+		expect(label?.component?.custom_id).toBe("savematch");
+		expect(label?.component?.options.find((option) => option.default)?.value).toBe("no");
+	});
+
+	it("offers nothing to an admin who is not a player, or for a match still in play", async () => {
+		gateMock.mockResolvedValue(true);
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished" }));
+		const adminPress = pressWithModal("gameroom:archive:room-1", "moderator-9");
+		await _handleGameRoomButton(adminPress);
+		expect(modalJson(adminPress).components.some((component) => component.type === 18)).toBe(false);
+
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "playing" }));
+		const livePress = pressWithModal("gameroom:archive:room-1", "host-1");
+		await _handleGameRoomButton(livePress);
+		expect(modalJson(livePress).components.some((component) => component.type === 18)).toBe(false);
+	});
+
+	it("saves the presser, then archives, when they chose yes", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished" }));
+		const order: string[] = [];
+		storeMock.addSavedBy.mockImplementation(async () => void order.push("save"));
+		lifecycleMock.archiveNow.mockImplementation(async () => {
+			order.push("archive");
+			return { ok: true };
+		});
+
+		await _handleGameRoomConfirm(submitWith("host-1", ["yes"]));
+
+		expect(storeMock.addSavedBy).toHaveBeenCalledWith("guild-1", "room-1", "host-1");
+		expect(order).toEqual(["save", "archive"]);
+	});
+
+	it.each([
+		["no", ["no"]],
+		["no answer at all", []],
+		["a submit with no select field", "throws"],
+	] as const)("saves nothing and still archives for %s", async (_label, values) => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished" }));
+
+		await _handleGameRoomConfirm(submitWith("host-1", values as string[] | "throws"));
+
+		expect(storeMock.addSavedBy).not.toHaveBeenCalled();
+		expect(lifecycleMock.archiveNow).toHaveBeenCalledOnce();
+	});
+
+	it("saves nothing for an admin who did not play, even on a forged yes", async () => {
+		gateMock.mockResolvedValue(true);
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished" }));
+
+		await _handleGameRoomConfirm(submitWith("moderator-9", ["yes"]));
+
+		expect(storeMock.addSavedBy).not.toHaveBeenCalled();
+		expect(lifecycleMock.archiveNow).toHaveBeenCalledOnce();
+	});
+
+	it("archives anyway when the save itself fails", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished" }));
+		storeMock.addSavedBy.mockRejectedValue(new Error("db down"));
+
+		await _handleGameRoomConfirm(submitWith("host-1", ["yes"]));
+
+		expect(lifecycleMock.archiveNow).toHaveBeenCalledOnce();
 	});
 });
 

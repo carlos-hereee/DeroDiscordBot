@@ -138,6 +138,11 @@ export interface IGameRoom {
 	secret: RoomSecret | null;
 	moves: RoomMove[];
 	winnerId: string | null;
+	// The players who chose Save this match to my profile when the room was archived
+	// (2026-10 item 257 Phase 3b), shown by /account view:saved. Only ever a member of
+	// playerIds, added by gameRoomStore.addSavedBy and by nothing else. The row outlives
+	// its channel, so a saved match stays readable after the archive deletes the room.
+	savedBy: string[];
 	startedAt: Date | null;
 	endedAt: Date | null;
 	// The moment the sweep may delete this room's channel. See the index note below: this is
@@ -248,6 +253,8 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		secret: { type: mongoose.Schema.Types.Mixed, default: null },
 		moves: { type: [roomMoveSchema], default: [] },
 		winnerId: { type: String, default: null },
+		// Empty by default, so an older row reads as saved by nobody and needs no backfill.
+		savedBy: { type: [String], default: [] },
 		startedAt: { type: Date, default: null },
 		endedAt: { type: Date, default: null },
 		archiveAt: { type: Date, default: null },
@@ -286,6 +293,10 @@ gameRoomSchema.index({ status: 1, archiveAt: 1 });
 // The future dashboard's "show me my game history in this guild" query. playerIds is an array,
 // so this is a multikey index; endedAt descending gives the newest-first cursor for free.
 gameRoomSchema.index({ guildId: 1, playerIds: 1, endedAt: -1 });
+
+// /account view:saved, exactly: this guild, rooms a member saved, newest finish first. Sparse in
+// effect, since most rows have an empty savedBy and contribute no index entries.
+gameRoomSchema.index({ guildId: 1, savedBy: 1, endedAt: -1 });
 
 // ── The satellite lookups (2026-10 item 244 Phase 5a) ──
 // What:  a press in a satellite channel finds its host row by that channel, and a member

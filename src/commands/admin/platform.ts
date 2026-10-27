@@ -3,10 +3,12 @@ import { networkCopy } from "@features/game-rooms/networkCopy.js";
 import { renderAnalyticsCopy } from "@features/renderer/renderAnalyticsCopy.js";
 import { addNetworkBanSubcommands, runNetworkBanSubcommand } from "@features/game-rooms/networkBanSubcommands.js";
 import { addRenderAnalyticsOptions, runRenderAnalyticsSubcommand } from "@features/renderer/renderAnalyticsSubcommand.js";
+import { addVerseSubcommand, runVerseSubcommand } from "@features/platform/verseSubcommand.js";
 
 // ── /platform ─────────────────────────────────────────────────────────
 // What:  the platform owner's tools: the `network` group (ban and unban a member or
-//        a server from every network table) and `analytics` (render cache analytics).
+//        a server from every network table), `analytics` (render cache analytics) and
+//        `verse` (the Verse's counts, 2026-10 item 257 Phase 3b).
 // Who:   the platform owner ONLY. Each handler checks isPlatformOwner first thing in
 //        its own run, before reading anything; an unset CREATOR_DISCORD_ID refuses
 //        everyone. It carries no Discord default permission, so it shows in every
@@ -19,11 +21,16 @@ export const data = new SlashCommandBuilder()
 	.setName("platform")
 	.setDescription(networkCopy.command.platformDescription)
 	.addSubcommandGroup((group) => addNetworkBanSubcommands(group.setName("network").setDescription(networkCopy.command.description)))
-	.addSubcommand((sub) => addRenderAnalyticsOptions(sub.setName("analytics").setDescription(renderAnalyticsCopy.command.analyticsDescription)));
+	.addSubcommand((sub) => addRenderAnalyticsOptions(sub.setName("analytics").setDescription(renderAnalyticsCopy.command.analyticsDescription)))
+	.addSubcommand((sub) => addVerseSubcommand(sub));
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
 	if (interaction.options.getSubcommandGroup(false) === "network") {
 		await runNetworkBanSubcommand(interaction);
+		return;
+	}
+	if (interaction.options.getSubcommand(false) === "verse") {
+		await runVerseSubcommand(interaction);
 		return;
 	}
 	await runRenderAnalyticsSubcommand(interaction);

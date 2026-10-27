@@ -15,7 +15,7 @@ const KIND_NAMES: Record<NetworkBanKind, string> = {
 export const networkCopy = {
 	command: {
 		// /platform itself (commands/admin/platform.ts), whose network group is this file's.
-		platformDescription: "Platform owner only: network bans and render analytics",
+		platformDescription: "Platform owner only: network bans, render analytics and the Verse's counts",
 		description: "Keep a member or a server off every network table",
 		ban: "Ban a member or a server from network tables",
 		unban: "Lift a network ban",
