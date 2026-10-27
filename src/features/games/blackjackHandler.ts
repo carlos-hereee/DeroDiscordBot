@@ -9,6 +9,7 @@ import {
 	type ButtonInteraction,
 	type Channel,
 	type ChatInputCommandInteraction,
+	type Client,
 	type EmbedBuilder,
 	type Message,
 	type MessageEditOptions,
@@ -19,14 +20,16 @@ import { CooldownManager } from "@utils/cooldownManager.js";
 import { withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
 import { gamesCopy } from "./gamesCopy.js";
 import { blackjackResultView, blackjackTableView, renderBlackjackResultCard, renderBlackjackTableCard } from "./blackjackRenderer.js";
-import { buildBlackjackResultEmbed, buildBlackjackSeatingEmbed, buildBlackjackTableEmbed } from "./gamesEmbeds.js";
+import { buildBlackjackResultEmbed, buildBlackjackSeatingEmbed, buildBlackjackTableEmbed, renderHand, renderTotal } from "./gamesEmbeds.js";
 import { applyAction, applyLeave, createTable, legalActions, playDealer, settle, type BlackjackAction, type BlackjackTable, type SeatResult } from "./blackjackState.js";
 import { awardBlackjackResult } from "./gameXp.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
 import { roomTrail } from "@features/game-rooms/roomTrail.js";
 import { drawingSettled, isClockExpired, pausedDeadline, withDrawingPause } from "@features/game-rooms/drawingPause.js";
 import { showErrorNotice } from "@utils/textModal.js";
+import { syncTurnPrompt, type TurnAdapter } from "@features/game-rooms/turnPrompt.js";
 
 // ── /mini-game blackjack ───────────────────────────────────────────────────
 // What:  three surfaces on ONE engine, exactly as the owner asked. `solo` deals
@@ -53,7 +56,8 @@ import { showErrorNotice } from "@utils/textModal.js";
 // no private per player view and therefore never meets the interaction token
 // problem that shapes battleship and holdem. Do not "improve" this by showing a
 // player their own hand ephemerally; there is nothing they can see that the
-// board does not already show them.
+// board does not already show them. The turn modal a room table opens (blackjackTurnAdapter,
+// 2026-10 item 257 Phase 4a) shows the same public hand beside the moves, nothing more.
 //
 // ⚠️ A ROOM'S TABLE STILL DIES ON RAILWAY SIGTERM, AND THAT IS CLOSED OUT
 // HONESTLY RATHER THAN RECOVERED. A blackjack room, solo or multi seat, opens through
@@ -113,6 +117,10 @@ interface BlackjackGame {
 	// then closes the room through roomLifecycle.finish (lock, result card, archive
 	// clock). Null for the inline slash forms, which own no room.
 	roomId: string | null;
+	// The board message the collector watches, set once it is wired. The turn modal's Submit has
+	// no click on the board to answer through, so it edits this message instead (a message edit,
+	// unlike a click's token, never expires); a room table's result also reposts from it.
+	board: Message | null;
 	seatingTimer: NodeJS.Timeout | null;
 	// The table's lifetime clock: when the board was posted, and the timer that ends
 	// the table TABLE_TIMEOUT_MS later plus any time the board spent drawing.
@@ -286,6 +294,7 @@ export async function startBlackjackTable(
 		table: null,
 		settled: false,
 		roomId,
+		board: null,
 		seatingTimer: null,
 		openedAt: Date.now(),
 		lifetimeTimer: null,
@@ -334,6 +343,8 @@ export async function startBlackjackTable(
 		// channel occupied by a finished game.
 		wireCollector(game, channel.id, board);
 		if (settledOnDeal) game.stop();
+		// A room table deals at once, so its first seat is prompted here (item 257 Phase 4a).
+		else if (dealNow) await promptTurn(game, channel.client);
 
 		// ④ The window closes itself. Without this a table whose host never presses
 		// Deal would sit in the seating phase until the collector's own timeout,
@@ -357,6 +368,7 @@ export async function startBlackjackTable(
 // ── the collector, one per game ─────────────────────────────────────────────
 
 function wireCollector(game: BlackjackGame, channelId: string, board: Message): void {
+	game.board = board;
 	// No `time` option: the table's lifetime is armLifetime's timer below, which can
 	// hold while the board draws. The collector's own limit cannot.
 	const collector = board.createMessageComponentCollector({
@@ -460,32 +472,53 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 		await leaveDuringHand(click, game, channelId);
 		return;
 	}
-	if (!(["hit", "stand", "double", "split"] as string[]).includes(action)) return;
+	if (!BLACKJACK_ACTIONS.includes(action)) return;
 
-	const outcome = applyAction(game.table, click.user.id, action as BlackjackAction);
-	if (outcome.status === "not-your-turn") {
+	const played = await playBlackjackAction(game, channelId, click.user.id, action as BlackjackAction, click.client, clickWriter(click));
+	if (played === "not-your-turn") {
 		const seated = game.table.seats.some((seat) => seat.userId === click.user.id);
 		await showErrorNotice(click, seated ? c.notYourTurn : c.notPlaying);
 		return;
 	}
-	if (outcome.status === "illegal") {
-		await showErrorNotice(click, c.illegalAction);
-		return;
-	}
+	if (played === "illegal") await showErrorNotice(click, c.illegalAction);
+}
+
+const BLACKJACK_ACTIONS: readonly string[] = ["hit", "stand", "double", "split"];
+
+/**
+ * One seat's action against the table, from a board button or the turn modal: the SAME path
+ * (2026-10 item 257 Phase 4a), so an action never has two implementations. `writer` is how the
+ * board is rewritten, the click's own token or the board message itself.
+ */
+async function playBlackjackAction(
+	game: BlackjackGame,
+	channelId: string,
+	userId: string,
+	action: BlackjackAction,
+	client: Message["client"],
+	writer: BoardWriter
+): Promise<"played" | "not-your-turn" | "illegal"> {
+	if (!game.table) return "illegal";
+	const outcome = applyAction(game.table, userId, action);
+	if (outcome.status === "not-your-turn") return "not-your-turn";
+	if (outcome.status === "illegal") return "illegal";
 
 	// The hand may have ended on this very action. Settling BEFORE the render
 	// means the player sees one final board rather than a live board that is
 	// replaced a moment later.
 	if (game.table.phase === "dealer") {
-		const result = settleGame(game, channelId, click.client);
+		const result = settleGame(game, channelId, client);
 		if (result) {
-			await redrawResult(channelId, result, clickWriter(click));
+			await redrawResult(channelId, result, resultWriter(game, writer));
+			await promptTurn(game, client);
 			game.stop();
-			return;
+			return "played";
 		}
 	}
 
-	await redrawTable(channelId, game.table, clickWriter(click));
+	await redrawTable(channelId, game.table, writer);
+	await promptTurn(game, client);
+	return "played";
 }
 
 // ── leaving during a hand (2026-10 item 254, Arcade 12) ──
@@ -507,8 +540,9 @@ async function leaveDuringHand(click: ButtonInteraction, game: BlackjackGame, ch
 	}
 
 	const result = game.table.phase === "dealer" ? settleGame(game, channelId, click.client) : null;
-	if (result) await redrawResult(channelId, result, clickWriter(click));
+	if (result) await redrawResult(channelId, result, resultWriter(game, clickWriter(click)));
 	else await redrawTable(channelId, game.table, clickWriter(click));
+	await promptTurn(game, click.client);
 	await click.followUp({ content: c.leftHand, flags: MessageFlags.Ephemeral }).catch(() => undefined);
 	if (result) game.stop();
 }
@@ -545,13 +579,14 @@ async function dealInto(game: BlackjackGame, channelId: string, click: ButtonInt
 	if (table.phase === "dealer") {
 		const result = settleGame(game, channelId, click.client);
 		if (result) {
-			await redrawResult(channelId, result, clickWriter(click));
+			await redrawResult(channelId, result, resultWriter(game, clickWriter(click)));
 			game.stop();
 			return;
 		}
 	}
 
 	await redrawTable(channelId, table, clickWriter(click), embed);
+	await promptTurn(game, click.client);
 }
 
 async function closeSeating(channelId: string, board: Message): Promise<void> {
@@ -572,12 +607,13 @@ async function closeSeating(channelId: string, board: Message): Promise<void> {
 	if (table.phase === "dealer") {
 		const result = settleGame(game, channelId, board.client);
 		if (result) {
-			await redrawResult(channelId, result, messageWriter(board));
+			await redrawResult(channelId, result, resultWriter(game, messageWriter(board)));
 			game.stop();
 			return;
 		}
 	}
 	await redrawTable(channelId, table, messageWriter(board), embed);
+	await promptTurn(game, board.client);
 }
 
 // ── settlement ──────────────────────────────────────────────────────────────
@@ -641,6 +677,22 @@ const messageWriter = (board: Message): BoardWriter => ({
 	showStatus: (status) => board.edit({ content: status }),
 	write: (payload) => board.edit(payload),
 });
+
+// A room table's RESULT posts as a fresh message and retires the board, so the dealer's revealed
+// hand is the last thing in the room instead of an edit buried under the turn prompts and the
+// room's own result card (2026-10 item 257 Phase 4a). The base writer still takes the status
+// line, which is what acknowledges a click. The inline slash forms own no room and keep the edit.
+function resultWriter(game: BlackjackGame, base: BoardWriter): BoardWriter {
+	const board = game.board;
+	if (!game.roomId || !board) return base;
+	return {
+		showStatus: base.showStatus,
+		write: async (payload) => {
+			if (board.channel.isSendable()) await board.channel.send({ embeds: payload.embeds, files: payload.files, components: [], allowedMentions: { parse: [] } });
+			await board.delete().catch((error: unknown) => console.warn("[mini-game] the old blackjack board could not be deleted", error));
+		},
+	};
+}
 
 // Behind the drawing pause. `attachments: []` drops the previous turn's card, which
 // an edit otherwise keeps, and `content: null` takes the drawing status back off.
@@ -717,6 +769,69 @@ function settleGame(game: BlackjackGame, channelId: string, client: Message["cli
 	const anyDoubledLoss = results.some((seat) => seat.hands.some((outcome, index) => outcome === "lose" && seat.doubled[index]));
 	return { embed: buildBlackjackResultEmbed(game.table, results, anyDoubledLoss), table: game.table, results };
 }
+
+// ── the turn prompt (turnPrompt.ts, 2026-10 item 257 Phase 4a) ────────
+// What:  Blackjack's side of the shared turn piece, for a room's multi seat table. The table
+//        lives in this file's process Map, so the adapter reads the game by the room's channel.
+//        Every hand here is public, so the modal shows nothing the board does not: it is the
+//        player's own cards, the dealer's up card and the moves that are legal.
+// How:   a move plays through playBlackjackAction, the function the board's buttons call, and
+//        the board is rewritten by editing its message. A one seat Play Dero table
+//        (solo-blackjack) is not prompted: its player is alone with the buttons.
+
+const MOVE_FIELD = "move";
+
+const gameOf = (room: { channelId: string | null }): BlackjackGame | undefined => (room.channelId ? games.get(room.channelId) : undefined);
+
+const actingSeat = (game: BlackjackGame | undefined) => (game?.table?.phase === "playing" ? game.table.seats[game.table.turn] : undefined);
+
+// Post (or retire) the prompt for whoever the table is waiting on. Fire and forget after the
+// board was drawn: a failed prompt never holds a hand up. Rooms only; the inline forms have no row.
+async function promptTurn(game: BlackjackGame, client: Client): Promise<void> {
+	if (!game.roomId) return;
+	const room = await gameRoomStore.findByRoomId(game.guildId, game.roomId).catch(() => null);
+	if (room) await syncTurnPrompt(client, room, blackjackTurnAdapter);
+}
+
+export const blackjackTurnAdapter: TurnAdapter = {
+	game: "blackjack",
+	whoseTurn(room) {
+		return actingSeat(gameOf(room))?.userId ?? null;
+	},
+	fingerprintOf(room) {
+		const table = gameOf(room)?.table;
+		if (!table || table.phase !== "playing") return null;
+		const cardsDealt = table.seats.reduce((total, seat) => total + seat.hands.reduce((sum, hand) => sum + hand.cards.length, 0), 0);
+		return `j${table.turn}.${table.seats[table.turn]?.activeHand ?? 0}.${cardsDealt}`;
+	},
+	view(room, userId) {
+		const game = gameOf(room);
+		const seat = actingSeat(game);
+		const table = game?.table;
+		if (!game || !table || !seat || seat.userId !== userId) return null;
+		const legal = legalActions(table, userId);
+		if (legal.length === 0) return null;
+		const copy = gamesCopy.blackjack;
+		const hand = seat.hands[seat.activeHand];
+		const labels: Record<BlackjackAction, string> = { hit: copy.hitLabel, stand: copy.standLabel, double: copy.doubleLabel, split: copy.splitLabel };
+		return {
+			title: copy.turnModalTitle,
+			text: [copy.turnHandText(renderHand(hand.cards), renderTotal(hand.cards), table.dealer.cards[0] ? renderHand([table.dealer.cards[0]]) : "")],
+			fields: [{ kind: "select", id: MOVE_FIELD, label: gameRoomsCopy.turnPrompt.moveLabel, options: legal.map((action) => ({ label: labels[action], value: action })) }],
+		};
+	},
+	async apply(client, room, userId, answers, acknowledge) {
+		const game = gameOf(room);
+		const action = answers[MOVE_FIELD] ?? "";
+		if (!game?.table || !game.board) return { ok: false, reason: gameRoomsCopy.turnPrompt.turnPassed };
+		if (!BLACKJACK_ACTIONS.includes(action)) return { ok: false, reason: gamesCopy.blackjack.illegalAction };
+		await acknowledge();
+		// The board message was fetched by this very process, so its client is the ready one.
+		const played = await playBlackjackAction(game, room.channelId ?? "", userId, action as BlackjackAction, game.board.client, messageWriter(game.board));
+		if (played === "not-your-turn") return { ok: false, reason: gamesCopy.blackjack.notYourTurn };
+		return played === "illegal" ? { ok: false, reason: gamesCopy.blackjack.illegalAction } : { ok: true };
+	},
+};
 
 /**
  * The one winner a room's result card can name: the only seat with a hand that beat the

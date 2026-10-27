@@ -5,6 +5,8 @@ import {
 	ModalBuilder,
 	StringSelectMenuBuilder,
 	TextDisplayBuilder,
+	TextInputBuilder,
+	TextInputStyle,
 	type ButtonInteraction,
 	type ChatInputCommandInteraction,
 	type ModalSubmitInteraction,
@@ -17,7 +19,9 @@ import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActio
 // What:  a game room's private single choice picker (the opponent, the bot count, the
 //        player to remove, a rock paper scissors throw) shown as a modal with one
 //        required select, instead of a private select message that sits in the channel
-//        until it is dismissed (2026-10 item 254 Phase 5b, owner decision 3).
+//        until it is dismissed (2026-10 item 254 Phase 5b, owner decision 3). Since 2026-10
+//        item 257 Phase 4a it also builds the modal of several fields a turn opens
+//        (buildFieldsModal): a hand as text, a select of moves and an optional typed amount.
 // Who:   challengeBoard (opponent, bots), hostControls (kick) and roomGames (rps), and
 //        the daily claim's rock paper scissors round (economy/chipClaim.ts, 2026-10 item
 //        257 Phase 3a), which routes to its own handler rather than a room's.
@@ -109,4 +113,84 @@ export async function deferPick(interaction: StringSelectMenuInteraction | Modal
 /** A slow pick's outcome: it replaces the picker message, or answers the modal privately. */
 export async function answerPick(interaction: StringSelectMenuInteraction | ModalSubmitInteraction, content: string): Promise<void> {
 	await interaction.editReply(interaction.isModalSubmit() ? { content } : { content, components: [] });
+}
+
+// ── several fields (the turn modal, 2026-10 item 257 Phase 4a) ────────
+// A turn's modal is a hand over its moves: text displays, then selects and an optional text
+// input. Discord caps a modal at five components in all (text displays and labels count
+// alike), so the builder keeps the fields whole and gives the text what room is left.
+
+/** Discord's ceiling on the components of one modal. */
+const MODAL_COMPONENT_LIMIT = 5;
+
+/** One option of a select field. */
+export interface FieldOption {
+	label: string;
+	value: string;
+	description?: string;
+	isDefault?: boolean;
+}
+
+/** One field of a fields modal: a required select, or an optional text input. */
+export type ModalField =
+	| { kind: "select"; id: string; label: string; options: readonly FieldOption[] }
+	| { kind: "text"; id: string; label: string; placeholder: string; maxLength: number };
+
+/** What a fields modal shows: its routing id, its title, the text over the fields, and the fields. */
+export interface FieldsModalContent {
+	customId: string;
+	title: string;
+	text: readonly string[];
+	fields: readonly ModalField[];
+}
+
+const MAX_MODAL_TITLE_LENGTH = 45;
+const MAX_TEXT_DISPLAY_LENGTH = 4000;
+
+/**
+ * The modal for several fields. The text lands in as many displays as the fields leave room
+ * for (the last one carries what does not fit, joined), so a hand is never dropped for a move
+ * and a move is never dropped for a hand. Exported for the tests, which read it with toJSON.
+ */
+export function buildFieldsModal(content: FieldsModalContent): ModalBuilder {
+	const displayRoom = Math.max(MODAL_COMPONENT_LIMIT - content.fields.length, 0);
+	const sections = content.text.filter((section) => section.trim().length > 0);
+	const displays = sections.length <= displayRoom ? sections : [...sections.slice(0, displayRoom - 1), sections.slice(displayRoom - 1).join("\n\n")];
+	const modal = new ModalBuilder().setCustomId(content.customId).setTitle(content.title.slice(0, MAX_MODAL_TITLE_LENGTH));
+	for (const section of displays.slice(0, displayRoom)) modal.addTextDisplayComponents(new TextDisplayBuilder().setContent(section.slice(0, MAX_TEXT_DISPLAY_LENGTH)));
+	for (const field of content.fields) modal.addLabelComponents(labelOf(field));
+	return modal;
+}
+
+function labelOf(field: ModalField): LabelBuilder {
+	const label = new LabelBuilder().setLabel(field.label);
+	if (field.kind === "text") {
+		return label.setTextInputComponent(
+			new TextInputBuilder().setCustomId(field.id).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(field.maxLength).setPlaceholder(field.placeholder)
+		);
+	}
+	const select = new StringSelectMenuBuilder()
+		.setCustomId(field.id)
+		.setMinValues(1)
+		.setMaxValues(1)
+		.setRequired(true)
+		.addOptions(field.options.map((option) => ({ label: option.label, value: option.value, description: option.description, default: option.isDefault === true })));
+	return label.setStringSelectMenuComponent(select);
+}
+
+/**
+ * What a fields modal was answered with, by field id: a select's chosen value, a text input's
+ * trimmed text. A field the submit lacks reads as empty, which only a hand made submit can
+ * produce, since Discord enforces a required select; the caller refuses an empty move.
+ */
+export function readFieldAnswers(interaction: ModalSubmitInteraction, fields: readonly ModalField[]): Record<string, string> {
+	const answers: Record<string, string> = {};
+	for (const field of fields) {
+		try {
+			answers[field.id] = field.kind === "select" ? (interaction.fields.getStringSelectValues(field.id)[0] ?? "") : interaction.fields.getTextInputValue(field.id).trim();
+		} catch {
+			answers[field.id] = "";
+		}
+	}
+	return answers;
 }

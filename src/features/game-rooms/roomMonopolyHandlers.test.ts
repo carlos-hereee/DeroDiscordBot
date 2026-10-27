@@ -8,7 +8,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		// the caller's read was still current; null means somebody else moved first.
 		updateSecretIf: vi.fn(),
 		// Moving the board to a fresh message at a turn change (2026-10 item 254, Arcade 8).
-		moveMonopolyBoard: vi.fn(),
+		moveBoardMessage: vi.fn(),
 	},
 }));
 // The board carries a turn's lines and the finished turn posts as one log message, so
@@ -45,7 +45,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 const storeMock = gameRoomStore as unknown as {
 	findByRoomId: ReturnType<typeof vi.fn>;
 	updateSecretIf: ReturnType<typeof vi.fn>;
-	moveMonopolyBoard: ReturnType<typeof vi.fn>;
+	moveBoardMessage: ReturnType<typeof vi.fn>;
 };
 const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
 const carriedMock = roomTrail.recordCarriedMoves as unknown as ReturnType<typeof vi.fn>;
@@ -136,7 +136,7 @@ beforeEach(() => {
 	postMoveMock.mockResolvedValue(true);
 	moveLogMock.mockResolvedValue(true);
 	carriedMock.mockResolvedValue(undefined);
-	storeMock.moveMonopolyBoard.mockResolvedValue({});
+	storeMock.moveBoardMessage.mockResolvedValue({});
 	finishMock.mockResolvedValue(true);
 	diceMock.mockReturnValueOnce(ROLL_ONE).mockReturnValueOnce(ROLL_TWO);
 	renderMock.mockResolvedValue(null);

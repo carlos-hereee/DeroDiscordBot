@@ -13,7 +13,9 @@ import {
 	deserializeMatch,
 	battleshipBoardMessage,
 } from "./roomBattleship.js";
-import { createTable as createHoldemTable, joinTable as joinHoldemTable, type HoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
+import { createTable as createHoldemTable, joinTable as joinHoldemTable, setBuyIn as setHoldemBuyIn, type HoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
+import { returnChips } from "@features/economy/chipWallet.js";
+import type { PaidSeats } from "./holdemDraftBuyIn.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
 import { createInitialState as createMonopolyState } from "@features/games/monopolyState.js";
@@ -21,6 +23,8 @@ import { chipTableFor } from "./holdemChips.js";
 import { botSeatName, labelBotMentions } from "./botSeat.js";
 import { monopolyBoardEmbed, monopolyControlsRow } from "./roomMonopoly.js";
 import { seatNamesForBoard } from "./roomMonopolyBoard.js";
+import { monopolyTurnAdapter } from "./roomMonopolyHandlers.js";
+import { syncTurnPrompt } from "./turnPrompt.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -180,6 +184,9 @@ export interface RoomOpenInput {
 	// asked for a table and confirmed its terms). Absent everywhere else, which
 	// opens the standard table exactly as before. Ignored for every other game.
 	holdemTerms?: HoldemTerms;
+	// The members who paid the buy in on the challenge card, host first, and the amount
+	// (2026-10 item 257 Phase 4a): a chip table opens with them already seated at it.
+	holdemSeats?: PaidSeats;
 	// Whether a Monopoly match opens with auctions on: the host's choice on the
 	// challenge card, carried from the draft row. Absent means off. Ignored for every
 	// other game.
@@ -307,6 +314,7 @@ export const RoomProvisioner = {
 			visibility,
 			spectatorMode: input.spectatorMode ?? null,
 			holdemTerms: input.holdemTerms,
+			holdemSeats: input.holdemSeats,
 			monopolyAuctions: input.monopolyAuctions,
 			hangmanCategory: input.hangmanCategory,
 			botIds: input.botIds,
@@ -421,6 +429,7 @@ export interface RoomSeedInput {
 	// about who can watch. Absent or null reads as the visibility's default.
 	spectatorMode?: SpectatorMode | null;
 	holdemTerms?: HoldemTerms;
+	holdemSeats?: PaidSeats;
 	monopolyAuctions?: boolean;
 	hangmanCategory?: HangmanCategory;
 	// The Dero bot seats the host chose on the challenge card (2026-10 item 250 Phase 5),
@@ -490,6 +499,15 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 		// with a bot seat plays free, so a bot never pays a member chips it never had.
 		const chips = await chipTableFor(room, botIds.length > 0);
 		if (chips) table.chips = chips;
+		// The members who paid on the challenge card sit down at the buy in they paid. A table that
+		// turned out to play free (chips switched off since) gives those chips back instead.
+		const paid = input.holdemSeats;
+		if (paid && chips) {
+			setHoldemBuyIn(table, paid.buyIn);
+			for (const userId of paid.userIds) joinHoldemTable(table, userId, guild.members.cache.get(userId)?.displayName ?? userId);
+		} else if (paid) {
+			for (const userId of paid.userIds) await returnChips({ guildId: guild.id, userId }, paid.buyIn);
+		}
 		// The host's Dero bots take their seats before anybody buys in.
 		for (const botId of botIds) joinHoldemTable(table, botId, botSeatName(botId));
 		const boardMessage = await channel
@@ -525,6 +543,9 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 			// RoomSecret, so another game's state needs the cast to be stored there.
 			secret: { ...state, boardMessageId: boardMessage?.id ?? null } as never,
 		});
+		// The first seat's prompt line (2026-10 item 257 Phase 4a). Every later turn posts its line
+		// above the fresh board; this first one has no board to go above, so it sits below it.
+		await syncTurnPrompt(guild.client, started ?? room, monopolyTurnAdapter);
 	}
 
 	// Solo hangman is seeded HERE rather than authored: the host is the guesser, so

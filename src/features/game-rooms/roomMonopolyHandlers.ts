@@ -8,7 +8,7 @@ import {
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { secureRandom } from "@utils/secureRng.js";
-import { ownableTileName } from "@features/games/monopolyBoard.js";
+import { BOARD, JAIL_BAIL, describeTile, isOwnableTile, ownableTileName } from "@features/games/monopolyBoard.js";
 import {
 	applyBuy,
 	applyEndTurn,
@@ -17,6 +17,7 @@ import {
 	applyPayDebt,
 	applyRoll,
 	applySkip,
+	waitingDebt,
 	type JailChoice,
 	type MonopolyResult,
 	type MonopolyState,
@@ -29,7 +30,8 @@ import { monopolyFinishingOrder, recordMatchRatings } from "@features/ratings/re
 import { roomLifecycle } from "./roomLifecycle.js";
 import { monopolyOutcome, type FinishCause, type OutcomeBucket } from "./matchOutcome.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { auctionClosesAt, monopolyInventoryReply } from "./roomMonopoly.js";
+import { auctionClosesAt, monopolyInventoryReply, monopolyPromptButtons } from "./roomMonopoly.js";
+import { syncTurnPrompt, type TurnAdapter, type TurnView } from "./turnPrompt.js";
 import { monopolyStateOf, placeMonopolyBoard, splitTurnLines, withTurnLog } from "./roomMonopolyBoard.js";
 import { postRefereeNotice } from "./roomMonopolyRefereeNotice.js";
 import { announceReferee } from "./roomMonopolyReferee.js";
@@ -132,7 +134,9 @@ export async function applyMonopolyOutcome(
 	cause: FinishCause = "played"
 ): Promise<void> {
 	const split = splitTurnLines(read, state, trail.lines);
-	await placeMonopolyBoard(client, room, state, { split, actorId: trail.actorId, kind: trail.kind });
+	// The prompt line for whoever the turn passed to posts inside the placement, above the fresh
+	// board, which stays the last message in the room (item 257 Phase 4a).
+	await placeMonopolyBoard(client, room, state, { split, actorId: trail.actorId, kind: trail.kind, promptSync: () => syncTurnPrompt(client, room, monopolyTurnAdapter) });
 	// Voice only, for a room whose host turned the referee on. Fire and forget, so a
 	// slow render never holds up the finish below or the next press. A move it cannot
 	// speak posts the match's one notice saying why (2026-10 item 254, Arcade 7).
@@ -324,21 +328,34 @@ async function runMonopolyAction(
 	if (!outcome.ok) await refuse(interaction, outcome.reason);
 }
 
+// ── the moves ─────────────────────────────────────────────────────────
+// Each turn move bound to its engine action, ONCE: the board's buttons and the turn modal
+// (monopolyTurnAdapter) both play these, so a move has exactly one path (item 257 Phase 4a).
+
 /** Roll the dice. secureRandom, because the dice decide who pays whom. */
-export const handleMroll = (interaction: ButtonInteraction, room: IGameRoom): Promise<void> =>
-	runMonopolyAction(interaction, room, (state) => applyRoll(state, secureRandom));
+const rollMove: MonopolyMove = (state) => applyRoll(state, secureRandom);
 
 /** Buy the lot on the button. The engine refuses a lot the seat is no longer standing on. */
-export const handleMbuy = (interaction: ButtonInteraction, room: IGameRoom, tileId: string): Promise<void> =>
-	runMonopolyAction(interaction, room, (state, actorId) => applyBuy(state, actorId, tileId));
+const buyMove = (tileId: string): MonopolyMove => (state, actorId) => applyBuy(state, actorId, tileId);
 
 /**
  * Pass on the lot. In a match with auctions on, the engine opens the auction
  * itself, and the trail gets one more line saying the clock is running, since the
  * engine keeps no timer and so says nothing about one.
  */
-export const handleMskip = (interaction: ButtonInteraction, room: IGameRoom): Promise<void> =>
-	runMonopolyAction(interaction, room, (state, actorId) => withAuctionNotice(applySkip(state, actorId)));
+const skipMove: MonopolyMove = (state, actorId) => withAuctionNotice(applySkip(state, actorId));
+
+const endTurnMove: MonopolyMove = (state) => applyEndTurn(state);
+
+const payDebtMove: MonopolyMove = (state, actorId) => applyPayDebt(state, actorId);
+
+const jailMove = (choice: JailChoice): MonopolyMove => (state) => applyJailChoice(state, choice, secureRandom);
+
+export const handleMroll = (interaction: ButtonInteraction, room: IGameRoom): Promise<void> => runMonopolyAction(interaction, room, rollMove);
+
+export const handleMbuy = (interaction: ButtonInteraction, room: IGameRoom, tileId: string): Promise<void> => runMonopolyAction(interaction, room, buyMove(tileId));
+
+export const handleMskip = (interaction: ButtonInteraction, room: IGameRoom): Promise<void> => runMonopolyAction(interaction, room, skipMove);
 
 /** A skip's result with the auction notice added when the skip opened an auction. Shared with a Dero bot's skip (botTurns). */
 export function withAuctionNotice(result: MonopolyResult): MonopolyResult {
@@ -384,16 +401,14 @@ export function parseWholeCount(text: string): number | null {
 	return WHOLE_COUNT.test(trimmed) ? Number(trimmed) : null;
 }
 
-export const handleMend = (interaction: ButtonInteraction, room: IGameRoom): Promise<void> =>
-	runMonopolyAction(interaction, room, (state) => applyEndTurn(state));
+export const handleMend = (interaction: ButtonInteraction, room: IGameRoom): Promise<void> => runMonopolyAction(interaction, room, endTurnMove);
 
 /**
  * Pay the debt the match is waiting on. Not turn bound: the debtor may be a rival
  * a card charged. The engine refuses anyone but the debtor, and refuses the debtor
  * while mortgaging or selling could still raise the rest.
  */
-export const handleMpaydebt = (interaction: ButtonInteraction, room: IGameRoom): Promise<void> =>
-	runMonopolyAction(interaction, room, (state, actorId) => applyPayDebt(state, actorId), { onTurnOnly: false });
+export const handleMpaydebt = (interaction: ButtonInteraction, room: IGameRoom): Promise<void> => runMonopolyAction(interaction, room, payDebtMove, { onTurnOnly: false });
 
 /** The three jail buttons share this handler; the choice rides the customId's arg. */
 export async function handleMjail(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
@@ -405,7 +420,7 @@ export async function handleMjail(interaction: ButtonInteraction, room: IGameRoo
 		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
-	await runMonopolyAction(interaction, room, (state) => applyJailChoice(state, jailChoice, secureRandom));
+	await runMonopolyAction(interaction, room, jailMove(jailChoice));
 }
 
 // ── the private peek ──────────────────────────────────────────────────
@@ -419,6 +434,108 @@ export async function handleMinventory(interaction: ButtonInteraction, room: IGa
 	}
 	await interaction.reply({ ...monopolyInventoryReply(state, interaction.user.id, room.roomId), ...PRIVATE });
 }
+
+// ── the turn prompt (turnPrompt.ts, 2026-10 item 257 Phase 4a) ────────
+// What:  Monopoly's side of the shared turn piece: whose turn it is, a fingerprint that holds
+//        for the whole turn (it moves when the engine counts one more turn taken), the seat's
+//        position and cash as the modal's text, and the moves the seat could press on the
+//        board right now as a select.
+// Who:   syncTurnPrompt after every placed board; handleTurnPress and handleTurnSubmit.
+// How:   the select's values map back to the moves above, played through commitMonopolyMove
+//        like the board's own buttons. Trade and Bid are buttons on the prompt line, since a
+//        modal cannot open from this one's Submit (risk R6).
+
+const BUY_PREFIX = "buy:";
+const MOVE_FIELD = "move";
+
+// The moves the seat on the clock could press on the board now: the same phase table as the
+// board's turnButtons, so the modal never offers a move the board would not.
+function turnMoveOptions(state: MonopolyState, seat: MonopolyState["seats"][number]): { label: string; value: string }[] {
+	const copy = gameRoomsCopy.monopoly;
+	const debt = waitingDebt(state);
+	if (debt) return debt.debtorId === seat.userId ? [{ label: copy.payDebtLabel(debt.amount), value: "paydebt" }] : [];
+	switch (state.phase) {
+		case "pre-roll": {
+			if (!seat.inJail) return [{ label: copy.rollLabel, value: "roll" }];
+			const options: { label: string; value: string }[] = [{ label: copy.jailRollLabel, value: "jailroll" }];
+			if (seat.chips >= JAIL_BAIL) options.unshift({ label: copy.bailLabel(JAIL_BAIL), value: "bail" });
+			if (seat.gojfCards > 0) options.unshift({ label: copy.useCardLabel, value: "card" });
+			return options;
+		}
+		case "awaiting-buy-or-skip": {
+			const tile = BOARD[seat.position];
+			const skip = { label: copy.skipLabel, value: "skip" };
+			if (!isOwnableTile(tile)) return [skip];
+			return seat.chips >= tile.price ? [{ label: copy.buyLabel(tile.name, tile.price), value: `${BUY_PREFIX}${tile.id}` }, skip] : [skip];
+		}
+		case "post-roll":
+			return [{ label: copy.endTurnLabel, value: "end" }];
+		default:
+			return [];
+	}
+}
+
+function moveForChoice(choice: string): MonopolyMove | null {
+	if (choice.startsWith(BUY_PREFIX)) return buyMove(choice.slice(BUY_PREFIX.length));
+	switch (choice) {
+		case "roll":
+			return rollMove;
+		case "skip":
+			return skipMove;
+		case "end":
+			return endTurnMove;
+		case "paydebt":
+			return payDebtMove;
+		case "bail":
+		case "card":
+			return jailMove(choice);
+		case "jailroll":
+			return jailMove("roll");
+		default:
+			return null;
+	}
+}
+
+const activeSeatOf = (state: MonopolyState) => state.seats[state.activeSeatIndex];
+
+export const monopolyTurnAdapter: TurnAdapter = {
+	game: "monopoly",
+	whoseTurn(room) {
+		const state = monopolyStateOf(room);
+		return state && state.phase !== "finished" ? activeSeatOf(state).userId : null;
+	},
+	fingerprintOf(room) {
+		const state = monopolyStateOf(room);
+		return state ? `m${state.stats?.turnsTaken ?? 0}.${state.activeSeatIndex}` : null;
+	},
+	view(room, userId): TurnView | null {
+		const state = monopolyStateOf(room);
+		if (!state || state.phase === "finished") return null;
+		const seat = activeSeatOf(state);
+		const options = turnMoveOptions(state, seat);
+		if (seat.userId !== userId || options.length === 0) return null;
+		const copy = gameRoomsCopy.monopoly;
+		return {
+			title: copy.turnModalTitle,
+			text: [copy.turnHandText(describeTile(BOARD[seat.position]), seat.chips, seat.gojfCards, seat.inJail)],
+			fields: [{ kind: "select", id: MOVE_FIELD, label: gameRoomsCopy.turnPrompt.moveLabel, options }],
+		};
+	},
+	async apply(client, room, userId, answers, acknowledge) {
+		const choice = answers[MOVE_FIELD] ?? "";
+		const move = moveForChoice(choice);
+		if (!move) return { ok: false, reason: gameRoomsCopy.errors.controlRetired };
+		// Acknowledged FIRST, like the board's buttons (risk M1): the read and the compare and swap
+		// are two Mongo round trips, and a refusal after it arrives as a private follow up.
+		await acknowledge();
+		const outcome = await commitMonopolyMove(client, room, userId, move, { onTurnOnly: choice !== "paydebt" });
+		return outcome.ok ? { ok: true } : { ok: false, reason: outcome.reason };
+	},
+	extraButtons(room) {
+		const state = monopolyStateOf(room);
+		return state ? monopolyPromptButtons(state, room.roomId) : [];
+	},
+};
 
 export const roomMonopolyHandlers = {
 	handleMroll,

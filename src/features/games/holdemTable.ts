@@ -86,6 +86,12 @@ export interface HoldemTable {
 	// carried over by returnToTable; absent until a board has shown the table.
 	turnPrompt?: { stamp: number; shownAt: number };
 	boardMessageId: string | null;
+	// What the table message currently on the board showed of the hand: the hand number, how
+	// many board cards, and whether a hand was live (roomHoldemHandlers.revealKeyOf). A redraw
+	// whose key differs posts a FRESH table message instead of editing (2026-10 item 257 Phase
+	// 4a). Written only in the same claim that moves boardMessageId. Absent reads as the joining
+	// table, which every table starts as.
+	revealKey?: string;
 	winnerId: string | null;
 	// Busted players worst-first, so placement is derivable at the end.
 	bustOrder: string[];

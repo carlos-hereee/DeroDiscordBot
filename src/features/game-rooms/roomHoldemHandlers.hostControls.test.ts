@@ -132,7 +132,7 @@ describe("a late seat while the host has seats open", () => {
 		await handleBuyIn(interaction, makeRoom(table, { seatsOpen: true }));
 
 		const [, , expected, written, extra] = storeMock.updateSecretIf.mock.calls[0] as [string, string, Record<string, unknown>, HoldemTable, unknown];
-		expect(expected).toEqual({ "secret.lastActionAt": readAt, seatsOpen: true, kickedIds: { $ne: "late" } });
+		expect(expected).toEqual({ "secret.lastActionAt": readAt, seatsOpen: true, kickedIds: { $ne: "late" }, "secret.boardMessageId": null });
 		expect(written.pendingSeats).toEqual([{ userId: "late", username: "Name late" }]);
 		expect(written.seats.some((seat) => seat.userId === "late")).toBe(false);
 		expect(extra).toBeUndefined();

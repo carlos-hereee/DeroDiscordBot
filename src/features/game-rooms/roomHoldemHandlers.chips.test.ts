@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ButtonInteraction, ModalSubmitInteraction } from "discord.js";
+import type { ButtonInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: { update: vi.fn(), updateSecretIf: vi.fn(), findByRoomId: vi.fn(), addPendingJoin: vi.fn() },
@@ -14,7 +14,7 @@ vi.mock("@features/ratings/recordMatchRatings.js", async (importOriginal) => ({
 	recordMatchRatings: vi.fn(),
 }));
 
-import { handleBuyIn, handleBuyInModal, handleLeaveTable, handleSetBuyIn, removeFromTable } from "./roomHoldemHandlers.js";
+import { handleBuyIn, handleLeaveTable, removeFromTable } from "./roomHoldemHandlers.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { chipWalletStore } from "@db/stores/chipWalletStore.js";
 import { roomTrail } from "./roomTrail.js";
@@ -69,9 +69,6 @@ function makeInteraction(userId: string): ButtonInteraction {
 		showModal: vi.fn().mockResolvedValue(undefined),
 	} as unknown as ButtonInteraction;
 }
-
-const replyText = (interaction: { reply: unknown }): string =>
-	(((interaction.reply as Mock).mock.calls[0]?.[0] ?? {}) as { content?: string }).content ?? "";
 
 // The modals a press opened, and the text of its notice: a refusal or a short answer now
 // opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
@@ -177,65 +174,5 @@ describe("cashing out", () => {
 		// Folded out of a hand they never had to put more into: their stack, less any blind they had posted.
 		expect(paid?.[1]).toBeGreaterThan(0);
 		expect(paid?.[1]).toBeLessThanOrEqual(stackBefore + 2_500);
-	});
-});
-
-describe("the host's buy in", () => {
-	it("opens the modal for the host on an empty chip table", async () => {
-		const interaction = makeInteraction(HOST);
-		await handleSetBuyIn(interaction, makeRoom(chipTable()));
-		expect(interaction.showModal).toHaveBeenCalledOnce();
-	});
-
-	it("refuses once somebody bought in, and on a free play table", async () => {
-		const seated = makeInteraction(HOST);
-		await handleSetBuyIn(seated, makeRoom(chipTable(["a"])));
-		expect(noticeText(seated)).toBe(words.buyInLocked);
-
-		const free = makeInteraction(HOST);
-		await handleSetBuyIn(free, makeRoom(createTable()));
-		expect(noticeText(free)).toBe(words.buyInFreeTable);
-	});
-
-	function submit(userId: string, typed: string, preset = "1000"): ModalSubmitInteraction {
-		return {
-			customId: "gameroomModal:hbuyin:room-1",
-			guildId: GUILD,
-			user: { id: userId },
-			client: { channels: { fetch: vi.fn().mockResolvedValue(null) } },
-			fields: { getTextInputValue: () => typed, getStringSelectValues: () => [preset] },
-			reply: vi.fn().mockResolvedValue(undefined),
-			deferUpdate: vi.fn().mockResolvedValue(undefined),
-		} as unknown as ModalSubmitInteraction;
-	}
-
-	it("sets a typed amount on a joining table with no seat, in one guarded write", async () => {
-		storeMock.findByRoomId.mockResolvedValue(makeRoom(chipTable()));
-		storeMock.updateSecretIf.mockResolvedValue(makeRoom(chipTable([], 7_500)));
-
-		await handleBuyInModal(submit(HOST, "7.5k"));
-
-		const [, , expected, written] = storeMock.updateSecretIf.mock.calls[0] as [string, string, Record<string, unknown>, HoldemTable];
-		expect(expected).toEqual({ "secret.status": "joining", "secret.seats": { $size: 0 } });
-		expect(written.startingStack).toBe(7_500);
-		expect(trailMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ text: words.buyInSet(HOST, 7_500) }));
-	});
-
-	it("uses the preset when nothing is typed, and refuses an amount outside the bounds", async () => {
-		storeMock.findByRoomId.mockResolvedValue(makeRoom(chipTable()));
-		await handleBuyInModal(submit(HOST, "", "10000"));
-		expect((storeMock.updateSecretIf.mock.calls[0] as [string, string, unknown, HoldemTable])[3].startingStack).toBe(10_000);
-
-		const tooSmall = submit(HOST, "50");
-		await handleBuyInModal(tooSmall);
-		expect(replyText(tooSmall)).toBe(words.buyInInvalid(200, 1_000_000));
-	});
-
-	it("refuses a submit from anybody but the host", async () => {
-		storeMock.findByRoomId.mockResolvedValue(makeRoom(chipTable()));
-		const stranger = submit("someone", "5000");
-		await handleBuyInModal(stranger);
-		expect(replyText(stranger)).toBe(gameRoomsCopy.board.onlyHostStarts);
-		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 });

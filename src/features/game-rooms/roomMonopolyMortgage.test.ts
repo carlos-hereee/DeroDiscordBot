@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TextChannel, type Client, type StringSelectMenuInteraction } from "discord.js";
 
-vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn(), moveMonopolyBoard: vi.fn(async () => ({})) } }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn(), moveBoardMessage: vi.fn(async () => ({})) } }));
 // A Monopoly move's lines ride the board, or the finished turn's log message, rather than
 // one postMove each (2026-10 item 254, Arcade 8).
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), postMoveLog: vi.fn(async () => true), recordCarriedMoves: vi.fn() } }));

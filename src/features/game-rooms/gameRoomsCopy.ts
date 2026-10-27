@@ -214,6 +214,23 @@ export const gameRoomsCopy = {
 		status: "🎨 Dero is drawing the table…",
 	},
 
+	// ── the turn prompt (turnPrompt.ts, 2026-10 item 257 Phase 4a) ──
+	// The one line that pings the member on the clock, the modal their button opens, and
+	// the words the line is edited to once the turn is over. Every game shares them.
+	turnPrompt: {
+		line: (userId: string): string => `<@${userId}> it's your turn`,
+		takeLabel: "Take your turn",
+		playedLine: (userId: string): string => `✅ <@${userId}> played their turn.`,
+		passedLine: (userId: string): string => `⏳ <@${userId}>'s turn passed.`,
+		turnPassed: "That turn has passed.",
+		notYourTurn: "It is not your turn.",
+		nothingToPlay: "There is nothing to play from here right now.",
+		moveLabel: "Your move",
+		amountLabel: "Raise to (only if you chose Raise)",
+		amountPlaceholder: "A number of chips, or leave blank",
+		invalidAmount: "That is not a number of chips.",
+	},
+
 	// ── notice titles (2026-10 item 254 Phase 5b) ──
 	// The title over a private answer shown as a notice modal, one per part of the
 	// arcade. Discord cuts a modal title at 45 characters.
@@ -462,6 +479,10 @@ export const gameRoomsCopy = {
 
 	// ── the challenge board (Phase 4) ──
 	board: {
+		// The Hold'em buy in on the card (2026-10 item 257 Phase 4a).
+		cardBuyIn: (amount: number): string => `🪙 Buy in: **${chipAmount(amount)}**, paid from your wallet when you join and given back if you are declined or the challenge is cancelled.`,
+		buyInChangedJoining: "The host changed the buy in as you joined, so your chips went back to your wallet. Press Join again.",
+		buyInSetNotice: (amount: number): string => `The buy in is now ${chipAmount(amount)}.`,
 		introTitle: "⚔️ The challenge board",
 		introDescription: [
 			"Pick a game to start a challenge. Dero posts a card here, you choose who can see it, and the match plays out in its own channel.",
@@ -775,12 +796,17 @@ export const gameRoomsCopy = {
 		columnPlaceholder: "Column (A to J)",
 		rowPlaceholder: "Row (1 to 10)",
 		fireLabel: "Fire",
+		// The firing and setup modals (turnPrompt.ts, 2026-10 item 257 Phase 4a).
+		fireModalTitle: "🎯 Take your shot",
+		targetLine: (shipsLeft: number): string => `Your target: ${shipsLeft} ship${shipsLeft === 1 ? "" : "s"} left. 💥 hit, 🔥 sunk, ⬜ miss.`,
+		setupLabel: "Set up your fleet",
+		setupModalTitle: "⚓ Your fleet",
+		setupChoiceLabel: "What now?",
+		setupReadyOption: "I am ready",
+		setupRerollOption: "Randomize again",
 		viewLabel: "View my board",
 		forfeitLabel: "Surrender",
 
-		aimed: (coord: string): string => `Target set: **${coord}**. Press Fire when you are ready.`,
-		aimedPartial: "Target set. Pick the other half of the coordinate, then Fire.",
-		noTarget: "Pick a column and a row first.",
 		notYourTurn: "It is not your turn.",
 		offGrid: "That is not on the grid.",
 		matchOver: "This match is already over.",
@@ -799,7 +825,7 @@ export const gameRoomsCopy = {
 		// in with Ready. The public lines name who is ready and never where anything is.
 		setupLine: (players: { userId: string; ready: boolean }[]): string =>
 			[
-				"⚓ **Setup.** Dero laid both fleets. Press **View my board** to see yours, **Randomize** to lay it again, then **Ready**. The first shot waits for both captains.",
+				"⚓ **Setup.** Dero laid both fleets. Press **Set up your fleet** to see yours, lay it again if you like, then choose **I am ready**. The first shot waits for both captains.",
 				"",
 				...players.map((player) => (player.ready ? `✅ <@${player.userId}> is ready.` : `⏳ <@${player.userId}> is still laying their fleet.`)),
 			].join("\n"),
@@ -814,7 +840,7 @@ export const gameRoomsCopy = {
 		cardSetup: "Laying the fleets",
 		// The private view's modal (item 16). Discord caps a modal title at 45 characters.
 		privateModalTitle: "Your own waters",
-		privateSetupHint: "Not happy with it? Close this and press Randomize. Happy? Press Ready.",
+		privateSetupHint: "Not happy with it? Close this and press Set up your fleet, then choose Randomize again. Happy? Choose I am ready.",
 
 		// The public narration. None of these names an UNFIRED position, which is the
 		// property the whole feature turns on.
@@ -894,6 +920,12 @@ export const gameRoomsCopy = {
 		// The private view modal's title (post-launch plan item 16). A modal title is
 		// plain text with a 45 character cap, so no card back glyph.
 		yourCardsModalTitle: "Your hand",
+		// The turn modal (turnPrompt.ts, 2026-10 item 257 Phase 4a).
+		turnModalTitle: "🃏 Your turn",
+		turnCallOption: (cost: number): string => `Call (${cost})`,
+		turnAllInOption: (cost: number): string => `All in (${cost})`,
+		turnRaiseOption: (min: number, max: number): string => `Raise (to ${min}, up to ${max})`,
+		turnToCall: (cost: number): string => `To call: **${cost}**`,
 		noCardsYet: "You have no cards. Wait for the next deal.",
 		yourStack: (stack: number): string => `Your stack: **${stack}**`,
 
@@ -926,13 +958,12 @@ export const gameRoomsCopy = {
 		buyInCustomLabel: "Or type another amount",
 		buyInCustomPlaceholder: "for example 7500 or 7.5k",
 		buyInInvalid: (min: number, max: number): string => `A buy in is a whole number of chips from ${min.toLocaleString("en-US")} to ${max.toLocaleString("en-US")}.`,
-		buyInLocked: "Somebody already bought in, so the buy in stays as it is.",
+		buyInLocked: "Somebody already paid the buy in, so it stays as it is.",
 		buyInFreeTable: "This table plays for table chips only, so it has no buy in to set.",
 
 		// ── the trail ──
 		seatTaken: (userId: string, seated: number): string => `🪙 <@${userId}> bought in. ${seated} at the table.`,
 		chipsSeatTaken: (userId: string, buyIn: number, seated: number): string => `🪙 <@${userId}> bought in for ${chipAmount(buyIn)}. ${seated} at the table.`,
-		buyInSet: (hostId: string, buyIn: number): string => `🪙 <@${hostId}> set the buy in to ${chipAmount(buyIn)}.`,
 		handDealt: (hand: number, small: number, big: number): string =>
 			`🃏 **Hand ${hand}** is dealt. Blinds are ${small}/${big}.`,
 		blindsUp: (small: number, big: number): string => `⏫ Blinds are up: ${small}/${big}.`,
@@ -996,6 +1027,10 @@ export const gameRoomsCopy = {
 	// holds only what the room layer adds around them: the board, the buttons,
 	// the private peek and the refusals.
 	monopoly: {
+		// The turn modal (turnPrompt.ts, 2026-10 item 257 Phase 4a): where the seat stands and what it holds.
+		turnModalTitle: "🎲 Your turn",
+		turnHandText: (tileName: string, chips: number, gojfCards: number, inJail: boolean): string =>
+			[`You are on **${tileName}**${inJail ? " (in jail)" : ""}.`, `Cash: **${chips}**${gojfCards > 0 ? `, Get out of jail free cards: **${gojfCards}**` : ""}`].join("\n"),
 		boardTitle: "🏠 Monopoly",
 		// The rules in a few sentences, on the pinned opener, because the board
 		// message that gets edited every turn has no room for them.

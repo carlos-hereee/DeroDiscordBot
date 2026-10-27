@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ButtonInteraction, StringSelectMenuInteraction } from "discord.js";
+import type { Client, ButtonInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn(), updateSecretIf: vi.fn() },
@@ -9,7 +9,7 @@ vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardTwoPlayerResult: vi.fn() }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 
-import { handleFire, handleViewBoard, handleReroll, handleAimSelect, handleReady } from "./roomBattleshipHandlers.js";
+import { battleshipTurnAdapter, handleFire, handleViewBoard, handleReroll, handleReady } from "./roomBattleshipHandlers.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
@@ -63,11 +63,11 @@ function makeInteraction(userId: string): ButtonInteraction {
 	} as unknown as ButtonInteraction;
 }
 
-// Aim player A at a cell that is known to hold one of B's ships, then at the rest
-// of that ship, so the sinking shot is reachable deterministically.
-function aimedAt(match: StoredBattleship, shooter: string, x: number, y: number): StoredBattleship {
-	return { ...match, pending: { [shooter]: { x, y } } };
-}
+// Fire through the turn modal's Submit, the path every member's shot takes since item 257
+// Phase 4a: the adapter plays the file and rank the two selects carried.
+const modalClient = { channels: { fetch: vi.fn().mockResolvedValue(null) } } as unknown as Client;
+const fireAtCell = (room: IGameRoom, userId: string, x: number, y: number, acknowledge: () => Promise<unknown> = async () => undefined) =>
+	battleshipTurnAdapter.apply(modalClient, room, userId, { file: String(x), rank: String(y) }, acknowledge);
 
 // A match in setup, as the provisioner stores it (post-launch plan item 17), and the
 // same match past setup, which is what every firing case starts from.
@@ -90,43 +90,75 @@ beforeEach(() => {
 });
 
 describe("firing", () => {
-	it("refuses a shot when it is not your turn, and writes nothing", async () => {
-		const room = makeRoom(aimedAt(freshMatch(), B, 0, 0));
+	it("refuses the Fire button when it is not your turn, and writes nothing", async () => {
 		const interaction = makeInteraction(B);
 
-		await handleFire(interaction, room);
-
-		expect(storeMock.update).not.toHaveBeenCalled();
-	});
-
-	it("refuses a shot with no coordinate chosen", async () => {
-		const interaction = makeInteraction(A);
 		await handleFire(interaction, makeRoom(freshMatch()));
 
-		expect(noticeText(interaction)).toMatch(/column and a row/i);
+		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.turnPrompt.notYourTurn);
+	});
+
+	it("opens ONE modal from Fire: the target grid, a file select A to J and a rank select 1 to 10", async () => {
+		const interaction = makeInteraction(A);
+
+		await handleFire(interaction, makeRoom(freshMatch()));
+
+		const [modal] = shownModals(interaction);
+		expect(modal.custom_id).toBe("gameroomModal:turn:room-1:b0");
+		const json = JSON.stringify(modal.components);
+		expect(json).toContain("Column (A to J)");
+		expect(json).toContain("Row (1 to 10)");
+		expect((json.match(/"custom_id":"file"/g) ?? []).length).toBe(1);
+		expect((json.match(/"custom_id":"rank"/g) ?? []).length).toBe(1);
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
-	it("posts the shot line once, publicly, and acknowledges the shooter without a private copy", async () => {
-		const interaction = makeInteraction(A);
-		await handleFire(interaction, makeRoom(aimedAt(freshMatch(), A, 0, 0)));
+	it("fires with one Submit: the shot line posts once, publicly, and the shooter is acknowledged without a private copy", async () => {
+		const acknowledge = vi.fn().mockResolvedValue(undefined);
 
-		expect(interaction.reply).not.toHaveBeenCalled();
-		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+		const result = await fireAtCell(makeRoom(freshMatch()), A, 0, 0, acknowledge);
+
+		expect(result).toEqual({ ok: true });
+		expect(acknowledge).toHaveBeenCalledOnce();
 		expect(roomTrail.postMove).toHaveBeenCalledOnce();
 		expect(roomTrail.postMove).toHaveBeenCalledWith(
-			interaction.client,
+			modalClient,
 			expect.objectContaining({ roomId: "room-1" }),
 			expect.objectContaining({ actorId: A, kind: "guess", text: expect.stringMatching(/\S/) }),
 		);
 	});
 
-	it("clears the shooter's aim after firing, so a stray press cannot re-fire it", async () => {
-		const room = makeRoom(aimedAt(freshMatch(), A, 0, 0));
-		await handleFire(makeInteraction(A), room);
+	it("refuses a Submit from the captain who is not on the clock, and writes nothing", async () => {
+		const result = await fireAtCell(makeRoom(freshMatch()), B, 0, 0);
 
-		const saved = storeMock.update.mock.calls[0][2].secret as StoredBattleship;
-		expect(saved.pending?.[A]).toBeUndefined();
+		expect(result).toEqual({ ok: false, reason: gameRoomsCopy.battleship.notYourTurn });
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("refuses a repeat target without spending the turn", async () => {
+		const match = freshMatch();
+		const state = deserializeMatch(match);
+		// Shots are recorded on the board they landed on, so A's earlier shot sits on B's board.
+		state.players[1].shots.add("0,0");
+
+		const result = await fireAtCell(makeRoom(serializeMatch(state, { boardMessageId: null })), A, 0, 0);
+
+		expect(result.ok).toBe(false);
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("refuses a coordinate that is not on the grid", async () => {
+		const result = await battleshipTurnAdapter.apply(modalClient, makeRoom(freshMatch()), A, { file: "x", rank: "" }, async () => undefined);
+
+		expect(result).toEqual({ ok: false, reason: gameRoomsCopy.battleship.offGrid });
+	});
+
+	it("keeps no half finished aim on the row any more", async () => {
+		await fireAtCell(makeRoom(freshMatch()), A, 0, 0);
+
+		const saved = storeMock.update.mock.calls[0][2].secret as StoredBattleship & { pending?: unknown };
+		expect(saved.pending).toBeUndefined();
 	});
 });
 
@@ -144,11 +176,11 @@ describe("the per sink bonus", () => {
 	}
 
 	it("pays nothing extra on an ordinary miss", async () => {
-		const room = makeRoom(aimedAt(freshMatch(), A, 0, 0));
+		const room = makeRoom(freshMatch());
 		const state = deserializeMatch(room.secret as StoredBattleship);
 		const isShip = state.players[1].ships.some((ship) => ship.cells.some((c) => c.x === 0 && c.y === 0));
 
-		await handleFire(makeInteraction(A), room);
+		await fireAtCell(room, A, 0, 0);
 
 		// Only assert the no-bonus case when the cell really was empty.
 		if (!isShip) expect(awardXpMock).not.toHaveBeenCalled();
@@ -161,9 +193,8 @@ describe("the per sink bonus", () => {
 		// Hit every cell of the destroyer. A's turn returns after each of B's, which
 		// never comes, so the turn is forced back for the purposes of this fixture.
 		for (const cell of cells) {
-			match = { ...match, turn: 0, pending: { [A]: cell } };
-			const current = makeRoom(match);
-			await handleFire(makeInteraction(A), current);
+			match = { ...match, turn: 0 };
+			await fireAtCell(makeRoom(match), A, cell.x, cell.y);
 			match = storeMock.update.mock.calls[storeMock.update.mock.calls.length - 1][2].secret as StoredBattleship;
 		}
 
@@ -204,40 +235,53 @@ describe("the private board", () => {
 	});
 });
 
-describe("aiming", () => {
-	beforeEach(() => storeMock.findByRoomId.mockResolvedValue(makeRoom(freshMatch())));
+describe("the setup modal", () => {
+	it("shows the captain's own fleet and one select, Randomize again or I am ready", async () => {
+		const interaction = makeInteraction(A);
 
-	const aimInteraction = (userId: string, action: string, value: string) =>
-		({
-			...makeInteraction(userId),
-			customId: `bs:${action}:room-1`,
-			values: [value],
-		}) as unknown as StringSelectMenuInteraction;
+		await handleFire(interaction, makeRoom(setupMatch()));
 
-	it("writes ONLY the aiming player's own pending slot", async () => {
-		await handleAimSelect(aimInteraction(A, "bscol", "3"));
-
-		const [guildId, roomId, path, value] = storeMock.setSecretField.mock.calls[0];
-		expect([guildId, roomId]).toEqual(["guild-1", "room-1"]);
-		// ⚠️ Both players aim SIMULTANEOUSLY, unlike firing, which is turn gated. The old write
-		// persisted the whole secret from a snapshot read at handler entry, so an aim landing
-		// just after the opponent's shot wrote their shot, the turn and their sunk-ship progress
-		// back to what they were before it. Scoping the path is what closes that.
-		expect(path).toBe(`pending.${A}`);
-		expect(value).toEqual({ x: 3 });
-		expect(storeMock.update).not.toHaveBeenCalled();
+		const [modal] = shownModals(interaction);
+		expect(modal.custom_id).toBe("gameroomModal:turn:room-1:setup");
+		const json = JSON.stringify(modal.components);
+		expect(json).toContain("I am ready");
+		expect(json).toContain("Randomize again");
+		expect(json).toContain("Still afloat");
 	});
 
-	it("lets the second select land on top of the first rather than claiming once", async () => {
-		const match = freshMatch();
-		storeMock.findByRoomId.mockResolvedValue(makeRoom({ ...match, pending: { [A]: { x: 3 } } }));
+	it("lays the fleet again on a Randomize Submit, writing only this captain's own slot", async () => {
+		const room = makeRoom(setupMatch());
+		const acknowledge = vi.fn().mockResolvedValue(undefined);
 
-		await handleAimSelect(aimInteraction(A, "bsrow", "5"));
+		const result = await battleshipTurnAdapter.apply(modalClient, room, A, { setup: "reroll" }, acknowledge);
 
-		const [, , path, value] = storeMock.setSecretField.mock.calls[0];
-		expect(path).toBe(`pending.${A}`);
-		// Not claimSecretField: a claim would refuse the second half of the coordinate.
-		expect(value).toEqual({ x: 3, y: 5 });
+		expect(result).toEqual({ ok: true });
+		expect(storeMock.setSecretField.mock.calls[0][2]).toBe("players.0");
+		expect(acknowledge).toHaveBeenCalledOnce();
+	});
+
+	it("readies in ONE Submit: choosing I am ready locks the captain in", async () => {
+		storeMock.setSecretField.mockResolvedValue({ secret: { ...setupMatch(), ready: [true, false] } });
+		const acknowledge = vi.fn().mockResolvedValue(undefined);
+
+		const result = await battleshipTurnAdapter.apply(modalClient, makeRoom(setupMatch()), A, { setup: "ready" }, acknowledge);
+
+		expect(result).toEqual({ ok: true });
+		expect(storeMock.setSecretField).toHaveBeenCalledWith("guild-1", "room-1", "ready.0", true);
+		expect(acknowledge).toHaveBeenCalledOnce();
+	});
+
+	it("refuses a second Ready from the same captain with the words the button used", async () => {
+		const result = await battleshipTurnAdapter.apply(modalClient, makeRoom({ ...setupMatch(), ready: [true, false] }), A, { setup: "ready" }, async () => undefined);
+
+		expect(result).toEqual({ ok: false, reason: gameRoomsCopy.battleship.alreadyReady });
+	});
+
+	it("has no turn to prompt while the fleets are being laid", () => {
+		const room = makeRoom(setupMatch());
+
+		expect(battleshipTurnAdapter.whoseTurn(room)).toBeNull();
+		expect(battleshipTurnAdapter.view(makeRoom({ ...setupMatch(), ready: [true, false] }), A)).toBeNull();
 	});
 });
 
@@ -335,12 +379,12 @@ describe("ready (post-launch plan item 17)", () => {
 		expect(noticeText(interaction)).toBe(gameRoomsCopy.battleship.alreadyReady);
 	});
 
-	it("refuses a shot while the fleets are being laid", async () => {
+	it("offers no firing modal while the fleets are being laid: the same press opens the setup one", async () => {
 		const interaction = makeInteraction(A);
-		await handleFire(interaction, makeRoom(aimedAt(setupMatch(), A, 0, 0)));
+		await handleFire(interaction, makeRoom(setupMatch()));
 
 		expect(storeMock.update).not.toHaveBeenCalled();
-		expect(noticeText(interaction)).toBe(gameRoomsCopy.battleship.setupFirst);
+		expect(shownModals(interaction)[0].custom_id).toBe("gameroomModal:turn:room-1:setup");
 	});
 });
 
@@ -354,8 +398,8 @@ describe("winning", () => {
 		let current = match;
 
 		for (const cell of allCells) {
-			current = { ...current, turn: 0, pending: { [A]: cell } };
-			await handleFire(makeInteraction(A), makeRoom(current));
+			current = { ...current, turn: 0 };
+			await fireAtCell(makeRoom(current), A, cell.x, cell.y);
 			current = storeMock.update.mock.calls[storeMock.update.mock.calls.length - 1][2].secret as StoredBattleship;
 		}
 

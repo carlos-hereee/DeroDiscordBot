@@ -19,6 +19,15 @@ import {
 	type SpectatorMode,
 } from "@features/game-rooms/roomTypes.js";
 
+/** The prompt line a turn posts for the member on the clock; see IGameRoom.turnPrompt. */
+export interface TurnPromptRecord {
+	fingerprint: string | null;
+	messageId: string | null;
+	playerId: string | null;
+	layout: string | null;
+	played: boolean;
+}
+
 // ── GameRoom ──
 // What:  one match of one mini game, played in its own Discord text channel, with its full
 //        move list kept as an append-only transcript.
@@ -89,6 +98,18 @@ export interface IGameRoom {
 	// referee was on and could not speak. On the ROW rather than in the match's `secret`,
 	// because every Monopoly move rewrites that blob from its own read and would drop it.
 	monopolyRefereeNoticeAt: Date | null;
+	// The prompt line that pings the member on the clock (2026-10 item 257 Phase 4a): which turn
+	// it was posted for, where it sits, and whether the turn was played through its modal. On the
+	// ROW rather than in `secret`, because Hold'em and Monopoly rewrite the secret wholesale from
+	// their own read and would drop it. Written only by gameRoomStore.claimTurnPrompt and
+	// setTurnPromptPlayed, never by a game.
+	turnPrompt: TurnPromptRecord;
+	// Hold'em only, on the DRAFT (item 257 Phase 4a): the buy in the host set on the challenge card
+	// for a chip table, or null for the default. Every joiner pays it on Join, so it cannot change
+	// once anybody has paid. buyInPaidBy lists the members whose wallet was charged, the ledger
+	// the refunds on decline, removal and cancel read.
+	holdemBuyIn: number | null;
+	buyInPaidBy: string[];
 	// ── the host's say over who joins (2026-10 item 244 Phase 4) ──
 	// Set on the draft by the challenge card's host controls and read on every join,
 	// on the card and, for Hold'em, at the table's Buy in and Take a seat. Each
@@ -228,6 +249,16 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		monopolyReferee: { type: Boolean, default: false },
 		// Null on every older row, which reads as no notice posted yet.
 		monopolyRefereeNoticeAt: { type: Date, default: null },
+		// Nulls on every older row, which reads as no prompt posted yet.
+		turnPrompt: {
+			fingerprint: { type: String, default: null },
+			messageId: { type: String, default: null },
+			playerId: { type: String, default: null },
+			layout: { type: String, default: null },
+			played: { type: Boolean, default: false },
+		},
+		holdemBuyIn: { type: Number, default: null },
+		buyInPaidBy: { type: [String], default: [] },
 		// The host controls. Every default is the open door a room had before them, so
 		// no older row needs a backfill.
 		ratingBand: { type: String, enum: [...RATING_BANDS], default: "any" },

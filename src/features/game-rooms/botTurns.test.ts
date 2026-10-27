@@ -96,10 +96,11 @@ describe("Battleship", () => {
 		expect(mocks.commitReady).toHaveBeenCalledWith(client, expect.anything(), "dero-bot-red", 1);
 	});
 
-	it("aims and fires on the bot's turn through the Fire button's core", async () => {
+	it("aims and fires on the bot's turn through the core a member's modal Submit also ends in", async () => {
 		expect(await playBattleshipBotTurn(client, room("battleship", match("battle")))).toBe(true);
-		const [, , aimed, , shooter] = mocks.commitShot.mock.calls[0] as [Client, IGameRoom, { pending: Record<string, unknown> }, unknown, { userId: string; name: string }];
-		expect(aimed.pending["dero-bot-red"]).toEqual({ x: expect.any(Number), y: expect.any(Number) });
+		const [, , , outcome, shooter] = mocks.commitShot.mock.calls[0] as [Client, IGameRoom, unknown, { ok: boolean; state?: unknown }, { userId: string; name: string }];
+		expect(outcome.ok).toBe(true);
+		expect(outcome.state).toBeDefined();
 		expect(shooter).toEqual({ userId: "dero-bot-red", name: "Dero Red" });
 	});
 });

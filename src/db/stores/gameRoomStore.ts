@@ -1,4 +1,4 @@
-import { GameRoom, type IGameRoom } from "@db/models/GameRoom.js";
+import { GameRoom, type IGameRoom, type TurnPromptRecord } from "@db/models/GameRoom.js";
 import {
 	NON_TERMINAL_ROOM_STATUSES,
 	type GameSlug,
@@ -204,16 +204,68 @@ export const gameRoomStore = {
 		);
 	},
 
-	// ── Monopoly's board and referee (2026-10 item 254, Phase 4b) ──
-	// Point a Monopoly match at the board message just posted, but only while it still
-	// points at `fromMessageId`: a dotted $set, so it touches nothing a move wrote, and
-	// conditional, so a repost that lost to another one writes nothing. Null when it lost.
-	async moveMonopolyBoard(guildId: string, roomId: string, fromMessageId: string | null, toMessageId: string) {
+	// ── The board message of a match in a room (2026-10 item 254 Phase 4b, generalized by item 257 Phase 4a) ──
+	// Point a match at the board message just posted, but only while it still points at
+	// `fromMessageId`: a dotted $set, so it touches nothing a move wrote, and conditional, so a
+	// repost that lost to another one writes nothing. Null when it lost. `alsoSet` rides the
+	// same write (Hold'em stamps the reveal the new table shows), so the id and the stamp can
+	// never disagree. Every game that reposts its table (Monopoly, Hold'em, Battleship) claims
+	// through this one method.
+	async moveBoardMessage(guildId: string, roomId: string, fromMessageId: string | null, toMessageId: string, alsoSet: Record<string, unknown> = {}) {
 		return GameRoom.findOneAndUpdate(
 			{ guildId, roomId, "secret.boardMessageId": fromMessageId },
-			{ $set: { "secret.boardMessageId": toMessageId } },
+			{ $set: { "secret.boardMessageId": toMessageId, ...alsoSet } },
 			{ new: true }
 		);
+	},
+
+	// ── The turn prompt (2026-10 item 257 Phase 4a) ──
+	// Point the room at the prompt line just posted, but only while it still holds the prompt
+	// the caller read (`fromFingerprint`, null for none): two syncs racing for one turn post
+	// two lines and exactly one claim lands, the loser deletes its own. Answers the row as it
+	// stood BEFORE the write (the previous prompt, for the caller to retire), or null when it lost.
+	async claimTurnPrompt(guildId: string, roomId: string, fromFingerprint: string | null, next: Omit<TurnPromptRecord, "played">) {
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, "turnPrompt.fingerprint": fromFingerprint },
+			{ $set: { turnPrompt: { ...next, played: false } } },
+			{ new: false }
+		);
+	},
+
+	// Mark the current prompt's turn as played through its modal, or take the mark back when the
+	// move was refused. Conditional on the fingerprint, so a turn that already passed is untouched.
+	async setTurnPromptPlayed(guildId: string, roomId: string, fingerprint: string, played: boolean) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId, "turnPrompt.fingerprint": fingerprint }, { $set: { "turnPrompt.played": played } }, { new: true });
+	},
+
+	// Change only the layout stamp of the current prompt (Monopoly's extra buttons come and go
+	// within one turn). Conditional on the fingerprint, so a prompt that moved on is untouched.
+	async setTurnPromptLayout(guildId: string, roomId: string, fingerprint: string, layout: string) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId, "turnPrompt.fingerprint": fingerprint }, { $set: { "turnPrompt.layout": layout } }, { new: true });
+	},
+
+	// ── The Hold'em buy in on a draft (2026-10 item 257 Phase 4a) ──
+	// The host sets the amount while nobody has paid it: conditional on an empty ledger, so a
+	// joiner who paid first makes this refuse. An older draft row may lack the ledger field.
+	async setHoldemBuyIn(guildId: string, roomId: string, amount: number) {
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, status: "draft", $or: [{ buyInPaidBy: { $exists: false } }, { buyInPaidBy: { $size: 0 } }] },
+			{ $set: { holdemBuyIn: amount } },
+			{ new: true }
+		);
+	},
+
+	// Record that a joiner's wallet was charged, but only against the buy in they were charged
+	// (`expectedBuyIn`, null for the standard one): a host who changed the amount meanwhile makes
+	// this refuse and the caller gives the chips back.
+	async addBuyInPaid(guildId: string, roomId: string, userId: string, expectedBuyIn: number | null) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId, status: "draft", holdemBuyIn: expectedBuyIn }, { $addToSet: { buyInPaidBy: userId } }, { new: true });
+	},
+
+	// Claim one member's refund: the row BEFORE the pull, or null when they were not on the ledger.
+	// Whoever gets the row pays the chips back, so two refunds for one payment pay once.
+	async takeBuyInPaid(guildId: string, roomId: string, userId: string) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId, buyInPaidBy: userId }, { $pull: { buyInPaidBy: userId } }, { new: false });
 	},
 
 	// Claim the referee's one silent notice for this match. Null when it was already claimed.

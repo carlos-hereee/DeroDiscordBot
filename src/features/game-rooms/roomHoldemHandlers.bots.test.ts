@@ -81,7 +81,7 @@ describe("a bot's turn", () => {
 		table.turnPrompt = { stamp: readAt, shownAt: readAt - 10_000 };
 
 		expect(await playHoldemBotTurn(client, makeRoom(table), new Date(readAt + 10_000))).toBe(true);
-		expect(storeMock.updateSecretIf).toHaveBeenCalledWith("guild-1", "room-1", { "secret.lastActionAt": readAt }, expect.anything());
+		expect(storeMock.updateSecretIf).toHaveBeenCalledWith("guild-1", "room-1", { "secret.lastActionAt": readAt, "secret.boardMessageId": null }, expect.anything());
 		expect(trailMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ actorId: BOT }));
 	});
 

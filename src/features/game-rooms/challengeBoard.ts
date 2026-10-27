@@ -57,6 +57,7 @@ import { effectiveSpectatorMode } from "./roomPermissions.js";
 import { cardStateFor, editOpenerCard, refreshCard, resolveChallengesChannel } from "./challengeCard.js";
 import { isWithinReach, readChallengeReach } from "./challengeReach.js";
 import { isKicked, judgeJoin } from "./joinGate.js";
+import { buyInModal, chargeJoiner, draftBuyInOf, isChipDraft, isValidDraftBuyIn, refundAllJoiners, refundJoiners, refundOpenedSeats, settleDraftBuyIns, submittedBuyIn } from "./holdemDraftBuyIn.js";
 import { consentPrompt, isGuildBanned, isUserBanned, readNetworkGuild } from "./networkRules.js";
 import { hasNetworkConsent } from "./networkConsent.js";
 import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
@@ -515,6 +516,16 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
 	}
+	// A Hold'em chip table is paid for on the card (2026-10 item 257 Phase 4a): the buy in leaves the
+	// wallet now, whether the joiner goes straight in or waits for the host, and goes back if they
+	// are declined, removed, or the challenge is cancelled.
+	if (room.game === "holdem") {
+		const unpaid = await chargeJoiner(room, actorId);
+		if (unpaid) {
+			await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [unpaid] });
+			return;
+		}
+	}
 	if (verdict.kind === "ask") {
 		await askHostToJoin(interaction, room);
 		return;
@@ -525,6 +536,7 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 	// in the moment since the read above (the store's kickedIds filter).
 	const added = await gameRoomStore.addPoolMember(room.guildId, room.roomId, actorId);
 	if (!added && isKicked((await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? room, actorId)) {
+		await refundJoiners(room, [actorId]);
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [hostWords.kick.refusedRejoin] });
 		return;
 	}
@@ -546,6 +558,7 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 async function askHostToJoin(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const updated = await gameRoomStore.addPendingJoin(room.guildId, room.roomId, interaction.user.id);
 	if (!updated) {
+		await refundJoiners(room, [interaction.user.id]);
 		const fresh = (await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? room;
 		const refusal = isKicked(fresh, interaction.user.id) ? hostWords.kick.refusedRejoin : gameRoomsCopy.board.draftGone;
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
@@ -737,6 +750,15 @@ async function provisionFromDraft(
 	const spectatorIds = effectiveSpectatorMode(room.visibility, room.spectatorMode) === "invite" ? others : [];
 	const botIds = botSeatIdsFor(room.game, playerIds.length, room.botSeats ?? 0);
 
+	// A Hold'em chip table seats everyone who paid on the card, and charges the host their own
+	// seat here (item 257 Phase 4a); a short wallet stops the start before any channel exists.
+	const settled = await settleDraftBuyIns(room, pool);
+	if (!settled.ok) {
+		await interaction.editReply({ embeds: [errorEmbed(settled.reason)] });
+		return;
+	}
+	const paidSeats = settled.seats;
+
 	await gameRoomStore.update(room.guildId, room.roomId, { playerIds, spectatorIds });
 
 	const host = guild.members.cache.get(room.hostId) ?? (await guild.members.fetch(room.hostId).catch(() => null));
@@ -756,12 +778,16 @@ async function provisionFromDraft(
 		existingRoomId: room.roomId,
 		monopolyAuctions: room.monopolyAuctions ?? false,
 		botIds,
+		holdemSeats: paidSeats ?? undefined,
 	});
 
 	if (!result.ok) {
+		if (paidSeats) await refundOpenedSeats(room, paidSeats);
 		await interaction.editReply({ embeds: [errorEmbed(describeRoomOpenFailure(result))] });
 		return;
 	}
+	// The ledger is settled: those buy ins are stacks at the table now, paid back by the table.
+	if (paidSeats) await gameRoomStore.update(room.guildId, room.roomId, { buyInPaidBy: [] });
 
 	// A Blackjack table is dealt once its room is up (2026-10 item 254, Arcade 1), every
 	// gathered player seated; a table that cannot start has already closed its room.
@@ -1236,12 +1262,52 @@ export async function yieldBotSeatsTo(client: Client, before: IGameRoom, after: 
 	return lowered;
 }
 
+// ── the Hold'em buy in on the card (2026-10 item 257 Phase 4a) ────────
+// The host's Set the buy in: a modal from the card's button, applied on its Submit. Refused
+// honestly on a server with chips off and once anybody has paid, since a payment is for the
+// amount it was charged.
+export async function openBuyIn(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	if (!(await isChipDraft(room))) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.holdem.buyInFreeTable] });
+		return;
+	}
+	if ((room.buyInPaidBy ?? []).length > 0) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.holdem.buyInLocked] });
+		return;
+	}
+	await interaction.showModal(buyInModal(room.roomId, draftBuyInOf(room)));
+}
+
+/** The buy in modal's Submit: re-gated and re-read, because a modal is reachable without the button. */
+export async function handleBuyInModal(interaction: ModalSubmitInteraction): Promise<void> {
+	const [, , roomId] = interaction.customId.split(":");
+	const guildId = interaction.guildId;
+	if (!guildId || !roomId || !interaction.guild) return;
+	const notice = (text: string) => showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [text] });
+
+	const room = await gameRoomStore.findByRoomId(guildId, roomId);
+	if (!room || room.game !== "holdem" || room.status !== "draft") return notice(gameRoomsCopy.board.draftGone);
+	if (room.hostId !== interaction.user.id) return notice(gameRoomsCopy.board.onlyHostStarts);
+	if (!(await isChipDraft(room))) return notice(gameRoomsCopy.holdem.buyInFreeTable);
+
+	const amount = submittedBuyIn(interaction);
+	const economy = BOT_CONSTANTS.ECONOMY;
+	if (amount === null || !isValidDraftBuyIn(amount)) return notice(gameRoomsCopy.holdem.buyInInvalid(economy.HOLDEM_MIN_BUY_IN, economy.HOLDEM_MAX_BUY_IN));
+
+	const updated = await gameRoomStore.setHoldemBuyIn(guildId, roomId, amount);
+	if (!updated) return notice(gameRoomsCopy.holdem.buyInLocked);
+	await interaction.deferUpdate();
+	await refreshDraftCard(interaction.guild, updated);
+}
+
 // ── cancel ────────────────────────────────────────────────────────────
 export async function cancelDraft(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	// "archived" rather than a delete: the row is the audit trail, and the partial
 	// unique index only counts non-terminal statuses, so archiving is what actually
 	// frees the host's slot.
 	await gameRoomStore.markArchived(room.guildId, room.roomId);
+	// Everyone who paid the buy in gets it back (item 257 Phase 4a), after the draft is closed.
+	await refundAllJoiners(room);
 	await interaction.deferUpdate();
 	await refreshCard(interaction.guild!, room, cancelledCardState(room));
 }
@@ -1251,6 +1317,7 @@ export async function cancelDraft(interaction: ButtonInteraction, room: IGameRoo
 // has to post the new card inside Discord's three second window.
 async function closeDraft(guild: Guild, room: IGameRoom): Promise<void> {
 	await gameRoomStore.markArchived(room.guildId, room.roomId);
+	await refundAllJoiners(room);
 	void refreshCard(guild, room, cancelledCardState(room)).catch((error: unknown) =>
 		console.error("[game-rooms] the replaced draft's card did not redraw", { guildId: room.guildId, roomId: room.roomId, error })
 	);
@@ -1277,4 +1344,6 @@ export const challengeBoard = {
 	openBotPicker,
 	handleBotSelect,
 	chooseCasual,
+	openBuyIn,
+	handleBuyInModal,
 };

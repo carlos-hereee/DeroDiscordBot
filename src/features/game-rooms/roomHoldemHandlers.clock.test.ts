@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TextChannel, type ButtonInteraction, type Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { update: vi.fn(), findPlayingByGame: vi.fn(), updateSecretIf: vi.fn(), findByRoomId: vi.fn() },
+	gameRoomStore: { update: vi.fn(), findPlayingByGame: vi.fn(), updateSecretIf: vi.fn(), findByRoomId: vi.fn(), moveBoardMessage: vi.fn() },
 }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
@@ -21,7 +21,7 @@ vi.mock("@features/dero-brain/dealerShowdownRenderer.js", async (importOriginal)
 	};
 });
 
-import { handleImBack, handleMove, sweepHoldemClocks } from "./roomHoldemHandlers.js";
+import { handleImBack, handleMove, holdemRevealKey, sweepHoldemClocks } from "./roomHoldemHandlers.js";
 import { bettingRows, betweenHandsRows } from "./roomHoldem.js";
 import { GAME_ROOM_ACTIONS } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -40,7 +40,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // Who:   the room handlers over a mocked store, trail and lifecycle, with the real
 //        engine and the real drawing pause.
 
-const storeMock = gameRoomStore as unknown as Record<"update" | "findPlayingByGame" | "updateSecretIf" | "findByRoomId", ReturnType<typeof vi.fn>>;
+const storeMock = gameRoomStore as unknown as Record<"update" | "findPlayingByGame" | "updateSecretIf" | "findByRoomId" | "moveBoardMessage", ReturnType<typeof vi.fn>>;
 const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn> };
 const NOW = Date.UTC(2026, 9, 23, 18, 0, 0);
 
@@ -58,6 +58,8 @@ function dealtTable(seats = 3): HoldemTable {
 	table.status = "playing";
 	dealHand(table, seededRng());
 	table.boardMessageId = "board-1";
+	// Already on the board as this hand: a redraw edits it in place. A reveal reposts, tested below.
+	table.revealKey = holdemRevealKey(table);
 	return table;
 }
 
@@ -65,6 +67,7 @@ function dealtTable(seats = 3): HoldemTable {
 function betweenHands(seats = 2): HoldemTable {
 	const table = dealtTable(seats);
 	for (let guard = 0; guard < 10 && table.street !== "showdown"; guard++) act(table, whoActs(table)!, "fold");
+	table.revealKey = holdemRevealKey(table);
 	return table;
 }
 
@@ -82,10 +85,12 @@ function makeRoom(table: HoldemTable): IGameRoom {
 }
 
 function boardClient() {
-	const board = { edit: vi.fn().mockResolvedValue(undefined) };
-	const channel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, { messages: { fetch: vi.fn().mockResolvedValue(board) } });
+	const board = { edit: vi.fn().mockResolvedValue(undefined), delete: vi.fn().mockResolvedValue(undefined) };
+	const fresh = { id: "board-2", delete: vi.fn().mockResolvedValue(undefined) };
+	const send = vi.fn().mockResolvedValue(fresh);
+	const channel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, { send, messages: { fetch: vi.fn().mockResolvedValue(board) } });
 	const client = { channels: { fetch: vi.fn().mockResolvedValue(channel) } } as unknown as Client;
-	return { client, board };
+	return { client, board, send };
 }
 
 const quietClient = { channels: { fetch: vi.fn().mockResolvedValue(null) } } as unknown as Client;
@@ -109,6 +114,7 @@ beforeEach(() => {
 	_resetDrawingPauses();
 	live.fail = false;
 	storeMock.updateSecretIf.mockResolvedValue({} as never);
+	storeMock.moveBoardMessage.mockResolvedValue({} as never);
 });
 
 describe("the turn clock", () => {
@@ -195,7 +201,7 @@ describe("the board", () => {
 		);
 		expect(swapped.embeds[0].data.description).toContain(relative(prompt.shownAt + 60_000));
 		// The prompt is kept on the row only while the table is still in the state shown.
-		expect(storeMock.updateSecretIf.mock.calls.at(-1)![2]).toEqual({ "secret.lastActionAt": table.lastActionAt, "secret.status": "playing" });
+		expect(storeMock.updateSecretIf.mock.calls.at(-1)![2]).toEqual({ "secret.lastActionAt": table.lastActionAt, "secret.status": "playing", "secret.boardMessageId": "board-1" });
 	});
 
 	it("posts the text table, with no stale card, when the live card does not draw", async () => {
@@ -227,7 +233,7 @@ describe("the next hand", () => {
 		expect(table.handNumber).toBe(2);
 		// Claimed on the hand number and the action stamp, so a leave or an I'm back
 		// between the sweep's read and its deal makes the deal lose.
-		expect(storeMock.updateSecretIf.mock.calls[0][2]).toEqual({ "secret.handNumber": 1, "secret.lastActionAt": readStamp });
+		expect(storeMock.updateSecretIf.mock.calls[0][2]).toEqual({ "secret.handNumber": 1, "secret.lastActionAt": readStamp, "secret.boardMessageId": "board-1" });
 		const dealt = trailMock.postMove.mock.calls.find((call) => (call[2] as { text: string }).text.includes("is dealt"));
 		expect(dealt?.[2]).toMatchObject({ actorId: "p0", kind: "system" });
 	});
@@ -254,11 +260,12 @@ describe("the next hand", () => {
 
 	it("tells the table when it deals itself, on the board between hands", async () => {
 		const table = dealtTable(2);
-		const { client, board } = boardClient();
+		const { client, send } = boardClient();
 
 		await handleMove(makeInteraction(whoActs(table)!, client), makeRoom(table), "fold");
 
-		const swapped = board.edit.mock.calls.at(-1)![0] as { embeds: { data: { description?: string } }[] };
+		// A hand that ends reveals its result, so the table posts afresh (item 257 Phase 4a).
+		const swapped = send.mock.calls.at(-1)![0] as { embeds: { data: { description?: string } }[] };
 		expect(swapped.embeds[0].data.description).toContain(
 			gameRoomsCopy.holdem.nextHandLine(table.turnPrompt!.shownAt + BOT_CONSTANTS.HOLDEM_NEXT_HAND_DELAY_MS)
 		);
@@ -287,7 +294,7 @@ describe("I'm back", () => {
 
 		await handleImBack(interaction, makeRoom(table));
 
-		expect(storeMock.updateSecretIf.mock.calls[0][2]).toEqual({ "secret.lastActionAt": readAt });
+		expect(storeMock.updateSecretIf.mock.calls[0][2]).toEqual({ "secret.lastActionAt": readAt, "secret.boardMessageId": "board-1" });
 		expect((storeMock.updateSecretIf.mock.calls[0][3] as HoldemTable).seats.find((seat) => seat.userId === away.userId)!.sittingOut).toBe(false);
 		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
 		expect(trailTexts()).toEqual([gameRoomsCopy.holdem.backAtTable(away.userId)]);

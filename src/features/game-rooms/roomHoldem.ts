@@ -3,11 +3,6 @@ import {
 	ButtonBuilder,
 	ButtonStyle,
 	EmbedBuilder,
-	LabelBuilder,
-	ModalBuilder,
-	StringSelectMenuBuilder,
-	TextInputBuilder,
-	TextInputStyle,
 	type ColorResolvable,
 } from "discord.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
@@ -24,10 +19,11 @@ import {
 	type HoldemTable,
 } from "@features/games/holdemTable.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
-import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_PREFIX } from "./gameRoomActions.js";
+import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import type { PrivateViewContent } from "./privateView.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import type { TurnView } from "./turnPrompt.js";
 
 // The host controls' words read the same in every pack (both packs share this
 // object), so the default pack is the right one here without a config read on
@@ -221,6 +217,53 @@ export function holeCardsView(table: HoldemTable, viewerId: string): PrivateView
 	};
 }
 
+/**
+ * The turn modal's content (2026-10 item 257 Phase 4a): the member's own two cards as text, the
+ * board, the pot, what a call costs and their stack, over a select of exactly the moves the
+ * engine says are legal and a field for a typed raise total.
+ * ⚠️ ONLY THE VIEWER'S OWN CARDS, like holeCardsView: it reads one seat's hole cards.
+ */
+export function holdemTurnView(table: HoldemTable, viewerId: string, potTotal: number): TurnView | null {
+	const copy = gameRoomsCopy.holdem;
+	const legal = actionsFor(table, viewerId);
+	if (legal.length === 0) return null;
+	const cards = table.holeCards[viewerId] ?? [];
+	const seat = table.seats.find((entry) => entry.userId === viewerId);
+	const call = legal.find((entry) => entry.action === "call");
+
+	const options = legal.map((entry) => {
+		switch (entry.action) {
+			case "fold":
+				return { label: copy.foldLabel, value: "fold" };
+			case "check":
+				return { label: copy.checkLabel, value: "check" };
+			case "call":
+				return { label: copy.turnCallOption(entry.cost), value: "call" };
+			case "allIn":
+				return { label: copy.turnAllInOption(entry.cost), value: "allin" };
+			default:
+				return { label: copy.turnRaiseOption(entry.min ?? 0, entry.max ?? 0), value: "raise" };
+		}
+	});
+	const raiseLegal = Boolean(aggressiveActionFor(table, viewerId));
+
+	return {
+		title: copy.turnModalTitle,
+		text: [
+			[
+				`## ${cards.map(formatCard).join("  ") || copy.noCardsYet}`,
+				`${copy.boardLabel} ${table.board.length ? table.board.map(formatCard).join("  ") : copy.noBoardYet}`,
+				`${copy.potLabel} ${potTotal}${call ? ` · ${copy.turnToCall(call.cost)}` : ""}`,
+				copy.yourStack(seat?.stack ?? 0),
+			].join("\n"),
+		],
+		fields: [
+			{ kind: "select", id: "move", label: gameRoomsCopy.turnPrompt.moveLabel, options },
+			...(raiseLegal ? [{ kind: "text" as const, id: "amount", label: gameRoomsCopy.turnPrompt.amountLabel, placeholder: gameRoomsCopy.turnPrompt.amountPlaceholder, maxLength: 12 }] : []),
+		],
+	};
+}
+
 // ── controls ──────────────────────────────────────────────────────────
 // Leave table and End table ride every live state's last row, so no state of the
 // table can hold a seated player, or the host's one room slot, with no way out.
@@ -281,51 +324,7 @@ export function joiningRows(roomId: string, seatCount: number, table?: HoldemTab
 			...tableExitButtons(roomId),
 			...requests
 		),
-		...buyInRow(roomId, table),
 	];
-}
-
-// The host's Set the buy in (2026-10 item 250 Phase 5), on a chip table only and only
-// before anybody sits, so no player ever paid an amount the table no longer deals. A row
-// of its own, because the joining row is already at Discord's five with Requests showing.
-function buyInRow(roomId: string, table?: HoldemTable): ActionRowBuilder<ButtonBuilder>[] {
-	if (!table?.chips || table.seats.length > 0) return [];
-	return [
-		new ActionRowBuilder<ButtonBuilder>().addComponents(
-			new ButtonBuilder()
-				.setCustomId(`${GAME_ROOM_PREFIX}:hbuyin:${roomId}`)
-				.setLabel(gameRoomsCopy.holdem.setBuyInLabel)
-				.setEmoji("🪙")
-				.setStyle(ButtonStyle.Secondary)
-		),
-	];
-}
-
-/** The two fields of the buy in modal: the preset select and the typed amount. */
-export const BUY_IN_FIELDS = { preset: "preset", custom: "custom" } as const;
-
-/**
- * The host's buy in modal: the presets as a select with the table's current buy in
- * chosen, and a field for any other amount, which wins when it is filled.
- */
-export function buyInModal(roomId: string, current: number): ModalBuilder {
-	const copy = gameRoomsCopy.holdem;
-	const presets = [...new Set([...BOT_CONSTANTS.ECONOMY.HOLDEM_BUY_IN_PRESETS, current])].sort((first, second) => first - second);
-	return new ModalBuilder()
-		.setCustomId(`${GAME_ROOM_MODAL_PREFIX}:hbuyin:${roomId}`)
-		.setTitle(copy.buyInModalTitle)
-		.addLabelComponents(
-			new LabelBuilder().setLabel(copy.buyInPresetLabel).setStringSelectMenuComponent(
-				new StringSelectMenuBuilder()
-					.setCustomId(BUY_IN_FIELDS.preset)
-					.setMinValues(1)
-					.setMaxValues(1)
-					.addOptions(presets.map((amount) => ({ label: copy.buyInPresetOption(amount), value: String(amount), default: amount === current })))
-			),
-			new LabelBuilder().setLabel(copy.buyInCustomLabel).setTextInputComponent(
-				new TextInputBuilder().setCustomId(BUY_IN_FIELDS.custom).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(12).setPlaceholder(copy.buyInCustomPlaceholder)
-			)
-		);
 }
 
 // The controls BETWEEN hands: the tournament is still running, the last hand has
@@ -349,7 +348,7 @@ export function betweenHandsRows(roomId: string, table?: HoldemTable, host?: Tab
 			new ButtonBuilder()
 				.setCustomId(`${GAME_ROOM_PREFIX}:hcards:${roomId}`)
 				.setLabel(gameRoomsCopy.holdem.showCardsLabel)
-				.setEmoji("🂠")
+				.setEmoji("👀")
 				.setStyle(ButtonStyle.Secondary),
 			...tableExitButtons(roomId, table)
 		),
@@ -416,7 +415,7 @@ export function bettingRows(table: HoldemTable, roomId: string, potTotal: number
 			new ButtonBuilder()
 				.setCustomId(`${GAME_ROOM_PREFIX}:hcards:${roomId}`)
 				.setLabel(gameRoomsCopy.holdem.showCardsLabel)
-				.setEmoji("🂠")
+				.setEmoji("👀")
 				.setStyle(ButtonStyle.Secondary),
 			...tableExitButtons(roomId, table)
 		)

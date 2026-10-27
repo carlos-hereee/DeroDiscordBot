@@ -6,6 +6,7 @@ import { renderBoard } from "@features/games/monopolyRenderer.js";
 import type { ResolvedGameAsset } from "@features/games/gamesAssets.js";
 import { monopolyBoardEmbedWith, monopolyControlsRow } from "./roomMonopoly.js";
 import { roomTrail, type RoomMoveInput } from "./roomTrail.js";
+import { repostRoomBoard } from "./roomBoardRepost.js";
 import { roomDrawingKey, withDrawingPause } from "./drawingPause.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { labelForRoom } from "./satelliteRooms.js";
@@ -152,6 +153,11 @@ export interface BoardPlacement {
 	split: TurnSplit;
 	actorId: string;
 	kind: RoomMoveKind;
+	// Posts the turn prompt line for the seat the turn passed to (turnPrompt.syncTurnPrompt). Run
+	// BETWEEN the finished turn's log and the new board, so the board stays the last message in
+	// the room even with a prompt line in it (2026-10 item 257 Phase 4a). Passed in rather than
+	// imported: the adapter lives in the handlers, which import this file.
+	promptSync?: () => Promise<void>;
 }
 
 /**
@@ -161,7 +167,7 @@ export interface BoardPlacement {
  * move places the board from it.
  */
 export async function placeMonopolyBoard(client: Client, room: IGameRoom, state: MonopolyState, placement: BoardPlacement): Promise<void> {
-	const { split, actorId, kind } = placement;
+	const { split, actorId, kind, promptSync } = placement;
 	const asMoves = (lines: readonly string[]): RoomMoveInput[] => lines.map((text) => ({ actorId, kind, text }));
 	let channel: TextChannel | null = null;
 	let boardId: string | null = null;
@@ -188,6 +194,8 @@ export async function placeMonopolyBoard(client: Client, room: IGameRoom, state:
 				if (board) {
 					await board.edit({ ...boardPayload(room, state, picture), content: null, attachments: [] });
 					await roomTrail.recordCarriedMoves(room, asMoves(split.currentNew));
+					// Same turn, so the prompt only changes when its buttons do (an auction opening).
+					await promptSync?.();
 					return;
 				}
 				// The board was deleted from under the match: post a fresh one rather than
@@ -195,6 +203,7 @@ export async function placeMonopolyBoard(client: Client, room: IGameRoom, state:
 			} else {
 				await roomTrail.postMoveLog(client, room, { shown: split.finishedShown, moves: asMoves(split.finishedNew) });
 			}
+			await promptSync?.();
 			await repostBoard(channel, room, boardId, boardPayload(room, state, picture), asMoves(split.currentNew));
 		},
 	}).catch((error) => console.warn("[game-rooms] failed to place the monopoly board", { roomId: room.roomId, error }));
@@ -242,21 +251,10 @@ function boardPayload(room: Pick<IGameRoom, "roomId">, state: MonopolyState, pic
 	return { embeds: [embed], components: monopolyControlsRow(state, activeId, room.roomId), files: attachment ? [attachment] : [] };
 }
 
-// ① send, ② claim the id (null when another placement moved it first, in which case the
-// newcomer is withdrawn and nothing is recorded), ③ record what it carries, ④ delete the
-// old board. Pings nobody: the board names players in its embed, which never pings.
+// The generic repost (roomBoardRepost) with Monopoly's payload: every turn change posts a fresh
+// board below the finished turn's log, and the one it replaced is deleted.
 async function repostBoard(channel: TextChannel, room: Pick<IGameRoom, "guildId" | "roomId">, fromId: string | null, payload: BoardPayload, carried: readonly RoomMoveInput[]): Promise<void> {
-	const posted = await channel.send({ ...payload, allowedMentions: { parse: [] } });
-	const claimed = await gameRoomStore.moveMonopolyBoard(room.guildId, room.roomId, fromId, posted.id);
-	if (!claimed) {
-		await posted.delete().catch(() => undefined);
-		return;
-	}
-	await roomTrail.recordCarriedMoves(room, carried);
-	if (!fromId) return;
-	const old = await fetchBoard(channel, fromId);
-	// Logged rather than thrown: a leftover board still works, and the row points past it.
-	await old?.delete().catch((error: unknown) => console.warn("[game-rooms] the old monopoly board could not be deleted", { roomId: room.roomId, error }));
+	await repostRoomBoard(channel, room, fromId, payload, { carried });
 }
 
 // The room's text channel, or null once it is gone (an admin can delete it at any time,

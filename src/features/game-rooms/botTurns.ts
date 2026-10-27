@@ -125,9 +125,8 @@ export async function playBattleshipBotTurn(client: Client, room: IGameRoom): Pr
 
 	const target = decideBattleshipShot(state, botId);
 	if (!target) return false;
-	const aimed: StoredBattleship = { ...stored, pending: { ...(stored.pending ?? {}), [botId]: { x: target.x, y: target.y } } };
-	const outcome = fire(aimed, botId);
+	const outcome = fire(stored, botId, target);
 	if (!outcome.ok || !outcome.state) return false;
-	await commitShot(client, room, aimed, { ...outcome, state: outcome.state }, { userId: botId, name: botSeatName(botId) });
+	await commitShot(client, room, stored, { ...outcome, state: outcome.state }, { userId: botId, name: botSeatName(botId) });
 	return true;
 }

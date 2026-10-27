@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TextChannel, type Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findPlayingByGame: vi.fn(), updateSecretIf: vi.fn(), findByRoomId: vi.fn(), moveMonopolyBoard: vi.fn() },
+	gameRoomStore: { findPlayingByGame: vi.fn(), updateSecretIf: vi.fn(), findByRoomId: vi.fn(), moveBoardMessage: vi.fn() },
 }));
 // A Monopoly move's lines ride the board, or the finished turn's log message, rather
 // than one postMove each (2026-10 item 254, Arcade 8).
@@ -29,7 +29,7 @@ const storeMock = gameRoomStore as unknown as {
 	findPlayingByGame: ReturnType<typeof vi.fn>;
 	updateSecretIf: ReturnType<typeof vi.fn>;
 	findByRoomId: ReturnType<typeof vi.fn>;
-	moveMonopolyBoard: ReturnType<typeof vi.fn>;
+	moveBoardMessage: ReturnType<typeof vi.fn>;
 };
 const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
 const carriedMock = roomTrail.recordCarriedMoves as unknown as ReturnType<typeof vi.fn>;
@@ -82,7 +82,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.updateSecretIf.mockResolvedValue({} as never);
 	storeMock.findByRoomId.mockResolvedValue(null);
-	storeMock.moveMonopolyBoard.mockResolvedValue({});
+	storeMock.moveBoardMessage.mockResolvedValue({});
 	postMoveMock.mockResolvedValue(true);
 	moveLogMock.mockResolvedValue(true);
 	finishMock.mockResolvedValue(true);

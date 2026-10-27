@@ -199,6 +199,9 @@ export interface OpenerCardState {
 	// The host's Casual (unrated) choice (2026-10 item 254, Arcade 6), off the row. Offered
 	// wherever Play vs bots is, since filling the empty seats is what Casual does.
 	casual?: boolean;
+	// Hold'em only (2026-10 item 257 Phase 4a): the buy in the host set on the card, or null for the
+	// standard stack. Shown as a line, and the host's Set the buy in button sits on the gather row.
+	holdemBuyIn?: number | null;
 }
 
 /** The draft's host controls the card shows: the band, approval, and how many wait for an answer. */
@@ -256,6 +259,7 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 	}
 	lines.push(...hostControlLines(state));
 	lines.push(...spectatorLines(state));
+	lines.push(...buyInLines(state));
 
 	const embed = infoEmbed(
 		gameRoomsCopy.board.cardTitle(state.game),
@@ -296,6 +300,24 @@ function hostControlLines(state: OpenerCardState): string[] {
 // servers are its satellites' business.
 const showsSpectators = (state: OpenerCardState): boolean =>
 	Boolean(state.hostControls && state.visibility && !state.network && !state.cancelled && !state.startedChannelId && !state.resultLine);
+
+// A Hold'em card offers the buy in wherever a table could play for chips: not on a network
+// table (its seats come from other servers) and not with a Dero bot seat (it plays free). The
+// button answers honestly when the server has chips off, which the card cannot know.
+function showsBuyIn(state: OpenerCardState): boolean {
+	return state.game === "holdem" && !state.network && (state.bots?.count ?? 0) === 0;
+}
+
+function buyInLines(state: OpenerCardState): string[] {
+	if (!showsBuyIn(state) || state.holdemBuyIn == null) return [];
+	return ["", gameRoomsCopy.board.cardBuyIn(state.holdemBuyIn)];
+}
+
+// The host's Set the buy in, on the gather row, so the card stays at the rows it had.
+function buyInButtons(roomId: string, state: OpenerCardState): ButtonBuilder[] {
+	if (!showsBuyIn(state)) return [];
+	return [new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:hbuyin:${roomId}`).setLabel(gameRoomsCopy.holdem.setBuyInLabel).setEmoji("🪙").setStyle(ButtonStyle.Secondary)];
+}
 
 function spectatorLines(state: OpenerCardState): string[] {
 	if (!showsSpectators(state) || !state.hostControls) return [];
@@ -488,7 +510,7 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 					draftSettingToggle(roomId, "referee", state.monopolyReferee ?? false, gameRoomsCopy.board.monopolyRefereeToggleLabel, "🎙️"),
 					cancel
 			  )
-			: new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(gather, start, ...playDeroButtons(roomId, state.game), cancel);
+			: new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(gather, start, ...buyInButtons(roomId, state), ...playDeroButtons(roomId, state.game), cancel);
 
 	// The host's controls ride their own rows below, so the gather row keeps its shape
 	// (and Monopoly keeps all five of its slots). Four rows at most, inside Discord's five:

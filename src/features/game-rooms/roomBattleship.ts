@@ -4,7 +4,6 @@ import {
 	ButtonStyle,
 	EmbedBuilder,
 	MessageFlags,
-	StringSelectMenuBuilder,
 	type AttachmentBuilder,
 	type ColorResolvable,
 } from "discord.js";
@@ -12,7 +11,6 @@ import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import {
 	COLUMNS,
-	GRID_SIZE,
 	FLEET,
 	createMatch,
 	applyShot,
@@ -33,7 +31,8 @@ import {
 	type BattleshipFleetView,
 } from "@features/games/battleshipRenderer.js";
 import { isRenderPayload, withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
-import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
+import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
+import { turnButtonId } from "./turnPrompt.js";
 import type { PrivateViewContent } from "./privateView.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -82,10 +81,6 @@ export interface StoredBattleship {
 	// Who pressed Ready during setup (post-launch plan item 17). ABSENT on a match
 	// stored before setup existed, which was already past it, so it reads as both.
 	ready?: [boolean, boolean];
-	// The half-entered coordinate each player has selected but not yet fired. Kept
-	// on the ROW rather than in a Map so a deploy mid-aim costs a re-click at worst,
-	// and so two players aiming at once cannot collide on one shared slot.
-	pending?: Record<string, { x?: number; y?: number }>;
 	// The public board message, edited every turn rather than reposted. A 10x10 grid
 	// per shot would be thirty unreadable walls in a row; the append-only trail
 	// carries the NARRATION and this carries the state.
@@ -189,6 +184,27 @@ function statusLine(state: BattleshipState): string {
 	}
 	if (state.status === "finished") return copy.finished(state.winnerId);
 	return copy.turnLine(state.players[state.turn].userId);
+}
+
+/**
+ * What the setup modal shows (2026-10 item 257 Phase 4a): the viewer's own fleet as the emoji
+ * grid and what is afloat. ⚠️ PRIVATE ONLY, like privateBoardView: it reads ownView, and it
+ * reaches a player only inside their own modal.
+ */
+export function ownFleetText(state: BattleshipState, viewerId: string): string {
+	return [ownGridText(state, viewerId), gameRoomsCopy.battleship.fleetLine(afloatShipNames(state, viewerId))].join("\n");
+}
+
+/**
+ * What the firing modal shows: the viewer's target grid, built from opponentView and so from
+ * the shots that were FIRED only, never a ship's unfired cell. Safe to show, and still shown
+ * only inside the modal, where it replaces the board's selects.
+ */
+export function targetGridText(state: BattleshipState, viewerId: string): string {
+	const grid = opponentView(state, viewerId).map((row) => row.map((cell) => CELL[cell]));
+	const opponent = state.players.find((player) => player.userId !== viewerId);
+	const shipsLeft = opponent ? shipsRemaining(state, opponent.userId) : 0;
+	return [renderGrid(grid), gameRoomsCopy.battleship.targetLine(shipsLeft)].join("\n");
 }
 
 // The viewer's own grid as emoji, their ships and the shots fired at them. One
@@ -342,20 +358,12 @@ export async function privateBoardReply(state: BattleshipState, viewerId: string
 }
 
 // ── controls ──────────────────────────────────────────────────────────
-// ⚠️ TWO SELECTS, NEVER A BUTTON GRID (T17). A 10x10 grid of buttons is 100
-// components against Discord's hard cap of 25 (5 rows of 5), so the obvious
-// implementation is not merely ugly, it is impossible.
+// ⚠️ NEVER A BUTTON GRID (T17), and since item 257 Phase 4a no aim selects either. A 10x10 grid
+// of buttons is 100 components against Discord's hard cap of 25 (5 rows of 5); the file and the
+// rank are two selects inside the firing modal, opened by Fire or by the turn prompt's Take your
+// turn, so the board carries one row of buttons.
 export function battleshipRows(roomId: string, state: BattleshipState): ActionRowBuilder<never>[] {
 	if (state.status === "setup") return [setupRow(roomId) as unknown as ActionRowBuilder<never>];
-	const columnSelect = new StringSelectMenuBuilder()
-		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:bscol:${roomId}`)
-		.setPlaceholder(gameRoomsCopy.battleship.columnPlaceholder)
-		.addOptions(COLUMNS.map((label, index) => ({ label, value: String(index) })));
-
-	const rowSelect = new StringSelectMenuBuilder()
-		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:bsrow:${roomId}`)
-		.setPlaceholder(gameRoomsCopy.battleship.rowPlaceholder)
-		.addOptions(Array.from({ length: GRID_SIZE }, (_, index) => ({ label: String(index + 1), value: String(index) })));
 
 	const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
 		new ButtonBuilder()
@@ -375,24 +383,18 @@ export function battleshipRows(roomId: string, state: BattleshipState): ActionRo
 			.setStyle(ButtonStyle.Secondary)
 	);
 
-	return [
-		new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(columnSelect) as unknown as ActionRowBuilder<never>,
-		new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(rowSelect) as unknown as ActionRowBuilder<never>,
-		buttons as unknown as ActionRowBuilder<never>,
-	];
+	return [buttons as unknown as ActionRowBuilder<never>];
 }
 
-// The setup row (post-launch plan item 17), the board's only row until both captains
-// are ready: see your fleet, lay it again, lock it in, or surrender. The aim selects
-// and Fire join only when the battle starts, so nothing on the board offers a shot
-// that would be refused. Randomize keeps the `reroll` action, so a Reroll button on
-// a board posted before setup existed still routes.
+// The setup row (post-launch plan item 17, one modal since item 257 Phase 4a), the board's only
+// row until both captains are ready: one button opens the modal that shows your fleet and takes
+// either choice, Randomize again or I am ready, and one Submit does it. It is the turn prompt's
+// own press with the "setup" fingerprint (battleshipTurnAdapter). The old Randomize and Ready
+// buttons on a board posted before this still route (`reroll`, `bready`).
 function setupRow(roomId: string): ActionRowBuilder<ButtonBuilder> {
 	const copy = gameRoomsCopy.battleship;
 	return new ActionRowBuilder<ButtonBuilder>().addComponents(
-		new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:board:${roomId}`).setLabel(copy.viewLabel).setEmoji("🗺️").setStyle(ButtonStyle.Primary),
-		new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:reroll:${roomId}`).setLabel(copy.randomizeLabel).setEmoji("🎲").setStyle(ButtonStyle.Secondary),
-		new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:bready:${roomId}`).setLabel(copy.readyLabel).setEmoji("⚓").setStyle(ButtonStyle.Success),
+		new ButtonBuilder().setCustomId(turnButtonId(roomId, "setup")).setLabel(copy.setupLabel).setEmoji("⚓").setStyle(ButtonStyle.Primary),
 		new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:forfeit:${roomId}`).setLabel(copy.forfeitLabel).setStyle(ButtonStyle.Secondary)
 	);
 }
@@ -406,20 +408,16 @@ export interface FireOutcome {
 	won?: boolean;
 }
 
-// Resolve a fire press against the stored match. Returns what to say and, when the
+// Resolve a shot at `aim` against the stored match. Returns what to say and, when the
 // shot landed, the new state for the caller to persist and render.
-export function fire(stored: StoredBattleship, shooterId: string): FireOutcome {
+export function fire(stored: StoredBattleship, shooterId: string, aim: Coord): FireOutcome {
 	const state = deserializeMatch(stored);
 
 	if (state.status === "setup") return { ok: false, message: gameRoomsCopy.battleship.setupFirst };
 	if (state.status !== "playing") return { ok: false, message: gameRoomsCopy.battleship.matchOver };
 	if (state.players[state.turn].userId !== shooterId) return { ok: false, message: gameRoomsCopy.battleship.notYourTurn };
 
-	const aim = stored.pending?.[shooterId];
-	if (aim?.x === undefined || aim?.y === undefined) return { ok: false, message: gameRoomsCopy.battleship.noTarget };
-
-	const coord: Coord = { x: aim.x, y: aim.y };
-	const result = applyShot(state, shooterId, coord);
+	const result = applyShot(state, shooterId, aim);
 
 	// The four refusals cost NOTHING, not even the turn. A repeat in particular:
 	// a select menu makes a double submit easy, and spending somebody's turn on

@@ -47,6 +47,7 @@ import {
 	TABLE_TIMEOUT_MS,
 	MAX_SEATS,
 	roomWinnerOf,
+	blackjackTurnAdapter,
 } from "./blackjackHandler.js";
 import { _resetDrawingPauses } from "@features/game-rooms/drawingPause.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
@@ -593,5 +594,61 @@ describe("Leave during a hand", () => {
 		await flush();
 		expect(stranger.reply).toHaveBeenCalledOnce();
 		expect(mocks.awardBlackjackResult).not.toHaveBeenCalled();
+	});
+});
+
+// ── the turn prompt (2026-10 item 257 Phase 4a) ─────────────────────────────
+// The table lives in this process, so the adapter finds the game by the room's channel. Its
+// modal plays the SAME action path the board's buttons do, and rewrites the board by editing
+// the board message, since a modal's Submit has no click on the board to answer through.
+describe("the turn prompt", () => {
+	const roomOf = (channelId: string) => ({ channelId, roomId: "room-1", guildId: "g1" }) as never;
+	const soloTable = async () => {
+		const c = fakeChannel("chan-1");
+		await startBlackjackTable(c.channel, "g1", host, true);
+		return c;
+	};
+
+	it("names the seat on the clock and a fingerprint that moves with every action", async () => {
+		await soloTable();
+		expect(blackjackTurnAdapter.whoseTurn(roomOf("chan-1"))).toBe(host.userId);
+		const before = blackjackTurnAdapter.fingerprintOf(roomOf("chan-1"));
+
+		await blackjackTurnAdapter.apply({} as never, roomOf("chan-1"), host.userId, { move: "hit" }, async () => undefined);
+		await flush();
+
+		const after = blackjackTurnAdapter.fingerprintOf(roomOf("chan-1"));
+		expect(before).toMatch(/^j0\./);
+		if (after) expect(after).not.toBe(before);
+	});
+
+	it("offers the seat its hand and exactly the moves the board's buttons would enable", async () => {
+		await soloTable();
+		const view = blackjackTurnAdapter.view(roomOf("chan-1"), host.userId);
+
+		expect(view?.text.join("\n")).toMatch(/Your hand/);
+		const field = view?.fields[0];
+		const values = field && field.kind === "select" ? field.options.map((option) => option.value) : [];
+		expect(values).toContain("hit");
+		expect(values).toContain("stand");
+		expect(blackjackTurnAdapter.view(roomOf("chan-1"), "stranger")).toBeNull();
+	});
+
+	it("plays a move through the shared action path and rewrites the board by editing its message", async () => {
+		const c = await soloTable();
+		const acknowledge = vi.fn(async () => undefined);
+
+		const result = await blackjackTurnAdapter.apply({} as never, roomOf("chan-1"), host.userId, { move: "hit" }, acknowledge);
+		await flush();
+
+		expect(result).toEqual({ ok: true });
+		expect(acknowledge).toHaveBeenCalledOnce();
+		expect(c.board().edit).toHaveBeenCalled();
+	});
+
+	it("refuses a move that is not an action, and a table that is gone", async () => {
+		await soloTable();
+		expect(await blackjackTurnAdapter.apply({} as never, roomOf("chan-1"), host.userId, { move: "rob" }, async () => undefined)).toEqual({ ok: false, reason: expect.any(String) });
+		expect(await blackjackTurnAdapter.apply({} as never, roomOf("other"), host.userId, { move: "hit" }, async () => undefined)).toEqual({ ok: false, reason: expect.any(String) });
 	});
 });

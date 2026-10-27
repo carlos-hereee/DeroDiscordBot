@@ -60,7 +60,7 @@ function lastActivityAt(room: IGameRoom): number {
 async function startBattleOnSetupTimeout(client: Client, room: IGameRoom, stored: StoredBattleship): Promise<boolean> {
 	const state = deserializeMatch(stored);
 	if (!startBattle(state)) return false;
-	const next = serializeMatch(state, { pending: stored.pending, boardMessageId: stored.boardMessageId });
+	const next = serializeMatch(state, { boardMessageId: stored.boardMessageId });
 	const started = await gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.status": "setup" }, next);
 	if (!started) return false;
 	await roomTrail.postMove(client, room, { actorId: room.hostId, kind: "system", text: gameRoomsCopy.battleship.setupTimedOut, meta: { expired: true } });
@@ -101,7 +101,7 @@ export async function sweepBattleshipTurns(client: Client, now: Date = new Date(
 			// state, because it passes the turn to the other player.
 			const loserId = state.players[state.turn].userId;
 			const result = expireTurn(state);
-			const next = serializeMatch(state, { pending: stored.pending, boardMessageId: stored.boardMessageId });
+			const next = serializeMatch(state, { boardMessageId: stored.boardMessageId });
 			await gameRoomStore.update(room.guildId, room.roomId, { secret: next as never });
 
 			// The expiry is a MOVE: it belongs in the transcript that is the product,

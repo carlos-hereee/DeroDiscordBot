@@ -42,6 +42,8 @@ import { roomMonopolyRefereeNotice } from "./roomMonopolyRefereeNotice.js";
 import { hostControls } from "./hostControls.js";
 import { PRIVATE_VIEW_ACTION, closePrivateView } from "./privateView.js";
 import { satelliteAt } from "./satelliteRooms.js";
+import { handleTurnPress, handleTurnSubmit } from "./turnPrompt.js";
+import { turnAdapterFor } from "./turnAdapters.js";
 import { registerNetworkHandlers } from "./networkJoin.js";
 import type { GameSlug, SatelliteRoom } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -59,7 +61,7 @@ const DRAFT_CONFIRM_GAMES: readonly string[] = [...CHALLENGE_GAMES, "blackjack"]
 // the status refusal below cannot drift from the routing switch. `requests` and `kick`
 // are host controls too but are NOT here: they also work in a live room, and each
 // refuses by the room's status itself.
-const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "startok", "dero", "cancel", "auctions", "referee", "approval", "bots", "casual"]);
+const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "startok", "dero", "cancel", "auctions", "referee", "approval", "bots", "casual", "hbuyin"]);
 
 // ── gameRoomHandlers ─────────────────────────────────────────────────
 // What:  routes every `gameroom:` button to its action, after proving the clicker is
@@ -255,14 +257,20 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			return;
 
 		// ── in the room ──
+		// Take your turn (item 257 Phase 4a): the arg is the turn's fingerprint, and the press
+		// re-checks the presser is on the clock and the turn is still the one it was posted for.
+		case "turn":
+			await handleTurnPress(interaction, room, parsed.arg ?? "", turnAdapterFor);
+			return;
 		case "author":
 			await openAuthoringModal(interaction, room);
 			return;
 		case "hjoin":
 			await roomHoldemHandlers.handleBuyIn(interaction, room);
 			return;
+		// The host's Set the buy in is on the challenge card now (item 257 Phase 4a).
 		case "hbuyin":
-			await roomHoldemHandlers.handleSetBuyIn(interaction, room);
+			await challengeBoard.openBuyIn(interaction, room);
 			return;
 		case "hstart":
 			await roomHoldemHandlers.handleDeal(interaction, room);
@@ -515,9 +523,6 @@ export function registerGameRoomHandlers(): void {
 		if (action === "rps") return handleRpsSelect(interaction);
 		// Hangman: the host lets Dero draw the word from a category.
 		if (action === "hcategory") return handleCategorySelect(interaction);
-		// Battleship's two aim selects share one handler, which reads which half of
-		// the coordinate it was given off the action name.
-		if (action === "bscol" || action === "bsrow") return roomBattleshipHandlers.handleAimSelect(interaction);
 		if (action === "mtradeWith") return roomMonopolyTrade.handleTradePartnerSelect(interaction);
 		if (action === "mbuild") return roomMonopolyBuild.handleBuildSelect(interaction);
 		if (action === "mmortgage") return roomMonopolyMortgage.handleMortgageSelect(interaction);
@@ -532,6 +537,8 @@ export function registerGameRoomHandlers(): void {
 		const action = interaction.customId.split(":")[1];
 		if (action === "word") return handleAuthoringModal(interaction);
 		if (action === "guess") return handleGuessModal(interaction);
+		// A turn's modal: the hand and the moves of whichever game prompted it.
+		if (action === "turn") return handleTurnSubmit(interaction, turnAdapterFor);
 		if (action === "mtrade") return roomMonopolyTrade.handleTradeModal(interaction);
 		if (action === "mbid") return roomMonopolyAuction.handleBidModal(interaction);
 		// The host's throw against Dero (post-launch plan item 13).
@@ -543,7 +550,7 @@ export function registerGameRoomHandlers(): void {
 		if (action === "kick") return hostControls.handleRemoveSelect(interaction);
 		if (action === "rps") return handleRpsSelect(interaction);
 		// A chip table's buy in (2026-10 item 250 Phase 5).
-		if (action === "hbuyin") return roomHoldemHandlers.handleBuyInModal(interaction);
+		if (action === "hbuyin") return challengeBoard.handleBuyInModal(interaction);
 		// The private view modals (battleship's board, hold em's hand) have nothing to
 		// submit; closing one is acknowledged and nothing else.
 		if (action === PRIVATE_VIEW_ACTION) return closePrivateView(interaction);

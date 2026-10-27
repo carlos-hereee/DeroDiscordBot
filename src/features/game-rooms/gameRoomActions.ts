@@ -25,7 +25,7 @@ export const GAME_ROOM_MODAL_PREFIX = "gameroomModal";
 //
 // `tail` is a roomId for every action except `new` and `newok`, which carry a game slug
 // because no room exists yet at that point. `arg` is used by `vis`, `auctions`, `referee`, `approval`, `casual`,
-// `hmove`, `hseats`, `mbuy`, `mjail`, `mtradeAccept`, `mtradeReject`, `mauction` and `newok`.
+// `hmove`, `turn`, `hseats`, `mbuy`, `mjail`, `mtradeAccept`, `mtradeReject`, `mauction` and `newok`.
 //
 // ⚠️ EVERY ENTRY HERE HAS A BUTTON THAT EMITS IT AND A BRANCH THAT ANSWERS IT. Phase 3
 // deliberately declared only archive and forfeit for that reason, and Phase 4 adds the
@@ -114,6 +114,12 @@ export const GAME_ROOM_ACTIONS = {
 	// Battleship: lock your fleet in. The battle starts when both captains are ready.
 	bready: { hostOnly: false, playersOnly: true },
 
+	// Take your turn (2026-10 item 257 Phase 4a): the button on the line that pings the member on
+	// the clock, in every game with a turn prompt. The arg is the turn's fingerprint. playersOnly
+	// here, and turnPrompt re-checks that the presser is the one on the clock and that the
+	// fingerprint is still current, since the line stays in the channel's history forever.
+	turn: { hostOnly: false, playersOnly: true },
+
 	// ── hold em ──
 	// Buying in is how you BECOME a player, so it cannot be playersOnly: that gate
 	// reads room.playerIds, which this action is what adds you to.
@@ -134,8 +140,9 @@ export const GAME_ROOM_ACTIONS = {
 	// I'm back, for a seat that sits out after two timeouts in a row. playersOnly,
 	// and the handler also requires that the clicker's own seat is sitting out.
 	hback: { hostOnly: false, playersOnly: true },
-	// Set the buy in on a chip table before anybody sits (2026-10 item 250 Phase 5). In
-	// HOST_STRICT_ACTIONS: it decides what every player pays from their wallet.
+	// Set the buy in on a Hold'em challenge card (2026-10 item 257 Phase 4a, moved from the table
+	// by owner item 13); a draft action, so BOARD_ACTIONS refuses it once the room is open. In
+	// HOST_STRICT_ACTIONS: it decides what every joiner pays from their wallet.
 	hbuyin: { hostOnly: true, playersOnly: false },
 	// Open seats or Close seats while the tournament runs (2026-10 item 244 Phase 4),
 	// with the value to set in the arg. The host's call, like dealing. A late joiner

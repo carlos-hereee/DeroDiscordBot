@@ -217,6 +217,9 @@ export const gamesCopy = {
 	// every string below because they share one engine; only the seating board
 	// differs, and a solo game simply never shows it.
 	blackjack: {
+		// The turn modal (turnPrompt.ts, 2026-10 item 257 Phase 4a): the hand is public at the table.
+		turnModalTitle: "🃏 Your hand",
+		turnHandText: (hand: string, total: string, dealerUpCard: string): string => [`Your hand: ${hand} (${total})`, dealerUpCard ? `Dealer shows: ${dealerUpCard}` : ""].filter(Boolean).join("\n"),
 		subcommandDescription: "Play blackjack against Dero's dealer, alone or at a table",
 		label: "blackjack",
 

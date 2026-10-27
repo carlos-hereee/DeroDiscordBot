@@ -198,7 +198,7 @@ describe("buying in", () => {
 		// the loser of that race write nothing at all, and on the buyer not being
 		// removed by the host, which is what keeps a member removed after this read
 		// off the table (2026-10 item 244 Phase 4).
-		expect(expected).toEqual({ "secret.seats": { $size: 0 }, kickedIds: { $ne: "newcomer" } });
+		expect(expected).toEqual({ "secret.seats": { $size: 0 }, kickedIds: { $ne: "newcomer" }, "secret.boardMessageId": null });
 	});
 
 	it("re-reads and seats the loser of a race rather than overwriting the winner", async () => {
@@ -543,6 +543,7 @@ describe("leaving and ending the table", () => {
 		expect(storeMock.updateSecretIf.mock.calls[0][2]).toEqual({
 			"secret.lastActionAt": readAt,
 			"secret.seats": { $size: 2 },
+			"secret.boardMessageId": null,
 		});
 	});
 

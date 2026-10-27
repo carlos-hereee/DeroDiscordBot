@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ButtonInteraction, Client, ModalSubmitInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn(), findPlayingByGame: vi.fn(), moveMonopolyBoard: vi.fn(async () => ({})) },
+	gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn(), findPlayingByGame: vi.fn(), moveBoardMessage: vi.fn(async () => ({})) },
 }));
 // A Monopoly move's lines ride the board, or the finished turn's log message, rather than
 // one postMove each (2026-10 item 254, Arcade 8).

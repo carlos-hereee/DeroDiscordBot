@@ -113,6 +113,8 @@ export function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState
 		// The host's Casual choice (2026-10 item 254, Arcade 6), so even the closed card of a
 		// casual match keeps its CASUAL badge.
 		casual: room.casual ?? false,
+		// Hold'em's buy in, set on the card (2026-10 item 257 Phase 4a).
+		holdemBuyIn: room.holdemBuyIn ?? null,
 		...overrides,
 	};
 }

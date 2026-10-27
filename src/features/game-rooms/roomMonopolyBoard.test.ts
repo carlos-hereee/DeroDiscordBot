@@ -25,7 +25,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 			current.secret = structuredClone(secret);
 			return current;
 		}),
-		moveMonopolyBoard: vi.fn(async (_guildId: string, _roomId: string, fromId: string | null, toId: string) => {
+		moveBoardMessage: vi.fn(async (_guildId: string, _roomId: string, fromId: string | null, toId: string) => {
 			const secret = row.current?.secret as { boardMessageId: string | null } | undefined;
 			if (!secret || (secret.boardMessageId ?? null) !== fromId) return null;
 			secret.boardMessageId = toId;
@@ -41,6 +41,8 @@ vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() })
 vi.mock("@features/ratings/recordMatchRatings.js", () => ({ recordMatchRatings: vi.fn(), monopolyFinishingOrder: vi.fn(() => []) }));
 // The text board, whatever art is on disk where the suite runs.
 vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn(async () => null), renderWinnerCard: vi.fn(async () => null), monopolyWinnerView: vi.fn() }));
+// The prompt line has its own suite (turnPrompt.test.ts); here it is a no-op unless a test makes it post one.
+vi.mock("./turnPrompt.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./turnPrompt.js")>()), syncTurnPrompt: vi.fn(async () => undefined) }));
 
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { applyEndTurn, applyRoll, applySkip, createInitialState, type MonopolyResult, type MonopolyState } from "@features/games/monopolyState.js";
@@ -49,6 +51,7 @@ import { commitMonopolyMove, persistIfUnchanged } from "./roomMonopolyHandlers.j
 import { moveMonopolyBoardToBottom, splitTurnLines } from "./roomMonopolyBoard.js";
 import { sweepMonopolyIdle } from "./roomTurnSweep.js";
 import { _resetDrawingPauses } from "./drawingPause.js";
+import { syncTurnPrompt } from "./turnPrompt.js";
 
 const A = "player-a";
 const B = "player-b";
@@ -174,6 +177,21 @@ describe("the board stays the last message", () => {
 		expect(transcript().at(-1)).toBe(`It is now <@${B}>'s turn.`);
 	});
 
+	it("posts the turn prompt between the finished turn's log and the new board, so the board is still the last message", async () => {
+		const room = fakeRoom();
+		const seeded = await seedMatch(room);
+		await commitMonopolyMove(room.client, seeded, A, (state) => applyRoll(state, noDoubles()), { onTurnOnly: true });
+		// Only the turn that passes posts a prompt line; the roll above edited the board in place.
+		vi.mocked(syncTurnPrompt).mockImplementationOnce(async (client) => {
+			const channel = (await client.channels.fetch("ch-1")) as TextChannel;
+			await channel.send({ content: "it's your turn" });
+		});
+		await commitMonopolyMove(room.client, seeded, A, (state, actorId) => applyEndTurnAfterSkip(state, actorId), { onTurnOnly: true });
+
+		expect(room.messages.map((message) => message.payload.content ?? "board")).toEqual([expect.stringContaining("rolled 1 and 2."), "it's your turn", "board"]);
+		expect(boardIsLast(room)).toBe(true);
+	});
+
 	it("leads every reader to the new board: the next move edits it, and the idle sweep moves it", async () => {
 		const room = fakeRoom();
 		const seeded = await seedMatch(room, [A, B, C]);
@@ -248,7 +266,7 @@ describe("the board stays the last message", () => {
 		await commitMonopolyMove(room.client, seeded, A, (state) => applyRoll(state, noDoubles()), { onTurnOnly: true });
 		expect(room.messages).toHaveLength(1);
 		expect(boardIsLast(room)).toBe(true);
-		expect(gameRoomStore.moveMonopolyBoard).toHaveBeenCalledOnce();
+		expect(gameRoomStore.moveBoardMessage).toHaveBeenCalledOnce();
 	});
 });
 

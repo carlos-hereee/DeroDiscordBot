@@ -24,6 +24,7 @@ import { refreshDraftCard, yieldBotSeatsTo } from "./challengeBoard.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { roomTrail } from "./roomTrail.js";
 import { redrawTable, removeFromTable, seatAcceptedPlayer } from "./roomHoldemHandlers.js";
+import { refundJoiners } from "./holdemDraftBuyIn.js";
 import { monopolyStateOf, removeFromMonopolyMatch } from "./roomMonopolyHandlers.js";
 import { seatAcceptedRemotePlayer } from "./networkJoin.js";
 import { RATING_BANDS, SPECTATOR_MODES, type RatingBand, type SpectatorMode } from "./roomTypes.js";
@@ -236,6 +237,8 @@ export async function handleJoinRequestSelect(interaction: StringSelectMenuInter
 
 async function declineRequests(interaction: StringSelectMenuInteraction, room: IGameRoom, userIds: string[]): Promise<string> {
 	const updated = (await gameRoomStore.declinePendingJoins(room.guildId, room.roomId, userIds)) ?? room;
+	// A Hold'em joiner paid the card's buy in when they asked; declined, they get it back.
+	if (room.status === "draft") await refundJoiners(room, userIds);
 	await refreshRoomControls(interaction, updated);
 	await tellJoiners(interaction, room, userIds, "declined");
 	return words.approval.declined(userIds.length);
@@ -398,6 +401,8 @@ export async function handleRemoveSelect(interaction: StringSelectMenuInteractio
 }
 
 async function removeFromDraft(guild: Guild, room: IGameRoom, userId: string): Promise<string> {
+	// A removed Hold'em joiner gets the card's buy in back (2026-10 item 257 Phase 4a).
+	await refundJoiners(room, [userId]);
 	await refreshDraftCard(guild, room);
 	return words.kick.removed(userId);
 }

@@ -348,6 +348,20 @@ export function monopolyControlsRow(state: MonopolyState, viewerId: string, room
 	return turn.length > 0 ? [row(...turn), row(...anyTime)] : [row(...anyTime)];
 }
 
+/**
+ * The buttons that ride the turn prompt line beside Take your turn (2026-10 item 257 Phase 4a):
+ * Trade for any seat at any time, and Bid while an auction is open. Both open their own modal,
+ * which cannot open from the turn modal's Submit (risk R6), so they stay buttons. Built with the
+ * same helper and labels as the board's rows, so a prompt and a board cannot disagree.
+ */
+export function monopolyPromptButtons(state: MonopolyState, roomId: string): ButtonBuilder[] {
+	const tradeLabel = state.pendingTrade ? gameRoomsCopy.monopoly.tradeOpenLabel : gameRoomsCopy.monopoly.tradeLabel;
+	const trade = button(roomId, "mtrade", tradeLabel, ButtonStyle.Secondary, "🤝");
+	if (state.phase !== "in-auction" || !state.pendingAuction) return [trade];
+	const { tileId, roundOpenedAt } = state.pendingAuction;
+	return [button(roomId, "mauction", gameRoomsCopy.monopoly.bidLabel(ownableTileName(tileId)), ButtonStyle.Primary, "🔨", String(roundOpenedAt)), trade];
+}
+
 function turnButtons(state: MonopolyState, active: MonopolySeat, viewerId: string, roomId: string): ButtonBuilder[] {
 	// The one turn control that is not the active seat's: every seat still playing
 	// bids. The round's opening time rides the arg so a bid button from an earlier

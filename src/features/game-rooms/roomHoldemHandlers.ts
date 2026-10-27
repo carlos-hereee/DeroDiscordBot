@@ -1,8 +1,9 @@
-import { MessageFlags, TextChannel, type ButtonInteraction, type Client, type ModalSubmitInteraction } from "discord.js";
+import { MessageFlags, TextChannel, type ButtonInteraction, type Client } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { buildPots, potTotal, type PlayerCommitment } from "@features/games/holdemPots.js";
 import {
+	actionsFor,
 	joinTable,
 	dealHand,
 	act,
@@ -11,7 +12,6 @@ import {
 	endTable,
 	returnToTable,
 	requestLateSeat,
-	setBuyIn,
 	withdrawLateSeat,
 	handInProgress,
 	clockStartOf,
@@ -35,7 +35,7 @@ import { recordShowdownHand } from "@features/ratings/gameResultCounts.js";
 import { isRatedHoldemSession } from "@features/ratings/ratingEngine.js";
 import { secureRandom } from "@utils/secureRng.js";
 import { parseChipAmount } from "@features/economy/chipWallet.js";
-import { cashOut, isValidBuyIn, payBuyIn, refundBuyIn } from "./holdemChips.js";
+import { cashOut, payBuyIn, refundBuyIn } from "./holdemChips.js";
 import { botViewOf, decideHoldemMove } from "@features/games/holdemBot.js";
 import { isBotSeatId } from "./botSeat.js";
 import type { BettingAction } from "@features/games/holdemBetting.js";
@@ -55,17 +55,18 @@ import {
 	tableEmbed,
 	holeCardsEmbed,
 	holeCardsView,
+	holdemTurnView,
 	joiningRows,
 	betweenHandsRows,
 	bettingRows,
 	aggressiveActionFor,
 	resolveRaiseAmount,
 	tableHostStateOf,
-	buyInModal,
-	BUY_IN_FIELDS,
 } from "./roomHoldem.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { acknowledgeConfirm, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
+import { syncTurnPrompt, type TurnAdapter } from "./turnPrompt.js";
+import { repostRoomBoard } from "./roomBoardRepost.js";
 
 // ── roomHoldemHandlers ───────────────────────────────────────────────
 // What:  every hold em interaction: buying in, dealing, acting, peeking at your
@@ -126,8 +127,17 @@ const currentPot = (table: HoldemTable): number =>
 // milliseconds between a read and a write, and the whoActs check upstream already
 // covers the rest.
 async function persistIfUnchanged(room: IGameRoom, table: HoldemTable, readAt: number) {
-	return gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.lastActionAt": readAt }, table);
+	return gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.lastActionAt": readAt, ...sameBoard(table) }, table);
 }
+
+// ⚠️ EVERY TABLE WRITE ALSO MATCHES THE BOARD MESSAGE ID (risk R13, 2026-10 item 257 Phase 4a).
+// A reveal reposts the table and moves `secret.boardMessageId` with one dotted write that leaves
+// lastActionAt alone, so a write keyed only on the stamp would let an action read before the
+// repost write the OLD board id back with the rest of the blob, and the table would point at a
+// message the repost just deleted. Monopoly's turnFingerprint does the same. The loser of the
+// race answers "the table changed" and the player presses again. `table.boardMessageId` is
+// still the id the caller read: only a redraw changes it, and only after its own claim landed.
+const sameBoard = (table: HoldemTable): Record<string, unknown> => ({ "secret.boardMessageId": table.boardMessageId ?? null });
 
 // Redraw the one board message behind the drawing pause: the live table card (every
 // table, every action) in the table embed's image slot, or the embed alone when the
@@ -173,14 +183,26 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Prom
 			const embed = await labelEmbedForRoom(client, room, tableEmbed(table, pot, clockLine(table)));
 			const embeds = [card ? embed.setImage(card.ref) : embed];
 			const files = card ? [card.attachment] : [];
-			await message.edit({
-				content: null,
-				embeds,
-				components,
-				files,
-				// `attachments: []` drops the last action's card, which an edit otherwise keeps.
-				attachments: [],
-			});
+			// ① A reveal (a street dealt, a hand over, a new hand) posts the table afresh at the bottom
+			// of the room, so it is never buried under the turn lines and prompts that followed the last
+			// one (2026-10 item 257 Phase 4a); ② anything else edits the same message in place.
+			const reveal = holdemRevealKey(table);
+			if (reveal !== (table.revealKey ?? JOINING_REVEAL)) {
+				const postedId = await repostRoomBoard(channel, room, table.boardMessageId, { embeds, components, files }, { alsoSet: { "secret.revealKey": reveal } });
+				if (postedId) {
+					table.boardMessageId = postedId;
+					table.revealKey = reveal;
+				}
+			} else {
+				await message.edit({
+					content: null,
+					embeds,
+					components,
+					files,
+					// `attachments: []` drops the last action's card, which an edit otherwise keeps.
+					attachments: [],
+				});
+			}
 			if (prompted) await rememberPrompt(room, table);
 			// The same table into every satellite of a network table (2026-10 item 244 Phase
 			// 5a), after the host room has it and never awaited, so a satellite in another
@@ -191,6 +213,19 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Prom
 			if (room.network) scheduleNetworkBoardRefresh();
 		},
 	}).catch((error) => console.warn("[game-rooms] failed to redraw the hold em table", error));
+	// The line that pings whoever the hand is waiting on, below the table that was just drawn.
+	await syncTurnPrompt(client, room, holdemTurnAdapter);
+}
+
+// What the table message on the board shows of the hand. It changes when a street is dealt, when
+// a hand ends (showdown or everyone folded) and when the next hand is dealt; it holds still for
+// every action in between, which edit the table in place. A joining table is the baseline.
+const JOINING_REVEAL = "joining";
+
+/** The key a table message is shown under; exported for the tests that seed a table already on the board. */
+export function holdemRevealKey(table: HoldemTable): string {
+	if (table.status === "joining") return JOINING_REVEAL;
+	return `${table.handNumber}.${table.board.length}.${handInProgress(table) ? "live" : "settled"}.${table.status}`;
 }
 
 // ── the prompt ────────────────────────────────────────────────────────
@@ -212,7 +247,7 @@ function promptTable(table: HoldemTable, now: number = Date.now()): boolean {
 // every move moves the stamp, so a move that landed since makes this write lose, and
 // that move's own redraw prompts its own state.
 async function rememberPrompt(room: IGameRoom, table: HoldemTable): Promise<void> {
-	await gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.lastActionAt": table.lastActionAt, "secret.status": "playing" }, table);
+	await gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.lastActionAt": table.lastActionAt, "secret.status": "playing", ...sameBoard(table) }, table);
 }
 
 // The line under the header that counts down: whose turn it is and when it runs out,
@@ -392,7 +427,7 @@ async function tryBuyIn(room: IGameRoom, table: HoldemTable, userId: string, use
 	const written = await gameRoomStore.updateSecretIf(
 		room.guildId,
 		room.roomId,
-		{ "secret.seats": { $size: table.seats.length - 1 }, kickedIds: { $ne: userId } },
+		{ "secret.seats": { $size: table.seats.length - 1 }, kickedIds: { $ne: userId }, ...sameBoard(table) },
 		table,
 		{ $addToSet: { playerIds: userId } }
 	);
@@ -429,7 +464,7 @@ async function tryLateSeat(room: IGameRoom, table: HoldemTable, userId: string, 
 	const written = await gameRoomStore.updateSecretIf(
 		room.guildId,
 		room.roomId,
-		{ "secret.lastActionAt": readAt, seatsOpen: true, kickedIds: { $ne: userId } },
+		{ "secret.lastActionAt": readAt, seatsOpen: true, kickedIds: { $ne: userId }, ...sameBoard(table) },
 		table
 	);
 	return written ? { outcome: "landed", table } : { outcome: "lost" };
@@ -523,7 +558,7 @@ interface ClaimedDeal {
 // they have cards to play. A waiting seat whose player the host removed is dropped
 // first, a backstop for a removal that raced this read.
 async function claimDeal(room: IGameRoom, table: HoldemTable): Promise<ClaimedDeal | null> {
-	const expected = { "secret.handNumber": table.handNumber, "secret.lastActionAt": table.lastActionAt };
+	const expected = { "secret.handNumber": table.handNumber, "secret.lastActionAt": table.lastActionAt, ...sameBoard(table) };
 	const blindsBefore = table.bigBlind;
 	const before = toPublicView(table);
 	const dropped = dropRemovedLateSeats(table, room);
@@ -591,21 +626,31 @@ const PRESET_ACTIONS: Record<string, HoldemPreset> = {
 };
 
 export async function handleMove(interaction: ButtonInteraction, room: IGameRoom, preset: string): Promise<void> {
-	const table = tableOf(room);
-	if (!table || table.status !== "playing") {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tournamentOver] });
-		return;
-	}
-	if (whoActs(table) !== interaction.user.id) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.notYourTurn] });
-		return;
-	}
+	const refusal = await playHoldemMove(interaction.client, room, interaction.user.id, { preset }, () => interaction.deferUpdate());
+	if (refusal) await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [refusal] });
+}
 
+/** A decision as the board's buttons and the turn modal both name it: a preset key, and for a raise a typed total. */
+export interface HoldemMoveRequest {
+	preset: string;
+	/** A typed raise TOTAL, clamped into the legal band; absent means the preset's own size. */
+	amount?: number;
+}
+
+/**
+ * One member's decision at the table, from a board button or the turn modal: the SAME path, so
+ * a move never has two implementations (item 257 Phase 4a). `acknowledge` runs once the move is
+ * claimed, where the button's deferUpdate always ran. Answers the refusal worded for the
+ * member, or null when the move landed.
+ */
+export async function playHoldemMove(client: Client, room: IGameRoom, userId: string, request: HoldemMoveRequest, acknowledge: () => Promise<unknown>): Promise<string | null> {
+	const table = tableOf(room);
+	if (!table || table.status !== "playing") return gameRoomsCopy.holdem.tournamentOver;
+	if (whoActs(table) !== userId) return gameRoomsCopy.holdem.notYourTurn;
+
+	const preset = request.preset;
 	const choice = PRESET_ACTIONS[preset];
-	if (!choice) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.errors.controlRetired] });
-		return;
-	}
+	if (!choice) return gameRoomsCopy.errors.controlRetired;
 
 	// ⚠️ ASK THE ENGINE WHAT THE AGGRESSIVE ACTION IS CALLED. It is "bet" when there
 	// is no bet to raise and "raise" when there is, and every street after preflop
@@ -614,20 +659,27 @@ export async function handleMove(interaction: ButtonInteraction, room: IGameRoom
 	// turn and river, so the only aggression that ever worked after preflop was All in,
 	// and the refusal came back as the not-your-turn copy to the one player whose turn
 	// it actually was.
-	const aggressive = choice === "aggress" ? aggressiveActionFor(table, interaction.user.id) : undefined;
-	if (choice === "aggress" && !aggressive) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.illegalMove] });
-		return;
-	}
+	const aggressive = choice === "aggress" ? aggressiveActionFor(table, userId) : undefined;
+	if (choice === "aggress" && !aggressive) return gameRoomsCopy.holdem.illegalMove;
 	const action = aggressive ? aggressive.action : (choice as Exclude<HoldemPreset, "aggress">);
-	const amount = aggressive ? resolveRaiseAmount(table, interaction.user.id, preset, currentPot(table)) : 0;
+	const amount = aggressive ? raiseTotalFor(table, userId, preset, request.amount) : 0;
 
-	const landed = await applySeatMove(interaction.client, room, table, interaction.user.id, action, amount, () => interaction.deferUpdate());
+	const landed = await applySeatMove(client, room, table, userId, action, amount, acknowledge);
 	// Says what actually happened. Answering an illegal action with "it is not your turn"
 	// is how the raise bug stayed invisible: the message blamed the player for something
 	// that was not true and named nothing that could be searched for.
-	if (landed === "illegal") await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.illegalMove] });
-	if (landed === "busy") await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tableBusy] });
+	if (landed === "illegal") return gameRoomsCopy.holdem.illegalMove;
+	if (landed === "busy") return gameRoomsCopy.holdem.tableBusy;
+	return null;
+}
+
+// A typed raise total wins over the preset's size, clamped into the legal band like a preset is:
+// the modal's player named a number, and a number outside the band should play as the nearest
+// legal raise rather than be refused for a rule they had no way to read off the field.
+function raiseTotalFor(table: HoldemTable, userId: string, preset: string, typed: number | undefined): number {
+	const raise = aggressiveActionFor(table, userId);
+	if (typed === undefined || !raise) return resolveRaiseAmount(table, userId, preset, currentPot(table));
+	return Math.max(raise.min ?? 0, Math.min(raise.max ?? 0, typed));
 }
 
 /** How one seat's decision went: it landed, the engine refused it, or another write won. */
@@ -868,7 +920,7 @@ function persistLeaveOrEnd(room: IGameRoom, table: HoldemTable, readAt: number, 
 	return gameRoomStore.updateSecretIf(
 		room.guildId,
 		room.roomId,
-		{ "secret.lastActionAt": readAt, "secret.seats": { $size: seatsRead } },
+		{ "secret.lastActionAt": readAt, "secret.seats": { $size: seatsRead }, ...sameBoard(table) },
 		table
 	);
 }
@@ -1108,82 +1160,6 @@ export async function redrawTable(client: Client, room: IGameRoom): Promise<void
 	if (table) await redraw(client, room, table);
 }
 
-// ── the host's buy in (2026-10 item 250 Phase 5) ──────────────────────
-// What:  Set the buy in, on a chip table's joining board before anybody sits: the
-//        host's one amount every player pays from their wallet and starts with.
-// Who:   the host alone (HOST_STRICT_ACTIONS), on the button and again on the submit,
-//        since a modal submit is reachable without the button.
-// How:   the write matches a joining table with no seat, so a buy in that landed first
-//        makes this refuse, and a buy in racing after it re-reads the new amount and
-//        refuses rather than seat a player at a stack they did not pay for.
-
-function buyInRefusal(table: HoldemTable | null): string | null {
-	if (!table?.chips) return gameRoomsCopy.holdem.buyInFreeTable;
-	if (table.status !== "joining" || table.seats.length > 0) return gameRoomsCopy.holdem.buyInLocked;
-	return null;
-}
-
-export async function handleSetBuyIn(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
-	const table = tableOf(room);
-	const refusal = buyInRefusal(table);
-	if (refusal || !table) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [refusal ?? gameRoomsCopy.holdem.tournamentOver] });
-		return;
-	}
-	await interaction.showModal(buyInModal(room.roomId, startingStackOf(table)));
-}
-
-// The typed amount wins when it is filled; otherwise the preset select. Null when
-// neither reads as a whole number of chips.
-function submittedBuyIn(interaction: ModalSubmitInteraction): number | null {
-	const typed = interaction.fields.getTextInputValue(BUY_IN_FIELDS.custom).trim();
-	if (typed) return parseChipAmount(typed);
-	const preset = interaction.fields.getStringSelectValues(BUY_IN_FIELDS.preset)[0];
-	return preset ? parseChipAmount(preset) : null;
-}
-
-export async function handleBuyInModal(interaction: ModalSubmitInteraction): Promise<void> {
-	const [, , roomId] = interaction.customId.split(":");
-	const guildId = interaction.guildId;
-	if (!guildId || !roomId) return;
-
-	const room = await gameRoomStore.findByRoomId(guildId, roomId);
-	if (!room || room.game !== "holdem") {
-		await interaction.reply({ content: gameRoomsCopy.errors.notFound, ...PRIVATE });
-		return;
-	}
-	if (room.hostId !== interaction.user.id) {
-		await interaction.reply({ content: gameRoomsCopy.board.onlyHostStarts, ...PRIVATE });
-		return;
-	}
-	const table = tableOf(room);
-	const refusal = buyInRefusal(table);
-	if (refusal || !table) {
-		await interaction.reply({ content: refusal ?? gameRoomsCopy.holdem.tournamentOver, ...PRIVATE });
-		return;
-	}
-
-	const amount = submittedBuyIn(interaction);
-	const economy = BOT_CONSTANTS.ECONOMY;
-	if (amount === null || !isValidBuyIn(amount)) {
-		await interaction.reply({ content: gameRoomsCopy.holdem.buyInInvalid(economy.HOLDEM_MIN_BUY_IN, economy.HOLDEM_MAX_BUY_IN), ...PRIVATE });
-		return;
-	}
-	if (!setBuyIn(table, amount).ok) {
-		await interaction.reply({ content: gameRoomsCopy.holdem.buyInLocked, ...PRIVATE });
-		return;
-	}
-	const written = await gameRoomStore.updateSecretIf(guildId, roomId, { "secret.status": "joining", "secret.seats": { $size: 0 } }, table);
-	if (!written) {
-		await interaction.reply({ content: gameRoomsCopy.holdem.buyInLocked, ...PRIVATE });
-		return;
-	}
-
-	await interaction.deferUpdate();
-	await roomTrail.postMove(interaction.client, written, { actorId: interaction.user.id, kind: "system", text: gameRoomsCopy.holdem.buyInSet(interaction.user.id, amount) });
-	await redraw(interaction.client, written, table);
-}
-
 // ── the private peek ──────────────────────────────────────────────────
 export async function handleShowCards(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const table = tableOf(room);
@@ -1314,10 +1290,49 @@ async function dealNextHandIfDue(client: Client, room: IGameRoom, table: HoldemT
 	return true;
 }
 
+// ── the turn prompt (turnPrompt.ts, 2026-10 item 257 Phase 4a) ────────
+// What:  Hold'em's side of the shared turn piece: the seat on the clock, a fingerprint that
+//        moves with every action, the player's two cards, the board, the pot and their
+//        stack as the modal's text, and their legal moves as a select with a typed raise.
+// How:   every move plays through playHoldemMove, the function the board's buttons call, so
+//        the compare and swap, the narration and the redraw are the ones a button press gets.
+//        A Dero bot on the clock gets no prompt (syncTurnPrompt skips bot seats); its tick
+//        plays it through applySeatMove.
+
+const MOVE_FIELD = "move";
+const AMOUNT_FIELD = "amount";
+// The select value for the aggressive action, which the engine names bet or raise by street.
+const RAISE_CHOICE = "raise";
+
+export const holdemTurnAdapter: TurnAdapter = {
+	game: "holdem",
+	whoseTurn(room) {
+		const table = tableOf(room);
+		return table && table.status === "playing" && handInProgress(table) ? (whoActs(table) ?? null) : null;
+	},
+	fingerprintOf(room) {
+		const table = tableOf(room);
+		return table ? `h${table.handNumber}.${table.lastActionAt}` : null;
+	},
+	view(room, userId) {
+		const table = tableOf(room);
+		if (!table || table.status !== "playing" || whoActs(table) !== userId || actionsFor(table, userId).length === 0) return null;
+		return holdemTurnView(table, userId, currentPot(table));
+	},
+	async apply(client, room, userId, answers, acknowledge) {
+		const typed = answers[AMOUNT_FIELD];
+		const amount = typed ? parseChipAmount(typed) : undefined;
+		if (amount === null) return { ok: false, reason: gameRoomsCopy.turnPrompt.invalidAmount };
+		const choice = answers[MOVE_FIELD] ?? "";
+		// A typed total only means something for a raise; anything else plays as its own preset.
+		const request: HoldemMoveRequest = choice === RAISE_CHOICE ? { preset: "min", amount } : { preset: choice };
+		const refusal = await playHoldemMove(client, room, userId, request, acknowledge);
+		return refusal ? { ok: false, reason: refusal } : { ok: true };
+	},
+};
+
 export const roomHoldemHandlers = {
 	handleBuyIn,
-	handleSetBuyIn,
-	handleBuyInModal,
 	handleDeal,
 	handleMove,
 	handleShowCards,

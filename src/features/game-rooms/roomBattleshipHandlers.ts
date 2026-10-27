@@ -1,6 +1,6 @@
-import { MessageFlags, TextChannel, type ButtonInteraction, type Client, type StringSelectMenuInteraction } from "discord.js";
+import { MessageFlags, TextChannel, type ButtonInteraction, type Client } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
-import { FLEET, markReady, rerollFleet, shipsRemaining, type BattleshipState, type SetupRefusal } from "@features/games/battleshipState.js";
+import { COLUMNS, FLEET, GRID_SIZE, markReady, rerollFleet, shipsRemaining, type BattleshipState, type SetupRefusal } from "@features/games/battleshipState.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -17,6 +17,8 @@ import {
 	battleshipBoardMessageWith,
 	privateBoardReply,
 	privateBoardView,
+	ownFleetText,
+	targetGridText,
 	PRIVATE,
 	type BattleshipSinking,
 	type FireOutcome,
@@ -26,6 +28,8 @@ import { showPrivateView } from "./privateView.js";
 import { battleshipOutcome, wasBehindOnShips, type OutcomeBucket } from "./matchOutcome.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { showNotice } from "@utils/textModal.js";
+import { repostRoomBoard } from "./roomBoardRepost.js";
+import { handleTurnPress, syncTurnPrompt, type TurnAdapter } from "./turnPrompt.js";
 
 // ── roomBattleshipHandlers ───────────────────────────────────────────
 // What:  the interaction half of battleship: aiming, firing, looking at your own
@@ -70,85 +74,50 @@ export async function redrawBattleshipBoard(
 		showStatus: (status) => message.edit({ content: status }),
 		render: () => battleshipBoardCard(state, sinking),
 		fallback: () => null,
-		// `attachments: []` drops the last turn's picture, which an edit otherwise
-		// keeps, and `content: null` takes the drawing status back off.
-		swapIn: (card) => message.edit({ ...battleshipBoardMessageWith(state, room.roomId, card), content: null, attachments: [] }),
+		swapIn: async (card) => {
+			const board = battleshipBoardMessageWith(state, room.roomId, card);
+			// A shot resolves a round, and a battle that is under way posts its board afresh at the
+			// bottom of the room, so it is never buried under the shot lines and prompts that follow
+			// it (2026-10 item 257 Phase 4a). Setup and the finished board edit in place. The claim is
+			// keyed on the id the caller read, which the shot's own persist just wrote.
+			if (state.status === "playing") {
+				await repostRoomBoard(channel, room, stored.boardMessageId ?? null, board);
+				return;
+			}
+			// `attachments: []` drops the last turn's picture, which an edit otherwise
+			// keeps, and `content: null` takes the drawing status back off.
+			await message.edit({ ...board, content: null, attachments: [] });
+		},
 	}).catch((error) => console.warn("[game-rooms] failed to redraw the battleship board", error));
-}
-
-// ── aiming ────────────────────────────────────────────────────────────
-// The two selects each store HALF a coordinate on the row. Keeping it on the row
-// rather than in a Map means a deploy mid-aim costs a re-click at worst, and two
-// players aiming at once cannot collide on one shared slot.
-//
-// ⚠️ THAT LAST CLAUSE IS TRUE OF THE SLOT AND WAS FALSE OF THE WRITE. Each player owns
-// `pending.<their id>`, but this handler used to persist `{ ...stored, pending }`, the WHOLE
-// secret rebuilt from a snapshot read at handler entry. So an aim landing just after the
-// opponent's shot wrote their shot, the turn and their sunk-ship progress straight back to
-// what they were before it. A dotted setSecretField on this player's own slot touches
-// nothing else, which is what makes the original comment true.
-export async function handleAimSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-	const [, action, roomId] = interaction.customId.split(":");
-	const guildId = interaction.guildId;
-	if (!guildId || !roomId) return;
-
-	const room = await gameRoomStore.findByRoomId(guildId, roomId);
-	if (!room || room.status !== "playing") {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [gameRoomsCopy.battleship.matchOver] });
-		return;
-	}
-	// Re-gated: a select's customId is user input and this is reachable directly.
-	if (!room.playerIds.includes(interaction.user.id)) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [gameRoomsCopy.errors.notYours] });
-		return;
-	}
-
-	const stored = storedMatch(room);
-	if (!stored) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [gameRoomsCopy.battleship.matchOver] });
-		return;
-	}
-
-	const value = Number.parseInt(interaction.values[0] ?? "", 10);
-	if (!Number.isInteger(value)) return;
-
-	const mine = { ...(stored.pending?.[interaction.user.id] ?? {}) };
-	if (action === "bscol") mine.x = value;
-	else mine.y = value;
-
-	// setSecretField, not claimSecretField: the second select must land ON TOP of the first,
-	// so this is a revision, not a once-only claim.
-	await gameRoomStore.setSecretField(guildId, roomId, `pending.${interaction.user.id}`, mine);
-
-	// Ephemeral, always: announcing an aim publicly would tell the opponent where
-	// the next shot is going before it is fired.
-	const ready = mine.x !== undefined && mine.y !== undefined;
-	await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [ready
-			? gameRoomsCopy.battleship.aimed(`${["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"][mine.x!]}${mine.y! + 1}`)
-			: gameRoomsCopy.battleship.aimedPartial] });
+	// The line that pings the captain whose turn it now is, below the board that was just drawn.
+	await syncTurnPrompt(client, room, battleshipTurnAdapter);
 }
 
 // ── firing ────────────────────────────────────────────────────────────
+// The Fire button on the board opens the same modal Take your turn does: the target grid and
+// two selects, a file A to J and a rank 1 to 10, so one Submit fires (2026-10 item 257 Phase 4a,
+// owner items 18 and 19). There is no half a coordinate stored on the row any more.
 export async function handleFire(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	await handleTurnPress(interaction, room, battleshipTurnAdapter.fingerprintOf(room) ?? "", () => battleshipTurnAdapter);
+}
+
+/**
+ * Fire at one coordinate for `shooterId`, whoever opened the modal: the engine's refusals come
+ * back as a worded reason, and a landed shot goes through commitShot, the function every shot
+ * (a member's, a Dero bot's) ends in.
+ */
+async function fireAt(client: Client, room: IGameRoom, shooterId: string, aim: { x: number; y: number }, acknowledge: () => Promise<unknown>): Promise<string | null> {
 	const stored = storedMatch(room);
-	if (!stored) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [gameRoomsCopy.battleship.matchOver] });
-		return;
-	}
-
-	const outcome = fire(stored, interaction.user.id);
-	if (!outcome.ok || !outcome.state) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [outcome.message] });
-		return;
-	}
-
-	const shooterName =
-		interaction.guild?.members.cache.get(interaction.user.id)?.displayName ?? interaction.user.globalName ?? interaction.user.username;
+	if (!stored) return gameRoomsCopy.battleship.matchOver;
+	const outcome = fire(stored, shooterId, aim);
+	if (!outcome.ok || !outcome.state) return outcome.message;
+	const shooterName = stored.players.find((board) => board.userId === shooterId)?.username ?? shooterId;
 	// A silent acknowledgement, not a reply: the trail line already tells the shooter
 	// and everyone watching what the shot did, so a private copy of the same sentence
 	// only doubled it. Without some acknowledgement Discord shows the shooter
 	// "interaction failed" after three seconds.
-	await commitShot(interaction.client, room, stored, { ...outcome, state: outcome.state }, { userId: interaction.user.id, name: shooterName }, () => interaction.deferUpdate());
+	await commitShot(client, room, stored, { ...outcome, state: outcome.state }, { userId: shooterId, name: shooterName }, acknowledge);
+	return null;
 }
 
 /**
@@ -166,11 +135,7 @@ export async function commitShot(
 	shooter: { userId: string; name: string },
 	acknowledge: () => Promise<unknown> = async () => undefined
 ): Promise<void> {
-	// Clear the shooter's aim so the next turn starts from nothing rather than
-	// re-firing the previous coordinate on a stray press.
-	const pending = { ...(stored.pending ?? {}) };
-	delete pending[shooter.userId];
-	const next = serializeMatch(outcome.state, { pending, boardMessageId: stored.boardMessageId });
+	const next = serializeMatch(outcome.state, { boardMessageId: stored.boardMessageId });
 	await persist(room, next);
 	await acknowledge();
 
@@ -287,45 +252,55 @@ const SETUP_REFUSALS: Record<SetupRefusal, string> = {
 // private view, so the press answers with the thing it changed and nothing lands in
 // the channel. Only during setup and only before this player pressed Ready.
 export async function handleReroll(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
-	const stored = storedMatch(room);
-	if (!stored) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [gameRoomsCopy.battleship.matchOver] });
+	const relaid = await layFleetAgain(room, interaction.user.id);
+	if (!relaid.ok) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [relaid.reason] });
 		return;
 	}
+	await showOwnBoard(interaction, room, relaid.state);
+}
+
+/**
+ * Lay one captain's fleet again, the function the Randomize button and the setup modal's
+ * "Randomize again" both call (2026-10 item 257 Phase 4a). Answers the new state, or the
+ * refusal worded for the member.
+ */
+async function layFleetAgain(room: IGameRoom, userId: string): Promise<{ ok: true; state: BattleshipState } | { ok: false; reason: string }> {
+	const stored = storedMatch(room);
+	if (!stored) return { ok: false, reason: gameRoomsCopy.battleship.matchOver };
 
 	const state = deserializeMatch(stored);
-	const result = rerollFleet(state, interaction.user.id);
+	const result = rerollFleet(state, userId);
 	if (!result.ok) {
 		// A board posted before setup existed is past its first shot or at it; its old
 		// Reroll button answers in the words it always did.
-		const refusal = result.reason === "not-in-setup" && stored.ready === undefined ? gameRoomsCopy.battleship.rerollTooLate : SETUP_REFUSALS[result.reason];
-		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [refusal] });
-		return;
+		return { ok: false, reason: result.reason === "not-in-setup" && stored.ready === undefined ? gameRoomsCopy.battleship.rerollTooLate : SETUP_REFUSALS[result.reason] };
 	}
 
-	// One player's fleet slot, by index, for the same reason as the aim above: writing the whole
-	// secret back would revert whatever the opponent did between this handler's read and its
-	// write. The opponent's own reroll is a DIFFERENT index.
+	// One player's fleet slot, by index: writing the whole secret back would revert whatever
+	// the opponent did between this handler's read and its write. The opponent's own reroll
+	// is a DIFFERENT index.
 	const relaid = serializeMatch(state).players[result.index];
 	await gameRoomStore.setSecretField(room.guildId, room.roomId, `players.${result.index}`, relaid);
-	await showOwnBoard(interaction, room, state);
+	return { ok: true, state };
 }
 
 // Ready: lock this player's fleet. The first Ready is narrated and redrawn; the second
 // starts the battle, exactly once, however close together the two presses land.
 export async function handleReady(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
-	const stored = storedMatch(room);
-	if (!stored) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [gameRoomsCopy.battleship.matchOver] });
-		return;
-	}
+	const refusal = await lockFleetIn(interaction.client, room, interaction.user.id, () => interaction.deferUpdate());
+	if (refusal) await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [refusal] });
+}
 
-	const result = markReady(deserializeMatch(stored), interaction.user.id);
-	if (!result.ok) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [SETUP_REFUSALS[result.reason]] });
-		return;
-	}
-	await commitReady(interaction.client, room, interaction.user.id, result.index, () => interaction.deferUpdate());
+/** Lock one captain's fleet in, the function the Ready button and the setup modal's "I am ready" both call. Answers a refusal or null. */
+async function lockFleetIn(client: Client, room: IGameRoom, userId: string, acknowledge: () => Promise<unknown>): Promise<string | null> {
+	const stored = storedMatch(room);
+	if (!stored) return gameRoomsCopy.battleship.matchOver;
+
+	const result = markReady(deserializeMatch(stored), userId);
+	if (!result.ok) return SETUP_REFUSALS[result.reason];
+	await commitReady(client, room, userId, result.index, acknowledge);
+	return null;
 }
 
 /**
@@ -368,7 +343,96 @@ export async function commitReady(
 	await redrawBattleshipBoard(client, room, latest);
 }
 
-export const roomBattleshipHandlers = { handleAimSelect, handleFire, handleViewBoard, handleReroll, handleReady, commitShot, commitReady };
+// ── the turn prompt (turnPrompt.ts, 2026-10 item 257 Phase 4a) ────────
+// What:  Battleship's side of the shared turn piece. While the fleets are laid there is no one
+//        on the clock: the board's Set up your fleet button opens one modal with your fleet's
+//        emoji grid and a select, Randomize again or I am ready, and one Submit does either.
+//        Once the battle runs, Take your turn (and the board's Fire) opens one modal with the
+//        target grid and a file and a rank select, and one Submit fires.
+// How:   Randomize and Ready play through layFleetAgain and lockFleetIn, the functions the old
+//        buttons call; a shot plays through fireAt and commitShot, the path every shot ends in.
+//        The grid stays emoji text (owner decision 14): a modal shows no image.
+
+const SETUP_FIELD = "setup";
+const FILE_FIELD = "file";
+const RANK_FIELD = "rank";
+const SETUP_FINGERPRINT = "setup";
+
+const shotsFired = (state: BattleshipState): number => state.players[0].shots.size + state.players[1].shots.size;
+
+export const battleshipTurnAdapter: TurnAdapter = {
+	game: "battleship",
+	whoseTurn(room) {
+		const stored = storedMatch(room);
+		return stored?.status === "playing" ? stored.players[stored.turn].userId : null;
+	},
+	canAct(room, userId) {
+		const stored = storedMatch(room);
+		if (!stored) return false;
+		if (stored.status === "setup") return stored.players.some((board) => board.userId === userId);
+		return stored.status === "playing" && stored.players[stored.turn].userId === userId;
+	},
+	fingerprintOf(room) {
+		const stored = storedMatch(room);
+		if (!stored) return null;
+		if (stored.status === "setup") return SETUP_FINGERPRINT;
+		return stored.status === "playing" ? `b${shotsFired(deserializeMatch(stored))}` : null;
+	},
+	view(room, userId) {
+		const stored = storedMatch(room);
+		if (!stored) return null;
+		const copy = gameRoomsCopy.battleship;
+		const state = deserializeMatch(stored);
+		if (stored.status === "setup") {
+			const index = state.players.findIndex((player) => player.userId === userId);
+			if (index < 0 || state.ready[index]) return null;
+			return {
+				title: copy.setupModalTitle,
+				text: [ownFleetText(state, userId)],
+				fields: [
+					{
+						kind: "select",
+						id: SETUP_FIELD,
+						label: copy.setupChoiceLabel,
+						options: [
+							{ label: copy.setupReadyOption, value: "ready" },
+							{ label: copy.setupRerollOption, value: "reroll" },
+						],
+					},
+				],
+			};
+		}
+		if (stored.status !== "playing" || state.players[state.turn].userId !== userId) return null;
+		return {
+			title: copy.fireModalTitle,
+			text: [targetGridText(state, userId)],
+			fields: [
+				{ kind: "select", id: FILE_FIELD, label: copy.columnPlaceholder, options: COLUMNS.map((label, index) => ({ label, value: String(index) })) },
+				{ kind: "select", id: RANK_FIELD, label: copy.rowPlaceholder, options: Array.from({ length: GRID_SIZE }, (_, index) => ({ label: String(index + 1), value: String(index) })) },
+			],
+		};
+	},
+	async apply(client, room, userId, answers, acknowledge) {
+		const stored = storedMatch(room);
+		if (stored?.status === "setup") {
+			if (answers[SETUP_FIELD] === "reroll") {
+				const relaid = await layFleetAgain(room, userId);
+				if (!relaid.ok) return relaid;
+				await acknowledge();
+				return { ok: true };
+			}
+			const refusal = await lockFleetIn(client, room, userId, acknowledge);
+			return refusal ? { ok: false, reason: refusal } : { ok: true };
+		}
+		const x = Number.parseInt(answers[FILE_FIELD] ?? "", 10);
+		const y = Number.parseInt(answers[RANK_FIELD] ?? "", 10);
+		if (!Number.isInteger(x) || !Number.isInteger(y)) return { ok: false, reason: gameRoomsCopy.battleship.offGrid };
+		const refusal = await fireAt(client, room, userId, { x, y }, acknowledge);
+		return refusal ? { ok: false, reason: refusal } : { ok: true };
+	},
+};
+
+export const roomBattleshipHandlers = { handleFire, handleViewBoard, handleReroll, handleReady, commitShot, commitReady };
 
 // Re-exported so the router's flag reads identically to every other ephemeral
 // surface in the feature.

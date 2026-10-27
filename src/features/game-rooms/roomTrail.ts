@@ -1,4 +1,4 @@
-import { type Client, type TextChannel } from "discord.js";
+import { type ActionRowBuilder, type ButtonBuilder, type Client, type Message, type TextChannel } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { labelForRoom, relayMove } from "./satelliteRooms.js";
@@ -116,6 +116,31 @@ export async function postMove(
 	return true;
 }
 
+// ── the turn prompt line (2026-10 item 257 Phase 4a) ──
+/**
+ * Post the line that pings the member on the clock, with the buttons it carries. The same
+ * sending rules as postMove: the channel is resolved first, the line is labelled for the room,
+ * and the mention allowlist names exactly the one member whose turn it is, so no other text in
+ * the line can ping anybody. Writes NOTHING to the transcript: a prompt is not a move, and the
+ * move it asks for lands there when it is played. Answers the sent message (its id is what the
+ * prompt is edited through later) or null when it never reached the channel. Never throws.
+ */
+export async function postTurnPrompt(
+	client: Client,
+	room: Pick<IGameRoom, "guildId" | "roomId" | "channelId"> & Partial<Pick<IGameRoom, "network">>,
+	prompt: { playerId: string; text: string; components: ActionRowBuilder<ButtonBuilder>[] }
+): Promise<Message | null> {
+	const channel = await resolveRoomChannel(client, room.channelId);
+	if (!channel) return null;
+	try {
+		const shown = await labelForRoom(client, { network: room.network ?? false }, prompt.text);
+		return await channel.send({ content: shown, components: prompt.components, allowedMentions: { users: memberIdsOnly([prompt.playerId]) } });
+	} catch (error) {
+		console.error("[game-rooms] the turn prompt could not be sent", { guildId: room.guildId, roomId: room.roomId, error });
+		return null;
+	}
+}
+
 // ── several moves in one message (2026-10 item 254, Arcade 8) ─────────
 // Monopoly gathers a turn's lines rather than posting one message per line, so its
 // board can stay the last message in the room. The rule above holds unchanged: a
@@ -195,4 +220,4 @@ export async function postMoveLog(
 	return true;
 }
 
-export const roomTrail = { postMove, postMoveLog, recordCarriedMoves };
+export const roomTrail = { postMove, postMoveLog, postTurnPrompt, recordCarriedMoves };
