@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findConfig } }));
-// The launcher's own tests prove an admin gets the panel and a member does not.
+// Mocked so the chips off test can prove the press never opens the arcade panel.
 vi.mock("@features/command-buttons/adminCommandLauncher.js", () => ({ openSettingsPanel: mocks.openSettingsPanel }));
 vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { claimFirst: mocks.claimFirst, claimDaily: mocks.claimDaily, findOne: mocks.findChipWallet } }));
 vi.mock("@db/stores/deroCoinStore.js", () => ({ deroCoinStore: { insertAward: mocks.insertAward, credit: mocks.credit, hasClaim: mocks.hasClaim } }));
@@ -111,14 +111,16 @@ describe("runChipClaim, the press", () => {
 		expect(modal.data.custom_id).toMatch(/^notice:/);
 	});
 
-	// Phase 1b's routing stays first: an admin's press opens the arcade panel.
-	it("opens the arcade panel for an admin when chips are off, and no round", async () => {
+	// Owner decision 2026-10-27: with chips off an admin plays the round like a member, and
+	// the card's chips off line is what points at the switch. The launcher answers as if
+	// the presser were an admin, and the press still never reaches it.
+	it("plays the round for an admin too when chips are off, opening no settings panel", async () => {
 		mocks.findConfig.mockResolvedValue({ chipEconomyEnabled: false });
 		mocks.openSettingsPanel.mockResolvedValue(true);
 		const { fake, showModal } = press();
 		await runChipClaim(fake);
-		expect(mocks.openSettingsPanel).toHaveBeenCalledWith(fake, "arcade", { chipEconomyEnabled: false });
-		expect(showModal).not.toHaveBeenCalled();
+		expect(mocks.openSettingsPanel).not.toHaveBeenCalled();
+		expect((showModal.mock.calls[0] as unknown as [{ data: { custom_id: string } }])[0].data.custom_id).toBe("dailyclaim:throw");
 	});
 
 	it("lets a member play for coins when chips are off, gated by today's coin claim", async () => {

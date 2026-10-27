@@ -45,17 +45,16 @@ import { economyCopy } from "./economyCopy.js";
 // ⚠️ THE ROUND NEVER TOUCHES THE LUCK BOARD: no recordLuckResult and no XP here. A daily
 // claim is not a match, and every member playing it once a day would swamp the board.
 //
-// With chips off (Phase 1b, owner item 10) an admin's press still opens the arcade
-// settings panel first, since a modal can open only one thing; a member plays the round
-// for coins only, and the card names the command to send an admin.
+// With chips off everyone, admins included, plays the round for coins only, and the
+// card's chips off line names the command that switches chips on (owner decision of
+// 2026-10-27, replacing Phase 1b's routing of an admin's press to the arcade panel: a
+// modal opens only one thing, so that routing left an admin who keeps chips off with no
+// way to claim at all).
 
 const copy = economyCopy.claim;
 const roundCopy = economyCopy.round;
 
 type GuildConfigRow = Awaited<ReturnType<typeof guildConfigStore.findByGuildId>>;
-
-// The settings panel holding the Chips switch (settingsPanels.ts, SETTINGS_PANELS).
-const ARCADE_PANEL_ID = "arcade";
 
 // The round's interactionRegistry prefix: its modal and its fallback select share it.
 const CLAIM_ROUND_PREFIX = "dailyclaim";
@@ -77,7 +76,6 @@ export async function runChipClaim(interaction: ButtonInteraction | ChatInputCom
 	try {
 		config = await guildConfigStore.findByGuildId(guildId);
 		const chipsOn = isChipEconomyOn(config);
-		if (!chipsOn && (await openChipSwitchForAdmin(interaction, config))) return;
 		// Read before the modal so a member never throws for nothing; the Submit reads it
 		// again, because the claim itself is what decides.
 		const wait = await claimWaitText(guildId, interaction.user.id, chipsOn, new Date());
@@ -105,16 +103,6 @@ export async function runChipClaim(interaction: ButtonInteraction | ChatInputCom
 			.setMaxValues(1)
 			.addOptions(RPS_CHOICES.map((choice) => ({ label: gameRoomsCopy.games.rpsLabel(choice), value: choice }))),
 	});
-}
-
-// Chips off: the arcade panel, whose Chips switch turns them on, for whoever may flip it.
-// True when it opened. Loaded on use rather than imported at the top: the launcher imports
-// /arcade, which reaches this file back through arcadeSwitch, GuildSetupManager and
-// PowerUps, and it builds its command table as it loads, so a static import here would
-// close that cycle with the table half built.
-async function openChipSwitchForAdmin(interaction: ButtonInteraction | ChatInputCommandInteraction, config: GuildConfigRow): Promise<boolean> {
-	const { openSettingsPanel } = await import("@features/command-buttons/adminCommandLauncher.js");
-	return openSettingsPanel(interaction, ARCADE_PANEL_ID, config);
 }
 
 // When the claim is not open yet, the words saying when it opens; null when it is open.

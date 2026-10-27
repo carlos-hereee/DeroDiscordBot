@@ -47,9 +47,10 @@ export const economyCopy = {
 			const head = pay ? `Dero pays <@${input.userId}> ${pay} (x${input.multiplier}).` : `<@${input.userId}> played today's round.`;
 			return input.coinsPaid > 0 ? head : `${head}\nToday's Dero coins from this server were paid already.`;
 		},
-		// Chips off: the round still pays coins, and the card says so with the command a
-		// member sends an admin (the same words Phase 1b gave the chips off notice).
-		chipsOff: "Chips are switched off on this server, so this round paid Dero coins only.\nSend this command to an admin and ask them to switch chips on:\n`/arcade chips toggle enabled:True`",
+		// Chips off: the round still pays coins, for admins and members alike, and the card
+		// names the command that switches chips on: an admin runs it, a member copies it to
+		// send one. The card is the only place the claim points at the switch.
+		chipsOff: "Chips are switched off on this server, so this round paid Dero coins only.\nAn admin switches chips on with this command (copy it to send one):\n`/arcade chips toggle enabled:True`",
 		// The cooldown with chips off: only the coins' UTC day decides it.
 		coinsCooldown: (nextClaimAt: Date): string => `You already claimed today. Your next claim opens ${relative(nextClaimAt)}.`,
 		// No 💬dero-commands yet (setup not rerun since it was added): the result answers
