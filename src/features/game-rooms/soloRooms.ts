@@ -5,7 +5,7 @@ import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { startBlackjackTable } from "@features/games/blackjackHandler.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import type { SoloLuckGame, SoloLuckPlay } from "@features/games/soloLuck.js";
-import { RoomProvisioner, describeRoomOpenFailure, type RoomOpenResult } from "./RoomProvisioner.js";
+import { RoomProvisioner, checkRoomAdmission, describeRoomOpenFailure, type RoomOpenResult } from "./RoomProvisioner.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -152,9 +152,35 @@ async function dealRoomTable(
 	return false;
 }
 
+/** Why a solo room would not open. */
+export type SoloOpenFailure = Exclude<SoloOpenResult, { ok: true }>;
+
+/**
+ * The solo refusals a press can read inside Discord's three seconds, so it can answer them as a
+ * notice while a modal can still open (owner rule 1 of the Round 3 list, 2026-10 item 263): no
+ * arcade category, a full server, the private ceiling. Null when the press may go on.
+ * openSoloRoom checks all of it again after the acknowledgement, where a refusal met only then is
+ * a race. A held slot is left to that path and to offerToFreeSlot, which answer it with its link,
+ * and a category missing from the cache is left to it too, since only a fetch can say it is gone.
+ * A read that throws here also leaves the decision to it, so this never throws.
+ */
+export async function readSoloRefusalAtPress(guild: Guild, hostId: string): Promise<SoloOpenFailure | null> {
+	try {
+		const [stored, admission] = await Promise.all([guildConfigStore.findByGuildId(guild.id), checkRoomAdmission({ guild, hostId, visibility: "solo" })]);
+		const categoryId = (stored as unknown as { gamesCategoryId?: string | null } | null)?.gamesCategoryId;
+		const category = categoryId ? guild.channels.cache.get(categoryId) : undefined;
+		if (!categoryId || (category && category.type !== ChannelType.GuildCategory)) return { ok: false, reason: "noArcadeCategory" };
+		if (admission && admission.reason !== "alreadyHosting") return admission;
+		return null;
+	} catch (error) {
+		console.warn(`[solo-rooms] the press check failed for guild ${guild.id}; the open decides instead`, error);
+		return null;
+	}
+}
+
 // The solo counterpart of describeRoomOpenFailure, covering the one extra reason this
 // path can fail that the provisioner cannot know about.
-export function describeSoloOpenFailure(result: Exclude<SoloOpenResult, { ok: true }>): string {
+export function describeSoloOpenFailure(result: SoloOpenFailure): string {
 	if (result.reason === "noArcadeCategory") return gameRoomsCopy.errors.noArcadeCategory;
 	return describeRoomOpenFailure(result);
 }

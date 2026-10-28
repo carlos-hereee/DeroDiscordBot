@@ -9,7 +9,7 @@ import {
 	type ModalSubmitInteraction,
 } from "discord.js";
 import { registerButton, registerModal } from "@handlers/interactionRegistry.js";
-import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import {
 	serverApi,
@@ -17,6 +17,8 @@ import {
 	ServerResponseError,
 	ServerUnreachableError,
 } from "@utils/serverApi.js";
+import { showNotice } from "@utils/textModal.js";
+import { suggestionBoxCopy } from "./suggestionBoxCopy.js";
 
 // ── Suggestion Box ─────────────────────────────────────────────────
 // Lets any guild member send feedback that lands in the platform
@@ -95,7 +97,7 @@ async function handleOpenButton(interaction: ButtonInteraction): Promise<void> {
 async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
 	const text = interaction.fields.getTextInputValue(TEXT_INPUT_ID).trim();
 	if (!text) {
-		await answerInChannel(interaction, "member", { embeds: [errorEmbed("Suggestion cannot be empty.")] });
+		await showNotice(interaction, { title: suggestionBoxCopy.noticeTitle, sections: [suggestionBoxCopy.empty] });
 		return;
 	}
 
@@ -104,9 +106,8 @@ async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<v
 		// Defensive: Discord scopes the slash command to guilds so
 		// guild is normally populated. Empty branch covers any cache
 		// race or DM path so users get a clear "must be in a server"
-		// message instead of a generic error. Outside a server there is no channel, so
-		// this one answers privately through answerInChannel's fallback.
-		await answerInChannel(interaction, "member", { embeds: [errorEmbed("This must be used inside a server, not a DM.")] }, { config: null });
+		// message instead of a generic error, as a private notice.
+		await showNotice(interaction, { title: suggestionBoxCopy.noticeTitle, sections: [suggestionBoxCopy.outsideGuild] });
 		return;
 	}
 

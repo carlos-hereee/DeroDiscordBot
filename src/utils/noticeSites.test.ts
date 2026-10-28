@@ -3,7 +3,7 @@ import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // ── the notice inventory (2026-10 item 263, R3-11 and R3-6) ──────────────────
-// What:  finds every call of the five notice helpers and of the five files' own notice
+// What:  finds every call of the six notice helpers and of the six files' own notice
 //        wrappers in the source, and holds each one to INVENTORY below: the file, the named
 //        function it sits in, a piece of its line, and its kind under owner rule 1 of the
 //        Round 3 list (a notice states something; an answer is never a notice).
@@ -18,6 +18,9 @@ import { describe, expect, it } from "vitest";
 //        failure may call showErrorNotice. The verdicts and their reasons are the fourth pass
 //        of companyuno-discord/docs/handoffs/dero-private-reply-audit-2026-10-part-2.md.
 //
+// A second scan (the channel error inventory, below INVENTORY) finds every error embed handed
+// to a channel answer, which pings its member where it posts, and allows a failure alone there.
+//
 // utils/textModal.ts is not scanned: it is where the helpers are written, so its calls are
 // the helpers calling each other, not places a member is answered.
 
@@ -29,7 +32,7 @@ const UNSORTED_ALLOWED = false;
 /** The folders Phase 1b sorted, where an unsorted entry was never allowed even before Phase 1c. */
 const SORTED_FOLDERS = ["features/game-rooms/", "features/games/"];
 
-const NOTICE_HELPERS = ["showNotice", "showErrorNotice", "showEmbedNotice", "showCooldownNotice", "showRefusalNotice"] as const;
+const NOTICE_HELPERS = ["showNotice", "showErrorNotice", "showEmbedNotice", "showCooldownNotice", "showRefusalNotice", "showPendingNotice"] as const;
 
 // Functions that only pass their words on to a notice helper, so a call of one is a notice site
 // its own line would not show. Each was read to confirm it does nothing else. `calledFrom` names
@@ -115,6 +118,8 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/game-rooms/challengeBoard.ts", within: "handleBotSelect", anchor: "gameRoomsCopy.errors.controlRetired", kind: "race", why: "the bot count picker's Submit with a count no picker offers: only a forged or stale Submit sends one" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "chooseCasual", anchor: "refusal", kind: "state" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "answerSoloRefusal", anchor: "sections: [line]", kind: "race", why: "a solo room refused for a held slot after its press was acknowledged: every solo start refuses a held slot at the press (R3-9), so only a slot taken since meets it, and it links the card or room holding it" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "answerOpenRefusal", kind: "race", why: "a room refused after its press was acknowledged: a solo start reads no arcade, a full server and the private ceiling at the press (readSoloRefusalAtPress), so only a change since meets it; a draft start's refusal needs the provisioner's reads" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "provisionFromDraft", anchor: "settled.reason", kind: "race", why: "a host's short wallet for their own seat, read when the start charges it, after its acknowledgement" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "openBuyIn", anchor: "gameRoomsCopy.holdem.buyInFreeTable", kind: "state" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "openBuyIn", anchor: "gameRoomsCopy.holdem.buyInLocked", kind: "state" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "handleBuyInModal", anchor: "text", kind: "race", why: "the buy in modal's Submit: openBuyIn refused a free or paid table first; what is left is the row moving after the press, and a typed amount out of range, which only the Submit can read" },
@@ -171,6 +176,9 @@ const INVENTORY: readonly NoticeEntry[] = [
 	// ── game-rooms/partyGames.ts ──
 	{ file: "features/game-rooms/partyGames.ts", within: "handlePartyGamesButton", anchor: "gameRoomsCopy.partyGames.adminsOnly", kind: "state" },
 	{ file: "features/game-rooms/partyGames.ts", within: "handlePartyGamesButton", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/partyGames.ts", within: "hostHangman", anchor: "sections: [pressRefusal]", kind: "state" },
+	{ file: "features/game-rooms/partyGames.ts", within: "hostHangman", anchor: "gameRoomsCopy.partyGames.noChannel", kind: "race", why: "the stored 🎉party-games channel is gone, which only the fetch after the acknowledgement can tell" },
+	{ file: "features/game-rooms/partyGames.ts", within: "hostHangman", anchor: "gamesCopy.hangman.alreadyRunning", kind: "race", why: "a round started in 🎉party-games since the press checked it" },
 
 	// ── game-rooms/partyGamesSchedule.ts ──
 	{ file: "features/game-rooms/partyGamesSchedule.ts", within: "handleRsvpButton", anchor: "[words.gone]", kind: "state" },
@@ -228,12 +236,15 @@ const INVENTORY: readonly NoticeEntry[] = [
 	// ── game-rooms/roomMonopolyBuild.ts ──
 	{ file: "features/game-rooms/roomMonopolyBuild.ts", within: "handleMbuild", anchor: "gameRoomsCopy.monopoly.noBoard", kind: "state" },
 	{ file: "features/game-rooms/roomMonopolyBuild.ts", within: "handleMbuild", anchor: "gameRoomsCopy.monopoly.nothingToBuild", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyBuild.ts", within: "handleBuildSelect", anchor: "outcome.reason", kind: "state" },
 
 	// ── game-rooms/roomMonopolyHandlers.ts ──
 	{ file: "features/game-rooms/roomMonopolyHandlers.ts", within: "loadSeatedRoom", anchor: "gameRoomsCopy.monopoly.matchOver", kind: "state" },
 	{ file: "features/game-rooms/roomMonopolyHandlers.ts", within: "loadSeatedRoom", anchor: "gameRoomsCopy.errors.notYours", kind: "state" },
 	{ file: "features/game-rooms/roomMonopolyHandlers.ts", within: "handleMjail", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
 	{ file: "features/game-rooms/roomMonopolyHandlers.ts", within: "handleMinventory", anchor: "gameRoomsCopy.monopoly.noBoard", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyHandlers.ts", within: "refuse", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyMortgage.ts", within: "runHoldingsSelect", kind: "state" },
 
 	// ── game-rooms/roomMonopolyRefereeNotice.ts ──
 	{ file: "features/game-rooms/roomMonopolyRefereeNotice.ts", within: "handleEnableVoice", anchor: "words.enableVoiceAdminOnly", kind: "state" },
@@ -257,8 +268,14 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/game-rooms/turnPrompt.ts", within: "handleTurnPress", anchor: "text", kind: "state" },
 	{ file: "features/game-rooms/turnPrompt.ts", within: "handleTurnSubmit", anchor: "text", kind: "race", why: "the turn modal's Submit: handleTurnPress refuses the same turn first, so only a turn that passed while the modal stood open meets it (risk R4)" },
 
+	// ── games/arcadeHost.ts ──
+	{ file: "features/games/arcadeHost.ts", within: "openSoloRoomForMember", anchor: "describeSoloOpenFailure(refusal)", kind: "state" },
+
 	// ── games/blackjackHandler.ts ──
 	{ file: "features/games/blackjackHandler.ts", within: "runBlackjack", anchor: "c.cooldownMessage(Math.ceil(gate.remainingMs / 1", kind: "state" },
+	{ file: "features/games/blackjackHandler.ts", within: "runBlackjack", anchor: "sections: [c.outsideGuild]", kind: "state" },
+	{ file: "features/games/blackjackHandler.ts", within: "runBlackjack", anchor: "showNotice(interaction, { title: gamesCopy.notices.blackjack, sections: [c.alreadyRunning]", kind: "state" },
+	{ file: "features/games/blackjackHandler.ts", within: "runBlackjack", anchor: "showPendingNotice(interaction, answer, { title: gamesCopy.notices.blackjack, sections: [c.alreadyRunning]", kind: "race", why: "a table opened in the channel since the press checked it" },
 	{ file: "features/games/blackjackHandler.ts", within: "onClick", anchor: "c.alreadySeated", kind: "state" },
 	{ file: "features/games/blackjackHandler.ts", within: "onClick", anchor: "c.tableFull", kind: "state" },
 	{ file: "features/games/blackjackHandler.ts", within: "onClick", anchor: "c.notSeated", kind: "state" },
@@ -271,6 +288,10 @@ const INVENTORY: readonly NoticeEntry[] = [
 
 	// ── games/hangmanHandler.ts ──
 	{ file: "features/games/hangmanHandler.ts", within: "runHangman", anchor: "gamesCopy.hangman.cooldownMessage(Math.ceil(gate", kind: "state" },
+	{ file: "features/games/hangmanHandler.ts", within: "runHangman", anchor: "sections: [gamesCopy.outsideGuild]", kind: "state" },
+	{ file: "features/games/hangmanHandler.ts", within: "runHangman", anchor: "showNotice(interaction, { title: gamesCopy.notices.hangman, sections: [gamesCopy.hangman.alreadyRunning]", kind: "state" },
+	{ file: "features/games/hangmanHandler.ts", within: "runHangman", anchor: "gamesCopy.hangmanInRoom", kind: "state" },
+	{ file: "features/games/hangmanHandler.ts", within: "runHangman", anchor: "showPendingNotice(interaction, answer, { title: gamesCopy.notices.hangman, sections: [gamesCopy.hangman.alreadyRunning]", kind: "race", why: "a round started in the channel since the press checked it" },
 	{ file: "features/games/hangmanHandler.ts", within: "onGuessClick", anchor: "(click, { title: gamesCopy.notices.hangman, sections: [gamesCopy.hangman.closed]", kind: "state" },
 	{ file: "features/games/hangmanHandler.ts", within: "onGuessClick", anchor: "(submit, { title: gamesCopy.notices.hangman, sections: [gamesCopy.hangman.closed]", kind: "race", why: "the guess modal's Submit: the round ended while the member typed" },
 	{ file: "features/games/hangmanHandler.ts", within: "onGuessClick", anchor: "guessRefusal(result)", kind: "race", why: "a letter already tried or a character that is no letter: only the Submit can read what was typed" },
@@ -303,8 +324,8 @@ const INVENTORY: readonly NoticeEntry[] = [
 
 	// ── commands/utility/dero.ts ──
 	{ file: "commands/utility/dero.ts", within: "refuse", kind: "state" },
-	{ file: "commands/utility/dero.ts", within: "tell", count: 7, kind: "state" },
-	{ file: "commands/utility/dero.ts", within: "bringDeroIntoCall", count: 3, kind: "state" },
+	{ file: "commands/utility/dero.ts", within: "tell", count: 8, kind: "state" },
+	{ file: "commands/utility/dero.ts", within: "bringDeroIntoCall", count: 4, kind: "state" },
 	{ file: "commands/utility/dero.ts", within: "sendDeroAwayFromCall", count: 4, kind: "state" },
 	{ file: "commands/utility/dero.ts", within: "execute", kind: "failure" },
 
@@ -315,7 +336,7 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "showForm", kind: "state" },
 	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "openAdminLaunch", kind: "state" },
 	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "offerSwitchFix", kind: "state" },
-	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "handlePanelSubmit", kind: "race", why: "the settings panel's Submit for a panel or guild that is gone: the press opened it from a live button, so only a stale or replayed Submit meets it" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "handlePanelSubmit", count: 3, kind: "race", why: "the settings panel's Submit for a panel or guild that is gone (the press opened it from a live button, so only a stale or replayed Submit meets it), or a value the panel refuses, which only the Submit can read" },
 	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "handleFormSubmit", anchor: "commandButtonsCopy.launcher.staleButton", kind: "race", why: "the command form's Submit whose field mask no longer reads: only a Submit from a form opened before the command changed meets it" },
 	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "handleFormSubmit", anchor: "read.problem", kind: "race", why: "the command form's Submit with a value out of range: only the Submit can read it" },
 
@@ -324,7 +345,7 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/community/communityButtons.ts", within: "replyRefusal", kind: "state" },
 
 	// ── community/configureOnboarding.ts ──
-	{ file: "features/community/configureOnboarding.ts", within: "handleConfigureOnboardingButton", kind: "state" },
+	{ file: "features/community/configureOnboarding.ts", within: "handleConfigureOnboardingButton", count: 2, kind: "state" },
 	{ file: "features/community/configureOnboarding.ts", within: "handleConfirmOnboarding", count: 2, kind: "state" },
 	// The confirm modal's Submit (2026-10 item 263 R3-20): expired, or a check that changed since Confirm.
 	{ file: "features/community/configureOnboarding.ts", within: "handleWriteOnboarding", count: 2, kind: "state" },
@@ -411,10 +432,10 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/leaderboard/leaderboardChannelHandlers.ts", within: "handleLeaderboardChannelDelete", anchor: "Could not remove the leaderboard channel", kind: "failure" },
 
 	// ── leveling/accountProfile.ts ──
-	{ file: "features/leveling/accountProfile.ts", within: "showAccountProfile", count: 2, kind: "state" },
+	{ file: "features/leveling/accountProfile.ts", within: "showAccountProfile", count: 4, kind: "state" },
 
 	// ── leveling/achievementsView.ts ──
-	{ file: "features/leveling/achievementsView.ts", within: "showAchievements", count: 2, kind: "state" },
+	{ file: "features/leveling/achievementsView.ts", within: "showAchievements", count: 3, kind: "state" },
 
 	// ── leveling/levelSettingsSubcommands.ts ──
 	{ file: "features/leveling/levelSettingsSubcommands.ts", within: "runLevelSettings", anchor: "sections: [levelingCopy.errors.outsideGuild", kind: "state" },
@@ -428,7 +449,7 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/leveling/levelSettingsSubcommands.ts", within: "runLevelSettings", anchor: "Could not save those settings", kind: "failure" },
 
 	// ── leveling/levelsStandings.ts ──
-	{ file: "features/leveling/levelsStandings.ts", within: "showLevelsStandings", kind: "state" },
+	{ file: "features/leveling/levelsStandings.ts", within: "showLevelsStandings", count: 2, kind: "state" },
 
 	// ── leveling/xpSubcommands.ts ──
 	{ file: "features/leveling/xpSubcommands.ts", within: "runXpSubcommand", anchor: "sections: [levelingCopy.errors.outsideGuild", kind: "state" },
@@ -469,6 +490,7 @@ const INVENTORY: readonly NoticeEntry[] = [
 
 	// ── schedule/decreeEditHandlers.ts ──
 	{ file: "features/schedule/decreeEditHandlers.ts", within: "handleEditButton", count: 5, kind: "state" },
+	{ file: "features/schedule/decreeEditHandlers.ts", within: "refuseEdit", kind: "race", why: "the decree edit modal's Submit: a forged or stale modal, a role taken away or a decree deleted while it stood open, or a value only the Submit can read; a Submit opens no modal, so it is answered privately" },
 
 	// ── schedule/goLiveSoon.ts ──
 	{ file: "features/schedule/goLiveSoon.ts", within: "goLiveSoon", kind: "state" },
@@ -566,6 +588,10 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/setup/selfDestruct.ts", within: "runChoice", kind: "race", why: "the self destruct modal's Submit with a choice no modal offers: only a Submit built from an older modal sends one" },
 	{ file: "features/setup/selfDestruct.ts", within: "handleConfirmModal", kind: "race", why: "the confirm modal's Submit with the wrong word typed: only the Submit can read it" },
 
+	// ── suggestion-box/SuggestionBox.ts ──
+	{ file: "features/suggestion-box/SuggestionBox.ts", within: "handleModalSubmit", anchor: "suggestionBoxCopy.empty", kind: "race", why: "the suggestion modal's Submit with only blank space typed: only the Submit can read it" },
+	{ file: "features/suggestion-box/SuggestionBox.ts", within: "handleModalSubmit", anchor: "suggestionBoxCopy.outsideGuild", kind: "race", why: "the suggestion modal's Submit from outside a server: the command is server only, so only a cache race or a forged Submit meets it" },
+
 	// ── voice/listenHandler.ts ──
 	{ file: "features/voice/listenHandler.ts", within: "answeredCooldownAtPress", kind: "state" },
 
@@ -580,6 +606,25 @@ const INVENTORY: readonly NoticeEntry[] = [
 
 	// ── utils/answerInChannel.ts ──
 	{ file: "utils/answerInChannel.ts", within: "askerOnly", kind: "state" },
+];
+
+// Every error embed handed to a channel answer, which pings its member where it posts. Owner
+// rule 1 allows that to a real failure alone, so every entry here is a failure; a state goes
+// through a notice helper instead (showPendingNotice once the answer was begun).
+const CHANNEL_ERROR_INVENTORY: readonly NoticeEntry[] = [
+	{ file: "commands/admin/setup.ts", within: "execute", anchor: "responses.setupFailed", count: 3, kind: "failure" },
+	{ file: "commands/utility/dero.ts", within: "tell", anchor: "tellCopy.failed", kind: "failure" },
+	{ file: "commands/utility/dero.ts", within: "bringDeroIntoCall", anchor: "callCopy.connectFailed", kind: "failure" },
+	{ file: "commands/utility/dero.ts", within: "bringDeroIntoCall", anchor: "tellCopy.failed", kind: "failure" },
+	{ file: "features/community/configureOnboarding.ts", within: "handleConfigureOnboardingButton", anchor: "communityCopy.onboarding.readFailed", kind: "failure" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "provisionFromDraft", anchor: "gameRoomsCopy.errors.createFailed", kind: "failure", why: "a blackjack table whose board could not be dealt" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "answerOpenRefusal", kind: "failure", why: "only ROOM_OPEN_FAILURES reach it: a permission Dero lacks, a create Discord refused" },
+	{ file: "features/game-rooms/partyGames.ts", within: "hostHangman", anchor: "gameRoomsCopy.partyGames.noChannel", kind: "failure", why: "the round's board could not post in the channel found (startHangmanRound answered failed)" },
+	{ file: "features/games/blackjackHandler.ts", within: "runBlackjack", anchor: "c.noChannel", kind: "failure", why: "the table could not post (startBlackjackTable answered failed)" },
+	{ file: "features/games/hangmanHandler.ts", within: "runHangman", anchor: "gamesCopy.hangman.noChannel", kind: "failure", why: "the board could not post (startHangmanRound answered failed)" },
+	{ file: "features/setup/arcadeSettingsSubcommands.ts", within: "switchArcade", anchor: "arcadeCopy.offFailed : arcadeCopy.onFailed", kind: "failure" },
+	{ file: "features/setup/selfDestruct.ts", within: "runArcadeOnly", anchor: "arcadeCopy.offFailed", kind: "failure" },
+	{ file: "features/suggestion-box/SuggestionBox.ts", within: "handleModalSubmit", anchor: "Could not send your suggestion", kind: "failure" },
 ];
 
 // ── the scan ──────────────────────────────────────────────────────────
@@ -597,16 +642,12 @@ function sourceFiles(folder: string): string[] {
 	});
 }
 
-// Every notice call in one file: its helpers everywhere, a wrapper in the file that defines it and the files it is called from.
-function scanFile(file: string, source: string): NoticeSite[] {
-	const names = [...NOTICE_HELPERS, ...NOTICE_WRAPPERS.filter((wrapper) => wrapper.file === file || wrapper.calledFrom?.includes(file)).map((wrapper) => wrapper.name)];
-	const call = new RegExp(`(?<![\\w.])(?:${names.join("|")})\\(`);
-	const declaration = new RegExp(`function\\s+(?:${names.join("|")})\\(`);
-	const sites: NoticeSite[] = [];
+// The named function each line sits in (`Class.method` inside a class), by line index.
+function enclosingNames(lines: readonly string[]): string[] {
 	let topLevel = "(module)";
 	let inClass = false;
 	let method: string | null = null;
-	source.split(/\r?\n/).forEach((raw, index) => {
+	return lines.map((raw) => {
 		const opened = TOP_LEVEL.exec(raw);
 		if (opened) {
 			topLevel = opened[1] ?? opened[2] ?? opened[3] ?? topLevel;
@@ -616,17 +657,70 @@ function scanFile(file: string, source: string): NoticeSite[] {
 			const named = CLASS_METHOD.exec(raw);
 			if (named?.[1] && !NOT_A_METHOD.has(named[1])) method = named[1];
 		}
+		return method ? `${topLevel}.${method}` : topLevel;
+	});
+}
+
+// Every notice call in one file: its helpers everywhere, a wrapper in the file that defines it and the files it is called from.
+function scanFile(file: string, source: string): NoticeSite[] {
+	const names = [...NOTICE_HELPERS, ...NOTICE_WRAPPERS.filter((wrapper) => wrapper.file === file || wrapper.calledFrom?.includes(file)).map((wrapper) => wrapper.name)];
+	const call = new RegExp(`(?<![\\w.])(?:${names.join("|")})\\(`);
+	const declaration = new RegExp(`function\\s+(?:${names.join("|")})\\(`);
+	const lines = source.split(/\r?\n/);
+	const within = enclosingNames(lines);
+	const sites: NoticeSite[] = [];
+	lines.forEach((raw, index) => {
 		const text = raw.trim();
 		if (text.startsWith("//") || text.startsWith("*") || declaration.test(text) || !call.test(text)) return;
-		sites.push({ file, within: method ? `${topLevel}.${method}` : topLevel, line: index + 1, text });
+		sites.push({ file, within: within[index] ?? "(module)", line: index + 1, text });
 	});
 	return sites;
 }
 
-function scanSource(): NoticeSite[] {
+// ── the channel error scan ────────────────────────────────────────────
+// An error embed handed to a channel answer posts in 💬dero-commands (or a Headquarters
+// channel) and pings its member there, which owner rule 1 allows a real failure alone: a
+// state is a notice (2026-10 item 263). The channel answers are answerInChannel, askInChannel
+// and the send of a slow answer begun with beginChannelAnswer (or beginProfileAnswer, which is
+// it). A call is read whole across its lines, and an embed built into a variable first is
+// caught by the variable's name.
+const CHANNEL_ANSWER_CALLS = ["answerInChannel", "askInChannel"];
+const PENDING_ANSWER = /(\w+)\s*=\s*await\s+begin\w*Answer\(|(\w+)\s*:\s*PendingChannelAnswer\b/g;
+const ERROR_EMBED_VARIABLE = /(\w+)\s*=\s*\[?errorEmbed\(/g;
+
+// The text from an opening parenthesis to its match, so a call spread over lines is read whole.
+function callBody(source: string, openAt: number): string {
+	let depth = 0;
+	for (let index = openAt; index < source.length; index++) {
+		if (source[index] === "(") depth++;
+		else if (source[index] === ")" && --depth === 0) return source.slice(openAt, index + 1);
+	}
+	return source.slice(openAt);
+}
+
+/** Every channel answer in one file that carries an error embed. */
+function scanChannelErrors(file: string, source: string): NoticeSite[] {
+	const pending = [...source.matchAll(PENDING_ANSWER)].map((match) => match[1] ?? match[2]).filter((name): name is string => !!name);
+	const embedVariables = [...source.matchAll(ERROR_EMBED_VARIABLE)].map((match) => match[1]!);
+	const callees = [...CHANNEL_ANSWER_CALLS, ...[...new Set(pending)].map((name) => `${name}\\.send`)];
+	const call = new RegExp(`(?<![\\w.])(?:${callees.join("|")})\\(`, "g");
+	const carriesError = (body: string): boolean => body.includes("errorEmbed(") || embedVariables.some((name) => new RegExp(`\\b${name}\\b`).test(body));
+	const lines = source.split(/\r?\n/);
+	const within = enclosingNames(lines);
+	const sites: NoticeSite[] = [];
+	for (const match of source.matchAll(call)) {
+		const body = callBody(source, match.index + match[0].length - 1);
+		if (!carriesError(body)) continue;
+		const lineIndex = source.slice(0, match.index).split("\n").length - 1;
+		sites.push({ file, within: within[lineIndex] ?? "(module)", line: lineIndex + 1, text: `${match[0]}${body.slice(1)}`.replace(/\s+/g, " ") });
+	}
+	return sites;
+}
+
+function scanSource(scan: (file: string, source: string) => NoticeSite[]): NoticeSite[] {
 	return sourceFiles(SOURCE_ROOT).flatMap((path) => {
 		const file = relative(SOURCE_ROOT, path).split(sep).join("/");
-		return file === "utils/textModal.ts" ? [] : scanFile(file, readFileSync(path, "utf8"));
+		return file === "utils/textModal.ts" ? [] : scan(file, readFileSync(path, "utf8"));
 	});
 }
 
@@ -658,8 +752,35 @@ function auditNotices(sites: readonly NoticeSite[], inventory: readonly NoticeEn
 	};
 }
 
+/** Everything wrong between the channel error embeds found and their inventory: the notice audit's listing checks, and any kind but a failure. */
+function auditChannelErrors(sites: readonly NoticeSite[], inventory: readonly NoticeEntry[]) {
+	const { unlisted, stale } = auditNotices(sites, inventory, false);
+	return { unlisted, stale, notFailures: inventory.filter((entry) => entry.kind !== "failure").map(describeEntry) };
+}
+
+describe("the channel error inventory", () => {
+	const sites = scanSource(scanChannelErrors);
+	const audit = auditChannelErrors(sites, CHANNEL_ERROR_INVENTORY);
+
+	it("finds the channel error embeds at all (the scan reads the source tree)", () => {
+		expect(sites.length).toBeGreaterThan(10);
+	});
+
+	it("lists every error embed handed to a channel answer, each by exactly one entry", () => {
+		expect(audit.unlisted).toEqual([]);
+	});
+
+	it("matches every entry as many times as it says, so no entry outlives its site", () => {
+		expect(audit.stale).toEqual([]);
+	});
+
+	it("posts an error embed with its ping for a real failure alone", () => {
+		expect(audit.notFailures).toEqual([]);
+	});
+});
+
 describe("the notice inventory", () => {
-	const sites = scanSource();
+	const sites = scanSource(scanFile);
 	const audit = auditNotices(sites, INVENTORY, UNSORTED_ALLOWED);
 
 	it("finds the notice sites at all (the scan reads the source tree)", () => {
@@ -724,5 +845,33 @@ describe("the notice inventory's audit", () => {
 	it("names a call by the function it sits in, inside a class too", () => {
 		const source = ["export class Panel {", "\tasync open(interaction) {", "\t\tawait showNotice(interaction, words);", "\t}", "}", "async function other() {", "\tawait showErrorNotice(i, m);", "}"].join("\n");
 		expect(scanFile("features/x.ts", source).map((found) => found.within)).toEqual(["Panel.open", "other"]);
+	});
+});
+
+describe("the channel error inventory's audit", () => {
+	const source = [
+		"async function refuse(interaction) {",
+		"\tconst answer = await beginChannelAnswer(interaction, \"member\");",
+		"\tawait answer.send({",
+		"\t\tembeds: [errorEmbed(copy.notYourTurn)],",
+		"\t});",
+		"\tconst embed = errorEmbed(copy.full);",
+		"\tawait answerInChannel(interaction, \"member\", { embeds: [embed] });",
+		"\tawait answer.send({ content: copy.done });",
+		"}",
+	].join("\n");
+
+	it("finds an error embed in a pending answer's send across lines, and one held in a variable", () => {
+		expect(scanChannelErrors("features/x.ts", source).map((found) => [found.within, found.line])).toEqual([
+			["refuse", 3],
+			["refuse", 7],
+		]);
+	});
+
+	it("fails on a state listed among the channel error embeds", () => {
+		const sites = scanChannelErrors("features/x.ts", source);
+		const audit = auditChannelErrors(sites, [{ file: "features/x.ts", within: "refuse", count: 2, kind: "state" }]);
+		expect(audit.notFailures).toHaveLength(1);
+		expect(auditChannelErrors(sites, []).unlisted).toHaveLength(2);
 	});
 });

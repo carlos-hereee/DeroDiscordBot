@@ -26,9 +26,9 @@ import type { Client } from "discord.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
-import { answerInChannel, askInChannel, type ChannelPrompt } from "@utils/answerInChannel.js";
+import { askInChannel, type ChannelPrompt } from "@utils/answerInChannel.js";
 import { showNotice } from "@utils/textModal.js";
-import { getPluginCopy } from "@base/copy/getCopy.js";
+import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 
 // ── customId prefixes ───────────────────────────────────────────────
 // What:  the wire format every persistent decree-edit interaction uses.
@@ -397,30 +397,38 @@ async function handleEditButton(interaction: ButtonInteraction): Promise<void> {
 //      once the editor picks a zone.
 //   ③ render the proposed-changes embed + apply-scope buttons (apply
 //      once, apply permanent, cancel) on the same prompt.
-// The prompt and every refusal post in 🛠️server-config, a refused
-// non-editor's in 💬dero-commands (2026-10 item 257 Phase 5); only the
+// The prompt posts in 🛠️server-config (2026-10 item 257 Phase 5) and every
+// refusal is a private notice (refuseEdit, 2026-10 item 263); only the
 // editor who submitted can answer the prompt (askInChannel).
 // When step ② is skipped (no time change), step ③ replies directly.
 // The apply-scope buttons and the timezone select live inside this
 // collector, they are NOT registered globally because their lifetime
 // is bounded to this submit.
 
+// Every refusal of an edit Submit is a state (a stale or forged modal, no setup, a role taken
+// away while the modal stood open, a decree gone, a value the editor must fix), so it is a
+// private notice titled Events, never a ping in a channel (owner rule 1 of the Round 3 list,
+// 2026-10 item 263). A Submit cannot open a modal, so showNotice answers it privately.
+async function refuseEdit(submission: ModalSubmitInteraction, config: ICopyConfig | null, message: string): Promise<void> {
+	await showNotice(submission, { title: getPluginCopy(config).notice.events, sections: [message] });
+}
+
 async function handleEditModalSubmit(submission: ModalSubmitInteraction): Promise<void> {
 	const parsed = parseDecreeCustomId(submission.customId);
 	if (!parsed) {
-		await answerInChannel(submission, "member", { embeds: [errorEmbed("This edit modal is malformed and cannot be processed.")] });
+		await refuseEdit(submission, null, "This edit modal is malformed and cannot be processed.");
 		return;
 	}
 
 	// No guild means no channel to post in, so this one answers privately by the fallback.
 	if (!submission.guildId) {
-		await answerInChannel(submission, "member", { embeds: [errorEmbed("Decree edits can only be applied inside a guild.")] }, { config: null });
+		await refuseEdit(submission, null, "Decree edits can only be applied inside a guild.");
 		return;
 	}
 
 	const config = await guildConfigStore.findByGuildId(submission.guildId);
 	if (!config) {
-		await answerInChannel(submission, "member", { embeds: [errorEmbed(rokCommanderCopy.responses.setupRequired)] }, { config: null });
+		await refuseEdit(submission, null, rokCommanderCopy.responses.setupRequired);
 		return;
 	}
 
@@ -429,13 +437,13 @@ async function handleEditModalSubmit(submission: ModalSubmitInteraction): Promis
 	// gate must run twice for defense in depth.
 	const member = submission.member as GuildMember | null;
 	if (!member || !canEditDecree(member, config)) {
-		await answerInChannel(submission, "member", { embeds: [errorEmbed(rokCommanderCopy.responses.noWizardPowers)] }, { config });
+		await refuseEdit(submission, config, rokCommanderCopy.responses.noWizardPowers);
 		return;
 	}
 
 	const event = await eventStore.findByIdInGuild(parsed.eventId, submission.guildId);
 	if (!event) {
-		await answerInChannel(submission, "admin", { embeds: [errorEmbed("That decree no longer exists.")] }, { config });
+		await refuseEdit(submission, config, "That decree no longer exists.");
 		return;
 	}
 
@@ -446,7 +454,7 @@ async function handleEditModalSubmit(submission: ModalSubmitInteraction): Promis
 		submission.fields.getTextInputValue(FIELD_TIME)
 	);
 	if (!extracted.ok) {
-		await answerInChannel(submission, "admin", { embeds: [errorEmbed(extracted.reason)] }, { config });
+		await refuseEdit(submission, config, extracted.reason);
 		return;
 	}
 

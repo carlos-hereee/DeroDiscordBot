@@ -14,7 +14,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, describeRoomOpenFailure: () => "nope" }));
-vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedValue(null), startBlackjackRoomBoard: vi.fn() }));
+vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedValue(null), startBlackjackRoomBoard: vi.fn(), describeSoloOpenFailure: () => "nope" }));
 // The opener card's picture (2026-10 item 243 Phase 4). The renderer answers null
 // unless a case says otherwise, so every case written before the picture still
 // sees the text card alone; the view is a fixed fake so no case needs avatars.

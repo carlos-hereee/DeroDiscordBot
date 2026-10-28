@@ -32,7 +32,7 @@ import { turnLatencyLog } from "@features/voice/turnLatency.js";
 import { liveVoicePresenceState, renderVoicePresenceCard } from "@features/voice/voicePresenceRenderer.js";
 import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showCooldownNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
+import { showCooldownNotice, showErrorNotice, showNotice, showPendingNotice } from "@utils/textModal.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 
@@ -233,8 +233,11 @@ async function tell(interaction: ChatInputCommandInteraction): Promise<void> {
 		const audit = { ...describeBrainTurn(turn), speakerId: speaker.id, source: "text", taskChars: task.length };
 
 		// ⑨
+		// An unanswered turn (the brain offline, busy, slow or puzzled) is a state, not a
+		// failure, so it is a notice titled for Dero and never a ping in 💬dero-commands
+		// (owner rule 1 of the Round 3 list, 2026-10 item 263).
 		if (turn.status === "unanswered") {
-			await answer.send({ embeds: [errorEmbed(UNANSWERED_LINES[turn.reason])] });
+			await showPendingNotice(interaction, answer, { title: deroBrainCopy.noticeTitle, sections: [UNANSWERED_LINES[turn.reason]] });
 			auditAction(guild.id, { ...audit, durationMs: Date.now() - startedAt });
 			return;
 		}
@@ -417,8 +420,8 @@ export async function bringDeroIntoCall(interaction: RepliableInteraction): Prom
 	try {
 		const outcome = await voiceSessions.join({ guild, channel: gate.channel, controlChannelId });
 		if (outcome.status === "alreadyInGuild") {
-			// Another join won the race between the gate and here.
-			await answer.send({ embeds: [errorEmbed(callCopy.alreadyElsewhere(outcome.channelId))] });
+			// Another join won the race between the gate and here: a state, so a notice.
+			await showPendingNotice(interaction, answer, { title: deroBrainCopy.noticeTitle, sections: [callCopy.alreadyElsewhere(outcome.channelId)] });
 			return;
 		}
 		if (outcome.status === "failed") {

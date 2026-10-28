@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { AttachmentBuilder, TextChannel, type ButtonInteraction, type Client } from "discord.js";
+import { AttachmentBuilder, MessageFlags, TextChannel, type ButtonInteraction, type Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: {
@@ -100,13 +100,20 @@ function makeClient(boardMessage = makeBoardMessage()) {
 }
 
 function makeInteraction(userId: string, client: Client = makeClient()) {
-	return {
+	// As discord.js does: a deferUpdate marks the press deferred, which is what sends a notice
+	// to the private followUp rather than a modal.
+	const interaction: Record<string, unknown> = {
 		user: { id: userId },
 		client,
+		deferred: false,
+		replied: false,
 		reply: vi.fn().mockResolvedValue(undefined),
 		followUp: vi.fn().mockResolvedValue(undefined),
-		deferUpdate: vi.fn().mockResolvedValue(undefined),
-	} as unknown as ButtonInteraction & {
+		deferUpdate: vi.fn(async () => {
+			interaction.deferred = true;
+		}),
+	};
+	return interaction as unknown as ButtonInteraction & {
 		reply: ReturnType<typeof vi.fn>;
 		followUp: ReturnType<typeof vi.fn>;
 		deferUpdate: ReturnType<typeof vi.fn>;
@@ -133,7 +140,14 @@ function answered(interaction: ReturnType<typeof makeInteraction>): { embeds: { 
 	expect(call[1]).toBe("member");
 	return call[2] as ReturnType<typeof answered>;
 }
-const followUpText = (interaction: ReturnType<typeof makeInteraction>): string => answered(interaction).embeds[0].data.description ?? "";
+// The text of the private notice a refusal answered with, after the deferUpdate: a state never
+// posts in the commands channel (owner rule 1 of the Round 3 list, 2026-10 item 263).
+function followUpText(interaction: ReturnType<typeof makeInteraction>): string {
+	expect(answerMock.mock.calls.some((args) => args[0] === interaction)).toBe(false);
+	const notice = interaction.followUp.mock.calls.at(-1)?.[0] as { content?: string; flags?: number } | undefined;
+	expect(notice?.flags).toBe(MessageFlags.Ephemeral);
+	return notice?.content ?? "";
+}
 
 function seed(state: MonopolyState): IGameRoom {
 	const room = makeRoom(state);
@@ -273,14 +287,13 @@ describe("handleMroll", () => {
 		expect(payload.embeds[0].data.image).toBeUndefined();
 	});
 
-	it("refuses a seat that is not on the clock, in the commands channel, and writes nothing", async () => {
+	it("refuses a seat that is not on the clock, privately, and writes nothing", async () => {
 		const room = seed(freshMatch());
 		const interaction = makeInteraction(B);
 
 		await handleMroll(interaction, room);
 
 		expect(followUpText(interaction)).toBe(gameRoomsCopy.monopoly.notYourTurn);
-		expect(interaction.followUp).not.toHaveBeenCalled();
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 		expect(postMoveMock).not.toHaveBeenCalled();
 	});

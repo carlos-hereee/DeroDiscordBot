@@ -1,9 +1,9 @@
 import type { StringSelectMenuInteraction } from "discord.js";
-import { answerInChannel } from "@utils/answerInChannel.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
 import { applyMortgage, applySellBuilding, applyUnmortgage, type MonopolyResult, type MonopolyState } from "@features/games/monopolyState.js";
 import { monopolyInventoryReply } from "./roomMonopoly.js";
 import { commitMonopolyMove, loadSeatedRoom } from "./roomMonopolyHandlers.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── roomMonopolyMortgage ─────────────────────────────────────────────
 // What:  the selects in the private Inventory peek: mortgage a lot for cash, lift a
@@ -45,7 +45,10 @@ async function runHoldingsSelect(interaction: StringSelectMenuInteraction, actio
 		onTurnOnly: false,
 	});
 	if (!outcome.ok) {
-		await answerInChannel(interaction, "member", { embeds: [errorEmbed(outcome.reason)] });
+		// The engine's refusal (not your turn, cannot afford, the board busy) is a state, so a
+		// private notice after the deferUpdate, never a ping in 💬dero-commands (owner rule 1 of
+		// the Round 3 list, 2026-10 item 263).
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [outcome.reason] });
 		return;
 	}
 	await interaction.editReply(monopolyInventoryReply(outcome.state, interaction.user.id, room.roomId));

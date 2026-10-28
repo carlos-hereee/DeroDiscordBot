@@ -11,7 +11,7 @@ import { connectMongoose, disconnectMongoose } from "@db/db.js";
 import { registerActivityListeners } from "@features/activity-tracking/ActivityTracker.js";
 import { startApiServer } from "@api/server.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { arrivalEmbed, errorEmbed, pairingCodeEmbed } from "@utils/embedBuilder.js";
+import { arrivalEmbed, pairingCodeEmbed } from "@utils/embedBuilder.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { GuildSetupManager } from "@features/setup/GuildSetupManager.js";
@@ -71,7 +71,6 @@ import { runWeeklyDigest, startWeeklyDigest } from "@features/leveling/weeklyDig
 import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { isAdminCommand } from "@utils/permissions.js";
-import { answerInChannel } from "@utils/answerInChannel.js";
 import { registerNoticeModal, showEmbedNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
 import { registerMessageXp } from "@features/leveling/messageXp.js";
@@ -533,13 +532,10 @@ process.on("uncaughtException", (err) => {
 		} catch (error) {
 			console.error(LOG_MESSAGES.main.commandExecuteError(interaction.commandName), error);
 
-			// An interaction already answered cannot open a notice, so the failure posts in
-			// 💬dero-commands (2026-10 item 257 Phase 5).
-			if (interaction.replied || interaction.deferred) {
-				await answerInChannel(interaction, "member", { embeds: [errorEmbed(rokCommanderCopy.responses.commandExecuteFailure)] });
-			} else {
-				await showErrorNotice(interaction, rokCommanderCopy.responses.commandExecuteFailure);
-			}
+			// A real failure, so it keeps the error title, but it is still the member's alone: a
+			// notice, or its private error embed once the command already acknowledged, never a
+			// post pinging them in 💬dero-commands (owner rule 1 of the Round 3 list, 2026-10 item 263).
+			await showErrorNotice(interaction, rokCommanderCopy.responses.commandExecuteFailure);
 		}
 	}); // start the scheduler after commands are loaded
 	// && after client is ready (since it relies on the client to send messages)

@@ -1,5 +1,4 @@
 import type { RepliableInteraction, User } from "discord.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { xpPeriodStore } from "@db/stores/xpPeriodStore.js";
 import { levelFromTotalXp, xpIntoLevel, xpToNextLevel } from "@features/leveling/levelCurve.js";
@@ -20,7 +19,7 @@ import { fortuneBuffStore } from "@db/stores/fortuneBuffStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { utcMonthKey } from "@utils/utcMonthKey.js";
 import { beginChannelAnswer, type PendingChannelAnswer } from "@utils/answerInChannel.js";
-import { showNotice } from "@utils/textModal.js";
+import { showNotice, showPendingNotice } from "@utils/textModal.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── the account profile ────────────────────────────────────────────────────
@@ -57,15 +56,17 @@ export async function showAccountProfile(interaction: RepliableInteraction, { ta
 		return;
 	}
 
-	// The profile is a handful of round trips, comfortably past Discord's three
-	// second window on a cold connection, so acknowledge first.
-	const answer = await beginProfileAnswer(interaction);
-
+	// Read before the acknowledgement (a cached config read), so a server with no leveling data
+	// is a notice while a modal can still open (owner rule 1 of the Round 3 list, 2026-10 item 263).
 	const context = await getLevelingConfig(guildId);
 	if (!context) {
-		await answer.send({ embeds: [errorEmbed(levelingCopy.errors.noData)] });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: [levelingCopy.errors.noData] });
 		return;
 	}
+
+	// The rest of the profile is a handful of round trips, comfortably past Discord's three
+	// second window on a cold connection, so acknowledge first.
+	const answer = await beginProfileAnswer(interaction);
 
 	const record = await memberLevelStore.findOne(guildId, target.id);
 
@@ -73,7 +74,7 @@ export async function showAccountProfile(interaction: RepliableInteraction, { ta
 	// profile is worth rendering: a level 1 card with an empty bar is an
 	// invitation, and an error reads as the feature being broken.
 	if (!record && !isSelf) {
-		await answer.send({ embeds: [errorEmbed(levelingCopy.errors.memberNoData)] });
+		await showPendingNotice(interaction, answer, { title: getPluginCopy(null).notice.leveling, sections: [levelingCopy.errors.memberNoData] });
 		return;
 	}
 

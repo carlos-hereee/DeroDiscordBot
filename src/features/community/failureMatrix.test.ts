@@ -476,7 +476,9 @@ describe("R4: an Onboarding config Discord would refuse", () => {
 		await handleCommunityButton(press);
 
 		expect(guild.editOnboarding).not.toHaveBeenCalled();
-		expect(descriptionOf(press.editReply)).toBe(communityCopy.onboarding.draftErrors.roleAboveBot("Mod"));
+		// A state, so the notice's words with no error embed (owner rule 1 of the Round 3 list, 2026-10
+		// item 263); this guild has no 🧭onboarding, so they answer the private defer.
+		expect(press.editReply).toHaveBeenCalledWith(expect.objectContaining({ content: communityCopy.onboarding.draftErrors.roleAboveBot("Mod") }));
 	});
 
 	it("refuses at Confirm when the member role was moved above Dero after the review, keeps the draft, and writes once it is fixed", async () => {

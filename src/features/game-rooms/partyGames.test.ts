@@ -3,7 +3,7 @@ import { TextChannel, type ButtonInteraction } from "discord.js";
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 vi.mock("@utils/permissions.js", () => ({ gateOwnerOrAdmin: vi.fn() }));
-vi.mock("@features/games/hangmanHandler.js", () => ({ startHangmanRound: vi.fn() }));
+vi.mock("@features/games/hangmanHandler.js", () => ({ startHangmanRound: vi.fn(), isHangmanRoundRunning: () => false }));
 vi.mock("@features/setup/adminLog.js", () => ({ adminLog: { emit: vi.fn(), emitFor: vi.fn() } }));
 vi.mock("./challengeBoard.js", () => ({ offerChallengeDraft: vi.fn(async () => null) }));
 const registry = vi.hoisted(() => ({ buttons: new Map<string, (interaction: ButtonInteraction) => Promise<void>>() }));

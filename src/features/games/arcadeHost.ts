@@ -10,7 +10,8 @@ import {
 } from "discord.js";
 import { registerButton, registerModal, registerSelectMenu } from "@handlers/interactionRegistry.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
-import { openSoloRoom, readPrivateQuotaStatus, type SoloGameSlug } from "@features/game-rooms/soloRooms.js";
+import { describeSoloOpenFailure, openSoloRoom, readPrivateQuotaStatus, readSoloRefusalAtPress, type SoloGameSlug } from "@features/game-rooms/soloRooms.js";
+import { showNotice } from "@utils/textModal.js";
 import { answerSoloRefusal, closeHeldDraft, offerChallengeDraft, offerToFreeSlot } from "@features/game-rooms/challengeBoard.js";
 import { SOLO_LUCK_GAMES } from "@features/game-rooms/roomTypes.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
@@ -145,7 +146,15 @@ export async function openSoloRoomForMember(
 	options: { hangmanCategory?: HangmanCategory } = {}
 ): Promise<void> {
 	const guild = interaction.guild!;
+	// Started beside the held slot reads rather than after them, so the press spends one round
+	// of reads inside Discord's three seconds; a held slot answers first and the check is dropped.
+	const refusalAtPress = readSoloRefusalAtPress(guild, interaction.user.id);
 	if (!interaction.isModalSubmit() && (await offerToFreeSlot(interaction, (roomId) => replaceConfirmId(game, roomId, options.hangmanCategory)))) return;
+	const refusal = await refusalAtPress;
+	if (refusal) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [describeSoloOpenFailure(refusal)] });
+		return;
+	}
 	const answer = await beginChannelAnswer(interaction, "member");
 	const member = guild.members.cache.get(interaction.user.id);
 	const result = await openSoloRoom(
@@ -173,8 +182,8 @@ export async function openSoloRoomForMember(
 		if (status) await answer.send({ content: status });
 		return;
 	}
-	// Every refusal names itself (room slot held, guild full, quota hit, no
-	// arcade), so the member learns what to do rather than that something failed.
+	// Only a race reaches here (a slot taken or the server filled since the press), or a real failure;
+	// a state is a private notice and a failure the error embed (answerSoloRefusal).
 	await answerSoloRefusal(interaction, answer, result);
 }
 

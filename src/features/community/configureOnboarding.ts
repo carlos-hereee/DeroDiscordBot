@@ -4,7 +4,7 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showConfirm, showNotice } from "@utils/textModal.js";
+import { showConfirm, showNotice, showPendingNotice } from "@utils/textModal.js";
 import { communityCopy } from "./communityCopy.js";
 import { COMMUNITY_CUSTOM_IDS, buildOnboardingReviewRows } from "./communityControls.js";
 import { describeRefusal, type IWriteRefusal } from "./enableCommunity.js";
@@ -163,9 +163,12 @@ export async function handleConfigureOnboardingButton(interaction: ButtonInterac
 	}
 
 	const result = buildOnboardingDraft({ guild, stored: config, copy: communityCopy.onboarding, current });
+	// A draft Discord would refuse is a state the press cannot know before the live read, so it
+	// is a private notice titled for the area, never a ping in 🧭onboarding (owner rule 1 of the
+	// Round 3 list, 2026-10 item 263). An unreadable live config above is a real failure.
 	if (!result.ok) {
 		auditRefusedPress(guild.id, interaction.user.id, "draft", result);
-		await answer.send({ embeds: [errorEmbed(result.reason, config)] });
+		await showPendingNotice(interaction, answer, { title: getPluginCopy(config).notice.community, sections: [result.reason] });
 		return;
 	}
 	const revision = storePendingDraft(guild.id, interaction.user.id, result.draft);

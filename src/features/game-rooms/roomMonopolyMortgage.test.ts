@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TextChannel, type Client, type StringSelectMenuInteraction } from "discord.js";
+import { MessageFlags, TextChannel, type Client, type StringSelectMenuInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn(), moveBoardMessage: vi.fn(async () => ({})) } }));
 // A Monopoly move's lines ride its turn's board, rather than one postMove each (2026-10 item
@@ -74,7 +74,11 @@ function makeSelect(action: "mmortgage" | "munmortgage" | "msell", userId: strin
 		values: [value],
 		client,
 		reply: vi.fn().mockResolvedValue(undefined),
-		deferUpdate: vi.fn().mockResolvedValue(undefined),
+		// As discord.js does: a deferUpdate marks the press deferred, so a notice after it is a private followUp.
+		deferred: false,
+		deferUpdate: vi.fn(async function (this: { deferred: boolean }) {
+			this.deferred = true;
+		}),
 		editReply: vi.fn().mockResolvedValue(undefined),
 		followUp: vi.fn().mockResolvedValue(undefined),
 	} as unknown as StringSelectMenuInteraction & Record<"reply" | "deferUpdate" | "editReply" | "followUp", ReturnType<typeof vi.fn>>;
@@ -119,16 +123,16 @@ describe("mortgaging from the Inventory peek", () => {
 		expect(persisted().seats[1].chips).toBe(1500 - 55);
 	});
 
-	it("passes the engine's refusal back in the commands channel, for a lot the seat does not own, and writes nothing", async () => {
+	// A refusal is a state, so a private notice and never a ping in the commands channel (owner
+	// rule 1 of the Round 3 list, 2026-10 item 263).
+	it("passes the engine's refusal back privately, for a lot the seat does not own, and writes nothing", async () => {
 		seed(holdings());
 		const interaction = makeSelect("mmortgage", A, "vermillion-alley");
 
 		await handleMortgageSelect(interaction);
 
-		const call = (answerInChannel as unknown as ReturnType<typeof vi.fn>).mock.calls.find((args) => args[0] === interaction);
-		expect(call?.[1]).toBe("member");
-		expect((call?.[2] as { embeds: { data: { description: string } }[] }).embeds[0].data.description).toBe("You do not own Vermillion Alley.");
-		expect(interaction.followUp).not.toHaveBeenCalled();
+		expect((answerInChannel as unknown as ReturnType<typeof vi.fn>).mock.calls.some((args) => args[0] === interaction)).toBe(false);
+		expect(interaction.followUp).toHaveBeenCalledWith({ content: "You do not own Vermillion Alley.", flags: MessageFlags.Ephemeral });
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 

@@ -6,7 +6,6 @@ import {
 } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { answerInChannel } from "@utils/answerInChannel.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
 import { secureRandom } from "@utils/secureRng.js";
 import { BOARD, JAIL_BAIL, describeTile, isOwnableTile, ownableTileName } from "@features/games/monopolyBoard.js";
 import {
@@ -308,9 +307,10 @@ export async function removeFromMonopolyMatch(client: Client, room: IGameRoom, u
 
 // ── the button path ───────────────────────────────────────────────────
 async function refuse(interaction: ButtonInteraction, reason: string): Promise<void> {
-	// Every refusal below comes after the deferUpdate, which has spent the one reply and
-	// any notice, so it posts in 💬dero-commands (2026-10 item 257 Phase 5).
-	await answerInChannel(interaction, "member", { embeds: [errorEmbed(reason)] });
+	// Every refusal below comes after the deferUpdate, which has spent the modal, and each is a
+	// state (not your turn, cannot afford, the board busy), so it is a private notice, never a
+	// ping in 💬dero-commands (owner rule 1 of the Round 3 list, 2026-10 item 263).
+	await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [reason] });
 }
 
 async function runMonopolyAction(

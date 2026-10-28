@@ -7,7 +7,7 @@ vi.mock("@db/stores/partyGameStore.js", () => ({
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 vi.mock("@utils/permissions.js", () => ({ gateOwnerOrAdmin: vi.fn() }));
 vi.mock("@features/setup/adminLog.js", () => ({ adminLog: { emit: vi.fn(), emitFor: vi.fn() } }));
-vi.mock("@features/games/hangmanHandler.js", () => ({ startHangmanRound: vi.fn() }));
+vi.mock("@features/games/hangmanHandler.js", () => ({ startHangmanRound: vi.fn(), isHangmanRoundRunning: () => false }));
 vi.mock("./challengeBoard.js", () => ({ openChallengeDraft: vi.fn() }));
 
 import { openDuePartyGames } from "./partyGamesOpen.js";

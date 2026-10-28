@@ -33,9 +33,8 @@ const soloMock = openSoloRoom as unknown as ReturnType<typeof vi.fn>;
 const cardStateMock = cardStateFor as unknown as ReturnType<typeof vi.fn>;
 const configMock = guildConfigStore.findByGuildId as unknown as ReturnType<typeof vi.fn>;
 
-// 💬dero-commands, where the line pointing at the room posts (2026-10 item 257 Phase 5).
+// 💬dero-commands, where nothing about a solo room posts any more (2026-10 item 263).
 const commandsChannel = { id: "commands", isSendable: () => true, send: vi.fn() };
-const sentTo = (channel: { send: ReturnType<typeof vi.fn> }) => channel.send.mock.calls.map((call) => call[0] as { content: string; embeds?: unknown[]; allowedMentions?: unknown });
 
 function makeRoom(game: string, overrides: Partial<IGameRoom> = {}): IGameRoom {
 	return { roomId: "room-1", guildId: "guild-1", game, hostId: HOST, status: "draft", visibility: "invite", spectatorIds: [], boardMessageId: null, ...overrides } as unknown as IGameRoom;
@@ -60,6 +59,7 @@ function makeButton(): ButtonInteraction {
 			button.deferred = true;
 		}),
 		editReply: vi.fn().mockResolvedValue(undefined),
+		followUp: vi.fn().mockResolvedValue(undefined),
 		deferUpdate: vi.fn(async () => {
 			button.deferred = true;
 		}),
@@ -109,13 +109,16 @@ describe("playDero", () => {
 		expect(interaction.reply).not.toHaveBeenCalled();
 	});
 
-	it("tells the host in the commands channel why when the solo room cannot open, and closes the card", async () => {
+	// A full server is a state, so it is a private notice and never a ping in the commands
+	// channel (owner rule 1 of the Round 3 list, 2026-10 item 263).
+	it("tells the host privately why when the solo room cannot open, and closes the card", async () => {
 		soloMock.mockResolvedValue({ ok: false, reason: "guildFull" });
 		const interaction = makeButton();
 
 		await playDero(interaction, makeRoom("coinflip"));
 
-		expect(sentTo(commandsChannel)).toEqual([expect.objectContaining({ embeds: [expect.anything()] })]);
+		expect(commandsChannel.send).not.toHaveBeenCalled();
+		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: "no room", flags: expect.any(Number) }));
 		expect(cardStateMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ resultLine: gameRoomsCopy.board.cardDeroUnavailable(HOST) }));
 	});
 

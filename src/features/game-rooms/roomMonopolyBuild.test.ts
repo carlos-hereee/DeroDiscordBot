@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TextChannel, type ButtonInteraction, type Client, type StringSelectMenuInteraction } from "discord.js";
+import { MessageFlags, TextChannel, type ButtonInteraction, type Client, type StringSelectMenuInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn(), moveBoardMessage: vi.fn(async () => ({})) } }));
 // A Monopoly move's lines ride its turn's board, rather than one postMove each (2026-10 item
@@ -82,7 +82,11 @@ function makeSelect(userId: string, value: string) {
 		values: [value],
 		client,
 		reply: vi.fn().mockResolvedValue(undefined),
-		deferUpdate: vi.fn().mockResolvedValue(undefined),
+		// As discord.js does: a deferUpdate marks the press deferred, so a notice after it is a private followUp.
+		deferred: false,
+		deferUpdate: vi.fn(async function (this: { deferred: boolean }) {
+			this.deferred = true;
+		}),
 		editReply: vi.fn().mockResolvedValue(undefined),
 		followUp: vi.fn().mockResolvedValue(undefined),
 	} as unknown as StringSelectMenuInteraction & Record<"reply" | "deferUpdate" | "editReply" | "followUp", ReturnType<typeof vi.fn>>;
@@ -155,15 +159,16 @@ describe("handleBuildSelect", () => {
 		expect(interaction.editReply).toHaveBeenCalledWith({ content: gameRoomsCopy.monopoly.buildPickerDone, components: [] });
 	});
 
-	it("refuses a seat that is not on the clock, in the commands channel, and writes nothing", async () => {
+	// A refusal is a state, so a private notice and never a ping in the commands channel (owner
+	// rule 1 of the Round 3 list, 2026-10 item 263).
+	it("refuses a seat that is not on the clock, privately, and writes nothing", async () => {
 		seed(brownMatch());
 		const interaction = makeSelect(B, "vermillion-alley");
 
 		await handleBuildSelect(interaction);
 
-		const refusal = answered<{ embeds: { data: { description: string } }[] }>(interaction);
-		expect(refusal.embeds[0].data.description).toBe(gameRoomsCopy.monopoly.notYourTurn);
-		expect(interaction.followUp).not.toHaveBeenCalled();
+		expect(answerMock.mock.calls.some((args) => args[0] === interaction)).toBe(false);
+		expect(interaction.followUp).toHaveBeenCalledWith({ content: gameRoomsCopy.monopoly.notYourTurn, flags: MessageFlags.Ephemeral });
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
@@ -171,8 +176,7 @@ describe("handleBuildSelect", () => {
 		seed(brownMatch());
 		const interaction = makeSelect(A, "nowhere");
 		await handleBuildSelect(interaction);
-		const refusal = answered<{ embeds: { data: { description: string } }[] }>(interaction);
-		expect(refusal.embeds[0].data.description).toBe("Only color lots take buildings.");
+		expect(interaction.followUp).toHaveBeenCalledWith({ content: "Only color lots take buildings.", flags: MessageFlags.Ephemeral });
 	});
 
 	it("refuses a select from somebody who is not at the table before touching the match", async () => {

@@ -1,5 +1,4 @@
 import { type RepliableInteraction, type User } from "discord.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { levelFromTotalXp } from "@features/leveling/levelCurve.js";
 import { milestoneLevelsUpTo } from "@features/leveling/primeLevels.js";
@@ -58,13 +57,15 @@ export async function showAchievements(interaction: RepliableInteraction, { targ
 		return;
 	}
 
-	const answer = await beginProfileAnswer(interaction);
-
+	// Read before the acknowledgement (a cached config read), so a server with no leveling data
+	// is a notice while a modal can still open (owner rule 1 of the Round 3 list, 2026-10 item 263).
 	const context = await getLevelingConfig(guildId);
 	if (!context) {
-		await answer.send({ embeds: [errorEmbed(levelingCopy.errors.noData)] });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: [levelingCopy.errors.noData] });
 		return;
 	}
+
+	const answer = await beginProfileAnswer(interaction);
 
 	const record = await memberLevelStore.findOne(guildId, target.id);
 	const settings = context.settings;

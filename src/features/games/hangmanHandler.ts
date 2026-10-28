@@ -23,7 +23,7 @@ import { createHangmanState, applyGuess, type HangmanGuess, type HangmanState } 
 import { awardMultiPlayerResult } from "./gameXp.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
-import { acknowledgeTextModal, showCooldownNotice, showNotice } from "@utils/textModal.js";
+import { acknowledgeTextModal, showCooldownNotice, showNotice, showPendingNotice } from "@utils/textModal.js";
 
 // ── /mini-game hangman ─────────────────────────────────────────────────────
 // What:  a PUBLIC, channel wide round. The board is a normal channel message
@@ -94,6 +94,9 @@ const hangmanRounds = new Map<string, HangmanRound>();
 // Test seams, matching earlyAccess.ts' `_clearEarlyAccessCache` convention.
 export const _clearHangmanRounds = (): void => hangmanRounds.clear();
 export const _activeHangmanRoundCount = (): number => hangmanRounds.size;
+
+/** Whether a casual round already holds this channel: read at a press, so its refusal can be a notice before any acknowledgement. */
+export const isHangmanRoundRunning = (channelId: string): boolean => hangmanRounds.has(channelId);
 
 export type HangmanStartResult = "started" | "alreadyRunning" | "failed";
 
@@ -167,17 +170,22 @@ export async function runHangman(interaction: ChatInputCommandInteraction): Prom
 		return;
 	}
 
-	// Acknowledged first so every branch below answers the same way, and because
-	// posting the board is Discord I/O that eats into the three second ack window. The
-	// answer posts in 💬dero-commands (2026-10 item 257 Phase 5); the board, where the
-	// command ran.
-	const answer = await beginChannelAnswer(interaction, "member");
-
+	// The refusals the command can read in memory are notices before the acknowledgement,
+	// while a modal can still open (owner rule 1 of the Round 3 list, 2026-10 item 263).
 	const channel = interaction.channel;
 	if (!(channel instanceof TextChannel)) {
-		await answer.send({ embeds: [errorEmbed(gamesCopy.outsideGuild)] });
+		await showNotice(interaction, { title: gamesCopy.notices.hangman, sections: [gamesCopy.outsideGuild] });
 		return;
 	}
+	if (isHangmanRoundRunning(channel.id)) {
+		await showNotice(interaction, { title: gamesCopy.notices.hangman, sections: [gamesCopy.hangman.alreadyRunning] });
+		return;
+	}
+
+	// Acknowledged before the room read and the board post, which are I/O that eats into the
+	// three second window. The answer posts in 💬dero-commands (2026-10 item 257 Phase 5); the
+	// board, where the command ran. Every state met from here on is a private notice.
+	const answer = await beginChannelAnswer(interaction, "member");
 
 	// ── casual mode vs room mode (game rooms plan task 5.8) ──
 	// What:  refuse the CASUAL board inside a game room channel.
@@ -195,14 +203,15 @@ export async function runHangman(interaction: ChatInputCommandInteraction): Prom
 	if (interaction.guildId) {
 		const room = await gameRoomStore.findByChannelId(interaction.guildId, channel.id).catch(() => null);
 		if (room && room.status === "playing") {
-			await answer.send({ embeds: [errorEmbed(gamesCopy.hangmanInRoom)] });
+			await showPendingNotice(interaction, answer, { title: gamesCopy.notices.hangman, sections: [gamesCopy.hangmanInRoom] });
 			return;
 		}
 	}
 
 	const result = await startHangmanRound(channel, interaction.user.id);
+	// A round started since the press check: the race, answered as the same notice.
 	if (result === "alreadyRunning") {
-		await answer.send({ embeds: [errorEmbed(gamesCopy.hangman.alreadyRunning)] });
+		await showPendingNotice(interaction, answer, { title: gamesCopy.notices.hangman, sections: [gamesCopy.hangman.alreadyRunning] });
 		return;
 	}
 	if (result === "failed") {

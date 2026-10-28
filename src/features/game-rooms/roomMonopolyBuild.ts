@@ -1,6 +1,5 @@
 import { ActionRowBuilder, StringSelectMenuBuilder, type ButtonInteraction, type StringSelectMenuInteraction } from "discord.js";
 import { answerInChannel } from "@utils/answerInChannel.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
 import {
 	applyBuild,
 	listBuildOptions,
@@ -74,7 +73,10 @@ export async function handleBuildSelect(interaction: StringSelectMenuInteraction
 		{ onTurnOnly: true }
 	);
 	if (!outcome.ok) {
-		await answerInChannel(interaction, "member", { embeds: [errorEmbed(outcome.reason)] });
+		// The engine's refusal (not your turn, cannot afford, the board busy) is a state, so a
+		// private notice after the deferUpdate, never a ping in 💬dero-commands (owner rule 1 of
+		// the Round 3 list, 2026-10 item 263).
+		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [outcome.reason] });
 		return;
 	}
 

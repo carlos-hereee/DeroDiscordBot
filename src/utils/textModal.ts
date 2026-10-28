@@ -17,6 +17,8 @@ import {
 } from "discord.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { registerModal } from "@handlers/interactionRegistry.js";
+// Type only: answerInChannel imports this module at runtime, so a value import would be a cycle.
+import type { PendingChannelAnswer } from "./answerInChannel.js";
 import { errorEmbed } from "./embedBuilder.js";
 
 // ── textModal ────────────────────────────────────────────────────────
@@ -155,6 +157,21 @@ export async function showNotice(
 		return;
 	}
 	await replyPrivately(interaction, await fallback());
+}
+
+/**
+ * A notice met only after a slow answer was begun (beginChannelAnswer acknowledged the press),
+ * so no modal can open any more. With an answer channel the acknowledgement was quiet, so the
+ * notice is a private reply; with none, the private defer is still waiting, so the notice's
+ * text is its answer, or that defer would hang. Either way it never posts in a channel and
+ * never pings (owner rule 1 of the Round 3 list, 2026-10 item 263). Never throws.
+ */
+export async function showPendingNotice(interaction: RepliableInteraction, pending: PendingChannelAnswer, content: TextModalContent): Promise<void> {
+	if (pending.channelId === null) {
+		await pending.send({ content: content.sections.join("\n\n") });
+		return;
+	}
+	await showNotice(interaction, content);
 }
 
 /**

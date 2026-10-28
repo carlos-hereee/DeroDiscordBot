@@ -21,7 +21,7 @@ import type { FormChoicesProvider, OptionChoice, SharedCommandHandler } from "@h
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { answerInChannel, beginChannelAnswer, type AnswerAudience, type ChannelAnswer } from "@utils/answerInChannel.js";
-import { type ModalOpeningInteraction, showEmbedNotice, showNotice } from "@utils/textModal.js";
+import { type ModalOpeningInteraction, showEmbedNotice, showNotice, showPendingNotice } from "@utils/textModal.js";
 import type { IGuildConfigPermissionShape } from "@utils/permissions.js";
 import * as arcadeCommand from "@commands/admin/arcade.js";
 import * as deroConfigCommand from "@commands/admin/dero-config.js";
@@ -463,13 +463,16 @@ async function handlePanelSubmit(interaction: ModalSubmitInteraction): Promise<v
 	// Read again rather than trusted from the modal: the comparison is with what is
 	// stored now, so only what this admin chose differently is written.
 	const panel = await definition.load({ guild, userId: interaction.user.id });
+	// A panel gone since the press and a value the panel refuses are states only this Submit
+	// can read, so each is a private notice, never a ping in the answer channel (owner rule 1
+	// of the Round 3 list, 2026-10 item 263).
 	if (!panel) {
-		await answer.send({ embeds: [errorEmbed(commandButtonsCopy.launcher.staleButton)] });
+		await showPendingNotice(interaction, answer, { title: commandButtonsCopy.launcher.staleTitle, sections: [commandButtonsCopy.launcher.staleButton] });
 		return;
 	}
 	const read = readSettingsPanel(interaction.fields, panel);
 	if (!read.ok) {
-		await answer.send({ embeds: [errorEmbed(read.problem)] });
+		await showPendingNotice(interaction, answer, { title: commandButtonsCopy.launcher.staleTitle, sections: [read.problem] });
 		return;
 	}
 	const collected = await runPanelCalls(interaction, target.command, planSettingsChanges(panel, read.answers));

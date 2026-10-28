@@ -19,7 +19,7 @@ vi.mock("@db/stores/playerRatingStore.js", () => ({ playerRatingStore: { findFor
 vi.mock("@db/stores/networkConsentStore.js", () => ({ networkConsentStore: { findByUserId: mocks.findConsent } }));
 vi.mock("@db/stores/networkBanStore.js", () => ({ networkBanStore: { findAgainst: mocks.findBans } }));
 vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, describeRoomOpenFailure: () => "nope" }));
-vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedValue(null) }));
+vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedValue(null), describeSoloOpenFailure: () => "nope" }));
 vi.mock("./challengeCardRenderer.js", () => ({ renderChallengeCard: vi.fn().mockResolvedValue(null), challengeCardView: vi.fn().mockResolvedValue({}) }));
 
 import { chooseVisibility, joinChallenge, confirmStartMatch } from "./challengeBoard.js";

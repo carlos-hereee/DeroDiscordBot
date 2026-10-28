@@ -30,7 +30,7 @@ import { postTurnBoard } from "@features/game-rooms/turnBoard.js";
 import { setTurnBlock, turnBlockLines } from "@features/game-rooms/turnLog.js";
 import { drawingSettled, isClockExpired, pausedDeadline, withDrawingPause } from "@features/game-rooms/drawingPause.js";
 import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showCooldownNotice, showNotice } from "@utils/textModal.js";
+import { showCooldownNotice, showNotice, showPendingNotice } from "@utils/textModal.js";
 import { syncTurnPrompt, type TurnAdapter } from "@features/game-rooms/turnPrompt.js";
 
 // ── /mini-game blackjack ───────────────────────────────────────────────────
@@ -245,22 +245,29 @@ export async function runBlackjack(interaction: ChatInputCommandInteraction): Pr
 		}
 	}
 
-	// The table itself posts where the command ran; the member's own answer (seated, or
-	// why not) posts in 💬dero-commands (2026-10 item 257 Phase 5).
-	const answer = await beginChannelAnswer(interaction, "member");
-
+	// The refusals the command can read in memory are notices before the acknowledgement,
+	// while a modal can still open (owner rule 1 of the Round 3 list, 2026-10 item 263).
 	const channel = interaction.channel;
 	if (!(channel instanceof TextChannel) || !interaction.guildId) {
-		await answer.send({ embeds: [errorEmbed(c.outsideGuild)] });
+		await showNotice(interaction, { title: gamesCopy.notices.blackjack, sections: [c.outsideGuild] });
 		return;
 	}
+	if (games.has(channel.id)) {
+		await showNotice(interaction, { title: gamesCopy.notices.blackjack, sections: [c.alreadyRunning] });
+		return;
+	}
+
+	// The table itself posts where the command ran; the member's own answer (seated) posts in
+	// 💬dero-commands (2026-10 item 257 Phase 5), and a state met from here on is a private notice.
+	const answer = await beginChannelAnswer(interaction, "member");
 
 	const solo = interaction.options.getString("mode") !== "table";
 	const host = { userId: interaction.user.id, username: interaction.user.globalName ?? interaction.user.username };
 	const result = await startBlackjackTable(channel, interaction.guildId, host, solo);
 
+	// A table opened since the press check: the race, answered as the same notice.
 	if (result === "alreadyRunning") {
-		await answer.send({ embeds: [errorEmbed(c.alreadyRunning)] });
+		await showPendingNotice(interaction, answer, { title: gamesCopy.notices.blackjack, sections: [c.alreadyRunning] });
 		return;
 	}
 	if (result === "failed") {

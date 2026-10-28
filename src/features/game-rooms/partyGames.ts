@@ -3,7 +3,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton, registerModal } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
-import { startHangmanRound } from "@features/games/hangmanHandler.js";
+import { isHangmanRoundRunning, startHangmanRound } from "@features/games/hangmanHandler.js";
 import { offerChallengeDraft } from "./challengeBoard.js";
 import { gamesCopy } from "@features/games/gamesCopy.js";
 import { adminLog } from "@features/setup/adminLog.js";
@@ -11,7 +11,7 @@ import { setupCopy } from "@features/setup/setupCopy.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { PARTY_MODAL_PREFIX, PARTY_RSVP_PREFIX, buildScheduleModal, handleRsvpButton, handleScheduleSubmit } from "./partyGamesSchedule.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showNotice } from "@utils/textModal.js";
+import { showNotice, showPendingNotice } from "@utils/textModal.js";
 import { resolveServerTimezone } from "@utils/tzParser.js";
 
 // ── partyGames ───────────────────────────────────────────────────────
@@ -86,20 +86,36 @@ async function handlePartyGamesButton(interaction: ButtonInteraction): Promise<v
 	await showNotice(interaction, { title: gameRoomsCopy.notices.partyGames, sections: [gameRoomsCopy.errors.controlRetired] });
 }
 
-// Open a public hangman round in 🎉party-games. Acknowledged first: it resolves a channel
-// and posts a board, which can run past Discord's three second window on a cold cache. The
-// admin's answer posts in 🎰arcade-control (2026-10 item 257 Phase 5).
+// What a Host hangman press refuses with no I/O, or null when it may go on.
+function hangmanPressRefusal(channelId: string | null): string | null {
+	if (!channelId) return gameRoomsCopy.partyGames.noChannel;
+	if (isHangmanRoundRunning(channelId)) return gamesCopy.hangman.alreadyRunning;
+	return null;
+}
+
+// Open a public hangman round in 🎉party-games. Acknowledged after the press checks: it
+// resolves a channel and posts a board, which can run past Discord's three second window on a
+// cold cache. The admin's answer posts in 🎰arcade-control (2026-10 item 257 Phase 5).
 async function hostHangman(interaction: ButtonInteraction, guildId: string, channelId: string | null): Promise<void> {
+	// No 🎉party-games stored, or a round already in it, is a state the press reads with no I/O,
+	// so it is a notice while a modal can still open (owner rule 1 of the Round 3 list, 2026-10
+	// item 263). A channel gone since setup needs the fetch, so it is read after the acknowledgement.
+	const pressRefusal = hangmanPressRefusal(channelId);
+	if (pressRefusal) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.partyGames, sections: [pressRefusal] });
+		return;
+	}
 	const answer = await beginChannelAnswer(interaction, "arcade");
 	const channel = channelId ? await interaction.client.channels.fetch(channelId).catch(() => null) : null;
 	if (!(channel instanceof TextChannel)) {
-		await answer.send({ embeds: [errorEmbed(gameRoomsCopy.partyGames.noChannel)] });
+		await showPendingNotice(interaction, answer, { title: gameRoomsCopy.notices.partyGames, sections: [gameRoomsCopy.partyGames.noChannel] });
 		return;
 	}
 
 	const result = await startHangmanRound(channel, interaction.user.id);
+	// A round started since the press check: the race, answered as the same notice.
 	if (result === "alreadyRunning") {
-		await answer.send({ embeds: [errorEmbed(gamesCopy.hangman.alreadyRunning)] });
+		await showPendingNotice(interaction, answer, { title: gameRoomsCopy.notices.partyGames, sections: [gamesCopy.hangman.alreadyRunning] });
 		return;
 	}
 	if (result === "failed") {

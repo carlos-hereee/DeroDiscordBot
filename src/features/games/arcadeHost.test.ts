@@ -9,6 +9,8 @@ vi.mock("@features/game-rooms/soloRooms.js", () => ({
 	openSoloRoom: vi.fn(),
 	describeSoloOpenFailure: vi.fn(() => "refused"),
 	readPrivateQuotaStatus: vi.fn(async () => null),
+	// The press check (2026-10 item 263): null lets the press go on to open the room.
+	readSoloRefusalAtPress: vi.fn(async () => null),
 }));
 // The table's door is the challenge card (2026-10 item 254, Arcade 1), so the board is
 // mocked: what is pinned is that the press reaches it, not what the card then does. The held
@@ -23,9 +25,10 @@ vi.mock("@features/game-rooms/challengeBoard.js", () => ({
 import { buildHangmanCategoryStartRow, registerArcadeHostHandlers } from "./arcadeHost.js";
 import { dispatchButton, dispatchModal, dispatchSelectMenu } from "@handlers/interactionRegistry.js";
 import type { ModalSubmitInteraction } from "discord.js";
-import { openSoloRoom } from "@features/game-rooms/soloRooms.js";
+import { openSoloRoom, readSoloRefusalAtPress } from "@features/game-rooms/soloRooms.js";
 import { closeHeldDraft, offerChallengeDraft, offerToFreeSlot } from "@features/game-rooms/challengeBoard.js";
 import { HANGMAN_CATEGORIES } from "./hangmanWords.js";
+import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 
 const openMock = openSoloRoom as unknown as ReturnType<typeof vi.fn>;
 const draftMock = offerChallengeDraft as unknown as ReturnType<typeof vi.fn>;
@@ -111,6 +114,33 @@ describe("the host row", () => {
 		expect(openMock).toHaveBeenCalledWith(interaction.guild, "solo-blackjack", expect.objectContaining({ userId: "member-1" }), {});
 		expect(draftMock).not.toHaveBeenCalled();
 		expect(challengesSend).not.toHaveBeenCalled();
+	});
+});
+
+// ── a refusal the press can read is a notice there (2026-10 item 263, owner rule 1) ──
+describe("a solo start the server refuses", () => {
+	it("opens the refusal as a notice at the press, before any acknowledgement, and opens nothing", async () => {
+		(readSoloRefusalAtPress as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ok: false, reason: "guildFull" });
+		const interaction = {
+			id: "press-1",
+			customId: "arcade_host:hangman",
+			isModalSubmit: () => false,
+			deferred: false,
+			replied: false,
+			guild: { id: "guild-1", members: { cache: new Map() } },
+			user: { id: "member-1", username: "member", globalName: "Member" },
+			showModal: vi.fn(async () => undefined),
+			deferReply: vi.fn(async () => undefined),
+			deferUpdate: vi.fn(async () => undefined),
+		};
+		await dispatchButton(interaction as unknown as ButtonInteraction);
+
+		const modal = interaction.showModal.mock.calls[0]?.[0] as { toJSON(): { title: string; components: Array<{ content?: string }> } };
+		expect(modal.toJSON().title).toBe(gameRoomsCopy.notices.room);
+		expect(modal.toJSON().components[0]?.content).toBe("refused");
+		expect(interaction.deferReply).not.toHaveBeenCalled();
+		expect(interaction.deferUpdate).not.toHaveBeenCalled();
+		expect(openMock).not.toHaveBeenCalled();
 	});
 });
 

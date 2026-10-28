@@ -96,6 +96,7 @@ import {
 	showEmbedNotice,
 	showModalOrReply,
 	showNotice,
+	showPendingNotice,
 	type ConfirmInteraction,
 	type ModalOpeningInteraction,
 } from "@utils/textModal.js";
@@ -1059,7 +1060,7 @@ async function provisionFromDraft(
 	const categoryId = config?.gamesCategoryId;
 	const category = categoryId ? await guild.channels.fetch(categoryId).catch(() => null) : null;
 	if (!category || category.type !== ChannelType.GuildCategory) {
-		await answer.send({ embeds: [errorEmbed(gameRoomsCopy.errors.noArcadeCategory)] });
+		await answerOpenRefusal(interaction, answer, { ok: false, reason: "noArcadeCategory" });
 		return;
 	}
 
@@ -1084,8 +1085,9 @@ async function provisionFromDraft(
 	// A Hold'em chip table seats everyone who paid on the card, and charges the host their own
 	// seat here (item 257 Phase 4a); a short wallet stops the start before any channel exists.
 	const settled = await settleDraftBuyIns(room, pool);
+	// A short wallet is a state, so a notice titled for the room, never a ping.
 	if (!settled.ok) {
-		await answer.send({ embeds: [errorEmbed(settled.reason)] });
+		await showPendingNotice(interaction, answer, { title: gameRoomsCopy.notices.room, sections: [settled.reason] });
 		return;
 	}
 	const paidSeats = settled.seats;
@@ -1114,7 +1116,7 @@ async function provisionFromDraft(
 
 	if (!result.ok) {
 		if (paidSeats) await refundOpenedSeats(room, paidSeats);
-		await answer.send({ embeds: [errorEmbed(describeRoomOpenFailure(result))] });
+		await answerOpenRefusal(interaction, answer, result);
 		return;
 	}
 	// The ledger is settled: those buy ins are stacks at the table now, paid back by the table.
@@ -1402,18 +1404,34 @@ async function openDeroRoom(interaction: HostPress, guild: Guild, game: SoloLuck
  * A solo room that would not open, answered after its press was acknowledged. A held slot is
  * only a race by now, since every solo start refuses it at the press (2026-10 item 263 R3-9),
  * so it is a notice linking the card or the room that holds it, never an error embed pinging in
- * 💬dero-commands; every other refusal keeps the answer it always had. Shared with arcadeHost.
+ * 💬dero-commands; every other refusal is answered by answerOpenRefusal. Shared with arcadeHost.
  */
 export async function answerSoloRefusal(interaction: RepliableInteraction, answer: PendingChannelAnswer, failure: Exclude<SoloOpenResult, { ok: true }>): Promise<void> {
 	if (failure.reason !== "alreadyHosting") {
-		await answer.send({ embeds: [errorEmbed(describeSoloOpenFailure(failure))] });
+		await answerOpenRefusal(interaction, answer, failure);
 		return;
 	}
 	const line = await heldSlotLine(interaction.guildId ?? "", interaction.user.id);
-	// With no channel the private defer still waits, so the line is its answer; in a channel
-	// the quiet acknowledgement left nothing waiting, so the line is a private notice.
-	if (answer.channelId === null) await answer.send({ content: line });
-	else await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [line] });
+	await showPendingNotice(interaction, answer, { title: gameRoomsCopy.notices.room, sections: [line] });
+}
+
+// The open refusals that are Dero failing (a permission it lacks, a create Discord refused):
+// the only ones that keep the error embed. Every other reason (a full server, the private
+// ceiling, the reach, no arcade, a held slot) is a state the member can act on.
+const ROOM_OPEN_FAILURES: ReadonlySet<string> = new Set(["missingPermissions", "createFailed"]);
+
+/**
+ * A room that would not open, answered after its press was acknowledged: a state as a private
+ * notice titled for the room (owner rule 1 of the Round 3 list, 2026-10 item 263), a real
+ * failure as the error embed in the answer channel. Shared by the solo starts and a draft start.
+ */
+async function answerOpenRefusal(interaction: RepliableInteraction, answer: PendingChannelAnswer, failure: Exclude<SoloOpenResult, { ok: true }>): Promise<void> {
+	const line = describeSoloOpenFailure(failure);
+	if (ROOM_OPEN_FAILURES.has(failure.reason)) {
+		await answer.send({ embeds: [errorEmbed(line)] });
+		return;
+	}
+	await showPendingNotice(interaction, answer, { title: gameRoomsCopy.notices.room, sections: [line] });
 }
 
 // Where the host's one slot is held: the card of a draft, linked, or the channel of a match.
