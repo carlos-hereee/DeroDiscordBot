@@ -8,8 +8,9 @@ vi.mock("@db/stores/playerRatingStore.js", () => ({ playerRatingStore: { findFor
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
-// A held seat and a join request are answers, posted in 💬dero-commands (2026-10 item 263 R3-11).
-vi.mock("@utils/answerInChannel.js", () => ({ answerInChannel: vi.fn(async () => ({ channelId: "c-commands" })) }));
+// A held seat and a join request are answers, posted in 💬dero-commands through the real
+// answerInChannel (2026-10 item 263 R3-11), which reads the server's config for that channel.
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn(async () => ({ guildId: "guild-1", commandOutputChannelId: "c-commands" })) } }));
 vi.mock("@features/ratings/recordMatchRatings.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@features/ratings/recordMatchRatings.js")>()),
 	recordMatchRatings: vi.fn(),
@@ -20,7 +21,6 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
-import { answerInChannel } from "@utils/answerInChannel.js";
 import { act, createTable, dealHand, handInProgress, joinTable, requestLateSeat, whoActs, type HoldemTable } from "@features/games/holdemTable.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -37,13 +37,28 @@ const storeMock = gameRoomStore as unknown as Record<"update" | "updateSecretIf"
 const trailMock = roomTrail.postMove as unknown as Mock;
 const finishMock = roomLifecycle.finish as unknown as Mock;
 const ratingMock = recordMatchRatings as unknown as Mock;
-const answerMock = answerInChannel as unknown as Mock;
 
-// What an answer posted in 💬dero-commands said, for the interaction it answered.
-const answerText = (interaction: unknown): string => {
-	const call = answerMock.mock.calls.find((args) => args[0] === interaction);
-	return call ? (call[2] as { content: string }).content : "";
-};
+// A press whose server has 💬dero-commands, so an answer posts there: the posts land in `sent`.
+function pressWithCommandsChannel(userId: string): { interaction: ButtonInteraction; sent: Mock } {
+	const sent = vi.fn().mockResolvedValue({ id: "answer-1" });
+	const channel = { id: "c-commands", isSendable: () => true, send: sent };
+	const interaction = {
+		...makeInteraction(userId),
+		client: { channels: { fetch: vi.fn().mockResolvedValue(channel) } },
+		isModalSubmit: () => false,
+		isMessageComponent: () => true,
+	} as unknown as ButtonInteraction;
+	return { interaction, sent };
+}
+
+// Owner rule 1 of the Round 3 list: an answer posts in its channel and pings the member it
+// answers, that one id and nobody else.
+function expectAnswerPingingOnly(sent: Mock, memberId: string, content: string): void {
+	expect(sent).toHaveBeenCalledOnce();
+	const post = sent.mock.calls[0][0] as { content: string; allowedMentions: { parse: string[]; users: string[] } };
+	expect(post.content).toBe(`<@${memberId}> ${content}`);
+	expect(post.allowedMentions).toEqual({ parse: [], users: [memberId] });
+}
 
 const HOST = "p0";
 
@@ -114,13 +129,14 @@ describe("Buy in and Take a seat pass the host's gate", () => {
 	it("turn a stranger's buy in into a request when the host approves each joiner", async () => {
 		const table = createTable();
 		storeMock.addPendingJoin.mockResolvedValue(makeRoom(table, { pendingJoinIds: ["stranger"] }));
-		const interaction = makeInteraction("stranger");
+		const { interaction, sent } = pressWithCommandsChannel("stranger");
 
 		await handleBuyIn(interaction, makeRoom(table, { playerIds: [HOST], requireApproval: true }));
 
 		expect(storeMock.addPendingJoin).toHaveBeenCalledWith("guild-1", "room-1", "stranger");
-		expect(answerText(interaction)).toBe(words.approval.asked);
-		expect(answerMock.mock.calls.find((args) => args[0] === interaction)?.[1]).toBe("member");
+		// The request is the asker's answer: it pings the asker, never the host.
+		expectAnswerPingingOnly(sent, "stranger", words.approval.asked);
+		expect(interaction.reply).not.toHaveBeenCalled();
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
@@ -138,7 +154,7 @@ describe("a late seat while the host has seats open", () => {
 	it("holds the seat for the next deal: a compare and swap on the stamp, the open seats and the removal list, with no player added yet", async () => {
 		const table = betweenHands();
 		const readAt = table.lastActionAt;
-		const interaction = makeInteraction("late");
+		const { interaction, sent } = pressWithCommandsChannel("late");
 
 		await handleBuyIn(interaction, makeRoom(table, { seatsOpen: true }));
 
@@ -147,7 +163,7 @@ describe("a late seat while the host has seats open", () => {
 		expect(written.pendingSeats).toEqual([{ userId: "late", username: "Name late" }]);
 		expect(written.seats.some((seat) => seat.userId === "late")).toBe(false);
 		expect(extra).toBeUndefined();
-		expect(answerText(interaction)).toBe(words.seats.heldReply(BOT_CONSTANTS.HOLDEM_STARTING_STACK));
+		expectAnswerPingingOnly(sent, "late", words.seats.heldReply(BOT_CONSTANTS.HOLDEM_STARTING_STACK));
 	});
 
 	it("is refused while the seats are closed", async () => {
