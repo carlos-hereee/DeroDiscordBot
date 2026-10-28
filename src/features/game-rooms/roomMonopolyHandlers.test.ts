@@ -11,9 +11,10 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		moveBoardMessage: vi.fn(),
 	},
 }));
-// The board carries a turn's lines and the finished turn posts as one log message, so
-// a Monopoly move records through these two rather than one postMove per line.
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), postMoveLog: vi.fn(), recordCarriedMoves: vi.fn() } }));
+// Each turn's board carries that turn's lines and stays in the room once the turn passes
+// (2026-10 item 263), so a Monopoly move records through recordCarriedMoves, never one
+// postMove per line.
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), recordCarriedMoves: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 // The dice. Mocked so a test names the exact roll it needs.
@@ -53,7 +54,6 @@ const storeMock = gameRoomStore as unknown as {
 };
 const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
 const carriedMock = roomTrail.recordCarriedMoves as unknown as ReturnType<typeof vi.fn>;
-const moveLogMock = roomTrail.postMoveLog as unknown as ReturnType<typeof vi.fn>;
 const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
 const awardMock = awardMultiPlayerResult as unknown as ReturnType<typeof vi.fn>;
 const diceMock = secureRandom as unknown as ReturnType<typeof vi.fn>;
@@ -119,11 +119,11 @@ const swappedBoard = (boardMessage: ReturnType<typeof makeBoardMessage>): unknow
 
 // The state the handler persisted, off the compare and swap call.
 const persisted = (): MonopolyState => storeMock.updateSecretIf.mock.calls[0][3] as MonopolyState;
-// Every line the move recorded, in order: those the board carried and those a turn's
-// log message carried, which is the whole transcript a move writes.
+// Every line the move recorded, in order, through the boards that carried them, which is the
+// whole transcript a move writes.
 type RecordedMove = { text: string };
 const trailTexts = (): string[] =>
-	[...moveLogMock.mock.calls.map((call) => (call[2] as { moves: RecordedMove[] }).moves), ...carriedMock.mock.calls.map((call) => call[1] as RecordedMove[])]
+	carriedMock.mock.calls.map((call) => call[1] as RecordedMove[])
 		.flat()
 		.map((move) => move.text);
 // What this interaction answered through answerInChannel, which must be the member's channel.
@@ -145,7 +145,6 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.updateSecretIf.mockResolvedValue({} as never);
 	postMoveMock.mockResolvedValue(true);
-	moveLogMock.mockResolvedValue(true);
 	carriedMock.mockResolvedValue(undefined);
 	storeMock.moveBoardMessage.mockResolvedValue({});
 	finishMock.mockResolvedValue(true);
@@ -217,7 +216,10 @@ describe("handleMroll", () => {
 		expect(turnFingerprint(afterTrade)).not.toEqual(turnFingerprint(read));
 	});
 
-	it("redraws the board with the next control for the seat on the clock", async () => {
+	// The turn moves (Buy and Skip here) are played through the turn line's Take your turn, and
+	// Trade, Inventory and Surrender ride that line too (2026-10 item 263 R3-22), so the board a
+	// member's roll leaves carries no buttons of its own.
+	it("redraws the board with no turn controls, which the seat on the clock plays from its turn line", async () => {
 		const room = seed(freshMatch());
 		const boardMessage = makeBoardMessage();
 
@@ -225,7 +227,7 @@ describe("handleMroll", () => {
 
 		const payload = swappedBoard(boardMessage) as { components: { toJSON(): { components: { custom_id?: string }[] } }[] };
 		const ids = payload.components.flatMap((row) => row.toJSON().components.map((button) => button.custom_id));
-		expect(ids).toEqual(["gameroom:mbuy:room-1:burnt-umber-row", "gameroom:mskip:room-1", "gameroom:mtrade:room-1", "gameroom:minventory:room-1", "gameroom:msurrender:room-1"]);
+		expect(ids).toEqual([]);
 	});
 
 	it("swaps the board picture on a redraw rather than stacking one per move", async () => {

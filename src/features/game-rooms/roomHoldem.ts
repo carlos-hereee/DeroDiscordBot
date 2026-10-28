@@ -24,6 +24,7 @@ import type { PrivateViewContent } from "./privateView.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { TurnView } from "./turnPrompt.js";
+import { turnBlockLines } from "./turnLog.js";
 
 // The host controls' words read the same in every pack (both packs share this
 // object), so the default pack is the right one here without a config read on
@@ -85,6 +86,10 @@ export function tableEmbed(table: HoldemTable, potTotal: number, clockLine: stri
 	const waiting = (table.pendingSeats ?? []).map((entry) => entry.userId);
 	const waitingLines = waiting.length > 0 && table.status === "playing" ? ["", hostWords.seats.waitingLine(waiting)] : [];
 
+	// The street's bets so far (2026-10 item 263 R3-29): a street is a turn, so this table
+	// message stays in the room once the next street posts, carrying every bet made on it.
+	const block = turnBlockLines(table.turnLog ?? []);
+
 	const lines = [
 		header,
 		...(clockLine ? [clockLine] : []),
@@ -94,6 +99,7 @@ export function tableEmbed(table: HoldemTable, potTotal: number, clockLine: stri
 		"",
 		seats,
 		...waitingLines,
+		...(block.length > 0 ? ["", ...block] : []),
 	];
 	return infoEmbed(gameRoomsCopy.holdem.tableTitle, lines.join("\n"), COLORS.ARCADE as ColorResolvable);
 }

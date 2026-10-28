@@ -40,7 +40,9 @@ import {
 	type PickedHangmanWord,
 } from "@features/games/hangmanWords.js";
 import { withRenderFallback } from "@features/renderer/index.js";
-import { roomTrail, resolveRoomChannel } from "./roomTrail.js";
+import { roomTrail, resolveRoomChannel, type RoomMoveInput } from "./roomTrail.js";
+import { postTurnBoard } from "./turnBoard.js";
+import { turnBlockLines } from "./turnLog.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { hangmanOutcome } from "./matchOutcome.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -393,47 +395,36 @@ async function swapOpenerToGuessing(client: Client, room: HangmanRoomRef): Promi
 }
 
 // ── the gallows card ──────────────────────────────────────────────────
-// A new message after the word is set and after every guess that leaves the round
-// open, drawn by the same boardPicture the channel game uses. It is NOT a move: the
-// trail line above it stays the text transcript, and this card never enters it.
-// The round's last guess posts no card, because the result card from
-// roomLifecycle.finish carries the ending's gallows. Cosmetic, so a failure is
-// logged and swallowed: the row is the truth and the next guess draws again.
+// A guess is a turn (2026-10 item 263 R3-29): a new gallows card after the word is set
+// and after every guess, drawn by the same boardPicture the channel game uses, posted
+// through the shared turn board with the guess (and the hint it earned) in its This
+// turn block. Those lines are recorded once the card is posted and never also posted
+// as lines of their own (risk R6). The round's last guess posts its card too, with no
+// controls, under which the result line and the result card follow. Cosmetic, so a
+// failure is logged and swallowed: the row is the truth and the next guess draws again.
 //
 // ⚠️ THE GUESS CONTROLS RIDE THE NEWEST CARD (post-launch plan item 3). The pinned
-// opener sits above every move line, so a guesser used to scroll back up past the
-// whole round to press Guess. Each card now carries the row under its own picture,
-// and the card before it gives the row up, so the only live controls in the scroll
-// are the ones directly under the gallows the room is looking at. The opener keeps
-// its row too: it is the pinned way back in for anyone arriving late.
+// opener sits above every move, so a guesser used to scroll back up past the whole
+// round to press Guess. Each card carries the row under its own picture, and the card
+// before it gives the row up and stays as that guess's record, so the only live
+// controls in the scroll are the ones directly under the gallows the room is looking
+// at. The opener keeps its row too: it is the pinned way back in for anyone arriving late.
 async function postGallowsCard(
 	client: Client,
 	room: Pick<IGameRoom, "guildId" | "roomId" | "channelId">,
 	state: HangmanState,
-	previousCardId: string | null
+	previousCardId: string | null,
+	turn: { moves: readonly RoomMoveInput[]; roundOver: boolean } = { moves: [], roundOver: false }
 ): Promise<void> {
 	try {
 		const channel = await resolveRoomChannel(client, room.channelId);
 		if (!channel) return;
-		const picture = await playingBoardPicture(state, gameRoomsCopy.hangman.boardDescription(state.authoredBy));
-		const card = await channel.send({ ...picture, components: [hangmanRow(room, true)], allowedMentions: { parse: [] } });
-		await gameRoomStore.setSecretField(room.guildId, room.roomId, "gallowsMessageId", card.id);
-		await stripGallowsControls(client, room, previousCardId);
+		const block = turnBlockLines(turn.moves.map((move) => move.text));
+		const description = [gameRoomsCopy.hangman.boardDescription(state.authoredBy), ...(block.length > 0 ? ["", ...block] : [])].join("\n");
+		const picture = await playingBoardPicture(state, description);
+		await postTurnBoard(channel, room, previousCardId, { ...picture, components: turn.roundOver ? [] : [hangmanRow(room, true)] }, { carried: turn.moves, boardField: "gallowsMessageId" });
 	} catch (error) {
 		console.warn("[game-rooms] could not post the hangman gallows card", { roomId: room.roomId, error });
-	}
-}
-
-// Take the guess row off an older gallows card. Components only, so its picture and
-// embed stay exactly as they were. A card that is already gone is not an error.
-async function stripGallowsControls(client: Client, room: Pick<IGameRoom, "roomId" | "channelId">, cardId: string | null): Promise<void> {
-	if (!cardId) return;
-	try {
-		const channel = await resolveRoomChannel(client, room.channelId);
-		const card = await channel?.messages.fetch(cardId);
-		await card?.edit({ components: [] });
-	} catch (error) {
-		console.warn("[game-rooms] could not take the controls off an older hangman card", { roomId: room.roomId, error });
 	}
 }
 
@@ -510,7 +501,7 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 		return;
 	}
 
-	// The move line posted in the room below IS the answer, so the Submit only closes
+	// The guess's own gallows card below IS the answer, so the Submit only closes
 	// (2026-10 item 257 Phase 5, replacing a private "You played" line).
 	await acknowledgeTextModal(interaction);
 	await persist(room, state);
@@ -518,40 +509,37 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	const mask = maskedWord(state);
 	const remaining = remainingAttempts(state);
 
-	// ⚠️ A NEW MESSAGE PER MOVE, never an edit, and the move line never carries a
-	// file (R8). The scroll IS the history, which is the entire reason this game
-	// earns a room; the picture rides its own gallows card below.
-	await roomTrail.postMove(interaction.client, room, {
-		actorId: interaction.user.id,
-		kind: "guess",
-		text:
-			outcome.status === "hit"
-				? gameRoomsCopy.hangman.hit(interaction.user.id, outcome.letter, mask, remaining)
-				: gameRoomsCopy.hangman.miss(interaction.user.id, outcome.letter, mask, wrongLetters(state), remaining),
-		meta: { letter: outcome.letter, hit: outcome.status === "hit", wrong: state.wrong },
-	});
-
-	// A hint reveal is its OWN post, so scrolling the room shows when it was earned
-	// rather than making a reader infer it from the miss count.
-	if (outcome.status === "miss" && outcome.revealedHint) {
-		await roomTrail.postMove(interaction.client, room, {
+	// ⚠️ A NEW MESSAGE PER GUESS, never an edit of an older one, and a move never carries a
+	// file of its own (R8). The scroll IS the history, which is the entire reason this game
+	// earns a room: each guess's card shows the gallows it left and, in its This turn block,
+	// the guess and the hint it earned (2026-10 item 263 R3-29).
+	const moves: RoomMoveInput[] = [
+		{
 			actorId: interaction.user.id,
-			kind: "hint",
-			text: gameRoomsCopy.hangman.hintRevealed(outcome.revealedHint),
-		});
+			kind: "guess",
+			text:
+				outcome.status === "hit"
+					? gameRoomsCopy.hangman.hit(interaction.user.id, outcome.letter, mask, remaining)
+					: gameRoomsCopy.hangman.miss(interaction.user.id, outcome.letter, mask, wrongLetters(state), remaining),
+			meta: { letter: outcome.letter, hit: outcome.status === "hit", wrong: state.wrong },
+		},
+	];
+	// A hint reveal is its OWN line, so scrolling the room shows when it was earned rather
+	// than making a reader infer it from the miss count.
+	if (outcome.status === "miss" && outcome.revealedHint) {
+		moves.push({ actorId: interaction.user.id, kind: "hint", text: gameRoomsCopy.hangman.hintRevealed(outcome.revealedHint) });
 	}
 
 	const won = outcome.status === "hit" && outcome.solved;
 	const lost = outcome.status === "miss" && outcome.lost;
 	const previousCardId = (room.secret as HangmanSecret).gallowsMessageId ?? null;
-	if (!won && !lost) {
-		await postGallowsCard(interaction.client, room, state, previousCardId);
-		return;
-	}
-	// The round is over, so the last card's Guess and Give up have nothing left to do.
-	await stripGallowsControls(interaction.client, room, previousCardId);
+	// The round's last guess is a turn like any other and posts its card, with no Guess or
+	// Give up left on it since the round is over.
+	await postGallowsCard(interaction.client, room, state, previousCardId, { moves, roundOver: won || lost });
+	if (!won && !lost) return;
 
-	// ⚠️ THE ONLY PLACE THE WORD IS EVER RENDERED, and it is after the round is over.
+	// ⚠️ THE ONLY PLACE THE WORD IS EVER RENDERED, and it is after the round is over. A
+	// result, not a guess, so it posts as its own line under the last card.
 	await roomTrail.postMove(interaction.client, room, {
 		actorId: interaction.user.id,
 		kind: "system",
@@ -561,8 +549,7 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	// A hangman room has no single winner: the guessers win or lose together, and the
 	// host is not competing. winnerId stays null and the XP hook takes the whole
 	// participant list.
-	// The result card carries the ending's gallows, which is why the final guess
-	// posted no playing card above. The hangman end card when it draws (2026-10
+	// The result card carries the ending's gallows: the hangman end card when it draws (2026-10
 	// item 243 Phase 3), the gallows art or its Dero stand in when it does not. The
 	// card takes revealedLetters, never the word, so this line adds no third read of it.
 	// A solved word closes the challenge card as the room's win (post-launch plan item

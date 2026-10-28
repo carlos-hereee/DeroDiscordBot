@@ -92,6 +92,11 @@ export interface HoldemTable {
 	// 4a). Written only in the same claim that moves boardMessageId. Absent reads as the joining
 	// table, which every table starts as.
 	revealKey?: string;
+	// The street on the board's lines so far, which the table message's This turn block shows
+	// (2026-10 item 263 R3-29). Display only, never read by the rules here: the room stamps it
+	// into the same compare and swap as the move whose lines it adds, so two moves cannot lose
+	// each other's lines. Absent on a table from before the block, read as no lines.
+	turnLog?: string[];
 	winnerId: string | null;
 	// Busted players worst-first, so placement is derivable at the end.
 	bustOrder: string[];

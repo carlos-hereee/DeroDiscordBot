@@ -42,12 +42,12 @@ import type { BettingAction } from "@features/games/holdemBetting.js";
 import { showPrivateView } from "./privateView.js";
 import { chipsAtHandStart, holdemOutcome, shareOf, type FinishCause, type OutcomeBucket } from "./matchOutcome.js";
 import { HAND_CATEGORIES } from "@features/games/holdemHand.js";
-import { roomTrail } from "./roomTrail.js";
+import { roomTrail, type RoomMoveInput } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isClockExpired, roomDrawingKey, withDrawingPause } from "./drawingPause.js";
 import { judgeJoin } from "./joinGate.js";
-import { labelEmbedForRoom, relayState } from "./satelliteRooms.js";
+import { labelEmbedForRoom, labelForRoom, relayMove, relayState } from "./satelliteRooms.js";
 import { consentPrompt } from "./networkRules.js";
 import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
 import { hostDestinationFor, resolveHoldemXpDestination } from "./networkXp.js";
@@ -67,7 +67,8 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 import { answerInChannel } from "@utils/answerInChannel.js";
 import { acknowledgeConfirm, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 import { syncTurnPrompt, type TurnAdapter } from "./turnPrompt.js";
-import { repostRoomBoard } from "./roomBoardRepost.js";
+import { postTurnBoard } from "./turnBoard.js";
+import { splitTurnAt, turnBlockLines } from "./turnLog.js";
 
 // ── roomHoldemHandlers ───────────────────────────────────────────────
 // What:  every hold em interaction: buying in, dealing, acting, peeking at your
@@ -80,8 +81,15 @@ import { repostRoomBoard } from "./roomBoardRepost.js";
 // When:  many times per tournament.
 // Where: the table lives on the room row, so a deploy mid-hand costs nothing. Its
 //        chips live NOWHERE ELSE, which is the whole of A9/R22.
-// How:   every path ends by persisting the table and redrawing one board message,
-//        with the live table card, behind the drawing pause. The three paths that
+// How:   every path ends by persisting the table and redrawing its board, with the live
+//        table card, behind the drawing pause. A street is a turn (2026-10 item 263
+//        R3-29): every bet of a street edits that street's table message in place with
+//        the bet in its This turn block, and a new street, a hand's end or a new hand
+//        posts a new table message through the shared turn board while the street before
+//        stays in the room with its buttons off. A bet, a forced fold and a hand's result
+//        are lines in a block, recorded once the message showing them landed; a seat
+//        taken, a leave, an end and a host's toggle still post as lines of their own,
+//        since they are no bet of a street. The three paths that
 //        change a hand (a deal, an action, a clock fold) then hand a public view of
 //        the table before and after to announceDealer, fire and forget, which
 //        narrates only the tables Dero opened and deals. At a network table the
@@ -131,25 +139,102 @@ async function persistIfUnchanged(room: IGameRoom, table: HoldemTable, readAt: n
 	return gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.lastActionAt": readAt, ...sameBoard(table) }, table);
 }
 
-// ⚠️ EVERY TABLE WRITE ALSO MATCHES THE BOARD MESSAGE ID (risk R13, 2026-10 item 257 Phase 4a).
-// A reveal reposts the table and moves `secret.boardMessageId` with one dotted write that leaves
-// lastActionAt alone, so a write keyed only on the stamp would let an action read before the
-// repost write the OLD board id back with the rest of the blob, and the table would point at a
-// message the repost just deleted. Monopoly's turnFingerprint does the same. The loser of the
-// race answers "the table changed" and the player presses again. `table.boardMessageId` is
-// still the id the caller read: only a redraw changes it, and only after its own claim landed.
+// ⚠️ EVERY TABLE WRITE ALSO MATCHES THE BOARD MESSAGE ID (risk R13, 2026-10 item 257 Phase 4a;
+// R17 of item 263). A reveal posts a new table message and moves `secret.boardMessageId` with
+// one dotted write that leaves lastActionAt alone, so a write keyed only on the stamp would let
+// an action read before that write the OLD board id back with the rest of the blob, and the
+// table would point at a kept street's message whose buttons are off. Monopoly's
+// turnFingerprint does the same. The loser of the race answers "the table changed" and the
+// player presses again. `table.boardMessageId` is still the id the caller read: only a redraw
+// changes it, and only after its own claim landed.
 const sameBoard = (table: HoldemTable): Record<string, unknown> => ({ "secret.boardMessageId": table.boardMessageId ?? null });
 
-// Redraw the one board message behind the drawing pause: the live table card (every
-// table, every action) in the table embed's image slot, or the embed alone when the
-// card does not draw, while the clock holds. Cosmetic, so a failure is logged and
-// swallowed: the row is the truth and the next action catches up.
-async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Promise<void> {
+// ── the street's lines (2026-10 item 263 R3-29) ───────────────────────
+/** What a move adds to the boards: the street it closed, if it closed one, and the street now showing. */
+interface HoldemTurn {
+	// The closed street's whole block for its kept table message, or null while the street runs on.
+	finishedShown: string[] | null;
+	// This move's lines that belong to the closed street.
+	finishedNew: RoomMoveInput[];
+	// This move's lines that belong to the street the table now shows.
+	currentNew: RoomMoveInput[];
+}
+
+const NO_NEW_LINES: HoldemTurn = { finishedShown: null, finishedNew: [], currentNew: [] };
+
+/** A move's lines, by when they happened: at the table the move was made at, and after it. */
+interface HoldemMoveLines {
+	// The move itself, then the seats sitting out it folded on the way: the street it was made on.
+	played: RoomMoveInput[];
+	// What the move set off once the betting closed: chips handed back, the showdown, the pots
+	// won, the busts. They belong to the table it left, a hand's end when it ended one.
+	after: RoomMoveInput[];
+}
+
+/**
+ * The lines one engine outcome adds, led by `lead` (the move's own line: the engine's narration,
+ * or the clock's timeout line, which replaces it). The same lines and kinds the room posted one
+ * message each before item 263, so the transcript reads as it always did.
+ */
+function holdemMoveLines(outcome: ActionOutcome, lead: readonly RoomMoveInput[]): HoldemMoveLines {
+	const holdem = gameRoomsCopy.holdem;
+	const played: RoomMoveInput[] = [
+		...lead,
+		// Seats the action reached while they sit out, folded by the engine, each in the room's
+		// own words rather than the engine's plain "folds".
+		...(outcome.sittingOutFolds ?? []).map((userId): RoomMoveInput => ({ actorId: userId, kind: "system", text: holdem.sittingOutFolded(userId) })),
+	];
+	if (!outcome.handOver) return { played, after: [] };
+	// The uncalled chips come back before the awards, which is the order it happens at a real
+	// table, and as a line of its own: a hand history that credits somebody with chips they
+	// were never at risk of losing is one players argue about.
+	const returned = outcome.returned;
+	const after: RoomMoveInput[] = [
+		...(returned ? [{ actorId: returned.userId, kind: "system" as const, text: holdem.uncalledReturned(returned.userId, returned.amount) }] : []),
+		...(outcome.showdown ?? []).map((shown): RoomMoveInput => ({ actorId: shown.userId, kind: "system", text: holdem.showdownLine(shown.userId, shown.hand) })),
+		...(outcome.awards ?? []).filter((award) => award.amount > 0).map((award): RoomMoveInput => ({ actorId: award.userId, kind: "system", text: holdem.handWon(award.userId, award.amount) })),
+		...(outcome.busted ?? []).map((bustedId): RoomMoveInput => ({ actorId: bustedId, kind: "system", text: holdem.busted(bustedId) })),
+	];
+	return { played, after };
+}
+
+/** The engine's own line for an action as the room's first line of it, when it narrated one. */
+const narrationLead = (outcome: ActionOutcome, actorId: string): RoomMoveInput[] => (outcome.narration ? [{ actorId, kind: "guess", text: outcome.narration }] : []);
+
+/**
+ * Stamp a move's lines onto `table.turnLog` BEFORE the move's compare and swap writes it, and
+ * answer where each line lands. `revealBefore` is the table's reveal key as the move read it.
+ * When the move changed what the table shows (a street dealt, a hand over, a new hand), the
+ * street it was played on closes: its `played` lines finish that street's block on its kept
+ * message, and its `after` lines open the new message's block. `opensNewStreet` puts every line
+ * on the new message (a deal: its blind and deal lines open the hand).
+ *
+ * ⚠️ BOTH KEYS COME FROM THE TABLE ITSELF, never from `table.revealKey`, which is what the board
+ * last SHOWED and only moves when a redraw claims a new message. An action read after another
+ * action closed the street but before that redraw landed would otherwise see a reveal it did not
+ * make and close a street that is already closed.
+ */
+function stampHoldemTurn(table: HoldemTable, revealBefore: string, lines: HoldemMoveLines, opensNewStreet = false): HoldemTurn {
+	const moves = [...lines.played, ...lines.after];
+	const changed = holdemRevealKey(table) !== revealBefore;
+	const cut = changed ? (opensNewStreet ? 0 : lines.played.length) : null;
+	const split = splitTurnAt(table.turnLog ?? [], moves.map((move) => move.text), cut);
+	table.turnLog = split.current;
+	const finishedCount = split.finishedNew.length;
+	return { finishedShown: split.finishedShown, finishedNew: moves.slice(0, finishedCount), currentNew: moves.slice(finishedCount) };
+}
+
+// Redraw the table's board behind the drawing pause: the live table card (every table, every
+// action) in the table embed's image slot, or the embed alone when the card does not draw, while
+// the clock holds. `turn` is what the move that called this added (stampHoldemTurn). Cosmetic, so
+// a failure is logged and swallowed: the row is the truth and the next action catches up.
+async function redraw(client: Client, room: IGameRoom, table: HoldemTable, turn: HoldemTurn = NO_NEW_LINES): Promise<void> {
 	if (!table.boardMessageId || !room.channelId) return;
 	const channel = await client.channels.fetch(room.channelId).catch(() => null);
 	if (!(channel instanceof TextChannel)) return;
+	// Null when an admin deleted it: the table then posts a fresh message rather than lose the
+	// lines this move added along with the deleted one.
 	const message = await channel.messages.fetch(table.boardMessageId).catch(() => null);
-	if (!message) return;
 
 	const pot = currentPot(table);
 	// The host controls the rows show (2026-10 item 244 Phase 4) come from the row this
@@ -173,7 +258,9 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Prom
 
 	await withDrawingPause({
 		gameKey: roomDrawingKey(room),
-		showStatus: (status) => message.edit({ content: status }),
+		showStatus: async (status) => {
+			await message?.edit({ content: status });
+		},
 		// The view is built inside the render, so a view that throws costs the card,
 		// not the board. It reads the public view only: no seat's own cards.
 		render: () => renderHoldemLiveCard(holdemLiveView(toPublicView(table), pot)),
@@ -184,16 +271,21 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Prom
 			const embed = await labelEmbedForRoom(client, room, tableEmbed(table, pot, clockLine(table)));
 			const embeds = [card ? embed.setImage(card.ref) : embed];
 			const files = card ? [card.attachment] : [];
-			// ① A reveal (a street dealt, a hand over, a new hand) posts the table afresh at the bottom
-			// of the room, so it is never buried under the turn lines and prompts that followed the last
-			// one (2026-10 item 257 Phase 4a); ② anything else edits the same message in place.
+			// ① A reveal (a street dealt, a hand over, a new hand) is a new turn: the table posts a new
+			// message through the shared turn board, and the street before keeps its message, with the
+			// bet that closed it written into its block (2026-10 item 263 R3-29); ② anything else edits
+			// the street's own message in place.
 			const reveal = holdemRevealKey(table);
-			if (reveal !== (table.revealKey ?? JOINING_REVEAL)) {
-				const postedId = await repostRoomBoard(channel, room, table.boardMessageId, { embeds, components, files }, { alsoSet: { "secret.revealKey": reveal } });
+			if (reveal !== (table.revealKey ?? JOINING_REVEAL) || !message) {
+				const closing = turn.finishedShown && turn.finishedNew.length > 0 ? { block: await labelledBlock(client, room, turn.finishedShown), moves: turn.finishedNew } : undefined;
+				const postedId = await postTurnBoard(channel, room, table.boardMessageId, { embeds, components, files }, { alsoSet: { "secret.revealKey": reveal }, carried: turn.currentNew, ...(closing ? { closing } : {}) });
 				if (postedId) {
 					table.boardMessageId = postedId;
 					table.revealKey = reveal;
 				}
+				// A satellite keeps ONE table message, edited, so the closing bet its table never
+				// showed is relayed as a line, the way every move reached it before.
+				if (closing && room.satellites?.length) for (const move of closing.moves) void labelForRoom(client, room, move.text).then((line) => relayMove(client, room, line));
 			} else {
 				await message.edit({
 					content: null,
@@ -203,6 +295,7 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Prom
 					// `attachments: []` drops the last action's card, which an edit otherwise keeps.
 					attachments: [],
 				});
+				await roomTrail.recordCarriedMoves(room, turn.currentNew);
 			}
 			if (prompted) await rememberPrompt(room, table);
 			// The same table into every satellite of a network table (2026-10 item 244 Phase
@@ -216,6 +309,11 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable): Prom
 	}).catch((error) => console.warn("[game-rooms] failed to redraw the hold em table", error));
 	// The line that pings whoever the hand is waiting on, below the table that was just drawn.
 	await syncTurnPrompt(client, room, holdemTurnAdapter);
+}
+
+// A closed street's block as the room shows lines: a network table names its players.
+async function labelledBlock(client: Client, room: IGameRoom, lines: readonly string[]): Promise<string[]> {
+	return Promise.all(turnBlockLines(lines).map((line) => labelForRoom(client, room, line)));
 }
 
 // What the table message on the board shows of the hand. It changes when a street is dealt, when
@@ -531,7 +629,7 @@ export async function handleDeal(interaction: ButtonInteraction, room: IGameRoom
 		return;
 	}
 
-	const deal = await claimDeal(room, table);
+	const deal = await claimDeal(room, table, interaction.user.id);
 	if (!deal) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.handInProgress] });
 		return;
@@ -553,17 +651,17 @@ export async function dealOpeningHand(client: Client, room: IGameRoom): Promise<
 	const table = fresh ? tableOf(fresh) : null;
 	if (!fresh || !table || table.status !== "joining" || table.seats.length < BOT_CONSTANTS.HOLDEM_MIN_SEATS) return false;
 	table.status = "playing";
-	const deal = await claimDeal(fresh, table);
+	const deal = await claimDeal(fresh, table, fresh.hostId);
 	if (!deal) return false;
 	await announceDeal(client, fresh, table, deal, fresh.hostId);
 	return true;
 }
 
-/** A deal that won its claim: the table as it stood before, and what the deal set off. */
+/** A deal that won its claim: the table as it stood before, what the deal set off, and the new hand's lines. */
 interface ClaimedDeal {
 	before: PublicView;
-	blindsBefore: number;
 	outcome: ActionOutcome;
+	turn: HoldemTurn;
 }
 
 // Deal the next hand and claim it. Shared by the host's button and the clock's
@@ -580,13 +678,19 @@ interface ClaimedDeal {
 // playerIds in the same claim, and the playersOnly gate opens for them exactly when
 // they have cards to play. A waiting seat whose player the host removed is dropped
 // first, a backstop for a removal that raced this read.
-async function claimDeal(room: IGameRoom, table: HoldemTable): Promise<ClaimedDeal | null> {
+//
+// A new hand is a new turn on the board (2026-10 item 263 R3-29): the blinds and deal lines,
+// and anything the deal set off, open the new hand's block, stamped into this same write.
+async function claimDeal(room: IGameRoom, table: HoldemTable, actorId: string): Promise<ClaimedDeal | null> {
 	const expected = { "secret.handNumber": table.handNumber, "secret.lastActionAt": table.lastActionAt, ...sameBoard(table) };
 	const blindsBefore = table.bigBlind;
 	const before = toPublicView(table);
+	const revealBefore = holdemRevealKey(table);
 	const dropped = dropRemovedLateSeats(table, room);
 	const outcome = dealHand(table, secureRandom);
 	const lateSeated = outcome.lateSeated ?? [];
+	const dealt = holdemMoveLines(outcome, dealLines(table, blindsBefore, actorId));
+	const turn = stampHoldemTurn(table, revealBefore, dealt, true);
 	const written =
 		lateSeated.length > 0
 			? await gameRoomStore.updateSecretIf(room.guildId, room.roomId, expected, table, { $addToSet: { playerIds: { $each: lateSeated } } })
@@ -595,7 +699,14 @@ async function claimDeal(room: IGameRoom, table: HoldemTable): Promise<ClaimedDe
 	// A late seat the host removed paid its buy in at a chip table; the deal that dropped
 	// it is the claim, so it is refunded only once this write landed.
 	for (const userId of dropped) await refundBuyIn(table, userId);
-	return { before, blindsBefore, outcome };
+	return { before, outcome, turn };
+}
+
+// A new hand's opening lines: the blinds going up when they did, then the deal.
+function dealLines(table: HoldemTable, blindsBefore: number, actorId: string): RoomMoveInput[] {
+	const holdem = gameRoomsCopy.holdem;
+	const blindsUp: RoomMoveInput[] = table.bigBlind !== blindsBefore ? [{ actorId, kind: "system", text: holdem.blindsUp(table.smallBlind, table.bigBlind) }] : [];
+	return [...blindsUp, { actorId, kind: "system", text: holdem.handDealt(table.handNumber, table.smallBlind, table.bigBlind) }];
 }
 
 // Answers the ids it dropped, for the refund once the deal's write lands.
@@ -607,27 +718,16 @@ function dropRemovedLateSeats(table: HoldemTable, room: IGameRoom): string[] {
 	return dropped;
 }
 
-// Everything after a deal landed, whoever dealt it: the blinds and deal lines, then
-// the same settle path an action takes, which posts any sit out folds the deal set
-// off, settles a hand they ended, and redraws the board.
+// Everything after a deal landed, whoever dealt it: the late seats' join lines, then the same
+// settle path an action takes, which settles a hand the deal's sit out folds ended and posts the
+// new hand's table with its blinds and deal lines in its block.
 async function announceDeal(client: Client, room: IGameRoom, table: HoldemTable, deal: ClaimedDeal, actorId: string): Promise<void> {
-	// The late seats first: they sat down before the cards went round.
+	// The late seats first: they sat down before the cards went round. A seat taken is no bet
+	// of a street, so it stays a line of its own.
 	for (const userId of deal.outcome.lateSeated ?? []) {
 		await roomTrail.postMove(client, room, { actorId: userId, kind: "join", text: hostWords.seats.seatedLine(userId, startingStackOf(table)) });
 	}
-	if (table.bigBlind !== deal.blindsBefore) {
-		await roomTrail.postMove(client, room, {
-			actorId,
-			kind: "system",
-			text: gameRoomsCopy.holdem.blindsUp(table.smallBlind, table.bigBlind),
-		});
-	}
-	await roomTrail.postMove(client, room, {
-		actorId,
-		kind: "system",
-		text: gameRoomsCopy.holdem.handDealt(table.handNumber, table.smallBlind, table.bigBlind),
-	});
-	await settleOutcome(client, room, table, deal.outcome, actorId, { cause: "played", handStartChips: chipsAtHandStart(table.seats) });
+	await settleOutcome(client, room, table, deal.outcome, actorId, { cause: "played", handStartChips: chipsAtHandStart(table.seats) }, deal.turn);
 	announceDealer({ client, roomId: room.roomId, before: deal.before, after: toPublicView(table), outcome: deal.outcome });
 }
 
@@ -726,8 +826,11 @@ async function applySeatMove(
 	const readAt = table.lastActionAt;
 	const before = toPublicView(table);
 	const handStartChips = chipsAtHandStart(table.seats);
+	const revealBefore = holdemRevealKey(table);
 	const outcome = act(table, userId, action, amount, secureRandom);
 	if (!outcome.ok) return "illegal";
+	// The move's lines ride its own write, so the street's block can never lose them to a racing move.
+	const turn = stampHoldemTurn(table, revealBefore, holdemMoveLines(outcome, narrationLead(outcome, userId)));
 
 	// Claim it BEFORE announcing it. Two clicks arrive as two interactions that both
 	// read the same table and both clear the whoActs check, and the turn clock may be
@@ -737,7 +840,7 @@ async function applySeatMove(
 	if (!written) return "busy";
 
 	await acknowledge();
-	await settleOutcome(client, room, table, outcome, userId, { cause: "played", handStartChips });
+	await settleOutcome(client, room, table, outcome, userId, { cause: "played", handStartChips }, turn);
 	announceDealer({ client, roomId: room.roomId, before, after: toPublicView(table), outcome });
 	return "landed";
 }
@@ -776,47 +879,22 @@ interface HoldemEnding {
 	handStartChips: ReadonlyMap<string, number>;
 }
 
-// Everything that happens after any action, whoever caused it. Shared by the
-// button path and the turn clock so a forced fold reads exactly like a real one.
+// Everything that happens after any action, whoever caused it. Shared by the button path, the
+// turn clock, a deal, a leave and a removal, so a forced fold reads exactly like a real one.
+// The action's lines are already on `turn` (stamped into its own write, stampHoldemTurn), and
+// they reach the room and the transcript through the board the redraw posts or edits, once
+// (2026-10 item 263 R3-29, risk R6).
 async function settleOutcome(
 	client: Client,
 	room: IGameRoom,
 	table: HoldemTable,
 	outcome: ActionOutcome,
 	actorId: string,
-	ending: HoldemEnding
+	ending: HoldemEnding,
+	turn: HoldemTurn
 ): Promise<void> {
-	if (outcome.narration) {
-		await roomTrail.postMove(client, room, { actorId, kind: "guess", text: outcome.narration });
-	}
-	// Seats the action reached while they sit out, folded by the engine, each in the
-	// room's own words rather than the engine's plain "folds".
-	for (const userId of outcome.sittingOutFolds ?? []) {
-		await roomTrail.postMove(client, room, { actorId: userId, kind: "system", text: gameRoomsCopy.holdem.sittingOutFolded(userId) });
-	}
-
 	if (outcome.handOver) {
-		// Before the awards, because that is the order it happens at a real table: the
-		// uncalled chips come back first, then what is left is won. Posting it as a
-		// separate line rather than folding it into the win is the point; a hand history
-		// that credits somebody with chips they were never at risk of losing is one
-		// players argue about.
-		if (outcome.returned) {
-			await roomTrail.postMove(client, room, {
-				actorId: outcome.returned.userId,
-				kind: "system",
-				text: gameRoomsCopy.holdem.uncalledReturned(outcome.returned.userId, outcome.returned.amount),
-			});
-		}
-
 		if (outcome.showdown?.length) {
-			for (const shown of outcome.showdown) {
-				await roomTrail.postMove(client, room, {
-					actorId: shown.userId,
-					kind: "system",
-					text: gameRoomsCopy.holdem.showdownLine(shown.userId, shown.hand),
-				});
-			}
 			// The winning hand, counted for the monthly post (2026-10 item 244). Once per
 			// showdown, because only the action that won the table's compare and swap gets
 			// here. Fire and forget: a count never holds up the table.
@@ -824,11 +902,6 @@ async function settleOutcome(
 		}
 		for (const award of outcome.awards ?? []) {
 			if (award.amount <= 0) continue;
-			await roomTrail.postMove(client, room, {
-				actorId: award.userId,
-				kind: "system",
-				text: gameRoomsCopy.holdem.handWon(award.userId, award.amount),
-			});
 			// Per HAND, so a long tournament pays out along the way rather than only
 			// at the end. Deliberately omits `game`, for the same reason battleship's
 			// sink bonus does: awardXp increments games.<slug>.played for any call
@@ -843,31 +916,24 @@ async function settleOutcome(
 				source: "game",
 			});
 		}
-		for (const bustedId of outcome.busted ?? []) {
-			await roomTrail.postMove(client, room, {
-				actorId: bustedId,
-				kind: "system",
-				text: gameRoomsCopy.holdem.busted(bustedId),
-			});
-		}
 	}
 
-	if (outcome.tournamentOver) {
-		await payPlacements(client, room, table);
-		const claimed = await roomLifecycle.finish(client, room, { winnerId: table.winnerId, outcome: { bucket: holdemEndingBucket(table, outcome, ending) } });
-		// One rating update per finished session, by finishing order: the winner, then the
-		// reverse bust order (a seat that left counts as a bust, since leaveTable records
-		// it in bustOrder). Only the call that won finish's claim rates, so a racing clock
-		// fold cannot rate the session twice. A session under 10 dealt hands is recorded
-		// unrated (2026-10 item 244). A player the host removed sits in that bust order
-		// too (removal is a leave), and is excluded, so their result never moves a rating;
-		// the removal writes kickedIds before it touches the table, so the room a removal
-		// itself finishes always carries them.
-		if (claimed) void recordMatchRatings(room, placements(table), room.kickedIds ?? [], { rated: isRatedHoldemSession(table.handNumber) });
-		return;
-	}
+	// Drawn before a finish too: the last hand's result lines ride its final table message, and
+	// the finished table loses its controls before the result card is the room's last word.
+	await redraw(client, room, table, turn);
+	if (!outcome.tournamentOver) return;
 
-	await redraw(client, room, table);
+	await payPlacements(client, room, table);
+	const claimed = await roomLifecycle.finish(client, room, { winnerId: table.winnerId, outcome: { bucket: holdemEndingBucket(table, outcome, ending) } });
+	// One rating update per finished session, by finishing order: the winner, then the
+	// reverse bust order (a seat that left counts as a bust, since leaveTable records
+	// it in bustOrder). Only the call that won finish's claim rates, so a racing clock
+	// fold cannot rate the session twice. A session under 10 dealt hands is recorded
+	// unrated (2026-10 item 244). A player the host removed sits in that bust order
+	// too (removal is a leave), and is excluded, so their result never moves a rating;
+	// the removal writes kickedIds before it touches the table, so the room a removal
+	// itself finishes always carries them.
+	if (claimed) void recordMatchRatings(room, placements(table), room.kickedIds ?? [], { rated: isRatedHoldemSession(table.handNumber) });
 }
 
 // The bucket for a tournament that ended on `outcome`. The winner's made hand is read
@@ -979,11 +1045,15 @@ export async function handleLeaveTable(interaction: ConfirmInteraction, room: IG
 	const seatsRead = table.seats.length;
 	const before = toPublicView(table);
 	const handStartChips = chipsAtHandStart(table.seats);
+	const revealBefore = holdemRevealKey(table);
 	const outcome = leaveTable(table, interaction.user.id, secureRandom);
 	if (!outcome.ok) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.notSeated] });
 		return;
 	}
+	// The leave's own line posts below (a leave is no bet of a street); what its fold set off
+	// rides the street's block, stamped into the leave's own write.
+	const turn = stampHoldemTurn(table, revealBefore, holdemMoveLines(outcome, []));
 
 	const written = await persistLeaveOrEnd(room, table, readAt, seatsRead);
 	if (!written) {
@@ -1002,7 +1072,7 @@ export async function handleLeaveTable(interaction: ConfirmInteraction, room: IG
 	});
 	// The same settle path a fold takes, so a leave that ends the hand pays the pot and
 	// one that leaves a single seat ends the tournament exactly the way a bust does.
-	await settleOutcome(interaction.client, room, table, outcome, interaction.user.id, { cause: "forfeit", handStartChips });
+	await settleOutcome(interaction.client, room, table, outcome, interaction.user.id, { cause: "forfeit", handStartChips }, turn);
 	if (outcome.foldedHand) {
 		announceDealer({ client: interaction.client, roomId: room.roomId, before, after: toPublicView(table), outcome });
 	}
@@ -1050,7 +1120,10 @@ async function closeTable(
 ): Promise<"ended" | "busy"> {
 	const readAt = table.lastActionAt;
 	const seatsRead = table.seats.length;
+	const revealBefore = holdemRevealKey(table);
 	const order = endTable(table);
+	// The ended table is a new message with an empty block: the street it ended keeps its own.
+	const turn = stampHoldemTurn(table, revealBefore, { played: [], after: [] }, true);
 	const written = await persistLeaveOrEnd(room, table, readAt, seatsRead);
 	if (!written) return "busy";
 
@@ -1066,7 +1139,7 @@ async function closeTable(
 	});
 	// Redrawn before the finish so the board loses its controls; the result card that
 	// finish posts is the room's last word.
-	await redraw(client, room, table);
+	await redraw(client, room, table, turn);
 	// Judged on the standings the table stopped at: a dominant chip lead reads decisive.
 	const endedBucket = holdemOutcome({ cause: "ended", bustedInFinalHand: 0, winnerHandCategory: null, winnerShare: shareOf(chipsAtHandStart(table.seats), table.winnerId) });
 	const claimed = await roomLifecycle.finish(client, room, { winnerId: table.winnerId, outcome: { bucket: endedBucket } });
@@ -1175,9 +1248,11 @@ export async function removeFromTable(client: Client, room: IGameRoom, userId: s
 		const seatsRead = table.seats.length;
 		const before = toPublicView(table);
 		const handStartChips = chipsAtHandStart(table.seats);
+		const revealBefore = holdemRevealKey(table);
 		const withdrewLateSeat = withdrawLateSeat(table, userId);
 		const outcome = withdrewLateSeat ? null : leaveTable(table, userId, secureRandom);
 		if (outcome && !outcome.ok) return "notAtTable";
+		const turn = outcome ? stampHoldemTurn(table, revealBefore, holdemMoveLines(outcome, [])) : NO_NEW_LINES;
 
 		if (await persistLeaveOrEnd(current, table, readAt, seatsRead)) {
 			// At a chip table the removed player keeps their chips: a waiting seat's buy in,
@@ -1188,7 +1263,7 @@ export async function removeFromTable(client: Client, room: IGameRoom, userId: s
 				return "removed";
 			}
 			if (table.chips) await cashOut(table, userId, outcome.stackLeft ?? 0);
-			await settleOutcome(client, current, table, outcome, actorId, { cause: "forfeit", handStartChips });
+			await settleOutcome(client, current, table, outcome, actorId, { cause: "forfeit", handStartChips }, turn);
 			if (outcome.foldedHand) announceDealer({ client, roomId: current.roomId, before, after: toPublicView(table), outcome });
 			return "removed";
 		}
@@ -1293,8 +1368,17 @@ async function forceFoldIfDue(client: Client, room: IGameRoom, table: HoldemTabl
 	const readAt = table.lastActionAt;
 	const before = toPublicView(table);
 	const handStartChips = chipsAtHandStart(table.seats);
+	const revealBefore = holdemRevealKey(table);
 	const outcome = forceFold(table, secureRandom);
 	if (!outcome.ok || !outcome.userId) return false;
+	// The clock's line replaces the engine's narration as the move, and a second timeout in a row
+	// says the seat now sits out: both are the street's, stamped into the fold's own write.
+	const timedOutId = outcome.userId;
+	const lead: RoomMoveInput[] = [
+		{ actorId: timedOutId, kind: "system", text: gameRoomsCopy.holdem.timedOut(timedOutId, outcome.narration?.includes("checks") ? "checked" : "folded") },
+		...(outcome.satOut ? [{ actorId: timedOutId, kind: "system" as const, text: gameRoomsCopy.holdem.satOut(timedOutId) }] : []),
+	];
+	const turn = stampHoldemTurn(table, revealBefore, holdemMoveLines(outcome, lead));
 
 	// ⚠️ THE PLAYER GETS THE BENEFIT OF THE DOUBT ON A TIE. This loop is
 	// sequential and each iteration awaits Discord I/O, so the Nth table is being
@@ -1307,15 +1391,7 @@ async function forceFoldIfDue(client: Client, room: IGameRoom, table: HoldemTabl
 	const written = await persistIfUnchanged(room, table, readAt);
 	if (!written) return false;
 
-	await roomTrail.postMove(client, room, {
-		actorId: outcome.userId,
-		kind: "system",
-		text: gameRoomsCopy.holdem.timedOut(outcome.userId, outcome.narration?.includes("checks") ? "checked" : "folded"),
-	});
-	if (outcome.satOut) {
-		await roomTrail.postMove(client, room, { actorId: outcome.userId, kind: "system", text: gameRoomsCopy.holdem.satOut(outcome.userId) });
-	}
-	await settleOutcome(client, room, table, outcome, outcome.userId, { cause: "timeout", handStartChips });
+	await settleOutcome(client, room, table, outcome, timedOutId, { cause: "timeout", handStartChips }, turn);
 	announceDealer({ client, roomId: room.roomId, before, after: toPublicView(table), outcome });
 	return true;
 }
@@ -1327,7 +1403,7 @@ async function forceFoldIfDue(client: Client, room: IGameRoom, table: HoldemTabl
 async function dealNextHandIfDue(client: Client, room: IGameRoom, table: HoldemTable, now: Date): Promise<boolean> {
 	if (!canDealItself(table)) return false;
 	if (!isClockExpired(roomDrawingKey(room), clockStartOf(table), BOT_CONSTANTS.HOLDEM_NEXT_HAND_DELAY_MS, now.getTime())) return false;
-	const deal = await claimDeal(room, table);
+	const deal = await claimDeal(room, table, room.hostId);
 	if (!deal) return false;
 	await announceDeal(client, room, table, deal, room.hostId);
 	return true;

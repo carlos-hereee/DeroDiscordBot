@@ -16,8 +16,8 @@ vi.mock("@features/voice/callAnnouncer.js", async (importOriginal) => ({
 }));
 vi.mock("@features/voice/voiceQueue.js", () => ({ voiceQueue: { requestVoice: vi.fn() } }));
 vi.mock("@features/voice/voiceSessions.js", () => ({ voiceSessions: { get: vi.fn() } }));
-vi.mock("./roomMonopolyRefereeNotice.js", () => ({ postRefereeNotice: vi.fn(), postAboveBoard: vi.fn() }));
-vi.mock("./roomMonopolyBoard.js", () => ({ moveMonopolyBoardToBottom: vi.fn() }));
+vi.mock("./roomMonopolyRefereeNotice.js", () => ({ postRefereeNotice: vi.fn(), postRefereeLine: vi.fn() }));
+vi.mock("./roomMonopolyBoard.js", () => ({ postBelowMonopolyBoard: vi.fn() }));
 
 import { startRoomReferee } from "./roomReferee.js";
 import { refereeOn } from "./roomTypes.js";
@@ -25,8 +25,8 @@ import { _clearDealerTables, dealerTableOf } from "@features/dero-brain/dealerNa
 import { isVoiceEnabled } from "@features/voice/callAnnouncer.js";
 import { voiceQueue } from "@features/voice/voiceQueue.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
-import { postAboveBoard, postRefereeNotice } from "./roomMonopolyRefereeNotice.js";
-import { moveMonopolyBoardToBottom } from "./roomMonopolyBoard.js";
+import { postRefereeLine, postRefereeNotice } from "./roomMonopolyRefereeNotice.js";
+import { postBelowMonopolyBoard } from "./roomMonopolyBoard.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -35,8 +35,8 @@ const voiceOnMock = isVoiceEnabled as unknown as Mock;
 const requestMock = voiceQueue.requestVoice as unknown as Mock;
 const sessionMock = voiceSessions.get as unknown as Mock;
 const noticeMock = postRefereeNotice as unknown as Mock;
-const aboveMock = postAboveBoard as unknown as Mock;
-const moveMock = moveMonopolyBoardToBottom as unknown as Mock;
+const lineMock = postRefereeLine as unknown as Mock;
+const belowMock = postBelowMonopolyBoard as unknown as Mock;
 
 const HOST = "host-1";
 const HOST_CALL = "voice-ch-1";
@@ -119,15 +119,17 @@ describe("startRoomReferee", () => {
 
 		await startRoomReferee(client, room, makeChannel(HOST_CALL));
 
-		expect(aboveMock).toHaveBeenCalledWith(client, room, { content: gameRoomsCopy.monopoly.refereeQueued(2, 3), allowedMentions: { parse: [] } });
+		expect(lineMock).toHaveBeenCalledWith(client, room, { content: gameRoomsCopy.monopoly.refereeQueued(2, 3), allowedMentions: { parse: [] } });
 	});
 
-	it("moves Monopoly's board below the join notice once Dero joins", async () => {
+	// A turn keeps ONE board (2026-10 item 263 owner decision 4): Dero's join notice posts below it.
+	it("posts no second Monopoly board once Dero joins", async () => {
 		const room = makeRoom({ game: "monopoly" });
 
 		await startRoomReferee(client, room, makeChannel(HOST_CALL));
 
-		expect(moveMock).toHaveBeenCalledWith(client, room);
+		expect(belowMock).not.toHaveBeenCalled();
+		expect(lineMock).not.toHaveBeenCalled();
 		expect(dealerTableOf("room-1")).toBeNull();
 	});
 

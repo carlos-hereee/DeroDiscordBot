@@ -114,19 +114,16 @@ describe("firing", () => {
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
-	it("fires with one Submit: the shot line posts once, publicly, and the shooter is acknowledged without a private copy", async () => {
+	// The shot rides its own board's This turn block (2026-10 item 263 R3-29), recorded once that
+	// board posts (roomBattleshipHandlers.turnBoard.test.ts), so it is never a line of its own.
+	it("fires with one Submit: the shooter is acknowledged without a private copy, and the shot posts no line of its own", async () => {
 		const acknowledge = vi.fn().mockResolvedValue(undefined);
 
 		const result = await fireAtCell(makeRoom(freshMatch()), A, 0, 0, acknowledge);
 
 		expect(result).toEqual({ ok: true });
 		expect(acknowledge).toHaveBeenCalledOnce();
-		expect(roomTrail.postMove).toHaveBeenCalledOnce();
-		expect(roomTrail.postMove).toHaveBeenCalledWith(
-			modalClient,
-			expect.objectContaining({ roomId: "room-1" }),
-			expect.objectContaining({ actorId: A, kind: "guess", text: expect.stringMatching(/\S/) }),
-		);
+		expect(roomTrail.postMove).not.toHaveBeenCalled();
 	});
 
 	it("refuses a Submit from the captain who is not on the clock, and writes nothing", async () => {

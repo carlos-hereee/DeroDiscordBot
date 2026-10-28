@@ -10,7 +10,7 @@ import {
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import { BOARD, BOARD_SIZE, JAIL_BAIL, describeTile, isOwnableTile, ownableTileName, type OwnableTile } from "@features/games/monopolyBoard.js";
+import { BOARD, BOARD_SIZE, describeTile, isOwnableTile, ownableTileName, type OwnableTile } from "@features/games/monopolyBoard.js";
 import {
 	BANK_CREDITOR,
 	listBuildOptions,
@@ -27,7 +27,8 @@ import { renderBoard } from "@features/games/monopolyRenderer.js";
 import type { ResolvedGameAsset } from "@features/games/gamesAssets.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { labelBotMentions } from "./botSeat.js";
+import { isBotSeatId, labelBotMentions } from "./botSeat.js";
+import { turnBlockLines } from "./turnLog.js";
 
 // ── roomMonopoly ─────────────────────────────────────────────────────
 // What:  how a Monopoly match looks in Discord, and what its controls are: the
@@ -39,10 +40,10 @@ import { labelBotMentions } from "./botSeat.js";
 // Where: pure rendering over the engine's MonopolyState. Nothing here reads the
 //        row or calls the engine's actions; it does not decide what is legal, it
 //        only declines to offer what plainly is not (the engine still refuses).
-// How:   at most TWO rows: the turn row (whose widest form is jail's three) and the
-//        any time row (Build, Trade, Inventory, Surrender), well inside Discord's five per row
-//        and the plan's four rows (risk M10). Mortgage controls live in the
-//        private Inventory peek rather than on the shared board. The board is a
+// How:   at most TWO rows on the board, and only what the turn line does not carry
+//        (2026-10 item 263 R3-22): Build and Pay a debt, plus, while a Dero bot is on the
+//        clock and so no turn line exists, Bid, Trade, Inventory and Surrender. Mortgage
+//        controls live in the private Inventory peek rather than on the shared board. The board is a
 //        picture from monopolyRenderer when its art is on disk and the monospaced
 //        token map when it is not; everything else in the embed is the same text.
 
@@ -98,31 +99,16 @@ export function monopolyBoardEmbedWith(state: MonopolyState, picture: ResolvedGa
 	return { embed: embed.setImage(picture.ref), attachment: picture.attachment };
 }
 
-// How much of the embed's 4096 character description the turn's lines may take, so
-// the status, map and seat lines above them always fit beside a long turn.
-const TURN_LINES_BUDGET = 2400;
-
-// The board carries the turn on the clock as it happens (2026-10 item 254, Arcade 8):
-// every line so far, newest last, so the board can stay the last message in the room
-// rather than scrolling up under one message per line. A turn too long for the budget
-// shows its latest lines and counts the rest, which its log message posts in full once
-// the turn passes. A state from before the turn log, or a turn with no line yet, shows
-// the last move as the board always did.
+// The board carries the turn on the clock as it happens (2026-10 item 254, Arcade 8): its
+// This turn block (turnLog.turnBlockLines, the block every game's board shares since item 263
+// R3-29), and the board stays in the room once the turn passes, so its block is that turn's
+// log. A state from before the turn log, or a turn with no line yet, shows the last move as
+// the board always did.
 function moveLines(state: MonopolyState): string[] {
 	const turnLog = state.turnLog ?? [];
-	if (turnLog.length === 0) {
-		const lastMove = state.log[state.log.length - 1]?.text ?? gameRoomsCopy.monopoly.noMovesYet;
-		return [`**${gameRoomsCopy.monopoly.lastMoveLabel}** ${lastMove}`];
-	}
-	const shown: string[] = [];
-	let used = 0;
-	for (let index = turnLog.length - 1; index >= 0; index--) {
-		used += turnLog[index].length + 1;
-		if (used > TURN_LINES_BUDGET && shown.length > 0) break;
-		shown.unshift(turnLog[index]);
-	}
-	const hidden = turnLog.length - shown.length;
-	return [`**${gameRoomsCopy.monopoly.thisTurnLabel}**`, ...(hidden > 0 ? [gameRoomsCopy.monopoly.earlierThisTurn(hidden)] : []), ...shown];
+	if (turnLog.length > 0) return turnBlockLines(turnLog);
+	const lastMove = state.log[state.log.length - 1]?.text ?? gameRoomsCopy.monopoly.noMovesYet;
+	return [`**${gameRoomsCopy.monopoly.lastMoveLabel}** ${lastMove}`];
 }
 
 // Who is on the clock and what they can do, or who won.
@@ -331,109 +317,76 @@ function holdingsSelect(
 
 // ── controls ──────────────────────────────────────────────────────────
 /**
- * The board message's buttons for `viewerId`, in at most two rows: the turn row
- * (what the seat on the clock does next, or the bid button every seat shares
- * during an auction), then the any time row (Build for the seat on the clock when
- * it can build, Trade and Inventory for everyone). The board is ONE shared
- * message, so the room renders it for the seat on the clock. A finished match
- * gets no rows at all. Every button is still re-checked in its handler, because a
- * rendered button is a hint.
+ * The board message's buttons, rendered for `viewerId`, the seat on the clock (the board is ONE
+ * shared message). Since 2026-10 item 263 R3-22 the board carries only what the turn line does
+ * not: Build for the seat on the clock when a build would go through, and Pay a debt for
+ * whoever owes. The turn moves themselves (Roll, Buy and Skip, End turn, the jail choices) are
+ * played through the line's Take your turn, and Bid, Trade, Inventory and Surrender ride the
+ * line beside it (monopolyPromptButtons). A finished match gets no rows. Every button is still
+ * re-checked in its handler, because a rendered button is a hint, and every route a removed
+ * button used stays registered, so a board posted before this change still works.
+ *
+ * ⚠️ A DERO BOT ON THE CLOCK GETS NO TURN LINE (turnPrompt.syncTurnPrompt skips a bot seat), and
+ * that is the one time a Monopoly table runs without one: a Monopoly room is never a network
+ * table. So while a bot is on the clock the board keeps what a member would otherwise have
+ * nowhere to press: Bid in an auction, Trade, Inventory and Surrender (owner decision 3).
  */
 export function monopolyControlsRow(state: MonopolyState, viewerId: string, roomId: string): ActionRowBuilder<ButtonBuilder>[] {
 	if (state.phase === "finished") return [];
 
 	const active = state.seats[state.activeSeatIndex];
-	const turn = turnButtons(state, active, viewerId, roomId);
-	const anyTime = anyTimeButtons(state, active, viewerId, roomId);
-	return turn.length > 0 ? [row(...turn), row(...anyTime)] : [row(...anyTime)];
+	const botOnClock = isBotSeatId(active.userId);
+	const turn = [...(botOnClock ? bidButtons(state, roomId) : []), ...debtButtons(state, roomId)];
+	const anyTime = [...buildButtons(state, active, viewerId, roomId), ...(botOnClock ? lineButtons(state, roomId) : [])];
+	return [turn, anyTime].filter((buttons) => buttons.length > 0).map((buttons) => row(...buttons));
 }
 
 /**
- * The buttons that ride the turn prompt line beside Take your turn (2026-10 item 257 Phase 4a):
- * Trade for any seat at any time, and Bid while an auction is open. Both open their own modal,
+ * The buttons that ride the turn prompt line beside Take your turn (2026-10 item 257 Phase 4a,
+ * item 263 R3-22): Bid while an auction is open, then Trade, Inventory and Surrender, so with
+ * Take your turn the line holds five at most, one row. Bid and Trade open their own modal,
  * which cannot open from the turn modal's Submit (risk R6), so they stay buttons. Built with the
- * same helper and labels as the board's rows, so a prompt and a board cannot disagree.
+ * same helpers and labels as the board's bot turn rows, so a prompt and a board cannot disagree.
  */
 export function monopolyPromptButtons(state: MonopolyState, roomId: string): ButtonBuilder[] {
-	const tradeLabel = state.pendingTrade ? gameRoomsCopy.monopoly.tradeOpenLabel : gameRoomsCopy.monopoly.tradeLabel;
-	const trade = button(roomId, "mtrade", tradeLabel, ButtonStyle.Secondary, "🤝");
-	if (state.phase !== "in-auction" || !state.pendingAuction) return [trade];
+	return [...bidButtons(state, roomId), ...lineButtons(state, roomId)];
+}
+
+// Bid, while an auction is open: every seat still playing bids, not only the seat on the clock.
+// The round's opening time rides the arg so a bid button from an earlier auction cannot open the
+// modal for a later one.
+function bidButtons(state: MonopolyState, roomId: string): ButtonBuilder[] {
+	if (state.phase !== "in-auction" || !state.pendingAuction) return [];
 	const { tileId, roundOpenedAt } = state.pendingAuction;
-	return [button(roomId, "mauction", gameRoomsCopy.monopoly.bidLabel(ownableTileName(tileId)), ButtonStyle.Primary, "🔨", String(roundOpenedAt)), trade];
+	return [button(roomId, "mauction", gameRoomsCopy.monopoly.bidLabel(ownableTileName(tileId)), ButtonStyle.Primary, "🔨", String(roundOpenedAt))];
 }
 
-function turnButtons(state: MonopolyState, active: MonopolySeat, viewerId: string, roomId: string): ButtonBuilder[] {
-	// The one turn control that is not the active seat's: every seat still playing
-	// bids. The round's opening time rides the arg so a bid button from an earlier
-	// auction cannot open the modal for a later one.
-	if (state.phase === "in-auction" && state.pendingAuction) {
-		const { tileId, roundOpenedAt } = state.pendingAuction;
-		return [button(roomId, "mauction", gameRoomsCopy.monopoly.bidLabel(ownableTileName(tileId)), ButtonStyle.Primary, "🔨", String(roundOpenedAt))];
-	}
-	// Pay is shown to every viewer for the same reason: the debtor may not be the
-	// seat on the clock. The prompt above names who it is, and the engine refuses
-	// anyone else. Never greyed out, because a debtor who can no longer cover the
-	// debt settles it by pressing Pay too (the engine then declares the bankruptcy).
+// Pay a debt, shown to every seat while the match waits on one, because the debtor may not be
+// the seat on the clock and the turn line pings only that seat. The prompt above names who owes,
+// and the engine refuses anyone else. Never greyed out: a debtor who can no longer cover the
+// debt settles it by pressing Pay too (the engine then declares the bankruptcy).
+function debtButtons(state: MonopolyState, roomId: string): ButtonBuilder[] {
 	const debt = waitingDebt(state);
-	if (debt) return [button(roomId, "mpaydebt", gameRoomsCopy.monopoly.payDebtLabel(debt.amount), ButtonStyle.Danger, "💸")];
-	if (active.userId !== viewerId) return [];
-
-	switch (state.phase) {
-		case "pre-roll":
-			return active.inJail ? jailButtons(active, roomId) : [rollButton(roomId)];
-		case "awaiting-buy-or-skip":
-			return buyOrSkipButtons(active, roomId);
-		case "post-roll":
-			return [button(roomId, "mend", gameRoomsCopy.monopoly.endTurnLabel, ButtonStyle.Primary, "✅")];
-		default:
-			// "in-trade" is never entered (a trade does not move the phase), so no
-			// turn control is the honest row if it ever were.
-			return [];
-	}
+	return debt ? [button(roomId, "mpaydebt", gameRoomsCopy.monopoly.payDebtLabel(debt.amount), ButtonStyle.Danger, "💸")] : [];
 }
 
-// Build is offered only when the build would go through for at least one lot, from
-// the same rule check the build runs (listBuildOptions), so the button and the
-// action cannot disagree. Trade and Inventory are for any seat at any time.
-function anyTimeButtons(state: MonopolyState, active: MonopolySeat, viewerId: string, roomId: string): ButtonBuilder[] {
-	const buttons: ButtonBuilder[] = [];
-	if (active.userId === viewerId && listBuildOptions(state, viewerId).length > 0) {
-		buttons.push(button(roomId, "mbuild", gameRoomsCopy.monopoly.buildLabel, ButtonStyle.Success, "🏗️"));
-	}
+// Build, for the seat on the clock and only when the build would go through for at least one
+// lot, from the same rule check the build runs (listBuildOptions), so the button and the action
+// cannot disagree. Never for a Dero bot on the clock: nobody can press it for the bot.
+function buildButtons(state: MonopolyState, active: MonopolySeat, viewerId: string, roomId: string): ButtonBuilder[] {
+	if (active.userId !== viewerId || isBotSeatId(active.userId) || listBuildOptions(state, viewerId).length === 0) return [];
+	return [button(roomId, "mbuild", gameRoomsCopy.monopoly.buildLabel, ButtonStyle.Success, "🏗️")];
+}
+
+// Trade, Inventory and Surrender, for any seat at any time. Surrender (2026-10 item 254, Arcade
+// 12) only opens a private confirm, so a slip costs nothing.
+function lineButtons(state: MonopolyState, roomId: string): ButtonBuilder[] {
 	const tradeLabel = state.pendingTrade ? gameRoomsCopy.monopoly.tradeOpenLabel : gameRoomsCopy.monopoly.tradeLabel;
-	buttons.push(button(roomId, "mtrade", tradeLabel, ButtonStyle.Secondary, "🤝"));
-	buttons.push(button(roomId, "minventory", gameRoomsCopy.monopoly.inventoryLabel, ButtonStyle.Secondary, "🎒"));
-	// Every seat's way out (2026-10 item 254, Arcade 12), at most the fourth button of
-	// this row. The press only opens a private confirm, so a slip costs nothing.
-	buttons.push(button(roomId, "msurrender", gameRoomsCopy.monopoly.surrenderLabel, ButtonStyle.Danger, "🏳️"));
-	return buttons;
-}
-
-const rollButton = (roomId: string): ButtonBuilder =>
-	button(roomId, "mroll", gameRoomsCopy.monopoly.rollLabel, ButtonStyle.Primary, "🎲");
-
-// Disabled rather than hidden where the seat plainly cannot afford it or holds
-// no card: the engine would refuse either press, and a greyed button says why
-// nothing would happen before the player tries.
-function jailButtons(active: MonopolySeat, roomId: string): ButtonBuilder[] {
 	return [
-		button(roomId, "mjail", gameRoomsCopy.monopoly.bailLabel(JAIL_BAIL), ButtonStyle.Primary, "💵", "bail").setDisabled(
-			active.chips < JAIL_BAIL
-		),
-		button(roomId, "mjail", gameRoomsCopy.monopoly.useCardLabel, ButtonStyle.Secondary, "🎟️", "card").setDisabled(
-			active.gojfCards < 1
-		),
-		button(roomId, "mjail", gameRoomsCopy.monopoly.jailRollLabel, ButtonStyle.Secondary, "🎲", "roll"),
+		button(roomId, "mtrade", tradeLabel, ButtonStyle.Secondary, "🤝"),
+		button(roomId, "minventory", gameRoomsCopy.monopoly.inventoryLabel, ButtonStyle.Secondary, "🎒"),
+		button(roomId, "msurrender", gameRoomsCopy.monopoly.surrenderLabel, ButtonStyle.Danger, "🏳️"),
 	];
-}
-
-function buyOrSkipButtons(active: MonopolySeat, roomId: string): ButtonBuilder[] {
-	const tile = BOARD[active.position];
-	const skip = button(roomId, "mskip", gameRoomsCopy.monopoly.skipLabel, ButtonStyle.Secondary, "⏭️");
-	// Same narrowing as turnPrompt: the phase is only set on an ownable lot.
-	if (!isOwnableTile(tile)) return [skip];
-	const buy = button(roomId, "mbuy", gameRoomsCopy.monopoly.buyLabel(tile.name, tile.price), ButtonStyle.Success, "🏠", tile.id);
-	return [buy.setDisabled(active.chips < tile.price), skip];
 }
 
 // customId shape `gameroom:<action>:<roomId>[:<arg>]`, parsed by parseGameRoomCustomId.

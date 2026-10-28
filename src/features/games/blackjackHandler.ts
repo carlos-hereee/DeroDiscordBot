@@ -25,7 +25,9 @@ import { awardBlackjackResult } from "./gameXp.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
-import { roomTrail } from "@features/game-rooms/roomTrail.js";
+import { roomTrail, type RoomMoveInput } from "@features/game-rooms/roomTrail.js";
+import { postTurnBoard } from "@features/game-rooms/turnBoard.js";
+import { setTurnBlock, turnBlockLines } from "@features/game-rooms/turnLog.js";
 import { drawingSettled, isClockExpired, pausedDeadline, withDrawingPause } from "@features/game-rooms/drawingPause.js";
 import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showCooldownNotice, showNotice } from "@utils/textModal.js";
@@ -119,8 +121,12 @@ interface BlackjackGame {
 	roomId: string | null;
 	// The board message the collector watches, set once it is wired. The turn modal's Submit has
 	// no click on the board to answer through, so it edits this message instead (a message edit,
-	// unlike a click's token, never expires); a room table's result also reposts from it.
+	// unlike a click's token, never expires); a room table's result posts below it and keeps it.
 	board: Message | null;
+	// A room table's hand so far, one line per move, newest last: the hand is the table's one
+	// turn, so its board carries these in its This turn block (2026-10 item 263 R3-29) and the
+	// transcript records each once the board showing it was written. Empty for an inline table.
+	turnLog: string[];
 	seatingTimer: NodeJS.Timeout | null;
 	// The table's lifetime clock: when the board was posted, and the timer that ends
 	// the table TABLE_TIMEOUT_MS later plus any time the board spent drawing.
@@ -307,6 +313,7 @@ export async function startBlackjackTable(
 		openedAt: Date.now(),
 		lifetimeTimer: null,
 		stop: () => undefined,
+		turnLog: [],
 	};
 	games.set(channel.id, game);
 
@@ -507,9 +514,11 @@ async function playBlackjackAction(
 	writer: BoardWriter
 ): Promise<"played" | "not-your-turn" | "illegal"> {
 	if (!game.table) return "illegal";
+	const handIndex = game.table.seats.find((seat) => seat.userId === userId)?.activeHand ?? 0;
 	const outcome = applyAction(game.table, userId, action);
 	if (outcome.status === "not-your-turn") return "not-your-turn";
 	if (outcome.status === "illegal") return "illegal";
+	const move = logHandMove(game, userId, action, handIndex);
 
 	// The hand may have ended on this very action. Settling BEFORE the render
 	// means the player sees one final board rather than a live board that is
@@ -517,16 +526,46 @@ async function playBlackjackAction(
 	if (game.table.phase === "dealer") {
 		const result = settleGame(game, channelId, client);
 		if (result) {
-			await redrawResult(channelId, result, resultWriter(game, writer));
+			// The action that ended the hand is the hand's last line, on the hand's own board.
+			const closing = move ? { block: turnBlockLines(game.turnLog), moves: [move] } : undefined;
+			await redrawResult(channelId, result, resultWriter(game, writer, closing));
 			await promptTurn(game, client);
 			game.stop();
 			return "played";
 		}
 	}
 
-	await redrawTable(channelId, game.table, writer);
+	await redrawTable(channelId, game.table, writer, tableEmbedOf(game, game.table), move ? [move] : []);
 	await promptTurn(game, client);
 	return "played";
+}
+
+/**
+ * A room table's line for one action, added to the hand's lines, or null for an inline table,
+ * which keeps no transcript. Read after the action, off the hand it was played on: the hand it
+ * left and its total, the way the block reads the hand back.
+ */
+function logHandMove(game: BlackjackGame, userId: string, action: BlackjackAction, handIndex: number): RoomMoveInput | null {
+	const seat = game.table?.seats.find((candidate) => candidate.userId === userId);
+	const hand = seat?.hands[handIndex];
+	if (!game.roomId || !hand) return null;
+	const copy = gameRoomsCopy.turnBoard;
+	const cards = renderHand(hand.cards);
+	const total = renderTotal(hand.cards);
+	const lines: Record<BlackjackAction, string> = {
+		hit: copy.blackjackHit(userId, cards, total),
+		stand: copy.blackjackStand(userId, total),
+		double: copy.blackjackDouble(userId, cards, total),
+		split: copy.blackjackSplit(userId, cards),
+	};
+	game.turnLog.push(lines[action]);
+	return { actorId: userId, kind: "guess", text: lines[action] };
+}
+
+// The table embed with the hand's This turn block when it plays in a room.
+function tableEmbedOf(game: BlackjackGame, table: BlackjackTable): EmbedBuilder {
+	const embed = buildBlackjackTableEmbed(table, false);
+	return game.roomId && game.turnLog.length > 0 ? setTurnBlock(embed, turnBlockLines(game.turnLog)) : embed;
 }
 
 // ── leaving during a hand (2026-10 item 254, Arcade 12) ──
@@ -549,7 +588,7 @@ async function leaveDuringHand(click: ButtonInteraction, game: BlackjackGame, ch
 
 	const result = game.table.phase === "dealer" ? settleGame(game, channelId, click.client) : null;
 	if (result) await redrawResult(channelId, result, resultWriter(game, clickWriter(click)));
-	else await redrawTable(channelId, game.table, clickWriter(click));
+	else await redrawTable(channelId, game.table, clickWriter(click), tableEmbedOf(game, game.table));
 	await promptTurn(game, click.client);
 	await answerInChannel(click, "member", { content: c.leftHand });
 	if (result) game.stop();
@@ -686,18 +725,25 @@ const messageWriter = (board: Message): BoardWriter => ({
 	write: (payload) => board.edit(payload),
 });
 
-// A room table's RESULT posts as a fresh message and retires the board, so the dealer's revealed
-// hand is the last thing in the room instead of an edit buried under the turn prompts and the
-// room's own result card (2026-10 item 257 Phase 4a). The base writer still takes the status
-// line, which is what acknowledges a click. The inline slash forms own no room and keep the edit.
-function resultWriter(game: BlackjackGame, base: BoardWriter): BoardWriter {
+// A room table's RESULT posts as a fresh message through the shared turn board, so the dealer's
+// revealed hand is the last thing in the room instead of an edit buried under the turn prompts
+// (2026-10 item 257 Phase 4a), and the hand's board STAYS above it with its buttons off and its
+// This turn block finished by `closing`, the action that ended the hand (item 263 R3-29). The
+// base writer still takes the status line, which is what acknowledges a click. The inline slash
+// forms own no room and keep the edit.
+function resultWriter(game: BlackjackGame, base: BoardWriter, closing?: { block: readonly string[]; moves: readonly RoomMoveInput[] }): BoardWriter {
 	const board = game.board;
-	if (!game.roomId || !board) return base;
+	const roomId = game.roomId;
+	if (!roomId || !board) return base;
 	return {
 		showStatus: base.showStatus,
 		write: async (payload) => {
-			if (board.channel.isSendable()) await board.channel.send({ embeds: payload.embeds, files: payload.files, components: [], allowedMentions: { parse: [] } });
-			await board.delete().catch((error: unknown) => console.warn("[mini-game] the old blackjack board could not be deleted", error));
+			if (!board.channel.isSendable()) return;
+			// A room table always plays in its room's guild text channel; the turn board only sends
+			// in it and fetches the hand's board back. Claimed by nobody: the table lives in this
+			// process with one writer, so the result is the table's board by being posted.
+			const channel = board.channel as TextChannel;
+			await postTurnBoard(channel, { guildId: game.guildId, roomId }, board.id, { embeds: payload.embeds, files: payload.files, components: [] }, { boardField: null, ...(closing ? { closing } : {}) });
 		},
 	};
 }
@@ -711,20 +757,32 @@ async function redrawBoard(
 	writer: BoardWriter,
 	render: () => Promise<RenderPayload | null>,
 	embed: EmbedBuilder,
-	components: ActionRowBuilder<ButtonBuilder>[]
+	components: ActionRowBuilder<ButtonBuilder>[],
+	carried: readonly RoomMoveInput[] = []
 ): Promise<void> {
 	await withDrawingPause({
 		gameKey: drawingKeyOf(channelId),
 		showStatus: writer.showStatus,
 		render,
 		fallback: () => null,
-		swapIn: (drawn) => writer.write({ ...boardParts(embed, drawn), components, content: null, attachments: [] }),
+		swapIn: async (drawn) => {
+			await writer.write({ ...boardParts(embed, drawn), components, content: null, attachments: [] });
+			// After the write that shows them, the send first rule (roomTrail.recordCarriedMoves).
+			const game = games.get(channelId);
+			if (carried.length > 0 && game?.roomId) await roomTrail.recordCarriedMoves({ guildId: game.guildId, roomId: game.roomId }, carried);
+		},
 	}).catch((error) => console.warn(`[mini-game] blackjack could not redraw the board in channel ${channelId}`, error));
 }
 
-// The table in play, with its action row.
-function redrawTable(channelId: string, table: BlackjackTable, writer: BoardWriter, embed: EmbedBuilder = buildBlackjackTableEmbed(table, false)): Promise<void> {
-	return redrawBoard(channelId, writer, () => drawTableCard(table), embed, [actionRow(channelId, table)]);
+// The table in play, with its action row. `carried` is the move this redraw adds to the hand's block.
+function redrawTable(
+	channelId: string,
+	table: BlackjackTable,
+	writer: BoardWriter,
+	embed: EmbedBuilder = buildBlackjackTableEmbed(table, false),
+	carried: readonly RoomMoveInput[] = []
+): Promise<void> {
+	return redrawBoard(channelId, writer, () => drawTableCard(table), embed, [actionRow(channelId, table)], carried);
 }
 
 // The settled result, with nothing left to press.

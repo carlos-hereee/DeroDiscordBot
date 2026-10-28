@@ -6,8 +6,9 @@ import { TextChannel, type Client, type ModalSubmitInteraction } from "discord.j
 // channel that keeps its messages in order and REFUSES an invalid button emoji the way Discord
 // does (50035 COMPONENT_INVALID_EMOJI, the Log 2 failure). A heads up hand is played to the end
 // entirely through each player's Take your turn modal: every decision is prompted, a fresh table
-// posts at each street and at the showdown, the table is redrawn without a refusal, and a stale
-// Submit is turned away.
+// posts at each street and at the showdown while each street's table stays in the room with its
+// bets in its This turn block (2026-10 item 263 R3-29), the table is redrawn without a refusal,
+// and a stale Submit is turned away.
 
 const row = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
 
@@ -88,6 +89,9 @@ interface FakeMessage {
 	deleted: boolean;
 	// Set when the message was sent as a turn prompt line, so it is still found after it is edited.
 	isPrompt: boolean;
+	// What a posted message reads back, as discord.js gives it: the embeds it shows and its files.
+	readonly embeds: unknown[];
+	attachments: Map<string, { name: string }>;
 	edit: ReturnType<typeof vi.fn>;
 	delete: ReturnType<typeof vi.fn>;
 }
@@ -120,6 +124,10 @@ function fakeRoom() {
 				payload,
 				deleted: false,
 				isPrompt: typeof payload.content === "string" && payload.content.includes("it's your turn"),
+				get embeds() {
+					return message.payload.embeds ?? [];
+				},
+				attachments: new Map(),
 				edit: vi.fn(async (edit: FakeMessage["payload"]) => {
 					refuseInvalidEmoji(edit.components);
 					message.payload = { ...message.payload, ...edit };
@@ -200,6 +208,12 @@ function submitFor(userId: string, room: IGameRoom, fingerprint: string, prefer:
 
 const livePrompts = (room: ReturnType<typeof fakeRoom>) => room.messages.filter((message) => message.isPrompt);
 const tableMessages = (room: ReturnType<typeof fakeRoom>) => room.messages.filter((message) => (message.payload.embeds?.length ?? 0) > 0);
+// A table message's embed description as the room reads it, its This turn block included.
+const descriptionOf = (message: FakeMessage): string => {
+	const embed = message.payload.embeds?.[0] as { data?: { description?: string }; description?: string } | undefined;
+	return embed?.data?.description ?? embed?.description ?? "";
+};
+const transcript = (): string[] => (row.current?.moves as { text: string }[]).map((move) => move.text);
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -238,11 +252,32 @@ describe("a Hold'em hand played through the turn prompt", () => {
 		expect(invalidEmoji).toEqual([]);
 
 		// The table: the flop, the turn, the river and the showdown each posted afresh (the deal's own
-		// table was already on the board), and only the newest is left in the room.
-		expect(tableMessages(room).filter((message) => message.id !== firstBoard.id)).toHaveLength(4);
-		const liveTables = tableMessages(room).filter((message) => !message.deleted);
-		expect(liveTables).toHaveLength(1);
-		expect(liveTables[0].id).toBe(tableOf().boardMessageId);
+		// table was already on the board), and every street's table STAYS: five turns, five tables,
+		// only the newest with buttons (2026-10 item 263 R3-29 and R3-4).
+		const tables = tableMessages(room);
+		expect(tables).toHaveLength(5);
+		expect(tables.every((message) => !message.deleted)).toBe(true);
+		expect(tables.at(-1)?.id).toBe(tableOf().boardMessageId);
+		expect(tables.filter((message) => (message.payload.components?.length ?? 0) > 0).map((message) => message.id)).toEqual([tableOf().boardMessageId]);
+
+		// Each street's table carries its own bets in its This turn block, the bet that closed it
+		// included, and the showdown's carries the result.
+		for (const street of tables.slice(0, 4)) {
+			const block = descriptionOf(street);
+			expect(block).toContain(`**${gameRoomsCopy.turnBoard.thisTurnLabel}**`);
+			expect(block.split("\n").filter((line) => /^<@player-[ab]> (checks|calls)/.test(line))).toHaveLength(2);
+		}
+		expect(descriptionOf(tables[4])).toMatch(/ takes \d+\./);
+
+		// Every move once in the transcript and on exactly one table: a bet two streets share word
+		// for word is on as many tables as the transcript holds it, and no move posted a line.
+		const lines = transcript();
+		expect(lines.length).toBeGreaterThan(8);
+		for (const line of new Set(lines)) {
+			const onTables = tables.filter((message) => descriptionOf(message).split("\n").includes(line));
+			expect(onTables.length, line).toBe(lines.filter((candidate) => candidate === line).length);
+		}
+		expect(room.messages.filter((message) => !message.isPrompt && (message.payload.embeds?.length ?? 0) === 0)).toEqual([]);
 
 		// Every prompt line is spent: edited to say it was played through its modal, with no button.
 		for (const prompt of livePrompts(room)) {
@@ -281,6 +316,35 @@ describe("a Hold'em hand played through the turn prompt", () => {
 
 		expect(tableOf()).toEqual(before);
 		expect(JSON.stringify((replay.reply as unknown as ReturnType<typeof vi.fn>).mock.calls)).toContain(gameRoomsCopy.turnPrompt.turnPassed);
+	});
+
+	// Risk R17 of 2026-10 item 263 (R13 of item 257): a street's table stays in the room once the
+	// next one posts, so a move read while the old table was the live one must not write its id
+	// back. The read below differs from the row in the board id alone, so nothing else refuses it.
+	it("refuses a move read against the table a new street replaced, and keeps the new table's id", async () => {
+		const room = fakeRoom();
+		const firstBoard = await room.channel.send({ embeds: [{ title: "table" }], components: [] });
+		seedHand(room, firstBoard.id);
+		await redrawTable(room.client, stored());
+		for (let guard = 0; guard < 10 && tableOf().board.length === 0; guard++) {
+			const acting = whoActs(tableOf())!;
+			const snapshot = stored();
+			const move = submitFor(acting, snapshot, holdemTurnAdapter.fingerprintOf(snapshot)!, ["check", "call"]);
+			(move as unknown as { client: Client }).client = room.client;
+			await handleTurnSubmit(move, () => holdemTurnAdapter);
+		}
+		const flopTable = tableOf().boardMessageId;
+		expect(flopTable).not.toBe(firstBoard.id);
+		const before = structuredClone(tableOf());
+
+		const stale = stored();
+		(stale.secret as unknown as HoldemTable).boardMessageId = firstBoard.id;
+		const acting = whoActs(tableOf())!;
+		const result = await holdemTurnAdapter.apply(room.client, stale, acting, { move: "check" }, async () => undefined);
+
+		expect(result).toEqual({ ok: false, reason: gameRoomsCopy.holdem.tableBusy });
+		expect(tableOf()).toEqual(before);
+		expect(tableOf().boardMessageId).toBe(flopTable);
 	});
 
 	it("gives a Dero bot seat on the clock no prompt", async () => {

@@ -5,7 +5,7 @@ import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { recordMatchRatings, twoPlayerFinishingOrder } from "@features/ratings/recordMatchRatings.js";
-import { roomTrail } from "./roomTrail.js";
+import { roomTrail, type RoomMoveInput } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { roomDrawingKey, withDrawingPause } from "./drawingPause.js";
@@ -28,7 +28,7 @@ import { showPrivateView } from "./privateView.js";
 import { battleshipOutcome, wasBehindOnShips, type OutcomeBucket } from "./matchOutcome.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { showNotice } from "@utils/textModal.js";
-import { repostRoomBoard } from "./roomBoardRepost.js";
+import { postTurnBoard } from "./turnBoard.js";
 import { handleTurnPress, syncTurnPrompt, type TurnAdapter } from "./turnPrompt.js";
 
 // ── roomBattleshipHandlers ───────────────────────────────────────────
@@ -37,10 +37,11 @@ import { handleTurnPress, syncTurnPrompt, type TurnAdapter } from "./turnPrompt.
 // Who:   routed from gameRoomHandlers, which has already proven the clicker is one
 //        of the room's players.
 // When:  many times per match, unlike every other game in this feature.
-// Where: the public board is ONE message, EDITED every turn. That deliberately
-//        differs from hangman's append-only trail: a 10x10 grid reposted per shot
-//        would be thirty unreadable walls, so the board carries the STATE and the
-//        trail carries the NARRATION. Both exist; neither is redundant.
+// Where: a shot is a turn (2026-10 item 263 R3-29): each shot posts the battle's board
+//        afresh through the shared turn board with that shot in its This turn block, and
+//        the board before it stays in the room with its buttons off, so the room reads as
+//        the battle's log. Setup edits its one board in place; the fleet's ready lines and
+//        the battle's opening line still post as their own lines, since they are no shot.
 // How:   every write goes back through the room row, so a deploy mid-match costs
 //        nothing.
 
@@ -51,42 +52,47 @@ async function persist(room: IGameRoom, stored: StoredBattleship) {
 }
 
 /**
- * Redraw the one public board message behind the drawing pause, so the turn clock
- * holds while the card renders. Shared by a shot and the turn sweep's expiry.
- * Cosmetic, so a failure is logged and swallowed: the row is the truth and the
- * next turn will catch up.
+ * Draw the battle's board behind the drawing pause, so the turn clock holds while the card
+ * renders. Shared by a shot, the turn sweep's expiry and the battle's start. `turn` is the
+ * turn's own moves (the shot, or the expired turn), which the board's This turn block shows
+ * and the transcript records once that board is posted. Cosmetic, so a failure is logged and
+ * swallowed: the row is the truth and the next turn will catch up.
  */
 export async function redrawBattleshipBoard(
 	client: Client,
 	room: IGameRoom,
 	stored: StoredBattleship,
-	sinking: BattleshipSinking | null = null
+	sinking: BattleshipSinking | null = null,
+	turn: readonly RoomMoveInput[] = []
 ): Promise<void> {
 	if (!stored.boardMessageId || !room.channelId) return;
 	const channel = await client.channels.fetch(room.channelId).catch(() => null);
 	if (!(channel instanceof TextChannel)) return;
+	// Null when an admin deleted it: a running battle still posts its next board, so the turn's
+	// moves are never lost with it; only setup, which edits in place, needs it.
 	const message = await channel.messages.fetch(stored.boardMessageId).catch(() => null);
-	if (!message) return;
 
 	const state = deserializeMatch(stored);
 	await withDrawingPause({
 		gameKey: roomDrawingKey(room),
-		showStatus: (status) => message.edit({ content: status }),
+		showStatus: async (status) => {
+			await message?.edit({ content: status });
+		},
 		render: () => battleshipBoardCard(state, sinking),
 		fallback: () => null,
 		swapIn: async (card) => {
-			const board = battleshipBoardMessageWith(state, room.roomId, card);
-			// A shot resolves a round, and a battle that is under way posts its board afresh at the
-			// bottom of the room, so it is never buried under the shot lines and prompts that follow
-			// it (2026-10 item 257 Phase 4a). Setup and the finished board edit in place. The claim is
-			// keyed on the id the caller read, which the shot's own persist just wrote.
-			if (state.status === "playing") {
-				await repostRoomBoard(channel, room, stored.boardMessageId ?? null, board);
+			const board = battleshipBoardMessageWith(state, room.roomId, card, turn.map((move) => move.text));
+			// Once the battle runs, every redraw is a new turn: the start, each shot, the winning
+			// shot and an expired turn each post their board through the shared turn board, and the
+			// board before keeps its picture and loses its buttons (2026-10 item 263 R3-29). The
+			// claim is keyed on the id the caller read, which the shot's own persist just wrote.
+			if (state.status !== "setup") {
+				await postTurnBoard(channel, room, stored.boardMessageId ?? null, board, { carried: turn });
 				return;
 			}
 			// `attachments: []` drops the last turn's picture, which an edit otherwise
 			// keeps, and `content: null` takes the drawing status back off.
-			await message.edit({ ...board, content: null, attachments: [] });
+			await message?.edit({ ...board, content: null, attachments: [] });
 		},
 	}).catch((error) => console.warn("[game-rooms] failed to redraw the battleship board", error));
 	// The line that pings the captain whose turn it now is, below the board that was just drawn.
@@ -139,18 +145,15 @@ export async function commitShot(
 	await persist(room, next);
 	await acknowledge();
 
-	// The narration is a MOVE: it belongs in the transcript that is the product, and
-	// it names only a coordinate that has now been fired on, never an unfired one.
-	await roomTrail.postMove(client, room, {
-		actorId: shooter.userId,
-		kind: "guess",
-		text: outcome.message,
-		meta: { sunk: outcome.sunk ?? null },
-	});
+	// The narration is a MOVE: it belongs in the transcript that is the product, and it
+	// names only a coordinate that has now been fired on, never an unfired one. It rides the
+	// shot's own board as its This turn block and is recorded once that board is posted, never
+	// also posted as a line of its own (2026-10 item 263 R3-29, risk R6).
+	const shot: RoomMoveInput = { actorId: shooter.userId, kind: "guess", text: outcome.message, meta: { sunk: outcome.sunk ?? null } };
 
 	// A shot that sank a ship redraws with the sinking reveal on the card.
 	const sinking = outcome.sunk ? { shooterId: shooter.userId, ship: outcome.sunk } : null;
-	await redrawBattleshipBoard(client, room, next, sinking);
+	await redrawBattleshipBoard(client, room, next, sinking, [shot]);
 
 	// ── the per sink bonus ──
 	// ⚠️ AWARDED WITHOUT `game`, DELIBERATELY. awardXp increments

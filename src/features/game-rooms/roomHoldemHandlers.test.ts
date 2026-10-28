@@ -12,7 +12,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		findByRoomId: vi.fn(),
 	},
 }));
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), recordCarriedMoves: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 
@@ -486,7 +486,8 @@ describe("the opening deal of a card's table", () => {
 		expect(written.status).toBe("playing");
 		expect(written.handNumber).toBe(1);
 		expect(Object.values(written.holeCards).map((cards) => cards.length)).toEqual([2, 2, 2]);
-		expect(roomTrail.postMove).toHaveBeenCalledWith(client, expect.anything(), expect.objectContaining({ text: gameRoomsCopy.holdem.handDealt(1, table.smallBlind, table.bigBlind) }));
+		// The deal line opens hand one's This turn block, stamped into the deal's own claim (2026-10 item 263).
+		expect(written.turnLog).toEqual([gameRoomsCopy.holdem.handDealt(1, table.smallBlind, table.bigBlind)]);
 	});
 
 	it("deals nothing to a table short of two seats, or one already dealt", async () => {

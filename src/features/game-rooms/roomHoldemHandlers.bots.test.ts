@@ -4,7 +4,7 @@ import type { Client } from "discord.js";
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: { update: vi.fn(), updateSecretIf: vi.fn(), findByRoomId: vi.fn() },
 }));
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), recordCarriedMoves: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 vi.mock("@features/dero-brain/dealerNarration.js", async (importOriginal) => ({
@@ -82,7 +82,9 @@ describe("a bot's turn", () => {
 
 		expect(await playHoldemBotTurn(client, makeRoom(table), new Date(readAt + 10_000))).toBe(true);
 		expect(storeMock.updateSecretIf).toHaveBeenCalledWith("guild-1", "room-1", { "secret.lastActionAt": readAt, "secret.boardMessageId": null }, expect.anything());
-		expect(trailMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ actorId: BOT }));
+		// The bot's bet is the street's, stamped into its own write (2026-10 item 263 R3-29).
+		const written = storeMock.updateSecretIf.mock.calls[0][3] as HoldemTable;
+		expect(written.turnLog?.at(-1)).toMatch(new RegExp('^<@' + BOT + '> '));
 	});
 
 	it("never acts for a member", async () => {

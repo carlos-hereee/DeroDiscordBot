@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
 
-vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn() } }));
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() }, resolveRoomChannel: vi.fn() }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn(), moveBoardMessage: vi.fn() } }));
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), recordCarriedMoves: vi.fn() }, resolveRoomChannel: vi.fn() }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 vi.mock("@features/games/gamesAssets.js", () => ({ resolveGameAsset: vi.fn(() => null) }));
@@ -69,8 +69,9 @@ const storeMock = gameRoomStore as unknown as {
 	update: ReturnType<typeof vi.fn>;
 	findByRoomId: ReturnType<typeof vi.fn>;
 	setSecretField: ReturnType<typeof vi.fn>;
+	moveBoardMessage: ReturnType<typeof vi.fn>;
 };
-const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn> };
+const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn>; recordCarriedMoves: ReturnType<typeof vi.fn> };
 const resolveChannelMock = resolveRoomChannel as unknown as ReturnType<typeof vi.fn>;
 const boardMock = playingBoardPicture as unknown as ReturnType<typeof vi.fn>;
 
@@ -208,7 +209,9 @@ beforeEach(() => {
 	storeMock.update.mockResolvedValue(undefined);
 	trailMock.postMove.mockResolvedValue(undefined);
 	openerEdit = vi.fn().mockResolvedValue(undefined);
-	channelSend = vi.fn().mockResolvedValue(undefined);
+	// A gallows card is a turn board (2026-10 item 263 R3-29): it is posted, then claimed.
+	channelSend = vi.fn().mockResolvedValue({ id: "card-new", edit: vi.fn() });
+	storeMock.moveBoardMessage.mockResolvedValue({});
 	openerFetch = vi.fn().mockResolvedValue({ edit: openerEdit });
 	resolveChannelMock.mockResolvedValue({ messages: { fetch: openerFetch }, send: channelSend });
 });
@@ -434,15 +437,19 @@ describe("handleGuessModal, the gallows card", () => {
 		expect(state.wrong).toBe(1);
 	});
 
-	it("posts no playing card on the guess that ends the round, because the result card carries it", async () => {
+	// A guess is a turn (2026-10 item 263 R3-29), the last one included: its card shows the guess
+	// with nothing left to press, and the result line with the word posts under it.
+	it("posts the guess that ends the round on a card of its own with no controls, then the result line", async () => {
 		const room = makeRoom();
 		(room.secret as { guessedLetters: string[] }).guessedLetters = ["p", "l", "a", "n", "e"];
 		storeMock.findByRoomId.mockResolvedValue(room);
 
 		await handleGuessModal(makeSubmit(GUESSER, "t"));
 
-		expect(boardMock).not.toHaveBeenCalled();
-		expect(channelSend).not.toHaveBeenCalled();
+		expect(channelSend).toHaveBeenCalledOnce();
+		expect((channelSend.mock.calls[0][0] as { components: unknown[] }).components).toEqual([]);
+		expect(trailMock.postMove).toHaveBeenCalledOnce();
+		expect((trailMock.postMove.mock.calls[0][2] as { text: string }).text).toBe(gameRoomsCopy.hangman.wonLine(WORD));
 	});
 
 	it("posts nothing for a refused guess", async () => {
@@ -464,7 +471,7 @@ describe("handleGuessModal, the gallows card", () => {
 		const { components } = channelSend.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id: string }[] } }[] };
 		const ids = components[0].toJSON().components.map((button) => button.custom_id);
 		expect(ids).toEqual([`${GAME_ROOM_PREFIX}:move:room-1`, `${GAME_ROOM_PREFIX}:forfeit:room-1`]);
-		expect(storeMock.setSecretField).toHaveBeenCalledWith("guild-1", "room-1", "gallowsMessageId", "card-2");
+		expect(storeMock.moveBoardMessage).toHaveBeenCalledWith("guild-1", "room-1", null, "card-2", {}, "gallowsMessageId");
 	});
 
 	it("takes the controls off the previous card, and only that one", async () => {
@@ -476,7 +483,7 @@ describe("handleGuessModal, the gallows card", () => {
 		await handleGuessModal(makeSubmit(GUESSER, "z"));
 
 		expect(openerFetch).toHaveBeenCalledWith("card-1");
-		expect(openerEdit).toHaveBeenCalledWith({ components: [] });
+		expect(openerEdit).toHaveBeenCalledWith({ content: null, components: [] });
 	});
 
 	it("takes the controls off the last card when the guess ends the round", async () => {
@@ -487,9 +494,9 @@ describe("handleGuessModal, the gallows card", () => {
 
 		await handleGuessModal(makeSubmit(GUESSER, "t"));
 
-		expect(channelSend).not.toHaveBeenCalled();
+		expect(channelSend).toHaveBeenCalledOnce();
 		expect(openerFetch).toHaveBeenCalledWith("card-5");
-		expect(openerEdit).toHaveBeenCalledWith({ components: [] });
+		expect(openerEdit).toHaveBeenCalledWith({ content: null, components: [] });
 	});
 });
 
@@ -596,7 +603,9 @@ describe("handleGuessModal, the host gate", () => {
 		await handleGuessModal(makeSubmit(GUESSER));
 
 		expect(storeMock.update).toHaveBeenCalledOnce();
-		expect(trailMock.postMove).toHaveBeenCalledOnce();
+		// The guess rides its card's This turn block and is recorded once, never posted as a line.
+		expect(trailMock.postMove).not.toHaveBeenCalled();
+		expect(trailMock.recordCarriedMoves).toHaveBeenCalledOnce();
 	});
 
 	it("closes a played guess's modal without a message of its own: the move line answers it", async () => {

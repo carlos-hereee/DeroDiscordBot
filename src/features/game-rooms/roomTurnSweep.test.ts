@@ -7,6 +7,8 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardTwoPlayerResult: vi.fn() }));
+// The battle's board is drawn by the handlers' own suites; here only what the sweep hands it.
+vi.mock("./roomBattleshipHandlers.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./roomBattleshipHandlers.js")>()), redrawBattleshipBoard: vi.fn() }));
 
 import { sweepBattleshipTurns } from "./roomTurnSweep.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -18,6 +20,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { _resetDrawingPauses, roomDrawingKey, withDrawingPause } from "./drawingPause.js";
+import { redrawBattleshipBoard } from "./roomBattleshipHandlers.js";
 
 const storeMock = gameRoomStore as unknown as {
 	findPlayingByGame: ReturnType<typeof vi.fn>;
@@ -129,15 +132,19 @@ describe("sweepBattleshipTurns", () => {
 		expect(awardMock.mock.calls[0][0]).toMatchObject({ game: "battleship", winner: "opponent" });
 	});
 
-	it("records the expiry as a MOVE, so the transcript says why the match ended", async () => {
+	// The expired turn is a turn: its line rides that turn's board as its This turn block, which
+	// records it once the board posts (2026-10 item 263 R3-29), never as a line of its own.
+	it("records the expiry as a MOVE on the expired turn's board, so the transcript says why the match ended", async () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000)]);
 
 		await sweepBattleshipTurns(client, NOW);
 
-		expect(trailMock.postMove).toHaveBeenCalledOnce();
+		expect(trailMock.postMove).not.toHaveBeenCalled();
+		const redraws = (redrawBattleshipBoard as unknown as ReturnType<typeof vi.fn>).mock.calls;
+		expect(redraws).toHaveLength(1);
 		// Attributed to the player who missed, captured BEFORE expireTurn passes the
 		// turn to the other one.
-		expect(trailMock.postMove.mock.calls[0][2]).toMatchObject({ actorId: A });
+		expect(redraws[0][4]).toEqual([expect.objectContaining({ actorId: A, kind: "system", meta: { expired: true } })]);
 	});
 
 	// A match with no shots yet falls back to startedAt, which gives the first

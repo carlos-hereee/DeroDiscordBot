@@ -153,14 +153,16 @@ describe("RoomProvisioner.open for monopoly", () => {
 		expect(storedState().settings.auctionsEnabled).toBe(true);
 	});
 
-	it("posts the board with the first seat's Roll control and stores that message id", async () => {
+	// The first seat plays from its turn line (2026-10 item 263 R3-22), so the first board of a
+	// member's turn carries no turn controls of its own.
+	it("posts the board for the first seat on the clock and stores that message id", async () => {
 		const { guild, send } = makeGuild();
 		await RoomProvisioner.open(input(guild));
 
 		const board = sentPayloads(send).find((payload) => payload.embeds[0]?.data.title === gameRoomsCopy.monopoly.boardTitle);
 		expect(board).toBeDefined();
 		const ids = (board?.components ?? []).flatMap((row) => row.toJSON().components.map((button) => button.custom_id));
-		expect(ids).toEqual(["gameroom:mroll:room-1", "gameroom:mtrade:room-1", "gameroom:minventory:room-1", "gameroom:msurrender:room-1"]);
+		expect(ids).toEqual([]);
 		expect(board?.embeds[0].data.description).toContain(gameRoomsCopy.monopoly.onTheClock("host-1"));
 		// The opener is message-1, the board message-2.
 		expect(storedState().boardMessageId).toBe("message-2");

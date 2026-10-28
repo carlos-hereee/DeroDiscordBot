@@ -133,8 +133,8 @@ export async function applyMonopolyOutcome(
 	cause: FinishCause = "played"
 ): Promise<void> {
 	const split = splitTurnLines(read, state, trail.lines);
-	// The prompt line for whoever the turn passed to posts inside the placement, above the fresh
-	// board, which stays the last message in the room (item 257 Phase 4a).
+	// The prompt line for whoever the turn passed to posts inside the placement, between the
+	// finished turn's kept board and the new turn's board (item 257 Phase 4a, item 263).
 	await placeMonopolyBoard(client, room, state, { split, actorId: trail.actorId, kind: trail.kind, promptSync: () => syncTurnPrompt(client, room, monopolyTurnAdapter) });
 	// Voice only, for a room whose host turned the referee on. Fire and forget, so a
 	// slow render never holds up the finish below or the next press. A move it cannot
@@ -293,8 +293,8 @@ export type MatchRemoval = "removed" | "notInMatch" | "busy";
  *
  * A lost compare and swap (a move landed first) is retried up to GAME_ROOM_KICK_ATTEMPTS
  * times; any other refusal means the seat is already out or was never seated. The
- * host's "removed" line leads the engine's lines on the board (`leadLine`), so the board
- * stays the last message in the room; on any refusal it is the caller's to post.
+ * host's "removed" line leads the engine's lines on the board (`leadLine`), so it lands once,
+ * in the turn's This turn block; on any refusal it is the caller's to post.
  */
 export async function removeFromMonopolyMatch(client: Client, room: IGameRoom, userId: string, actorId: string, leadLine?: string): Promise<MatchRemoval> {
 	const lead = leadLine ? [leadLine] : [];

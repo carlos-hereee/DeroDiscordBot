@@ -4,7 +4,7 @@ import { TextChannel, type ButtonInteraction, type Client } from "discord.js";
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: { update: vi.fn(), findPlayingByGame: vi.fn(), updateSecretIf: vi.fn(), findByRoomId: vi.fn(), moveBoardMessage: vi.fn() },
 }));
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), recordCarriedMoves: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 // The live card's PNG is pinned in arcadeCards.test.ts; here it answers a fixed
@@ -85,8 +85,9 @@ function makeRoom(table: HoldemTable): IGameRoom {
 }
 
 function boardClient() {
-	const board = { edit: vi.fn().mockResolvedValue(undefined), delete: vi.fn().mockResolvedValue(undefined) };
-	const fresh = { id: "board-2", delete: vi.fn().mockResolvedValue(undefined) };
+	// The street's table message, as discord.js reads it back: kept once the next street posts.
+	const board = { edit: vi.fn().mockResolvedValue(undefined), delete: vi.fn().mockResolvedValue(undefined), embeds: [{ description: "the table" }] };
+	const fresh = { id: "board-2", edit: vi.fn().mockResolvedValue(undefined), delete: vi.fn().mockResolvedValue(undefined) };
 	const send = vi.fn().mockResolvedValue(fresh);
 	const channel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, { send, messages: { fetch: vi.fn().mockResolvedValue(board) } });
 	const client = { channels: { fetch: vi.fn().mockResolvedValue(channel) } } as unknown as Client;
@@ -171,7 +172,10 @@ describe("the turn clock", () => {
 		await sweepAt(0);
 
 		expect(table.seats.find((seat) => seat.userId === stalling)!.sittingOut).toBe(true);
-		expect(trailTexts()).toContain(gameRoomsCopy.holdem.satOut(stalling));
+		// The forced fold and the sit out are the street's, in its This turn block (2026-10 item 263
+		// R3-29), stamped into the fold's own write; the board showing them records them.
+		expect(table.turnLog).toContain(gameRoomsCopy.holdem.satOut(stalling));
+		expect(trailTexts()).toEqual([]);
 	});
 });
 
@@ -234,8 +238,9 @@ describe("the next hand", () => {
 		// Claimed on the hand number and the action stamp, so a leave or an I'm back
 		// between the sweep's read and its deal makes the deal lose.
 		expect(storeMock.updateSecretIf.mock.calls[0][2]).toEqual({ "secret.handNumber": 1, "secret.lastActionAt": readStamp, "secret.boardMessageId": "board-1" });
-		const dealt = trailMock.postMove.mock.calls.find((call) => (call[2] as { text: string }).text.includes("is dealt"));
-		expect(dealt?.[2]).toMatchObject({ actorId: "p0", kind: "system" });
+		// The deal line opens the new hand's This turn block, stamped into the deal's own claim.
+		const written = storeMock.updateSecretIf.mock.calls[0][3] as HoldemTable;
+		expect(written.turnLog).toEqual([gameRoomsCopy.holdem.handDealt(2, table.smallBlind, table.bigBlind)]);
 	});
 
 	it("deals nothing when the host's own deal won the claim", async () => {

@@ -8,7 +8,7 @@ vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn() }))
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
 import { renderBoard } from "@features/games/monopolyRenderer.js";
-import { monopolyBoardEmbed, monopolyControlsRow, monopolyInventoryEmbed, monopolyInventoryReply } from "./roomMonopoly.js";
+import { monopolyBoardEmbed, monopolyControlsRow, monopolyInventoryEmbed, monopolyInventoryReply, monopolyPromptButtons } from "./roomMonopoly.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
 // ── roomMonopoly ─────────────────────────────────────────────────────
@@ -76,6 +76,15 @@ describe("monopolyBoardEmbed", () => {
 		expect(description).toContain(gameRoomsCopy.monopoly.jailPrompt);
 	});
 
+	// The block moved to turnLog.ts for every game (2026-10 item 263 R3-29) and must read exactly as
+	// the owner saw it on Monopoly's board: the bold header, then the turn's lines, at the bottom.
+	it("ends with the turn's This turn block, exactly as before the block was shared", async () => {
+		const state = { ...freshMatch(), turnLog: [`<@${A}> rolled 1 and 2.`, `<@${A}> landed on Burnt Umber Row.`] };
+		expect(await descriptionOf(state)).toMatch(new RegExp(`\\n\\n\\*\\*This turn:\\*\\*\\n<@${A}> rolled 1 and 2\\.\\n<@${A}> landed on Burnt Umber Row\\.$`));
+		const longTurn = { ...freshMatch(), turnLog: Array.from({ length: 40 }, (_, index) => `${index} ${"x".repeat(90)}`) };
+		expect(await descriptionOf(longTurn)).toMatch(/\*\*This turn:\*\*\n\(\d+ earlier lines this turn\)\n/);
+	});
+
 	it("names the winner once the match is finished", async () => {
 		const state = freshMatch();
 		state.phase = "finished";
@@ -121,8 +130,12 @@ describe("monopolyBoardEmbed", () => {
 
 describe("monopolyControlsRow", () => {
 	const idsByRow = (state: MonopolyState, viewerId: string) => rowsJson(state, viewerId).map((row) => row.map((button) => button.custom_id));
-	// Surrender is every seat's, last on the row (2026-10 item 254, Arcade 12).
-	const ANY_TIME = [`gameroom:mtrade:${ROOM}`, `gameroom:minventory:${ROOM}`, `gameroom:msurrender:${ROOM}`];
+	// What the turn line carries beside Take your turn (2026-10 item 263 R3-22), which the board
+	// shows only while a Dero bot is on the clock, since a bot gets no turn line.
+	const LINE = [`gameroom:mtrade:${ROOM}`, `gameroom:minventory:${ROOM}`, `gameroom:msurrender:${ROOM}`];
+	// A Dero bot seat on the clock: seat one.
+	const BOT = "dero-bot-red";
+	const botMatch = (): MonopolyState => createInitialState([BOT, A], { auctionsEnabled: false }, 0, 1);
 
 	// A owns the whole brown group, unimproved, so a house is legal on either lot.
 	const brownOwner = (): MonopolyState => {
@@ -132,48 +145,24 @@ describe("monopolyControlsRow", () => {
 		return state;
 	};
 
-	it("offers the active seat Roll, then Trade and Inventory, before the roll", () => {
-		expect(idsByRow(freshMatch(), A)).toEqual([[`gameroom:mroll:${ROOM}`], ANY_TIME]);
+	it("leaves a member's turn moves, Trade, Inventory and Surrender to the turn line, so the board shows none of them", () => {
+		for (const phase of ["pre-roll", "awaiting-buy-or-skip", "post-roll"] as const) {
+			const state = freshMatch();
+			state.phase = phase;
+			state.seats[0].position = 3;
+			expect(idsByRow(state, A)).toEqual([]);
+		}
+		const jailed = freshMatch();
+		jailed.seats[0].inJail = true;
+		jailed.seats[0].jailTurnsRemaining = 3;
+		expect(idsByRow(jailed, A)).toEqual([]);
 	});
 
-	it("offers a viewer who is not on the clock Trade and Inventory only", () => {
-		expect(idsByRow(freshMatch(), B)).toEqual([ANY_TIME]);
-	});
-
-	it("offers a jailed seat the three ways out, greying the card it does not hold", () => {
+	it("leaves Bid to the turn line during a member's auction", () => {
 		const state = freshMatch();
-		state.seats[0].inJail = true;
-		state.seats[0].jailTurnsRemaining = 3;
-
-		const [row, anyTime] = rowsJson(state, A);
-		expect(row.map((button) => button.custom_id)).toEqual([`gameroom:mjail:${ROOM}:bail`, `gameroom:mjail:${ROOM}:card`, `gameroom:mjail:${ROOM}:roll`]);
-		expect(row[0]).toMatchObject({ label: gameRoomsCopy.monopoly.bailLabel(50), disabled: false });
-		expect(row[1]).toMatchObject({ label: gameRoomsCopy.monopoly.useCardLabel, disabled: true });
-		expect(anyTime.map((button) => button.custom_id)).toEqual(ANY_TIME);
-	});
-
-	it("offers Buy with the lot and price on it, and Skip, on a lot for sale", () => {
-		const state = freshMatch();
-		state.phase = "awaiting-buy-or-skip";
-		state.seats[0].position = 3;
-
-		const [row] = rowsJson(state, A);
-		expect(row.map((button) => button.custom_id)).toEqual([`gameroom:mbuy:${ROOM}:burnt-umber-row`, `gameroom:mskip:${ROOM}`]);
-		expect(row[0]).toMatchObject({ label: "Buy Burnt Umber Row for $60", disabled: false });
-	});
-
-	it("greys Buy when the seat cannot afford the lot", () => {
-		const state = freshMatch();
-		state.phase = "awaiting-buy-or-skip";
-		state.seats[0].position = 3;
-		state.seats[0].chips = 59;
-		expect(rowsJson(state, A)[0][0].disabled).toBe(true);
-	});
-
-	it("offers End turn after the roll", () => {
-		const state = freshMatch();
-		state.phase = "post-roll";
-		expect(idsByRow(state, A)).toEqual([[`gameroom:mend:${ROOM}`], ANY_TIME]);
+		state.phase = "in-auction";
+		state.pendingAuction = { tileId: "burnt-umber-row", bids: {}, roundOpenedAt: 1_234, skippedBy: A };
+		expect(idsByRow(state, A)).toEqual([]);
 	});
 
 	it("offers nothing once the match is finished", () => {
@@ -184,41 +173,17 @@ describe("monopolyControlsRow", () => {
 
 	it("offers Build to the seat on the clock before its roll when a build would go through, and nowhere else", () => {
 		const state = brownOwner();
-		expect(idsByRow(state, A)[1]).toEqual([`gameroom:mbuild:${ROOM}`, ...ANY_TIME]);
+		expect(idsByRow(state, A)).toEqual([[`gameroom:mbuild:${ROOM}`]]);
 		// Off turn, and after the roll, the engine would refuse, so the button is absent.
-		expect(idsByRow(state, B)).toEqual([ANY_TIME]);
+		expect(idsByRow(state, B)).toEqual([]);
 		state.phase = "post-roll";
-		expect(idsByRow(state, A)[1]).toEqual(ANY_TIME);
+		expect(idsByRow(state, A)).toEqual([]);
 	});
 
 	it("leaves Build off when the seat owns only part of a color group", () => {
 		const state = freshMatch();
 		state.properties["vermillion-alley"].ownerId = A;
-		expect(idsByRow(state, A)[1]).toEqual(ANY_TIME);
-	});
-
-	it("labels Trade as an open offer while one waits", () => {
-		const state = freshMatch();
-		state.pendingTrade = {
-			initiatorId: A,
-			counterpartyId: B,
-			offer: { properties: [], chips: 10, gojf: 0 },
-			request: { properties: [], chips: 0, gojf: 0 },
-			openedAt: 5,
-		};
-		const anyTime = rowsJson(state, B)[0];
-		expect(anyTime[0]).toMatchObject({ custom_id: `gameroom:mtrade:${ROOM}`, label: gameRoomsCopy.monopoly.tradeOpenLabel });
-	});
-
-	it("offers EVERY seat the bid button during an auction, with the round it belongs to", () => {
-		const state = freshMatch();
-		state.phase = "in-auction";
-		state.pendingAuction = { tileId: "burnt-umber-row", bids: {}, roundOpenedAt: 1_234, skippedBy: A };
-
-		for (const viewer of [A, B]) {
-			const [turn] = rowsJson(state, viewer);
-			expect(turn).toEqual([expect.objectContaining({ custom_id: `gameroom:mauction:${ROOM}:1234`, label: gameRoomsCopy.monopoly.bidLabel("Burnt Umber Row") })]);
-		}
+		expect(idsByRow(state, A)).toEqual([]);
 	});
 
 	it("offers EVERY seat the Pay button while the match waits on a debt, priced, and the prompt names the debtor", async () => {
@@ -234,30 +199,64 @@ describe("monopolyControlsRow", () => {
 		expect(await descriptionOf(state)).toContain(gameRoomsCopy.monopoly.debtPrompt(B, gameRoomsCopy.monopoly.bankCreditor, 50, 30));
 	});
 
-	it("offers no turn control in an auction phase with no auction recorded", () => {
-		const state = freshMatch();
-		state.phase = "in-auction";
-		expect(idsByRow(state, A)).toEqual([ANY_TIME]);
+	it("keeps Trade, Inventory and Surrender on the board while a Dero bot is on the clock, and never its Build or turn moves", () => {
+		const state = botMatch();
+		state.properties["vermillion-alley"].ownerId = BOT;
+		state.properties["burnt-umber-row"].ownerId = BOT;
+		expect(idsByRow(state, BOT)).toEqual([LINE]);
 	});
 
-	it("stays inside Discord's caps and emits only Monopoly actions, in every phase", () => {
-		const phases: MonopolyState["phase"][] = ["pre-roll", "awaiting-buy-or-skip", "post-roll", "in-auction", "in-trade"];
+	it("keeps Bid on the board during a Dero bot's auction, with the round it belongs to, since no turn line carries it", () => {
+		const state = botMatch();
+		state.phase = "in-auction";
+		state.pendingAuction = { tileId: "burnt-umber-row", bids: {}, roundOpenedAt: 1_234, skippedBy: BOT };
+		const [turn, line] = rowsJson(state, BOT);
+		expect(turn).toEqual([expect.objectContaining({ custom_id: `gameroom:mauction:${ROOM}:1234`, label: gameRoomsCopy.monopoly.bidLabel("Burnt Umber Row") })]);
+		expect(line.map((button) => button.custom_id)).toEqual(LINE);
+	});
+
+	it("labels Trade as an open offer while one waits", () => {
+		const state = botMatch();
+		state.pendingTrade = {
+			initiatorId: A,
+			counterpartyId: BOT,
+			offer: { properties: [], chips: 10, gojf: 0 },
+			request: { properties: [], chips: 0, gojf: 0 },
+			openedAt: 5,
+		};
+		const [line] = rowsJson(state, BOT);
+		expect(line[0]).toMatchObject({ custom_id: `gameroom:mtrade:${ROOM}`, label: gameRoomsCopy.monopoly.tradeOpenLabel });
+	});
+
+	it("stays inside Discord's caps and emits only Monopoly actions, in every phase, on a member's turn and a bot's", () => {
+		const phases: MonopolyState["phase"][] = ["pre-roll", "awaiting-buy-or-skip", "post-roll", "in-auction", "in-trade", "awaiting-debt"];
 		for (const phase of phases) {
-			for (const inJail of [false, true]) {
-				// The widest board there is: Build on offer AND in jail AND an auction recorded.
-				const state = brownOwner();
+			for (const onClock of [A, BOT]) {
+				// The widest board there is: Build on offer AND an auction or a debt recorded.
+				const state = onClock === A ? brownOwner() : botMatch();
 				state.phase = phase;
-				state.seats[0].inJail = inJail;
-				state.seats[0].position = 3;
-				state.pendingAuction = phase === "in-auction" ? { tileId: "reader-dock", bids: {}, roundOpenedAt: 1, skippedBy: A } : null;
-				const rows = rowsJson(state, A);
+				state.pendingAuction = phase === "in-auction" ? { tileId: "reader-dock", bids: {}, roundOpenedAt: 1, skippedBy: onClock } : null;
+				state.pendingDebt = phase === "awaiting-debt" ? { debts: [{ debtorId: B, creditorId: "bank", amount: 50 }], resumePhase: "post-roll", moveAfter: null } : null;
+				const rows = rowsJson(state, onClock);
 				expect(rows.length).toBeLessThanOrEqual(MAX_ROWS);
 				for (const row of rows) expect(row.length).toBeLessThanOrEqual(DISCORD_COMPONENTS_PER_ROW);
 				for (const id of rows.flat().map((button) => button.custom_id ?? "")) {
-					expect(id).toMatch(/^gameroom:(mroll|mbuy|mskip|mend|mjail|minventory|mbuild|mtrade|mauction|msurrender):/);
+					expect(id).toMatch(/^gameroom:(mbuild|mpaydebt|mauction|mtrade|minventory|msurrender):/);
 				}
 			}
 		}
+	});
+});
+
+describe("monopolyPromptButtons", () => {
+	it("puts Trade, Inventory and Surrender on a member's turn line, and Bid first during an auction, four at most beside Take your turn", () => {
+		const ids = (state: MonopolyState) => monopolyPromptButtons(state, ROOM).map((button) => (button.toJSON() as { custom_id: string }).custom_id);
+		const state = freshMatch();
+		expect(ids(state)).toEqual([`gameroom:mtrade:${ROOM}`, `gameroom:minventory:${ROOM}`, `gameroom:msurrender:${ROOM}`]);
+		state.phase = "in-auction";
+		state.pendingAuction = { tileId: "burnt-umber-row", bids: {}, roundOpenedAt: 1_234, skippedBy: A };
+		expect(ids(state)).toEqual([`gameroom:mauction:${ROOM}:1234`, `gameroom:mtrade:${ROOM}`, `gameroom:minventory:${ROOM}`, `gameroom:msurrender:${ROOM}`]);
+		expect(ids(state).length).toBeLessThan(DISCORD_COMPONENTS_PER_ROW);
 	});
 });
 

@@ -70,9 +70,10 @@ describe("the modal", () => {
 	});
 });
 
-describe("Trade and Bid stay as buttons beside Take your turn", () => {
-	it("carries Trade on every prompt line", () => {
-		expect(customIds(roomOf(fresh()))).toEqual(["gameroom:mtrade:room-1"]);
+describe("Bid, Trade, Inventory and Surrender ride beside Take your turn", () => {
+	// 2026-10 item 263 R3-22: the turn line carries what the board no longer does on a member's turn.
+	it("carries Trade, Inventory and Surrender on every prompt line", () => {
+		expect(customIds(roomOf(fresh()))).toEqual(["gameroom:mtrade:room-1", "gameroom:minventory:room-1", "gameroom:msurrender:room-1"]);
 	});
 
 	it("adds the Bid button, carrying the round it opens, while an auction is open", () => {
@@ -81,6 +82,6 @@ describe("Trade and Bid stay as buttons beside Take your turn", () => {
 			phase: "in-auction",
 			pendingAuction: { tileId: "burnt-umber-row", roundOpenedAt: 12345 } as MonopolyState["pendingAuction"],
 		};
-		expect(customIds(roomOf(state))).toEqual(["gameroom:mauction:room-1:12345", "gameroom:mtrade:room-1"]);
+		expect(customIds(roomOf(state))).toEqual(["gameroom:mauction:room-1:12345", "gameroom:mtrade:room-1", "gameroom:minventory:room-1", "gameroom:msurrender:room-1"]);
 	});
 });

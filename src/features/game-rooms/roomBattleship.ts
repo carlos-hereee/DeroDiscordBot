@@ -37,6 +37,7 @@ import type { PrivateViewContent } from "./privateView.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { labelBotMentions } from "./botSeat.js";
+import { turnBlockLines } from "./turnLog.js";
 
 // ── roomBattleship ───────────────────────────────────────────────────
 // What:  the Discord half of a battleship match: how the match is stored on the
@@ -81,9 +82,9 @@ export interface StoredBattleship {
 	// Who pressed Ready during setup (post-launch plan item 17). ABSENT on a match
 	// stored before setup existed, which was already past it, so it reads as both.
 	ready?: [boolean, boolean];
-	// The public board message, edited every turn rather than reposted. A 10x10 grid
-	// per shot would be thirty unreadable walls in a row; the append-only trail
-	// carries the NARRATION and this carries the state.
+	// The battle's live board message. Each shot posts a new one through the shared turn
+	// board with that shot in its This turn block, and the one before stays in the room with
+	// its buttons off (2026-10 item 263 R3-29); setup edits its one board in place.
 	boardMessageId?: string | null;
 }
 
@@ -155,8 +156,10 @@ function renderGrid(rows: string[][]): string {
 // The PUBLIC board: what the room may see. Built from opponentView for BOTH
 // players, so neither player's unfired ships are readable by anyone, including the
 // opponent and including a spectator scrolling back. With `imageRef` the rendered
-// card carries the grids, so the description keeps only the headline lines.
-export function publicBoardEmbed(state: BattleshipState, imageRef?: string): EmbedBuilder {
+// card carries the grids, so the description keeps only the headline lines. `turnLines` is
+// the shot this board was posted for, shown in its This turn block (2026-10 item 263 R3-29):
+// each shot is a turn, so each shot's board stays in the room with its own line.
+export function publicBoardEmbed(state: BattleshipState, imageRef?: string, turnLines: readonly string[] = []): EmbedBuilder {
 	const [first, second] = state.players;
 	const section = (viewer: PlayerBoard, target: PlayerBoard): string => {
 		const heading = `**${viewer.username}** firing on **${target.username}** (${shipsRemaining(state, target.userId)} ships left)`;
@@ -166,11 +169,12 @@ export function publicBoardEmbed(state: BattleshipState, imageRef?: string): Emb
 	};
 
 	const turnLine = statusLine(state);
+	const block = turnBlockLines(turnLines);
 
 	// A Dero bot captain (2026-10 item 250 Phase 5) is named rather than mentioned.
 	const embed = infoEmbed(
 		gameRoomsCopy.battleship.boardTitle,
-		labelBotMentions([turnLine, "", section(first, second), "", section(second, first)].join("\n")),
+		labelBotMentions([turnLine, "", section(first, second), "", section(second, first), ...(block.length > 0 ? ["", ...block] : [])].join("\n")),
 		COLORS.ARCADE as ColorResolvable
 	);
 	return imageRef ? embed.setImage(imageRef) : embed;
@@ -321,11 +325,12 @@ export async function battleshipBoardMessage(
 
 /**
  * The public board message around a card already drawn, or the emoji grid when
- * `card` is null. For a redraw that drew its card behind the drawing pause.
+ * `card` is null. For a redraw that drew its card behind the drawing pause; `turnLines`
+ * fills its This turn block.
  */
-export function battleshipBoardMessageWith(state: BattleshipState, roomId: string, card: RenderPayload | null): BattleshipBoardMessage {
+export function battleshipBoardMessageWith(state: BattleshipState, roomId: string, card: RenderPayload | null, turnLines: readonly string[] = []): BattleshipBoardMessage {
 	return {
-		embeds: [publicBoardEmbed(state, card?.ref)],
+		embeds: [publicBoardEmbed(state, card?.ref, turnLines)],
 		components: battleshipRows(roomId, state),
 		files: card ? [card.attachment] : [],
 	};

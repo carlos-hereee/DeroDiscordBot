@@ -4,9 +4,9 @@ import type { ButtonInteraction, Client, ModalSubmitInteraction } from "discord.
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn(), findPlayingByGame: vi.fn(), moveBoardMessage: vi.fn(async () => ({})) },
 }));
-// A Monopoly move's lines ride the board, or the finished turn's log message, rather than
-// one postMove each (2026-10 item 254, Arcade 8).
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), postMoveLog: vi.fn(async () => true), recordCarriedMoves: vi.fn() } }));
+// A Monopoly move's lines ride its turn's board, rather than one postMove each (2026-10 item
+// 254, Arcade 8; the finished turn's board keeps them since item 263).
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), recordCarriedMoves: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 // The auction card answers null unless a case hands one back, so the other cases
@@ -39,11 +39,10 @@ const storeMock = gameRoomStore as unknown as {
 };
 const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
 const carriedMock = roomTrail.recordCarriedMoves as unknown as ReturnType<typeof vi.fn>;
-const moveLogMock = roomTrail.postMoveLog as unknown as ReturnType<typeof vi.fn>;
-// Every line a move recorded, in order: the finished turn's log, then the board's.
+// Every line a move recorded, in order: the finished turn's board, then the new one's.
 type RecordedMove = { actorId: string; kind: string; text: string };
 const recorded = (): RecordedMove[] =>
-	[...moveLogMock.mock.calls.map((call) => (call[2] as { moves: RecordedMove[] }).moves), ...carriedMock.mock.calls.map((call) => call[1] as RecordedMove[])].flat();
+	carriedMock.mock.calls.map((call) => call[1] as RecordedMove[]).flat();
 
 const A = "player-a";
 const B = "player-b";

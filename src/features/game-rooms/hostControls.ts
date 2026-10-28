@@ -448,9 +448,9 @@ async function removeFromMatch(client: Client, room: IGameRoom, userId: string, 
 	else await revokeMemberOverwrite(client, room, userId);
 	const trailLine = words.kick.trailLine(actorId, userId);
 
-	// Monopoly carries the line on its board with the forfeit it causes, so the board stays
-	// the last message in the room (2026-10 item 254, Arcade 8); it posts on its own only
-	// when there was no seat left to take out.
+	// Monopoly carries the line on its turn's board with the forfeit it causes, so it lands
+	// once, in that turn's This turn block (2026-10 item 254 Arcade 8, item 263); it posts on
+	// its own only when there was no seat left to take out.
 	if (room.game === "monopoly") {
 		const removal = await removeFromMonopolyMatch(client, room, userId, actorId, trailLine);
 		if (removal !== "removed") await roomTrail.postMove(client, room, { actorId, kind: "system", text: trailLine });

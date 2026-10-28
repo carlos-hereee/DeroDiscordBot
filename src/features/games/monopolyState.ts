@@ -103,8 +103,8 @@ export interface MonopolyState {
 	turnStartedAt: number; // ms epoch, for the idle sweep
 	log: MonopolyLogEntry[]; // compact per-turn log for the embed
 	boardMessageId: string | null; // for RoomProvisioner's board edit
-	// The trail lines of the turn on the clock so far, which the board message carries
-	// until the turn passes and they post as one log message (2026-10 item 254, Arcade 8).
+	// The trail lines of the turn on the clock so far, which the turn's board carries in its
+	// This turn block and keeps once the turn passes (2026-10 item 254 Arcade 8, item 263).
 	// Written by the room layer before it persists a move, like boardMessageId, never by
 	// an action here; ABSENT on every state stored before it existed, which reads as none.
 	turnLog?: string[];

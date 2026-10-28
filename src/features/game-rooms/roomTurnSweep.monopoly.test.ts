@@ -4,9 +4,9 @@ import { TextChannel, type Client } from "discord.js";
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: { findPlayingByGame: vi.fn(), updateSecretIf: vi.fn(), findByRoomId: vi.fn(), moveBoardMessage: vi.fn() },
 }));
-// A Monopoly move's lines ride the board, or the finished turn's log message, rather
-// than one postMove each (2026-10 item 254, Arcade 8).
-vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), postMoveLog: vi.fn(), recordCarriedMoves: vi.fn() } }));
+// A Monopoly move's lines ride its turn's board, rather than one postMove each (2026-10
+// item 254, Arcade 8; the finished turn's board keeps them since item 263).
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), recordCarriedMoves: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardTwoPlayerResult: vi.fn(), awardMultiPlayerResult: vi.fn() }));
 
@@ -33,7 +33,6 @@ const storeMock = gameRoomStore as unknown as {
 };
 const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
 const carriedMock = roomTrail.recordCarriedMoves as unknown as ReturnType<typeof vi.fn>;
-const moveLogMock = roomTrail.postMoveLog as unknown as ReturnType<typeof vi.fn>;
 const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
 const awardMock = awardMultiPlayerResult as unknown as ReturnType<typeof vi.fn>;
 
@@ -43,10 +42,10 @@ const A = "player-a";
 const B = "player-b";
 const C = "player-c";
 
-// The room's channel, holding a board to edit or replace.
+// The room's channel, holding a board to edit, or to keep as its turn's log once the next turn's board posts.
 const channel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, {
-	messages: { fetch: vi.fn().mockResolvedValue({ edit: vi.fn(), delete: vi.fn() }) },
-	send: vi.fn().mockResolvedValue({ id: "board-2", delete: vi.fn() }),
+	messages: { fetch: vi.fn().mockResolvedValue({ edit: vi.fn(), delete: vi.fn(), embeds: [{ description: "the board" }] }) },
+	send: vi.fn().mockResolvedValue({ id: "board-2", edit: vi.fn(), delete: vi.fn() }),
 });
 const client = {
 	channels: { fetch: vi.fn().mockResolvedValue(channel) },
@@ -72,10 +71,9 @@ function makeRoom(players: string[], turnIdleHours: number, lastMoveHoursAgo: nu
 }
 
 const persisted = (): MonopolyState => storeMock.updateSecretIf.mock.calls[0][3] as MonopolyState;
-// Every line the sweep recorded, in order: the finished turn's log, then the board's.
+// Every line the sweep recorded, in order: the finished turn's board, then the new one's.
 type RecordedMove = { actorId: string; kind: string; text: string };
-const recorded = (): RecordedMove[] =>
-	[...moveLogMock.mock.calls.map((call) => (call[2] as { moves: RecordedMove[] }).moves), ...carriedMock.mock.calls.map((call) => call[1] as RecordedMove[])].flat();
+const recorded = (): RecordedMove[] => carriedMock.mock.calls.map((call) => call[1] as RecordedMove[]).flat();
 const trailTexts = (): string[] => recorded().map((move) => move.text);
 
 beforeEach(() => {
@@ -84,7 +82,6 @@ beforeEach(() => {
 	storeMock.findByRoomId.mockResolvedValue(null);
 	storeMock.moveBoardMessage.mockResolvedValue({});
 	postMoveMock.mockResolvedValue(true);
-	moveLogMock.mockResolvedValue(true);
 	finishMock.mockResolvedValue(true);
 	vi.spyOn(console, "log").mockImplementation(() => undefined);
 });

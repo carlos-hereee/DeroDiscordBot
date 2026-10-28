@@ -7,8 +7,7 @@ import { voiceSessions } from "@features/voice/voiceSessions.js";
 import type { VoicePriorityCategory } from "@features/voice/voicePriority.js";
 import { challengeBadge } from "./challengeBoardEmbeds.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { moveMonopolyBoardToBottom } from "./roomMonopolyBoard.js";
-import { postAboveBoard, postRefereeNotice } from "./roomMonopolyRefereeNotice.js";
+import { postRefereeLine, postRefereeNotice } from "./roomMonopolyRefereeNotice.js";
 import { offersReferee, refereeOn } from "./roomTypes.js";
 
 // ── roomReferee ──────────────────────────────────────────────────────
@@ -66,11 +65,10 @@ export async function startRoomReferee(client: Client, room: IGameRoom, channel:
 		// otherwise waits its place, which the room is told, as a /dero join requester is.
 		const place = await voiceQueue.requestVoice({ guild: channel.guild, requesterId: room.hostId, channelId: hostCallId, controlChannelId: channel.id, category: matchCategory(room) });
 		if (place) {
-			await postAboveBoard(client, room, { content: gameRoomsCopy.monopoly.refereeQueued(place.place, place.total), allowedMentions: { parse: [] } });
+			await postRefereeLine(client, room, { content: gameRoomsCopy.monopoly.refereeQueued(place.place, place.total), allowedMentions: { parse: [] } });
 			return;
 		}
-		// The join notice landed in the room below Monopoly's board, which stays the last message.
-		if (room.game === "monopoly") await moveMonopolyBoardToBottom(client, room);
+		// The join notice lands in the room below the board, which stays where it is: a turn keeps ONE board (2026-10 item 263).
 	} catch (error) {
 		console.error("[game-rooms] the referee could not start", { roomId: room.roomId, error });
 	}

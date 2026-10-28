@@ -6,38 +6,36 @@ import { renderBoard } from "@features/games/monopolyRenderer.js";
 import type { ResolvedGameAsset } from "@features/games/gamesAssets.js";
 import { monopolyBoardEmbedWith, monopolyControlsRow } from "./roomMonopoly.js";
 import { roomTrail, type RoomMoveInput } from "./roomTrail.js";
-import { repostRoomBoard } from "./roomBoardRepost.js";
+import { postTurnBoard } from "./turnBoard.js";
+import { splitTurnAt, turnBlockLines, type TurnSplit } from "./turnLog.js";
 import { roomDrawingKey, withDrawingPause } from "./drawingPause.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { labelForRoom } from "./satelliteRooms.js";
-import { botSeatName, isBotSeatId, memberIdsOnly } from "./botSeat.js";
+import { botSeatName, isBotSeatId, labelBotMentions, memberIdsOnly } from "./botSeat.js";
 import type { RoomMoveKind } from "./roomTypes.js";
 
 // ── roomMonopolyBoard ────────────────────────────────────────────────
-// What:  where a Monopoly match's board message sits, and what it carries: the board
-//        is always the LAST message in the room (2026-10 item 254, Arcade 8). During a
-//        turn the board carries that turn's lines, edited in place with each move; when
-//        the turn passes, the finished turn's lines post as one log message, the new
-//        board posts below it with the buttons, and the old board is deleted.
+// What:  where a Monopoly match's board messages sit, and what they carry: one board per
+//        turn (2026-10 item 263 R3-29). During a turn its board carries that turn's lines,
+//        edited in place with each move; when the turn passes, the old board takes the
+//        turn's last lines and loses its buttons and STAYS in the room as that turn's log,
+//        the turn prompt line posts, and the new turn's board posts below it with the
+//        buttons, through the shared turn board (turnBoard.postTurnBoard).
 // Who:   roomMonopolyHandlers.applyMonopolyOutcome, the tail every move reaches (a
 //        press, a modal, a bot's turn, the idle and auction sweeps), plus the referee's
-//        notice and the Bring Dero into the call button, which post above the board and
-//        so move it down (roomMonopolyRefereeNotice).
+//        notice and the Bring Dero into the call button, which post below the board in
+//        the same queue (roomMonopolyRefereeNotice) and never move it.
 // When:  once per landed move, after the move was persisted.
 // Where: the board's message id lives on the match (`secret.boardMessageId`). Every
-//        move's compare and swap includes it (turnFingerprint), and the repost moves it
-//        with one conditional dotted write, so a move read before the board moved can
-//        never write the old id back.
+//        move's compare and swap includes it (turnFingerprint), and a new turn's board
+//        moves it with one conditional dotted write, so a move read before the board
+//        moved can never write the old id back.
 // How:   ① every placement queues behind the room's drawing pause, so two moves' boards
 //        land in the order they were persisted; ② inside the queue the CURRENT board id
 //        is read from the row, never from the move's own copy, which an earlier
 //        placement may already have replaced; ③ a line reaches the transcript only after
-//        the message carrying it was sent or edited (roomTrail's rule).
-//
-// ⚠️ THE NEW BOARD IS PERSISTED BEFORE THE OLD ONE IS DELETED. A crash between the two
-// leaves two boards, both of whose buttons still work (a control carries the room id,
-// not the message id) and the newer of which the row points at; the reverse order would
-// leave a room with no board at all.
+//        the message carrying it was sent or edited (roomTrail's rule), and each line
+//        lands once: on the board of the turn it belongs to.
 
 /**
  * The match stored on a room row, or null for a row with no board yet. Through
@@ -63,36 +61,20 @@ const TURN_HANDOFF = new RegExp(String.raw`^It is now ${PLAYER_MENTION_PATTERN}'
 export const isTurnHandoffLine = (line: string): boolean => TURN_HANDOFF.test(line);
 
 // ── the turn's lines ──────────────────────────────────────────────────
-/** How one move's lines split between the turn that just ended and the turn now on the clock. */
-export interface TurnSplit {
-	// Every line of the turn that just ended, for its log message, or null while the turn runs on.
-	finishedShown: string[] | null;
-	// The lines of this move that belong to the finished turn, which no message carried yet.
-	finishedNew: string[];
-	// The turn on the clock's lines so far, which the board carries (and the state stores).
-	current: string[];
-	// The lines of this move that belong to the turn on the clock.
-	currentNew: string[];
-}
-
 const turnsTaken = (state: MonopolyState): number => state.stats?.turnsTaken ?? 0;
 
 /**
- * Split one move's lines at the turn handoff. The turn passed when the engine counted
- * one more turn taken, or the match ended (its last turn is over and no new one starts).
- * The engine's "It is now X's turn." line opens the new turn, so it and everything after
- * it ride the new board; everything before it closes the old one. A move that passed the
- * turn without a handoff line (the match ending) closes the old turn with all its lines.
+ * Split one move's lines at the turn handoff, through the split every game shares
+ * (turnLog.splitTurnAt). The turn passed when the engine counted one more turn taken, or
+ * the match ended (its last turn is over and no new one starts). The engine's "It is now
+ * X's turn." line opens the new turn, so it and everything after it ride the new board;
+ * everything before it closes the old one. A move that passed the turn without a handoff
+ * line (the match ending) closes the old turn with all its lines.
  */
 export function splitTurnLines(read: MonopolyState, next: MonopolyState, lines: readonly string[]): TurnSplit {
-	const earlier = read.turnLog ?? [];
 	const passed = next.phase === "finished" || turnsTaken(next) !== turnsTaken(read);
-	if (!passed) return { finishedShown: null, finishedNew: [], current: [...earlier, ...lines], currentNew: [...lines] };
-
-	const cut = next.phase === "finished" ? lines.length : lastHandoffIndex(lines);
-	const finishedNew = lines.slice(0, cut);
-	const currentNew = lines.slice(cut);
-	return { finishedShown: [...earlier, ...finishedNew], finishedNew, current: currentNew, currentNew };
+	const cut = passed ? (next.phase === "finished" ? lines.length : lastHandoffIndex(lines)) : null;
+	return splitTurnAt(read.turnLog ?? [], lines, cut);
 }
 
 // Where the last turn handoff line sits, or the end of the lines when there is none.
@@ -148,23 +130,25 @@ export async function seatNamesForBoard(client: Client, room: Pick<IGameRoom, "g
 }
 
 // ── placing the board ─────────────────────────────────────────────────
-/** One move's lines, split, and who made them, for the board to carry and the transcript to record. */
+/** One move's lines, split, and who made them, for the boards to carry and the transcript to record. */
 export interface BoardPlacement {
 	split: TurnSplit;
 	actorId: string;
 	kind: RoomMoveKind;
 	// Posts the turn prompt line for the seat the turn passed to (turnPrompt.syncTurnPrompt). Run
-	// BETWEEN the finished turn's log and the new board, so the board stays the last message in
-	// the room even with a prompt line in it (2026-10 item 257 Phase 4a). Passed in rather than
-	// imported: the adapter lives in the handlers, which import this file.
+	// BETWEEN the finished turn's board and the new one, so the room reads the finished turn's
+	// board, the prompt line, the new board (2026-10 item 257 Phase 4a, kept by item 263). Passed
+	// in rather than imported: the adapter lives in the handlers, which import this file.
 	promptSync?: () => Promise<void>;
 }
 
 /**
- * Put the board for `state` where it belongs after a move: edited in place while the
- * turn runs, reposted below the turn's log message when it passed. Cosmetic past the
- * persist, so a failure is logged and swallowed: the row is the truth, and the next
- * move places the board from it.
+ * Put the board for `state` where it belongs after a move: the turn's own board edited in
+ * place while the turn runs (the match's last turn included, which ends on its own board);
+ * and when the turn passed, the finished turn's board takes its last lines and loses its
+ * buttons, the prompt line posts, and the new turn's board posts below. Cosmetic past the
+ * persist, so a failure is logged and swallowed: the row is the truth, and the next move
+ * places the board from it.
  */
 export async function placeMonopolyBoard(client: Client, room: IGameRoom, state: MonopolyState, placement: BoardPlacement): Promise<void> {
 	const { split, actorId, kind, promptSync } = placement;
@@ -189,72 +173,64 @@ export async function placeMonopolyBoard(client: Client, room: IGameRoom, state:
 		swapIn: async (picture) => {
 			channel ??= await boardChannel(client, room.channelId);
 			if (!channel) return;
-			if (!split.finishedShown) {
+			// The match's last turn ends on the board it ran on: no new turn opens, so its lines
+			// stay with it, and the finished match's board shows them under the winner's line.
+			const lastTurn = split.finishedShown && state.phase === "finished";
+			if (!split.finishedShown || lastTurn) {
+				const shown = lastTurn ? { ...state, turnLog: split.finishedShown ?? [] } : state;
+				const added = asMoves(lastTurn ? split.finishedNew : split.currentNew);
 				const board = await fetchBoard(channel, boardId);
 				if (board) {
-					await board.edit({ ...boardPayload(room, state, picture), content: null, attachments: [] });
-					await roomTrail.recordCarriedMoves(room, asMoves(split.currentNew));
+					await board.edit({ ...boardPayload(room, shown, picture), content: null, attachments: [] });
+					await roomTrail.recordCarriedMoves(room, added);
 					// Same turn, so the prompt only changes when its buttons do (an auction opening).
 					await promptSync?.();
 					return;
 				}
-				// The board was deleted from under the match: post a fresh one rather than
-				// leave the room with no buttons.
-			} else {
-				await roomTrail.postMoveLog(client, room, { shown: split.finishedShown, moves: asMoves(split.finishedNew) });
+				// The board was deleted from under the match: post a fresh one rather than leave
+				// the room with no buttons, carrying the lines the deleted board took with it.
+				await promptSync?.();
+				await postTurnBoard(channel, room, boardId, boardPayload(room, shown, picture), { carried: added });
+				return;
 			}
 			await promptSync?.();
-			await repostBoard(channel, room, boardId, boardPayload(room, state, picture), asMoves(split.currentNew));
+			await postTurnBoard(channel, room, boardId, boardPayload(room, state, picture), {
+				carried: asMoves(split.currentNew),
+				// The finished turn's board keeps its block, now with the lines that ended the turn.
+				...(split.finishedNew.length > 0 ? { closing: { block: turnBlockLines(split.finishedShown).map(labelBotMentions), moves: asMoves(split.finishedNew) } } : {}),
+			});
 		},
 	}).catch((error) => console.warn("[game-rooms] failed to place the monopoly board", { roomId: room.roomId, error }));
 }
 
 /**
- * Move the board below whatever was just posted above it: the referee's notice, or the
- * join notice Bring Dero into the call leaves in the room. `above` posts first, inside
- * the same queue, so nothing lands between it and the new board. With nothing to post,
- * a board that is already the last message stays where it is. Reads the match fresh,
- * because the move that prompted this may no longer be the latest. Never throws.
+ * Post a line in a Monopoly room, below its board, inside the board's drawing queue so it
+ * never lands between a turn's prompt line and the board that follows it: the referee's
+ * notice, or its queue place. The board stays where it is (2026-10 item 263 owner decision
+ * 4): a turn keeps ONE board, and a notice under it is read before the board's buttons are.
+ * Never throws.
  */
-export async function moveMonopolyBoardToBottom(client: Client, room: IGameRoom, above?: (channel: TextChannel) => Promise<unknown>): Promise<void> {
-	let latest: { row: IGameRoom; state: MonopolyState } | null = null;
+export async function postBelowMonopolyBoard(client: Client, room: IGameRoom, post: (channel: TextChannel) => Promise<unknown>): Promise<void> {
 	await withDrawingPause({
 		gameKey: roomDrawingKey(room),
-		// No status line: the board is not changing, only moving.
+		// No status line and no picture: the board is not changing.
 		showStatus: async () => undefined,
-		render: async () => {
-			latest = await readMatch(room);
-			if (!latest) return null;
-			return renderBoard(latest.state, Date.now(), await seatNamesForBoard(client, latest.row, latest.state));
-		},
+		render: async () => null,
 		fallback: () => null,
-		swapIn: async (picture) => {
-			const match: { row: IGameRoom; state: MonopolyState } | null = latest;
+		swapIn: async () => {
 			const channel = await boardChannel(client, room.channelId);
-			if (!match || !channel) return;
-			const boardId = match.state.boardMessageId;
-			if (above) await above(channel);
-			else if (boardId && channel.lastMessageId === boardId) return;
-			await repostBoard(channel, match.row, boardId, boardPayload(match.row, match.state, picture), []);
+			if (channel) await post(channel);
 		},
-	}).catch((error) => console.warn("[game-rooms] failed to move the monopoly board down", { roomId: room.roomId, error }));
+	}).catch((error) => console.warn("[game-rooms] failed to post below the monopoly board", { roomId: room.roomId, error }));
 }
 
 // ── helpers ───────────────────────────────────────────────────────────
-type BoardPayload = ReturnType<typeof boardPayload>;
-
 // Rendered for the seat on the clock, because the board is one shared message and that
 // seat is the only one whose turn buttons do anything. A finished match gets no rows.
 function boardPayload(room: Pick<IGameRoom, "roomId">, state: MonopolyState, picture: ResolvedGameAsset | null) {
 	const { embed, attachment } = monopolyBoardEmbedWith(state, picture);
 	const activeId = state.seats[state.activeSeatIndex].userId;
 	return { embeds: [embed], components: monopolyControlsRow(state, activeId, room.roomId), files: attachment ? [attachment] : [] };
-}
-
-// The generic repost (roomBoardRepost) with Monopoly's payload: every turn change posts a fresh
-// board below the finished turn's log, and the one it replaced is deleted.
-async function repostBoard(channel: TextChannel, room: Pick<IGameRoom, "guildId" | "roomId">, fromId: string | null, payload: BoardPayload, carried: readonly RoomMoveInput[]): Promise<void> {
-	await repostRoomBoard(channel, room, fromId, payload, { carried });
 }
 
 // The room's text channel, or null once it is gone (an admin can delete it at any time,

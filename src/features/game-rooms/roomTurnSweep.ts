@@ -6,7 +6,7 @@ import { expireTurn, startBattle } from "@features/games/battleshipState.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { applyDebtDefault, applyForfeit, waitingDebt } from "@features/games/monopolyState.js";
 import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
-import { roomTrail } from "./roomTrail.js";
+import { roomTrail, type RoomMoveInput } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { deserializeMatch, serializeMatch, type StoredBattleship } from "./roomBattleship.js";
@@ -104,18 +104,17 @@ export async function sweepBattleshipTurns(client: Client, now: Date = new Date(
 			const next = serializeMatch(state, { boardMessageId: stored.boardMessageId });
 			await gameRoomStore.update(room.guildId, room.roomId, { secret: next as never });
 
-			// The expiry is a MOVE: it belongs in the transcript that is the product,
-			// and it is the only record of why the match ended the way it did.
-			await roomTrail.postMove(client, room, {
+			// The expiry is a MOVE: it belongs in the transcript that is the product, and it is
+			// the only record of why the match ended the way it did. It is the turn the captain
+			// let pass, so it rides that turn's board as its This turn block (2026-10 item 263
+			// R3-29), recorded once the board is posted rather than posted as a line of its own.
+			const expired: RoomMoveInput = {
 				actorId: loserId,
 				kind: "system",
-				text: result.forfeited
-					? gameRoomsCopy.battleship.forfeitedMatch(loserId)
-					: gameRoomsCopy.battleship.forfeitedTurn(loserId),
+				text: result.forfeited ? gameRoomsCopy.battleship.forfeitedMatch(loserId) : gameRoomsCopy.battleship.forfeitedTurn(loserId),
 				meta: { expired: true },
-			});
-
-			await redrawBattleshipBoard(client, room, next);
+			};
+			await redrawBattleshipBoard(client, room, next, null, [expired]);
 
 			if (!result.forfeited) {
 				turnsExpired++;

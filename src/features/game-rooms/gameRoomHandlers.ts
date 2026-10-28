@@ -357,7 +357,7 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			await roomMonopolyRefereeNotice.handleEnableVoice(interaction);
 			return;
 		case "mrefcall":
-			await roomMonopolyRefereeNotice.handleBringIntoCall(interaction, room);
+			await roomMonopolyRefereeNotice.handleBringIntoCall(interaction);
 			return;
 		case "mpaydebt":
 			await roomMonopolyHandlers.handleMpaydebt(interaction, room);

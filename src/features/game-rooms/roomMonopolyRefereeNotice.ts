@@ -12,7 +12,7 @@ import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/early
 import { FormOptionReader } from "@features/command-buttons/formOptionReader.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { moveMonopolyBoardToBottom } from "./roomMonopolyBoard.js";
+import { postBelowMonopolyBoard } from "./roomMonopolyBoard.js";
 import type { RefereeSilence } from "./roomMonopolyReferee.js";
 import { resolveRoomChannel } from "./roomTrail.js";
 
@@ -32,9 +32,10 @@ import { resolveRoomChannel } from "./roomTrail.js";
 // Where: the only join a match makes by itself is roomReferee's request for the host's own
 //        call at match start. This file only says why it is quiet; any other join stays a
 //        member's press.
-// How:   claim, then post the notice. A Monopoly board then moves below it, so the board
-//        stays the last message in the room (Arcade 8); a Hold'em table posts afresh at its
-//        next reveal anyway (roomBoardRepost), so the notice simply posts in the room.
+// How:   claim, then post the notice below the board. A turn keeps ONE board (2026-10 item
+//        263 owner decision 4), so no notice posts a second board for the same turn: a
+//        Monopoly notice waits its place in the board's drawing queue, and the next turn's
+//        board (turnBoard.postTurnBoard) posts below it as it would below any line.
 
 /** The fix button a silence offers, if any. */
 function fixButton(reason: RefereeSilence, roomId: string): ButtonBuilder | null {
@@ -57,12 +58,13 @@ export function refereeNoticeMessage(reason: RefereeSilence, roomId: string) {
 }
 
 /**
- * Post a line in a refereed room: above Monopoly's board, which then moves down so it stays
- * the last message, or straight into any other room. `room` must carry its channel id.
+ * Post a line in a refereed room, below its board: in a Monopoly room through the board's
+ * drawing queue, straight into any other room. The board stays where it is. `room` must carry
+ * its channel id.
  */
-export async function postAboveBoard(client: Client, room: IGameRoom, payload: MessageCreateOptions): Promise<void> {
+export async function postRefereeLine(client: Client, room: IGameRoom, payload: MessageCreateOptions): Promise<void> {
 	if (room.game === "monopoly") {
-		await moveMonopolyBoardToBottom(client, room, (channel) => channel.send(payload));
+		await postBelowMonopolyBoard(client, room, (channel) => channel.send(payload));
 		return;
 	}
 	const channel = await resolveRoomChannel(client, room.channelId);
@@ -77,7 +79,7 @@ export async function postRefereeNotice(client: Client, room: IGameRoom, reason:
 	try {
 		const claimed = await gameRoomStore.claimRefereeNotice(room.guildId, room.roomId, new Date());
 		if (!claimed) return;
-		await postAboveBoard(client, claimed, { ...refereeNoticeMessage(reason, room.roomId), allowedMentions: { parse: [] } });
+		await postRefereeLine(client, claimed, { ...refereeNoticeMessage(reason, room.roomId), allowedMentions: { parse: [] } });
 	} catch (error) {
 		console.error("[game-rooms] the silent referee notice did not post", { roomId: room.roomId, reason, error });
 	}
@@ -105,12 +107,11 @@ export async function handleEnableVoice(interaction: ButtonInteraction): Promise
 }
 
 /**
- * Bring Dero into the call: bringDeroIntoCall answers and gates the press itself. Its
- * join notice posts in this room, so a Monopoly board then moves back below it.
+ * Bring Dero into the call: bringDeroIntoCall answers and gates the press itself. Its join
+ * notice posts in this room below the board, which stays where it is (a turn keeps ONE board).
  */
-export async function handleBringIntoCall(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+export async function handleBringIntoCall(interaction: ButtonInteraction): Promise<void> {
 	await bringDeroIntoCall(interaction);
-	if (room.game === "monopoly") await moveMonopolyBoardToBottom(interaction.client, room);
 }
 
 export const roomMonopolyRefereeNotice = { postRefereeNotice, handleEnableVoice, handleBringIntoCall };

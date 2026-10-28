@@ -73,6 +73,10 @@ const DUPLICATE_KEY_CODE = 11000;
 // Where an accepted join request lands: the draft's pool, or a live room's players.
 export type AdmittedJoinField = "spectatorIds" | "playerIds";
 
+// Where a match keeps its board message id: every board game's `boardMessageId`, and the
+// hangman gallows card's own `gallowsMessageId`, which predates the shared turn board.
+export type BoardMessageField = "boardMessageId" | "gallowsMessageId";
+
 export const gameRoomStore = {
 	// Insert a new draft room.
 	//
@@ -211,12 +215,19 @@ export const gameRoomStore = {
 	// `fromMessageId`: a dotted $set, so it touches nothing a move wrote, and conditional, so a
 	// repost that lost to another one writes nothing. Null when it lost. `alsoSet` rides the
 	// same write (Hold'em stamps the reveal the new table shows), so the id and the stamp can
-	// never disagree. Every game that reposts its table (Monopoly, Hold'em, Battleship) claims
-	// through this one method.
-	async moveBoardMessage(guildId: string, roomId: string, fromMessageId: string | null, toMessageId: string, alsoSet: Record<string, unknown> = {}) {
+	// never disagree. Every game whose turns post a new board (turnBoard.postTurnBoard) claims
+	// through this one method, hangman by its own `field`.
+	async moveBoardMessage(
+		guildId: string,
+		roomId: string,
+		fromMessageId: string | null,
+		toMessageId: string,
+		alsoSet: Record<string, unknown> = {},
+		field: BoardMessageField = "boardMessageId"
+	) {
 		return GameRoom.findOneAndUpdate(
-			{ guildId, roomId, "secret.boardMessageId": fromMessageId },
-			{ $set: { "secret.boardMessageId": toMessageId, ...alsoSet } },
+			{ guildId, roomId, [`secret.${field}`]: fromMessageId },
+			{ $set: { [`secret.${field}`]: toMessageId, ...alsoSet } },
 			{ new: true }
 		);
 	},

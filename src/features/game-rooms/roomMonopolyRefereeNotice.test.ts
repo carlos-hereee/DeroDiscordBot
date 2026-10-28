@@ -14,11 +14,11 @@ vi.mock("@utils/textModal.js", () => ({ showNotice: vi.fn() }));
 vi.mock("@features/early-access/earlyAccess.js", () => ({ checkEarlyAccess: vi.fn(async () => ({ allowed: true })), earlyAccessEmbed: vi.fn() }));
 vi.mock("@commands/admin/dero-config.js", () => ({ data: { name: "dero-config" }, run: vi.fn() }));
 vi.mock("@commands/utility/dero.js", () => ({ bringDeroIntoCall: vi.fn() }));
-// The board move, with a channel that records what posted above the board.
+// The Monopoly board's queue, with a channel that records what posted below the board.
 const posted = vi.hoisted(() => ({ messages: [] as unknown[] }));
 vi.mock("./roomMonopolyBoard.js", () => ({
-	moveMonopolyBoardToBottom: vi.fn(async (_client: unknown, _room: unknown, above?: (channel: TextChannel) => Promise<unknown>) => {
-		await above?.({ send: async (payload: unknown) => posted.messages.push(payload) } as unknown as TextChannel);
+	postBelowMonopolyBoard: vi.fn(async (_client: unknown, _room: unknown, post: (channel: TextChannel) => Promise<unknown>) => {
+		await post({ send: async (payload: unknown) => posted.messages.push(payload) } as unknown as TextChannel);
 	}),
 }));
 
@@ -34,7 +34,7 @@ import * as deroConfigCommand from "@commands/admin/dero-config.js";
 import { bringDeroIntoCall } from "@commands/utility/dero.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { FormOptionReader } from "@features/command-buttons/formOptionReader.js";
-import { moveMonopolyBoardToBottom } from "./roomMonopolyBoard.js";
+import { postBelowMonopolyBoard } from "./roomMonopolyBoard.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { RefereeSilence } from "./roomMonopolyReferee.js";
 import { handleBringIntoCall, handleEnableVoice, postRefereeNotice } from "./roomMonopolyRefereeNotice.js";
@@ -69,9 +69,9 @@ describe("postRefereeNotice", () => {
 			const notice = posted.messages[0] as PostedNotice;
 			expect(notice.embeds[0].data.description).toBe(gameRoomsCopy.monopoly.refereeSilent[reason]);
 			expect(noticeButtons(notice)).toEqual(buttons);
-			// It pings nobody, and it posts above the board, which then moves below it.
+			// It pings nobody, and it posts below the board, which stays where it is (2026-10 item 263).
 			expect(notice.allowedMentions).toEqual({ parse: [] });
-			expect(moveMonopolyBoardToBottom).toHaveBeenCalledOnce();
+			expect(postBelowMonopolyBoard).toHaveBeenCalledOnce();
 		});
 	}
 
@@ -80,15 +80,15 @@ describe("postRefereeNotice", () => {
 		await postRefereeNotice(client, room, "noCall");
 		await postRefereeNotice(client, room, "voiceOff");
 		expect(posted.messages).toHaveLength(1);
-		expect(moveMonopolyBoardToBottom).toHaveBeenCalledOnce();
+		expect(postBelowMonopolyBoard).toHaveBeenCalledOnce();
 	});
 
-	it("posts a Hold'em table's notice straight into its room, with no board to move", async () => {
+	it("posts a Hold'em table's notice straight into its room, outside the Monopoly board's queue", async () => {
 		claimMock.mockResolvedValue(holdemRoom);
 		await postRefereeNotice(client, holdemRoom, "noCall");
 		expect(posted.messages).toHaveLength(1);
 		expect(noticeButtons(posted.messages[0] as PostedNotice)).toEqual(["gameroom:mrefcall:room-1"]);
-		expect(moveMonopolyBoardToBottom).not.toHaveBeenCalled();
+		expect(postBelowMonopolyBoard).not.toHaveBeenCalled();
 	});
 
 	it("never throws when the claim fails, since it runs off the referee's own chain", async () => {
@@ -123,19 +123,12 @@ describe("the fix buttons", () => {
 		expect(content.sections).toEqual([gameRoomsCopy.monopoly.enableVoiceAdminOnly]);
 	});
 
-	it("Bring Dero into the call runs bringDeroIntoCall, then moves the board back below its join notice", async () => {
+	// A turn keeps ONE board (2026-10 item 263 owner decision 4): the join notice posts below it and
+	// no second board follows, on Monopoly and Hold'em alike.
+	it("Bring Dero into the call runs bringDeroIntoCall and posts no second board", async () => {
 		const interaction = press();
-		await handleBringIntoCall(interaction, room);
+		await handleBringIntoCall(interaction);
 		expect(bringDeroIntoCall).toHaveBeenCalledExactlyOnceWith(interaction);
-		const moveMock = moveMonopolyBoardToBottom as unknown as ReturnType<typeof vi.fn>;
-		expect(moveMock).toHaveBeenCalledWith(client, room);
-		expect(moveMock.mock.invocationCallOrder[0]).toBeGreaterThan((bringDeroIntoCall as unknown as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]);
-	});
-
-	it("Bring Dero into the call on a Hold'em table moves no board, since the table reposts at its next reveal", async () => {
-		const interaction = press();
-		await handleBringIntoCall(interaction, holdemRoom);
-		expect(bringDeroIntoCall).toHaveBeenCalledExactlyOnceWith(interaction);
-		expect(moveMonopolyBoardToBottom).not.toHaveBeenCalled();
+		expect(postBelowMonopolyBoard).not.toHaveBeenCalled();
 	});
 });

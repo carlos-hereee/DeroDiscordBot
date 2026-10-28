@@ -231,6 +231,22 @@ export const gameRoomsCopy = {
 		invalidAmount: "That is not a number of chips.",
 	},
 
+	// ── the shared turn board (2026-10 item 263 R3-29) ──
+	// Over a turn's lines at the bottom of every game's board. Each turn's board stays in
+	// the room with its block, so the room reads as the match's log.
+	turnBoard: {
+		thisTurnLabel: "This turn:",
+		// Above the lines a turn too long for one embed had to leave out; every one of them
+		// is still in the match's transcript.
+		earlierThisTurn: (count: number): string => `(${count} earlier ${count === 1 ? "line" : "lines"} this turn)`,
+		// A room blackjack table's moves, one line each in its hand's block: the hand they
+		// leave and its total, so the block reads as the hand was played.
+		blackjackHit: (userId: string, hand: string, total: string): string => `<@${userId}> hits: ${hand} (${total}).`,
+		blackjackStand: (userId: string, total: string): string => `<@${userId}> stands on ${total}.`,
+		blackjackDouble: (userId: string, hand: string, total: string): string => `<@${userId}> doubles down: ${hand} (${total}).`,
+		blackjackSplit: (userId: string, hand: string): string => `<@${userId}> splits, playing ${hand} first.`,
+	},
+
 	// ── notice titles (2026-10 item 254 Phase 5b) ──
 	// The title over a private answer shown as a notice modal, one per part of the
 	// arcade. Discord cuts a modal title at 45 characters.
@@ -1291,14 +1307,6 @@ export const gameRoomsCopy = {
 		// which is the engine's next line, rather than forfeited to the bank.
 		idleDebtDefault: (userId: string): string =>
 			`⏳ <@${userId}> left a debt unpaid for ${monopolyIdleHours()} hours, so Dero settles it the only way left.`,
-
-		// ── the board stays last (2026-10 item 254, Arcade 8) ──
-		// Over the turn's lines on the board, which carries them until the turn passes
-		// and they post as one log message above the next board.
-		thisTurnLabel: "This turn:",
-		// Above the lines a board too long for one embed had to leave out; the turn's
-		// log message still carries every one of them once the turn passes.
-		earlierThisTurn: (count: number): string => `(${count} earlier ${count === 1 ? "line" : "lines"} this turn)`,
 
 		// ── Surrender (2026-10 item 254, Arcade 12) ──
 		surrenderLabel: "Surrender",
