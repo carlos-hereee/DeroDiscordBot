@@ -18,6 +18,7 @@ import { returnChips } from "@features/economy/chipWallet.js";
 import type { PaidSeats } from "./holdemDraftBuyIn.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
+import { dealOpeningHand } from "./roomHoldemHandlers.js";
 import { createInitialState as createMonopolyState } from "@features/games/monopolyState.js";
 import { chipTableFor } from "./holdemChips.js";
 import { botSeatName, isBotSeatId, labelBotMentions } from "./botSeat.js";
@@ -187,9 +188,16 @@ export interface RoomOpenInput {
 	// asked for a table and confirmed its terms). Absent everywhere else, which
 	// opens the standard table exactly as before. Ignored for every other game.
 	holdemTerms?: HoldemTerms;
-	// The members who paid the buy in on the challenge card, host first, and the amount
-	// (2026-10 item 257 Phase 4a): a chip table opens with them already seated at it.
+	// Who sits down as a table opened from a challenge card opens, host first (2026-10 item
+	// 263 R3-27): the payers at a chip table, every pool member at a free one. Present only
+	// for a card's table, which deals its first hand at once; absent (the rules card, a
+	// rematch) opens the joining table.
 	holdemSeats?: PaidSeats;
+	// The voice referee the row opens with, written on the new row (absent writes null, which
+	// roomTypes.refereeOn reads as the game's default). Only Dero's rules card sets it, false,
+	// because its table registers its own dealer and must not gain the referee's voice join.
+	// Ignored when promoting a draft, whose row already holds the host's choice.
+	referee?: boolean;
 	// Whether a Monopoly match opens with auctions on: the host's choice on the
 	// challenge card, carried from the draft row. Absent means off. Ignored for every
 	// other game.
@@ -293,6 +301,7 @@ export const RoomProvisioner = {
 					playerIds,
 					spectatorIds,
 					spectatorMode: input.spectatorMode ?? null,
+					referee: input.referee ?? null,
 				});
 			}
 		} catch (error) {
@@ -499,8 +508,10 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 	// message to edit every turn. Done here rather than lazily on the first click
 	// so both players see the grid the moment the channel appears, and so the
 	// fleets exist before anyone can press Fire.
-	// Hold em opens as a JOINING table rather than a dealt hand: the room's
-	// players are whoever buys in, which is not known until they do.
+	// A table opened from a challenge card (2026-10 item 263 R3-27) opens SEATED and deals its
+	// first hand at once, every buy in having happened on the card; its Start was the one start.
+	// Dero's rules card and a rematch still open a JOINING table, whose players buy in here.
+	let holdemDealsAtOpen = false;
 	if (game === "holdem") {
 		const table = createHoldemTable(Date.now(), input.holdemTerms);
 		// Whether the table plays for the members' wallet chips (2026-10 item 250 Phase 5),
@@ -508,19 +519,20 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 		// with a bot seat plays free, so a bot never pays a member chips it never had.
 		const chips = await chipTableFor(room, botIds.length > 0);
 		if (chips) table.chips = chips;
-		// The members who paid on the challenge card sit down at the buy in they paid. A table that
-		// turned out to play free (chips switched off since) gives those chips back instead.
-		const paid = input.holdemSeats;
-		if (paid && chips) {
-			setHoldemBuyIn(table, paid.buyIn);
-			for (const userId of paid.userIds) joinHoldemTable(table, userId, guild.members.cache.get(userId)?.displayName ?? userId);
-		} else if (paid) {
-			for (const userId of paid.userIds) await returnChips({ guildId: guild.id, userId }, paid.buyIn);
-		}
-		// The host's Dero bots take their seats before anybody buys in.
+		// Everyone the card seated sits down: at a chip table at the buy in they paid, at a free
+		// one on the standard stack. Seats paid for at a table that turned free in the moment
+		// since the card settled (chips switched off) get their chips back and sit free.
+		const seats = input.holdemSeats;
+		if (seats?.charged && chips) setHoldemBuyIn(table, seats.buyIn);
+		else if (seats?.charged) for (const userId of seats.userIds) await returnChips({ guildId: guild.id, userId }, seats.buyIn);
+		for (const userId of seats?.userIds ?? []) joinHoldemTable(table, userId, guild.members.cache.get(userId)?.displayName ?? userId);
+		// The host's Dero bots take their seats after the members.
 		for (const botId of botIds) joinHoldemTable(table, botId, botSeatName(botId));
+		// The card's Start refuses fewer than HOLDEM_MIN_SEATS, so a card's table is short only when
+		// it is a network table, whose players come from the network board: it gathers instead.
+		holdemDealsAtOpen = seats !== undefined && table.seats.length >= BOT_CONSTANTS.HOLDEM_MIN_SEATS;
 		const boardMessage = await channel
-			.send({ embeds: [firstTableEmbed(table)], components: holdemJoiningRows(room.roomId, table.seats.length, table) })
+			.send({ embeds: [firstTableEmbed(table)], components: holdemDealsAtOpen ? [] : holdemJoiningRows(room.roomId, table.seats.length, table) })
 			.catch(() => null);
 		await gameRoomStore.update(guild.id, room.roomId, {
 			secret: { ...table, boardMessageId: boardMessage?.id ?? null } as never,
@@ -607,6 +619,10 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 	// cannot hold the room's open up. It catches its own failures.
 	void startRoomReferee(guild.client, started ?? room, channel);
 
+	// The first hand of a card's Hold'em table, dealt after the referee above registered its
+	// dealer (that registration is synchronous), so the very first deal is narrated too.
+	if (holdemDealsAtOpen) await dealOpeningHand(guild.client, started ?? room);
+
 	// ⑥ Fire and forget, per house rule 7: an audit write that failed must never take
 	// down a room the members can already see and play in.
 	botLogStore
@@ -631,8 +647,10 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 // soloRooms right after seedRoom with the host in the first seat, whose deal prompts that
 // seat. The opener posts before that deal, so a deal that passes the host by (a natural, or
 // the dealer's) is the one case this guesses wrong: the host, who pressed to open the table,
-// goes unpinged, and a second seat on the clock is pinged twice. Every other game opens with no
-// turn line (Hold'em gathers first, Battleship sets up), so the opener pings everyone.
+// goes unpinged, and a second seat on the clock is pinged twice. A Hold'em table a card opens is
+// dealt after its opener (2026-10 item 263 R3-27), and the button that decides who acts first is
+// drawn by that deal, so the opener cannot leave that member out: they are pinged by both. Every
+// other game opens with no turn line (Battleship sets up), so the opener pings everyone.
 const FIRST_TURN_SEAT: Partial<Record<GameSlug, "firstPlayer" | "host">> = {
 	monopoly: "firstPlayer",
 	"solo-rps": "host",

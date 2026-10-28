@@ -227,9 +227,15 @@ describe("the creation Submit", () => {
 		expect(submit.followUp).not.toHaveBeenCalled();
 	});
 
-	it("turns the referee on for Hold'em by default (owner decision 5)", async () => {
+	// A new Hold'em row already reads as referee on (refereeOn, 2026-10 item 263 R3-28), so the
+	// default writes nothing and only the host's off is stored.
+	it("leaves the referee on for Hold'em by default (owner decision 5), storing only an off", async () => {
 		await confirmChallengeDraft(submitOf("gameroom:newok:holdem", { join: "public", watch: "open", match: "rated-any", buyIn: "", referee: "on" }), "holdem", null);
-		expect(patches()).toContainEqual({ referee: true });
+		expect(patches().some((patch) => "referee" in patch)).toBe(false);
+
+		mocks.store.update.mockClear();
+		await confirmChallengeDraft(submitOf("gameroom:newok:holdem", { join: "public", watch: "open", match: "rated-any", buyIn: "", referee: "off" }), "holdem", null);
+		expect(patches()).toContainEqual({ referee: false });
 	});
 
 	it("accepts Casual without bots on a server with bots off, and posts the card in ⚔️challenges (R3-5)", async () => {

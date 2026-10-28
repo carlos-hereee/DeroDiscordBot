@@ -82,9 +82,12 @@ export const offersReferee = (game: GameSlug): boolean => (REFEREE_GAMES as read
  * Whether Dero referees this match. The field is `referee`; a row written before it existed
  * carries Monopoly's old `monopolyReferee` instead, so a null falls through to that, and a
  * live draft or match keeps its referee across the deploy that introduced the new field.
+ * Hold'em never had that old flag and defaults ON (2026-10 item 263 R3-28, owner decision 5),
+ * so a Hold'em row with no stored choice narrates; only a host's explicit off keeps it quiet.
  * Structural rather than typed on IGameRoom, so this module stays import free.
  */
-export const refereeOn = (room: { referee?: boolean | null; monopolyReferee?: boolean | null }): boolean => room.referee ?? room.monopolyReferee ?? false;
+export const refereeOn = (room: { game?: string; referee?: boolean | null; monopolyReferee?: boolean | null }): boolean =>
+	room.referee ?? (room.game === "holdem" ? true : (room.monopolyReferee ?? false));
 
 // ── Who may see the room ──
 // "invite": @everyone is denied ViewChannel and each accepted member gets an explicit

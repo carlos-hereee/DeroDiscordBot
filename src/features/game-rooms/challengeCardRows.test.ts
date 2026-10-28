@@ -69,12 +69,16 @@ describe("the challenge card's rows", () => {
 		}
 	}
 
-	it("keeps Join or Invite, Start, Edit settings and Call it off on the gather row, leaving its fifth slot free", () => {
-		for (const visibility of ["invite", "public"] as const) {
-			const [gatherRow] = openerCardRows("room-1", fullestState("holdem", visibility));
-			const ids = gatherRow.toJSON().components.map((component) => (component as { custom_id?: string }).custom_id?.split(":")[1]);
-			expect(ids).toEqual([visibility === "invite" ? "invite" : "join", "start", "edit", "cancel"]);
-		}
+	// The fifth slot is an invited member's Accept and buy in, on an Invite only Hold'em card that
+	// may charge one (2026-10 item 263 R3-27); an open card's joiners pay on Join instead.
+	it("keeps Join or Invite, Start, Edit settings and Call it off on the gather row, with Accept and buy in fifth on an Invite only Hold'em card", () => {
+		const gatherIds = (state: OpenerCardState) =>
+			openerCardRows("room-1", state)[0].toJSON().components.map((component) => (component as { custom_id?: string }).custom_id?.split(":")[1]);
+		expect(gatherIds(fullestState("holdem", "invite"))).toEqual(["invite", "start", "edit", "cancel", "haccept"]);
+		expect(gatherIds(fullestState("holdem", "public"))).toEqual(["join", "start", "edit", "cancel"]);
+		// A table that plays free (a Dero bot seat, or the network) charges nobody, so it offers no Accept.
+		expect(gatherIds(fullestState("holdem", "invite", { bots: { count: 1 } }))).toEqual(["invite", "start", "edit", "cancel"]);
+		expect(gatherIds(fullestState("monopoly", "invite"))).toEqual(["invite", "start", "edit", "cancel"]);
 	});
 
 	it("keeps the host's Requests and Remove a player on the row below", () => {

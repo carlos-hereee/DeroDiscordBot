@@ -56,7 +56,7 @@ import { effectiveSpectatorMode } from "./roomPermissions.js";
 import { cardStateFor, challengeCardLink, editOpenerCard, readChallengeChannelIds, refreshCard, resolveChallengesChannel, type ChallengeChannelIds } from "./challengeCard.js";
 import { asChallengeReach, isWithinReach, readChallengeReach } from "./challengeReach.js";
 import { isKicked, judgeJoin } from "./joinGate.js";
-import { buyInModal, chargeJoiner, draftBuyInOf, isChipDraft, isValidDraftBuyIn, refundAllJoiners, refundJoiners, refundOpenedSeats, settleDraftBuyIns, submittedBuyIn } from "./holdemDraftBuyIn.js";
+import { buyInModal, chargeJoiner, draftBuyInOf, isChipDraft, isValidDraftBuyIn, refundAllJoiners, refundJoiners, refundOpenedSeats, seatsAtStart, settleDraftBuyIns, submittedBuyIn } from "./holdemDraftBuyIn.js";
 import {
 	bandOfMatch,
 	buildSettingsModal,
@@ -485,7 +485,8 @@ async function applySettings(interaction: HostPress, room: IGameRoom, wanted: Ch
 	}
 
 	// ④ The referee and Monopoly's auctions. Hold'em's referee is applied even when the held
-	// draft's line took its field, since its default is on (owner decision 5) and a new row's is off.
+	// draft's line took its field: the field's default is on (owner decision 5), which a new
+	// Hold'em row already reads as (refereeOn), so nothing is written unless the host chose off.
 	if (offersReferee(current.game) && refereeOn(current) !== wanted.referee && (mode.kind === "create" || fields.includes("referee") || fields.includes("table"))) {
 		take(await applyDraftSetting(current, "referee", wanted.referee ? "on" : "off"), names.referee);
 	}
@@ -748,6 +749,10 @@ export async function handleInviteSelect(interaction: StringSelectMenuInteractio
 	const picked = await refilterInvitees(interaction.guild, interaction.values, room.hostId, room.kickedIds ?? []);
 
 	const saved = (await gameRoomStore.update(guildId, roomId, { spectatorIds: picked })) ?? room;
+	// A new pick replaces the pool, so a member who accepted and paid (2026-10 item 263 R3-27) and
+	// is not picked again is out of the draft and gets the buy in back, claimed once as ever.
+	const dropped = (room.buyInPaidBy ?? []).filter((userId) => !picked.includes(userId));
+	if (dropped.length > 0) await refundJoiners(room, dropped);
 	// Each person the host invites onto a Casual draft takes a Dero bot's seat (Arcade 6).
 	const updated = await yieldBotSeatsTo(interaction.client, room, saved);
 	// Who was invited is an answer, not a state (owner rule 1, 2026-10 item 263 R3-11), and it
@@ -830,6 +835,34 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 	);
 }
 
+// ── Accept and buy in: an invited member's Join (2026-10 item 263 R3-27) ──
+// An Invite only host puts members in the pool through the picker, so they never press Join
+// and never pay on the card; this is where they do, on the card's gather row. The same charge
+// and ledger as Join (chargeJoiner), so a removal or a cancelled draft refunds it through
+// refundJoiners, claiming the entry first, and a double press is charged once (risk R7).
+// Only a member in the pool may press it: a hidden button is not a gate, and the card is public.
+export async function acceptBuyIn(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	const actorId = interaction.user.id;
+	const notice = (text: string) => showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [text] });
+	const invited = room.game === "holdem" && room.visibility === "invite" && actorId !== room.hostId && (room.spectatorIds ?? []).includes(actorId) && !isKicked(room, actorId);
+	if (!invited) return notice(gameRoomsCopy.holdem.acceptOnlyInvited);
+	if ((room.buyInPaidBy ?? []).includes(actorId)) return notice(gameRoomsCopy.holdem.buyInAlreadyPaid);
+	// A table that plays free seats every pool member at Start, so the invited member is in already.
+	if (!(await isChipDraft(room))) return notice(gameRoomsCopy.holdem.acceptFreeTable);
+
+	const unpaid = await chargeJoiner(room, actorId);
+	if (unpaid) return notice(unpaid);
+	// The host may have removed this member, or the draft closed, while the charge ran. A removal
+	// that already refunded claimed the entry, so this refund pays nothing twice.
+	const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId);
+	if (!fresh || fresh.status !== "draft" || !(fresh.spectatorIds ?? []).includes(actorId)) {
+		await refundJoiners(room, [actorId]);
+		return notice(fresh && fresh.status === "draft" ? gameRoomsCopy.holdem.acceptOnlyInvited : gameRoomsCopy.board.draftGone);
+	}
+	await interaction.deferUpdate();
+	await refreshDraftCard(interaction.guild!, fresh);
+}
+
 // The host approves each joiner (2026-10 item 244 Phase 4): the member goes on the
 // waiting list instead of the pool, answered from the host's Requests panel, and the
 // card's waiting count moves. A null from the store means the write did not apply:
@@ -854,7 +887,7 @@ async function askHostToJoin(interaction: ButtonInteraction, room: IGameRoom): P
 // on the confirm's Submit (confirmStartMatch), or on the opponent picker's Submit when the
 // host has a choice to make, since choosing who plays is itself the yes.
 export async function startMatch(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
-	const refusal = startRefusal(room);
+	const refusal = startRefusal(room) ?? (await holdemSeatRefusal(room));
 	if (refusal) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
@@ -871,7 +904,7 @@ export async function startMatch(interaction: ButtonInteraction, room: IGameRoom
  * since the pool may have moved while the confirm stood open, then the room is provisioned.
  */
 export async function confirmStartMatch(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
-	const refusal = startRefusal(room);
+	const refusal = startRefusal(room) ?? (await holdemSeatRefusal(room));
 	if (refusal) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
@@ -917,6 +950,20 @@ function startRefusal(room: IGameRoom): string | null {
 	if (room.game === "blackjack" && pool.length + 1 > BLACKJACK_MAX_SEATS) {
 		return gameRoomsCopy.board.blackjackTooManyPlayers(BLACKJACK_MAX_SEATS, pool.length);
 	}
+	return null;
+}
+
+// A Hold'em table a card opens is dealt at once (2026-10 item 263 R3-27), so its Start is refused
+// at the press, before any channel exists, unless the seats it would open with can deal a hand
+// (HOLDEM_MIN_SEATS, Dero bots counting, owner decision 4) and fit the table. Async apart from
+// startRefusal because which pool members sit depends on whether chips are on (seatsAtStart).
+// A network table may open shorter, as before: its players come from the network board, which
+// lists a table while it gathers, so only the seat cap is checked there.
+async function holdemSeatRefusal(room: IGameRoom): Promise<string | null> {
+	if (room.game !== "holdem") return null;
+	const seats = await seatsAtStart(room, room.spectatorIds ?? []);
+	if (seats > BOT_CONSTANTS.HOLDEM_MAX_SEATS) return gameRoomsCopy.holdem.startTooManySeats(BOT_CONSTANTS.HOLDEM_MAX_SEATS, seats);
+	if (!room.network && seats < BOT_CONSTANTS.HOLDEM_MIN_SEATS) return gameRoomsCopy.holdem.startTooFewSeats(BOT_CONSTANTS.HOLDEM_MIN_SEATS, seats);
 	return null;
 }
 
@@ -1645,6 +1692,7 @@ export const challengeBoard = {
 	openInvitePicker,
 	handleInviteSelect,
 	joinChallenge,
+	acceptBuyIn,
 	startMatch,
 	handleOpponentSelect,
 	cancelDraft,

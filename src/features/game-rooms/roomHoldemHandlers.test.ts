@@ -19,6 +19,7 @@ vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 import {
 	handleBuyIn,
 	handleDeal,
+	dealOpeningHand,
 	handleShowCards,
 	handleMove,
 	handleLeaveTable,
@@ -463,6 +464,38 @@ describe("dealing the next hand", () => {
 
 		expect(table.handNumber).toBe(2);
 		expect(interaction.deferUpdate).toHaveBeenCalled();
+	});
+});
+
+// 2026-10 item 263 R3-27: a table a challenge card opens is seated already and deals its first
+// hand as the room opens, through the same claim the host's Start uses.
+describe("the opening deal of a card's table", () => {
+	function seatedTable(seats: number): HoldemTable {
+		const table = createTable();
+		for (let index = 0; index < seats; index++) joinTable(table, `p${index}`, `Player ${index}`);
+		return table;
+	}
+
+	it("deals hand one to every seated player at once", async () => {
+		const table = seatedTable(3);
+		storeMock.findByRoomId.mockResolvedValue(makeRoom(table));
+
+		await expect(dealOpeningHand(client, makeRoom(table))).resolves.toBe(true);
+
+		const written = storeMock.updateSecretIf.mock.calls[0][3] as HoldemTable;
+		expect(written.status).toBe("playing");
+		expect(written.handNumber).toBe(1);
+		expect(Object.values(written.holeCards).map((cards) => cards.length)).toEqual([2, 2, 2]);
+		expect(roomTrail.postMove).toHaveBeenCalledWith(client, expect.anything(), expect.objectContaining({ text: gameRoomsCopy.holdem.handDealt(1, table.smallBlind, table.bigBlind) }));
+	});
+
+	it("deals nothing to a table short of two seats, or one already dealt", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom(seatedTable(1)));
+		await expect(dealOpeningHand(client, makeRoom(seatedTable(1)))).resolves.toBe(false);
+
+		storeMock.findByRoomId.mockResolvedValue(makeRoom(dealtTable(2)));
+		await expect(dealOpeningHand(client, makeRoom(dealtTable(2)))).resolves.toBe(false);
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 });
 

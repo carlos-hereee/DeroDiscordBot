@@ -17,8 +17,11 @@ const ADAPTERS: Partial<Record<GameSlug, TurnAdapter>> = {
 	holdem: holdemTurnAdapter,
 	monopoly: monopolyTurnAdapter,
 	battleship: battleshipTurnAdapter,
-	// The multi seat room table only: a one seat Play Dero table (solo-blackjack) has no one to ping.
+	// Both blackjack room tables: blackjackHandler.promptTurn syncs a turn line for any table in a
+	// room, the one seat solo-blackjack table too, and the adapter reads the table by the room's
+	// channel, so one seat is just a table whose turn never moves (2026-10 item 263 R3-23).
 	blackjack: blackjackTurnAdapter,
+	"solo-blackjack": blackjackTurnAdapter,
 	// Rock paper scissors against Dero asks for its throw in its room (2026-10 item 257 Phase 4b).
 	"solo-rps": soloRpsTurnAdapter,
 };

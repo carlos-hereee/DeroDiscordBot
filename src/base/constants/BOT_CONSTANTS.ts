@@ -587,8 +587,9 @@ export const BOT_CONSTANTS = {
 	// cannot queue a minute of talking, dropping "your turn" lines first.
 	DERO_DEALER_TEXT_LINES_PER_HAND: 2,
 	DERO_DEALER_SPOKEN_LINES_PER_HAND: 8,
-	// A dealer entry whose table ended some other way (a forfeit, a deleted
-	// channel) is dropped after this, so the in memory map cannot grow forever.
+	// A dealer entry silent this long (no announcement: its table ended some other way, a
+	// forfeit or a deleted channel) is dropped, so the in memory map cannot grow forever.
+	// Every announcement restarts the window, so a table still dealing is never dropped.
 	DERO_DEALER_SESSION_MAX_AGE_MS: 12 * 60 * 60_000,
 
 	// ── leveling ──────────────────────────────────────────────────

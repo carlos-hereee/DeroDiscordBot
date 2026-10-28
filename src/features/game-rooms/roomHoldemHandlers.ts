@@ -541,6 +541,24 @@ export async function handleDeal(interaction: ButtonInteraction, room: IGameRoom
 	await announceDeal(interaction.client, room, table, deal, interaction.user.id);
 }
 
+/**
+ * Deal the first hand of a table a challenge card opened already seated (2026-10 item 263
+ * R3-27): RoomProvisioner.seedRoom calls this once the table is on the row, so the room opens
+ * on a dealt hand with no Buy in or Start press. The same claim and announcement the host's
+ * Start uses, with the host as the actor. Answers whether the deal landed; a table that is not
+ * joining any more (somebody's press won) answers false and changes nothing.
+ */
+export async function dealOpeningHand(client: Client, room: IGameRoom): Promise<boolean> {
+	const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId).catch(() => null);
+	const table = fresh ? tableOf(fresh) : null;
+	if (!fresh || !table || table.status !== "joining" || table.seats.length < BOT_CONSTANTS.HOLDEM_MIN_SEATS) return false;
+	table.status = "playing";
+	const deal = await claimDeal(fresh, table);
+	if (!deal) return false;
+	await announceDeal(client, fresh, table, deal, fresh.hostId);
+	return true;
+}
+
 /** A deal that won its claim: the table as it stood before, and what the deal set off. */
 interface ClaimedDeal {
 	before: PublicView;

@@ -66,6 +66,19 @@ describe("refereeOn", () => {
 		expect(refereeOn({ referee: null, monopolyReferee: true })).toBe(true);
 		expect(refereeOn({})).toBe(false);
 	});
+
+	// 2026-10 item 263 R3-28, owner decision 5: Hold'em narrates unless its host turned it off.
+	it("reads a Hold'em row with no stored choice as on, and keeps a host's off", () => {
+		expect(refereeOn({ game: "holdem", referee: null, monopolyReferee: false })).toBe(true);
+		expect(refereeOn({ game: "holdem" })).toBe(true);
+		expect(refereeOn({ game: "holdem", referee: false })).toBe(false);
+		expect(refereeOn({ game: "monopoly", referee: null, monopolyReferee: false })).toBe(false);
+	});
+
+	it("registers a Hold'em table with no stored referee as its dealer, voice on", async () => {
+		await startRoomReferee(client, makeRoom({ referee: null }), makeChannel(null));
+		expect(dealerTableOf("room-1")).toEqual({ voice: true });
+	});
 });
 
 describe("startRoomReferee", () => {

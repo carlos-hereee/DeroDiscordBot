@@ -392,10 +392,21 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 		.setEmoji("⚔️")
 		.setStyle(ButtonStyle.Primary);
 
-	// Four of the row's five: the fifth stays free for an invited member's Accept and buy in
-	// on an Invite only Hold'em card (2026-10 item 263 R3-27), so the card never needs a row
-	// of its own for it.
-	const gatherRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(gather, start, editSettingsButton(roomId), cancel);
+	// Four of the row's five, and the fifth is an invited member's Accept and buy in on an
+	// Invite only Hold'em card that may charge one (2026-10 item 263 R3-27), so the card never
+	// needs a row of its own for it. Shown to everyone, since Discord cannot show a button to some
+	// members only; the handler refuses anybody the host did not invite.
+	const accept =
+		state.visibility === "invite" && showsBuyIn(state)
+			? [
+					new ButtonBuilder()
+						.setCustomId(`${GAME_ROOM_PREFIX}:haccept:${roomId}`)
+						.setLabel(gameRoomsCopy.holdem.acceptLabel)
+						.setEmoji("🪙")
+						.setStyle(ButtonStyle.Success),
+			  ]
+			: [];
+	const gatherRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(gather, start, editSettingsButton(roomId), cancel, ...accept);
 
 	const controls = state.hostControls;
 	if (!controls) return [gatherRow];

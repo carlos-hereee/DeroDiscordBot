@@ -13,7 +13,8 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 //        they press Join, and whoever the host declines or removes, or a cancelled draft,
 //        gets it back. The room then opens with those seats already paid. The in room Set
 //        the buy in row this replaces is gone.
-// Who:   challengeBoard (the host's press and its modal, the Join charge, the cancel refund),
+// Who:   challengeBoard (the host's press and its modal, the Join charge, an invited member's
+//        Accept and buy in, the cancel refund, the seats at Start),
 //        hostControls (decline and remove refunds), and RoomProvisioner (seating the paid).
 // Does NOT: decide the cards or the stacks (the engine seats a paid member at the buy in
 //        through joinTable) or move chips at a running table (holdemChips does that).
@@ -93,9 +94,11 @@ export async function chargeJoiner(room: IGameRoom, userId: string): Promise<str
 
 	const recorded = await gameRoomStore.addBuyInPaid(room.guildId, room.roomId, userId, room.holdemBuyIn ?? null);
 	if (recorded) return null;
-	// The host changed the amount (or the draft closed) between the charge and the record.
+	// The record refused: this member was already on the ledger (a double press, whose first
+	// charge stands), or the host changed the amount or the draft closed since the charge.
 	await returnChips({ guildId: room.guildId, userId }, buyIn);
-	return gameRoomsCopy.board.buyInChangedJoining;
+	const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId);
+	return (fresh?.buyInPaidBy ?? []).includes(userId) ? gameRoomsCopy.holdem.buyInAlreadyPaid : gameRoomsCopy.board.buyInChangedJoining;
 }
 
 /**
@@ -121,35 +124,66 @@ export async function refundAllJoiners(room: Pick<IGameRoom, "guildId" | "roomId
 }
 
 // ── opening the table ─────────────────────────────────────────────────
-/** What the room opens with: the amount, and who sits down already paid (the host first). */
+/** Who sits down as the room opens (the host first), and whether their seats were paid for. */
 export interface PaidSeats {
 	buyIn: number;
 	userIds: string[];
+	// True on a chip table, where the host and every one of userIds paid `buyIn` from their
+	// wallet; false on a table that plays free, where nobody paid and every seat is free.
+	charged: boolean;
+}
+
+// The pool members a chip table seats: the ones who paid on the card (Join, or an invited
+// member's Accept and buy in). An invited member who never accepted sits nowhere.
+function paidPoolMembers(room: Pick<IGameRoom, "hostId" | "buyInPaidBy">, pool: readonly string[]): string[] {
+	const inPool = new Set(pool);
+	return (room.buyInPaidBy ?? []).filter((userId) => inPool.has(userId) && userId !== room.hostId);
+}
+
+/**
+ * How many seats a Hold'em draft would open with, Dero bots counted (2026-10 item 263 R3-27):
+ * on a chip table the host and every payer still in the pool, on a free table the host, every
+ * pool member and every bot. The card's Start refuses below BOT_CONSTANTS.HOLDEM_MIN_SEATS.
+ */
+export async function seatsAtStart(room: IGameRoom, pool: readonly string[]): Promise<number> {
+	if (await isChipDraft(room)) return 1 + paidPoolMembers(room, pool).length;
+	return 1 + pool.filter((userId) => userId !== room.hostId).length + (room.botSeats ?? 0);
 }
 
 /**
  * Settle a Hold'em draft's buy ins as the room opens. A chip draft charges the host (their seat
- * is paid like everyone's) and answers the members who paid on Join and are still in the pool,
- * host first; a draft that is free play by now (chips switched off meanwhile) gives every
- * payment back and answers none. A refusal means the host's wallet is short, and nothing was
- * taken.
+ * is paid like everyone's) and answers the members who paid on the card and are still in the
+ * pool, host first, giving back any payment whose member left the pool. A draft that plays free
+ * (chips off, a network table, or a Dero bot seat, which the rulebook says plays free) gives
+ * every payment back and seats the host and every pool member free. A refusal means the host's
+ * wallet is short, and nothing was taken.
+ *
+ * ⚠️ A FREE TABLE STILL SEATS EVERYBODY (2026-10 item 263 risk R8). This used to answer no seats
+ * when the draft was not a chip draft, and isChipDraft is false whenever a bot sits, so a card
+ * with Dero bots opened with the bots alone and the host unseated.
  */
 export async function settleDraftBuyIns(room: IGameRoom, pool: readonly string[]): Promise<{ ok: true; seats: PaidSeats | null } | { ok: false; reason: string }> {
 	if (room.game !== "holdem") return { ok: true, seats: null };
+	const buyIn = draftBuyInOf(room);
 	if (!(await isChipDraft(room))) {
 		await refundAllJoiners(room);
-		return { ok: true, seats: null };
+		const members = pool.filter((userId) => userId !== room.hostId);
+		return { ok: true, seats: { buyIn, userIds: [room.hostId, ...members], charged: false } };
 	}
-	const buyIn = draftBuyInOf(room);
 	if (!(await takeChips({ guildId: room.guildId, userId: room.hostId }, buyIn))) return { ok: false, reason: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
 
-	const inPool = new Set(pool);
-	const paid = (room.buyInPaidBy ?? []).filter((userId) => inPool.has(userId));
-	return { ok: true, seats: { buyIn, userIds: [room.hostId, ...paid] } };
+	// A payer who is no longer in the pool would otherwise lose the buy in for good, since the
+	// ledger is cleared once the room opens. Refunded only after the host's charge landed, so a
+	// short host leaves the ledger as it was for the cancel that follows.
+	const paid = paidPoolMembers(room, pool);
+	const strays = (room.buyInPaidBy ?? []).filter((userId) => !paid.includes(userId));
+	if (strays.length > 0) await refundJoiners(room, strays);
+	return { ok: true, seats: { buyIn, userIds: [room.hostId, ...paid], charged: true } };
 }
 
-/** The room did not open: give the host and every paid seat their buy in back. */
+/** The room did not open: give the host and every paid seat their buy in back. A free table owes nobody. */
 export async function refundOpenedSeats(room: IGameRoom, seats: PaidSeats): Promise<void> {
+	if (!seats.charged) return;
 	await returnChips({ guildId: room.guildId, userId: room.hostId }, seats.buyIn);
 	await refundJoiners(room, seats.userIds.filter((userId) => userId !== room.hostId));
 }

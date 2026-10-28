@@ -19,17 +19,17 @@ import { awardSoloLuckResult } from "./gameXp.js";
 import type { SoloLuckSlug } from "@features/game-rooms/roomTypes.js";
 import { gamesCopy } from "./gamesCopy.js";
 import { showNotice } from "@utils/textModal.js";
+import { openSoloRoomForMember } from "./arcadeHost.js";
 
 // ── soloLuck ───────────────────────────────────────────────────────────────
 // What:  a coin flip, dice roll or rock paper scissors against Dero himself: one press,
 //        one result message, no challenge card (the 1.7.0 test fixes, item 14).
-// Who:   /mini-game coin-flip, dice-roll and rps with `against: Dero` typed outside the
-//        challenge channels, through challengeEntry, and the solo luck row on the
-//        🕹️games intro (2026-10 item 245 Phase 4a), through handleSoloLuckButton below;
-//        both end in playSoloLuck, answered in place. Play Dero instead and a round
-//        against Dero typed in ⚔️challenges end in playSoloLuckInChannel instead, posted
-//        into the solo room soloRooms opened for it (2026-10 item 254, Arcade 1), so
-//        nothing is played in ⚔️challenges.
+// Who:   every round against Dero is played in its own solo room (2026-10 item 263 R3-7 and
+//        R3-8): the 🕹️games row below, /mini-game wherever it is typed (miniGameInChallenges)
+//        and Play Dero instead all open one through arcadeHost.openSoloRoomForMember, and the
+//        room posts its round through playSoloLuckInChannel. playSoloLuck, the round answered
+//        in place, is reached by no command or button any more; it stays for its suite, which
+//        pins the pay a round against Dero earns.
 // Where: it reuses the two pure resolvers the member against member games use,
 //        with Dero as the second side: resolveVersus for the coin and the dice (the
 //        member is the challenger, Dero the opponent) and scoreRps for the throws.
@@ -208,10 +208,9 @@ const SOLO_SLUG: Record<SoloLuckGame, SoloLuckSlug> = { coinflip: "solo-coinflip
 const ROUND_CARD_WINNER: Record<SoloLuckOutcome, "left" | "right" | "tie"> = { won: "left", lost: "right", tie: "tie" };
 
 // ── the 🕹️games row ────────────────────────────────────────────────────────
-// Five buttons, Discord's ceiling for one row: the coin, the dice, and one button per
-// rps throw. A throw is a button of its own because rps is the one game here where the
-// member decides something, and a button per choice makes the press the whole game
-// rather than a press that opens a second step.
+// Three buttons, one per game against Dero (2026-10 item 263 R3-7, owner decision 9), and each
+// opens that game's solo room: nothing is played in 🕹️games. Rock paper scissors asks for the
+// throw in its room's turn prompt, so the row needs no button per throw any more.
 
 const SOLO_LUCK_PREFIX = "solo_luck";
 
@@ -219,41 +218,39 @@ const SOLO_LUCK_PREFIX = "solo_luck";
 export interface SoloLuckButtonLabels {
 	coinflip: string;
 	diceroll: string;
-	rock: string;
-	paper: string;
-	scissors: string;
+	rps: string;
 }
 
-const THROW_EMOJI: Record<RpsChoice, string> = { rock: "🪨", paper: "📄", scissors: "✂️" };
-
-/** The solo luck row the 🕹️games intro carries. Each press is one round against Dero. */
+/** The solo luck row the 🕹️games intro carries. Each press opens a solo room against Dero. */
 export function buildSoloLuckRow(labels: SoloLuckButtonLabels): ActionRowBuilder<ButtonBuilder> {
 	return new ActionRowBuilder<ButtonBuilder>().addComponents(
 		new ButtonBuilder().setCustomId(`${SOLO_LUCK_PREFIX}:coinflip`).setLabel(labels.coinflip).setEmoji("🪙").setStyle(ButtonStyle.Primary),
 		new ButtonBuilder().setCustomId(`${SOLO_LUCK_PREFIX}:diceroll`).setLabel(labels.diceroll).setEmoji("🎲").setStyle(ButtonStyle.Primary),
-		...RPS_CHOICES.map((choice) =>
-			new ButtonBuilder().setCustomId(`${SOLO_LUCK_PREFIX}:rps:${choice}`).setLabel(labels[choice]).setEmoji(THROW_EMOJI[choice]).setStyle(ButtonStyle.Secondary)
-		)
+		new ButtonBuilder().setCustomId(`${SOLO_LUCK_PREFIX}:rps`).setLabel(labels.rps).setEmoji("✂️").setStyle(ButtonStyle.Primary)
 	);
 }
 
 /**
- * Translate a solo luck button's customId into the round it asks for, or null for a
- * customId this row never builds. Pure, so the parse is testable without Discord; the
- * throw is re-checked against RPS_CHOICES because a customId is replayable input.
+ * Translate a solo luck button's customId into the game whose solo room it opens, or null for a
+ * customId this row never builds. Pure, so the parse is testable without Discord.
+ *
+ * ⚠️ AN OLD THROW BUTTON STILL OPENS THE ROOM. An intro posted before the row changed carries
+ * `solo_luck:rps:<throw>` until the boot refresh redraws it; its press opens the solo-rps room,
+ * which asks for the throw, so the throw it names is not read. A throw that is not one of
+ * RPS_CHOICES is replayed or forged input and parses to nothing.
  */
-export function parseSoloLuckButton(customId: string): SoloLuckPlay | null {
-	const [prefix, game, memberThrow] = customId.split(":");
-	if (prefix !== SOLO_LUCK_PREFIX) return null;
-	if (game === "coinflip" || game === "diceroll") return { game };
-	if (game === "rps" && RPS_CHOICES.includes(memberThrow as RpsChoice)) return { game: "rps", memberThrow: memberThrow as RpsChoice };
+export function parseSoloLuckButton(customId: string): SoloLuckGame | null {
+	const [prefix, game, memberThrow, extra] = customId.split(":");
+	if (prefix !== SOLO_LUCK_PREFIX || extra !== undefined) return null;
+	if (game === "coinflip" || game === "diceroll") return memberThrow === undefined ? game : null;
+	if (game === "rps" && (memberThrow === undefined || RPS_CHOICES.includes(memberThrow as RpsChoice))) return "rps";
 	return null;
 }
 
 async function handleSoloLuckButton(interaction: ButtonInteraction): Promise<void> {
-	const play = parseSoloLuckButton(interaction.customId);
-	if (!play) return;
-	await playSoloLuck(interaction, play);
+	const game = parseSoloLuckButton(interaction.customId);
+	if (!game) return;
+	await openSoloRoomForMember(interaction, SOLO_SLUG[game]);
 }
 
 /** Register the solo luck row. Called once at boot from main.ts, like every persistent button. */

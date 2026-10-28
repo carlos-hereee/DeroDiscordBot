@@ -1664,9 +1664,8 @@ describe("resolveIntroComponents: every host button lives in 🕹️games", () =
 			"arcade_host:blackjack-table",
 			"solo_luck:coinflip",
 			"solo_luck:diceroll",
-			"solo_luck:rps:rock",
-			"solo_luck:rps:paper",
-			"solo_luck:rps:scissors",
+			// One button per game against Dero, each opening its solo room (2026-10 item 263 R3-7).
+			"solo_luck:rps",
 			"arcade_host:hcategory",
 			// The daily row (2026-10 item 254): Fortune keeps its old customId, so a Fortune
 			// button left on an old message still reads, and Claim daily rewards beside it.

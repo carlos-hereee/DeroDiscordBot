@@ -1003,6 +1003,15 @@ export const gameRoomsCopy = {
 		tableFull: "Every seat is taken.",
 		alreadyStarted: "This tournament has already started.",
 		needMorePlayers: "You need at least two players to deal.",
+		// The card's Start for a table dealt as it opens (2026-10 item 263 R3-27). Dero bots count as seats.
+		startTooFewSeats: (min: number, seated: number): string =>
+			`A hand needs at least ${min} seats, and this table would open with ${seated}. The host, every member who paid the buy in (every member, at a table that plays free) and every Dero bot sit down.`,
+		startTooManySeats: (max: number, seated: number): string => `This table seats ${max}, and ${seated} would sit down. Remove a player before you start.`,
+		// ── Accept and buy in, on an Invite only card (2026-10 item 263 R3-27) ──
+		acceptLabel: "Accept and buy in",
+		acceptOnlyInvited: "Only a member the host invited can accept a seat at this table.",
+		buyInAlreadyPaid: "You already paid the buy in. Your seat is waiting for the host's Start.",
+		acceptFreeTable: "This table plays free, so there is nothing to pay. You sit down when the host starts.",
 		notYourTurn: "It is not your turn.",
 		tournamentOver: "This tournament is over.",
 		// Distinct from notYourTurn on purpose. Telling the player whose turn it IS

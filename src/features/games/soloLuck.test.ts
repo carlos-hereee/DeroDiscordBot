@@ -1,13 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AttachmentBuilder, type RepliableInteraction, type TextChannel, type User } from "discord.js";
 
-const mocks = vi.hoisted(() => ({ awardXp: vi.fn(), renderRpsCard: vi.fn() }));
+const mocks = vi.hoisted(() => ({ awardXp: vi.fn(), renderRpsCard: vi.fn(), openSoloRoomForMember: vi.fn() }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: mocks.awardXp }));
 // The rps reveal card (2026-10 item 254 Phase 5a), mocked so a case chooses whether it draws.
 vi.mock("./rpsRenderer.js", () => ({ renderRpsCard: mocks.renderRpsCard }));
+// The row opens solo rooms (2026-10 item 263 R3-7); mocked so its suite stays off the room graph.
+vi.mock("./arcadeHost.js", () => ({ openSoloRoomForMember: mocks.openSoloRoomForMember }));
+const registered = vi.hoisted(() => new Map<string, (interaction: unknown) => Promise<void>>());
+vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: (prefix: string, handler: (interaction: unknown) => Promise<void>) => registered.set(prefix, handler) }));
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import { buildSoloLuckRow, parseSoloLuckButton, pickDeroThrow, playSoloLuck, playSoloLuckInChannel, resolveSoloLuck } from "./soloLuck.js";
+import { buildSoloLuckRow, parseSoloLuckButton, pickDeroThrow, playSoloLuck, playSoloLuckInChannel, registerSoloLuckHandlers, resolveSoloLuck } from "./soloLuck.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gamesCopy } from "./gamesCopy.js";
 
@@ -46,6 +50,7 @@ const paidAmounts = (): number[] => mocks.awardXp.mock.calls.map((call) => (call
 beforeEach(() => {
 	mocks.awardXp.mockReset().mockResolvedValue(undefined);
 	mocks.renderRpsCard.mockReset().mockResolvedValue(null);
+	mocks.openSoloRoomForMember.mockReset().mockResolvedValue(undefined);
 });
 
 describe("resolveSoloLuck, with Dero as the second side", () => {
@@ -189,10 +194,6 @@ describe("playSoloLuck", () => {
 	});
 });
 
-// ── the 🕹️games row (2026-10 item 245 Phase 4a) ──
-// The buttons are the third way into playSoloLuck, after the two /mini-game paths, so
-// what is pinned here is the translation: every button the row builds parses back to
-// the round it names, and a replayed customId for anything else parses to nothing.
 // ── into a solo room (2026-10 item 254, Arcade 1) ──
 describe("playSoloLuckInChannel", () => {
 	const user = { id: "member-1", username: "member", globalName: "Member" } as unknown as User;
@@ -225,35 +226,45 @@ describe("playSoloLuckInChannel", () => {
 	});
 });
 
-describe("the solo luck row on 🕹️games", () => {
+// ── the 🕹️games row (2026-10 item 245 Phase 4a, rooms since 2026-10 item 263 R3-7) ──
+// Every button opens its game's solo room and plays nothing where it was pressed. Pinned: each
+// button the row builds parses back to its game, an old throw button opens rps, and a replayed
+// customId for anything else parses to nothing.
+describe("the solo luck row on 🕹️games (2026-10 item 263 R3-7)", () => {
 	const row = buildSoloLuckRow(rokCommanderCopy.channelContent.arcadeGames.soloLuckLabels).toJSON() as { components: Array<{ custom_id?: string; label?: string }> };
 
-	it("fills one row with the coin, the dice and one button per throw", () => {
-		expect(row.components.map((button) => button.custom_id)).toEqual([
-			"solo_luck:coinflip",
-			"solo_luck:diceroll",
-			"solo_luck:rps:rock",
-			"solo_luck:rps:paper",
-			"solo_luck:rps:scissors",
-		]);
-		// Five is Discord's ceiling for one row.
-		expect(row.components).toHaveLength(5);
+	it("carries one button per game against Dero", () => {
+		expect(row.components.map((button) => button.custom_id)).toEqual(["solo_luck:coinflip", "solo_luck:diceroll", "solo_luck:rps"]);
+		expect(row.components.map((button) => button.label)).toEqual(["Coin flip with Dero", "Dice with Dero", "Rock paper scissors with Dero"]);
 	});
 
-	it("parses every button back to the round it names", () => {
-		const plays = row.components.map((button) => parseSoloLuckButton(button.custom_id ?? ""));
-		expect(plays).toEqual([
-			{ game: "coinflip" },
-			{ game: "diceroll" },
-			{ game: "rps", memberThrow: "rock" },
-			{ game: "rps", memberThrow: "paper" },
-			{ game: "rps", memberThrow: "scissors" },
-		]);
+	it("parses every button back to its game", () => {
+		expect(row.components.map((button) => parseSoloLuckButton(button.custom_id ?? ""))).toEqual(["coinflip", "diceroll", "rps"]);
+	});
+
+	it("reads a throw button from an intro posted before the change as rock paper scissors", () => {
+		for (const choice of ["rock", "paper", "scissors"]) expect(parseSoloLuckButton(`solo_luck:rps:${choice}`)).toBe("rps");
 	});
 
 	it("parses a customId this row never builds to nothing", () => {
-		for (const customId of ["solo_luck:rps:lizard", "solo_luck:rps", "solo_luck:hangman", "arcade_host:hangman"]) {
+		for (const customId of ["solo_luck:rps:lizard", "solo_luck:coinflip:rock", "solo_luck:rps:rock:extra", "solo_luck:hangman", "arcade_host:hangman"]) {
 			expect(parseSoloLuckButton(customId), customId).toBeNull();
 		}
+	});
+
+	it.each([
+		["solo_luck:coinflip", "solo-coinflip"],
+		["solo_luck:diceroll", "solo-diceroll"],
+		["solo_luck:rps", "solo-rps"],
+		["solo_luck:rps:paper", "solo-rps"],
+	])("opens a solo room for %s and plays nothing in 🕹️games", async (customId, slug) => {
+		registerSoloLuckHandlers();
+		const reply = vi.fn();
+		const interaction = { customId, reply };
+		await registered.get("solo_luck")!(interaction);
+
+		expect(mocks.openSoloRoomForMember).toHaveBeenCalledWith(interaction, slug);
+		expect(reply).not.toHaveBeenCalled();
+		expect(mocks.awardXp).not.toHaveBeenCalled();
 	});
 });

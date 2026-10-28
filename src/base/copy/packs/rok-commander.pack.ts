@@ -799,16 +799,14 @@ export const rokCommanderCopy = {
 
 			playTitle: "🎯 Play now",
 			playBody:
-				"The first row sets a table for you alone, or a blackjack table others may join. The second plays me on the spot: flip, roll, or throw rock, paper or scissors. The list beneath them gives you a hangman word from the shelf you name. The last row is your daily: one fortune a day, and your chips to claim.",
+				"The first row sets a table for you alone, or a blackjack table others may join. The second opens a room where you play me: a coin flip, a roll of the dice, or rock paper scissors. The list beneath them gives you a hangman word from the shelf you name. The last row is your daily: one fortune a day, and your chips to claim.",
 
-			// The solo luck row. Rock, paper and scissors are the throw itself, so
-			// pressing one plays it against me at once.
+			// The solo luck row: each button opens a room where the member plays me
+			// (2026-10 item 263 R3-7), and rock paper scissors asks for the throw there.
 			soloLuckLabels: {
 				coinflip: "Coin flip with Dero",
 				diceroll: "Dice with Dero",
-				rock: "Rock",
-				paper: "Paper",
-				scissors: "Scissors",
+				rps: "Rock paper scissors with Dero",
 			},
 			hangmanCategoryPlaceholder: "Hangman alone: choose a shelf of words",
 			// The daily row (2026-10 item 254): a fortune reading once a day and the daily chip claim.

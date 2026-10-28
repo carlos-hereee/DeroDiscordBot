@@ -5,8 +5,9 @@ import type { ChatInputCommandInteraction } from "discord.js";
 // The owner's rule is that nothing is played in ⚔️challenges. What is pinned here is the
 // router's contract: typed in a challenge channel, every game opens its room or solo room
 // (or posts its challenge card, the one thing the channel holds), a fortune is answered
-// apart from it (in 💬dero-commands since 2026-10 item 257 Phase 5), and the channel itself is never sent anything; typed anywhere else, the
-// router answers nothing and the subcommand's own handler runs as before.
+// apart from it (in 💬dero-commands since 2026-10 item 257 Phase 5), and the channel itself is never sent anything. Since
+// 2026-10 item 263 R3-8 the same holds wherever the command is typed: only a fortune typed outside
+// the challenge channels is left to its own handler, private option and all.
 vi.mock("@features/game-rooms/challengeCard.js", () => ({ isChallengeChannel: vi.fn() }));
 vi.mock("@features/game-rooms/challengeBoard.js", () => ({ offerChallengeDraft: vi.fn() }));
 vi.mock("@features/game-rooms/soloRooms.js", () => ({ soloLuckSlugFor: (game: string) => `solo-${game}` }));
@@ -119,15 +120,45 @@ describe("routeMiniGameInChallenges, typed in a challenge channel", () => {
 	});
 });
 
-describe("routeMiniGameInChallenges, typed anywhere else", () => {
-	it.each(["hangman", "blackjack", "coin-flip", "fortune"])("answers nothing for %s, so the game behaves as today", async (subcommand) => {
-		channelMock.mockResolvedValue(false);
-		const { interaction } = typedInChallenges({ against: "dero" });
+describe("routeMiniGameInChallenges, typed anywhere else (2026-10 item 263 R3-8)", () => {
+	beforeEach(() => channelMock.mockResolvedValue(false));
 
-		await expect(routeMiniGameInChallenges(interaction, subcommand)).resolves.toBe(false);
+	it.each([
+		["hangman", {}, "solo-hangman"],
+		["blackjack", { mode: "solo" }, "solo-blackjack"],
+		["coin-flip", { against: "dero" }, "solo-coinflip"],
+		["dice-roll", { against: "dero" }, "solo-diceroll"],
+		["rps", { against: "dero" }, "solo-rps"],
+	] as const)("opens the %s room instead of playing in the channel", async (subcommand, options, slug) => {
+		const { interaction, channelSend } = typedInChallenges(options);
+
+		await expect(routeMiniGameInChallenges(interaction, subcommand)).resolves.toBe(true);
+
+		expect(soloMock).toHaveBeenCalledWith(interaction, slug);
+		expect(channelSend).not.toHaveBeenCalled();
+	});
+
+	it("posts a blackjack table as its challenge card", async () => {
+		const { interaction } = typedInChallenges({ mode: "table" });
+
+		await expect(routeMiniGameInChallenges(interaction, "blackjack")).resolves.toBe(true);
+
+		expect(draftMock).toHaveBeenCalledWith(interaction, "blackjack");
+	});
+
+	it("leaves a fortune to its own handler, which keeps its private option", async () => {
+		const { interaction } = typedInChallenges();
+
+		await expect(routeMiniGameInChallenges(interaction, "fortune")).resolves.toBe(false);
+
+		expect(fortuneMock).not.toHaveBeenCalled();
+	});
+
+	it("leaves a luck game against a member to its own handler, which posts the card", async () => {
+		const { interaction } = typedInChallenges({ against: "member" });
+
+		await expect(routeMiniGameInChallenges(interaction, "coin-flip")).resolves.toBe(false);
 
 		expect(soloMock).not.toHaveBeenCalled();
-		expect(draftMock).not.toHaveBeenCalled();
-		expect(fortuneMock).not.toHaveBeenCalled();
 	});
 });

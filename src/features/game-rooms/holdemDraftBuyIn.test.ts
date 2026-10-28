@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { addBuyInPaid: vi.fn(), takeBuyInPaid: vi.fn() } }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { addBuyInPaid: vi.fn(), takeBuyInPaid: vi.fn(), findByRoomId: vi.fn() } }));
 vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { debit: vi.fn(), credit: vi.fn() } }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 
-import { buyInModal, chargeJoiner, draftBuyInOf, isValidDraftBuyIn, refundAllJoiners, refundJoiners, refundOpenedSeats, settleDraftBuyIns } from "./holdemDraftBuyIn.js";
+import { buyInModal, chargeJoiner, draftBuyInOf, isValidDraftBuyIn, refundAllJoiners, refundJoiners, refundOpenedSeats, seatsAtStart, settleDraftBuyIns } from "./holdemDraftBuyIn.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { chipWalletStore } from "@db/stores/chipWalletStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -17,7 +17,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // with the payers seated. Driven over mocked stores: the ledger's conditional writes are the
 // store's, and the order of take, record and give back is what is pinned here.
 
-const storeMock = gameRoomStore as unknown as Record<"addBuyInPaid" | "takeBuyInPaid", ReturnType<typeof vi.fn>>;
+const storeMock = gameRoomStore as unknown as Record<"addBuyInPaid" | "takeBuyInPaid" | "findByRoomId", ReturnType<typeof vi.fn>>;
 const walletMock = chipWalletStore as unknown as Record<"debit" | "credit", ReturnType<typeof vi.fn>>;
 const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
 
@@ -47,6 +47,7 @@ beforeEach(() => {
 	walletMock.credit.mockResolvedValue({ balance: 0 });
 	storeMock.addBuyInPaid.mockResolvedValue({});
 	storeMock.takeBuyInPaid.mockResolvedValue({});
+	storeMock.findByRoomId.mockResolvedValue(draft());
 });
 
 describe("the amount", () => {
@@ -81,6 +82,16 @@ describe("paying on Join", () => {
 	it("gives the chips back when the host changed the amount between the charge and the record", async () => {
 		storeMock.addBuyInPaid.mockResolvedValue(null);
 		expect(await chargeJoiner(draft(), GUEST)).toBe(gameRoomsCopy.board.buyInChangedJoining);
+		expect(walletMock.credit).toHaveBeenCalledWith(key(GUEST), 2_500);
+	});
+
+	// 2026-10 item 263 risk R7: the store refuses a second record for one member, so a double press
+	// of Join or Accept and buy in keeps the first charge and gives the second straight back.
+	it("charges a double press once, giving the second charge back", async () => {
+		storeMock.addBuyInPaid.mockResolvedValue(null);
+		storeMock.findByRoomId.mockResolvedValue(draft({ buyInPaidBy: [GUEST] }));
+		expect(await chargeJoiner(draft(), GUEST)).toBe(gameRoomsCopy.holdem.buyInAlreadyPaid);
+		expect(walletMock.debit).toHaveBeenCalledTimes(1);
 		expect(walletMock.credit).toHaveBeenCalledWith(key(GUEST), 2_500);
 	});
 
@@ -124,9 +135,15 @@ describe("getting it back", () => {
 
 describe("opening the table", () => {
 	it("charges the host and seats them first, then everyone who paid and is still in the pool", async () => {
-		const settled = await settleDraftBuyIns(draft({ buyInPaidBy: ["a", "gone"] }), ["a"]);
-		expect(settled).toEqual({ ok: true, seats: { buyIn: 2_500, userIds: [HOST, "a"] } });
+		const settled = await settleDraftBuyIns(draft({ buyInPaidBy: ["a", "gone"] }), ["a", "unpaid"]);
+		expect(settled).toEqual({ ok: true, seats: { buyIn: 2_500, userIds: [HOST, "a"], charged: true } });
 		expect(walletMock.debit).toHaveBeenCalledWith(key(HOST), 2_500);
+	});
+
+	// The ledger is cleared once the room opens, so a payer who left the pool is paid back here.
+	it("gives the buy in back to a payer who is no longer in the pool", async () => {
+		await settleDraftBuyIns(draft({ buyInPaidBy: ["a", "gone"] }), ["a"]);
+		expect(walletMock.credit.mock.calls.map((call) => (call[0] as { userId: string }).userId)).toEqual(["gone"]);
 	});
 
 	it("refuses the start when the host's wallet is short, taking nothing", async () => {
@@ -134,10 +151,18 @@ describe("opening the table", () => {
 		expect(await settleDraftBuyIns(draft(), [])).toEqual({ ok: false, reason: gameRoomsCopy.holdem.notEnoughChips(2_500) });
 	});
 
-	it("gives every payment back and seats nobody when the table turned out to play free", async () => {
+	it("gives every payment back and seats every pool member free when the table turned out to play free", async () => {
 		configMock.findByGuildId.mockResolvedValue({ chipEconomyEnabled: false });
-		expect(await settleDraftBuyIns(draft({ buyInPaidBy: ["a"] }), ["a"])).toEqual({ ok: true, seats: null });
+		expect(await settleDraftBuyIns(draft({ buyInPaidBy: ["a"] }), ["a", "b"])).toEqual({ ok: true, seats: { buyIn: 2_500, userIds: [HOST, "a", "b"], charged: false } });
 		expect(walletMock.credit).toHaveBeenCalledWith(key("a"), 2_500);
+		expect(walletMock.debit).not.toHaveBeenCalled();
+	});
+
+	// 2026-10 item 263 risk R8: a Dero bot seat makes the table free, which used to seat nobody, so
+	// the room opened with the bots alone and the host unseated.
+	it("seats the host and every member free at a table with a Dero bot", async () => {
+		expect(await settleDraftBuyIns(draft({ botSeats: 1 }), ["a"])).toEqual({ ok: true, seats: { buyIn: 2_500, userIds: [HOST, "a"], charged: false } });
+		expect(walletMock.debit).not.toHaveBeenCalled();
 	});
 
 	it("is not a Hold'em chip draft for any other game", async () => {
@@ -146,7 +171,26 @@ describe("opening the table", () => {
 	});
 
 	it("gives the host and every payer their buy in back when the room does not open", async () => {
-		await refundOpenedSeats(draft(), { buyIn: 2_500, userIds: [HOST, "a"] });
+		await refundOpenedSeats(draft(), { buyIn: 2_500, userIds: [HOST, "a"], charged: true });
 		expect(walletMock.credit.mock.calls.map((call) => (call[0] as { userId: string }).userId)).toEqual([HOST, "a"]);
+	});
+
+	it("owes nobody anything when a free table does not open", async () => {
+		await refundOpenedSeats(draft(), { buyIn: 2_500, userIds: [HOST, "a"], charged: false });
+		expect(walletMock.credit).not.toHaveBeenCalled();
+	});
+});
+
+// The card's Start refuses below HOLDEM_MIN_SEATS (2026-10 item 263 R3-27, owner decision 4).
+describe("the seats a draft would open with", () => {
+	it("counts the host and the payers still in the pool at a chip table", async () => {
+		expect(await seatsAtStart(draft({ buyInPaidBy: ["a", "gone"] }), ["a", "invited-unpaid"])).toBe(2);
+		expect(await seatsAtStart(draft(), ["invited-unpaid"])).toBe(1);
+	});
+
+	it("counts the host, every pool member and every Dero bot at a free table", async () => {
+		expect(await seatsAtStart(draft({ botSeats: 1 }), [])).toBe(2);
+		configMock.findByGuildId.mockResolvedValue({ chipEconomyEnabled: false });
+		expect(await seatsAtStart(draft(), ["a", "b"])).toBe(3);
 	});
 });

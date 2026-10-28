@@ -329,6 +329,22 @@ describe("announceDealer", () => {
 		for (const call of calls.filter((entry) => entry !== resultCall)) expect(call).toHaveLength(3);
 	});
 
+	// 2026-10 item 263 R3-28: the 12 hour prune drops only a table silent for the whole window,
+	// so a table that is still dealing at 13 hours keeps its dealer.
+	it("keeps a table that is still dealing past the prune window, and drops a silent one", () => {
+		const { deps } = fakeDeps();
+		const hour = 60 * 60_000;
+		const start = 1_000_000;
+		registerDealerTable({ roomId: "playing", guildId: "g1", channelId: "room-ch", voice: true, now: start });
+		registerDealerTable({ roomId: "silent", guildId: "g1", channelId: "room-ch", voice: true, now: start });
+		announceDealer({ client, roomId: "playing", ...dealtChange() }, deps, start + 11 * hour);
+
+		registerDealerTable({ roomId: "new", guildId: "g1", channelId: "room-ch", voice: true, now: start + 13 * hour });
+
+		expect(dealerTableOf("playing")).toEqual({ voice: true });
+		expect(dealerTableOf("silent")).toBeNull();
+	});
+
 	it("forgets the table once the tournament is over", async () => {
 		const { deps } = fakeDeps();
 		registerDealerTable({ roomId: "room-1", guildId: "g1", channelId: "room-ch", voice: false });

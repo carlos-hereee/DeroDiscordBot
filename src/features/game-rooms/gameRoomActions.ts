@@ -147,6 +147,11 @@ export const GAME_ROOM_ACTIONS = {
 	// by owner item 13); a draft action, so BOARD_ACTIONS refuses it once the room is open. In
 	// HOST_STRICT_ACTIONS: it decides what every joiner pays from their wallet.
 	hbuyin: { hostOnly: true, playersOnly: false },
+	// An invited member's Accept and buy in on an Invite only Hold'em card (2026-10 item 263
+	// R3-27): it pays the buy in Join takes on an open card. Ungated here, because the gate is
+	// "a member the host invited", which the handler checks against the draft's pool; a draft
+	// action, so BOARD_ACTIONS refuses it once the room is open.
+	haccept: { hostOnly: false, playersOnly: false },
 	// Open seats or Close seats while the tournament runs (2026-10 item 244 Phase 4),
 	// with the value to set in the arg. The host's call, like dealing. A late joiner
 	// takes a seat through `hjoin`, the same door as Buy in.

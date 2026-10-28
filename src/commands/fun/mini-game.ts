@@ -79,8 +79,7 @@ export const data = new SlashCommandBuilder()
 	// gone. Do NOT add a user option back to any game.
 	//
 	// The one option they DO carry is `against`, a STRING choice between a member (the
-	// default, the challenge board) and Dero (a solo round played inline, the 1.7.0 test
-	// fixes, item 14). Dero is offered by the bot as a fixed choice, never picked from a
+	// default, the challenge board) and Dero (a solo room, the 1.7.0 test fixes, item 14). Dero is offered by the bot as a fixed choice, never picked from a
 	// member list, so this is not the user option the note above forbids. ⚠️ HAND KEPT
 	// PAIR: the option names and the "dero" value are read in
 	// src/features/games/challengeEntry.ts.
@@ -94,22 +93,9 @@ export const data = new SlashCommandBuilder()
 		sub
 			.setName("rps")
 			.setDescription(gamesCopy.rps.subcommandDescription)
+			// No throw option (2026-10 item 263 R3-8): against Dero the round opens a solo room that
+			// asks for the throw there, and a throw against a member is made in secret in the room.
 			.addStringOption(againstOption)
-			// Read only when `against` is Dero and the command was typed outside the challenge
-			// channels. Typed in one, the round opens a solo room that asks for the throw in the
-			// room (2026-10 item 257 Phase 4b), and a member's throw against another member is
-			// still made in secret inside the room.
-			.addStringOption((option) =>
-				option
-					.setName("throw")
-					.setDescription(gamesCopy.soloLuck.throwOptionDescription)
-					.setRequired(false)
-					.addChoices(
-						{ name: gamesCopy.rps.rockLabel, value: "rock" },
-						{ name: gamesCopy.rps.paperLabel, value: "paper" },
-						{ name: gamesCopy.rps.scissorsLabel, value: "scissors" }
-					)
-			)
 	)
 	// Monopoly seats the whole pool (two to six), so like the three above it opens a
 	// card on ⚔️challenges and carries no option: who plays is gathered on the card.
@@ -183,9 +169,9 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	// in src/features/games/.
 	const subcommand = interaction.options.getSubcommand();
 
-	// Nothing is played in a challenge channel (2026-10 item 254, Arcade 1): typed there,
-	// a game opens its room and a fortune answers privately. Everywhere else this returns
-	// false and the table below runs exactly as before.
+	// Nothing is played where the command is typed (2026-10 item 263 R3-8): a game against Dero,
+	// hangman and a blackjack hand open their rooms, a blackjack table its card, and a fortune
+	// typed in a challenge channel answers privately. The table below runs for the rest.
 	if (await routeMiniGameInChallenges(interaction, subcommand)) return;
 
 	const handler = MINI_GAME_HANDLERS[subcommand as keyof typeof MINI_GAME_HANDLERS] as

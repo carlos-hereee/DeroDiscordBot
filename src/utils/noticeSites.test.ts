@@ -98,6 +98,7 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/game-rooms/challengeBoard.ts", within: "joinChallenge", anchor: "refusal", kind: "state" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "joinChallenge", anchor: "unpaid", kind: "state" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "joinChallenge", anchor: "hostWords.kick.refusedRejoin", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "acceptBuyIn", anchor: "text", kind: "state" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "askHostToJoin", anchor: "refusal", kind: "state" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "startMatch", anchor: "refusal", kind: "state" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "confirmStartMatch", anchor: "refusal", kind: "race", why: "the start confirm's Submit: startMatch refused the same pool first, so a Submit meets it only when the row moved after the press, which passed the same check first" },
@@ -267,7 +268,6 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/games/blackjackHandler.ts", within: "leaveDuringHand", anchor: "refusal", kind: "state" },
 
 	// ── games/challengeEntry.ts ──
-	{ file: "features/games/challengeEntry.ts", within: "runLuckGame", anchor: "gamesCopy.soloLuck.throwNeeded", kind: "state" },
 
 	// ── games/hangmanHandler.ts ──
 	{ file: "features/games/hangmanHandler.ts", within: "runHangman", anchor: "gamesCopy.hangman.cooldownMessage(Math.ceil(gate", kind: "state" },

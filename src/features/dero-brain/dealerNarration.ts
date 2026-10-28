@@ -258,7 +258,9 @@ interface DealerSession {
 	channelId: string;
 	/** True only when the card came from a call and a call was open at Open. */
 	voice: boolean;
-	registeredAt: number;
+	// When the table last showed it was alive: its registration, then every announcement. The
+	// prune below reads this, so a table still dealing is never dropped (2026-10 item 263 R3-28).
+	lastActiveAt: number;
 	lastTurnUserId: string | null;
 	handNumber: number;
 	textThisHand: number;
@@ -266,7 +268,7 @@ interface DealerSession {
 	chain: Promise<void>;
 }
 
-/** The tables Dero deals, by room id. Memory only: a restart stops narration. */
+/** The tables Dero deals, by room id. Memory only: roomBootRecovery registers the playing referee tables again after a restart. */
 const dealerSessions = new Map<string, DealerSession>();
 
 export interface RegisterDealerInput {
@@ -277,17 +279,19 @@ export interface RegisterDealerInput {
 	now?: number;
 }
 
-/** Make Dero the dealer of a room it just opened. */
+/** Make Dero the dealer of a room it just opened, or of a playing room again after a restart. */
 export function registerDealerTable({ roomId, guildId, channelId, voice, now = Date.now() }: RegisterDealerInput): void {
+	// Drops only a table that has been silent for the whole window: one that ended some other way
+	// (a forfeit, a deleted channel). A table still playing announces every action, which keeps it.
 	for (const [id, session] of dealerSessions) {
-		if (now - session.registeredAt > BOT_CONSTANTS.DERO_DEALER_SESSION_MAX_AGE_MS) dealerSessions.delete(id);
+		if (now - session.lastActiveAt > BOT_CONSTANTS.DERO_DEALER_SESSION_MAX_AGE_MS) dealerSessions.delete(id);
 	}
 	dealerSessions.set(roomId, {
 		roomId,
 		guildId,
 		channelId,
 		voice,
-		registeredAt: now,
+		lastActiveAt: now,
 		lastTurnUserId: null,
 		handNumber: 0,
 		textThisHand: 0,
@@ -379,9 +383,10 @@ export interface AnnounceInput {
  * throws and never delays the caller, and a table Dero does not deal costs a map
  * lookup and nothing else.
  */
-export function announceDealer({ client, roomId, before, after, outcome }: AnnounceInput, deps: DealerDeps = defaultDealerDeps): void {
+export function announceDealer({ client, roomId, before, after, outcome }: AnnounceInput, deps: DealerDeps = defaultDealerDeps, now: number = Date.now()): void {
 	const session = dealerSessions.get(roomId);
 	if (!session) return;
+	session.lastActiveAt = now;
 	try {
 		// A new hand starts every count from zero, the last turn prompt included, so
 		// the first player to act is told even if they also closed the last hand.

@@ -1,16 +1,13 @@
 import { type ChatInputCommandInteraction } from "discord.js";
 import { offerChallengeDraft } from "@features/game-rooms/challengeBoard.js";
-import { playSoloLuck, type SoloLuckGame, type SoloLuckPlay } from "./soloLuck.js";
-import { RPS_CHOICES, type RpsChoice } from "./rpsWinner.js";
-import { gamesCopy } from "./gamesCopy.js";
-import { showNotice } from "@utils/textModal.js";
+import type { SoloLuckGame } from "./soloLuck.js";
 
 // ── challengeEntry ─────────────────────────────────────────────────────────
 // What:  the slash-command doorway into the challenge board, for the three head to
 //        head games and Monopoly.
 // Who:   MINI_GAME_HANDLERS in src/commands/fun/mini-game.ts.
-// When:  on /mini-game coin-flip, dice-roll, rps or monopoly. The three luck games
-//        hand a round against Dero to soloLuck instead (see `against` below).
+// When:  on /mini-game coin-flip, dice-roll, rps or monopoly against a member. A round
+//        against Dero opens its solo room in miniGameInChallenges instead.
 // Where: the SAME function the board's own buttons call, deliberately. Two ways to
 //        start a match that did not share a code path would be two places to
 //        enforce the one-room-per-host rule, two places to check entitlement, and
@@ -29,53 +26,21 @@ import { showNotice } from "@utils/textModal.js";
 // @features/game-rooms/roomGames.ts.
 
 // ── against Dero (the 1.7.0 test fixes, item 14) ──
-// The three luck games carry an optional `against` choice. Its default, a member,
-// is the challenge path exactly as it was; "dero" plays a solo round inline through
-// soloLuck instead, or in a solo room when typed in a challenge channel (2026-10 item
-// 254, Arcade 1, through miniGameInChallenges). ⚠️ HAND KEPT PAIR: the option names and
-// the "dero" value are declared in the builder in src/commands/fun/mini-game.ts, and its
-// suite mocks this module wholesale, so the builder cannot import them from here.
+// The three luck games carry an optional `against` choice. Its default, a member, is the
+// challenge path; "dero" opens a solo room wherever the command is typed (2026-10 item 263
+// R3-8), which miniGameInChallenges answers before this module runs. ⚠️ HAND KEPT PAIR: the
+// option name and the "dero" value are declared in the builder in src/commands/fun/mini-game.ts,
+// and its suite mocks this module wholesale, so the builder cannot import them from here.
 const AGAINST_OPTION = "against";
 const AGAINST_DERO = "dero";
-const THROW_OPTION = "throw";
 
-/**
- * Whether a luck subcommand asks for a round against Dero rather than a member. Shared by
- * readDeroPlay below and miniGameInChallenges, so the option contract is read in one place
- * whichever channel the command was typed in.
- */
+/** Whether a luck subcommand asks for a round against Dero rather than a member. Read by miniGameInChallenges. */
 export const isAgainstDero = (interaction: ChatInputCommandInteraction): boolean => interaction.options.getString(AGAINST_OPTION) === AGAINST_DERO;
 
-/**
- * The round against Dero a luck subcommand typed OUTSIDE the challenge channels asks for: null
- * when `against` is a member (the challenge path), "throwMissing" for rps against Dero with no
- * throw, the play otherwise. Typed in a challenge channel, the throw is asked in the room
- * instead (2026-10 item 257 Phase 4b), so miniGameInChallenges reads isAgainstDero alone.
- */
-export function readDeroPlay(interaction: ChatInputCommandInteraction, game: SoloLuckGame): SoloLuckPlay | "throwMissing" | null {
-	if (!isAgainstDero(interaction)) return null;
-	if (game !== "rps") return { game };
-	// Discord cannot make `throw` required only when `against` is Dero, so a member who
-	// left it blank is told how to fix it rather than given a throw they did not choose.
-	// Discord validates the value against the builder's choices; checked again anyway.
-	const memberThrow = interaction.options.getString(THROW_OPTION) as RpsChoice | null;
-	return memberThrow && RPS_CHOICES.includes(memberThrow) ? { game: "rps", memberThrow } : "throwMissing";
-}
-
-// One luck subcommand: a challenge card against a member, through its creation modal, or a
-// round against Dero played in place. (Typed in a challenge channel, miniGameInChallenges
-// answers first instead.)
+// One luck subcommand against a member: a challenge card, through its creation modal. A round
+// against Dero never reaches here, since miniGameInChallenges opens its solo room first.
 async function runLuckGame(interaction: ChatInputCommandInteraction, game: SoloLuckGame): Promise<void> {
-	const play = readDeroPlay(interaction, game);
-	if (play === null) {
-		await offerChallengeDraft(interaction, game);
-		return;
-	}
-	if (play === "throwMissing") {
-		await showNotice(interaction, { title: gamesCopy.notices.miniGame, sections: [gamesCopy.soloLuck.throwNeeded] });
-		return;
-	}
-	await playSoloLuck(interaction, play);
+	await offerChallengeDraft(interaction, game);
 }
 
 export const runCoinFlip = (interaction: ChatInputCommandInteraction): Promise<void> => runLuckGame(interaction, "coinflip");

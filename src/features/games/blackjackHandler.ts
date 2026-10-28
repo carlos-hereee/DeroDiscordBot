@@ -785,7 +785,7 @@ function settleGame(game: BlackjackGame, channelId: string, client: Message["cli
 //        player's own cards, the dealer's up card and the moves that are legal.
 // How:   a move plays through playBlackjackAction, the function the board's buttons call, and
 //        the board is rewritten by editing its message. A one seat Play Dero table
-//        (solo-blackjack) is not prompted: its player is alone with the buttons.
+//        (solo-blackjack) is prompted the same way, registered under both slugs in turnAdapters.
 
 const MOVE_FIELD = "move";
 

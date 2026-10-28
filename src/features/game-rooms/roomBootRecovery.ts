@@ -7,7 +7,8 @@ import { finish } from "./roomLifecycle.js";
 import { sweepExpiredRooms } from "./roomArchiveSweep.js";
 import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { isBlackjackRoomGame } from "./roomTypes.js";
+import { isBlackjackRoomGame, refereeOn } from "./roomTypes.js";
+import { registerDealerTable } from "@features/dero-brain/dealerNarration.js";
 
 // ── roomBootRecovery ─────────────────────────────────────────────────
 // What:  reconciles what the GameRoom rows CLAIM with what Discord actually has, once
@@ -22,6 +23,7 @@ import { isBlackjackRoomGame } from "./roomTypes.js";
 // How:   ① every non-terminal room whose channel is gone is finished as abandoned,
 //        ①ᵇ a solo blackjack room whose channel survived but whose in-memory table did
 //        not is closed out loud (a system line, the dead board disarmed, then abandoned),
+//        ①ᶜ a playing Hold'em room whose referee is on gets its dealer back,
 //        ② then the ordinary expiry sweep runs immediately rather than waiting up to
 //        five minutes for its first cron tick.
 
@@ -30,12 +32,15 @@ export interface BootRecoverySummary {
 	// Solo blackjack rooms closed because this boot held no table for them. Counted apart
 	// from `abandoned` because the channel was fine; it is the hand that did not survive.
 	lostTables: number;
+	// Hold'em rooms whose dealer narration this boot registered again (2026-10 item 263 R3-28).
+	dealersRestored: number;
 	archived: number;
 }
 
 export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecoverySummary> {
 	let abandoned = 0;
 	let lostTables = 0;
+	let dealersRestored = 0;
 
 	try {
 		const live = await gameRoomStore.findNonTerminal();
@@ -51,6 +56,16 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 
 				const channel = await client.channels.fetch(room.channelId).catch(() => null);
 				if (channel) {
+					// ①ᶜ The dealer registry is memory only (dealerNarration), so a restart silenced every
+					// table that narrated. Registered again exactly as roomReferee.startRoomReferee does,
+					// voice on, and only while the host's referee is on: a host who turned it off stays
+					// unnarrated (risk R15). The voice join itself is not redone: the dealer speaks once
+					// Dero is in a call with the table, wherever that call came from.
+					if (room.game === "holdem" && room.status === "playing" && refereeOn(room)) {
+						registerDealerTable({ roomId: room.roomId, guildId: room.guildId, channelId: room.channelId, voice: true });
+						dealersRestored++;
+						return;
+					}
 					// ①ᵇ The channel is here; is the game? A blackjack hand, solo or at a room's
 					// multi seat table (2026-10 item 254, Arcade 1), lives only in
 					// blackjackHandler's process-scoped Map, and this process started with that
@@ -107,5 +122,6 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 
 	if (abandoned > 0) console.log(`[game-rooms] boot recovery: ${abandoned} abandoned room(s) closed`);
 	if (lostTables > 0) console.log(`[game-rooms] boot recovery: ${lostTables} solo blackjack table(s) lost to the restart, room(s) closed`);
-	return { abandoned, lostTables, archived };
+	if (dealersRestored > 0) console.log(`[game-rooms] boot recovery: ${dealersRestored} hold em dealer(s) registered again`);
+	return { abandoned, lostTables, dealersRestored, archived };
 }

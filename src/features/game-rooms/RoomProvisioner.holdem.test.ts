@@ -16,6 +16,9 @@ vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: vi.fn() } }));
 vi.mock("@features/entitlements/gameRoomAccess.js", () => ({ checkGameRoomAccess: vi.fn() }));
 // The challenge reach read a public open makes (2026-10 item 244 Phase 4); no config reads as "server".
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn().mockResolvedValue(null) } }));
+vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { debit: vi.fn(), credit: vi.fn() } }));
+// The opening deal is roomHoldemHandlers' own (its suite pins it); here only that it is asked for.
+vi.mock("./roomHoldemHandlers.js", async (importOriginal) => ({ ...(await importOriginal<object>()), dealOpeningHand: vi.fn() }));
 
 import { RoomProvisioner, _clearInflightOpens, type RoomOpenInput } from "./RoomProvisioner.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -24,6 +27,9 @@ import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { createTable, joinTable } from "@features/games/holdemTable.js";
 import { joiningRows, tableEmbed } from "./roomHoldem.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { chipWalletStore } from "@db/stores/chipWalletStore.js";
+import { dealOpeningHand } from "./roomHoldemHandlers.js";
 
 // ── a hold em room opened with terms ──────────────────────────────────
 // RoomProvisioner's one additive field, holdemTerms, reaches the table it builds,
@@ -40,6 +46,7 @@ function makeGuild() {
 	const guild = {
 		id: "guild-1",
 		roles: { everyone: { id: "everyone" } },
+		members: { cache: { get: () => undefined } },
 		client: { user: { id: "bot-1" }, channels: { fetch: vi.fn().mockResolvedValue(null) } },
 		channels: { create: vi.fn(async () => created) },
 	} as unknown as Guild;
@@ -74,6 +81,8 @@ beforeEach(() => {
 	storeMock.update.mockResolvedValue(undefined);
 	(botLogStore.log as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 	(checkGameRoomAccess as ReturnType<typeof vi.fn>).mockResolvedValue({ allowed: true, privateQuota: Number.POSITIVE_INFINITY });
+	(guildConfigStore.findByGuildId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+	(chipWalletStore.credit as ReturnType<typeof vi.fn>).mockResolvedValue({ balance: 0 });
 });
 
 describe("RoomProvisioner.open with holdemTerms", () => {
@@ -125,6 +134,84 @@ describe("RoomProvisioner.open with Dero bots", () => {
 		};
 		expect(board.embeds[0].data.description).toContain("🤖 **Dero Red**");
 		expect(board.embeds[0].data.description).not.toContain("<@dero-bot-red>");
+	});
+});
+
+// 2026-10 item 263 R3-27: a table a challenge card opens sits everyone the card seated and
+// deals at once, with no joining phase; Dero's rules card (no holdemSeats) still gathers.
+describe("RoomProvisioner.open for a challenge card's table", () => {
+	const dealMock = dealOpeningHand as unknown as ReturnType<typeof vi.fn>;
+	const boardOf = (send: ReturnType<typeof vi.fn>) =>
+		send.mock.calls.map((call) => call[0]).find((payload) => payload.embeds?.[0]?.data.title === gameRoomsCopy.holdem.tableTitle) as { components: unknown[] };
+	const seatsOf = () => (storedTable() as { seats: Array<{ userId: string; stack: number }> }).seats.map((seat) => [seat.userId, seat.stack]);
+
+	it("seats the host and two payers at the buy in they paid and deals the first hand", async () => {
+		(guildConfigStore.findByGuildId as ReturnType<typeof vi.fn>).mockResolvedValue({ chipEconomyEnabled: true });
+		const { guild, send } = makeGuild();
+
+		await RoomProvisioner.open(input(guild, { holdemSeats: { buyIn: 2_500, userIds: ["host-1", "a", "b"], charged: true } }));
+
+		expect(seatsOf()).toEqual([["host-1", 2_500], ["a", 2_500], ["b", 2_500]]);
+		expect(boardOf(send).components).toEqual([]);
+		expect(dealMock).toHaveBeenCalledWith(guild.client, expect.objectContaining({ roomId: "room-1" }));
+	});
+
+	it("seats every joiner free on a server with chips off", async () => {
+		const { guild } = makeGuild();
+
+		await RoomProvisioner.open(input(guild, { holdemSeats: { buyIn: 2_500, userIds: ["host-1", "a", "b"], charged: false } }));
+
+		expect(seatsOf()).toEqual([["host-1", 1_000], ["a", 1_000], ["b", 1_000]]);
+		expect(chipWalletStore.credit).not.toHaveBeenCalled();
+		expect(dealMock).toHaveBeenCalledOnce();
+	});
+
+	it("gives a paid seat its chips back and seats it free when chips went off since the card settled", async () => {
+		const { guild } = makeGuild();
+
+		await RoomProvisioner.open(input(guild, { holdemSeats: { buyIn: 2_500, userIds: ["host-1", "a"], charged: true } }));
+
+		expect(seatsOf()).toEqual([["host-1", 1_000], ["a", 1_000]]);
+		expect((chipWalletStore.credit as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { userId: string }).userId)).toEqual(["host-1", "a"]);
+	});
+
+	it("seats the host and every member beside the Dero bots (risk R8)", async () => {
+		const { guild } = makeGuild();
+
+		await RoomProvisioner.open(input(guild, { botIds: ["dero-bot-red"], holdemSeats: { buyIn: 1_000, userIds: ["host-1", "a"], charged: false } }));
+
+		expect(seatsOf().map(([userId]) => userId)).toEqual(["host-1", "a", "dero-bot-red"]);
+		expect(dealMock).toHaveBeenCalledOnce();
+	});
+
+	it("lets a network table short of two seats gather from the network board instead", async () => {
+		const { guild, send } = makeGuild();
+
+		await RoomProvisioner.open(input(guild, { holdemSeats: { buyIn: 1_000, userIds: ["host-1"], charged: false } }));
+
+		expect(boardOf(send).components).not.toEqual([]);
+		expect(dealMock).not.toHaveBeenCalled();
+	});
+
+	it("keeps the rules card's joining table, which deals nothing at open", async () => {
+		const { guild } = makeGuild();
+
+		await RoomProvisioner.open(input(guild, { holdemTerms: OWNER_TERMS }));
+
+		expect(storedTable()).toMatchObject({ status: "joining", seats: [] });
+		expect(dealMock).not.toHaveBeenCalled();
+	});
+
+	// The rules card writes its referee off (it registers its own dealer); everyone else leaves it
+	// null, which roomTypes.refereeOn reads as the game's default (2026-10 item 263 R3-28).
+	it("writes the referee the caller asked for on the new row, or null", async () => {
+		const { guild } = makeGuild();
+		await RoomProvisioner.open(input(guild, { referee: false }));
+		expect(storeMock.create.mock.calls[0][0]).toMatchObject({ referee: false });
+
+		_clearInflightOpens();
+		await RoomProvisioner.open(input(makeGuild().guild));
+		expect(storeMock.create.mock.calls[1][0]).toMatchObject({ referee: null });
 	});
 });
 

@@ -128,12 +128,11 @@ export const gamesCopy = {
 	soloLuck: {
 		// The option every one of the three subcommands gains. A STRING choice, not a
 		// user option: Dero is offered by the bot, never picked from a member list.
-		againstOptionDescription: "Challenge a member on the board, or play Dero right here",
+		// Against Dero the round plays in a solo room of its own, wherever the command is typed
+		// (2026-10 item 263 R3-8), and rock paper scissors asks for the throw there.
+		againstOptionDescription: "Challenge a member on the board, or play Dero in a room of your own",
 		againstMemberLabel: "A member, on the challenge board",
-		againstDeroLabel: "Dero, right here and now",
-		// In a challenge channel the throw is asked in the room instead (2026-10 item 257 Phase 4b).
-		throwOptionDescription: "Your throw against Dero; in a challenge channel you pick it in the room instead",
-		throwNeeded: "Pick your throw to face Dero: run it again with the throw option set to rock, paper or scissors.",
+		againstDeroLabel: "Dero, in a room of your own",
 
 		coinTitle: "🪙 Dero flips a royal coin",
 		coinLine: (memberId: string, face: string): string =>

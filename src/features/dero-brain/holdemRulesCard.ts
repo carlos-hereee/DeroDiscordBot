@@ -352,6 +352,9 @@ async function openDeferred(interaction: ButtonInteraction, gate: PassedGate, vi
 		visibility,
 		adminRoleId: arcade.adminRoleId,
 		holdemTerms: request.terms,
+		// Off on the row: this table registers its own dealer below, voiced only when the card came
+		// from a call, so the room referee (on by default for Hold'em) must not join a call for it.
+		referee: false,
 	});
 	deps.audit(guild.id, {
 		kind: "holdem_open",

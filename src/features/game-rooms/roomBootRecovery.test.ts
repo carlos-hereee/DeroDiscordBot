@@ -7,6 +7,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 vi.mock("./roomLifecycle.js", () => ({ finish: vi.fn() }));
 vi.mock("./roomArchiveSweep.js", () => ({ sweepExpiredRooms: vi.fn() }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+vi.mock("@features/dero-brain/dealerNarration.js", () => ({ registerDealerTable: vi.fn() }));
 vi.mock("@features/games/blackjackHandler.js", () => ({
 	hasLiveBlackjackTable: vi.fn(),
 	disarmStaleBlackjackBoard: vi.fn(),
@@ -19,6 +20,7 @@ import { sweepExpiredRooms } from "./roomArchiveSweep.js";
 import { roomTrail } from "./roomTrail.js";
 import { disarmStaleBlackjackBoard, hasLiveBlackjackTable } from "@features/games/blackjackHandler.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { registerDealerTable } from "@features/dero-brain/dealerNarration.js";
 
 const storeMock = gameRoomStore as unknown as { findNonTerminal: ReturnType<typeof vi.fn> };
 const finishMock = finish as unknown as ReturnType<typeof vi.fn>;
@@ -26,6 +28,7 @@ const sweepMock = sweepExpiredRooms as unknown as ReturnType<typeof vi.fn>;
 const postMoveMock = roomTrail.postMove as unknown as ReturnType<typeof vi.fn>;
 const hasTableMock = hasLiveBlackjackTable as unknown as ReturnType<typeof vi.fn>;
 const disarmMock = disarmStaleBlackjackBoard as unknown as ReturnType<typeof vi.fn>;
+const registerMock = registerDealerTable as unknown as ReturnType<typeof vi.fn>;
 
 const makeRoom = (roomId: string, channelId: string | null, game = "hangman") => ({
 	roomId,
@@ -138,7 +141,42 @@ describe("recoverGameRoomsOnBoot", () => {
 		// This runs inside main.ts's ready handler. A rejection here would surface as a
 		// startup failure in a feature that is not on the critical path.
 		sweepMock.mockRejectedValue(new Error("discord down"));
-		await expect(recoverGameRoomsOnBoot(makeClient([]))).resolves.toEqual({ abandoned: 0, lostTables: 0, archived: 0 });
+		await expect(recoverGameRoomsOnBoot(makeClient([]))).resolves.toEqual({ abandoned: 0, lostTables: 0, dealersRestored: 0, archived: 0 });
+	});
+
+	// ── ①ᶜ the Hold'em dealer a restart silenced (2026-10 item 263 R3-28) ──
+	// The dealer registry is memory only, so a playing table whose referee is on is registered
+	// again at boot, voice on; a table whose host turned the referee off never is (risk R15).
+	describe("a playing Hold'em table's dealer", () => {
+		const holdem = (roomId: string, extra: Record<string, unknown> = {}) => ({ ...makeRoom(roomId, `ch-${roomId}`, "holdem"), ...extra });
+
+		it("registers a table with no stored referee, which reads as on, voice on", async () => {
+			vi.spyOn(console, "log").mockImplementation(() => undefined);
+			storeMock.findNonTerminal.mockResolvedValue([holdem("t1", { referee: null })]);
+
+			const summary = await recoverGameRoomsOnBoot(makeClient(["ch-t1"]));
+
+			expect(registerMock).toHaveBeenCalledWith({ roomId: "t1", guildId: "guild-1", channelId: "ch-t1", voice: true });
+			expect(summary.dealersRestored).toBe(1);
+			expect(finishMock).not.toHaveBeenCalled();
+		});
+
+		it("never registers a table whose host turned the referee off", async () => {
+			storeMock.findNonTerminal.mockResolvedValue([holdem("t1", { referee: false })]);
+
+			await recoverGameRoomsOnBoot(makeClient(["ch-t1"]));
+
+			expect(registerMock).not.toHaveBeenCalled();
+		});
+
+		it("registers nothing for a draft, another game, or a table whose channel is gone", async () => {
+			vi.spyOn(console, "log").mockImplementation(() => undefined);
+			storeMock.findNonTerminal.mockResolvedValue([holdem("draft", { status: "draft" }), makeRoom("m1", "ch-m1", "monopoly"), holdem("gone")]);
+
+			await recoverGameRoomsOnBoot(makeClient(["ch-draft", "ch-m1"]));
+
+			expect(registerMock).not.toHaveBeenCalled();
+		});
 	});
 
 	// ── ①ᵇ the solo blackjack table that did not survive the redeploy ──

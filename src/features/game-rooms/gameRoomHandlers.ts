@@ -62,7 +62,7 @@ const DRAFT_CONFIRM_GAMES: readonly string[] = SETTINGS_GAMES;
 // the status refusal below cannot drift from the routing switch. `requests` and `kick`
 // are host controls too but are NOT here: they also work in a live room, and each
 // refuses by the room's status itself.
-const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "startok", "dero", "cancel", "auctions", "referee", "approval", "bots", "casual", "hbuyin", "edit", "editok"]);
+const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "startok", "dero", "cancel", "auctions", "referee", "approval", "bots", "casual", "hbuyin", "haccept", "edit", "editok"]);
 
 // ── gameRoomHandlers ─────────────────────────────────────────────────
 // What:  routes every `gameroom:` button to its action, after proving the clicker is
@@ -217,6 +217,9 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			return;
 		case "join":
 			await challengeBoard.joinChallenge(interaction, room);
+			return;
+		case "haccept":
+			await challengeBoard.acceptBuyIn(interaction, room);
 			return;
 		case "start":
 			await challengeBoard.startMatch(interaction, room);

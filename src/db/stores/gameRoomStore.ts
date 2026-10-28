@@ -53,7 +53,9 @@ interface ICreateGameRoom {
 	// The host's Casual choice (2026-10 item 254, Arcade 6), carried by a rematch so it
 	// stays unrated like the match it follows.
 	casual?: boolean;
-	referee?: boolean;
+	// Null (the default) reads as the game's own default in roomTypes.refereeOn: on for Hold'em
+	// (2026-10 item 263 R3-28), off for Monopoly. A rematch carries the finished room's choice.
+	referee?: boolean | null;
 	// The host controls, carried from the finished room by a rematch in the same
 	// channel, so a member removed from that channel stays removed. A board challenge
 	// sets them on its draft with the card's controls instead.
@@ -93,7 +95,7 @@ export const gameRoomStore = {
 			rematchedFromRoomId: input.rematchedFromRoomId ?? null,
 			channelId: input.channelId ?? null,
 			monopolyAuctions: input.monopolyAuctions ?? false,
-			referee: input.referee ?? false,
+			referee: input.referee ?? null,
 			ratingBand: input.ratingBand ?? "any",
 			requireApproval: input.requireApproval ?? false,
 			kickedIds: input.kickedIds ?? [],
@@ -258,8 +260,9 @@ export const gameRoomStore = {
 	// Record that a joiner's wallet was charged, but only against the buy in they were charged
 	// (`expectedBuyIn`, null for the standard one): a host who changed the amount meanwhile makes
 	// this refuse and the caller gives the chips back.
+	// Null when the member is already on the ledger, so a double press is charged once (2026-10 item 263 risk R7).
 	async addBuyInPaid(guildId: string, roomId: string, userId: string, expectedBuyIn: number | null) {
-		return GameRoom.findOneAndUpdate({ guildId, roomId, status: "draft", holdemBuyIn: expectedBuyIn }, { $addToSet: { buyInPaidBy: userId } }, { new: true });
+		return GameRoom.findOneAndUpdate({ guildId, roomId, status: "draft", holdemBuyIn: expectedBuyIn, buyInPaidBy: { $ne: userId } }, { $addToSet: { buyInPaidBy: userId } }, { new: true });
 	},
 
 	// Claim one member's refund: the row BEFORE the pull, or null when they were not on the ledger.
