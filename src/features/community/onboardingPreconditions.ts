@@ -1,4 +1,4 @@
-import { ChannelType, PermissionFlagsBits, type Guild, type Role } from "discord.js";
+import { ChannelType, PermissionFlagsBits, type Guild, type GuildBasedChannel, type Role } from "discord.js";
 import { communityCopy } from "./communityCopy.js";
 import { isCommunityEnabled } from "./enableCommunity.js";
 
@@ -8,7 +8,8 @@ import { isCommunityEnabled } from "./enableCommunity.js";
 //        edit Onboarding, a member role Dero can hand out, and the channels Discord
 //        insists on. Pure reads of the cached guild; nothing here fetches or writes.
 // Who:   configureOnboarding, on the Configure Onboarding press and on Confirm;
-//        onboardingDraft reuses isRoleBelowBot and everyoneSendableChannelIds so the
+//        onboardingDraft reuses isRoleBelowBot, everyoneSendableChannelIds and
+//        everyoneCanView so the
 //        draft's own checks and its default channels agree with these.
 // When:  every press. A refusal is a plain sentence for the owner; the caller audits it.
 // How:   the clauses run in a fixed order and the first that fails is the answer,
@@ -76,6 +77,16 @@ export function everyoneSendableChannelIds(guild: Guild): string[] {
 		if (channel.permissionsFor(everyone)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) sendable.push(channel.id);
 	}
 	return sendable;
+}
+
+/**
+ * Whether a new member could open this channel or category: the same resolved
+ * @everyone permissions everyoneSendableChannelIds reads, for viewing alone. The
+ * Onboarding review lists a default only when this holds (2026-10 item 263 R3-20),
+ * since a default a newcomer cannot see is one they would never get.
+ */
+export function everyoneCanView(guild: Guild, channel: GuildBasedChannel): boolean {
+	return channel.permissionsFor(guild.roles.everyone)?.has(PermissionFlagsBits.ViewChannel) === true;
 }
 
 // ── the check ────────────────────────────────────────────────────────

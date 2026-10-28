@@ -6,6 +6,7 @@ import {
 	ONBOARDING_PROMPT_TITLE_MAX_LENGTH,
 	buildOnboardingDraft,
 	plainOption,
+	reviewedDefaults,
 	snapshotOnboarding,
 	toOnboardingEditOptions,
 	validateOnboardingDraft,
@@ -28,16 +29,24 @@ const GAMER_ROLE = "role-gamer";
 const STAFF_ROLE = "role-staff";
 const copy = communityCopy.onboarding;
 
-// A channel whose resolved @everyone permission to view and send is `open`.
-const channel = (id: string, open = true) => ({
+// A channel whose resolved @everyone permission to view and send is `open`; `viewable`
+// alone (a read only channel) lets @everyone open it without sending.
+const channel = (id: string, open = true, viewable = open, type: ChannelType = ChannelType.GuildText, name = id) => ({
 	id,
-	type: ChannelType.GuildText,
+	name,
+	type,
 	permissionsFor: (role: { id: string }) => ({
-		has: (flags: bigint[]) => open && role.id === EVERYONE && flags.includes(PermissionFlagsBits.SendMessages),
+		has: (flags: bigint | bigint[]) => {
+			if (role.id !== EVERYONE) return false;
+			const asked = Array.isArray(flags) ? flags : [flags];
+			return asked.every((flag) => (flag === PermissionFlagsBits.ViewChannel ? viewable : open));
+		},
 	}),
 });
 
-function makeGuild(channelIds: Array<[string, boolean]> = [["intro", true], ["general", true], ["memes", true], ["gated", false]]): Guild {
+type ChannelSpec = [string, boolean] | [string, boolean, boolean, ChannelType, string];
+
+function makeGuild(channelIds: ChannelSpec[] = [["intro", true], ["general", true], ["memes", true], ["gated", false]]): Guild {
 	const roles = new Map([
 		[MEMBER_ROLE, { id: MEMBER_ROLE, name: "Member", position: 2 }],
 		[GAMER_ROLE, { id: GAMER_ROLE, name: "Gamer", position: 3 }],
@@ -48,7 +57,7 @@ function makeGuild(channelIds: Array<[string, boolean]> = [["intro", true], ["ge
 		features: ["COMMUNITY"],
 		roles: { everyone: { id: EVERYONE }, cache: roles },
 		members: { me: { permissions: { has: () => true }, roles: { highest: { position: 5 } } } },
-		channels: { cache: new Map(channelIds.map(([id, open]) => [id, channel(id, open)])) },
+		channels: { cache: new Map(channelIds.map(([id, open, viewable, type, name]) => [id, channel(id, open, viewable, type, name)])) },
 	} as unknown as Guild;
 }
 
@@ -148,9 +157,25 @@ describe("a server that already has Onboarding questions", () => {
 		expect(draft.prompts.at(-1)).toMatchObject({ title: "Welcome aboard", isFinal: true });
 	});
 
-	it("merges the server's own default channels, dropping one that no longer exists", () => {
+	// R3-20 (2026-10 item 263 Phase 4b): only what a new member would really see.
+	it("merges the server's own default channels, dropping one that no longer exists and one a new member could not open", () => {
 		const draft = draftOf(buildOnboardingDraft({ guild: makeGuild(), stored, copy, current: snapshot([livePrompt()], ["gated", "deleted-channel", "general"]) }));
-		expect(draft.defaultChannelIds).toEqual(["intro", "gated", "general", "memes"]);
+		expect(draft.defaultChannelIds).toEqual(["intro", "general", "memes"]);
+		expect(draft.defaultCategories).toEqual([]);
+	});
+
+	it("keeps a category among the server's own defaults apart, by name, and a read only channel a new member can open", () => {
+		const guild = makeGuild([
+			["intro", true],
+			["general", true],
+			["entrance", false, true, ChannelType.GuildCategory, "entrance"],
+			["announcements", false, true, ChannelType.GuildText, "announcements"],
+			["staff-only", false, false, ChannelType.GuildCategory, "staff-only"],
+		]);
+		const draft = draftOf(buildOnboardingDraft({ guild, stored, copy, current: snapshot([livePrompt()], ["entrance", "announcements", "staff-only"]) }));
+		expect(draft.defaultChannelIds).toEqual(["intro", "entrance", "announcements", "general"]);
+		expect(draft.defaultCategories).toEqual([{ id: "entrance", name: "entrance" }]);
+		expect(reviewedDefaults(draft)).toEqual({ channelIds: ["intro", "announcements", "general"], categoryNames: ["entrance"] });
 	});
 
 	it("refuses a question whose answer gives a role above Dero's, naming the role", () => {

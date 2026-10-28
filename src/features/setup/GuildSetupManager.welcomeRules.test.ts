@@ -192,6 +192,13 @@ describe("a fresh install on a server with its own arrivals channel", () => {
 		// 257, decision 3): emitted before the create, it found no channel and posted nothing.
 		expect(payload.adminLogChannelId).toBeTruthy();
 		expect(vi.mocked(adminLog.emit).mock.invocationCallOrder[0]!).toBeGreaterThan(store.create.mock.invocationCallOrder[0]!);
+
+		// R3-19 (2026-10 item 263 Phase 4b): the choice is 🧭onboarding's step 2, so no
+		// channel Dero built, 🔒inner-sanctum among them, gets a "your own channels" card.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		const built = (await Promise.all(create.mock.results.map((result) => result.value))) as Array<{ send?: ReturnType<typeof vi.fn> }>;
+		const titles = built.flatMap((channel) => channel.send?.mock.calls ?? []).map((call) => JSON.stringify(call[0]));
+		expect(titles.some((sent) => sent.includes(setupCopy.adoptionChoice.cardTitle))).toBe(false);
 	});
 
 	it("takes the system channel before a name match", async () => {

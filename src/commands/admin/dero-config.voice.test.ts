@@ -82,11 +82,11 @@ describe("the kill switch ends a live call", () => {
 		expect(text).toContain(voiceCopy.config.leftCall(VC));
 	});
 
-	it("a cap of 0 ends the call too", async () => {
-		const text = await replyText({ sub: "cap", dollars: 0 });
-		expect(mocks.sessionLeave).toHaveBeenCalledWith("g1", "switched_off");
-		expect(text).toContain(voiceCopy.config.capSet(0));
-		expect(text).toContain(voiceCopy.config.leftCall(VC));
+	// The cap is hidden (2026-10 item 263 Phase 4b): a stale cap press is only a status,
+	// so it neither writes nor ends the call. disable stays the kill switch.
+	it("a stale cap press leaves the call alone", async () => {
+		await replyText({ sub: "cap", dollars: 0 });
+		expect(mocks.sessionLeave).not.toHaveBeenCalled();
 	});
 
 	it("ends the call even when the write that follows fails", async () => {

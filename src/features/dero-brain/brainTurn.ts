@@ -5,6 +5,7 @@ import { buildJobInput } from "./brainJob.js";
 import { brainQueue, type BrainQueue } from "./brainQueue.js";
 import type { BrainAction, BrainJobSource, BrainOutcome } from "./brainTypes.js";
 import { executeActions, type ActionReport, type ExecuteInput } from "./executor.js";
+import { readTaskChannelIds } from "./taskChannel.js";
 
 // ── brain turn ────────────────────────────────────────────────────────────
 // What:  the one "ask the brain and act on its answer" step: build the job,
@@ -56,13 +57,18 @@ export interface BrainTurnInput {
 	/** Already trimmed and within DERO_BRAIN_MAX_TASK_CHARS. */
 	text: string;
 	source: BrainJobSource;
-	/** The config the caller authorized against; supplies the channel allowlist. */
+	/**
+	 * The config the caller authorized against. It names no channel any more: every task
+	 * posts in 💬dero-commands (2026-10 item 263 Phase 4b), read through loadTaskChannelIds.
+	 */
 	voiceConfig: IDeroVoiceConfig;
 }
 
 export interface BrainTurnDeps {
 	queue: Pick<BrainQueue, "enqueue" | "isBrainOnline">;
 	loadConfig(guildId: string): Promise<IDeroVoiceConfig | null>;
+	/** The channels a job may offer the brain: 💬dero-commands (taskChannel.ts). */
+	loadTaskChannelIds(guildId: string): Promise<string[]>;
 	execute(input: ExecuteInput): Promise<ActionReport[]>;
 	now(): number;
 }
@@ -70,6 +76,7 @@ export interface BrainTurnDeps {
 export const defaultBrainTurnDeps: BrainTurnDeps = {
 	queue: brainQueue,
 	loadConfig: (guildId) => deroVoiceConfigStore.findByGuildId(guildId),
+	loadTaskChannelIds: readTaskChannelIds,
 	execute: executeActions,
 	now: () => Date.now(),
 };
@@ -84,7 +91,7 @@ function unanswered(outcome: BrainOutcome): { reason: UnansweredReason; code: st
 
 /** Ask the brain about one task and act on its answer. Throws only what the executor or a store throws. */
 export async function runBrainTurn(input: BrainTurnInput, deps: BrainTurnDeps = defaultBrainTurnDeps): Promise<BrainTurnResult> {
-	const { guild, speaker, text, source, voiceConfig } = input;
+	const { guild, speaker, text, source } = input;
 
 	// ①
 	if (!deps.queue.isBrainOnline()) {
@@ -92,7 +99,7 @@ export async function runBrainTurn(input: BrainTurnInput, deps: BrainTurnDeps = 
 	}
 
 	// ②
-	const job = buildJobInput({ guild, speaker, text, voiceConfig, source });
+	const job = buildJobInput({ guild, speaker, text, allowedChannelIds: await deps.loadTaskChannelIds(guild.id), source });
 	const { jobId, outcome: pendingOutcome } = deps.queue.enqueue(job);
 	const outcome = await pendingOutcome;
 	const resultAt = deps.now();

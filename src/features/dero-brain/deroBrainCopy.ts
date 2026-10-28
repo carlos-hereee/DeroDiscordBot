@@ -67,7 +67,7 @@ export const deroBrainCopy = {
 	// ── the /dero command itself ──
 	command: {
 		description: "Give Dero a task, bring Dero into your voice call, or check whether Dero's brain is online",
-		tell: "Give Dero a short task, like posting a message in an allowed channel",
+		tell: "Give Dero a short task, like posting a message in the Dero commands channel",
 		taskOption: "What you want Dero to do, in your own words",
 		status: "Show whether Dero's brain is online and whether Dero is in a voice call",
 		join: "Bring Dero into your voice channel. Dero listens only to members on its task list",

@@ -63,7 +63,7 @@ describe("buildJobInput", () => {
 			guild,
 			speaker,
 			text: "send hello world with an emoji in general",
-			voiceConfig: { allowedChannelIds: ["200000000000000001"] },
+			allowedChannelIds: ["200000000000000001"],
 			source: "text",
 		});
 		expect(job).toEqual({

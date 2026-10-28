@@ -322,6 +322,27 @@ function communityPress(guild: unknown, customId: string, awaited: unknown = nul
 	} as unknown as ButtonInteraction & Record<"showModal" | "reply" | "deferReply" | "editReply" | "deferUpdate" | "update", ReturnType<typeof vi.fn>>;
 }
 
+// The Onboarding review's Confirm, then the Submit of the confirm modal it opens: since
+// 2026-10 item 263 R3-20 only that Submit writes. Returns the Submit, whose editReply
+// carries the result or the refusal under the review.
+async function confirmOnboardingAndSubmit(guild: unknown) {
+	await handleCommunityButton(communityPress(guild, COMMUNITY_CUSTOM_IDS.confirmOnboarding));
+	const submit = {
+		id: `int-${++guildCounter}`,
+		customId: COMMUNITY_CUSTOM_IDS.writeOnboarding,
+		guild,
+		user: { id: OWNER },
+		fields: { getTextInputValue: vi.fn() },
+		isFromMessage: () => true,
+		reply: vi.fn(async () => undefined),
+		followUp: vi.fn(async () => undefined),
+		editReply: vi.fn(async () => undefined),
+		deferUpdate: vi.fn(async () => undefined),
+	} as unknown as ModalSubmitInteraction & Record<"reply" | "followUp" | "editReply" | "deferUpdate", ReturnType<typeof vi.fn>>;
+	await handleCommunityButton(submit);
+	return submit;
+}
+
 async function pickChannelsAndConfirm(guild: EnableGuild) {
 	const submission = {
 		guild,
@@ -407,7 +428,7 @@ function onboardingGuild(options: { memberRolePosition?: number; extraRoles?: Ar
 	const channels = new Map(
 		channelIds.map((id) => [
 			id,
-			{ id, type: ChannelType.GuildText, permissionsFor: (role: { id: string }) => ({ has: (flags: bigint[]) => role.id === EVERYONE && flags.includes(SendMessages) }) },
+			{ id, type: ChannelType.GuildText, permissionsFor: (role: { id: string }) => ({ has: (flags: bigint | bigint[]) => role.id === EVERYONE && (Array.isArray(flags) ? flags.includes(SendMessages) : true) }) },
 		])
 	);
 	const roles = new Map([[MEMBER_ROLE, { id: MEMBER_ROLE, name: "Member", position: options.memberRolePosition ?? 2 }]]);
@@ -469,7 +490,7 @@ describe("R4: an Onboarding config Discord would refuse", () => {
 		expect(noticeTextOf(refused.showModal)).toBe(communityCopy.onboarding.preconditions.memberRoleAboveBot("Member"));
 
 		guild.roles.cache.get(MEMBER_ROLE)!.position = 2;
-		await handleCommunityButton(communityPress(guild, COMMUNITY_CUSTOM_IDS.confirmOnboarding));
+		await confirmOnboardingAndSubmit(guild);
 		expect(guild.editOnboarding).toHaveBeenCalledOnce();
 	});
 
@@ -479,15 +500,14 @@ describe("R4: an Onboarding config Discord would refuse", () => {
 		const discordMessage = "Invalid Form Body\ndefault_channel_ids: Onboarding requires at least 7 default channels";
 		guild.editOnboarding.mockRejectedValueOnce(formRefusal(discordMessage));
 
-		const confirm = communityPress(guild, COMMUNITY_CUSTOM_IDS.confirmOnboarding);
-		await handleCommunityButton(confirm);
+		const confirm = await confirmOnboardingAndSubmit(guild);
 
 		const reply = confirm.editReply.mock.calls[0]![0] as { embeds: Array<{ data: { description?: string } }>; components: unknown[] };
 		expect(reply.embeds.at(-1)!.data.description).toBe(communityCopy.onboarding.failures.rejected(discordMessage));
 		expect(reply.components.length).toBeGreaterThan(0);
 		expect(auditRows(BOT_LOG_EVENTS.ONBOARDING_CONFIGURED_BY_BOT)[0]).toMatchObject({ outcome: "refused-discord", discordCode: 50035 });
 
-		await handleCommunityButton(communityPress(guild, COMMUNITY_CUSTOM_IDS.confirmOnboarding));
+		await confirmOnboardingAndSubmit(guild);
 		expect(guild.editOnboarding).toHaveBeenCalledTimes(2);
 	});
 

@@ -326,6 +326,8 @@ const INVENTORY: readonly NoticeEntry[] = [
 	// ── community/configureOnboarding.ts ──
 	{ file: "features/community/configureOnboarding.ts", within: "handleConfigureOnboardingButton", kind: "state" },
 	{ file: "features/community/configureOnboarding.ts", within: "handleConfirmOnboarding", count: 2, kind: "state" },
+	// The confirm modal's Submit (2026-10 item 263 R3-20): expired, or a check that changed since Confirm.
+	{ file: "features/community/configureOnboarding.ts", within: "handleWriteOnboarding", count: 2, kind: "state" },
 	{ file: "features/community/configureOnboarding.ts", within: "replyOnboardingError", kind: "state" },
 
 	// ── community/enableCommunity.ts ──

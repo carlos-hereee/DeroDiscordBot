@@ -198,12 +198,10 @@ export const voiceCopy = {
 			cap: "Set the monthly speech budget for this server, in whole dollars",
 			capOption: "Whole dollars per month. 0 refuses every speech call",
 			roleGroup: "Roles that may give Dero tasks",
-			channelGroup: "Text channels Dero may post in for a task",
 			voiceChannelGroup: "Voice channels Dero may join",
 			add: "Add one to the list",
 			remove: "Remove one from the list",
 			roleOption: "The role",
-			channelOption: "The text channel",
 			voiceChannelOption: "The voice channel",
 		},
 
@@ -220,10 +218,10 @@ export const voiceCopy = {
 			listenEnabled: boolean;
 			keyConfigured: boolean;
 			roles: number;
-			channels: number;
 			voiceChannels: number;
-			spentUsd: string;
-			capUsd: number;
+			// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+			// spentUsd: string;
+			// capUsd: number;
 		}): string =>
 			[
 				`Voice: **${onOff(status.enabled)}**`,
@@ -232,8 +230,9 @@ export const voiceCopy = {
 					: `Speaking voice: id ending in \`${status.voiceIdTail}\``,
 				`Listen buttons: **${onOff(status.listenEnabled)}**`,
 				`Speech key on the bot: ${status.keyConfigured ? "configured" : "missing, so no speech call is sent"}`,
-				`Allowed roles: ${status.roles} · text channels: ${status.channels} · voice channels: ${status.voiceChannels}`,
-				`This month: $${status.spentUsd} of a $${status.capUsd} cap (an estimate, not the provider's invoice)`,
+				`Allowed roles: ${status.roles} · voice channels: ${status.voiceChannels}`,
+				// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+				// `This month: ${status.spentUsd} of a ${status.capUsd} cap (an estimate, not the provider's invoice)`,
 			].join("\n"),
 
 		enabledTitle: "🔊 Dero's voice is ON",
@@ -264,12 +263,11 @@ export const voiceCopy = {
 		listNotThere: (item: string): string => `${item} is not on the list. No change made.`,
 		listTitle: {
 			roles: "Allowed roles",
-			channels: "Allowed text channels",
 			voiceChannels: "Allowed voice channels",
 		},
 	},
 
-	// ── the voice priority order, step 5 of ⚙️dero-config (2026-10 item 257, owner item 22) ──
+	// ── the voice priority order, step 2 of ⚙️dero-config (2026-10 item 257, owner item 22) ──
 	// Admin facing. A modal title and a select label hold 45 characters each.
 	priority: {
 		label: (category: VoicePriorityCategory): string => PRIORITY_LABELS[category],

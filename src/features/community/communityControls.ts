@@ -21,6 +21,10 @@ import { communityCopy } from "./communityCopy.js";
 
 /** The interactionRegistry prefix every community control routes on. */
 export const COMMUNITY_PREFIX = "community";
+// The Onboarding confirm's own prefix (2026-10 item 263 R3-20). A modal registered under
+// COMMUNITY_PREFIX would also catch promptEditModal's `community:promptmodal:*` modals,
+// which their awaitModalSubmit collectors answer, so the confirm's Submit routes apart.
+export const COMMUNITY_CONFIRM_PREFIX = "communityconfirm";
 
 /** The customId of each community control, `community:<action>`. */
 export const COMMUNITY_CUSTOM_IDS = {
@@ -39,6 +43,9 @@ export const COMMUNITY_CUSTOM_IDS = {
 	editOption: `${COMMUNITY_PREFIX}:editoption`,
 	deleteOption: `${COMMUNITY_PREFIX}:deleteoption`,
 	confirmOnboarding: `${COMMUNITY_PREFIX}:confirmOnboarding`,
+	// The confirm modal's Submit and its fallback button (2026-10 item 263 R3-20): the
+	// one press that writes Onboarding, routed as a modal or a button under its own prefix.
+	writeOnboarding: `${COMMUNITY_CONFIRM_PREFIX}:onboarding`,
 	cancelOnboarding: `${COMMUNITY_PREFIX}:cancelOnboarding`,
 } as const;
 

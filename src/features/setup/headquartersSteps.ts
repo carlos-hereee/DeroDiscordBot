@@ -37,7 +37,7 @@ import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 //        /dero-config, /arcade, /server channels and /leveling settings panels, the
 //        /events pick, or an /arcade, /events or /server subcommand's form,
 //        through the admin command launcher. The one new flow is ⚙️dero-config's step
-//        5, the voice priority order (owner decision 4): a modal of four selects.
+//        2, the voice priority order (owner decision 4): a modal of four selects.
 // Who:   the buttons headquartersCards.ts puts on the steps cards, as
 //        `hqstep:<domain>:<step>`. The 🧭onboarding steps carry the Community and
 //        adoption customIds themselves and never come here.
@@ -54,10 +54,12 @@ type StepTarget =
 const panel = (launchId: string): StepTarget => ({ kind: "launch", launchId });
 const leaf = (command: string, path: string): StepTarget => ({ kind: "leaf", command, path });
 
-// The step to flow map, read at each flow's call site. The /dero-config panel holds the
-// voice switch, the voice channel list, Listen and the task list, and the budget, so
-// steps 1 to 4 all open it; the arcade panel holds the chip switch (the daily claim
-// rides it), the monthly post and the bots.
+// The step to flow map, read at each flow's call site. ⚙️dero-config has two steps
+// (2026-10 item 263 Phase 4b, owner decision 15): the /dero-config panel (the voice and
+// Listen switches, the task roles and the voice channels) and the priority order, so no
+// two steps open the same modal. 🎰arcade-control's one panel step holds the chip switch
+// (the daily claim rides it), the monthly post and the bots, the two steps that both
+// opened it merged into one.
 //
 // 🛠️server-config (2026-10 item 263 Phase 4a) routes by step key, so a step inserted in
 // SERVER_CONFIG_STEPS takes its route with it: the KvK season and the weekly stream
@@ -79,8 +81,8 @@ const SWITCH_ROUTES: Record<ServerSwitch, StepTarget> = {
 };
 
 const ROUTED_STEPS: Partial<Record<HeadquartersDomain, readonly StepTarget[]>> = {
-	deroConfig: [panel("dero-config"), panel("dero-config"), panel("dero-config"), panel("dero-config"), { kind: "priority" }],
-	arcadeControl: [leaf("arcade", "on"), panel("arcade"), panel("arcade"), leaf("arcade", "reach"), leaf("arcade", "server block")],
+	deroConfig: [panel("dero-config"), { kind: "priority" }],
+	arcadeControl: [leaf("arcade", "on"), panel("arcade"), leaf("arcade", "reach"), leaf("arcade", "server block")],
 	serverConfig: SERVER_CONFIG_STEPS.map((key) => SERVER_CONFIG_ROUTES[key]),
 };
 
@@ -115,7 +117,7 @@ async function handleStepButton(interaction: ButtonInteraction): Promise<void> {
 	else await launcher.openAdminLeaf(interaction, target.command, target.path);
 }
 
-// ── step 5, the voice priority order ─────────────────────────────────────────
+// ── step 2, the voice priority order ─────────────────────────────────────────
 
 const PRIORITY_MODAL_ID = `${HEADQUARTERS_STEP_PREFIX}priority`;
 // The four places an admin picks; the category left out goes last.

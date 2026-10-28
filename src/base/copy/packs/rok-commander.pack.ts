@@ -615,7 +615,7 @@ export const rokCommanderCopy = {
 						"`/leveling xp`",
 						"Correct a member's XP or level, reset a member or the server, or export it all.",
 						"`/dero-config`",
-						"My voice: the switch, the monthly budget and who may give me tasks.",
+						"My voice: the switch, Listen, who may give me tasks and the calls I may join.",
 						"`/arcade`",
 						"The arcade: on or off, bot opponents, how far a challenge reaches, the monthly post, network blocks and chips.",
 					].join("\n"),

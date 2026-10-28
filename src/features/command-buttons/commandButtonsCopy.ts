@@ -54,7 +54,6 @@ export const commandButtonsCopy = {
 			listen: "Listen buttons",
 			roles: "Roles that may give Dero tasks",
 			rolesHint: "The server owner and the admin role always may, whatever this list holds",
-			channels: "Text channels Dero may post in",
 			voiceChannels: "Voice channels Dero may join",
 			cap: "Monthly speech budget, in dollars",
 		},

@@ -8,6 +8,7 @@ import { voiceCopy } from "@features/voice/voiceCopy.js";
 import type { BrainAction, BrainActionType, OpenHoldemAction, PostMessageAction, SayAction } from "./brainTypes.js";
 import { isAuthorizedSpeaker } from "./authorizer.js";
 import { readSpeakerAdminRoleId } from "./speakerAdminRole.js";
+import { readTaskChannelIds } from "./taskChannel.js";
 import { checkPostableChannel, type ChannelRefusal } from "./channelGate.js";
 import { deroBrainCopy } from "./deroBrainCopy.js";
 import { describeTerms, describeTermsRefusal, resolveTerms } from "./holdemTerms.js";
@@ -31,7 +32,8 @@ import { createHoldemRequest } from "./holdemRequests.js";
 //        voice turn); the card's buttons are the only way a table opens, and any
 //        channelId the brain sent is ignored, because the room's channel comes
 //        from the provisioner and the arcade category; ③ the pure checks first
-//        (a post's allowlist, whether a call is open), so a refused action costs
+//        (a post's channel against the task channel, 💬dero-commands, read fresh
+//        through taskChannel.ts; whether a call is open), so a refused action costs
 //        zero Discord API calls; ④ the speaker re-fetched and re-authorized,
 //        only when an action survived ③ (a role removed while the brain was
 //        thinking stops the action); ⑤ the channel gate against the live
@@ -82,6 +84,12 @@ export interface ExecutorDeps {
 	 * default deps always wire it to readSpeakerAdminRoleId.
 	 */
 	loadAdminRoleId?(guildId: string): Promise<string | null>;
+	/**
+	 * The channels a post may go to: 💬dero-commands (2026-10 item 263 Phase 4b). Optional
+	 * so a rig that never posts need not build it; without it no post goes out, the way the
+	 * gate refuses any unlisted channel. The default deps wire it to readTaskChannelIds.
+	 */
+	loadTaskChannelIds?(guildId: string): Promise<string[]>;
 	/** Optional so a caller that never speaks need not build it; defaults to the live calls. */
 	voice?: ExecutorVoiceDeps;
 }
@@ -121,6 +129,7 @@ export const defaultExecutorDeps: ExecutorDeps = {
 	// re-check exists to get past. A member who left resolves to null.
 	fetchMember: (guild, userId) => guild.members.fetch({ user: userId, force: true }).catch(() => null),
 	loadAdminRoleId: readSpeakerAdminRoleId,
+	loadTaskChannelIds: readTaskChannelIds,
 	voice: defaultExecutorVoiceDeps,
 };
 
@@ -211,7 +220,9 @@ export async function executeActions({
 
 	// ③ before any API call: the posts that could possibly go out, and whether a
 	// voice action has a call to act on (the session map is local memory)
-	const allowed = voiceConfig.allowedChannelIds;
+	// Read only when a post was asked for, so a voice only answer costs no database read.
+	const asksToPost = actions.some((action) => action.type === "post_message");
+	const allowed: readonly string[] = asksToPost && deps.loadTaskChannelIds ? await deps.loadTaskChannelIds(guild.id) : [];
 	const postable = actions.filter(
 		(action): action is PostMessageAction => action.type === "post_message" && allowed.includes(action.channelId),
 	);

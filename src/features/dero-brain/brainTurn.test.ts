@@ -31,6 +31,8 @@ function rig(outcome: BrainOutcome, online = true) {
 			}),
 		},
 		loadConfig: vi.fn(async () => FRESH),
+		// 💬dero-commands, the one channel a task may post in (2026-10 item 263 Phase 4b).
+		loadTaskChannelIds: vi.fn(async () => ["commands"]),
 		execute: vi.fn(async () => [{ type: "post_message" as const, outcome: "posted" as const, line: "Posted in <#c1>." }]),
 		now: () => clock,
 	};
@@ -53,10 +55,11 @@ describe("runBrainTurn", () => {
 		expect(mocks.buildJobInput).not.toHaveBeenCalled();
 	});
 
-	it("builds the job with the caller's source and the config the caller authorized against", async () => {
+	it("builds the job with the caller's source and the task channel, never the voice config's old text list", async () => {
 		const deps = rig({ kind: "timeout" });
 		await run(deps, "voice");
-		expect(mocks.buildJobInput).toHaveBeenCalledWith(expect.objectContaining({ source: "voice", voiceConfig: CONFIG, speaker }));
+		expect(deps.loadTaskChannelIds).toHaveBeenCalledWith("g1");
+		expect(mocks.buildJobInput).toHaveBeenCalledWith(expect.objectContaining({ source: "voice", allowedChannelIds: ["commands"], speaker }));
 	});
 
 	it.each([

@@ -71,11 +71,17 @@ function fakeWorld(speakerRoles: string[] = [TASKER_ROLE]) {
 	const guild = { id: GUILD_ID, ownerId: OWNER_ID, name: "Guild", channels: { cache }, members: { me: { id: BOT_ID } } };
 	const speaker = fakeMember(SPEAKER_ID, speakerRoles);
 	const fetchMember = vi.fn(async () => speaker as unknown as GuildMember);
-	const deps: ExecutorDeps = { fetchMember };
+	// The task channel read stands in for 💬dero-commands (2026-10 item 263 Phase 4b). It
+	// answers several ids here so the gate's refusals can each be reached; production
+	// answers the one command channel.
+	const loadTaskChannelIds = vi.fn(async () => [...TASK_CHANNELS]);
+	const deps: ExecutorDeps = { fetchMember, loadTaskChannelIds };
 	const sends = () => channels.reduce((total, channel) => total + channel.send.mock.calls.length, 0);
 	const apiCalls = () => fetchMember.mock.calls.length + sends();
-	return { guild: guild as unknown as Guild, channels: cache, fetchMember, deps, apiCalls, sends };
+	return { guild: guild as unknown as Guild, channels: cache, fetchMember, loadTaskChannelIds, deps, apiCalls, sends };
 }
+
+const TASK_CHANNELS = [GENERAL, FOREIGN, NO_SEND, HIDDEN, VOICE];
 
 const CONFIG: IDeroVoiceConfig = {
 	guildId: GUILD_ID,
@@ -83,7 +89,8 @@ const CONFIG: IDeroVoiceConfig = {
 	voiceId: "voice1234567890",
 	listenEnabled: true,
 	allowedRoleIds: [TASKER_ROLE],
-	allowedChannelIds: [GENERAL, FOREIGN, NO_SEND, HIDDEN, VOICE],
+	// The retired text list, never read: the task channel decides where a post may go.
+	allowedChannelIds: [NOT_LISTED],
 	allowedVoiceChannelIds: [],
 	monthlyCapUsd: 25,
 };
@@ -109,6 +116,21 @@ describe("executeActions: post_message", () => {
 			content: "hi @​everyone and @​here",
 			allowedMentions: SAFE_MENTIONS,
 		});
+	});
+
+	it("posts only where the task channel read allows, never in a channel the voice config's old text list names", async () => {
+		const { reports, world } = await run([post(NOT_LISTED)]);
+		expect(reports[0].outcome).toBe("channel_not_allowed");
+		expect(world.loadTaskChannelIds).toHaveBeenCalledWith(GUILD_ID);
+		expect(world.sends()).toBe(0);
+	});
+
+	it("refuses every post the way the gate refuses an unlisted channel when no task channel is stored (setup not rerun)", async () => {
+		const world = fakeWorld();
+		world.loadTaskChannelIds.mockResolvedValue([]);
+		const { reports } = await run([post(GENERAL)], world);
+		expect(reports).toEqual([{ type: "post_message", outcome: "channel_not_allowed", line: deroBrainCopy.result.channelNotAllowed }]);
+		expect(world.apiCalls()).toBe(0);
 	});
 
 	it("refuses a channel that is not allowlisted with zero API calls", async () => {

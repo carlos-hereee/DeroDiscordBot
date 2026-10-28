@@ -13,7 +13,7 @@ import { voiceCopy } from "@features/voice/voiceCopy.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { normalizeLevelingSettings } from "@features/leveling/levelingConfig.js";
 import { buildAdminControlButtons } from "@features/power-ups/PowerUps.js";
-import { CHOOSE_BUTTON_ID, choosableAdoptedChannels, type IAdoptionChoiceRow } from "./adoptionChoice.js";
+import { CHOOSE_BUTTON_ID, adoptedChannelLines, choosableAdoptedChannels, type IAdoptionChoiceRow } from "./adoptionChoice.js";
 import { readAdoptionChoice } from "./adoption.js";
 import { isMemberRoleGated } from "./communityOverwrites.js";
 import { setupCopy } from "./setupCopy.js";
@@ -146,14 +146,12 @@ const value = (label: string, text: string): SettingsChartRow => ({ label, kind:
 export function deroConfigView(voice: IDeroVoiceConfig | null): DomainView {
 	const domain = copy.deroConfig;
 	const order = normalizePriorityOrder(voice?.priorityOrder);
-	const done = [
-		voice?.enabled === true,
-		(voice?.allowedVoiceChannelIds.length ?? 0) > 0,
-		(voice?.allowedRoleIds.length ?? 0) > 0,
-		// The budget and the order have working defaults, so a saved row has both set.
-		voice !== null,
-		voice !== null,
-	];
+	// Two steps (2026-10 item 263 Phase 4b, owner decision 15): the settings panel is done
+	// once the voice is on with a channel to join (the task roles are optional, since the
+	// owner and the admin role always may), and the order, which has a working default,
+	// once a row is saved. The marks, the labels and the routes are index based, so the
+	// three lists move together.
+	const done = [voice?.enabled === true && voice.allowedVoiceChannelIds.length > 0, voice !== null];
 	return {
 		title: domain.title,
 		steps: domain.steps.map((label, index) => ({ label, done: done[index] ?? false, customId: stepCustomId("deroConfig", index + 1) })),
@@ -165,9 +163,9 @@ export function deroConfigView(voice: IDeroVoiceConfig | null): DomainView {
 				toggle(domain.rows.voice, voice?.enabled ?? false),
 				toggle(domain.rows.listen, voice?.listenEnabled ?? true),
 				value(domain.rows.roles, copy.count(voice?.allowedRoleIds.length ?? 0)),
-				value(domain.rows.textChannels, copy.count(voice?.allowedChannelIds.length ?? 0)),
 				value(domain.rows.voiceChannels, copy.count(voice?.allowedVoiceChannelIds.length ?? 0)),
-				value(domain.rows.cap, voice ? copy.dollars(voice.monthlyCapUsd) : copy.notSet),
+				// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+				// value(domain.rows.cap, voice ? copy.dollars(voice.monthlyCapUsd) : copy.notSet),
 				value(domain.rows.priority, order.map((category) => voiceCopy.priority.label(category)).join(" › ")),
 			],
 		},
@@ -183,9 +181,16 @@ export interface OnboardingFacts {
 	memberRoleName: string | null;
 	// Every adopted channel an admin may place has an answer; true when there is none to place.
 	adoptedPlaced: boolean;
+	// One line per adopted channel an admin may place ("#spawn-point as the welcome log"); empty when there is none.
+	adoptedLines: string[];
 }
 
-/** 🧭onboarding. Step 4 carries no button: /setup names the member role (option A). */
+/**
+ * 🧭onboarding. Step 2 names the channels Dero adopted, so the choice lives here and no
+ * card posts in 🔒inner-sanctum (2026-10 item 263 Phase 4b, R3-19); with none adopted it
+ * stays in place as done, its line saying there is nothing to choose, because the marks
+ * are index based. Step 4 carries no button: /setup names the member role (option A).
+ */
 export function onboardingView(facts: OnboardingFacts): DomainView {
 	const domain = copy.onboarding;
 	const [community, adopted, onboarding, gating] = domain.steps;
@@ -193,7 +198,7 @@ export function onboardingView(facts: OnboardingFacts): DomainView {
 		title: domain.title,
 		steps: [
 			{ label: community, done: facts.communityOn, customId: COMMUNITY_CUSTOM_IDS.enable },
-			{ label: adopted, done: facts.adoptedPlaced, customId: CHOOSE_BUTTON_ID },
+			{ label: adopted, done: facts.adoptedPlaced, note: facts.adoptedLines.length > 0 ? facts.adoptedLines.join("\n") : domain.nothingAdopted, customId: CHOOSE_BUTTON_ID },
 			{ label: onboarding, done: facts.onboardingOn === true, customId: COMMUNITY_CUSTOM_IDS.configure },
 			{ label: gating, done: facts.gated, note: domain.gatingNote, customId: null },
 		],
@@ -223,7 +228,9 @@ export function arcadeControlView(row: HeadquartersRow): DomainView {
 	const bots = row.botOpponentsEnabled !== false;
 	const reach = row.challengeReach ?? "server";
 	const blocked = row.blockedNetworkGuildIds?.length ?? 0;
-	const done = [arcadeOn, chipsOn, monthlyPost && bots, reach === "network", blocked > 0];
+	// Chips, the monthly post and the bots are one step since they share the /arcade panel
+	// (2026-10 item 263 Phase 4b, owner decision 15); marks, labels and routes stay index based.
+	const done = [arcadeOn, chipsOn && monthlyPost && bots, reach === "network", blocked > 0];
 	return {
 		title: domain.title,
 		steps: domain.steps.map((label, index) => ({
@@ -366,6 +373,7 @@ async function readOnboardingFacts(guild: Guild, row: HeadquartersRow): Promise<
 		gated: isMemberRoleGated(guild, row.memberRoleId),
 		memberRoleName: row.memberRoleId ? (guild.roles.cache.get(row.memberRoleId)?.name ?? null) : null,
 		adoptedPlaced: choosable.every((entry) => readAdoptionChoice(row, entry.channel.id) !== null),
+		adoptedLines: adoptedChannelLines(choosable),
 	};
 }
 

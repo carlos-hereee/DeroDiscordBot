@@ -1,12 +1,13 @@
-import { Events, type ButtonInteraction, type Client, type Guild, type StringSelectMenuInteraction } from "discord.js";
+import { Events, type ButtonInteraction, type Client, type Guild, type ModalSubmitInteraction, type StringSelectMenuInteraction } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
-import { registerButton, registerSelectMenu } from "@handlers/interactionRegistry.js";
+import { registerButton, registerModal, registerSelectMenu } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { showNotice } from "@utils/textModal.js";
 import { refreshHeadquartersCards } from "@features/setup/headquartersCards.js";
 import { communityCopy } from "./communityCopy.js";
 import {
+	COMMUNITY_CONFIRM_PREFIX,
 	COMMUNITY_CUSTOM_IDS,
 	COMMUNITY_INDEXED_ACTIONS,
 	COMMUNITY_PREFIX,
@@ -14,7 +15,7 @@ import {
 	type CommunityAction,
 } from "./communityControls.js";
 import { handleConfirm, handleEnableClick, isCommunityEnabled, type IEnableCommunityConfig } from "./enableCommunity.js";
-import { handleCancelOnboarding, handleConfigureOnboardingButton, handleConfirmOnboarding, type IConfigureOnboardingConfig } from "./configureOnboarding.js";
+import { handleCancelOnboarding, handleConfigureOnboardingButton, handleConfirmOnboarding, handleWriteOnboarding, type IConfigureOnboardingConfig } from "./configureOnboarding.js";
 import {
 	handleAddOption,
 	handleAddPrompt,
@@ -28,7 +29,8 @@ import {
 
 // ── communityButtons ─────────────────────────────────────────────────
 // What:  the one router every `community:<action>` press goes through, the Onboarding
-//        review's two selects included (2026-10 item 254), and the listener that
+//        review's two selects included (2026-10 item 254) and the Submit of the
+//        confirm its Confirm opens (2026-10 item 263 R3-20), and the listener that
 //        redraws 🧭onboarding when Discord's Community state changes. The router
 //        gates and routes; the flows themselves live in enableCommunity,
 //        configureOnboarding and promptEditModal (Phase 4).
@@ -45,8 +47,18 @@ import {
 /** The stored GuildConfig fields the community flows read, together. */
 type ICommunityConfig = IEnableCommunityConfig & IConfigureOnboardingConfig;
 
-/** A press on a community control: a button, or one of the Onboarding review's selects. */
-type CommunityPress = ButtonInteraction | StringSelectMenuInteraction;
+/** A press on a community control: a button, one of the Onboarding review's selects, or the Onboarding confirm's Submit. */
+type CommunityPress = ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction;
+
+// The one action a modal Submit may carry: the Onboarding confirm, whose fallback
+// button carries the same id. A Submit naming any other action is from no layout.
+const MODAL_ACTIONS: ReadonlySet<CommunityAction> = new Set<CommunityAction>(["writeOnboarding"]);
+
+// A modal Submit carries its fields; a button or a select carries none. Read by shape
+// for the same reason as isSelectPress.
+function isModalSubmit(interaction: CommunityPress): interaction is ModalSubmitInteraction {
+	return "fields" in interaction;
+}
 
 // A select carries its picked values; a button carries none. Read by shape rather
 // than isStringSelectMenu, so the router reads the same for a test's plain object.
@@ -59,7 +71,7 @@ export async function handleCommunityButton(interaction: CommunityPress): Promis
 	const parsed = parseCommunityCustomId(interaction.customId);
 	// A control from an older layout, answered before any read since nothing runs.
 	// A select's action reached as a button, or the reverse, is from no layout either.
-	if (!parsed || COMMUNITY_SELECT_ACTIONS.has(parsed.action) !== isSelectPress(interaction)) {
+	if (!parsed || COMMUNITY_SELECT_ACTIONS.has(parsed.action) !== isSelectPress(interaction) || (isModalSubmit(interaction) && !MODAL_ACTIONS.has(parsed.action))) {
 		await showNotice(interaction, { title: getPluginCopy(null).notice.community, sections: [communityCopy.errors.controlRetired] });
 		return;
 	}
@@ -82,14 +94,15 @@ export async function handleCommunityButton(interaction: CommunityPress): Promis
 		await routeSelect(interaction, parsed.action, guild, config, parsed.argument);
 		return;
 	}
-	await routeButton(interaction, parsed.action, guild, config, parsed.argument);
+	if (isModalSubmit(interaction)) await handleWriteOnboarding(interaction, guild, config);
+	else await routeButton(interaction, parsed.action, guild, config, parsed.argument);
 	// The two presses that change what 🧭onboarding shows: Community turned on, and an
-	// Onboarding config written. Its steps card and chart follow, fire and forget
-	// (2026-10 item 257 Phase 2b).
+	// Onboarding config written (the confirm's Submit, since Confirm itself only opens
+	// the confirm). Its steps card and chart follow, fire and forget (2026-10 item 257 Phase 2b).
 	if (ONBOARDING_CHANGING_ACTIONS.has(parsed.action)) refreshHeadquartersCards(guild, "onboarding");
 }
 
-const ONBOARDING_CHANGING_ACTIONS: ReadonlySet<CommunityAction> = new Set<CommunityAction>(["confirm", "confirmOnboarding"]);
+const ONBOARDING_CHANGING_ACTIONS: ReadonlySet<CommunityAction> = new Set<CommunityAction>(["confirm", "writeOnboarding"]);
 
 async function routeSelect(interaction: StringSelectMenuInteraction, action: CommunityAction, guild: Guild, config: ICommunityConfig, argument: string | null): Promise<void> {
 	if (action === "pickPrompt") await handlePickPrompt(interaction, guild, config, argument);
@@ -127,6 +140,10 @@ async function routeButton(interaction: ButtonInteraction, action: CommunityActi
 			return;
 		case "confirmOnboarding":
 			await handleConfirmOnboarding(interaction, guild, config);
+			return;
+		// The confirm's fallback button, when no modal could open; its Submit routes above.
+		case "writeOnboarding":
+			await handleWriteOnboarding(interaction, guild, config);
 			return;
 		case "cancelOnboarding":
 			await handleCancelOnboarding(interaction, guild);
@@ -172,8 +189,10 @@ export function registerCommunityStateSync(client: Client): void {
 	});
 }
 
-/** Register the community router, for buttons and the review's selects. Called once at boot from main.ts, before the InteractionCreate listener installs. */
+/** Register the community router, for buttons, the review's selects and the Onboarding confirm's Submit. Called once at boot from main.ts, before the InteractionCreate listener installs. */
 export function registerCommunityHandlers(): void {
 	registerButton(COMMUNITY_PREFIX, handleCommunityButton);
 	registerSelectMenu(COMMUNITY_PREFIX, handleCommunityButton);
+	registerButton(COMMUNITY_CONFIRM_PREFIX, handleCommunityButton);
+	registerModal(COMMUNITY_CONFIRM_PREFIX, handleCommunityButton);
 }

@@ -1,5 +1,6 @@
 import type { Guild, RESTPostAPIChatInputApplicationCommandsJSONBody } from "discord.js";
-import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+// import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import { getLevelingConfig } from "@features/leveling/levelingConfig.js";
@@ -96,7 +97,7 @@ function cachedChannels(guild: Guild, ids: readonly string[]): Map<string, FormV
 function listControl(params: {
 	id: string;
 	kind: PickControl["kind"];
-	group: "role" | "channel" | "voicechannel";
+	group: "role" | "voicechannel";
 	option: string;
 	label: string;
 	description: string;
@@ -180,6 +181,10 @@ const serverChannelsPanel: PanelDefinition = {
 const voiceSub = voiceCopy.config.sub;
 
 // Dero's voice and task list only; the arcade switches that sat here are the arcade panel's.
+// ⚙️dero-config's step 1 (2026-10 item 263 Phase 4b, owner decision 15): the voice and
+// Listen switches, the task roles and the voice channels Dero may join. The text channel
+// list is retired (a task posts in 💬dero-commands) and the budget is hidden, so neither
+// is a control nor a covered leaf the saved reply could offer.
 const deroConfigPanel: PanelDefinition = {
 	command: "dero-config",
 	group: null,
@@ -187,11 +192,10 @@ const deroConfigPanel: PanelDefinition = {
 		"enable",
 		"disable",
 		"listen",
-		"cap",
+		// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+		// "cap",
 		"role add",
 		"role remove",
-		"channel add",
-		"channel remove",
 		"voicechannel add",
 		"voicechannel remove",
 	],
@@ -199,7 +203,8 @@ const deroConfigPanel: PanelDefinition = {
 		const config = await guildConfigStore.findByGuildId(guild.id);
 		if (!config) return null;
 		const voice = await deroVoiceConfigStore.findByGuildId(guild.id);
-		const capField = fieldOf(deroConfigCommand, "cap", "dollars");
+		// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+		// const capField = fieldOf(deroConfigCommand, "cap", "dollars");
 		const switches: PanelSwitch[] = [
 			{ value: "voice", label: copy.deroConfig.voice, description: voiceSub.enable, on: voice?.enabled ?? false, callsFor: (on) => [call(on ? "enable" : "disable")] },
 			{ value: "listen", label: copy.deroConfig.listen, description: voiceSub.listen, on: voice?.listenEnabled ?? true, callsFor: (on) => [call("listen", { enabled: flag(on) })] },
@@ -207,7 +212,6 @@ const deroConfigPanel: PanelDefinition = {
 		const controls: PanelControl[] = [
 			{ id: "switches", kind: "switches", label: copy.switchesLabel, description: copy.switchesHint, switches },
 			listControl({ id: "roles", kind: "roles", group: "role", option: "role", label: copy.deroConfig.roles, description: copy.deroConfig.rolesHint, current: cachedRoles(guild, voice?.allowedRoleIds ?? []) }),
-			listControl({ id: "channels", kind: "channels", group: "channel", option: "channel", label: copy.deroConfig.channels, description: voiceSub.channelGroup, current: cachedChannels(guild, voice?.allowedChannelIds ?? []) }),
 			listControl({
 				id: "voice-channels",
 				kind: "channels",
@@ -217,16 +221,17 @@ const deroConfigPanel: PanelDefinition = {
 				description: voiceSub.voiceChannelGroup,
 				current: cachedChannels(guild, voice?.allowedVoiceChannelIds ?? []),
 			}),
-			{
-				id: "cap",
-				kind: "number",
-				label: copy.deroConfig.cap,
-				description: voiceSub.capOption,
-				current: voice?.monthlyCapUsd ?? BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD,
-				min: capField?.minValue ?? 0,
-				max: capField?.maxValue ?? BOT_CONSTANTS.DERO_VOICE_MAX_CAP_USD,
-				callsFor: (value) => [call("cap", { dollars: { kind: "number", value } })],
-			},
+			// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+			// {
+			// 	id: "cap",
+			// 	kind: "number",
+			// 	label: copy.deroConfig.cap,
+			// 	description: voiceSub.capOption,
+			// 	current: voice?.monthlyCapUsd ?? BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD,
+			// 	min: capField?.minValue ?? 0,
+			// 	max: capField?.maxValue ?? BOT_CONSTANTS.DERO_VOICE_MAX_CAP_USD,
+			// 	callsFor: (value) => [call("cap", { dollars: { kind: "number", value } })],
+			// },
 		];
 		return { title: copy.deroConfig.title, controls };
 	},

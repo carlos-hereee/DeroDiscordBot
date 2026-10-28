@@ -105,7 +105,8 @@ describe("the builder", () => {
 		const json = data.toJSON();
 		expect(json.default_member_permissions).toBeUndefined();
 		const names = (json.options ?? []).map((option) => option.name);
-		expect(names).toEqual(["status", "enable", "disable", "listen", "cap", "role", "channel", "voicechannel"]);
+		// The cap is hidden and the text channel group retired (2026-10 item 263 Phase 4b).
+		expect(names).toEqual(["status", "enable", "disable", "listen", "role", "voicechannel"]);
 	});
 });
 
@@ -149,15 +150,18 @@ describe("enable and disable", () => {
 	});
 });
 
-describe("listen and cap", () => {
-	it("sets Listen and the cap, idempotently", async () => {
+describe("listen and the hidden cap", () => {
+	it("sets Listen, idempotently", async () => {
 		await replyText({ sub: "listen", enabled: false });
 		expect(mocks.upsert).toHaveBeenCalledWith("g1", { listenEnabled: false });
 		expect(await replyText({ sub: "listen", enabled: true })).toContain("already");
+	});
 
+	// A cap press from a command registered before the hide answers the status and writes
+	// nothing, so the stored cap keeps being the one spendMeter enforces.
+	it("writes no cap from a stale cap subcommand", async () => {
 		await replyText({ sub: "cap", dollars: 0 });
-		expect(mocks.upsert).toHaveBeenCalledWith("g1", { monthlyCapUsd: 0 });
-		expect(await replyText({ sub: "cap", dollars: 25 })).toContain("already $25");
+		expect(mocks.upsert).not.toHaveBeenCalled();
 	});
 });
 
@@ -176,22 +180,23 @@ describe("allowlists", () => {
 		expect(mocks.removeFromList).toHaveBeenCalledTimes(1);
 	});
 
-	it("files text and voice channels on their own lists", async () => {
+	it("files voice channels on their list, and a stale text channel press files nothing", async () => {
 		await replyText({ group: "channel", sub: "add", channelId: "c1" });
 		await replyText({ group: "voicechannel", sub: "add", channelId: "v1" });
-		expect(mocks.addToList).toHaveBeenCalledWith("g1", "allowedChannelIds", "c1");
+		expect(mocks.addToList).toHaveBeenCalledTimes(1);
 		expect(mocks.addToList).toHaveBeenCalledWith("g1", "allowedVoiceChannelIds", "v1");
 	});
 });
 
 describe("status", () => {
-	it("shows state, list sizes and spend against the cap, and only the voice id's tail", async () => {
+	it("shows state and list sizes with no text channel count and no budget, and only the voice id's tail", async () => {
 		const text = await replyText({ sub: "status" });
 		expect(text).toContain("Voice: **OFF**");
 		expect(text).toContain("Speaking voice: id ending in `wxyz`");
 		expect(text).not.toContain(VOICE_ID);
 		expect(text).toContain("Allowed roles: 1");
-		expect(text).toContain("$3.12 of a $25 cap");
+		expect(text).not.toContain("text channels");
+		expect(text).not.toContain("cap");
 	});
 
 	it("names George, by tail only, for a row that stored no voice id", async () => {
@@ -215,9 +220,9 @@ describe("a failed write", () => {
 describe("admin log lines", () => {
 	const kinds = () => mocks.emit.mock.calls.map((call) => (call[0] as { kind: string }).kind);
 
-	it("logs a cap change as voice.cap, by the member who ran it", async () => {
-		await replyText({ sub: "cap", dollars: 10 });
-		expect(kinds()).toEqual(["voice.cap"]);
+	it("logs a voice channel added as voice.allowlist, by the member who ran it", async () => {
+		await replyText({ group: "voicechannel", sub: "add", channelId: "v1" });
+		expect(kinds()).toEqual(["voice.allowlist"]);
 		expect(mocks.emit.mock.calls[0]![0]).toMatchObject({ actor: { userId: "admin-1" }, guild: { id: "g1" } });
 	});
 

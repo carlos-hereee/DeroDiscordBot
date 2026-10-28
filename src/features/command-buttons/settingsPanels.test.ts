@@ -20,7 +20,6 @@ vi.mock("@features/leveling/levelingConfig.js", async (original) => ({
 	getLevelingConfig: mocks.getLevelingConfig,
 }));
 
-import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { normalizeLevelingSettings } from "@features/leveling/levelingConfig.js";
 import { LAUNCHABLE_COMMANDS } from "./adminCommandLauncher.js";
 import { findLeaf, listLeaves } from "./commandForm.js";
@@ -101,8 +100,11 @@ describe("the panel ids", () => {
 });
 
 describe("/dero-config", () => {
-	it("presets the voice switches, the three lists and the budget, and holds no arcade switch", async () => {
+	// ⚙️dero-config's step 1 (2026-10 item 263 Phase 4b, owner decision 15): the budget is
+	// hidden and the text channel list retired, so neither is a control nor a covered leaf.
+	it("presets the voice switches, the task roles and the voice channels, with no budget, no text channel list and no arcade switch", async () => {
 		const panel = await load("dero-config");
+		expect(panel?.controls.map((item) => item.id)).toEqual(["switches", "roles", "voice-channels"]);
 		const switches = control(panel, "switches");
 		expect(switches.kind === "switches" && switches.switches.map((item) => [item.value, item.on])).toEqual([
 			["voice", true],
@@ -110,8 +112,9 @@ describe("/dero-config", () => {
 		]);
 		const roles = control(panel, "roles");
 		expect(roles.kind === "roles" && [...roles.current.keys()]).toEqual(["r1"]);
-		const cap = control(panel, "cap");
-		expect(cap.kind === "number" && [cap.current, cap.min, cap.max]).toEqual([12, 0, BOT_CONSTANTS.DERO_VOICE_MAX_CAP_USD]);
+		const covered = SETTINGS_PANELS.get("dero-config")?.covered ?? [];
+		expect(covered).not.toContain("cap");
+		expect(covered.filter((path) => path.startsWith("channel "))).toEqual([]);
 	});
 
 	it("turns the voice switch into enable or disable, the kill switch that ends a call", async () => {

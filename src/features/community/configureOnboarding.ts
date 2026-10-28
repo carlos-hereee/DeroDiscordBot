@@ -4,13 +4,14 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showNotice } from "@utils/textModal.js";
+import { showConfirm, showNotice } from "@utils/textModal.js";
 import { communityCopy } from "./communityCopy.js";
-import { buildOnboardingReviewRows } from "./communityControls.js";
+import { COMMUNITY_CUSTOM_IDS, buildOnboardingReviewRows } from "./communityControls.js";
 import { describeRefusal, type IWriteRefusal } from "./enableCommunity.js";
 import { checkOnboardingPreconditions } from "./onboardingPreconditions.js";
 import {
 	buildOnboardingDraft,
+	reviewedDefaults,
 	rolesReusedAcrossPrompts,
 	toOnboardingEditOptions,
 	validateOnboardingDraft,
@@ -27,11 +28,12 @@ import { setupCopy } from "@features/setup/setupCopy.js";
 //        247 Phase 4): check the server can take Onboarding, read what it already
 //        has, draft the questions, show a private review whose controls edit each
 //        question and each answer (promptEditModal, 2026-10 item 254), and on
-//        Confirm write the whole config in one guild.editOnboarding
-//        call. It never writes a role to a member (Discord Onboarding does, when the
+//        Confirm open a confirm modal of the summary whose Submit writes the whole
+//        config in one guild.editOnboarding call (2026-10 item 263 R3-20). It never writes a role to a member (Discord Onboarding does, when the
 //        member answers the final question) and never stores anyone's answers.
-// Who:   communityButtons routes `community:configure`, `community:confirmOnboarding`
-//        and `community:cancelOnboarding` here AFTER it has gated the clicker;
+// Who:   communityButtons routes `community:configure`, `community:confirmOnboarding`,
+//        `community:writeOnboarding` (the confirm's Submit and its fallback button) and
+//        `community:cancelOnboarding` here AFTER it has gated the clicker;
 //        promptEditModal edits a question of the draft this file holds and redraws
 //        the review with buildOnboardingReview.
 // When:  on a press. The draft waits ONBOARDING_DRAFT_TTL_MS in memory, so a restart
@@ -39,8 +41,9 @@ import { setupCopy } from "@features/setup/setupCopy.js";
 // How:   ① preconditions, refused with one plain sentence; ② fetchOnboarding, and
 //        nothing is drafted over a config Dero could not read; ③ the draft, which
 //        keeps every question the server already has; ④ the review; ⑤ Confirm runs
-//        ① and the draft's own checks again against the live guild, then writes;
-//        ⑥ audit rows and the owner DM, fire and forget.
+//        ① and the draft's own checks, then opens the confirm modal, and its Submit
+//        runs them again against the live guild before it writes; ⑥ audit rows and
+//        the owner DM, fire and forget.
 
 // ── constants ────────────────────────────────────────────────────────
 
@@ -184,8 +187,48 @@ async function readLiveOnboarding(guild: Guild): Promise<IOnboardingSnapshot | {
 
 // ── ⑤ ⑥ Confirm ─────────────────────────────────────────────────────
 
-/** The review's Confirm button, once the router has gated the clicker: check again, write, audit, DM the owner. */
+/**
+ * The review's Confirm button, once the router has gated the clicker: check the draft,
+ * then open a confirm modal whose text is the summary. Nothing is written here, so the
+ * draft is read, not taken, and closing the modal leaves the review as it was.
+ */
 export async function handleConfirmOnboarding(interaction: ButtonInteraction, guild: Guild, config: IConfigureOnboardingConfig): Promise<void> {
+	const draft = readPendingDraft(guild.id, interaction.user.id);
+	if (!draft) {
+		await replyOnboardingError(interaction, communityCopy.onboarding.expired, config);
+		return;
+	}
+	const refusal = recheckBeforeWrite(guild, config, draft);
+	if (refusal) {
+		auditRefusedPress(guild.id, interaction.user.id, "confirm", refusal);
+		await replyOnboardingError(interaction, refusal.reason, config);
+		return;
+	}
+	await showConfirm(
+		interaction,
+		{ title: communityCopy.onboarding.review.confirmTitle, sections: [confirmSummary(guild, draft)], confirmId: COMMUNITY_CUSTOM_IDS.writeOnboarding },
+		config
+	);
+}
+
+// The confirm's text: names, not mentions, because a modal shows a mention as raw text.
+function confirmSummary(guild: Guild, draft: PendingOnboardingDraft): string {
+	const defaults = reviewedDefaults(draft);
+	const nameOf = (id: string): string => guild.channels.cache.get(id)?.name ?? id;
+	return communityCopy.onboarding.review.confirmSummary({
+		promptCount: draft.prompts.length,
+		memberRoleName: guild.roles.cache.get(draft.memberRoleId)?.name ?? draft.memberRoleId,
+		channelNames: defaults.channelIds.map(nameOf),
+		categoryNames: defaults.categoryNames,
+	});
+}
+
+/**
+ * The confirm's Submit, or its fallback button when no modal could open, once the router
+ * has gated the clicker: check again, write, audit, DM the owner. A modal Submit is
+ * reachable without the Confirm press that opened it, so every check runs again here.
+ */
+export async function handleWriteOnboarding(interaction: ButtonInteraction | ModalSubmitInteraction, guild: Guild, config: IConfigureOnboardingConfig): Promise<void> {
 	const draft = takePendingDraft(guild.id, interaction.user.id);
 	if (!draft) {
 		await replyOnboardingError(interaction, communityCopy.onboarding.expired, config);
@@ -203,7 +246,8 @@ export async function handleConfirmOnboarding(interaction: ButtonInteraction, gu
 		return;
 	}
 
-	// An update, so the review itself becomes the result and its buttons go away.
+	// An update, so the review itself becomes the result and its buttons go away: the
+	// confirm modal opened from the review's Confirm, so its Submit updates that message.
 	await interaction.deferUpdate();
 	const writeRefusal = await writeOnboarding(guild, draft);
 	if (writeRefusal) {
@@ -218,7 +262,8 @@ export async function handleConfirmOnboarding(interaction: ButtonInteraction, gu
 	adminLog.emitFor(interaction, guild.id, "config.change", { subject: setupCopy.adminLog.subjects.onboarding, detail: setupCopy.adminLog.updated });
 
 	void notifyOwnerThenAudit(guild, interaction.user.id, draft);
-	const summary = { promptCount: draft.prompts.length, defaultChannelCount: draft.defaultChannelIds.length, memberRoleId: draft.memberRoleId };
+	// Channels only: a category among the defaults is no channel (2026-10 item 263 R3-20).
+	const summary = { promptCount: draft.prompts.length, defaultChannelCount: reviewedDefaults(draft).channelIds.length, memberRoleId: draft.memberRoleId };
 	await interaction.editReply({
 		embeds: [infoEmbed(communityCopy.onboarding.success.title, communityCopy.onboarding.success.description(summary), getPluginCopy(config).COLORS.ADMIN, config)],
 		components: [],
@@ -286,7 +331,9 @@ export function buildOnboardingReview(draft: PendingOnboardingDraft, config: ICo
 		const name = truncate(copy.promptFieldName(index + 1, prompt.title), Math.min(EMBED_FIELD_NAME_MAX, Math.floor(fieldBudget / 3)));
 		return { name, value: promptFieldValue(prompt, reused, Math.min(EMBED_FIELD_VALUE_MAX, fieldBudget - name.length)) };
 	});
-	const embed = infoEmbed(copy.title, copy.description({ ...draft, reusedRoleIds }), getPluginCopy(config).COLORS.ADMIN, config).addFields(fields);
+	const defaults = reviewedDefaults(draft);
+	const description = copy.description({ ...draft, defaultChannelIds: defaults.channelIds, defaultCategoryNames: defaults.categoryNames, reusedRoleIds });
+	const embed = infoEmbed(copy.title, description, getPluginCopy(config).COLORS.ADMIN, config).addFields(fields);
 	const components = buildOnboardingReviewRows({ revision, prompts: draft.prompts, focusedPrompt: focus.prompt ?? null, focusedOption: focus.option ?? null });
 	return { embeds: [embed], components };
 }

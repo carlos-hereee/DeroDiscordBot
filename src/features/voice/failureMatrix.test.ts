@@ -399,7 +399,9 @@ function makeWorld() {
 					runBrainTurn(input, {
 						queue,
 						loadConfig: (id) => deroVoiceConfigStore.findByGuildId(id),
-						execute: (exec) => executeActions({ ...exec, deps: { fetchMember, voice: defaultExecutorVoiceDeps } }),
+						// #general stands in for 💬dero-commands, the one task channel (2026-10 item 263 Phase 4b).
+						loadTaskChannelIds: async () => [GENERAL],
+						execute: (exec) => executeActions({ ...exec, deps: { fetchMember, loadTaskChannelIds: async () => [GENERAL], voice: defaultExecutorVoiceDeps } }),
 						now: () => Date.now(),
 					}),
 				latency: createLatencyLog(),

@@ -52,7 +52,9 @@ export type ScreeningReplyOutcome = "enabled" | "skipped" | "refused";
 /** What the Configure Onboarding review says above its questions. */
 export interface IOnboardingReviewSummary {
 	memberRoleId: string;
+	/** The default channels alone; a category among the defaults is in defaultCategoryNames (2026-10 item 263 R3-20). */
 	defaultChannelIds: readonly string[];
+	defaultCategoryNames: readonly string[];
 	startedFromExisting: boolean;
 	finalPromptAdded: boolean;
 	/** Roles given by answers in more than one question, which the review warns about. */
@@ -82,6 +84,10 @@ const mentionList = (ids: readonly string[], shown: number, render: (id: string)
 	const named = ids.slice(0, shown).map(render).join(", ");
 	return ids.length > shown ? `${named} and ${ids.length - shown} more` : named;
 };
+
+// A category among the default channels, on its own line and never counted as a
+// channel: a newcomer gets every channel in it (owner decision 18 of 2026-10 item 263).
+const onboardingCategoryLine = (name: string): string => `• everything in the **${name}** category`;
 
 // The review's opening line: a fresh draft, or the server's own questions kept,
 // with or without the final question Dero had to add.
@@ -303,9 +309,10 @@ export const communityCopy = {
 					`Confirm switches Onboarding on in Advanced mode, and the final question gives <@&${summary.memberRoleId}>.`,
 					"",
 					`**Default channels** (${summary.defaultChannelIds.length}), which every new member gets right away: ${channels}`,
+					...summary.defaultCategoryNames.map((name) => onboardingCategoryLine(name)),
 					"",
 					...(summary.reusedRoleIds.length > 0 ? [reusedRolesWarning(summary.reusedRoleIds), ""] : []),
-					"Pick a question below to edit it, delete it, or add and change its answers, each with its own roles. Nothing changes until you press Confirm.",
+					"Pick a question below to edit it, delete it, or add and change its answers, each with its own roles. Nothing changes until you press Confirm and then Submit.",
 				].join("\n");
 			},
 			promptFieldName: (position: number, title: string): string => `${position}. ${title}`,
@@ -317,6 +324,20 @@ export const communityCopy = {
 				`• ${option.title}${option.description ? `: ${option.description}` : ""}${optionGrants(option, reusedRoleIds)}`,
 			// When a question has more answers than one embed field holds.
 			moreOptions: (count: number): string => `and ${count} more`,
+			// The confirm modal Confirm opens (2026-10 item 263 R3-20): the summary again, so
+			// nothing changes on Discord until its Submit. A modal title holds 45 characters,
+			// and names rather than mentions, since a modal shows a mention as raw text.
+			confirmTitle: "Switch Onboarding on?",
+			confirmSummary: (summary: { promptCount: number; memberRoleName: string; channelNames: readonly string[]; categoryNames: readonly string[] }): string =>
+				[
+					"Submit switches Discord Onboarding on for this server in Advanced mode, with:",
+					"",
+					`• Questions: ${summary.promptCount}, ending with the one that gives @${summary.memberRoleName}`,
+					`• Default channels (${summary.channelNames.length}): ${summary.channelNames.length > 0 ? mentionList(summary.channelNames, REVIEW_DEFAULT_CHANNELS_SHOWN, (name) => `#${name}`) : "none"}`,
+					...summary.categoryNames.map((name) => onboardingCategoryLine(name)),
+					"",
+					"Close this to keep editing; nothing changes until you Submit.",
+				].join("\n"),
 		},
 
 		// ── the edit modals ──

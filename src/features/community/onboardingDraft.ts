@@ -1,6 +1,6 @@
-import { GuildOnboardingMode, GuildOnboardingPromptType, type Emoji, type Guild, type GuildOnboarding, type GuildOnboardingEditOptions } from "discord.js";
+import { ChannelType, GuildOnboardingMode, GuildOnboardingPromptType, type Emoji, type Guild, type GuildOnboarding, type GuildOnboardingEditOptions } from "discord.js";
 import type { communityCopy } from "./communityCopy.js";
-import { everyoneSendableChannelIds, isRoleBelowBot } from "./onboardingPreconditions.js";
+import { everyoneCanView, everyoneSendableChannelIds, isRoleBelowBot } from "./onboardingPreconditions.js";
 
 // ── onboardingDraft ──────────────────────────────────────────────────
 // What:  the Onboarding draft the owner reviews before Confirm (2026-10 item 247
@@ -17,7 +17,8 @@ import { everyoneSendableChannelIds, isRoleBelowBot } from "./onboardingPrecondi
 //        already has questions keeps every one of them, ids included, so nothing it
 //        had is silently replaced, and gains the final question only when none of
 //        its own already has that shape; ③ default channels are #introductions, the
-//        server's existing defaults and every channel @everyone can send in;
+//        server's existing defaults and every channel @everyone can send in, each
+//        one a new member can open, a category among them named apart;
 //        ④ every role an answer gives must be one Dero can hand out.
 
 // ── constants ────────────────────────────────────────────────────────
@@ -79,11 +80,20 @@ export interface IDraftPrompt {
 	isFinal: boolean;
 }
 
+/** A category among the default channels: the review names it as a category, never counts it as a channel. */
+export interface IDraftCategory {
+	id: string;
+	name: string;
+}
+
 /** A draft waiting for the owner's Confirm. */
 export interface PendingOnboardingDraft {
 	mode: GuildOnboardingMode.OnboardingAdvanced;
 	prompts: IDraftPrompt[];
+	/** Every default Discord gets, categories included. */
 	defaultChannelIds: string[];
+	/** The categories among defaultChannelIds, with the names the review shows (2026-10 item 263 R3-20). */
+	defaultCategories: IDraftCategory[];
 	memberRoleId: string;
 	/** The draft began from questions the server already had rather than the starter set. */
 	startedFromExisting: boolean;
@@ -125,10 +135,12 @@ export function buildOnboardingDraft({ guild, stored, copy, current }: IBuildOnb
 
 	const existingPrompts = current?.prompts ?? [];
 	const questions = existingPrompts.length > 0 ? keepExistingPrompts(existingPrompts, memberRoleId, copy) : { prompts: starterPrompts(memberRoleId, copy), finalPromptAdded: false };
+	const defaults = draftDefaultChannels(guild, stored, current);
 	const draft: PendingOnboardingDraft = {
 		mode: GuildOnboardingMode.OnboardingAdvanced,
 		prompts: questions.prompts,
-		defaultChannelIds: draftDefaultChannelIds(guild, stored, current),
+		defaultChannelIds: defaults.channelIds,
+		defaultCategories: defaults.categories,
 		memberRoleId,
 		startedFromExisting: existingPrompts.length > 0,
 		finalPromptAdded: questions.finalPromptAdded,
@@ -191,11 +203,27 @@ function hasFinalShape(prompt: IDraftPrompt, memberRoleId: string): boolean {
 
 // ③ Introductions first, then what the owner already chose, then every channel
 // @everyone can send in, each once. Only channels still in the guild are kept: a
-// default naming a deleted channel would fail the whole write.
-function draftDefaultChannelIds(guild: Guild, stored: IOnboardingDraftConfig, current: IOnboardingSnapshot | null): string[] {
+// default naming a deleted channel would fail the whole write. A default a new member
+// could not open is left off, and a category the server's own defaults hold (Discord
+// renders its mention as plain text) is kept but set apart, so the review names it as a
+// category rather than counting it as a channel (2026-10 item 263 R3-20, owner decision 18).
+function draftDefaultChannels(guild: Guild, stored: IOnboardingDraftConfig, current: IOnboardingSnapshot | null): { channelIds: string[]; categories: IDraftCategory[] } {
 	const candidates = [stored.introChannelId, ...(current?.defaultChannelIds ?? []), ...everyoneSendableChannelIds(guild)];
-	const present = candidates.filter((id): id is string => typeof id === "string" && guild.channels.cache.has(id));
-	return [...new Set(present)];
+	const channelIds: string[] = [];
+	const categories: IDraftCategory[] = [];
+	for (const id of new Set(candidates)) {
+		const channel = typeof id === "string" ? guild.channels.cache.get(id) : undefined;
+		if (!channel || !everyoneCanView(guild, channel)) continue;
+		channelIds.push(channel.id);
+		if (channel.type === ChannelType.GuildCategory) categories.push({ id: channel.id, name: channel.name });
+	}
+	return { channelIds, categories };
+}
+
+/** The defaults as the review and its confirm show them: the channels alone, and the categories by name. */
+export function reviewedDefaults(draft: Pick<PendingOnboardingDraft, "defaultChannelIds" | "defaultCategories">): { channelIds: string[]; categoryNames: string[] } {
+	const categoryIds = new Set(draft.defaultCategories.map((category) => category.id));
+	return { channelIds: draft.defaultChannelIds.filter((id) => !categoryIds.has(id)), categoryNames: draft.defaultCategories.map((category) => category.name) };
 }
 
 // ── checking ─────────────────────────────────────────────────────────

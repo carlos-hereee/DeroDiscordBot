@@ -52,7 +52,7 @@ function makeGuild() {
 	const channels = new Map(
 		["intro", "a", "b", "c", "d"].map((id) => [
 			id,
-			{ id, type: ChannelType.GuildText, permissionsFor: (role: { id: string }) => ({ has: (flags: bigint[]) => role.id === EVERYONE && flags.includes(PermissionFlagsBits.SendMessages) }) },
+			{ id, type: ChannelType.GuildText, permissionsFor: (role: { id: string }) => ({ has: (flags: bigint | bigint[]) => role.id === EVERYONE && (Array.isArray(flags) ? flags.includes(PermissionFlagsBits.SendMessages) : true) }) },
 		])
 	);
 	return {
@@ -193,9 +193,12 @@ async function pressControl(guild: FakeGuild, customId: string, options: { submi
 
 const answer = (title: string, roles: string[] = [], description = ""): ISubmitValues => ({ text: { option_title: title, option_description: description }, roles });
 
+// Confirm opens the confirm modal (2026-10 item 263 R3-20); its Submit is what writes.
 async function confirmPayload(guild: FakeGuild) {
 	const { interaction } = press(guild, OWNER, COMMUNITY_CUSTOM_IDS.confirmOnboarding);
 	await handleCommunityButton(interaction);
+	const confirmSubmit = submission(guild, OWNER, COMMUNITY_CUSTOM_IDS.writeOnboarding, { text: {} });
+	await handleCommunityButton(Object.assign(confirmSubmit, { deferUpdate: vi.fn(async () => undefined), editReply: vi.fn(async () => undefined) }));
 	return guild.editOnboarding.mock.calls[0]![0] as {
 		prompts: Array<{ title: string; singleSelect: boolean; required: boolean; options: Array<{ id: string | null; title: string; description: string | null; roles: string[]; channels: string[] }> }>;
 	};

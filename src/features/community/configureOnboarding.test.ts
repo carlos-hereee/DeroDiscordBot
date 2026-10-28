@@ -8,6 +8,7 @@ import {
 	MessageFlags,
 	PermissionFlagsBits,
 	type ButtonInteraction,
+	type ModalSubmitInteraction,
 } from "discord.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
@@ -53,6 +54,25 @@ interface IGuildOptions {
 	sendableChannels?: number;
 	memberRolePosition?: number;
 	live?: unknown;
+	/** Channels or categories @everyone cannot send in, each with whether a new member can open it. */
+	extraChannels?: Array<{ id: string; name: string; type: ChannelType; viewable: boolean }>;
+}
+
+// A channel whose resolved @everyone permissions are read through permissionsFor: a
+// single flag asks about viewing, a list about viewing and sending together.
+function fakeChannel(id: string, name: string, type: ChannelType, viewable: boolean, sendable: boolean) {
+	return {
+		id,
+		name,
+		type,
+		permissionsFor: (role: { id: string }) => ({
+			has: (flags: bigint | bigint[]) => {
+				if (role.id !== EVERYONE) return false;
+				const asked = Array.isArray(flags) ? flags : [flags];
+				return asked.every((flag) => (flag === PermissionFlagsBits.ViewChannel ? viewable : sendable));
+			},
+		}),
+	};
 }
 
 // A live config with no questions and no defaults: a Community server that never
@@ -62,12 +82,8 @@ const emptyOnboarding = () => ({ enabled: false, prompts: new Collection(), defa
 function makeGuild(options: IGuildOptions = {}) {
 	guildCounter += 1;
 	const channelIds = ["intro", ...Array.from({ length: (options.sendableChannels ?? 6) - 1 }, (_, index) => `open-${index}`)];
-	const channels = new Map(
-		channelIds.map((id) => [
-			id,
-			{ id, type: ChannelType.GuildText, permissionsFor: (role: { id: string }) => ({ has: (flags: bigint[]) => role.id === EVERYONE && flags.includes(PermissionFlagsBits.SendMessages) }) },
-		])
-	);
+	const channels = new Map<string, ReturnType<typeof fakeChannel>>(channelIds.map((id) => [id, fakeChannel(id, id, ChannelType.GuildText, true, true)]));
+	for (const extra of options.extraChannels ?? []) channels.set(extra.id, fakeChannel(extra.id, extra.name, extra.type, extra.viewable, false));
 	const owner = { send: vi.fn(async () => undefined) };
 	return {
 		id: `g${guildCounter}`,
@@ -136,11 +152,45 @@ async function openReview(guild: FakeGuild, userId = OWNER) {
 	return interaction;
 }
 
+// The review's Confirm: it opens the confirm modal (2026-10 item 263 R3-20) and writes nothing.
 async function pressConfirm(guild: FakeGuild, userId = OWNER) {
 	const interaction = press(guild, userId, COMMUNITY_CUSTOM_IDS.confirmOnboarding);
 	await handleCommunityButton(interaction);
 	return interaction;
 }
+
+// The confirm modal's Submit, opened from the review message, so it updates that message.
+async function submitConfirm(guild: FakeGuild, userId = OWNER) {
+	interactionCounter += 1;
+	const interaction = {
+		id: `int-${interactionCounter}`,
+		customId: COMMUNITY_CUSTOM_IDS.writeOnboarding,
+		guild,
+		user: { id: userId },
+		fields: { getTextInputValue: vi.fn() },
+		isFromMessage: () => true,
+		reply: vi.fn(async () => undefined),
+		followUp: vi.fn(async () => undefined),
+		editReply: vi.fn(async () => undefined),
+		deferUpdate: vi.fn(async () => undefined),
+	} as unknown as ModalSubmitInteraction & Record<"reply" | "followUp" | "editReply" | "deferUpdate", ReturnType<typeof vi.fn>>;
+	await handleCommunityButton(interaction);
+	return interaction;
+}
+
+// Confirm, then the confirm's Submit: the one path that writes.
+async function confirmAndSubmit(guild: FakeGuild, userId = OWNER) {
+	await pressConfirm(guild, userId);
+	return submitConfirm(guild, userId);
+}
+
+type ConfirmModalJson = { custom_id: string; title: string; components: Array<{ content?: string }> };
+const confirmModalOf = (interaction: { showModal: ReturnType<typeof vi.fn> }): ConfirmModalJson | undefined =>
+	interaction.showModal.mock.calls
+		.map((call) => (call[0] as { toJSON(): unknown }).toJSON() as ConfirmModalJson)
+		.find((modal) => modal.custom_id === COMMUNITY_CUSTOM_IDS.writeOnboarding);
+const confirmTextOf = (interaction: { showModal: ReturnType<typeof vi.fn> }): string =>
+	(confirmModalOf(interaction)?.components ?? []).map((component) => component.content ?? "").join("\n");
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -255,7 +305,7 @@ describe("Confirm", () => {
 	it("calls editOnboarding once with the full payload, replaces the review with the result, and DMs the owner", async () => {
 		const guild = makeGuild();
 		await openReview(guild);
-		const confirm = await pressConfirm(guild);
+		const confirm = await confirmAndSubmit(guild);
 
 		expect(confirm.deferUpdate).toHaveBeenCalledOnce();
 		expect(guild.editOnboarding).toHaveBeenCalledOnce();
@@ -319,12 +369,14 @@ describe("Confirm", () => {
 		});
 	});
 
-	it("writes once on a double press: the second Confirm finds the draft taken", async () => {
+	it("writes once on a double Submit: the second finds the draft taken, and so does a later Confirm", async () => {
 		const guild = makeGuild();
 		await openReview(guild);
-		await pressConfirm(guild);
+		await confirmAndSubmit(guild);
+		const secondSubmit = await submitConfirm(guild);
 		const second = await pressConfirm(guild);
 		expect(guild.editOnboarding).toHaveBeenCalledOnce();
+		expect(secondSubmit.deferUpdate).not.toHaveBeenCalled();
 		expect(refusalText(second)).toBe(copy.expired);
 	});
 
@@ -339,7 +391,7 @@ describe("Confirm", () => {
 		expect(auditRows(BOT_LOG_EVENTS.ONBOARDING_PRECONDITION_FAILED).at(-1)).toMatchObject({ step: "confirm", code: "community-off" });
 
 		guild.features = ["COMMUNITY"];
-		await pressConfirm(guild);
+		await confirmAndSubmit(guild);
 		expect(guild.editOnboarding).toHaveBeenCalledOnce();
 	});
 
@@ -356,7 +408,7 @@ describe("Confirm", () => {
 		const guild = makeGuild();
 		guild.editOnboarding.mockRejectedValueOnce(new DiscordAPIError({ code: 50013, message: "Missing Permissions" }, 50013, 403, "PUT", "url", {}));
 		await openReview(guild);
-		const refused = await pressConfirm(guild);
+		const refused = await confirmAndSubmit(guild);
 
 		const reply = sent(refused.editReply);
 		expect(reply.embeds!.map((embed) => embed.data.title)).toEqual([copy.review.title, rokCommanderCopy.error.title]);
@@ -365,7 +417,7 @@ describe("Confirm", () => {
 		expect(auditRows(BOT_LOG_EVENTS.ONBOARDING_CONFIGURED_BY_BOT)).toEqual([expect.objectContaining({ outcome: "refused-permissions", discordCode: 50013, ownerDm: null })]);
 		expect(guild.fetchOwner).not.toHaveBeenCalled();
 
-		await pressConfirm(guild);
+		await confirmAndSubmit(guild);
 		expect(guild.editOnboarding).toHaveBeenCalledTimes(2);
 	});
 
@@ -374,7 +426,7 @@ describe("Confirm", () => {
 		const discordMessage = "Invalid Form Body\ndefault_channel_ids: Onboarding requires at least 7 default channels";
 		guild.editOnboarding.mockRejectedValueOnce(new DiscordAPIError({ code: 50035, message: discordMessage }, 50035, 400, "PUT", "url", {}));
 		await openReview(guild);
-		const refused = await pressConfirm(guild);
+		const refused = await confirmAndSubmit(guild);
 
 		expect(sent(refused.editReply).embeds![1]!.data.description).toBe(copy.failures.rejected(discordMessage));
 		expect(sent(refused.editReply).embeds![1]!.data.description).toContain("Onboarding requires at least 7 default channels");
@@ -385,7 +437,7 @@ describe("Confirm", () => {
 		const guild = makeGuild();
 		guild.owner.send.mockRejectedValueOnce(new Error("Cannot send messages to this user"));
 		await openReview(guild);
-		const confirm = await pressConfirm(guild);
+		const confirm = await confirmAndSubmit(guild);
 
 		expect(sent(confirm.editReply).embeds![0]!.data.title).toBe(copy.success.title);
 		await vi.waitFor(() => expect(auditRows(BOT_LOG_EVENTS.ONBOARDING_CONFIGURED_BY_BOT)[0]).toMatchObject({ outcome: "configured", ownerDm: "failed" }));
@@ -410,6 +462,82 @@ describe("Confirm", () => {
 		const adminConfirm = await pressConfirm(guild, ADMIN);
 		expect(guild.editOnboarding).not.toHaveBeenCalled();
 		expect(refusalText(adminConfirm)).toBe(copy.expired);
+	});
+});
+
+// R3-20 (2026-10 item 263 Phase 4b, owner decision 18): Confirm opens a confirm modal of
+// the summary, so nothing changes on Discord until its Submit.
+describe("the confirm modal", () => {
+	it("opens on Confirm with the summary as its text, and writes nothing until its Submit", async () => {
+		const guild = makeGuild();
+		await openReview(guild);
+		const confirm = await pressConfirm(guild);
+
+		expect(confirmModalOf(confirm)?.title).toBe(copy.review.confirmTitle);
+		const text = confirmTextOf(confirm);
+		expect(text).toContain("Questions: 3, ending with the one that gives @Member");
+		expect(text).toContain("Default channels (6): #intro, #open-0");
+		expect(guild.editOnboarding).not.toHaveBeenCalled();
+
+		// Closing the modal sends nothing, so the draft waits: a second Confirm opens it again.
+		const again = await pressConfirm(guild);
+		expect(confirmModalOf(again)).toBeDefined();
+		await submitConfirm(guild);
+		expect(guild.editOnboarding).toHaveBeenCalledOnce();
+	});
+
+	it("re-checks on Submit: Community switched off after the modal opened writes nothing and keeps the draft", async () => {
+		const guild = makeGuild();
+		await openReview(guild);
+		await pressConfirm(guild);
+		guild.features = [];
+		const refused = await submitConfirm(guild);
+		expect(guild.editOnboarding).not.toHaveBeenCalled();
+		expect(refused.deferUpdate).not.toHaveBeenCalled();
+
+		guild.features = ["COMMUNITY"];
+		await confirmAndSubmit(guild);
+		expect(guild.editOnboarding).toHaveBeenCalledOnce();
+	});
+
+	it("refuses a Submit from a member who is neither the owner nor an admin", async () => {
+		const guild = makeGuild();
+		await openReview(guild);
+		await pressConfirm(guild);
+		await submitConfirm(guild, MEMBER);
+		expect(guild.editOnboarding).not.toHaveBeenCalled();
+	});
+});
+
+// R3-20 (2026-10 item 263 Phase 4b): the review lists only what a new member would see.
+describe("the review's default channels", () => {
+	it("names a category among the server's defaults as a category, counts channels only, and lists no channel a new member cannot open", async () => {
+		const live = { ...emptyOnboarding(), defaultChannels: new Collection([["entrance", undefined], ["staff", undefined]]) };
+		const guild = makeGuild({
+			live,
+			extraChannels: [
+				{ id: "entrance", name: "entrance", type: ChannelType.GuildCategory, viewable: true },
+				{ id: "staff", name: "staff", type: ChannelType.GuildText, viewable: false },
+			],
+		});
+		const review = await openReview(guild);
+		const description = sent(review.editReply).embeds![0]!.data.description!;
+
+		expect(description).toContain("Default channels** (6)");
+		expect(description).toContain("everything in the **entrance** category");
+		expect(description).not.toContain("<#entrance>");
+		expect(description).not.toContain("<#staff>");
+		// Every listed channel is a link.
+		expect(description.match(/<#[^>]+>/g)).toHaveLength(6);
+
+		const confirm = await pressConfirm(guild);
+		const text = confirmTextOf(confirm);
+		expect(text).toContain("Default channels (6)");
+		expect(text).toContain("everything in the **entrance** category");
+		await submitConfirm(guild);
+		const written = guild.editOnboarding.mock.calls[0]![0] as { defaultChannels: string[] };
+		expect(written.defaultChannels).toContain("entrance");
+		expect(written.defaultChannels).not.toContain("staff");
 	});
 });
 

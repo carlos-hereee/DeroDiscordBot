@@ -446,7 +446,7 @@ export const generalEventsCopy: IPluginCopy = {
 						"`/leveling xp`",
 						"Correct a member's XP or level, reset a member or the server, or export it all.",
 						"`/dero-config`",
-						"Dero's voice: the switch, the monthly budget and who may give Dero tasks.",
+						"Dero's voice: the switch, Listen, who may give Dero tasks and the calls Dero may join.",
 						"`/arcade`",
 						"The arcade: on or off, bot opponents, how far a challenge reaches, the monthly post, network blocks and chips.",
 					].join("\n"),

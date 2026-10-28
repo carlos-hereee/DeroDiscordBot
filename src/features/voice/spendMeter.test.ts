@@ -31,6 +31,7 @@ vi.mock("@db/stores/deroVoiceSpendStore.js", () => ({
 	},
 }));
 
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { tryReserve, refund, monthKey, currentMonthCents } from "./spendMeter.js";
 
 const rowKey = (guildId: string, month: string): string => `${guildId}|${month}`;
@@ -101,6 +102,20 @@ describe("tryReserve against the cap", () => {
 		capUsd(null);
 		expect((await tryReserve("g1", 500, { now: OCTOBER })).status).toBe("ok");
 		expect((await tryReserve("g1", 1, { now: OCTOBER })).status).toBe("capReached");
+	});
+
+	// The budget is hidden from /dero-config, its panel and ⚙️dero-config's chart by the
+	// owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b), and stays ENFORCED here:
+	// a stored cap still stops a spend, and a row that never stored one stops at $5.
+	it("still stops a spend at the stored cap or the $5 default while the budget is hidden", async () => {
+		expect(BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD).toBe(5);
+		capUsd(2);
+		expect((await tryReserve("g1", 200, { now: OCTOBER })).status).toBe("ok");
+		expect((await tryReserve("g1", 1, { now: OCTOBER })).status).toBe("capReached");
+
+		mocks.findByGuildId.mockResolvedValue({ enabled: true });
+		expect((await tryReserve("g2", 500, { now: OCTOBER })).status).toBe("ok");
+		expect((await tryReserve("g2", 1, { now: OCTOBER })).status).toBe("capReached");
 	});
 
 	it("counts the characters alongside the cents", async () => {

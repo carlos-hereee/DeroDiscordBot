@@ -8,7 +8,8 @@ vi.mock("./headquartersCards.js", () => ({ refreshHeadquartersCards: vi.fn() }))
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { adminLog } from "./adminLog.js";
 import { setupCopy } from "./setupCopy.js";
-import { choosableAdoptedChannels, handleChoiceSubmit, handleChooseButton, offerAdoptionChoice } from "./adoptionChoice.js";
+import * as adoptionChoice from "./adoptionChoice.js";
+import { adoptedChannelLines, choosableAdoptedChannels, handleChoiceSubmit, handleChooseButton } from "./adoptionChoice.js";
 
 // ── adoptionChoice (2026-10 item 257 Phase 1a) ──────────────────────────────
 // Owner decision 5: a channel the server already had moves into the notice board only
@@ -120,24 +121,18 @@ describe("choosableAdoptedChannels", () => {
 	});
 });
 
-describe("the card", () => {
-	it("posts once in the admin channel, listing each channel nobody has placed, with the Choose button", async () => {
-		const { guild, adminChannel } = rig();
-		store.findByGuildId.mockResolvedValue(row({ adoptedChannelChoices: new Map([["own-welcome", "stay"]]) }));
-
-		await offerAdoptionChoice(guild);
-
-		const sent = adminChannel.send.mock.calls[0]![0] as { embeds: Array<{ data: { description: string } }>; components: Array<{ toJSON(): { components: Array<{ custom_id: string }> } }> };
-		expect(sent.embeds[0]!.data.description).toContain("<#own-rules>");
-		expect(sent.embeds[0]!.data.description).not.toContain("<#own-welcome>");
-		expect(sent.components[0]!.toJSON().components[0]!.custom_id).toBe("adoption:choose");
+// R3-19 (2026-10 item 263 Phase 4b): no card posts in 🔒inner-sanctum; 🧭onboarding's
+// step 2 names the channels by these lines and carries the Choose button.
+describe("🧭onboarding's step 2 lines", () => {
+	it("names each channel an admin may place and the slot it fills", () => {
+		const { guild } = rig();
+		expect(adoptedChannelLines(choosableAdoptedChannels(guild, row()))).toEqual([copy.channelLine("own-welcome", copy.slots.welcomeChannelId), copy.channelLine("own-rules", copy.slots.rulesChannelId)]);
+		expect(copy.channelLine("own-welcome", copy.slots.welcomeChannelId)).toBe("• <#own-welcome> as the welcome log");
 	});
 
-	it("posts nothing when every adopted channel already has an answer", async () => {
-		const { guild, adminChannel } = rig();
-		store.findByGuildId.mockResolvedValue(row({ adoptedChannelChoices: { "own-welcome": "stay", "own-rules": "move" } }));
-		await offerAdoptionChoice(guild);
-		expect(adminChannel.send).not.toHaveBeenCalled();
+	it("has no card of its own left to post in the admin channel", () => {
+		expect("offerAdoptionChoice" in adoptionChoice).toBe(false);
+		expect("buildAdoptionChoiceCard" in adoptionChoice).toBe(false);
 	});
 });
 

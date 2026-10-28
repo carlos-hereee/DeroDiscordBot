@@ -55,14 +55,13 @@ beforeEach(() => {
 
 describe("the step to flow map", () => {
 	it.each([
+		// ⚙️dero-config's two steps and 🎰arcade-control's one panel step (2026-10 item 263 Phase 4b).
 		["hqstep:deroConfig:1", { kind: "launch", launchId: "dero-config" }],
-		["hqstep:deroConfig:4", { kind: "launch", launchId: "dero-config" }],
-		["hqstep:deroConfig:5", { kind: "priority" }],
+		["hqstep:deroConfig:2", { kind: "priority" }],
 		["hqstep:arcadeControl:1", { kind: "leaf", command: "arcade", path: "on" }],
 		["hqstep:arcadeControl:2", { kind: "launch", launchId: "arcade" }],
-		["hqstep:arcadeControl:3", { kind: "launch", launchId: "arcade" }],
-		["hqstep:arcadeControl:4", { kind: "leaf", command: "arcade", path: "reach" }],
-		["hqstep:arcadeControl:5", { kind: "leaf", command: "arcade", path: "server block" }],
+		["hqstep:arcadeControl:3", { kind: "leaf", command: "arcade", path: "reach" }],
+		["hqstep:arcadeControl:4", { kind: "leaf", command: "arcade", path: "server block" }],
 		// 🛠️server-config (2026-10 item 263 Phase 4a): every step an existing /events, /server or /leveling flow.
 		["hqstep:serverConfig:1", { kind: "leaf", command: "events", path: "kvk-season" }],
 		["hqstep:serverConfig:2", { kind: "leaf", command: "events", path: "stream weekly" }],
@@ -77,8 +76,20 @@ describe("the step to flow map", () => {
 		expect(stepTarget(customId)).toEqual(target);
 	});
 
+	// R3-15 (2026-10 item 263 Phase 4b): no two steps of one card open the same flow.
+	it.each([
+		["deroConfig", 2],
+		["arcadeControl", 4],
+		["serverConfig", 5],
+	])("%s opens a different flow from each of its %i steps", (domain, steps) => {
+		const targets = Array.from({ length: steps }, (_unused, index) => JSON.stringify(stepTarget(`hqstep:${domain}:${index + 1}`)));
+		expect(targets).not.toContain("null");
+		expect(new Set(targets).size).toBe(steps);
+	});
+
 	it("knows no step past the card, and no onboarding step (those carry their flow's own customId)", () => {
-		expect(stepTarget("hqstep:deroConfig:6")).toBeNull();
+		expect(stepTarget("hqstep:deroConfig:3")).toBeNull();
+		expect(stepTarget("hqstep:arcadeControl:5")).toBeNull();
 		expect(stepTarget("hqstep:onboarding:1")).toBeNull();
 		expect(stepTarget("hqstep:serverConfig:6")).toBeNull();
 		// A switch exists only on 🛠️server-config, and only by its own name.
@@ -88,9 +99,9 @@ describe("the step to flow map", () => {
 	});
 
 	it("opens a panel through the launcher, a leaf through the launcher, and answers a stale step", async () => {
-		await pressStep(press("hqstep:deroConfig:2"));
+		await pressStep(press("hqstep:deroConfig:1"));
 		expect(mocks.openAdminLaunch).toHaveBeenCalledWith(expect.anything(), "dero-config");
-		await pressStep(press("hqstep:arcadeControl:5"));
+		await pressStep(press("hqstep:arcadeControl:4"));
 		expect(mocks.openAdminLeaf).toHaveBeenCalledWith(expect.anything(), "arcade", "server block");
 		await pressStep(press("hqstep:arcadeControl:9"));
 		// A stale step is a state, a notice titled Setup (owner rule 1, 2026-10 item 263 Phase 1c).
@@ -98,9 +109,9 @@ describe("the step to flow map", () => {
 	});
 });
 
-describe("step 5, the voice priority order", () => {
+describe("step 2, the voice priority order", () => {
 	it("opens a modal of four selects preset to the stored order, for an admin", async () => {
-		await pressStep(press("hqstep:deroConfig:5"));
+		await pressStep(press("hqstep:deroConfig:2"));
 		expect(mocks.showModalOrReply).toHaveBeenCalledOnce();
 		const modal = buildPriorityModal([...DEFAULT_VOICE_PRIORITY_ORDER]).toJSON();
 		expect(modal.title).toBe(voiceCopy.priority.modalTitle);
@@ -109,7 +120,7 @@ describe("step 5, the voice priority order", () => {
 
 	it("refuses a member before any modal opens", async () => {
 		mocks.gate.mockResolvedValue(false);
-		await pressStep(press("hqstep:deroConfig:5"));
+		await pressStep(press("hqstep:deroConfig:2"));
 		expect(mocks.showModalOrReply).not.toHaveBeenCalled();
 		expect(mocks.showNotice).toHaveBeenCalledWith(expect.anything(), { title: deroBrainCopy.noticeTitle, sections: [voiceCopy.priority.notAdmin] });
 	});

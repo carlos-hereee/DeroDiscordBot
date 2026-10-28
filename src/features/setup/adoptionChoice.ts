@@ -19,7 +19,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { COLORS } from "@base/copy/brand.js";
 import { registerButton, registerModal } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
-import { beginChannelAnswer, type PendingChannelAnswer } from "@utils/answerInChannel.js";
+import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showModalOrReply, showNotice } from "@utils/textModal.js";
 import { mustStayReadable, readOnboardingSafeChannels } from "@features/community/onboardingChannels.js";
 import { communityOverwritesFor, isMemberRoleGated, type IOverwriteRoles } from "./communityOverwrites.js";
@@ -33,20 +33,20 @@ import { getPluginCopy } from "@base/copy/getCopy.js";
 //        channel the server already had moves into 🪧 NOTICE BOARD or stays where it
 //        is (2026-10 item 257 Phase 1a, owner decision 5), and the ONE move every
 //        path shares once an admin said Move. It never builds or deletes a channel.
-// Who:   GuildSetupManager posts the card (offerAdoptionChoice) after a build or a
-//        boot sweep adopts a channel, and moves a channel whose stored answer is
-//        "move" (moveChosenChannel) when a rebuild adopts it again; main.ts registers
-//        the Choose button and the modal's Submit.
-// When:  the card goes up once per adoption, in the admin channel. Until an admin
-//        answers, the channel is adopted IN PLACE: Dero posts in it and leaves its
-//        place and permissions alone, so nothing moves without an admin saying so.
-// How:   ① the card lists the channels and carries a Choose button; ② Choose
-//        re-checks owner or admin and opens a modal with one select per channel;
-//        ③ Submit re-checks, moves each channel picked to move (its overwrite first,
-//        its parent only after Discord accepts it), stores every answer on
+// Who:   🧭onboarding's step 2 (headquartersCards.onboardingView) names the channels
+//        (choosableAdoptedChannels) and carries the Choose button; GuildSetupManager
+//        moves a channel whose stored answer is "move" (moveChosenChannel) when a
+//        rebuild adopts it again; main.ts registers the Choose button and the Submit.
+//        No card of its own posts in 🔒inner-sanctum (2026-10 item 263 Phase 4b, R3-19).
+// When:  until an admin answers, the channel is adopted IN PLACE: Dero posts in it and
+//        leaves its place and permissions alone, so nothing moves without an admin
+//        saying so.
+// How:   ① Choose re-checks owner or admin and opens a modal with one select per
+//        channel; ② Submit re-checks, moves each channel picked to move (its overwrite
+//        first, its parent only after Discord accepts it), stores every answer on
 //        GuildConfig.adoptedChannelChoices, logs one admin log line per channel and
-//        rewrites the card with what happened. A channel Discord Onboarding uses
-//        moves onto the open shape, so it stays readable by everyone either way.
+//        posts what happened in 🧭onboarding. A channel Discord Onboarding uses moves
+//        onto the open shape, so it stays readable by everyone either way.
 
 // ── constants ────────────────────────────────────────────────────────
 
@@ -133,35 +133,10 @@ export function choosableAdoptedChannels(guild: Pick<Guild, "channels" | "system
 	return choosable;
 }
 
-// ── the card ─────────────────────────────────────────────────────────
-
-/** The card in the admin channel: which channels Dero found, and the Choose button. */
-export function buildAdoptionChoiceCard(entries: readonly IChoosableChannel[]): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
+/** One line per channel for 🧭onboarding's step 2: the channel and the slot it fills ("#spawn-point as the welcome log"). */
+export function adoptedChannelLines(entries: readonly IChoosableChannel[]): string[] {
 	const copy = setupCopy.adoptionChoice;
-	const lines = entries.map((entry) => copy.channelLine(entry.channel.id, copy.slots[entry.slot]));
-	return {
-		embeds: [new EmbedBuilder().setTitle(copy.cardTitle).setDescription(copy.cardBody(lines)).setColor(COLORS.ADMIN)],
-		components: [chooseButtonRow()],
-	};
-}
-
-/**
- * Post the card when the guild has an adopted channel nobody has placed yet. Fire and
- * forget after the adoption it follows (project rule 7): logs its own failures and
- * never throws into the build or the boot sweep.
- */
-export async function offerAdoptionChoice(guild: Guild): Promise<void> {
-	try {
-		const row = (await guildConfigStore.findByGuildId(guild.id)) as unknown as IAdoptionChoiceRow | null;
-		if (!row?.adminChannelId) return;
-		const unanswered = choosableAdoptedChannels(guild, row).filter((entry) => readAdoptionChoice(row, entry.channel.id) === null);
-		if (unanswered.length === 0) return;
-		const adminChannel = await guild.channels.fetch(row.adminChannelId).catch(() => null);
-		if (!(adminChannel instanceof TextChannel)) return;
-		await adminChannel.send({ ...buildAdoptionChoiceCard(unanswered), allowedMentions: { parse: [] } });
-	} catch (error) {
-		console.warn(`[adoption] guild ${guild.id} could not post the channel choice card`, error);
-	}
+	return entries.map((entry) => copy.channelLine(entry.channel.id, copy.slots[entry.slot]));
 }
 
 // ── the modal ────────────────────────────────────────────────────────
@@ -206,7 +181,7 @@ export async function handleChooseButton(interaction: ButtonInteraction): Promis
 	await showModalOrReply(interaction, buildAdoptionChoiceModal(entries, row), () => ({ content: copy.modalRefused, flags: MessageFlags.Ephemeral }));
 }
 
-/** The modal's Submit: re-check, move or leave each channel, store the answers, rewrite the card. */
+/** The modal's Submit: re-check, move or leave each channel, store the answers, post the result in 🧭onboarding. */
 export async function handleChoiceSubmit(interaction: ModalSubmitInteraction): Promise<void> {
 	const copy = setupCopy.adoptionChoice;
 	const guild = interaction.guild;
@@ -217,14 +192,11 @@ export async function handleChoiceSubmit(interaction: ModalSubmitInteraction): P
 		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [copy.notAllowed] });
 		return;
 	}
-	// A move is a Discord round trip or two per channel, past the three second window.
-	// The result replaces the choice card only when the modal came from that card: from
-	// the 🧭onboarding steps card (2026-10 item 257 Phase 2b) an update would overwrite
-	// the steps card, so the result posts as a new card in 🧭onboarding instead (Phase 5).
-	const fromChoiceCard = interaction.isFromMessage() && interaction.message.embeds[0]?.title === copy.cardTitle;
-	let answer: PendingChannelAnswer | null = null;
-	if (fromChoiceCard) await interaction.deferUpdate();
-	else answer = await beginChannelAnswer(interaction, "onboarding");
+	// A move is a Discord round trip or two per channel, past the three second window, so
+	// the press is acknowledged first. The result posts as a new card in 🧭onboarding: an
+	// update would overwrite the steps card the Choose button sits on (2026-10 item 257
+	// Phase 5), and a choice card left on an older server's admin channel answers the same way.
+	const answer = await beginChannelAnswer(interaction, "onboarding");
 
 	const category = row.categoryId ? await guild.channels.fetch(row.categoryId).catch(() => null) : null;
 	const roles = { memberRoleId: row.memberRoleId ?? null, adminRoleId: row.adminRoleId ?? null };
@@ -248,9 +220,7 @@ export async function handleChoiceSubmit(interaction: ModalSubmitInteraction): P
 	if (Object.keys(writes).length > 0) await guildConfigStore.update(guild.id, writes);
 
 	const result = new EmbedBuilder().setTitle(copy.cardTitle).setDescription(lines.join("\n") || copy.nothingToChoose).setColor(COLORS.ADMIN);
-	const card = { embeds: [result], components: [chooseButtonRow()] };
-	if (answer) await answer.send(card);
-	else await interaction.editReply(card).catch((error) => console.warn(`[adoption] guild ${guild.id} could not update the channel choice card`, error));
+	await answer.send({ embeds: [result], components: [chooseButtonRow()] });
 	// 🧭onboarding's step 2 mark follows the answers. Loaded on use, because
 	// headquartersCards reads this module's channel list and a static import back would
 	// close a cycle.

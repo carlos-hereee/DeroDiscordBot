@@ -275,19 +275,13 @@ export const setupCopy = {
 		auditSomeFailed: (failed: readonly string[]): string => `not refreshed: ${failed.join(", ")}`,
 	},
 
-	// The server's own welcome and rules channels (2026-10 item 257 Phase 1a): the card
-	// Dero posts in the admin channel when it adopts one, the modal its Choose button
-	// opens, and the result the card shows after Submit. A modal title, a select label
-	// and an option label hold 45 characters, an option description 100.
+	// The server's own welcome and rules channels (2026-10 item 257 Phase 1a): the lines
+	// 🧭onboarding's step 2 lists them by (2026-10 item 263 Phase 4b), the modal its
+	// Choose button opens, and the result card posted in 🧭onboarding after Submit. A
+	// modal title, a select label and an option label hold 45 characters, an option
+	// description 100.
 	adoptionChoice: {
 		cardTitle: "📌 Your server's own channels",
-		cardBody: (lines: readonly string[]): string =>
-			[
-				"Your server already had these channels, so Dero uses them instead of building its own:",
-				...lines,
-				"",
-				"Nothing has moved. Press **Choose** to move each one into 🪧 NOTICE BOARD or leave it where it is. A channel Discord Onboarding uses stays readable by everyone either way.",
-			].join("\n"),
 		channelLine: (channelId: string, slot: string): string => `• <#${channelId}> as the ${slot}`,
 		slots: { welcomeChannelId: "welcome log", rulesChannelId: "rules channel" },
 		buttonLabel: "Choose",
@@ -359,16 +353,16 @@ export const setupCopy = {
 		staleStep: "This step is no longer available. The card refreshes on the next change.",
 		deroConfig: {
 			title: "⚙️ Dero's voice setup",
-			steps: ["Switch Dero's voice on", "Pick the voice channels Dero may join", "Listen, and who may give Dero tasks", "Set the monthly speech budget", "Set the voice priority order"],
+			steps: ["Dero's voice, Listen, the task roles and the voice channels Dero may join", "Set the voice priority order"],
 			chartTitle: "⚙️ Dero's voice settings",
 			chartSubtitle: "Every switch and setting of Dero's voice in this server.",
 			rows: {
 				voice: "Dero's voice",
 				listen: "Listen buttons",
 				roles: "Task list roles",
-				textChannels: "Text channels Dero posts in",
 				voiceChannels: "Voice channels Dero may join",
-				cap: "Monthly speech budget",
+				// Hidden by the owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b); returns later.
+				// cap: "Monthly speech budget",
 				priority: "Voice priority",
 			},
 		},
@@ -378,6 +372,8 @@ export const setupCopy = {
 			// Step 4 has no button: the member role is named in /setup, and the gate follows
 			// on its own once Community is on (2026-10 item 257, the orchestrator's option A).
 			gatingNote: "The member role is named in /setup; the gate follows on its own once Community is on.",
+			// Step 2's line on a server where Dero adopted none of its own channels.
+			nothingAdopted: "Dero found none of your server's own channels to use, so there is nothing to choose.",
 			chartTitle: "🧭 Onboarding settings",
 			chartSubtitle: "Community, Onboarding and who sees Dero's channels.",
 			rows: {
@@ -390,7 +386,7 @@ export const setupCopy = {
 		},
 		arcadeControl: {
 			title: "🎰 Arcade setup",
-			steps: ["Turn the arcade on", "Chips and the daily claim", "The monthly post and Dero bot opponents", "Rated network reach and registration", "Block servers from your network"],
+			steps: ["Turn the arcade on", "Chips, the daily claim, the monthly post and Dero bot opponents", "Rated network reach and registration", "Block servers from your network"],
 			chartTitle: "🎰 Arcade settings",
 			chartSubtitle: "Every switch and setting of the arcade in this server.",
 			rows: {

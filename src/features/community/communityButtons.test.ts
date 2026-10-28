@@ -101,7 +101,7 @@ beforeEach(() => {
 // managed channel's intro carries a community row any more.
 describe("where the Community buttons live", () => {
 	it("are 🧭onboarding's steps 1 and 3, on the flows' own customIds", () => {
-		const view = onboardingView({ communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: true });
+		const view = onboardingView({ communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: true, adoptedLines: [] });
 		expect(view.steps[0]?.customId).toBe(COMMUNITY_CUSTOM_IDS.enable);
 		expect(view.steps[2]?.customId).toBe(COMMUNITY_CUSTOM_IDS.configure);
 	});

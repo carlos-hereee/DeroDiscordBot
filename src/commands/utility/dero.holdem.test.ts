@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
 
 // The admin role read is a GuildConfig lookup; null keeps these suites on the allowlist only rule.
 vi.mock("@features/dero-brain/speakerAdminRole.js", () => ({ readSpeakerAdminRoleId: vi.fn(async () => null) }));
+// The task channel read is a GuildConfig lookup too (2026-10 item 263 Phase 4b); 💬dero-commands stands in.
+vi.mock("@features/dero-brain/taskChannel.js", () => ({ readTaskChannelIds: vi.fn(async () => ["commands"]) }));
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { findByGuildId: mocks.findByGuildId } }));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: mocks.log } }));
 vi.mock("@features/dero-brain/brainQueue.js", () => ({ brainQueue: { enqueue: mocks.enqueue, isBrainOnline: mocks.isBrainOnline } }));

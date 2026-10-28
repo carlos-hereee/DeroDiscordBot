@@ -50,7 +50,7 @@ import { moveIntoHeadquarters, canManageChannels } from "./headquarters.js";
 import { retireAdminControls } from "./retireAdminControls.js";
 import { CommunityGatingAnnouncement } from "./CommunityGatingAnnouncement.js";
 import { fetchAcceptsDeroContent, findRulesChannel, findWelcomeChannel, readAdoptedChannelIds, readAdoptionChoice, type IAdoptionCandidate } from "./adoption.js";
-import { moveChosenChannel, offerAdoptionChoice } from "./adoptionChoice.js";
+import { moveChosenChannel } from "./adoptionChoice.js";
 import { arcadeSwitchesToWrite } from "./arcadeDefaults.js";
 import { mustStayReadable, readOnboardingSafeChannels } from "@features/community/onboardingChannels.js";
 import { adminLog } from "./adminLog.js";
@@ -1444,12 +1444,11 @@ export class GuildSetupManager {
 	}
 
 	// After a build's row is stored: the adoption admin log lines, which need the admin
-	// log channel id the row now holds, and the card asking where each adopted channel
-	// goes. Fire and forget, like every line after a primary write.
+	// log channel id the row now holds. Fire and forget, like every line after a primary
+	// write. Where each adopted channel goes is asked on 🧭onboarding's step 2, which names
+	// the channels, never in a card of its own (2026-10 item 263 Phase 4b, R3-19).
 	private static afterAdoptionPersisted(guild: Guild, adoptions: ReadonlyArray<{ field: string; channelId: string }>): void {
-		if (adoptions.length === 0) return;
 		for (const adoption of adoptions) GuildSetupManager.logAdoption(guild, adoption.field, adoption.channelId);
-		void offerAdoptionChoice(guild);
 	}
 
 	/**
@@ -1532,7 +1531,6 @@ export class GuildSetupManager {
 				introMessageIds: { ...priorIntroIds, welcomeChannelId: null },
 			});
 			console.log(`[adoption] guild ${guild.id} moved its welcome log from Dero's channel ${currentId} to ${adopted.id}; ${currentId} is now a plain channel`);
-			void offerAdoptionChoice(guild);
 			return true;
 		} catch (error) {
 			console.warn(`[adoption] guild ${guild.id} welcome reconcile failed; the next boot retries`, error);
@@ -1709,7 +1707,6 @@ export class GuildSetupManager {
 		}
 		await guildConfigStore.update(guild.id, update);
 		console.warn(LOG_MESSAGES.setup.channelRepaired(spec.displayName, guild.id));
-		if (adopted) void offerAdoptionChoice(guild);
 		// A rebuilt voice room keeps its place on Dero's voice allow list under its new id
 		// (2026-10 item 257, owner item 8); the dead id comes off.
 		if (spec.kind === "voice") void replaceDeroVoiceRoom(guild.id, stored[spec.configField] as string | null | undefined, newChannel.id);

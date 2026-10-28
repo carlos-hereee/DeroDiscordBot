@@ -64,16 +64,22 @@ function voiceRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe("the step marks, read from a fixture config", () => {
-	it("⚙️dero-config: every step done for a configured voice row, and steps 1 to 3 not done for a fresh one", () => {
-		expect(deroConfigView(voiceRow()).steps.map((step) => step.done)).toEqual([true, true, true, true, true]);
-		expect(deroConfigView(voiceRow({ enabled: false, allowedVoiceChannelIds: [], allowedRoleIds: [] })).steps.map((step) => step.done)).toEqual([
-			false,
-			false,
-			false,
-			true,
-			true,
-		]);
+	// Two steps (2026-10 item 263 Phase 4b, owner decision 15): the settings panel and the
+	// priority order. The panel is done with the voice on and a channel to join; the task
+	// roles are optional, since the owner and the admin role always may.
+	it("⚙️dero-config: two steps, the panel done once the voice is on with a channel to join, the order once a row is saved", () => {
+		expect(deroConfigView(voiceRow()).steps.map((step) => step.done)).toEqual([true, true]);
+		expect(deroConfigView(voiceRow({ allowedRoleIds: [] })).steps.map((step) => step.done)).toEqual([true, true]);
+		expect(deroConfigView(voiceRow({ allowedVoiceChannelIds: [] })).steps.map((step) => step.done)).toEqual([false, true]);
+		expect(deroConfigView(voiceRow({ enabled: false })).steps.map((step) => step.done)).toEqual([false, true]);
 		expect(deroConfigView(null).steps.every((step) => !step.done)).toBe(true);
+		expect(deroConfigView(null).steps.map((step) => step.label)).toEqual(copy.deroConfig.steps);
+		expect(copy.deroConfig.steps).toHaveLength(2);
+	});
+
+	it("⚙️dero-config's chart shows no budget and no text channel list", () => {
+		const labels = deroConfigView(voiceRow({ allowedChannelIds: ["t1"], monthlyCapUsd: 9 })).chart.rows.map((row) => row.label);
+		expect(labels).toEqual([copy.deroConfig.rows.voice, copy.deroConfig.rows.listen, copy.deroConfig.rows.roles, copy.deroConfig.rows.voiceChannels, copy.deroConfig.rows.priority]);
 	});
 
 	it("⚙️dero-config's chart shows each switch and the priority order the admin chose first", () => {
@@ -83,7 +89,7 @@ describe("the step marks, read from a fixture config", () => {
 	});
 
 	it("🧭onboarding: step 4 carries no button and its /setup note; the others carry their own flow's customId", () => {
-		const view = onboardingView({ communityOn: true, onboardingOn: false, gated: true, memberRoleName: "Members", adoptedPlaced: true });
+		const view = onboardingView({ communityOn: true, onboardingOn: false, gated: true, memberRoleName: "Members", adoptedPlaced: true, adoptedLines: [] });
 		expect(view.steps.map((step) => step.done)).toEqual([true, true, false, true]);
 		expect(view.steps.map((step) => step.customId)).toEqual([COMMUNITY_CUSTOM_IDS.enable, CHOOSE_BUTTON_ID, COMMUNITY_CUSTOM_IDS.configure, null]);
 		const card = buildStepsCard(view);
@@ -92,17 +98,32 @@ describe("the step marks, read from a fixture config", () => {
 	});
 
 	it("🧭onboarding's chart says unknown, not off, when Onboarding could not be read", () => {
-		const rows = onboardingView({ communityOn: true, onboardingOn: null, gated: false, memberRoleName: null, adoptedPlaced: false }).chart.rows;
+		const rows = onboardingView({ communityOn: true, onboardingOn: null, gated: false, memberRoleName: null, adoptedPlaced: false, adoptedLines: [] }).chart.rows;
 		expect(rows[1]).toEqual({ label: copy.onboarding.rows.onboarding, kind: "value", value: copy.unknown });
 		expect(rows[2]).toMatchObject({ value: copy.notSet });
 	});
 
-	it("🎰arcade-control: the arcade off and nothing set marks only the switches that default on", () => {
+	// Chips, the monthly post and the bots share the /arcade panel, so they are one step
+	// (2026-10 item 263 Phase 4b, owner decision 15).
+	it("🎰arcade-control: four steps, the arcade off and nothing set marking only the panel step, whose switches default on", () => {
 		const off = arcadeControlView({ gamesCategoryId: null } as HeadquartersRow);
-		expect(off.steps.map((step) => step.done)).toEqual([false, true, true, false, false]);
+		expect(off.steps.map((step) => step.done)).toEqual([false, true, false, false]);
+		expect(off.steps.map((step) => step.label)).toEqual(copy.arcadeControl.steps);
 		expect(off.steps.at(-1)?.optional).toBe(true);
 		const on = arcadeControlView({ gamesCategoryId: "cat", chipEconomyEnabled: false, challengeReach: "network", blockedNetworkGuildIds: ["x"] } as HeadquartersRow);
-		expect(on.steps.map((step) => step.done)).toEqual([true, false, true, true, true]);
+		expect(on.steps.map((step) => step.done)).toEqual([true, false, true, true]);
+		expect(arcadeControlView({ gamesCategoryId: "cat", botOpponentsEnabled: false } as HeadquartersRow).steps[1]?.done).toBe(false);
+	});
+
+	// R3-19 (2026-10 item 263 Phase 4b): the choice lives on 🧭onboarding's step 2, which
+	// names each adopted channel and its slot, or says there is nothing to choose.
+	it("🧭onboarding: step 2 names the channels Dero adopted, or says there is nothing to choose and shows done", () => {
+		const lines = ["• <#c-welcome> as the welcome log"];
+		const adopted = onboardingView({ communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: false, adoptedLines: lines });
+		expect(adopted.steps[1]).toMatchObject({ done: false, note: lines[0], customId: CHOOSE_BUTTON_ID });
+		expect(buildStepsCard(adopted).embeds[0]!.data.description).toContain("<#c-welcome> as the welcome log");
+		const none = onboardingView({ communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: true, adoptedLines: [] });
+		expect(none.steps[1]).toMatchObject({ done: true, note: copy.onboarding.nothingAdopted, customId: CHOOSE_BUTTON_ID });
 	});
 });
 
@@ -199,13 +220,13 @@ describe("the step buttons (2026-10 item 263 Phase 4a, R3-21)", () => {
 describe("buildStepsCard", () => {
 	it("numbers every step with its mark and gives each routed step a button, in two rows at most", () => {
 		const card = buildStepsCard(deroConfigView(voiceRow({ enabled: false })));
-		expect(marks(card.embeds[0]!.data.description)).toEqual([copy.todo.slice(0, 1), copy.done.slice(0, 1), copy.done.slice(0, 1), copy.done.slice(0, 1), copy.done.slice(0, 1)]);
+		expect(marks(card.embeds[0]!.data.description)).toEqual([copy.todo.slice(0, 1), copy.done.slice(0, 1)]);
 		const buttons = card.components.flatMap((row) => row.components.map((button) => button.toJSON() as { custom_id: string; label: string }));
-		expect(buttons.map((button) => button.custom_id)).toEqual([1, 2, 3, 4, 5].map((step) => stepCustomId("deroConfig", step)));
-		expect(buttons.map((button) => button.label)).toEqual(["Step 1", "Step 2", "Step 3", "Step 4", "Step 5"]);
-		// Step 1 is open, grey; the rest are done, green (R3-21).
+		expect(buttons.map((button) => button.custom_id)).toEqual([1, 2].map((step) => stepCustomId("deroConfig", step)));
+		expect(buttons.map((button) => button.label)).toEqual(["Step 1", "Step 2"]);
+		// Step 1 is open, grey; step 2 is done, green (R3-21).
 		const styles = card.components.flatMap((row) => row.components.map((button) => (button.toJSON() as { style: ButtonStyle }).style));
-		expect(styles).toEqual([ButtonStyle.Secondary, ButtonStyle.Success, ButtonStyle.Success, ButtonStyle.Success, ButtonStyle.Success]);
+		expect(styles).toEqual([ButtonStyle.Secondary, ButtonStyle.Success]);
 		expect(card.components.length).toBeLessThanOrEqual(2);
 	});
 });
