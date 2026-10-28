@@ -7,8 +7,14 @@ const mocks = vi.hoisted(() => ({
 	commitMonopolyMove: vi.fn(),
 	commitShot: vi.fn(),
 	commitReady: vi.fn(),
+	secureRandom: vi.fn(),
 }));
 
+// The bots' dice come from secureRandom, so a test that replays a roll can pin its faces.
+vi.mock("@utils/secureRng.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@utils/secureRng.js")>()),
+	secureRandom: mocks.secureRandom,
+}));
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findPlayingWithBots: mocks.findPlayingWithBots } }));
 vi.mock("./roomHoldemHandlers.js", () => ({ playHoldemBotTurn: mocks.playHoldemBotTurn }));
 vi.mock("./roomMonopolyHandlers.js", async (importOriginal) => ({
@@ -40,6 +46,7 @@ beforeEach(() => {
 	mocks.commitMonopolyMove.mockResolvedValue({ ok: true });
 	mocks.commitShot.mockResolvedValue(undefined);
 	mocks.commitReady.mockResolvedValue(undefined);
+	mocks.secureRandom.mockImplementation(() => Math.random());
 });
 
 describe("Monopoly", () => {
@@ -51,7 +58,13 @@ describe("Monopoly", () => {
 		const [, , actorId, move, options] = mocks.commitMonopolyMove.mock.calls[0] as [Client, IGameRoom, string, Move, { onTurnOnly: boolean }];
 		expect(actorId).toBe("dero-bot-red");
 		expect(options).toEqual({ onTurnOnly: false });
-		// The bot's step is the roll its turn opens with.
+		// The bot's step is the roll its turn opens with. The dice are pinned to two different
+		// faces: on real dice a double (one roll in six) deliberately leaves rolledThisTurn false
+		// so the seat rolls again (monopolyState.applyRoll), which made this test fail now and
+		// then (TECH_DEBT part 1, fixed 2026-10 item 263).
+		const faces = [0.1, 0.5];
+		let draw = 0;
+		mocks.secureRandom.mockImplementation(() => faces[draw++ % faces.length]!);
 		const rolled = move(state, actorId);
 		expect(rolled.ok).toBe(true);
 		expect(rolled.state?.rolledThisTurn).toBe(true);
