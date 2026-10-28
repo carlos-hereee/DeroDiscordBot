@@ -111,20 +111,6 @@ export const ChannelContent = {
 		);
 	},
 
-	// ── admin command guide ──────────────────────────────────────
-	// The pinned intro of the dedicated admin command center (its own
-	// homebase channel as of the 2026-06-19 split; previously a second
-	// pinned message inside #inner-sanctum next to adminWelcome). Tracked on
-	// GuildConfig.introMessageIds.adminCommandsChannelId so refreshIntroEmbeds
-	// edits/reposts it in place on boot when copy or the command list evolves.
-	// ADMIN color keeps it visually consistent with the rest of the admin surface.
-	adminCommandGuide(guildConfig?: ICopyConfig | null): EmbedBuilder {
-		const copy = getPluginCopy(guildConfig);
-		const cc = copy.channelContent;
-		return infoEmbed(cc.adminCommandGuide.title, cc.adminCommandGuide.description, copy.COLORS.ADMIN).addFields(
-			...cc.adminCommandGuide.fields
-		);
-	},
 	adminPending(guildConfig?: ICopyConfig | null): EmbedBuilder {
 		const copy = getPluginCopy(guildConfig);
 		return infoEmbed(copy.channelContent.adminWelcome.title, copy.responses.adminRolePending, copy.COLORS.ADMIN);
@@ -183,6 +169,13 @@ export const ChannelContent = {
 		const copy = getPluginCopy(guildConfig);
 		const cc = copy.channelContent;
 		return infoEmbed(cc.arcadeControl.title, cc.arcadeControl.description, copy.COLORS.ADMIN);
+	},
+
+	// 🛠️server-config, the fourth config channel (2026-10 item 263 Phase 4a).
+	serverConfigIntro(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const cc = copy.channelContent;
+		return infoEmbed(cc.serverConfig.title, cc.serverConfig.description, copy.COLORS.ADMIN);
 	},
 
 	// 💬dero-commands' intro, pinned because members write in the channel.

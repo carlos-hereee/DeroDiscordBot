@@ -82,7 +82,7 @@ export async function pauseAllSchedules(interaction: RepliableInteraction, optio
 	}
 
 	// Some or all of the schedules changed: work done, an answer, so it posts in
-	// 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+	// 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 	if (failed > 0) {
 		await answerInChannel(interaction, "admin", { embeds: [infoEmbed("⏸️ Partially paused", c.partialFailure(succeeded, failed), rokCommanderCopy.COLORS.SCHEDULE)] });
 		return;

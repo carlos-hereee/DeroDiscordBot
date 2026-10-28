@@ -146,7 +146,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 			console.warn(`[leaderboard-channel-delete] admin audit notice failed for guild ${guildId}`, noticeErr);
 		}
 
-		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 		await answerInChannel(interaction, "admin", { embeds: [infoEmbed(
 					"🗑️ Leaderboard channel removed",
 					"The leaderboard channel has been deleted from this server and flagged so auto-heal will not rebuild it. To restore it later, run /server leaderboard tracking enabled:True, that re-enables tracking AND clears the removal flag, so the channel rebuilds on the next boot sweep (assuming autoHealEnabled is on).",

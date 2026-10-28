@@ -129,7 +129,8 @@ type OpeningInteraction = ButtonInteraction | StringSelectMenuInteraction;
 
 // The 🏰 DERO HEADQUARTERS channel each command's launcher answers post in (2026-10 item
 // 257, owner decision 7): Dero's config and voice in ⚙️dero-config, the arcade with its
-// economy, chips and network in 🎰arcade-control, every other command in 🎛️admin-controls.
+// economy, chips and network in 🎰arcade-control, every other command in 🛠️server-config
+// (2026-10 item 263 Phase 4a: the "admin" audience is 🛠️server-config's channel now).
 const ANSWER_AUDIENCE: Readonly<Record<string, AnswerAudience>> = {
 	[deroConfigCommand.data.name]: "deroConfig",
 	[arcadeCommand.data.name]: "arcade",

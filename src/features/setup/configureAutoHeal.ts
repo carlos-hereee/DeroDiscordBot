@@ -77,7 +77,7 @@ export async function configureAutoHeal(interaction: RepliableInteraction, optio
 		const body = enabled
 			? "The bot will rebuild any homebase channel that goes missing. This is the default behavior."
 			: "The bot will no longer rebuild deleted homebase channels. A single summary line per boot will note which channels would have been repaired, so check the bot's Railway logs if something feels off. Run this command again with `enabled:True` to restore.";
-		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 		await answerInChannel(interaction, "admin", { embeds: [infoEmbed(heading, body, COLORS.SCHEDULE)] });
 	} catch (err) {
 		console.error("[configure auto-heal] update failed", err);

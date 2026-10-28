@@ -55,10 +55,8 @@ export const SLOT_LABELS: ReadonlyArray<{ label: string; configField: string }> 
 	{ label: "Announcements", configField: "announcementsChannelId" },
 	{ label: "Admin / inner sanctum", configField: "adminChannelId" },
 	{ label: "Upcoming events", configField: "nextDecreeChannelId" },
-	// Admin command center. MISSING until 2026-08-12, so the one channel an admin
-	// is most likely to want renamed was the one slot they could not pick. Not a
-	// deliberate exclusion, just a list nobody extended when the channel shipped.
-	{ label: "Admin controls", configField: "adminCommandsChannelId" },
+	// 🎛️admin-controls has no slot: it is retired and deleted by its stored id
+	// (2026-10 item 263 Phase 4a), so there is nothing left to rename.
 	// 🗒️admin-log (post-launch plan item 11), renameable like every managed channel.
 	{ label: "Admin log", configField: "adminLogChannelId" },
 	// 👋welcome and 📘rules (2026-10 item 247 Phase 2). An autocomplete row each, so
@@ -88,6 +86,7 @@ export const SLOT_LABELS: ReadonlyArray<{ label: string; configField: string }> 
 	{ label: "Dero config", configField: "deroConfigChannelId" },
 	{ label: "Onboarding config", configField: "onboardingConfigChannelId" },
 	{ label: "Arcade control", configField: "arcadeControlChannelId" },
+	{ label: "Server config", configField: "serverConfigChannelId" },
 	{ label: "Dero commands", configField: "commandOutputChannelId" },
 ];
 const VALID_SLOTS = new Set(SLOT_LABELS.map((s) => s.configField));
@@ -225,7 +224,7 @@ export async function renameChannel(interaction: RepliableInteraction, options: 
 		}
 		await guildConfigStore.update(guildId, { channelNames: channelNamesRecord });
 
-		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 		await answerInChannel(interaction, "admin", { embeds: [infoEmbed(
 					"✏️ Channel renamed",
 					`The channel is now named **${newName}** and the rename is persisted, so it will survive any future auto-heal rebuild.\n\nHeads up: renaming the channel directly in Discord works for the live channel but does NOT update the persisted override. Use /server channels rename again any time you want the new name to stick across rebuilds.`,

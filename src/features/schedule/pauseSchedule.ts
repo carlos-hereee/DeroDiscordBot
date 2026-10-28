@@ -102,7 +102,7 @@ export async function pauseOneSchedule(interaction: RepliableInteraction, option
 			? c.pausedUntil(event.name, Math.floor(pausedUntil.getTime() / 1000))
 			: c.paused(event.name);
 
-		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 		await answerInChannel(interaction, "admin", { embeds: [infoEmbed("⏸️ Schedule paused", successText, rokCommanderCopy.COLORS.SCHEDULE)] });
 
 		// Fire-and-forget board refresh so the paused tag renders right

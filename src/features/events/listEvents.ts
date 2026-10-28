@@ -71,6 +71,6 @@ export async function listEvents(interaction: RepliableInteraction): Promise<voi
 	});
 
 	// One field per event, which a notice modal cannot show, so the list posts in
-	// 🎛️admin-controls (2026-10 item 257 Phase 5).
+	// 🛠️server-config (2026-10 item 257 Phase 5).
 	await answerInChannel(interaction, "admin", { embeds: [listEventsEmbed(fields, announcementsChannelId, config)] }, { config });
 }

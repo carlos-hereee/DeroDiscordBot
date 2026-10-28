@@ -51,7 +51,9 @@ export type AnswerAudience =
 	| "onboarding"
 	/** the arcade, the economy, chips and the network: 🎰arcade-control */
 	| "arcade"
-	/** every other admin answer: 🎛️admin-controls */
+	/** the server's own configs: 🛠️server-config (2026-10 item 263 Phase 4a) */
+	| "serverConfig"
+	/** every other admin answer: 🛠️server-config too, since 🎛️admin-controls is retired */
 	| "admin";
 
 /** The GuildConfig fields an answer's channel is read from. */
@@ -60,7 +62,7 @@ export interface AnswerChannelConfig extends ICopyConfig {
 	deroConfigChannelId?: string | null;
 	onboardingConfigChannelId?: string | null;
 	arcadeControlChannelId?: string | null;
-	adminCommandsChannelId?: string | null;
+	serverConfigChannelId?: string | null;
 }
 
 /** What an answer carries in its channel. Components ride along, so a control lives in the channel. */
@@ -110,7 +112,10 @@ const AUDIENCE_FIELD: Record<AnswerAudience, keyof AnswerChannelConfig> = {
 	deroConfig: "deroConfigChannelId",
 	onboarding: "onboardingConfigChannelId",
 	arcade: "arcadeControlChannelId",
-	admin: "adminCommandsChannelId",
+	serverConfig: "serverConfigChannelId",
+	// Every admin answer with no domain of its own (owner decision 14 of 2026-10 item 263):
+	// 🎛️admin-controls is deleted on boot, so this one field moves about 20 call sites.
+	admin: "serverConfigChannelId",
 };
 
 /** The stored channel id an audience's answer posts in, or null when setup never stored it. */

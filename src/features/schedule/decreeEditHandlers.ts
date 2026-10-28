@@ -447,7 +447,7 @@ async function handleEditButton(interaction: ButtonInteraction): Promise<void> {
 //      once the editor picks a zone.
 //   ③ render the proposed-changes embed + apply-scope buttons (apply
 //      once, apply permanent, cancel) on the same prompt.
-// The prompt and every refusal post in 🎛️admin-controls, a refused
+// The prompt and every refusal post in 🛠️server-config, a refused
 // non-editor's in 💬dero-commands (2026-10 item 257 Phase 5); only the
 // editor who submitted can answer the prompt (askInChannel).
 // When step ② is skipped (no time change), step ③ replies directly.

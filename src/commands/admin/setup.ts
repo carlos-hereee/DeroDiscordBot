@@ -115,7 +115,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 	const adminRole = interaction.options.getRole("admin-role", true);
 	const memberRole = interaction.options.getRole("member-role", true);
 
-	// The result posts in 🎛️admin-controls (2026-10 item 257 Phase 5), pinging the admin
+	// The result posts in 🛠️server-config (2026-10 item 257 Phase 5), pinging the admin
 	// who ran setup; the command itself is acknowledged quietly (2026-10 item 263 R3-10).
 	const answer = await beginChannelAnswer(interaction, "admin", { config });
 

@@ -21,7 +21,12 @@ vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { f
 vi.mock("@utils/permissions.js", () => ({ gateOwnerOrAdmin: mocks.gate }));
 vi.mock("@utils/textModal.js", () => ({ showNotice: mocks.showNotice, showModalOrReply: mocks.showModalOrReply }));
 vi.mock("./adminLog.js", () => ({ adminLog: { emitFor: mocks.emitFor } }));
-vi.mock("./headquartersCards.js", () => ({ HEADQUARTERS_STEP_PREFIX: "hqstep", refreshHeadquartersCards: mocks.refresh }));
+vi.mock("./headquartersCards.js", () => ({
+	HEADQUARTERS_STEP_PREFIX: "hqstep",
+	SERVER_CONFIG_STEPS: ["kvkSeason", "streams", "events", "channels", "leveling"],
+	SWITCH_STEP_TAIL: "switch-",
+	refreshHeadquartersCards: mocks.refresh,
+}));
 vi.mock("@handlers/interactionRegistry.js", () => ({
 	registerButton: (prefix: string, handler: (interaction: ButtonInteraction) => Promise<void>) => mocks.buttons.set(prefix, handler),
 	registerModal: (prefix: string, handler: (interaction: ModalSubmitInteraction) => Promise<void>) => mocks.modals.set(prefix, handler),
@@ -58,6 +63,16 @@ describe("the step to flow map", () => {
 		["hqstep:arcadeControl:3", { kind: "launch", launchId: "arcade" }],
 		["hqstep:arcadeControl:4", { kind: "leaf", command: "arcade", path: "reach" }],
 		["hqstep:arcadeControl:5", { kind: "leaf", command: "arcade", path: "server block" }],
+		// 🛠️server-config (2026-10 item 263 Phase 4a): every step an existing /events, /server or /leveling flow.
+		["hqstep:serverConfig:1", { kind: "leaf", command: "events", path: "kvk-season" }],
+		["hqstep:serverConfig:2", { kind: "leaf", command: "events", path: "stream weekly" }],
+		["hqstep:serverConfig:3", { kind: "launch", launchId: "events" }],
+		["hqstep:serverConfig:4", { kind: "launch", launchId: "server-channels" }],
+		["hqstep:serverConfig:5", { kind: "launch", launchId: "leveling" }],
+		// The server switches message.
+		["hqstep:serverConfig:switch-autoHeal", { kind: "leaf", command: "server", path: "auto-heal" }],
+		["hqstep:serverConfig:switch-tracking", { kind: "leaf", command: "server", path: "leaderboard tracking" }],
+		["hqstep:serverConfig:switch-weekStart", { kind: "leaf", command: "server", path: "leaderboard week-start" }],
 	])("%s opens its mapped flow", (customId, target) => {
 		expect(stepTarget(customId)).toEqual(target);
 	});
@@ -65,6 +80,11 @@ describe("the step to flow map", () => {
 	it("knows no step past the card, and no onboarding step (those carry their flow's own customId)", () => {
 		expect(stepTarget("hqstep:deroConfig:6")).toBeNull();
 		expect(stepTarget("hqstep:onboarding:1")).toBeNull();
+		expect(stepTarget("hqstep:serverConfig:6")).toBeNull();
+		// A switch exists only on 🛠️server-config, and only by its own name.
+		expect(stepTarget("hqstep:serverConfig:switch-nope")).toBeNull();
+		expect(stepTarget("hqstep:serverConfig:switch-toString")).toBeNull();
+		expect(stepTarget("hqstep:arcadeControl:switch-autoHeal")).toBeNull();
 	});
 
 	it("opens a panel through the launcher, a leaf through the launcher, and answers a stale step", async () => {

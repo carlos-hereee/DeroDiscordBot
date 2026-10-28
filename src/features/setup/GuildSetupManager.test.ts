@@ -55,7 +55,6 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 		// null/undefined stored id as "also missing, rebuild too", so these must
 		// be present or every repair sweep rebuilds them alongside the real target.
 		nextDecreeChannelId: "ch-nextdecree",
-		adminCommandsChannelId: "ch-admincommands",
 		adminLogChannelId: "ch-adminlog",
 		// 👋welcome and 📘rules (2026-10 item 247 Phase 2), present for the same reason.
 		welcomeChannelId: "ch-welcome",
@@ -87,6 +86,8 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 		deroConfigChannelId: "ch-deroconfig",
 		onboardingConfigChannelId: "ch-onboardingconfig",
 		arcadeControlChannelId: "ch-arcadecontrol",
+		// 🛠️server-config (2026-10 item 263 Phase 4a), which took 🎛️admin-controls' place.
+		serverConfigChannelId: "ch-serverconfig",
 		commandOutputChannelId: "ch-commandoutput",
 		scheduleMessageId: "msg-schedule",
 		adminRoleId: null,
@@ -160,7 +161,7 @@ function makeGuild(options: {
 	// rebuild too" branch for them. A test can still override either id.
 	const map: Record<string, unknown> = {
 		"ch-nextdecree": { id: "ch-nextdecree" },
-		"ch-admincommands": { id: "ch-admincommands" },
+		"ch-serverconfig": { id: "ch-serverconfig" },
 		"ch-adminlog": { id: "ch-adminlog" },
 		// 👋welcome and 📘rules (2026-10 item 247 Phase 2), present by default too.
 		"ch-welcome": { id: "ch-welcome" },
@@ -977,7 +978,6 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 				packChannels.announcements,
 				packChannels.admin,
 				packChannels.nextDecree,
-				packChannels.adminCommands,
 				packChannels.adminLog,
 				packChannels.welcome,
 				packChannels.rules,
@@ -989,6 +989,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 				packChannels.deroConfig,
 				packChannels.onboardingConfig,
 				packChannels.arcadeControl,
+				packChannels.serverConfig,
 				packChannels.commandOutput,
 			].sort()
 		);
@@ -1020,15 +1021,16 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 			expect(parentOf(name), `${name} belongs under the homebase category`).toBe(homebaseParent);
 		}
 
-		// 🏰 DERO HEADQUARTERS (2026-10 item 257 Phase 2a): every admin channel, the three
-		// that used to sit under the notice board and the three config channels.
+		// 🏰 DERO HEADQUARTERS: every admin channel, the two that used to sit under the
+		// notice board and the four config channels; a fresh server never gets
+		// 🎛️admin-controls (2026-10 item 263 Phase 4a).
 		for (const name of [
 			packChannels.admin,
-			packChannels.adminCommands,
 			packChannels.adminLog,
 			packChannels.deroConfig,
 			packChannels.onboardingConfig,
 			packChannels.arcadeControl,
+			packChannels.serverConfig,
 		]) {
 			expect(parentOf(name), `${name} belongs under 🏰 DERO HEADQUARTERS`).toBe(headquartersParent);
 		}
@@ -1090,7 +1092,6 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		[packChannels.announcements, "public"],
 		[packChannels.admin, "admin"],
 		[packChannels.nextDecree, "public"],
-		[packChannels.adminCommands, "admin"],
 		[packChannels.adminLog, "adminLog"],
 		// 👋welcome and 📘rules: members read Dero's log and the rules, and type nothing.
 		[packChannels.welcome, "public"],
@@ -1107,10 +1108,11 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		[packChannels.partyGames, "public"],
 		// 🏆rated-challenges: the rated half of ⚔️challenges, the same wall of bot cards.
 		[packChannels.arcadeRatedChallenges, "public"],
-		// 🏰 DERO HEADQUARTERS' three config channels: admin only, like 🎛️admin-controls.
+		// 🏰 DERO HEADQUARTERS' four config channels: admin only, like 🔒inner-sanctum.
 		[packChannels.deroConfig, "admin"],
 		[packChannels.onboardingConfig, "admin"],
 		[packChannels.arcadeControl, "admin"],
+		[packChannels.serverConfig, "admin"],
 		// 💬dero-commands: members run commands here, so they read AND send, the
 		// introductions posture on an ungated guild.
 		[packChannels.commandOutput, "intro"],
@@ -1164,7 +1166,8 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		expect(payload.arcadeRulesChannelId).toBe(`new-${packChannels.arcadeRules}`);
 		expect(payload.arcadeChallengesChannelId).toBe(`new-${packChannels.arcadeChallenges}`);
 		expect(payload.arcadeGamesChannelId).toBe(`new-${packChannels.arcadeGames}`);
-		expect(payload.adminCommandsChannelId).toBe(`new-${packChannels.adminCommands}`);
+		expect(payload.serverConfigChannelId).toBe(`new-${packChannels.serverConfig}`);
+		expect(payload).not.toHaveProperty("adminCommandsChannelId");
 		expect(payload.nextDecreeChannelId).toBe(`new-${packChannels.nextDecree}`);
 		expect(payload.introChannelId).toBe(`new-${packChannels.intro}`);
 		expect(payload.commandsChannelId).toBe(`new-${packChannels.commands}`);

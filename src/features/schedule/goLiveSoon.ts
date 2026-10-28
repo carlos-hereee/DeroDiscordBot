@@ -78,7 +78,7 @@ export async function goLiveSoon(interaction: RepliableInteraction, options: Com
 	const result = await postGoLiveAnnouncement(interaction.client, guildId, whenKey, note, mentionRoleIdOverride);
 
 	if (result.ok) {
-		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 		await answerInChannel(interaction, "admin", { content: c.posted });
 		return;
 	}

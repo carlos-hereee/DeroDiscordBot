@@ -235,7 +235,7 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 	// ── ③ confirmation embed ───────────────────────────────────────
 	// Two-line preview: cadence + next fire, plus the audience line so
 	// the streamer sees the role + channel before clicking save. Posted in
-	// 🎛️admin-controls (2026-10 item 257 Phase 5) so the preview does not clutter
+	// 🛠️server-config (2026-10 item 257 Phase 5) so the preview does not clutter
 	// the channel where the command was run. Timezone is rendered alongside the
 	// cadence so the streamer can sanity-check that "Friday 7pm" got
 	// interpreted in the zone they meant.

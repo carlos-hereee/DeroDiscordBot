@@ -5,7 +5,6 @@ import { GuildSetupManager } from "./GuildSetupManager.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
 import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
 import { buildAdminControlButtons, buildMemberControlButtons, buildProfileButtons } from "@features/power-ups/PowerUps.js";
-import { ADMIN_GUIDE_COMMAND_ROWS } from "@features/command-buttons/adminGuideButtons.js";
 
 // ── the guides' buttons, by audience (2026-10 item 245 Phase 4b) ─────────────
 // What:  which buttons each guide carries, read off the builders themselves so a
@@ -39,10 +38,20 @@ describe("the guides' buttons", () => {
 		expect(ids).not.toContain("powerup:member:fortune");
 	});
 
-	it("give the admin guide a button per admin job above its control row", () => {
-		const rows = rowIds("adminCommandsChannelId");
-		expect(rows.slice(0, ADMIN_GUIDE_COMMAND_ROWS.length)).toEqual(ADMIN_GUIDE_COMMAND_ROWS.map((buttons) => buttons.map((button) => `admincmd:${button.id}`)));
-		expect(rows.at(-1)).toEqual(idsOf([buildSelfDestructButton(), ...buildAdminControlButtons()]));
+	// 🎛️admin-controls and its guide retired (2026-10 item 263 Phase 4a): Self destruct is
+	// the one control on 🔒inner-sanctum's intro, and no intro carries an admin command
+	// button or Refresh standings, which rides 🛠️server-config's switches message.
+	it("give 🔒inner-sanctum the owner only Self destruct and nothing else", () => {
+		expect(rowIds("adminChannelId")).toEqual([idsOf([buildSelfDestructButton()])]);
+	});
+
+	it("put no admin command button and no Refresh standings on any intro", () => {
+		const refresh = idsOf(buildAdminControlButtons());
+		for (const field of GuildSetupManager.CHANNEL_FIELDS) {
+			const ids = rowIds(field).flat();
+			expect(ids.filter((id) => id?.startsWith("admincmd:")), field).toEqual([]);
+			for (const id of refresh) expect(ids, field).not.toContain(id);
+		}
 	});
 
 	it("give both voice rooms /dero's Join, Leave and Status", () => {

@@ -23,7 +23,10 @@ describe("self-destruct demolishes every managed channel", () => {
 		// The invariant: what setup BUILDS and what self-destruct REMOVES are the
 		// same set. Add an 11th channel spec and this goes red until selfDestruct
 		// learns about it, which is the entire point.
-		expect([...HOMEBASE_CHANNEL_FIELDS].sort()).toEqual([...GuildSetupManager.CHANNEL_FIELDS].sort());
+		// The one field beyond the specs is the retired 🎛️admin-controls (2026-10 item 263
+		// Phase 4a): no longer built, but still demolished on a server the boot sweep that
+		// deletes it has not reached.
+		expect([...HOMEBASE_CHANNEL_FIELDS].sort()).toEqual([...GuildSetupManager.CHANNEL_FIELDS, "adminCommandsChannelId"].sort());
 	});
 
 	it("includes both ARCADE GAMES channels", () => {

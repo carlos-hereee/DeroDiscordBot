@@ -122,7 +122,7 @@ export async function announceStream(interaction: RepliableInteraction, options:
 		new ButtonBuilder().setCustomId("announce_cancel").setLabel(c.confirm.cancelButtonLabel).setStyle(ButtonStyle.Secondary)
 	);
 
-	// Posted in 🎛️admin-controls (2026-10 item 257 Phase 5); only this admin's press counts.
+	// Posted in 🛠️server-config (2026-10 item 257 Phase 5); only this admin's press counts.
 	const prompt = await askInChannel(interaction, "admin", { embeds: [confirmEmbed], components: [row] });
 
 	try {

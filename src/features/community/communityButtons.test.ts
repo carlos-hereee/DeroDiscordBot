@@ -1,33 +1,38 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { existsSync } from "node:fs";
-import { ButtonStyle, GuildExplicitContentFilter, GuildVerificationLevel, TextChannel, type ButtonInteraction, type Client, type Guild, type ModalBuilder } from "discord.js";
+import { GuildExplicitContentFilter, GuildVerificationLevel, type ButtonInteraction, type Client, type ModalBuilder } from "discord.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 
 // ── communityButtons (2026-10 item 247 Phase 3) ─────────────────────────────
-// The admin guide's community row, where it sits on the guide, and the router
-// every `community:<action>` press goes through: a stale customId, a guild with no
+// The router every `community:<action>` press goes through, and the listener that
+// redraws 🧭onboarding when Community changes (2026-10 item 263 Phase 4a, R3-14: the
+// admin guide's community row retired with 🎛️admin-controls). The router refuses a stale customId, a guild with no
 // config, and a clicker who is neither the owner nor an admin are all refused
 // before any flow runs, and Configure Onboarding reaches its real flow (Phase 4
 // deleted the stub that stood in for it). A refusal is a notice modal, not a
-// message left to dismiss (post-launch plan item 9), and the row shows one button,
-// the one the server's Community state calls for (item 8).
+// message left to dismiss (post-launch plan item 9).
 
 const mocks = vi.hoisted(() => ({
 	findByGuildId: vi.fn(),
 	log: vi.fn(),
 	registerButton: vi.fn(),
 	registerSelectMenu: vi.fn(),
+	refresh: vi.fn(),
 }));
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId } }));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: mocks.log, has: vi.fn(async () => false) } }));
 vi.mock("@handlers/interactionRegistry.js", () => ({ registerButton: mocks.registerButton, registerSelectMenu: mocks.registerSelectMenu, registerModal: vi.fn() }));
+vi.mock("@features/setup/headquartersCards.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@features/setup/headquartersCards.js")>()),
+	refreshHeadquartersCards: mocks.refresh,
+}));
 
-import { buildCommunityControlButtons, handleCommunityButton, registerCommunityGuideSync, registerCommunityHandlers, syncCommunityGuideRow } from "./communityButtons.js";
+import { handleCommunityButton, registerCommunityHandlers, registerCommunityStateSync } from "./communityButtons.js";
 import { COMMUNITY_CUSTOM_IDS, COMMUNITY_SELECT_ACTIONS, type CommunityAction } from "./communityControls.js";
 import { communityCopy } from "./communityCopy.js";
 import { GuildSetupManager } from "@features/setup/GuildSetupManager.js";
-import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
+import { onboardingView } from "@features/setup/headquartersCards.js";
 
 const OWNER = "owner-1";
 const ADMIN = "admin-1";
@@ -92,35 +97,23 @@ beforeEach(() => {
 	mocks.log.mockResolvedValue(undefined);
 });
 
-type RowJson = { components: Array<{ custom_id: string; label: string; style: ButtonStyle }> };
-
-describe("buildCommunityControlButtons", () => {
-	it("shows Enable Community alone while Community is off", () => {
-		const row = buildCommunityControlButtons(false).toJSON() as RowJson;
-		expect(row.components.map((button) => button.custom_id)).toEqual([COMMUNITY_CUSTOM_IDS.enable]);
-		expect(row.components.map((button) => button.label)).toEqual([communityCopy.buttons.enable]);
-		expect(row.components.map((button) => button.style)).toEqual([ButtonStyle.Primary]);
+// The two Community flows open from 🧭onboarding's steps 1 and 3 alone (R3-14): no
+// managed channel's intro carries a community row any more.
+describe("where the Community buttons live", () => {
+	it("are 🧭onboarding's steps 1 and 3, on the flows' own customIds", () => {
+		const view = onboardingView({ communityOn: false, onboardingOn: false, gated: false, memberRoleName: null, adoptedPlaced: true });
+		expect(view.steps[0]?.customId).toBe(COMMUNITY_CUSTOM_IDS.enable);
+		expect(view.steps[2]?.customId).toBe(COMMUNITY_CUSTOM_IDS.configure);
 	});
 
-	it("shows Configure Onboarding alone once Community is on", () => {
-		const row = buildCommunityControlButtons(true).toJSON() as RowJson;
-		expect(row.components.map((button) => button.custom_id)).toEqual([COMMUNITY_CUSTOM_IDS.configure]);
-		expect(row.components.map((button) => button.label)).toEqual([communityCopy.buttons.configure]);
-	});
-
-	it("sits on the admin guide above the control row, inside Discord's five rows, showing the button the guild's state calls for", () => {
+	it("are on no channel's intro", () => {
 		const internals = GuildSetupManager as unknown as {
-			resolveIntroComponents(field: string, config?: null, guild?: { features: string[] }): Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }> | null;
+			resolveIntroComponents(field: string): Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }> | null;
 		};
-		const rowsFor = (guild?: { features: string[] }) =>
-			(internals.resolveIntroComponents("adminCommandsChannelId", null, guild) ?? []).map((row) => row.toJSON().components.map((component) => component.custom_id));
-		const off = rowsFor({ features: [] });
-		expect(off.at(-2)).toEqual([COMMUNITY_CUSTOM_IDS.enable]);
-		expect(off.at(-1)?.[0]).toBe((buildSelfDestructButton().toJSON() as { custom_id: string }).custom_id);
-		expect(off.length).toBeLessThanOrEqual(5);
-		expect(rowsFor({ features: ["COMMUNITY"] }).at(-2)).toEqual([COMMUNITY_CUSTOM_IDS.configure]);
-		// A first build has no live guild to read, and reads as Community off.
-		expect(rowsFor().at(-2)).toEqual([COMMUNITY_CUSTOM_IDS.enable]);
+		for (const field of GuildSetupManager.CHANNEL_FIELDS) {
+			const ids = (internals.resolveIntroComponents(field) ?? []).flatMap((row) => row.toJSON().components.map((component) => component.custom_id ?? ""));
+			expect(ids.filter((id) => id.startsWith("community:")), field).toEqual([]);
+		}
 	});
 });
 
@@ -182,59 +175,21 @@ describe("the community router", () => {
 	});
 });
 
-// ── keeping the guide's row on the live state (post-launch plan item 8) ──
+// ── 🧭onboarding follows a Community switch (2026-10 item 263 Phase 4a, R3-14) ──
 
-describe("syncCommunityGuideRow", () => {
-	function guideRig(rowIds: string[][], features: string[] = []) {
-		const rows = rowIds.map((ids) => ({ toJSON: () => ({ type: 1, components: ids.map((id) => ({ type: 2, style: 1, label: id, custom_id: id })) }) }));
-		const guide = { components: rows, edit: vi.fn(async () => undefined) };
-		const channel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, { messages: { fetch: vi.fn(async () => guide) } });
-		const guild = { id: "g1", features, client: { channels: { fetch: vi.fn(async () => channel) } } } as unknown as Guild;
-		mocks.findByGuildId.mockResolvedValue({ guildId: "g1", adminCommandsChannelId: "ch-guide", introMessageIds: { adminCommandsChannelId: "guide-msg" } });
-		return { guide, guild };
-	}
-	const editedIds = (guide: { edit: ReturnType<typeof vi.fn> }): string[][] =>
-		(guide.edit.mock.calls[0]![0] as { components: Array<{ components: Array<{ custom_id?: string }> }> }).components.map((row) =>
-			row.components.map((component) => component.custom_id ?? "")
-		);
-
-	it("swaps Enable Community for Configure Onboarding once Community is on, and leaves every other row as it was", async () => {
-		const { guide, guild } = guideRig([["admin_cmd:events"], [COMMUNITY_CUSTOM_IDS.enable], ["self_destruct:prompt"]], ["COMMUNITY"]);
-		await expect(syncCommunityGuideRow(guild)).resolves.toBe(true);
-		expect(editedIds(guide)).toEqual([["admin_cmd:events"], [COMMUNITY_CUSTOM_IDS.configure], ["self_destruct:prompt"]]);
-	});
-
-	it("swaps back to Enable Community when Community is switched off", async () => {
-		const { guide, guild } = guideRig([[COMMUNITY_CUSTOM_IDS.configure], ["self_destruct:prompt"]]);
-		await syncCommunityGuideRow(guild);
-		expect(editedIds(guide)).toEqual([[COMMUNITY_CUSTOM_IDS.enable], ["self_destruct:prompt"]]);
-	});
-
-	it("edits nothing when the guide already shows the right button, or carries no community row", async () => {
-		const right = guideRig([[COMMUNITY_CUSTOM_IDS.enable]]);
-		await expect(syncCommunityGuideRow(right.guild)).resolves.toBe(false);
-		expect(right.guide.edit).not.toHaveBeenCalled();
-		const none = guideRig([["self_destruct:prompt"]], ["COMMUNITY"]);
-		await expect(syncCommunityGuideRow(none.guild)).resolves.toBe(false);
-		expect(none.guide.edit).not.toHaveBeenCalled();
-	});
-
-	it("never throws when the edit is refused", async () => {
-		const { guide, guild } = guideRig([[COMMUNITY_CUSTOM_IDS.enable]], ["COMMUNITY"]);
-		guide.edit.mockRejectedValueOnce(new Error("Missing Access"));
-		vi.spyOn(console, "warn").mockImplementation(() => undefined);
-		await expect(syncCommunityGuideRow(guild)).resolves.toBe(false);
-	});
-
-	it("listens to GuildUpdate and syncs only when the Community feature changed", async () => {
+describe("registerCommunityStateSync", () => {
+	it("redraws 🧭onboarding when the Community feature changes, and only then", () => {
 		const on = vi.fn();
-		registerCommunityGuideSync({ on } as unknown as Client);
-		const listener = on.mock.calls[0]![1] as (before: { features: string[] }, after: { id: string; features: string[]; client: unknown }) => void;
-		mocks.findByGuildId.mockClear();
-		listener({ features: [] }, { id: "g1", features: ["NEWS"], client: {} });
-		expect(mocks.findByGuildId).not.toHaveBeenCalled();
-		listener({ features: [] }, { id: "g1", features: ["COMMUNITY"], client: { channels: { fetch: vi.fn(async () => null) } } });
-		expect(mocks.findByGuildId).toHaveBeenCalledWith("g1");
+		registerCommunityStateSync({ on } as unknown as Client);
+		expect(on.mock.calls[0]?.[0]).toBe("guildUpdate");
+		const listener = on.mock.calls[0]![1] as (before: { features: string[] }, after: { id: string; features: string[] }) => void;
+		listener({ features: [] }, { id: "g1", features: ["NEWS"] });
+		expect(mocks.refresh).not.toHaveBeenCalled();
+		const after = { id: "g1", features: ["COMMUNITY"] };
+		listener({ features: [] }, after);
+		expect(mocks.refresh).toHaveBeenCalledExactlyOnceWith(after, "onboarding");
+		listener({ features: ["COMMUNITY"] }, { id: "g1", features: [] });
+		expect(mocks.refresh).toHaveBeenCalledTimes(2);
 	});
 });
 

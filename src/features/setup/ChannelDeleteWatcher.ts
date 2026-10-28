@@ -4,6 +4,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { finish as finishGameRoom } from "@features/game-rooms/roomLifecycle.js";
 import { NON_TERMINAL_ROOM_STATUSES } from "@features/game-rooms/roomTypes.js";
 import { GuildSetupManager } from "./GuildSetupManager.js";
+import { isRetiredAdminControls } from "./retireAdminControls.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
 // ── ChannelDeleteWatcher ──────────────────────────────────────────────
@@ -77,6 +78,11 @@ export function registerChannelDeleteWatcher(client: Client): void {
 			//    handle new guilds; ensureHomebase handles reinstalls.)
 			const stored = await guildConfigStore.findByGuildId(guild.id);
 			if (!stored) return;
+
+			// 🎛️admin-controls is deleted on purpose by the boot sweep (retireAdminControls,
+			// 2026-10 item 263 Phase 4a), and the event can arrive before the sweep clears
+			// its stored id. It is no room and no managed slot any more: no repair, no line.
+			if (isRetiredAdminControls(stored as unknown as Record<string, unknown>, channel.id)) return;
 
 			// ── risk R14: the deleted channel was a live GAME ROOM ──
 			// What:  finish the room as abandoned and stop, before any homebase logic.

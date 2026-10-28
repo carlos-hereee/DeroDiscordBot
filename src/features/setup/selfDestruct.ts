@@ -92,6 +92,9 @@ export const HOMEBASE_CHANNEL_FIELDS = [
 	"announcementsChannelId",
 	"nextDecreeChannelId",
 	"adminChannelId",
+	// 🎛️admin-controls is retired (2026-10 item 263 Phase 4a), but a server the boot
+	// sweep has not reached yet (no Manage Channels) may still hold it, so its stored
+	// id is still demolished here.
 	"adminCommandsChannelId",
 	// 🗒️admin-log (post-launch plan item 11)
 	"adminLogChannelId",
@@ -115,6 +118,8 @@ export const HOMEBASE_CHANNEL_FIELDS = [
 	"deroConfigChannelId",
 	"onboardingConfigChannelId",
 	"arcadeControlChannelId",
+	// 🛠️server-config (2026-10 item 263 Phase 4a)
+	"serverConfigChannelId",
 	"commandOutputChannelId",
 ] as const;
 
@@ -259,7 +264,7 @@ async function runChoice(interaction: ModalSubmitInteraction, guild: Guild): Pro
 	if (choice === "data") {
 		// Nothing is logged here: Delete my data writes its one line at the CONFIRM
 		// step, where it either deletes or is refused. The prompt posts in
-		// 🎛️admin-controls (2026-10 item 257 Phase 5): a modal Submit opens no notice,
+		// 🛠️server-config (2026-10 item 257 Phase 5): a modal Submit opens no notice,
 		// and its button refuses everyone but the server owner (refuseNonOwner).
 		const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
 			new ButtonBuilder().setCustomId(DELETE_ID).setLabel(c.typeConfirmLabel).setEmoji("🗑️").setStyle(ButtonStyle.Danger)
@@ -467,9 +472,9 @@ export async function demolishCategory(
 }
 
 /**
- * Owner-only "Self destruct" button, folded into the pinned admin command guide
- * row (alongside the admin controls). Exported as a bare ButtonBuilder so
- * resolveIntroComponents can compose it with the other admin-controls buttons.
+ * Owner-only "Self destruct" button, the one control on 🔒inner-sanctum's intro.
+ * Exported as a bare ButtonBuilder so
+ * resolveIntroComponents can place it on 🔒inner-sanctum's intro (2026-10 item 263 Phase 4a).
  * The `self_destruct:prompt` customId routes through handleSelfDestruct, which
  * gates owner only and opens the choice modal. Visible to admins but only the
  * server owner can act on it.

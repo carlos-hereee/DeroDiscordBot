@@ -29,10 +29,7 @@ import { buildPartyGamesRow } from "@features/game-rooms/partyGames.js";
 import { buildSoloLuckRow } from "@features/games/soloLuck.js";
 import { boardStartRows } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { buildGameRequestRow } from "@features/game-rooms/gameRequestHandlers.js";
-import { buildMemberControlButtons, buildAdminControlButtons, buildIcebreakerButton, buildFortuneButton, buildClaimButton, buildProfileButtons } from "@features/power-ups/PowerUps.js";
-import { buildAdminCommandRows } from "@features/command-buttons/adminGuideButtons.js";
-import { buildCommunityControlButtons } from "@features/community/communityButtons.js";
-import { isCommunityEnabled } from "@features/community/enableCommunity.js";
+import { buildMemberControlButtons, buildIcebreakerButton, buildFortuneButton, buildClaimButton, buildProfileButtons } from "@features/power-ups/PowerUps.js";
 import { buildVoiceRoomControlRow } from "@features/voice/voiceRoomControls.js";
 import { allowDeroVoiceRooms, replaceDeroVoiceRoom } from "@features/voice/deroVoiceRooms.js";
 import { DOMAIN_CHANNEL_FIELDS, HEADQUARTERS_DOMAINS, syncAllHeadquarters, syncHeadquartersChannel } from "./headquartersCards.js";
@@ -50,6 +47,7 @@ import {
 	type ManagedOverwriteKind,
 } from "./communityOverwrites.js";
 import { moveIntoHeadquarters, canManageChannels } from "./headquarters.js";
+import { retireAdminControls } from "./retireAdminControls.js";
 import { CommunityGatingAnnouncement } from "./CommunityGatingAnnouncement.js";
 import { fetchAcceptsDeroContent, findRulesChannel, findWelcomeChannel, readAdoptedChannelIds, readAdoptionChoice, type IAdoptionCandidate } from "./adoption.js";
 import { moveChosenChannel, offerAdoptionChoice } from "./adoptionChoice.js";
@@ -340,9 +338,6 @@ export class GuildSetupManager {
 			// legacy rows (case ③ in repairMissingChannels), it is just no longer
 			// load bearing for a fresh install.
 			nextDecreeChannelId: ids.nextDecreeChannelId,
-			// Keys the admin power-up panel, so ensurePowerUps can post as soon as
-			// /setup runs rather than waiting for a reboot.
-			adminCommandsChannelId: ids.adminCommandsChannelId,
 			// The audit trail, so the first admin action after /setup already has a home.
 			adminLogChannelId: ids.adminLogChannelId,
 			// 👋welcome and 📘rules, and which of the two (if either) the server already
@@ -366,6 +361,7 @@ export class GuildSetupManager {
 			deroConfigChannelId: ids.deroConfigChannelId,
 			onboardingConfigChannelId: ids.onboardingConfigChannelId,
 			arcadeControlChannelId: ids.arcadeControlChannelId,
+			serverConfigChannelId: ids.serverConfigChannelId,
 			commandOutputChannelId: ids.commandOutputChannelId,
 			// The arcade is built, so its switches are written on (2026-10 item 257,
 			// owner item 11), except one this server already turned off.
@@ -661,6 +657,11 @@ export class GuildSetupManager {
 			}
 		}
 
+		// ③.6 🎛️admin-controls is retired (2026-10 item 263 Phase 4a, owner decision 14):
+		//      deleted once, by its stored id only, never by name. Before the repair so
+		//      the sweep below never sees a channel that is about to go. Never throws.
+		await retireAdminControls(guild);
+
 		// ④ category is ours. scan each of the six child channels and
 		//    rebuild any that were deleted while the bot was offline.
 		//    repairMissingChannels also posts the per channel notices so
@@ -774,11 +775,9 @@ export class GuildSetupManager {
 		// horizon, so leaders get a scrollable audit trail separate from
 		// the living calendar in scheduleChannelId.
 		"nextDecreeChannelId",
-		// eighth homebase channel. admin-only command + control surface:
-		// the relocated admin command guide (out of inner-sanctum) plus the
-		// admin power-up panel. kept separate so daily inner-sanctum notices
-		// never bury the quick-action controls.
-		"adminCommandsChannelId",
+		// 🎛️admin-controls (adminCommandsChannelId) is NOT here since 2026-10 item 263
+		// Phase 4a: it is retired, never built or repaired, and retireAdminControls deletes
+		// a server's old one by its stored id.
 		// 🗒️admin-log, the audit trail under the homebase (post-launch plan item 11).
 		"adminLogChannelId",
 		// 👋welcome and 📘rules, under the homebase (2026-10 item 247 Phase 2).
@@ -810,6 +809,8 @@ export class GuildSetupManager {
 		"deroConfigChannelId",
 		"onboardingConfigChannelId",
 		"arcadeControlChannelId",
+		// 🛠️server-config, the fourth config channel (2026-10 item 263 Phase 4a).
+		"serverConfigChannelId",
 		"commandOutputChannelId",
 	] as const;
 
@@ -856,9 +857,6 @@ export class GuildSetupManager {
 		// posts, bot only writes (the category level overwrites already
 		// gate SendMessages for "public" kind).
 		{ configField: "nextDecreeChannelId", displayName: channels.nextDecree, kind: "public", categoryField: "categoryId" },
-		// 🛡️ eighth, admin command center. admin-only (same gating as the
-		// admin channel); hosts the command guide + admin power-up panel.
-		{ configField: "adminCommandsChannelId", displayName: channels.adminCommands, kind: "admin", categoryField: "headquartersCategoryId" },
 		// 🗒️ the audit trail (post-launch plan item 11). ⚠️ THIS LINE ARMS THE BOOT
 		// REPAIR SWEEP for every existing guild, the way the welcome and arcade specs
 		// did: a legacy row loads adminLogChannelId as null, the sweep reads null as
@@ -936,11 +934,16 @@ export class GuildSetupManager {
 		// as 🏆rated-challenges did: a legacy row loads each id as null, the sweep reads
 		// null as case ③ "missing, build it", and each channel appears once on the next
 		// boot, the Headquarters three under a category the sweep builds on demand.
-		// The three config channels are admin only, like 🎛️admin-controls; their setup
+		// The three config channels are admin only, like 🔒inner-sanctum; their setup
 		// steps arrive in Phase 2b.
 		{ configField: "deroConfigChannelId", displayName: channels.deroConfig, kind: "admin", categoryField: "headquartersCategoryId" },
 		{ configField: "onboardingConfigChannelId", displayName: channels.onboardingConfig, kind: "admin", categoryField: "headquartersCategoryId" },
 		{ configField: "arcadeControlChannelId", displayName: channels.arcadeControl, kind: "admin", categoryField: "headquartersCategoryId" },
+		// 🛠️server-config (2026-10 item 263 Phase 4a). ⚠️ THIS LINE ARMS THE BOOT REPAIR SWEEP
+		// for every existing guild like the three above: a legacy row loads
+		// serverConfigChannelId as null, and the next boot builds it once under 🏰 DERO
+		// HEADQUARTERS. It takes 🎛️admin-controls' place as the home of every admin answer.
+		{ configField: "serverConfigChannelId", displayName: channels.serverConfig, kind: "admin", categoryField: "headquartersCategoryId" },
 		// "public" for every reader of a spec's kind (the admin grant, the visibility
 		// list); overwriteKindOf gives it its own member-writable shape, because members
 		// run their commands here (owner decision 7).
@@ -988,12 +991,6 @@ export class GuildSetupManager {
 				// Does not depend on adminRoleId because this is a public
 				// channel, mortals read, bot writes.
 				return ChannelContent.nextDecreeIntro(guildConfig);
-			case "adminCommandsChannelId":
-				// the relocated admin command guide is this channel's standard
-				// pinned intro (was a second message in the admin channel before
-				// the 2026-06-19 split). Self-destruct button rides along via
-				// resolveIntroComponents.
-				return ChannelContent.adminCommandGuide(guildConfig);
 			// The header above the audit lines adminLog.ts posts.
 			case "adminLogChannelId":
 				return ChannelContent.adminLogIntro(guildConfig);
@@ -1035,6 +1032,8 @@ export class GuildSetupManager {
 				return ChannelContent.onboardingConfigIntro(guildConfig);
 			case "arcadeControlChannelId":
 				return ChannelContent.arcadeControlIntro(guildConfig);
+			case "serverConfigChannelId":
+				return ChannelContent.serverConfigIntro(guildConfig);
 			case "commandOutputChannelId":
 				return ChannelContent.commandOutputIntro(guildConfig);
 		}
@@ -1043,9 +1042,9 @@ export class GuildSetupManager {
 	// ── resolveIntroComponents ────────────────────────────────────
 	// What:  returns the action row(s) that accompany a given channel's intro
 	//        embed, or null if it has no buttons (the common case). The
-	//        #command-center guide carries the member buttons, the admin-controls
-	//        guide one button per admin command above its control row, and each
-	//        voice room /dero's Join, Leave and Status (2026-10 item 245 Phase 4b).
+	//        #command-center guide carries the member buttons, 🔒inner-sanctum's
+	//        intro the owner only Self destruct, and each voice room /dero's Join,
+	//        Leave and Status (2026-10 item 245 Phase 4b).
 	//        The standalone "power-up" panels were retired, every button rides on
 	//        these guides. Five rows of five buttons is Discord's ceiling for one
 	//        message; the guide test holds every row set to it.
@@ -1058,19 +1057,14 @@ export class GuildSetupManager {
 	//        PowerUps.handlePowerUpButton routes them; suggestion box and self
 	//        destruct come from bare button factories so they share those rows.
 	// How:   compose the ActionRow(s) per channel: #command-center takes two rows
-	//        (the /account views, then the rest), the admin guide its command rows,
-	//        then the community row, then the control row. null means "no buttons."
+	//        (the /account views, then the rest). null means "no buttons."
 	private static resolveIntroComponents(
 		field: (typeof GuildSetupManager.CHANNEL_FIELDS)[number],
 		// Pack selector for the rows whose labels live in the copy packs (the rules
 		// card's ballot button and 🕹️games' play now rows), read exactly the way
 		// resolveIntroEmbed reads it: undefined is the rok-commander default, which is
 		// correct on a first build.
-		guildConfig?: ICopyConfig | null,
-		// The live guild, read only for the admin guide's community row, which shows
-		// Enable Community or Configure Onboarding by Discord's Community state. Absent
-		// reads as Community off, which is every guild on its first build.
-		guild?: Pick<Guild, "features"> | null
+		guildConfig?: ICopyConfig | null
 	): ActionRowBuilder<MessageActionRowComponentBuilder>[] | null {
 		switch (field) {
 			case "commandsChannelId":
@@ -1083,20 +1077,12 @@ export class GuildSetupManager {
 					new ActionRowBuilder<ButtonBuilder>().addComponents(...buildProfileButtons()),
 					new ActionRowBuilder<ButtonBuilder>().addComponents(buildSuggestionBoxButton(), ...buildMemberControlButtons()),
 				];
-			case "adminCommandsChannelId":
-				// admin-controls guide: two rows of admin command buttons (each opens its
-				// command's own flow, gated at every step), the community row (Enable
-				// Community or Configure Onboarding, whichever the live state calls for,
-				// 2026-10 item 247 Phase 3 and post-launch plan item 8), then the
-				// control row, the owner only Self destruct and the admin controls. Four
-				// rows of Discord's five; the control row stays last, where the guide
-				// test reads it.
-				return [
-					...buildAdminCommandRows(),
-					// A partial guild (an unhydrated payload) carries no features, and reads as off.
-					buildCommunityControlButtons(Boolean(guild?.features && isCommunityEnabled(guild))),
-					new ActionRowBuilder<ButtonBuilder>().addComponents(buildSelfDestructButton(), ...buildAdminControlButtons()),
-				];
+			case "adminChannelId":
+				// 🔒inner-sanctum, the owner's channel, carries the owner only Self destruct
+				// (2026-10 item 263 Phase 4a, owner decision 14), its gate unchanged in
+				// selfDestruct.ts. An existing intro takes it in place on the next boot
+				// (componentsAreEquivalent in refreshIntroEmbeds).
+				return [new ActionRowBuilder<ButtonBuilder>().addComponents(buildSelfDestructButton())];
 			case "meetingVoiceChannelId":
 			case "arcadeVoiceChannelId":
 				return [buildVoiceRoomControlRow(getPluginCopy(guildConfig).channelContent.voiceRoom)];
@@ -1767,7 +1753,7 @@ export class GuildSetupManager {
 		adoptedExisting: boolean,
 		guildConfig: ICopyConfig | null
 	): Promise<{ id: string | null; posted: boolean }> {
-		const introComponents = GuildSetupManager.resolveIntroComponents(spec.configField, guildConfig, guild);
+		const introComponents = GuildSetupManager.resolveIntroComponents(spec.configField, guildConfig);
 		let introMessageId: string | null = null;
 		let posted = false;
 
@@ -2050,7 +2036,7 @@ export class GuildSetupManager {
 	}
 
 	// ── move a live admin channel into Headquarters ───────────────
-	// One existing admin channel (🔒inner-sanctum, 🎛️admin-controls, 🗒️admin-log) still
+	// One existing admin channel (🔒inner-sanctum, 🗒️admin-log) still
 	// under the notice board is moved into 🏰 DERO HEADQUARTERS, keeping its messages and
 	// pins, with its overwrites re-applied from its spec (risk R1). Resolves true when it
 	// moved. Never throws back into the sweep: a refused move logs and leaves the channel.
@@ -2397,7 +2383,10 @@ export class GuildSetupManager {
 
 		// post the real welcome message now that the role is known
 		if (adminChannel?.isTextBased()) {
-			await adminChannel.send({ embeds: [ChannelContent.adminWelcome(config.ownerId, config.adminRoleId, stored)] });
+			await adminChannel.send({
+				embeds: [ChannelContent.adminWelcome(config.ownerId, config.adminRoleId, stored)],
+				components: GuildSetupManager.resolveIntroComponents("adminChannelId") ?? [],
+			});
 		}
 
 		await guildConfigStore.update(config.guildId, {
@@ -2579,7 +2568,6 @@ export class GuildSetupManager {
 			announcementsChannel,
 			adminChannel,
 			nextDecreeChannel,
-			adminCommandsChannel,
 			adminLogChannel,
 			welcome,
 			rules,
@@ -2593,6 +2581,7 @@ export class GuildSetupManager {
 			deroConfigChannel,
 			onboardingConfigChannel,
 			arcadeControlChannel,
+			serverConfigChannel,
 			commandOutputChannel,
 		] = await Promise.all([
 			guild.channels.create({
@@ -2647,14 +2636,6 @@ export class GuildSetupManager {
 				type: ChannelType.GuildText,
 				parent: category.id,
 				permissionOverwrites: publicOverwrites,
-			}),
-			// eighth, admin command center. adminOverwrites (admin-gated like
-			// inner-sanctum); hosts the relocated command guide + the admin panel.
-			guild.channels.create({
-				name: channels.adminCommands,
-				type: ChannelType.GuildText,
-				parent: headquartersCategory.id,
-				permissionOverwrites: adminOverwrites,
 			}),
 			// 🗒️admin-log (post-launch plan item 11), the bot write only audit trail.
 			guild.channels.create({
@@ -2734,7 +2715,7 @@ export class GuildSetupManager {
 			}),
 			// ── 🏰 DERO HEADQUARTERS' three config channels (2026-10 item 257 Phase 2a) ──
 			// ⚠️ NOTE THE PARENT, as with the arcade's: headquartersCategory.id. Admin
-			// only, the shape of 🎛️admin-controls; the admin role joins at /setup.
+			// only, the shape of 🔒inner-sanctum; the admin role joins at /setup.
 			guild.channels.create({
 				name: channels.deroConfig,
 				type: ChannelType.GuildText,
@@ -2749,6 +2730,13 @@ export class GuildSetupManager {
 			}),
 			guild.channels.create({
 				name: channels.arcadeControl,
+				type: ChannelType.GuildText,
+				parent: headquartersCategory.id,
+				permissionOverwrites: adminOverwrites,
+			}),
+			// 🛠️server-config, the fourth (2026-10 item 263 Phase 4a); a fresh server never gets 🎛️admin-controls.
+			guild.channels.create({
+				name: channels.serverConfig,
 				type: ChannelType.GuildText,
 				parent: headquartersCategory.id,
 				permissionOverwrites: adminOverwrites,
@@ -2772,7 +2760,6 @@ export class GuildSetupManager {
 				announcementsChannelId: announcementsChannel.id,
 				adminChannelId: adminChannel.id,
 				nextDecreeChannelId: nextDecreeChannel.id,
-				adminCommandsChannelId: adminCommandsChannel.id,
 				adminLogChannelId: adminLogChannel.id,
 				welcomeChannelId: welcome.channel.id,
 				rulesChannelId: rules.channel.id,
@@ -2788,6 +2775,7 @@ export class GuildSetupManager {
 				deroConfigChannelId: deroConfigChannel.id,
 				onboardingConfigChannelId: onboardingConfigChannel.id,
 				arcadeControlChannelId: arcadeControlChannel.id,
+				serverConfigChannelId: serverConfigChannel.id,
 				commandOutputChannelId: commandOutputChannel.id,
 			},
 			objects: {
@@ -2798,7 +2786,6 @@ export class GuildSetupManager {
 				announcementsChannel,
 				adminChannel,
 				nextDecreeChannel,
-				adminCommandsChannel,
 				adminLogChannel,
 				welcomeChannel: welcome.channel,
 				rulesChannel: rules.channel,
@@ -2812,6 +2799,7 @@ export class GuildSetupManager {
 				deroConfigChannel,
 				onboardingConfigChannel,
 				arcadeControlChannel,
+				serverConfigChannel,
 				commandOutputChannel,
 			},
 			adoptedChannelIds: [welcome, rules].filter((entry) => entry.adopted).map((entry) => entry.channel.id),
@@ -2857,10 +2845,6 @@ export class GuildSetupManager {
 			announcementsChannelId: string;
 			adminChannelId: string;
 			nextDecreeChannelId: string;
-			// Intro anchor for the admin command center (the relocated command
-			// guide). Standard one-key-per-channel slot, the guide is this
-			// channel's only tracked message after the 2026-06-19 split.
-			adminCommandsChannelId: string;
 			// 🗒️admin-log's header, edited in place on later boots like every intro.
 			adminLogChannelId: string;
 			// Null when an adopted channel already held the owner's own content.
@@ -2888,6 +2872,7 @@ export class GuildSetupManager {
 			deroConfigChannelId: string;
 			onboardingConfigChannelId: string;
 			arcadeControlChannelId: string;
+			serverConfigChannelId: string;
 			commandOutputChannelId: string;
 		};
 	}> {
@@ -2899,7 +2884,6 @@ export class GuildSetupManager {
 			announcementsChannel,
 			adminChannel,
 			nextDecreeChannel,
-			adminCommandsChannel,
 			adminLogChannel,
 			welcomeChannel,
 			rulesChannel,
@@ -2913,6 +2897,7 @@ export class GuildSetupManager {
 			deroConfigChannel,
 			onboardingConfigChannel,
 			arcadeControlChannel,
+			serverConfigChannel,
 			commandOutputChannel,
 		} = discordChannels;
 
@@ -2931,12 +2916,6 @@ export class GuildSetupManager {
 			announcementsMsg,
 			adminMsg,
 			nextDecreeMsg,
-			// ── admin command center intro ───────────
-			// The admin command guide is the dedicated admin command center's
-			// pinned intro. Sent in the same Promise.all so posting happens in
-			// one batch and ordering is deterministic. Persisted on
-			// introMessageIds.adminCommandsChannelId like every other channel intro.
-			adminCommandsMsg,
 			// 🗒️admin-log's header. Not pinned: only Dero writes there, so nothing buries it.
 			adminLogMsg,
 			// 👋welcome's intro and 📘rules' rules post, null where an adopted channel
@@ -2965,6 +2944,7 @@ export class GuildSetupManager {
 			deroConfigMsg,
 			onboardingConfigMsg,
 			arcadeControlMsg,
+			serverConfigMsg,
 			commandOutputMsg,
 		] = await Promise.all([
 			// intro channel carries both the introduction embed AND the
@@ -2984,17 +2964,12 @@ export class GuildSetupManager {
 			leaderboardChannel.send({ embeds: [ChannelContent.leaderboardIntro()] }),
 			scheduleChannel.send({ embeds: [ChannelContent.scheduleIntro()] }),
 			announcementsChannel.send({ embeds: [ChannelContent.announcementsIntro()] }),
-			adminChannel.send({ embeds: [ChannelContent.adminPending()] }),
+			adminChannel.send({ embeds: [ChannelContent.adminPending()], components: GuildSetupManager.resolveIntroComponents("adminChannelId") ?? [] }),
 			// Pinned header above the NextUpBoard posts. Pinning is best
 			// effort (see schedule channel block below). The message id
 			// is persisted on introMessageIds.nextDecreeChannelId so
 			// refreshIntroEmbeds edits it in place on every boot.
 			nextDecreeChannel.send({ embeds: [ChannelContent.nextDecreeIntro()] }),
-			// Admin command guide, the pinned intro of the dedicated admin
-			// command center. Carries the owner-only Self destruct button row
-			// (gated in the handler). Pinning handled below alongside the
-			// schedule + next-decree pins.
-			adminCommandsChannel.send({ embeds: [ChannelContent.adminCommandGuide()], components: GuildSetupManager.resolveIntroComponents("adminCommandsChannelId", null, guild) ?? [] }),
 			adminLogChannel.send({ embeds: [ChannelContent.adminLogIntro()] }),
 			postIntroUnlessOwnerContent(welcomeChannel, "welcomeChannelId"),
 			postIntroUnlessOwnerContent(rulesChannel, "rulesChannelId"),
@@ -3023,6 +2998,7 @@ export class GuildSetupManager {
 			deroConfigChannel.send({ embeds: [ChannelContent.deroConfigIntro()] }),
 			onboardingConfigChannel.send({ embeds: [ChannelContent.onboardingConfigIntro()] }),
 			arcadeControlChannel.send({ embeds: [ChannelContent.arcadeControlIntro()] }),
+			serverConfigChannel.send({ embeds: [ChannelContent.serverConfigIntro()] }),
 			commandOutputChannel.send({ embeds: [ChannelContent.commandOutputIntro()] }),
 		]);
 
@@ -3058,7 +3034,6 @@ export class GuildSetupManager {
 				announcementsChannelId: announcementsMsg.id,
 				adminChannelId: adminMsg.id,
 				nextDecreeChannelId: nextDecreeMsg.id,
-				adminCommandsChannelId: adminCommandsMsg.id,
 				adminLogChannelId: adminLogMsg.id,
 				welcomeChannelId: welcomeMsg?.id ?? null,
 				rulesChannelId: rulesMsg?.id ?? null,
@@ -3074,6 +3049,7 @@ export class GuildSetupManager {
 				deroConfigChannelId: deroConfigMsg.id,
 				onboardingConfigChannelId: onboardingConfigMsg.id,
 				arcadeControlChannelId: arcadeControlMsg.id,
+				serverConfigChannelId: serverConfigMsg.id,
 				commandOutputChannelId: commandOutputMsg.id,
 			},
 		};
@@ -3157,13 +3133,8 @@ export class GuildSetupManager {
 			...Object.fromEntries(
 				GuildSetupManager.CHANNEL_SPECS.map((spec) => [spec.configField, storedIntroIds[spec.configField] ?? null])
 			),
-			// The two FLAT keys stay explicit, because they are not a channel's own
+			// The FLAT keys stay explicit, because they are not a channel's own
 			// intro and so are deliberately absent from CHANNEL_FIELDS.
-			//
-			// Legacy flat key for the OLD admin command guide that used to live
-			// in #inner-sanctum. Retained only so the retirement block below can
-			// unpin that stale message and null this key; new setups never set it.
-			adminCommandGuideId: storedIntroIds.adminCommandGuideId ?? null,
 			// Flat key for the standalone invite card (second message in
 			// #command-center). null on legacy rows; the invite-card block below
 			// posts it the first time and persists the id.
@@ -3207,7 +3178,7 @@ export class GuildSetupManager {
 			// resolveIntroComponents returns null for the channels that
 			// have no component surface; we pass `[]` in that case so
 			// the send call is explicit about "no components."
-			const componentRows = GuildSetupManager.resolveIntroComponents(spec.configField, stored as unknown as ICopyConfig, guild);
+			const componentRows = GuildSetupManager.resolveIntroComponents(spec.configField, stored as unknown as ICopyConfig);
 			const storedMessageId = nextIntroIds[spec.configField];
 
 			// ── schedule channel exception: edit-in-place ──────────
@@ -3392,41 +3363,6 @@ export class GuildSetupManager {
 				// pinned, still tracked.
 				console.warn(LOG_MESSAGES.setup.introRefreshEditFailed(spec.displayName, guild.id), error);
 			}
-		}
-
-		// ── retire the legacy in-sanctum admin command guide ──────────────
-		// What:  the admin command guide MOVED to its own channel
-		//        (adminCommandsChannelId, maintained by the spec loop above) in
-		//        the 2026-06-19 split. On guilds that still have the old guide
-		//        pinned in #inner-sanctum, unpin it (left in history per the
-		//        never-delete policy) and clear the legacy anchor so it stops
-		//        being tracked. Once cleared, adminCommandGuideId is null and
-		//        this block is a permanent no-op.
-		// Who:   guilds set up before the split. Brand-new setups never populate
-		//        adminCommandGuideId, so they skip this entirely.
-		// When:  gated on the NEW channel's guide already being live
-		//        (nextIntroIds.adminCommandsChannelId set) so an admin who
-		//        disabled auto-heal, and therefore has no new channel yet,
-		//        keeps the old guide pinned until the replacement actually exists.
-		const legacyGuideId = nextIntroIds.adminCommandGuideId;
-		const legacyAdminChannelId = stored.adminChannelId as string | null | undefined;
-		if (legacyGuideId && nextIntroIds.adminCommandsChannelId && legacyAdminChannelId) {
-			const adminChannel = await client.channels.fetch(legacyAdminChannelId).catch(() => null);
-			if (adminChannel instanceof TextChannel) {
-				const legacyGuide = await adminChannel.messages.fetch(legacyGuideId).catch(() => null);
-				if (legacyGuide?.pinned) {
-					try {
-						await legacyGuide.unpin();
-					} catch (unpinError) {
-						console.warn(LOG_MESSAGES.setup.introRefreshEditFailed("admin command guide", guild.id), unpinError);
-					}
-				}
-			}
-			// Clear the anchor regardless of whether the fetch/unpin succeeded,
-			// the message is no longer the tracked guide; the new channel owns
-			// the live one now.
-			nextIntroIds.adminCommandGuideId = null;
-			needsPersist = true;
 		}
 
 		// ── invite card (second pinned message in #command-center) ──

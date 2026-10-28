@@ -43,7 +43,7 @@ export type KvKSeasonReport = (answer: { content: string }) => Promise<unknown>;
 
 export class GuildEventManager {
 	// `report` defaults to the interaction's own reply; /events kvk-season passes the edit of
-	// its prompt, which posts in 🎛️admin-controls (2026-10 item 257 Phase 5).
+	// its prompt, which posts in 🛠️server-config (2026-10 item 257 Phase 5).
 	static async configureKvKSeason(interaction: RepliableInteraction, input: IKvKSeasonInput, report: KvKSeasonReport = (answer) => interaction.editReply(answer)): Promise<void> {
 		try {
 			const guildId = interaction.guildId!;

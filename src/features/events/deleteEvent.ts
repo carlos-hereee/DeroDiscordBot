@@ -79,7 +79,7 @@ export async function deleteEvent(interaction: RepliableInteraction, options: Co
 
 	const row = new ActionRowBuilder<ButtonBuilder>().addComponents(cancel, confirm);
 
-	// Posted in 🎛️admin-controls (2026-10 item 257 Phase 5); only this admin's press counts.
+	// Posted in 🛠️server-config (2026-10 item 257 Phase 5); only this admin's press counts.
 	const prompt = await askInChannel(interaction, "admin", {
 		embeds: [infoEmbed(c.confirmTitle, c.confirmDescription(event.name), rokCommanderCopy.COLORS.ERROR)],
 		components: [row],

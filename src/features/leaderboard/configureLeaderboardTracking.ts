@@ -88,7 +88,7 @@ export async function configureLeaderboardTracking(interaction: RepliableInterac
 
 		const embed = infoEmbed("Leaderboard tracking already that way", body, COLORS.SCHEDULE);
 		// The Remove button is an action, not a choice, so a reply that carries it posts in
-		// 🎛️admin-controls (2026-10 item 257 Phase 5), where its own handler re-gates the
+		// 🛠️server-config (2026-10 item 257 Phase 5), where its own handler re-gates the
 		// presser; without it the answer is a notice.
 		if (components) await answerInChannel(interaction, "admin", { embeds: [embed], components });
 		else await showEmbedNotice(interaction, embed);
@@ -149,7 +149,7 @@ export async function configureLeaderboardTracking(interaction: RepliableInterac
 				: undefined;
 
 		const embed = infoEmbed(heading, body, COLORS.SCHEDULE);
-		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 		await answerInChannel(interaction, "admin", { embeds: [embed], components });
 	} catch (err) {
 		console.error("[configure leaderboard-tracking] update failed", err);

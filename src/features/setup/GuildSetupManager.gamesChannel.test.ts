@@ -132,7 +132,6 @@ const EXISTING_IDS = {
 	announcementsChannelId: "ch-announcements",
 	adminChannelId: "ch-admin",
 	nextDecreeChannelId: "ch-nextdecree",
-	adminCommandsChannelId: "ch-admincommands",
 	adminLogChannelId: "ch-adminlog",
 	welcomeChannelId: "ch-welcome",
 	rulesChannelId: "ch-rules",
@@ -152,6 +151,7 @@ const EXISTING_IDS = {
 	deroConfigChannelId: "ch-deroconfig",
 	onboardingConfigChannelId: "ch-onboardingconfig",
 	arcadeControlChannelId: "ch-arcadecontrol",
+	serverConfigChannelId: "ch-serverconfig",
 	commandOutputChannelId: "ch-commandoutput",
 };
 

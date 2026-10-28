@@ -18,7 +18,15 @@ import { COLORS } from "@base/copy/brand.js";
 import { normalizePriorityOrder, VOICE_PRIORITY_CATEGORIES, type VoicePriorityCategory } from "@features/voice/voicePriority.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
 import { adminLog } from "./adminLog.js";
-import { HEADQUARTERS_STEP_PREFIX, refreshHeadquartersCards, type HeadquartersDomain } from "./headquartersCards.js";
+import {
+	HEADQUARTERS_STEP_PREFIX,
+	SERVER_CONFIG_STEPS,
+	SWITCH_STEP_TAIL,
+	refreshHeadquartersCards,
+	type HeadquartersDomain,
+	type ServerConfigStep,
+	type ServerSwitch,
+} from "./headquartersCards.js";
 import { setupCopy } from "./setupCopy.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
@@ -26,7 +34,8 @@ import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 // ── headquartersSteps ───────────────────────────────────────────────────────
 // What:  where a 🏰 DERO HEADQUARTERS step button goes (2026-10 item 257 Phase 2b,
 //        owner item 7). Every step but one opens a flow that already exists: the
-//        /dero-config and /arcade settings panels, or an /arcade subcommand's form,
+//        /dero-config, /arcade, /server channels and /leveling settings panels, the
+//        /events pick, or an /arcade, /events or /server subcommand's form,
 //        through the admin command launcher. The one new flow is ⚙️dero-config's step
 //        5, the voice priority order (owner decision 4): a modal of four selects.
 // Who:   the buttons headquartersCards.ts puts on the steps cards, as
@@ -49,15 +58,40 @@ const leaf = (command: string, path: string): StepTarget => ({ kind: "leaf", com
 // voice switch, the voice channel list, Listen and the task list, and the budget, so
 // steps 1 to 4 all open it; the arcade panel holds the chip switch (the daily claim
 // rides it), the monthly post and the bots.
+//
+// 🛠️server-config (2026-10 item 263 Phase 4a) routes by step key, so a step inserted in
+// SERVER_CONFIG_STEPS takes its route with it: the KvK season and the weekly stream
+// schedule open their /events forms, events opens the /events pick (list, pause,
+// resume, delete), the channels the /server channels panel and leveling its panel.
+const SERVER_CONFIG_ROUTES: Record<ServerConfigStep, StepTarget> = {
+	kvkSeason: leaf("events", "kvk-season"),
+	streams: leaf("events", "stream weekly"),
+	events: panel("events"),
+	channels: panel("server-channels"),
+	leveling: panel("leveling"),
+};
+
+// The server switches message: each switch opens its own /server form.
+const SWITCH_ROUTES: Record<ServerSwitch, StepTarget> = {
+	autoHeal: leaf("server", "auto-heal"),
+	tracking: leaf("server", "leaderboard tracking"),
+	weekStart: leaf("server", "leaderboard week-start"),
+};
+
 const ROUTED_STEPS: Partial<Record<HeadquartersDomain, readonly StepTarget[]>> = {
 	deroConfig: [panel("dero-config"), panel("dero-config"), panel("dero-config"), panel("dero-config"), { kind: "priority" }],
 	arcadeControl: [leaf("arcade", "on"), panel("arcade"), panel("arcade"), leaf("arcade", "reach"), leaf("arcade", "server block")],
+	serverConfig: SERVER_CONFIG_STEPS.map((key) => SERVER_CONFIG_ROUTES[key]),
 };
 
 /** The flow a routed step opens, or null for a customId from no current card. */
 export function stepTarget(customId: string): StepTarget | null {
 	const [prefix, domain, step] = customId.split(":");
 	if (prefix !== HEADQUARTERS_STEP_PREFIX || !domain || !step) return null;
+	if (step.startsWith(SWITCH_STEP_TAIL)) {
+		const name = step.slice(SWITCH_STEP_TAIL.length);
+		return domain === "serverConfig" && Object.hasOwn(SWITCH_ROUTES, name) ? SWITCH_ROUTES[name as ServerSwitch] : null;
+	}
 	return ROUTED_STEPS[domain as HeadquartersDomain]?.[Number(step) - 1] ?? null;
 }
 

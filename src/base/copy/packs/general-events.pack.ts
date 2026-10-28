@@ -321,6 +321,8 @@ export const generalEventsCopy: IPluginCopy = {
 			deroConfig: "⚙️dero-config",
 			onboardingConfig: "🧭onboarding",
 			arcadeControl: "🎰arcade-control",
+			// The fourth config channel (mirrors rok-commander, 2026-10 item 263 Phase 4a).
+			serverConfig: "🛠️server-config",
 			commandOutput: "💬dero-commands",
 			// The join log and the rules post (mirrors rok-commander, 2026-10 item 247).
 			welcome: "👋welcome",
@@ -507,8 +509,14 @@ export const generalEventsCopy: IPluginCopy = {
 		arcadeControl: {
 			title: "🎰 Arcade Control",
 			description:
-				"The arcade and its economy: chips, the arcade switches, registering for the rated network, this server's rating standing and the `/server` settings.\n\n" +
+				"The arcade and its economy: chips, the arcade switches, registering for the rated network and this server's rating standing.\n\n" +
 				"This channel's setup steps arrive here, one step at a time.",
+		},
+		serverConfig: {
+			title: "🛠️ Server Config",
+			description:
+				"This server's own settings: the KvK season, the stream schedule, events, the server's channels, leveling and XP, and the server switches.\n\n" +
+				"Every admin answer that belongs to no other channel posts here.",
 		},
 		// 💬dero-commands' intro, plain voice.
 		commandOutput: {

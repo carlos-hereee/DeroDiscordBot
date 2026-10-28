@@ -8,7 +8,7 @@ import { GuildExplicitContentFilter, GuildVerificationLevel } from "discord.js";
 // would double the authoring for content that comes out the same twice.
 // Who:   communityControls (button labels), enableCommunity (the modal, the review,
 //        the replies and the screening form), communityButtons (the router's
-//        refusals), communityButtonsPointer, and the Configure Onboarding modules
+//        refusals), and the Configure Onboarding modules
 //        (onboardingPreconditions, onboardingDraft, configureOnboarding,
 //        promptEditModal), which read the `onboarding` section.
 //
@@ -396,18 +396,5 @@ export const communityCopy = {
 
 		// The reason Discord's audit log shows beside the Onboarding change.
 		auditReason: "Configured by Dero via Configure Onboarding",
-	},
-
-	// ── the one time pointer in #inner-sanctum ──
-	pointer: {
-		title: "New: Community button",
-		description: (adminCommandsChannelId: string): string =>
-			[
-				`The admin controls card in <#${adminCommandsChannelId}> has a new Community button. It shows one of these two, whichever this server is ready for.`,
-				"",
-				"**Enable Community** switches on Discord Community for this server. You pick the rules channel and a channel for moderator notices, and Membership Screening (on by default) asks new members to accept your rules before they can talk.",
-				"",
-				"**Configure Onboarding** takes its place once Community is on. It drafts Discord Onboarding questions for this server, ending with one that gives the member role. You review and edit them before anything changes.",
-			].join("\n"),
 	},
 };

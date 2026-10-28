@@ -264,7 +264,7 @@ export async function runLevelSettings(interaction: RepliableInteraction, option
 
 	switch (subcommand) {
 		case "show":
-			// A reading of the settings is an answer, so it posts in 🎛️admin-controls (owner rule 1).
+			// A reading of the settings is an answer, so it posts in 🛠️server-config (owner rule 1).
 			await answerInChannel(interaction, "admin", { embeds: [buildPreview(interaction, context)] });
 			return;
 
@@ -499,7 +499,7 @@ export async function runLevelSettings(interaction: RepliableInteraction, option
 		invalidateLevelingConfig(guildId);
 		auditLevelingPatch(interaction, guildId, patch);
 
-		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 		await answerInChannel(interaction, "admin", { embeds: [infoEmbed(
 					"Leveling settings updated",
 					[...notes, "", `Run \`/leveling settings show\` to see everything as it stands now.`].join("\n"),

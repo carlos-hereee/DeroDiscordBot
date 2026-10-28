@@ -229,7 +229,7 @@ export async function runXpSubcommand(interaction: RepliableInteraction, options
 		}
 
 		case "export": {
-			// The file posts in 🎛️admin-controls (2026-10 item 257 Phase 5): every admin there
+			// The file posts in 🛠️server-config (2026-10 item 257 Phase 5): every admin there
 			// may run this same export, so it shows them nothing they could not already fetch.
 			const answer = await beginChannelAnswer(interaction, "admin");
 
@@ -289,7 +289,7 @@ const clamp = (value: number, low: number, high: number): number => Math.min(hig
 const displayNameOf = (interaction: RepliableInteraction, user: User): string =>
 	interaction.guild?.members.cache.get(user.id)?.displayName ?? user.globalName ?? user.username;
 
-// XP given is work done, an answer, so it posts in 🎛️admin-controls (owner rule 1).
+// XP given is work done, an answer, so it posts in 🛠️server-config (owner rule 1).
 async function reply(interaction: RepliableInteraction, title: string, description: string): Promise<void> {
 	await answerInChannel(interaction, "admin", { embeds: [infoEmbed(title, description, COLORS.ACCOUNT)] });
 }
@@ -318,7 +318,7 @@ async function setExactly(
 }
 
 // ── the confirm gate ───────────────────────────────────────────────────────
-// An inline collector on the prompt, which posts in 🎛️admin-controls (2026-10 item
+// An inline collector on the prompt, which posts in 🛠️server-config (2026-10 item
 // 257 Phase 5) and answers only the admin who ran the command (askInChannel), the
 // pattern the KvK season and event delete prompts use. Not a registered persistent
 // button: the prompt is meaningful only inside this one invocation, and a persistent

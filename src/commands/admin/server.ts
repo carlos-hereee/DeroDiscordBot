@@ -3,6 +3,7 @@ import { addAutoHealOptions, configureAutoHeal } from "@features/setup/configure
 import { addChannelsSubcommands, channelsAutocomplete, channelsFormChoices, runChannelsSubcommand } from "@features/setup/channelVisibilitySubcommands.js";
 import { addLeaderboardTrackingOptions, configureLeaderboardTracking } from "@features/leaderboard/configureLeaderboardTracking.js";
 import { addWeekStartOptions, configureLeaderboardWeekStart } from "@features/leaderboard/configureLeaderboardWeekStart.js";
+import { refreshHeadquartersCards } from "@features/setup/headquartersCards.js";
 import type { CommandOptionReader, FormChoicesProvider } from "@handlers/commandOptions.js";
 
 // ── /server ───────────────────────────────────────────────────────────
@@ -40,6 +41,13 @@ export const data = new SlashCommandBuilder()
 
 /** The one handler the slash command and the admin guide's /server buttons share. */
 export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
+	await dispatch(interaction, options);
+	// 🛠️server-config's steps card, switches and chart follow every server switch and channel change, fire
+	// and forget (2026-10 item 263 Phase 4a); the steps and settings panels run this handler.
+	refreshHeadquartersCards(interaction.guild, "serverConfig");
+}
+
+async function dispatch(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const group = options.getSubcommandGroup(false);
 	if (group === CHANNELS_GROUP) {
 		await runChannelsSubcommand(interaction, options);

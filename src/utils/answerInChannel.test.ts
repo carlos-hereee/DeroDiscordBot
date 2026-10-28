@@ -19,7 +19,9 @@ const CONFIG = {
 	deroConfigChannelId: "c-dero-config",
 	onboardingConfigChannelId: "c-onboarding",
 	arcadeControlChannelId: "c-arcade",
-	adminCommandsChannelId: "c-admin",
+	// 🛠️server-config holds both its own answers and every other admin answer since
+	// 🎛️admin-controls retired (2026-10 item 263 Phase 4a).
+	serverConfigChannelId: "c-admin",
 };
 
 function channel(id: string) {
@@ -71,6 +73,7 @@ describe("answerChannelId", () => {
 		["deroConfig", "c-dero-config"],
 		["onboarding", "c-onboarding"],
 		["arcade", "c-arcade"],
+		["serverConfig", "c-admin"],
 		["admin", "c-admin"],
 	];
 	it.each(routes)("routes %s to its own channel", (audience, expected) => {
@@ -100,6 +103,7 @@ describe("answerInChannel", () => {
 		["deroConfig", "c-dero-config"],
 		["onboarding", "c-onboarding"],
 		["arcade", "c-arcade"],
+		["serverConfig", "c-admin"],
 		["admin", "c-admin"],
 	] as Array<[AnswerAudience, string]>)("posts an admin's %s answer in its Headquarters channel", async (audience, expected) => {
 		const channels = allChannels();

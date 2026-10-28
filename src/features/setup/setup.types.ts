@@ -29,10 +29,6 @@ export interface ICreatedChannels {
 	// the NextUpBoard's permanent-post audit trail does not drown the
 	// 15/30 minute reminder pings.
 	nextDecreeChannelId: string;
-	// id of the admin-only command channel. Holds the relocated admin command
-	// guide + the admin power-up panel; kept out of inner-sanctum so daily
-	// announcements there do not bury the quick-action controls.
-	adminCommandsChannelId: string;
 	// 🗒️admin-log, the bot write only audit trail (post-launch plan item 11).
 	adminLogChannelId: string;
 	// 👋welcome and 📘rules (2026-10 item 247 Phase 2). Either may be a channel the
@@ -58,11 +54,13 @@ export interface ICreatedChannels {
 	arcadeVoiceChannelId: string;
 	// ── 🏰 DERO HEADQUARTERS, the THIRD managed category (2026-10 item 257 Phase 2a) ──
 	// The three admin channels above live under it on a fresh install; these are its
-	// own id and the three admin config channels it adds.
+	// own id and the four admin config channels it adds (🛠️server-config, 2026-10 item 263).
 	headquartersCategoryId: string;
 	deroConfigChannelId: string;
 	onboardingConfigChannelId: string;
 	arcadeControlChannelId: string;
+	// 🛠️server-config, the fourth config channel (2026-10 item 263 Phase 4a).
+	serverConfigChannelId: string;
 	// 💬dero-commands under the notice board, where member command answers post.
 	commandOutputChannelId: string;
 }
@@ -79,7 +77,6 @@ export interface IChannelObjects {
 	adminChannel: TextChannel;
 	announcementsChannel: TextChannel;
 	nextDecreeChannel: TextChannel;
-	adminCommandsChannel: TextChannel;
 	adminLogChannel: TextChannel;
 	welcomeChannel: TextChannel;
 	rulesChannel: TextChannel;
@@ -95,6 +92,7 @@ export interface IChannelObjects {
 	deroConfigChannel: TextChannel;
 	onboardingConfigChannel: TextChannel;
 	arcadeControlChannel: TextChannel;
+	serverConfigChannel: TextChannel;
 	commandOutputChannel: TextChannel;
 }
 

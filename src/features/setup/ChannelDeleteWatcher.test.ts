@@ -218,6 +218,23 @@ describe("ChannelDeleteWatcher", () => {
 		expect(guildConfigMock.update).not.toHaveBeenCalled();
 	});
 
+	// The boot sweep deletes 🎛️admin-controls on purpose (2026-10 item 263 Phase 4a), and
+	// the event may arrive while its id is still stored: no repair, no room lookup.
+	it("treats the retired 🎛️admin-controls deletion as expected", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig({ adminCommandsChannelId: "ch-admin-controls" }));
+		const captured = makeClientCapturing({});
+		registerChannelDeleteWatcher(captured.client);
+		const repair = vi.spyOn(GuildSetupManager, "repairOneChannel");
+
+		await captured.handler!(makeDeletedChannel("ch-admin-controls", makeGuild({}), "🎛️admin-controls"));
+
+		expect(gameRoomMock.findByChannelId).not.toHaveBeenCalled();
+		expect(finishRoomMock).not.toHaveBeenCalled();
+		expect(repair).not.toHaveBeenCalled();
+		expect(guildConfigMock.update).not.toHaveBeenCalled();
+		repair.mockRestore();
+	});
+
 	it("ignores category deletes and defers to the boot sweep", async () => {
 		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig());
 		const captured = makeClientCapturing({});
@@ -617,7 +634,6 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			"announcementsChannelId",
 			"adminChannelId",
 			"nextDecreeChannelId",
-			"adminCommandsChannelId",
 			// 🗒️admin-log (post-launch plan item 11).
 			"adminLogChannelId",
 			// 👋welcome and 📘rules (2026-10 item 247 Phase 2).
@@ -640,6 +656,8 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			"deroConfigChannelId",
 			"onboardingConfigChannelId",
 			"arcadeControlChannelId",
+			// 🛠️server-config replaces 🎛️admin-controls (2026-10 item 263 Phase 4a).
+			"serverConfigChannelId",
 			"commandOutputChannelId",
 		];
 		const actualFields = GuildSetupManager.CHANNEL_SPECS.map((s) => s.configField);
@@ -665,15 +683,15 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			"arcadeVoiceChannelId",
 			"partyGamesChannelId",
 		]);
-		// Every admin channel lives under Headquarters: the three that moved out of the
-		// notice board and the three config channels.
+		// Every admin channel lives under Headquarters: the two that moved out of the
+		// notice board and the four config channels.
 		expect(byCategory("headquartersCategoryId")).toEqual([
 			"adminChannelId",
-			"adminCommandsChannelId",
 			"adminLogChannelId",
 			"arcadeControlChannelId",
 			"deroConfigChannelId",
 			"onboardingConfigChannelId",
+			"serverConfigChannelId",
 		]);
 		// Nine text channels (welcome, rules and 💬dero-commands among them) plus the 🏛️ Meeting Hall voice room.
 		expect(byCategory("categoryId")).toHaveLength(10);
@@ -696,10 +714,10 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 		}
 	});
 
-	it("marks the admin channel, the admin command center and the three Headquarters config channels as kind 'admin'", () => {
+	it("marks the admin channel and the four Headquarters config channels as kind 'admin', and 🎛️admin-controls is no spec", () => {
 		const adminEntries = GuildSetupManager.CHANNEL_SPECS.filter((s) => s.kind === "admin");
 		expect(adminEntries.map((s) => s.configField).sort()).toEqual(
-			["adminChannelId", "adminCommandsChannelId", "deroConfigChannelId", "onboardingConfigChannelId", "arcadeControlChannelId"].sort()
+			["adminChannelId", "deroConfigChannelId", "onboardingConfigChannelId", "arcadeControlChannelId", "serverConfigChannelId"].sort()
 		);
 	});
 

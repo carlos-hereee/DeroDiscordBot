@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, type ChatInputCommandInteraction, type RepliableInteraction } from "discord.js";
 import { addLevelSettingsSubcommands, runLevelSettings } from "@features/leveling/levelSettingsSubcommands.js";
 import { addXpSubcommands, runXpSubcommand } from "@features/leveling/xpSubcommands.js";
+import { refreshHeadquartersCards } from "@features/setup/headquartersCards.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
 // ── /leveling ─────────────────────────────────────────────────────────
@@ -30,6 +31,13 @@ export const data = new SlashCommandBuilder()
 
 /** The one handler the slash command and the admin guide's /leveling button share. */
 export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
+	await dispatch(interaction, options);
+	// 🛠️server-config's steps card, switches and chart follow every leveling and XP change, fire
+	// and forget (2026-10 item 263 Phase 4a); the steps and settings panels run this handler.
+	refreshHeadquartersCards(interaction.guild, "serverConfig");
+}
+
+async function dispatch(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	if (options.getSubcommandGroup(false) === XP_GROUP) {
 		await runXpSubcommand(interaction, options);
 		return;

@@ -12,8 +12,11 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({
 		deleteByGuildId: vi.fn(),
 	},
 }));
+// The retirement's one admin log line, counted rather than posted.
+vi.mock("./adminLog.js", () => ({ adminLog: { write: vi.fn(async () => ({ persisted: true, posted: true })), emit: vi.fn(), emitFor: vi.fn() } }));
 
 import { GuildSetupManager } from "./GuildSetupManager.js";
+import { adminLog } from "./adminLog.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 
@@ -23,7 +26,9 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 //        ensureHomebase, then boots again.
 // Why:   risk R1 (a move that drops overwrites or pins) and risk R2 (a spec built under
 //        the wrong parent, or twice). Neither throws, so only running the sweep twice
-//        over persisted state shows them.
+//        over persisted state shows them. Since 2026-10 item 263 Phase 4a the same boot
+//        builds 🛠️server-config and deletes the stored 🎛️admin-controls, by its id only
+//        (that plan's risk R1): a channel merely named like it is never touched.
 
 const configMock = guildConfigStore as unknown as {
 	findByGuildId: ReturnType<typeof vi.fn>;
@@ -60,12 +65,14 @@ const EXISTING_IDS = {
 	arcadeVoiceChannelId: "ch-arcadevoice",
 };
 
-// The three admin channels, which the old layout kept under the notice board.
-const ADMIN_CHANNELS: Array<{ field: "adminChannelId" | "adminCommandsChannelId" | "adminLogChannelId"; name: string }> = [
+// The admin channels the old layout kept under the notice board and the boot moves.
+// 🎛️admin-controls was the third; it is deleted instead (2026-10 item 263 Phase 4a).
+const ADMIN_CHANNELS: Array<{ field: "adminChannelId" | "adminLogChannelId"; name: string }> = [
 	{ field: "adminChannelId", name: names.admin },
-	{ field: "adminCommandsChannelId", name: names.adminCommands },
 	{ field: "adminLogChannelId", name: names.adminLog },
 ];
+// A channel of the server's own that merely carries the retired name.
+const NAMESAKE_ID = "ch-namesake";
 
 interface IOverwriteLike {
 	id: string;
@@ -78,6 +85,7 @@ interface IOverwriteLike {
 function makeTextChannel(id: string, name: string, parentId: string | null) {
 	const overwrites = new Map<string, IOverwriteLike>([[CUSTOM_ROLE_ID, { id: CUSTOM_ROLE_ID, allow: PermissionFlagsBits.AddReactions }]]);
 	const pinnedMessage = { id: `${id}-pin`, pinned: true, delete: vi.fn(), unpin: vi.fn() };
+	const remove = vi.fn(async () => channel);
 	let posted = 0;
 	const channel = Object.create(TextChannel.prototype) as TextChannel;
 	const setParent = vi.fn(async (nextParentId: string) => {
@@ -100,10 +108,11 @@ function makeTextChannel(id: string, name: string, parentId: string | null) {
 		parentId,
 		setParent,
 		send,
+		delete: remove,
 		permissionOverwrites: { cache: overwrites, set: setOverwrites },
 		messages: { fetch: vi.fn(async () => ({ find: () => undefined, values: () => [][Symbol.iterator]() })) },
 	});
-	return { channel, setParent, setOverwrites, send, overwrites, pinnedMessage };
+	return { channel, setParent, setOverwrites, send, overwrites, pinnedMessage, remove };
 }
 
 function makeCategory(id: string, name: string) {
@@ -134,11 +143,15 @@ function makeWorld(options: { canManageChannels: boolean }) {
 
 	const noticeBoard = makeCategory(NOTICE_BOARD_ID, rokCommanderCopy.setup.categoryName);
 	const admins = Object.fromEntries(ADMIN_CHANNELS.map(({ field, name }) => [field, makeTextChannel(EXISTING_IDS[field], name, NOTICE_BOARD_ID)]));
+	const adminControls = makeTextChannel(EXISTING_IDS.adminCommandsChannelId, names.adminCommands, NOTICE_BOARD_ID);
+	const namesake = makeTextChannel(NAMESAKE_ID, names.adminCommands, NOTICE_BOARD_ID);
 	const guildChannels = new Map<string, unknown>([
 		[NOTICE_BOARD_ID, noticeBoard.category],
 		["games-cat-1", makeCategory("games-cat-1", rokCommanderCopy.setup.gamesCategoryName).category],
 		...Object.values(EXISTING_IDS).map((id): [string, unknown] => [id, { id }]),
 		...ADMIN_CHANNELS.map(({ field }): [string, unknown] => [EXISTING_IDS[field], admins[field].channel]),
+		[EXISTING_IDS.adminCommandsChannelId, adminControls.channel],
+		[NAMESAKE_ID, namesake.channel],
 	]);
 	const categories = new Map<string, ReturnType<typeof makeCategory>>();
 	const created: Array<{ name: string; type: number; parent?: string }> = [];
@@ -169,7 +182,7 @@ function makeWorld(options: { canManageChannels: boolean }) {
 		channels: { fetch: vi.fn(async (id: string) => (id === EXISTING_IDS.adminChannelId ? admins.adminChannelId.channel : (guildChannels.get(id) ?? null))) },
 	} as unknown as Client;
 
-	return { guild, client, create, created, admins, readStored: () => stored };
+	return { guild, client, create, created, admins, adminControls, namesake, readStored: () => stored };
 }
 
 describe("🏰 DERO HEADQUARTERS on an existing guild's boot", () => {
@@ -180,7 +193,7 @@ describe("🏰 DERO HEADQUARTERS on an existing guild's boot", () => {
 	});
 	afterEach(() => vi.restoreAllMocks());
 
-	it("builds the category and the four new channels once, each under its own parent", async () => {
+	it("builds the category and the five new channels once, each under its own parent", async () => {
 		const world = makeWorld({ canManageChannels: true });
 
 		await GuildSetupManager.ensureHomebase(world.client, world.guild);
@@ -191,18 +204,19 @@ describe("🏰 DERO HEADQUARTERS on an existing guild's boot", () => {
 		expect(headquartersId).toBe("created-1");
 
 		const parentOf = (name: string) => world.created.find((call) => call.name === name)?.parent;
-		for (const name of [names.deroConfig, names.onboardingConfig, names.arcadeControl]) {
+		for (const name of [names.deroConfig, names.onboardingConfig, names.arcadeControl, names.serverConfig]) {
 			expect(parentOf(name), `${name} belongs under 🏰 DERO HEADQUARTERS`).toBe(headquartersId);
 		}
 		expect(parentOf(names.commandOutput), "💬dero-commands belongs under the notice board").toBe(NOTICE_BOARD_ID);
-		// One category and four channels, nothing else.
-		expect(world.created).toHaveLength(5);
-		for (const field of ["deroConfigChannelId", "onboardingConfigChannelId", "arcadeControlChannelId", "commandOutputChannelId"]) {
+		// One category and five channels, nothing else: 🎛️admin-controls is never built.
+		expect(world.created).toHaveLength(6);
+		expect(world.created.filter((call) => call.name === names.adminCommands)).toHaveLength(0);
+		for (const field of ["deroConfigChannelId", "onboardingConfigChannelId", "arcadeControlChannelId", "serverConfigChannelId", "commandOutputChannelId"]) {
 			expect(world.readStored()[field], field).toMatch(/^created-/);
 		}
 	});
 
-	it("moves the three admin channels in, keeping their overwrites and their pins", async () => {
+	it("moves the two admin channels in, keeping their overwrites and their pins", async () => {
 		const world = makeWorld({ canManageChannels: true });
 
 		await GuildSetupManager.ensureHomebase(world.client, world.guild);
@@ -231,6 +245,19 @@ describe("🏰 DERO HEADQUARTERS on an existing guild's boot", () => {
 		expect(world.readStored().adminLogChannelId).toBe(EXISTING_IDS.adminLogChannelId);
 	});
 
+	it("deletes exactly the stored 🎛️admin-controls, once, clears its id and writes one admin log line; a namesake is untouched", async () => {
+		const world = makeWorld({ canManageChannels: true });
+
+		await GuildSetupManager.ensureHomebase(world.client, world.guild);
+
+		expect(world.adminControls.remove).toHaveBeenCalledOnce();
+		expect(world.adminControls.setParent).not.toHaveBeenCalled();
+		expect(world.namesake.remove).not.toHaveBeenCalled();
+		expect(world.namesake.setParent).not.toHaveBeenCalled();
+		expect(world.readStored().adminCommandsChannelId).toBeNull();
+		expect(adminLog.write).toHaveBeenCalledOnce();
+	});
+
 	it("changes nothing on a second boot", async () => {
 		const world = makeWorld({ canManageChannels: true });
 		await GuildSetupManager.ensureHomebase(world.client, world.guild);
@@ -239,6 +266,8 @@ describe("🏰 DERO HEADQUARTERS on an existing guild's boot", () => {
 		await GuildSetupManager.ensureHomebase(world.client, world.guild);
 
 		expect(world.create.mock.calls.length).toBe(createdAfterFirst);
+		expect(world.adminControls.remove).toHaveBeenCalledOnce();
+		expect(adminLog.write).toHaveBeenCalledOnce();
 		for (const { field } of ADMIN_CHANNELS) {
 			expect(world.admins[field].setParent, field).toHaveBeenCalledOnce();
 			expect(world.admins[field].setOverwrites, field).toHaveBeenCalledOnce();
@@ -257,7 +286,12 @@ describe("🏰 DERO HEADQUARTERS on an existing guild's boot", () => {
 			expect(world.admins[field].channel.parentId).toBe(NOTICE_BOARD_ID);
 		}
 		expect(world.readStored().headquartersCategoryId).toBeUndefined();
-		const refusals = log.mock.calls.filter(([line]) => typeof line === "string" && line.includes("lacks Manage Channels"));
-		expect(refusals).toHaveLength(1);
+		// One line for Headquarters and one for 🎛️admin-controls, which stays until a boot with the permission.
+		const refusals = (tag: string) => log.mock.calls.filter(([line]) => typeof line === "string" && line.startsWith(tag) && line.includes("lacks Manage Channels"));
+		expect(refusals("[headquarters]")).toHaveLength(1);
+		expect(refusals("[admin-controls]")).toHaveLength(1);
+		expect(world.adminControls.remove).not.toHaveBeenCalled();
+		expect(world.readStored().adminCommandsChannelId).toBe(EXISTING_IDS.adminCommandsChannelId);
+		expect(adminLog.write).not.toHaveBeenCalled();
 	});
 });

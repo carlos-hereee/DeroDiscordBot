@@ -329,6 +329,15 @@ export const setupCopy = {
 		auditOn: "arcade on, category and channels rebuilt",
 	},
 
+	// ── 🎛️admin-controls retired (2026-10 item 263 Phase 4a) ──
+	// The one admin log line the boot sweep writes when it deletes the channel, and the
+	// reason Discord's own audit log shows beside the delete. Admin facing.
+	retiredAdminControls: {
+		subject: "🎛️admin-controls",
+		detail: "deleted: every control now lives in its own Dero Headquarters channel, and admin answers post in 🛠️server-config",
+		deleteReason: "Dero retired 🎛️admin-controls: every control now lives in its own Dero Headquarters channel",
+	},
+
 	// ── 🏰 DERO HEADQUARTERS steps cards and settings charts (2026-10 item 257 Phase 2b) ──
 	// Admin facing. A button label holds 80 characters; the step labels stay short so the
 	// card reads as a checklist.
@@ -339,6 +348,7 @@ export const setupCopy = {
 		optional: "(optional)",
 		buttonLabel: (step: number): string => `Step ${step}`,
 		footer: "Press a step to open its settings. The marks update after every change.",
+		switchesFooter: "Press a switch to change it. Refresh standings redraws the leaderboard.",
 		on: "ON",
 		off: "OFF",
 		notSet: "not set",
@@ -392,6 +402,39 @@ export const setupCopy = {
 				blocked: "Blocked servers",
 			},
 			reach: { "invite-only": "invite only", server: "this server", network: "the rated network" } as Record<string, string>,
+		},
+		// 🛠️server-config (2026-10 item 263 Phase 4a). Steps are keyed, not listed, so an
+		// inserted step (Phase 4c's timezone) moves its number with its label.
+		serverConfig: {
+			title: "🛠️ Server setup",
+			steps: {
+				kvkSeason: "The KvK season",
+				streams: "The weekly stream schedule",
+				events: "Your events: list, pause, resume or delete",
+				channels: "The server's channels: hide, show, list or rename",
+				leveling: "Leveling settings and XP",
+			},
+			chartTitle: "🛠️ Server settings",
+			chartSubtitle: "This server's schedule, channels, leveling and switches.",
+			rows: {
+				kvkSeason: "KvK season",
+				weeklySchedules: "Weekly schedules",
+				activeEvents: "Active events",
+				pausedEvents: "Paused events",
+				hiddenChannels: "Hidden channels",
+				renamedChannels: "Renamed channels",
+				leveling: "Leveling",
+				autoHeal: "Auto heal",
+				tracking: "Leaderboard tracking",
+				weekStart: "Leaderboard week starts",
+			},
+			seasonEnds: (end: Date): string => `ends ${end.toISOString().slice(0, 10)}`,
+			weekStarts: { sunday: "Sunday", monday: "Monday" } as Record<"sunday" | "monday", string>,
+			switches: {
+				title: "🛠️ Server switches",
+				labels: { autoHeal: "Auto heal", tracking: "Leaderboard tracking", weekStart: "Week start" },
+				line: (label: string, state: string): string => `**${label}** ${state}`,
+			},
 		},
 	},
 } as const;

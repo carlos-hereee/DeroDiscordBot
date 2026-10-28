@@ -90,7 +90,7 @@ export async function configureLeaderboardWeekStart(interaction: RepliableIntera
 	try {
 		await guildConfigStore.update(guildId, { weekStart: start });
 		adminLog.emitFor(interaction, guildId, "config.change", { subject: setupCopy.adminLog.subjects.weekStart, detail: setupCopy.adminLog.set(start) });
-		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 		await answerInChannel(interaction, "admin", { embeds: [infoEmbed(
 					"📅 Leaderboard week start updated",
 					`The leaderboard's "This week" view now runs ${BOUNDARY_LABEL[start]}. The boundary is shown in the leaderboard title so members always know the window.`,

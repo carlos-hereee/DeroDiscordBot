@@ -126,6 +126,11 @@ const guildConfigSchema = new Schema(
 		deroConfigChannelId: { type: String, required: false, default: null },
 		onboardingConfigChannelId: { type: String, required: false, default: null },
 		arcadeControlChannelId: { type: String, required: false, default: null },
+		// 🛠️server-config, the fourth config channel (2026-10 item 263 Phase 4a): the server's own
+		// configs (the KvK season, streams, events, channels, leveling and the server switches),
+		// and where every admin answer with no domain of its own posts. Nullable like its
+		// siblings, so the boot sweep builds it once on every existing server.
+		serverConfigChannelId: { type: String, required: false, default: null },
 		// 💬dero-commands under the notice board: where member command answers post
 		// (2026-10 item 257, owner decision 7). Not commandsChannelId, which stays the
 		// 📖command-center guide.
@@ -498,6 +503,7 @@ const guildConfigSchema = new Schema(
 				deroConfigChannelId: { type: String, required: false, default: null },
 				onboardingConfigChannelId: { type: String, required: false, default: null },
 				arcadeControlChannelId: { type: String, required: false, default: null },
+				serverConfigChannelId: { type: String, required: false, default: null },
 				commandOutputChannelId: { type: String, required: false, default: null },
 			},
 			required: false,
@@ -516,6 +522,17 @@ const guildConfigSchema = new Schema(
 				deroConfigChannelId: { type: String, required: false, default: null },
 				onboardingConfigChannelId: { type: String, required: false, default: null },
 				arcadeControlChannelId: { type: String, required: false, default: null },
+				serverConfigChannelId: { type: String, required: false, default: null },
+			},
+			required: false,
+			default: () => ({}),
+		},
+		// 🛠️server-config's third message, the server switches between its steps card and its
+		// chart (2026-10 item 263 Phase 4a), kept by headquartersCards.ts like the steps card.
+		// Declared key by key for the same reason as its siblings.
+		settingsSwitchesMessageIds: {
+			type: {
+				serverConfigChannelId: { type: String, required: false, default: null },
 			},
 			required: false,
 			default: () => ({}),
@@ -525,6 +542,7 @@ const guildConfigSchema = new Schema(
 				deroConfigChannelId: { type: String, required: false, default: null },
 				onboardingConfigChannelId: { type: String, required: false, default: null },
 				arcadeControlChannelId: { type: String, required: false, default: null },
+				serverConfigChannelId: { type: String, required: false, default: null },
 			},
 			required: false,
 			default: () => ({}),

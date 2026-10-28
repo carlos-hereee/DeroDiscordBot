@@ -53,8 +53,7 @@ import { registerSelfDestructHandlers } from "@features/setup/selfDestruct.js";
 import { registerRulesEditHandlers } from "@features/setup/rulesEdit.js";
 import { registerAdoptionChoiceHandlers } from "@features/setup/adoptionChoice.js";
 import { registerHeadquartersStepHandlers } from "@features/setup/headquartersSteps.js";
-import { registerCommunityGuideSync, registerCommunityHandlers } from "@features/community/communityButtons.js";
-import { postCommunityButtonsPointers } from "@features/community/communityButtonsPointer.js";
+import { registerCommunityStateSync, registerCommunityHandlers } from "@features/community/communityButtons.js";
 import { registerWelcomeLog } from "@features/setup/welcomeLog.js";
 import { registerPowerUpHandlers, removeAllPowerUpPanels } from "@features/power-ups/PowerUps.js";
 import { registerAdminCommandLauncher } from "@features/command-buttons/adminCommandLauncher.js";
@@ -668,9 +667,9 @@ process.on("uncaughtException", (err) => {
 		// second GuildMemberAdd listener beside the greeter's on purpose: the greeter
 		// welcomes in introductions, this logs in 👋welcome, each throttled apart.
 		registerWelcomeLog(client);
-		// Swaps the admin guide's community row between Enable Community and Configure
-		// Onboarding when Discord's Community state changes (post-launch plan item 8).
-		registerCommunityGuideSync(client);
+		// Redraws 🧭onboarding when Discord's Community state changes, so its step 1 mark
+		// follows at once (2026-10 item 263 Phase 4a, R3-14).
+		registerCommunityStateSync(client);
 
 		// ── legacy arcade field rename ─────────────────────────────
 		// What: renames gamesRulesChannelId / gamesChallengesChannelId (and their
@@ -900,13 +899,6 @@ process.on("uncaughtException", (err) => {
 		// changes that move it (2026-10 item 244 Phase 5b). After the reconcile, so a table
 		// a departure closed is not listed. Never throws.
 		await startNetworkBoards(client);
-
-		// ── community buttons pointer (2026-10 item 247 Phase 3) ──
-		// Once per guild, an #inner-sanctum post pointing at the new Enable Community
-		// and Configure Onboarding buttons. After the homebase loop on purpose: the
-		// intro refresh there is what puts the buttons on each guide, and the pointer
-		// waits until a guide shows them. Never throws, per guild.
-		await postCommunityButtonsPointers(client);
 
 		// ── hold em turn clock ─────────────────────────────────────
 		// What: force-folds a player who has run out of time at a poker table, and

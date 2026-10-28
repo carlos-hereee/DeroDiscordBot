@@ -277,7 +277,7 @@ async function handleHide(interaction: RepliableInteraction, options: CommandOpt
 	await guildConfigStore.update(interaction.guildId!, { hiddenChannels });
 	adminLog.emitFor(interaction, interaction.guildId!, "config.change", { subject: setupCopy.adminLog.subjects.channelVisibility(displayName), detail: setupCopy.adminLog.hidden });
 
-	// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+	// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 	await answerInChannel(interaction, "admin", { embeds: [infoEmbed(
 				`Channel hidden`,
 				`Hid <#${channelId}> (${displayName}) from members. The bot still posts there in the background. Run /server channels show to make it visible again.`,
@@ -331,7 +331,7 @@ async function handleShow(interaction: RepliableInteraction, options: CommandOpt
 	await guildConfigStore.update(interaction.guildId!, { hiddenChannels });
 	adminLog.emitFor(interaction, interaction.guildId!, "config.change", { subject: setupCopy.adminLog.subjects.channelVisibility(displayName), detail: setupCopy.adminLog.shown });
 
-	// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+	// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 	await answerInChannel(interaction, "admin", { embeds: [infoEmbed(
 				`Channel visible`,
 				`Made <#${channelId}> (${displayName}) visible to members again.`,
@@ -354,7 +354,7 @@ async function handleList(interaction: RepliableInteraction, config: GuildConfig
 		.setColor(COLORS.ARRIVAL)
 		.setFooter({ text: "Hidden channels still receive bot posts; only member visibility is suppressed." });
 
-	// The list is a reading, an answer, so it posts in 🎛️admin-controls (owner rule 1).
+	// The list is a reading, an answer, so it posts in 🛠️server-config (owner rule 1).
 	await answerInChannel(interaction, "admin", { embeds: [embed] });
 }
 

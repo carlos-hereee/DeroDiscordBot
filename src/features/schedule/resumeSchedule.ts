@@ -83,7 +83,7 @@ export async function resumeOneSchedule(interaction: RepliableInteraction, optio
 		await eventStore.updateInGuild(event.eventId, guildId, { paused: false, pausedUntil: null });
 		adminLog.emitFor(interaction, guildId, "schedule.update", { subject: event.name, detail: setupCopy.adminLog.resumed, eventId: event.eventId });
 
-		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 		await answerInChannel(interaction, "admin", { embeds: [infoEmbed("▶️ Schedule resumed", c.resumed(event.name), rokCommanderCopy.COLORS.SCHEDULE)] });
 
 		refreshSchedule(interaction.client, guildId).catch((err) =>

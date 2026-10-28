@@ -27,7 +27,7 @@ import { getPluginCopy } from "@base/copy/getCopy.js";
 //   • Summon Dero invite card: "Icebreaker" (any member)
 //   • 🕹️games intro's daily row: "Fortune" and "Claim daily rewards" (any member,
 //     2026-10 item 254)
-//   • admin-controls guide:  "Refresh standings" (owner/admin)
+//   • 🛠️server-config switches: "Refresh standings" (owner/admin)
 // The admin "Post hangman" button moved to 🎉party-games as Host hangman
 // (post-launch plan item 3, features/game-rooms/partyGames); a stale one on an
 // old card answers as a retired control.
@@ -117,12 +117,12 @@ export function buildClaimButton(label: string): ButtonBuilder {
 	return new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:member:claim`).setLabel(label).setEmoji("🪙").setStyle(ButtonStyle.Success);
 }
 
-// admin-controls guide row: refresh the leaderboard standings. Owner/admin gated
+// 🛠️server-config switches row (2026-10 item 263 Phase 4a): refresh the leaderboard standings. Owner/admin gated
 // in handlePowerUpButton via POWERUP_ACTIONS.
 export function buildAdminControlButtons(): ButtonBuilder[] {
 	return [
-		// Changing this row re-edits every existing guild's pinned admin card on its
-		// next boot, via the componentsAreEquivalent check in refreshIntroEmbeds, so
+		// Changing this row re-edits 🛠️server-config's switches message on every existing
+		// guild's next boot, via the shape check in headquartersCards.ts, so
 		// it ships with no re-run of /setup.
 		new ButtonBuilder().setCustomId(`${POWERUP_PREFIX}:admin:refresh`).setLabel("Refresh standings").setEmoji("🔄").setStyle(ButtonStyle.Primary),
 	];
@@ -200,7 +200,7 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 async function runLeaderboardRefresh(interaction: ButtonInteraction, guildId: string): Promise<void> {
 	// Acknowledge first: both refreshes do Discord I/O (channel fetch, message edit or
 	// post, a card render) which can exceed the 3s interaction-ack window on a cold cache.
-	// The report posts in 🎛️admin-controls (2026-10 item 257 Phase 5).
+	// The report posts in 🛠️server-config (2026-10 item 257 Phase 5).
 	const answer = await beginChannelAnswer(interaction, "admin");
 	const copy = setupCopy.refreshStandings;
 	// The two boards write different anchors (leaderboardMessageId, levelsMessageId),

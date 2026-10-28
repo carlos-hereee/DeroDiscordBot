@@ -37,7 +37,6 @@ vi.mock("@handlers/interactionRegistry.js", () => ({
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { LAUNCHABLE_COMMANDS, formCustomId, offerSwitchFix, registerAdminCommandLauncher, resolveLaunchTarget } from "./adminCommandLauncher.js";
-import { ADMIN_GUIDE_COMMAND_ROWS, buildAdminCommandRows } from "./adminGuideButtons.js";
 import { buildForm, listLeaves } from "./commandForm.js";
 import { commandButtonsCopy } from "./commandButtonsCopy.js";
 
@@ -135,36 +134,31 @@ beforeEach(() => {
 	mocks.findVoice.mockReset().mockResolvedValue(null);
 });
 
-// Every launch id the guide offers, and every id an older guide still carries.
-const GUIDE_IDS = ADMIN_GUIDE_COMMAND_ROWS.flat().map((button) => button.id);
+// The launch ids the retired admin guide carried (2026-10 item 263 Phase 4a retired it
+// with 🎛️admin-controls), each with the command path its label named. A guide still
+// standing on a server the boot sweep has not reached keeps opening its job, and the
+// Headquarters steps open the same ids, so every admin command must stay reachable.
+const GUIDE_BUTTONS = [
+	{ id: "events", path: "events" },
+	{ id: "server", path: "server" },
+	{ id: "server-channels", path: "server channels" },
+	{ id: "leveling", path: "leveling" },
+	{ id: "dero-config", path: "dero-config" },
+	{ id: "arcade", path: "arcade" },
+];
+const GUIDE_IDS = GUIDE_BUTTONS.map((button) => button.id);
 const LEGACY_IDS = ["schedule", "stream", "configure-kvk-season", "configure", "channels", "setup-level-system", "xp", "economy", "dero-config"];
 
-describe("the admin guide's command buttons", () => {
-	it("offer six buttons in two rows: /events, /server, /server channels, /leveling, /dero-config, then /arcade", () => {
-		const labels = buildAdminCommandRows().map((row) => (row.toJSON().components as Array<{ label?: string }>).map((button) => button.label));
-		expect(labels).toEqual([["/events", "/server", "/server channels", "/leveling", "/dero-config"], ["/arcade"]]);
-	});
-
-	it("open exactly the commands the launcher can, each under the path its label names, and every admin command among them", () => {
+describe("the admin guide's launch ids", () => {
+	it("open exactly the commands the launcher can, each under the path its label named, and every admin command among them", () => {
 		const opened = new Set<string>();
-		for (const button of ADMIN_GUIDE_COMMAND_ROWS.flat()) {
+		for (const button of GUIDE_BUTTONS) {
 			const target = resolveLaunchTarget(button.id);
 			expect(target?.path, button.id).toBe(button.path);
 			if (target) opened.add(target.command.data.name);
 		}
 		expect([...opened].sort()).toEqual([...LAUNCHABLE_COMMANDS.keys()].sort());
-		for (const commandName of BOT_CONSTANTS.ADMIN_COMMANDS) expect(LAUNCHABLE_COMMANDS.has(commandName), `${commandName} has no button`).toBe(true);
-	});
-
-	it("carry their launch id and fit Discord's row and message limits", () => {
-		const rows = buildAdminCommandRows();
-		// The guide adds its control row (Self destruct and the admin controls) below.
-		expect(rows.length + 1).toBeLessThanOrEqual(LIMITS.MAX_MESSAGE_ROWS);
-		for (const [index, row] of rows.entries()) {
-			const buttons = row.toJSON().components as Array<{ custom_id?: string }>;
-			expect(buttons.length).toBeLessThanOrEqual(LIMITS.MAX_ROW_BUTTONS);
-			expect(buttons.map((button) => button.custom_id)).toEqual(ADMIN_GUIDE_COMMAND_ROWS[index]?.map((button) => `admincmd:${button.id}`));
-		}
+		for (const commandName of BOT_CONSTANTS.ADMIN_COMMANDS) expect(LAUNCHABLE_COMMANDS.has(commandName), `${commandName} has no launch id`).toBe(true);
 	});
 
 	it("map every id an older guide carries to the job it opened", () => {

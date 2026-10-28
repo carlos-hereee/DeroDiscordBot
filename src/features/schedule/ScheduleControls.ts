@@ -140,7 +140,7 @@ async function runGoLiveNow(interaction: ButtonInteraction, guildId: string): Pr
 	const result = await postGoLiveAnnouncement(interaction.client, guildId, "now", null, null);
 	const c = rokCommanderCopy.goLiveSoon;
 	if (result.ok) {
-		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		// A confirmation of work done is an answer, so it posts in 🛠️server-config and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 		await answerInChannel(interaction, "admin", { content: c.posted });
 		return;
 	}
@@ -161,7 +161,7 @@ async function runConfigureHowTo(interaction: ButtonInteraction): Promise<void> 
 }
 
 async function runBulkSchedule(interaction: ButtonInteraction, guildId: string, action: "paused" | "resumed"): Promise<void> {
-	// Acknowledged first (a write per schedule), the summary posting in 🎛️admin-controls
+	// Acknowledged first (a write per schedule), the summary posting in 🛠️server-config
 	// (2026-10 item 257 Phase 5).
 	const answer = await beginChannelAnswer(interaction, "admin");
 	const result = action === "paused" ? await pauseAllGuildEvents(guildId) : await resumeAllGuildEvents(guildId);

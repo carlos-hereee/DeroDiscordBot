@@ -1,15 +1,4 @@
-import {
-	ActionRowBuilder,
-	Events,
-	TextChannel,
-	type APIActionRowComponent,
-	type APIComponentInMessageActionRow,
-	type ButtonBuilder,
-	type ButtonInteraction,
-	type Client,
-	type Guild,
-	type StringSelectMenuInteraction,
-} from "discord.js";
+import { Events, type ButtonInteraction, type Client, type Guild, type StringSelectMenuInteraction } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { registerButton, registerSelectMenu } from "@handlers/interactionRegistry.js";
@@ -22,8 +11,6 @@ import {
 	COMMUNITY_INDEXED_ACTIONS,
 	COMMUNITY_PREFIX,
 	COMMUNITY_SELECT_ACTIONS,
-	buildConfigureOnboardingButton,
-	buildEnableCommunityButton,
 	type CommunityAction,
 } from "./communityControls.js";
 import { handleConfirm, handleEnableClick, isCommunityEnabled, type IEnableCommunityConfig } from "./enableCommunity.js";
@@ -40,32 +27,18 @@ import {
 } from "./promptEditModal.js";
 
 // ── communityButtons ─────────────────────────────────────────────────
-// What:  the admin guide's community row (Enable Community and Configure
-//        Onboarding, 2026-10 item 247 Phase 3) and the one router every
-//        `community:<action>` press goes through, the Onboarding review's two
-//        selects included (2026-10 item 254). The router gates and routes; the
-//        flows themselves live in enableCommunity, configureOnboarding and
-//        promptEditModal (Phase 4).
-// Who:   GuildSetupManager.resolveIntroComponents puts the row on the pinned admin
-//        guide; main.ts registers the router once at boot.
-// When:  on every press. The row reaches existing guilds on their next boot, when
-//        refreshIntroEmbeds sees the guide's rows differ (componentsAreEquivalent)
-//        and edits the pinned guide in place, so no guild re-runs /setup.
-// How:   the buttons sit in the admin channel, but a channel is not a gate: every
-//        press re-checks owner or admin here, before any action runs, the same rule
-//        PowerUps applies to its admin controls. The row shows ONE of the two
-//        buttons (post-launch plan item 8): Enable Community while Community is
-//        off, Configure Onboarding once it is on, because Discord refuses Onboarding
-//        on a server without Community and nothing is left to enable after. The
-//        GuildUpdate listener below swaps it the moment Discord's state changes,
-//        whether Dero or Server Settings changed it.
-
-// ── the admin guide row ──────────────────────────────────────────────
-
-/** The community row on the admin guide: Enable Community while Community is off, Configure Onboarding once it is on. */
-export function buildCommunityControlButtons(communityOn: boolean): ActionRowBuilder<ButtonBuilder> {
-	return new ActionRowBuilder<ButtonBuilder>().addComponents(communityOn ? buildConfigureOnboardingButton() : buildEnableCommunityButton());
-}
+// What:  the one router every `community:<action>` press goes through, the Onboarding
+//        review's two selects included (2026-10 item 254), and the listener that
+//        redraws 🧭onboarding when Discord's Community state changes. The router
+//        gates and routes; the flows themselves live in enableCommunity,
+//        configureOnboarding and promptEditModal (Phase 4).
+// Who:   the buttons on 🧭onboarding's steps card (steps 1 and 3 carry the Community
+//        customIds themselves); main.ts registers the router and the listener at boot.
+//        The admin guide's community row that used to duplicate them retired with
+//        🎛️admin-controls (2026-10 item 263 Phase 4a, R3-14).
+// When:  on every press, and on every GuildUpdate that flips Community.
+// How:   a channel is not a gate: every press re-checks owner or admin here, before
+//        any action runs, the same rule PowerUps applies to its admin controls.
 
 // ── the router ───────────────────────────────────────────────────────
 
@@ -184,63 +157,18 @@ async function replyRefusal(interaction: CommunityPress, message: string, config
 	await showNotice(interaction, { title: getPluginCopy(config).notice.community, sections: [message] });
 }
 
-// ── keeping the guide's row on the live state ────────────────────────
-
-/** The stored GuildConfig fields the guide sync reads. */
-interface ICommunityGuideConfig {
-	homebaseDestroyed?: boolean | null;
-	adminCommandsChannelId?: string | null;
-	introMessageIds?: { adminCommandsChannelId?: string | null } | null;
-}
+// ── 🧭onboarding follows Discord's Community state ────────────────────
 
 /**
- * Swap the community row on the pinned admin guide to the button the guild's live
- * Community state calls for. Edits the guide IN PLACE and only that row, the same
- * button only edit refreshIntroEmbeds makes when rows drift; a guide already right,
- * a missing guide or a refused edit changes nothing (the next boot's refresh catches
- * up). Resolves true when it edited. Never throws.
+ * Attach the GuildUpdate listener that redraws 🧭onboarding's steps card and chart when
+ * Community is switched on or off, so step 1's mark follows at once whether Dero or
+ * Server Settings changed it. Called once at boot from main.ts. A change Dero misses
+ * while offline is caught by the boot's Headquarters sync, which reads the same state.
  */
-export async function syncCommunityGuideRow(guild: Pick<Guild, "id" | "features" | "client">): Promise<boolean> {
-	try {
-		const stored = (await guildConfigStore.findByGuildId(guild.id)) as ICommunityGuideConfig | null;
-		const guideId = stored?.introMessageIds?.adminCommandsChannelId;
-		if (!stored || stored.homebaseDestroyed || !stored.adminCommandsChannelId || !guideId) return false;
-		const channel = await guild.client.channels.fetch(stored.adminCommandsChannelId).catch(() => null);
-		if (!(channel instanceof TextChannel)) return false;
-		const guide = await channel.messages.fetch(guideId).catch(() => null);
-		if (!guide) return false;
-
-		// toJSON reads a live message row in the API shape, the way
-		// GuildSetupManager.componentsAreEquivalent reads it. The admin guide holds
-		// action rows only, which is the shape the cast names.
-		const rows = guide.components.map((row) => row.toJSON()) as APIActionRowComponent<APIComponentInMessageActionRow>[];
-		const rowIndex = rows.findIndex((row) => customIdsOf(row).some((id) => id.startsWith(`${COMMUNITY_PREFIX}:`)));
-		if (rowIndex === -1) return false;
-		const wanted = buildCommunityControlButtons(isCommunityEnabled(guild)).toJSON();
-		if (customIdsOf(rows[rowIndex]!).join() === customIdsOf(wanted).join()) return false;
-
-		await guide.edit({ components: rows.map((row, index) => (index === rowIndex ? wanted : row)) });
-		console.log(`[community-guide] guild ${guild.id} guide row now shows ${isCommunityEnabled(guild) ? "Configure Onboarding" : "Enable Community"}`);
-		return true;
-	} catch (error) {
-		console.warn(`[community-guide] guild ${guild.id} could not swap the community row; the next boot retries`, error);
-		return false;
-	}
-}
-
-function customIdsOf(row: APIActionRowComponent<APIComponentInMessageActionRow>): string[] {
-	return row.components.map((component) => ("custom_id" in component ? component.custom_id : ""));
-}
-
-/**
- * Attach the GuildUpdate listener that swaps the guide's row when Community is
- * switched on or off. Called once at boot from main.ts. A change Dero misses while
- * offline is caught by the boot refresh, which builds the row from the same state.
- */
-export function registerCommunityGuideSync(client: Client): void {
+export function registerCommunityStateSync(client: Client): void {
 	client.on(Events.GuildUpdate, (before, after) => {
 		if (isCommunityEnabled(before) === isCommunityEnabled(after)) return;
-		void syncCommunityGuideRow(after);
+		refreshHeadquartersCards(after, "onboarding");
 	});
 }
 

@@ -154,7 +154,7 @@ export async function runKvkSeason(interaction: RepliableInteraction, options: C
 			.setStyle(ButtonStyle.Secondary)
 	);
 
-	// Posted in 🎛️admin-controls (2026-10 item 257 Phase 5); only this admin's press counts,
+	// Posted in 🛠️server-config (2026-10 item 257 Phase 5); only this admin's press counts,
 	// at both steps.
 	const prompt = await askInChannel(interaction, "admin", {
 		embeds: [confirmEmbed],

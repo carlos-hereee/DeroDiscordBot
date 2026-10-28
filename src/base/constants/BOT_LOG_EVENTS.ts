@@ -187,16 +187,6 @@ export const BOT_LOG_EVENTS = {
 	// ⚠️ PRIVACY: metadata carries ids, the saved text's LENGTH and whether the
 	// edit reset to the default, and NEVER the rules text itself.
 	RULES_EDITED: "rules_edited",
-	// ── community buttons pointer (2026-10 item 247 Phase 3) ───────
-	// What:  per-guild log that the one time #inner-sanctum post pointing at the
-	//        Enable Community and Configure Onboarding buttons went out.
-	// Who:   communityButtonsPointer reads it before posting and writes it once the
-	//        post succeeds, so a failure retries next boot.
-	// When:  read once per boot per setup complete guild; written once per guild.
-	// How:   a plain per-guild key, like MEMBER_ROLE_GATING_ANNOUNCED.
-	//
-	// ⚠️ PRIVACY: metadata carries the two channel ids and nothing else.
-	COMMUNITY_BUTTONS_AVAILABLE_NOTICE: "community_buttons_available_notice",
 	// ── Enable Community audit (2026-10 item 247 Phase 3) ──────────
 	// What:  one row per Enable Community Confirm that reached Discord: COMMUNITY
 	//        for the guild edit that switches Discord Community on, MEMBERSHIP

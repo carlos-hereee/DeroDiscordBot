@@ -10,17 +10,21 @@ import { COMMUNITY_CUSTOM_IDS } from "@features/community/communityControls.js";
 import { fetchOnboardingSnapshot } from "@features/community/onboardingChannels.js";
 import { normalizePriorityOrder } from "@features/voice/voicePriority.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
+import { eventStore } from "@db/stores/eventStore.js";
+import { normalizeLevelingSettings } from "@features/leveling/levelingConfig.js";
+import { buildAdminControlButtons } from "@features/power-ups/PowerUps.js";
 import { CHOOSE_BUTTON_ID, choosableAdoptedChannels, type IAdoptionChoiceRow } from "./adoptionChoice.js";
 import { readAdoptionChoice } from "./adoption.js";
 import { isMemberRoleGated } from "./communityOverwrites.js";
 import { setupCopy } from "./setupCopy.js";
 
 // ── headquartersCards ───────────────────────────────────────────────────────
-// What:  the two messages each 🏰 DERO HEADQUARTERS config channel holds under its
+// What:  the messages each 🏰 DERO HEADQUARTERS config channel holds under its
 //        intro (2026-10 item 257 Phase 2b, owner item 7): the pinned steps card, a
 //        numbered checklist whose marks are read from the server as it stands and
 //        whose buttons open each step's existing flow, and the drawn settings chart of
-//        every switch in that channel's domain.
+//        every switch in that channel's domain. 🛠️server-config (2026-10 item 263
+//        Phase 4a) keeps a third, the server switches, between its card and chart.
 // Who:   GuildSetupManager after a full build and on every boot (refreshIntroEmbeds);
 //        after every change in a domain, fire and forget: the /dero-config and /arcade
 //        commands (the settings panels run them), the voice priority step, the
@@ -36,22 +40,42 @@ import { setupCopy } from "./setupCopy.js";
 //        beneath a freshly posted intro so the order stays intro, steps, chart. Every
 //        failure logs one line and never throws (rulebook convention 7).
 
-/** The three Headquarters config channels, by the domain each one sets up. */
-export const HEADQUARTERS_DOMAINS = ["deroConfig", "onboarding", "arcadeControl"] as const;
+/** The four Headquarters config channels, by the domain each one sets up. */
+export const HEADQUARTERS_DOMAINS = ["deroConfig", "onboarding", "arcadeControl", "serverConfig"] as const;
 export type HeadquartersDomain = (typeof HEADQUARTERS_DOMAINS)[number];
 
 /** The GuildConfig field holding each domain's channel, which also keys its message ids. */
-export const DOMAIN_CHANNEL_FIELDS: Record<HeadquartersDomain, "deroConfigChannelId" | "onboardingConfigChannelId" | "arcadeControlChannelId"> = {
+export const DOMAIN_CHANNEL_FIELDS: Record<HeadquartersDomain, "deroConfigChannelId" | "onboardingConfigChannelId" | "arcadeControlChannelId" | "serverConfigChannelId"> = {
 	deroConfig: "deroConfigChannelId",
 	onboarding: "onboardingConfigChannelId",
 	arcadeControl: "arcadeControlChannelId",
+	serverConfig: "serverConfigChannelId",
 };
+
+// 🛠️server-config's steps by key, in card order (2026-10 item 263 Phase 4a). Each key
+// carries its label (setupCopy), its mark (serverConfigView) and its route
+// (headquartersSteps.ts), so a step inserted anywhere, Phase 4c's timezone at the
+// front among them, moves its number, its mark and its button together.
+export const SERVER_CONFIG_STEPS = ["kvkSeason", "streams", "events", "channels", "leveling"] as const;
+export type ServerConfigStep = (typeof SERVER_CONFIG_STEPS)[number];
+
+// The server switches message's buttons by key, in order; Refresh standings follows them.
+export const SERVER_SWITCHES = ["autoHeal", "tracking", "weekStart"] as const;
+export type ServerSwitch = (typeof SERVER_SWITCHES)[number];
 
 /** The customId prefix of a step that headquartersSteps.ts routes. */
 export const HEADQUARTERS_STEP_PREFIX = "hqstep";
 
 export function stepCustomId(domain: HeadquartersDomain, step: number): string {
 	return `${HEADQUARTERS_STEP_PREFIX}:${domain}:${step}`;
+}
+
+// A switch button shares the step prefix so headquartersSteps.ts routes it, and is told
+// apart from a numbered step by its `switch-` tail.
+export const SWITCH_STEP_TAIL = "switch-";
+
+export function switchCustomId(name: ServerSwitch): string {
+	return `${HEADQUARTERS_STEP_PREFIX}:serverConfig:${SWITCH_STEP_TAIL}${name}`;
 }
 
 // Discord fits five buttons in a row; the owner asked for two rows at most.
@@ -70,6 +94,7 @@ export interface HeadquartersRow extends IAdoptionChoiceRow {
 	deroConfigChannelId?: string | null;
 	onboardingConfigChannelId?: string | null;
 	arcadeControlChannelId?: string | null;
+	serverConfigChannelId?: string | null;
 	gamesCategoryId?: string | null;
 	chipEconomyEnabled?: boolean | null;
 	arcadeMonthlyPost?: boolean | null;
@@ -78,6 +103,15 @@ export interface HeadquartersRow extends IAdoptionChoiceRow {
 	blockedNetworkGuildIds?: string[] | null;
 	setupStepsMessageIds?: Partial<Record<string, string | null>> | null;
 	settingsChartMessageIds?: Partial<Record<string, string | null>> | null;
+	settingsSwitchesMessageIds?: Partial<Record<string, string | null>> | null;
+	// 🛠️server-config's reads, all off the row.
+	kvkSeasonEnd?: Date | string | null;
+	autoHealEnabled?: boolean | null;
+	leaderboardTrackingEnabled?: boolean | null;
+	weekStart?: string | null;
+	hiddenChannels?: string[] | null;
+	channelNames?: Map<string, string> | Record<string, string> | null;
+	leveling?: unknown;
 }
 
 /** One numbered step of a steps card. A step with no customId shows its mark only. */
@@ -89,11 +123,19 @@ export interface SetupStep {
 	customId: string | null;
 }
 
-/** What one domain shows: its steps and its chart. */
+/** One message of buttons kept between a domain's steps card and its chart. */
+export interface SwitchesView {
+	title: string;
+	lines: string[];
+	buttons: ButtonBuilder[];
+}
+
+/** What one domain shows: its steps, its chart and, for 🛠️server-config, its switches. */
 export interface DomainView {
 	title: string;
 	steps: SetupStep[];
 	chart: SettingsChartView;
+	switches?: SwitchesView;
 }
 
 const onOff = { onLabel: copy.on, offLabel: copy.off };
@@ -207,6 +249,103 @@ export function arcadeControlView(row: HeadquartersRow): DomainView {
 	};
 }
 
+/** What the 🛠️server-config view reads beyond the row: the server's active events. */
+export interface ServerConfigFacts {
+	now: number;
+	activeEvents: number;
+	pausedEvents: number;
+	// Recurring every week with no season: what /events stream weekly writes.
+	weeklySchedules: number;
+}
+
+const WEEK_HOURS = 168;
+
+function countOverrides(names: HeadquartersRow["channelNames"]): number {
+	if (!names) return 0;
+	return names instanceof Map ? names.size : Object.keys(names).length;
+}
+
+function seasonEndOf(row: HeadquartersRow): Date | null {
+	if (!row.kvkSeasonEnd) return null;
+	const end = new Date(row.kvkSeasonEnd);
+	return Number.isNaN(end.getTime()) ? null : end;
+}
+
+/** 🛠️server-config, the server's own configs (2026-10 item 263 Phase 4a, owner decision 13). */
+export function serverConfigView(row: HeadquartersRow, facts: ServerConfigFacts): DomainView {
+	const domain = copy.serverConfig;
+	const seasonEnd = seasonEndOf(row);
+	const hidden = row.hiddenChannels?.length ?? 0;
+	const renamed = countOverrides(row.channelNames);
+	const leveling = normalizeLevelingSettings(row.leveling).enabled;
+	// A row that never stored a switch reads as the schema default: both on, Sunday.
+	const autoHeal = row.autoHealEnabled !== false;
+	const tracking = row.leaderboardTrackingEnabled !== false;
+	const weekStart = row.weekStart === "monday" ? "monday" : "sunday";
+	const done: Record<ServerConfigStep, boolean> = {
+		kvkSeason: seasonEnd !== null && seasonEnd.getTime() > facts.now,
+		streams: facts.weeklySchedules > 0,
+		events: facts.activeEvents > 0,
+		channels: hidden + renamed > 0,
+		leveling,
+	};
+	// Not every server runs a KvK season, streams or custom channel names, so those
+	// steps say they are optional rather than nag.
+	const optional: Record<ServerConfigStep, boolean> = { kvkSeason: true, streams: true, events: false, channels: true, leveling: false };
+	return {
+		title: domain.title,
+		steps: SERVER_CONFIG_STEPS.map((key, index) => ({
+			label: domain.steps[key],
+			done: done[key],
+			optional: optional[key],
+			customId: stepCustomId("serverConfig", index + 1),
+		})),
+		chart: {
+			title: domain.chartTitle,
+			subtitle: domain.chartSubtitle,
+			...onOff,
+			rows: [
+				value(domain.rows.kvkSeason, seasonEnd ? domain.seasonEnds(seasonEnd) : copy.notSet),
+				value(domain.rows.weeklySchedules, copy.count(facts.weeklySchedules)),
+				value(domain.rows.activeEvents, copy.count(facts.activeEvents)),
+				value(domain.rows.pausedEvents, copy.count(facts.pausedEvents)),
+				value(domain.rows.hiddenChannels, copy.count(hidden)),
+				value(domain.rows.renamedChannels, copy.count(renamed)),
+				toggle(domain.rows.leveling, leveling),
+				toggle(domain.rows.autoHeal, autoHeal),
+				toggle(domain.rows.tracking, tracking),
+				value(domain.rows.weekStart, domain.weekStarts[weekStart]),
+			],
+		},
+		switches: {
+			title: domain.switches.title,
+			lines: [
+				domain.switches.line(domain.switches.labels.autoHeal, autoHeal ? copy.on : copy.off),
+				domain.switches.line(domain.switches.labels.tracking, tracking ? copy.on : copy.off),
+				domain.switches.line(domain.switches.labels.weekStart, domain.weekStarts[weekStart]),
+			],
+			buttons: [
+				...SERVER_SWITCHES.map((name) => new ButtonBuilder().setCustomId(switchCustomId(name)).setLabel(domain.switches.labels[name]).setStyle(ButtonStyle.Secondary)),
+				// Refresh standings keeps its own customId, so PowerUps still answers it.
+				...buildAdminControlButtons(),
+			],
+		},
+	};
+}
+
+// The server's active events, read once per redraw. A failed read shows zeroes rather
+// than failing the card, like every other read here.
+async function readServerConfigFacts(guildId: string): Promise<ServerConfigFacts> {
+	const events = await eventStore.findByGuildId(guildId).catch(() => []);
+	const rows = events as unknown as Array<{ type?: string; intervalHours?: number; seasonEnd?: Date | null; paused?: boolean }>;
+	return {
+		now: Date.now(),
+		activeEvents: rows.length,
+		pausedEvents: rows.filter((event) => event.paused === true).length,
+		weeklySchedules: rows.filter((event) => event.type === "recurring" && event.intervalHours === WEEK_HOURS && !event.seasonEnd).length,
+	};
+}
+
 // Onboarding can be read only from a Community server with Manage Server; any refusal
 // reads as unknown rather than off, so the card never claims a setting it could not see.
 async function readOnboardingOn(guild: Guild, communityOn: boolean): Promise<boolean | null> {
@@ -230,11 +369,26 @@ async function readOnboardingFacts(guild: Guild, row: HeadquartersRow): Promise<
 	};
 }
 
-/** One domain's view as the server stands now. */
+/**
+ * One domain's view as the server stands now. An exhaustive switch (risk R3 of 2026-10
+ * item 263): a domain added without its own branch is a compile error at `never`, never
+ * a channel that silently draws another domain's card.
+ */
 export async function readDomainView(guild: Guild, row: HeadquartersRow, domain: HeadquartersDomain): Promise<DomainView> {
-	if (domain === "deroConfig") return deroConfigView(await deroVoiceConfigStore.findByGuildId(guild.id));
-	if (domain === "onboarding") return onboardingView(await readOnboardingFacts(guild, row));
-	return arcadeControlView(row);
+	switch (domain) {
+		case "deroConfig":
+			return deroConfigView(await deroVoiceConfigStore.findByGuildId(guild.id));
+		case "onboarding":
+			return onboardingView(await readOnboardingFacts(guild, row));
+		case "arcadeControl":
+			return arcadeControlView(row);
+		case "serverConfig":
+			return serverConfigView(row, await readServerConfigFacts(guild.id));
+		default: {
+			const unknownDomain: never = domain;
+			throw new Error(`[headquarters] no view for the domain ${String(unknownDomain)}`);
+		}
+	}
 }
 
 // ── the steps card ───────────────────────────────────────────────────────────
@@ -246,6 +400,16 @@ function stepLine(step: SetupStep, number: number): string {
 	return `${line}${optional}${note}`;
 }
 
+/**
+ * One step's button (2026-10 item 263 Phase 4a, R3-21): a done step is green with a ✅,
+ * an open one grey, both labelled "Step N". A done step still opens its flow, so a
+ * setting can be changed again. shapeOfRows compares styles, so existing cards re-edit.
+ */
+export function buildStepButton(customId: string, number: number, done: boolean): ButtonBuilder {
+	const button = new ButtonBuilder().setCustomId(customId).setLabel(copy.buttonLabel(number)).setStyle(done ? ButtonStyle.Success : ButtonStyle.Secondary);
+	return done ? button.setEmoji(copy.done) : button;
+}
+
 /** The steps card: every step with its mark, and a button per step that opens a flow. */
 export function buildStepsCard(view: DomainView): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
 	const embed = new EmbedBuilder()
@@ -253,11 +417,7 @@ export function buildStepsCard(view: DomainView): { embeds: EmbedBuilder[]; comp
 		.setDescription(view.steps.map((step, index) => stepLine(step, index + 1)).join("\n"))
 		.setColor(COLORS.ADMIN)
 		.setFooter({ text: copy.footer });
-	const buttons = view.steps.flatMap((step, index) =>
-		step.customId
-			? [new ButtonBuilder().setCustomId(step.customId).setLabel(copy.buttonLabel(index + 1)).setStyle(step.done ? ButtonStyle.Secondary : ButtonStyle.Primary)]
-			: []
-	);
+	const buttons = view.steps.flatMap((step, index) => (step.customId ? [buildStepButton(step.customId, index + 1, step.done)] : []));
 	const components: ActionRowBuilder<ButtonBuilder>[] = [];
 	for (let start = 0; start < buttons.length && components.length < MAX_STEP_ROWS; start += BUTTONS_PER_ROW) {
 		components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(buttons.slice(start, start + BUTTONS_PER_ROW)));
@@ -265,7 +425,13 @@ export function buildStepsCard(view: DomainView): { embeds: EmbedBuilder[]; comp
 	return { embeds: [embed], components };
 }
 
-// ── keeping the two messages ─────────────────────────────────────────────────
+/** The server switches message: each switch as it stands, and a button per switch. */
+export function buildSwitchesMessage(switches: SwitchesView): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
+	const embed = new EmbedBuilder().setTitle(switches.title).setDescription(switches.lines.join("\n")).setColor(COLORS.ADMIN).setFooter({ text: copy.switchesFooter });
+	return { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(switches.buttons.slice(0, BUTTONS_PER_ROW))] };
+}
+
+// ── keeping the messages ─────────────────────────────────────────────────────
 
 /** What a kept message shows, compared before an edit so an unchanged card is never rewritten. */
 interface MessageShape {
@@ -370,6 +536,25 @@ export async function syncHeadquartersChannel(guild: Guild, domain: Headquarters
 			edit: (message) => message.edit(steps),
 		});
 
+		// Between the card and the chart, so a fresh post reads intro, steps, switches, chart.
+		const switchesView = view.switches;
+		const switchesId = switchesView
+			? await keepMessage({
+					channel,
+					storedId: row.settingsSwitchesMessageIds?.[field],
+					title: switchesView.title,
+					selfId,
+					forcePost,
+					pin: false,
+					shape: (() => {
+						const message = buildSwitchesMessage(switchesView);
+						return { ...shapeOfEmbed(message.embeds[0]?.data), buttons: shapeOfRows(message.components) };
+					})(),
+					send: () => channel.send(buildSwitchesMessage(switchesView)),
+					edit: (message) => message.edit(buildSwitchesMessage(switchesView)),
+				})
+			: null;
+
 		const chartEmbed = settingsChartEmbed(view.chart);
 		const chartShape = { ...shapeOfEmbed(chartEmbed.data), buttons: shapeOfRows([]) };
 		// Drawn only when the chart must be written: an unchanged chart costs no render.
@@ -397,6 +582,7 @@ export async function syncHeadquartersChannel(guild: Guild, domain: Headquarters
 		const writes: Record<string, string> = {};
 		if (stepsId && stepsId !== row.setupStepsMessageIds?.[field]) writes[`setupStepsMessageIds.${field}`] = stepsId;
 		if (chartId && chartId !== row.settingsChartMessageIds?.[field]) writes[`settingsChartMessageIds.${field}`] = chartId;
+		if (switchesId && switchesId !== row.settingsSwitchesMessageIds?.[field]) writes[`settingsSwitchesMessageIds.${field}`] = switchesId;
 		if (Object.keys(writes).length > 0) await guildConfigStore.update(guild.id, writes);
 	} catch (error) {
 		console.warn(`[headquarters] the ${domain} steps card and chart could not be brought up to date in guild ${guild.id}`, error);
