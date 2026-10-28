@@ -163,4 +163,27 @@ describe("each guess is a turn on the shared turn board", () => {
 		expect(result.payload.content).toBe(gameRoomsCopy.hangman.wonLine("planet"));
 		expect(room.messages.filter((message) => (message.payload.components?.length ?? 0) > 0)).toEqual([]);
 	});
+
+	// The transcript is the product (the row outlives the channel), so a round played to its end must
+	// leave every guess in it once, in the order played, each hint right after the miss that earned
+	// it, and the result line last.
+	it("a finished match's transcript holds every move of every turn exactly once", async () => {
+		const room = fakeRoom();
+		seedRound();
+		const { roomLifecycle } = await import("./roomLifecycle.js");
+
+		// One miss among the hits, so a hint can ride the transcript too.
+		const letters = ["p", "z", "l", "a", "n", "e", "t"];
+		for (const letter of letters) await handleGuessModal(guess(room.client, letter));
+
+		expect(roomLifecycle.finish).toHaveBeenCalledOnce();
+		const moves = row.current?.moves as { kind: string; text: string; meta?: { letter?: string } }[];
+		expect(moves.filter((move) => move.kind === "guess").map((move) => move.meta?.letter)).toEqual(letters);
+		for (const [index, move] of moves.entries()) {
+			if (move.kind === "hint") expect(moves[index - 1]?.meta?.letter, move.text).toBe("z");
+		}
+		expect(moves.map((move) => move.kind).filter((kind) => kind !== "guess" && kind !== "hint")).toEqual(["system"]);
+		expect(moves.at(-1)?.text).toBe(gameRoomsCopy.hangman.wonLine("planet"));
+		expect(new Set(transcript()).size).toBe(moves.length);
+	});
 });

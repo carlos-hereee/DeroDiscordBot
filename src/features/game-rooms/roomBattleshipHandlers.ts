@@ -19,6 +19,8 @@ import {
 	privateBoardView,
 	ownFleetText,
 	targetGridText,
+	fleetFingerprint,
+	SETUP_PRESS_FINGERPRINT,
 	PRIVATE,
 	type BattleshipSinking,
 	type FireOutcome,
@@ -29,7 +31,7 @@ import { battleshipOutcome, wasBehindOnShips, type OutcomeBucket } from "./match
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { showNotice } from "@utils/textModal.js";
 import { postTurnBoard } from "./turnBoard.js";
-import { handleTurnPress, syncTurnPrompt, type TurnAdapter } from "./turnPrompt.js";
+import { handleTurnPress, showTurnModal, syncTurnPrompt, type TurnAdapter, type TurnView } from "./turnPrompt.js";
 
 // ── roomBattleshipHandlers ───────────────────────────────────────────
 // What:  the interaction half of battleship: aiming, firing, looking at your own
@@ -100,9 +102,9 @@ export async function redrawBattleshipBoard(
 }
 
 // ── firing ────────────────────────────────────────────────────────────
-// The Fire button on the board opens the same modal Take your turn does: the target grid and
-// two selects, a file A to J and a rank 1 to 10, so one Submit fires (2026-10 item 257 Phase 4a,
-// owner items 18 and 19). There is no half a coordinate stored on the row any more.
+// Take your turn opens one modal: the target grid and two selects, a file A to J and a rank 1 to
+// 10, so one Submit fires (2026-10 item 257 Phase 4a, owner items 18 and 19). The board has no
+// Fire button since 2026-10 item 263 R3-3; this answers one left on a board posted before then.
 export async function handleFire(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	await handleTurnPress(interaction, room, battleshipTurnAdapter.fingerprintOf(room) ?? "", () => battleshipTurnAdapter);
 }
@@ -251,24 +253,33 @@ const SETUP_REFUSALS: Record<SetupRefusal, string> = {
 	"already-ready": gameRoomsCopy.battleship.alreadyReady,
 };
 
-// Randomize: lay this player's fleet again, then show them the new layout in the
-// private view, so the press answers with the thing it changed and nothing lands in
-// the channel. Only during setup and only before this player pressed Ready.
-export async function handleReroll(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
-	const relaid = await layFleetAgain(room, interaction.user.id);
+/**
+ * Randomize (2026-10 item 263 R3-1): lay this captain's fleet again IN MEMORY, open the setup
+ * modal showing it at once, then write it. The modal must be the press's first answer inside
+ * Discord's three seconds, so nothing renders or fetches before it (risk R5), and it carries the
+ * new fleet's fingerprint, so a Submit locks in this fleet and no other (risk R14). Pressed as
+ * often as the captain likes; each press supersedes the modal before it. A Randomize on a board
+ * posted before Phase 4a of item 257 (action `reroll`) lands here too.
+ */
+export async function handleRandomize(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	const userId = interaction.user.id;
+	const relaid = relayFleet(room, userId);
 	if (!relaid.ok) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [relaid.reason] });
 		return;
 	}
-	await showOwnBoard(interaction, room, relaid.state);
+	await showTurnModal(interaction, room.roomId, fleetFingerprint(relaid.board), setupView(relaid.state, userId));
+	// One player's fleet slot, by index: writing the whole secret back would revert whatever
+	// the opponent did between this handler's read and its write. The opponent's own Randomize
+	// is a DIFFERENT index. Written after the modal opened; if it fails, the modal's Submit
+	// meets the old fleet's fingerprint and locks nothing.
+	await gameRoomStore.setSecretField(room.guildId, room.roomId, `players.${relaid.index}`, relaid.board);
 }
 
-/**
- * Lay one captain's fleet again, the function the Randomize button and the setup modal's
- * "Randomize again" both call (2026-10 item 257 Phase 4a). Answers the new state, or the
- * refusal worded for the member.
- */
-async function layFleetAgain(room: IGameRoom, userId: string): Promise<{ ok: true; state: BattleshipState } | { ok: false; reason: string }> {
+type RelaidFleet = { ok: true; state: BattleshipState; index: 0 | 1; board: StoredBattleship["players"][number] } | { ok: false; reason: string };
+
+/** Lay one captain's fleet again without writing it. Answers the new fleet and its slot, or the refusal worded for the member. */
+function relayFleet(room: IGameRoom, userId: string): RelaidFleet {
 	const stored = storedMatch(room);
 	if (!stored) return { ok: false, reason: gameRoomsCopy.battleship.matchOver };
 
@@ -279,13 +290,12 @@ async function layFleetAgain(room: IGameRoom, userId: string): Promise<{ ok: tru
 		// Reroll button answers in the words it always did.
 		return { ok: false, reason: result.reason === "not-in-setup" && stored.ready === undefined ? gameRoomsCopy.battleship.rerollTooLate : SETUP_REFUSALS[result.reason] };
 	}
+	return { ok: true, state, index: result.index, board: serializeMatch(state).players[result.index] };
+}
 
-	// One player's fleet slot, by index: writing the whole secret back would revert whatever
-	// the opponent did between this handler's read and its write. The opponent's own reroll
-	// is a DIFFERENT index.
-	const relaid = serializeMatch(state).players[result.index];
-	await gameRoomStore.setSecretField(room.guildId, room.roomId, `players.${result.index}`, relaid);
-	return { ok: true, state };
+/** The setup modal: the captain's fleet and no field, so its Submit is I am ready and closing it is not yet. */
+function setupView(state: BattleshipState, userId: string): TurnView {
+	return { title: gameRoomsCopy.battleship.setupModalTitle, text: [ownFleetText(state, userId)], fields: [] };
 }
 
 // Ready: lock this player's fleet. The first Ready is narrated and redrawn; the second
@@ -295,7 +305,7 @@ export async function handleReady(interaction: ButtonInteraction, room: IGameRoo
 	if (refusal) await showNotice(interaction, { title: gameRoomsCopy.notices.battleship, sections: [refusal] });
 }
 
-/** Lock one captain's fleet in, the function the Ready button and the setup modal's "I am ready" both call. Answers a refusal or null. */
+/** Lock one captain's fleet in, the function the old Ready button and the setup modal's Submit both call. Answers a refusal or null. */
 async function lockFleetIn(client: Client, room: IGameRoom, userId: string, acknowledge: () => Promise<unknown>): Promise<string | null> {
 	const stored = storedMatch(room);
 	if (!stored) return gameRoomsCopy.battleship.matchOver;
@@ -349,17 +359,20 @@ export async function commitReady(
 // ── the turn prompt (turnPrompt.ts, 2026-10 item 257 Phase 4a) ────────
 // What:  Battleship's side of the shared turn piece. While the fleets are laid there is no one
 //        on the clock: the board's Set up your fleet button opens one modal with your fleet's
-//        emoji grid and a select, Randomize again or I am ready, and one Submit does either.
-//        Once the battle runs, Take your turn (and the board's Fire) opens one modal with the
-//        target grid and a file and a rank select, and one Submit fires.
-// How:   Randomize and Ready play through layFleetAgain and lockFleetIn, the functions the old
-//        buttons call; a shot plays through fireAt and commitShot, the path every shot ends in.
-//        The grid stays emoji text (owner decision 14): a modal shows no image.
+//        emoji grid and nothing to choose, and its Submit locks that fleet in (2026-10 item 263
+//        R3-1); the board's Randomize opens the same modal on a new fleet. Once the battle
+//        runs, Take your turn opens one modal with the target grid and a file and a rank
+//        select, and one Submit fires.
+// How:   the setup Submit plays through lockFleetIn, the function the old Ready button calls; a
+//        shot plays through fireAt and commitShot, the path every shot ends in. The grid stays
+//        emoji text (owner decision 14): a modal shows no image.
+// ⚠️ A SETUP MODAL CARRIES ITS FLEET'S FINGERPRINT (risk R14). The press is the same "setup" for
+// both captains, but each modal carries fleetFingerprint of the fleet it showed and the Submit is
+// checked against the fleet stored now, so a modal opened before a Randomize locks nothing and
+// answers the way a passed turn does.
 
-const SETUP_FIELD = "setup";
 const FILE_FIELD = "file";
 const RANK_FIELD = "rank";
-const SETUP_FINGERPRINT = "setup";
 
 const shotsFired = (state: BattleshipState): number => state.players[0].shots.size + state.players[1].shots.size;
 
@@ -378,8 +391,14 @@ export const battleshipTurnAdapter: TurnAdapter = {
 	fingerprintOf(room) {
 		const stored = storedMatch(room);
 		if (!stored) return null;
-		if (stored.status === "setup") return SETUP_FINGERPRINT;
+		if (stored.status === "setup") return SETUP_PRESS_FINGERPRINT;
 		return stored.status === "playing" ? `b${shotsFired(deserializeMatch(stored))}` : null;
+	},
+	memberFingerprintOf(room, userId) {
+		const stored = storedMatch(room);
+		if (stored?.status !== "setup") return battleshipTurnAdapter.fingerprintOf(room);
+		const board = stored.players.find((player) => player.userId === userId);
+		return board ? fleetFingerprint(board) : null;
 	},
 	view(room, userId) {
 		const stored = storedMatch(room);
@@ -389,21 +408,7 @@ export const battleshipTurnAdapter: TurnAdapter = {
 		if (stored.status === "setup") {
 			const index = state.players.findIndex((player) => player.userId === userId);
 			if (index < 0 || state.ready[index]) return null;
-			return {
-				title: copy.setupModalTitle,
-				text: [ownFleetText(state, userId)],
-				fields: [
-					{
-						kind: "select",
-						id: SETUP_FIELD,
-						label: copy.setupChoiceLabel,
-						options: [
-							{ label: copy.setupReadyOption, value: "ready" },
-							{ label: copy.setupRerollOption, value: "reroll" },
-						],
-					},
-				],
-			};
+			return setupView(state, userId);
 		}
 		if (stored.status !== "playing" || state.players[state.turn].userId !== userId) return null;
 		return {
@@ -418,12 +423,6 @@ export const battleshipTurnAdapter: TurnAdapter = {
 	async apply(client, room, userId, answers, acknowledge) {
 		const stored = storedMatch(room);
 		if (stored?.status === "setup") {
-			if (answers[SETUP_FIELD] === "reroll") {
-				const relaid = await layFleetAgain(room, userId);
-				if (!relaid.ok) return relaid;
-				await acknowledge();
-				return { ok: true };
-			}
 			const refusal = await lockFleetIn(client, room, userId, acknowledge);
 			return refusal ? { ok: false, reason: refusal } : { ok: true };
 		}
@@ -435,4 +434,4 @@ export const battleshipTurnAdapter: TurnAdapter = {
 	},
 };
 
-export const roomBattleshipHandlers = { handleFire, handleViewBoard, handleReroll, handleReady, commitShot, commitReady };
+export const roomBattleshipHandlers = { handleFire, handleViewBoard, handleRandomize, handleReady, commitShot, commitReady };

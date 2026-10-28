@@ -743,28 +743,13 @@ export const gameRoomStore = {
 		);
 	},
 
-	// The future dashboard's history query: every finished room a member played in, newest first.
-	// Matches the { guildId, playerIds, endedAt } index. Spectators are deliberately excluded,
-	// watching a match is not playing one.
-	async findByUserInGuild(guildId: string, userId: string, limit = 25) {
-		return GameRoom.find({ guildId, playerIds: userId, endedAt: { $ne: null } })
-			.sort({ endedAt: -1 })
-			.limit(limit);
-	},
-
-	// Save this match to a player's profile (2026-10 item 257 Phase 3b). $addToSet, so a double
-	// Submit is a no-op rather than a second entry, and the playerIds filter is the guarantee that
-	// only a player of the match can save it: the caller checks the row it read, but the filter is
-	// what holds if the row changed since. Null when the room is gone or the member did not play.
-	async addSavedBy(guildId: string, roomId: string, userId: string) {
-		return GameRoom.findOneAndUpdate({ guildId, roomId, playerIds: userId }, { $addToSet: { savedBy: userId } }, { new: true });
-	},
-
-	// /account view:saved: the matches one member saved in this guild, newest finish first.
-	// Matches the { guildId, savedBy, endedAt } index. A row only gets savedBy on a finished
-	// match, but endedAt is still required so a hand written row never lists without a date.
-	async findSavedBy(guildId: string, userId: string, limit: number) {
-		return GameRoom.find({ guildId, savedBy: userId, endedAt: { $ne: null } })
+	// A member's match history (/account view:saved, 2026-10 item 263 decision 2): the finished or
+	// archived rooms they played in this guild, newest finish first. Matches the { guildId,
+	// playerIds, endedAt } index. Spectators are deliberately excluded, watching a match is not
+	// playing one, and a Dero bot seat never lives in playerIds. endedAt is still required so a
+	// hand written row never lists without a date.
+	async findByUserInGuild(guildId: string, userId: string, limit: number) {
+		return GameRoom.find({ guildId, playerIds: userId, status: { $in: ["finished", "archived"] }, endedAt: { $ne: null } })
 			.sort({ endedAt: -1 })
 			.limit(limit)
 			.lean();

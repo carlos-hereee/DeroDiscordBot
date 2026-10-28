@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
 	ActionRowBuilder,
 	ButtonBuilder,
@@ -88,6 +89,20 @@ export interface StoredBattleship {
 	boardMessageId?: string | null;
 }
 
+/** How many hex characters of the fleet's hash a layout fingerprint keeps: plenty to tell two random layouts apart. */
+const FLEET_FINGERPRINT_LENGTH = 12;
+
+/**
+ * A short token for one captain's fleet as laid, carried on the setup modal's custom id so its
+ * Submit locks in only the fleet it showed (2026-10 item 263 R3-1, risk R14). Derived from the
+ * cells alone, never stored, so no board claim or second write can race it, and hex, so it holds
+ * no colon (the custom id's separator).
+ */
+export function fleetFingerprint(board: Pick<StoredBoard, "ships">): string {
+	const cells = board.ships.map((ship) => `${ship.name}=${ship.cells.map((cell) => `${cell.x}.${cell.y}`).join(",")}`).join("|");
+	return `f${createHash("sha256").update(cells).digest("hex").slice(0, FLEET_FINGERPRINT_LENGTH)}`;
+}
+
 export function serializeMatch(state: BattleshipState, extra: Partial<StoredBattleship> = {}): StoredBattleship {
 	const board = (player: PlayerBoard): StoredBoard => ({
 		userId: player.userId,
@@ -146,7 +161,13 @@ export function startMatch(room: IGameRoom, usernames: Record<string, string>, r
 // line spacing, which breaks a fixed-width grid into a ragged mess; inside an
 // embed description the rows stay aligned.
 const CELL: Record<string, string> = { unknown: "🌊", miss: "⬜", hit: "💥", sunk: "🔥", ship: "🚢" };
-const COLUMN_HEADER = `⬛${COLUMNS.map((_, index) => ["🇦", "🇧", "🇨", "🇩", "🇪", "🇫", "🇬", "🇭", "🇮", "🇯"][index]).join("")}`;
+// ⚠️ A ZERO WIDTH SPACE BETWEEN THE LETTERS (2026-10 item 263 R3-2). The column letters are
+// regional indicators, and two adjacent ones that spell a country code render as its flag (C D
+// drew the DR Congo, G H Ghana). U+200B breaks every pair while taking no width, so the letters
+// stay over their columns.
+const COLUMN_SEPARATOR = "\u200B";
+const COLUMN_LETTERS = ["🇦", "🇧", "🇨", "🇩", "🇪", "🇫", "🇬", "🇭", "🇮", "🇯"];
+const COLUMN_HEADER = `⬛${COLUMN_SEPARATOR}${COLUMNS.map((_, index) => COLUMN_LETTERS[index]).join(COLUMN_SEPARATOR)}`;
 const ROW_LABELS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
 
 function renderGrid(rows: string[][]): string {
@@ -365,18 +386,14 @@ export async function privateBoardReply(state: BattleshipState, viewerId: string
 // ── controls ──────────────────────────────────────────────────────────
 // ⚠️ NEVER A BUTTON GRID (T17), and since item 257 Phase 4a no aim selects either. A 10x10 grid
 // of buttons is 100 components against Discord's hard cap of 25 (5 rows of 5); the file and the
-// rank are two selects inside the firing modal, opened by Fire or by the turn prompt's Take your
-// turn, so the board carries one row of buttons.
+// rank are two selects inside the firing modal, opened by the turn prompt's Take your turn, so the
+// board carries one row of buttons. The board has no Fire of its own any more (2026-10 item 263
+// R3-3): it opened the same modal, and the prompt is re-synced after every redraw. A Fire button
+// on a board posted before then still routes (`move`, gameRoomHandlers).
 export function battleshipRows(roomId: string, state: BattleshipState): ActionRowBuilder<never>[] {
 	if (state.status === "setup") return [setupRow(roomId) as unknown as ActionRowBuilder<never>];
 
 	const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
-		new ButtonBuilder()
-			.setCustomId(`${GAME_ROOM_PREFIX}:move:${roomId}`)
-			.setLabel(gameRoomsCopy.battleship.fireLabel)
-			.setEmoji("🎯")
-			.setStyle(ButtonStyle.Danger)
-			.setDisabled(state.status === "finished"),
 		new ButtonBuilder()
 			.setCustomId(`${GAME_ROOM_PREFIX}:board:${roomId}`)
 			.setLabel(gameRoomsCopy.battleship.viewLabel)
@@ -391,15 +408,21 @@ export function battleshipRows(roomId: string, state: BattleshipState): ActionRo
 	return [buttons as unknown as ActionRowBuilder<never>];
 }
 
-// The setup row (post-launch plan item 17, one modal since item 257 Phase 4a), the board's only
-// row until both captains are ready: one button opens the modal that shows your fleet and takes
-// either choice, Randomize again or I am ready, and one Submit does it. It is the turn prompt's
-// own press with the "setup" fingerprint (battleshipTurnAdapter). The old Randomize and Ready
-// buttons on a board posted before this still route (`reroll`, `bready`).
+/** The fingerprint the setup press carries: setup has no turn, so it is the same for both captains. */
+export const SETUP_PRESS_FINGERPRINT = "setup";
+
+// The setup row (post-launch plan item 17), the board's only row until both captains are ready
+// (2026-10 item 263 R3-1). Set up your fleet is the turn prompt's own press with the "setup"
+// fingerprint and opens your fleet in a modal with no choice on it, so its Submit means I am
+// ready and closing it means not yet. Randomize lays the fleet again and opens the same modal
+// showing the new one; it lives here because a modal holds no button. Randomize keeps the old
+// `reroll` action, so a Randomize on an older board lands in the same handler, and an older
+// Ready (`bready`) still locks in.
 function setupRow(roomId: string): ActionRowBuilder<ButtonBuilder> {
 	const copy = gameRoomsCopy.battleship;
 	return new ActionRowBuilder<ButtonBuilder>().addComponents(
-		new ButtonBuilder().setCustomId(turnButtonId(roomId, "setup")).setLabel(copy.setupLabel).setEmoji("⚓").setStyle(ButtonStyle.Primary),
+		new ButtonBuilder().setCustomId(turnButtonId(roomId, SETUP_PRESS_FINGERPRINT)).setLabel(copy.setupLabel).setEmoji("⚓").setStyle(ButtonStyle.Primary),
+		new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:reroll:${roomId}`).setLabel(copy.randomizeLabel).setEmoji("🔀").setStyle(ButtonStyle.Secondary),
 		new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:forfeit:${roomId}`).setLabel(copy.forfeitLabel).setStyle(ButtonStyle.Secondary)
 	);
 }

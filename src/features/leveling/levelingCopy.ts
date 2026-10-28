@@ -178,7 +178,7 @@ export const levelingCopy = {
 		profile: "Profile",
 		levels: "Levels",
 		achievements: "Achievements",
-		saved: "Saved matches",
+		saved: "Match history",
 	},
 	// The same three views as buttons on the #command-center guide (PowerUps).
 	guideButtons: {

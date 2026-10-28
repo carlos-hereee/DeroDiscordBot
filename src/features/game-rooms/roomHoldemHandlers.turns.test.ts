@@ -286,6 +286,63 @@ describe("a Hold'em hand played through the turn prompt", () => {
 		}
 	});
 
+	// A heads up table ends when one seat is out of chips, so both players going all in on the first
+	// decision plays the shortest real path to a finished table: one hand, run out to a showdown,
+	// the loser busted. The transcript outlives the room, so it must hold every bet and every result
+	// line of that hand once, in the order they happened.
+	it("a finished match's transcript holds every move of every turn exactly once", async () => {
+		const room = fakeRoom();
+		const firstBoard = await room.channel.send({ embeds: [{ title: "table" }], components: [] });
+		seedHand(room, firstBoard.id);
+		const { roomLifecycle } = await import("./roomLifecycle.js");
+		await redrawTable(room.client, stored());
+
+		// Each decision's own transcript rows, as they landed: the first must be the decision's own line.
+		const decided: { actor: string; added: { actorId: string; kind: string; text: string }[] }[] = [];
+		for (let guard = 0; guard < 10 && handInProgress(tableOf()); guard++) {
+			const acting = whoActs(tableOf())!;
+			const before = (row.current?.moves as unknown[]).length;
+			const snapshot = stored();
+			const interaction = submitFor(acting, snapshot, holdemTurnAdapter.fingerprintOf(snapshot)!, ["allin", "call"]);
+			(interaction as unknown as { client: Client }).client = room.client;
+			await handleTurnSubmit(interaction, () => holdemTurnAdapter);
+			decided.push({ actor: acting, added: (row.current?.moves as { actorId: string; kind: string; text: string }[]).slice(before) });
+		}
+
+		// The table is over, through its real finish.
+		expect(tableOf().status).toBe("finished");
+		expect(roomLifecycle.finish).toHaveBeenCalledOnce();
+		const winner = tableOf().winnerId as string;
+		const loser = [A, B].find((id) => id !== winner) as string;
+
+		// Two decisions, each recorded as its own player's line, once.
+		expect(decided.map((entry) => entry.actor)).toHaveLength(2);
+		for (const entry of decided) {
+			expect(entry.added[0]?.actorId).toBe(entry.actor);
+			expect(entry.added[0]?.kind).toBe("guess");
+		}
+
+		// The hand's end, in order: both hands shown, the pot taken, the loser out, each once.
+		const holdem = gameRoomsCopy.holdem;
+		const lines = transcript();
+		const indexOfLine = (line: string): number => lines.indexOf(line);
+		const shows = lines.filter((line) => /^<@player-[ab]> shows /.test(line));
+		expect(shows.map((line) => line.slice(0, line.indexOf(">") + 1)).sort()).toEqual([`<@${A}>`, `<@${B}>`]);
+		expect(lines.filter((line) => line.startsWith(`<@${winner}> takes `))).toHaveLength(1);
+		expect(lines.filter((line) => line === holdem.busted(loser))).toHaveLength(1);
+		const lastDecision = Math.max(...decided.map((entry) => indexOfLine(entry.added[0].text)));
+		const firstShow = Math.min(...shows.map(indexOfLine));
+		const taken = lines.findIndex((line) => line.startsWith(`<@${winner}> takes `));
+		expect(lastDecision).toBeLessThan(firstShow);
+		expect(Math.max(...shows.map(indexOfLine))).toBeLessThan(taken);
+		expect(taken).toBeLessThan(indexOfLine(holdem.busted(loser)));
+
+		// Nothing doubled, and every row is on exactly one of the hand's tables.
+		expect(new Set(lines).size).toBe(lines.length);
+		const tables = tableMessages(room);
+		for (const line of lines) expect(tables.filter((message) => descriptionOf(message).split("\n").includes(line)), line).toHaveLength(1);
+	});
+
 	it("turns a stale Submit away: a modal opened for a turn that has passed plays nothing", async () => {
 		const room = fakeRoom();
 		const firstBoard = await room.channel.send({ embeds: [{ title: "table" }], components: [] });

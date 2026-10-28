@@ -260,7 +260,7 @@ export const gameRoomsCopy = {
 		hangman: "🪢 Hangman",
 		holdem: "🃏 Texas hold em",
 		monopoly: "🎩 Monopoly",
-		savedMatches: "📌 Saved matches",
+		matchHistory: "📜 Match history",
 	},
 
 	// ── the opener card, pinned inside the room ──
@@ -486,11 +486,6 @@ export const gameRoomsCopy = {
 		matchOver: "That match is already over, so there is nothing to forfeit.",
 		// The archive confirm's one choice (2026-10 item 257 Phase 3b): a modal holds no button,
 		// so keeping the match is a select applied on Submit, defaulting to no.
-		saveToProfile: {
-			label: "Save this match to my profile",
-			yes: "Yes, save it",
-			no: "No, just archive",
-		},
 	},
 
 	// ── the creation modal (2026-10 item 263 Phase 2a, R3-13) ──
@@ -574,13 +569,15 @@ export const gameRoomsCopy = {
 
 	// ── saved matches (2026-10 item 257 Phase 3b) ──
 	// /account view:saved, the matches a member chose to keep when archiving a room.
+	// /account view:saved, the match history (2026-10 item 263 decision 2): every finished match a
+	// member played in this server, with no save step.
 	saved: {
-		title: (name: string): string => `📌 ${name}'s saved matches`,
-		empty: "No saved matches yet. Choose Save this match to my profile when you archive a finished match, and it is kept here.",
-		// A bot cannot have saved matches, and the command can name any member.
-		botMember: "A bot has no saved matches.",
-		outsideGuild: "Saved matches belong to a server. Run this in a server.",
-		readFailed: "Dero could not read the saved matches just now. Try again in a moment.",
+		title: (name: string): string => `📜 ${name}'s match history`,
+		empty: "No finished matches yet. Every match you finish in this server lands here.",
+		// A bot cannot have a match history, and the command can name any member.
+		botMember: "A bot has no match history.",
+		outsideGuild: "A match history belongs to a server. Run this in a server.",
+		readFailed: "Dero could not read the match history just now. Try again in a moment.",
 		footer: (shown: number): string => `Showing the last ${shown}, newest first.`,
 		// One row: "Hangman · Won · against <@a>, 🤖 Dero Red · <t:...:D>". Solo rooms have no opponent
 		// to name, so the line says who the round was against.
@@ -879,15 +876,11 @@ export const gameRoomsCopy = {
 
 		columnPlaceholder: "Column (A to J)",
 		rowPlaceholder: "Row (1 to 10)",
-		fireLabel: "Fire",
 		// The firing and setup modals (turnPrompt.ts, 2026-10 item 257 Phase 4a).
 		fireModalTitle: "🎯 Take your shot",
 		targetLine: (shipsLeft: number): string => `Your target: ${shipsLeft} ship${shipsLeft === 1 ? "" : "s"} left. 💥 hit, 🔥 sunk, ⬜ miss.`,
 		setupLabel: "Set up your fleet",
 		setupModalTitle: "⚓ Your fleet",
-		setupChoiceLabel: "What now?",
-		setupReadyOption: "I am ready",
-		setupRerollOption: "Randomize again",
 		viewLabel: "View my board",
 		forfeitLabel: "Surrender",
 
@@ -909,7 +902,7 @@ export const gameRoomsCopy = {
 		// in with Ready. The public lines name who is ready and never where anything is.
 		setupLine: (players: { userId: string; ready: boolean }[]): string =>
 			[
-				"⚓ **Setup.** Dero laid both fleets. Press **Set up your fleet** to see yours, lay it again if you like, then choose **I am ready**. The first shot waits for both captains.",
+				"⚓ **Setup.** Dero laid both fleets. Press **Set up your fleet** to see yours, or **Randomize** to lay it again as often as you like, then Submit the fleet you keep. The first shot waits for both captains.",
 				"",
 				...players.map((player) => (player.ready ? `✅ <@${player.userId}> is ready.` : `⏳ <@${player.userId}> is still laying their fleet.`)),
 			].join("\n"),
@@ -918,7 +911,7 @@ export const gameRoomsCopy = {
 		readyLine: (userId: string): string => `⚓ <@${userId}> is ready.`,
 		battleBegins: (firstId: string): string => `🎯 Both fleets are laid. <@${firstId}> fires first.`,
 		setupTimedOut: "⏳ Setup time is up. The fleets sail as Dero laid them.",
-		setupFirst: "Both captains have to press Ready before the first shot.",
+		setupFirst: "Both captains have to lock their fleets in before the first shot.",
 		alreadyReady: "You are ready, so your fleet is locked in.",
 		setupOver: "Setup is over. The fleets are where they are.",
 		cardSetup: "Laying the fleets",

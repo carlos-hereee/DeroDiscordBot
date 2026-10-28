@@ -3,14 +3,14 @@ import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import { showAccountProfile } from "@features/leveling/accountProfile.js";
 import { LEVELS_WINDOW_CHOICES, showLevelsStandings, toLevelsWindow } from "@features/leveling/levelsStandings.js";
 import { showAchievements } from "@features/leveling/achievementsView.js";
-import { showSavedMatches } from "@features/game-rooms/savedMatches.js";
+import { showMatchHistory } from "@features/game-rooms/savedMatches.js";
 
 // ── /account ───────────────────────────────────────────────────────────────
 // What:  a member's leveling surfaces behind one command: `view` picks the
 //        profile (the default), the server's levels standings, a member's
-//        achievements, or the matches a member saved to their profile when archiving
-//        a room (2026-10 item 257 Phase 3b). `member` names whose profile, achievements
-//        or saved matches to show and `window` names which stretch the levels view ranks.
+//        achievements, or a member's match history, their last finished matches
+//        (`saved`, 2026-10 item 263 decision 2). `member` names whose profile, achievements
+//        or match history to show and `window` names which stretch the levels view ranks.
 // Who:   every member. PUBLIC replies, exactly as /levels and /achievements gave
 //        before 2026-10 item 245 Phase 4b folded them in here.
 // Where: the three views live in features/leveling, shared with the Account,
@@ -40,7 +40,7 @@ export const data = new SlashCommandBuilder()
 			.addChoices(...VIEW_CHOICES)
 	)
 	.addUserOption((option) =>
-		option.setName("member").setDescription("Whose profile, achievements or saved matches to show. Defaults to you.").setRequired(false)
+		option.setName("member").setDescription("Whose profile, achievements or match history to show. Defaults to you.").setRequired(false)
 	)
 	.addStringOption((option) =>
 		option
@@ -62,7 +62,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		return;
 	}
 	if (view === "saved") {
-		await showSavedMatches(interaction, target);
+		await showMatchHistory(interaction, target);
 		return;
 	}
 	await showAccountProfile(interaction, { target });

@@ -48,7 +48,6 @@ import { turnAdapterFor } from "./turnAdapters.js";
 import { registerNetworkHandlers } from "./networkJoin.js";
 import type { GameSlug, SatelliteRoom } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
-import { archiveSaveSelect, canSaveMatch, saveMatchIfChosen } from "./savedMatches.js";
 import { acknowledgeConfirm, showConfirm, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 
 const satelliteWords = rokCommanderCopy.arcadeSatellites;
@@ -365,9 +364,11 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		case "board":
 			await roomBattleshipHandlers.handleViewBoard(interaction, room);
 			return;
+		// The setup row's Randomize, and the Randomize on a board posted before item 257 Phase 4a.
 		case "reroll":
-			await roomBattleshipHandlers.handleReroll(interaction, room);
+			await roomBattleshipHandlers.handleRandomize(interaction, room);
 			return;
+		// Ready on a board posted before item 257 Phase 4a: it locks in, like the setup modal's Submit.
 		case "bready":
 			await roomBattleshipHandlers.handleReady(interaction, room);
 			return;
@@ -397,9 +398,6 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 				title: gameRoomsCopy.notices.room,
 				sections: [gameRoomsCopy.confirms.archive],
 				confirmId: confirmCustomId("archiveok", room.roomId),
-				// Offered only to a player of a finished match (item 257 Phase 3b): an admin clearing
-				// someone else's room has no match of their own to keep.
-				select: canSaveMatch(room, interaction.user.id) ? archiveSaveSelect() : undefined,
 			});
 			return;
 		case "forfeit":
@@ -435,10 +433,6 @@ async function runConfirmed(interaction: ConfirmInteraction, gated: GatedPress):
 			await challengeBoard.confirmSettingsEdit(interaction, room);
 			return;
 		case "archiveok":
-			// The save lands BEFORE the archive (item 257 Phase 3b): the row survives the
-			// archive either way, but a save is a write the member chose and must not race
-			// the delete. It never blocks the archive.
-			await saveMatchIfChosen(interaction, room);
 			// Acknowledged BEFORE the delete: the channel the confirm was pressed in is about
 			// to stop existing, and an answer sent after it is gone throws.
 			await acknowledgeConfirm(interaction);

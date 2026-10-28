@@ -44,6 +44,13 @@ export interface TurnAdapter {
 	canAct?(room: IGameRoom, userId: string): boolean;
 	/** A token that is the same for the whole turn and different for the next one; no colons. */
 	fingerprintOf(room: IGameRoom): string | null;
+	/**
+	 * The fingerprint one member's modal carries and its Submit is checked against, when it is
+	 * narrower than the turn's. Battleship's setup has no turn, so each captain's modal carries
+	 * their own fleet's layout instead, and a Submit after a Randomize locks nothing (2026-10 item
+	 * 263, risk R14). Defaults to fingerprintOf.
+	 */
+	memberFingerprintOf?(room: IGameRoom, userId: string): string | null;
 	/** The modal's title, text and fields for this member, or null when there is nothing to play. */
 	view(room: IGameRoom, userId: string): TurnView | null;
 	/**
@@ -188,6 +195,21 @@ async function fetchPromptLine(client: Client, room: IGameRoom, record: TurnProm
 const canActNow = (adapter: TurnAdapter, room: IGameRoom, userId: string): boolean =>
 	adapter.canAct ? adapter.canAct(room, userId) : adapter.whoseTurn(room) === userId;
 
+const memberFingerprint = (adapter: TurnAdapter, room: IGameRoom, userId: string): string | null =>
+	adapter.memberFingerprintOf ? adapter.memberFingerprintOf(room, userId) : adapter.fingerprintOf(room);
+
+/**
+ * Open a turn modal whose Submit lands in handleTurnSubmit, checked against `fingerprint`. The
+ * press below opens it, and so does a game control that must answer with the modal at once
+ * (Battleship's Randomize, which shows the fleet it just laid before writing it).
+ */
+export async function showTurnModal(interaction: ButtonInteraction, roomId: string, fingerprint: string, view: TurnView): Promise<void> {
+	await showModalOrReply(interaction, buildFieldsModal({ customId: turnModalId(roomId, fingerprint), title: view.title, text: view.text, fields: view.fields }), () => ({
+		content: view.text.join("\n\n"),
+		flags: MessageFlags.Ephemeral,
+	}));
+}
+
 /**
  * Take your turn: open the modal with the member's hand and moves. Refused, in a notice, for
  * anybody who is not on the clock and for a button whose turn has passed. Built from `room`,
@@ -202,11 +224,7 @@ export async function handleTurnPress(interaction: ButtonInteraction, room: IGam
 	if (adapter.fingerprintOf(room) !== fingerprint) return notice(copy.turnPassed);
 	const view = adapter.view(room, interaction.user.id);
 	if (!view) return notice(copy.nothingToPlay);
-
-	await showModalOrReply(interaction, buildFieldsModal({ customId: turnModalId(room.roomId, fingerprint), title: view.title, text: view.text, fields: view.fields }), () => ({
-		content: view.text.join("\n\n"),
-		flags: MessageFlags.Ephemeral,
-	}));
+	await showTurnModal(interaction, room.roomId, memberFingerprint(adapter, room, interaction.user.id) ?? fingerprint, view);
 }
 
 /**
@@ -226,7 +244,7 @@ export async function handleTurnSubmit(interaction: ModalSubmitInteraction, adap
 	if (!room || !adapter || room.status !== "playing") return notice(copy.turnPassed);
 	if (!room.playerIds.includes(interaction.user.id)) return notice(gameRoomsCopy.errors.notYours);
 	if (!canActNow(adapter, room, interaction.user.id)) return notice(copy.notYourTurn);
-	if (adapter.fingerprintOf(room) !== fingerprint) return notice(copy.turnPassed);
+	if (memberFingerprint(adapter, room, interaction.user.id) !== fingerprint) return notice(copy.turnPassed);
 	const view = adapter.view(room, interaction.user.id);
 	if (!view) return notice(copy.turnPassed);
 

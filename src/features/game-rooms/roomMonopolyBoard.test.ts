@@ -50,6 +50,7 @@ import { applyEndTurn, applyForfeit, applyRoll, applySkip, createInitialState, t
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { commitMonopolyMove, persistIfUnchanged } from "./roomMonopolyHandlers.js";
 import { postBelowMonopolyBoard, splitTurnLines } from "./roomMonopolyBoard.js";
+import { surrenderMonopolySeat, surrenderMove } from "./roomMonopolySurrender.js";
 import { sweepMonopolyIdle } from "./roomTurnSweep.js";
 import { _resetDrawingPauses } from "./drawingPause.js";
 import { syncTurnPrompt } from "./turnPrompt.js";
@@ -294,6 +295,53 @@ describe("one board per turn", () => {
 		expect(stored().boardMessageId).toBe(boardId);
 		expect(room.messages[0].payload.components).toEqual([]);
 		expect(descriptionOf(room.messages[0])).toContain("rolled 1 and 2.");
+	});
+
+	// The transcript outlives the room, so a match played to its end must leave every line every turn
+	// made in it once, in the order played. The shortest real ending: two turns, then the second seat
+	// surrenders through the Surrender confirm's own path, which leaves one seat and finishes the match.
+	it("a finished match's transcript holds every move of every turn exactly once", async () => {
+		const room = fakeRoom();
+		const seeded = await seedMatch(room);
+		const { roomLifecycle } = await import("./roomLifecycle.js");
+
+		// Each move's engine lines, kept as the real commit path applies them; nothing races here, so
+		// every move applied is a move that landed.
+		const expected: string[] = [];
+		const keeping =
+			(move: (state: MonopolyState, actorId: string) => MonopolyResult) =>
+			(state: MonopolyState, actorId: string): MonopolyResult => {
+				const result = move(state, actorId);
+				if (result.ok) expected.push(...result.trailLines);
+				return result;
+			};
+		const roll = keeping((state) => applyRoll(state, noDoubles()));
+		const endTurn = keeping(applyEndTurnAfterSkip);
+		expect((await commitMonopolyMove(room.client, seeded, A, roll, { onTurnOnly: true })).ok).toBe(true);
+		expect((await commitMonopolyMove(room.client, seeded, A, endTurn, { onTurnOnly: true })).ok).toBe(true);
+		expect((await commitMonopolyMove(room.client, seeded, B, roll, { onTurnOnly: true })).ok).toBe(true);
+
+		// The surrender's lines, worked out on a copy of the match it reads: its own line ahead of the forfeit's.
+		const surrender = surrenderMove(structuredClone(stored()), B, [gameRoomsCopy.monopoly.surrendered(B)], false);
+		expect(surrender.ok).toBe(true);
+		if (surrender.ok) expected.push(...surrender.trailLines);
+		expect(await surrenderMonopolySeat(room.client, seeded, B)).toBe("surrendered");
+
+		// The match is over, through its real finish.
+		expect(stored().phase).toBe("finished");
+		expect(stored().winnerId).toBe(A);
+		expect(roomLifecycle.finish).toHaveBeenCalledOnce();
+
+		// Every line once, in order, and nothing else; and each on exactly as many boards as the
+		// transcript holds it.
+		const lines = transcript();
+		expect(lines).toEqual(expected);
+		expect(lines.filter((line) => line.includes("rolled 1 and 2."))).toHaveLength(2);
+		expect(lines).toContain(gameRoomsCopy.monopoly.surrendered(B));
+		for (const line of new Set(lines)) {
+			const boards = room.messages.filter((message) => descriptionOf(message).includes(labelBotMentions(line)));
+			expect(boards.length, line).toBe(lines.filter((candidate) => candidate === line).length);
+		}
 	});
 
 	it("posts a referee notice below the board and never a second board for the same turn", async () => {

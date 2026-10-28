@@ -8,16 +8,19 @@ import type { Client, TextChannel } from "discord.js";
 // ended the hand. Every move reaches the transcript once. Driven through the real turn adapter,
 // handler, turn board and trail over a channel that keeps its messages in order.
 
-const moves = vi.hoisted(() => ({ recorded: [] as { text: string }[] }));
+const moves = vi.hoisted(() => ({ recorded: [] as { actorId: string; kind: string; text: string }[] }));
+// The row the table's room reads back. Null by default: the prompt line and the room's finish have
+// their own suites; the finished match case below hands one over to see the finish happen.
+const roomRow = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: {
-		// No row: the prompt line and the room's finish have their own suites.
-		findByRoomId: vi.fn(async () => null),
-		appendMove: vi.fn(async (_guildId: string, _roomId: string, move: { text: string }) => {
+		findByRoomId: vi.fn(async () => roomRow.current),
+		appendMove: vi.fn(async (_guildId: string, _roomId: string, move: { actorId: string; kind: string; text: string }) => {
 			moves.recorded.push(move);
 		}),
 	},
 }));
+vi.mock("@features/game-rooms/roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn(async () => true) } }));
 vi.mock("./gameXp.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./gameXp.js")>()), awardBlackjackResult: vi.fn() }));
 // The text table, whatever art is on disk where the suite runs.
 vi.mock("./blackjackRenderer.js", async (importOriginal) => ({
@@ -29,6 +32,7 @@ vi.mock("./blackjackRenderer.js", async (importOriginal) => ({
 import { _clearBlackjackGames, blackjackTurnAdapter, startBlackjackTable } from "./blackjackHandler.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { _resetDrawingPauses } from "@features/game-rooms/drawingPause.js";
+import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
 
 const HOST = { userId: "host-1", username: "Host" };
 const GUEST = { userId: "guest-1", username: "Guest" };
@@ -92,6 +96,8 @@ beforeEach(() => {
 	_clearBlackjackGames();
 	_resetDrawingPauses();
 	moves.recorded = [];
+	roomRow.current = null;
+	vi.mocked(roomLifecycle.finish).mockClear();
 	// A fixed deal, so the hand is the same every run and opens with no natural.
 	vi.spyOn(Math, "random").mockReturnValue(0.5);
 });
@@ -134,6 +140,42 @@ describe("a room's blackjack hand on the shared turn board", () => {
 			expect(block.split("\n").filter((shown) => shown === line), line).toHaveLength(1);
 			expect(descriptionOf(result)).not.toContain(line);
 		}
+		expect(new Set(lines).size).toBe(lines.length);
+	});
+
+	// A room table plays one hand and closes its room, and the transcript is what outlives the room:
+	// every action the hand took is in it once, in the order played, and nothing else is.
+	it("a finished match's transcript holds every move of every turn exactly once", async () => {
+		const room = fakeRoom();
+		expect(await startBlackjackTable(room.channel, "g1", HOST, true, "room-1", [GUEST])).toBe("started");
+		// The row the settle hands to finish. Stored as already finished so the turn prompt, which has
+		// its own suite, finds no seat on the clock and posts nothing in this room.
+		roomRow.current = { roomId: "room-1", guildId: "g1", channelId: "ch-1", status: "finished" };
+
+		const played: { actor: string; move: "hit" | "stand" }[] = [];
+		const hit = new Set<string>();
+		for (let guard = 0; guard < 12; guard++) {
+			const acting = blackjackTurnAdapter.whoseTurn(roomOf);
+			if (!acting) break;
+			const move = hit.has(acting) ? "stand" : "hit";
+			hit.add(acting);
+			expect(await blackjackTurnAdapter.apply({} as never, roomOf, acting, { move }, async () => undefined)).toEqual({ ok: true });
+			played.push({ actor: acting, move });
+		}
+
+		// The hand ended: no seat is on the clock, and the settle closed the room once.
+		expect(blackjackTurnAdapter.whoseTurn(roomOf)).toBeNull();
+		await vi.waitFor(() => expect(roomLifecycle.finish).toHaveBeenCalledOnce());
+
+		// One transcript row per action, in the order played, each the action it records. A hit's
+		// line opens with the hitter and "hits:", a stand's with the stander and "stands on".
+		const words = gameRoomsCopy.turnBoard;
+		const openingOf = (entry: { actor: string; move: "hit" | "stand" }): string =>
+			(entry.move === "hit" ? words.blackjackHit(entry.actor, "\u0000", "") : words.blackjackStand(entry.actor, "\u0000")).split("\u0000")[0];
+		expect(played.length).toBeGreaterThanOrEqual(2);
+		expect(moves.recorded.map((move) => move.actorId)).toEqual(played.map((entry) => entry.actor));
+		for (const [index, entry] of played.entries()) expect(moves.recorded[index].text.startsWith(openingOf(entry)), moves.recorded[index].text).toBe(true);
+		const lines = moves.recorded.map((move) => move.text);
 		expect(new Set(lines).size).toBe(lines.length);
 	});
 });

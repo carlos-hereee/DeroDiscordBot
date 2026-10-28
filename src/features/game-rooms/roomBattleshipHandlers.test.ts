@@ -9,12 +9,12 @@ vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardTwoPlayerResult: vi.fn() }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 
-import { battleshipTurnAdapter, handleFire, handleViewBoard, handleReroll, handleReady } from "./roomBattleshipHandlers.js";
+import { battleshipTurnAdapter, handleFire, handleViewBoard, handleRandomize, handleReady } from "./roomBattleshipHandlers.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { roomTrail } from "./roomTrail.js";
-import { startMatch, deserializeMatch, serializeMatch, type StoredBattleship } from "./roomBattleship.js";
+import { startMatch, deserializeMatch, serializeMatch, fleetFingerprint, type StoredBattleship } from "./roomBattleship.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -232,44 +232,37 @@ describe("the private board", () => {
 	});
 });
 
+// 2026-10 item 263 R3-1: the setup modal shows the captain's fleet with nothing to choose, so its
+// Submit means I am ready, and it carries that fleet's fingerprint so a Submit locks in only the
+// fleet it showed (risk R14).
 describe("the setup modal", () => {
-	it("shows the captain's own fleet and one select, Randomize again or I am ready", async () => {
+	it("shows the captain's own fleet and no select, carrying that fleet's fingerprint", async () => {
 		const interaction = makeInteraction(A);
+		const match = setupMatch();
 
-		await handleFire(interaction, makeRoom(setupMatch()));
+		await handleFire(interaction, makeRoom(match));
 
 		const [modal] = shownModals(interaction);
-		expect(modal.custom_id).toBe("gameroomModal:turn:room-1:setup");
+		expect(modal.custom_id).toBe(`gameroomModal:turn:room-1:${fleetFingerprint(match.players[0])}`);
 		const json = JSON.stringify(modal.components);
-		expect(json).toContain("I am ready");
-		expect(json).toContain("Randomize again");
 		expect(json).toContain("Still afloat");
+		expect(json).not.toContain("string_select");
+		expect(json).not.toMatch(/"type":3\b/);
 	});
 
-	it("lays the fleet again on a Randomize Submit, writing only this captain's own slot", async () => {
-		const room = makeRoom(setupMatch());
-		const acknowledge = vi.fn().mockResolvedValue(undefined);
-
-		const result = await battleshipTurnAdapter.apply(modalClient, room, A, { setup: "reroll" }, acknowledge);
-
-		expect(result).toEqual({ ok: true });
-		expect(storeMock.setSecretField.mock.calls[0][2]).toBe("players.0");
-		expect(acknowledge).toHaveBeenCalledOnce();
-	});
-
-	it("readies in ONE Submit: choosing I am ready locks the captain in", async () => {
+	it("locks the captain in on Submit", async () => {
 		storeMock.setSecretField.mockResolvedValue({ secret: { ...setupMatch(), ready: [true, false] } });
 		const acknowledge = vi.fn().mockResolvedValue(undefined);
 
-		const result = await battleshipTurnAdapter.apply(modalClient, makeRoom(setupMatch()), A, { setup: "ready" }, acknowledge);
+		const result = await battleshipTurnAdapter.apply(modalClient, makeRoom(setupMatch()), A, {}, acknowledge);
 
 		expect(result).toEqual({ ok: true });
 		expect(storeMock.setSecretField).toHaveBeenCalledWith("guild-1", "room-1", "ready.0", true);
 		expect(acknowledge).toHaveBeenCalledOnce();
 	});
 
-	it("refuses a second Ready from the same captain with the words the button used", async () => {
-		const result = await battleshipTurnAdapter.apply(modalClient, makeRoom({ ...setupMatch(), ready: [true, false] }), A, { setup: "ready" }, async () => undefined);
+	it("refuses a second Submit from the same captain with the words the button used", async () => {
+		const result = await battleshipTurnAdapter.apply(modalClient, makeRoom({ ...setupMatch(), ready: [true, false] }), A, {}, async () => undefined);
 
 		expect(result).toEqual({ ok: false, reason: gameRoomsCopy.battleship.alreadyReady });
 	});
@@ -280,26 +273,42 @@ describe("the setup modal", () => {
 		expect(battleshipTurnAdapter.whoseTurn(room)).toBeNull();
 		expect(battleshipTurnAdapter.view(makeRoom({ ...setupMatch(), ready: [true, false] }), A)).toBeNull();
 	});
+
+	it("fingerprints each captain's fleet apart, with no colon, and the battle's turn as before", () => {
+		const match = setupMatch();
+		const room = makeRoom(match);
+
+		const mine = battleshipTurnAdapter.memberFingerprintOf?.(room, A);
+		const theirs = battleshipTurnAdapter.memberFingerprintOf?.(room, B);
+		expect(mine).toBe(fleetFingerprint(match.players[0]));
+		expect(mine).not.toBe(theirs);
+		expect(mine).not.toContain(":");
+		expect(battleshipTurnAdapter.memberFingerprintOf?.(makeRoom(freshMatch()), A)).toBe("b0");
+	});
 });
 
-describe("reroll", () => {
-	it("re-lays the caller's fleet during setup and shows the new layout privately", async () => {
+describe("Randomize", () => {
+	it("opens the setup modal on a NEW fleet at once, then writes only this captain's slot", async () => {
 		const room = makeRoom(setupMatch());
 		const before = JSON.stringify((room.secret as StoredBattleship).players[0].ships);
 		const interaction = makeInteraction(A);
+		const order: string[] = [];
+		(interaction.showModal as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => void order.push("modal"));
+		storeMock.setSecretField.mockImplementation(async () => void order.push("write"));
 
-		await handleReroll(interaction, room);
+		await handleRandomize(interaction, room);
 
 		const [, , path, value] = storeMock.setSecretField.mock.calls[0];
 		// ⚠️ THE PATH IS THE ASSERTION. A whole-secret write here reverted whatever the opponent
 		// did between this handler's read and its write; a dotted $set on ONE player's slot
-		// cannot touch the other's, so "the opponent's fleet is untouched" stops being a fact
-		// about this code path and becomes a fact about the query.
+		// cannot touch the other's.
 		expect(path).toBe("players.0");
-		expect(JSON.stringify((value as StoredBattleship["players"][number]).ships)).not.toBe(before);
+		const laid = value as StoredBattleship["players"][number];
+		expect(JSON.stringify(laid.ships)).not.toBe(before);
+		// The modal is the press's first answer (risk R5) and shows the fleet just written.
+		expect(order).toEqual(["modal", "write"]);
+		expect(shownModals(interaction)[0].custom_id).toBe(`gameroomModal:turn:room-1:${fleetFingerprint(laid)}`);
 		expect(storeMock.update).not.toHaveBeenCalled();
-		// The answer is the private view of the fleet just laid, never a channel message.
-		expect(interaction.showModal).toHaveBeenCalledOnce();
 		expect(interaction.reply).not.toHaveBeenCalled();
 	});
 
@@ -307,7 +316,7 @@ describe("reroll", () => {
 		const room = makeRoom({ ...setupMatch(), ready: [true, false] });
 		const interaction = makeInteraction(A);
 
-		await handleReroll(interaction, room);
+		await handleRandomize(interaction, room);
 
 		expect(storeMock.setSecretField).not.toHaveBeenCalled();
 		expect(noticeText(interaction)).toBe(gameRoomsCopy.battleship.alreadyReady);
@@ -322,7 +331,7 @@ describe("reroll", () => {
 		const room = makeRoom({ ...serializeMatch(state), ready: undefined });
 
 		const interaction = makeInteraction(A);
-		await handleReroll(interaction, room);
+		await handleRandomize(interaction, room);
 
 		expect(storeMock.setSecretField).not.toHaveBeenCalled();
 		expect(noticeText(interaction)).toMatch(/first shot/i);
@@ -378,10 +387,11 @@ describe("ready (post-launch plan item 17)", () => {
 
 	it("offers no firing modal while the fleets are being laid: the same press opens the setup one", async () => {
 		const interaction = makeInteraction(A);
-		await handleFire(interaction, makeRoom(setupMatch()));
+		const match = setupMatch();
+		await handleFire(interaction, makeRoom(match));
 
 		expect(storeMock.update).not.toHaveBeenCalled();
-		expect(shownModals(interaction)[0].custom_id).toBe("gameroomModal:turn:room-1:setup");
+		expect(shownModals(interaction)[0].custom_id).toBe(`gameroomModal:turn:room-1:${fleetFingerprint(match.players[0])}`);
 	});
 });
 

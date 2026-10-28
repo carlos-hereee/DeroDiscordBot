@@ -171,10 +171,10 @@ export interface IGameRoom {
 	secret: RoomSecret | null;
 	moves: RoomMove[];
 	winnerId: string | null;
-	// The players who chose Save this match to my profile when the room was archived
-	// (2026-10 item 257 Phase 3b), shown by /account view:saved. Only ever a member of
-	// playerIds, added by gameRoomStore.addSavedBy and by nothing else. The row outlives
-	// its channel, so a saved match stays readable after the archive deletes the room.
+	// The players who chose Save this match to my profile when the room was archived (2026-10
+	// item 257 Phase 3b). Written by nothing and read by nothing since 2026-10 item 263 decision
+	// 2 made every finished match a member played list in their history by playerIds; kept, with
+	// its index, so older rows need no migration.
 	savedBy: string[];
 	startedAt: Date | null;
 	endedAt: Date | null;
@@ -339,12 +339,14 @@ gameRoomSchema.index(
 // status keeps the scan off the far larger set of archived rows.
 gameRoomSchema.index({ status: 1, archiveAt: 1 });
 
-// The future dashboard's "show me my game history in this guild" query. playerIds is an array,
-// so this is a multikey index; endedAt descending gives the newest-first cursor for free.
+// A member's match history in this guild (/account view:saved, gameRoomStore.findByUserInGuild).
+// playerIds is an array, so this is a multikey index; endedAt descending gives the newest first
+// cursor for free.
 gameRoomSchema.index({ guildId: 1, playerIds: 1, endedAt: -1 });
 
-// /account view:saved, exactly: this guild, rooms a member saved, newest finish first. Sparse in
-// effect, since most rows have an empty savedBy and contribute no index entries.
+// The old saved matches read (item 257 Phase 3b), unused since the match history reads playerIds
+// above. Kept beside it until an index cleanup drops it with savedBy. Sparse in effect, since most
+// rows have an empty savedBy and contribute no index entries.
 gameRoomSchema.index({ guildId: 1, savedBy: 1, endedAt: -1 });
 
 // ── The satellite lookups (2026-10 item 244 Phase 5a) ──

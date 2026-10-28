@@ -1,18 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { InteractionType, type Client, type ModalSubmitInteraction, type RepliableInteraction, type User } from "discord.js";
+import { type Client, type RepliableInteraction, type User } from "discord.js";
 
-const mocks = vi.hoisted(() => ({ addSavedBy: vi.fn(), findSavedBy: vi.fn(), findByGuildId: vi.fn() }));
+const mocks = vi.hoisted(() => ({ findByUserInGuild: vi.fn(), findByGuildId: vi.fn() }));
 // The view posts in 💬dero-commands (2026-10 item 257 Phase 5). With no commands channel
 // stored it answers privately, which is what most tests below read; one posts in the channel.
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId } }));
-vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { addSavedBy: mocks.addSavedBy, findSavedBy: mocks.findSavedBy } }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByUserInGuild: mocks.findByUserInGuild } }));
 
-import { SAVED_MATCHES_SHOWN, archiveSaveSelect, canSaveMatch, resultFor, saveMatchIfChosen, savedMatchLine, showSavedMatches } from "./savedMatches.js";
+import { MATCH_HISTORY_SHOWN, resultFor, savedMatchLine, showMatchHistory } from "./savedMatches.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
-// ── savedMatches (2026-10 item 257 Phase 3b) ─────────────────────────────────
-// The archive confirm's save choice and /account view:saved. The store is mocked: what is
-// pinned is who may save, what the list shows and how many rows it asks for.
+// ── savedMatches: the match history (2026-10 item 263 decision 2) ─────────────
+// /account view:saved lists a member's last finished matches, with no save step. The store is
+// mocked: what is pinned is what the list shows and how many rows it asks for.
 
 const client = {} as Client;
 
@@ -30,54 +30,10 @@ const room = (overrides: Record<string, unknown> = {}): IGameRoom =>
 		...overrides,
 	}) as unknown as IGameRoom;
 
-const submitWith = (userId: string, values: string[]): ModalSubmitInteraction =>
-	({ type: InteractionType.ModalSubmit, user: { id: userId }, fields: { getStringSelectValues: () => values } }) as unknown as ModalSubmitInteraction;
-
 beforeEach(() => {
 	vi.clearAllMocks();
-	mocks.addSavedBy.mockResolvedValue({});
-	mocks.findSavedBy.mockResolvedValue([]);
+	mocks.findByUserInGuild.mockResolvedValue([]);
 	mocks.findByGuildId.mockResolvedValue(null);
-});
-
-describe("canSaveMatch", () => {
-	it("allows a player of a finished match only", () => {
-		expect(canSaveMatch(room(), "me")).toBe(true);
-		expect(canSaveMatch(room(), "admin")).toBe(false);
-		expect(canSaveMatch(room({ status: "playing" }), "me")).toBe(false);
-		expect(canSaveMatch(room({ status: "archived" }), "me")).toBe(false);
-	});
-});
-
-describe("archiveSaveSelect", () => {
-	it("defaults to no, so an untouched Submit saves nothing", () => {
-		const defaults = archiveSaveSelect().options.filter((option) => option.isDefault);
-		expect(defaults.map((option) => option.value)).toEqual(["no"]);
-	});
-});
-
-describe("saveMatchIfChosen", () => {
-	it("adds the presser once, by the room, when they chose yes", async () => {
-		await saveMatchIfChosen(submitWith("me", ["yes"]), room());
-		expect(mocks.addSavedBy).toHaveBeenCalledExactlyOnceWith("guild-1", "room-1", "me");
-	});
-
-	it.each([
-		["chose no", submitWith("me", ["no"]), room()],
-		["answered nothing", submitWith("me", []), room()],
-		["is not a player of the match", submitWith("admin", ["yes"]), room()],
-		["pressed on a match still in play", submitWith("me", ["yes"]), room({ status: "playing" })],
-	])("saves nothing when the presser %s", async (_label, interaction, target) => {
-		await saveMatchIfChosen(interaction, target);
-		expect(mocks.addSavedBy).not.toHaveBeenCalled();
-	});
-
-	it("logs and carries on when the write fails, so the archive after it still runs", async () => {
-		const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
-		mocks.addSavedBy.mockRejectedValue(new Error("db down"));
-		await expect(saveMatchIfChosen(submitWith("me", ["yes"]), room())).resolves.toBeUndefined();
-		expect(logged).toHaveBeenCalled();
-	});
 });
 
 describe("resultFor", () => {
@@ -110,7 +66,7 @@ describe("savedMatchLine", () => {
 	});
 });
 
-describe("showSavedMatches", () => {
+describe("showMatchHistory", () => {
 	const target = { id: "me", bot: false, globalName: "Me", username: "me" } as unknown as User;
 	function command(guildId: string | null = "guild-1") {
 		return {
@@ -128,33 +84,44 @@ describe("showSavedMatches", () => {
 	type Embed = { data: { title?: string; description?: string } };
 
 	it("asks the store for the member's last ten in this guild, and lists them newest first as the store returns them", async () => {
-		mocks.findSavedBy.mockResolvedValue([room({ roomId: "new", endedAt: new Date("2026-10-21T00:00:00Z") }), room({ roomId: "old" })]);
+		mocks.findByUserInGuild.mockResolvedValue([room({ roomId: "new", endedAt: new Date("2026-10-21T00:00:00Z") }), room({ roomId: "old" })]);
 		const interaction = command();
 
-		await showSavedMatches(interaction, target);
+		await showMatchHistory(interaction, target);
 
-		expect(mocks.findSavedBy).toHaveBeenCalledExactlyOnceWith("guild-1", "me", SAVED_MATCHES_SHOWN);
-		expect(SAVED_MATCHES_SHOWN).toBe(10);
+		expect(mocks.findByUserInGuild).toHaveBeenCalledExactlyOnceWith("guild-1", "me", MATCH_HISTORY_SHOWN);
+		expect(MATCH_HISTORY_SHOWN).toBe(10);
 		const embed = (interaction.editReply.mock.calls[0]![0] as { embeds: Embed[] }).embeds[0]!;
-		expect(embed.data.title).toBe("📌 Me's saved matches");
+		expect(embed.data.title).toBe("📜 Me's match history");
 		const lines = embed.data.description!.split("\n").filter((line) => line.startsWith("**"));
 		expect(lines).toHaveLength(2);
 		expect(lines[0]).toContain("<t:1792540800:D>");
 	});
 
-	it("says so, and shows no list, when nothing is saved", async () => {
+	// A match the member never saved lists like any other, and one an older Save marked lists once.
+	it("lists every finished match the store returns, saved or not", async () => {
+		mocks.findByUserInGuild.mockResolvedValue([room({ roomId: "unsaved", savedBy: [] }), room({ roomId: "saved", savedBy: ["me"] })]);
 		const interaction = command();
-		await showSavedMatches(interaction, target);
+
+		await showMatchHistory(interaction, target);
+
 		const embed = (interaction.editReply.mock.calls[0]![0] as { embeds: Embed[] }).embeds[0]!;
-		expect(embed.data.description).toContain("No saved matches yet");
+		expect(embed.data.description!.split("\n").filter((line) => line.startsWith("**"))).toHaveLength(2);
+	});
+
+	it("says so, and shows no list, when nothing has finished", async () => {
+		const interaction = command();
+		await showMatchHistory(interaction, target);
+		const embed = (interaction.editReply.mock.calls[0]![0] as { embeds: Embed[] }).embeds[0]!;
+		expect(embed.data.description).toContain("No finished matches yet");
 	});
 
 	it("answers a bot, or a command outside a server, with a notice and reads nothing", async () => {
 		const bot = command();
-		await showSavedMatches(bot, { ...target, bot: true } as User);
+		await showMatchHistory(bot, { ...target, bot: true } as User);
 		const dm = command(null);
-		await showSavedMatches(dm, target);
-		expect(mocks.findSavedBy).not.toHaveBeenCalled();
+		await showMatchHistory(dm, target);
+		expect(mocks.findByUserInGuild).not.toHaveBeenCalled();
 		expect(bot.deferReply).not.toHaveBeenCalled();
 		expect(bot.showModal).toHaveBeenCalledOnce();
 		expect(dm.showModal).toHaveBeenCalledOnce();
@@ -173,7 +140,7 @@ describe("showSavedMatches", () => {
 		fake.deleteReply = vi.fn(async () => undefined);
 		const interaction = fake as unknown as ReturnType<typeof command>;
 
-		await showSavedMatches(interaction, target);
+		await showMatchHistory(interaction, target);
 
 		expect(interaction.showModal).not.toHaveBeenCalled();
 		expect(interaction.deferReply).toHaveBeenCalledOnce();
@@ -181,14 +148,14 @@ describe("showSavedMatches", () => {
 		const posted = send.mock.calls[0]![0] as { content: string; embeds: Embed[]; allowedMentions: unknown };
 		expect(posted.content).toBe("<@me>");
 		expect(posted.allowedMentions).toEqual({ parse: [], users: ["me"] });
-		expect(posted.embeds[0]!.data.description).toContain("No saved matches yet");
+		expect(posted.embeds[0]!.data.description).toContain("No finished matches yet");
 	});
 
 	it("answers a failed read with the error line instead of throwing", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => undefined);
-		mocks.findSavedBy.mockRejectedValue(new Error("db down"));
+		mocks.findByUserInGuild.mockRejectedValue(new Error("db down"));
 		const interaction = command();
-		await expect(showSavedMatches(interaction, target)).resolves.toBeUndefined();
+		await expect(showMatchHistory(interaction, target)).resolves.toBeUndefined();
 		expect((interaction.editReply.mock.calls[0]![0] as { content: string }).content).toContain("could not read");
 	});
 });

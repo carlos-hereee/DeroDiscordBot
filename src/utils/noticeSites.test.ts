@@ -179,7 +179,7 @@ const INVENTORY: readonly NoticeEntry[] = [
 
 	// ── game-rooms/roomBattleshipHandlers.ts ──
 	{ file: "features/game-rooms/roomBattleshipHandlers.ts", within: "handleViewBoard", anchor: "gameRoomsCopy.battleship.matchOver", kind: "state" },
-	{ file: "features/game-rooms/roomBattleshipHandlers.ts", within: "handleReroll", anchor: "relaid.reason", kind: "state" },
+	{ file: "features/game-rooms/roomBattleshipHandlers.ts", within: "handleRandomize", anchor: "relaid.reason", kind: "state" },
 	{ file: "features/game-rooms/roomBattleshipHandlers.ts", within: "handleReady", anchor: "refusal", kind: "state" },
 
 	// ── game-rooms/roomGames.ts ──
@@ -250,8 +250,8 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/game-rooms/roomMonopolyTrade.ts", within: "handleTradePartnerSelect", anchor: "gameRoomsCopy.monopoly.noTradePartners", kind: "state" },
 
 	// ── game-rooms/savedMatches.ts ──
-	{ file: "features/game-rooms/savedMatches.ts", within: "showSavedMatches", anchor: "copy.outsideGuild", kind: "state" },
-	{ file: "features/game-rooms/savedMatches.ts", within: "showSavedMatches", anchor: "copy.botMember", kind: "state" },
+	{ file: "features/game-rooms/savedMatches.ts", within: "showMatchHistory", anchor: "copy.outsideGuild", kind: "state" },
+	{ file: "features/game-rooms/savedMatches.ts", within: "showMatchHistory", anchor: "copy.botMember", kind: "state" },
 
 	// ── game-rooms/turnPrompt.ts ──
 	{ file: "features/game-rooms/turnPrompt.ts", within: "handleTurnPress", anchor: "text", kind: "state" },
