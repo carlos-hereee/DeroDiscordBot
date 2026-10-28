@@ -158,6 +158,26 @@ describe("retireAdminControls", () => {
 		warn.mockRestore();
 	});
 
+	// The store hands back a HYDRATED Mongoose document, whose own keys are $__, $isNew and
+	// _doc, never its fields. A plain object fixture cannot show that, so this one is built
+	// by the real model (no database needed).
+	it("never deletes through a corrupt id on a hydrated GuildConfig document, the shape the store returns", async () => {
+		const { default: GuildConfigModel } = await import("@db/models/GuildConfig.js");
+		const sanctum = textChannel("ch-sanctum", "🔒inner-sanctum");
+		const { guild, fetch } = makeGuild(new Map([["ch-sanctum", sanctum.channel]]));
+		vi.mocked(guildConfigStore.findByGuildId).mockResolvedValue(
+			GuildConfigModel.hydrate({ guildId: "guild-1", categoryId: "cat-1", adminCommandsChannelId: "ch-sanctum", adminChannelId: "ch-sanctum" }) as never
+		);
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+		expect(await retireAdminControls(guild)).toBe("cleared");
+
+		expect(fetch).not.toHaveBeenCalled();
+		expect(sanctum.remove).not.toHaveBeenCalled();
+		expect(guildConfigStore.update).toHaveBeenCalledExactlyOnceWith("guild-1", CLEARED);
+		warn.mockRestore();
+	});
+
 	it("never deletes a stored id that is not a text channel", async () => {
 		const category = Object.create(CategoryChannel.prototype) as CategoryChannel;
 		const remove = vi.fn();

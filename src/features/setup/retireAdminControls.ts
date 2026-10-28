@@ -70,6 +70,16 @@ async function fetchStoredChannel(guild: Guild, channelId: string): Promise<Stor
 	}
 }
 
+// The store returns a hydrated Mongoose document, whose own enumerable keys are $__,
+// $isNew and _doc rather than its fields, so Object.entries over it sees nothing and the
+// corrupt row guard (step ③) would never fire. Read it as a plain object first; a plain
+// object (a lean read, a test fixture) passes through as it is.
+function asPlainRow(row: unknown): Record<string, unknown> | null {
+	if (!row || typeof row !== "object") return null;
+	const document = row as { toObject?: () => unknown };
+	return (typeof document.toObject === "function" ? document.toObject() : row) as Record<string, unknown>;
+}
+
 async function clearRetiredIds(guild: Guild): Promise<void> {
 	await guildConfigStore.update(guild.id, { ...CLEARED_IDS });
 }
@@ -77,7 +87,7 @@ async function clearRetiredIds(guild: Guild): Promise<void> {
 /** Delete the stored 🎛️admin-controls, once, by its id. Never throws. */
 export async function retireAdminControls(guild: Guild): Promise<AdminControlsOutcome> {
 	try {
-		const row = (await guildConfigStore.findByGuildId(guild.id)) as unknown as Record<string, unknown> | null;
+		const row = asPlainRow(await guildConfigStore.findByGuildId(guild.id));
 		const storedId = row?.[RETIRED_FIELD];
 		if (!row || typeof storedId !== "string" || storedId.length === 0) return "none";
 
