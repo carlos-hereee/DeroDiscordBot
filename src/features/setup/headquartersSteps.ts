@@ -30,26 +30,30 @@ import {
 import { setupCopy } from "./setupCopy.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
+import { TIMEZONE_OPTIONS, resolveServerTimezone } from "@utils/tzParser.js";
 
 // ── headquartersSteps ───────────────────────────────────────────────────────
 // What:  where a 🏰 DERO HEADQUARTERS step button goes (2026-10 item 257 Phase 2b,
 //        owner item 7). Every step but one opens a flow that already exists: the
 //        /dero-config, /arcade, /server channels and /leveling settings panels, the
 //        /events pick, or an /arcade, /events or /server subcommand's form,
-//        through the admin command launcher. The one new flow is ⚙️dero-config's step
-//        2, the voice priority order (owner decision 4): a modal of four selects.
+//        through the admin command launcher. Two flows are new: ⚙️dero-config's step
+//        2, the voice priority order (owner decision 4), a modal of four selects, and
+//        🛠️server-config's step 1, the server's timezone (2026-10 item 263 Phase 4c), a
+//        modal of one select.
 // Who:   the buttons headquartersCards.ts puts on the steps cards, as
 //        `hqstep:<domain>:<step>`. The 🧭onboarding steps carry the Community and
 //        adoption customIds themselves and never come here.
 // How:   the launcher re-runs its owner or admin gate at every step, and the priority
-//        modal runs gateOwnerOrAdmin on the press and again on the Submit, because a
-//        modal is reachable without the button that opened it.
+//        and timezone modals run gateOwnerOrAdmin on the press and again on the
+//        Submit, because a modal is reachable without the button that opened it.
 
 /** What one routed step opens. */
 type StepTarget =
 	| { kind: "launch"; launchId: string }
 	| { kind: "leaf"; command: string; path: string }
-	| { kind: "priority" };
+	| { kind: "priority" }
+	| { kind: "timezone" };
 
 const panel = (launchId: string): StepTarget => ({ kind: "launch", launchId });
 const leaf = (command: string, path: string): StepTarget => ({ kind: "leaf", command, path });
@@ -62,10 +66,12 @@ const leaf = (command: string, path: string): StepTarget => ({ kind: "leaf", com
 // opened it merged into one.
 //
 // 🛠️server-config (2026-10 item 263 Phase 4a) routes by step key, so a step inserted in
-// SERVER_CONFIG_STEPS takes its route with it: the KvK season and the weekly stream
+// SERVER_CONFIG_STEPS takes its route with it: the server's timezone opens its own
+// modal (Phase 4c), the KvK season and the weekly stream
 // schedule open their /events forms, events opens the /events pick (list, pause,
 // resume, delete), the channels the /server channels panel and leveling its panel.
 const SERVER_CONFIG_ROUTES: Record<ServerConfigStep, StepTarget> = {
+	timezone: { kind: "timezone" },
 	kvkSeason: leaf("events", "kvk-season"),
 	streams: leaf("events", "stream weekly"),
 	events: panel("events"),
@@ -110,6 +116,10 @@ async function handleStepButton(interaction: ButtonInteraction): Promise<void> {
 	}
 	if (target.kind === "priority") {
 		await openPriorityModal(interaction);
+		return;
+	}
+	if (target.kind === "timezone") {
+		await openTimezoneModal(interaction);
 		return;
 	}
 	const launcher = await import("@features/command-buttons/adminCommandLauncher.js");
@@ -186,8 +196,73 @@ async function handlePrioritySubmit(interaction: ModalSubmitInteraction): Promis
 	refreshHeadquartersCards(guild, "deroConfig");
 }
 
-/** Register the step buttons and the priority modal. Called once at boot from main.ts. */
+// ── 🛠️server-config step 1, the server's timezone (2026-10 item 263 Phase 4c) ──
+
+const TIMEZONE_MODAL_ID = `${HEADQUARTERS_STEP_PREFIX}timezone`;
+const TIMEZONE_FIELD_ID = "timezone";
+const timezoneCopy = setupCopy.headquarters.serverConfig.timezone;
+
+/** The modal: one select of the shared 25 zones, the server's zone picked already. */
+export function buildTimezoneModal(currentZone: string): ModalBuilder {
+	const select = new StringSelectMenuBuilder()
+		.setCustomId(TIMEZONE_FIELD_ID)
+		.setMinValues(1)
+		.setMaxValues(1)
+		.addOptions(TIMEZONE_OPTIONS.map((option) => ({ label: option.label, value: option.value, description: option.description, default: option.value === currentZone })));
+	return new ModalBuilder()
+		.setCustomId(TIMEZONE_MODAL_ID)
+		.setTitle(timezoneCopy.modalTitle)
+		.addTextDisplayComponents(new TextDisplayBuilder().setContent(timezoneCopy.intro))
+		.addLabelComponents(new LabelBuilder().setLabel(timezoneCopy.selectLabel).setStringSelectMenuComponent(select));
+}
+
+/**
+ * The zone a Submit picked, or null for one that is not on the list. The select only
+ * offers the list, but a crafted Submit can carry any string, and this value goes
+ * straight into every scheduler's time math.
+ */
+export function pickedTimezone(picked: string | undefined): string | null {
+	return TIMEZONE_OPTIONS.some((option) => option.value === picked) ? (picked as string) : null;
+}
+
+async function openTimezoneModal(interaction: ButtonInteraction): Promise<void> {
+	const guild = interaction.guild;
+	if (!guild) return;
+	const config = await guildConfigStore.findByGuildId(guild.id);
+	if (!(await gateOwnerOrAdmin(interaction, config))) {
+		await showNotice(interaction, { title: getPluginCopy(config).notice.server, sections: [timezoneCopy.notAdmin] });
+		return;
+	}
+	// Read by name: the store returns a hydrated document, whose fields are getters.
+	const currentZone = resolveServerTimezone(config?.timezone);
+	await showModalOrReply(interaction, buildTimezoneModal(currentZone), () => ({ content: setupCopy.headquarters.stepUnavailable, flags: MessageFlags.Ephemeral }));
+}
+
+async function handleTimezoneSubmit(interaction: ModalSubmitInteraction): Promise<void> {
+	const guild = interaction.guild;
+	if (!guild) return;
+	const config = await guildConfigStore.findByGuildId(guild.id);
+	if (!(await gateOwnerOrAdmin(interaction, config))) {
+		await showNotice(interaction, { title: getPluginCopy(config).notice.server, sections: [timezoneCopy.notAdmin] });
+		return;
+	}
+	const zone = pickedTimezone(interaction.fields.getStringSelectValues(TIMEZONE_FIELD_ID)[0]);
+	if (!zone) {
+		await showNotice(interaction, { title: getPluginCopy(config).notice.server, sections: [setupCopy.headquarters.staleStep] });
+		return;
+	}
+	// timezoneSetAt marks the step done even when the admin keeps UTC on purpose.
+	await guildConfigStore.update(guild.id, { timezone: zone, timezoneSetAt: new Date() });
+	// The modal opened from the steps card, so its Submit is acknowledged quietly and the
+	// saved zone posts in 🛠️server-config, the channel whose card the step sits on.
+	await answerInChannel(interaction, "serverConfig", { embeds: [infoEmbed(timezoneCopy.modalTitle, timezoneCopy.saved(zone), COLORS.ADMIN)] }, { config });
+	adminLog.emitFor(interaction, guild.id, "config.change", { subject: timezoneCopy.auditSubject, detail: zone });
+	refreshHeadquartersCards(guild, "serverConfig");
+}
+
+/** Register the step buttons and the priority and timezone modals. Called once at boot from main.ts. */
 export function registerHeadquartersStepHandlers(): void {
 	registerButton(HEADQUARTERS_STEP_PREFIX, handleStepButton);
 	registerModal(PRIORITY_MODAL_ID, handlePrioritySubmit);
+	registerModal(TIMEZONE_MODAL_ID, handleTimezoneSubmit);
 }

@@ -404,6 +404,7 @@ export const setupCopy = {
 		serverConfig: {
 			title: "🛠️ Server setup",
 			steps: {
+				timezone: "The server's timezone",
 				kvkSeason: "The KvK season",
 				streams: "The weekly stream schedule",
 				events: "Your events: list, pause, resume or delete",
@@ -413,6 +414,7 @@ export const setupCopy = {
 			chartTitle: "🛠️ Server settings",
 			chartSubtitle: "This server's schedule, channels, leveling and switches.",
 			rows: {
+				timezone: "Timezone",
 				kvkSeason: "KvK season",
 				weeklySchedules: "Weekly schedules",
 				activeEvents: "Active events",
@@ -430,6 +432,17 @@ export const setupCopy = {
 				title: "🛠️ Server switches",
 				labels: { autoHeal: "Auto heal", tracking: "Leaderboard tracking", weekStart: "Week start" },
 				line: (label: string, state: string): string => `**${label}** ${state}`,
+			},
+			// Step 1, the server's timezone (2026-10 item 263 Phase 4c). Discord caps a modal
+			// title and a label at 45 characters.
+			timezone: {
+				modalTitle: "Server timezone",
+				intro:
+					"Times typed for party games and stream announcements are read in this zone, and a new weekly stream starts in it. The KvK season stays on UTC, the game's clock. Shown times already appear in each member's own time.",
+				selectLabel: "This server's timezone",
+				notAdmin: "Only the server owner or an admin can set the server's timezone.",
+				saved: (zone: string): string => `This server's timezone is now **${zone}**. Times typed from now on are read in it.`,
+				auditSubject: "server timezone",
 			},
 		},
 	},

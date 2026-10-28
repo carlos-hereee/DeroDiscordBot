@@ -538,6 +538,9 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/setup/headquartersSteps.ts", within: "openPriorityModal", kind: "state" },
 	{ file: "features/setup/headquartersSteps.ts", within: "handlePrioritySubmit", anchor: "voiceCopy.priority.notAdmin", kind: "race", why: "the voice priority modal's Submit, gated again: an admin role can be taken away while the modal is open" },
 	{ file: "features/setup/headquartersSteps.ts", within: "handlePrioritySubmit", anchor: "voiceCopy.priority.duplicate", kind: "race", why: "the voice priority modal's Submit with one category picked twice: only the Submit can read it" },
+	{ file: "features/setup/headquartersSteps.ts", within: "openTimezoneModal", kind: "state" },
+	{ file: "features/setup/headquartersSteps.ts", within: "handleTimezoneSubmit", anchor: "timezoneCopy.notAdmin", kind: "race", why: "the server timezone modal's Submit, gated again: an admin role can be taken away while the modal is open" },
+	{ file: "features/setup/headquartersSteps.ts", within: "handleTimezoneSubmit", anchor: "setupCopy.headquarters.staleStep", kind: "race", why: "the server timezone modal's Submit carrying a zone not on the list: only a crafted Submit can, and only the Submit can read it" },
 
 	// ── setup/renameChannel.ts ──
 	{ file: "features/setup/renameChannel.ts", within: "renameChannel", anchor: "sections: [\"Run this in a server, not a DM.\"", kind: "state" },

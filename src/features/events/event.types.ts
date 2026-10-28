@@ -60,6 +60,11 @@ export interface IGameEvent {
 	// type. Null means "paused indefinitely". ReminderScheduler clears
 	// both paused and pausedUntil when this date passes.
 	pausedUntil?: Date | null;
+	// The IANA zone a weekly event holds its local time in (2026-10 item 263 Phase 4c):
+	// occurrenceCalculator walks it by local week, so 7 PM stays 7 PM through daylight
+	// saving. Absent or null (every event before 4c) keeps the plain interval math. Same
+	// `?` + `| null` shape as mentionRoleId, for the same Mongoose reason.
+	timezone?: string | null;
 	createdAt?: Date;
 	updatedAt?: Date;
 }

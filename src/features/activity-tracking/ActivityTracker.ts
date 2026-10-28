@@ -4,7 +4,7 @@ import { activityStore } from "@db/stores/activityStore.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { isEventWindowOpen } from "@features/events/occurrenceCalculator.js";
-import { getUpcomingOccurrences } from "@features/events/occurrenceCalculator.js";
+import { getUpcomingOccurrences, previousOccurrence } from "@features/events/occurrenceCalculator.js";
 import { IVoiceSession } from "./activity.types.js";
 import { computeScore } from "./ParticipationStore.js";
 import { scheduleLeaderboardRefresh } from "@features/leaderboard/LeaderboardBoard.js";
@@ -287,9 +287,9 @@ async function getActiveEvent(guildId: string, windowMinutes = 60) {
 		const [occurrence] = getUpcomingOccurrences(event, 1);
 
 		// getUpcomingOccurrences returns the NEXT future occurrence
-		// but we want the one that just started, so look back one interval
-		const intervalMs = event.intervalHours * 60 * 60 * 1000;
-		const lastOccurrence = new Date(occurrence.getTime() - intervalMs);
+		// but we want the one that just started, so look back one occurrence
+		// (one local week for a weekly event with a zone, one interval otherwise)
+		const lastOccurrence = previousOccurrence(event, occurrence);
 
 		return { ...event, occurrence: lastOccurrence };
 	}

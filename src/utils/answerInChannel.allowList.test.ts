@@ -53,7 +53,7 @@ const ALLOWED: readonly AllowedLine[] = [
 	// ── notices whose modal Discord refused ──
 	{ file: "features/community/enableCommunity.ts", contains: "flags: MessageFlags.Ephemeral,", reason: "fallback", why: "the Community already on notice's fallback, used only when Discord refuses the modal" },
 	{ file: "features/setup/adoptionChoice.ts", contains: "flags: MessageFlags.Ephemeral }));", reason: "fallback", why: "the channel choice modal's fallback, used only when Discord refuses the modal" },
-	{ file: "features/setup/headquartersSteps.ts", contains: "flags: MessageFlags.Ephemeral }));", reason: "fallback", why: "the voice priority modal's fallback, used only when Discord refuses the modal" },
+	{ file: "features/setup/headquartersSteps.ts", contains: "flags: MessageFlags.Ephemeral }));", count: 2, reason: "fallback", why: "the voice priority and server timezone modals' fallbacks, used only when Discord refuses the modal" },
 
 	// ── private data: a hand, a fleet, a sealed bid, trade terms ──
 	{ file: "features/game-rooms/turnPrompt.ts", contains: "flags: MessageFlags.Ephemeral,", reason: "private data", why: "the turn modal's fallback carries the member's hand, used only when Discord refuses the modal" },

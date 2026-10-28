@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { getUpcomingOccurrences, isEventWindowOpen } from "./occurrenceCalculator.js";
+import { getUpcomingOccurrences, isEventWindowOpen, previousOccurrence } from "./occurrenceCalculator.js";
 import { IGameEvent } from "./event.types.js";
 import rokEvents from "../../base/constants/rok-events.json" with { type: "json" };
 
@@ -189,5 +189,119 @@ describe("isEventWindowOpen", () => {
 		});
 
 		expect(isEventWindowOpen(event, new Date("2026-04-17T01:30:00Z"))).toBe(true);
+	});
+});
+
+// ── risk R12: an event with no stored zone keeps its exact old math ──
+// 2026-10 item 263 Phase 4c gives a weekly stream a zone so its local time
+// holds through daylight saving. Every reminder reads getUpcomingOccurrences,
+// so an event created before that (no zone) must keep walking in plain 168
+// hour steps from its UTC anchor, drift included. These pins were written
+// against the pre 4c function and must never move.
+describe("getUpcomingOccurrences with no stored zone (risk R12)", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	// Friday 7 PM New York while daylight time is on (23:00 UTC).
+	const weeklyWithoutZone = makeEvent({
+		intervalHours: 168,
+		firstOccurrence: new Date("2026-10-23T23:00:00Z"),
+		seasonEnd: null,
+	});
+
+	it("walks exact 168 hour steps across the 2026-11-01 change, from before it", () => {
+		vi.setSystemTime(new Date("2026-10-28T12:00:00Z"));
+
+		const result = getUpcomingOccurrences(weeklyWithoutZone, 3).map((date) => date.toISOString());
+
+		expect(result).toEqual(["2026-10-30T23:00:00.000Z", "2026-11-06T23:00:00.000Z", "2026-11-13T23:00:00.000Z"]);
+	});
+
+	it("walks exact 168 hour steps across the 2026-11-01 change, from after it", () => {
+		vi.setSystemTime(new Date("2026-11-02T12:00:00Z"));
+
+		const result = getUpcomingOccurrences(weeklyWithoutZone, 2).map((date) => date.toISOString());
+
+		expect(result).toEqual(["2026-11-06T23:00:00.000Z", "2026-11-13T23:00:00.000Z"]);
+	});
+
+	it("walks exact 168 hour steps across the March 2027 change", () => {
+		vi.setSystemTime(new Date("2027-03-10T12:00:00Z"));
+
+		const result = getUpcomingOccurrences(weeklyWithoutZone, 2).map((date) => date.toISOString());
+
+		expect(result).toEqual(["2027-03-12T23:00:00.000Z", "2027-03-19T23:00:00.000Z"]);
+	});
+});
+
+// ── a weekly event with a zone holds its local time (2026-10 item 263 Phase 4c) ──
+describe("getUpcomingOccurrences for a weekly event with a zone", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	// Friday 7 PM New York, created while daylight time was on.
+	const fridayStream = makeEvent({
+		intervalHours: 168,
+		firstOccurrence: new Date("2026-10-23T23:00:00Z"),
+		seasonEnd: null,
+		timezone: "America/New_York",
+	});
+
+	it("keeps 7 PM New York on both sides of the 2026-11-01 change", () => {
+		vi.setSystemTime(new Date("2026-10-28T12:00:00Z"));
+
+		const result = getUpcomingOccurrences(fridayStream, 3).map((date) => date.toISOString());
+
+		// 7 PM EDT is 23:00 UTC; 7 PM EST is 00:00 UTC the next day.
+		expect(result).toEqual(["2026-10-30T23:00:00.000Z", "2026-11-07T00:00:00.000Z", "2026-11-14T00:00:00.000Z"]);
+	});
+
+	it("keeps 7 PM New York when read from after the change", () => {
+		vi.setSystemTime(new Date("2026-11-02T12:00:00Z"));
+
+		const result = getUpcomingOccurrences(fridayStream, 2).map((date) => date.toISOString());
+
+		expect(result).toEqual(["2026-11-07T00:00:00.000Z", "2026-11-14T00:00:00.000Z"]);
+	});
+
+	it("keeps 7 PM New York across the March 2027 change", () => {
+		vi.setSystemTime(new Date("2027-03-10T12:00:00Z"));
+
+		const result = getUpcomingOccurrences(fridayStream, 2).map((date) => date.toISOString());
+
+		expect(result).toEqual(["2027-03-13T00:00:00.000Z", "2027-03-19T23:00:00.000Z"]);
+	});
+
+	it("reads a zone that is not real, or an interval that is not weekly, as the plain math", () => {
+		vi.setSystemTime(new Date("2026-11-02T12:00:00Z"));
+
+		const badZone = getUpcomingOccurrences({ ...fridayStream, timezone: "Mars/Olympus" }, 1);
+		const daily = getUpcomingOccurrences({ ...fridayStream, intervalHours: 24 }, 1);
+
+		expect(badZone[0].toISOString()).toBe("2026-11-06T23:00:00.000Z");
+		expect(daily[0].toISOString()).toBe("2026-11-02T23:00:00.000Z");
+	});
+
+	it("steps back one local week for the previous start, and one interval with no zone", () => {
+		const afterChange = new Date("2026-11-07T00:00:00Z");
+
+		expect(previousOccurrence(fridayStream, afterChange).toISOString()).toBe("2026-10-30T23:00:00.000Z");
+		expect(previousOccurrence({ ...fridayStream, timezone: null }, afterChange).toISOString()).toBe("2026-10-31T00:00:00.000Z");
+	});
+
+	it("opens the attendance window at the local start after the change", () => {
+		vi.setSystemTime(new Date("2026-11-07T00:30:00Z"));
+
+		expect(isEventWindowOpen(fridayStream, new Date("2026-11-07T00:30:00Z"))).toBe(true);
 	});
 });

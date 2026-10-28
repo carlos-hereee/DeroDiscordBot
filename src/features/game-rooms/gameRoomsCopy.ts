@@ -328,19 +328,27 @@ export const gameRoomsCopy = {
 		// The schedule modal. Discord caps a modal title at 45 characters and a label at 45.
 		modalTitle: "Schedule a party game",
 		gameLabel: "Game",
-		startLabel: "Starts (UTC, MM/DD @HH:MM)",
+		// The start is read in the server's timezone (2026-10 item 263 Phase 4c), and the
+		// label names it. A zone long enough to push the label past Discord's 45 characters
+		// would make Discord refuse the whole modal, so that label says "server time" and
+		// the zone line above the fields still names the zone.
+		startLabel: (zone: string): string => {
+			const named = `Starts (${zone}, MM/DD @HH:MM)`;
+			return named.length <= 45 ? named : "Starts (server time, MM/DD @HH:MM)";
+		},
+		zoneLine: (zone: string): string => `Times are in ${zone}, this server's timezone.`,
 		startPlaceholder: "10/31 @19:00",
 		durationLabel: "Runs for (minutes)",
 		maxLabel: "Most attendees (0 for no limit)",
 
 		// Refusals of the form, each naming what to fix.
-		badStart: "The start time reads MM/DD @HH:MM in UTC, for example 10/31 @19:00.",
+		badStart: (zone: string): string => `The start time reads MM/DD @HH:MM in ${zone}, this server's timezone, for example 10/31 @19:00.`,
 		pastStart: "That time has already passed. Pick a time ahead.",
 		badDuration: (min: number, max: number): string => `The length is a whole number of minutes from ${min} to ${max}.`,
 		badMax: (max: number): string => `Most attendees is a whole number from 0 (no limit) to ${max}.`,
 		badGame: "Pick a game from the list.",
 		noRsvpChannel: "There is no 🔜upcoming-events channel to post the RSVP card in. An admin can run /setup to build it.",
-		scheduled: (rsvpChannelId: string): string => `Scheduled. The RSVP card is in <#${rsvpChannelId}>.`,
+		scheduled: (rsvpChannelId: string, zone: string): string => `Scheduled, reading the start in ${zone}, this server's timezone. The RSVP card is in <#${rsvpChannelId}>.`,
 
 		// The line in 📢announcements. Mentions render as names and ping nobody.
 		announcementTitle: "🎉 A party game is called",

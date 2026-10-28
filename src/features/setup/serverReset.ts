@@ -55,6 +55,8 @@ export const CONFIG_DEFAULTS = {
 	userRemovedChannels: [],
 	leaderboardTrackingEnabled: true,
 	weekStart: "sunday",
+	timezone: "UTC",
+	timezoneSetAt: null,
 	defaultEventImageUrl: null,
 	hiddenChannels: [],
 	challengeReach: "server",

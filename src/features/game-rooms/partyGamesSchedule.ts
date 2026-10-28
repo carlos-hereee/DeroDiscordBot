@@ -7,6 +7,7 @@ import {
 	ModalBuilder,
 	StringSelectMenuBuilder,
 	TextChannel,
+	TextDisplayBuilder,
 	TextInputBuilder,
 	TextInputStyle,
 	type ButtonInteraction,
@@ -21,6 +22,7 @@ import { partyGameStore } from "@db/stores/partyGameStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { parseEventDateTimeMinutes } from "@utils/dateParser.js";
+import { DEFAULT_SERVER_TIMEZONE, resolveServerTimezone } from "@utils/tzParser.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -85,18 +87,19 @@ const WHOLE_NUMBER = /^\d+$/;
 
 /**
  * Read the schedule modal's answers into a party game, or the first thing to fix. The
- * start is UTC "MM/DD @HH:MM" like /events stream announce. A date already past this year that
- * falls in an earlier month is read as next year (scheduling January in December); any
- * other past time is refused rather than quietly moved a year out.
+ * start is "MM/DD @HH:MM" like /events stream announce, read in the server's timezone
+ * (2026-10 item 263 Phase 4c; UTC until an admin picks one). A date already past this
+ * year that falls in an earlier month is read as next year (scheduling January in
+ * December); any other past time is refused rather than quietly moved a year out.
  */
-export function parsePartyGameForm(raw: RawPartyGameForm, now: Date = new Date()): PartyGameFormResult {
+export function parsePartyGameForm(raw: RawPartyGameForm, now: Date = new Date(), timezone: string = DEFAULT_SERVER_TIMEZONE): PartyGameFormResult {
 	const words = gameRoomsCopy.partyGames;
 	if (!raw.game || !(PARTY_GAMES as readonly string[]).includes(raw.game)) return { ok: false, error: words.badGame };
 
 	const thisYear = now.getUTCFullYear();
-	let startAt = parseEventDateTimeMinutes(raw.start, thisYear);
-	if (!startAt) return { ok: false, error: words.badStart };
-	if (startAt <= now && startAt.getUTCMonth() < now.getUTCMonth()) startAt = parseEventDateTimeMinutes(raw.start, thisYear + 1);
+	let startAt = parseEventDateTimeMinutes(raw.start, thisYear, timezone);
+	if (!startAt) return { ok: false, error: words.badStart(timezone) };
+	if (startAt <= now && startAt.getUTCMonth() < now.getUTCMonth()) startAt = parseEventDateTimeMinutes(raw.start, thisYear + 1, timezone);
 	if (!startAt || startAt <= now) return { ok: false, error: words.pastStart };
 
 	const minDuration = BOT_CONSTANTS.PARTY_GAME_MIN_DURATION_MINUTES;
@@ -115,8 +118,8 @@ export function parsePartyGameForm(raw: RawPartyGameForm, now: Date = new Date()
 	return { ok: true, form: { game: raw.game as PartyGameSlug, startAt, durationMinutes, maxAttendees } };
 }
 
-/** The schedule modal, with the owner's defaults filled in. */
-export function buildScheduleModal(): ModalBuilder {
+/** The schedule modal, with the owner's defaults filled in and the server's timezone named. */
+export function buildScheduleModal(timezone: string = DEFAULT_SERVER_TIMEZONE): ModalBuilder {
 	const words = gameRoomsCopy.partyGames;
 	const text = (id: string, style: TextInputStyle, value?: string, placeholder?: string): TextInputBuilder => {
 		const input = new TextInputBuilder().setCustomId(id).setStyle(style).setRequired(true);
@@ -127,6 +130,8 @@ export function buildScheduleModal(): ModalBuilder {
 	return new ModalBuilder()
 		.setCustomId(`${PARTY_MODAL_PREFIX}:${SCHEDULE_ACTION}`)
 		.setTitle(words.modalTitle)
+		// The zone line is the modal's fifth and last component, Discord's cap.
+		.addTextDisplayComponents(new TextDisplayBuilder().setContent(words.zoneLine(timezone)))
 		.addLabelComponents(
 			new LabelBuilder().setLabel(words.gameLabel).setStringSelectMenuComponent(
 				new StringSelectMenuBuilder()
@@ -135,7 +140,7 @@ export function buildScheduleModal(): ModalBuilder {
 					.setMaxValues(1)
 					.addOptions(PARTY_GAMES.map((game, index) => ({ label: words.gameLabels[game], value: game, default: index === 0 })))
 			),
-			new LabelBuilder().setLabel(words.startLabel).setTextInputComponent(text(FIELD.start, TextInputStyle.Short, undefined, words.startPlaceholder)),
+			new LabelBuilder().setLabel(words.startLabel(timezone)).setTextInputComponent(text(FIELD.start, TextInputStyle.Short, undefined, words.startPlaceholder)),
 			new LabelBuilder()
 				.setLabel(words.durationLabel)
 				.setTextInputComponent(text(FIELD.duration, TextInputStyle.Short, String(BOT_CONSTANTS.PARTY_GAME_DEFAULT_DURATION_MINUTES))),
@@ -182,6 +187,7 @@ interface PartyChannels extends AnswerChannelConfig {
 	announcementsChannelId: string | null;
 	nextDecreeChannelId: string | null;
 	adminRoleId: string | null;
+	timezone?: string | null;
 }
 
 async function textChannel(client: Client, channelId: string | null): Promise<TextChannel | null> {
@@ -210,12 +216,18 @@ export async function handleScheduleSubmit(interaction: ModalSubmitInteraction):
 		return;
 	}
 
-	const parsed = parsePartyGameForm({
-		game: interaction.fields.getStringSelectValues(FIELD.game)[0],
-		start: interaction.fields.getTextInputValue(FIELD.start),
-		duration: interaction.fields.getTextInputValue(FIELD.duration),
-		max: interaction.fields.getTextInputValue(FIELD.max),
-	});
+	// Read by name: the store returns a hydrated document, whose fields are getters.
+	const timezone = resolveServerTimezone(config?.timezone);
+	const parsed = parsePartyGameForm(
+		{
+			game: interaction.fields.getStringSelectValues(FIELD.game)[0],
+			start: interaction.fields.getTextInputValue(FIELD.start),
+			duration: interaction.fields.getTextInputValue(FIELD.duration),
+			max: interaction.fields.getTextInputValue(FIELD.max),
+		},
+		new Date(),
+		timezone
+	);
 	if (!parsed.ok) {
 		await answerInChannel(interaction, "arcade", { content: parsed.error }, { config });
 		return;
@@ -253,7 +265,7 @@ export async function handleScheduleSubmit(interaction: ModalSubmitInteraction):
 	});
 	void announce(interaction.client, config, row, gameLabel, rsvpChannel.id);
 
-	await answer.send({ content: words.scheduled(rsvpChannel.id) });
+	await answer.send({ content: words.scheduled(rsvpChannel.id, timezone) });
 }
 
 // The 📢announcements line. Fire and forget after the card (house rule 7): a missing

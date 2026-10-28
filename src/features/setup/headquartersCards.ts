@@ -17,6 +17,7 @@ import { CHOOSE_BUTTON_ID, adoptedChannelLines, choosableAdoptedChannels, type I
 import { readAdoptionChoice } from "./adoption.js";
 import { isMemberRoleGated } from "./communityOverwrites.js";
 import { setupCopy } from "./setupCopy.js";
+import { DEFAULT_SERVER_TIMEZONE, resolveServerTimezone } from "@utils/tzParser.js";
 
 // ── headquartersCards ───────────────────────────────────────────────────────
 // What:  the messages each 🏰 DERO HEADQUARTERS config channel holds under its
@@ -54,9 +55,9 @@ export const DOMAIN_CHANNEL_FIELDS: Record<HeadquartersDomain, "deroConfigChanne
 
 // 🛠️server-config's steps by key, in card order (2026-10 item 263 Phase 4a). Each key
 // carries its label (setupCopy), its mark (serverConfigView) and its route
-// (headquartersSteps.ts), so a step inserted anywhere, Phase 4c's timezone at the
-// front among them, moves its number, its mark and its button together.
-export const SERVER_CONFIG_STEPS = ["kvkSeason", "streams", "events", "channels", "leveling"] as const;
+// (headquartersSteps.ts), so a step inserted anywhere moves its number, its mark and
+// its button together; Phase 4c's timezone came in at the front that way.
+export const SERVER_CONFIG_STEPS = ["timezone", "kvkSeason", "streams", "events", "channels", "leveling"] as const;
 export type ServerConfigStep = (typeof SERVER_CONFIG_STEPS)[number];
 
 // The server switches message's buttons by key, in order; Refresh standings follows them.
@@ -105,6 +106,8 @@ export interface HeadquartersRow extends IAdoptionChoiceRow {
 	settingsChartMessageIds?: Partial<Record<string, string | null>> | null;
 	settingsSwitchesMessageIds?: Partial<Record<string, string | null>> | null;
 	// 🛠️server-config's reads, all off the row.
+	timezone?: string | null;
+	timezoneSetAt?: Date | string | null;
 	kvkSeasonEnd?: Date | string | null;
 	autoHealEnabled?: boolean | null;
 	leaderboardTrackingEnabled?: boolean | null;
@@ -289,7 +292,10 @@ export function serverConfigView(row: HeadquartersRow, facts: ServerConfigFacts)
 	const autoHeal = row.autoHealEnabled !== false;
 	const tracking = row.leaderboardTrackingEnabled !== false;
 	const weekStart = row.weekStart === "monday" ? "monday" : "sunday";
+	const timezone = resolveServerTimezone(row.timezone);
 	const done: Record<ServerConfigStep, boolean> = {
+		// Every row reads UTC by default, so UTC alone is done only once an admin saved it.
+		timezone: timezone !== DEFAULT_SERVER_TIMEZONE || Boolean(row.timezoneSetAt),
 		kvkSeason: seasonEnd !== null && seasonEnd.getTime() > facts.now,
 		streams: facts.weeklySchedules > 0,
 		events: facts.activeEvents > 0,
@@ -298,7 +304,7 @@ export function serverConfigView(row: HeadquartersRow, facts: ServerConfigFacts)
 	};
 	// Not every server runs a KvK season, streams or custom channel names, so those
 	// steps say they are optional rather than nag.
-	const optional: Record<ServerConfigStep, boolean> = { kvkSeason: true, streams: true, events: false, channels: true, leveling: false };
+	const optional: Record<ServerConfigStep, boolean> = { timezone: false, kvkSeason: true, streams: true, events: false, channels: true, leveling: false };
 	return {
 		title: domain.title,
 		steps: SERVER_CONFIG_STEPS.map((key, index) => ({
@@ -312,6 +318,7 @@ export function serverConfigView(row: HeadquartersRow, facts: ServerConfigFacts)
 			subtitle: domain.chartSubtitle,
 			...onOff,
 			rows: [
+				value(domain.rows.timezone, timezone),
 				value(domain.rows.kvkSeason, seasonEnd ? domain.seasonEnds(seasonEnd) : copy.notSet),
 				value(domain.rows.weeklySchedules, copy.count(facts.weeklySchedules)),
 				value(domain.rows.activeEvents, copy.count(facts.activeEvents)),

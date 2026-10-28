@@ -94,7 +94,7 @@ describe("parsePartyGameForm", () => {
 	it("refuses a game not on the list, and a start it cannot read", () => {
 		expect(parsePartyGameForm(form({ game: "chess" }), NOW)).toEqual({ ok: false, error: words.badGame });
 		expect(parsePartyGameForm(form({ game: undefined }), NOW)).toEqual({ ok: false, error: words.badGame });
-		expect(parsePartyGameForm(form({ start: "tomorrow" }), NOW)).toEqual({ ok: false, error: words.badStart });
+		expect(parsePartyGameForm(form({ start: "tomorrow" }), NOW)).toEqual({ ok: false, error: words.badStart("UTC") });
 	});
 
 	it("refuses a time already past this month, but reads an earlier month as next year", () => {
@@ -145,7 +145,35 @@ describe("the party game list", () => {
 	});
 });
 
+describe("parsePartyGameForm in the server's timezone (2026-10 item 263 Phase 4c)", () => {
+	it("stores 7 PM New York as 7 PM New York, on both sides of the 2026-11-01 change", () => {
+		const before = parsePartyGameForm(form({ start: "10/31 @19:00" }), NOW, "America/New_York");
+		const after = parsePartyGameForm(form({ start: "11/07 @19:00" }), NOW, "America/New_York");
+		expect(before.ok && before.form.startAt.toISOString()).toBe("2026-10-31T23:00:00.000Z");
+		expect(after.ok && after.form.startAt.toISOString()).toBe("2026-11-08T00:00:00.000Z");
+	});
+
+	it("names the zone when it cannot read the start", () => {
+		expect(parsePartyGameForm(form({ start: "soon" }), NOW, "Europe/Berlin")).toEqual({ ok: false, error: words.badStart("Europe/Berlin") });
+	});
+});
+
 describe("buildScheduleModal", () => {
+	it("names the server's timezone above the fields and in the start's label", () => {
+		const modal = buildScheduleModal("America/New_York").toJSON();
+		const json = JSON.stringify(modal);
+		expect(json).toContain(words.zoneLine("America/New_York"));
+		expect(json).toContain(words.startLabel("America/New_York"));
+		expect(words.startLabel("America/New_York")).toContain("America/New_York");
+		// Discord's cap: five components a modal.
+		expect(modal.components).toHaveLength(5);
+	});
+
+	it("keeps every start label inside Discord's 45 characters, a long zone included", () => {
+		expect(words.startLabel("America/Argentina/ComodRivadavia").length).toBeLessThanOrEqual(45);
+		expect(words.startLabel("America/Los_Angeles").length).toBeLessThanOrEqual(45);
+	});
+
 	it("fills in the owner's defaults", () => {
 		const json = JSON.stringify(buildScheduleModal().toJSON());
 		expect(json).toContain(`"value":"${BOT_CONSTANTS.PARTY_GAME_DEFAULT_DURATION_MINUTES}"`);
@@ -305,7 +333,7 @@ describe("handleScheduleSubmit", () => {
 		expect(storeMock.create).toHaveBeenCalledWith(expect.objectContaining({ guildId: "guild-1", game: "hangman", hostId: "admin-1", maxAttendees: 20, durationMinutes: 30 }));
 		expect((channels.get("ch-upcoming") as unknown as { send: ReturnType<typeof vi.fn> }).send).toHaveBeenCalledOnce();
 		expect(logMock.emitFor).toHaveBeenCalledWith(interaction, "guild-1", "event.create", expect.objectContaining({ subject: words.logSubject("Hangman") }));
-		expect(sentIn("ch-arcade")).toEqual([`<@admin-1> ${words.scheduled("ch-upcoming")}`]);
+		expect(sentIn("ch-arcade")).toEqual([`<@admin-1> ${words.scheduled("ch-upcoming", "UTC")}`]);
 		expect(interaction.editReply).not.toHaveBeenCalled();
 	});
 
@@ -317,7 +345,7 @@ describe("handleScheduleSubmit", () => {
 
 			expect(storeMock.create).toHaveBeenLastCalledWith(expect.objectContaining({ game, hostId: "admin-1" }));
 			expect(logMock.emitFor).toHaveBeenLastCalledWith(interaction, "guild-1", "event.create", expect.objectContaining({ subject: words.logSubject(words.gameLabels[game]) }));
-			expect(sentIn("ch-arcade").at(-1)).toBe(`<@admin-1> ${words.scheduled("ch-upcoming")}`);
+			expect(sentIn("ch-arcade").at(-1)).toBe(`<@admin-1> ${words.scheduled("ch-upcoming", "UTC")}`);
 		}
 	});
 
@@ -333,12 +361,30 @@ describe("handleScheduleSubmit", () => {
 		expect(storeMock.create).not.toHaveBeenCalled();
 	});
 
+	// The server's timezone (2026-10 item 263 Phase 4c, R3-30).
+	it("reads the start in the server's timezone and names it in the answer", async () => {
+		configMock.findByGuildId.mockResolvedValueOnce({
+			partyGamesChannelId: "ch-party",
+			announcementsChannelId: "ch-announce",
+			nextDecreeChannelId: "ch-upcoming",
+			arcadeControlChannelId: "ch-arcade",
+			commandOutputChannelId: "ch-commands",
+			timezone: "America/New_York",
+		});
+
+		await handleScheduleSubmit(submit());
+
+		// 7 PM New York on 10/31 is 23:00 UTC while daylight time is on.
+		expect(storeMock.create).toHaveBeenCalledWith(expect.objectContaining({ startAt: new Date("2026-10-31T23:00:00.000Z") }));
+		expect(sentIn("ch-arcade")).toEqual([`<@admin-1> ${words.scheduled("ch-upcoming", "America/New_York")}`]);
+	});
+
 	it("answers a bad form with what to fix and stores nothing", async () => {
 		const interaction = submit(form({ start: "soon" }));
 
 		await handleScheduleSubmit(interaction);
 
-		expect(sentIn("ch-arcade")).toEqual([`<@admin-1> ${words.badStart}`]);
+		expect(sentIn("ch-arcade")).toEqual([`<@admin-1> ${words.badStart("UTC")}`]);
 		expect(storeMock.create).not.toHaveBeenCalled();
 	});
 });

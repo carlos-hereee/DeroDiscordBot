@@ -19,6 +19,7 @@ import {
 	nextOccurrenceInZone,
 	isValidTimezone,
 	searchTimezones,
+	resolveServerTimezone,
 } from "@utils/tzParser.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
@@ -126,7 +127,7 @@ export function addStreamScheduleOptions(sub: SlashCommandSubcommandBuilder): Sl
 		.addStringOption((option) =>
 			option
 				.setName("timezone")
-				.setDescription("Your timezone, e.g. America/New_York. Defaults to UTC if blank.")
+				.setDescription("Your timezone, e.g. America/New_York. Defaults to this server's timezone if blank.")
 				.setRequired(false)
 				.setAutocomplete(true)
 		)
@@ -184,11 +185,11 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 	const name = options.getString("name", true).trim();
 	const dayRaw = options.getString("day", true).toLowerCase();
 	const timeRaw = options.getString("time", true);
-	// Default to UTC when the streamer leaves the timezone blank. This
-	// preserves the pre-2026-04-25 contract where every time was UTC,
-	// so any guild that had docs/runbook entries pointing at "type your
-	// time in UTC" continues to work without changes.
-	const timezoneRaw = options.getString("timezone", false)?.trim() || "UTC";
+	// A blank timezone takes the server's (2026-10 item 263 Phase 4c), which is UTC
+	// until an admin picks one in 🛠️server-config, so a server that never picked a zone
+	// keeps the old "type your time in UTC" contract. Read by name: the store returns a
+	// hydrated document, whose fields are getters.
+	const timezoneRaw = options.getString("timezone", false)?.trim() || resolveServerTimezone(config.timezone);
 	const mentionRole = options.getRole("mention-role", false);
 	const description = options.getString("description", false)?.trim() ?? "";
 
@@ -283,6 +284,9 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 				active: true,
 				mentionRoleId,
 				paused: false,
+				// The zone the day and time were read in, so occurrenceCalculator keeps the
+				// stream on the same local weekday and time through daylight saving.
+				timezone: timezoneRaw,
 				// seasonEnd intentionally omitted, streamer schedules have
 				// no season scope. Schema default is null, ScheduleBoard +
 				// ReminderScheduler treat null as "no auto archive".

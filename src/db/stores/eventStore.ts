@@ -34,6 +34,9 @@ type EventLike = {
 	mentionRoleId: string | null;
 	paused: boolean;
 	pausedUntil: Date | null;
+	// Absent on a remote event: the platform server's event carries no zone, so a remote
+	// weekly event keeps the plain interval math.
+	timezone?: string | null;
 	active: boolean;
 };
 

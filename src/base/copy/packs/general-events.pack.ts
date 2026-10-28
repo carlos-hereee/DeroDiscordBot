@@ -933,6 +933,9 @@ export const generalEventsCopy: IPluginCopy = {
 		setupRequired: "Run `/setup` first so the bot has an announcements channel to post in.",
 		invalidDateTime: "Date/time invalid. Use `MM/DD @HH:MM` like `04/26 @19:30`.",
 		dateInPast: "That time is already in the past. Pick a future date and time.",
+		// The typed time is read in the server's timezone (2026-10 item 263 Phase 4c), so
+		// every refusal and the confirmation say which zone that is.
+		zoneLine: (zone: string) => `Times are in ${zone}, this server's timezone.`,
 		confirm: {
 			title: "📺 Confirm planned stream",
 			description: (title: string, startUnix: number) =>

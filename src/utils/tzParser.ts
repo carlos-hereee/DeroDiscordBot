@@ -256,6 +256,23 @@ export function isValidTimezone(timezone: string): boolean {
 	}
 }
 
+// ── the server's timezone (2026-10 item 263 Phase 4c, R3-30) ─────────────────
+// GuildConfig.timezone is the zone a server's typed times are read in, picked in
+// 🛠️server-config. UTC is the default so nothing moves on a server until an admin
+// picks a zone, and it is what the bot read every typed time in before.
+export const DEFAULT_SERVER_TIMEZONE = "UTC";
+
+/**
+ * The zone a stored GuildConfig.timezone names, or UTC when it is missing or no
+ * real IANA zone. Every reader goes through this, because the row is written by a
+ * select today but a hand edited or older row could hold anything, and a bad zone
+ * would make Intl throw in the middle of a scheduler.
+ */
+export function resolveServerTimezone(stored: unknown): string {
+	if (typeof stored !== "string" || stored.length === 0) return DEFAULT_SERVER_TIMEZONE;
+	return isValidTimezone(stored) ? stored : DEFAULT_SERVER_TIMEZONE;
+}
+
 // ── COMMON_TIMEZONES ──────────────────────────────────────────
 // What:  curated short-list of timezone names surfaced first in
 //        autocomplete. Players cluster heavily in NA + EU + a few
@@ -275,7 +292,7 @@ export const COMMON_TIMEZONES = [
 	"America/Los_Angeles",
 	"America/Phoenix",
 	"America/Anchorage",
-	"America/Honolulu",
+	"Pacific/Honolulu",
 	"America/Toronto",
 	"America/Vancouver",
 	"America/Mexico_City",
@@ -309,6 +326,59 @@ export const COMMON_TIMEZONES = [
 	"Africa/Lagos",
 	"Africa/Johannesburg",
 ] as const;
+
+// ── timezone select options ─────────────────────────────────────────
+// What:  the curated 25 IANA zones surfaced in the post-modal timezone
+//        dropdown. Discord caps StringSelectMenu at 25 options, so this
+//        list is the entire surface, no "Other" fallback. UTC sits
+//        first as the safe default for editors who do not want to think
+//        about zones; the rest are ranked by ROK player concentration
+//        (heavy NA + EU, plus the major APAC and one each Mexico /
+//        Brazil / Sydney for the long tail).
+// Who:   the decree editor's timezone prompt (features/schedule/
+//        decreeEditHandlers.ts, after a time of day was typed in its
+//        modal) and 🛠️server-config's Server timezone step (features/setup/
+//        headquartersSteps.ts, 2026-10 item 263 Phase 4c). Each option's
+//        `value` MUST be a valid IANA name because both pass it straight
+//        to localTimeToUtc, which trusts the input.
+// When:  static. If a future ROK community adds a zone we do not cover,
+//        edit this list AND the same change in tzParser COMMON_TIMEZONES
+//        so the autocomplete and the dropdown stay in sync.
+// Where: here beside COMMON_TIMEZONES since its second use (platform rule
+//        17), so both dropdowns offer one list. Its order may still differ
+//        from the autocomplete ranking: a dropdown sees only 25 options,
+//        autocomplete can page through the full set.
+// How:   `label` is what Discord shows the user (max 100 chars, friendly
+//        names). `value` is the IANA identifier sent back to the bot.
+//        `description` repeats the IANA name as a small subtitle so users
+//        can verify the zone they picked.
+export const TIMEZONE_OPTIONS: ReadonlyArray<{ label: string; value: string; description: string }> = [
+	{ label: "UTC", value: "UTC", description: "Coordinated Universal Time" },
+	{ label: "Eastern Time (US)", value: "America/New_York", description: "America/New_York" },
+	{ label: "Central Time (US)", value: "America/Chicago", description: "America/Chicago" },
+	{ label: "Mountain Time (US)", value: "America/Denver", description: "America/Denver" },
+	{ label: "Pacific Time (US)", value: "America/Los_Angeles", description: "America/Los_Angeles" },
+	{ label: "Arizona", value: "America/Phoenix", description: "America/Phoenix" },
+	{ label: "Alaska", value: "America/Anchorage", description: "America/Anchorage" },
+	{ label: "Hawaii", value: "Pacific/Honolulu", description: "Pacific/Honolulu" },
+	{ label: "Toronto", value: "America/Toronto", description: "America/Toronto" },
+	{ label: "Mexico City", value: "America/Mexico_City", description: "America/Mexico_City" },
+	{ label: "São Paulo", value: "America/Sao_Paulo", description: "America/Sao_Paulo" },
+	{ label: "London", value: "Europe/London", description: "Europe/London" },
+	{ label: "Paris", value: "Europe/Paris", description: "Europe/Paris" },
+	{ label: "Berlin", value: "Europe/Berlin", description: "Europe/Berlin" },
+	{ label: "Madrid", value: "Europe/Madrid", description: "Europe/Madrid" },
+	{ label: "Rome", value: "Europe/Rome", description: "Europe/Rome" },
+	{ label: "Athens", value: "Europe/Athens", description: "Europe/Athens" },
+	{ label: "Moscow", value: "Europe/Moscow", description: "Europe/Moscow" },
+	{ label: "Tokyo", value: "Asia/Tokyo", description: "Asia/Tokyo" },
+	{ label: "Shanghai", value: "Asia/Shanghai", description: "Asia/Shanghai" },
+	{ label: "Hong Kong", value: "Asia/Hong_Kong", description: "Asia/Hong_Kong" },
+	{ label: "Singapore", value: "Asia/Singapore", description: "Asia/Singapore" },
+	{ label: "Manila", value: "Asia/Manila", description: "Asia/Manila" },
+	{ label: "Kolkata (IST)", value: "Asia/Kolkata", description: "Asia/Kolkata" },
+	{ label: "Sydney", value: "Australia/Sydney", description: "Australia/Sydney" },
+];
 
 // ── searchTimezones ───────────────────────────────────────────
 // What:  return up to `limit` timezone names matching the user's

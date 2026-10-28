@@ -30,6 +30,9 @@ const { configureReminders } = rokCommanderCopy;
 //        kingdom pack's copy directly and applies no pack check of its own.
 // Where: GuildEventManager creates the events; this module exports no `data` or
 //        `execute`, so neither command loader registers it.
+// When:  its dates are read in UTC, the game's clock, whatever the server's timezone
+//        (2026-10 item 263 Phase 4c, owner decision 17): Rise of Kingdoms runs its
+//        events on UTC, so the options, the refusals and the confirmation say so.
 
 /** The /events kvk-season options: the season's days left and the three next dates. */
 export function addKvkSeasonOptions(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
@@ -48,7 +51,7 @@ export function addKvkSeasonOptions(sub: SlashCommandSubcommandBuilder): SlashCo
 		.addStringOption((option) =>
 			option
 				.setName("ruins-date-time")
-				.setDescription("Next Ancient Ruins date, format: MM/DD @HH e.g. 03/20 @12")
+				.setDescription("Next Ancient Ruins in UTC (the game's clock), format: MM/DD @HH e.g. 03/20 @12")
 				.setRequired(true)
 		)
 
@@ -56,13 +59,13 @@ export function addKvkSeasonOptions(sub: SlashCommandSubcommandBuilder): SlashCo
 		.addStringOption((option) =>
 			option
 				.setName("altar-date-time")
-				.setDescription("Next Altar of Darkness date, format: MM/DD @HH e.g. 03/20 @12")
+				.setDescription("Next Altar of Darkness in UTC (the game's clock), format: MM/DD @HH e.g. 03/20 @12")
 				.setRequired(true)
 		)
 
 		// ── trial of kau karuak ──────────────────────────────────────
 		.addStringOption((option) =>
-			option.setName("kau-date").setDescription("Trial of Kau Karuak Easy date, format: MM/DD e.g. 03/14").setRequired(true)
+			option.setName("kau-date").setDescription("Trial of Kau Karuak Easy in UTC (the game's clock), format: MM/DD e.g. 03/14").setRequired(true)
 		);
 }
 

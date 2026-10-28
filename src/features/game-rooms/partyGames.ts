@@ -12,6 +12,7 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { PARTY_MODAL_PREFIX, PARTY_RSVP_PREFIX, buildScheduleModal, handleRsvpButton, handleScheduleSubmit } from "./partyGamesSchedule.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showNotice } from "@utils/textModal.js";
+import { resolveServerTimezone } from "@utils/tzParser.js";
 
 // ── partyGames ───────────────────────────────────────────────────────
 // What:  the 🎉party-games channel's admin controls (post-launch plan item 3): Host
@@ -67,7 +68,8 @@ async function handlePartyGamesButton(interaction: ButtonInteraction): Promise<v
 	}
 
 	if (action === "schedule") {
-		await interaction.showModal(buildScheduleModal());
+		// The modal names the zone its start is read in; the Submit reads the zone again.
+		await interaction.showModal(buildScheduleModal(resolveServerTimezone(config?.timezone)));
 		return;
 	}
 	// The table game's own challenge card, posted only on its creation modal's Submit (2026-10

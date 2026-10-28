@@ -20,7 +20,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { canEditDecree } from "@utils/permissions.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
-import { parseFlexibleTime, isValidTimezone, localTimeToUtc, dateInTimezone } from "@utils/tzParser.js";
+import { parseFlexibleTime, isValidTimezone, localTimeToUtc, dateInTimezone, TIMEZONE_OPTIONS } from "@utils/tzParser.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import type { Client } from "discord.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
@@ -49,56 +49,6 @@ const TIMEZONE_SELECT_LOCAL_ID = "edit_decree_tz";
 // and click Apply, but short enough that the awaitMessageComponent
 // collector cleans up reasonably if the user walks away.
 const APPLY_SCOPE_TIMEOUT_MS = 300_000;
-
-// ── timezone select options ─────────────────────────────────────────
-// What:  the curated 25 IANA zones surfaced in the post-modal timezone
-//        dropdown. Discord caps StringSelectMenu at 25 options, so this
-//        list is the entire surface, no "Other" fallback. UTC sits
-//        first as the safe default for editors who do not want to think
-//        about zones; the rest are ranked by ROK player concentration
-//        (heavy NA + EU, plus the major APAC and one each Mexico /
-//        Brazil / Sydney for the long tail).
-// Who:   read by handleEditModalSubmit when prompting for a timezone
-//        after a time-of-day was provided in the modal. Each option's
-//        `value` MUST be a valid IANA name because resolveOverrideTime
-//        passes it straight to localTimeToUtc, which trusts the input.
-// When:  static. If a future ROK community adds a zone we do not cover,
-//        edit this list AND the same change in tzParser COMMON_TIMEZONES
-//        so the autocomplete and the dropdown stay in sync.
-// Where: kept in this file (rather than tzParser) so the order can drift
-//        from autocomplete without breaking either surface, the dropdown
-//        sees only 25 options, autocomplete can paginate the full set.
-// How:   `label` is what Discord shows the user (max 100 chars, friendly
-//        names). `value` is the IANA identifier sent back to the bot.
-//        `description` repeats the IANA name as a small subtitle so users
-//        can verify the zone they picked.
-const TIMEZONE_OPTIONS: ReadonlyArray<{ label: string; value: string; description: string }> = [
-	{ label: "UTC", value: "UTC", description: "Coordinated Universal Time" },
-	{ label: "Eastern Time (US)", value: "America/New_York", description: "America/New_York" },
-	{ label: "Central Time (US)", value: "America/Chicago", description: "America/Chicago" },
-	{ label: "Mountain Time (US)", value: "America/Denver", description: "America/Denver" },
-	{ label: "Pacific Time (US)", value: "America/Los_Angeles", description: "America/Los_Angeles" },
-	{ label: "Arizona", value: "America/Phoenix", description: "America/Phoenix" },
-	{ label: "Alaska", value: "America/Anchorage", description: "America/Anchorage" },
-	{ label: "Hawaii", value: "America/Honolulu", description: "America/Honolulu" },
-	{ label: "Toronto", value: "America/Toronto", description: "America/Toronto" },
-	{ label: "Mexico City", value: "America/Mexico_City", description: "America/Mexico_City" },
-	{ label: "São Paulo", value: "America/Sao_Paulo", description: "America/Sao_Paulo" },
-	{ label: "London", value: "Europe/London", description: "Europe/London" },
-	{ label: "Paris", value: "Europe/Paris", description: "Europe/Paris" },
-	{ label: "Berlin", value: "Europe/Berlin", description: "Europe/Berlin" },
-	{ label: "Madrid", value: "Europe/Madrid", description: "Europe/Madrid" },
-	{ label: "Rome", value: "Europe/Rome", description: "Europe/Rome" },
-	{ label: "Athens", value: "Europe/Athens", description: "Europe/Athens" },
-	{ label: "Moscow", value: "Europe/Moscow", description: "Europe/Moscow" },
-	{ label: "Tokyo", value: "Asia/Tokyo", description: "Asia/Tokyo" },
-	{ label: "Shanghai", value: "Asia/Shanghai", description: "Asia/Shanghai" },
-	{ label: "Hong Kong", value: "Asia/Hong_Kong", description: "Asia/Hong_Kong" },
-	{ label: "Singapore", value: "Asia/Singapore", description: "Asia/Singapore" },
-	{ label: "Manila", value: "Asia/Manila", description: "Asia/Manila" },
-	{ label: "Kolkata (IST)", value: "Asia/Kolkata", description: "Asia/Kolkata" },
-	{ label: "Sydney", value: "Australia/Sydney", description: "Australia/Sydney" },
-];
 
 // ── customId helpers ────────────────────────────────────────────────
 // Keep parsing centralized so a future format change (e.g., adding a

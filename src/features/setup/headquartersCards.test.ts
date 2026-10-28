@@ -17,6 +17,7 @@ import { renderSettingsChart } from "@features/renderer/settingsChartRenderer.js
 import { COMMUNITY_CUSTOM_IDS } from "@features/community/communityControls.js";
 import { CHOOSE_BUTTON_ID } from "./adoptionChoice.js";
 import { setupCopy } from "./setupCopy.js";
+import GuildConfigModel from "@db/models/GuildConfig.js";
 import {
 	HEADQUARTERS_DOMAINS,
 	SERVER_CONFIG_STEPS,
@@ -132,18 +133,22 @@ describe("the step marks, read from a fixture config", () => {
 const NOW = Date.parse("2026-10-28T12:00:00Z");
 const noEvents = { now: NOW, activeEvents: 0, pausedEvents: 0, weeklySchedules: 0 };
 
+// A step's mark by its key, so an inserted step never shifts what a test reads.
+const doneOf = (view: { steps: { done: boolean }[] }, key: (typeof SERVER_CONFIG_STEPS)[number]): boolean | undefined =>
+	view.steps[SERVER_CONFIG_STEPS.indexOf(key)]?.done;
+
 describe("🛠️server-config's steps and chart", () => {
 	it("on a fresh server marks only leveling, which ships on, and names every step in order", () => {
 		const view = serverConfigView({}, noEvents);
 		expect(view.title).toBe(copy.serverConfig.title);
 		expect(view.steps.map((step) => step.label)).toEqual(SERVER_CONFIG_STEPS.map((key) => copy.serverConfig.steps[key]));
-		expect(view.steps.map((step) => step.done)).toEqual([false, false, false, false, true]);
+		expect(view.steps.map((step) => step.done)).toEqual([false, false, false, false, false, true]);
 		expect(view.steps.map((step) => step.customId)).toEqual(SERVER_CONFIG_STEPS.map((_key, index) => stepCustomId("serverConfig", index + 1)));
 	});
 
 	it("marks every step done for a configured server", () => {
 		const view = serverConfigView(
-			{ kvkSeasonEnd: new Date(NOW + 86_400_000), hiddenChannels: ["leaderboardChannelId"], leveling: { enabled: true } },
+			{ timezone: "America/New_York", kvkSeasonEnd: new Date(NOW + 86_400_000), hiddenChannels: ["leaderboardChannelId"], leveling: { enabled: true } },
 			{ now: NOW, activeEvents: 3, pausedEvents: 1, weeklySchedules: 1 }
 		);
 		expect(view.steps.every((step) => step.done)).toBe(true);
@@ -151,8 +156,28 @@ describe("🛠️server-config's steps and chart", () => {
 
 	it("reads a past KvK season and switched off leveling as not done", () => {
 		const view = serverConfigView({ kvkSeasonEnd: new Date(NOW - 1), leveling: { enabled: false } }, noEvents);
-		expect(view.steps[0]?.done).toBe(false);
-		expect(view.steps[4]?.done).toBe(false);
+		expect(doneOf(view, "kvkSeason")).toBe(false);
+		expect(doneOf(view, "leveling")).toBe(false);
+	});
+
+	// ── step 1, the server's timezone (2026-10 item 263 Phase 4c) ──
+	it("puts the server's timezone first, so steps 2 to 6 are the five steps that were 1 to 5", () => {
+		expect([...SERVER_CONFIG_STEPS]).toEqual(["timezone", "kvkSeason", "streams", "events", "channels", "leveling"]);
+	});
+
+	it("marks the timezone done for a picked zone or a UTC an admin saved, never for the default", () => {
+		expect(doneOf(serverConfigView({ timezone: "UTC" }, noEvents), "timezone")).toBe(false);
+		expect(doneOf(serverConfigView({ timezone: "America/New_York" }, noEvents), "timezone")).toBe(true);
+		expect(doneOf(serverConfigView({ timezone: "UTC", timezoneSetAt: new Date(NOW) }, noEvents), "timezone")).toBe(true);
+		// A stored value that is no real zone reads as the UTC default.
+		expect(doneOf(serverConfigView({ timezone: "Mars/Olympus" }, noEvents), "timezone")).toBe(false);
+	});
+
+	it("shows the zone on the chart, read by name from the hydrated document the store returns", () => {
+		const row = GuildConfigModel.hydrate({ guildId: "g1", timezone: "Europe/Berlin" });
+		const view = serverConfigView(row as unknown as HeadquartersRow, noEvents);
+		expect(view.chart.rows.find((chartRow) => chartRow.label === copy.serverConfig.rows.timezone)).toMatchObject({ value: "Europe/Berlin" });
+		expect(doneOf(view, "timezone")).toBe(true);
 	});
 
 	it("draws the switches as they stand, each with its button, then Refresh standings", () => {
@@ -200,7 +225,7 @@ describe("readDomainView", () => {
 			{ type: "recurring", intervalHours: 36, seasonEnd: new Date(NOW), paused: true },
 		]);
 		const view = await readDomainView(guild, {}, "serverConfig");
-		expect(view.steps.map((step) => step.done).slice(1, 3)).toEqual([true, true]);
+		expect([doneOf(view, "streams"), doneOf(view, "events")]).toEqual([true, true]);
 		const valueOf = (label: string) => view.chart.rows.find((row) => row.label === label);
 		expect(valueOf(copy.serverConfig.rows.pausedEvents)).toMatchObject({ value: "1" });
 	});

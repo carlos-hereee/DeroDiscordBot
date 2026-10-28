@@ -91,7 +91,7 @@ const RETIRED_COMMANDS = [
 const MOVED_PATHS: ReadonlyArray<{ from: string; to: string; options: readonly string[]; widened?: true }> = [
 	{ from: "schedule pause", to: "events pause", options: ["event", "days"] },
 	{ from: "schedule resume", to: "events resume", options: ["event"] },
-	{ from: "stream announce", to: "events stream announce", options: ["title", "when-utc", "mention-role", "description"] },
+	{ from: "stream announce", to: "events stream announce", options: ["title", "when", "mention-role", "description"] },
 	{ from: "stream soon", to: "events stream soon", options: ["when", "note", "mention-role"] },
 	{ from: "stream setup", to: "events stream weekly", options: ["name", "day", "time", "timezone", "mention-role", "description"] },
 	{ from: "configure-kvk-season", to: "events kvk-season", options: ["days-remaining", "ruins-date-time", "altar-date-time", "kau-date"] },

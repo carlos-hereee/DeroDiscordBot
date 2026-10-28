@@ -114,6 +114,16 @@ const eventSchema = new Schema(
 		//        the per-event paused check so a just-expired pause does
 		//        not skip its own resume tick.
 		pausedUntil: { type: Date, required: false, default: null },
+
+		// ── the zone a weekly event keeps its local time in (2026-10 item 263 Phase 4c) ──
+		// What:  the IANA zone /events stream weekly read its day and time in, the
+		//        server's zone unless the admin typed another.
+		// Who:   occurrenceCalculator reads it: a weekly event with a zone fires on the
+		//        same local weekday and time every week, through daylight saving.
+		// When:  written at create time by /events stream weekly. Absent (null) on every
+		//        event created before, which keeps the plain 168 hour steps it always had
+		//        (risk R12), so there is no backfill.
+		timezone: { type: String, required: false, default: null },
 	},
 	{ timestamps: true } // adds createdAt + updatedAt automatically
 );

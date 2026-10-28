@@ -715,6 +715,23 @@ const guildConfigSchema = new Schema(
 		//        backfill.
 		weekStart: { type: String, enum: ["sunday", "monday"], default: "sunday" },
 
+		// ── the server's timezone (2026-10 item 263 Phase 4c, R3-30) ──────
+		// What:  the IANA zone this server's typed times are read in: a party game's
+		//        start and a stream announcement's time. The KvK season stays on UTC,
+		//        the game's clock (owner decision 17), and /events stream weekly
+		//        offers this zone as its default.
+		// Who:   written by 🛠️server-config's Server timezone step (setup/
+		//        headquartersSteps.ts) from the 25 zone select in utils/tzParser.ts.
+		//        Every reader passes it through tzParser.resolveServerTimezone, so a
+		//        value that is no real zone reads as UTC.
+		// When:  "UTC" by default, the zone every typed time was read in before, so
+		//        nothing moves on a server until an admin picks one; no backfill.
+		timezone: { type: String, required: false, default: "UTC" },
+		// When an admin last saved the timezone step. The step reads as done once a
+		// zone other than UTC is saved or an admin saved UTC on purpose, and only
+		// this tells a chosen UTC from the default one.
+		timezoneSetAt: { type: Date, required: false, default: null },
+
 		// ── default event image (v1.6 Phase 4, media attachments) ───────
 		// What:  per-guild fallback image URL used by event embeds when an
 		//        event has no imageUrl of its own. Resolution at each embed site

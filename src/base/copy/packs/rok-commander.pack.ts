@@ -220,9 +220,9 @@ export const rokCommanderCopy = {
 	// adjusted from one place alongside the rest of the kingdom voice.
 	configureReminders: {
 		setupRequired: "This guild has not finished setup. Run /setup before configuring reminders.",
-		ruinsInvalid: "Ruins date invalid, use format MM/DD @HH e.g. `04/20 @12`",
-		altarInvalid: "Altar date invalid, use format MM/DD @HH e.g. `04/20 @12`",
-		kauInvalid: "Kau Karuak date invalid, use format MM/DD e.g. `04/20`",
+		ruinsInvalid: "Ruins date invalid, use format MM/DD @HH in UTC, the game's clock, e.g. `04/20 @12`",
+		altarInvalid: "Altar date invalid, use format MM/DD @HH in UTC, the game's clock, e.g. `04/20 @12`",
+		kauInvalid: "Kau Karuak date invalid, use format MM/DD in UTC, the game's clock, e.g. `04/20`",
 		invalidInputsHeader: "❌ Invalid inputs:",
 		ruinsAfterSeason: "Ruins date must be before the season end date",
 		altarAfterSeason: "Altar date must be before the season end date",
@@ -273,7 +273,12 @@ export const rokCommanderCopy = {
 	},
 	kvkConfirmation: {
 		title: "⚔️ KvK Reminder Configuration, Please Confirm",
-		description: "Verify these dates match what you see in-game.\n" + "Timestamps shown in **your local timezone**.",
+		// The KvK season stays on UTC, the game's clock (2026-10 item 263 Phase 4c, owner
+		// decision 17), while other typed times follow the server's timezone, so it says so.
+		description:
+			"Verify these dates match what you see in-game.\n" +
+			"The dates you typed were read in **UTC**, the game's clock, whatever this server's timezone.\n" +
+			"Timestamps shown in **your local timezone**.",
 		fields: {
 			seasonEnd: "📅 Season End",
 			ruins: {
@@ -1236,6 +1241,9 @@ export const rokCommanderCopy = {
 		setupRequired: "Run `/setup` first so the bot has an announcements channel to post in.",
 		invalidDateTime: "Date/time invalid. Use `MM/DD @HH:MM` like `04/26 @19:30`.",
 		dateInPast: "That time is already in the past. Pick a future date and time.",
+		// The typed time is read in the server's timezone (2026-10 item 263 Phase 4c), so
+		// every refusal and the confirmation say which zone that is.
+		zoneLine: (zone: string) => `Times are in ${zone}, this server's timezone.`,
 		confirm: {
 			title: "📺 Confirm planned stream",
 			description: (title: string, startUnix: number) =>

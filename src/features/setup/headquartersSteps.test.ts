@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
 	gate: vi.fn(),
 	upsert: vi.fn(),
 	findVoice: vi.fn(),
+	findConfig: vi.fn(),
+	updateConfig: vi.fn(),
 	refresh: vi.fn(),
 	emitFor: vi.fn(),
 	showNotice: vi.fn(),
@@ -16,14 +18,14 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@features/command-buttons/adminCommandLauncher.js", () => ({ openAdminLaunch: mocks.openAdminLaunch, openAdminLeaf: mocks.openAdminLeaf }));
-vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn(async () => ({ guildId: "g1" })) } }));
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findConfig, update: mocks.updateConfig } }));
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { findByGuildId: mocks.findVoice, upsert: mocks.upsert } }));
 vi.mock("@utils/permissions.js", () => ({ gateOwnerOrAdmin: mocks.gate }));
 vi.mock("@utils/textModal.js", () => ({ showNotice: mocks.showNotice, showModalOrReply: mocks.showModalOrReply }));
 vi.mock("./adminLog.js", () => ({ adminLog: { emitFor: mocks.emitFor } }));
 vi.mock("./headquartersCards.js", () => ({
 	HEADQUARTERS_STEP_PREFIX: "hqstep",
-	SERVER_CONFIG_STEPS: ["kvkSeason", "streams", "events", "channels", "leveling"],
+	SERVER_CONFIG_STEPS: ["timezone", "kvkSeason", "streams", "events", "channels", "leveling"],
 	SWITCH_STEP_TAIL: "switch-",
 	refreshHeadquartersCards: mocks.refresh,
 }));
@@ -32,7 +34,10 @@ vi.mock("@handlers/interactionRegistry.js", () => ({
 	registerModal: (prefix: string, handler: (interaction: ModalSubmitInteraction) => Promise<void>) => mocks.modals.set(prefix, handler),
 }));
 
-import { buildPriorityModal, orderFromPicks, registerHeadquartersStepHandlers, stepTarget } from "./headquartersSteps.js";
+import { buildPriorityModal, buildTimezoneModal, orderFromPicks, pickedTimezone, registerHeadquartersStepHandlers, stepTarget } from "./headquartersSteps.js";
+import { TIMEZONE_OPTIONS } from "@utils/tzParser.js";
+import GuildConfigModel from "@db/models/GuildConfig.js";
+import { SERVER_CONFIG_STEPS } from "./headquartersCards.js";
 import { DEFAULT_VOICE_PRIORITY_ORDER } from "@features/voice/voicePriority.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
 import { setupCopy } from "./setupCopy.js";
@@ -44,6 +49,7 @@ import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 registerHeadquartersStepHandlers();
 const pressStep = mocks.buttons.get("hqstep")!;
 const submitPriority = mocks.modals.get("hqsteppriority")!;
+const submitTimezone = mocks.modals.get("hqsteptimezone")!;
 
 const press = (customId: string) => ({ customId, guild: { id: "g1" } }) as unknown as ButtonInteraction;
 
@@ -51,6 +57,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	mocks.gate.mockResolvedValue(true);
 	mocks.findVoice.mockResolvedValue(null);
+	mocks.findConfig.mockResolvedValue({ guildId: "g1" });
 });
 
 describe("the step to flow map", () => {
@@ -63,11 +70,13 @@ describe("the step to flow map", () => {
 		["hqstep:arcadeControl:3", { kind: "leaf", command: "arcade", path: "reach" }],
 		["hqstep:arcadeControl:4", { kind: "leaf", command: "arcade", path: "server block" }],
 		// 🛠️server-config (2026-10 item 263 Phase 4a): every step an existing /events, /server or /leveling flow.
-		["hqstep:serverConfig:1", { kind: "leaf", command: "events", path: "kvk-season" }],
-		["hqstep:serverConfig:2", { kind: "leaf", command: "events", path: "stream weekly" }],
-		["hqstep:serverConfig:3", { kind: "launch", launchId: "events" }],
-		["hqstep:serverConfig:4", { kind: "launch", launchId: "server-channels" }],
-		["hqstep:serverConfig:5", { kind: "launch", launchId: "leveling" }],
+		// Step 1 is the server's timezone (2026-10 item 263 Phase 4c); 2 to 6 open what 1 to 5 did.
+		["hqstep:serverConfig:1", { kind: "timezone" }],
+		["hqstep:serverConfig:2", { kind: "leaf", command: "events", path: "kvk-season" }],
+		["hqstep:serverConfig:3", { kind: "leaf", command: "events", path: "stream weekly" }],
+		["hqstep:serverConfig:4", { kind: "launch", launchId: "events" }],
+		["hqstep:serverConfig:5", { kind: "launch", launchId: "server-channels" }],
+		["hqstep:serverConfig:6", { kind: "launch", launchId: "leveling" }],
 		// The server switches message.
 		["hqstep:serverConfig:switch-autoHeal", { kind: "leaf", command: "server", path: "auto-heal" }],
 		["hqstep:serverConfig:switch-tracking", { kind: "leaf", command: "server", path: "leaderboard tracking" }],
@@ -80,7 +89,7 @@ describe("the step to flow map", () => {
 	it.each([
 		["deroConfig", 2],
 		["arcadeControl", 4],
-		["serverConfig", 5],
+		["serverConfig", SERVER_CONFIG_STEPS.length],
 	])("%s opens a different flow from each of its %i steps", (domain, steps) => {
 		const targets = Array.from({ length: steps }, (_unused, index) => JSON.stringify(stepTarget(`hqstep:${domain}:${index + 1}`)));
 		expect(targets).not.toContain("null");
@@ -91,7 +100,7 @@ describe("the step to flow map", () => {
 		expect(stepTarget("hqstep:deroConfig:3")).toBeNull();
 		expect(stepTarget("hqstep:arcadeControl:5")).toBeNull();
 		expect(stepTarget("hqstep:onboarding:1")).toBeNull();
-		expect(stepTarget("hqstep:serverConfig:6")).toBeNull();
+		expect(stepTarget("hqstep:serverConfig:7")).toBeNull();
 		// A switch exists only on 🛠️server-config, and only by its own name.
 		expect(stepTarget("hqstep:serverConfig:switch-nope")).toBeNull();
 		expect(stepTarget("hqstep:serverConfig:switch-toString")).toBeNull();
@@ -155,5 +164,67 @@ describe("step 2, the voice priority order", () => {
 		mocks.gate.mockResolvedValue(false);
 		await submitPriority(submit(["arcade-lounge", "meeting-hall", "other", "rated-match"]));
 		expect(mocks.upsert).not.toHaveBeenCalled();
+	});
+});
+
+// ── 🛠️server-config step 1, the server's timezone (2026-10 item 263 Phase 4c) ──
+describe("step 1 of 🛠️server-config, the server's timezone", () => {
+	const words = setupCopy.headquarters.serverConfig.timezone;
+
+	it("opens a modal of the shared 25 zones with the server's zone picked, read by name from the hydrated document", async () => {
+		mocks.findConfig.mockResolvedValue(GuildConfigModel.hydrate({ guildId: "g1", timezone: "America/New_York" }));
+		await pressStep(press("hqstep:serverConfig:1"));
+		expect(mocks.showModalOrReply).toHaveBeenCalledOnce();
+		const modal = mocks.showModalOrReply.mock.calls[0][1] as ReturnType<typeof buildTimezoneModal>;
+		const json = JSON.stringify(modal.toJSON());
+		expect(json).toContain(`"value":"America/New_York","description":"America/New_York","default":true`);
+		expect(json.match(/"default":true/g)).toHaveLength(1);
+	});
+
+	it("offers exactly the decree editor's 25 zones from tzParser", () => {
+		const json = JSON.stringify(buildTimezoneModal("UTC").toJSON());
+		expect(TIMEZONE_OPTIONS).toHaveLength(25);
+		for (const option of TIMEZONE_OPTIONS) expect(json).toContain(`"value":"${option.value}"`);
+		expect(buildTimezoneModal("UTC").toJSON().title).toBe(words.modalTitle);
+	});
+
+	it("refuses a member before any modal opens, with a Server notice", async () => {
+		mocks.gate.mockResolvedValue(false);
+		await pressStep(press("hqstep:serverConfig:1"));
+		expect(mocks.showModalOrReply).not.toHaveBeenCalled();
+		expect(mocks.showNotice).toHaveBeenCalledWith(expect.anything(), { title: getPluginCopy(null).notice.server, sections: [words.notAdmin] });
+	});
+
+	it("takes only a zone from the list", () => {
+		expect(pickedTimezone("Europe/Berlin")).toBe("Europe/Berlin");
+		expect(pickedTimezone("Mars/Olympus")).toBeNull();
+		expect(pickedTimezone(undefined)).toBeNull();
+	});
+
+	function submit(zone: string) {
+		return {
+			guild: { id: "g1" },
+			fields: { getStringSelectValues: () => [zone] },
+			reply: vi.fn(async () => undefined),
+		} as unknown as ModalSubmitInteraction & { reply: ReturnType<typeof vi.fn> };
+	}
+
+	it("saves the zone with the moment it was set, logs it, answers, and redraws 🛠️server-config's card", async () => {
+		const interaction = submit("UTC");
+		await submitTimezone(interaction);
+		expect(mocks.updateConfig).toHaveBeenCalledWith("g1", { timezone: "UTC", timezoneSetAt: expect.any(Date) });
+		expect(mocks.emitFor).toHaveBeenCalledWith(interaction, "g1", "config.change", { subject: words.auditSubject, detail: "UTC" });
+		expect(interaction.reply).toHaveBeenCalledOnce();
+		expect(mocks.refresh).toHaveBeenCalledWith(interaction.guild, "serverConfig");
+	});
+
+	it("saves nothing for a zone off the list, and re-checks the admin on Submit", async () => {
+		await submitTimezone(submit("Mars/Olympus"));
+		expect(mocks.updateConfig).not.toHaveBeenCalled();
+		expect(mocks.showNotice).toHaveBeenCalledWith(expect.anything(), { title: getPluginCopy(null).notice.server, sections: [setupCopy.headquarters.staleStep] });
+
+		mocks.gate.mockResolvedValue(false);
+		await submitTimezone(submit("Europe/Berlin"));
+		expect(mocks.updateConfig).not.toHaveBeenCalled();
 	});
 });

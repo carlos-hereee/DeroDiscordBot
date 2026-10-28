@@ -11,6 +11,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { parseEventDateTimeMinutes } from "@utils/dateParser.js";
+import { resolveServerTimezone } from "@utils/tzParser.js";
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
@@ -37,6 +38,11 @@ import { getPluginCopy } from "@base/copy/getCopy.js";
 // Where: writes a one-time Event into the same collection as KvK and
 //        weekly stream events. ScheduleBoard renders it next to other
 //        active events with no special casing.
+// The typed time is read in the server's timezone (2026-10 item 263 Phase 4c, UTC
+// until an admin picks one in 🛠️server-config), and every refusal and the
+// confirmation name that zone. The option is `when`: a registered option's
+// description is global, one text for every server, so it says "this server's
+// timezone" and the prompts name the zone itself.
 // How:   ① parse + validate the date (must be in the future); ②
 //        confirmation embed; ③ on confirm, eventStore.create with
 //        type:"one-time"; ④ kick a schedule board refresh.
@@ -50,7 +56,7 @@ export function addAnnounceStreamOptions(sub: SlashCommandSubcommandBuilder): Sl
 			option.setName("title").setDescription("Stream title (e.g. Charity Stream, Patch Day)").setRequired(true).setMaxLength(80)
 		)
 		.addStringOption((option) =>
-			option.setName("when-utc").setDescription("Date and time in UTC, format MM/DD @HH:MM (e.g. 04/26 @19:30)").setRequired(true)
+			option.setName("when").setDescription("Date and time in this server's timezone, format MM/DD @HH:MM (e.g. 04/26 @19:30)").setRequired(true)
 		)
 		.addRoleOption((option) =>
 			option
@@ -81,7 +87,9 @@ export async function announceStream(interaction: RepliableInteraction, options:
 	}
 
 	const title = options.getString("title", true).trim();
-	const whenRaw = options.getString("when-utc", true);
+	const whenRaw = options.getString("when", true);
+	// Read by name: the store returns a hydrated document, whose fields are getters.
+	const timezone = resolveServerTimezone(config.timezone);
 	const mentionRole = options.getRole("mention-role", false);
 	const description = options.getString("description", false)?.trim() ?? "";
 
@@ -89,13 +97,13 @@ export async function announceStream(interaction: RepliableInteraction, options:
 	// event whose firstOccurrence is already in the past would never
 	// fire (ReminderScheduler's diff-window check skips negative diffs)
 	// so accepting it would silently swallow the streamer's input.
-	const startDate = parseEventDateTimeMinutes(whenRaw);
+	const startDate = parseEventDateTimeMinutes(whenRaw, undefined, timezone);
 	if (!startDate) {
-		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.invalidDateTime] });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.invalidDateTime, c.zoneLine(timezone)] });
 		return;
 	}
 	if (startDate.getTime() <= Date.now()) {
-		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.dateInPast] });
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.dateInPast, c.zoneLine(timezone)] });
 		return;
 	}
 
@@ -108,6 +116,7 @@ export async function announceStream(interaction: RepliableInteraction, options:
 	// the preview matches the eventual schedule board entry.
 	const previewLines = [
 		c.confirm.description(title, startUnix),
+		c.zoneLine(timezone),
 		"",
 		c.confirm.audienceLine(mentionRoleId ?? config.memberRoleId ?? null, config.announcementsChannelId),
 	];
