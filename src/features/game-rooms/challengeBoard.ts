@@ -798,7 +798,10 @@ async function provisionFromDraft(
 		return;
 	}
 
-	await answer.send({ content: gameRoomsCopy.board.cardStarted(result.channel.id) });
+	// Nothing posts in 💬dero-commands once the room is open (2026-10 item 263 R3-24): the room's
+	// opener pings its players there. Only the no channel fallback still has a private defer
+	// waiting, so only it names the room.
+	if (answer.channelId === null) await answer.send({ content: gameRoomsCopy.board.cardStarted(result.channel.id) });
 	// A network table is now playing and taking players, which is what the board lists.
 	if (room.network) scheduleNetworkBoardRefresh();
 	await refreshCard(
@@ -1027,9 +1030,8 @@ export async function playDero(interaction: ButtonInteraction, room: IGameRoom):
 	}
 	const guild = interaction.guild;
 	if (!guild) return;
-	// Acknowledged first: opening a room is a channel create plus its opener, which can run
-	// past Discord's three second window. The line pointing at the room posts in
-	// 💬dero-commands (2026-10 item 257 Phase 5).
+	// Acknowledged quietly first: opening a room is a channel create plus its opener, which
+	// can run past Discord's three second window. A refusal posts in 💬dero-commands.
 	const answer = await beginChannelAnswer(interaction, "member");
 	await gameRoomStore.markArchived(room.guildId, room.roomId);
 
@@ -1044,7 +1046,9 @@ export async function playDero(interaction: ButtonInteraction, room: IGameRoom):
 		await refreshCard(guild, room, cardStateFor(room, { visibility: room.visibility, resultLine: gameRoomsCopy.board.cardDeroUnavailable(room.hostId) }));
 		return;
 	}
-	await answer.send({ content: gameRoomsCopy.board.cardStarted(opened.channel.id) });
+	// The room's opener pings the member there, so nothing posts in 💬dero-commands (2026-10
+	// item 263 R3-24); only the no channel fallback's private defer still waits for a word.
+	if (answer.channelId === null) await answer.send({ content: gameRoomsCopy.board.cardStarted(opened.channel.id) });
 	await refreshCard(guild, room, cardStateFor(room, { visibility: room.visibility, resultLine: gameRoomsCopy.board.cardPlayedDero(room.hostId, opened.channel.id) }));
 }
 

@@ -141,7 +141,7 @@ describe("the party games buttons", () => {
 
 		expect(hangmanMock).toHaveBeenCalledWith(partyChannel, "admin-1");
 		expect(logMock.emitFor).toHaveBeenCalledWith(interaction, "guild-1", "powerup.toggle", expect.anything());
-		expect(arcadeControl.send).toHaveBeenCalledWith(expect.objectContaining({ content: `<@admin-1> ${words.hostStarted("ch-party")}`, allowedMentions: { parse: [] } }));
+		expect(arcadeControl.send).toHaveBeenCalledWith(expect.objectContaining({ content: `<@admin-1> ${words.hostStarted("ch-party")}`, allowedMentions: { parse: [], users: ["admin-1"] } }));
 		expect(interaction.deferReply).not.toHaveBeenCalled();
 		expect(interaction.editReply).not.toHaveBeenCalled();
 	});

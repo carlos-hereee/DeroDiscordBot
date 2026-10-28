@@ -20,7 +20,8 @@ import { acknowledgeTextModal, showNotice } from "./textModal.js";
 //        Dismiss message" (2026-10 item 257, owner decision 7, Phase 5). A member's
 //        answer posts in 💬dero-commands (GuildConfig.commandOutputChannelId); an
 //        admin's answer posts in the matching 🏰 DERO HEADQUARTERS channel by its
-//        domain. Every post mentions the member it answers, without a ping.
+//        domain. Every post mentions the member it answers in its content and pings
+//        that one member, nobody else (2026-10 item 263 Phase 1a, R3-10).
 // Who:   every site the private reply audit kept private for Discord's reasons (a
 //        slow answer after a defer, a modal Submit, a followUp, a reply carrying
 //        buttons, an image or an embed with fields); the site list is the third pass
@@ -29,8 +30,8 @@ import { acknowledgeTextModal, showNotice } from "./textModal.js";
 //        private data. A hand, a fleet, a secret word or a recovery secret never comes
 //        here; those stay private and are listed with their reason in that audit.
 // How:   answerInChannel posts a finished answer. beginChannelAnswer is for a slow one:
-//        it acknowledges the interaction inside Discord's three second window (a notice
-//        modal naming the channel, or a quiet acknowledgement for a modal Submit), and
+//        it acknowledges the interaction quietly inside Discord's three second window
+//        (nothing shows; the answer's own ping tells the member where it went), and
 //        its send posts the answer once the work is done. askInChannel posts a confirm
 //        then act prompt that only its asker can answer, and beginAnswerInPlace keeps a
 //        public slash command answer where it was asked.
@@ -119,7 +120,7 @@ export function answerChannelId(config: AnswerChannelConfig | null | undefined, 
 }
 
 /**
- * Post a finished answer in its audience's channel, mentioning the member without a ping,
+ * Post a finished answer in its audience's channel, pinging the member it answers,
  * or answer privately when the server has no such channel. Works on an interaction in any
  * state: a fresh one, one deferred either way, or one already answered. Never throws.
  */
@@ -138,15 +139,18 @@ export async function answerInChannel(interaction: RepliableInteraction, audienc
 }
 
 /**
- * Acknowledge a slow answer before its work runs: a notice naming the channel the answer
- * will post in (a quiet acknowledgement for a modal Submit, which cannot open a modal), or,
- * with no channel, the private defer every slow answer took before. Never throws.
+ * Acknowledge a slow answer before its work runs: quietly, showing nothing, when it will
+ * post in a channel (owner rule 1 of the Round 3 list: a line saying where an answer will
+ * post states nothing, so it is no notice), or, with no channel, the private defer every
+ * slow answer took before. A caller left with nothing to post once its work is done sends
+ * only when `channelId` is null, because only that private defer is still waiting.
+ * Never throws.
  */
 export async function beginChannelAnswer(interaction: RepliableInteraction, audience: AnswerAudience, options: AnswerOptions = {}): Promise<PendingChannelAnswer> {
 	const config = options.config === undefined ? await readConfig(interaction) : options.config;
 	const channel = await resolveAnswerChannel(interaction, audience, config);
 	if (channel) {
-		await acknowledgeWithNotice(interaction, channel.id, config);
+		await acknowledgeQuietly(interaction);
 		return { channelId: channel.id, send: (answer) => answerInChannel(interaction, audience, answer, { config }) };
 	}
 	// The sanctioned private fallback (see the module header): no channel to name, so the
@@ -276,26 +280,18 @@ async function resolveAnswerChannel(interaction: RepliableInteraction, audience:
 }
 
 async function postInChannel(interaction: RepliableInteraction, channel: SendableChannels, answer: ChannelAnswer): Promise<Message | null> {
-	const mention = `<@${interaction.user.id}>`;
+	const memberId = interaction.user.id;
+	const mention = `<@${memberId}>`;
 	const content = answer.content ? `${mention} ${answer.content}` : mention;
 	try {
-		// parse [] with no users list: the mention names the member and pings nobody.
-		return await channel.send({ content, embeds: answer.embeds, files: answer.files, components: answer.components, allowedMentions: { parse: [] } });
+		// The mention leads the CONTENT because a mention inside an embed never notifies. parse []
+		// with the one users entry pings exactly the member answered: never a role, never
+		// everyone, and never another member the answer happens to name.
+		return await channel.send({ content, embeds: answer.embeds, files: answer.files, components: answer.components, allowedMentions: { parse: [], users: [memberId] } });
 	} catch (error) {
 		console.warn(`[answer-in-channel] posting in channel ${channel.id} failed; answering privately`, error);
 		return null;
 	}
-}
-
-// The notice is only the acknowledgement: it names where the answer goes, and the answer
-// itself posts when the work behind it is done.
-async function acknowledgeWithNotice(interaction: RepliableInteraction, channelId: string, config: AnswerChannelConfig | null | undefined): Promise<void> {
-	if (interaction.isModalSubmit()) {
-		await acknowledgeTextModal(interaction);
-		return;
-	}
-	const words = getPluginCopy(config).answerInChannel;
-	await showNotice(interaction, { title: words.noticeTitle, sections: [words.postsIn(channelId)] });
 }
 
 // A fresh interaction answered only in a channel: a modal Submit closes as a text modal
@@ -320,7 +316,7 @@ async function acknowledgeQuietly(interaction: RepliableInteraction): Promise<vo
 }
 
 // The sanctioned private fallback (see the module header): a followUp after any
-// acknowledgement (a notice, a deferUpdate, a reply), and a reply to a fresh interaction.
+// acknowledgement (a deferUpdate, a deleted private defer, a reply), and a reply to a fresh interaction.
 async function answerPrivately(interaction: RepliableInteraction, answer: ChannelAnswer): Promise<void> {
 	const reply: InteractionReplyOptions = { ...answer, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } };
 	await settle<unknown>(() => (interaction.deferred || interaction.replied ? interaction.followUp(reply) : interaction.reply(reply)), "the private answer", interaction.id);

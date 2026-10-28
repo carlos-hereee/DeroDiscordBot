@@ -36,7 +36,7 @@ import { economyCopy } from "./economyCopy.js";
 const DERO_THROWS_ROCK = (): number => 0;
 const LAST_CLAIM = new Date("2020-01-01T00:00:00Z");
 
-type Sent = { embeds: Array<{ data: { description?: string } }>; allowedMentions?: { parse: string[] } };
+type Sent = { embeds: Array<{ data: { description?: string } }>; allowedMentions?: { parse: string[]; users?: string[] } };
 
 function press() {
 	const showModal = vi.fn(async () => undefined);
@@ -152,7 +152,7 @@ describe("playClaimRound, the Submit", () => {
 		expect(mocks.insertAward).toHaveBeenCalledWith(expect.objectContaining({ userId: "u1", guildId: "g1", amount: coins, source: "claim" }));
 		expect(mocks.credit).toHaveBeenCalledWith("u1", coins);
 		expect(descriptionOf(channel.send)).toContain(`<@u1>`);
-		expect((channel.send.mock.calls[0][0] as Sent).allowedMentions).toEqual({ parse: [] });
+		expect((channel.send.mock.calls[0][0] as Sent).allowedMentions).toEqual({ parse: [], users: ["u1"] });
 	});
 
 	// Risk R11: the first claim's 25,000 is the base the multiplier applies to.
@@ -198,10 +198,10 @@ describe("playClaimRound, the Submit", () => {
 
 		expect(mocks.claimDaily).not.toHaveBeenCalled();
 		expect(mocks.insertAward).not.toHaveBeenCalled();
-		const wait = channel.send.mock.calls[0][0] as { content: string; allowedMentions?: { parse: string[] } };
+		const wait = channel.send.mock.calls[0][0] as { content: string; allowedMentions?: { parse: string[]; users?: string[] } };
 		expect(wait.content).toMatch(/^<@u1> /);
 		expect(wait.content).toContain("next claim opens");
-		expect(wait.allowedMentions).toEqual({ parse: [] });
+		expect(wait.allowedMentions).toEqual({ parse: [], users: ["u1"] });
 		expect(followUp).not.toHaveBeenCalled();
 	});
 

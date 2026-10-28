@@ -131,7 +131,7 @@ describe("Buy in at a network table", () => {
 		expect(reply).not.toHaveBeenCalled();
 		const payload = send.mock.calls[0][0] as { content: string; allowedMentions: unknown; components: { toJSON(): { components: { custom_id?: string }[] } }[] };
 		expect(payload.content.startsWith("<@newcomer>")).toBe(true);
-		expect(payload.allowedMentions).toEqual({ parse: [] });
+		expect(payload.allowedMentions).toEqual({ parse: [], users: ["newcomer"] });
 		const ids = payload.components.flatMap((row) => row.toJSON().components.map((component) => component.custom_id));
 		expect(ids).toContain(consentAcceptId({ kind: "again" }));
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();

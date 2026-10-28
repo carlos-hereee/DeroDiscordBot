@@ -232,8 +232,13 @@ describe("/dero join", () => {
 		await execute(first.interaction);
 
 		const second = interactionFor("join", { guildId: first.guildId });
+		const showModal = vi.fn(async (_modal: { toJSON(): { title: string; components: Array<{ content?: string }> } }) => undefined);
+		Object.assign(second.interaction, { showModal });
 		await execute(second.interaction);
-		expect(textOf(second.reply)).toContain("Try /dero join again in");
+		// A cooldown is a state: Dero's own title, never the error title (2026-10 item 263 R3-12).
+		const notice = showModal.mock.calls[0]![0].toJSON();
+		expect(notice.title).toBe(deroBrainCopy.noticeTitle);
+		expect(notice.components.map((component) => component.content).join("\n")).toContain("Try /dero join again in");
 		expect(mocks.sessionJoin).toHaveBeenCalledTimes(1);
 	});
 });

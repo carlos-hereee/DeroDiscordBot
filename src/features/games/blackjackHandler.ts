@@ -28,7 +28,7 @@ import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
 import { roomTrail } from "@features/game-rooms/roomTrail.js";
 import { drawingSettled, isClockExpired, pausedDeadline, withDrawingPause } from "@features/game-rooms/drawingPause.js";
 import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showCooldownNotice, showErrorNotice } from "@utils/textModal.js";
 import { syncTurnPrompt, type TurnAdapter } from "@features/game-rooms/turnPrompt.js";
 
 // ── /mini-game blackjack ───────────────────────────────────────────────────
@@ -226,20 +226,26 @@ function actionRow(channelId: string, table: BlackjackTable): ActionRowBuilder<B
 // ── the slash entry point ───────────────────────────────────────────────────
 
 export async function runBlackjack(interaction: ChatInputCommandInteraction): Promise<void> {
+	const c = gamesCopy.blackjack;
+
+	// The cooldown is read before the acknowledgement, so the command itself opens the
+	// cooldown notice (2026-10 item 263 R3-12): a notice can only be the FIRST answer, and the
+	// check is an in memory read. Outside a server there is no key; the refusal below answers.
+	if (interaction.guildId) {
+		const gate = cooldown.check(`${interaction.guildId}:${interaction.user.id}`);
+		if (gate.onCooldown) {
+			await showCooldownNotice(interaction, { title: gamesCopy.notices.blackjack, message: c.cooldownMessage(Math.ceil(gate.remainingMs / 1000)) });
+			return;
+		}
+	}
+
 	// The table itself posts where the command ran; the member's own answer (seated, or
 	// why not) posts in 💬dero-commands (2026-10 item 257 Phase 5).
 	const answer = await beginChannelAnswer(interaction, "member");
-	const c = gamesCopy.blackjack;
 
 	const channel = interaction.channel;
 	if (!(channel instanceof TextChannel) || !interaction.guildId) {
 		await answer.send({ embeds: [errorEmbed(c.outsideGuild)] });
-		return;
-	}
-
-	const gate = cooldown.check(`${interaction.guildId}:${interaction.user.id}`);
-	if (gate.onCooldown) {
-		await answer.send({ embeds: [errorEmbed(c.cooldownMessage(Math.ceil(gate.remainingMs / 1000)))] });
 		return;
 	}
 

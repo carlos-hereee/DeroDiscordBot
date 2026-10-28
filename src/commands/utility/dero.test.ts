@@ -183,8 +183,13 @@ describe("/dero tell answers", () => {
 		expect(mocks.enqueue).toHaveBeenCalledTimes(2);
 
 		const third = interactionFor({ userId: "steady" });
+		const showModal = vi.fn(async (_modal: { toJSON(): { title: string; components: Array<{ content?: string }> } }) => undefined);
+		Object.assign(third.interaction, { showModal });
 		await execute(third.interaction);
-		expect(textOf(third.reply)).toContain("Try again in");
+		// A cooldown is a state: Dero's own title, never the error title (2026-10 item 263 R3-12).
+		const notice = showModal.mock.calls[0]![0].toJSON();
+		expect(notice.title).toBe(deroBrainCopy.noticeTitle);
+		expect(notice.components.map((component) => component.content).join("\n")).toContain("Try again in");
 		expect(mocks.enqueue).toHaveBeenCalledTimes(2);
 	});
 

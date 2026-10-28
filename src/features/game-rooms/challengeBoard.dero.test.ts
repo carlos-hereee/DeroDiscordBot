@@ -60,6 +60,9 @@ function makeButton(): ButtonInteraction {
 			button.deferred = true;
 		}),
 		editReply: vi.fn().mockResolvedValue(undefined),
+		deferUpdate: vi.fn(async () => {
+			button.deferred = true;
+		}),
 		showModal: vi.fn(async () => {
 			button.replied = true;
 		}),
@@ -95,11 +98,12 @@ describe("playDero", () => {
 		expect(soloMock).toHaveBeenCalledWith(GUILD, `solo-${game}`, expect.objectContaining({ userId: HOST }));
 		// The draft must free the host's one room slot before the solo room claims it.
 		expect(storeMock.markArchived.mock.invocationCallOrder[0]).toBeLessThan(soloMock.mock.invocationCallOrder[0]);
-		// A notice names 💬dero-commands, the line pointing at the room posts there naming the
-		// host without a ping, and the card points at the room: nothing is posted into
-		// ⚔️challenges but the card's own edit.
-		expect(noticeText(interaction)).toContain("<#commands>");
-		expect(sentTo(commandsChannel)).toEqual([expect.objectContaining({ content: `<@${HOST}> ${gameRoomsCopy.board.cardStarted("solo-room-1")}`, allowedMentions: { parse: [] } })]);
+		// The press is acknowledged quietly and nothing posts in 💬dero-commands (2026-10 item
+		// 263 R3-10 and R3-24): the room's opener pings the host in the room, and the card points
+		// at the room, so nothing is posted into ⚔️challenges but the card's own edit.
+		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+		expect(noticeText(interaction)).toBe("");
+		expect(commandsChannel.send).not.toHaveBeenCalled();
 		expect(interaction.deferReply).not.toHaveBeenCalled();
 		expect(cardStateMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ resultLine: gameRoomsCopy.board.cardPlayedDero(HOST, "solo-room-1") }));
 		expect(interaction.reply).not.toHaveBeenCalled();

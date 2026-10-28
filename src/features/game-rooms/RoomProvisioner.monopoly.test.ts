@@ -91,6 +91,34 @@ const boardPayload = (send: ReturnType<typeof vi.fn>) =>
 	sentPayloads(send).find((payload) => payload.embeds[0]?.data.title === gameRoomsCopy.monopoly.boardTitle);
 
 describe("RoomProvisioner.open for monopoly", () => {
+	// 2026-10 item 263 R3-24: the first seat's turn line goes up as the room opens and pings
+	// that seat, so the opener pings every other member player and each is pinged exactly once.
+	it("pings each member player once in total across the opener and the first turn line", async () => {
+		const { guild, send } = makeGuild();
+		const roomChannel = await (guild.channels.create as unknown as () => Promise<{ id: string; send: unknown }>)();
+		(guild.client.channels.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ ...roomChannel, isSendable: () => true, isTextBased: () => true, isDMBased: () => false });
+		(guild.channels.create as unknown as ReturnType<typeof vi.fn>).mockClear();
+		storeMock.findByRoomId.mockImplementation(async () => ({
+			roomId: "room-1",
+			guildId: "guild-1",
+			game: "monopoly",
+			hostId: "host-1",
+			status: "playing",
+			channelId: "room-channel-1",
+			playerIds: ["host-1", "player-2", "player-3"],
+			secret: storedState(),
+			turnPrompt: null,
+		}));
+
+		await RoomProvisioner.open(input(guild));
+
+		const pings = sentPayloads(send).flatMap((payload) => (payload as { allowedMentions?: { users?: string[] } }).allowedMentions?.users ?? []);
+		expect(pings.sort()).toEqual(["host-1", "player-2", "player-3"]);
+		const opener = sentPayloads(send)[0] as { content?: string; allowedMentions?: { users?: string[] } };
+		expect(opener.content).toBe(gameRoomsCopy.opener.playersCall(["host-1", "player-2", "player-3"]));
+		expect(opener.allowedMentions?.users).toEqual(["player-2", "player-3"]);
+	});
+
 	it("provisions the room and stores a fresh match, seated in player order, on the row", async () => {
 		const { guild } = makeGuild();
 		const result = await RoomProvisioner.open(input(guild));

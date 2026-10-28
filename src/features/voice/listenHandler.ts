@@ -15,6 +15,8 @@ import { pcm24kMonoToPcm48kStereo } from "./resample.js";
 import { voiceSessions, type VoiceSessionView } from "./voiceSessions.js";
 import { TtsError, type TtsClip, type TtsErrorKind } from "./ttsProvider.js";
 import { voiceCopy } from "./voiceCopy.js";
+import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
+import { showCooldownNotice } from "@utils/textModal.js";
 
 // ── Listen handler ─────────────────────────────────────────────────────────
 // What:  answer a Listen press with the post read aloud in Dero's voice: in the
@@ -28,7 +30,7 @@ import { voiceCopy } from "./voiceCopy.js";
 // Where: the only path from a click to a paid provider call for Listen. Every
 //        render goes cooldown, then spend reservation, then provider, in that
 //        order, and a failure after the reservation refunds it.
-// How:   ① defer, private; ② gate on the guild's config; ③④ read and clean the
+// How:   ⓪ a press inside the cooldown answered with its notice; ① defer, private; ② gate on the guild's config; ③④ read and clean the
 //        post's own text; ⑤ deliverClip, which decides WHERE the clip goes before
 //        anything is rendered, because the two places need different formats
 //        (raw 24 kHz PCM for the call, mp3 for a file) and a clip rendered in
@@ -127,6 +129,8 @@ async function deliverPrivately(interaction: ButtonInteraction, { guildId, userI
 
 	const wait = cooldownSeconds(guildId, userId);
 	if (wait > 0) {
+		// Reached only when the window opened after ⓪ (another member's render starts the
+		// guild window), so the press is already deferred and the line is a plain reply.
 		await replyPlain(interaction, voiceCopy.listen.cooldown(wait));
 		return "cooldown";
 	}
@@ -170,6 +174,7 @@ async function deliverInCall(interaction: ButtonInteraction, request: ListenRequ
 	else {
 		const wait = cooldownSeconds(guildId, userId);
 		if (wait > 0) {
+			// Only a window that opened after ⓪ reaches here (see deliverPrivately).
 			await replyPlain(interaction, voiceCopy.listen.cooldown(wait));
 			return "cooldown";
 		}
@@ -220,14 +225,39 @@ export async function deliverClip(
 	return { outcome: await deliverPrivately(interaction, request), delivery: "private" };
 }
 
-export async function handleListen(interaction: ButtonInteraction): Promise<void> {
-	// ① Private from the first byte: a member's Listen is nobody else's business,
-	// and the render can outlast Discord's 3 second acknowledgement window.
-	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+// ⓪ A press inside the cooldown is answered AT the press with a notice titled for Dero
+// (2026-10 item 263 R3-12), because a notice can only be the first answer and ①'s defer
+// would rule it out. The window is an in memory read, so a press outside it costs nothing
+// here. Only a press inside it reads the config (one indexed read, which fits the three
+// second window as the fortune's slot claim does) to learn whether the clip would be a free
+// replay, which skips the cooldown as it always has. A press the gates would refuse anyway,
+// or a failed read, goes on to ① and is answered there exactly as before. True when the
+// notice answered the press.
+async function answeredCooldownAtPress(interaction: ButtonInteraction, guildId: string, userId: string): Promise<boolean> {
+	const wait = cooldownSeconds(guildId, userId);
+	if (wait === 0) return false;
+	const config = await deroVoiceConfigStore.findByGuildId(guildId).catch(() => null);
+	if (!config || listenRefusal(config)) return false;
+	const prepared = prepareListenText(interaction.message);
+	const chars = prepared.text.length;
+	if (chars === 0) return false;
+	const format = callFor(interaction, guildId) ? "pcm24k" : "mp3";
+	if (clipCache.get(clipKey(resolveDeroVoiceId(config), elevenLabsTts.modelId, format, prepared.text))) return false;
+	await showCooldownNotice(interaction, { title: deroBrainCopy.noticeTitle, message: voiceCopy.listen.cooldown(wait) });
+	audit(guildId, userId, chars, "cooldown");
+	return true;
+}
 
+export async function handleListen(interaction: ButtonInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	const userId = interaction.user.id;
 	let chars = 0;
+
+	if (guildId && (await answeredCooldownAtPress(interaction, guildId, userId))) return;
+
+	// ① Private from the first byte: a member's Listen is nobody else's business,
+	// and the render can outlast Discord's 3 second acknowledgement window.
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
 	try {
 		// ② gate on the guild's config, re-read on every click

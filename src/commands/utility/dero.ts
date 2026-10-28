@@ -32,7 +32,7 @@ import { turnLatencyLog } from "@features/voice/turnLatency.js";
 import { liveVoicePresenceState, renderVoicePresenceCard } from "@features/voice/voicePresenceRenderer.js";
 import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showCooldownNotice, showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 
@@ -200,7 +200,9 @@ async function tell(interaction: ChatInputCommandInteraction): Promise<void> {
 	const cooldownKey = `${guild.id}:${speaker.id}`;
 	const gate = tellCooldown.check(cooldownKey);
 	if (gate.onCooldown) {
-		await refuse(interaction, tellCopy.cooldown(Math.ceil(gate.remainingMs / MS_PER_SECOND)));
+		// A cooldown is a state, not a failure, so it wears Dero's area title rather than the
+		// error title refuse gives (2026-10 item 263 R3-12).
+		await showCooldownNotice(interaction, { title: deroBrainCopy.noticeTitle, message: tellCopy.cooldown(Math.ceil(gate.remainingMs / MS_PER_SECOND)) });
 		return;
 	}
 
@@ -215,8 +217,9 @@ async function tell(interaction: ChatInputCommandInteraction): Promise<void> {
 		return;
 	}
 
-	// ⑦ the brain can take up to 20 seconds, far past Discord's 3 second window, so a
-	// notice names 💬dero-commands and the answer posts there (2026-10 item 257 Phase 5)
+	// ⑦ the brain can take up to 20 seconds, far past Discord's 3 second window, so a quiet
+	// acknowledgement goes first and the answer posts in 💬dero-commands, pinging the member
+	// (2026-10 item 257 Phase 5, item 263 R3-10)
 	const answer = await beginChannelAnswer(interaction, "member");
 	const startedAt = Date.now();
 
@@ -393,13 +396,14 @@ export async function bringDeroIntoCall(interaction: RepliableInteraction): Prom
 	// gateway voice traffic.
 	const cooldown = joinCooldown.check(guild.id);
 	if (cooldown.onCooldown) {
-		await refuse(interaction, callCopy.joinCooldown(Math.ceil(cooldown.remainingMs / MS_PER_SECOND)));
+		await showCooldownNotice(interaction, { title: deroBrainCopy.noticeTitle, message: callCopy.joinCooldown(Math.ceil(cooldown.remainingMs / MS_PER_SECOND)) });
 		return;
 	}
 	joinCooldown.record(guild.id);
 
-	// Ready can take up to 20 seconds, far past Discord's 3 second window, so a notice
-	// names 💬dero-commands and the answer posts there (2026-10 item 257 Phase 5).
+	// Ready can take up to 20 seconds, far past Discord's 3 second window, so a quiet
+	// acknowledgement goes first and the answer posts in 💬dero-commands, pinging the member
+	// (2026-10 item 257 Phase 5, item 263 R3-10).
 	const answer = await beginChannelAnswer(interaction, "member");
 	const voiceChannelId = gate.channel.id;
 	// The channel the request came from carries the join notice. A slash command

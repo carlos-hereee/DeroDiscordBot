@@ -44,6 +44,7 @@ vi.mock("./fortuneCooldown.js", () => ({ claimFortuneSlot: mocks.claimFortuneSlo
 vi.mock("./fortuneSceneRenderer.js", () => ({ FORTUNE_SCENE_AVATAR_SIZE: 128, renderFortuneScene: mocks.renderFortuneScene }));
 
 import { respondWithFortune } from "./respondWithFortune.js";
+import { fortuneCopy } from "./fortuneCopy.js";
 
 // Every case uses a fresh reader, so no case leans on another's.
 let seq = 0;
@@ -168,7 +169,9 @@ describe("the award cannot break a reading", () => {
 		expect(mocks.rollFortune).not.toHaveBeenCalled();
 		expect(interaction.deferReply).not.toHaveBeenCalled();
 		expect(mocks.awardXp).not.toHaveBeenCalled();
-		const notice = (vi.mocked(interaction.showModal).mock.calls[0]![0] as unknown as { toJSON(): { components: Array<{ content?: string }> } }).toJSON();
+		const notice = (vi.mocked(interaction.showModal).mock.calls[0]![0] as unknown as { toJSON(): { title: string; components: Array<{ content?: string }> } }).toJSON();
+		// A cooldown is a state, so it wears the fortune's own title and never the error title.
+		expect(notice.title).toBe(fortuneCopy.noticeTitle);
 		expect(notice.components.map((component) => component.content).join("\n")).toContain(`<t:${readyAt.getTime() / 1000}:R>`);
 	});
 
@@ -242,7 +245,7 @@ describe("where a reading answers", () => {
 		expect(interaction.editReply).toHaveBeenCalledTimes(1);
 	});
 
-	it("posts a private reading in the commands channel after a notice naming it, without a ping", async () => {
+	it("posts a private reading in the commands channel after a quiet acknowledgement, pinging the member", async () => {
 		mocks.findByGuildId.mockResolvedValue({ commandOutputChannelId: "c-commands" });
 		const send = vi.fn(async (_payload: unknown) => ({ id: "m-1", edit: vi.fn(async () => undefined) }));
 		const commands = { id: "c-commands", isSendable: () => true, send };
@@ -250,20 +253,22 @@ describe("where a reading answers", () => {
 		const fake = interaction as unknown as Record<string, unknown>;
 		fake.client = { channels: { fetch: vi.fn(async () => commands) } };
 		fake.isModalSubmit = () => false;
-		// As discord.js does: an opened modal is the interaction's one answer.
-		fake.showModal = vi.fn(async () => {
-			fake.replied = true;
+		fake.isMessageComponent = () => true;
+		// As discord.js does: a deferUpdate is the press's one answer, and it shows nothing.
+		fake.deferUpdate = vi.fn(async () => {
+			fake.deferred = true;
 		});
 
 		await respondWithFortune(interaction as unknown as ButtonInteraction, { isPrivate: true });
 
-		expect(fake.showModal).toHaveBeenCalledOnce();
+		expect(fake.deferUpdate).toHaveBeenCalledOnce();
+		expect(fake.showModal).not.toHaveBeenCalled();
 		expect(interaction.deferReply).not.toHaveBeenCalled();
 		expect(interaction.editReply).not.toHaveBeenCalled();
 		const posted = send.mock.calls[0]![0] as { content: string; embeds: unknown[]; allowedMentions: unknown };
 		expect(posted.content).toBe(`<@${interaction.user.id}>`);
 		expect(posted.embeds).toHaveLength(1);
-		expect(posted.allowedMentions).toEqual({ parse: [] });
+		expect(posted.allowedMentions).toEqual({ parse: [], users: [interaction.user.id] });
 		expect(mocks.awardXp).toHaveBeenCalledTimes(1);
 	});
 });

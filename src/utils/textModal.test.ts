@@ -16,6 +16,7 @@ import {
 	buildTextModal,
 	noticeFromEmbed,
 	registerNoticeModal,
+	showCooldownNotice,
 	showEmbedNotice,
 	showErrorNotice,
 	showConfirm,
@@ -113,6 +114,22 @@ describe("showErrorNotice", () => {
 		const reply = submit.reply.mock.calls[0]![0] as { embeds: Array<{ data: { description?: string } }>; flags: number };
 		expect(reply.embeds[0]!.data.description).toBe("Not allowed.");
 		expect(reply.flags).toBe(MessageFlags.Ephemeral);
+	});
+});
+
+// ── the cooldown notice (2026-10 item 263 R3-12) ─────────────────────────────
+describe("showCooldownNotice", () => {
+	it("titles the notice for its feature, never the error title, and falls back to the plain private line", async () => {
+		const press = interaction();
+		await showCooldownNotice(press, { title: "🔮 Fortune", message: "Your next reading is ready soon." });
+		const modal = json(press.showModal.mock.calls[0]![0] as ModalBuilder);
+		expect(modal.title).toBe("🔮 Fortune");
+		expect(modal.title).not.toBe(rokCommanderCopy.error.title);
+		expect(modal.components[0]!.content).toBe("Your next reading is ready soon.");
+
+		const late = interaction({ deferred: true });
+		await showCooldownNotice(late, { title: "🔮 Fortune", message: "Your next reading is ready soon." });
+		expect(late.followUp).toHaveBeenCalledWith({ content: "Your next reading is ready soon.", flags: MessageFlags.Ephemeral });
 	});
 });
 

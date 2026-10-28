@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { ButtonInteraction, TextChannel } from "discord.js";
+import { TextChannel as TextChannelClass, type ButtonInteraction, type ChatInputCommandInteraction, type TextChannel } from "discord.js";
 
 // ── hangmanHandler ─────────────────────────────────────────────────────────
 // hangmanState already pins every rule exhaustively. What only a handler test
@@ -33,7 +33,8 @@ vi.mock("./hangmanRenderer.js", async (importOriginal) => {
 	};
 });
 
-import { startHangmanRound, _clearHangmanRounds, _activeHangmanRoundCount } from "./hangmanHandler.js";
+import { startHangmanRound, runHangman, _clearHangmanRounds, _activeHangmanRoundCount } from "./hangmanHandler.js";
+import { gamesCopy } from "./gamesCopy.js";
 
 interface Board {
 	edit: ReturnType<typeof vi.fn>;
@@ -323,5 +324,49 @@ describe("ending a round", () => {
 		expect(options).toBeDefined();
 		expect(options).not.toHaveProperty("time");
 		expect(options).not.toHaveProperty("idle");
+	});
+});
+
+// A /mini-game slash command typed in the channel the fake stands for. The prototype is
+// TextChannel's so the handler's instanceof check passes; the fake's own send is what runs.
+function slashCommand(channel: TextChannel, guildId: string | null) {
+	Object.setPrototypeOf(channel, TextChannelClass.prototype);
+	const command: Record<string, unknown> = {
+		id: "cmd-1",
+		guildId,
+		user: { id: "cool-starter", username: "cool", globalName: "Cool" },
+		channel,
+		deferred: false,
+		replied: false,
+		isModalSubmit: () => false,
+		isMessageComponent: () => false,
+		reply: vi.fn(async () => undefined),
+		editReply: vi.fn(async () => undefined),
+		showModal: vi.fn(async () => undefined),
+		deferReply: vi.fn(async () => {
+			command.deferred = true;
+		}),
+	};
+	return command as unknown as ChatInputCommandInteraction & Record<"deferReply" | "showModal", ReturnType<typeof vi.fn>>;
+}
+
+type NoticeJson = { title: string; components: Array<{ content?: string }> };
+const noticeOf = (command: { showModal: ReturnType<typeof vi.fn> }): NoticeJson => (command.showModal.mock.calls[0]![0] as { toJSON(): NoticeJson }).toJSON();
+
+describe("the slash command's cooldown (2026-10 item 263 R3-12)", () => {
+	it("opens the cooldown notice at the command itself, titled for hangman, before any acknowledgement", async () => {
+		// Outside a server the answer has no channel to read, so the first start needs no config.
+		const started = slashCommand(fakeChannel("chan-cool").channel, null);
+		await runHangman(started);
+		expect(started.deferReply).toHaveBeenCalledOnce();
+
+		const again = slashCommand(fakeChannel("chan-cool-2").channel, null);
+		await runHangman(again);
+
+		const notice = noticeOf(again);
+		expect(notice.title).toBe(gamesCopy.notices.hangman);
+		expect(notice.components[0]!.content).toBe(gamesCopy.hangman.cooldownMessage(15));
+		expect(again.deferReply).not.toHaveBeenCalled();
+		expect(_activeHangmanRoundCount()).toBe(1);
 	});
 });

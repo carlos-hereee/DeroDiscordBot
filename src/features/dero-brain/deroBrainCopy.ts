@@ -60,6 +60,10 @@ const winnerPhrase = ({ name, amount, category }: DealerWinner): string =>
 	category ? `${name} wins ${amount} with ${HAND_PHRASES[category]}.` : `${name} wins ${amount}.`;
 
 export const deroBrainCopy = {
+	// Dero's own area title (2026-10 item 263 R3-12), worn by the cooldown notices of /dero
+	// tell, /dero join and the Listen button in place of the pack's error title.
+	noticeTitle: "🎙️ Dero",
+
 	// ── the /dero command itself ──
 	command: {
 		description: "Give Dero a task, bring Dero into your voice call, or check whether Dero's brain is online",

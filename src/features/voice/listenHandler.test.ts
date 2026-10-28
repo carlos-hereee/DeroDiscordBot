@@ -3,6 +3,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { MessageFlags, type AttachmentBuilder, type ButtonInteraction } from "discord.js";
 import { TtsError } from "./ttsProvider.js";
 import { voiceCopy } from "./voiceCopy.js";
+import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 
 // ── Listen handler matrix ──────────────────────────────────────────────────
 // The handler is the only path from a click to a paid call, so every gate is
@@ -44,10 +45,19 @@ function click(options: { guildId?: string | null; userId?: string; content?: st
 			content: options.content ?? `Fresh words number ${seq}.`,
 			embeds: options.description ? [{ description: options.description }] : [],
 		},
+		id: `press-${seq}`,
+		deferred: false,
+		replied: false,
+		// A press inside the cooldown opens its notice before any defer (2026-10 item 263 R3-12).
+		showModal: vi.fn(async () => undefined),
 		deferReply: vi.fn(async () => undefined),
 		editReply: vi.fn(async () => undefined),
-	} as unknown as ButtonInteraction & { deferReply: ReturnType<typeof vi.fn>; editReply: ReturnType<typeof vi.fn> };
+	} as unknown as ButtonInteraction & { deferReply: ReturnType<typeof vi.fn>; editReply: ReturnType<typeof vi.fn>; showModal: ReturnType<typeof vi.fn> };
 }
+
+type NoticeJson = { title: string; components: Array<{ content?: string }> };
+const noticeOf = (interaction: { showModal: ReturnType<typeof vi.fn> }): NoticeJson =>
+	(interaction.showModal.mock.calls[0]![0] as { toJSON(): NoticeJson }).toJSON();
 
 const lastReply = (interaction: { editReply: ReturnType<typeof vi.fn> }) =>
 	interaction.editReply.mock.calls.at(-1)?.[0] as { content?: string; files?: AttachmentBuilder[] };
@@ -116,13 +126,16 @@ describe("the gates before any spend", () => {
 });
 
 describe("cooldowns", () => {
-	it("refuses a second fresh render by the same member, with the seconds left", async () => {
+	it("refuses a second fresh render by the same member at the press, with a notice titled for Dero", async () => {
 		const first = click({ guildId: "cool-guild-a", userId: "cool-user-a", content: "First post." });
 		await handleListen(first);
 		const second = click({ guildId: "cool-guild-a", userId: "cool-user-a", content: "Second post." });
 		await handleListen(second);
 
-		expect(lastReply(second)?.content).toBe(voiceCopy.listen.cooldown(15));
+		const notice = noticeOf(second);
+		expect(notice.title).toBe(deroBrainCopy.noticeTitle);
+		expect(notice.components[0]!.content).toBe(voiceCopy.listen.cooldown(15));
+		expect(second.deferReply).not.toHaveBeenCalled();
 		expect(mocks.synthesize).toHaveBeenCalledTimes(1);
 		expect(mocks.tryReserve).toHaveBeenCalledTimes(1);
 	});
@@ -132,7 +145,19 @@ describe("cooldowns", () => {
 		const other = click({ guildId: "cool-guild-b", userId: "cool-user-b2", content: "Another post." });
 		await handleListen(other);
 
-		expect(lastReply(other)?.content).toBe(voiceCopy.listen.cooldown(3));
+		expect(noticeOf(other).components[0]!.content).toBe(voiceCopy.listen.cooldown(3));
+		expect(other.deferReply).not.toHaveBeenCalled();
+		expect(mocks.synthesize).toHaveBeenCalledTimes(1);
+	});
+
+	it("still replays a cached clip inside the cooldown, since a replay is free", async () => {
+		const first = click({ guildId: "cool-guild-c", userId: "cool-user-c", content: "Same post." });
+		await handleListen(first);
+		const replay = click({ guildId: "cool-guild-c", userId: "cool-user-c", content: "Same post." });
+		await handleListen(replay);
+
+		expect(replay.showModal).not.toHaveBeenCalled();
+		expect(lastReply(replay)?.files).toHaveLength(1);
 		expect(mocks.synthesize).toHaveBeenCalledTimes(1);
 	});
 });

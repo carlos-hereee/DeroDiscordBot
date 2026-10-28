@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { ButtonInteraction, TextChannel } from "discord.js";
+import { TextChannel as TextChannelClass, type ButtonInteraction, type ChatInputCommandInteraction, type TextChannel } from "discord.js";
 
 // ── blackjackHandler ───────────────────────────────────────────────────────
 // blackjackState already pins every RULE exhaustively, so nothing here re-tests
@@ -10,6 +10,9 @@ import type { ButtonInteraction, TextChannel } from "discord.js";
 // costs real xp and nothing in the game surface would show it.
 
 const mocks = vi.hoisted(() => ({ awardBlackjackResult: vi.fn() }));
+// The slash command's answer reads the server's config for 💬dero-commands; none stored keeps
+// these tests on the private fallback with no database.
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn(async () => null) } }));
 vi.mock("./gameXp.js", () => ({ awardBlackjackResult: mocks.awardBlackjackResult }));
 
 // Every redraw waits on a REAL card render (the table card every turn, the result
@@ -48,7 +51,9 @@ import {
 	MAX_SEATS,
 	roomWinnerOf,
 	blackjackTurnAdapter,
+	runBlackjack,
 } from "./blackjackHandler.js";
+import { gamesCopy } from "./gamesCopy.js";
 import { _resetDrawingPauses } from "@features/game-rooms/drawingPause.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 
@@ -650,5 +655,49 @@ describe("the turn prompt", () => {
 		await soloTable();
 		expect(await blackjackTurnAdapter.apply({} as never, roomOf("chan-1"), host.userId, { move: "rob" }, async () => undefined)).toEqual({ ok: false, reason: expect.any(String) });
 		expect(await blackjackTurnAdapter.apply({} as never, roomOf("other"), host.userId, { move: "hit" }, async () => undefined)).toEqual({ ok: false, reason: expect.any(String) });
+	});
+});
+
+// A /mini-game slash command typed in the channel the fake stands for. The prototype is
+// TextChannel's so the handler's instanceof check passes; the fake's own send is what runs.
+function slashCommand(channel: TextChannel, guildId: string | null) {
+	Object.setPrototypeOf(channel, TextChannelClass.prototype);
+	const command: Record<string, unknown> = {
+		id: "cmd-1",
+		guildId,
+		user: { id: "cool-starter", username: "cool", globalName: "Cool" },
+		channel,
+		deferred: false,
+		replied: false,
+		options: { getString: () => null },
+		isModalSubmit: () => false,
+		isMessageComponent: () => false,
+		reply: vi.fn(async () => undefined),
+		editReply: vi.fn(async () => undefined),
+		showModal: vi.fn(async () => undefined),
+		deferReply: vi.fn(async () => {
+			command.deferred = true;
+		}),
+	};
+	return command as unknown as ChatInputCommandInteraction & Record<"deferReply" | "showModal", ReturnType<typeof vi.fn>>;
+}
+
+type NoticeJson = { title: string; components: Array<{ content?: string }> };
+const noticeOf = (command: { showModal: ReturnType<typeof vi.fn> }): NoticeJson => (command.showModal.mock.calls[0]![0] as { toJSON(): NoticeJson }).toJSON();
+
+describe("the slash command's cooldown (2026-10 item 263 R3-12)", () => {
+	it("opens the cooldown notice at the command itself, titled for blackjack, before any acknowledgement", async () => {
+		const started = slashCommand(fakeChannel("chan-cool").channel, "g-cool");
+		await runBlackjack(started);
+		await flush();
+		expect(started.deferReply).toHaveBeenCalledOnce();
+
+		const again = slashCommand(fakeChannel("chan-cool-2").channel, "g-cool");
+		await runBlackjack(again);
+
+		const notice = noticeOf(again);
+		expect(notice.title).toBe(gamesCopy.notices.blackjack);
+		expect(again.deferReply).not.toHaveBeenCalled();
+		expect(hasLiveBlackjackTable("chan-cool-2")).toBe(false);
 	});
 });

@@ -20,7 +20,7 @@ import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
 import { createInitialState as createMonopolyState } from "@features/games/monopolyState.js";
 import { chipTableFor } from "./holdemChips.js";
-import { botSeatName, labelBotMentions } from "./botSeat.js";
+import { botSeatName, isBotSeatId, labelBotMentions } from "./botSeat.js";
 import { monopolyBoardEmbed, monopolyControlsRow } from "./roomMonopoly.js";
 import { seatNamesForBoard } from "./roomMonopolyBoard.js";
 import { monopolyTurnAdapter } from "./roomMonopolyHandlers.js";
@@ -475,8 +475,12 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 	// command to take their turn. Pinned below, which is what keeps it reachable
 	// once the trail has scrolled past it.
 	const logo = roomOpenerLogo(game);
+	const memberPlayerIds = playerIds.filter((id) => !isBotSeatId(id));
 	const opener = await channel
 		.send({
+			content: gameRoomsCopy.opener.playersCall(memberPlayerIds),
+			// Pings only the member players the first turn line will not ping (openerPingIds).
+			allowedMentions: { parse: [], users: openerPingIds(game, hostId, memberPlayerIds) },
 			embeds: [roomOpenerEmbed(game, hostId, [...playerIds, ...botIds], visibility, input.spectatorMode ?? null, inviteCode, logo?.ref)],
 			...(logo ? { files: [logo.attachment] } : {}),
 			...openerComponents(game, room.roomId),
@@ -616,6 +620,35 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 		.catch((error) => console.error("[game-rooms] botLog for room create failed", error));
 
 	return started ?? room;
+}
+
+// ── the opener's ping (2026-10 item 263 R3-24) ────────────────────────
+// Every member player is pinged exactly ONCE as a room starts, in the room. A game whose
+// first turn line goes up the moment the room opens already pings the member on the clock,
+// so the opener leaves that one member out of its own ping (still naming them). The games
+// that do: Monopoly and solo rock paper scissors, prompted by seedRoom above (Monopoly seats
+// the members first, so its first seat is playerIds[0]); and a Blackjack table, dealt by
+// soloRooms right after seedRoom with the host in the first seat, whose deal prompts that
+// seat. The opener posts before that deal, so a deal that passes the host by (a natural, or
+// the dealer's) is the one case this guesses wrong: the host, who pressed to open the table,
+// goes unpinged, and a second seat on the clock is pinged twice. Every other game opens with no
+// turn line (Hold'em gathers first, Battleship sets up), so the opener pings everyone.
+const FIRST_TURN_SEAT: Partial<Record<GameSlug, "firstPlayer" | "host">> = {
+	monopoly: "firstPlayer",
+	"solo-rps": "host",
+	blackjack: "host",
+	"solo-blackjack": "host",
+};
+
+/**
+ * The member players a room's opener pings: every one of `memberPlayerIds` but the member
+ * the room's first turn line pings. Exported for the tests.
+ */
+export function openerPingIds(game: GameSlug, hostId: string, memberPlayerIds: string[]): string[] {
+	const seat = FIRST_TURN_SEAT[game];
+	if (!seat) return memberPlayerIds;
+	const pingedByTurnLine = seat === "host" ? hostId : memberPlayerIds[0];
+	return memberPlayerIds.filter((id) => id !== pingedByTurnLine);
 }
 
 // The first table embed, with any Dero bot seats named rather than mentioned (2026-10

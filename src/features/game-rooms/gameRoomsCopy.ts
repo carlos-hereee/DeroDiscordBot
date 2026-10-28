@@ -265,6 +265,10 @@ export const gameRoomsCopy = {
 			if (inviteCode) lines.push("", `Invite link, until the match ends: https://discord.gg/${inviteCode}`);
 			return lines.join("\n");
 		},
+		// The opener's content line (2026-10 item 263 R3-24), naming every member player: a
+		// mention only notifies from the content, never from the embed above. The member ids
+		// only; a Dero bot seat and a spectator are never named here.
+		playersCall: (playerIds: string[]): string => `${playerIds.map((id) => `<@${id}>`).join(" ")}, your match is ready here.`,
 	},
 
 	// ── the result card, posted at finish ──

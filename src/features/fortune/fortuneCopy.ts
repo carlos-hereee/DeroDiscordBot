@@ -21,6 +21,10 @@ export const fortuneCopy = {
 	// rendered inside an embed with mention parsing disabled, so it cannot ping.
 	questionLabel: (question: string): string => `*You asked:* ${question}`,
 
+	// The title of the fortune's notices (2026-10 item 263 R3-12), the area title a cooldown
+	// wears instead of the pack's error title.
+	noticeTitle: "🔮 Fortune",
+
 	// One reading a day per member per server (2026-10 item 254). The ready time is a
 	// Discord relative timestamp, so it counts down in the member's own client.
 	cooldownMessage: (readyAt: Date): string =>

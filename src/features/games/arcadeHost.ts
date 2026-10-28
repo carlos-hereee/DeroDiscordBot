@@ -114,11 +114,11 @@ async function handleHangmanCategoryStart(interaction: StringSelectMenuInteracti
 	await openSoloRoomForMember(interaction, "solo-hangman", { hangmanCategory: category });
 }
 
-// The shared tail of every solo form: open the room, then tell the member where it is
-// or, on a refusal, what to do about it. Acknowledged first, because opening a room is a
-// channel create plus its opener, past Discord's three second window: a notice names
-// 💬dero-commands and the line pointing at the room posts there (2026-10 item 257 Phase 5),
-// beside the room itself, which is the press's public artifact.
+// The shared tail of every solo form: open the room, or, on a refusal, tell the member
+// what to do about it. Acknowledged quietly first, because opening a room is a channel
+// create plus its opener, past Discord's three second window. A room that opens posts
+// nothing in 💬dero-commands (2026-10 item 263 R3-24): the room's own opener pings its
+// player there, so a line pointing at it would be a second ping in another channel.
 // Exported for miniGameInChallenges (2026-10 item 254, Arcade 1), whose slash commands
 // typed in ⚔️challenges open the same solo rooms and answer the same way.
 export async function openSoloRoomForMember(
@@ -144,8 +144,14 @@ export async function openSoloRoomForMember(
 		// enforcing, so a solo host sees the ceiling the same way an invite host
 		// does on the visibility chooser. Null (and skipped) in production today.
 		const status = await readPrivateQuotaStatus(guild.id, interaction.user.id).catch(() => null);
-		const started = gameRoomsCopy.board.cardStarted(result.channel.id);
-		await answer.send({ content: status ? `${started} ${status}` : started });
+		// With no channel the answer is a private defer still waiting, so it names the room
+		// rather than hang; in a channel the quiet acknowledgement already closed the press.
+		if (answer.channelId === null) {
+			const started = gameRoomsCopy.board.cardStarted(result.channel.id);
+			await answer.send({ content: status ? `${started} ${status}` : started });
+			return;
+		}
+		if (status) await answer.send({ content: status });
 		return;
 	}
 	// Every refusal names itself (room slot held, guild full, quota hit, no

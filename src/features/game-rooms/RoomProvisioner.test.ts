@@ -27,7 +27,8 @@ vi.mock("@features/entitlements/gameRoomAccess.js", () => ({
 // config reads as "server", today's behavior, so only the reach cases set one.
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 
-import { RoomProvisioner, _clearInflightOpens, describeRoomOpenFailure, type RoomOpenInput } from "./RoomProvisioner.js";
+import { RoomProvisioner, _clearInflightOpens, describeRoomOpenFailure, openerPingIds, type RoomOpenInput } from "./RoomProvisioner.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
@@ -510,5 +511,46 @@ describe("RoomProvisioner.open, the server's challenge reach (2026-10 item 244 P
 			configMock.mockResolvedValue({ challengeReach });
 			expect((await RoomProvisioner.open(makeInput({ visibility: "public" }))).ok).toBe(true);
 		}
+	});
+});
+
+// ── the opener's ping (2026-10 item 263 R3-24) ────────────────────────
+// The line pointing at a room left 💬dero-commands, so the room's own opener is where its
+// players are pinged: in its content (an embed mention never notifies), naming only them.
+describe("RoomProvisioner.open, the opener's ping", () => {
+	type OpenerPayload = { content?: string; allowedMentions?: { parse: string[]; users: string[] } };
+	const openerOf = async (input: RoomOpenInput): Promise<OpenerPayload> => (await createdChannelOf(input.guild)).send.mock.calls[0][0] as OpenerPayload;
+
+	it.each([
+		["a hangman room", "hangman", ["host-1", "player-2"]],
+		["a coin flip room", "coinflip", ["host-1", "player-2"]],
+		["a solo coin flip room", "solo-coinflip", ["host-1"]],
+	] as const)("pings every member player of %s once, in the opener's content", async (_label, game, playerIds) => {
+		const input = makeInput({ game, playerIds: [...playerIds], visibility: "public", spectatorIds: ["watcher-9"] } as Partial<RoomOpenInput>);
+		await RoomProvisioner.open(input);
+
+		const opener = await openerOf(input);
+		expect(opener.content).toBe(gameRoomsCopy.opener.playersCall([...playerIds]));
+		expect(opener.allowedMentions).toEqual({ parse: [], users: [...playerIds] });
+		expect(opener.allowedMentions!.users).not.toContain("watcher-9");
+	});
+
+	it("never names or pings a Dero bot seat, even one handed in as a player", async () => {
+		const input = makeInput({ playerIds: ["host-1", "dero-bot-rook"] });
+		await RoomProvisioner.open(input);
+
+		const opener = await openerOf(input);
+		expect(opener.content).not.toContain("dero-bot-rook");
+		expect(opener.allowedMentions!.users).toEqual(["host-1"]);
+	});
+});
+
+describe("openerPingIds", () => {
+	it("leaves out the member the first turn line pings, and nobody else", () => {
+		expect(openerPingIds("monopoly", "host-1", ["host-1", "player-2", "player-3"])).toEqual(["player-2", "player-3"]);
+		expect(openerPingIds("solo-rps", "host-1", ["host-1"])).toEqual([]);
+		expect(openerPingIds("blackjack", "host-1", ["host-1", "player-2"])).toEqual(["player-2"]);
+		expect(openerPingIds("hangman", "host-1", ["host-1", "player-2"])).toEqual(["host-1", "player-2"]);
+		expect(openerPingIds("holdem", "host-1", ["host-1", "player-2"])).toEqual(["host-1", "player-2"]);
 	});
 });

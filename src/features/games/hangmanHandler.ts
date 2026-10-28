@@ -23,7 +23,7 @@ import { createHangmanState, applyGuess, type HangmanState } from "./hangmanStat
 import { awardMultiPlayerResult } from "./gameXp.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showNotice } from "@utils/textModal.js";
+import { showCooldownNotice, showNotice } from "@utils/textModal.js";
 
 // ── /mini-game hangman ─────────────────────────────────────────────────────
 // What:  a PUBLIC, channel wide round. The board is a normal channel message
@@ -157,6 +157,16 @@ export async function startHangmanRound(channel: TextChannel, starterId: string)
 
 // ── the slash entry point ──────────────────────────────────────────────────
 export async function runHangman(interaction: ChatInputCommandInteraction): Promise<void> {
+	// The cooldown is read before the acknowledgement, so the command itself opens the
+	// cooldown notice (2026-10 item 263 R3-12): a notice can only be the FIRST answer, and the
+	// check is an in memory read that costs nothing of the three second window.
+	const cooldownKey = `${interaction.guildId ?? "dm"}:${interaction.user.id}`;
+	const gate = cooldown.check(cooldownKey);
+	if (gate.onCooldown) {
+		await showCooldownNotice(interaction, { title: gamesCopy.notices.hangman, message: gamesCopy.hangman.cooldownMessage(Math.ceil(gate.remainingMs / 1000)) });
+		return;
+	}
+
 	// Acknowledged first so every branch below answers the same way, and because
 	// posting the board is Discord I/O that eats into the three second ack window. The
 	// answer posts in 💬dero-commands (2026-10 item 257 Phase 5); the board, where the
@@ -188,15 +198,6 @@ export async function runHangman(interaction: ChatInputCommandInteraction): Prom
 			await answer.send({ embeds: [errorEmbed(gamesCopy.hangmanInRoom)] });
 			return;
 		}
-	}
-
-	const cooldownKey = `${interaction.guildId ?? "dm"}:${interaction.user.id}`;
-	const gate = cooldown.check(cooldownKey);
-	if (gate.onCooldown) {
-		await answer.send({
-			embeds: [errorEmbed(gamesCopy.hangman.cooldownMessage(Math.ceil(gate.remainingMs / 1000)))],
-		});
-		return;
 	}
 
 	const result = await startHangmanRound(channel, interaction.user.id);

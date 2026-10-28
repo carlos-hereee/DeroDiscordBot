@@ -185,6 +185,22 @@ export async function showEmbedNotice(interaction: RepliableInteraction, embed: 
 	await replyPrivately(interaction, fallback());
 }
 
+/** What a cooldown notice shows: its feature's area title, and the line saying when to try again. */
+export interface CooldownNoticeContent {
+	title: string;
+	message: string;
+}
+
+/**
+ * A cooldown as a notice titled for its feature (🔮 Fortune, 🪢 Hangman), never the pack's
+ * error title: waiting out a cooldown is a state, not a failure (owner rule 1 of the Round 3
+ * list, 2026-10 item 263 R3-12). The same fallback rules as showNotice, so a cooldown checked
+ * after an acknowledgement is still answered privately. Never throws past a failed fallback.
+ */
+export async function showCooldownNotice(interaction: RepliableInteraction, content: CooldownNoticeContent): Promise<void> {
+	await showNotice(interaction, { title: content.title, sections: [content.message] });
+}
+
 /**
  * A refusal or other short error from an admin control as a notice: the pack's error
  * title over the message, falling back to the private error embed every control

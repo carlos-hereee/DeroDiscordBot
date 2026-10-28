@@ -160,24 +160,27 @@ describe("showSavedMatches", () => {
 		expect(dm.showModal).toHaveBeenCalledOnce();
 	});
 
-	it("posts the list in the commands channel, naming the member without a ping, when the server has one", async () => {
+	it("posts the list in the commands channel, pinging the member, after a quiet acknowledgement, when the server has one", async () => {
 		mocks.findByGuildId.mockResolvedValue({ commandOutputChannelId: "c-commands" });
 		const send = vi.fn(async (_payload: unknown) => ({ id: "m-1" }));
 		const commands = { id: "c-commands", isSendable: () => true, send };
 		const fake: Record<string, unknown> = { ...command(), id: "int-1", user: { id: "me" }, isModalSubmit: () => false, client: { channels: { fetch: vi.fn(async () => commands) } } };
-		// As discord.js does: an opened modal is the interaction's one answer.
-		fake.showModal = vi.fn(async () => {
-			fake.replied = true;
+		// A slash command has no silent acknowledgement: a private defer, deleted at once.
+		fake.isMessageComponent = () => false;
+		fake.deferReply = vi.fn(async () => {
+			fake.deferred = true;
 		});
+		fake.deleteReply = vi.fn(async () => undefined);
 		const interaction = fake as unknown as ReturnType<typeof command>;
 
 		await showSavedMatches(interaction, target);
 
-		expect(interaction.showModal).toHaveBeenCalledOnce();
-		expect(interaction.deferReply).not.toHaveBeenCalled();
+		expect(interaction.showModal).not.toHaveBeenCalled();
+		expect(interaction.deferReply).toHaveBeenCalledOnce();
+		expect(fake.deleteReply).toHaveBeenCalledOnce();
 		const posted = send.mock.calls[0]![0] as { content: string; embeds: Embed[]; allowedMentions: unknown };
 		expect(posted.content).toBe("<@me>");
-		expect(posted.allowedMentions).toEqual({ parse: [] });
+		expect(posted.allowedMentions).toEqual({ parse: [], users: ["me"] });
 		expect(posted.embeds[0]!.data.description).toContain("No saved matches yet");
 	});
 

@@ -85,13 +85,13 @@ describe("answerChannelId", () => {
 });
 
 describe("answerInChannel", () => {
-	it("posts a member's answer in the commands channel, naming them without a ping, and leaves no private message", async () => {
+	it("posts a member's answer in the commands channel, pinging that one member in the content, and leaves no private message", async () => {
 		const channels = allChannels();
 		const fake = interaction({ kind: "component", channels });
 		const place = await answerInChannel(fake, "member", { content: "Done." });
 
 		expect(place.channelId).toBe("c-commands");
-		expect(channels.get("c-commands")!.send).toHaveBeenCalledWith(expect.objectContaining({ content: "<@u-asker> Done.", allowedMentions: { parse: [] } }));
+		expect(channels.get("c-commands")!.send).toHaveBeenCalledWith(expect.objectContaining({ content: "<@u-asker> Done.", allowedMentions: { parse: [], users: ["u-asker"] } }));
 		expect(fake.deferUpdate).toHaveBeenCalled();
 		expect(fake.reply).not.toHaveBeenCalled();
 	});
@@ -140,16 +140,43 @@ describe("answerInChannel", () => {
 });
 
 describe("beginChannelAnswer", () => {
-	it("opens with a notice naming the channel, then posts the answer there", async () => {
+	it("acknowledges a slash command with a private defer deleted at once, opens no modal, then posts the answer with its ping", async () => {
 		const channels = allChannels();
 		const fake = interaction({ channels });
 		const answer = await beginChannelAnswer(fake, "member");
 
 		expect(answer.channelId).toBe("c-commands");
-		expect(fake.showModal).toHaveBeenCalledTimes(1);
-		expect(fake.deferReply).not.toHaveBeenCalled();
+		expect(fake.showModal).not.toHaveBeenCalled();
+		expect(fake.deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
+		expect(fake.deleteReply).toHaveBeenCalledTimes(1);
 		await answer.send({ content: "Here it is." });
-		expect(channels.get("c-commands")!.send).toHaveBeenCalledWith(expect.objectContaining({ content: "<@u-asker> Here it is." }));
+		expect(channels.get("c-commands")!.send).toHaveBeenCalledWith(expect.objectContaining({ content: "<@u-asker> Here it is.", allowedMentions: { parse: [], users: ["u-asker"] } }));
+		expect(fake.followUp).not.toHaveBeenCalled();
+	});
+
+	it("acknowledges a button with deferUpdate, which shows nothing, and opens no modal", async () => {
+		const channels = allChannels();
+		const fake = interaction({ kind: "component", channels });
+		const answer = await beginChannelAnswer(fake, "admin");
+
+		expect(answer.channelId).toBe("c-admin");
+		expect(fake.deferUpdate).toHaveBeenCalledTimes(1);
+		expect(fake.showModal).not.toHaveBeenCalled();
+		expect(fake.deferReply).not.toHaveBeenCalled();
+		await answer.send({ content: "Saved." });
+		expect(channels.get("c-admin")!.send).toHaveBeenCalledWith(expect.objectContaining({ content: "<@u-asker> Saved.", allowedMentions: { parse: [], users: ["u-asker"] } }));
+	});
+
+	it("puts the mention in the content even when the answer is only an embed, since an embed mention never pings", async () => {
+		const channels = allChannels();
+		await answerInChannel(interaction({ kind: "component", channels }), "member", { embeds: [] });
+		expect(channels.get("c-commands")!.send).toHaveBeenCalledWith(expect.objectContaining({ content: "<@u-asker>", allowedMentions: { parse: [], users: ["u-asker"] } }));
+	});
+
+	it("pings only the asker in a confirm then act prompt too", async () => {
+		const channels = allChannels();
+		await askInChannel(interaction({ channels }), "admin", { content: "Sure?" });
+		expect(channels.get("c-admin")!.send).toHaveBeenCalledWith(expect.objectContaining({ content: "<@u-asker> Sure?", allowedMentions: { parse: [], users: ["u-asker"] } }));
 	});
 
 	it("closes a modal Submit quietly, since a Submit cannot open a notice", async () => {
@@ -211,6 +238,9 @@ describe("askInChannel", () => {
 describe("the copy", () => {
 	it("carries the same keys in both packs", () => {
 		expect(Object.keys(generalEventsCopy.answerInChannel).sort()).toEqual(Object.keys(rokCommanderCopy.answerInChannel).sort());
-		expect(rokCommanderCopy.answerInChannel.postsIn("c-1")).toContain("<#c-1>");
+	});
+
+	it("keeps no copy for the retired notice that named where an answer would post", () => {
+		expect(Object.keys(rokCommanderCopy.answerInChannel)).not.toContain("postsIn");
 	});
 });

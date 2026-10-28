@@ -249,7 +249,6 @@ export const generalEventsCopy: IPluginCopy = {
 	// the answer itself follows there once the work is done. Discord cuts the title at 45.
 	answerInChannel: {
 		noticeTitle: "📬 Your answer",
-		postsIn: (channelId: string) => `Your answer posts in <#${channelId}> in a moment.`,
 		// A press on someone else's confirm then act prompt, which only its asker may answer.
 		notYours: "This prompt belongs to the member who asked for it. Run the command yourself to get your own.",
 	},

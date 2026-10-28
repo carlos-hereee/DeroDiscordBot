@@ -26,6 +26,7 @@ export const gamesCopy = {
 	notices: {
 		miniGame: "🎲 Mini game",
 		hangman: "🪢 Hangman",
+		blackjack: "🃏 Blackjack",
 	},
 
 	// ── coin flip and dice roll ──

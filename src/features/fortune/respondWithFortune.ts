@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { AttachmentBuilder, type RepliableInteraction } from "discord.js";
 import { beginAnswerInPlace, beginChannelAnswer, type ChannelAnswer } from "@utils/answerInChannel.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showCooldownNotice } from "@utils/textModal.js";
 import { buildDeroImageAttachment } from "@base/copy/brand.js";
 import { rollFortune, fortuneLuck, EXPECTED_FORTUNE_LUCK, PITY_THRESHOLD } from "./rollFortune.js";
 import { recordFortuneReading } from "@features/ratings/luckStats.js";
@@ -41,7 +41,7 @@ export async function respondWithFortune(
 	// turns into a refusal. One indexed upsert fits Discord's three second window.
 	const claim = await claimFortuneSlot(interaction.guildId, interaction.user.id);
 	if (!claim.ok) {
-		await showErrorNotice(interaction, fortuneCopy.cooldownMessage(claim.readyAt));
+		await showCooldownNotice(interaction, { title: fortuneCopy.noticeTitle, message: fortuneCopy.cooldownMessage(claim.readyAt) });
 		return;
 	}
 	try {
@@ -60,8 +60,8 @@ export async function respondWithFortune(
 async function readFortune(interaction: RepliableInteraction, options: { question?: string | null; isPrivate?: boolean }): Promise<void> {
 	// Acknowledge within Discord's 3-second window BEFORE the DB read and the orb
 	// upload, either of which can exceed it (a cold Mongo query, a multi-MB gif).
-	// A public reading defers in place; a private one opens with the notice naming
-	// 💬dero-commands. Without this the interaction token expires mid-reply and
+	// A public reading defers in place; a private one is acknowledged quietly and
+	// posts in 💬dero-commands, pinging the member. Without this the interaction token expires mid-reply and
 	// Discord returns error 10062 (Unknown interaction).
 	const answer = options.isPrivate ? await beginChannelAnswer(interaction, "member") : await beginAnswerInPlace(interaction);
 
