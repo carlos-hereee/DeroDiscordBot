@@ -451,6 +451,8 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "sections: [\"This server is not set up yet.\"", kind: "state" },
 	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "Could not set up the announcements role", kind: "failure" },
 	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "Could not resolve your membership", kind: "failure" },
+	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "You're off the announcement ping list", kind: "state" },
+	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "You're on the announcement ping list", kind: "state" },
 	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "Could not update your notifications", kind: "failure" },
 
 	// ── renderer/renderAnalyticsSubcommand.ts ──

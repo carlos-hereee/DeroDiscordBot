@@ -332,15 +332,16 @@ async function runToggleNotificationRole(interaction: ButtonInteraction, guildId
 			return;
 		}
 
-		// Toggle: the member's new place on the list is the answer, not the button label (a
-		// shared button label cannot be per user). Work done is an answer, so it posts in
-		// 💬dero-commands and pings the member (owner rule 1, 2026-10 item 263 R3-11).
+		// Toggle: the member's new place on the list is said in a notice, not the button label
+		// (a shared button label cannot be per user). The owner reads it as the member's own
+		// state rather than an answer (2026-10 item 263, owner decision after Phase 1c), so it
+		// is a Power ups notice only they see and never a ping in 💬dero-commands.
 		if (member.roles.cache.has(role.id)) {
 			await member.roles.remove(role.id, "Announcement ping opt-out");
-			await answerInChannel(interaction, "member", { content: "🔕 You're off the announcement ping list." });
+			await showNotice(interaction, { title: getPluginCopy(null).notice.powerUps, sections: ["🔕 You're off the announcement ping list."] });
 		} else {
 			await member.roles.add(role.id, "Announcement ping opt-in");
-			await answerInChannel(interaction, "member", { content: "🔔 You're on the announcement ping list. Tap again to opt out." });
+			await showNotice(interaction, { title: getPluginCopy(null).notice.powerUps, sections: ["🔔 You're on the announcement ping list. Tap again to opt out."] });
 		}
 	} catch (err) {
 		console.error(`[powerup] toggle notifications role failed in guild ${guildId}`, err);
