@@ -84,7 +84,7 @@ beforeEach(() => {
 		allowedChannelIds: ["t1"],
 		allowedVoiceChannelIds: [],
 	});
-	mocks.getLevelingConfig.mockReset().mockResolvedValue({ settings: normalizeLevelingSettings({ curve: "linear", announceMode: "off" }), weekStart: "sunday" });
+	mocks.getLevelingConfig.mockReset().mockResolvedValue({ settings: normalizeLevelingSettings({ announceMode: "off" }), weekStart: "sunday" });
 });
 
 describe("the panel ids", () => {
@@ -181,10 +181,15 @@ describe("/server channels", () => {
 describe("/leveling and /server", () => {
 	it("preset leveling's switches and choices from the stored settings, run through the settings group", async () => {
 		const panel = await load("leveling");
-		expect(control(panel, "curve")).toMatchObject({ kind: "choice", current: "linear" });
+		expect(control(panel, "milestones")).toMatchObject({ kind: "choice", current: "prime" });
 		expect(control(panel, "announce")).toMatchObject({ kind: "choice", current: "off" });
-		const curve = control(panel, "curve");
-		expect(curve.kind === "choice" && curve.callsFor("flat").map((call) => call.path)).toEqual(["settings curve"]);
+		const milestones = control(panel, "milestones");
+		expect(milestones.kind === "choice" && milestones.callsFor("everyN").map((call) => call.path)).toEqual(["settings curve"]);
+	});
+
+	it("offers no curve preset, whatever curve the server's row stores", async () => {
+		const panel = await load("leveling");
+		expect(panel?.controls.map((entry) => entry.id)).not.toContain("curve");
 	});
 
 	it("runs the server switches through auto-heal and the leaderboard group", async () => {

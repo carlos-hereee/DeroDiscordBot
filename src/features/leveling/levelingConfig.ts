@@ -174,8 +174,16 @@ export function normalizeLevelingSettings(raw: unknown): LevelingSettings {
 		// Defaults TRUE here as well as in the schema, so a row whose subtree was
 		// somehow written as an empty object still earns. Leveling ships on.
 		enabled: bool(source.enabled, true),
-		curve: oneOf(source.curve, ["dero", "linear", "exponential", "flat"] as const, "dero"),
-		curveMultiplier: num(source.curveMultiplier, 1),
+		// ⚠️ THE ONE CURVE (2026-10 item 263 Phase 5). Every server levels on Dero's
+		// quadratic at multiplier 1 whatever the row stores, so a member's level is
+		// the same for the same XP in every server. Every curve reader gets its
+		// settings from this function, which is why the pin lives here and nowhere
+		// else. The stored leveling.curve and leveling.curveMultiplier stay in the
+		// schema, unread and unmigrated; to give a server its own curve back, unpin
+		// these two lines. Pinned, not read, so a hydrated Mongoose document and a
+		// plain object cannot disagree about it.
+		curve: "dero",
+		curveMultiplier: 1,
 		maxLevel: maxLevelRaw === null || maxLevelRaw === undefined ? null : num(maxLevelRaw, 0) || null,
 		milestoneMode: oneOf(source.milestoneMode, ["prime", "everyN"] as const, "prime"),
 		milestoneEveryN: Math.max(1, num(source.milestoneEveryN, 5)),

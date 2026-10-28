@@ -203,15 +203,15 @@ describe("⚠️ THE NEVER PING INVARIANT", () => {
 });
 
 describe("the two tiers of celebration", () => {
-	it("renders an ordinary level as a compact line with no embed and no art", async () => {
+	it("posts an ordinary level as a card embed with Dero's still, not a plain text line", async () => {
 		const { client, send } = harness();
 		await cross(client, TO_LEVEL_3, TO_LEVEL_4);
 		await _drainAnnouncerNow(CHANNEL_ID);
 
-		const payload = payloads(send)[0];
-		expect(payload.content).toContain("**level 4**");
-		expect(payload.embeds).toBeUndefined();
-		expect(payload.files).toBeUndefined();
+		const payload = payloads(send)[0] as unknown as { content?: string; embeds: Array<{ data: { description?: string } }>; files: unknown[] };
+		expect(payload.content).toBeUndefined();
+		expect(payload.embeds[0].data.description).toContain("**level 4**");
+		expect(payload.files).toHaveLength(1);
 	});
 
 	it("renders a PRIME level as a full card with art and a reaction", async () => {
@@ -265,14 +265,22 @@ describe("coalescing and the burst threshold", () => {
 		expect(_queuedChannels()).toEqual([CHANNEL_ID]);
 	});
 
-	it("groups several ordinary level ups into ONE message", async () => {
+	it("posts two or three ordinary level ups in one window as separate cards", async () => {
+		vi.spyOn(console, "warn").mockImplementation(() => undefined);
 		const { client, send } = harness();
-		await cross(client, TO_LEVEL_3, TO_LEVEL_4, "u1");
-		await cross(client, TO_LEVEL_3, TO_LEVEL_4, "u2");
+		for (const userId of ["u1", "u2", "u3"]) await cross(client, TO_LEVEL_3, TO_LEVEL_4, userId);
+		await _drainAnnouncerNow(CHANNEL_ID);
+
+		expect(send).toHaveBeenCalledTimes(3);
+		for (const payload of payloads(send)) expect(payload.allowedMentions).toEqual({ parse: [], roles: [], users: [] });
+	});
+
+	it("still coalesces four ordinary level ups, the threshold being a burst of MORE than three", async () => {
+		const { client, send } = harness();
+		for (const userId of ["u1", "u2", "u3", "u4"]) await cross(client, TO_LEVEL_3, TO_LEVEL_4, userId);
 		await _drainAnnouncerNow(CHANNEL_ID);
 
 		expect(send).toHaveBeenCalledTimes(1);
-		expect(String(payloads(send)[0].content).split("\n")).toHaveLength(2);
 	});
 
 	it("collapses a burst above the threshold into ONE combined message", async () => {
@@ -518,11 +526,20 @@ describe("the rendered cards and their fallbacks (2026-10 item 243 Phase 2)", ()
 		);
 	});
 
-	it("never renders a card for an ordinary level", async () => {
-		const { client } = harness();
+	it("renders the card for an ordinary level, with the ordinary treatment, no reaction and no ping", async () => {
+		const rendered = card("level-up-def.png");
+		mocks.renderLevelUpCard.mockResolvedValue(rendered);
+		const { client, send, react } = harness();
+
 		await cross(client, TO_LEVEL_3, TO_LEVEL_4);
 		await _drainAnnouncerNow(CHANNEL_ID);
-		expect(mocks.renderLevelUpCard).not.toHaveBeenCalled();
+
+		expect(mocks.renderLevelUpCard).toHaveBeenCalledWith(expect.objectContaining({ level: 4, milestone: false, displayName: "Silent" }));
+		const payload = payloads(send)[0] as unknown as CardPayload;
+		expect(payload.files).toEqual([rendered.attachment]);
+		expect(payload.embeds[0].data.image?.url).toBe(rendered.ref);
+		expect(payload.allowedMentions).toEqual({ parse: [], roles: [], users: [] });
+		expect(react).not.toHaveBeenCalled();
 	});
 
 	it("posts the unlock EMBED, with no files, when the unlock renderer answers null", async () => {

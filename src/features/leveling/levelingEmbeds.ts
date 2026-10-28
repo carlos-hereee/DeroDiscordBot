@@ -48,10 +48,10 @@ export function progressBar(current: number, total: number, segments = BAR_SEGME
 }
 
 // ── the level up card ───────────────────────────────────────────────────────
-// The PRIME MILESTONE treatment only. An ordinary level up is deliberately not
-// an embed at all, it is one compact line in the coalesced message, because an
-// embed per level up in a live guild is what trains a community to mute the
-// channel. The visible gap between the two is the mechanic.
+// The embed under every announced level up's card, and its text fallback when the
+// card cannot be drawn. A milestone wears the gold treatment and its footer; an
+// ordinary level wears the calm teal. A burst past the threshold skips this and
+// posts the combined message below instead.
 export interface LevelUpView {
 	// Already rendered by the announcer's template pass, so this builder never
 	// touches copyOverrides and stays free of a guild config dependency.

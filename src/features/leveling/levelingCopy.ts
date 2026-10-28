@@ -58,12 +58,11 @@ export const levelingCopy = {
 	// Defaults only. A guild that sets leveling.levelUp or leveling.milestone in
 	// copyOverrides replaces these entirely.
 	levelUp: {
-		// The ORDINARY level. Deliberately one compact line with no embed and no
-		// art: at the volume a live guild produces, an embed per level up is what
-		// trains a community to mute the announcements channel.
+		// The ORDINARY level, the card's description. It stays one short line because
+		// the card, not the sentence, carries the celebration.
 		defaultTemplate: "{user.mention} reached **level {user.level}**.",
 
-		// A PRIME level. This one earns the full card, so it can afford a sentence.
+		// A loud level (a prime, or every N). It can afford a sentence.
 		milestoneTemplate: "{user.mention} reached **level {user.level}**, a milestone. Dero salutes you.",
 
 		milestoneTitle: "A milestone level",
@@ -216,6 +215,7 @@ export const levelingCopy = {
 	cards: {
 		levelBadge: (level: number): string => `LEVEL ${level}`,
 		primeLevel: "PRIME LEVEL",
+		levelUp: "LEVEL UP",
 		milestoneLevel: "MILESTONE LEVEL",
 		rankOf: (rank: number, size: number): string => `#${rank.toLocaleString()} of ${size.toLocaleString()}`,
 		unranked: "Not ranked yet",

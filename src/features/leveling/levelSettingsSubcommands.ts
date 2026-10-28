@@ -87,22 +87,7 @@ export function addLevelSettingsSubcommands(group: SlashCommandSubcommandGroupBu
 		.addSubcommand((sub) =>
 			sub
 				.setName("curve")
-				.setDescription("Set how steeply levels get harder")
-				.addStringOption((option) =>
-					option
-						.setName("preset")
-						.setDescription("Which curve to use")
-						.setRequired(false)
-						.addChoices(
-							{ name: "Dero (the default, quadratic)", value: "dero" },
-							{ name: "Linear (gentler)", value: "linear" },
-							{ name: "Exponential (steeper)", value: "exponential" },
-							{ name: "Flat (every level costs the same)", value: "flat" }
-						)
-				)
-				.addNumberOption((option) =>
-					option.setName("multiplier").setDescription("Scale every level's cost. 1 is normal.").setRequired(false)
-				)
+				.setDescription("Set the highest reachable level and which levels get the loud celebration")
 				.addIntegerOption((option) =>
 					option.setName("max-level").setDescription("Highest reachable level. 0 means uncapped.").setRequired(false)
 				)
@@ -314,16 +299,6 @@ export async function runLevelSettings(interaction: RepliableInteraction, option
 		}
 
 		case "curve": {
-			const preset = options.getString("preset");
-			if (preset) patch["leveling.curve"] = preset;
-
-			const multiplier = options.getNumber("multiplier");
-			if (multiplier !== null) {
-				const clamped = clamp(multiplier, LIMITS.MIN_CURVE_MULTIPLIER, LIMITS.MAX_CURVE_MULTIPLIER);
-				patch["leveling.curveMultiplier"] = clamped;
-				if (clamped !== multiplier) notes.push(noteClamped("Curve multiplier", multiplier, clamped));
-			}
-
 			const maxLevel = options.getInteger("max-level");
 			if (maxLevel !== null) {
 				// 0 is the honest way to say "uncapped" through an integer option,
@@ -545,7 +520,7 @@ function buildPreview(
 
 	const lines = [
 		`**Status** ${settings.enabled ? "ON" : "OFF"}`,
-		`**Curve** ${settings.curve}, multiplier ${settings.curveMultiplier}${settings.maxLevel ? `, capped at level ${settings.maxLevel}` : ""}`,
+		`**Level cap** ${settings.maxLevel ? `level ${settings.maxLevel}` : "none"}`,
 		`**Milestones** ${settings.milestoneMode === "prime" ? "prime levels (2, 3, 5, 7, 11, ...)" : `every ${settings.milestoneEveryN} levels`}`,
 		"",
 		`**Messages** ${settings.message.enabled ? `${LEVELING.MESSAGE_XP} XP every ${settings.message.cooldownSeconds}s` : "off"}`,

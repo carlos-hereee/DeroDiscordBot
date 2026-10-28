@@ -92,7 +92,7 @@ const memberLevelSchema = new mongoose.Schema<IMemberLevel>(
 		// ⚠️ THE ONLY XP FIELD. `level` is deliberately NOT stored, it is DERIVED
 		// from totalXp through @features/leveling/levelCurve.ts on every read. A
 		// stored level is a second source of truth that drifts the instant an admin
-		// runs /leveling xp set or the guild changes its curve preset or its multiplier, and
+		// runs /leveling xp set or the level curve ever changes, and
 		// the drift is silent because nothing recomputes it.
 		totalXp: { type: Number, default: 0 },
 

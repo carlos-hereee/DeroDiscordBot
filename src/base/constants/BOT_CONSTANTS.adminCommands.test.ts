@@ -105,7 +105,7 @@ const MOVED_PATHS: ReadonlyArray<{ from: string; to: string; options: readonly s
 	{ from: "setup-level-system show", to: "leveling settings show", options: [] },
 	{ from: "setup-level-system toggle", to: "leveling settings toggle", options: ["enabled"] },
 	{ from: "setup-level-system rates", to: "leveling settings rates", options: ["message-cooldown", "reaction-cooldown", "reaction-awards", "voice-per-minute"] },
-	{ from: "setup-level-system curve", to: "leveling settings curve", options: ["preset", "multiplier", "max-level", "milestones", "every-n"] },
+	{ from: "setup-level-system curve", to: "leveling settings curve", options: ["max-level", "milestones", "every-n"] },
 	{ from: "setup-level-system announce", to: "leveling settings announce", options: ["mode", "channel", "emoji"] },
 	{ from: "setup-level-system restrictions", to: "leveling settings restrictions", options: ["mode", "add-channel", "remove-channel", "add-role", "remove-role"] },
 	{ from: "setup-level-system voice", to: "leveling settings voice", options: ["approve", "unapprove", "min-members", "decay-after", "decay-factor"] },

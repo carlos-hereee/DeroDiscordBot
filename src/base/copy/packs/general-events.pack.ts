@@ -442,7 +442,7 @@ export const generalEventsCopy: IPluginCopy = {
 						"`/server`",
 						"Channel auto heal, leaderboard tracking and the day the leaderboard week starts.",
 						"`/leveling settings`",
-						"Leveling: rates, the curve, where level ups post, which channels count, rewards and boosts.",
+						"Leveling: rates, the level cap, where level ups post, which channels count, rewards and boosts.",
 						"`/leveling xp`",
 						"Correct a member's XP or level, reset a member or the server, or export it all.",
 						"`/dero-config`",

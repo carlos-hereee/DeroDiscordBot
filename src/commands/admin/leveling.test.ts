@@ -120,6 +120,12 @@ describe("/leveling settings says what it does NOT do", () => {
 		);
 	});
 
+	it("offers its curve subcommand no preset and no multiplier, since every server is on the Dero curve", () => {
+		const subcommand = ((setupData.toJSON() as BuilderJSON).options ?? []).find((option) => option.name === "curve");
+		const names = (subcommand?.options ?? []).map((option) => option.name).sort();
+		expect(names).toEqual(["every-n", "max-level", "milestones"]);
+	});
+
 	it("offers the toggle, which is the no-deploy rollback path", () => {
 		// Leveling ships ON in every guild. This subcommand is the cheapest rung of
 		// the rollback ladder and the one the admin notice points at by name.

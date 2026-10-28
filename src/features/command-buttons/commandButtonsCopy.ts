@@ -70,7 +70,6 @@ export const commandButtonsCopy = {
 			stackRewardsHint: "Off keeps only the highest reward a member earned",
 			stackMultipliers: "Combine XP multipliers",
 			stackMultipliersHint: "Off pays only the highest multiplier that applies",
-			curve: "Level curve",
 			milestones: "Milestone levels",
 			announce: "Where level ups post",
 			reactionAwards: "Who a reaction pays",

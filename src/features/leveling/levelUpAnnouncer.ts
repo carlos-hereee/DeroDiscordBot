@@ -24,8 +24,9 @@ import { avatarRequestFor, canvasColor, isRenderPayload, withRenderFallback } fr
 // says it without ever notifying anybody.
 //
 // What:  ① derive old and new level from the two totals, ② claim the
-//        announcement atomically, ③ coalesce a burst into one message, ④ render
-//        an ordinary level as a compact line and a PRIME level as a full card.
+//        announcement atomically, ③ coalesce a burst of more than
+//        ANNOUNCE_BURST_THRESHOLD into one message, ④ post every other announced
+//        level up as its own drawn card (2026-10 item 263 Phase 5).
 // Who:   xpWriter's flush for buffered message xp, and awardXp directly for
 //        every write-through source (games, voice, admin).
 // When:  once per member per level, guaranteed by the claim rather than by
@@ -215,33 +216,22 @@ async function drain(channelId: string): Promise<void> {
 			return;
 		}
 
-		const milestones = queue.events.filter((event) => event.milestone);
-		const ordinary = queue.events.filter((event) => !event.milestone);
-
 		// Above the burst threshold everything collapses into ONE message. This
-		// solves the "trains your community to mute the channel" complaint and
-		// Discord's per channel 429 risk with a single mechanism.
+		// is what keeps a busy channel from going unreadable and keeps the bot
+		// under Discord's per channel 429 limit now that every level up is a card.
 		if (queue.events.length > BOT_CONSTANTS.LEVELING.ANNOUNCE_BURST_THRESHOLD) {
-			await sendCombined(queue, settings?.reactionEmoji ?? "🎉", milestones.length > 0);
+			await sendCombined(
+				queue,
+				settings?.reactionEmoji ?? "🎉",
+				queue.events.some((event) => event.milestone)
+			);
 			return;
 		}
 
-		// Ordinary levels ride together as compact lines with no embed and no art.
-		// The visible gap between this and the milestone card below IS the
-		// mechanic: at the volume a live guild produces, an embed per level up is
-		// what trains a community to mute the channel.
-		if (ordinary.length > 0) {
-			assertNotPingable();
-			await queue.channel.send({
-				content: ordinary.map((event) => renderLine(event, queue, context ?? null)).join("\n"),
-				allowedMentions: NO_MENTIONS,
-			});
-		}
-
-		// A prime level gets its own card, every time, so it never reads as one
-		// entry in a list.
-		for (const event of milestones) {
-			await sendMilestoneCard(queue, event, settings?.reactionEmoji ?? "🎉", context ?? null);
+		// Three or fewer in one window: each level up gets its own card, in the
+		// order they were earned, so none reads as one entry in a list.
+		for (const event of queue.events) {
+			await sendLevelUpCard(queue, event, settings?.reactionEmoji ?? "🎉", context ?? null);
 		}
 	} catch (error) {
 		console.error(LOG_MESSAGES.leveling.announceFailed(queue.channel.guildId), error);
@@ -262,7 +252,10 @@ async function sendCombined(queue: ChannelQueue, reactionEmoji: string, anyMiles
 	if (anyMilestone) await addReaction(message, reactionEmoji, queue.channel.guildId);
 }
 
-async function sendMilestoneCard(
+// One announced level up as its drawn card, a milestone or not. The card is the
+// same either way; only a milestone gets the congratulations reaction, so the
+// loud levels still stand out in a channel that now shows a card for every level.
+async function sendLevelUpCard(
 	queue: ChannelQueue,
 	event: QueuedLevelUp,
 	reactionEmoji: string,
@@ -273,7 +266,7 @@ async function sendMilestoneCard(
 	const view: LevelUpView = {
 		description: renderLine(event, queue, context),
 		level: event.level,
-		milestone: true,
+		milestone: event.milestone,
 		imageRef: DERO_IMAGE_REF,
 		displayName: member?.displayName ?? event.username,
 		avatar: member ? avatarRequestFor(member.user, LEVEL_UP_AVATAR_SIZE) : null,
@@ -290,6 +283,8 @@ async function sendMilestoneCard(
 			: { embeds: [card], files: [buildDeroImageAttachment()] }),
 		allowedMentions: NO_MENTIONS,
 	});
+
+	if (!event.milestone) return;
 
 	// ⚠️ The reaction goes on the BOT'S OWN post, never on the member's message.
 	// A level up can come from a reaction or from a voice sweep, where there is no

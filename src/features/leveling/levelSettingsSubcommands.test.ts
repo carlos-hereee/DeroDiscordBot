@@ -41,9 +41,9 @@ beforeEach(() => {
 describe("/leveling settings admin log", () => {
 	it("logs one line per setting the run wrote", async () => {
 		const ran = interaction();
-		await run(ran, reader("curve", { preset: { kind: "string", value: "flat" }, milestones: { kind: "string", value: "everyN" } }));
+		await run(ran, reader("curve", { "max-level": { kind: "number", value: 50 }, milestones: { kind: "string", value: "everyN" } }));
 		expect(mocks.emitFor.mock.calls.map((call) => [call[2], call[3]])).toEqual([
-			["config.change", { subject: "leveling curve", detail: "set to flat" }],
+			["config.change", { subject: "leveling maxLevel", detail: "set to 50" }],
 			["config.change", { subject: "leveling milestoneMode", detail: "set to everyN" }],
 		]);
 	});

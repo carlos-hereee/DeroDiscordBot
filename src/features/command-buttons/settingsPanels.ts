@@ -240,8 +240,8 @@ const deroConfigPanel: PanelDefinition = {
 // ── /leveling settings ───────────────────────────────────────────────────────
 
 // One fixed choice of a leveling settings subcommand, as a single select. Each change is its
-// own run of that subcommand, so two choices on one subcommand (the curve's preset
-// and its milestones) are two runs, each saving only its own option.
+// own run of that subcommand, so two choices on one subcommand are two runs, each
+// saving only its own option.
 function levelingChoice(id: string, path: string, option: string, label: string, current: string): PanelControl {
 	const field = fieldOf(levelingCommand, path, option);
 	return {
@@ -281,7 +281,6 @@ const levelingPanel: PanelDefinition = {
 		];
 		const controls: PanelControl[] = [
 			{ id: "switches", kind: "switches", label: copy.switchesLabel, description: copy.switchesHint, switches },
-			levelingChoice("curve", settingsPath("curve"), "preset", copy.leveling.curve, settings.curve),
 			levelingChoice("milestones", settingsPath("curve"), "milestones", copy.leveling.milestones, settings.milestoneMode),
 			levelingChoice("announce", settingsPath("announce"), "mode", copy.leveling.announce, settings.announceMode),
 			levelingChoice("reaction-awards", settingsPath("rates"), "reaction-awards", copy.leveling.reactionAwards, settings.reaction.awards),

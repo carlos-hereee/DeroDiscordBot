@@ -22,19 +22,18 @@ import type { LevelUpView } from "./levelingEmbeds.js";
 import { isMilestone } from "./primeLevels.js";
 
 // ── levelUpRenderer ────────────────────────────────────────────────────────
-// The milestone level up as a card: Dero's pose, the level in large type, a tag
-// saying what kind of milestone it is, and the member's face and name. A PRIME
-// level is a short looping GIF (the glow breathes and sparks circle Dero); a
-// milestone that is not prime (a guild on the "every N levels" mode) is a still
-// PNG. The ordinary level up never reaches here: it stays one compact line.
-// levelUpAnnouncer's milestone card calls renderLevelUpCard through
-// withRenderFallback, and the embed it wraps carries the rendered image.
+// The level up as a card: Dero's pose, the level in large type, a tag saying what
+// kind of level it is, and the member's face and name. A PRIME level is a short
+// looping GIF (the glow breathes and sparks circle Dero); every other level, a
+// loud one on the "every N levels" mode or an ordinary one, is a still PNG.
+// levelUpAnnouncer calls renderLevelUpCard through withRenderFallback for every
+// announced level up, and the embed it wraps carries the rendered image.
 
 /** The avatar size the level up card requests. The face draws at 72 pixels. */
 export const LEVEL_UP_AVATAR_SIZE = 128;
 
 // Bump whenever the drawing changes, or members keep seeing cached cards.
-const LEVEL_UP_CARD_VERSION = 1;
+const LEVEL_UP_CARD_VERSION = 2;
 const CARD_WIDTH = 900;
 const CARD_HEIGHT = 360;
 const DERO_BOX: Rect = { x: 30, y: 20, width: 320, height: 320 };
@@ -57,19 +56,22 @@ const SPARK_ORBIT = { radiusX: 175, radiusY: 150 };
 interface LevelUpCardInput {
 	level: number;
 	prime: boolean;
+	// Loud under the guild's milestone mode. An ordinary level shares the card but
+	// wears the calm level up color and tag instead of the milestone gold.
+	milestone: boolean;
 	displayName: string;
 	avatar: AvatarRequest | null;
 }
 
 /**
- * The milestone level up card, or null when the embed with Dero's still art
- * should post. A prime level is tried as a GIF first and falls back to the PNG
+ * The level up card, or null when the embed with Dero's still art should post. A prime level is tried as a GIF first and falls back to the PNG
  * if the GIF cannot be made, so an encoder failure costs the motion, not the card.
  */
 export async function renderLevelUpCard(view: LevelUpView): Promise<RenderPayload | null> {
 	const input: LevelUpCardInput = {
 		level: view.level,
 		prime: isMilestone(view.level),
+		milestone: view.milestone,
 		displayName: view.displayName ?? "",
 		avatar: view.avatar ?? null,
 	};
@@ -94,7 +96,8 @@ function cardRequest(input: LevelUpCardInput): CardRenderRequest<LevelUpCardInpu
 async function drawLevelUpCard(context: SKRSContext2D, input: LevelUpCardInput, frame: CardFrame): Promise<DrawOutcome> {
 	const phase = (frame.index / frame.count) * Math.PI * 2;
 	const glow = GLOW_RADIUS * (1 + GLOW_PULSE * Math.sin(phase));
-	drawCardBackground(context, COLORS.LEVEL_MILESTONE, DERO_CENTER.x, DERO_CENTER.y, glow);
+	const accent = input.milestone ? COLORS.LEVEL_MILESTONE : COLORS.LEVEL_UP;
+	drawCardBackground(context, accent, DERO_CENTER.x, DERO_CENTER.y, glow);
 	if (input.prime) drawSparks(context, phase);
 
 	const deroStandIn = await drawDeroPose(context, input.prime ? "prime" : "levelUp", DERO_BOX);
@@ -103,8 +106,8 @@ async function drawLevelUpCard(context: SKRSContext2D, input: LevelUpCardInput, 
 		y: 56,
 		width: 250,
 		height: 40,
-		fill: canvasColor(COLORS.LEVEL_MILESTONE),
-		label: input.prime ? levelingCopy.cards.primeLevel : levelingCopy.cards.milestoneLevel,
+		fill: canvasColor(accent),
+		label: levelTag(input),
 	});
 	drawText(context, levelingCopy.cards.levelBadge(input.level), {
 		x: TEXT_X,
@@ -128,6 +131,11 @@ async function drawLevelUpCard(context: SKRSContext2D, input: LevelUpCardInput, 
 	});
 
 	return deroStandIn || faceStandIn ? { cacheable: false } : undefined;
+}
+
+function levelTag(input: LevelUpCardInput): string {
+	if (input.prime) return levelingCopy.cards.primeLevel;
+	return input.milestone ? levelingCopy.cards.milestoneLevel : levelingCopy.cards.levelUp;
 }
 
 // Sparks orbit Dero on an ellipse, each a step further round per frame, so the

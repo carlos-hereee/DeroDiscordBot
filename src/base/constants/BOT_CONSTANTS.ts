@@ -638,8 +638,6 @@ export const BOT_CONSTANTS = {
 			MIN_COOLDOWN_SECONDS: 5,
 			MIN_XP: 1,
 			MAX_XP: 1000,
-			MIN_CURVE_MULTIPLIER: 0.1,
-			MAX_CURVE_MULTIPLIER: 100,
 			MIN_VOICE_MEMBERS: 1,
 			MAX_VOICE_MEMBERS: 25,
 			// A level an admin may write with /leveling xp set-level. Capped well inside
