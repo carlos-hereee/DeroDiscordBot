@@ -3,7 +3,7 @@ import { TextChannel, type Client, type Guild } from "discord.js";
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 
-import { challengeResultLine, closeChallengeCard, isChallengeChannel, resolveChallengesChannel } from "./challengeCard.js";
+import { challengeCardLink, challengeResultLine, closeChallengeCard, isChallengeChannel, resolveChallengesChannel } from "./challengeCard.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -80,6 +80,13 @@ describe("resolveChallengesChannel", () => {
 		expect(channel?.id).toBe("challenges-1");
 	});
 
+	// Owner decision 8 (2026-10 item 263 R3-5): the channel is the game's AND the match's.
+	it.each(["holdem", "battleship", "monopoly"] as const)("posts a casual %s card in ⚔️challenges", async (game) => {
+		configMock.findByGuildId.mockResolvedValue(BOTH);
+		const channel = await resolveChallengesChannel(guildWith({ "challenges-1": textChannel("challenges-1"), "rated-1": textChannel("rated-1") }), game, true);
+		expect(channel?.id).toBe("challenges-1");
+	});
+
 	// A guild whose boot repair has not built 🏆rated-challenges yet still takes rated challenges.
 	it("falls back to ⚔️challenges for a rated game while the guild has no 🏆rated-challenges", async () => {
 		configMock.findByGuildId.mockResolvedValue({ arcadeChallengesChannelId: "challenges-1", arcadeRatedChallengesChannelId: null });
@@ -97,5 +104,20 @@ describe("isChallengeChannel", () => {
 		await expect(isChallengeChannel("guild-1", "rated-1")).resolves.toBe(true);
 		await expect(isChallengeChannel("guild-1", "games-1")).resolves.toBe(false);
 		await expect(isChallengeChannel("guild-1", null)).resolves.toBe(false);
+	});
+});
+
+// ── the held card's link (2026-10 item 263 R3-9) ──
+describe("challengeCardLink", () => {
+	const ids = { arcadeChallengesChannelId: "challenges-1", arcadeRatedChallengesChannelId: "rated-1" };
+
+	it("links a card in the channel its game and match post in", () => {
+		expect(challengeCardLink(ids, { guildId: "guild-1", game: "holdem", casual: false, boardMessageId: "card-1" })).toBe("https://discord.com/channels/guild-1/rated-1/card-1");
+		expect(challengeCardLink(ids, { guildId: "guild-1", game: "holdem", casual: true, boardMessageId: "card-1" })).toBe("https://discord.com/channels/guild-1/challenges-1/card-1");
+		expect(challengeCardLink(ids, { guildId: "guild-1", game: "rps", casual: false, boardMessageId: "card-1" })).toBe("https://discord.com/channels/guild-1/challenges-1/card-1");
+	});
+
+	it("links nothing for a draft with no card", () => {
+		expect(challengeCardLink(ids, { guildId: "guild-1", game: "holdem", casual: false, boardMessageId: null })).toBeNull();
 	});
 });

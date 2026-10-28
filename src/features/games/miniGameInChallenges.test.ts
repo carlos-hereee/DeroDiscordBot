@@ -8,19 +8,19 @@ import type { ChatInputCommandInteraction } from "discord.js";
 // apart from it (in 💬dero-commands since 2026-10 item 257 Phase 5), and the channel itself is never sent anything; typed anywhere else, the
 // router answers nothing and the subcommand's own handler runs as before.
 vi.mock("@features/game-rooms/challengeCard.js", () => ({ isChallengeChannel: vi.fn() }));
-vi.mock("@features/game-rooms/challengeBoard.js", () => ({ startChallengeDraft: vi.fn() }));
+vi.mock("@features/game-rooms/challengeBoard.js", () => ({ offerChallengeDraft: vi.fn() }));
 vi.mock("@features/game-rooms/soloRooms.js", () => ({ soloLuckSlugFor: (game: string) => `solo-${game}` }));
 vi.mock("./arcadeHost.js", () => ({ openSoloRoomForMember: vi.fn() }));
 vi.mock("./fortuneHandler.js", () => ({ runFortune: vi.fn() }));
 
 import { routeMiniGameInChallenges } from "./miniGameInChallenges.js";
 import { isChallengeChannel } from "@features/game-rooms/challengeCard.js";
-import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
+import { offerChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 import { openSoloRoomForMember } from "./arcadeHost.js";
 import { runFortune } from "./fortuneHandler.js";
 
 const channelMock = isChallengeChannel as unknown as ReturnType<typeof vi.fn>;
-const draftMock = startChallengeDraft as unknown as ReturnType<typeof vi.fn>;
+const draftMock = offerChallengeDraft as unknown as ReturnType<typeof vi.fn>;
 const soloMock = openSoloRoomForMember as unknown as ReturnType<typeof vi.fn>;
 const fortuneMock = runFortune as unknown as ReturnType<typeof vi.fn>;
 

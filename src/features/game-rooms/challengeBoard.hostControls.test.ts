@@ -16,7 +16,8 @@ vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedV
 vi.mock("./challengeCardRenderer.js", () => ({ renderChallengeCard: vi.fn().mockResolvedValue(null), challengeCardView: vi.fn().mockResolvedValue({}) }));
 
 import { chooseVisibility, handleInviteSelect, handleOpponentSelect, joinChallenge, openInvitePicker } from "./challengeBoard.js";
-import { openerCardRows, type OpenerCardState } from "./challengeBoardEmbeds.js";
+import { buildSettingsModal, defaultSettings, type SettingsGame } from "./challengeSettings.js";
+import type { ChallengeReach } from "./roomTypes.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { playerRatingStore } from "@db/stores/playerRatingStore.js";
@@ -116,20 +117,21 @@ beforeEach(() => {
 });
 
 describe("the server's challenge reach", () => {
-	const firstStep = (allowPublic?: boolean): OpenerCardState => ({ game: "holdem", hostId: HOST, visibility: null, pool: [], ...(allowPublic === undefined ? {} : { allowPublic }) });
-	const visibilityChoices = (state: OpenerCardState): string[] =>
-		openerCardRows("room-1", state)
-			.flatMap((row) => row.toJSON().components)
-			.map((component) => ("custom_id" in component ? component.custom_id : ""))
-			.filter((id) => id.includes(":vis:"));
+	// The creation modal's Who can join options (2026-10 item 263 Phase 2a), the card's old first step.
+	const joinValues = (reach: ChallengeReach, game: SettingsGame = "holdem"): string[] => {
+		const context = { game, reach, botsAllowed: true, hasRatedChannel: true };
+		const { modal } = buildSettingsModal(context, { customId: "gameroom:newok:holdem", mode: { kind: "create" }, values: defaultSettings(context) });
+		const field = (modal.toJSON().components as Array<{ component?: { custom_id?: string; options?: Array<{ value: string }> } }>).find((entry) => entry.component?.custom_id === "join");
+		return field?.component?.options?.map((option) => option.value) ?? [];
+	};
 
-	it("offers Invite only and Open to all at Server and Network reach", () => {
-		expect(visibilityChoices(firstStep(true))).toEqual(["gameroom:vis:room-1:invite", "gameroom:vis:room-1:public"]);
-		expect(visibilityChoices(firstStep())).toEqual(["gameroom:vis:room-1:invite", "gameroom:vis:room-1:public"]);
+	it("offers Invite only and Open to all, approving or not, at Server reach", () => {
+		expect(joinValues("server")).toEqual(["invite", "public", "approve"]);
+		expect(joinValues("network", "monopoly")).toEqual(["invite", "public", "approve"]);
 	});
 
 	it("offers Invite only alone at Invite only reach", () => {
-		expect(visibilityChoices(firstStep(false))).toEqual(["gameroom:vis:room-1:invite"]);
+		expect(joinValues("invite-only")).toEqual(["invite"]);
 	});
 
 	it("refuses Open to all server side at Invite only reach, writing nothing, even from a stale card", async () => {

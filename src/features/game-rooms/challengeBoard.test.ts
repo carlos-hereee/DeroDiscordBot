@@ -505,51 +505,57 @@ describe("the opener card's picture", () => {
 	});
 });
 
-// ── the per game start asks first, and the one room per host refusal offers its fix ──
-// 2026-10 item 257, owner items 12 and 15. The press writes nothing; the confirm's Submit
-// closes the open draft it named (never a running match) and then posts the new card.
+// ── the per game start opens the creation modal, and a held draft folds into it ──
+// 2026-10 item 257, owner items 12 and 15, and 2026-10 item 263 Phase 2a (R3-9, R3-13). The
+// press writes nothing; the modal's Submit closes the held draft it named (never a running
+// match) and then posts the new card.
 describe("starting a challenge from a game button", () => {
 	const members = makeMembers([{ id: HOST, bot: false, name: "Host" }]);
-	type ConfirmReply = { content: string; components?: Array<{ components: Array<{ data: { custom_id: string } }> }> };
-	const replyOf = (interaction: ButtonInteraction): ConfirmReply => (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as ConfirmReply;
-	const confirmIdOf = (interaction: ButtonInteraction): string | undefined => replyOf(interaction).components?.[0]?.components[0]?.data.custom_id;
+	type ShownModal = { toJSON: () => { custom_id: string; components: Array<{ type: number; content?: string }> } };
+	const withModal = (interaction: ButtonInteraction): ButtonInteraction & { showModal: ReturnType<typeof vi.fn> } =>
+		Object.assign(interaction, { showModal: vi.fn().mockResolvedValue(undefined) }) as ButtonInteraction & { showModal: ReturnType<typeof vi.fn> };
+	const modalOf = (interaction: { showModal: ReturnType<typeof vi.fn> }) => (interaction.showModal.mock.calls[0][0] as ShownModal).toJSON();
+	const replyOf = (interaction: ButtonInteraction): { content: string } => (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
 	const markArchived = () => (gameRoomStore as unknown as { markArchived: ReturnType<typeof vi.fn> }).markArchived;
+	const asSubmit = (interaction: ButtonInteraction) => Object.assign(interaction, { isModalSubmit: () => false });
 
-	it("asks first and posts nothing on the press", async () => {
+	it("opens the creation modal and posts nothing on the press", async () => {
 		storeMock.findOpenByHost.mockResolvedValue(null);
-		const interaction = makeButton(HOST, members);
+		const interaction = withModal(makeButton(HOST, members));
 
 		await offerChallengeDraft(interaction, "rps");
 
-		expect(confirmIdOf(interaction)).toBe("gameroom:newok:rps");
+		expect(modalOf(interaction).custom_id).toBe("gameroom:newok:rps");
 		expect(storeMock.create).not.toHaveBeenCalled();
 	});
 
-	it("offers to close an open draft, naming that draft in the confirm, and closes nothing yet", async () => {
+	it("offers to close an open draft inside the modal, naming that draft, and closes nothing yet", async () => {
 		storeMock.findOpenByHost.mockResolvedValue(makeRoom({ roomId: "old-room", status: "draft" }));
-		const interaction = makeButton(HOST, members);
+		const interaction = withModal(makeButton(HOST, members));
 
 		await offerChallengeDraft(interaction, "rps");
 
-		expect(replyOf(interaction).content).toContain(gameRoomsCopy.confirms.replaceDraft);
-		expect(confirmIdOf(interaction)).toBe("gameroom:newok:rps:old-room");
+		const modal = modalOf(interaction);
+		expect(modal.custom_id).toBe("gameroom:newok:rps:old-room");
+		expect(JSON.stringify(modal.components)).toContain("You already have a challenge open");
 		expect(markArchived()).not.toHaveBeenCalled();
 	});
 
 	it("never offers to close a match in play, and says where it is", async () => {
 		storeMock.findOpenByHost.mockResolvedValue(makeRoom({ roomId: "live-room", status: "playing", channelId: "ch-live" }));
-		const interaction = makeButton(HOST, members);
+		const interaction = withModal(makeButton(HOST, members));
 
 		await offerChallengeDraft(interaction, "rps");
 
-		expect(replyOf(interaction).content).toBe(gameRoomsCopy.confirms.matchInPlay("ch-live"));
-		expect(confirmIdOf(interaction)).toBeUndefined();
+		expect(interaction.showModal).toHaveBeenCalledOnce();
+		expect(JSON.stringify(modalOf(interaction))).toContain(gameRoomsCopy.confirms.matchInPlay("ch-live"));
+		expect(modalOf(interaction).custom_id.startsWith("notice:")).toBe(true);
 	});
 
 	it("closes the named draft on Submit, before it opens the new challenge", async () => {
 		storeMock.findByRoomId.mockResolvedValue(makeRoom({ roomId: "old-room", status: "draft" }));
 		storeMock.findOpenByHost.mockResolvedValue(null);
-		const interaction = makeButton(HOST, members);
+		const interaction = asSubmit(makeButton(HOST, members));
 		// No challenges channel, so the new card stops at its own honest refusal; this case
 		// is about the order of the close and the open.
 		Object.assign(interaction.guild as object, { channels: { cache: { find: () => undefined }, fetch: vi.fn(async () => null) } });
@@ -564,12 +570,14 @@ describe("starting a challenge from a game button", () => {
 		const live = makeRoom({ roomId: "old-room", status: "playing", channelId: "ch-live" });
 		storeMock.findByRoomId.mockResolvedValue(live);
 		storeMock.findOpenByHost.mockResolvedValue(live);
-		const interaction = makeButton(HOST, members);
+		const interaction = asSubmit(makeButton(HOST, members));
 
 		await confirmChallengeDraft(interaction, "rps", "old-room");
 
 		expect(markArchived()).not.toHaveBeenCalled();
 		expect(storeMock.create).not.toHaveBeenCalled();
-		expect(replyOf(interaction).content).toBe(gameRoomsCopy.confirms.matchInPlay("ch-live"));
+		const followUp = (interaction as unknown as { followUp?: ReturnType<typeof vi.fn> }).followUp;
+		const answer = (followUp?.mock.calls[0]?.[0] ?? replyOf(interaction)) as { content: string };
+		expect(answer.content).toBe(gameRoomsCopy.errors.alreadyHosting("ch-live"));
 	});
 });

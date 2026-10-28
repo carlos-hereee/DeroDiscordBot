@@ -1,6 +1,7 @@
 import {
 	ActionRowBuilder,
 	ChannelType,
+	MessageFlags,
 	StringSelectMenuBuilder,
 	TextChannel,
 	type ButtonInteraction,
@@ -32,6 +33,7 @@ import {
 	openSoloRoom,
 	readPrivateQuotaStatus,
 	soloLuckSlugFor,
+	type SoloOpenResult,
 	startBlackjackRoomBoard,
 	startSoloBlackjackBoard,
 } from "./soloRooms.js";
@@ -51,10 +53,32 @@ import {
 } from "./challengeBoardEmbeds.js";
 import { isSoloRematchGame, offersReferee, refereeOn, type GameSlug, type RoomVisibility } from "./roomTypes.js";
 import { effectiveSpectatorMode } from "./roomPermissions.js";
-import { cardStateFor, editOpenerCard, refreshCard, resolveChallengesChannel } from "./challengeCard.js";
-import { isWithinReach, readChallengeReach } from "./challengeReach.js";
+import { cardStateFor, challengeCardLink, editOpenerCard, readChallengeChannelIds, refreshCard, resolveChallengesChannel, type ChallengeChannelIds } from "./challengeCard.js";
+import { asChallengeReach, isWithinReach, readChallengeReach } from "./challengeReach.js";
 import { isKicked, judgeJoin } from "./joinGate.js";
 import { buyInModal, chargeJoiner, draftBuyInOf, isChipDraft, isValidDraftBuyIn, refundAllJoiners, refundJoiners, refundOpenedSeats, settleDraftBuyIns, submittedBuyIn } from "./holdemDraftBuyIn.js";
+import {
+	bandOfMatch,
+	buildSettingsModal,
+	defaultSettings,
+	isSettingsGame,
+	joinOfRoom,
+	matchOfRoom,
+	readSettingsAnswers,
+	settingFieldsFor,
+	settingsModalFields,
+	settingsOfRoom,
+	type ChallengeSettings,
+	type JoinChoice,
+	type SettingField,
+	type SettingsContext,
+	type SettingsGame,
+	type SettingsMode,
+} from "./challengeSettings.js";
+import { applyApproval, applyRatingBand, applySpectatorMode } from "./hostControls.js";
+import { parseChipAmount } from "@features/economy/chipWallet.js";
+import { isRatedGame } from "@features/ratings/ratingEngine.js";
+import type { SoloLuckGame } from "@features/games/soloLuck.js";
 import { consentPrompt, isGuildBanned, isUserBanned, readNetworkGuild } from "./networkRules.js";
 import { hasNetworkConsent } from "./networkConsent.js";
 import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
@@ -64,7 +88,17 @@ import { botSeatIdsFor, botsAllowedIn, casualBotSeats, maxBotSeats, takesBots } 
 import { adminLog } from "@features/setup/adminLog.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { answerInChannel, beginChannelAnswer, type PendingChannelAnswer } from "@utils/answerInChannel.js";
-import { acknowledgeTextModal, showConfirm, showEmbedNotice, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
+import {
+	acknowledgeConfirm,
+	acknowledgeTextModal,
+	confirmFallback,
+	showConfirm,
+	showEmbedNotice,
+	showModalOrReply,
+	showNotice,
+	type ConfirmInteraction,
+	type ModalOpeningInteraction,
+} from "@utils/textModal.js";
 
 // The host controls' words are shared by every pack (2026-10 item 244 Phase 4), so
 // the default pack is the right one for every guild.
@@ -73,13 +107,15 @@ const hostWords = rokCommanderCopy.arcadeHostControls;
 const networkWords = rokCommanderCopy.arcadeNetwork;
 
 // ── challengeBoard ───────────────────────────────────────────────────
-// What:  the challenge flow: start a challenge (its card in ⚔️challenges, or in
-//        🏆rated-challenges for a rated game, 2026-10 item 254, Arcade 5), choose who can
-//        see it and who may watch, gather the people who want in, then hand the result to
+// What:  the challenge flow: start a challenge from its creation modal, whose choices land
+//        on the draft through the card's own choice functions (2026-10 item 263 Phase 2a),
+//        post its card already configured (in ⚔️challenges, or in 🏆rated-challenges for a
+//        rated game's rated match), gather the people who want in, then hand the result to
 //        RoomProvisioner. Nothing is played on a card: every match, a round against Dero
 //        included, plays in a room (Arcade 1).
-// Who:   the board's own buttons, and the /mini-game two-player subcommands, which
-//        route here rather than keeping a second way to start a match.
+// Who:   the board's own buttons, the 🎉party-games and 🕹️games table starts, and the
+//        /mini-game subcommands that post a card, which route here rather than keeping a
+//        second way to start a match.
 // When:  from the first press to the moment the room's channel exists.
 // Where: the draft GameRoom row IS the state. Nothing about a challenge lives in
 //        memory, which is what makes a challenge survive the Railway deploy that
@@ -110,76 +146,119 @@ export async function refreshDraftCard(guild: Guild, room: IGameRoom): Promise<v
 	await refreshCard(guild, room, cardStateFor(room, { visibility: room.visibility, pool: room.spectatorIds ?? [] }));
 }
 
-// ── start a challenge ─────────────────────────────────────────────────
-// Reached from the board's per-game buttons AND from /mini-game, so the two cannot
-// drift into different rules about who may start what. Returns the draft row when one
-// was created, or null when the press was refused (the refusal has already replied).
-export async function startChallengeDraft(
-	interaction: RepliableInteraction,
-	game: GameSlug
-): Promise<IGameRoom | null> {
-	const guild = interaction.guild;
-	if (!guild || !interaction.guildId) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.outsideGuild] });
-		return null;
-	}
+// ── a card choice, applied ────────────────────────────────────────────
+/**
+ * What one of the card's choice functions did to a draft: the row it wrote, or why it
+ * refused (the caller says it: a notice for a press, a note on the card for the creation
+ * modal). `needsConsent` marks the network refusal that the network notice answers.
+ */
+export type DraftChoice = { ok: true; room: IGameRoom } | { ok: false; refusal: string; needsConsent?: boolean };
 
-	const opened = await openChallengeDraft(guild, interaction.user.id, game);
-	if (!opened.ok && opened.reason === "alreadyHosting") {
-		// Item 15: the refusal offers its fix. Read again, since the opener reports only
-		// the channel and the offer needs to know whether the open room is a draft.
-		const existing = await gameRoomStore.findOpenByHost(guild.id, interaction.user.id);
-		if (existing) {
-			await offerToReplace(interaction, existing, game);
-			return null;
-		}
-	}
-	if (!opened.ok) {
-		await showRefusalNotice(interaction, draftRefusalReply(opened));
-		return null;
-	}
-	await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.cardStarted(opened.channel.id).replace("The match is under way in", "Your challenge card is in")] });
-	return opened.room;
+/** Who makes a draft choice: a card's button, or the creation modal's or Edit settings' Submit (or its fallback button). */
+type HostPress = ButtonInteraction | ModalSubmitInteraction;
+
+// ── start a challenge (2026-10 item 263 Phase 2a, R3-13) ──────────────
+// Every start (the board's per game buttons, the 🎉party-games Host table buttons, the
+// 🕹️games Blackjack table, and the slash commands that post a card) opens ONE creation
+// modal with that game's settings (challengeSettings.ts) as its first answer, and the card
+// posts on its Submit already configured, at its gather step. The modal replaced the start
+// confirm of 2026-10 item 257 and the card's own first step.
+
+// The press's context from the one GuildConfig read it makes: the reach and the bot switch
+// decide the modal's options, and whether 🏆rated-challenges exists decides its title.
+function settingsContextOf(game: SettingsGame, config: unknown): SettingsContext {
+	const stored = (config ?? {}) as { challengeReach?: unknown; botOpponentsEnabled?: boolean | null; arcadeRatedChallengesChannelId?: string | null };
+	return {
+		game,
+		reach: asChallengeReach(stored.challengeReach),
+		botsAllowed: botsAllowedIn(stored),
+		hasRatedChannel: Boolean(stored.arcadeRatedChallengesChannelId),
+	};
 }
 
 /**
- * A per game start button (the board's, the 🎉party-games Host buttons, the arcade host's
- * Blackjack table): ask first, and post the card only on Submit (2026-10 item 257, owner
- * item 12). A host who already holds a challenge is offered to close it instead, or told
- * where their match is in play (item 15). Writes nothing.
+ * A per game start: the creation modal, posted nowhere until its Submit (confirmChallengeDraft).
+ * A host whose slot holds a draft gets the same modal with a line saying Submit closes that
+ * draft first, its card linked (R3-9: one Submit frees the slot and posts the new card); a host
+ * whose match is in play is told where it is, and nothing opens. Writes nothing.
+ *
+ * ⚠️ THE THREE SECOND WINDOW (risk R4). A modal must be the first answer inside Discord's three
+ * seconds, so the press makes only the two reads the modal needs, IN PARALLEL: the host's open
+ * room and the GuildConfig row, which answers the reach, the bot switch and the rated channel at
+ * once. Nothing renders and nothing else is fetched before showModal.
  */
-export async function offerChallengeDraft(interaction: RepliableInteraction, game: GameSlug): Promise<void> {
-	if (!interaction.guildId) {
+export async function offerChallengeDraft(interaction: ModalOpeningInteraction, game: GameSlug): Promise<void> {
+	const guildId = interaction.guildId;
+	if (!guildId) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.outsideGuild] });
 		return;
 	}
-	const existing = await gameRoomStore.findOpenByHost(interaction.guildId, interaction.user.id);
-	if (existing) {
-		await offerToReplace(interaction, existing, game);
+	if (!isSettingsGame(game)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
 	}
-	await showConfirm(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.confirms.newChallenge(game)], confirmId: confirmCustomId("newok", game) });
-}
-
-// Item 15, the one room per host refusal with its fix. A draft can be closed from here,
-// and the confirm carries its roomId so the Submit closes that draft and no other. A room
-// in play never is: it is finished or archived in its own channel, so this only says where.
-async function offerToReplace(interaction: RepliableInteraction, existing: IGameRoom, game: GameSlug): Promise<void> {
-	if (existing.status !== "draft") {
+	const [existing, config] = await Promise.all([gameRoomStore.findOpenByHost(guildId, interaction.user.id), guildConfigStore.findByGuildId(guildId)]);
+	if (existing && existing.status !== "draft") {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.confirms.matchInPlay(existing.channelId ?? null)] });
 		return;
 	}
+	const context = settingsContextOf(game, config);
+	const notice = existing ? gameRoomsCopy.confirms.replaceDraft(challengeCardLink(channelIdsOf(config), existing)) : null;
+	// The Submit carries the held draft's roomId, so it closes that draft and no other.
+	const confirmId = confirmCustomId("newok", game, existing?.roomId);
+	const { modal } = buildSettingsModal(context, { customId: confirmId, mode: { kind: "create" }, values: defaultSettings(context), notice });
+	// When Discord refuses the modal, the start falls back to the confirm button it always had,
+	// which posts the card at the default settings for Edit settings to change.
+	await showModalOrReply(interaction, modal, () =>
+		confirmFallback({ title: gameRoomsCopy.notices.challenge, sections: [notice ?? gameRoomsCopy.confirms.newChallenge(game)], confirmId })
+	);
+}
+
+const channelIdsOf = (config: unknown): ChallengeChannelIds => (config ?? {}) as ChallengeChannelIds;
+
+/**
+ * The one room per host refusal with its fix, for a start that opens a room rather than a card
+ * (arcadeHost's solo starts, 2026-10 item 263 R3-9): at the press, a held draft is offered to
+ * close through a confirm whose Submit (`confirmId`) closes it and then opens the room, and a
+ * held running room is never touched: the notice names it, linked, to finish or archive there.
+ * Answers true when the slot was held (the press is answered), false when it is free. Makes the
+ * same two parallel reads as a challenge start, inside Discord's three seconds.
+ */
+export async function offerToFreeSlot(interaction: ModalOpeningInteraction, confirmIdFor: (roomId: string) => string): Promise<boolean> {
+	const guildId = interaction.guildId;
+	if (!guildId) return false;
+	const [existing, config] = await Promise.all([gameRoomStore.findOpenByHost(guildId, interaction.user.id), guildConfigStore.findByGuildId(guildId)]);
+	if (!existing) return false;
+	if (existing.status !== "draft") {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.confirms.matchInPlay(existing.channelId ?? null)] });
+		return true;
+	}
 	await showConfirm(interaction, {
 		title: gameRoomsCopy.notices.challenge,
-		sections: [gameRoomsCopy.confirms.replaceDraft],
-		confirmId: confirmCustomId("newok", game, existing.roomId),
+		sections: [gameRoomsCopy.confirms.replaceDraft(challengeCardLink(channelIdsOf(config), existing))],
+		confirmId: confirmIdFor(existing.roomId),
 	});
+	return true;
 }
 
 /**
- * The per game start's confirm: close the draft it offered to replace, when there is one,
- * then post the new card. The draft is closed only while it is still this presser's own
- * draft, so a confirm left open while that draft started never touches the live match.
+ * Close the draft a replace confirm named, while it is still a draft of this host's, so a
+ * confirm left open while that draft started never touches the live match. The same close
+ * Call it off makes (closeDraft). Answers whether it closed.
+ */
+export async function closeHeldDraft(guild: Guild, roomId: string, hostId: string): Promise<boolean> {
+	const open = await gameRoomStore.findByRoomId(guild.id, roomId);
+	if (!open || open.status !== "draft" || open.hostId !== hostId) return false;
+	await closeDraft(guild, open);
+	return true;
+}
+
+/**
+ * The creation modal's Submit (or the fallback's confirm button, which carries no fields and
+ * so posts the defaults): close the held draft it named, then either play Dero (a luck game's
+ * Who you play: Dero, through the card's own Play Dero path, posting no card) or post the card
+ * with every choice applied. Acknowledged quietly before the slow work and followed by no
+ * private line (R3-6): the card in its channel is the answer.
  */
 export async function confirmChallengeDraft(interaction: ConfirmInteraction, game: GameSlug, replaceRoomId: string | null): Promise<void> {
 	const guild = interaction.guild;
@@ -187,12 +266,34 @@ export async function confirmChallengeDraft(interaction: ConfirmInteraction, gam
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.outsideGuild] });
 		return;
 	}
-	if (replaceRoomId) {
-		const open = await gameRoomStore.findByRoomId(guild.id, replaceRoomId);
-		if (open && open.status === "draft" && open.hostId === interaction.user.id) await closeDraft(guild, open);
+	if (!isSettingsGame(game)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.controlRetired] });
+		return;
 	}
-	await startChallengeDraft(interaction, game);
+	const context = settingsContextOf(game, await guildConfigStore.findByGuildId(guild.id));
+	// The fields the press showed: the held draft's line took a slot when there was one.
+	const fields = settingsModalFields(game, CREATE_MODE, replaceRoomId !== null);
+	const wanted = interaction.isModalSubmit() ? readSettingsAnswers(interaction, context, fields, defaultSettings(context)) : defaultSettings(context);
+
+	if (replaceRoomId) await closeHeldDraft(guild, replaceRoomId, interaction.user.id);
+
+	if (wanted.opponent === "dero" && isDeroPlayable(game)) {
+		await playDeroRound(interaction, guild, game);
+		return;
+	}
+
+	await acknowledgeConfirm(interaction);
+	const opened = await openChallengeDraft(guild, interaction.user.id, game, {
+		wantsCasual: wanted.match === "casual" || wanted.match === "casual-bots",
+		configure: (room) => applySettings(interaction, room, wanted, fields, CREATE_MODE),
+	});
+	// Every refusal here is a race: the press already found the slot free and the game valid,
+	// so what is left (a slot taken since, a missing arcade, the paid plan, a failed post) is
+	// read only now, after the acknowledgement, and answers privately.
+	if (!opened.ok) await showRefusalNotice(interaction, draftRefusalReply(opened));
 }
+
+const CREATE_MODE: SettingsMode = { kind: "create" };
 
 /** Why a challenge card could not be posted, for the press or the scheduled open to explain. */
 export type DraftOpenFailure =
@@ -224,18 +325,30 @@ function draftRefusalReply(failure: DraftOpenFailure): { content: string } | { e
 	return { embeds: [errorEmbed(gameRoomsCopy.errors.createFailed)] };
 }
 
+/** How a new draft is set up before its card posts: the creation modal's choices, or Open to all for a scheduled party game. */
+export interface DraftOpenOptions {
+	// Starts the card Open to all where the server's reach allows it (a scheduled party game,
+	// whose host may not be at the keyboard when its time comes), Invite only where it does not.
+	openToAll?: boolean;
+	// Whether the host asked for a casual match, which decides the channel checked before the
+	// row exists; the channel the card posts in follows what the match became.
+	wantsCasual?: boolean;
+	// Applies the creation modal's choices to the new row before its card exists, answering the
+	// row the card is drawn from (applySettings).
+	configure?: (room: IGameRoom) => Promise<IGameRoom>;
+}
+
 /**
  * Post one challenge card for `hostId` and create its draft row: the one opener behind a
- * member's press (startChallengeDraft) and a scheduled party game Dero opens by itself at
- * its time (partyGamesOpen, 2026-10 item 254, Arcade 4), so the two cannot drift into
+ * member's creation modal (confirmChallengeDraft) and a scheduled party game Dero opens by
+ * itself at its time (partyGamesOpen, 2026-10 item 254, Arcade 4), so the two cannot drift into
  * different rules about who may host what. It answers nobody; the caller says why.
  *
- * `openToAll` starts the card past its visibility step, Open to all, where the server's
- * challenge reach allows it: a party game is called for everyone, and its host may not be
- * at the keyboard when its time comes. Where the reach is invite only the card starts at
- * the visibility step like any other, so the reach ceiling holds on this path too.
+ * The card posts at its gather step, already configured (2026-10 item 263 Phase 2a): the
+ * creation modal's choices land on the row first, through the card's own choice functions, and
+ * the channel follows the game and the match the row ends up with (owner decision 8).
  */
-export async function openChallengeDraft(guild: Guild, hostId: string, game: GameSlug, options: { openToAll?: boolean } = {}): Promise<DraftOpenResult> {
+export async function openChallengeDraft(guild: Guild, hostId: string, game: GameSlug, options: DraftOpenOptions = {}): Promise<DraftOpenResult> {
 	const guildId = guild.id;
 	// The paid-tier seam. Fails OPEN by design (see gameRoomAccess), and costs nothing
 	// at all while ENFORCE_GAME_ROOM_TIER is unset, which is production today.
@@ -247,26 +360,22 @@ export async function openChallengeDraft(guild: Guild, hostId: string, game: Gam
 	const existing = await gameRoomStore.findOpenByHost(guildId, hostId);
 	if (existing) return { ok: false, reason: "alreadyHosting", channelId: existing.channelId ?? null };
 
-	// The game decides the channel, once, here: a rated game's card goes to
-	// 🏆rated-challenges and stays there whatever its badge later says.
-	const channel = await resolveChallengesChannel(guild, game);
-	if (!channel) return { ok: false, reason: "noChannel" };
+	// Checked before the row exists, for the match the host asked for, so a server with no
+	// challenge channel never gets a draft (or a bot.slot line) for a card that cannot post.
+	const wantsCasual = options.wantsCasual ?? false;
+	const askedChannel = await resolveChallengesChannel(guild, game, wantsCasual);
+	if (!askedChannel) return { ok: false, reason: "noChannel" };
 
-	// Whether this card offers Play vs bots (2026-10 item 250 Phase 5): a game a bot can
-	// play, in a server that lets hosts add bots. Decided once, here, so the card never
-	// offers a door it would refuse; the press reads the switch again.
-	const botsOffered = takesBots(game) && botsAllowedIn(await guildConfigStore.findByGuildId(guildId));
+	// One read answers whether this draft takes Dero bots (2026-10 item 250 Phase 5: a game a bot
+	// can play, in a server that lets hosts add bots) and how far its challenge may reach.
+	const config = await guildConfigStore.findByGuildId(guildId);
+	const botsOffered = takesBots(game) && botsAllowedIn(config);
+	const reach = asChallengeReach((config as { challengeReach?: unknown } | null)?.challengeReach);
+	const startsOpen = Boolean(options.openToAll) && isWithinReach(reach, "public");
 
-	// The server's challenge reach decides whether Open to all is offered at all; the
-	// choice is still refused server side (chooseVisibility, checkRoomAdmission), since a
-	// card posted before an admin narrowed the reach still carries the button.
-	const reach = await readChallengeReach(guildId);
-	const allowPublic = isWithinReach(reach, "public");
-	const startsOpen = Boolean(options.openToAll) && allowPublic;
-
-	let room: IGameRoom;
+	let created: IGameRoom;
 	try {
-		room = await gameRoomStore.create({
+		created = await gameRoomStore.create({
 			guildId,
 			game,
 			hostId,
@@ -280,11 +389,16 @@ export async function openChallengeDraft(guild: Guild, hostId: string, game: Gam
 		return { ok: false, reason: "alreadyHosting", channelId: null };
 	}
 
-	// The network choice (2026-10 item 244 Phase 5b) is offered only where it could work:
-	// a server whose reach is network, for a game a satellite can mirror. chooseVisibility
-	// refuses it again on the press, for the same stale card reason as Open to all.
-	const allowNetwork = reach === "network" && isNetworkGame(game);
-	const state = cardStateFor(room, { visibility: startsOpen ? "public" : null, pool: room.spectatorIds ?? [], allowPublic, allowNetwork });
+	const room = options.configure ? await options.configure(created) : created;
+	// A casual choice the card's rules refused leaves a rated match, which posts where rated
+	// matches do; the match is fixed from here, so the card never moves.
+	const channel = (room.casual ?? false) === wantsCasual ? askedChannel : await resolveChallengesChannel(guild, game, room.casual ?? false);
+	if (!channel) {
+		await gameRoomStore.markArchived(guildId, room.roomId);
+		return { ok: false, reason: "noChannel" };
+	}
+
+	const state = cardStateFor(room, { visibility: room.visibility, pool: room.spectatorIds ?? [] });
 	const logo = roomOpenerLogo(game);
 	const card = await channel
 		.send({
@@ -310,6 +424,158 @@ export async function openChallengeDraft(guild: Guild, hostId: string, game: Gam
 	return { ok: true, room, channel, card };
 }
 
+// ── the settings, applied (owner decision 3: fold, never fork) ────────
+// What:  a creation or Edit settings Submit's choices, written onto the draft by calling the
+//        SAME function each card control calls, in the order a host pressing them would: who
+//        can join (the visibility or the network, then approval), the match (Rated or Casual,
+//        its Dero bots through Play vs bots' one write, then the band), Hold'em's buy in, the
+//        referee and the auctions, and who may watch last, since a network table refuses it.
+// Why:   one path onto the row per setting. A second writer here would be a second set of
+//        rules about the reach, the network, consent, bots and the chip ledger to keep in step.
+// How:   a choice that equals the row is skipped, so an edit writes only what changed. A choice
+//        the card's own rules refuse is not applied; its refusal becomes a note on the card under
+//        the settings line (settingsNotes), with the one fallback the card itself implies: a
+//        refused network table opens to all, the nearest choice within the reach.
+async function applySettings(interaction: HostPress, room: IGameRoom, wanted: ChallengeSettings, fields: readonly SettingField[], mode: SettingsMode): Promise<IGameRoom> {
+	const words = gameRoomsCopy.creation;
+	const names = words.settingNames;
+	const notes: string[] = [];
+	let current = room;
+	const take = (choice: DraftChoice, setting: string): void => {
+		if (choice.ok) current = choice.room;
+		else notes.push(words.notApplied(setting, choice.refusal));
+	};
+
+	// ① Who can join: the visibility the old first step chose, then the approval toggle.
+	if (fields.includes("join") && joinOfRoom(current) !== wanted.join) {
+		const visibility = VISIBILITY_OF_JOIN[wanted.join];
+		if (visibilityChoiceOf(current) !== visibility) {
+			const chosen = await applyVisibilityChoice(interaction, current, visibility);
+			if (!chosen.ok && visibility === "network") {
+				notes.push(words.notApplied(names.network, chosen.refusal));
+				// The network notice is the card's own answer to a host who never accepted it.
+				if (chosen.needsConsent) await answerInChannel(interaction, "member", consentPrompt({ kind: "again" }));
+				if (current.visibility !== "public") take(await applyVisibilityChoice(interaction, current, "public"), names.join);
+			} else take(chosen, names.join);
+		}
+		const approve = wanted.join === "approve";
+		if (current.visibility === "public" && (current.requireApproval ?? false) !== approve) take(await applyApproval(current, approve ? "on" : "off"), names.join);
+	}
+
+	// ② The match, fixed at creation: Rated or Casual, then the band of a rated match.
+	if (fields.includes("match") && matchOfRoom(current) !== wanted.match) {
+		if (wanted.match === "casual-bots") take(await applyCasualChoice(interaction, current, "on"), names.casualBots);
+		else if (wanted.match === "casual") take(await applyCasualChoice(interaction, current, CASUAL_WITHOUT_BOTS), names.match);
+		else {
+			if (current.casual) take(await applyCasualChoice(interaction, current, "off"), names.match);
+			const band = bandOfMatch(wanted.match);
+			if (band && (current.ratingBand ?? "any") !== band) take(await applyRatingBand(current, band), names.band);
+		}
+	}
+
+	// ③ Hold'em's buy in: an amount the buy in validation refuses leaves the one in force, and
+	// the note says which (Edit settings can fix it before anybody joins).
+	if (fields.includes("buyIn")) {
+		const amount = wantedBuyIn(wanted.buyIn, current.holdemBuyIn ?? null);
+		if (amount !== undefined) {
+			const chosen = await applyDraftBuyIn(current, amount);
+			if (chosen.ok) current = chosen.room;
+			else notes.push(words.notApplied(names.buyIn, `${chosen.refusal} ${words.buyInKept(draftBuyInOf(current))}`));
+		}
+	}
+
+	// ④ The referee and Monopoly's auctions. Hold'em's referee is applied even when the held
+	// draft's line took its field, since its default is on (owner decision 5) and a new row's is off.
+	if (offersReferee(current.game) && refereeOn(current) !== wanted.referee && (mode.kind === "create" || fields.includes("referee") || fields.includes("table"))) {
+		take(await applyDraftSetting(current, "referee", wanted.referee ? "on" : "off"), names.referee);
+	}
+	if (fields.includes("table") && (current.monopolyAuctions ?? false) !== wanted.auctions) take(await applyDraftSetting(current, "auctions", wanted.auctions ? "on" : "off"), names.auctions);
+
+	// ⑤ Who may watch, last: a network table keeps its own spectators, so only a choice other
+	// than the default it opens with is worth a note there.
+	if (fields.includes("watch") && current.spectatorMode !== wanted.watch && !(current.network && wanted.watch === effectiveSpectatorMode("public", null))) {
+		take(await applySpectatorMode(current, wanted.watch), names.watch);
+	}
+
+	// The notes replace the last Submit's, so a fixed choice stops being reported.
+	if (notes.length > 0 || (current.settingsNotes ?? []).length > 0) {
+		current = (await gameRoomStore.update(current.guildId, current.roomId, { settingsNotes: notes })) ?? current;
+	}
+	return current;
+}
+
+// Which of the card's old first step choices a row holds: the network, Open to all or Invite only.
+type VisibilityChoice = "network" | "public" | "invite";
+function visibilityChoiceOf(room: IGameRoom): VisibilityChoice {
+	if (room.network) return "network";
+	return room.visibility === "public" ? "public" : "invite";
+}
+
+// Who can join, as the old first step's choice it makes: approving is Open to all plus the toggle.
+const VISIBILITY_OF_JOIN: Record<JoinChoice, VisibilityChoice> = { invite: "invite", public: "public", approve: "public", network: "network" };
+
+/**
+ * The buy in a Submit asks to set, or undefined for none: blank keeps the standard stack (and
+ * takes a custom amount back to it on Edit settings), anything typed is read as chips, and null
+ * stands for typed text that is no amount, which the buy in's own validation refuses with its
+ * range. An amount already in force is no change.
+ */
+function wantedBuyIn(typed: string, current: number | null): number | null | undefined {
+	const text = typed.trim();
+	if (text === "") return current === null ? undefined : BOT_CONSTANTS.HOLDEM_STARTING_STACK;
+	const amount = parseChipAmount(text);
+	return amount !== null && amount === current ? undefined : amount;
+}
+
+// ── Edit settings (owner decision 7) ──────────────────────────────────
+// The host reopens the creation modal prefilled with the draft's values. The match is fixed
+// at creation and never offered; until the first joiner (nobody in the pool but the host and
+// no buy in paid) every other field can change, after it only Who may watch, Referee and
+// Table options. Host only, with no admin override (HOST_STRICT_ACTIONS).
+
+/** Whether anybody joined the draft: someone in the pool, or a buy in paid on the card. */
+const hasJoiner = (room: IGameRoom): boolean => (room.spectatorIds ?? []).length > 0 || (room.buyInPaidBy ?? []).length > 0;
+
+/**
+ * The card's Edit settings press: the settings modal prefilled with the draft's values. One
+ * read before it opens (risk R4), the GuildConfig row its options depend on.
+ */
+export async function openSettingsEditor(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	if (!isSettingsGame(room.game)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.controlRetired] });
+		return;
+	}
+	const context = settingsContextOf(room.game, await guildConfigStore.findByGuildId(room.guildId));
+	const { modal } = buildSettingsModal(context, { customId: confirmCustomId("editok", room.roomId), mode: { kind: "edit", hasJoiner: hasJoiner(room) }, values: settingsOfRoom(room) });
+	await showModalOrReply(interaction, modal, () => ({ content: gameRoomsCopy.creation.editUnavailable, flags: MessageFlags.Ephemeral }));
+}
+
+/**
+ * Edit settings' Submit, on the row gatePress read again (a draft started or closed since is
+ * refused there as a race, and plays nothing). The fields are worked out again from that row,
+ * so a joiner who arrived while the modal stood open locks what a joiner locks. Who you play:
+ * Dero plays the card's own Play Dero; anything else is applied as the creation modal's is.
+ */
+export async function confirmSettingsEdit(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
+	const guild = interaction.guild;
+	// Edit settings has no fallback button, so only a forged id arrives as a press: it acts on nothing.
+	if (!guild || !interaction.isModalSubmit() || !isSettingsGame(room.game)) {
+		await acknowledgeConfirm(interaction);
+		return;
+	}
+	const context = settingsContextOf(room.game, await guildConfigStore.findByGuildId(room.guildId));
+	const mode: SettingsMode = { kind: "edit", hasJoiner: hasJoiner(room) };
+	const fields = settingFieldsFor(room.game, mode);
+	const wanted = readSettingsAnswers(interaction, context, fields, settingsOfRoom(room));
+	if (fields.includes("opponent") && wanted.opponent === "dero") {
+		await playDero(interaction, room);
+		return;
+	}
+	await acknowledgeConfirm(interaction);
+	const updated = await applySettings(interaction, room, wanted, fields, mode);
+	await refreshDraftCard(guild, updated);
+}
+
 // ── the draft's on or off settings ────────────────────────────────────
 // The host decides at open whether a Monopoly lot a player passes on goes to auction
 // (master plan Section 1) and whether Dero referees the match out loud (Session 5c,
@@ -322,43 +588,60 @@ const DRAFT_SETTINGS = {
 	referee: { field: "referee", offeredFor: offersReferee },
 } as const satisfies Record<DraftSettingAction, { field: keyof IGameRoom; offeredFor: (game: GameSlug) => boolean }>;
 
-export async function chooseDraftSetting(interaction: ButtonInteraction, room: IGameRoom, action: DraftSettingAction, choice: string): Promise<void> {
+/**
+ * Switch one on or off draft setting: the one write behind a card's auctions or referee toggle
+ * and the creation modal's Referee and Table options (2026-10 item 263 Phase 2a).
+ */
+export async function applyDraftSetting(room: IGameRoom, action: DraftSettingAction, choice: string): Promise<DraftChoice> {
 	const setting = DRAFT_SETTINGS[action];
 	// The arg is user input like the rest of a customId: anything but the two values a card
 	// renders, or a setting this game's card never offers, is a retired or forged control.
-	if (!setting.offeredFor(room.game) || (choice !== "on" && choice !== "off")) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.controlRetired] });
-		return;
-	}
+	if (!setting.offeredFor(room.game) || (choice !== "on" && choice !== "off")) return { ok: false, refusal: gameRoomsCopy.errors.controlRetired };
 	const patch: Partial<IGameRoom> = {};
 	patch[setting.field] = choice === "on";
-	const updated = (await gameRoomStore.update(room.guildId, room.roomId, patch)) ?? room;
+	return { ok: true, room: (await gameRoomStore.update(room.guildId, room.roomId, patch)) ?? room };
+}
 
+export async function chooseDraftSetting(interaction: ButtonInteraction, room: IGameRoom, action: DraftSettingAction, choice: string): Promise<void> {
+	const applied = await applyDraftSetting(room, action, choice);
+	if (!applied.ok) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [applied.refusal] });
+		return;
+	}
 	await interaction.deferUpdate();
-	await refreshCard(interaction.guild!, updated, cardStateFor(updated, { visibility: updated.visibility, pool: updated.spectatorIds ?? [] }));
+	await refreshCard(interaction.guild!, applied.room, cardStateFor(applied.room, { visibility: applied.room.visibility, pool: applied.room.spectatorIds ?? [] }));
 }
 
 // ── the visibility chooser ────────────────────────────────────────────
-export async function chooseVisibility(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
-	if (choice === "network") {
-		await chooseNetworkTable(interaction, room);
-		return;
-	}
+/**
+ * Make a draft Invite only, Open to all, or open to the network: the one write behind the old
+ * card's first step and the creation modal's Who can join (2026-10 item 263 Phase 2a).
+ *
+ * ⚠️ THE REACH CEILING, REFUSED AT THE CHOICE (2026-10 item 244 Phase 4). The modal leaves Open
+ * to all out when the server is invite only, but a modal or card opened before the admin
+ * changed the setting still offers it, and a hidden choice is a suggestion, not a gate.
+ * checkRoomAdmission refuses the open again, for every other way in.
+ */
+export async function applyVisibilityChoice(interaction: HostPress, room: IGameRoom, choice: string): Promise<DraftChoice> {
+	if (choice === "network") return applyNetworkChoice(interaction, room);
 	const visibility: RoomVisibility = choice === "public" ? "public" : "invite";
+	if (!isWithinReach(await readChallengeReach(room.guildId), visibility)) return { ok: false, refusal: hostWords.reach.publicRefused };
+	// Leaving the network is new with Edit settings: the old card had no way back from it.
+	const patch: Partial<IGameRoom> = room.network ? { visibility, network: false } : { visibility };
+	return { ok: true, room: (await gameRoomStore.update(room.guildId, room.roomId, patch)) ?? room };
+}
 
-	// ⚠️ THE REACH CEILING, REFUSED AT THE CHOICE (2026-10 item 244 Phase 4). The card
-	// leaves Open to all off when the server is invite only, but a card posted before the
-	// admin changed the setting still has the button, and a hidden button is a suggestion,
-	// not a gate. checkRoomAdmission refuses the open again, for every other way in.
-	if (!isWithinReach(await readChallengeReach(room.guildId), visibility)) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [hostWords.reach.publicRefused] });
+export async function chooseVisibility(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
+	const chosen = await applyVisibilityChoice(interaction, room, choice);
+	if (!chosen.ok) {
+		// A host who never accepted the network notice is shown it, then presses the choice again.
+		if (chosen.needsConsent) await answerInChannel(interaction, "member", consentPrompt({ kind: "again" }));
+		else await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [chosen.refusal] });
 		return;
 	}
-
-	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { visibility })) ?? room;
-
+	const updated = chosen.room;
 	await interaction.deferUpdate();
-	await refreshCard(interaction.guild!, updated, cardStateFor(updated, { visibility, pool: updated.spectatorIds ?? [] }));
+	await refreshCard(interaction.guild!, updated, cardStateFor(updated, { visibility: updated.visibility, pool: updated.spectatorIds ?? [] }));
 
 	// A host choosing the PRIVATE form sees the ceiling before the refusal ever
 	// could: "Your server has 6/10 private rooms open on the Starter plan." Null
@@ -366,7 +649,7 @@ export async function chooseVisibility(interaction: ButtonInteraction, room: IGa
 	// production today. Fire and forget after the card edit; a failed post must
 	// not undo a visibility choice that already landed. It posts in 💬dero-commands
 	// (2026-10 item 257 Phase 5), the card's own update having acknowledged the press.
-	if (visibility === "invite") {
+	if (updated.visibility === "invite") {
 		readPrivateQuotaStatus(room.guildId, interaction.user.id)
 			.then((status) =>
 				status ? answerInChannel(interaction, "member", { content: `Invite only. ${status}` }) : undefined
@@ -385,32 +668,24 @@ const isNetworkGame = (game: GameSlug): boolean => (BOT_CONSTANTS.NETWORK_GAMES 
 // ⚠️ THE HOST THEMSELVES, AND ONLY WITH THEIR CONSENT. The board names the host in other
 // servers, and consent is personal, so the router's admin override (an admin pressing a
 // host's button) cannot open somebody else's table to the network; and a host who has
-// not accepted the network notice is shown it, then presses the choice again.
-async function chooseNetworkTable(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
-	const refusal = interaction.user.id === room.hostId ? await networkChoiceRefusal(interaction, room) : networkWords.hostRefusals.notHost;
-	if (refusal) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
-		return;
-	}
-	if (!(await hasNetworkConsent(room.hostId))) {
-		await answerInChannel(interaction, "member", consentPrompt({ kind: "again" }));
-		return;
-	}
+// not accepted the network notice is refused with needsConsent, which the caller answers
+// with the notice.
+async function applyNetworkChoice(interaction: HostPress, room: IGameRoom): Promise<DraftChoice> {
+	const refusal = interaction.user.id === room.hostId ? await networkChoiceRefusal(interaction.client, room) : networkWords.hostRefusals.notHost;
+	if (refusal) return { ok: false, refusal };
+	if (!(await hasNetworkConsent(room.hostId))) return { ok: false, refusal: gameRoomsCopy.creation.networkConsent, needsConsent: true };
 
-	// A spectator choice made at the visibility step is dropped: a network table's card offers
-	// no spectator select (its watchers in other servers are its satellites' business), so it
-	// keeps the default a network table has always opened with rather than a choice its card
-	// no longer shows.
-	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { visibility: "public", network: true, spectatorMode: null })) ?? room;
-	await interaction.deferUpdate();
-	await refreshCard(interaction.guild!, updated, cardStateFor(updated, { visibility: "public", pool: updated.spectatorIds ?? [] }));
+	// A spectator choice is dropped: a network table offers no spectator choice (its watchers in
+	// other servers are its satellites' business), so it keeps the default a network table has
+	// always opened with.
+	return { ok: true, room: (await gameRoomStore.update(room.guildId, room.roomId, { visibility: "public", network: true, spectatorMode: null })) ?? room };
 }
 
 // Why this table cannot be opened to the network, or null: a game no satellite mirrors, a
 // server that is not on the network, or a host or server the owner banned from it.
-async function networkChoiceRefusal(interaction: ButtonInteraction, room: IGameRoom): Promise<string | null> {
+async function networkChoiceRefusal(client: Client, room: IGameRoom): Promise<string | null> {
 	if (!isNetworkGame(room.game)) return networkWords.hostRefusals.notNetworkGame(gameRoomsCopy.gameLabel(room.game));
-	if (!(await readNetworkGuild(interaction.client, room.guildId)).onNetwork) return networkWords.hostRefusals.notOnNetwork;
+	if (!(await readNetworkGuild(client, room.guildId)).onNetwork) return networkWords.hostRefusals.notOnNetwork;
 	const bans = await networkBanStore.findAgainst({ userIds: [room.hostId], guildIds: [room.guildId] });
 	if (isUserBanned(bans, room.hostId)) return networkWords.hostRefusals.banned;
 	if (isGuildBanned(bans, room.guildId)) return networkWords.hostRefusals.serverBanned;
@@ -1021,18 +1296,21 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 // What:  the host of a coin flip, dice roll or rps challenge plays one round against
 //        Dero instead of waiting on a member. The draft closes and the round plays in a
 //        solo room of the host's own (soloRooms, 2026-10 item 254, Arcade 1), so nothing
-//        is played in ⚔️challenges; the host is told in 💬dero-commands where it is.
-// Who:   the card's `dero` button (strict host only: HOST_STRICT_ACTIONS).
+//        is played in ⚔️challenges.
+// Who:   a card's `dero` button (strict host only: HOST_STRICT_ACTIONS), Edit settings'
+//        Who you play: Dero, and, with no draft to close, the creation modal's Who you play:
+//        Dero (playDeroRound, 2026-10 item 263 Phase 2a), which posts no card.
 // Where: soloLuck is the ONE solo round, shared with /mini-game against Dero and the
 //        🕹️games row, so the odds and the pay cannot drift between the three doors. An rps
 //        round asks for its throw IN its room, through the turn prompt (soloLuckRoom,
 //        2026-10 item 257 Phase 4b), so the press asks nothing here and a rematch can ask
 //        again in the same channel.
 // How:   ① refuse anything but a luck draft; ② archive the draft, which frees the
-//        host's one room slot exactly like Call it off, so the solo room may take it;
-//        ③ open the solo room, which plays the coin or the dice at once and prompts the rps
-//        throw; ④ close the card with the line that points at the room.
-export async function playDero(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+//        host's one room slot exactly like Call it off, so the solo room may take it (the
+//        slot a Play Dero press could find held is this very draft, which is why it needs no
+//        offer to close one); ③ open the solo room, which plays the coin or the dice at once
+//        and prompts the rps throw; ④ close the card with the line that points at the room.
+export async function playDero(interaction: HostPress, room: IGameRoom): Promise<void> {
 	if (!isDeroPlayable(room.game)) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.controlRetired] });
 		return;
@@ -1040,25 +1318,62 @@ export async function playDero(interaction: ButtonInteraction, room: IGameRoom):
 	const guild = interaction.guild;
 	if (!guild) return;
 	// Acknowledged quietly first: opening a room is a channel create plus its opener, which
-	// can run past Discord's three second window. A refusal posts in 💬dero-commands.
+	// can run past Discord's three second window.
 	const answer = await beginChannelAnswer(interaction, "member");
 	await gameRoomStore.markArchived(room.guildId, room.roomId);
 
+	const channel = await openDeroRoom(interaction, guild, room.game, answer);
+	const resultLine = channel ? gameRoomsCopy.board.cardPlayedDero(room.hostId, channel.id) : gameRoomsCopy.board.cardDeroUnavailable(room.hostId);
+	await refreshCard(guild, room, cardStateFor(room, { visibility: room.visibility, resultLine }));
+}
+
+// The creation modal's Who you play: Dero: the same round with no draft to close and no card.
+async function playDeroRound(interaction: ConfirmInteraction, guild: Guild, game: SoloLuckGame): Promise<void> {
+	const answer = await beginChannelAnswer(interaction, "member");
+	await openDeroRoom(interaction, guild, game, answer);
+}
+
+// ③ The solo room itself, the one tail of every Play Dero door. The room's opener pings the
+// member there, so nothing posts in 💬dero-commands (2026-10 item 263 R3-24); only the no
+// channel fallback's private defer still waits for a word. Null when the room did not open.
+async function openDeroRoom(interaction: HostPress, guild: Guild, game: SoloLuckGame, answer: PendingChannelAnswer): Promise<TextChannel | null> {
 	const member = guild.members.cache.get(interaction.user.id);
-	const opened = await openSoloRoom(guild, soloLuckSlugFor(room.game), {
+	const opened = await openSoloRoom(guild, soloLuckSlugFor(game), {
 		userId: interaction.user.id,
 		displayName: member?.displayName ?? interaction.user.globalName ?? interaction.user.username,
 		user: interaction.user,
 	});
 	if (!opened.ok) {
-		await answer.send({ embeds: [errorEmbed(describeSoloOpenFailure(opened))] });
-		await refreshCard(guild, room, cardStateFor(room, { visibility: room.visibility, resultLine: gameRoomsCopy.board.cardDeroUnavailable(room.hostId) }));
+		await answerSoloRefusal(interaction, answer, opened);
+		return null;
+	}
+	if (answer.channelId === null) await answer.send({ content: gameRoomsCopy.board.cardStarted(opened.channel.id) });
+	return opened.channel;
+}
+
+/**
+ * A solo room that would not open, answered after its press was acknowledged. A held slot is
+ * only a race by now, since every solo start refuses it at the press (2026-10 item 263 R3-9),
+ * so it is a notice linking the card or the room that holds it, never an error embed pinging in
+ * 💬dero-commands; every other refusal keeps the answer it always had. Shared with arcadeHost.
+ */
+export async function answerSoloRefusal(interaction: RepliableInteraction, answer: PendingChannelAnswer, failure: Exclude<SoloOpenResult, { ok: true }>): Promise<void> {
+	if (failure.reason !== "alreadyHosting") {
+		await answer.send({ embeds: [errorEmbed(describeSoloOpenFailure(failure))] });
 		return;
 	}
-	// The room's opener pings the member there, so nothing posts in 💬dero-commands (2026-10
-	// item 263 R3-24); only the no channel fallback's private defer still waits for a word.
-	if (answer.channelId === null) await answer.send({ content: gameRoomsCopy.board.cardStarted(opened.channel.id) });
-	await refreshCard(guild, room, cardStateFor(room, { visibility: room.visibility, resultLine: gameRoomsCopy.board.cardPlayedDero(room.hostId, opened.channel.id) }));
+	const line = await heldSlotLine(interaction.guildId ?? "", interaction.user.id);
+	// With no channel the private defer still waits, so the line is its answer; in a channel
+	// the quiet acknowledgement left nothing waiting, so the line is a private notice.
+	if (answer.channelId === null) await answer.send({ content: line });
+	else await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [line] });
+}
+
+// Where the host's one slot is held: the card of a draft, linked, or the channel of a match.
+async function heldSlotLine(guildId: string, hostId: string): Promise<string> {
+	const [existing, ids] = await Promise.all([gameRoomStore.findOpenByHost(guildId, hostId), readChallengeChannelIds(guildId)]);
+	if (existing?.status === "draft") return gameRoomsCopy.errors.alreadyHostingCard(challengeCardLink(ids, existing));
+	return gameRoomsCopy.errors.alreadyHosting(existing?.channelId ?? null);
 }
 
 // ── Play vs bots (2026-10 item 250 Phase 5) ───────────────────────────
@@ -1170,35 +1485,52 @@ async function saveBotSeats(
 }
 
 // ── Rated or Casual (2026-10 item 254, Arcade 6) ──────────────────────
-// What:  the host's choice on a Hold'em, Monopoly or Battleship draft. Casual (unrated)
-//        fills the empty seats with Dero bots up to BOT_CONSTANTS.CASUAL_TABLE_SEATS;
-//        Rated, the default, takes every bot away, since a rated match cannot hold one.
-// Who:   the card's `casual` toggle, the host's alone (HOST_STRICT_ACTIONS), offered
-//        wherever Play vs bots is and refused by the same botRefusal.
+// What:  the host's choice on a Hold'em, Monopoly or Battleship draft. "on", the card's
+//        Casual, fills the empty seats with Dero bots up to BOT_CONSTANTS.CASUAL_TABLE_SEATS;
+//        CASUAL_WITHOUT_BOTS (2026-10 item 263 R3-5) is casual with no bot, so a server with
+//        bots off can still play an unrated match; "off", Rated, the default, takes every bot
+//        away, since a rated match cannot hold one.
+// Who:   a card's `casual` toggle (from before the creation modal), the host's alone
+//        (HOST_STRICT_ACTIONS), and the creation modal's The match (applySettings).
 // Where: the fill goes through saveBotSeats, the write Play vs bots makes, so Casual is
 //        not a second bot door: it is the host choosing a number of bots by another
 //        button. The badge reads the flag through challengeBadge, and recordMatchRatings
 //        refuses to rate a casual row even once people took every bot's seat.
-export async function chooseCasual(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
-	// The arg is user input like the rest of a customId: anything but the two values a
-	// card renders is a retired or forged control.
-	if (choice !== "on" && choice !== "off") {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.controlRetired] });
-		return;
-	}
-	const refusal = await botRefusal(room);
-	if (refusal) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
-		return;
-	}
-	const words = gameRoomsCopy.board.casual;
-	const casual = choice === "on";
-	const bots = casual ? casualBotSeats(room.game, (room.spectatorIds ?? []).length) : 0;
-	const updated = await saveBotSeats(interaction, room, { casual, botSeats: bots }, casual ? words.logFilled(bots) : words.logCleared);
 
-	// The card is the answer: its badge, its bots line and this button all change.
+/** The casual choice's value for a casual match with no Dero bot. */
+export const CASUAL_WITHOUT_BOTS = "plain";
+
+/**
+ * Set a rated game's draft Rated or Casual, its Dero bots with it. Refused only where bots are
+ * asked for ("on") and cannot sit (botRefusal): Rated and a casual match without bots seat none.
+ */
+export async function applyCasualChoice(interaction: HostPress, room: IGameRoom, choice: string): Promise<DraftChoice> {
+	// The arg is user input like the rest of a customId: anything but the values a card or
+	// the creation modal sends is a retired or forged control.
+	if (choice !== "on" && choice !== "off" && choice !== CASUAL_WITHOUT_BOTS) return { ok: false, refusal: gameRoomsCopy.errors.controlRetired };
+	const wantsBots = choice === "on";
+	if (wantsBots) {
+		const refusal = await botRefusal(room);
+		if (refusal) return { ok: false, refusal };
+	}
+	// Only a rated game has a match to make casual; botRefusal already said so for "on".
+	if (!isRatedGame(room.game)) return { ok: false, refusal: gameRoomsCopy.errors.controlRetired };
+	const words = gameRoomsCopy.board.casual;
+	const casual = choice !== "off";
+	const bots = wantsBots ? casualBotSeats(room.game, (room.spectatorIds ?? []).length) : 0;
+	const detail = casual ? words.logFilled(bots) : words.logCleared;
+	return { ok: true, room: await saveBotSeats(interaction, room, { casual, botSeats: bots }, detail) };
+}
+
+export async function chooseCasual(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
+	const chosen = await applyCasualChoice(interaction, room, choice);
+	if (!chosen.ok) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [chosen.refusal] });
+		return;
+	}
+	// The card is the answer: its badge and its settings line change.
 	await interaction.deferUpdate();
-	await refreshCard(interaction.guild!, updated, cardStateFor(updated, { visibility: updated.visibility, pool: updated.spectatorIds ?? [] }));
+	await refreshCard(interaction.guild!, chosen.room, cardStateFor(chosen.room, { visibility: chosen.room.visibility, pool: chosen.room.spectatorIds ?? [] }));
 }
 
 /**
@@ -1257,16 +1589,25 @@ export async function handleBuyInModal(interaction: ModalSubmitInteraction): Pro
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (!room || room.game !== "holdem" || room.status !== "draft") return notice(gameRoomsCopy.board.draftGone);
 	if (room.hostId !== interaction.user.id) return notice(gameRoomsCopy.board.onlyHostStarts);
-	if (!(await isChipDraft(room))) return notice(gameRoomsCopy.holdem.buyInFreeTable);
 
-	const amount = submittedBuyIn(interaction);
-	const economy = BOT_CONSTANTS.ECONOMY;
-	if (amount === null || !isValidDraftBuyIn(amount)) return notice(gameRoomsCopy.holdem.buyInInvalid(economy.HOLDEM_MIN_BUY_IN, economy.HOLDEM_MAX_BUY_IN));
-
-	const updated = await gameRoomStore.setHoldemBuyIn(guildId, roomId, amount);
-	if (!updated) return notice(gameRoomsCopy.holdem.buyInLocked);
+	const chosen = await applyDraftBuyIn(room, submittedBuyIn(interaction));
+	if (!chosen.ok) return notice(chosen.refusal);
 	await interaction.deferUpdate();
-	await refreshDraftCard(interaction.guild, updated);
+	await refreshDraftCard(interaction.guild, chosen.room);
+}
+
+/**
+ * Set a Hold'em draft's buy in: the one write behind the old card's Set the buy in modal and
+ * the creation modal's Buy in (2026-10 item 263 Phase 2a). Refused on a table that plays free
+ * (chips off, a network table, a Dero bot seat), for an amount outside the table's bounds or
+ * none at all, and once anybody has paid, since a payment is for the amount it was charged.
+ */
+export async function applyDraftBuyIn(room: IGameRoom, amount: number | null): Promise<DraftChoice> {
+	if (!(await isChipDraft(room))) return { ok: false, refusal: gameRoomsCopy.holdem.buyInFreeTable };
+	const economy = BOT_CONSTANTS.ECONOMY;
+	if (amount === null || !isValidDraftBuyIn(amount)) return { ok: false, refusal: gameRoomsCopy.holdem.buyInInvalid(economy.HOLDEM_MIN_BUY_IN, economy.HOLDEM_MAX_BUY_IN) };
+	const updated = await gameRoomStore.setHoldemBuyIn(room.guildId, room.roomId, amount);
+	return updated ? { ok: true, room: updated } : { ok: false, refusal: gameRoomsCopy.holdem.buyInLocked };
 }
 
 // ── cancel ────────────────────────────────────────────────────────────
@@ -1295,9 +1636,10 @@ async function closeDraft(guild: Guild, room: IGameRoom): Promise<void> {
 const cancelledCardState = (room: IGameRoom) => cardStateFor(room, { visibility: room.visibility, cancelled: true });
 
 export const challengeBoard = {
-	startChallengeDraft,
 	offerChallengeDraft,
 	confirmChallengeDraft,
+	openSettingsEditor,
+	confirmSettingsEdit,
 	confirmStartMatch,
 	chooseVisibility,
 	openInvitePicker,

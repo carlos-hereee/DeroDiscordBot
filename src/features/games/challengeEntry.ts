@@ -1,5 +1,5 @@
 import { type ChatInputCommandInteraction } from "discord.js";
-import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
+import { offerChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 import { playSoloLuck, type SoloLuckGame, type SoloLuckPlay } from "./soloLuck.js";
 import { RPS_CHOICES, type RpsChoice } from "./rpsWinner.js";
 import { gamesCopy } from "./gamesCopy.js";
@@ -15,8 +15,9 @@ import { showNotice } from "@utils/textModal.js";
 //        start a match that did not share a code path would be two places to
 //        enforce the one-room-per-host rule, two places to check entitlement, and
 //        two definitions of what an opponent is.
-// How:   read the slug from which subcommand ran, then hand over. There is nothing
-//        else here on purpose.
+// How:   read the slug from which subcommand ran, then hand over: the creation modal opens
+//        as the command's first answer (2026-10 item 263 Phase 2a), exactly as the board's
+//        buttons open it. There is nothing else here on purpose.
 //
 // ⚠️ THIS REPLACED versusHandler.ts AND rpsHandler.ts (game rooms Phase 4). Those
 // files ran the whole match inside one slash invocation: a public challenge message,
@@ -61,12 +62,13 @@ export function readDeroPlay(interaction: ChatInputCommandInteraction, game: Sol
 	return memberThrow && RPS_CHOICES.includes(memberThrow) ? { game: "rps", memberThrow } : "throwMissing";
 }
 
-// One luck subcommand: a challenge card against a member, or a round against Dero played
-// in place. (Typed in a challenge channel, miniGameInChallenges answers first instead.)
+// One luck subcommand: a challenge card against a member, through its creation modal, or a
+// round against Dero played in place. (Typed in a challenge channel, miniGameInChallenges
+// answers first instead.)
 async function runLuckGame(interaction: ChatInputCommandInteraction, game: SoloLuckGame): Promise<void> {
 	const play = readDeroPlay(interaction, game);
 	if (play === null) {
-		await startChallengeDraft(interaction, game);
+		await offerChallengeDraft(interaction, game);
 		return;
 	}
 	if (play === "throwMissing") {
@@ -76,14 +78,12 @@ async function runLuckGame(interaction: ChatInputCommandInteraction, game: SoloL
 	await playSoloLuck(interaction, play);
 }
 
-// startChallengeDraft returns the draft row for the rematch path's benefit; the slash
-// doorway has no use for it, so each wrapper discards it back to void.
 export const runCoinFlip = (interaction: ChatInputCommandInteraction): Promise<void> => runLuckGame(interaction, "coinflip");
 export const runDiceRoll = (interaction: ChatInputCommandInteraction): Promise<void> => runLuckGame(interaction, "diceroll");
 export const runRps = (interaction: ChatInputCommandInteraction): Promise<void> => runLuckGame(interaction, "rps");
 
-// The same card the board's Monopoly button posts: visibility, the auction toggle,
-// the pool and Start all happen on it, so the doorway adds nothing of its own.
+// The same creation modal and card the board's Monopoly button opens, so the doorway adds
+// nothing of its own.
 export const runMonopoly = async (interaction: ChatInputCommandInteraction): Promise<void> => {
-	await startChallengeDraft(interaction, "monopoly");
+	await offerChallengeDraft(interaction, "monopoly");
 };

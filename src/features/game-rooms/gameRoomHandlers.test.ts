@@ -502,3 +502,28 @@ describe("gameRoomHandlers forfeit", () => {
 		expect(order).toEqual(["ack", "archive"]);
 	});
 });
+
+// ── Edit settings (2026-10 item 263 Phase 2a, owner decision 7) ──
+describe("Edit settings on the challenge card", () => {
+	it("is the host's alone, with no admin override", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "draft", hostId: "host-1" }));
+		gateMock.mockResolvedValue(true);
+		const press = pressWithModal("gameroom:edit:room-1", "admin-7");
+
+		await _handleGameRoomButton(press);
+
+		expect(press.showModal).toHaveBeenCalledOnce();
+		expect(JSON.stringify((press.showModal.mock.calls[0][0] as { toJSON: () => unknown }).toJSON())).toContain(gameRoomsCopy.board.onlyHostStarts);
+		expect(gateMock).not.toHaveBeenCalled();
+	});
+
+	it("plays nothing when its Submit finds the draft started or closed: a race", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "playing", hostId: "host-1" }));
+		const interaction = submit("gameroom:editok:room-1");
+
+		await _handleGameRoomConfirm(interaction);
+
+		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.board.draftGone }));
+		expect(interaction.deferUpdate).not.toHaveBeenCalled();
+	});
+});

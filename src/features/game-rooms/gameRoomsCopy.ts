@@ -403,6 +403,11 @@ export const gameRoomsCopy = {
 			channelId
 				? `You already have a room open. Finish it first: <#${channelId}>`
 				: "You already have a room open. Finish it before starting another.",
+		// A slot held by a challenge card rather than a room, its card linked (2026-10 item 263 R3-9).
+		alreadyHostingCard: (cardLink: string | null): string =>
+			cardLink
+				? `You already have a challenge open: ${cardLink}\nCall it off there, or start again to close it.`
+				: "You already have a challenge open. Call it off on its card, or start again to close it.",
 		// The honest version of a full arena. A silent no-op here would read as the
 		// button being broken.
 		guildFull: (): string =>
@@ -443,10 +448,15 @@ export const gameRoomsCopy = {
 		archive: "Archive this room now? Its channel is deleted at once, and the match record is kept. Submit to archive it.",
 		forfeit: "Forfeit this match? It counts as a loss for you. Submit to forfeit.",
 		start: "Start the match? Dero opens its room now and seats the players. Submit to start.",
+		// The creation modal's fallback when Discord will not show it (2026-10 item 263 Phase 2a).
 		newChallenge: (game: GameSlug): string =>
-			`Start a ${GAME_LABELS[game] ?? game} challenge? Submit and Dero posts your challenge card, where you choose who can see it.`,
-		// Item 15: the one room per host refusal, offering its fix.
-		replaceDraft: "You already have a challenge open. Submit to close it and start this one.",
+			`Start a ${GAME_LABELS[game] ?? game} challenge? Submit and Dero posts your card with the usual settings; Edit settings on the card changes them.`,
+		// Item 15: the one room per host refusal, offering its fix, with the held card linked
+		// (2026-10 item 263 R3-9), or null when Dero cannot name where it is.
+		replaceDraft: (cardLink: string | null): string =>
+			cardLink
+				? `You already have a challenge open: ${cardLink}\nSubmit closes it and starts this one.`
+				: "You already have a challenge open. Submit closes it and starts this one.",
 		// A running match is never closed from here: it is finished or archived in its own room.
 		matchInPlay: (channelId: string | null): string =>
 			channelId
@@ -465,6 +475,85 @@ export const gameRoomsCopy = {
 			yes: "Yes, save it",
 			no: "No, just archive",
 		},
+	},
+
+	// ── the creation modal (2026-10 item 263 Phase 2a, R3-13) ──
+	// Every game starts from one modal with its own settings (challengeSettings.ts), and the
+	// card then posts already configured. Discord cuts a modal title and a field label at 45
+	// characters, an option's label and description at 100.
+	creation: {
+		// The title names the game and where its card posts, longest first until one fits 45.
+		titles: (game: GameSlug, channelName: string): string[] => {
+			const label = GAME_LABELS[game] ?? game;
+			return [`Start ${label}, card posts in ${channelName}`, `Start ${label} in ${channelName}`, `${label} in ${channelName}`];
+		},
+		editTitles: (game: GameSlug): string[] => {
+			const label = GAME_LABELS[game] ?? game;
+			return [`Edit your ${label} challenge`, `Edit ${label}`];
+		},
+		channelNames: { challenges: "#challenges", rated: "#rated-challenges" },
+		fields: {
+			join: {
+				label: "Who can join",
+				invite: { label: "Invite only", description: "Only the members you invite." },
+				public: { label: "Open to all", description: "Anyone in the server may press Join." },
+				approve: { label: "Open to all, I approve each joiner", description: "Anyone may ask to join, and you accept or decline each." },
+				network: { label: "Open to the network", description: "Open to all, plus players from other network servers." },
+			},
+			watch: { label: "Who may watch" },
+			match: {
+				label: "The match",
+				ratedAny: { label: "Rated, any rating", description: (channelName: string): string => `Counts toward /rating. Posts in ${channelName}.` },
+				ratedClose: { label: "Rated, close ratings", description: (width: number): string => `Only ratings within ${width} of yours may join.` },
+				ratedTight: { label: "Rated, tight ratings", description: (width: number): string => `Only ratings within ${width} of yours may join.` },
+				casual: { label: "Casual", description: (channelName: string): string => `Not rated. Posts in ${channelName}.` },
+				casualBots: { label: "Casual, empty seats filled by Dero bots", description: "Not rated. Each person who joins takes a bot's seat." },
+			},
+			buyIn: {
+				label: "Buy in (chips)",
+				placeholder: (min: number, max: number, standard: number): string =>
+					`${min.toLocaleString("en-US")} to ${max.toLocaleString("en-US")}, blank for ${standard.toLocaleString("en-US")}`,
+			},
+			referee: {
+				label: "Voice referee",
+				on: { label: "On", description: "Dero calls the key moments out loud in your voice call." },
+				off: { label: "Off", description: "The match plays in text only." },
+			},
+			table: {
+				label: "Table options",
+				auctions: { label: "Auctions", description: `A lot a player passes on goes to a ${monopolyAuctionSeconds()} second sealed bid.` },
+				referee: { label: "Voice referee", description: "Dero calls the key moments out loud in your voice call." },
+			},
+			opponent: {
+				label: "Who you play",
+				anyone: { label: "Anyone", description: "Post a card so a member can take you on." },
+				dero: { label: "Dero", description: "One round against Dero in a room of your own. No card is posted." },
+			},
+		},
+		// The card's one line of settings while it gathers, parts joined by " · ".
+		summary: {
+			lead: "⚙️",
+			join: { invite: "Invite only", public: "Open to all", approve: "Open to all, the host approves each joiner", network: "Open to the network" },
+			rated: "Rated",
+			band: (width: number): string => `ratings within ${width}`,
+			casual: "Casual",
+			bots: (count: number): string => (count === 1 ? "1 Dero bot" : `${count} Dero bots`),
+			watch: { open: "anyone may watch", invite: "invited members watch", none: "no spectators" },
+			referee: (enabled: boolean): string => (enabled ? "voice referee on" : "voice referee off"),
+			auctions: (enabled: boolean): string => (enabled ? "auctions on" : "auctions off"),
+		},
+		// A choice the card's own rules refused, said on the card under the summary.
+		notApplied: (setting: string, reason: string): string => `⚠️ ${setting} was not applied. ${reason}`,
+		buyInKept: (amount: number): string => `The table plays for ${amount.toLocaleString("en-US")} chips until you change it with Edit settings.`,
+		// The network refusal for a host who never accepted the network notice, which Dero posts beside it.
+		networkConsent: "Accept the network notice Dero just posted for you, then choose it again with Edit settings.",
+		// Discord refused the Edit settings modal, the one case the press cannot answer with it.
+		editUnavailable: "Dero could not open the settings just now. Press Edit settings again in a moment.",
+		// A network table's watchers in other servers are its satellites' business, so it keeps
+		// the network default rather than a choice made here.
+		networkWatch: "A table open to the network keeps its own spectators: its players in other servers watch from there.",
+		settingNames: { network: "Open to the network", join: "Who can join", match: "The match", casualBots: "Casual with Dero bots", band: "The rating band", buyIn: "Your buy in", referee: "The voice referee", auctions: "Auctions", watch: "Who may watch" },
+		editLabel: "Edit settings",
 	},
 
 	// ── saved matches (2026-10 item 257 Phase 3b) ──
@@ -528,7 +617,6 @@ export const gameRoomsCopy = {
 		// Coin flip, dice roll and rps only: the challenge closes and the host plays one
 		// round against Dero in a solo room of their own (2026-10 item 254, Arcade 1), so
 		// nothing is played in ⚔️challenges. The card points at the room.
-		playDeroLabel: "Play Dero instead",
 		cardPlayedDero: (hostId: string, channelId: string): string => `🤖 <@${hostId}> took on Dero instead, in <#${channelId}>.`,
 		// The card's line when the solo room could not open: the challenge is still closed,
 		// since the host chose Dero, and the host was told why privately.
@@ -545,20 +633,14 @@ export const gameRoomsCopy = {
 		},
 
 		// ── who may watch (2026-10 item 254, Arcade 11) ──
-		// The host's spectator setting on the draft card: a select, so it costs one row
-		// however many settings there are, with the current one as its default.
+		// The host's spectator setting, chosen in the creation modal's Who may watch since
+		// 2026-10 item 263 Phase 2a.
 		spectators: {
-			placeholder: "Who may watch",
 			options: {
 				open: { label: "Open to spectators", description: "Everyone in the server may watch." },
 				invite: { label: "Invite only", description: "Only the members you invited watch." },
 				none: { label: "No spectators", description: "Only the players see the room." },
 			} satisfies Record<SpectatorMode, { label: string; description: string }>,
-			cardLine: (mode: SpectatorMode): string => {
-				if (mode === "open") return "👀 Open to spectators: everyone in the server may watch.";
-				if (mode === "invite") return "👀 Invite only: the members who joined but do not play may watch.";
-				return "👀 No spectators: only the players will see the room.";
-			},
 		},
 		// The solo-rps room's turn modal (2026-10 item 257 Phase 4b): the throw is asked in the
 		// room, and Dero answers the moment the member submits.
@@ -568,21 +650,17 @@ export const gameRoomsCopy = {
 		// ── Play vs bots (2026-10 item 250 Phase 5) ──
 		// Hold'em, Monopoly and Battleship: the host fills seats with Dero bots, who sit
 		// down when the match starts. Bots never take a member's place and never rate.
-		playBotsLabel: "Play vs bots",
 		botPickerPrompt: "How many Dero bots should take a seat? They sit down when you press Start, and a match with a bot is never rated.",
 		botPickerPlaceholder: "Dero bots",
 		botOptionNone: "No bots",
 		botOptionCount: (count: number): string => (count === 1 ? "1 Dero bot" : `${count} Dero bots`),
 		botsSaved: (count: number): string => (count === 0 ? "No Dero bots will sit down." : `${count === 1 ? "1 Dero bot" : `${count} Dero bots`} will sit down when you press Start.`),
-		cardBots: (count: number): string => `🤖 ${count === 1 ? "1 Dero bot sits" : `${count} Dero bots sit`} down when the match starts. A match with a bot is never rated.`,
 		botsOff: "An admin switched Dero bot opponents off in this server.",
 		botsNotHere: "Dero bots can only join a Hold'em, Monopoly or Battleship challenge in this server.",
 		// The 🗒️admin-log detail when the host removes a bot mid match.
 		botRemovedDetail: (botName: string): string => `${botName} removed from the match`,
 		// ── Rated or Casual (2026-10 item 254, Arcade 6) ──
 		casual: {
-			toggleLabel: (isCasual: boolean): string => (isCasual ? "Make it rated" : "Make it casual"),
-			cardLine: "🎲 Casual: Dero bots fill the empty seats, and each person who joins before the start takes one bot's seat.",
 			// The admin log's detail for a bot seat that changed through the Casual choice.
 			logFilled: (bots: number): string => `Casual table: ${bots === 1 ? "1 Dero bot" : `${bots} Dero bots`}`,
 			logCleared: "Rated table: every Dero bot removed",
@@ -616,30 +694,9 @@ export const gameRoomsCopy = {
 		privateQuotaStatus: (open: number, quota: number, tierName: string): string =>
 			`Your server has ${open}/${quota} private rooms open on the ${tierName} plan.`,
 
-		visibilityInviteLabel: "Invite only",
-		visibilityOpenLabel: "Open to all",
 		joinLabel: "Join",
 		startLabel: "Start the match",
 		cancelLabel: "Call it off",
-
-		// ── Monopoly's auction choice (2026-10 item 241) ──
-		// The card line says what the setting MEANS, since "auctions" alone does not
-		// tell a host what happens to a lot nobody buys.
-		cardMonopolyAuctions: (enabled: boolean): string =>
-			enabled
-				? `Auctions are **on**: a lot a player passes on goes to a ${monopolyAuctionSeconds()} second sealed bid.`
-				: "Auctions are **off**: a lot a player passes on stays with the bank.",
-		// The toggle names the state it SWITCHES TO, so the press does what it says.
-		monopolyAuctionsToggleLabel: (enabled: boolean): string => (enabled ? "Turn auctions off" : "Turn auctions on"),
-
-		// ── the voice referee (2026-10 item 241, Session 5c; Hold'em too since item 257 Phase 4b) ──
-		// At the start Dero asks to join the host's voice channel when the server's voice is
-		// on (roomReferee), so the "on" line says to be in one.
-		cardReferee: (enabled: boolean): string =>
-			enabled
-				? "Voice referee is **on**: Dero calls the key moments out loud. Be in a voice channel when the match starts and Dero joins you there."
-				: "Voice referee is **off**: the match plays in text only.",
-		refereeToggleLabel: (enabled: boolean): string => (enabled ? "Turn referee off" : "Turn referee on"),
 
 		// ── the invite picker ──
 		pickerPlaceholder: "Choose who to invite",
@@ -910,7 +967,6 @@ export const gameRoomsCopy = {
 
 		buyInLabel: (stack: number): string => `Buy in (${stack})`,
 		chipsBuyInLabel: (amount: number): string => `Buy in (${chipAmount(amount)})`,
-		setBuyInLabel: "Set the buy in",
 		startLabel: "Deal",
 		// The same control between hands, worded so the host can tell the first deal
 		// from the ones after it.

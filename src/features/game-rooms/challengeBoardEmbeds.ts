@@ -3,7 +3,6 @@ import {
 	ButtonBuilder,
 	ButtonStyle,
 	EmbedBuilder,
-	StringSelectMenuBuilder,
 	type ColorResolvable,
 	type MessageActionRowComponentBuilder,
 } from "discord.js";
@@ -13,8 +12,8 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { bandWidth, isRatedGame } from "@features/ratings/ratingEngine.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
-import { RATING_BANDS, SPECTATOR_MODES, offersReferee, type GameSlug, type RatingBand, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
+import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
+import { offersReferee, type GameSlug, type RatingBand, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
 import type { SoloLuckGame } from "@features/games/soloLuck.js";
 
 // The host controls' words are shared by every pack, so the default pack is the right
@@ -26,20 +25,21 @@ type CardRow = ActionRowBuilder<MessageActionRowComponentBuilder>;
 
 // ── challengeBoardEmbeds ─────────────────────────────────────────────
 // What:  the pinned ⚔️challenges intro, and the opener card that is edited in place
-//        as one challenge moves from "choosing visibility" to "under way".
+//        as one challenge moves from "gathering" to "under way".
 // Who:   challengeBoard.ts.
 // When:  the intro once per boot (refreshIntroEmbeds keeps it current); the card on
-//        every state change of a draft, including the host's controls (2026-10 item
-//        244 Phase 4: the reach capped visibility step, the band, approval and Remove
-//        a player), which render only when the caller passes the draft's host state,
-//        and the network choice and its card line (Phase 5b).
+//        every state change of a draft. Since 2026-10 item 263 Phase 2a the card posts
+//        already configured by the creation modal (challengeSettings.ts), so it carries
+//        no settings control: only what happens after creation (Join or Invite, Start,
+//        Call it off, the host's Requests and Remove a player) and the host's Edit
+//        settings, with one line naming every setting in force.
 // How:   ONE card, edited, rather than a new message per step. A challenge that
-//        posted a fresh message for each of visibility, join and start would bury
-//        the channel it lives in, and ⚔️challenges is meant to be scannable.
+//        posted a fresh message for each of join and start would bury the channel it
+//        lives in, and ⚔️challenges is meant to be scannable.
 
 // The games the board can start. Blackjack is absent from the BOARD on purpose: its one
 // door is 🕹️games' Open a Blackjack table (and /mini-game blackjack typed in ⚔️challenges),
-// which posts the same challenge card through startChallengeDraft (2026-10 item 254,
+// which posts the same challenge card through offerChallengeDraft (2026-10 item 254,
 // Arcade 1), so a second button would only be a second way to the same card.
 //
 // ⚠️ HANGMAN IS HERE BUT IS NOT HEAD TO HEAD, and the difference is load bearing at
@@ -113,9 +113,10 @@ export type ChallengeBadge = "rated" | "casual";
  * otherwise, since a match with a bot is never rated (botSeat) and a Casual match is
  * never rated even once every bot gave its seat to a person (2026-10 item 254, Arcade 6).
  *
- * ⚠️ THE BADGE NEVER MOVES A CARD. Which channel a card lives in is decided once, at the
- * draft, by the game alone (challengeCard.resolveChallengesChannel), so a rated game's
- * card stays in 🏆rated-challenges when its badge turns CASUAL.
+ * ⚠️ THE BADGE NEVER MOVES A CARD. Which channel a card lives in is decided once, at
+ * creation, by the game and the match (challengeCard.resolveChallengesChannel, 2026-10 item
+ * 263 R3-5), and the match is fixed there, so a card stays where it posted whatever its
+ * badge later says (a card from before the creation modal can still seat a Dero bot).
  */
 export function challengeBadge(game: GameSlug, botCount: number, casual = false): ChallengeBadge {
 	return isRatedGame(game) && botCount === 0 && !casual ? "rated" : "casual";
@@ -170,7 +171,7 @@ export interface OpenerCardState {
 	hostId: string;
 	visibility: RoomVisibility | null;
 	pool: string[];
-	// Monopoly only: the host's auction choice, shown on the card and switched by its toggle.
+	// Monopoly only: the host's auction choice, named on the card's settings line.
 	monopolyAuctions?: boolean;
 	// The host's voice referee choice, on the games with voice lines (roomTypes.offersReferee:
 	// Monopoly and Hold'em, 2026-10 item 257 Phase 4b). Ignored for every other game.
@@ -181,29 +182,23 @@ export interface OpenerCardState {
 	// The card's last word: how the match ended (post-launch plan item 21), or that the
 	// host played Dero instead (item 13). It replaces the "under way" line.
 	resultLine?: string | null;
-	// False when the server's challenge reach is invite only (2026-10 item 244 Phase 4),
-	// which drops Open to all from the visibility step. Absent offers both, the card
-	// as it was; the choice is refused server side either way, since a stale card
-	// still carries the button.
-	allowPublic?: boolean;
-	// True offers Open to the network beside Open to all (2026-10 item 244 Phase 5b): a
-	// server whose reach is network, for a game a satellite can mirror. Absent offers no
-	// network choice, the card as it was; the choice is refused server side either way.
-	allowNetwork?: boolean;
 	// True once the host opened the table to the network, which changes the card's line.
 	network?: boolean;
 	// The host's say over who joins (Phase 4), read off the draft row. Absent renders
 	// the card exactly as it was before the controls existed.
 	hostControls?: DraftHostControls;
-	// Dero bot opponents (2026-10 item 250 Phase 5): present when this card offers Play vs
-	// bots, with the number the host chose. Absent offers none, the card as it was.
+	// Dero bot opponents (2026-10 item 250 Phase 5): present on a draft whose game and server
+	// take bots, with the number seated. Absent seats none.
 	bots?: { count: number };
-	// The host's Casual (unrated) choice (2026-10 item 254, Arcade 6), off the row. Offered
-	// wherever Play vs bots is, since filling the empty seats is what Casual does.
+	// The host's Casual (unrated) choice (2026-10 item 254, Arcade 6), off the row: with Dero
+	// bots in the empty seats or, since 2026-10 item 263 R3-5, without.
 	casual?: boolean;
-	// Hold'em only (2026-10 item 257 Phase 4a): the buy in the host set on the card, or null for the
-	// standard stack. Shown as a line, and the host's Set the buy in button sits on the gather row.
+	// Hold'em only (2026-10 item 257 Phase 4a): the buy in the host set, or null for the standard
+	// stack. Shown as a line; it is set in the creation modal or Edit settings since 2026-10 item 263.
 	holdemBuyIn?: number | null;
+	// What the creation modal or Edit settings could not apply, each a sentence, shown under
+	// the settings line while the card gathers (2026-10 item 263 Phase 2a).
+	settingsNotes?: readonly string[];
 }
 
 /** The draft's host controls the card shows: the band, approval, and how many wait for an answer. */
@@ -214,10 +209,6 @@ export interface DraftHostControls {
 	// Who may watch once the room opens (2026-10 item 254, Arcade 11), already resolved
 	// by roomPermissions.effectiveSpectatorMode, so the card shows what the matrix will do.
 	spectatorMode: SpectatorMode;
-	// The host's own choice off the row, or null while they have made none. The visibility
-	// step shows only this, since the resolved default above depends on a visibility not
-	// chosen yet (2026-10 item 257 Phase 4b).
-	spectatorChoice?: SpectatorMode | null;
 }
 
 // How many pool members the card names before it summarises the rest. Well under the
@@ -251,21 +242,13 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 		lines.push(state.network ? networkWords.cardLine(state.hostId) : gameRoomsCopy.board.cardOpenToAll(state.hostId));
 		lines.push("", gameRoomsCopy.board.cardPool(state.pool, POOL_NAMES_SHOWN));
 	}
-	// The draft settings are shown once the host is past the visibility step, the same step
-	// that offers their toggles, so each line and its button appear together.
+	// While the card gathers it names every setting in force on one line, then anything the
+	// host chose that could not apply, then what a joiner pays at a Hold'em chip table.
 	const gathering = Boolean(state.visibility && !state.cancelled && !state.startedChannelId && !state.resultLine);
-	if (gathering && (state.game === "monopoly" || offersReferee(state.game))) lines.push("");
-	if (gathering && state.game === "monopoly") lines.push(gameRoomsCopy.board.cardMonopolyAuctions(state.monopolyAuctions ?? false));
-	if (gathering && offersReferee(state.game)) lines.push(gameRoomsCopy.board.cardReferee(state.referee ?? false));
-	if (state.bots && state.bots.count > 0 && state.visibility && !state.cancelled && !state.startedChannelId && !state.resultLine) {
-		lines.push("", gameRoomsCopy.board.cardBots(state.bots.count));
+	if (gathering) {
+		lines.push("", settingsLine(state), ...(state.settingsNotes ?? []));
+		lines.push(...buyInLines(state));
 	}
-	if (state.casual && state.visibility && !state.cancelled && !state.startedChannelId && !state.resultLine) {
-		lines.push(gameRoomsCopy.board.casual.cardLine);
-	}
-	lines.push(...hostControlLines(state));
-	lines.push(...spectatorLines(state));
-	lines.push(...buyInLines(state));
 
 	const embed = infoEmbed(
 		gameRoomsCopy.board.cardTitle(state.game),
@@ -277,40 +260,44 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 	return embed;
 }
 
-// ── the host's controls on the card (2026-10 item 244 Phase 4) ────────
-// The band and the approval only bite on an Open to all challenge: an invite only host
-// picks every member by hand, so there is no stranger to band or approve. Removing a
-// member applies to both, since an invited member can be removed too.
+// ── the settings line (2026-10 item 263 Phase 2a) ─────────────────────
+// One line naming every setting in force while the card gathers: who can join, the match on
+// a rated game, who may watch, and the game's own switches. Read off the card state, which
+// is read off the row, so it says what the creation modal or Edit settings actually applied.
+const summaryWords = gameRoomsCopy.creation.summary;
+
+// The band and the approval only bite on an Open to all challenge: an invite only host picks
+// every member by hand, so there is no stranger to band or approve.
 const showsJoinControls = (state: OpenerCardState): boolean => state.visibility === "public" && Boolean(state.hostControls);
-const showsBand = (state: OpenerCardState): boolean => showsJoinControls(state) && isRatedGame(state.game);
 
-const BAND_LABELS: Record<RatingBand, string> = {
-	any: hostWords.band.options.any.label,
-	close: hostWords.band.options.close.label,
-	tight: hostWords.band.options.tight.label,
-};
-
-// The band and approval lines under the pool, while the card still gathers.
-function hostControlLines(state: OpenerCardState): string[] {
-	const controls = state.hostControls;
-	if (!controls || state.cancelled || state.startedChannelId || !showsJoinControls(state)) return [];
-	const lines: string[] = [""];
-	if (showsBand(state)) lines.push(hostWords.band.cardLine(BAND_LABELS[controls.ratingBand], bandWidth(controls.ratingBand)));
-	if (controls.requireApproval) lines.push(hostWords.approval.cardLine(controls.pendingJoinCount));
-	return lines.length > 1 ? lines : [];
+function joinPart(state: OpenerCardState): string {
+	if (state.network) return summaryWords.join.network;
+	if (state.visibility !== "public") return summaryWords.join.invite;
+	return state.hostControls?.requireApproval ? summaryWords.join.approve : summaryWords.join.public;
 }
 
-// ── who may watch (2026-10 item 254, Arcade 11) ──
-// Offered on every game's card from the visibility step on (2026-10 item 257 Phase 4b, owner
-// item 24), since an invite only host chooses who watches as much as an open one does, and
-// never on a network table, whose watchers in other servers are its satellites' business
-// (choosing the network drops a choice made at step one, challengeBoard.chooseNetworkTable).
-const showsSpectators = (state: OpenerCardState): boolean =>
-	Boolean(state.hostControls && !state.network && !state.cancelled && !state.startedChannelId && !state.resultLine);
+// Rated with its band where a band applies, or Casual, naming the Dero bots that sit down.
+// A card from before the creation modal can hold bots on a rated match; it reads casual,
+// which is what the badge says too (challengeBadge).
+function matchPart(state: OpenerCardState): string {
+	const bots = state.bots?.count ?? 0;
+	if (badgeOfCard(state) === "casual") return bots > 0 ? `${summaryWords.casual}, ${summaryWords.bots(bots)}` : summaryWords.casual;
+	const width = showsJoinControls(state) && state.hostControls ? bandWidth(state.hostControls.ratingBand) : null;
+	return width === null ? summaryWords.rated : `${summaryWords.rated}, ${summaryWords.band(width)}`;
+}
 
-// A Hold'em card offers the buy in wherever a table could play for chips: not on a network
-// table (its seats come from other servers) and not with a Dero bot seat (it plays free). The
-// button answers honestly when the server has chips off, which the card cannot know.
+function settingsLine(state: OpenerCardState): string {
+	const parts = [joinPart(state)];
+	if (isRatedGame(state.game)) parts.push(matchPart(state));
+	// A network table's watchers in other servers are its satellites' business, so it names none.
+	if (!state.network && state.hostControls) parts.push(summaryWords.watch[state.hostControls.spectatorMode]);
+	if (state.game === "monopoly") parts.push(summaryWords.auctions(state.monopolyAuctions ?? false));
+	if (offersReferee(state.game)) parts.push(summaryWords.referee(state.referee ?? false));
+	return `${summaryWords.lead} ${parts.join(" · ")}`;
+}
+
+// A Hold'em card names the buy in wherever a table could play for chips: not on a network table
+// (its seats come from other servers) and not with a Dero bot seat (it plays free).
 function showsBuyIn(state: OpenerCardState): boolean {
 	return state.game === "holdem" && !state.network && (state.bots?.count ?? 0) === 0;
 }
@@ -320,75 +307,20 @@ function buyInLines(state: OpenerCardState): string[] {
 	return ["", gameRoomsCopy.board.cardBuyIn(state.holdemBuyIn)];
 }
 
-// The host's Set the buy in, on the gather row, so the card stays at the rows it had.
-function buyInButtons(roomId: string, state: OpenerCardState): ButtonBuilder[] {
-	if (!showsBuyIn(state)) return [];
-	return [new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:hbuyin:${roomId}`).setLabel(gameRoomsCopy.holdem.setBuyInLabel).setEmoji("🪙").setStyle(ButtonStyle.Secondary)];
-}
-
-// The line names the setting in force, which needs a visibility: at the visibility step the
-// default is still undecided (Open for an open room, Invite only for an invite room), so the
-// line waits for step two and the select alone shows a choice the host already made.
-function spectatorLines(state: OpenerCardState): string[] {
-	if (!showsSpectators(state) || !state.hostControls || !state.visibility) return [];
-	return ["", gameRoomsCopy.board.spectators.cardLine(state.hostControls.spectatorMode)];
-}
-
-// The spectator select, with the setting in force as its default, or with no default (its
-// placeholder) while the setting is still the undecided default of the visibility step.
-function spectatorSelectRow(roomId: string, mode: SpectatorMode | null): CardRow {
-	const words = gameRoomsCopy.board.spectators;
-	const select = new StringSelectMenuBuilder()
-		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:spectators:${roomId}`)
-		.setPlaceholder(words.placeholder)
-		.addOptions(
-			SPECTATOR_MODES.map((option) => ({
-				label: words.options[option].label,
-				value: option,
-				description: words.options[option].description,
-				default: option === mode,
-			}))
-		);
-	return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(select);
-}
-
-// The host's row: Approve each joiner and Requests on an open challenge, then Remove a
-// player. The approval toggle's arg is the value the press SETS, like the Monopoly
-// toggles, so a stale card does what its label says. Requests shows while approval is
-// on or somebody still waits after it was turned off. Remove a player opens a private
-// picker (hostControls) rather than listing names here, because the card is public
-// and a picker of names belongs to the one person who may use it.
+// ── the card's controls ───────────────────────────────────────────────
+// The host's row: Requests on an open challenge while approval is on or somebody still waits
+// after it was turned off, then Remove a player. Remove a player opens a private picker
+// (hostControls) rather than listing names here, because the card is public and a picker of
+// names belongs to the one person who may use it.
 function hostControlRow(roomId: string, state: OpenerCardState, controls: DraftHostControls): CardRow {
 	const buttons: ButtonBuilder[] = [];
-	if (showsJoinControls(state)) {
+	if (showsJoinControls(state) && (controls.requireApproval || controls.pendingJoinCount > 0)) {
 		buttons.push(
 			new ButtonBuilder()
-				.setCustomId(`${GAME_ROOM_PREFIX}:approval:${roomId}:${controls.requireApproval ? "off" : "on"}`)
-				.setLabel(hostWords.approval.toggleLabel(controls.requireApproval))
-				.setEmoji("✋")
+				.setCustomId(`${GAME_ROOM_PREFIX}:requests:${roomId}`)
+				.setLabel(hostWords.approval.requestsLabel(controls.pendingJoinCount))
+				.setEmoji("📨")
 				.setStyle(ButtonStyle.Secondary)
-		);
-		if (controls.requireApproval || controls.pendingJoinCount > 0) {
-			buttons.push(
-				new ButtonBuilder()
-					.setCustomId(`${GAME_ROOM_PREFIX}:requests:${roomId}`)
-					.setLabel(hostWords.approval.requestsLabel(controls.pendingJoinCount))
-					.setEmoji("📨")
-					.setStyle(ButtonStyle.Secondary)
-			);
-		}
-	}
-	// Play vs bots (2026-10 item 250 Phase 5), the ONE way a bot sits down: the host's own
-	// press, on a card that offers it. Never on a network table, whose seats come from
-	// other servers.
-	if (state.bots && !state.network) {
-		buttons.push(
-			new ButtonBuilder()
-				.setCustomId(`${GAME_ROOM_PREFIX}:bots:${roomId}`)
-				.setLabel(gameRoomsCopy.board.playBotsLabel)
-				.setEmoji("🤖")
-				.setStyle(ButtonStyle.Secondary),
-			casualToggle(roomId, state)
 		);
 	}
 	buttons.push(
@@ -403,39 +335,25 @@ function hostControlRow(roomId: string, state: OpenerCardState, controls: DraftH
 	return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(...buttons);
 }
 
-// Rated or Casual (2026-10 item 254, Arcade 6), beside Play vs bots and offered exactly
-// where it is. The choice in force is read through the ONE badge helper, so the button and
-// the badge never disagree; the label names the switch the press makes and the arg is the
-// value it SETS, like the Monopoly toggles, so a stale card does what its label says. Five buttons at most
-// on the row: approval, requests, bots, this and remove.
-function casualToggle(roomId: string, state: OpenerCardState): ButtonBuilder {
-	const isCasual = badgeOfCard(state) === "casual";
+// The host's Edit settings (owner decision 7): it reopens the creation modal prefilled, every
+// field until somebody joins and then only those a match can still change. Host only.
+function editSettingsButton(roomId: string): ButtonBuilder {
 	return new ButtonBuilder()
-		.setCustomId(`${GAME_ROOM_PREFIX}:casual:${roomId}:${isCasual ? "off" : "on"}`)
-		.setLabel(gameRoomsCopy.board.casual.toggleLabel(isCasual))
-		.setEmoji(isCasual ? "🏆" : "🎲")
+		.setCustomId(`${GAME_ROOM_PREFIX}:edit:${roomId}`)
+		.setLabel(gameRoomsCopy.creation.editLabel)
+		.setEmoji("⚙️")
 		.setStyle(ButtonStyle.Secondary);
-}
-
-// The band select, on rated games only, with the current band as its default so the
-// card shows the choice in force. A select rather than three buttons because it costs
-// one row however many bands there are.
-function bandSelectRow(roomId: string, band: RatingBand): CardRow {
-	const describe = (option: RatingBand): string => {
-		if (option === "any") return hostWords.band.options.any.description;
-		const width = bandWidth(option) ?? 0;
-		return option === "close" ? hostWords.band.options.close.description(width) : hostWords.band.options.tight.description(width);
-	};
-	const select = new StringSelectMenuBuilder()
-		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:band:${roomId}`)
-		.setPlaceholder(hostWords.band.placeholder)
-		.addOptions(RATING_BANDS.map((option) => ({ label: BAND_LABELS[option], value: option, description: describe(option), default: option === band })));
-	return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(select);
 }
 
 // The card's controls for the current state. Returns an empty array once the draft is
 // terminal, which is what strips the buttons off a finished card rather than leaving
 // dead controls a member can still press.
+//
+// ⚠️ NO SETTING IS A CARD CONTROL (2026-10 item 263 R3-13). Visibility, the network, Play
+// Dero, approval, the band, who may watch, Rated or Casual, Play vs bots, the buy in, the
+// referee and the auctions are all chosen in the creation modal and changed through Edit
+// settings. Their routes stay registered in gameRoomHandlers, so a card posted before the
+// change still works until its next redraw, which shows these rows.
 export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[] {
 	if (state.cancelled || state.startedChannelId || state.resultLine) return [];
 
@@ -444,50 +362,14 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 		.setLabel(gameRoomsCopy.board.cancelLabel)
 		.setStyle(ButtonStyle.Secondary);
 
-	// Step 1: the host has not chosen who can see the room yet. Open to all is left off
-	// when the server's challenge reach is invite only.
-	if (!state.visibility) {
-		const openToAll =
-			state.allowPublic === false
-				? []
-				: [
-						new ButtonBuilder()
-							.setCustomId(`${GAME_ROOM_PREFIX}:vis:${roomId}:public`)
-							.setLabel(gameRoomsCopy.board.visibilityOpenLabel)
-							.setEmoji("🌐")
-							.setStyle(ButtonStyle.Primary),
-				  ];
-		const openToNetwork = state.allowNetwork
-			? [
-					new ButtonBuilder()
-						.setCustomId(`${GAME_ROOM_PREFIX}:vis:${roomId}:network`)
-						.setLabel(networkWords.visibilityLabel)
-						.setEmoji("🛰️")
-						.setStyle(ButtonStyle.Primary),
-			  ]
-			: [];
-		const visibilityRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
-			new ButtonBuilder()
-				.setCustomId(`${GAME_ROOM_PREFIX}:vis:${roomId}:invite`)
-				.setLabel(gameRoomsCopy.board.visibilityInviteLabel)
-				.setEmoji("🔒")
-				.setStyle(ButtonStyle.Secondary),
-			...openToAll,
-			...openToNetwork,
-			...playDeroButtons(roomId, state.game),
-			cancel
-		);
-		// The spectator select from the first step (owner item 24), two rows in all.
-		const controls = state.hostControls;
-		return showsSpectators(state) && controls ? [visibilityRow, spectatorSelectRow(roomId, controls.spectatorChoice ?? null)] : [visibilityRow];
-	}
+	// A card whose host never chose who can join: only a card posted before the creation
+	// modal, at its old first step, can be here. Edit settings is its way forward.
+	if (!state.visibility) return [new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(editSettingsButton(roomId), cancel)];
 
-	// Step 2: gather the pool, then start.
-	//
-	// Invite mode offers the picker; open-to-all offers Join to everyone. Start is
-	// present in both and refuses an empty pool in the handler rather than being
-	// hidden here: a hidden button is a suggestion, not a gate, and an honestly
-	// refused press tells the host WHY nothing happened.
+	// Invite mode offers the picker; open-to-all offers Join to everyone. Start is present in
+	// both and refuses an empty pool in the handler rather than being hidden here: a hidden
+	// button is a suggestion, not a gate, and an honestly refused press tells the host WHY
+	// nothing happened.
 	const gather =
 		state.visibility === "invite"
 			? new ButtonBuilder()
@@ -510,65 +392,15 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 		.setEmoji("⚔️")
 		.setStyle(ButtonStyle.Primary);
 
-	// The draft settings sit beside Start because they have to be made before the match is
-	// seeded. Monopoly's row is gather, Start, auctions, referee and cancel; Hold'em's is
-	// gather, Start, the buy in, referee and cancel: five buttons, Discord's cap for one row,
-	// so a sixth setting on either needs a second row.
-	const auctionToggle = state.game === "monopoly" ? [draftSettingToggle(roomId, "auctions", state.monopolyAuctions ?? false, gameRoomsCopy.board.monopolyAuctionsToggleLabel, "🔨")] : [];
-	const refereeToggle = offersReferee(state.game) ? [draftSettingToggle(roomId, "referee", state.referee ?? false, gameRoomsCopy.board.refereeToggleLabel, "🎙️")] : [];
-	const gatherRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
-		gather,
-		start,
-		...auctionToggle,
-		...buyInButtons(roomId, state),
-		...refereeToggle,
-		...playDeroButtons(roomId, state.game),
-		cancel
-	);
+	// Four of the row's five: the fifth stays free for an invited member's Accept and buy in
+	// on an Invite only Hold'em card (2026-10 item 263 R3-27), so the card never needs a row
+	// of its own for it.
+	const gatherRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(gather, start, editSettingsButton(roomId), cancel);
 
-	// The host's controls ride their own rows below, so the gather row keeps its shape
-	// (and Monopoly keeps all five of its slots). Four rows at most, inside Discord's five:
-	// the gather row, the host row, the band select and the spectator select.
 	const controls = state.hostControls;
 	if (!controls) return [gatherRow];
-	return [
-		gatherRow,
-		hostControlRow(roomId, state, controls),
-		...(showsBand(state) ? [bandSelectRow(roomId, controls.ratingBand)] : []),
-		...(showsSpectators(state) ? [spectatorSelectRow(roomId, controls.spectatorMode)] : []),
-	];
-}
-
-// Play Dero instead (post-launch plan item 13), on a luck game's card at both steps. The
-// round is played in a solo room of the host's own (2026-10 item 254, Arcade 1).
-// Never on any other game, which has no solo round to fall back to. Five buttons is
-// still the row's ceiling at step one: invite, open, network, Dero and cancel.
-function playDeroButtons(roomId: string, game: GameSlug): ButtonBuilder[] {
-	if (!isDeroPlayable(game)) return [];
-	return [
-		new ButtonBuilder()
-			.setCustomId(`${GAME_ROOM_PREFIX}:dero:${roomId}`)
-			.setLabel(gameRoomsCopy.board.playDeroLabel)
-			.setEmoji("🤖")
-			.setStyle(ButtonStyle.Secondary),
-	];
+	return [gatherRow, hostControlRow(roomId, state, controls)];
 }
 
 /** The card actions that switch an on or off draft setting; challengeBoard maps each to its row field. */
 export type DraftSettingAction = "auctions" | "referee";
-
-// One on or off draft setting. The arg is the value the press SETS, so a stale card's
-// button cannot flip the choice back the wrong way, and the label names that value.
-function draftSettingToggle(
-	roomId: string,
-	action: DraftSettingAction,
-	enabled: boolean,
-	label: (enabled: boolean) => string,
-	emoji: string
-): ButtonBuilder {
-	return new ButtonBuilder()
-		.setCustomId(`${GAME_ROOM_PREFIX}:${action}:${roomId}:${enabled ? "off" : "on"}`)
-		.setLabel(label(enabled))
-		.setEmoji(emoji)
-		.setStyle(ButtonStyle.Secondary);
-}

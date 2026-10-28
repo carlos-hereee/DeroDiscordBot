@@ -26,8 +26,8 @@ import { showNotice } from "@utils/textModal.js";
 //        played where the party is announced. Both run the same startHangmanRound the
 //        /mini-game hangman slash path does, so the round cannot differ by door. The two
 //        table games go through challengeBoard.offerChallengeDraft, the door every other
-//        challenge uses, so their card posts in 🏆rated-challenges like any rated game's
-//        and its room opens when the host presses Start.
+//        challenge uses, so their card posts where its game and match decide like any
+//        other card's and its room opens when the host presses Start.
 //
 // ⚠️ THE BUTTONS ARE PUBLIC, THE GATE IS NOT. A message cannot show a button to admins
 // only, so every press re-checks the owner or the admin role (gateOwnerOrAdmin), and a
@@ -70,9 +70,9 @@ async function handlePartyGamesButton(interaction: ButtonInteraction): Promise<v
 		await interaction.showModal(buildScheduleModal());
 		return;
 	}
-	// The table game's own challenge card, posted only on its confirm's Submit (2026-10
-	// item 257, owner item 12). The confirm answers the press itself, so nothing is
-	// deferred first. The card's controls are the host's from here on.
+	// The table game's own challenge card, posted only on its creation modal's Submit (2026-10
+	// item 263 Phase 2a). The modal answers the press itself, so nothing is deferred first.
+	// The card's controls are the host's from here on.
 	if (action === "host" && isPartyTableGame(game)) {
 		await offerChallengeDraft(interaction, game);
 		return;

@@ -48,6 +48,7 @@ const ALLOWED: readonly AllowedLine[] = [
 	// ── game-rooms/pickerModal.ts: the select modal's fallbacks ──
 	{ file: "features/game-rooms/pickerModal.ts", contains: "flags: MessageFlags.Ephemeral,", reason: "fallback", why: "showPicker's select message, used only when Discord refuses the select modal" },
 	{ file: "features/game-rooms/pickerModal.ts", contains: "if (interaction.isModalSubmit()) await interaction.deferReply({ flags: MessageFlags.Ephemeral });", reason: "fallback", why: "a select modal opened by a slash command cannot deferUpdate, so its slow pick takes a private defer" },
+	{ file: "features/game-rooms/challengeBoard.ts", contains: "gameRoomsCopy.creation.editUnavailable, flags: MessageFlags.Ephemeral", reason: "fallback", why: "Edit settings' fallback, used only when Discord refuses the settings modal (2026-10 item 263 Phase 2a)" },
 
 	// ── notices whose modal Discord refused ──
 	{ file: "features/community/enableCommunity.ts", contains: "flags: MessageFlags.Ephemeral,", reason: "fallback", why: "the Community already on notice's fallback, used only when Discord refuses the modal" },

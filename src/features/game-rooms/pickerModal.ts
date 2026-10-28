@@ -21,7 +21,9 @@ import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActio
 //        required select, instead of a private select message that sits in the channel
 //        until it is dismissed (2026-10 item 254 Phase 5b, owner decision 3). Since 2026-10
 //        item 257 Phase 4a it also builds the modal of several fields a turn opens
-//        (buildFieldsModal): a hand as text, a select of moves and an optional typed amount.
+//        (buildFieldsModal): a hand as text, a select of moves and an optional typed amount;
+//        and since 2026-10 item 263 Phase 2a every game's creation modal (challengeSettings),
+//        with a multi choice select and prefilled values for Edit settings.
 // Who:   challengeBoard (opponent, bots), hostControls (kick) and roomGames (rps), and
 //        the daily claim's rock paper scissors round (economy/chipClaim.ts, 2026-10 item
 //        257 Phase 3a), which routes to its own handler rather than a room's.
@@ -131,10 +133,17 @@ export interface FieldOption {
 	isDefault?: boolean;
 }
 
-/** One field of a fields modal: a required select, or an optional text input. */
+/**
+ * One field of a fields modal: a required select, a multi choice select (any number of its
+ * options, none included), or an optional text input. `value` prefills the field (the
+ * challenge settings editor reopens a modal with the draft's current choices): a select's
+ * chosen options, a text input's text. Absent, a select falls back to its options' own
+ * `isDefault` and a text input opens empty.
+ */
 export type ModalField =
-	| { kind: "select"; id: string; label: string; options: readonly FieldOption[] }
-	| { kind: "text"; id: string; label: string; placeholder: string; maxLength: number };
+	| { kind: "select"; id: string; label: string; options: readonly FieldOption[]; value?: string }
+	| { kind: "multi"; id: string; label: string; options: readonly FieldOption[]; value?: readonly string[] }
+	| { kind: "text"; id: string; label: string; placeholder: string; maxLength: number; value?: string };
 
 /** What a fields modal shows: its routing id, its title, the text over the fields, and the fields. */
 export interface FieldsModalContent {
@@ -165,21 +174,39 @@ export function buildFieldsModal(content: FieldsModalContent): ModalBuilder {
 function labelOf(field: ModalField): LabelBuilder {
 	const label = new LabelBuilder().setLabel(field.label);
 	if (field.kind === "text") {
-		return label.setTextInputComponent(
-			new TextInputBuilder().setCustomId(field.id).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(field.maxLength).setPlaceholder(field.placeholder)
-		);
+		const input = new TextInputBuilder().setCustomId(field.id).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(field.maxLength).setPlaceholder(field.placeholder);
+		if (field.value) input.setValue(field.value.slice(0, field.maxLength));
+		return label.setTextInputComponent(input);
 	}
+	// A multi choice select may be left empty (min 0), so it is not required; Discord refuses a
+	// required select whose minimum is zero.
+	const isMulti = field.kind === "multi";
+	const chosen = prefilledValues(field);
 	const select = new StringSelectMenuBuilder()
 		.setCustomId(field.id)
-		.setMinValues(1)
-		.setMaxValues(1)
-		.setRequired(true)
-		.addOptions(field.options.map((option) => ({ label: option.label, value: option.value, description: option.description, default: option.isDefault === true })));
+		.setMinValues(isMulti ? 0 : 1)
+		.setMaxValues(isMulti ? field.options.length : 1)
+		.setRequired(!isMulti)
+		.addOptions(
+			field.options.map((option) => ({
+				label: option.label,
+				value: option.value,
+				description: option.description,
+				default: chosen ? chosen.includes(option.value) : option.isDefault === true,
+			}))
+		);
 	return label.setStringSelectMenuComponent(select);
 }
 
+// The options a select opens with chosen, or undefined to leave each option's own default.
+function prefilledValues(field: Exclude<ModalField, { kind: "text" }>): readonly string[] | undefined {
+	if (field.kind === "multi") return field.value;
+	return field.value === undefined ? undefined : [field.value];
+}
+
 /**
- * What a fields modal was answered with, by field id: a select's chosen value, a text input's
+ * What a fields modal was answered with, by field id: a select's chosen value, a multi choice
+ * select's chosen values joined with commas (an option value never holds one), a text input's
  * trimmed text. A field the submit lacks reads as empty, which only a hand made submit can
  * produce, since Discord enforces a required select; the caller refuses an empty move.
  */
@@ -187,7 +214,9 @@ export function readFieldAnswers(interaction: ModalSubmitInteraction, fields: re
 	const answers: Record<string, string> = {};
 	for (const field of fields) {
 		try {
-			answers[field.id] = field.kind === "select" ? (interaction.fields.getStringSelectValues(field.id)[0] ?? "") : interaction.fields.getTextInputValue(field.id).trim();
+			if (field.kind === "text") answers[field.id] = interaction.fields.getTextInputValue(field.id).trim();
+			else if (field.kind === "multi") answers[field.id] = interaction.fields.getStringSelectValues(field.id).join(",");
+			else answers[field.id] = interaction.fields.getStringSelectValues(field.id)[0] ?? "";
 		} catch {
 			answers[field.id] = "";
 		}

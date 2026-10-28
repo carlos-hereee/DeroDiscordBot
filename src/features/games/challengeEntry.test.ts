@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ChatInputCommandInteraction } from "discord.js";
 
-vi.mock("@features/game-rooms/challengeBoard.js", () => ({ startChallengeDraft: vi.fn(async () => null) }));
+vi.mock("@features/game-rooms/challengeBoard.js", () => ({ offerChallengeDraft: vi.fn(async () => null) }));
 vi.mock("./soloLuck.js", () => ({ playSoloLuck: vi.fn(async () => undefined) }));
 
 import { runCoinFlip, runDiceRoll, runMonopoly, runRps } from "./challengeEntry.js";
-import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
+import { offerChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 import { playSoloLuck } from "./soloLuck.js";
 import { gamesCopy } from "./gamesCopy.js";
 
@@ -14,7 +14,7 @@ import { gamesCopy } from "./gamesCopy.js";
 // function the board's buttons call. A doorway passing the wrong slug would post a
 // card for another game, which nothing else would catch.
 
-const draftMock = startChallengeDraft as unknown as ReturnType<typeof vi.fn>;
+const draftMock = offerChallengeDraft as unknown as ReturnType<typeof vi.fn>;
 const soloMock = playSoloLuck as unknown as ReturnType<typeof vi.fn>;
 
 // The options a member typed, read by name the way challengeEntry reads them.
@@ -38,7 +38,7 @@ describe("the challenge doorways", () => {
 		["dice roll", runDiceRoll, "diceroll"],
 		["rps", runRps, "rps"],
 		["monopoly", runMonopoly, "monopoly"],
-	] as const)("%s posts the challenge card for its own game", async (_name, run, slug) => {
+	] as const)("%s opens the creation modal for its own game", async (_name, run, slug) => {
 		await run(interaction);
 		expect(draftMock).toHaveBeenCalledOnce();
 		expect(draftMock).toHaveBeenCalledWith(interaction, slug);
@@ -81,7 +81,7 @@ describe("against Dero", () => {
 		["coin flip", runCoinFlip, "coinflip"],
 		["dice roll", runDiceRoll, "diceroll"],
 		["rps", runRps, "rps"],
-	] as const)("%s against a member still opens the challenge card", async (_name, run, slug) => {
+	] as const)("%s against a member still opens the challenge card's creation modal", async (_name, run, slug) => {
 		const member = slash({ against: "member" });
 		await run(member);
 		expect(draftMock).toHaveBeenCalledWith(member, slug);

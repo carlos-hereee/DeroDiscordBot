@@ -147,6 +147,11 @@ export interface IGameRoom {
 	// seat went to a person, and the choice is what lets a joiner take a bot's seat
 	// before the start (challengeBoard).
 	casual: boolean;
+	// What the card says the host's creation or Edit settings choices could not apply (a
+	// refused network choice, a buy in out of range), shown under the card's settings line
+	// until the next Edit settings (2026-10 item 263 Phase 2a). On the row because the card
+	// is redrawn from the row at every join, and a note gone at the first join is no note.
+	settingsNotes: string[];
 	// ── network tables (2026-10 item 244 Phase 5a) ──
 	// True for a table open to players from other servers. Only a network room may
 	// carry satellites, and its players are named by display name and server tag
@@ -283,6 +288,8 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		botSeats: { type: Number, default: 0, min: 0 },
 		// Off by default, so an older row reads as the host's Rated choice and needs no backfill.
 		casual: { type: Boolean, default: false },
+		// Empty by default, so an older row's card shows no note and needs no backfill.
+		settingsNotes: { type: [String], default: [] },
 		// Off and empty by default, so an older row reads as a server room with no window
 		// anywhere else, and needs no backfill.
 		network: { type: Boolean, default: false },

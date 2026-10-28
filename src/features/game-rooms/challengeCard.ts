@@ -14,7 +14,8 @@ import { effectiveSpectatorMode } from "./roomPermissions.js";
 
 // ── challengeCard ────────────────────────────────────────────────────
 // What:  the challenge card as a message: finding its channel (⚔️challenges, or
-//        🏆rated-challenges for a rated game, 2026-10 item 254, Arcade 5), building its
+//        🏆rated-challenges for a rated match, 2026-10 item 254, Arcade 5, and since
+//        2026-10 item 263 Phase 2a only when the match is not casual), building its
 //        state from the room row, and editing it in place with its picture. It decides
 //        nothing about the challenge itself.
 // Who:   challengeBoard, at every step of a draft, and roomLifecycle.finish, which
@@ -25,12 +26,12 @@ import { effectiveSpectatorMode } from "./roomPermissions.js";
 
 // ── which channel a challenge lives in ────────────────────────────────
 // The two challenge channels' ids, off one GuildConfig read.
-interface ChallengeChannelIds {
+export interface ChallengeChannelIds {
 	arcadeChallengesChannelId?: string | null;
 	arcadeRatedChallengesChannelId?: string | null;
 }
 
-async function readChallengeChannelIds(guildId: string): Promise<ChallengeChannelIds> {
+export async function readChallengeChannelIds(guildId: string): Promise<ChallengeChannelIds> {
 	const stored = await guildConfigStore.findByGuildId(guildId);
 	return (stored as unknown as ChallengeChannelIds | null) ?? {};
 }
@@ -42,21 +43,42 @@ async function fetchTextChannel(guild: Guild, channelId: string | null | undefin
 }
 
 /**
- * The channel a challenge card for this game is posted in: 🏆rated-challenges for a rated
- * game (ratingEngine.RATED_GAMES), ⚔️challenges for every other. Decided by the GAME alone,
- * never by the card's badge, so a card never moves when its badge turns casual.
+ * Whether a card of this game and match belongs in 🏆rated-challenges: a rated game
+ * (ratingEngine.RATED_GAMES) whose match is not casual (owner decision 8, 2026-10 item 263
+ * R3-5). The match is fixed at creation, so this never changes for a card once it posted.
+ */
+export const postsInRatedChannel = (game: GameSlug, casual: boolean): boolean => isRatedGame(game) && !casual;
+
+/**
+ * The channel a challenge card is posted in: 🏆rated-challenges for a rated game's rated
+ * match, ⚔️challenges for every other, a casual Hold'em, Battleship or Monopoly match
+ * included. Decided by the game AND the match, once, at creation; never by the card's badge
+ * later, so a card never moves.
  *
- * A rated game falls back to ⚔️challenges while its guild has no 🏆rated-challenges yet
+ * A rated match falls back to ⚔️challenges while its guild has no 🏆rated-challenges yet
  * (the boot repair builds it on the next boot, and an admin can remove it), so a rated
  * challenge is never refused for a channel the member cannot do anything about.
  */
-export async function resolveChallengesChannel(guild: Guild, game: GameSlug): Promise<TextChannel | null> {
+export async function resolveChallengesChannel(guild: Guild, game: GameSlug, casual = false): Promise<TextChannel | null> {
 	const ids = await readChallengeChannelIds(guild.id);
-	if (isRatedGame(game)) {
+	if (postsInRatedChannel(game, casual)) {
 		const rated = await fetchTextChannel(guild, ids.arcadeRatedChallengesChannelId);
 		if (rated) return rated;
 	}
 	return fetchTextChannel(guild, ids.arcadeChallengesChannelId);
+}
+
+/**
+ * A link to a draft's challenge card, for a refusal that has to say where the slot is held
+ * (2026-10 item 263 R3-9): the card's message in the channel its game and match post in, or
+ * null for a row with no card. Built from ids alone, so it costs no fetch; a card that fell
+ * back to ⚔️challenges while 🏆rated-challenges was missing links to the wrong channel, the
+ * one case this cannot see.
+ */
+export function challengeCardLink(ids: ChallengeChannelIds, room: Pick<IGameRoom, "guildId" | "game" | "casual" | "boardMessageId">): string | null {
+	if (!room.boardMessageId) return null;
+	const channelId = (postsInRatedChannel(room.game, room.casual ?? false) ? ids.arcadeRatedChallengesChannelId : null) ?? ids.arcadeChallengesChannelId;
+	return channelId ? `https://discord.com/channels/${room.guildId}/${channelId}/${room.boardMessageId}` : null;
 }
 
 /**
@@ -69,13 +91,16 @@ export async function isChallengeChannel(guildId: string, channelId: string | nu
 	return channelId === ids.arcadeChallengesChannelId || channelId === ids.arcadeRatedChallengesChannelId;
 }
 
-// The card message, looked for in the channel its game posts in first and then in the
-// other challenge channel: a rated card posted before 🏆rated-challenges existed (or while
-// it was missing) lives in ⚔️challenges, and must keep updating until its match ends.
+// The card message, looked for in the channel its game and match post in first and then in
+// the other challenge channel: a rated card posted before 🏆rated-challenges existed (or
+// while it was missing) lives in ⚔️challenges, and so does a casual card of a rated game
+// posted before the match decided the channel, and each must keep updating until its match ends.
 async function findCardMessage(guild: Guild, room: IGameRoom): Promise<Message | null> {
 	if (!room.boardMessageId) return null;
 	const ids = await readChallengeChannelIds(guild.id);
-	const preferred = isRatedGame(room.game) ? [ids.arcadeRatedChallengesChannelId, ids.arcadeChallengesChannelId] : [ids.arcadeChallengesChannelId, ids.arcadeRatedChallengesChannelId];
+	const preferred = postsInRatedChannel(room.game, room.casual ?? false)
+		? [ids.arcadeRatedChallengesChannelId, ids.arcadeChallengesChannelId]
+		: [ids.arcadeChallengesChannelId, ids.arcadeRatedChallengesChannelId];
 	for (const channelId of preferred) {
 		const channel = await fetchTextChannel(guild, channelId);
 		const message = channel ? await channel.messages.fetch(room.boardMessageId).catch(() => null) : null;
@@ -107,8 +132,6 @@ export function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState
 			// Who may watch (2026-10 item 254, Arcade 11), resolved from the visibility the
 			// row holds, so the card's line and select show what the room will do.
 			spectatorMode: effectiveSpectatorMode(overrides.visibility ?? room.visibility, room.spectatorMode),
-			// The host's own choice, which the visibility step's select shows (2026-10 item 257 Phase 4b).
-			spectatorChoice: room.spectatorMode ?? null,
 		},
 		// Play vs bots (2026-10 item 250 Phase 5), off the draft row.
 		...(room.botsOffered ? { bots: { count: room.botSeats ?? 0 } } : {}),
@@ -117,6 +140,8 @@ export function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState
 		casual: room.casual ?? false,
 		// Hold'em's buy in, set on the card (2026-10 item 257 Phase 4a).
 		holdemBuyIn: room.holdemBuyIn ?? null,
+		// What the creation modal or Edit settings could not apply (2026-10 item 263 Phase 2a).
+		settingsNotes: room.settingsNotes ?? [],
 		...overrides,
 	};
 }

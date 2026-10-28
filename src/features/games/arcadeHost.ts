@@ -5,13 +5,14 @@ import {
 	StringSelectMenuBuilder,
 	type ButtonInteraction,
 	type ChatInputCommandInteraction,
+	type ModalSubmitInteraction,
 	type StringSelectMenuInteraction,
 } from "discord.js";
-import { registerButton, registerSelectMenu } from "@handlers/interactionRegistry.js";
+import { registerButton, registerModal, registerSelectMenu } from "@handlers/interactionRegistry.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
-import { errorEmbed } from "@utils/embedBuilder.js";
-import { openSoloRoom, describeSoloOpenFailure, readPrivateQuotaStatus, type SoloGameSlug } from "@features/game-rooms/soloRooms.js";
-import { offerChallengeDraft } from "@features/game-rooms/challengeBoard.js";
+import { openSoloRoom, readPrivateQuotaStatus, type SoloGameSlug } from "@features/game-rooms/soloRooms.js";
+import { answerSoloRefusal, closeHeldDraft, offerChallengeDraft, offerToFreeSlot } from "@features/game-rooms/challengeBoard.js";
+import { SOLO_LUCK_GAMES } from "@features/game-rooms/roomTypes.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { HANGMAN_CATEGORIES, isHangmanCategory, type HangmanCategory } from "./hangmanWords.js";
 
@@ -43,6 +44,14 @@ const PREFIX = "arcade_host";
 // The category start's action, on the select registry under the same prefix (the
 // button and select registries are separate maps, so the two cannot collide).
 const HANGMAN_CATEGORY_ACTION = "hcategory";
+// The held draft confirm's action (2026-10 item 263 R3-9), on the modal registry for its
+// Submit and the button registry for the fallback button a refused modal leaves.
+const REPLACE_ACTION = "replace";
+
+// Every solo room a press here (or a /mini-game typed in a challenge channel) can open, which
+// the replace confirm's customId is checked against: it is user input like any customId.
+const SOLO_START_GAMES: readonly SoloGameSlug[] = ["solo-hangman", "solo-blackjack", ...SOLO_LUCK_GAMES];
+const isSoloStartGame = (game: string | undefined): game is SoloGameSlug => (SOLO_START_GAMES as readonly (string | undefined)[]).includes(game);
 
 // value → how to start it. Adding a game is one entry here plus one line of copy;
 // there is deliberately no switch statement anywhere else in this file.
@@ -83,12 +92,16 @@ export function buildHangmanCategoryStartRow(placeholder: string): ActionRowBuil
 }
 
 async function handleArcadeHost(interaction: ButtonInteraction): Promise<void> {
+	if (interaction.customId.split(":")[1] === REPLACE_ACTION) {
+		await handleSoloReplace(interaction);
+		return;
+	}
 	const choice = interaction.customId.split(":")[1] as HostableId;
 	if (!HOSTABLE.some((game) => game.id === choice)) return;
 
 	// ── the multi seat table: a challenge card, like every room game ──
-	// Before the defer below, because the confirm answers the press itself; the card is
-	// posted only on its Submit (2026-10 item 257, owner item 12).
+	// Before the defer below, because the creation modal answers the press itself; the card
+	// is posted only on its Submit (2026-10 item 263 Phase 2a).
 	if (choice === "blackjack-table") {
 		await offerChallengeDraft(interaction, "blackjack");
 		return;
@@ -121,12 +134,18 @@ async function handleHangmanCategoryStart(interaction: StringSelectMenuInteracti
 // player there, so a line pointing at it would be a second ping in another channel.
 // Exported for miniGameInChallenges (2026-10 item 254, Arcade 1), whose slash commands
 // typed in ⚔️challenges open the same solo rooms and answer the same way.
+//
+// ⚠️ THE HELD SLOT IS ANSWERED AT THE PRESS (2026-10 item 263 R3-9), while a modal can still
+// open: a held draft is offered to close in one Submit (handleSoloReplace), and a held match
+// is named where it plays. The replace confirm's own Submit skips the check, having just closed
+// the draft; whatever still holds the slot then is a race, answered by answerSoloRefusal.
 export async function openSoloRoomForMember(
-	interaction: ButtonInteraction | StringSelectMenuInteraction | ChatInputCommandInteraction,
+	interaction: ButtonInteraction | StringSelectMenuInteraction | ChatInputCommandInteraction | ModalSubmitInteraction,
 	game: SoloGameSlug,
 	options: { hangmanCategory?: HangmanCategory } = {}
 ): Promise<void> {
 	const guild = interaction.guild!;
+	if (!interaction.isModalSubmit() && (await offerToFreeSlot(interaction, (roomId) => replaceConfirmId(game, roomId, options.hangmanCategory)))) return;
 	const answer = await beginChannelAnswer(interaction, "member");
 	const member = guild.members.cache.get(interaction.user.id);
 	const result = await openSoloRoom(
@@ -156,7 +175,22 @@ export async function openSoloRoomForMember(
 	}
 	// Every refusal names itself (room slot held, guild full, quota hit, no
 	// arcade), so the member learns what to do rather than that something failed.
-	await answer.send({ embeds: [errorEmbed(describeSoloOpenFailure(result))] });
+	await answerSoloRefusal(interaction, answer, result);
+}
+
+// The replace confirm's id: the solo room it opens, the held draft it closes first, and the
+// hangman shelf picked, when there was one.
+function replaceConfirmId(game: SoloGameSlug, roomId: string, category?: HangmanCategory): string {
+	return [PREFIX, REPLACE_ACTION, game, roomId, ...(category ? [category] : [])].join(":");
+}
+
+// The held draft confirm's Submit, or its fallback button: close the draft it named (only
+// while it is still this member's draft), then open the solo room the press asked for.
+async function handleSoloReplace(interaction: ButtonInteraction | ModalSubmitInteraction): Promise<void> {
+	const [, , game, roomId, category] = interaction.customId.split(":");
+	if (!interaction.guild || !isSoloStartGame(game) || !roomId) return;
+	await closeHeldDraft(interaction.guild, roomId, interaction.user.id);
+	await openSoloRoomForMember(interaction, game, { hangmanCategory: category && isHangmanCategory(category) ? category : undefined });
 }
 
 /**
@@ -167,4 +201,5 @@ export async function openSoloRoomForMember(
 export function registerArcadeHostHandlers(): void {
 	registerButton(PREFIX, handleArcadeHost);
 	registerSelectMenu(PREFIX, handleHangmanCategoryStart);
+	registerModal(PREFIX, handleSoloReplace);
 }

@@ -23,7 +23,9 @@ vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedV
 vi.mock("./challengeCardRenderer.js", () => ({ renderChallengeCard: vi.fn().mockResolvedValue(null), challengeCardView: vi.fn().mockResolvedValue({}) }));
 
 import { chooseVisibility, joinChallenge, confirmStartMatch } from "./challengeBoard.js";
-import { openerCardEmbed, openerCardRows, type OpenerCardState } from "./challengeBoardEmbeds.js";
+import { openerCardEmbed } from "./challengeBoardEmbeds.js";
+import { buildSettingsModal, defaultSettings, type SettingsGame } from "./challengeSettings.js";
+import type { ChallengeReach } from "./roomTypes.js";
 import { consentAcceptId } from "./networkRules.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -96,16 +98,18 @@ beforeEach(() => {
 });
 
 describe("the card's network choice", () => {
-	const firstStep = (allowNetwork?: boolean): OpenerCardState => ({ game: "holdem", hostId: HOST, visibility: null, pool: [], allowNetwork });
-	const choices = (state: OpenerCardState): string[] =>
-		openerCardRows("room-1", state)
-			.flatMap((row) => row.toJSON().components)
-			.map((component) => ("custom_id" in component ? component.custom_id : ""))
-			.filter((id) => id.includes(":vis:"));
+	// The creation modal's Who can join options (2026-10 item 263 Phase 2a), the card's old first step.
+	const joinValues = (reach: ChallengeReach, game: SettingsGame = "holdem"): string[] => {
+		const context = { game, reach, botsAllowed: true, hasRatedChannel: true };
+		const { modal } = buildSettingsModal(context, { customId: "gameroom:newok:holdem", mode: { kind: "create" }, values: defaultSettings(context) });
+		const field = (modal.toJSON().components as Array<{ component?: { custom_id?: string; options?: Array<{ value: string }> } }>).find((entry) => entry.component?.custom_id === "join");
+		return field?.component?.options?.map((option) => option.value) ?? [];
+	};
 
-	it("offers Open to the network only when the card is told it may", () => {
-		expect(choices(firstStep(true))).toEqual(["gameroom:vis:room-1:invite", "gameroom:vis:room-1:public", "gameroom:vis:room-1:network"]);
-		expect(choices(firstStep())).toEqual(["gameroom:vis:room-1:invite", "gameroom:vis:room-1:public"]);
+	it("offers Open to the network only at network reach, for a game a satellite mirrors", () => {
+		expect(joinValues("network")).toEqual(["invite", "public", "approve", "network"]);
+		expect(joinValues("server")).toEqual(["invite", "public", "approve"]);
+		expect(joinValues("network", "monopoly")).not.toContain("network");
 	});
 
 	it("says on the card that the table is open to other network servers", () => {

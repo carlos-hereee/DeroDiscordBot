@@ -1,31 +1,30 @@
 import { describe, it, expect } from "vitest";
 import { CHALLENGE_GAMES, openerCardEmbed, openerCardRows, type OpenerCardState } from "./challengeBoardEmbeds.js";
 
-// ── the opener card stays inside Discord's five rows (risk R15, 2026-10 item 257 Phase 4a) ──
-// Every game's card, at the visibility step and at the gather step, in the fullest state its
-// host controls can reach: approval on with requests waiting, Dero bots offered, the band and
-// spectator selects showing, the Hold'em buy in set and the referee on. A sixth row would make
-// Discord refuse the whole card edit, so this counts rows per game and step rather than trusting
-// a design. Since 2026-10 item 257 Phase 4b the spectator select shows from the first step on
-// every game, which this test also pins.
+// ── the opener card stays inside Discord's five rows (risks R15 of item 257, R16 of item 263) ──
+// Since 2026-10 item 263 Phase 2a the card posts already configured by the creation modal and
+// keeps only what happens after creation: Join or Invite, Start, Edit settings and Call it off on
+// the gather row, and the host's Requests and Remove a player below. Every game's card is counted
+// in every state a draft can be in, at its fullest (approval on with requests waiting, bots
+// seated, a buy in set, the referee and auctions on), because a sixth row or a sixth button makes
+// Discord refuse the whole card edit.
 
 const MAX_ROWS = 5;
 const MAX_PER_ROW = 5;
 
-function fullestState(game: OpenerCardState["game"], visibility: OpenerCardState["visibility"]): OpenerCardState {
+function fullestState(game: OpenerCardState["game"], visibility: OpenerCardState["visibility"], extra: Partial<OpenerCardState> = {}): OpenerCardState {
 	return {
 		game,
 		hostId: "host",
 		visibility,
 		pool: ["a", "b"],
-		allowPublic: true,
-		allowNetwork: true,
-		hostControls: { ratingBand: "close", requireApproval: true, pendingJoinCount: 2, spectatorMode: "invite", spectatorChoice: "invite" },
+		hostControls: { ratingBand: "close", requireApproval: true, pendingJoinCount: 2, spectatorMode: "invite" },
 		bots: { count: 0 },
 		casual: false,
 		holdemBuyIn: 5_000,
 		monopolyAuctions: true,
 		referee: true,
+		...extra,
 	};
 }
 
@@ -33,38 +32,64 @@ function fullestState(game: OpenerCardState["game"], visibility: OpenerCardState
 // whose card the 🕹️games host posts (2026-10 item 254, Arcade 1).
 const CARD_GAMES: readonly OpenerCardState["game"][] = [...CHALLENGE_GAMES, "blackjack"];
 
+// Every state a gathering card can be drawn in, the old first step of a card posted before the
+// creation modal included.
+const STATES: ReadonlyArray<{ name: string; state: Partial<OpenerCardState> & Pick<OpenerCardState, "visibility"> }> = [
+	{ name: "an old card at its first step", state: { visibility: null } },
+	{ name: "Invite only", state: { visibility: "invite" } },
+	{ name: "Open to all", state: { visibility: "public" } },
+	{ name: "Open to all with Dero bots", state: { visibility: "public", casual: true, bots: { count: 3 } } },
+	{ name: "open to the network", state: { visibility: "public", network: true } },
+	{ name: "nobody joined yet", state: { visibility: "public", pool: [], hostControls: { ratingBand: "any", requireApproval: false, pendingJoinCount: 0, spectatorMode: "open" } } },
+];
+
+const idsOf = (state: OpenerCardState): (string | undefined)[] =>
+	openerCardRows("room-1", state).flatMap((row) => row.toJSON().components.map((component) => (component as { custom_id?: string }).custom_id));
+
+// Every control the creation modal took over (R3-13). Their routes stay registered, so only the
+// card's rows lose them.
+const SETTINGS_ACTIONS = ["vis", "dero", "auctions", "referee", "hbuyin", "approval", "bots", "casual"];
+const SETTINGS_SELECTS = ["gameroomSelect:band:", "gameroomSelect:spectators:"];
+
 describe("the challenge card's rows", () => {
 	for (const game of CARD_GAMES) {
-		for (const visibility of [null, "invite", "public"] as const) {
-			it(`${game} at ${visibility ?? "the visibility step"} holds ${MAX_ROWS} rows or fewer, ${MAX_PER_ROW} components each`, () => {
-				const rows = openerCardRows("room-1", fullestState(game, visibility));
+		for (const { name, state } of STATES) {
+			it(`${game}, ${name}: ${MAX_ROWS} rows or fewer, ${MAX_PER_ROW} components each, and no settings control`, () => {
+				const full = fullestState(game, state.visibility, state);
+				const rows = openerCardRows("room-1", full);
 				expect(rows.length).toBeLessThanOrEqual(MAX_ROWS);
 				for (const row of rows) expect(row.components.length).toBeLessThanOrEqual(MAX_PER_ROW);
-				// The spectator select is one of them, on every game and at both steps.
-				const ids = rows.flatMap((row) => row.toJSON().components.map((component) => (component as { custom_id?: string }).custom_id));
-				expect(ids).toContain("gameroomSelect:spectators:room-1");
+
+				const ids = idsOf(full);
+				for (const action of SETTINGS_ACTIONS) expect(ids.some((id) => id?.startsWith(`gameroom:${action}:`))).toBe(false);
+				for (const prefix of SETTINGS_SELECTS) expect(ids.some((id) => id?.startsWith(prefix))).toBe(false);
+				// The host can always change what the creation modal set.
+				expect(ids).toContain("gameroom:edit:room-1");
 			});
 		}
 	}
 
-	it("offers the Hold'em host a Set the buy in button on the gather row, and shows the amount on the card", () => {
-		const state = fullestState("holdem", "public");
-		const ids = openerCardRows("room-1", state).flatMap((row) => row.toJSON().components.map((component) => (component as { custom_id?: string }).custom_id));
-		expect(ids).toContain("gameroom:hbuyin:room-1");
-		expect(JSON.stringify(openerCardEmbed(state).toJSON())).toContain("Buy in");
-	});
-
-	it("offers the referee toggle on the Monopoly and Hold'em cards only", () => {
-		for (const game of CARD_GAMES) {
-			const ids = openerCardRows("room-1", fullestState(game, "public")).flatMap((row) => row.toJSON().components.map((component) => (component as { custom_id?: string }).custom_id));
-			expect(ids.includes("gameroom:referee:room-1:off")).toBe(game === "monopoly" || game === "holdem");
+	it("keeps Join or Invite, Start, Edit settings and Call it off on the gather row, leaving its fifth slot free", () => {
+		for (const visibility of ["invite", "public"] as const) {
+			const [gatherRow] = openerCardRows("room-1", fullestState("holdem", visibility));
+			const ids = gatherRow.toJSON().components.map((component) => (component as { custom_id?: string }).custom_id?.split(":")[1]);
+			expect(ids).toEqual([visibility === "invite" ? "invite" : "join", "start", "edit", "cancel"]);
 		}
 	});
 
-	it("offers no buy in on another game's card, on a network table, or with a Dero bot seat", () => {
-		const idsOf = (state: OpenerCardState) => openerCardRows("room-1", state).flatMap((row) => row.toJSON().components.map((component) => (component as { custom_id?: string }).custom_id));
-		expect(idsOf(fullestState("monopoly", "public"))).not.toContain("gameroom:hbuyin:room-1");
-		expect(idsOf({ ...fullestState("holdem", "public"), network: true })).not.toContain("gameroom:hbuyin:room-1");
-		expect(idsOf({ ...fullestState("holdem", "public"), bots: { count: 2 } })).not.toContain("gameroom:hbuyin:room-1");
+	it("keeps the host's Requests and Remove a player on the row below", () => {
+		const ids = idsOf(fullestState("monopoly", "public"));
+		expect(ids).toContain("gameroom:requests:room-1");
+		expect(ids).toContain("gameroom:kick:room-1");
+	});
+
+	it("shows the Hold'em buy in on the card as a line, set in the creation modal", () => {
+		expect(JSON.stringify(openerCardEmbed(fullestState("holdem", "public")).toJSON())).toContain("Buy in");
+	});
+
+	it("strips every control from a closed card", () => {
+		for (const closed of [{ cancelled: true }, { startedChannelId: "ch" }, { resultLine: "over" }]) {
+			expect(openerCardRows("room-1", fullestState("monopoly", "public", closed))).toEqual([]);
+		}
 	});
 });

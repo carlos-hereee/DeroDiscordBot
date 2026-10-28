@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MessageFlags, StringSelectMenuBuilder, type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction } from "discord.js";
 import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
-import { answerPick, buildPickerModal, deferPick, isPickerPrefix, pickedValues, showPicker, type PickerContent } from "./pickerModal.js";
+import { answerPick, buildFieldsModal, buildPickerModal, deferPick, isPickerPrefix, pickedValues, readFieldAnswers, showPicker, type ModalField, type PickerContent } from "./pickerModal.js";
 
 // ── pickerModal (2026-10 item 254 Phase 5b) ──────────────────────────────────
 // A single choice picker as a modal with one required select: its shape, the select
@@ -131,5 +131,40 @@ describe("a slow pick", () => {
 		expect(interaction.deferUpdate).not.toHaveBeenCalled();
 		expect(interaction.deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
 		expect(interaction.editReply).toHaveBeenCalledWith({ content: "Removed." });
+	});
+});
+
+// ── the two additions for the creation modal (2026-10 item 263 Phase 2a) ──
+// A multi choice select (none to all of its options) and a value per field to prefill, which
+// Edit settings opens the creation modal with.
+describe("buildFieldsModal's multi choice select and prefilled values", () => {
+	const options = [
+		{ label: "Auctions", value: "auctions" },
+		{ label: "Voice referee", value: "referee" },
+	];
+	type Json = { components: Array<{ component?: { custom_id: string; min_values?: number; max_values?: number; required?: boolean; value?: string; options?: Array<{ value: string; default?: boolean }> } }> };
+	const componentOf = (fields: ModalField[], id: string) => (buildFieldsModal({ customId: "m", title: "t", text: [], fields }).toJSON() as unknown as Json).components.find((entry) => entry.component?.custom_id === id)?.component;
+
+	it("lets a multi choice select take none to all of its options, so it is not required", () => {
+		expect(componentOf([{ kind: "multi", id: "table", label: "Table options", options }], "table")).toMatchObject({ min_values: 0, max_values: 2, required: false });
+	});
+
+	it("keeps a single select required, one choice", () => {
+		expect(componentOf([{ kind: "select", id: "pick", label: "Pick", options }], "pick")).toMatchObject({ min_values: 1, max_values: 1, required: true });
+	});
+
+	it("prefills a select's choices and a text input's text", () => {
+		const multi = componentOf([{ kind: "multi", id: "table", label: "Table options", options, value: ["referee"] }], "table");
+		expect(multi?.options?.filter((option) => option.default).map((option) => option.value)).toEqual(["referee"]);
+		const single = componentOf([{ kind: "select", id: "pick", label: "Pick", options: options.map((option, index) => ({ ...option, isDefault: index === 0 })), value: "referee" }], "pick");
+		expect(single?.options?.filter((option) => option.default).map((option) => option.value)).toEqual(["referee"]);
+		expect(componentOf([{ kind: "text", id: "buyIn", label: "Buy in", placeholder: "", maxLength: 12, value: "5000" }], "buyIn")?.value).toBe("5000");
+	});
+
+	it("reads a multi choice select back as its values joined, and an empty one as empty", () => {
+		const fields: ModalField[] = [{ kind: "multi", id: "table", label: "Table options", options }];
+		const answered = (values: string[]) => ({ fields: { getStringSelectValues: () => values } }) as unknown as ModalSubmitInteraction;
+		expect(readFieldAnswers(answered(["auctions", "referee"]), fields)).toEqual({ table: "auctions,referee" });
+		expect(readFieldAnswers(answered([]), fields)).toEqual({ table: "" });
 	});
 });

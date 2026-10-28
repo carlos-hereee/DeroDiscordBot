@@ -19,7 +19,7 @@ import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { answerPick, deferPick, pickedValues, showPicker } from "./pickerModal.js";
 import { REMOVABLE_IN_PLAY_GAMES } from "./gameRoomsEmbeds.js";
-import { refreshDraftCard, yieldBotSeatsTo } from "./challengeBoard.js";
+import { refreshDraftCard, yieldBotSeatsTo, type DraftChoice } from "./challengeBoard.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { roomTrail } from "./roomTrail.js";
 import { redrawTable, removeFromTable, seatAcceptedPlayer } from "./roomHoldemHandlers.js";
@@ -121,7 +121,18 @@ function pickerRow(action: string, roomId: string, placeholder: string, options:
 }
 
 // ── the rating band ───────────────────────────────────────────────────
-/** The band select on a draft card: rated games only, and only the three bands there are. */
+/**
+ * Set a draft's rating band: rated games only, and only the three bands there are. The one
+ * write behind the band, shared by the card's band select (a card posted before the creation
+ * modal) and the creation modal's The match (challengeBoard.applySettings, 2026-10 item 263
+ * Phase 2a), so the two cannot disagree about which bands a game takes.
+ */
+export async function applyRatingBand(room: IGameRoom, band: string | undefined): Promise<DraftChoice> {
+	if (!isRatedGame(room.game) || !isRatingBand(band)) return { ok: false, refusal: gameRoomsCopy.errors.controlRetired };
+	return { ok: true, room: (await gameRoomStore.update(room.guildId, room.roomId, { ratingBand: band })) ?? room };
+}
+
+/** The band select on a draft card. */
 export async function handleBandSelect(interaction: StringSelectMenuInteraction): Promise<void> {
 	const room = await loadRoomForHost(interaction);
 	if (!room) return;
@@ -129,14 +140,13 @@ export async function handleBandSelect(interaction: StringSelectMenuInteraction)
 		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.board.draftGone] });
 		return;
 	}
-	const band = interaction.values[0];
-	if (!isRatedGame(room.game) || !isRatingBand(band)) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.errors.controlRetired] });
+	const choice = await applyRatingBand(room, interaction.values[0]);
+	if (!choice.ok) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [choice.refusal] });
 		return;
 	}
-	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { ratingBand: band })) ?? room;
 	await interaction.deferUpdate();
-	await refreshDraftCard(interaction.guild!, updated);
+	await refreshDraftCard(interaction.guild!, choice.room);
 }
 
 // ── who may watch (2026-10 item 254, Arcade 11) ────────────────────────
@@ -155,14 +165,24 @@ export async function handleSpectatorSelect(interaction: StringSelectMenuInterac
 		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.board.draftGone] });
 		return;
 	}
-	const mode = interaction.values[0];
-	if (!isSpectatorMode(mode) || room.network) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.errors.controlRetired] });
+	const choice = await applySpectatorMode(room, interaction.values[0]);
+	if (!choice.ok) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [choice.refusal] });
 		return;
 	}
-	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { spectatorMode: mode })) ?? room;
 	await interaction.deferUpdate();
-	await refreshDraftCard(interaction.guild!, updated);
+	await refreshDraftCard(interaction.guild!, choice.room);
+}
+
+/**
+ * Set who may watch a draft: one of the three settings, never on a network table. The one
+ * write behind the setting, shared by the card's spectator select and the creation modal's
+ * Who may watch (2026-10 item 263 Phase 2a).
+ */
+export async function applySpectatorMode(room: IGameRoom, mode: string | undefined): Promise<DraftChoice> {
+	if (!isSpectatorMode(mode)) return { ok: false, refusal: gameRoomsCopy.errors.controlRetired };
+	if (room.network) return { ok: false, refusal: gameRoomsCopy.creation.networkWatch };
+	return { ok: true, room: (await gameRoomStore.update(room.guildId, room.roomId, { spectatorMode: mode })) ?? room };
 }
 
 // ── approving each joiner ─────────────────────────────────────────────
@@ -172,13 +192,22 @@ export async function handleSpectatorSelect(interaction: StringSelectMenuInterac
  * waiting on the list, still answered from Requests, rather than letting them in unasked.
  */
 export async function toggleApproval(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {
-	if (choice !== "on" && choice !== "off") {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.errors.controlRetired] });
+	const applied = await applyApproval(room, choice);
+	if (!applied.ok) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [applied.refusal] });
 		return;
 	}
-	const updated = (await gameRoomStore.update(room.guildId, room.roomId, { requireApproval: choice === "on" })) ?? room;
 	await interaction.deferUpdate();
-	await refreshDraftCard(interaction.guild!, updated);
+	await refreshDraftCard(interaction.guild!, applied.room);
+}
+
+/**
+ * Turn approving each joiner on or off. The one write behind the setting, shared by the card's
+ * approval toggle and the creation modal's Who can join (2026-10 item 263 Phase 2a).
+ */
+export async function applyApproval(room: IGameRoom, choice: string): Promise<DraftChoice> {
+	if (choice !== "on" && choice !== "off") return { ok: false, refusal: gameRoomsCopy.errors.controlRetired };
+	return { ok: true, room: (await gameRoomStore.update(room.guildId, room.roomId, { requireApproval: choice === "on" })) ?? room };
 }
 
 // Requests can be answered while a draft gathers, and at a Hold'em table, the one room
@@ -468,6 +497,9 @@ async function revokeMemberOverwrite(client: Client, room: IGameRoom, userId: st
 }
 
 export const hostControls = {
+	applyRatingBand,
+	applySpectatorMode,
+	applyApproval,
 	handleSpectatorSelect,
 	handleBandSelect,
 	toggleApproval,

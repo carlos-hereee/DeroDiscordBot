@@ -1,6 +1,6 @@
 import type { ChatInputCommandInteraction } from "discord.js";
 import { isChallengeChannel } from "@features/game-rooms/challengeCard.js";
-import { startChallengeDraft } from "@features/game-rooms/challengeBoard.js";
+import { offerChallengeDraft } from "@features/game-rooms/challengeBoard.js";
 import { soloLuckSlugFor } from "@features/game-rooms/soloRooms.js";
 import { openSoloRoomForMember } from "./arcadeHost.js";
 import { isAgainstDero } from "./challengeEntry.js";
@@ -46,10 +46,10 @@ export async function routeMiniGameInChallenges(interaction: ChatInputCommandInt
 		return true;
 	}
 	if (subcommand === "blackjack") {
-		// A table others may join is a challenge card, which is what these channels hold;
-		// a hand alone against the dealer is a solo room with no card.
+		// A table others may join is a challenge card, which is what these channels hold, started
+		// from its creation modal; a hand alone against the dealer is a solo room with no card.
 		if (interaction.options.getString("mode") === "table") {
-			await startChallengeDraft(interaction, "blackjack");
+			await offerChallengeDraft(interaction, "blackjack");
 			return true;
 		}
 		await openSoloRoomForMember(interaction, "solo-blackjack");

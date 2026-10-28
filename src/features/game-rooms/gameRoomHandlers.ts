@@ -22,6 +22,7 @@ import { roomLifecycle } from "./roomLifecycle.js";
 import { roomTrail } from "./roomTrail.js";
 import { challengeBoard } from "./challengeBoard.js";
 import { CHALLENGE_GAMES } from "./challengeBoardEmbeds.js";
+import { SETTINGS_GAMES } from "./challengeSettings.js";
 import { runRoomMove, handleRpsSelect } from "./roomGames.js";
 import {
 	openAuthoringModal,
@@ -52,16 +53,16 @@ import { acknowledgeConfirm, showConfirm, showNotice, type ConfirmInteraction } 
 
 const satelliteWords = rokCommanderCopy.arcadeSatellites;
 
-// The games a per game start confirm may post a card for: the board's own, plus the
-// Blackjack table the arcade host's button opens (2026-10 item 257). Wider than
-// CHALLENGE_GAMES, which is only the board's buttons.
-const DRAFT_CONFIRM_GAMES: readonly string[] = [...CHALLENGE_GAMES, "blackjack"];
+// The games a creation modal may post a card for: the board's own, plus the Blackjack table
+// the arcade host's button opens, one list with the settings table (challengeSettings). Wider
+// than CHALLENGE_GAMES, which is only the board's buttons.
+const DRAFT_CONFIRM_GAMES: readonly string[] = SETTINGS_GAMES;
 
 // The actions that only make sense while a draft is still a draft. Listed once so
 // the status refusal below cannot drift from the routing switch. `requests` and `kick`
 // are host controls too but are NOT here: they also work in a live room, and each
 // refuses by the room's status itself.
-const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "startok", "dero", "cancel", "auctions", "referee", "approval", "bots", "casual", "hbuyin"]);
+const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "startok", "dero", "cancel", "auctions", "referee", "approval", "bots", "casual", "hbuyin", "edit", "editok"]);
 
 // ── gameRoomHandlers ─────────────────────────────────────────────────
 // What:  routes every `gameroom:` button to its action, after proving the clicker is
@@ -235,6 +236,9 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		case "auctions":
 		case "referee":
 			await challengeBoard.chooseDraftSetting(interaction, room, parsed.action, parsed.arg ?? "");
+			return;
+		case "edit":
+			await challengeBoard.openSettingsEditor(interaction, room);
 			return;
 		case "rematch":
 			// On the result card of a finished room. rematchFromRoom refuses by status
@@ -423,6 +427,9 @@ async function runConfirmed(interaction: ConfirmInteraction, gated: GatedPress):
 	switch (parsed.action) {
 		case "startok":
 			await challengeBoard.confirmStartMatch(interaction, room);
+			return;
+		case "editok":
+			await challengeBoard.confirmSettingsEdit(interaction, room);
 			return;
 		case "archiveok":
 			// The save lands BEFORE the archive (item 257 Phase 3b): the row survives the
