@@ -10,12 +10,13 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { COLORS } from "@base/copy/brand.js";
 import { networkBanStore } from "@db/stores/networkBanStore.js";
 import type { NetworkBanKind } from "@db/models/NetworkBan.js";
+import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { networkCopy } from "@features/game-rooms/networkCopy.js";
 import { scheduleNetworkBoardRefresh } from "@features/game-rooms/networkBoard.js";
 import { seatOutBannedMember, seatOutBannedServer } from "@features/game-rooms/satelliteSeats.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { isPlatformOwner } from "@utils/permissions.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showEmbedNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
 
 // ── /platform network ──────────────────────────────────────────────────────
 // What:  the platform owner's network bans (2026-10 item 244 Phase 5b): `ban` and
@@ -86,20 +87,20 @@ type TargetRead = { ok: true; target: BanTarget } | { ok: false; problem: string
 /** Runs /platform network ban or unban for the platform owner, refusing everyone else first. */
 export async function runNetworkBanSubcommand(interaction: ChatInputCommandInteraction): Promise<void> {
 	if (!isPlatformOwner(interaction.user.id)) {
-		await showErrorNotice(interaction, copy.notOwner);
+		await showNotice(interaction, { title: gameRoomsCopy.notices.network, sections: [copy.notOwner] });
 		return;
 	}
 
 	const sub = interaction.options.getSubcommand(true);
 	const targetKind = interaction.options.getString(TARGET_OPTION, true);
 	if ((sub !== "ban" && sub !== "unban") || !isTargetKind(targetKind)) {
-		await showErrorNotice(interaction, copy.unknownSubcommand(`${sub} ${targetKind}`));
+		await showNotice(interaction, { title: gameRoomsCopy.notices.network, sections: [copy.unknownSubcommand(`${sub} ${targetKind}`)] });
 		return;
 	}
 
 	const read = readTarget(interaction, targetKind);
 	if (!read.ok) {
-		await showErrorNotice(interaction, read.problem);
+		await showNotice(interaction, { title: gameRoomsCopy.notices.network, sections: [read.problem] });
 		return;
 	}
 

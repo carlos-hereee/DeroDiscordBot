@@ -94,6 +94,7 @@ function makeSelect(action: string, values: string[]): StringSelectMenuInteracti
 		isModalSubmit: () => false,
 		client: {},
 		reply: vi.fn().mockResolvedValue(undefined),
+		update: vi.fn().mockResolvedValue(undefined),
 		deferReply: vi.fn().mockResolvedValue(undefined),
 		editReply: vi.fn().mockResolvedValue(undefined),
 	} as unknown as StringSelectMenuInteraction;

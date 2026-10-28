@@ -8,6 +8,8 @@ vi.mock("@db/stores/playerRatingStore.js", () => ({ playerRatingStore: { findFor
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
+// A held seat and a join request are answers, posted in 💬dero-commands (2026-10 item 263 R3-11).
+vi.mock("@utils/answerInChannel.js", () => ({ answerInChannel: vi.fn(async () => ({ channelId: "c-commands" })) }));
 vi.mock("@features/ratings/recordMatchRatings.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@features/ratings/recordMatchRatings.js")>()),
 	recordMatchRatings: vi.fn(),
@@ -18,6 +20,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 import { act, createTable, dealHand, handInProgress, joinTable, requestLateSeat, whoActs, type HoldemTable } from "@features/games/holdemTable.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -34,6 +37,13 @@ const storeMock = gameRoomStore as unknown as Record<"update" | "updateSecretIf"
 const trailMock = roomTrail.postMove as unknown as Mock;
 const finishMock = roomLifecycle.finish as unknown as Mock;
 const ratingMock = recordMatchRatings as unknown as Mock;
+const answerMock = answerInChannel as unknown as Mock;
+
+// What an answer posted in 💬dero-commands said, for the interaction it answered.
+const answerText = (interaction: unknown): string => {
+	const call = answerMock.mock.calls.find((args) => args[0] === interaction);
+	return call ? (call[2] as { content: string }).content : "";
+};
 
 const HOST = "p0";
 
@@ -109,7 +119,8 @@ describe("Buy in and Take a seat pass the host's gate", () => {
 		await handleBuyIn(interaction, makeRoom(table, { playerIds: [HOST], requireApproval: true }));
 
 		expect(storeMock.addPendingJoin).toHaveBeenCalledWith("guild-1", "room-1", "stranger");
-		expect(replyText(interaction)).toBe(words.approval.asked);
+		expect(answerText(interaction)).toBe(words.approval.asked);
+		expect(answerMock.mock.calls.find((args) => args[0] === interaction)?.[1]).toBe("member");
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
@@ -136,7 +147,7 @@ describe("a late seat while the host has seats open", () => {
 		expect(written.pendingSeats).toEqual([{ userId: "late", username: "Name late" }]);
 		expect(written.seats.some((seat) => seat.userId === "late")).toBe(false);
 		expect(extra).toBeUndefined();
-		expect(replyText(interaction)).toBe(words.seats.heldReply(BOT_CONSTANTS.HOLDEM_STARTING_STACK));
+		expect(answerText(interaction)).toBe(words.seats.heldReply(BOT_CONSTANTS.HOLDEM_STARTING_STACK));
 	});
 
 	it("is refused while the seats are closed", async () => {

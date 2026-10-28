@@ -64,7 +64,7 @@ import { botSeatIdsFor, botsAllowedIn, casualBotSeats, maxBotSeats, takesBots } 
 import { adminLog } from "@features/setup/adminLog.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { answerInChannel, beginChannelAnswer, type PendingChannelAnswer } from "@utils/answerInChannel.js";
-import { showConfirm, showEmbedNotice, showErrorNotice, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
+import { acknowledgeTextModal, showConfirm, showEmbedNotice, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 
 // The host controls' words are shared by every pack (2026-10 item 244 Phase 4), so
 // the default pack is the right one for every guild.
@@ -120,7 +120,7 @@ export async function startChallengeDraft(
 ): Promise<IGameRoom | null> {
 	const guild = interaction.guild;
 	if (!guild || !interaction.guildId) {
-		await showErrorNotice(interaction, "This only works inside a server.");
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.outsideGuild] });
 		return null;
 	}
 
@@ -150,7 +150,7 @@ export async function startChallengeDraft(
  */
 export async function offerChallengeDraft(interaction: RepliableInteraction, game: GameSlug): Promise<void> {
 	if (!interaction.guildId) {
-		await showErrorNotice(interaction, "This only works inside a server.");
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.outsideGuild] });
 		return;
 	}
 	const existing = await gameRoomStore.findOpenByHost(interaction.guildId, interaction.user.id);
@@ -184,7 +184,7 @@ async function offerToReplace(interaction: RepliableInteraction, existing: IGame
 export async function confirmChallengeDraft(interaction: ConfirmInteraction, game: GameSlug, replaceRoomId: string | null): Promise<void> {
 	const guild = interaction.guild;
 	if (!guild) {
-		await showErrorNotice(interaction, "This only works inside a server.");
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.errors.outsideGuild] });
 		return;
 	}
 	if (replaceRoomId) {
@@ -218,7 +218,9 @@ async function showRefusalNotice(interaction: RepliableInteraction, refusal: { c
 function draftRefusalReply(failure: DraftOpenFailure): { content: string } | { embeds: EmbedBuilder[] } {
 	if (failure.reason === "noAccess") return { embeds: [gameRoomUpgradeEmbed(failure.upgradeUrl)] };
 	if (failure.reason === "alreadyHosting") return { content: gameRoomsCopy.errors.alreadyHosting(failure.channelId) };
-	if (failure.reason === "noChannel") return { embeds: [errorEmbed(gameRoomsCopy.errors.noArcadeCategory)] };
+	// A missing arcade category is a state an admin can fix, not a failure, so it opens under
+	// the challenge title rather than the error embed's (2026-10 item 263 R3-12).
+	if (failure.reason === "noChannel") return { content: gameRoomsCopy.errors.noArcadeCategory };
 	return { embeds: [errorEmbed(gameRoomsCopy.errors.createFailed)] };
 }
 
@@ -473,7 +475,10 @@ export async function handleInviteSelect(interaction: StringSelectMenuInteractio
 	const saved = (await gameRoomStore.update(guildId, roomId, { spectatorIds: picked })) ?? room;
 	// Each person the host invites onto a Casual draft takes a Dero bot's seat (Arcade 6).
 	const updated = await yieldBotSeatsTo(interaction.client, room, saved);
-	await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.pickerSaved(picked.length)] });
+	// Who was invited is an answer, not a state (owner rule 1, 2026-10 item 263 R3-11), and it
+	// belongs to the picker the host pressed in 💬dero-commands, so the picker becomes it and
+	// loses its select. No ping: the host is answering their own prompt where they pressed it.
+	await interaction.update({ content: gameRoomsCopy.board.pickerSaved(picked.length), components: [], allowedMentions: { parse: [] } });
 	await refreshCard(interaction.guild, updated, cardStateFor(updated, { visibility: "invite", pool: picked }));
 }
 
@@ -563,7 +568,9 @@ async function askHostToJoin(interaction: ButtonInteraction, room: IGameRoom): P
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
 	}
-	await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [hostWords.approval.asked] });
+	// A request filed is work done, so it is an answer (owner rule 1, R3-11): it posts in
+	// 💬dero-commands and pings the member who asked.
+	await answerInChannel(interaction, "member", { content: hostWords.approval.asked });
 	await refreshDraftCard(interaction.guild!, updated);
 }
 
@@ -893,7 +900,9 @@ async function checkRematch(interaction: ButtonInteraction, room: IGameRoom): Pr
 	if (!channel) return { ok: false, reply: { content: gameRoomsCopy.errors.notFound } };
 
 	const admission = await checkRoomAdmission({ guild: interaction.guild!, hostId: interaction.user.id, visibility: room.visibility });
-	if (admission) return { ok: false, reply: { embeds: [errorEmbed(describeRoomOpenFailure(admission))] } };
+	// Every admission refusal (one room per host, a full server, the private ceiling, the
+	// reach) is a state, so it opens as a titled notice rather than an error embed (R3-12).
+	if (admission) return { ok: false, reply: { content: describeRoomOpenFailure(admission) } };
 
 	return { ok: true, channel };
 }
@@ -1129,7 +1138,11 @@ export async function handleBotSelect(interaction: StringSelectMenuInteraction |
 	}
 
 	const updated = await saveBotSeats(interaction, room, { botSeats: count }, gameRoomsCopy.board.botOptionCount(count));
-	await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.botsSaved(count)] });
+	// The count saved is an answer that belongs to the card, whose bots line the refresh
+	// below redraws (owner rule 1, R3-11). The modal's Submit closes through
+	// acknowledgeTextModal (R3-6); the select message Discord falls back to becomes the answer.
+	if (interaction.isModalSubmit()) await acknowledgeTextModal(interaction);
+	else await interaction.update({ content: gameRoomsCopy.board.botsSaved(count), components: [], allowedMentions: { parse: [] } });
 	await refreshCard(interaction.guild, updated, cardStateFor(updated, { visibility: updated.visibility, pool: updated.spectatorIds ?? [] }));
 }
 

@@ -492,10 +492,9 @@ describe("refusals write nothing", () => {
 
 		await rematchFromRoom(interaction, await roomOf(FINISHED));
 
-		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
-			embeds: Array<{ data: { description?: string } }>;
-		};
-		expect(reply.embeds[0].data.description).toBe(gameRoomsCopy.errors.alreadyHosting("other-ch"));
+		// An admission refusal is a state, so it is a titled notice now, not an error embed (2026-10 item 263 R3-12).
+		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content?: string };
+		expect(reply.content).toBe(gameRoomsCopy.errors.alreadyHosting("other-ch"));
 		expect(fake.snapshot()).toBe(before);
 		expect(interaction.deferUpdate).not.toHaveBeenCalled();
 		expect(world.channel.permissionOverwrites.set).not.toHaveBeenCalled();

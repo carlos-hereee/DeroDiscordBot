@@ -44,8 +44,12 @@ function interaction(userId: string, group: string | null, sub: string) {
 	return { fake, reply };
 }
 
-const firstText = (reply: ReturnType<typeof vi.fn>): string =>
-	((reply.mock.calls[0] as unknown as [{ embeds: EmbedBuilder[] }])[0].embeds[0]?.data.description ?? "");
+// The network refusals are notices since 2026-10 item 263 R3-12 (plain text where the fake cannot
+// open a modal); analytics and the Verse still refuse with the error embed.
+const firstText = (reply: ReturnType<typeof vi.fn>): string => {
+	const payload = (reply.mock.calls[0] as unknown as [{ content?: string; embeds?: EmbedBuilder[] }])[0];
+	return payload.content ?? payload.embeds?.[0]?.data.description ?? "";
+};
 
 beforeEach(() => {
 	mocks.ban.mockReset().mockResolvedValue(true);

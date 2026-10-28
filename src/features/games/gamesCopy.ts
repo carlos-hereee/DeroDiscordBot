@@ -185,12 +185,9 @@ export const gamesCopy = {
 		modalInputLabel: "One letter",
 		modalPlaceholder: "a",
 
-		// ── per guess feedback, all ephemeral to the guesser ──
-		// Only the BOARD is public. Telling the whole channel that someone typed a
-		// digit would be noise, and the board already shows every real outcome.
-		hit: (letter: string): string => `**${letter.toUpperCase()}** is in the word.`,
-		miss: (letter: string, remaining: number): string =>
-			`**${letter.toUpperCase()}** is not in the word. ${remaining} attempt${remaining === 1 ? "" : "s"} left.`,
+		// ── the guesses the board does not show, a notice to the guesser alone ──
+		// A hit or a miss is answered by the board itself. Telling the whole channel that
+		// someone typed a digit would be noise.
 		repeat: (letter: string): string => `**${letter.toUpperCase()}** was already tried. That one is free.`,
 		invalid: "One letter, a through z. That one does not count against you.",
 		closed: "That round is already over.",

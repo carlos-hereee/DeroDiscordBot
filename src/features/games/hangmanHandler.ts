@@ -19,11 +19,11 @@ import { buildHangmanEndEmbed } from "./gamesEmbeds.js";
 import { hangmanCardView } from "./hangmanRenderer.js";
 import { boardPicture, playingBoardPicture } from "./hangmanBoard.js";
 import { pickWord } from "./hangmanWords.js";
-import { createHangmanState, applyGuess, type HangmanState } from "./hangmanState.js";
+import { createHangmanState, applyGuess, type HangmanGuess, type HangmanState } from "./hangmanState.js";
 import { awardMultiPlayerResult } from "./gameXp.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showCooldownNotice, showNotice } from "@utils/textModal.js";
+import { acknowledgeTextModal, showCooldownNotice, showNotice } from "@utils/textModal.js";
 
 // ── /mini-game hangman ─────────────────────────────────────────────────────
 // What:  a PUBLIC, channel wide round. The board is a normal channel message
@@ -308,20 +308,16 @@ async function onGuessClick(click: ButtonInteraction, channelId: string, board: 
 	// two simultaneous guesses cannot both spend the last attempt or both win.
 	const result = applyGuess(live.state, submit.fields.getTextInputValue(MODAL_FIELD));
 
-	// Feedback is ephemeral to the guesser only. The BOARD is the public record,
-	// and telling the whole channel that someone typed a digit would be noise.
-	const c = gamesCopy.hangman;
-	const feedback =
-		result.status === "hit"
-			? c.hit(result.letter)
-			: result.status === "miss"
-				? c.miss(result.letter, result.remaining)
-				: result.status === "repeat"
-					? c.repeat(result.letter)
-					: result.status === "invalid"
-						? c.invalid
-						: c.closed;
-	await showNotice(submit, { title: gamesCopy.notices.hangman, sections: [feedback] });
+	// A hit or a miss is an answer, and the BOARD redrawn below is it (owner rule 1, 2026-10
+	// item 263 R3-11), so the Submit only closes. A repeat, a character that is no letter, or a
+	// round that closed meanwhile is a state only this Submit can meet (the press cannot know
+	// what will be typed), so it keeps the private fallback: telling the whole channel that
+	// someone typed a digit would be noise.
+	if (result.status === "hit" || result.status === "miss") {
+		await acknowledgeTextModal(submit);
+	} else {
+		await showNotice(submit, { title: gamesCopy.notices.hangman, sections: [guessRefusal(result)] });
+	}
 
 	// Only a real turn changes the board. A repeat, an invalid character, or a
 	// late submit leaves it exactly as it was, which is the visible half of
@@ -329,6 +325,15 @@ async function onGuessClick(click: ButtonInteraction, channelId: string, board: 
 	if (result.status === "hit" || result.status === "miss") {
 		await renderBoard(board, live, channelId, submit.user.id);
 	}
+}
+
+// The notice for a guess that changed nothing: a letter tried already, a character that is no
+// letter, or a round that closed while the member typed.
+function guessRefusal(result: Exclude<HangmanGuess, { status: "hit" | "miss" }>): string {
+	const c = gamesCopy.hangman;
+	if (result.status === "repeat") return c.repeat(result.letter);
+	if (result.status === "invalid") return c.invalid;
+	return c.closed;
 }
 
 async function renderBoard(board: Message, round: HangmanRound, channelId: string, actorId: string): Promise<void> {

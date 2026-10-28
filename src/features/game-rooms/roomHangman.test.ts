@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { MessageFlags, type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
+import { type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn() } }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() }, resolveRoomChannel: vi.fn() }));
@@ -721,15 +721,17 @@ describe("handleCategorySelect, starting the round", () => {
 		expect(boardMock.mock.calls[0][1]).toBe(gameRoomsCopy.hangman.boardDescription(null));
 	});
 
-	it("tells the host the shelf privately and the room the hint publicly, never the word", async () => {
+	// Which shelf Dero drew from is an answer, so it posts in 💬dero-commands and pings the host
+	// there, like the authoring modal's own answer (2026-10 item 263 R3-11).
+	it("tells the host the shelf in 💬dero-commands and the room the hint publicly, never the word", async () => {
 		const interaction = makeCategorySelect(HOST, "realm");
 
 		await handleCategorySelect(interaction);
 
 		const { word, hint } = savedSecret() as { word: string; hint: string };
-		const confirmation = replyOf(interaction);
+		const confirmation = answerOf(interaction);
 		const opener = trailMock.postMove.mock.calls[0][2] as { text: string };
-		expect(confirmation.flags).toBe(MessageFlags.Ephemeral);
+		expect(confirmation.audience).toBe("member");
 		expect(confirmation.content).toBe(gameRoomsCopy.hangman.categoryPicked("Dero's realm"));
 		expect(opener.text).toBe(gameRoomsCopy.hangman.categoryOpener(HOST, "Dero's realm", hint));
 		expect(confirmation.content).not.toMatch(new RegExp(word, "i"));

@@ -1,7 +1,7 @@
 import { type Client, type RepliableInteraction, type User } from "discord.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
-import { confirmSelectValues, showErrorNotice, type ConfirmInteraction, type ConfirmSelect } from "@utils/textModal.js";
+import { confirmSelectValues, showNotice, type ConfirmInteraction, type ConfirmSelect } from "@utils/textModal.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { botSeatIdsFor } from "./botSeat.js";
@@ -102,11 +102,11 @@ export async function savedMatchLine(client: Client, room: SavedMatchRow, userId
 export async function showSavedMatches(interaction: RepliableInteraction, target: User): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, copy.outsideGuild);
+		await showNotice(interaction, { title: gameRoomsCopy.notices.savedMatches, sections: [copy.outsideGuild] });
 		return;
 	}
 	if (target.bot) {
-		await showErrorNotice(interaction, copy.botMember);
+		await showNotice(interaction, { title: gameRoomsCopy.notices.savedMatches, sections: [copy.botMember] });
 		return;
 	}
 

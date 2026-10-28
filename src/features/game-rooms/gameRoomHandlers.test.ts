@@ -193,7 +193,9 @@ describe("archive and forfeit ask first", () => {
 		["hleave", "player-2", "gameroom:hleaveok:room-1"],
 		["hend", "host-1", "gameroom:hendok:room-1"],
 	])("the Hold'em %s press opens a confirm and touches nothing", async (action, userId, confirmId) => {
-		storeMock.findByRoomId.mockResolvedValue(makeRoom({ game: "holdem", status: "playing" }));
+		// A running table with the presser seated: the press reads the table before it asks (2026-10 item 263 R3-6).
+		const secret = { status: "playing", seats: [{ userId: "host-1", out: false }, { userId: "player-2", out: false }] };
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ game: "holdem", status: "playing", secret }));
 		const press = pressWithModal(`gameroom:${action}:room-1`, userId);
 
 		await _handleGameRoomButton(press);
@@ -202,6 +204,35 @@ describe("archive and forfeit ask first", () => {
 		expect(storeMock.findByRoomId).toHaveBeenCalledOnce();
 		expect(lifecycleMock.finish).not.toHaveBeenCalled();
 		expect(trailMock.postMove).not.toHaveBeenCalled();
+	});
+
+	// R3-6: a state the press can read is refused there, in a notice titled for Hold'em, so the
+	// confirm's Submit meets it only when the table moved while the confirm stood open.
+	it.each([
+		["hleave", "player-2", { status: "finished", seats: [{ userId: "player-2", out: false }] }, gameRoomsCopy.holdem.tournamentOver],
+		["hleave", "player-2", { status: "playing", seats: [{ userId: "player-2", out: true }] }, gameRoomsCopy.holdem.notSeated],
+		["hend", "host-1", { status: "finished", seats: [] }, gameRoomsCopy.holdem.tournamentOver],
+	])("the Hold'em %s press refuses before its confirm when it can already tell", async (action, userId, secret, refusal) => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ game: "holdem", status: "playing", secret }));
+		const press = pressWithModal(`gameroom:${action}:room-1`, userId);
+
+		await _handleGameRoomButton(press);
+
+		const modal = press.showModal.mock.calls[0][0] as { data: { custom_id: string; title: string } };
+		expect(modal.data.custom_id).toMatch(/^notice:/);
+		expect(modal.data.title).toBe(gameRoomsCopy.notices.holdem);
+		expect(JSON.stringify(modal.toJSON())).toContain(refusal);
+	});
+
+	it("the forfeit press refuses a match that is already over", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished" }));
+		const press = pressWithModal("gameroom:forfeit:room-1", "player-2");
+
+		await _handleGameRoomButton(press);
+
+		const modal = press.showModal.mock.calls[0][0] as { data: { custom_id: string } };
+		expect(modal.data.custom_id).toMatch(/^notice:/);
+		expect(JSON.stringify(modal)).toContain(gameRoomsCopy.confirms.matchOver);
 	});
 
 	it("the board's per game button asks before posting a card", async () => {

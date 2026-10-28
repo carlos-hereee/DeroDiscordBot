@@ -110,6 +110,7 @@ function makeSelect(userId: string, values: string[], members: ReturnType<typeof
 		isModalSubmit: () => false,
 		client: {},
 		reply: vi.fn().mockResolvedValue(undefined),
+		update: vi.fn().mockResolvedValue(undefined),
 	} as unknown as StringSelectMenuInteraction;
 }
 
@@ -156,11 +157,14 @@ describe("the invite picker", () => {
 	// interaction too.
 	it("re-filters bots server side even if the client sends one back", async () => {
 		storeMock.findByRoomId.mockResolvedValue(makeRoom());
-		await handleInviteSelect(makeSelect(HOST, ["human-2", "bot-9"], members));
+		const interaction = makeSelect(HOST, ["human-2", "bot-9"], members);
+		await handleInviteSelect(interaction);
 
 		expect(storeMock.update).toHaveBeenCalledOnce();
 		const patch = storeMock.update.mock.calls[0][2] as { spectatorIds: string[] };
 		expect(patch.spectatorIds).toEqual(["human-2"]);
+		// Who was invited is an answer, so the picker message becomes it and loses its select (R3-11).
+		expect(interaction.update).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.board.pickerSaved(1), components: [] }));
 	});
 
 	it("refuses a picker submission from somebody who is not the host", async () => {

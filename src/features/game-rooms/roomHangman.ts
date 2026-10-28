@@ -307,7 +307,9 @@ export async function handleCategorySelect(interaction: StringSelectMenuInteract
 		room,
 		bankSecret(pick),
 		{ actorId: interaction.user.id, text: gameRoomsCopy.hangman.categoryOpener(interaction.user.id, label, pick.hint) },
-		() => showNotice(interaction, { title: gameRoomsCopy.notices.hangman, sections: [gameRoomsCopy.hangman.categoryPicked(label)] })
+		// Which shelf Dero drew from is an answer (owner rule 1, 2026-10 item 263 R3-11), so it
+		// posts in 💬dero-commands like the authoring modal's own answer, and names no word.
+		() => answerInChannel(interaction, "member", { content: gameRoomsCopy.hangman.categoryPicked(label) })
 	);
 }
 

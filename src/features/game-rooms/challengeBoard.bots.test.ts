@@ -62,6 +62,7 @@ function select(userId: string, value: string): StringSelectMenuInteraction {
 		values: [value],
 		isModalSubmit: () => false,
 		reply: vi.fn().mockResolvedValue(undefined),
+		update: vi.fn().mockResolvedValue(undefined),
 	} as unknown as StringSelectMenuInteraction;
 }
 
@@ -109,6 +110,9 @@ describe("the bot count select", () => {
 
 		expect(storeMock.update).toHaveBeenCalledWith("guild-1", "room-1", { botSeats: 3 });
 		expect(logMock).toHaveBeenCalledWith(interaction, "guild-1", "bot.slot", expect.objectContaining({ game: "monopoly", matchId: "room-1", botCount: 3, actor: HOST }));
+		// The count saved is an answer, so the select message becomes it rather than a notice (2026-10 item 263 R3-11).
+		expect(interaction.update).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.board.botsSaved(3), components: [] }));
+		expect(interaction.reply).not.toHaveBeenCalled();
 	});
 
 	it("refuses anybody but the host, and a count the game does not take", async () => {

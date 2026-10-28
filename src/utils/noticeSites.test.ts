@@ -1,0 +1,517 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
+import { describe, expect, it } from "vitest";
+
+// ── the notice inventory (2026-10 item 263, R3-11 and R3-6) ──────────────────
+// What:  finds every call of the five notice helpers and of the five files' own notice
+//        wrappers in the source, and holds each one to INVENTORY below: the file, the named
+//        function it sits in, a piece of its line, and its kind under owner rule 1 of the
+//        Round 3 list (a notice states something; an answer is never a notice).
+// Why:   an answer hidden behind a notice helper is the bug Round 3 found ("Your challenge
+//        card is in ..." as a private line), and a line grep cannot see which helper a line
+//        reaches. A new call fails here until it is listed with its kind, a listed call that
+//        disappears fails too, and an entry of kind answer always fails, so no answer can
+//        come back behind a notice.
+// How:   matched by file, enclosing function and a piece of the line, never a line number,
+//        which moves with every edit above it. Phase 1b sorted features/game-rooms and
+//        features/games; every other site is listed as unsorted until Phase 1c sorts it and
+//        flips UNSORTED_ALLOWED. The verdicts and their reasons are the fourth pass of
+//        companyuno-discord/docs/handoffs/dero-private-reply-audit-2026-10.md.
+//
+// utils/textModal.ts is not scanned: it is where the helpers are written, so its calls are
+// the helpers calling each other, not places a member is answered.
+
+const SOURCE_ROOT = join(__dirname, "..");
+
+/** Phase 1c sorts every unsorted site, then sets this false so none can come back. */
+const UNSORTED_ALLOWED = true;
+
+/** The folders Phase 1b sorted, where an unsorted entry is never allowed. */
+const SORTED_FOLDERS = ["features/game-rooms/", "features/games/"];
+
+const NOTICE_HELPERS = ["showNotice", "showErrorNotice", "showEmbedNotice", "showCooldownNotice", "showRefusalNotice"] as const;
+
+// File local functions that only pass their words on to showErrorNotice, so a call of one is a
+// notice site its own line would not show. Each was read to confirm it does nothing else.
+const NOTICE_WRAPPERS: readonly { file: string; name: string }[] = [
+	{ file: "commands/utility/dero.ts", name: "refuse" },
+	{ file: "features/community/communityButtons.ts", name: "replyRefusal" },
+	{ file: "features/community/enableCommunity.ts", name: "replyError" },
+	{ file: "features/dero-brain/holdemRulesCard.ts", name: "replyPrivately" },
+	{ file: "features/setup/rulesEdit.ts", name: "replyPrivately" },
+];
+
+/**
+ * A site's kind under owner rule 1. state: a cooldown, a refusal, nothing to do, a closed card
+ * or room, a passed turn. failure: something actually failed, so it may keep the error title.
+ * answer: a result, a list, a reading or work done, which never stays behind a notice. private:
+ * a hand, a fleet, a sealed bid, a secret, kept to the member it belongs to. race: a state only
+ * a modal Submit can meet, answered by the private fallback. replaced: a site a later phase
+ * removes. unsorted: not yet sorted (Phase 1c).
+ */
+type NoticeKind = "state" | "failure" | "answer" | "private" | "race" | "replaced" | "unsorted";
+
+interface NoticeEntry {
+	file: string;
+	/** The named function the call sits in (`Class.method` inside a class). */
+	within: string;
+	/** A piece of the call's line that tells it from the function's other sites; absent when the entry covers them all. */
+	anchor?: string;
+	/** How many sites the entry covers. */
+	count?: number;
+	kind: NoticeKind;
+	/** Why it may stay private: required for private, race and replaced. */
+	why?: string;
+}
+
+/** One call found in the source. */
+interface NoticeSite {
+	file: string;
+	within: string;
+	line: number;
+	text: string;
+}
+
+const INVENTORY: readonly NoticeEntry[] = [
+	// ── game-rooms/challengeBoard.ts ──
+	{ file: "features/game-rooms/challengeBoard.ts", within: "startChallengeDraft", anchor: "gameRoomsCopy.errors.outsideGuild", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "startChallengeDraft", anchor: "draftRefusalReply(opened", kind: "race", why: "reached from the start confirm's Submit: the press (offerChallengeDraft) already refuses a held slot, and noAccess, noChannel and a failed create are read only by the opener, which Phase 2a rebuilds" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "startChallengeDraft", anchor: "gameRoomsCopy.board.cardStarted(opened.channel.i", kind: "replaced", why: "Phase 2a removes the start flow's card notice (R3-6); left as it is until then" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "offerChallengeDraft", anchor: "gameRoomsCopy.errors.outsideGuild", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "offerToReplace", anchor: "gameRoomsCopy.confirms.matchInPlay(existing.chan", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "confirmChallengeDraft", anchor: "gameRoomsCopy.errors.outsideGuild", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "showRefusalNotice", anchor: "refusal.content", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "showRefusalNotice", anchor: "embed", kind: "failure", why: "the opener's embeds: a create that failed (the error embed) or the paid plan's upgrade embed, titled Game rooms; every state among them is plain text since R3-12" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "chooseDraftSetting", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "chooseVisibility", anchor: "hostWords.reach.publicRefused", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "chooseNetworkTable", anchor: "refusal", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "openInvitePicker", anchor: "gameRoomsCopy.board.pickerEmpty", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "handleInviteSelect", anchor: "gameRoomsCopy.board.draftGone", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "handleInviteSelect", anchor: "gameRoomsCopy.board.notYourChallenge", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "joinChallenge", anchor: "gameRoomsCopy.board.hostCannotJoin", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "joinChallenge", anchor: "gameRoomsCopy.board.alreadyJoined", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "joinChallenge", anchor: "hostWords.approval.alreadyAsked", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "joinChallenge", anchor: "gameRoomsCopy.board.poolFull(BOT_CONSTANTS.GAME_", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "joinChallenge", anchor: "refusal", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "joinChallenge", anchor: "unpaid", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "joinChallenge", anchor: "hostWords.kick.refusedRejoin", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "askHostToJoin", anchor: "refusal", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "startMatch", anchor: "refusal", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "confirmStartMatch", anchor: "refusal", kind: "race", why: "the start confirm's Submit: startMatch refused the same pool first, so a Submit meets it only when the row moved after the press, which passed the same check first" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "confirmStartMatch", anchor: "gameRoomsCopy.confirms.startPickNeeded", kind: "race", why: "the start confirm's Submit: startMatch opens the picker instead when the pool needs one, so only a pool that grew while the confirm stood open meets this" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "handleOpponentSelect", anchor: "gameRoomsCopy.board.draftGone", kind: "race", why: "the opponent picker's Submit (or its select fallback): the draft ended after the Start press" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "handleOpponentSelect", anchor: "gameRoomsCopy.board.notYourChallenge", kind: "race", why: "the opponent picker's Submit: the Start press is host strict, so only a forged or replayed Submit is not the host's" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "handleOpponentSelect", anchor: "gameRoomsCopy.board.poolEmpty", kind: "race", why: "the opponent picker's Submit: the chosen member left or was removed after the picker opened" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "rematchFromRoom", anchor: "check.reply", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "playDero", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "openBotPicker", anchor: "refusal", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "handleBotSelect", anchor: "gameRoomsCopy.board.draftGone", kind: "race", why: "the bot count picker's Submit: the draft ended after the Play vs bots press" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "handleBotSelect", anchor: "gameRoomsCopy.board.onlyHostStarts", kind: "race", why: "the bot count picker's Submit: the press is host strict, so only a forged or replayed Submit is not the host's" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "handleBotSelect", anchor: "refusal", kind: "race", why: "the bot count picker's Submit: openBotPicker refused bots first, so a Submit meets it only when the row moved after the press, which passed the same check first" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "handleBotSelect", anchor: "gameRoomsCopy.errors.controlRetired", kind: "race", why: "the bot count picker's Submit with a count no picker offers: only a forged or stale Submit sends one" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "chooseCasual", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "chooseCasual", anchor: "refusal", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "openBuyIn", anchor: "gameRoomsCopy.holdem.buyInFreeTable", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "openBuyIn", anchor: "gameRoomsCopy.holdem.buyInLocked", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "handleBuyInModal", anchor: "text", kind: "race", why: "the buy in modal's Submit: openBuyIn refused a free or paid table first; what is left is the row moving after the press, and a typed amount out of range, which only the Submit can read" },
+
+	// ── game-rooms/gameRequestHandlers.ts ──
+	{ file: "features/game-rooms/gameRequestHandlers.ts", within: "replyOutsideGuild", anchor: "getPluginCopy(null).gameRequests.outsideGuild", kind: "state" },
+	{ file: "features/game-rooms/gameRequestHandlers.ts", within: "removeAsAdmin", anchor: "context.copy.adminOnly", kind: "state" },
+
+	// ── game-rooms/gameRoomHandlers.ts ──
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "gatePress", anchor: "gameRoomsCopy.errors.outsideGuild", kind: "state" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "gatePress", anchor: "\"This control is no longer available.\"", kind: "state" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "gatePress", anchor: "gameRoomsCopy.errors.notFound", kind: "state" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "gatePress", anchor: "satelliteWords.hostRoomOnly", kind: "state" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "gatePress", anchor: "satelliteWords.notSeatedHere", kind: "state" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "gatePress", anchor: "gameRoomsCopy.board.draftGone", kind: "state" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "gatePress", anchor: "gameRoomsCopy.errors.notYours", count: 2, kind: "state" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "gatePress", anchor: "gameRoomsCopy.board.onlyHostStarts", kind: "state" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "handleGameRoomButton", anchor: "\"This control is no longer available.\"", kind: "state" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "handleGameRoomButton", anchor: "refusal", count: 2, kind: "state" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "handleGameRoomButton", anchor: "gameRoomsCopy.confirms.matchOver", kind: "state" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "runConfirmed", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "confirmForfeit", anchor: "gameRoomsCopy.confirms.matchOver", kind: "race", why: "the forfeit confirm's Submit: the Forfeit press refuses a match already over (R3-6), so a Submit meets it only when the row moved after the press, which passed the same check first" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "handleGameRoomConfirm", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/gameRoomHandlers.ts", within: "registerGameRoomHandlers", anchor: "\"This control is no longer available.\"", count: 2, kind: "state" },
+
+	// ── game-rooms/hostControls.ts ──
+	{ file: "features/game-rooms/hostControls.ts", within: "loadRoomForHost", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "loadRoomForHost", anchor: "gameRoomsCopy.errors.notFound", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "loadRoomForHost", anchor: "gameRoomsCopy.errors.notYours", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "handleBandSelect", anchor: "gameRoomsCopy.board.draftGone", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "handleBandSelect", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "handleSpectatorSelect", anchor: "gameRoomsCopy.board.draftGone", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "handleSpectatorSelect", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "toggleApproval", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "openJoinRequests", anchor: "gameRoomsCopy.board.draftGone", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "openJoinRequests", anchor: "words.approval.requestsEmpty", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "handleJoinRequestSelect", anchor: "gameRoomsCopy.board.draftGone", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "handleJoinRequestSelect", anchor: "words.approval.requestsEmpty", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "openRemovePicker", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "openRemovePicker", anchor: "words.kick.empty", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "handleRemoveSelect", anchor: "words.kick.gone", kind: "race", why: "the Remove a player picker's Submit (or its select fallback): the chosen member left or was removed after the picker opened" },
+
+	// ── game-rooms/networkBanSubcommands.ts ──
+	{ file: "features/game-rooms/networkBanSubcommands.ts", within: "runNetworkBanSubcommand", anchor: "copy.notOwner", kind: "state" },
+	{ file: "features/game-rooms/networkBanSubcommands.ts", within: "runNetworkBanSubcommand", anchor: "copy.unknownSubcommand(`${sub} ${targetKind}`)", kind: "state" },
+	{ file: "features/game-rooms/networkBanSubcommands.ts", within: "runNetworkBanSubcommand", anchor: "read.problem", kind: "state" },
+	{ file: "features/game-rooms/networkBanSubcommands.ts", within: "runNetworkBanSubcommand", anchor: "embed", kind: "private", why: "the platform owner's cross server ban record, which names a member for the owner's eyes only, like the Verse and render analytics views" },
+	{ file: "features/game-rooms/networkBanSubcommands.ts", within: "runNetworkBanSubcommand", anchor: "copy.saveFailed", kind: "failure" },
+
+	// ── game-rooms/networkJoin.ts ──
+	{ file: "features/game-rooms/networkJoin.ts", within: "handleNetworkBoardSelect", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/networkJoin.ts", within: "handleNetworkConsentButton", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+
+	// ── game-rooms/partyGames.ts ──
+	{ file: "features/game-rooms/partyGames.ts", within: "handlePartyGamesButton", anchor: "gameRoomsCopy.partyGames.adminsOnly", kind: "state" },
+	{ file: "features/game-rooms/partyGames.ts", within: "handlePartyGamesButton", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+
+	// ── game-rooms/partyGamesSchedule.ts ──
+	{ file: "features/game-rooms/partyGamesSchedule.ts", within: "handleRsvpButton", anchor: "[words.gone]", kind: "state" },
+	{ file: "features/game-rooms/partyGamesSchedule.ts", within: "handleRsvpButton", anchor: "words.over", kind: "state" },
+	{ file: "features/game-rooms/partyGamesSchedule.ts", within: "handleRsvpButton", anchor: "choice === \"yes\" ? words.full : words.gone", kind: "state" },
+
+	// ── game-rooms/roomBattleshipHandlers.ts ──
+	{ file: "features/game-rooms/roomBattleshipHandlers.ts", within: "handleViewBoard", anchor: "gameRoomsCopy.battleship.matchOver", kind: "state" },
+	{ file: "features/game-rooms/roomBattleshipHandlers.ts", within: "handleReroll", anchor: "relaid.reason", kind: "state" },
+	{ file: "features/game-rooms/roomBattleshipHandlers.ts", within: "handleReady", anchor: "refusal", kind: "state" },
+
+	// ── game-rooms/roomGames.ts ──
+	{ file: "features/game-rooms/roomGames.ts", within: "runRoomMove", anchor: "gameRoomsCopy.errors.notFound", kind: "state" },
+	{ file: "features/game-rooms/roomGames.ts", within: "runRoomMove", anchor: "\"This game has no room controls yet.\"", kind: "state" },
+	{ file: "features/game-rooms/roomGames.ts", within: "promptRpsChoice", anchor: "gameRoomsCopy.games.rpsAlreadyPicked", kind: "state" },
+	{ file: "features/game-rooms/roomGames.ts", within: "handleRpsSelect", anchor: "gameRoomsCopy.errors.notFound", kind: "race", why: "the throw picker's Submit (or its select fallback): the match ended after the press" },
+	{ file: "features/game-rooms/roomGames.ts", within: "handleRpsSelect", anchor: "gameRoomsCopy.errors.notYours", kind: "race", why: "the throw picker's Submit: the press is players only, so only a forged or replayed Submit is not a player's" },
+	{ file: "features/game-rooms/roomGames.ts", within: "handleRpsSelect", anchor: "gameRoomsCopy.games.rpsAlreadyPicked", kind: "race", why: "the throw picker's Submit: promptRpsChoice refused a second pick first, so only a double Submit meets the claim" },
+	{ file: "features/game-rooms/roomGames.ts", within: "handleRpsSelect", anchor: "gameRoomsCopy.games.rpsLocked(choice)", kind: "private", why: "names the member's own throw before the reveal; from the picker's Submit it is the private fallback, and the room's public line names nobody's choice" },
+
+	// ── game-rooms/roomHangman.ts ──
+	{ file: "features/game-rooms/roomHangman.ts", within: "handleCategorySelect", anchor: "gameRoomsCopy.errors.notFound", count: 2, kind: "state" },
+	{ file: "features/game-rooms/roomHangman.ts", within: "handleCategorySelect", anchor: "gameRoomsCopy.errors.notYours", kind: "state" },
+	{ file: "features/game-rooms/roomHangman.ts", within: "handleCategorySelect", anchor: "gameRoomsCopy.hangman.wordAlreadySet", kind: "state" },
+	{ file: "features/game-rooms/roomHangman.ts", within: "openGuessModal", anchor: "gameRoomsCopy.hangman.waitingForWord(room.hostId", kind: "state" },
+	{ file: "features/game-rooms/roomHangman.ts", within: "openGuessModal", anchor: "gameRoomsCopy.hangman.hostCannotGuess", kind: "state" },
+
+	// ── game-rooms/roomHoldemHandlers.ts ──
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleBuyIn", anchor: "joinRefusalText(room, verdict.reason)", kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleBuyIn", anchor: "claim.refusal", kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "askHostForSeat", anchor: "hostWords.approval.alreadyAsked", kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "askHostForSeat", anchor: "hostWords.kick.refusedRejoin", kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleDeal", anchor: "gameRoomsCopy.holdem.handInProgress", count: 2, kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleDeal", anchor: "gameRoomsCopy.holdem.needMorePlayers", kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleDeal", anchor: "gameRoomsCopy.holdem.tournamentOver", kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleMove", anchor: "refusal", kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleLeaveTable", anchor: "refusal ?? gameRoomsCopy.holdem.tournamentOver", kind: "race", why: "the Leave confirm's Submit: the Leave press runs leaveRefusal first (R3-6), so a Submit meets it only when the row moved after the press, which passed the same check first" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleLeaveTable", anchor: "gameRoomsCopy.holdem.notSeated", kind: "race", why: "the Leave confirm's Submit: leaveRefusal passed, so the engine refuses only a seat that went out after the press" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleLeaveTable", anchor: "gameRoomsCopy.holdem.tableBusy", kind: "race", why: "the Leave confirm's Submit lost its write to a move that landed first" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleEndTable", anchor: "refusal ?? gameRoomsCopy.holdem.tournamentOver", kind: "race", why: "the End confirm's Submit: the End press runs endRefusal first (R3-6), so a Submit meets it only when the row moved after the press, which passed the same check first" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleEndTable", anchor: "gameRoomsCopy.holdem.tableBusy", kind: "race", why: "the End confirm's Submit lost its claim to a move that landed first" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleImBack", anchor: "gameRoomsCopy.holdem.tournamentOver", kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleImBack", anchor: "RETURN_REFUSALS[result.reason]", kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleImBack", anchor: "gameRoomsCopy.holdem.tableBusy", kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleSeatsToggle", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleSeatsToggle", anchor: "refusal", kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleSeatsToggle", anchor: "open ? hostWords.seats.alreadyOpen : hostWords.s", kind: "state" },
+	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleShowCards", anchor: "gameRoomsCopy.holdem.tournamentOver", kind: "state" },
+
+	// ── game-rooms/roomMonopolyAuction.ts ──
+	{ file: "features/game-rooms/roomMonopolyAuction.ts", within: "handleMauction", anchor: "gameRoomsCopy.monopoly.noAuction", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyAuction.ts", within: "handleMauction", anchor: "gameRoomsCopy.monopoly.auctionOver", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyAuction.ts", within: "handleMauction", anchor: "gameRoomsCopy.monopoly.inventoryOut", kind: "state" },
+
+	// ── game-rooms/roomMonopolyBuild.ts ──
+	{ file: "features/game-rooms/roomMonopolyBuild.ts", within: "handleMbuild", anchor: "gameRoomsCopy.monopoly.noBoard", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyBuild.ts", within: "handleMbuild", anchor: "gameRoomsCopy.monopoly.nothingToBuild", kind: "state" },
+
+	// ── game-rooms/roomMonopolyHandlers.ts ──
+	{ file: "features/game-rooms/roomMonopolyHandlers.ts", within: "loadSeatedRoom", anchor: "gameRoomsCopy.monopoly.matchOver", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyHandlers.ts", within: "loadSeatedRoom", anchor: "gameRoomsCopy.errors.notYours", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyHandlers.ts", within: "handleMjail", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyHandlers.ts", within: "handleMinventory", anchor: "gameRoomsCopy.monopoly.noBoard", kind: "state" },
+
+	// ── game-rooms/roomMonopolyRefereeNotice.ts ──
+	{ file: "features/game-rooms/roomMonopolyRefereeNotice.ts", within: "handleEnableVoice", anchor: "words.enableVoiceAdminOnly", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyRefereeNotice.ts", within: "handleEnableVoice", anchor: "earlyAccessEmbed(access.generalReleaseAt", kind: "state" },
+
+	// ── game-rooms/roomMonopolySurrender.ts ──
+	{ file: "features/game-rooms/roomMonopolySurrender.ts", within: "handleMsurrender", anchor: "refusal", kind: "state" },
+
+	// ── game-rooms/roomMonopolyTrade.ts ──
+	{ file: "features/game-rooms/roomMonopolyTrade.ts", within: "handleMtrade", anchor: "state ? gameRoomsCopy.monopoly.matchOver : gameR", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyTrade.ts", within: "handleMtrade", anchor: "gameRoomsCopy.monopoly.inventoryOut", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyTrade.ts", within: "handleMtrade", anchor: "gameRoomsCopy.monopoly.noTradePartners", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyTrade.ts", within: "handleTradePartnerSelect", anchor: "gameRoomsCopy.monopoly.matchOver", kind: "state" },
+	{ file: "features/game-rooms/roomMonopolyTrade.ts", within: "handleTradePartnerSelect", anchor: "gameRoomsCopy.monopoly.noTradePartners", kind: "state" },
+
+	// ── game-rooms/savedMatches.ts ──
+	{ file: "features/game-rooms/savedMatches.ts", within: "showSavedMatches", anchor: "copy.outsideGuild", kind: "state" },
+	{ file: "features/game-rooms/savedMatches.ts", within: "showSavedMatches", anchor: "copy.botMember", kind: "state" },
+
+	// ── game-rooms/turnPrompt.ts ──
+	{ file: "features/game-rooms/turnPrompt.ts", within: "handleTurnPress", anchor: "text", kind: "state" },
+	{ file: "features/game-rooms/turnPrompt.ts", within: "handleTurnSubmit", anchor: "text", kind: "race", why: "the turn modal's Submit: handleTurnPress refuses the same turn first, so only a turn that passed while the modal stood open meets it (risk R4)" },
+
+	// ── games/blackjackHandler.ts ──
+	{ file: "features/games/blackjackHandler.ts", within: "runBlackjack", anchor: "c.cooldownMessage(Math.ceil(gate.remainingMs / 1", kind: "state" },
+	{ file: "features/games/blackjackHandler.ts", within: "onClick", anchor: "c.alreadySeated", kind: "state" },
+	{ file: "features/games/blackjackHandler.ts", within: "onClick", anchor: "c.tableFull", kind: "state" },
+	{ file: "features/games/blackjackHandler.ts", within: "onClick", anchor: "c.notSeated", kind: "state" },
+	{ file: "features/games/blackjackHandler.ts", within: "onClick", anchor: "c.hostOnlyDeal", kind: "state" },
+	{ file: "features/games/blackjackHandler.ts", within: "onClick", anchor: "seated ? c.notYourTurn : c.notPlaying", kind: "state" },
+	{ file: "features/games/blackjackHandler.ts", within: "onClick", anchor: "c.illegalAction", kind: "state" },
+	{ file: "features/games/blackjackHandler.ts", within: "leaveDuringHand", anchor: "refusal", kind: "state" },
+
+	// ── games/challengeEntry.ts ──
+	{ file: "features/games/challengeEntry.ts", within: "runLuckGame", anchor: "gamesCopy.soloLuck.throwNeeded", kind: "state" },
+
+	// ── games/hangmanHandler.ts ──
+	{ file: "features/games/hangmanHandler.ts", within: "runHangman", anchor: "gamesCopy.hangman.cooldownMessage(Math.ceil(gate", kind: "state" },
+	{ file: "features/games/hangmanHandler.ts", within: "onGuessClick", anchor: "(click, { title: gamesCopy.notices.hangman, sections: [gamesCopy.hangman.closed]", kind: "state" },
+	{ file: "features/games/hangmanHandler.ts", within: "onGuessClick", anchor: "(submit, { title: gamesCopy.notices.hangman, sections: [gamesCopy.hangman.closed]", kind: "race", why: "the guess modal's Submit: the round ended while the member typed" },
+	{ file: "features/games/hangmanHandler.ts", within: "onGuessClick", anchor: "guessRefusal(result)", kind: "race", why: "a letter already tried or a character that is no letter: only the Submit can read what was typed" },
+
+	// ── games/soloLuck.ts ──
+	{ file: "features/games/soloLuck.ts", within: "playSoloLuck", anchor: "gamesCopy.outsideGuild", kind: "state" },
+
+	// ── everywhere else: Phase 1c sorts these ──
+	{ file: "commands/admin/dero-config.ts", within: "run", count: 4, kind: "unsorted" },
+	{ file: "commands/admin/leaderboard.ts", within: "execute", count: 4, kind: "unsorted" },
+	{ file: "commands/admin/self-destruct.ts", within: "execute", kind: "unsorted" },
+	{ file: "commands/admin/setup.ts", within: "execute", count: 3, kind: "unsorted" },
+	{ file: "commands/fun/mini-game.ts", within: "execute", kind: "unsorted" },
+	{ file: "commands/fun/rating.ts", within: "execute", kind: "unsorted" },
+	{ file: "commands/fun/secret-code.ts", within: "execute", kind: "unsorted" },
+	{ file: "commands/utility/dero.ts", within: "refuse", kind: "unsorted" },
+	{ file: "commands/utility/dero.ts", within: "tell", count: 7, kind: "unsorted" },
+	{ file: "commands/utility/dero.ts", within: "showDeroStatus", kind: "unsorted" },
+	{ file: "commands/utility/dero.ts", within: "bringDeroIntoCall", count: 3, kind: "unsorted" },
+	{ file: "commands/utility/dero.ts", within: "queueJoin", kind: "unsorted" },
+	{ file: "commands/utility/dero.ts", within: "sendDeroAwayFromCall", count: 5, kind: "unsorted" },
+	{ file: "commands/utility/dero.ts", within: "execute", kind: "unsorted" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "admitAdmin", count: 2, kind: "unsorted" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "resolveTarget", kind: "unsorted" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "runLeaf", kind: "unsorted" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "showForm", kind: "unsorted" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "openAdminLaunch", kind: "unsorted" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "offerSwitchFix", kind: "unsorted" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "handlePanelSubmit", kind: "unsorted" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "handleFormSubmit", count: 2, kind: "unsorted" },
+	{ file: "features/community/communityButtons.ts", within: "handleCommunityButton", count: 4, kind: "unsorted" },
+	{ file: "features/community/communityButtons.ts", within: "replyRefusal", kind: "unsorted" },
+	{ file: "features/community/configureOnboarding.ts", within: "replyOnboardingError", kind: "unsorted" },
+	{ file: "features/community/enableCommunity.ts", within: "handleEnableClick", count: 2, kind: "unsorted" },
+	{ file: "features/community/enableCommunity.ts", within: "handleChannelsPicked", count: 3, kind: "unsorted" },
+	{ file: "features/community/enableCommunity.ts", within: "handleConfirm", kind: "unsorted" },
+	{ file: "features/community/enableCommunity.ts", within: "replyError", kind: "unsorted" },
+	{ file: "features/dero-brain/holdemRulesCard.ts", within: "replyPrivately", kind: "unsorted" },
+	{ file: "features/dero-brain/holdemRulesCard.ts", within: "passGate", count: 4, kind: "unsorted" },
+	{ file: "features/dero-brain/holdemRulesCard.ts", within: "openTable", kind: "unsorted" },
+	{ file: "features/dero-brain/holdemRulesCard.ts", within: "handleRulesCardButton", kind: "unsorted" },
+	{ file: "features/dero-brain/holdemRulesCard.ts", within: "handleRulesCardSelect", kind: "unsorted" },
+	{ file: "features/dero-brain/holdemRulesCard.ts", within: "handleRulesCardModal", count: 2, kind: "unsorted" },
+	{ file: "features/economy/chipClaim.ts", within: "runChipClaim", count: 3, kind: "unsorted" },
+	{ file: "features/economy/chipClaim.ts", within: "playClaimRound", count: 2, kind: "unsorted" },
+	{ file: "features/economy/chipEconomySubcommands.ts", within: "reply", kind: "unsorted" },
+	{ file: "features/economy/chipEconomySubcommands.ts", within: "runChipSubcommand", count: 4, kind: "unsorted" },
+	{ file: "features/economy/vaultGrant.ts", within: "runVaultGrant", count: 3, kind: "unsorted" },
+	{ file: "features/events/deleteEvent.ts", within: "deleteEvent", count: 2, kind: "unsorted" },
+	{ file: "features/events/kvkSeasonSubcommand.ts", within: "runKvkSeason", count: 4, kind: "unsorted" },
+	{ file: "features/events/listEvents.ts", within: "listEvents", kind: "unsorted" },
+	{ file: "features/fortune/respondWithFortune.ts", within: "respondWithFortune", kind: "unsorted" },
+	{ file: "features/leaderboard/configureLeaderboardTracking.ts", within: "configureLeaderboardTracking", count: 5, kind: "unsorted" },
+	{ file: "features/leaderboard/configureLeaderboardWeekStart.ts", within: "configureLeaderboardWeekStart", count: 6, kind: "unsorted" },
+	{ file: "features/leaderboard/leaderboardChannelHandlers.ts", within: "handleLeaderboardChannelDelete", count: 7, kind: "unsorted" },
+	{ file: "features/leveling/accountProfile.ts", within: "showAccountProfile", count: 2, kind: "unsorted" },
+	{ file: "features/leveling/achievementsView.ts", within: "showAchievements", count: 2, kind: "unsorted" },
+	{ file: "features/leveling/levelSettingsSubcommands.ts", within: "runLevelSettings", count: 11, kind: "unsorted" },
+	{ file: "features/leveling/levelsStandings.ts", within: "showLevelsStandings", kind: "unsorted" },
+	{ file: "features/leveling/xpSubcommands.ts", within: "runXpSubcommand", count: 4, kind: "unsorted" },
+	{ file: "features/leveling/xpSubcommands.ts", within: "reply", kind: "unsorted" },
+	{ file: "features/platform/verseSubcommand.ts", within: "runVerseSubcommand", kind: "unsorted" },
+	{ file: "features/polls/PollDispatcher.ts", within: "handlePollVote", count: 4, kind: "unsorted" },
+	{ file: "features/power-ups/PowerUps.ts", within: "handlePowerUpButton", count: 4, kind: "unsorted" },
+	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", count: 7, kind: "unsorted" },
+	{ file: "features/renderer/renderAnalyticsSubcommand.ts", within: "runRenderAnalyticsSubcommand", kind: "unsorted" },
+	{ file: "features/schedule/announceStream.ts", within: "announceStream", count: 4, kind: "unsorted" },
+	{ file: "features/schedule/configureStreamSchedule.ts", within: "configureStreamSchedule", count: 6, kind: "unsorted" },
+	{ file: "features/schedule/decreeEditHandlers.ts", within: "handleEditButton", count: 5, kind: "unsorted" },
+	{ file: "features/schedule/goLiveSoon.ts", within: "goLiveSoon", count: 3, kind: "unsorted" },
+	{ file: "features/schedule/pauseAllSchedules.ts", within: "pauseAllSchedules", count: 6, kind: "unsorted" },
+	{ file: "features/schedule/pauseSchedule.ts", within: "pauseOneSchedule", count: 5, kind: "unsorted" },
+	{ file: "features/schedule/resumeAllSchedules.ts", within: "resumeAllSchedules", count: 6, kind: "unsorted" },
+	{ file: "features/schedule/resumeSchedule.ts", within: "resumeOneSchedule", count: 5, kind: "unsorted" },
+	{ file: "features/schedule/ScheduleControls.ts", within: "handleScheduleControl", count: 3, kind: "unsorted" },
+	{ file: "features/schedule/ScheduleControls.ts", within: "runGoLiveNow", count: 2, kind: "unsorted" },
+	{ file: "features/schedule/ScheduleControls.ts", within: "runConfigureHowTo", kind: "unsorted" },
+	{ file: "features/setup/adoptionChoice.ts", within: "handleChooseButton", count: 2, kind: "unsorted" },
+	{ file: "features/setup/adoptionChoice.ts", within: "handleChoiceSubmit", kind: "unsorted" },
+	{ file: "features/setup/arcadeSettingsSubcommands.ts", within: "runArcadeSettingSubcommand", count: 4, kind: "unsorted" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "runChannelsSubcommand", count: 3, kind: "unsorted" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleHide", count: 6, kind: "unsorted" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleShow", count: 6, kind: "unsorted" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleList", kind: "unsorted" },
+	{ file: "features/setup/configureAutoHeal.ts", within: "configureAutoHeal", count: 5, kind: "unsorted" },
+	{ file: "features/setup/headquartersSteps.ts", within: "handleStepButton", kind: "unsorted" },
+	{ file: "features/setup/headquartersSteps.ts", within: "openPriorityModal", kind: "unsorted" },
+	{ file: "features/setup/headquartersSteps.ts", within: "handlePrioritySubmit", count: 2, kind: "unsorted" },
+	{ file: "features/setup/renameChannel.ts", within: "renameChannel", count: 8, kind: "unsorted" },
+	{ file: "features/setup/rulesEdit.ts", within: "handleRulesEditButton", count: 2, kind: "unsorted" },
+	{ file: "features/setup/rulesEdit.ts", within: "handleRulesEditSubmit", count: 4, kind: "unsorted" },
+	{ file: "features/setup/rulesEdit.ts", within: "replyPrivately", kind: "unsorted" },
+	{ file: "features/setup/selfDestruct.ts", within: "refuseNonOwner", kind: "unsorted" },
+	{ file: "features/setup/selfDestruct.ts", within: "handleSelfDestruct", kind: "unsorted" },
+	{ file: "features/setup/selfDestruct.ts", within: "handleSelfDestructModal", kind: "unsorted" },
+	{ file: "features/setup/selfDestruct.ts", within: "runChoice", kind: "unsorted" },
+	{ file: "features/setup/selfDestruct.ts", within: "handleConfirmModal", kind: "unsorted" },
+	{ file: "features/voice/listenHandler.ts", within: "answeredCooldownAtPress", kind: "unsorted" },
+	{ file: "features/voice/voiceRoomControlHandlers.ts", within: "handleVoiceRoomControl", kind: "unsorted" },
+	{ file: "main.ts", within: "gracefulShutdown", count: 7, kind: "unsorted" },
+	{ file: "utils/answerInChannel.ts", within: "askerOnly", kind: "unsorted" },
+];
+
+// ── the scan ──────────────────────────────────────────────────────────
+
+// A top level function, const or class, and a method inside a class: what names a site's place.
+const TOP_LEVEL = /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*(\w+)|^(?:export\s+)?(?:const|let)\s+(\w+)\s*[=:]|^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)/;
+const CLASS_METHOD = /^(?:\t| {2}| {4})(?:(?:public|private|protected|static|async|override)\s+)*(\w+)\s*\(/;
+const NOT_A_METHOD = new Set(["if", "for", "while", "switch", "return", "await", "catch", "constructor"]);
+
+function sourceFiles(folder: string): string[] {
+	return readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
+		const path = join(folder, entry.name);
+		if (entry.isDirectory()) return sourceFiles(path);
+		return entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") ? [path] : [];
+	});
+}
+
+// Every notice call in one file: its helpers everywhere, its own wrappers in the file that defines them.
+function scanFile(file: string, source: string): NoticeSite[] {
+	const names = [...NOTICE_HELPERS, ...NOTICE_WRAPPERS.filter((wrapper) => wrapper.file === file).map((wrapper) => wrapper.name)];
+	const call = new RegExp(`(?<![\\w.])(?:${names.join("|")})\\(`);
+	const declaration = new RegExp(`function\\s+(?:${names.join("|")})\\(`);
+	const sites: NoticeSite[] = [];
+	let topLevel = "(module)";
+	let inClass = false;
+	let method: string | null = null;
+	source.split(/\r?\n/).forEach((raw, index) => {
+		const opened = TOP_LEVEL.exec(raw);
+		if (opened) {
+			topLevel = opened[1] ?? opened[2] ?? opened[3] ?? topLevel;
+			inClass = opened[3] !== undefined;
+			method = null;
+		} else if (inClass) {
+			const named = CLASS_METHOD.exec(raw);
+			if (named?.[1] && !NOT_A_METHOD.has(named[1])) method = named[1];
+		}
+		const text = raw.trim();
+		if (text.startsWith("//") || text.startsWith("*") || declaration.test(text) || !call.test(text)) return;
+		sites.push({ file, within: method ? `${topLevel}.${method}` : topLevel, line: index + 1, text });
+	});
+	return sites;
+}
+
+function scanSource(): NoticeSite[] {
+	return sourceFiles(SOURCE_ROOT).flatMap((path) => {
+		const file = relative(SOURCE_ROOT, path).split(sep).join("/");
+		return file === "utils/textModal.ts" ? [] : scanFile(file, readFileSync(path, "utf8"));
+	});
+}
+
+// ── the audit ─────────────────────────────────────────────────────────
+
+const entriesFor = (site: NoticeSite, inventory: readonly NoticeEntry[]): NoticeEntry[] =>
+	inventory.filter((entry) => entry.file === site.file && entry.within === site.within && (entry.anchor === undefined || site.text.includes(entry.anchor)));
+
+const describeSite = (site: NoticeSite): string => `${site.file}:${site.line} (${site.within}) ${site.text}`;
+const describeEntry = (entry: NoticeEntry): string => `${entry.file} ${entry.within} "${entry.anchor ?? "*"}"`;
+const inSortedFolder = (file: string): boolean => SORTED_FOLDERS.some((folder) => file.startsWith(folder));
+
+/** Everything wrong between the sites found and an inventory. Pure, so the failing cases below can feed it made up sites. */
+function auditNotices(sites: readonly NoticeSite[], inventory: readonly NoticeEntry[], unsortedAllowed: boolean) {
+	return {
+		unlisted: sites.filter((site) => entriesFor(site, inventory).length !== 1).map(describeSite),
+		stale: inventory
+			.map((entry) => ({ entry, matched: sites.filter((site) => entriesFor(site, inventory)[0] === entry).length }))
+			.filter(({ entry, matched }) => matched !== (entry.count ?? 1))
+			.map(({ entry, matched }) => `${describeEntry(entry)} expected ${entry.count ?? 1}, found ${matched}`),
+		answers: inventory.filter((entry) => entry.kind === "answer").map(describeEntry),
+		unsorted: inventory.filter((entry) => entry.kind === "unsorted" && (!unsortedAllowed || inSortedFolder(entry.file))).map(describeEntry),
+		unexplained: inventory.filter((entry) => ["private", "race", "replaced"].includes(entry.kind) && !entry.why?.trim()).map(describeEntry),
+		// Owner rule 1: only a failure keeps the pack's error title, which showErrorNotice always shows.
+		errorTitledStates: sites
+			.filter((site) => inSortedFolder(site.file) && site.text.includes("showErrorNotice("))
+			.filter((site) => entriesFor(site, inventory)[0]?.kind !== "failure")
+			.map(describeSite),
+	};
+}
+
+describe("the notice inventory", () => {
+	const sites = scanSource();
+	const audit = auditNotices(sites, INVENTORY, UNSORTED_ALLOWED);
+
+	it("finds the notice sites at all (the scan reads the source tree)", () => {
+		expect(sites.length).toBeGreaterThan(300);
+	});
+
+	it("lists every notice site, each by exactly one entry", () => {
+		expect(audit.unlisted).toEqual([]);
+	});
+
+	it("matches every entry as many times as it says, so no entry outlives its site", () => {
+		expect(audit.stale).toEqual([]);
+	});
+
+	it("holds no answer behind a notice helper", () => {
+		expect(audit.answers).toEqual([]);
+	});
+
+	it("sorts every site in the game rooms and the games, and elsewhere only while Phase 1c is open", () => {
+		expect(audit.unsorted).toEqual([]);
+	});
+
+	it("gives every private, race and replaced site its reason", () => {
+		expect(audit.unexplained).toEqual([]);
+	});
+
+	it("keeps the error title for failures alone in the sorted folders", () => {
+		expect(audit.errorTitledStates).toEqual([]);
+	});
+});
+
+// The deliberately failing cases: made up sites fed through the same audit, proving it
+// catches what the real tree must never hold.
+describe("the notice inventory's audit", () => {
+	const site: NoticeSite = { file: "features/games/example.ts", within: "answerTheMember", line: 1, text: "await showNotice(interaction, { title: t, sections: [gamesCopy.example.result] });" };
+
+	it("fails on an answer listed behind a notice helper", () => {
+		const audit = auditNotices([site], [{ file: site.file, within: site.within, kind: "answer" }], true);
+		expect(audit.answers).toEqual([`${site.file} answerTheMember "*"`]);
+	});
+
+	it("fails on a notice call nobody listed", () => {
+		expect(auditNotices([site], [], true).unlisted).toHaveLength(1);
+	});
+
+	it("fails on an entry whose site is gone", () => {
+		expect(auditNotices([], [{ file: site.file, within: site.within, kind: "state" }], true).stale).toHaveLength(1);
+	});
+
+	it("fails on an unsorted site in a sorted folder, and on any unsorted site once Phase 1c forbids them", () => {
+		const elsewhere: NoticeEntry = { file: "features/setup/example.ts", within: "x", kind: "unsorted" };
+		expect(auditNotices([], [{ file: site.file, within: site.within, kind: "unsorted" }], true).unsorted).toHaveLength(1);
+		expect(auditNotices([], [elsewhere], true).unsorted).toEqual([]);
+		expect(auditNotices([], [elsewhere], false).unsorted).toHaveLength(1);
+	});
+
+	it("fails on a state that keeps the error title", () => {
+		const errorSite: NoticeSite = { ...site, text: "await showErrorNotice(interaction, gamesCopy.example.notYourTurn);" };
+		expect(auditNotices([errorSite], [{ file: site.file, within: site.within, kind: "state" }], true).errorTitledStates).toHaveLength(1);
+	});
+
+	it("names a call by the function it sits in, inside a class too", () => {
+		const source = ["export class Panel {", "\tasync open(interaction) {", "\t\tawait showNotice(interaction, words);", "\t}", "}", "async function other() {", "\tawait showErrorNotice(i, m);", "}"].join("\n");
+		expect(scanFile("features/x.ts", source).map((found) => found.within)).toEqual(["Panel.open", "other"]);
+	});
+});

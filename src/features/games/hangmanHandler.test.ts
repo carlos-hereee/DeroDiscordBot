@@ -91,35 +91,42 @@ function fakeChannel(id: string, opts: { failSend?: boolean } = {}): { channel: 
 
 // A click that opens the modal and then resolves with the given letter. `letter`
 // of null models a member closing the modal without submitting.
-function fakeClick(letter: string | null, userId = "guesser-1"): ButtonInteraction & { showModal: ReturnType<typeof vi.fn> } {
+// The guess modal's Submit. A hit or a miss closes it through acknowledgeTextModal, which
+// reads isFromMessage and defers the update (2026-10 item 263 R3-11: the board is the answer).
+type FakeSubmit = { user: { id: string }; fields: { getTextInputValue: () => string }; isFromMessage: () => boolean } & Record<"reply" | "deferUpdate", ReturnType<typeof vi.fn>>;
+
+function fakeClick(letter: string | null, userId = "guesser-1"): ButtonInteraction & { showModal: ReturnType<typeof vi.fn>; submit: FakeSubmit } {
 	const showModal = vi.fn(async () => undefined);
+	const submit: FakeSubmit = {
+		user: { id: userId },
+		fields: { getTextInputValue: () => letter ?? "" },
+		isFromMessage: () => true,
+		reply: vi.fn(async () => undefined),
+		deferUpdate: vi.fn(async () => undefined),
+	};
 	const click = {
+		submit,
 		id: `click-${Math.floor(performance.now() * 1000)}`,
 		user: { id: userId },
 		showModal,
 		deferReply: vi.fn(async () => undefined),
 		deferUpdate: vi.fn(async () => undefined),
 		reply: vi.fn(async () => undefined),
-		awaitModalSubmit: vi.fn(async () =>
-			letter === null
-				? Promise.reject(new Error("timed out"))
-				: {
-						user: { id: userId },
-						fields: { getTextInputValue: () => letter },
-						reply: vi.fn(async () => undefined),
-					}
-		),
+		awaitModalSubmit: vi.fn(async () => (letter === null ? Promise.reject(new Error("timed out")) : submit)),
 	};
-	return click as unknown as ButtonInteraction & { showModal: ReturnType<typeof vi.fn> };
+	return click as unknown as ButtonInteraction & { showModal: ReturnType<typeof vi.fn>; submit: FakeSubmit };
 }
 
 // Drains the microtasks, then waits out any card render they started, and repeats
 // until a pass starts none: a guess reaches its render only after the modal
 // submit's own microtasks, and the board edit only after the render.
 const MAX_FLUSH_PASSES = 10;
+// Enough microtasks for a guess to reach its render: closing the Submit through
+// acknowledgeTextModal (2026-10 item 263) adds awaits ahead of it, so 8 no longer did.
+const MICROTASKS_PER_PASS = 16;
 const flush = async (): Promise<void> => {
 	for (let pass = 0; pass < MAX_FLUSH_PASSES; pass++) {
-		for (let i = 0; i < 8; i++) await Promise.resolve();
+		for (let i = 0; i < MICROTASKS_PER_PASS; i++) await Promise.resolve();
 		if (renders.inFlight.size === 0) return;
 		await Promise.allSettled([...renders.inFlight]);
 	}
@@ -224,9 +231,13 @@ describe("the guess click", () => {
 	it("redraws the board on a real turn", async () => {
 		const c = fakeChannel("chan-8");
 		await startHangmanRound(c.channel, "starter-1");
-		c.board().collect(fakeClick("a"));
+		const click = fakeClick("a");
+		c.board().collect(click);
 		await flush();
 		expect(c.board().edit).toHaveBeenCalledTimes(1);
+		// The redrawn board is the answer, so the Submit only closes and nothing private is sent.
+		expect(click.submit.deferUpdate).toHaveBeenCalledOnce();
+		expect(click.submit.reply).not.toHaveBeenCalled();
 	});
 
 	it("leaves the board untouched for a repeat or an invalid character", async () => {
@@ -239,11 +250,16 @@ describe("the guess click", () => {
 		await flush();
 		expect(c.board().edit).toHaveBeenCalledTimes(1);
 
-		c.board().collect(fakeClick("a", "guesser-2"));
+		const repeat = fakeClick("a", "guesser-2");
+		c.board().collect(repeat);
 		await flush();
-		c.board().collect(fakeClick("7", "guesser-3"));
+		const invalid = fakeClick("7", "guesser-3");
+		c.board().collect(invalid);
 		await flush();
 		expect(c.board().edit).toHaveBeenCalledTimes(1);
+		// Only the Submit can read what was typed, so these keep the private fallback (a race survivor).
+		expect(repeat.submit.reply).toHaveBeenCalledOnce();
+		expect(invalid.submit.reply).toHaveBeenCalledOnce();
 	});
 
 	it("does nothing when the member closes the modal without submitting", async () => {

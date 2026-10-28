@@ -18,7 +18,7 @@ import { isRenderPayload, withRenderFallback, type RenderPayload } from "@featur
 import { awardSoloLuckResult } from "./gameXp.js";
 import type { SoloLuckSlug } from "@features/game-rooms/roomTypes.js";
 import { gamesCopy } from "./gamesCopy.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── soloLuck ───────────────────────────────────────────────────────────────
 // What:  a coin flip, dice roll or rock paper scissors against Dero himself: one press,
@@ -99,7 +99,7 @@ export async function playSoloLuck(
 ): Promise<void> {
 	// XP is per server, and a DM has no server to rank in.
 	if (!interaction.inGuild()) {
-		await showErrorNotice(interaction, gamesCopy.outsideGuild);
+		await showNotice(interaction, { title: gamesCopy.notices.miniGame, sections: [gamesCopy.outsideGuild] });
 		return;
 	}
 

@@ -48,7 +48,7 @@ import { registerNetworkHandlers } from "./networkJoin.js";
 import type { GameSlug, SatelliteRoom } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { archiveSaveSelect, canSaveMatch, saveMatchIfChosen } from "./savedMatches.js";
-import { acknowledgeConfirm, showConfirm, showErrorNotice, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
+import { acknowledgeConfirm, showConfirm, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 
 const satelliteWords = rokCommanderCopy.arcadeSatellites;
 
@@ -94,7 +94,7 @@ type GameRoomPress = ButtonInteraction | ModalSubmitInteraction;
 async function gatePress(interaction: GameRoomPress, parsed: ParsedGameRoomCustomId): Promise<GatedPress | null> {
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) {
-		await showErrorNotice(interaction, "This button only works inside a server.");
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.errors.outsideGuild] });
 		return null;
 	}
 
@@ -282,12 +282,26 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			await roomHoldemHandlers.handleShowCards(interaction, room);
 			return;
 		// Leave and End ask first (item 12); their confirms act in runConfirmed.
-		case "hleave":
+		// A state the press can already read is refused here, so the confirm's Submit meets it
+		// only when the table moved while the confirm stood open (2026-10 item 263 R3-6).
+		case "hleave": {
+			const refusal = roomHoldemHandlers.leaveRefusal(room, interaction.user.id);
+			if (refusal) {
+				await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [refusal] });
+				return;
+			}
 			await showConfirm(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.confirms.leaveTable], confirmId: confirmCustomId("hleaveok", room.roomId) });
 			return;
-		case "hend":
+		}
+		case "hend": {
+			const refusal = roomHoldemHandlers.endRefusal(room);
+			if (refusal) {
+				await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [refusal] });
+				return;
+			}
 			await showConfirm(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.confirms.endTable], confirmId: confirmCustomId("hendok", room.roomId) });
 			return;
+		}
 		case "hback":
 			await roomHoldemHandlers.handleImBack(interaction, room);
 			return;
@@ -382,6 +396,12 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			});
 			return;
 		case "forfeit":
+			// A match already over is refused at the press, so confirmForfeit meets it only when
+			// the match ended while the confirm stood open (R3-6).
+			if (isMatchOver(room)) {
+				await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.confirms.matchOver] });
+				return;
+			}
 			await showConfirm(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.confirms.forfeit], confirmId: confirmCustomId("forfeitok", room.roomId) });
 			return;
 	}
@@ -431,10 +451,12 @@ async function runConfirmed(interaction: ConfirmInteraction, gated: GatedPress):
 	}
 }
 
+const isMatchOver = (room: IGameRoom): boolean => room.status === "finished" || room.status === "archived";
+
 // A confirmed forfeit. The row was read again by gatePress, and a match that ended while
 // the confirm stood open is refused rather than given a forfeit line after its result.
 async function confirmForfeit(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
-	if (room.status === "finished" || room.status === "archived") {
+	if (isMatchOver(room)) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.confirms.matchOver] });
 		return;
 	}

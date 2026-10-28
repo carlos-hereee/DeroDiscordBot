@@ -311,7 +311,9 @@ export async function handleBuyIn(interaction: ButtonInteraction, room: IGameRoo
 		return;
 	}
 	if (claim.late) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [hostWords.seats.heldReply(startingStackOf(claim.table))] });
+		// A held seat is work done, so it is an answer (owner rule 1, 2026-10 item 263 R3-11):
+		// it posts in 💬dero-commands and pings the member it seated.
+		await answerInChannel(interaction, "member", { content: hostWords.seats.heldReply(startingStackOf(claim.table)) });
 	} else {
 		await interaction.deferUpdate();
 	}
@@ -339,7 +341,8 @@ async function askHostForSeat(interaction: ButtonInteraction, room: IGameRoom): 
 		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [hostWords.kick.refusedRejoin] });
 		return;
 	}
-	await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [hostWords.approval.asked] });
+	// A request filed is work done, so it is an answer (owner rule 1, R3-11).
+	await answerInChannel(interaction, "member", { content: hostWords.approval.asked });
 	const table = tableOf(updated);
 	if (table) await redraw(interaction.client, updated, table);
 }
@@ -927,11 +930,30 @@ function persistLeaveOrEnd(room: IGameRoom, table: HoldemTable, readAt: number, 
 	);
 }
 
-/** Leave table's confirm (2026-10 item 257): its Submit, or the fallback reply's button. The press itself only asks. */
-export async function handleLeaveTable(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
+/**
+ * Why a member cannot leave this table, or null when they can: the same reading on the Leave
+ * press, which refuses before its confirm opens, and on the confirm's Submit, which meets a
+ * refusal only when the table moved while the confirm stood open (2026-10 item 263 R3-6).
+ */
+function leaveRefusal(room: IGameRoom, userId: string): string | null {
 	const table = tableOf(room);
-	if (!table || table.status === "finished") {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tournamentOver] });
+	if (!table || table.status === "finished") return gameRoomsCopy.holdem.tournamentOver;
+	const seat = table.seats.find((candidate) => candidate.userId === userId);
+	return !seat || seat.out ? gameRoomsCopy.holdem.notSeated : null;
+}
+
+/** Why this table cannot be ended, or null when it can: read on the End press and again on its Submit (R3-6). */
+function endRefusal(room: IGameRoom): string | null {
+	const table = tableOf(room);
+	return !table || table.status === "finished" ? gameRoomsCopy.holdem.tournamentOver : null;
+}
+
+/** Leave table's confirm (2026-10 item 257): its Submit, or the fallback reply's button. The press only asks, after leaveRefusal. */
+export async function handleLeaveTable(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
+	const refusal = leaveRefusal(room, interaction.user.id);
+	const table = tableOf(room);
+	if (refusal || !table) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [refusal ?? gameRoomsCopy.holdem.tournamentOver] });
 		return;
 	}
 
@@ -985,9 +1007,10 @@ function leftTableLine(table: HoldemTable, userId: string, foldedHand: boolean, 
 // press End" unrated too.
 // End table's confirm (2026-10 item 257): its Submit, or the fallback reply's button.
 export async function handleEndTable(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
+	const refusal = endRefusal(room);
 	const table = tableOf(room);
-	if (!table || table.status === "finished") {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tournamentOver] });
+	if (refusal || !table) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [refusal ?? gameRoomsCopy.holdem.tournamentOver] });
 		return;
 	}
 	const ended = await closeTable(interaction.client, room, table, interaction.user.id, null, () => acknowledgeConfirm(interaction));
@@ -1340,6 +1363,8 @@ export const roomHoldemHandlers = {
 	handleShowCards,
 	handleLeaveTable,
 	handleEndTable,
+	leaveRefusal,
+	endRefusal,
 	handleImBack,
 	handleSeatsToggle,
 	sweepHoldemClocks,

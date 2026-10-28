@@ -244,6 +244,7 @@ export const gameRoomsCopy = {
 		hangman: "🪢 Hangman",
 		holdem: "🃏 Texas hold em",
 		monopoly: "🎩 Monopoly",
+		savedMatches: "📌 Saved matches",
 	},
 
 	// ── the opener card, pinned inside the room ──
@@ -419,6 +420,9 @@ export const gameRoomsCopy = {
 		// every component clickable forever, so this is a normal thing for a member to
 		// hit rather than an error, and the copy says so without apologising.
 		controlRetired: "This control is no longer available.",
+		// A press or a command from a DM. A state, not a failure, so it opens under the area's
+		// own title rather than the pack's error title (2026-10 item 263 R3-12).
+		outsideGuild: "This only works inside a server.",
 		// Anything else. Deliberately does not promise a retry loop; there is none.
 		createFailed: "Something went wrong opening that room. Try again in a moment.",
 		// The arcade switched off or never built (item 15): the command that builds it, as

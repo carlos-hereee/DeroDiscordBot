@@ -28,7 +28,7 @@ import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
 import { roomTrail } from "@features/game-rooms/roomTrail.js";
 import { drawingSettled, isClockExpired, pausedDeadline, withDrawingPause } from "@features/game-rooms/drawingPause.js";
 import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showCooldownNotice, showErrorNotice } from "@utils/textModal.js";
+import { showCooldownNotice, showNotice } from "@utils/textModal.js";
 import { syncTurnPrompt, type TurnAdapter } from "@features/game-rooms/turnPrompt.js";
 
 // ── /mini-game blackjack ───────────────────────────────────────────────────
@@ -438,11 +438,11 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 	if (!game.table) {
 		if (action === "join") {
 			if (game.seated.some((seat) => seat.userId === click.user.id)) {
-				await showErrorNotice(click, c.alreadySeated);
+				await showNotice(click, { title: gamesCopy.notices.blackjack, sections: [c.alreadySeated] });
 				return;
 			}
 			if (game.seated.length >= MAX_SEATS) {
-				await showErrorNotice(click, c.tableFull);
+				await showNotice(click, { title: gamesCopy.notices.blackjack, sections: [c.tableFull] });
 				return;
 			}
 			game.seated.push({ userId: click.user.id, username: click.user.globalName ?? click.user.username });
@@ -454,7 +454,7 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 			const before = game.seated.length;
 			game.seated = game.seated.filter((seat) => seat.userId !== click.user.id);
 			if (game.seated.length === before) {
-				await showErrorNotice(click, c.notSeated);
+				await showNotice(click, { title: gamesCopy.notices.blackjack, sections: [c.notSeated] });
 				return;
 			}
 			await click.update({ embeds: [seatingEmbed(game)], components: [seatingRow(channelId)] });
@@ -465,7 +465,7 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 			// Only the host may cut the window short. Any seated member could
 			// otherwise deal the moment they sat, which defeats the window.
 			if (click.user.id !== game.hostId) {
-				await showErrorNotice(click, c.hostOnlyDeal);
+				await showNotice(click, { title: gamesCopy.notices.blackjack, sections: [c.hostOnlyDeal] });
 				return;
 			}
 			if (game.seatingTimer) clearTimeout(game.seatingTimer);
@@ -485,10 +485,10 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 	const played = await playBlackjackAction(game, channelId, click.user.id, action as BlackjackAction, click.client, clickWriter(click));
 	if (played === "not-your-turn") {
 		const seated = game.table.seats.some((seat) => seat.userId === click.user.id);
-		await showErrorNotice(click, seated ? c.notYourTurn : c.notPlaying);
+		await showNotice(click, { title: gamesCopy.notices.blackjack, sections: [seated ? c.notYourTurn : c.notPlaying] });
 		return;
 	}
-	if (played === "illegal") await showErrorNotice(click, c.illegalAction);
+	if (played === "illegal") await showNotice(click, { title: gamesCopy.notices.blackjack, sections: [c.illegalAction] });
 }
 
 const BLACKJACK_ACTIONS: readonly string[] = ["hit", "stand", "double", "split"];
@@ -540,7 +540,7 @@ async function leaveDuringHand(click: ButtonInteraction, game: BlackjackGame, ch
 	const outcome = applyLeave(game.table, click.user.id);
 	if (outcome.status !== "left") {
 		const refusal = outcome.status === "already-left" ? c.leftAlready : c.notPlaying;
-		await showErrorNotice(click, refusal);
+		await showNotice(click, { title: gamesCopy.notices.blackjack, sections: [refusal] });
 		return;
 	}
 	if (game.roomId) {

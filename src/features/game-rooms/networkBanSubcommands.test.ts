@@ -39,8 +39,10 @@ async function run(options: Options): Promise<{ text: string; flags?: number }> 
 		},
 	} as unknown as ChatInputCommandInteraction;
 	await runNetworkBanSubcommand(interaction);
-	const payload = (reply.mock.calls[0] as unknown as [{ embeds: EmbedBuilder[]; flags?: number }])[0];
-	return { text: payload.embeds[0].data.description ?? "", flags: payload.flags };
+	// A refusal is a notice (plain text where the fake cannot open a modal) since 2026-10 item 263
+	// R3-12; the ban record is still an embed.
+	const payload = (reply.mock.calls[0] as unknown as [{ content?: string; embeds?: EmbedBuilder[]; flags?: number }])[0];
+	return { text: payload.content ?? payload.embeds?.[0]?.data.description ?? "", flags: payload.flags };
 }
 
 beforeEach(() => {
