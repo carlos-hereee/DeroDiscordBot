@@ -27,7 +27,8 @@ import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import { answerInChannel, askInChannel, type ChannelPrompt } from "@utils/answerInChannel.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── customId prefixes ───────────────────────────────────────────────
 // What:  the wire format every persistent decree-edit interaction uses.
@@ -362,7 +363,7 @@ async function logAudit(
 async function handleEditButton(interaction: ButtonInteraction): Promise<void> {
 	const parsed = parseDecreeCustomId(interaction.customId);
 	if (!parsed) {
-		await showErrorNotice(interaction, "This decree button is malformed and cannot be processed.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["This decree button is malformed and cannot be processed."] });
 		return;
 	}
 
@@ -370,25 +371,25 @@ async function handleEditButton(interaction: ButtonInteraction): Promise<void> {
 		// Buttons posted to a guild channel always have guildId; this guard
 		// satisfies the type narrowing and protects against a future change
 		// that exposes the bot to DMs without anchoring config lookups.
-		await showErrorNotice(interaction, "Decree edits can only be applied inside a guild.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["Decree edits can only be applied inside a guild."] });
 		return;
 	}
 
 	const config = await guildConfigStore.findByGuildId(interaction.guildId);
 	if (!config) {
-		await showErrorNotice(interaction, rokCommanderCopy.responses.setupRequired);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [rokCommanderCopy.responses.setupRequired] });
 		return;
 	}
 
 	const member = interaction.member as GuildMember | null;
 	if (!member || !canEditDecree(member, config)) {
-		await showErrorNotice(interaction, rokCommanderCopy.responses.noWizardPowers);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [rokCommanderCopy.responses.noWizardPowers] });
 		return;
 	}
 
 	const event = await eventStore.findByIdInGuild(parsed.eventId, interaction.guildId);
 	if (!event) {
-		await showErrorNotice(interaction, "That decree no longer exists.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["That decree no longer exists."] });
 		return;
 	}
 

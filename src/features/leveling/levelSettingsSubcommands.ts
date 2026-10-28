@@ -14,7 +14,9 @@ import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showEmbedNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 // ── /leveling settings ─────────────────────────────────────────────────────
 // What:  every per-guild knob of the leveling system. Rates, the curve, where
@@ -236,19 +238,19 @@ export function addLevelSettingsSubcommands(group: SlashCommandSubcommandGroupBu
 export async function runLevelSettings(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) {
-		await showErrorNotice(interaction, levelingCopy.errors.outsideGuild);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: [levelingCopy.errors.outsideGuild] });
 		return;
 	}
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
-		await showErrorNotice(interaction, "This server has not been set up yet. Run /setup first.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: ["This server has not been set up yet. Run /setup first."] });
 		return;
 	}
 
 	const context = await getLevelingConfig(guildId);
 	if (!context) {
-		await showErrorNotice(interaction, levelingCopy.errors.noData);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: [levelingCopy.errors.noData] });
 		return;
 	}
 
@@ -262,7 +264,8 @@ export async function runLevelSettings(interaction: RepliableInteraction, option
 
 	switch (subcommand) {
 		case "show":
-			await showEmbedNotice(interaction, buildPreview(interaction, context));
+			// A reading of the settings is an answer, so it posts in 🎛️admin-controls (owner rule 1).
+			await answerInChannel(interaction, "admin", { embeds: [buildPreview(interaction, context)] });
 			return;
 
 		case "toggle": {
@@ -426,14 +429,14 @@ export async function runLevelSettings(interaction: RepliableInteraction, option
 			if (level !== null && role) {
 				const refusal = refuseReward(interaction, role as Role);
 				if (refusal) {
-					await showErrorNotice(interaction, refusal);
+					await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: [refusal] });
 					return;
 				}
 				const clampedLevel = clamp(level, 2, LIMITS.MAX_SETTABLE_LEVEL);
 				rewards = [...rewards.filter((reward) => reward.level !== clampedLevel), { level: clampedLevel, roleId: role.id }];
 				notes.push(`Reaching level ${clampedLevel} now grants <@&${role.id}>.`);
 			} else if ((level !== null) !== Boolean(role)) {
-				await showErrorNotice(interaction, "Give both a level and a role to add a reward, or use remove-level on its own.");
+				await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: ["Give both a level and a role to add a reward, or use remove-level on its own."] });
 				return;
 			}
 
@@ -450,7 +453,7 @@ export async function runLevelSettings(interaction: RepliableInteraction, option
 			const channel = options.getChannel("channel");
 
 			if ((role || channel) && multiplier === null) {
-				await showErrorNotice(interaction, "Give a multiplier too. Use 0 to remove an existing boost.");
+				await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: ["Give a multiplier too. Use 0 to remove an existing boost."] });
 				return;
 			}
 
@@ -496,11 +499,12 @@ export async function runLevelSettings(interaction: RepliableInteraction, option
 		invalidateLevelingConfig(guildId);
 		auditLevelingPatch(interaction, guildId, patch);
 
-		await showEmbedNotice(interaction, infoEmbed(
+		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		await answerInChannel(interaction, "admin", { embeds: [infoEmbed(
 					"Leveling settings updated",
 					[...notes, "", `Run \`/leveling settings show\` to see everything as it stands now.`].join("\n"),
 					COLORS.ACCOUNT
-				));
+				)] });
 	} catch (error) {
 		console.error("[leveling settings] update failed", error);
 		await showErrorNotice(interaction, "Could not save those settings. Try again or check the bot's logs.");

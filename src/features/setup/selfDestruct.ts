@@ -20,7 +20,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { registerButton, registerModal } from "@handlers/interactionRegistry.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
 import { COLORS } from "@base/copy/brand.js";
 import { DERO_VOICE_ROOM_FIELDS, revokeDeroVoiceRooms } from "@features/voice/deroVoiceRooms.js";
 import { readAdoptedChannelIds } from "./adoption.js";
@@ -28,6 +28,7 @@ import { adminLog } from "./adminLog.js";
 import { turnArcadeOff } from "./arcadeSwitch.js";
 import { resetConfigsToDefault, wipeServerData } from "./serverReset.js";
 import { setupCopy } from "./setupCopy.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── Self destruct ──────────────────────────────────────────────────────
 // Server owner only, as three honest choices (2026-10 item 254, the owner's
@@ -150,7 +151,7 @@ function auditAttempt(interaction: SelfDestructEntry, detail: string): void {
 
 async function refuseNonOwner(interaction: SelfDestructEntry): Promise<void> {
 	auditAttempt(interaction, c.auditRefusedNotOwner);
-	await showErrorNotice(interaction, c.ownerOnly);
+	await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [c.ownerOnly] });
 }
 
 /** The choice modal: what self destruct deletes and keeps, over one required select of the three choices. Exported for the tests. */
@@ -218,13 +219,13 @@ async function handleSelfDestruct(interaction: ButtonInteraction): Promise<void>
 	}
 
 	// Unknown action, including the retired reset, cancel and confirm (see the header).
-	await showErrorNotice(interaction, c.staleControl);
+	await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [c.staleControl] });
 }
 
 // Both modals share the prefix, so one registered handler routes them by customId.
 async function handleSelfDestructModal(interaction: ModalSubmitInteraction): Promise<void> {
 	if (!interaction.guild) {
-		await showErrorNotice(interaction, c.notInGuild);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [c.notInGuild] });
 		return;
 	}
 	// The owner is checked again on every submit, because a modal submit is
@@ -268,7 +269,7 @@ async function runChoice(interaction: ModalSubmitInteraction, guild: Guild): Pro
 	}
 	// A required select always carries a value; this answers a submit Discord built
 	// from an older modal whose values no longer match.
-	await showErrorNotice(interaction, c.staleControl);
+	await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [c.staleControl] });
 }
 
 // Just delete channels: the teardown alone. Every setting stays on the row, so
@@ -312,7 +313,7 @@ async function runArcadeOnly(interaction: ModalSubmitInteraction, guild: Guild):
 async function handleConfirmModal(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
 	if (interaction.fields.getTextInputValue(CONFIRM_WORD_FIELD).trim() !== c.confirmWord) {
 		auditAttempt(interaction, c.auditDeleteRefused);
-		await showErrorNotice(interaction, c.mismatch);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [c.mismatch] });
 		return;
 	}
 

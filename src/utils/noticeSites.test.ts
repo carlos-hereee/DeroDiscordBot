@@ -14,31 +14,33 @@ import { describe, expect, it } from "vitest";
 //        come back behind a notice.
 // How:   matched by file, enclosing function and a piece of the line, never a line number,
 //        which moves with every edit above it. Phase 1b sorted features/game-rooms and
-//        features/games; every other site is listed as unsorted until Phase 1c sorts it and
-//        flips UNSORTED_ALLOWED. The verdicts and their reasons are the fourth pass of
-//        companyuno-discord/docs/handoffs/dero-private-reply-audit-2026-10.md.
+//        features/games and Phase 1c everything else, so no site may be unsorted and only a
+//        failure may call showErrorNotice. The verdicts and their reasons are the fourth pass
+//        of companyuno-discord/docs/handoffs/dero-private-reply-audit-2026-10-part-2.md.
 //
 // utils/textModal.ts is not scanned: it is where the helpers are written, so its calls are
 // the helpers calling each other, not places a member is answered.
 
 const SOURCE_ROOT = join(__dirname, "..");
 
-/** Phase 1c sorts every unsorted site, then sets this false so none can come back. */
-const UNSORTED_ALLOWED = true;
+/** Phase 1c sorted every site, so none may be unsorted again; the audit's own cases below still pass true. */
+const UNSORTED_ALLOWED = false;
 
-/** The folders Phase 1b sorted, where an unsorted entry is never allowed. */
+/** The folders Phase 1b sorted, where an unsorted entry was never allowed even before Phase 1c. */
 const SORTED_FOLDERS = ["features/game-rooms/", "features/games/"];
 
 const NOTICE_HELPERS = ["showNotice", "showErrorNotice", "showEmbedNotice", "showCooldownNotice", "showRefusalNotice"] as const;
 
-// File local functions that only pass their words on to showErrorNotice, so a call of one is a
-// notice site its own line would not show. Each was read to confirm it does nothing else.
-const NOTICE_WRAPPERS: readonly { file: string; name: string }[] = [
+// Functions that only pass their words on to a notice helper, so a call of one is a notice site
+// its own line would not show. Each was read to confirm it does nothing else. `calledFrom` names
+// the other files an exported wrapper is called in, which are scanned for it too.
+const NOTICE_WRAPPERS: readonly { file: string; name: string; calledFrom?: readonly string[] }[] = [
 	{ file: "commands/utility/dero.ts", name: "refuse" },
 	{ file: "features/community/communityButtons.ts", name: "replyRefusal" },
 	{ file: "features/community/enableCommunity.ts", name: "replyError" },
 	{ file: "features/dero-brain/holdemRulesCard.ts", name: "replyPrivately" },
 	{ file: "features/setup/rulesEdit.ts", name: "replyPrivately" },
+	{ file: "features/community/configureOnboarding.ts", name: "replyOnboardingError", calledFrom: ["features/community/promptEditModal.ts"] },
 ];
 
 /**
@@ -47,7 +49,7 @@ const NOTICE_WRAPPERS: readonly { file: string; name: string }[] = [
  * answer: a result, a list, a reading or work done, which never stays behind a notice. private:
  * a hand, a fleet, a sealed bid, a secret, kept to the member it belongs to. race: a state only
  * a modal Submit can meet, answered by the private fallback. replaced: a site a later phase
- * removes. unsorted: not yet sorted (Phase 1c).
+ * removes. unsorted: not yet sorted, which no entry may be since Phase 1c.
  */
 type NoticeKind = "state" | "failure" | "answer" | "private" | "race" | "replaced" | "unsorted";
 
@@ -275,100 +277,301 @@ const INVENTORY: readonly NoticeEntry[] = [
 	// ── games/soloLuck.ts ──
 	{ file: "features/games/soloLuck.ts", within: "playSoloLuck", anchor: "gamesCopy.outsideGuild", kind: "state" },
 
-	// ── everywhere else: Phase 1c sorts these ──
-	{ file: "commands/admin/dero-config.ts", within: "run", count: 4, kind: "unsorted" },
-	{ file: "commands/admin/leaderboard.ts", within: "execute", count: 4, kind: "unsorted" },
-	{ file: "commands/admin/self-destruct.ts", within: "execute", kind: "unsorted" },
-	{ file: "commands/admin/setup.ts", within: "execute", count: 3, kind: "unsorted" },
-	{ file: "commands/fun/mini-game.ts", within: "execute", kind: "unsorted" },
-	{ file: "commands/fun/rating.ts", within: "execute", kind: "unsorted" },
-	{ file: "commands/fun/secret-code.ts", within: "execute", kind: "unsorted" },
-	{ file: "commands/utility/dero.ts", within: "refuse", kind: "unsorted" },
-	{ file: "commands/utility/dero.ts", within: "tell", count: 7, kind: "unsorted" },
-	{ file: "commands/utility/dero.ts", within: "showDeroStatus", kind: "unsorted" },
-	{ file: "commands/utility/dero.ts", within: "bringDeroIntoCall", count: 3, kind: "unsorted" },
-	{ file: "commands/utility/dero.ts", within: "queueJoin", kind: "unsorted" },
-	{ file: "commands/utility/dero.ts", within: "sendDeroAwayFromCall", count: 5, kind: "unsorted" },
-	{ file: "commands/utility/dero.ts", within: "execute", kind: "unsorted" },
-	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "admitAdmin", count: 2, kind: "unsorted" },
-	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "resolveTarget", kind: "unsorted" },
-	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "runLeaf", kind: "unsorted" },
-	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "showForm", kind: "unsorted" },
-	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "openAdminLaunch", kind: "unsorted" },
-	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "offerSwitchFix", kind: "unsorted" },
-	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "handlePanelSubmit", kind: "unsorted" },
-	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "handleFormSubmit", count: 2, kind: "unsorted" },
-	{ file: "features/community/communityButtons.ts", within: "handleCommunityButton", count: 4, kind: "unsorted" },
-	{ file: "features/community/communityButtons.ts", within: "replyRefusal", kind: "unsorted" },
-	{ file: "features/community/configureOnboarding.ts", within: "replyOnboardingError", kind: "unsorted" },
-	{ file: "features/community/enableCommunity.ts", within: "handleEnableClick", count: 2, kind: "unsorted" },
-	{ file: "features/community/enableCommunity.ts", within: "handleChannelsPicked", count: 3, kind: "unsorted" },
-	{ file: "features/community/enableCommunity.ts", within: "handleConfirm", kind: "unsorted" },
-	{ file: "features/community/enableCommunity.ts", within: "replyError", kind: "unsorted" },
-	{ file: "features/dero-brain/holdemRulesCard.ts", within: "replyPrivately", kind: "unsorted" },
-	{ file: "features/dero-brain/holdemRulesCard.ts", within: "passGate", count: 4, kind: "unsorted" },
-	{ file: "features/dero-brain/holdemRulesCard.ts", within: "openTable", kind: "unsorted" },
-	{ file: "features/dero-brain/holdemRulesCard.ts", within: "handleRulesCardButton", kind: "unsorted" },
-	{ file: "features/dero-brain/holdemRulesCard.ts", within: "handleRulesCardSelect", kind: "unsorted" },
-	{ file: "features/dero-brain/holdemRulesCard.ts", within: "handleRulesCardModal", count: 2, kind: "unsorted" },
-	{ file: "features/economy/chipClaim.ts", within: "runChipClaim", count: 3, kind: "unsorted" },
-	{ file: "features/economy/chipClaim.ts", within: "playClaimRound", count: 2, kind: "unsorted" },
-	{ file: "features/economy/chipEconomySubcommands.ts", within: "reply", kind: "unsorted" },
-	{ file: "features/economy/chipEconomySubcommands.ts", within: "runChipSubcommand", count: 4, kind: "unsorted" },
-	{ file: "features/economy/vaultGrant.ts", within: "runVaultGrant", count: 3, kind: "unsorted" },
-	{ file: "features/events/deleteEvent.ts", within: "deleteEvent", count: 2, kind: "unsorted" },
-	{ file: "features/events/kvkSeasonSubcommand.ts", within: "runKvkSeason", count: 4, kind: "unsorted" },
-	{ file: "features/events/listEvents.ts", within: "listEvents", kind: "unsorted" },
-	{ file: "features/fortune/respondWithFortune.ts", within: "respondWithFortune", kind: "unsorted" },
-	{ file: "features/leaderboard/configureLeaderboardTracking.ts", within: "configureLeaderboardTracking", count: 5, kind: "unsorted" },
-	{ file: "features/leaderboard/configureLeaderboardWeekStart.ts", within: "configureLeaderboardWeekStart", count: 6, kind: "unsorted" },
-	{ file: "features/leaderboard/leaderboardChannelHandlers.ts", within: "handleLeaderboardChannelDelete", count: 7, kind: "unsorted" },
-	{ file: "features/leveling/accountProfile.ts", within: "showAccountProfile", count: 2, kind: "unsorted" },
-	{ file: "features/leveling/achievementsView.ts", within: "showAchievements", count: 2, kind: "unsorted" },
-	{ file: "features/leveling/levelSettingsSubcommands.ts", within: "runLevelSettings", count: 11, kind: "unsorted" },
-	{ file: "features/leveling/levelsStandings.ts", within: "showLevelsStandings", kind: "unsorted" },
-	{ file: "features/leveling/xpSubcommands.ts", within: "runXpSubcommand", count: 4, kind: "unsorted" },
-	{ file: "features/leveling/xpSubcommands.ts", within: "reply", kind: "unsorted" },
-	{ file: "features/platform/verseSubcommand.ts", within: "runVerseSubcommand", kind: "unsorted" },
-	{ file: "features/polls/PollDispatcher.ts", within: "handlePollVote", count: 4, kind: "unsorted" },
-	{ file: "features/power-ups/PowerUps.ts", within: "handlePowerUpButton", count: 4, kind: "unsorted" },
-	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", count: 7, kind: "unsorted" },
-	{ file: "features/renderer/renderAnalyticsSubcommand.ts", within: "runRenderAnalyticsSubcommand", kind: "unsorted" },
-	{ file: "features/schedule/announceStream.ts", within: "announceStream", count: 4, kind: "unsorted" },
-	{ file: "features/schedule/configureStreamSchedule.ts", within: "configureStreamSchedule", count: 6, kind: "unsorted" },
-	{ file: "features/schedule/decreeEditHandlers.ts", within: "handleEditButton", count: 5, kind: "unsorted" },
-	{ file: "features/schedule/goLiveSoon.ts", within: "goLiveSoon", count: 3, kind: "unsorted" },
-	{ file: "features/schedule/pauseAllSchedules.ts", within: "pauseAllSchedules", count: 6, kind: "unsorted" },
-	{ file: "features/schedule/pauseSchedule.ts", within: "pauseOneSchedule", count: 5, kind: "unsorted" },
-	{ file: "features/schedule/resumeAllSchedules.ts", within: "resumeAllSchedules", count: 6, kind: "unsorted" },
-	{ file: "features/schedule/resumeSchedule.ts", within: "resumeOneSchedule", count: 5, kind: "unsorted" },
-	{ file: "features/schedule/ScheduleControls.ts", within: "handleScheduleControl", count: 3, kind: "unsorted" },
-	{ file: "features/schedule/ScheduleControls.ts", within: "runGoLiveNow", count: 2, kind: "unsorted" },
-	{ file: "features/schedule/ScheduleControls.ts", within: "runConfigureHowTo", kind: "unsorted" },
-	{ file: "features/setup/adoptionChoice.ts", within: "handleChooseButton", count: 2, kind: "unsorted" },
-	{ file: "features/setup/adoptionChoice.ts", within: "handleChoiceSubmit", kind: "unsorted" },
-	{ file: "features/setup/arcadeSettingsSubcommands.ts", within: "runArcadeSettingSubcommand", count: 4, kind: "unsorted" },
-	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "runChannelsSubcommand", count: 3, kind: "unsorted" },
-	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleHide", count: 6, kind: "unsorted" },
-	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleShow", count: 6, kind: "unsorted" },
-	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleList", kind: "unsorted" },
-	{ file: "features/setup/configureAutoHeal.ts", within: "configureAutoHeal", count: 5, kind: "unsorted" },
-	{ file: "features/setup/headquartersSteps.ts", within: "handleStepButton", kind: "unsorted" },
-	{ file: "features/setup/headquartersSteps.ts", within: "openPriorityModal", kind: "unsorted" },
-	{ file: "features/setup/headquartersSteps.ts", within: "handlePrioritySubmit", count: 2, kind: "unsorted" },
-	{ file: "features/setup/renameChannel.ts", within: "renameChannel", count: 8, kind: "unsorted" },
-	{ file: "features/setup/rulesEdit.ts", within: "handleRulesEditButton", count: 2, kind: "unsorted" },
-	{ file: "features/setup/rulesEdit.ts", within: "handleRulesEditSubmit", count: 4, kind: "unsorted" },
-	{ file: "features/setup/rulesEdit.ts", within: "replyPrivately", kind: "unsorted" },
-	{ file: "features/setup/selfDestruct.ts", within: "refuseNonOwner", kind: "unsorted" },
-	{ file: "features/setup/selfDestruct.ts", within: "handleSelfDestruct", kind: "unsorted" },
-	{ file: "features/setup/selfDestruct.ts", within: "handleSelfDestructModal", kind: "unsorted" },
-	{ file: "features/setup/selfDestruct.ts", within: "runChoice", kind: "unsorted" },
-	{ file: "features/setup/selfDestruct.ts", within: "handleConfirmModal", kind: "unsorted" },
-	{ file: "features/voice/listenHandler.ts", within: "answeredCooldownAtPress", kind: "unsorted" },
-	{ file: "features/voice/voiceRoomControlHandlers.ts", within: "handleVoiceRoomControl", kind: "unsorted" },
-	{ file: "main.ts", within: "gracefulShutdown", count: 7, kind: "unsorted" },
-	{ file: "utils/answerInChannel.ts", within: "askerOnly", kind: "unsorted" },
+	// ── commands/admin/dero-config.ts ──
+	{ file: "commands/admin/dero-config.ts", within: "run", anchor: "sections: [c.notInGuild", kind: "state" },
+	{ file: "commands/admin/dero-config.ts", within: "run", anchor: "sections: [c.setupRequired", kind: "state" },
+	{ file: "commands/admin/dero-config.ts", within: "run", anchor: "c.saveFailed", kind: "failure" },
+
+	// ── commands/admin/leaderboard.ts ──
+	{ file: "commands/admin/leaderboard.ts", within: "execute", count: 4, kind: "state" },
+
+	// ── commands/admin/self-destruct.ts ──
+	{ file: "commands/admin/self-destruct.ts", within: "execute", kind: "state" },
+
+	// ── commands/admin/setup.ts ──
+	{ file: "commands/admin/setup.ts", within: "execute", count: 3, kind: "state" },
+
+	// ── commands/fun/mini-game.ts ──
+	{ file: "commands/fun/mini-game.ts", within: "execute", kind: "failure" },
+
+	// ── commands/fun/rating.ts ──
+	{ file: "commands/fun/rating.ts", within: "execute", kind: "state" },
+
+	// ── commands/fun/secret-code.ts ──
+	{ file: "commands/fun/secret-code.ts", within: "execute", kind: "private", why: "what a secret code did is the member's own secret: posted in a channel it would give the code away to everyone who saw it work" },
+
+	// ── commands/utility/dero.ts ──
+	{ file: "commands/utility/dero.ts", within: "refuse", kind: "state" },
+	{ file: "commands/utility/dero.ts", within: "tell", count: 7, kind: "state" },
+	{ file: "commands/utility/dero.ts", within: "bringDeroIntoCall", count: 3, kind: "state" },
+	{ file: "commands/utility/dero.ts", within: "sendDeroAwayFromCall", count: 4, kind: "state" },
+	{ file: "commands/utility/dero.ts", within: "execute", kind: "failure" },
+
+	// ── command-buttons/adminCommandLauncher.ts ──
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "admitAdmin", count: 2, kind: "state" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "resolveTarget", kind: "state" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "runLeaf", kind: "state" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "showForm", kind: "state" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "openAdminLaunch", kind: "state" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "offerSwitchFix", kind: "state" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "handlePanelSubmit", kind: "race", why: "the settings panel's Submit for a panel or guild that is gone: the press opened it from a live button, so only a stale or replayed Submit meets it" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "handleFormSubmit", anchor: "commandButtonsCopy.launcher.staleButton", kind: "race", why: "the command form's Submit whose field mask no longer reads: only a Submit from a form opened before the command changed meets it" },
+	{ file: "features/command-buttons/adminCommandLauncher.ts", within: "handleFormSubmit", anchor: "read.problem", kind: "race", why: "the command form's Submit with a value out of range: only the Submit can read it" },
+
+	// ── community/communityButtons.ts ──
+	{ file: "features/community/communityButtons.ts", within: "handleCommunityButton", count: 4, kind: "state" },
+	{ file: "features/community/communityButtons.ts", within: "replyRefusal", kind: "state" },
+
+	// ── community/configureOnboarding.ts ──
+	{ file: "features/community/configureOnboarding.ts", within: "handleConfigureOnboardingButton", kind: "state" },
+	{ file: "features/community/configureOnboarding.ts", within: "handleConfirmOnboarding", count: 2, kind: "state" },
+	{ file: "features/community/configureOnboarding.ts", within: "replyOnboardingError", kind: "state" },
+
+	// ── community/enableCommunity.ts ──
+	{ file: "features/community/enableCommunity.ts", within: "handleEnableClick", count: 2, kind: "state" },
+	{ file: "features/community/enableCommunity.ts", within: "handleChannelsPicked", anchor: "communityCopy.errors.expired", kind: "race", why: "the channel picker's Submit after its flow expired or the config went: the press found both" },
+	{ file: "features/community/enableCommunity.ts", within: "handleChannelsPicked", anchor: "noWizardPowers", kind: "race", why: "the channel picker's Submit, gated again: an admin role can be taken away while the modal is open" },
+	{ file: "features/community/enableCommunity.ts", within: "handleChannelsPicked", anchor: "communityCopy.errors.channelsMissing", kind: "race", why: "the channel picker's Submit with a channel not picked: only the Submit can read it" },
+	{ file: "features/community/enableCommunity.ts", within: "handleConfirm", kind: "state" },
+	{ file: "features/community/enableCommunity.ts", within: "replyError", kind: "state" },
+
+	// ── community/promptEditModal.ts ──
+	{ file: "features/community/promptEditModal.ts", within: "handlePickPrompt", kind: "state" },
+	{ file: "features/community/promptEditModal.ts", within: "handlePickOption", kind: "state" },
+	{ file: "features/community/promptEditModal.ts", within: "handleEditPromptButton", kind: "state" },
+	{ file: "features/community/promptEditModal.ts", within: "openAnswerModal", kind: "state" },
+	{ file: "features/community/promptEditModal.ts", within: "readCurrentDraft", count: 3, kind: "state" },
+	{ file: "features/community/promptEditModal.ts", within: "applyPressEdit", kind: "state" },
+	{ file: "features/community/promptEditModal.ts", within: "runModalEdit", kind: "state" },
+	{ file: "features/community/promptEditModal.ts", within: "handleEditSubmitted", count: 5, kind: "race", why: "an onboarding editor modal's Submit: the press read the same draft and gate first, so only a draft or role that moved while the modal stood open, or a typed edit only the Submit can read, meets it" },
+
+	// ── dero-brain/holdemRulesCard.ts ──
+	{ file: "features/dero-brain/holdemRulesCard.ts", within: "replyPrivately", kind: "state" },
+	{ file: "features/dero-brain/holdemRulesCard.ts", within: "passGate", count: 4, kind: "state" },
+	{ file: "features/dero-brain/holdemRulesCard.ts", within: "openTable", kind: "state" },
+	{ file: "features/dero-brain/holdemRulesCard.ts", within: "handleRulesCardButton", kind: "state" },
+	{ file: "features/dero-brain/holdemRulesCard.ts", within: "handleRulesCardSelect", kind: "state" },
+	{ file: "features/dero-brain/holdemRulesCard.ts", within: "handleRulesCardModal", anchor: "cardCopy.expired", kind: "race", why: "the table rules modal's Submit with a customId no card carries: only a stale or forged Submit sends one" },
+	{ file: "features/dero-brain/holdemRulesCard.ts", within: "handleRulesCardModal", anchor: "describeTermsRefusal", kind: "race", why: "the table rules modal's Submit with terms out of range: only the Submit can read it" },
+
+	// ── economy/chipClaim.ts ──
+	{ file: "features/economy/chipClaim.ts", within: "runChipClaim", anchor: "sections: [copy.notInGuild", kind: "state" },
+	{ file: "features/economy/chipClaim.ts", within: "runChipClaim", anchor: "sections: [wait", kind: "state" },
+	{ file: "features/economy/chipClaim.ts", within: "runChipClaim", anchor: "copy.failed", kind: "failure" },
+	{ file: "features/economy/chipClaim.ts", within: "playClaimRound", anchor: "copy.notInGuild", kind: "race", why: "the daily claim's throw picker Submit: runChipClaim refused outside a server at the press, so only a forged Submit meets it" },
+	{ file: "features/economy/chipClaim.ts", within: "playClaimRound", anchor: "copy.failed", kind: "failure" },
+
+	// ── economy/chipEconomySubcommands.ts ──
+	{ file: "features/economy/chipEconomySubcommands.ts", within: "toggle", kind: "state" },
+	{ file: "features/economy/chipEconomySubcommands.ts", within: "runChipSubcommand", anchor: "sections: [copy.notInGuild", kind: "state" },
+	{ file: "features/economy/chipEconomySubcommands.ts", within: "runChipSubcommand", anchor: "sections: [copy.setupRequired", kind: "state" },
+	{ file: "features/economy/chipEconomySubcommands.ts", within: "runChipSubcommand", anchor: "sections: [copy.economyOff", kind: "state" },
+	{ file: "features/economy/chipEconomySubcommands.ts", within: "runChipSubcommand", anchor: "copy.failed", kind: "failure" },
+
+	// ── economy/vaultGrant.ts ──
+	{ file: "features/economy/vaultGrant.ts", within: "runVaultGrant", count: 2, kind: "state" },
+
+	// ── events/deleteEvent.ts ──
+	{ file: "features/events/deleteEvent.ts", within: "deleteEvent", count: 2, kind: "state" },
+
+	// ── events/kvkSeasonSubcommand.ts ──
+	{ file: "features/events/kvkSeasonSubcommand.ts", within: "runKvkSeason", anchor: "sections: [configureReminders.setupRequired", kind: "state" },
+	{ file: "features/events/kvkSeasonSubcommand.ts", within: "runKvkSeason", anchor: "sections: [`${configureReminders.invalidInputsHeader}\\n$", kind: "state" },
+	{ file: "features/events/kvkSeasonSubcommand.ts", within: "runKvkSeason", anchor: "sections: [`${configureReminders.dateConflictsHeader}\\n$", kind: "state" },
+	{ file: "features/events/kvkSeasonSubcommand.ts", within: "runKvkSeason", anchor: "checklistEmptyError", kind: "race", why: "the reminder checklist modal's Submit with nothing ticked: only the Submit can read it" },
+
+	// ── events/listEvents.ts ──
+	{ file: "features/events/listEvents.ts", within: "listEvents", kind: "state" },
+
+	// ── fortune/respondWithFortune.ts ──
+	{ file: "features/fortune/respondWithFortune.ts", within: "respondWithFortune", kind: "state" },
+
+	// ── leaderboard/configureLeaderboardTracking.ts ──
+	{ file: "features/leaderboard/configureLeaderboardTracking.ts", within: "configureLeaderboardTracking", anchor: "sections: [\"Run this in a server, not a DM.\"", kind: "state" },
+	{ file: "features/leaderboard/configureLeaderboardTracking.ts", within: "configureLeaderboardTracking", anchor: "sections: [\"This server has not been set up yet. Run /se", kind: "state" },
+	{ file: "features/leaderboard/configureLeaderboardTracking.ts", within: "configureLeaderboardTracking", anchor: "embed", kind: "state" },
+	{ file: "features/leaderboard/configureLeaderboardTracking.ts", within: "configureLeaderboardTracking", anchor: "Could not save the toggle", kind: "failure" },
+
+	// ── leaderboard/configureLeaderboardWeekStart.ts ──
+	{ file: "features/leaderboard/configureLeaderboardWeekStart.ts", within: "configureLeaderboardWeekStart", anchor: "sections: [\"Run this in a server, not a DM.\"", kind: "state" },
+	{ file: "features/leaderboard/configureLeaderboardWeekStart.ts", within: "configureLeaderboardWeekStart", anchor: "sections: [\"Pick Sunday or Monday from the dropdown.\"", kind: "state" },
+	{ file: "features/leaderboard/configureLeaderboardWeekStart.ts", within: "configureLeaderboardWeekStart", anchor: "sections: [\"This server has not been set up yet. Run /se", kind: "state" },
+	{ file: "features/leaderboard/configureLeaderboardWeekStart.ts", within: "configureLeaderboardWeekStart", anchor: "await showEmbedNotice(interaction, infoEmbed(", kind: "state" },
+	{ file: "features/leaderboard/configureLeaderboardWeekStart.ts", within: "configureLeaderboardWeekStart", anchor: "Could not save the setting", kind: "failure" },
+
+	// ── leaderboard/leaderboardChannelHandlers.ts ──
+	{ file: "features/leaderboard/leaderboardChannelHandlers.ts", within: "handleLeaderboardChannelDelete", anchor: "sections: [\"Run this in a server, not a DM.\"", kind: "state" },
+	{ file: "features/leaderboard/leaderboardChannelHandlers.ts", within: "handleLeaderboardChannelDelete", anchor: "sections: [\"This button was issued for a different serve", kind: "state" },
+	{ file: "features/leaderboard/leaderboardChannelHandlers.ts", within: "handleLeaderboardChannelDelete", anchor: "sections: [\"You need Administrator permission to remove ", kind: "state" },
+	{ file: "features/leaderboard/leaderboardChannelHandlers.ts", within: "handleLeaderboardChannelDelete", anchor: "sections: [\"This server has not been set up yet. Run /se", kind: "state" },
+	{ file: "features/leaderboard/leaderboardChannelHandlers.ts", within: "handleLeaderboardChannelDelete", anchor: "await showEmbedNotice(interaction, infoEmbed(", kind: "state" },
+	{ file: "features/leaderboard/leaderboardChannelHandlers.ts", within: "handleLeaderboardChannelDelete", anchor: "Could not remove the leaderboard channel", kind: "failure" },
+
+	// ── leveling/accountProfile.ts ──
+	{ file: "features/leveling/accountProfile.ts", within: "showAccountProfile", count: 2, kind: "state" },
+
+	// ── leveling/achievementsView.ts ──
+	{ file: "features/leveling/achievementsView.ts", within: "showAchievements", count: 2, kind: "state" },
+
+	// ── leveling/levelSettingsSubcommands.ts ──
+	{ file: "features/leveling/levelSettingsSubcommands.ts", within: "runLevelSettings", anchor: "sections: [levelingCopy.errors.outsideGuild", kind: "state" },
+	{ file: "features/leveling/levelSettingsSubcommands.ts", within: "runLevelSettings", anchor: "sections: [\"This server has not been set up yet. Run /se", kind: "state" },
+	{ file: "features/leveling/levelSettingsSubcommands.ts", within: "runLevelSettings", anchor: "sections: [levelingCopy.errors.noData", kind: "state" },
+	{ file: "features/leveling/levelSettingsSubcommands.ts", within: "runLevelSettings", anchor: "sections: [refusal", kind: "state" },
+	{ file: "features/leveling/levelSettingsSubcommands.ts", within: "runLevelSettings", anchor: "sections: [\"Give both a level and a role to add a reward", kind: "state" },
+	{ file: "features/leveling/levelSettingsSubcommands.ts", within: "runLevelSettings", anchor: "sections: [\"Give a multiplier too. Use 0 to remove an ex", kind: "state" },
+	{ file: "features/leveling/levelSettingsSubcommands.ts", within: "runLevelSettings", anchor: "showErrorNotice(interaction, levelingCopy.errors.noData", kind: "failure" },
+	{ file: "features/leveling/levelSettingsSubcommands.ts", within: "runLevelSettings", anchor: "infoEmbed(\"Nothing changed\", \"You did not set an", kind: "state" },
+	{ file: "features/leveling/levelSettingsSubcommands.ts", within: "runLevelSettings", anchor: "Could not save those settings", kind: "failure" },
+
+	// ── leveling/levelsStandings.ts ──
+	{ file: "features/leveling/levelsStandings.ts", within: "showLevelsStandings", kind: "state" },
+
+	// ── leveling/xpSubcommands.ts ──
+	{ file: "features/leveling/xpSubcommands.ts", within: "runXpSubcommand", anchor: "sections: [levelingCopy.errors.outsideGuild", kind: "state" },
+	{ file: "features/leveling/xpSubcommands.ts", within: "runXpSubcommand", anchor: "sections: [levelingCopy.errors.noData", kind: "state" },
+	{ file: "features/leveling/xpSubcommands.ts", within: "runXpSubcommand", anchor: "sections: [levelingCopy.errors.botMember", kind: "state" },
+	{ file: "features/leveling/xpSubcommands.ts", within: "runXpSubcommand", anchor: "showErrorNotice(interaction, levelingCopy.errors.noData", kind: "failure" },
+
+	// ── platform/verseSubcommand.ts ──
+	{ file: "features/platform/verseSubcommand.ts", within: "runVerseSubcommand", kind: "state" },
+
+	// ── polls/PollDispatcher.ts ──
+	{ file: "features/polls/PollDispatcher.ts", within: "handlePollVote", anchor: "sections: [\"This poll is no longer active.\"", kind: "state" },
+	{ file: "features/polls/PollDispatcher.ts", within: "handlePollVote", anchor: "sections: [\"Please vote from within the server.\"", kind: "state" },
+	{ file: "features/polls/PollDispatcher.ts", within: "handlePollVote", anchor: "is recorded", kind: "private", why: "the member's ballot: a public line naming their pick would end the secret vote a poll button promises" },
+	{ file: "features/polls/PollDispatcher.ts", within: "handlePollVote", anchor: "Could not record your vote", kind: "failure" },
+
+	// ── power-ups/PowerUps.ts ──
+	{ file: "features/power-ups/PowerUps.ts", within: "handlePowerUpButton", anchor: "sections: [\"This control is no longer available.\"", kind: "state" },
+	{ file: "features/power-ups/PowerUps.ts", within: "handlePowerUpButton", anchor: "sections: [\"This button only works inside a server.\"", kind: "state" },
+	{ file: "features/power-ups/PowerUps.ts", within: "handlePowerUpButton", anchor: "sections: [rokCommanderCopy.responses.noWizardPowers", kind: "state" },
+	{ file: "features/power-ups/PowerUps.ts", within: "handlePowerUpButton", anchor: "This control is not wired up yet.", kind: "failure" },
+	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "sections: [\"This only works inside a server.\"", kind: "state" },
+	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "sections: [\"This server is not set up yet.\"", kind: "state" },
+	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "Could not set up the announcements role", kind: "failure" },
+	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "Could not resolve your membership", kind: "failure" },
+	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "Could not update your notifications", kind: "failure" },
+
+	// ── renderer/renderAnalyticsSubcommand.ts ──
+	{ file: "features/renderer/renderAnalyticsSubcommand.ts", within: "runRenderAnalyticsSubcommand", kind: "state" },
+
+	// ── schedule/announceStream.ts ──
+	{ file: "features/schedule/announceStream.ts", within: "announceStream", count: 4, kind: "state" },
+
+	// ── schedule/configureStreamSchedule.ts ──
+	{ file: "features/schedule/configureStreamSchedule.ts", within: "configureStreamSchedule", count: 6, kind: "state" },
+
+	// ── schedule/decreeEditHandlers.ts ──
+	{ file: "features/schedule/decreeEditHandlers.ts", within: "handleEditButton", count: 5, kind: "state" },
+
+	// ── schedule/goLiveSoon.ts ──
+	{ file: "features/schedule/goLiveSoon.ts", within: "goLiveSoon", kind: "state" },
+	{ file: "features/schedule/goLiveSoon.ts", within: "answerGoLiveRefusal", anchor: "c.postFailed", kind: "failure" },
+	{ file: "features/schedule/goLiveSoon.ts", within: "answerGoLiveRefusal", anchor: "sections: [message", kind: "state" },
+
+	// ── schedule/pauseAllSchedules.ts ──
+	{ file: "features/schedule/pauseAllSchedules.ts", within: "pauseAllSchedules", anchor: "sections: [\"Run this in a server, not a DM.\"", kind: "state" },
+	{ file: "features/schedule/pauseAllSchedules.ts", within: "pauseAllSchedules", anchor: "sections: [c.noEvents", kind: "state" },
+	{ file: "features/schedule/pauseAllSchedules.ts", within: "pauseAllSchedules", anchor: "sections: [c.allAlreadyPaused(events.length)", kind: "state" },
+	{ file: "features/schedule/pauseAllSchedules.ts", within: "pauseAllSchedules", anchor: "c.failed", kind: "failure" },
+
+	// ── schedule/pauseSchedule.ts ──
+	{ file: "features/schedule/pauseSchedule.ts", within: "pauseOneSchedule", anchor: "sections: [\"Run this in a server, not a DM.\"", kind: "state" },
+	{ file: "features/schedule/pauseSchedule.ts", within: "pauseOneSchedule", anchor: "sections: [getPluginCopy(config).pauseSchedule.notFound", kind: "state" },
+	{ file: "features/schedule/pauseSchedule.ts", within: "pauseOneSchedule", anchor: "sections: [c.alreadyPaused(event.name)", kind: "state" },
+	{ file: "features/schedule/pauseSchedule.ts", within: "pauseOneSchedule", anchor: "c.failed", kind: "failure" },
+
+	// ── schedule/resumeAllSchedules.ts ──
+	{ file: "features/schedule/resumeAllSchedules.ts", within: "resumeAllSchedules", anchor: "sections: [\"Run this in a server, not a DM.\"", kind: "state" },
+	{ file: "features/schedule/resumeAllSchedules.ts", within: "resumeAllSchedules", anchor: "sections: [c.noEvents", kind: "state" },
+	{ file: "features/schedule/resumeAllSchedules.ts", within: "resumeAllSchedules", anchor: "sections: [c.noneCurrentlyPaused", kind: "state" },
+	{ file: "features/schedule/resumeAllSchedules.ts", within: "resumeAllSchedules", anchor: "c.failed", kind: "failure" },
+
+	// ── schedule/resumeSchedule.ts ──
+	{ file: "features/schedule/resumeSchedule.ts", within: "resumeOneSchedule", anchor: "sections: [\"Run this in a server, not a DM.\"", kind: "state" },
+	{ file: "features/schedule/resumeSchedule.ts", within: "resumeOneSchedule", anchor: "sections: [getPluginCopy(config).pauseSchedule.notFound", kind: "state" },
+	{ file: "features/schedule/resumeSchedule.ts", within: "resumeOneSchedule", anchor: "sections: [c.alreadyActive(event.name)", kind: "state" },
+	{ file: "features/schedule/resumeSchedule.ts", within: "resumeOneSchedule", anchor: "c.failed", kind: "failure" },
+
+	// ── schedule/ScheduleControls.ts ──
+	{ file: "features/schedule/ScheduleControls.ts", within: "handleScheduleControl", count: 3, kind: "state" },
+	{ file: "features/schedule/ScheduleControls.ts", within: "runConfigureHowTo", kind: "state" },
+
+	// ── setup/adoptionChoice.ts ──
+	{ file: "features/setup/adoptionChoice.ts", within: "handleChooseButton", count: 2, kind: "state" },
+	{ file: "features/setup/adoptionChoice.ts", within: "handleChoiceSubmit", kind: "race", why: "the channel choice modal's Submit, gated again: an admin role can be taken away while the modal is open" },
+
+	// ── setup/arcadeSettingsSubcommands.ts ──
+	{ file: "features/setup/arcadeSettingsSubcommands.ts", within: "runArcadeSettingSubcommand", anchor: "sections: [configCopy.notInGuild", kind: "state" },
+	{ file: "features/setup/arcadeSettingsSubcommands.ts", within: "runArcadeSettingSubcommand", anchor: "sections: [configCopy.setupRequired", kind: "state" },
+	{ file: "features/setup/arcadeSettingsSubcommands.ts", within: "runArcadeSettingSubcommand", anchor: "configCopy.saveFailed", kind: "failure" },
+
+	// ── setup/channelVisibilitySubcommands.ts ──
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "runChannelsSubcommand", anchor: "sections: [responses.ownerOnly", kind: "state" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "runChannelsSubcommand", anchor: "sections: [responses.setupChannelsPending", kind: "state" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "runChannelsSubcommand", anchor: "\"Unknown subcommand\"", kind: "failure" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleHide", anchor: "sections: [`Pick one of the channels from the dropdown.`", kind: "state" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleHide", anchor: "sections: [`**${displayName}** is already hidden. Use /s", kind: "state" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleHide", anchor: "sections: [`That channel is not configured on this guild", kind: "state" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleHide", anchor: "sections: [`Channel not found in Discord. It may have be", kind: "state" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleHide", anchor: "Failed to update channel permissions.", kind: "failure" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleShow", anchor: "sections: [`Pick one of the channels from the dropdown.`", kind: "state" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleShow", anchor: "sections: [`**${displayName}** is already visible. Use /", kind: "state" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleShow", anchor: "sections: [`That channel is not configured on this guild", kind: "state" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleShow", anchor: "sections: [`Channel not found in Discord.`", kind: "state" },
+	{ file: "features/setup/channelVisibilitySubcommands.ts", within: "handleShow", anchor: "Failed to update channel permissions.", kind: "failure" },
+
+	// ── setup/configureAutoHeal.ts ──
+	{ file: "features/setup/configureAutoHeal.ts", within: "configureAutoHeal", anchor: "sections: [\"Run this in a server, not a DM.\"", kind: "state" },
+	{ file: "features/setup/configureAutoHeal.ts", within: "configureAutoHeal", anchor: "sections: [\"This server has not been set up yet. Run /se", kind: "state" },
+	{ file: "features/setup/configureAutoHeal.ts", within: "configureAutoHeal", anchor: "await showEmbedNotice(interaction, infoEmbed(", kind: "state" },
+	{ file: "features/setup/configureAutoHeal.ts", within: "configureAutoHeal", anchor: "Could not save the toggle", kind: "failure" },
+
+	// ── setup/headquartersSteps.ts ──
+	{ file: "features/setup/headquartersSteps.ts", within: "handleStepButton", kind: "state" },
+	{ file: "features/setup/headquartersSteps.ts", within: "openPriorityModal", kind: "state" },
+	{ file: "features/setup/headquartersSteps.ts", within: "handlePrioritySubmit", anchor: "voiceCopy.priority.notAdmin", kind: "race", why: "the voice priority modal's Submit, gated again: an admin role can be taken away while the modal is open" },
+	{ file: "features/setup/headquartersSteps.ts", within: "handlePrioritySubmit", anchor: "voiceCopy.priority.duplicate", kind: "race", why: "the voice priority modal's Submit with one category picked twice: only the Submit can read it" },
+
+	// ── setup/renameChannel.ts ──
+	{ file: "features/setup/renameChannel.ts", within: "renameChannel", anchor: "sections: [\"Run this in a server, not a DM.\"", kind: "state" },
+	{ file: "features/setup/renameChannel.ts", within: "renameChannel", anchor: "sections: [\"Pick a slot from the dropdown, that value is", kind: "state" },
+	{ file: "features/setup/renameChannel.ts", within: "renameChannel", anchor: "sections: [\"This server has not been set up yet. Run /se", kind: "state" },
+	{ file: "features/setup/renameChannel.ts", within: "renameChannel", anchor: "sections: [\"That channel slot is not currently set up in", kind: "state" },
+	{ file: "features/setup/renameChannel.ts", within: "renameChannel", anchor: "sections: [\"Could not find the live channel. It may have", kind: "state" },
+	{ file: "features/setup/renameChannel.ts", within: "renameChannel", anchor: "await showEmbedNotice(interaction, infoEmbed(", kind: "state" },
+	{ file: "features/setup/renameChannel.ts", within: "renameChannel", anchor: "Could not rename the channel", kind: "failure" },
+
+	// ── setup/rulesEdit.ts ──
+	{ file: "features/setup/rulesEdit.ts", within: "handleRulesEditButton", count: 2, kind: "state" },
+	{ file: "features/setup/rulesEdit.ts", within: "handleRulesEditSubmit", anchor: "rulesEdit.expired", kind: "race", why: "the rules editor's Submit after the config went: the press found it" },
+	{ file: "features/setup/rulesEdit.ts", within: "handleRulesEditSubmit", anchor: "noWizardPowers", kind: "race", why: "the rules editor's Submit, gated again: an admin role can be taken away while the modal is open" },
+	{ file: "features/setup/rulesEdit.ts", within: "handleRulesEditSubmit", anchor: "rulesEdit.empty", kind: "race", why: "the rules editor's Submit with the post emptied: only the Submit can read it" },
+	{ file: "features/setup/rulesEdit.ts", within: "handleRulesEditSubmit", anchor: "rulesEdit.failed", kind: "failure" },
+	{ file: "features/setup/rulesEdit.ts", within: "replyPrivately", kind: "state" },
+
+	// ── setup/selfDestruct.ts ──
+	{ file: "features/setup/selfDestruct.ts", within: "refuseNonOwner", kind: "state" },
+	{ file: "features/setup/selfDestruct.ts", within: "handleSelfDestruct", kind: "state" },
+	{ file: "features/setup/selfDestruct.ts", within: "handleSelfDestructModal", kind: "race", why: "the self destruct modal's Submit from outside a server: the press is server only, so only a forged Submit meets it" },
+	{ file: "features/setup/selfDestruct.ts", within: "runChoice", kind: "race", why: "the self destruct modal's Submit with a choice no modal offers: only a Submit built from an older modal sends one" },
+	{ file: "features/setup/selfDestruct.ts", within: "handleConfirmModal", kind: "race", why: "the confirm modal's Submit with the wrong word typed: only the Submit can read it" },
+
+	// ── voice/listenHandler.ts ──
+	{ file: "features/voice/listenHandler.ts", within: "answeredCooldownAtPress", kind: "state" },
+
+	// ── voice/voiceRoomControlHandlers.ts ──
+	{ file: "features/voice/voiceRoomControlHandlers.ts", within: "handleVoiceRoomControl", kind: "state" },
+
+	// ── main.ts ──
+	{ file: "main.ts", within: "gracefulShutdown", anchor: "commandExecuteFailure", count: 4, kind: "failure" },
+	{ file: "main.ts", within: "gracefulShutdown", anchor: "sections: [rokCommanderCopy.responses.setupRequired", kind: "state" },
+	{ file: "main.ts", within: "gracefulShutdown", anchor: "sections: [rokCommanderCopy.responses.noWizardPowers", kind: "state" },
+	{ file: "main.ts", within: "gracefulShutdown", anchor: "earlyAccessEmbed(access.generalReleaseAt", kind: "state" },
+
+	// ── utils/answerInChannel.ts ──
+	{ file: "utils/answerInChannel.ts", within: "askerOnly", kind: "state" },
 ];
 
 // ── the scan ──────────────────────────────────────────────────────────
@@ -386,9 +589,9 @@ function sourceFiles(folder: string): string[] {
 	});
 }
 
-// Every notice call in one file: its helpers everywhere, its own wrappers in the file that defines them.
+// Every notice call in one file: its helpers everywhere, a wrapper in the file that defines it and the files it is called from.
 function scanFile(file: string, source: string): NoticeSite[] {
-	const names = [...NOTICE_HELPERS, ...NOTICE_WRAPPERS.filter((wrapper) => wrapper.file === file).map((wrapper) => wrapper.name)];
+	const names = [...NOTICE_HELPERS, ...NOTICE_WRAPPERS.filter((wrapper) => wrapper.file === file || wrapper.calledFrom?.includes(file)).map((wrapper) => wrapper.name)];
 	const call = new RegExp(`(?<![\\w.])(?:${names.join("|")})\\(`);
 	const declaration = new RegExp(`function\\s+(?:${names.join("|")})\\(`);
 	const sites: NoticeSite[] = [];
@@ -441,7 +644,7 @@ function auditNotices(sites: readonly NoticeSite[], inventory: readonly NoticeEn
 		unexplained: inventory.filter((entry) => ["private", "race", "replaced"].includes(entry.kind) && !entry.why?.trim()).map(describeEntry),
 		// Owner rule 1: only a failure keeps the pack's error title, which showErrorNotice always shows.
 		errorTitledStates: sites
-			.filter((site) => inSortedFolder(site.file) && site.text.includes("showErrorNotice("))
+			.filter((site) => site.text.includes("showErrorNotice("))
 			.filter((site) => entriesFor(site, inventory)[0]?.kind !== "failure")
 			.map(describeSite),
 	};
@@ -467,7 +670,7 @@ describe("the notice inventory", () => {
 		expect(audit.answers).toEqual([]);
 	});
 
-	it("sorts every site in the game rooms and the games, and elsewhere only while Phase 1c is open", () => {
+	it("sorts every site, so none is left unsorted anywhere", () => {
 		expect(audit.unsorted).toEqual([]);
 	});
 
@@ -475,7 +678,7 @@ describe("the notice inventory", () => {
 		expect(audit.unexplained).toEqual([]);
 	});
 
-	it("keeps the error title for failures alone in the sorted folders", () => {
+	it("keeps the error title for failures alone, in every folder", () => {
 		expect(audit.errorTitledStates).toEqual([]);
 	});
 });

@@ -10,7 +10,9 @@ import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showEmbedNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 // ── /server channels rename ──────────────────────────────────────────────────
 // What:  rename one of the bot-managed channels AND persist the new name
@@ -151,7 +153,7 @@ export async function renameSlotChoices(guild: Guild): Promise<OptionChoice[]> {
 export async function renameChannel(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, "Run this in a server, not a DM.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 
@@ -162,13 +164,13 @@ export async function renameChannel(interaction: RepliableInteraction, options: 
 	// a free-form value into the field could write to an arbitrary key on
 	// the channelNames map.
 	if (!VALID_SLOTS.has(slot)) {
-		await showErrorNotice(interaction, "Pick a slot from the dropdown, that value is not a known channel slot.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: ["Pick a slot from the dropdown, that value is not a known channel slot."] });
 		return;
 	}
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
-		await showErrorNotice(interaction, "This server has not been set up yet. Run /setup first.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: ["This server has not been set up yet. Run /setup first."] });
 		return;
 	}
 
@@ -177,14 +179,14 @@ export async function renameChannel(interaction: RepliableInteraction, options: 
 	// the missing channel rather than silently rejecting.
 	const channelId = (config as unknown as Record<string, string | null | undefined>)[slot];
 	if (!channelId) {
-		await showErrorNotice(interaction, "That channel slot is not currently set up in this server. Run /setup or enable the related feature first.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: ["That channel slot is not currently set up in this server. Run /setup or enable the related feature first."] });
 		return;
 	}
 
 	const channel = await interaction.guild?.channels.fetch(channelId).catch(() => null);
 	// The two voice rooms are the only managed slots that are not text channels.
 	if (!channel || !(channel instanceof TextChannel || channel instanceof VoiceChannel)) {
-		await showErrorNotice(interaction, "Could not find the live channel. It may have been deleted; let auto-heal rebuild it, then try again.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: ["Could not find the live channel. It may have been deleted; let auto-heal rebuild it, then try again."] });
 		return;
 	}
 
@@ -223,11 +225,12 @@ export async function renameChannel(interaction: RepliableInteraction, options: 
 		}
 		await guildConfigStore.update(guildId, { channelNames: channelNamesRecord });
 
-		await showEmbedNotice(interaction, infoEmbed(
+		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		await answerInChannel(interaction, "admin", { embeds: [infoEmbed(
 					"✏️ Channel renamed",
 					`The channel is now named **${newName}** and the rename is persisted, so it will survive any future auto-heal rebuild.\n\nHeads up: renaming the channel directly in Discord works for the live channel but does NOT update the persisted override. Use /server channels rename again any time you want the new name to stick across rebuilds.`,
 					COLORS.SCHEDULE
-				));
+				)] });
 	} catch (err) {
 		console.error(`[channels rename] failed for guild ${guildId}, slot ${slot}`, err);
 		await showErrorNotice(interaction, "Could not rename the channel. Check the bot's Manage Channels permission, or try again, Discord enforces a rate limit of 2 renames per 10 minutes per channel.");

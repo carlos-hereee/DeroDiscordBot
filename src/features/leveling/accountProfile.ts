@@ -20,7 +20,8 @@ import { fortuneBuffStore } from "@db/stores/fortuneBuffStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { utcMonthKey } from "@utils/utcMonthKey.js";
 import { beginChannelAnswer, type PendingChannelAnswer } from "@utils/answerInChannel.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── the account profile ────────────────────────────────────────────────────
 // What:  a member's full leveling profile: level and progress, standing, the
@@ -45,14 +46,14 @@ export interface AccountProfileRequest {
 export async function showAccountProfile(interaction: RepliableInteraction, { target }: AccountProfileRequest): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, levelingCopy.errors.outsideGuild);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: [levelingCopy.errors.outsideGuild] });
 		return;
 	}
 
 	const isSelf = target.id === interaction.user.id;
 
 	if (target.bot) {
-		await showErrorNotice(interaction, levelingCopy.errors.botMember);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: [levelingCopy.errors.botMember] });
 		return;
 	}
 

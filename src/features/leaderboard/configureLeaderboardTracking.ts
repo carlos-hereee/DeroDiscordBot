@@ -13,7 +13,8 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import { answerInChannel } from "@utils/answerInChannel.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showEmbedNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /server leaderboard tracking ───────────────────────────────────
 // What:  master switch for participation tracking. When ON (default),
@@ -49,7 +50,7 @@ export function addLeaderboardTrackingOptions(sub: SlashCommandSubcommandBuilder
 export async function configureLeaderboardTracking(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, "Run this in a server, not a DM.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 
@@ -57,7 +58,7 @@ export async function configureLeaderboardTracking(interaction: RepliableInterac
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
-		await showErrorNotice(interaction, "This server has not been set up yet. Run /setup first.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["This server has not been set up yet. Run /setup first."] });
 		return;
 	}
 
@@ -148,9 +149,8 @@ export async function configureLeaderboardTracking(interaction: RepliableInterac
 				: undefined;
 
 		const embed = infoEmbed(heading, body, COLORS.SCHEDULE);
-		// As above: a reply carrying the Remove button posts in 🎛️admin-controls.
-		if (components) await answerInChannel(interaction, "admin", { embeds: [embed], components });
-		else await showEmbedNotice(interaction, embed);
+		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		await answerInChannel(interaction, "admin", { embeds: [embed], components });
 	} catch (err) {
 		console.error("[configure leaderboard-tracking] update failed", err);
 		await showErrorNotice(interaction, "Could not save the toggle. Try again or check the bot's logs.");

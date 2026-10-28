@@ -3,7 +3,9 @@ import { registerButton } from "@handlers/interactionRegistry.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showEmbedNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 // ── leaderboard channel handlers ──────────────────────────────────────
 // What:  persistent button handlers that follow up the
@@ -44,7 +46,7 @@ export function buildLeaderboardChannelDeleteCustomId(guildId: string): string {
 async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, "Run this in a server, not a DM.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 
@@ -53,7 +55,7 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 	const customIdParts = interaction.customId.split(":");
 	const buttonGuildId = customIdParts[1];
 	if (buttonGuildId && buttonGuildId !== guildId) {
-		await showErrorNotice(interaction, "This button was issued for a different server.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["This button was issued for a different server."] });
 		return;
 	}
 
@@ -64,13 +66,13 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 	// suspenders, but the cost is zero.)
 	const member = interaction.member;
 	if (!member || typeof member.permissions === "string" || !member.permissions.has(PermissionFlagsBits.Administrator)) {
-		await showErrorNotice(interaction, "You need Administrator permission to remove the leaderboard channel.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["You need Administrator permission to remove the leaderboard channel."] });
 		return;
 	}
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
-		await showErrorNotice(interaction, "This server has not been set up yet. Run /setup first.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["This server has not been set up yet. Run /setup first."] });
 		return;
 	}
 
@@ -144,11 +146,12 @@ async function handleLeaderboardChannelDelete(interaction: ButtonInteraction): P
 			console.warn(`[leaderboard-channel-delete] admin audit notice failed for guild ${guildId}`, noticeErr);
 		}
 
-		await showEmbedNotice(interaction, infoEmbed(
+		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		await answerInChannel(interaction, "admin", { embeds: [infoEmbed(
 					"🗑️ Leaderboard channel removed",
 					"The leaderboard channel has been deleted from this server and flagged so auto-heal will not rebuild it. To restore it later, run /server leaderboard tracking enabled:True, that re-enables tracking AND clears the removal flag, so the channel rebuilds on the next boot sweep (assuming autoHealEnabled is on).",
 					COLORS.SCHEDULE
-				));
+				)] });
 	} catch (err) {
 		console.error("[leaderboard-channel-delete] failed", err);
 		await showErrorNotice(interaction, "Could not remove the leaderboard channel. Check the bot's permissions or delete it manually in Discord.");

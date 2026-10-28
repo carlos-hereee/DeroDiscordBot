@@ -519,8 +519,8 @@ describe("the brain", () => {
 		} as unknown as ChatInputCommandInteraction;
 		await deroCommand(interaction);
 
-		const embed = (reply.mock.calls[0] as unknown as [{ embeds: EmbedBuilder[] }])[0].embeds[0];
-		expect(embed.data.description).toContain(deroBrainCopy.tell.brainOffline);
+		// Dero offline and an expired card are states: the notice's private fallback is plain text (owner rule 1, Phase 1c).
+		expect((reply.mock.calls[0] as unknown as [{ content: string }])[0].content).toContain(deroBrainCopy.tell.brainOffline);
 		expect(rowsOf(BOT_LOG_EVENTS.DERO_BRAIN_ACTION)).toEqual([
 			{ jobId: null, channels: 0, outcome: "offline", speakerId: SPEAKER_ID, source: "text" },
 		]);
@@ -898,8 +898,8 @@ describe("the launcher and restarts", () => {
 			user: { id: SPEAKER_ID },
 			reply,
 		} as unknown as ButtonInteraction);
-		const cardReply = (reply.mock.calls[0] as unknown as [{ embeds: EmbedBuilder[] }])[0].embeds[0];
-		expect(cardReply.data.description).toContain(deroBrainCopy.holdem.expired);
+		// Dero offline and an expired card are states: the notice's private fallback is plain text (owner rule 1, Phase 1c).
+		expect((reply.mock.calls[0] as unknown as [{ content: string }])[0].content).toContain(deroBrainCopy.holdem.expired);
 
 		const reloaded = JSON.parse(JSON.stringify(table)) as HoldemTable;
 		playToHandEnd(reloaded);

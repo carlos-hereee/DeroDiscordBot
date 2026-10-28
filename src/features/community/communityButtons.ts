@@ -14,7 +14,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { registerButton, registerSelectMenu } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
 import { refreshHeadquartersCards } from "@features/setup/headquartersCards.js";
 import { communityCopy } from "./communityCopy.js";
 import {
@@ -87,7 +87,7 @@ export async function handleCommunityButton(interaction: CommunityPress): Promis
 	// A control from an older layout, answered before any read since nothing runs.
 	// A select's action reached as a button, or the reverse, is from no layout either.
 	if (!parsed || COMMUNITY_SELECT_ACTIONS.has(parsed.action) !== isSelectPress(interaction)) {
-		await showErrorNotice(interaction, communityCopy.errors.controlRetired, null);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.community, sections: [communityCopy.errors.controlRetired] });
 		return;
 	}
 	const guild = interaction.guild;
@@ -178,8 +178,10 @@ function parseCommunityCustomId(customId: string): { action: CommunityAction; ar
 	return null;
 }
 
+// Every refusal here is a state (not in a server, not set up, not allowed), so it is a
+// notice titled Community, never the error title (owner rule 1, 2026-10 item 263 R3-12).
 async function replyRefusal(interaction: CommunityPress, message: string, config: ICommunityConfig | null): Promise<void> {
-	await showErrorNotice(interaction, message, config);
+	await showNotice(interaction, { title: getPluginCopy(config).notice.community, sections: [message] });
 }
 
 // ── keeping the guide's row on the live state ────────────────────────

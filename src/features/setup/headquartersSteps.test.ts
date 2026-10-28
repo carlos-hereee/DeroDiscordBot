@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 	findVoice: vi.fn(),
 	refresh: vi.fn(),
 	emitFor: vi.fn(),
-	showErrorNotice: vi.fn(),
+	showNotice: vi.fn(),
 	showModalOrReply: vi.fn(),
 	buttons: new Map<string, (interaction: ButtonInteraction) => Promise<void>>(),
 	modals: new Map<string, (interaction: ModalSubmitInteraction) => Promise<void>>(),
@@ -19,7 +19,7 @@ vi.mock("@features/command-buttons/adminCommandLauncher.js", () => ({ openAdminL
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn(async () => ({ guildId: "g1" })) } }));
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { findByGuildId: mocks.findVoice, upsert: mocks.upsert } }));
 vi.mock("@utils/permissions.js", () => ({ gateOwnerOrAdmin: mocks.gate }));
-vi.mock("@utils/textModal.js", () => ({ showErrorNotice: mocks.showErrorNotice, showModalOrReply: mocks.showModalOrReply }));
+vi.mock("@utils/textModal.js", () => ({ showNotice: mocks.showNotice, showModalOrReply: mocks.showModalOrReply }));
 vi.mock("./adminLog.js", () => ({ adminLog: { emitFor: mocks.emitFor } }));
 vi.mock("./headquartersCards.js", () => ({ HEADQUARTERS_STEP_PREFIX: "hqstep", refreshHeadquartersCards: mocks.refresh }));
 vi.mock("@handlers/interactionRegistry.js", () => ({
@@ -31,6 +31,8 @@ import { buildPriorityModal, orderFromPicks, registerHeadquartersStepHandlers, s
 import { DEFAULT_VOICE_PRIORITY_ORDER } from "@features/voice/voicePriority.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
 import { setupCopy } from "./setupCopy.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
+import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 
 // ── the step buttons and the voice priority step (2026-10 item 257 Phase 2b) ──
 
@@ -71,7 +73,8 @@ describe("the step to flow map", () => {
 		await pressStep(press("hqstep:arcadeControl:5"));
 		expect(mocks.openAdminLeaf).toHaveBeenCalledWith(expect.anything(), "arcade", "server block");
 		await pressStep(press("hqstep:arcadeControl:9"));
-		expect(mocks.showErrorNotice).toHaveBeenCalledWith(expect.anything(), setupCopy.headquarters.staleStep);
+		// A stale step is a state, a notice titled Setup (owner rule 1, 2026-10 item 263 Phase 1c).
+		expect(mocks.showNotice).toHaveBeenCalledWith(expect.anything(), { title: getPluginCopy(null).notice.setup, sections: [setupCopy.headquarters.staleStep] });
 	});
 });
 
@@ -88,7 +91,7 @@ describe("step 5, the voice priority order", () => {
 		mocks.gate.mockResolvedValue(false);
 		await pressStep(press("hqstep:deroConfig:5"));
 		expect(mocks.showModalOrReply).not.toHaveBeenCalled();
-		expect(mocks.showErrorNotice).toHaveBeenCalledWith(expect.anything(), voiceCopy.priority.notAdmin);
+		expect(mocks.showNotice).toHaveBeenCalledWith(expect.anything(), { title: deroBrainCopy.noticeTitle, sections: [voiceCopy.priority.notAdmin] });
 	});
 
 	it("builds the whole order from four picks, the fifth category last, and refuses a repeat", () => {
@@ -116,7 +119,7 @@ describe("step 5, the voice priority order", () => {
 	it("saves nothing when two places share a category, and re-checks the admin on Submit", async () => {
 		await submitPriority(submit(["other", "other", "meeting-hall", "rated-match"]));
 		expect(mocks.upsert).not.toHaveBeenCalled();
-		expect(mocks.showErrorNotice).toHaveBeenCalledWith(expect.anything(), voiceCopy.priority.duplicate);
+		expect(mocks.showNotice).toHaveBeenCalledWith(expect.anything(), { title: deroBrainCopy.noticeTitle, sections: [voiceCopy.priority.duplicate] });
 
 		mocks.gate.mockResolvedValue(false);
 		await submitPriority(submit(["arcade-lounge", "meeting-hall", "other", "rated-match"]));

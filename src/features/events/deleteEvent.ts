@@ -12,7 +12,8 @@ import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import { askInChannel } from "@utils/answerInChannel.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── deleting an event ─────────────────────────────────────────────────
 // What:  soft deletes one active event after a private Delete or Cancel
@@ -57,7 +58,7 @@ export async function deletableEventChoices(guildId: string, typed: string): Pro
 export async function deleteEvent(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, "Run this in a server, not a DM.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.events, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 
@@ -67,7 +68,7 @@ export async function deleteEvent(interaction: RepliableInteraction, options: Co
 	const event = await eventStore.findByIdInGuild(eventId, guildId);
 
 	if (!event) {
-		await showErrorNotice(interaction, c.notFound(eventId));
+		await showNotice(interaction, { title: getPluginCopy(null).notice.events, sections: [c.notFound(eventId)] });
 		return;
 	}
 

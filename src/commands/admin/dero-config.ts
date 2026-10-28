@@ -22,7 +22,9 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog, type AdminLogKind } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import { refreshHeadquartersCards } from "@features/setup/headquartersCards.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 // ── /dero-config ──────────────────────────────────────────────────────
 // What:  Dero's voice and task list, one per guild, in one admin command: the kill
@@ -229,14 +231,14 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 	// ① guild gate
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, c.notInGuild);
+		await showNotice(interaction, { title: deroBrainCopy.noticeTitle, sections: [c.notInGuild] });
 		return;
 	}
 
 	// ② setup gate
 	const guildConfig = await guildConfigStore.findByGuildId(guildId);
 	if (!guildConfig) {
-		await showErrorNotice(interaction, c.setupRequired);
+		await showNotice(interaction, { title: deroBrainCopy.noticeTitle, sections: [c.setupRequired] });
 		return;
 	}
 
@@ -264,8 +266,8 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 		else if (sub === "cap") embed = await setCap(guildId, current, options.getInteger("dollars", true), audit);
 		else embed = await status(guildId, current);
 
-		// ④
-		await showEmbedNotice(interaction, embed);
+		// ④ a status or a change made is an answer, so it posts in ⚙️dero-config (owner rule 1)
+		await answerInChannel(interaction, "deroConfig", { embeds: [embed] });
 		// ⑤ ⚙️dero-config's steps card and chart follow every change, fire and forget
 		// (2026-10 item 257 Phase 2b); the settings panel runs this same handler.
 		refreshHeadquartersCards(interaction.guild, "deroConfig");

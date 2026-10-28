@@ -13,13 +13,15 @@ import { registerButton, registerModal } from "@handlers/interactionRegistry.js"
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { answerInChannel } from "@utils/answerInChannel.js";
-import { showErrorNotice, showModalOrReply } from "@utils/textModal.js";
+import { showModalOrReply, showNotice } from "@utils/textModal.js";
 import { COLORS } from "@base/copy/brand.js";
 import { normalizePriorityOrder, VOICE_PRIORITY_CATEGORIES, type VoicePriorityCategory } from "@features/voice/voicePriority.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
 import { adminLog } from "./adminLog.js";
 import { HEADQUARTERS_STEP_PREFIX, refreshHeadquartersCards, type HeadquartersDomain } from "./headquartersCards.js";
 import { setupCopy } from "./setupCopy.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
+import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 
 // ── headquartersSteps ───────────────────────────────────────────────────────
 // What:  where a 🏰 DERO HEADQUARTERS step button goes (2026-10 item 257 Phase 2b,
@@ -67,7 +69,7 @@ export function stepTarget(customId: string): StepTarget | null {
 async function handleStepButton(interaction: ButtonInteraction): Promise<void> {
 	const target = stepTarget(interaction.customId);
 	if (!target) {
-		await showErrorNotice(interaction, setupCopy.headquarters.staleStep);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [setupCopy.headquarters.staleStep] });
 		return;
 	}
 	if (target.kind === "priority") {
@@ -118,7 +120,7 @@ async function openPriorityModal(interaction: ButtonInteraction): Promise<void> 
 	if (!guild) return;
 	const config = await guildConfigStore.findByGuildId(guild.id);
 	if (!(await gateOwnerOrAdmin(interaction, config))) {
-		await showErrorNotice(interaction, voiceCopy.priority.notAdmin);
+		await showNotice(interaction, { title: deroBrainCopy.noticeTitle, sections: [voiceCopy.priority.notAdmin] });
 		return;
 	}
 	const order = normalizePriorityOrder((await deroVoiceConfigStore.findByGuildId(guild.id))?.priorityOrder);
@@ -130,13 +132,13 @@ async function handlePrioritySubmit(interaction: ModalSubmitInteraction): Promis
 	if (!guild) return;
 	const config = await guildConfigStore.findByGuildId(guild.id);
 	if (!(await gateOwnerOrAdmin(interaction, config))) {
-		await showErrorNotice(interaction, voiceCopy.priority.notAdmin);
+		await showNotice(interaction, { title: deroBrainCopy.noticeTitle, sections: [voiceCopy.priority.notAdmin] });
 		return;
 	}
 	const picks = Array.from({ length: PLACES }, (_unused, index) => interaction.fields.getStringSelectValues(placeFieldId(index))[0] ?? "");
 	const order = orderFromPicks(picks);
 	if (!order) {
-		await showErrorNotice(interaction, voiceCopy.priority.duplicate);
+		await showNotice(interaction, { title: deroBrainCopy.noticeTitle, sections: [voiceCopy.priority.duplicate] });
 		return;
 	}
 	await deroVoiceConfigStore.upsert(guild.id, { priorityOrder: order });

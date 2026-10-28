@@ -227,8 +227,9 @@ describe("every admin button refuses a member who is neither the owner nor an ad
 
 	it("refuses a submitted form and runs nothing", async () => {
 		const form = submit("admincmd_form:server:leaderboard/week-start:0", { start: ["monday"] }, MEMBER_ID);
+		// A refused Submit is a state: the notice's private fallback is its plain text since Phase 1c (owner rule 1).
 		await form.run();
-		expect(firstReply(form.reply).embeds?.[0]?.data.description).toBe(refusal);
+		expect(firstReply(form.reply).content).toBe(refusal);
 		expect(mocks.update).not.toHaveBeenCalled();
 	});
 
@@ -295,14 +296,14 @@ describe("an admin's flow", () => {
 		// /events pause's `days` field alone (its index 1), answered with words.
 		const form = submit("admincmd_form:events:pause:1", { days: "two weeks" }, ADMIN_ID);
 		await form.run();
-		expect(firstReply(form.reply).embeds?.[0]?.data.description).toBe(commandButtonsCopy.problems.notWholeNumber("days"));
+		expect(firstReply(form.reply).content).toBe(commandButtonsCopy.problems.notWholeNumber("days"));
 		expect(mocks.findEvents).not.toHaveBeenCalled();
 	});
 
 	it("holds a number to the command's own bounds", async () => {
 		const form = submit("admincmd_form:events:pause:1", { days: "0" }, ADMIN_ID);
 		await form.run();
-		expect(firstReply(form.reply).embeds?.[0]?.data.description).toBe(commandButtonsCopy.problems.outOfRange("days", "1 to 90"));
+		expect(firstReply(form.reply).content).toBe(commandButtonsCopy.problems.outOfRange("days", "1 to 90"));
 	});
 
 	it("answers a button from an older layout quietly", async () => {
@@ -315,7 +316,7 @@ describe("an admin's flow", () => {
 	it("answers a stale form submit privately, since a submit cannot open a modal", async () => {
 		const form = submit("admincmd_form:server:no-such-leaf:0", {}, ADMIN_ID);
 		await form.run();
-		expect(firstReply(form.reply).embeds?.[0]?.data.description).toBe(commandButtonsCopy.launcher.staleButton);
+		expect(firstReply(form.reply).content).toBe(commandButtonsCopy.launcher.staleButton);
 	});
 });
 
@@ -418,7 +419,7 @@ describe("the settings panels", () => {
 	it("refuse a submitted panel from a member and write nothing", async () => {
 		const panel = panelSubmit("admincmd_panel:server", { switches: [] }, MEMBER_ID);
 		await panel.run();
-		expect(firstReply(panel.reply).embeds?.[0]?.data.description).toBe(refusal);
+		expect(firstReply(panel.reply).content).toBe(refusal);
 		expect(mocks.update).not.toHaveBeenCalled();
 	});
 });

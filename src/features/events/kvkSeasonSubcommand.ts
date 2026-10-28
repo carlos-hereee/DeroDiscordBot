@@ -16,7 +16,7 @@ import { addDays, parseEventDate, parseEventDateTime } from "@utils/dateParser.j
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { answerInChannel, askInChannel } from "@utils/answerInChannel.js";
-import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 
 const { configureReminders } = rokCommanderCopy;
@@ -85,7 +85,7 @@ export async function runKvkSeason(interaction: RepliableInteraction, options: C
 	// /setup has not run yet this command cannot proceed.
 	const config = await guildConfigStore.findByGuildId(interaction.guildId!);
 	if (!config?.announcementsChannelId) {
-		await showErrorNotice(interaction, configureReminders.setupRequired);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.kvkSeason, sections: [configureReminders.setupRequired] });
 		return;
 	}
 	const announcementsChannelId = config.announcementsChannelId;

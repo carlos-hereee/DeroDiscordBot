@@ -9,7 +9,8 @@ import {
 	type RenderAnalyticsReport,
 } from "@features/renderer/renderAnalytics.js";
 import { renderAnalyticsCopy } from "@features/renderer/renderAnalyticsCopy.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /platform analytics ────────────────────────────────────────────────────
 // What:  the platform owner's read of render cache analytics (2026-10 item 244):
@@ -50,7 +51,7 @@ function isPeriod(value: string | null): value is RenderAnalyticsPeriod {
 /** Runs /platform analytics for the platform owner, refusing everyone else first. */
 export async function runRenderAnalyticsSubcommand(interaction: ChatInputCommandInteraction): Promise<void> {
 	if (!isPlatformOwner(interaction.user.id)) {
-		await showErrorNotice(interaction, copy.errors.notOwner);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.ownerTools, sections: [copy.errors.notOwner] });
 		return;
 	}
 

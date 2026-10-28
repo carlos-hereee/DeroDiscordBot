@@ -73,12 +73,13 @@ import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { isAdminCommand } from "@utils/permissions.js";
 import { answerInChannel } from "@utils/answerInChannel.js";
-import { registerNoticeModal, showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { registerNoticeModal, showEmbedNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
 import { registerMessageXp } from "@features/leveling/messageXp.js";
 import { registerReactionXp } from "@features/leveling/reactionXp.js";
 import { startVoiceSweep } from "@features/leveling/voiceXp.js";
 import { refreshAllLevelsBoards } from "@features/leveling/LevelsBoard.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── DNS resolver guard ─────────────────────────────────────────────────────
 // Some dev machines leave node's DNS library (c-ares) unable to read the system
@@ -491,7 +492,7 @@ process.on("uncaughtException", (err) => {
 			if (isAdminCommand(interaction.commandName, subcommand, group)) {
 				// guild hasn't run /setup yet, no config means no admin role is defined
 				if (!config) {
-					await showErrorNotice(interaction, rokCommanderCopy.responses.setupRequired);
+					await showNotice(interaction, { title: getPluginCopy(null).notice.commands, sections: [rokCommanderCopy.responses.setupRequired] });
 					return;
 				}
 
@@ -509,7 +510,7 @@ process.on("uncaughtException", (err) => {
 				const hasAdminRole = (config.adminRoleId && member?.roles.cache.has(config.adminRoleId)) ?? false;
 
 				if (!isOwner && !hasAdminRole) {
-					await showErrorNotice(interaction, rokCommanderCopy.responses.noWizardPowers);
+					await showNotice(interaction, { title: getPluginCopy(null).notice.commands, sections: [rokCommanderCopy.responses.noWizardPowers] });
 					return;
 				}
 			}

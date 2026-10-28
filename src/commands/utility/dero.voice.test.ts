@@ -167,8 +167,10 @@ function interactionFor(sub: "join" | "leave" | "status", options: { roles?: str
 }
 
 function textOf(mock: ReturnType<typeof vi.fn>): string {
-	const call0 = mock.mock.calls[0] as unknown as [{ embeds: EmbedBuilder[] }];
-	const embed = call0[0].embeds[0];
+	// A state's private fallback is its plain text since Phase 1c (owner rule 1); an answer is an embed.
+	const call0 = mock.mock.calls[0] as unknown as [{ embeds?: EmbedBuilder[]; content?: string }];
+	if (call0[0].content) return call0[0].content;
+	const embed = call0[0].embeds![0];
 	return `${embed.data.title ?? ""}\n${embed.data.description ?? ""}`;
 }
 

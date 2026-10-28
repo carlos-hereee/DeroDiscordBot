@@ -4,7 +4,7 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
 import { communityCopy } from "./communityCopy.js";
 import { buildOnboardingReviewRows } from "./communityControls.js";
 import { describeRefusal, type IWriteRefusal } from "./enableCommunity.js";
@@ -349,14 +349,16 @@ function audit(guildId: string, event: string, metadata: Record<string, unknown>
 // ── helpers ──────────────────────────────────────────────────────────
 
 /**
- * How every refusal in this flow and in promptEditModal is answered: a notice modal
- * for a button press, the private error reply for a modal submit, which cannot open
- * a modal (post-launch plan item 9).
+ * How every refusal in this flow and in promptEditModal is answered: a notice titled
+ * Community, a modal for a press and the private fallback for a modal submit, which
+ * cannot open one (post-launch plan item 9). Every caller states something (expired,
+ * not allowed, a question gone), so none wears the error title (owner rule 1,
+ * 2026-10 item 263 R3-12); a real failure here answers through errorEmbed instead.
  */
 export async function replyOnboardingError(
 	interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
 	message: string,
 	config: ICopyConfig | null
 ): Promise<void> {
-	await showErrorNotice(interaction, message, config);
+	await showNotice(interaction, { title: getPluginCopy(config).notice.community, sections: [message] });
 }

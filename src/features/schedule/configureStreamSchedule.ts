@@ -23,7 +23,8 @@ import {
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import { askInChannel } from "@utils/answerInChannel.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /events stream weekly ────────────────────────────────────────
 // What:  creates a recurring weekly event on a fixed day + time of week
@@ -165,7 +166,7 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 		// makes sense inside a server. Discord's own permissioning blocks
 		// most of this path but the explicit guard keeps the rest of the
 		// function free of "what if guildId is null" branches.
-		await showErrorNotice(interaction, "Run this in a server, not a DM.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 
@@ -176,7 +177,7 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 	// preview ("Pinging the guild member role").
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config?.announcementsChannelId) {
-		await showErrorNotice(interaction, c.setupRequired);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.setupRequired] });
 		return;
 	}
 
@@ -193,13 +194,13 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 
 	const dayIndex = DAY_TO_INDEX[dayRaw];
 	if (dayIndex === undefined) {
-		await showErrorNotice(interaction, c.invalidDay);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.invalidDay] });
 		return;
 	}
 
 	const time = parseFlexibleTime(timeRaw);
 	if (!time) {
-		await showErrorNotice(interaction, c.invalidTime);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.invalidTime] });
 		return;
 	}
 
@@ -207,7 +208,7 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 	// trust an autocomplete pick blindly because Discord lets users
 	// type-and-submit a value that wasn't in the suggestion list.
 	if (!isValidTimezone(timezoneRaw)) {
-		await showErrorNotice(interaction, `Unknown timezone: \`${timezoneRaw}\`. Try names like \`America/New_York\`, \`Europe/London\`, or \`UTC\`.`);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [`Unknown timezone: \`${timezoneRaw}\`. Try names like \`America/New_York\`, \`Europe/London\`, or \`UTC\`.`] });
 		return;
 	}
 
@@ -217,7 +218,7 @@ export async function configureStreamSchedule(interaction: RepliableInteraction,
 	// so "Friday Night Stream" and "friday night stream" do not coexist.
 	const existing = await eventStore.findByGuildId(guildId);
 	if (existing.some((e) => e.name.toLowerCase() === name.toLowerCase())) {
-		await showErrorNotice(interaction, c.alreadyExists(name));
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.alreadyExists(name)] });
 		return;
 	}
 

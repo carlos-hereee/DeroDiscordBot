@@ -71,8 +71,10 @@ function interactionFor({ sub = "tell", task = TASK, roles = [ROLE], userId, cac
 }
 
 function textOf(mock: ReturnType<typeof vi.fn>): string {
-	const call = mock.mock.calls[0] as unknown as [{ embeds: EmbedBuilder[] }];
-	const embed = call[0].embeds[0];
+	// A state's private fallback is its plain text since Phase 1c (owner rule 1); an answer is an embed.
+	const call = mock.mock.calls[0] as unknown as [{ embeds?: EmbedBuilder[]; content?: string }];
+	if (call[0].content) return call[0].content;
+	const embed = call[0].embeds![0];
 	return `${embed.data.title ?? ""}\n${embed.data.description ?? ""}`;
 }
 

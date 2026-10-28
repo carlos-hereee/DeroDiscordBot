@@ -75,7 +75,10 @@ function run(options: Options, guildId: string | null = "g1") {
 async function replyText(options: Options, guildId: string | null = "g1"): Promise<string> {
 	const { interaction, reply } = run(options, guildId);
 	await execute(interaction);
-	const embed = (reply.mock.calls[0] as unknown as [{ embeds: EmbedBuilder[] }])[0].embeds[0];
+	// A state's private fallback is its plain text since Phase 1c (owner rule 1); an answer is an embed.
+	const sent = (reply.mock.calls[0] as unknown as [{ embeds?: EmbedBuilder[]; content?: string }])[0];
+	if (sent.content) return sent.content;
+	const embed = sent.embeds![0];
 	return `${embed.data.title ?? ""}\n${embed.data.description ?? ""}`;
 }
 

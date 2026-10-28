@@ -17,7 +17,8 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import { askInChannel } from "@utils/answerInChannel.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /events stream announce ──────────────────────────────────────────────────
 // What:  schedules a one-time stream announcement at a specific future
@@ -69,13 +70,13 @@ export function addAnnounceStreamOptions(sub: SlashCommandSubcommandBuilder): Sl
 export async function announceStream(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, "Run this in a server, not a DM.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config?.announcementsChannelId) {
-		await showErrorNotice(interaction, c.setupRequired);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.setupRequired] });
 		return;
 	}
 
@@ -90,11 +91,11 @@ export async function announceStream(interaction: RepliableInteraction, options:
 	// so accepting it would silently swallow the streamer's input.
 	const startDate = parseEventDateTimeMinutes(whenRaw);
 	if (!startDate) {
-		await showErrorNotice(interaction, c.invalidDateTime);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.invalidDateTime] });
 		return;
 	}
 	if (startDate.getTime() <= Date.now()) {
-		await showErrorNotice(interaction, c.dateInPast);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.dateInPast] });
 		return;
 	}
 

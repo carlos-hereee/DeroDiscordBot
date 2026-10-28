@@ -38,8 +38,10 @@ async function replyText(options: Options): Promise<string> {
 		getUser: () => ({ id: "u2", bot: false }),
 	} as unknown as CommandOptionReader;
 	await runChipSubcommand(interaction, reader);
-	const embed = (reply.mock.calls[0] as unknown as [{ embeds: EmbedBuilder[] }] | undefined)?.[0].embeds[0];
-	return embed?.data.description ?? "";
+	// A state (an unchanged switch, chips off) is a notice whose private fallback is plain text since
+	// Phase 1c; an answer is an embed, posted privately here because the fake config holds no channel.
+	const sent = (reply.mock.calls[0] as unknown as [{ embeds?: EmbedBuilder[]; content?: string }] | undefined)?.[0];
+	return sent?.content ?? sent?.embeds?.[0]?.data.description ?? "";
 }
 
 beforeEach(() => {

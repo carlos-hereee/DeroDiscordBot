@@ -5,7 +5,8 @@ import { adminLog } from "@features/setup/adminLog.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { grantFromVault, type GrantResult } from "./serverVault.js";
 import { economyCopy } from "./economyCopy.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 // ── vaultGrant ───────────────────────────────────────────────────────
 // What:  /arcade chips grant (2026-10 item 250 Phase 5): an admin moves chips from the server
@@ -28,13 +29,13 @@ function refusalText(result: Extract<GrantResult, { ok: false }>): string {
 /** Grant `amount` chips to `recipient` and answer privately. A Discord bot account is refused: bots hold no chips. */
 export async function runVaultGrant(interaction: RepliableInteraction, guildId: string, recipient: User, amount: number): Promise<void> {
 	if (recipient.bot) {
-		await showErrorNotice(interaction, copy.botTarget);
+		await showNotice(interaction, { title: copy.title, sections: [copy.botTarget] });
 		return;
 	}
 
 	const result = await grantFromVault({ guildId, toUserId: recipient.id, amount, byAdminId: interaction.user.id });
 	if (!result.ok) {
-		await showErrorNotice(interaction, refusalText(result));
+		await showNotice(interaction, { title: copy.title, sections: [refusalText(result)] });
 		return;
 	}
 
@@ -48,5 +49,6 @@ export async function runVaultGrant(interaction: RepliableInteraction, guildId: 
 		newWalletBalance: result.walletBalance,
 	});
 	const body = copy.granted({ userId: recipient.id, amount, walletBalance: result.walletBalance, vaultBalance: result.vaultBalance });
-	await showEmbedNotice(interaction, infoEmbed(copy.title, body, COLORS.ADMIN as ColorResolvable));
+	// A grant made is an answer, so it posts in 🎰arcade-control (owner rule 1).
+	await answerInChannel(interaction, "arcade", { embeds: [infoEmbed(copy.title, body, COLORS.ADMIN as ColorResolvable)] });
 }

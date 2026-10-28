@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from "discord.js";
 import { showSelfDestructChoices } from "@features/setup/selfDestruct.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /self-destruct ─────────────────────────────────────────────────────
 // Server-owner-only. Opens the self destruct choice modal: just delete channels,
@@ -15,7 +16,7 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
 	if (!interaction.guild) {
-		await showErrorNotice(interaction, "Run this in a server, not a DM.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 	// showSelfDestructChoices performs the owner check and opens either the

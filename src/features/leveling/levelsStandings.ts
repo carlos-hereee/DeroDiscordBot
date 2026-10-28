@@ -10,7 +10,8 @@ import { buildLevelsBoardCardEmbed, buildLevelsBoardEmbed, type LevelsBoardEntry
 import { LEVELS_BOARD_AVATAR_SIZE, renderLevelsBoardCard } from "@features/leveling/levelsBoardRenderer.js";
 import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { beginProfileAnswer } from "@features/leveling/accountProfile.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /account view:levels ───────────────────────────────────────────────────
 // What:  the guild's xp standings for this week, this month, or all time.
@@ -57,7 +58,7 @@ export function toLevelsWindow(value: string | null): LevelsWindow {
 export async function showLevelsStandings(interaction: RepliableInteraction, { window }: LevelsStandingsRequest): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, levelingCopy.errors.outsideGuild);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: [levelingCopy.errors.outsideGuild] });
 		return;
 	}
 

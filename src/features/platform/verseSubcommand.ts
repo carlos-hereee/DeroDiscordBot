@@ -1,9 +1,10 @@
 import { MessageFlags, type ChatInputCommandInteraction, type SlashCommandSubcommandBuilder } from "discord.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { isPlatformOwner } from "@utils/permissions.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
 import { verseCopy } from "./verseCopy.js";
 import { buildVerseProgress } from "./verseProgress.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /platform verse ──────────────────────────────────────────────────
 // What:  the platform owner's read of the Verse's counts (2026-10 item 257 Phase 3b).
@@ -23,7 +24,7 @@ export function addVerseSubcommand(sub: SlashCommandSubcommandBuilder): SlashCom
 /** Runs /platform verse for the platform owner, refusing everyone else first. */
 export async function runVerseSubcommand(interaction: ChatInputCommandInteraction): Promise<void> {
 	if (!isPlatformOwner(interaction.user.id)) {
-		await showErrorNotice(interaction, verseCopy.errors.notOwner);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.ownerTools, sections: [verseCopy.errors.notOwner] });
 		return;
 	}
 

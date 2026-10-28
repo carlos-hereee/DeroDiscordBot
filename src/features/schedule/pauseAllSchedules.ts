@@ -7,7 +7,9 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 // /events pause with no event, the bulk equivalent of pauseOneSchedule.
 // Pauses every non-paused event in the guild in one shot. Already-paused
@@ -21,7 +23,7 @@ const c = rokCommanderCopy.pauseAllSchedules;
 export async function pauseAllSchedules(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, "Run this in a server, not a DM.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 
@@ -29,7 +31,7 @@ export async function pauseAllSchedules(interaction: RepliableInteraction, optio
 
 	const events = await eventStore.findByGuildId(guildId);
 	if (events.length === 0) {
-		await showErrorNotice(interaction, c.noEvents);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.noEvents] });
 		return;
 	}
 
@@ -40,7 +42,7 @@ export async function pauseAllSchedules(interaction: RepliableInteraction, optio
 	const alreadyPaused = events.length - toPause.length;
 
 	if (toPause.length === 0) {
-		await showErrorNotice(interaction, c.allAlreadyPaused(events.length));
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.allAlreadyPaused(events.length)] });
 		return;
 	}
 
@@ -79,8 +81,10 @@ export async function pauseAllSchedules(interaction: RepliableInteraction, optio
 		return;
 	}
 
+	// Some or all of the schedules changed: work done, an answer, so it posts in
+	// 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 	if (failed > 0) {
-		await showEmbedNotice(interaction, infoEmbed("⏸️ Partially paused", c.partialFailure(succeeded, failed), rokCommanderCopy.COLORS.SCHEDULE));
+		await answerInChannel(interaction, "admin", { embeds: [infoEmbed("⏸️ Partially paused", c.partialFailure(succeeded, failed), rokCommanderCopy.COLORS.SCHEDULE)] });
 		return;
 	}
 
@@ -88,5 +92,5 @@ export async function pauseAllSchedules(interaction: RepliableInteraction, optio
 		? c.pausedUntil(succeeded, alreadyPaused, Math.floor(pausedUntil.getTime() / 1000))
 		: c.paused(succeeded, alreadyPaused);
 
-	await showEmbedNotice(interaction, infoEmbed("⏸️ All schedules paused", successText, rokCommanderCopy.COLORS.SCHEDULE));
+	await answerInChannel(interaction, "admin", { embeds: [infoEmbed("⏸️ All schedules paused", successText, rokCommanderCopy.COLORS.SCHEDULE)] });
 }

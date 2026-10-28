@@ -21,8 +21,9 @@ import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog, type AdminLogKind } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import { turnArcadeOff, turnArcadeOn } from "@features/setup/arcadeSwitch.js";
-import { beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /arcade settings ─────────────────────────────────────────────────────────
 // What:  the arcade's own settings, stored on GuildConfig: `on` and `off` (the
@@ -249,14 +250,14 @@ export async function runArcadeSettingSubcommand(interaction: RepliableInteracti
 	// ① guild gate
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, configCopy.notInGuild);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.arcade, sections: [configCopy.notInGuild] });
 		return;
 	}
 
 	// ② setup gate
 	const guildConfig = await guildConfigStore.findByGuildId(guildId);
 	if (!guildConfig) {
-		await showErrorNotice(interaction, configCopy.setupRequired);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.arcade, sections: [configCopy.setupRequired] });
 		return;
 	}
 
@@ -274,8 +275,8 @@ export async function runArcadeSettingSubcommand(interaction: RepliableInteracti
 			return;
 		}
 		const embed = await arcadeAnswer(interaction.client, guildId, guildConfig, { group, sub }, options, audit);
-		// ④
-		await showEmbedNotice(interaction, embed);
+		// ④ a setting read or changed is an answer, so it posts in 🎰arcade-control (owner rule 1)
+		await answerInChannel(interaction, "arcade", { embeds: [embed] });
 	}
 	catch (err) {
 		console.error(`[arcade] failed guild=${guildId}`, err);

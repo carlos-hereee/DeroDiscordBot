@@ -29,7 +29,7 @@ import { getPluginCopy } from "@base/copy/getCopy.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { answerInChannel } from "@utils/answerInChannel.js";
-import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
 import { resolveRulesMarkdown, type IRulesConfig } from "@features/setup/rulesContent.js";
 import { communityCopy, type ICommunityChangeSummary, type ScreeningReplyOutcome } from "./communityCopy.js";
 import { COMMUNITY_PREFIX, buildConfigureOnboardingOfferRow, buildConfirmEnableRow } from "./communityControls.js";
@@ -526,8 +526,10 @@ function existingTextChannelId(guild: Guild, channelId: string | null | undefine
 	return guild.channels.cache.get(channelId)?.type === ChannelType.GuildText ? channelId : null;
 }
 
-// A notice modal for a button press, the private error reply for a modal submit,
-// which cannot open a modal (post-launch plan item 9).
+// A notice modal for a button press, the private fallback for a modal submit, which
+// cannot open a modal (post-launch plan item 9). Every caller states something (a
+// permission missing, expired, not allowed, a channel not picked), so it is titled
+// Community, never the error title (owner rule 1, 2026-10 item 263 R3-12).
 async function replyError(interaction: ButtonInteraction | ModalSubmitInteraction, message: string, config: IEnableCommunityConfig | null): Promise<void> {
-	await showErrorNotice(interaction, message, config);
+	await showNotice(interaction, { title: getPluginCopy(config).notice.community, sections: [message] });
 }

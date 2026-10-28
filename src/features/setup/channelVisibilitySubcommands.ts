@@ -15,7 +15,8 @@ import { addRenameChannelOptions, renameChannel, renameSlotChoices } from "@feat
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 /* /server channels: the homebase visibility toggles and rename, as one
    subcommand group that commands/admin/server.ts adds to /server and
@@ -164,12 +165,12 @@ export async function runChannelsSubcommand(interaction: RepliableInteraction, o
 	const { responses } = getPluginCopy(config);
 
 	if (!canChangeVisibility(interaction.user.id, interaction.guild?.ownerId)) {
-		await showErrorNotice(interaction, responses.ownerOnly);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: [responses.ownerOnly] });
 		return;
 	}
 
 	if (!config?.categoryId) {
-		await showErrorNotice(interaction, responses.setupChannelsPending);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: [responses.setupChannelsPending] });
 		return;
 	}
 
@@ -238,7 +239,7 @@ function isHideableField(value: string): value is HideableField {
 async function handleHide(interaction: RepliableInteraction, options: CommandOptionReader, config: GuildConfigDoc) {
 	const fieldInput = options.getString("channel", true);
 	if (!isHideableField(fieldInput)) {
-		await showErrorNotice(interaction, `Pick one of the channels from the dropdown.`);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: [`Pick one of the channels from the dropdown.`] });
 		return;
 	}
 	const field = fieldInput;
@@ -248,19 +249,19 @@ async function handleHide(interaction: RepliableInteraction, options: CommandOpt
 	// admin gets clear feedback instead of a silent no-op.
 	const hidden = new Set(config.hiddenChannels ?? []);
 	if (hidden.has(field)) {
-		await showErrorNotice(interaction, `**${displayName}** is already hidden. Use /server channels show ${field} to make it visible.`);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: [`**${displayName}** is already hidden. Use /server channels show ${field} to make it visible.`] });
 		return;
 	}
 
 	const channelId = resolveChannelId(config, field);
 	if (!channelId) {
-		await showErrorNotice(interaction, `That channel is not configured on this guild yet.`);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: [`That channel is not configured on this guild yet.`] });
 		return;
 	}
 
 	const channel = await interaction.guild!.channels.fetch(channelId).catch(() => null);
 	if (!channel || !(channel instanceof TextChannel)) {
-		await showErrorNotice(interaction, `Channel not found in Discord. It may have been deleted; let auto-heal rebuild it first.`);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: [`Channel not found in Discord. It may have been deleted; let auto-heal rebuild it first.`] });
 		return;
 	}
 
@@ -276,17 +277,18 @@ async function handleHide(interaction: RepliableInteraction, options: CommandOpt
 	await guildConfigStore.update(interaction.guildId!, { hiddenChannels });
 	adminLog.emitFor(interaction, interaction.guildId!, "config.change", { subject: setupCopy.adminLog.subjects.channelVisibility(displayName), detail: setupCopy.adminLog.hidden });
 
-	await showEmbedNotice(interaction, infoEmbed(
+	// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+	await answerInChannel(interaction, "admin", { embeds: [infoEmbed(
 				`Channel hidden`,
 				`Hid <#${channelId}> (${displayName}) from members. The bot still posts there in the background. Run /server channels show to make it visible again.`,
 				COLORS.ARRIVAL
-			));
+			)] });
 }
 
 async function handleShow(interaction: RepliableInteraction, options: CommandOptionReader, config: GuildConfigDoc) {
 	const fieldInput = options.getString("channel", true);
 	if (!isHideableField(fieldInput)) {
-		await showErrorNotice(interaction, `Pick one of the channels from the dropdown.`);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: [`Pick one of the channels from the dropdown.`] });
 		return;
 	}
 	const field = fieldInput;
@@ -296,19 +298,19 @@ async function handleShow(interaction: RepliableInteraction, options: CommandOpt
 	// so the admin understands why nothing visibly changes.
 	const hidden = new Set(config.hiddenChannels ?? []);
 	if (!hidden.has(field)) {
-		await showErrorNotice(interaction, `**${displayName}** is already visible. Use /server channels hide ${field} to hide it.`);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: [`**${displayName}** is already visible. Use /server channels hide ${field} to hide it.`] });
 		return;
 	}
 
 	const channelId = resolveChannelId(config, field);
 	if (!channelId) {
-		await showErrorNotice(interaction, `That channel is not configured on this guild yet.`);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: [`That channel is not configured on this guild yet.`] });
 		return;
 	}
 
 	const channel = await interaction.guild!.channels.fetch(channelId).catch(() => null);
 	if (!channel || !(channel instanceof TextChannel)) {
-		await showErrorNotice(interaction, `Channel not found in Discord.`);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: [`Channel not found in Discord.`] });
 		return;
 	}
 
@@ -329,11 +331,12 @@ async function handleShow(interaction: RepliableInteraction, options: CommandOpt
 	await guildConfigStore.update(interaction.guildId!, { hiddenChannels });
 	adminLog.emitFor(interaction, interaction.guildId!, "config.change", { subject: setupCopy.adminLog.subjects.channelVisibility(displayName), detail: setupCopy.adminLog.shown });
 
-	await showEmbedNotice(interaction, infoEmbed(
+	// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+	await answerInChannel(interaction, "admin", { embeds: [infoEmbed(
 				`Channel visible`,
 				`Made <#${channelId}> (${displayName}) visible to members again.`,
 				COLORS.ARRIVAL
-			));
+			)] });
 }
 
 async function handleList(interaction: RepliableInteraction, config: GuildConfigDoc) {
@@ -351,7 +354,8 @@ async function handleList(interaction: RepliableInteraction, config: GuildConfig
 		.setColor(COLORS.ARRIVAL)
 		.setFooter({ text: "Hidden channels still receive bot posts; only member visibility is suppressed." });
 
-	await showEmbedNotice(interaction, embed);
+	// The list is a reading, an answer, so it posts in 🎛️admin-controls (owner rule 1).
+	await answerInChannel(interaction, "admin", { embeds: [embed] });
 }
 
 /**

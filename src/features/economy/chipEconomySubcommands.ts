@@ -10,7 +10,8 @@ import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 // ── /arcade chips ─────────────────────────────────────────────────────
 // What:  the chip economy's admin subcommands (2026-10 item 250 Phase 5): `status` (the
@@ -54,8 +55,9 @@ export function addChipSubcommands(group: SlashCommandSubcommandGroupBuilder): S
 		);
 }
 
+// The vault's status and a switch thrown are answers, so they post in 🎰arcade-control (owner rule 1).
 const reply = (interaction: RepliableInteraction, body: string) =>
-	showEmbedNotice(interaction, infoEmbed(copy.title, body, COLORS.ADMIN as ColorResolvable));
+	answerInChannel(interaction, "arcade", { embeds: [infoEmbed(copy.title, body, COLORS.ADMIN as ColorResolvable)] });
 
 async function status(interaction: RepliableInteraction, guildId: string, on: boolean): Promise<void> {
 	const vault = await readVault(guildId);
@@ -66,7 +68,8 @@ async function status(interaction: RepliableInteraction, guildId: string, on: bo
 // Idempotent like every switch in the bot: an unchanged value says so and writes nothing.
 async function toggle(interaction: RepliableInteraction, guildId: string, current: boolean, wanted: boolean): Promise<void> {
 	if (current === wanted) {
-		await reply(interaction, copy.unchanged(wanted));
+		// Nothing to do is a state, so it stays a notice.
+		await showNotice(interaction, { title: copy.title, sections: [copy.unchanged(wanted)] });
 		return;
 	}
 	await guildConfigStore.update(guildId, { chipEconomyEnabled: wanted });
@@ -82,7 +85,7 @@ export async function runChipSubcommand(interaction: RepliableInteraction, optio
 	// ①
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, copy.notInGuild);
+		await showNotice(interaction, { title: copy.title, sections: [copy.notInGuild] });
 		return;
 	}
 
@@ -90,7 +93,7 @@ export async function runChipSubcommand(interaction: RepliableInteraction, optio
 		// ②
 		const config = await guildConfigStore.findByGuildId(guildId);
 		if (!config) {
-			await showErrorNotice(interaction, copy.setupRequired);
+			await showNotice(interaction, { title: copy.title, sections: [copy.setupRequired] });
 			return;
 		}
 		const on = isChipEconomyOn(config);
@@ -103,7 +106,7 @@ export async function runChipSubcommand(interaction: RepliableInteraction, optio
 		}
 		if (sub === "grant") {
 			if (!on) {
-				await showErrorNotice(interaction, copy.economyOff);
+				await showNotice(interaction, { title: copy.title, sections: [copy.economyOff] });
 				return;
 			}
 			await runVaultGrant(interaction, guildId, options.getUser("user", true), options.getInteger("amount", true));

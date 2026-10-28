@@ -132,7 +132,11 @@ const description = (payload: { embeds: { data: { description?: string } }[] }):
 	payload.embeds.map((embed) => embed.data.description ?? "").join("\n");
 
 // The line a private refusal or a card edit carried.
-const replyLine = (mock: ReturnType<typeof vi.fn>): string => description(mock.mock.calls[0][0] as RulesCardPayload as never);
+// A refusal's plain text (since Phase 1c a refused Submit's private fallback is the notice's plain text (owner rule 1)), or the card's description.
+const replyLine = (mock: ReturnType<typeof vi.fn>): string => {
+	const payload = mock.mock.calls[0][0] as { content?: string };
+	return payload.content ?? description(payload as RulesCardPayload as never);
+};
 
 // The text of the notice modal a refused press opens instead of a private reply (2026-10
 // item 254 Phase 5b).

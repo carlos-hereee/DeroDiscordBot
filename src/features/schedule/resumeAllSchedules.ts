@@ -6,7 +6,9 @@ import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 // /events resume with no event, the bulk equivalent of resumeOneSchedule.
 // Resumes every paused event in the guild, including ones that had a
@@ -19,19 +21,19 @@ const c = rokCommanderCopy.continueAllSchedules;
 export async function resumeAllSchedules(interaction: RepliableInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, "Run this in a server, not a DM.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 
 	const events = await eventStore.findByGuildId(guildId);
 	if (events.length === 0) {
-		await showErrorNotice(interaction, c.noEvents);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.noEvents] });
 		return;
 	}
 
 	const toResume = events.filter((e) => e.paused);
 	if (toResume.length === 0) {
-		await showErrorNotice(interaction, c.noneCurrentlyPaused);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.noneCurrentlyPaused] });
 		return;
 	}
 
@@ -62,10 +64,12 @@ export async function resumeAllSchedules(interaction: RepliableInteraction): Pro
 		return;
 	}
 
+	// Some or all of the schedules changed: work done, an answer, so it posts in
+	// 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
 	if (failed > 0) {
-		await showEmbedNotice(interaction, infoEmbed("▶️ Partially resumed", c.partialFailure(succeeded, failed), rokCommanderCopy.COLORS.SCHEDULE));
+		await answerInChannel(interaction, "admin", { embeds: [infoEmbed("▶️ Partially resumed", c.partialFailure(succeeded, failed), rokCommanderCopy.COLORS.SCHEDULE)] });
 		return;
 	}
 
-	await showEmbedNotice(interaction, infoEmbed("▶️ All schedules resumed", c.resumed(succeeded), rokCommanderCopy.COLORS.SCHEDULE));
+	await answerInChannel(interaction, "admin", { embeds: [infoEmbed("▶️ All schedules resumed", c.resumed(succeeded), rokCommanderCopy.COLORS.SCHEDULE)] });
 }

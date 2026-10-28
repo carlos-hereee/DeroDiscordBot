@@ -26,7 +26,7 @@ import { isRatedGame, RATED_GAMES, type RatedGame } from "@features/ratings/rati
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { utcMonthKey } from "@utils/utcMonthKey.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── /rating ────────────────────────────────────────────────────────────────
 // What:  the arcade ratings, member side (2026-10 item 244 Phase 3b). `me [game]`
@@ -121,7 +121,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 	// ①
 	const guild = interaction.guild;
 	if (!guild) {
-		await showErrorNotice(interaction, words.notInGuild);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.arcade, sections: [words.notInGuild] });
 		return;
 	}
 

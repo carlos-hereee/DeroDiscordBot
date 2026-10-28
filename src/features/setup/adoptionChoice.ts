@@ -20,12 +20,13 @@ import { COLORS } from "@base/copy/brand.js";
 import { registerButton, registerModal } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { beginChannelAnswer, type PendingChannelAnswer } from "@utils/answerInChannel.js";
-import { showErrorNotice, showModalOrReply } from "@utils/textModal.js";
+import { showModalOrReply, showNotice } from "@utils/textModal.js";
 import { mustStayReadable, readOnboardingSafeChannels } from "@features/community/onboardingChannels.js";
 import { communityOverwritesFor, isMemberRoleGated, type IOverwriteRoles } from "./communityOverwrites.js";
 import { matchesAdoptionPattern, moveIntoNoticeBoard, readAdoptedChannelIds, readAdoptionChoice, type AdoptionChoice } from "./adoption.js";
 import { adminLog } from "./adminLog.js";
 import { setupCopy } from "./setupCopy.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── adoptionChoice ───────────────────────────────────────────────────
 // What:  the setup step that asks an admin, per channel, whether a welcome or rules
@@ -194,12 +195,12 @@ export async function handleChooseButton(interaction: ButtonInteraction): Promis
 	const row = (await guildConfigStore.findByGuildId(guild.id)) as unknown as IAdoptionChoiceRow | null;
 	// A channel is not a gate: the card sits in the admin channel, but every press re-checks.
 	if (!(await gateOwnerOrAdmin(interaction, row))) {
-		await showErrorNotice(interaction, copy.notAllowed);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [copy.notAllowed] });
 		return;
 	}
 	const entries = row ? choosableAdoptedChannels(guild, row) : [];
 	if (!row || entries.length === 0) {
-		await showErrorNotice(interaction, copy.nothingToChoose);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [copy.nothingToChoose] });
 		return;
 	}
 	await showModalOrReply(interaction, buildAdoptionChoiceModal(entries, row), () => ({ content: copy.modalRefused, flags: MessageFlags.Ephemeral }));
@@ -213,7 +214,7 @@ export async function handleChoiceSubmit(interaction: ModalSubmitInteraction): P
 	const row = (await guildConfigStore.findByGuildId(guild.id)) as unknown as IAdoptionChoiceRow | null;
 	// Re-checked at Submit: a role can be taken away while the modal is open.
 	if (!row || !(await gateOwnerOrAdmin(interaction, row))) {
-		await showErrorNotice(interaction, copy.notAllowed);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [copy.notAllowed] });
 		return;
 	}
 	// A move is a Discord round trip or two per channel, past the three second window.

@@ -18,8 +18,9 @@ import { levelFromTotalXp, totalXpForLevel } from "@features/leveling/levelCurve
 import { getLevelingConfig } from "@features/leveling/levelingConfig.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
-import { askInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { answerInChannel, askInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /leveling xp ───────────────────────────────────────────────────────────
 // What:  admin correction of a member's xp, plus the two reset paths and a
@@ -116,13 +117,13 @@ export function addXpSubcommands(group: SlashCommandSubcommandGroupBuilder): Sla
 export async function runXpSubcommand(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, levelingCopy.errors.outsideGuild);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: [levelingCopy.errors.outsideGuild] });
 		return;
 	}
 
 	const context = await getLevelingConfig(guildId);
 	if (!context) {
-		await showErrorNotice(interaction, levelingCopy.errors.noData);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: [levelingCopy.errors.noData] });
 		return;
 	}
 	const settings = context.settings;
@@ -133,7 +134,7 @@ export async function runXpSubcommand(interaction: RepliableInteraction, options
 	const target = subcommand === "reset-server" || subcommand === "export" ? null : options.getUser("member", true);
 
 	if (target?.bot) {
-		await showErrorNotice(interaction, levelingCopy.errors.botMember);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: [levelingCopy.errors.botMember] });
 		return;
 	}
 
@@ -288,8 +289,9 @@ const clamp = (value: number, low: number, high: number): number => Math.min(hig
 const displayNameOf = (interaction: RepliableInteraction, user: User): string =>
 	interaction.guild?.members.cache.get(user.id)?.displayName ?? user.globalName ?? user.username;
 
+// XP given is work done, an answer, so it posts in 🎛️admin-controls (owner rule 1).
 async function reply(interaction: RepliableInteraction, title: string, description: string): Promise<void> {
-	await showEmbedNotice(interaction, infoEmbed(title, description, COLORS.ACCOUNT));
+	await answerInChannel(interaction, "admin", { embeds: [infoEmbed(title, description, COLORS.ACCOUNT)] });
 }
 
 // Write an absolute total and move the announcement high water mark with it.

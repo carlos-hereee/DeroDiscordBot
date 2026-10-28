@@ -37,7 +37,7 @@ import { registerDealerTable, type RegisterDealerInput } from "./dealerNarration
 import { deroBrainCopy } from "./deroBrainCopy.js";
 import { describeTerms, describeTermsRefusal, resolveTerms, type HoldemTermsRequest } from "./holdemTerms.js";
 import { dropHoldemRequest, getHoldemRequest, type HoldemRequest, type HoldemVisibilityChoice } from "./holdemRequests.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
 
 // ── holdemRulesCard ───────────────────────────────────────────────────────
 // What:  the card that stands between "Dero, open a Hold'em table" and a real
@@ -246,8 +246,10 @@ interface PassedGate {
 	config: IDeroVoiceConfig;
 }
 
+// Every refusal on the card is a state (expired, not yours, switched off, not allowed, terms
+// out of range), so it is a notice under Dero's area title (owner rule 1, 2026-10 item 263).
 async function replyPrivately(interaction: AnyCardInteraction, line: string): Promise<void> {
-	await showErrorNotice(interaction, line);
+	await showNotice(interaction, { title: deroBrainCopy.noticeTitle, sections: [line] });
 }
 
 function parseCustomId(raw: string): { action: string; requestId: string } | null {

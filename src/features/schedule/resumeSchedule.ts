@@ -9,7 +9,8 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import type { CommandOptionReader, OptionChoice } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 // ── /events resume, one event ───────────────────────────────────────
 // What:  clears event.paused (and pausedUntil) so the scheduler resumes
@@ -48,7 +49,7 @@ export async function resumableEventChoices(guildId: string): Promise<OptionChoi
 export async function resumeOneSchedule(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, "Run this in a server, not a DM.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 
@@ -65,12 +66,12 @@ export async function resumeOneSchedule(interaction: RepliableInteraction, optio
 		// and still read from the shim above. Config is loaded lazily here so the
 		// happy path takes no extra read.
 		const config = await guildConfigStore.findByGuildId(guildId);
-		await showErrorNotice(interaction, getPluginCopy(config).pauseSchedule.notFound);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [getPluginCopy(config).pauseSchedule.notFound] });
 		return;
 	}
 
 	if (!event.paused) {
-		await showErrorNotice(interaction, c.alreadyActive(event.name));
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.alreadyActive(event.name)] });
 		return;
 	}
 
@@ -82,7 +83,8 @@ export async function resumeOneSchedule(interaction: RepliableInteraction, optio
 		await eventStore.updateInGuild(event.eventId, guildId, { paused: false, pausedUntil: null });
 		adminLog.emitFor(interaction, guildId, "schedule.update", { subject: event.name, detail: setupCopy.adminLog.resumed, eventId: event.eventId });
 
-		await showEmbedNotice(interaction, infoEmbed("▶️ Schedule resumed", c.resumed(event.name), rokCommanderCopy.COLORS.SCHEDULE));
+		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		await answerInChannel(interaction, "admin", { embeds: [infoEmbed("▶️ Schedule resumed", c.resumed(event.name), rokCommanderCopy.COLORS.SCHEDULE)] });
 
 		refreshSchedule(interaction.client, guildId).catch((err) =>
 			console.error(LOG_MESSAGES.schedule.refreshAfterRouteFailed("/events resume"), err)

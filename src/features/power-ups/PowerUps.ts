@@ -144,7 +144,7 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) {
-		await showErrorNotice(interaction, "This button only works inside a server.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.powerUps, sections: ["This button only works inside a server."] });
 		return;
 	}
 
@@ -154,7 +154,7 @@ async function handlePowerUpButton(interaction: ButtonInteraction): Promise<void
 		const config = await guildConfigStore.findByGuildId(guildId);
 		const allowed = await gateOwnerOrAdmin(interaction, config);
 		if (!allowed) {
-			await showErrorNotice(interaction, rokCommanderCopy.responses.noWizardPowers);
+			await showNotice(interaction, { title: getPluginCopy(null).notice.powerUps, sections: [rokCommanderCopy.responses.noWizardPowers] });
 			return;
 		}
 	}
@@ -297,12 +297,12 @@ async function resolveOrCreateNotificationsRole(guild: Guild, guildId: string, s
 
 async function runToggleNotificationRole(interaction: ButtonInteraction, guildId: string): Promise<void> {
 	if (!interaction.guild) {
-		await showErrorNotice(interaction, "This only works inside a server.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.powerUps, sections: ["This only works inside a server."] });
 		return;
 	}
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
-		await showErrorNotice(interaction, "This server is not set up yet.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.powerUps, sections: ["This server is not set up yet."] });
 		return;
 	}
 
@@ -332,14 +332,15 @@ async function runToggleNotificationRole(interaction: ButtonInteraction, guildId
 			return;
 		}
 
-		// Toggle: state is conveyed through this ephemeral reply, not the button
-		// label (a shared button label cannot be per-user).
+		// Toggle: the member's new place on the list is the answer, not the button label (a
+		// shared button label cannot be per user). Work done is an answer, so it posts in
+		// 💬dero-commands and pings the member (owner rule 1, 2026-10 item 263 R3-11).
 		if (member.roles.cache.has(role.id)) {
 			await member.roles.remove(role.id, "Announcement ping opt-out");
-			await showNotice(interaction, { title: getPluginCopy(null).notice.powerUps, sections: ["🔕 You're off the announcement ping list."] });
+			await answerInChannel(interaction, "member", { content: "🔕 You're off the announcement ping list." });
 		} else {
 			await member.roles.add(role.id, "Announcement ping opt-in");
-			await showNotice(interaction, { title: getPluginCopy(null).notice.powerUps, sections: ["🔔 You're on the announcement ping list. Tap again to opt out."] });
+			await answerInChannel(interaction, "member", { content: "🔔 You're on the announcement ping list. Tap again to opt out." });
 		}
 	} catch (err) {
 		console.error(`[powerup] toggle notifications role failed in guild ${guildId}`, err);

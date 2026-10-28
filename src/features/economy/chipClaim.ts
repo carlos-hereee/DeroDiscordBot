@@ -67,7 +67,7 @@ const CARD_WINNER: Record<SoloLuckOutcome, "left" | "right" | "tie"> = { won: "l
 export async function runChipClaim(interaction: ButtonInteraction | ChatInputCommandInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, copy.notInGuild);
+		await showNotice(interaction, { title: copy.title, sections: [copy.notInGuild] });
 		return;
 	}
 
@@ -126,7 +126,7 @@ async function claimWaitText(guildId: string, userId: string, chipsOn: boolean, 
 export async function playClaimRound(interaction: ModalSubmitInteraction | StringSelectMenuInteraction, rng: () => number = Math.random): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, copy.notInGuild);
+		await showNotice(interaction, { title: copy.title, sections: [copy.notInGuild] });
 		return;
 	}
 	const memberThrow = parseThrow(pickedValues(interaction)[0]);

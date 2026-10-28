@@ -234,7 +234,7 @@ function askerOnly(askerId: string, config: AnswerChannelConfig | null | undefin
 	return (press) => {
 		if (press.user.id === askerId) return true;
 		const words = getPluginCopy(config).answerInChannel;
-		void showNotice(press, { title: words.noticeTitle, sections: [words.notYours] });
+		void showNotice(press, { title: words.notYoursTitle, sections: [words.notYours] });
 		return false;
 	};
 }

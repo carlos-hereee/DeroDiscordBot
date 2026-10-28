@@ -32,7 +32,7 @@ import { turnLatencyLog } from "@features/voice/turnLatency.js";
 import { liveVoicePresenceState, renderVoicePresenceCard } from "@features/voice/voicePresenceRenderer.js";
 import { isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showCooldownNotice, showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showCooldownNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 
@@ -103,8 +103,11 @@ export const data = new SlashCommandBuilder()
 
 // ── replies ──
 
+// Every refusal here states something (not in a server, not set up, not allowed, Dero offline,
+// a task too long), so it wears Dero's area title; the one real failure, a command that threw,
+// calls showErrorNotice itself (owner rule 1, 2026-10 item 263 R3-12).
 async function refuse(interaction: RepliableInteraction, line: string): Promise<void> {
-	await showErrorNotice(interaction, line);
+	await showNotice(interaction, { title: deroBrainCopy.noticeTitle, sections: [line] });
 }
 
 // The settings panel holding the voice switch (settingsPanels.ts, SETTINGS_PANELS).
@@ -306,7 +309,8 @@ export async function showDeroStatus(interaction: RepliableInteraction): Promise
 		await answerInChannel(interaction, "member", { embeds: [embed], files: [card.attachment] });
 		return;
 	}
-	await showEmbedNotice(interaction, embed);
+	// A status is a reading, so it is an answer in 💬dero-commands, never a notice (owner rule 1).
+	await answerInChannel(interaction, "member", { embeds: [embed] });
 }
 
 // ── /dero join ──
@@ -460,7 +464,7 @@ async function queueJoin(
 		},
 		normalizePriorityOrder(storedOrder)
 	);
-	await showEmbedNotice(interaction, infoEmbed(callCopy.replyTitle, callCopy.queued(place.place, place.total, busyChannelId)));
+	await answerInChannel(interaction, "member", { embeds: [infoEmbed(callCopy.replyTitle, callCopy.queued(place.place, place.total, busyChannelId))] });
 }
 
 /**
@@ -539,7 +543,7 @@ export async function sendDeroAwayFromCall(interaction: RepliableInteraction): P
 	}
 
 	voiceSessions.leave(guild.id);
-	await showEmbedNotice(interaction, infoEmbed(callCopy.replyTitle, callCopy.left(session.channelId)));
+	await answerInChannel(interaction, "member", { embeds: [infoEmbed(callCopy.replyTitle, callCopy.left(session.channelId))] });
 }
 
 async function runSubcommand(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -564,7 +568,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 		// one), so a plain reply is still possible unless Discord already got one.
 		console.error(`[dero] command failed guild=${interaction.guildId ?? "none"}`, err);
 		if (!interaction.replied && !interaction.deferred) {
-			await refuse(interaction, tellCopy.failed).catch(() => undefined);
+			await showErrorNotice(interaction, tellCopy.failed).catch(() => undefined);
 		}
 	}
 }

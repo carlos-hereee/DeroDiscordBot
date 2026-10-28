@@ -141,7 +141,7 @@ interface ISentMessage {
 
 const sent = (fn: ReturnType<typeof vi.fn>, call = 0): ISentMessage => fn.mock.calls[call]![0] as ISentMessage;
 // What a refused press was told: the notice modal's text (post-launch plan item 9),
-// or the private reply's when no notice opened, as after a modal submit.
+// or the private reply's plain text when no notice opened, as after a modal submit.
 type NoticeJson = { custom_id: string; components: Array<{ content?: string }> };
 const noticeModals = (interaction: { showModal?: ReturnType<typeof vi.fn> }): NoticeJson[] =>
 	(interaction.showModal?.mock.calls ?? [])
@@ -150,7 +150,8 @@ const noticeModals = (interaction: { showModal?: ReturnType<typeof vi.fn> }): No
 const refusalText = (interaction: { showModal?: ReturnType<typeof vi.fn>; reply: ReturnType<typeof vi.fn> }): string | undefined => {
 	const [notice] = noticeModals(interaction);
 	if (notice) return notice.components.map((component) => component.content).join("\n");
-	return sent(interaction.reply).embeds?.[0]?.data.description;
+	// since Phase 1c a refused Submit's private fallback is the notice's plain text (owner rule 1)
+	return sent(interaction.reply).content;
 };
 const fieldNames = (message: ISentMessage): string[] => message.embeds![0]!.data.fields!.map((field) => field.name);
 const customIdsOf = (message: ISentMessage): string[] => (message.components ?? []).flatMap((row) => row.toJSON().components.map((component) => component.custom_id ?? ""));

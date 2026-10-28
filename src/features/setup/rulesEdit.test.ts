@@ -226,8 +226,8 @@ describe("an Edit rules submit", () => {
 		const submit = submission(OWNER, " \u200B\u200D\uFEFF ");
 		await handleRulesEditSubmit(submit, null);
 		expect(mocks.update).not.toHaveBeenCalled();
-		const embed = (submit.reply.mock.calls[0]![0] as { embeds: Array<{ data: { description?: string } }> }).embeds[0]!;
-		expect(embed.data.description).toBe(editCopy.empty);
+		// since Phase 1c a refused Submit's private fallback is the notice's plain text (owner rule 1)
+		expect((submit.reply.mock.calls[0]![0] as { content?: string }).content).toBe(editCopy.empty);
 	});
 
 	it("re-checks the submitter, who may have lost the admin role while the modal was open", async () => {

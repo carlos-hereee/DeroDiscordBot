@@ -314,14 +314,23 @@ export const rokCommanderCopy = {
 		poll: "🗳️ Poll",
 		powerUps: "⚡ Power ups",
 		schedule: "📅 Schedule",
+		// The areas Phase 1c of 2026-10 item 263 titled: every refusal outside the game rooms
+		// that is a state, not a failure, opens under its area rather than the error title.
+		setup: "🏰 Setup",
+		server: "🛠️ Server",
+		leveling: "📈 Leveling",
+		community: "🧭 Community",
+		arcade: "🎰 Arcade",
+		commands: "📜 Commands",
+		rules: "📖 Rules",
+		ownerTools: "👑 Owner tools",
 	},
 
-	// The notice a slow answer opens with when it posts in a channel instead of privately
-	// (2026-10 item 257 Phase 5, utils/answerInChannel.ts): it only names the channel, and
-	// the answer itself follows there once the work is done. Discord cuts the title at 45.
+	// The words utils/answerInChannel.ts shows itself. Discord cuts a notice title at 45.
 	answerInChannel: {
-		noticeTitle: "📜 Your answer",
-		// A press on someone else's confirm then act prompt, which only its asker may answer.
+		// A press on someone else's confirm then act prompt, which only its asker may answer:
+		// a refusal, so a notice titled for what it is (2026-10 item 263 Phase 1c).
+		notYoursTitle: "🔒 Not your prompt",
 		notYours: "This prompt belongs to the member who asked for it. Run the command yourself to get your own.",
 	},
 

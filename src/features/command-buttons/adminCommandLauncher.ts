@@ -21,7 +21,7 @@ import type { FormChoicesProvider, OptionChoice, SharedCommandHandler } from "@h
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { answerInChannel, beginChannelAnswer, type AnswerAudience, type ChannelAnswer } from "@utils/answerInChannel.js";
-import { showEmbedNotice, showErrorNotice, showNotice, type ModalOpeningInteraction } from "@utils/textModal.js";
+import { type ModalOpeningInteraction, showEmbedNotice, showNotice } from "@utils/textModal.js";
 import type { IGuildConfigPermissionShape } from "@utils/permissions.js";
 import * as arcadeCommand from "@commands/admin/arcade.js";
 import * as deroConfigCommand from "@commands/admin/dero-config.js";
@@ -162,12 +162,12 @@ function fieldsFromMask(leaf: CommandLeaf, mask: string): FormField[] | null {
  */
 async function admitAdmin(interaction: LauncherInteraction): Promise<boolean> {
 	if (!interaction.guild) {
-		await showErrorNotice(interaction, commandButtonsCopy.launcher.outsideGuild);
+		await showNotice(interaction, { title: commandButtonsCopy.launcher.staleTitle, sections: [commandButtonsCopy.launcher.outsideGuild] });
 		return false;
 	}
 	const config = await guildConfigStore.findByGuildId(interaction.guild.id);
 	if (await gateOwnerOrAdmin(interaction, config)) return true;
-	await showErrorNotice(interaction, getPluginCopy(config).responses.noWizardPowers);
+	await showNotice(interaction, { title: commandButtonsCopy.launcher.staleTitle, sections: [getPluginCopy(config).responses.noWizardPowers] });
 	return false;
 }
 
@@ -181,7 +181,7 @@ async function resolveTarget(
 	const command = commandName ? LAUNCHABLE_COMMANDS.get(commandName) : undefined;
 	const leaf = command ? findLeaf(listLeaves(command.data.toJSON()), idToPath(pathId ?? "")) : null;
 	if (command && leaf) return { command, leaf };
-	await showErrorNotice(interaction, commandButtonsCopy.launcher.staleButton);
+	await showNotice(interaction, { title: commandButtonsCopy.launcher.staleTitle, sections: [commandButtonsCopy.launcher.staleButton] });
 	return null;
 }
 
@@ -214,7 +214,7 @@ async function showForm(interaction: OpeningInteraction, command: LaunchableComm
 		const provided = field.autocomplete && !field.choices ? await command.formChoices?.(guild, leaf.path, field.name) : null;
 		if (provided && provided.length === 0) {
 			if (field.required) {
-				await showErrorNotice(interaction, commandButtonsCopy.problems.nothingToPick(field.name));
+				await showNotice(interaction, { title: commandButtonsCopy.launcher.staleTitle, sections: [commandButtonsCopy.problems.nothingToPick(field.name)] });
 				return;
 			}
 			continue;
@@ -285,7 +285,7 @@ export async function openAdminLaunch(interaction: ButtonInteraction, launchId: 
 	if (!(await admitAdmin(interaction))) return;
 	const target = launchId ? resolveLaunchTarget(launchId) : null;
 	if (!target) {
-		await showErrorNotice(interaction, commandButtonsCopy.launcher.staleButton);
+		await showNotice(interaction, { title: commandButtonsCopy.launcher.staleTitle, sections: [commandButtonsCopy.launcher.staleButton] });
 		return;
 	}
 	const leaves = launchLeaves(target);
@@ -452,7 +452,7 @@ async function handlePanelSubmit(interaction: ModalSubmitInteraction): Promise<v
 	const definition = target?.panel;
 	const guild = interaction.guild;
 	if (!target || !definition || !guild) {
-		await showErrorNotice(interaction, commandButtonsCopy.launcher.staleButton);
+		await showNotice(interaction, { title: commandButtonsCopy.launcher.staleTitle, sections: [commandButtonsCopy.launcher.staleButton] });
 		return;
 	}
 	// Several writes, some with Discord calls (a channel hidden, a call ended), can
@@ -511,12 +511,12 @@ async function handleFormSubmit(interaction: ModalSubmitInteraction): Promise<vo
 	if (!target) return;
 	const fields = fieldsFromMask(target.leaf, mask ?? "");
 	if (!fields) {
-		await showErrorNotice(interaction, commandButtonsCopy.launcher.staleButton);
+		await showNotice(interaction, { title: commandButtonsCopy.launcher.staleTitle, sections: [commandButtonsCopy.launcher.staleButton] });
 		return;
 	}
 	const read = readForm(interaction.fields, fields);
 	if (!read.ok) {
-		await showErrorNotice(interaction, read.problem);
+		await showNotice(interaction, { title: commandButtonsCopy.launcher.staleTitle, sections: [read.problem] });
 		return;
 	}
 	await runLeaf(interaction, target.command, new FormOptionReader(target.leaf, read.values));

@@ -5,7 +5,9 @@ import { COLORS } from "@base/copy/brand.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showEmbedNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 // ── /server auto-heal ──────────────────────────────────────────────
 // What:  master switch for the bot's channel auto-repair behavior.
@@ -42,7 +44,7 @@ export function addAutoHealOptions(sub: SlashCommandSubcommandBuilder): SlashCom
 export async function configureAutoHeal(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, "Run this in a server, not a DM.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 
@@ -53,7 +55,7 @@ export async function configureAutoHeal(interaction: RepliableInteraction, optio
 		// Guild has never run /setup. Toggling a flag on a non-existent
 		// row would silently no-op; surface the actual blocker so the
 		// admin knows where to start.
-		await showErrorNotice(interaction, "This server has not been set up yet. Run /setup first.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.server, sections: ["This server has not been set up yet. Run /setup first."] });
 		return;
 	}
 
@@ -75,7 +77,8 @@ export async function configureAutoHeal(interaction: RepliableInteraction, optio
 		const body = enabled
 			? "The bot will rebuild any homebase channel that goes missing. This is the default behavior."
 			: "The bot will no longer rebuild deleted homebase channels. A single summary line per boot will note which channels would have been repaired, so check the bot's Railway logs if something feels off. Run this command again with `enabled:True` to restore.";
-		await showEmbedNotice(interaction, infoEmbed(heading, body, COLORS.SCHEDULE));
+		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		await answerInChannel(interaction, "admin", { embeds: [infoEmbed(heading, body, COLORS.SCHEDULE)] });
 	} catch (err) {
 		console.error("[configure auto-heal] update failed", err);
 		await showErrorNotice(interaction, "Could not save the toggle. Try again or check the bot's logs.");

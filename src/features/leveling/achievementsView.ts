@@ -11,7 +11,8 @@ import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features
 import { buildCounters, progressFor, unlockedKey } from "@features/leveling/achievementEngine.js";
 import { ACHIEVEMENTS_BY_ID } from "@features/leveling/achievements.js";
 import { beginProfileAnswer } from "@features/leveling/accountProfile.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
 
 // ── /account view:achievements ─────────────────────────────────────────────
 // What:  which achievement tiers a member holds, with the action that earned
@@ -48,12 +49,12 @@ export interface AchievementsRequest {
 export async function showAchievements(interaction: RepliableInteraction, { target }: AchievementsRequest): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, levelingCopy.errors.outsideGuild);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: [levelingCopy.errors.outsideGuild] });
 		return;
 	}
 
 	if (target.bot) {
-		await showErrorNotice(interaction, levelingCopy.errors.botMember);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leveling, sections: [levelingCopy.errors.botMember] });
 		return;
 	}
 

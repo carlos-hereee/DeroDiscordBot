@@ -8,9 +8,10 @@ import { pauseAllGuildEvents, resumeAllGuildEvents, IBulkScheduleResult } from "
 import { refreshSchedule } from "@features/schedule/ScheduleBoard.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
-import { beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showErrorNotice, showNotice } from "@utils/textModal.js";
+import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
+import { showNotice } from "@utils/textModal.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
+import { answerGoLiveRefusal } from "@features/schedule/goLiveSoon.js";
 
 // ── Schedule channel controls (item 36) ────────────────────────────────
 // The pinned schedule board carries ONE dynamic, phase-gated control row,
@@ -99,7 +100,7 @@ export function buildScheduleControlRow(state: IScheduleControlState): ActionRow
 async function handleScheduleControl(interaction: ButtonInteraction): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId || !interaction.guild) {
-		await showErrorNotice(interaction, "This button only works inside a server.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["This button only works inside a server."] });
 		return;
 	}
 
@@ -108,7 +109,7 @@ async function handleScheduleControl(interaction: ButtonInteraction): Promise<vo
 	const config = await guildConfigStore.findByGuildId(guildId);
 	const allowed = await gateOwnerOrAdmin(interaction, config);
 	if (!allowed) {
-		await showErrorNotice(interaction, rokCommanderCopy.responses.noWizardPowers);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [rokCommanderCopy.responses.noWizardPowers] });
 		return;
 	}
 
@@ -139,12 +140,11 @@ async function runGoLiveNow(interaction: ButtonInteraction, guildId: string): Pr
 	const result = await postGoLiveAnnouncement(interaction.client, guildId, "now", null, null);
 	const c = rokCommanderCopy.goLiveSoon;
 	if (result.ok) {
-		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.posted] });
+		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		await answerInChannel(interaction, "admin", { content: c.posted });
 		return;
 	}
-	const errorMsg =
-		result.reason === "setup-required" ? c.setupRequired : result.reason === "invalid-lead-time" ? c.invalidLeadTime : c.postFailed;
-	await showErrorNotice(interaction, errorMsg);
+	await answerGoLiveRefusal(interaction, result.reason);
 }
 
 async function runConfigureHowTo(interaction: ButtonInteraction): Promise<void> {

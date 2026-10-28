@@ -17,7 +17,7 @@ import { registerButton } from "@handlers/interactionRegistry.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { RULES_EDIT_CUSTOM_ID, RULES_PREFIX, resolveRulesMarkdown, rulesContent, type IRulesConfig } from "./rulesContent.js";
 import { answerInChannel } from "@utils/answerInChannel.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showErrorNotice, showNotice } from "@utils/textModal.js";
 
 // ── rulesEdit ────────────────────────────────────────────────────────
 // What:  the Edit rules button on the 📘rules post (2026-10 item 247 Phase 2): it
@@ -120,7 +120,8 @@ export async function handleRulesEditSubmit(submission: ModalSubmitInteraction, 
 		return null;
 	})) as IRulesEditConfig | null;
 	if (!saved) {
-		await replyPrivately(submission, copy.responses.rulesEdit.failed, config);
+		// The one failure among this file's refusals keeps the error title (owner rule 1).
+		await showErrorNotice(submission, copy.responses.rulesEdit.failed, config);
 		return;
 	}
 
@@ -194,8 +195,10 @@ async function fetchTrackedRulesPost(submission: ModalSubmitInteraction, config:
 	return channel.messages.fetch(messageId).catch(() => null);
 }
 
+// The refusals (expired, not allowed, an empty post) are states, so a notice titled Rules;
+// the failed save calls showErrorNotice itself (owner rule 1, 2026-10 item 263 R3-12).
 async function replyPrivately(interaction: ButtonInteraction | ModalSubmitInteraction, message: string, config: IRulesConfig | null): Promise<void> {
-	await showErrorNotice(interaction, message, config);
+	await showNotice(interaction, { title: getPluginCopy(config).notice.rules, sections: [message] });
 }
 
 /** Register the Edit rules button. Called once at boot from main.ts, before the InteractionCreate listener installs. */

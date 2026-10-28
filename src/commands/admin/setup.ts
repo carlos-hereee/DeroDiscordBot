@@ -6,7 +6,7 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { creatorId } from "@utils/config.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showErrorNotice } from "@utils/textModal.js";
+import { showNotice } from "@utils/textModal.js";
 
 export const data = new SlashCommandBuilder()
 	.setName("setup")
@@ -35,7 +35,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 	const isCreator = interaction.user.id === creatorId;
 
 	if (!isOwner && !isCreator) {
-		await showErrorNotice(interaction, responses.ownerOnly);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [responses.ownerOnly] });
 		return;
 	}
 
@@ -102,13 +102,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
 	// channels haven't been built yet
 	if (!config?.categoryId) {
-		await showErrorNotice(interaction, responses.setupChannelsPending);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [responses.setupChannelsPending] });
 		return;
 	}
 
 	// already fully set up
 	if (config.setupComplete) {
-		await showErrorNotice(interaction, responses.alreadySetup);
+		await showNotice(interaction, { title: getPluginCopy(null).notice.setup, sections: [responses.alreadySetup] });
 		return;
 	}
 

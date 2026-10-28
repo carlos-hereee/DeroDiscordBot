@@ -323,7 +323,8 @@ describe("the review", () => {
 		const submit = submission(guild, MEMBER, { rules: "rules-ch", updates: "mods-ch" });
 		await handleChannelsPicked(submit);
 		const reply = sent(submit.reply);
-		expect(reply.embeds![0]!.data.description).toBe(rokCommanderCopy.responses.noWizardPowers);
+		// since Phase 1c a refused Submit's private fallback is the notice's plain text (owner rule 1)
+		expect(reply.content).toBe(rokCommanderCopy.responses.noWizardPowers);
 		expect(customIdsOf(reply)).toEqual([]);
 		expect(guild.edit).not.toHaveBeenCalled();
 	});
@@ -331,7 +332,7 @@ describe("the review", () => {
 	it("refuses a submit missing a channel", async () => {
 		const guild = makeGuild();
 		const { submit } = await pickChannels(guild, OWNER, { updates: "" });
-		expect(sent(submit.reply).embeds![0]!.data.description).toBe(communityCopy.errors.channelsMissing);
+		expect(sent(submit.reply).content).toBe(communityCopy.errors.channelsMissing);
 	});
 
 	it("warns before Confirm when the rules are longer than the screening form takes", async () => {

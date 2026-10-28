@@ -5,7 +5,9 @@ import { COLORS } from "@base/copy/brand.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { adminLog } from "@features/setup/adminLog.js";
 import { setupCopy } from "@features/setup/setupCopy.js";
-import { showEmbedNotice, showErrorNotice } from "@utils/textModal.js";
+import { showEmbedNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
+import { getPluginCopy } from "@base/copy/getCopy.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 // Mirrors the GuildConfig weekStart enum. Local union (zero runtime) so the
 // command, the schema, and /leaderboard's thisWeekRange all speak the same two
@@ -51,7 +53,7 @@ export function addWeekStartOptions(sub: SlashCommandSubcommandBuilder): SlashCo
 export async function configureLeaderboardWeekStart(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, "Run this in a server, not a DM.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 
@@ -61,14 +63,14 @@ export async function configureLeaderboardWeekStart(interaction: RepliableIntera
 	// than silently written to the enum field.
 	const startRaw = options.getString("start", true);
 	if (startRaw !== "sunday" && startRaw !== "monday") {
-		await showErrorNotice(interaction, "Pick Sunday or Monday from the dropdown.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["Pick Sunday or Monday from the dropdown."] });
 		return;
 	}
 	const start: WeekStart = startRaw;
 
 	const config = await guildConfigStore.findByGuildId(guildId);
 	if (!config) {
-		await showErrorNotice(interaction, "This server has not been set up yet. Run /setup first.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.leaderboard, sections: ["This server has not been set up yet. Run /setup first."] });
 		return;
 	}
 
@@ -88,11 +90,12 @@ export async function configureLeaderboardWeekStart(interaction: RepliableIntera
 	try {
 		await guildConfigStore.update(guildId, { weekStart: start });
 		adminLog.emitFor(interaction, guildId, "config.change", { subject: setupCopy.adminLog.subjects.weekStart, detail: setupCopy.adminLog.set(start) });
-		await showEmbedNotice(interaction, infoEmbed(
+		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		await answerInChannel(interaction, "admin", { embeds: [infoEmbed(
 					"📅 Leaderboard week start updated",
 					`The leaderboard's "This week" view now runs ${BOUNDARY_LABEL[start]}. The boundary is shown in the leaderboard title so members always know the window.`,
 					COLORS.SCHEDULE
-				));
+				)] });
 	} catch (err) {
 		console.error("[configure week-start] update failed", err);
 		await showErrorNotice(interaction, "Could not save the setting. Try again or check the bot's logs.");

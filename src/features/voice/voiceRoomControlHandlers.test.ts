@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
 	sessionJoin: vi.fn(),
 	sessionLeave: vi.fn(),
 	announceJoin: vi.fn(),
+	findGuildConfig: vi.fn(),
+	send: vi.fn(),
 	buttons: new Map<string, (interaction: unknown) => Promise<void>>(),
 }));
 
@@ -24,6 +26,9 @@ vi.mock("@features/voice/voiceSessions.js", () => ({
 	voiceSessions: { get: mocks.sessionGet, join: mocks.sessionJoin, leave: mocks.sessionLeave },
 }));
 vi.mock("@features/voice/joinNotice.js", () => ({ announceJoin: mocks.announceJoin }));
+// The real answerInChannel posts Leave's and Status's answers, so only the config it reads is
+// faked (mocking answerInChannel itself would skip the ping check).
+vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findGuildConfig } }));
 vi.mock("@handlers/interactionRegistry.js", () => ({
 	registerButton: (prefix: string, handler: (interaction: unknown) => Promise<void>) => mocks.buttons.set(prefix, handler),
 }));
@@ -62,6 +67,11 @@ function press(action: string, member: GuildMember) {
 		member,
 		user: { id: member.id },
 		inCachedGuild: () => true,
+		id: `press-${action}`,
+		client: { channels: { fetch: vi.fn(async () => ({ id: "c-commands", isSendable: () => true, send: mocks.send })) } },
+		isModalSubmit: () => false,
+		isMessageComponent: () => true,
+		deferUpdate: vi.fn(async () => undefined),
 		replied: false,
 		deferred: false,
 		reply,
@@ -88,7 +98,12 @@ beforeEach(() => {
 		allowedVoiceChannelIds: [VOICE_CHANNEL],
 	});
 	mocks.sessionGet.mockReturnValue(undefined);
+	mocks.findGuildConfig.mockResolvedValue({ guildId: GUILD_ID, commandOutputChannelId: "c-commands" });
+	mocks.send.mockResolvedValue({ id: "m-answer" });
 });
+
+// What an answer posted in 💬dero-commands carried.
+const posted = (): { content?: string; embeds?: Array<{ data: { title?: string; description?: string } }>; allowedMentions?: unknown } => mocks.send.mock.calls[0]?.[0];
 
 describe("the voice room row", () => {
 	it("is Join, Leave and Status on the dero_call prefix", () => {
@@ -110,7 +125,8 @@ describe("gated as /dero is, by the task list", () => {
 	it("refuses Join from a member who is not on the task list, and joins nothing", async () => {
 		const { interaction, reply } = press("join", memberWith([]));
 		await mocks.buttons.get("dero_call")!(interaction);
-		expect(firstReply(reply).embeds?.[0]?.data.description).toBe(deroBrainCopy.tell.notAuthorized);
+		// A refusal is a state: the notice's private fallback is its plain text (owner rule 1, Phase 1c).
+		expect(firstReply(reply).content).toBe(deroBrainCopy.tell.notAuthorized);
 		expect(mocks.sessionJoin).not.toHaveBeenCalled();
 	});
 
@@ -118,21 +134,25 @@ describe("gated as /dero is, by the task list", () => {
 		mocks.sessionGet.mockReturnValue({ channelId: VOICE_CHANNEL });
 		const { interaction, reply } = press("leave", memberWith([]));
 		await mocks.buttons.get("dero_call")!(interaction);
-		expect(firstReply(reply).embeds?.[0]?.data.description).toBe(deroBrainCopy.tell.notAuthorized);
+		expect(firstReply(reply).content).toBe(deroBrainCopy.tell.notAuthorized);
 		expect(mocks.sessionLeave).not.toHaveBeenCalled();
 	});
 
-	it("lets a member on the task list send Dero away", async () => {
+	it("lets a member on the task list send Dero away, answering in 💬dero-commands with a ping for them alone", async () => {
 		mocks.sessionGet.mockReturnValue({ channelId: VOICE_CHANNEL });
-		const { interaction } = press("leave", memberWith([TASK_ROLE]));
+		const { interaction, reply } = press("leave", memberWith([TASK_ROLE]));
 		await mocks.buttons.get("dero_call")!(interaction);
 		expect(mocks.sessionLeave).toHaveBeenCalledWith(GUILD_ID);
+		expect(posted().allowedMentions).toEqual({ parse: [], users: ["member"] });
+		expect(reply).not.toHaveBeenCalled();
 	});
 
-	it("answers Status for anyone, privately", async () => {
+	it("answers Status for anyone in 💬dero-commands, a reading being an answer, pinging only them", async () => {
 		const { interaction, reply } = press("status", memberWith([]));
 		await mocks.buttons.get("dero_call")!(interaction);
-		expect(firstReply(reply).embeds?.[0]?.data.title).toBe(deroBrainCopy.status.title);
+		expect(posted().embeds?.[0]?.data.title).toBe(deroBrainCopy.status.title);
+		expect(posted().allowedMentions).toEqual({ parse: [], users: ["member"] });
+		expect(reply).not.toHaveBeenCalled();
 	});
 
 	it("answers a button from an older layout quietly", async () => {

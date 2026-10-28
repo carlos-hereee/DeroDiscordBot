@@ -1,9 +1,10 @@
 import { type RepliableInteraction, type SlashCommandSubcommandBuilder } from "discord.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
-import { postGoLiveAnnouncement } from "@features/schedule/postGoLiveAnnouncement.js";
+import { postGoLiveAnnouncement, type TGoLiveResult } from "@features/schedule/postGoLiveAnnouncement.js";
 import type { CommandOptionReader } from "@handlers/commandOptions.js";
 import { showErrorNotice, showNotice } from "@utils/textModal.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
+import { answerInChannel } from "@utils/answerInChannel.js";
 
 // ── /events stream soon ─────────────────────────────────────────────────────
 // What:  one-shot panic-button announcement. Does NOT create an Event.
@@ -30,6 +31,9 @@ import { getPluginCopy } from "@base/copy/getCopy.js";
 //        acks the interaction.
 
 const c = rokCommanderCopy.goLiveSoon;
+
+/** Why a go live post did not happen. */
+type GoLiveRefusal = Extract<TGoLiveResult, { ok: false }>["reason"];
 
 /** The options this handler reads, added to the merged command's subcommand. */
 export function addGoLiveSoonOptions(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
@@ -62,7 +66,7 @@ export function addGoLiveSoonOptions(sub: SlashCommandSubcommandBuilder): SlashC
 export async function goLiveSoon(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	const guildId = interaction.guildId;
 	if (!guildId) {
-		await showErrorNotice(interaction, "Run this in a server, not a DM.");
+		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: ["Run this in a server, not a DM."] });
 		return;
 	}
 
@@ -74,21 +78,27 @@ export async function goLiveSoon(interaction: RepliableInteraction, options: Com
 	const result = await postGoLiveAnnouncement(interaction.client, guildId, whenKey, note, mentionRoleIdOverride);
 
 	if (result.ok) {
-		await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [c.posted] });
+		// A confirmation of work done is an answer, so it posts in 🎛️admin-controls and pings the admin who ran it (owner rule 1, 2026-10 item 263 R3-11).
+		await answerInChannel(interaction, "admin", { content: c.posted });
 		return;
 	}
 
-	// Map the discriminated reason back to the pack copy. Discord's
-	// option choices constrain whenKey at the API boundary so the
-	// invalid-lead-time branch is defensive only, but the helper still
-	// returns it for callers (eg the button) that might pass arbitrary
-	// strings in the future.
-	const errorMsg =
-		result.reason === "setup-required"
-			? c.setupRequired
-			: result.reason === "invalid-lead-time"
-				? c.invalidLeadTime
-				: c.postFailed;
+	// Discord's option choices constrain whenKey at the API boundary, so the
+	// invalid-lead-time branch is defensive only, but the helper still returns it for
+	// callers (eg the button) that might pass arbitrary strings in the future.
+	await answerGoLiveRefusal(interaction, result.reason);
+}
 
-	await showErrorNotice(interaction, errorMsg);
+/**
+ * A go live post that did not happen: a missing setup or a lead time no choice offers is a
+ * state, a notice titled Schedule; only a post Discord refused is a failure and keeps the
+ * error title (owner rule 1). Shared by /events stream soon and the board's Go live now.
+ */
+export async function answerGoLiveRefusal(interaction: RepliableInteraction, reason: GoLiveRefusal): Promise<void> {
+	if (reason === "post-failed") {
+		await showErrorNotice(interaction, c.postFailed);
+		return;
+	}
+	const message = reason === "setup-required" ? c.setupRequired : c.invalidLeadTime;
+	await showNotice(interaction, { title: getPluginCopy(null).notice.schedule, sections: [message] });
 }

@@ -130,9 +130,10 @@ describe("the guild gate", () => {
 	it("refuses a DM before reading anything", async () => {
 		const { interaction, reply, deferReply } = run({ sub: "me", inGuild: false });
 		await execute(interaction);
-		const embed = (reply.mock.calls[0] as unknown as [{ embeds: EmbedBuilder[]; flags: number }])[0];
-		expect(embed.embeds[0].data.description).toContain("not a DM");
-		expect(embed.flags).toBeDefined();
+		// A state: the notice's private fallback is its plain text since Phase 1c (owner rule 1).
+		const notice = (reply.mock.calls[0] as unknown as [{ content: string; flags: number }])[0];
+		expect(notice.content).toContain("not a DM");
+		expect(notice.flags).toBeDefined();
 		expect(deferReply).not.toHaveBeenCalled();
 		expect(mocks.findAllForPlayer).not.toHaveBeenCalled();
 	});
