@@ -2,7 +2,8 @@ import { ChannelType, PermissionFlagsBits, type Guild, type GuildMember, type Ne
 
 // ── channelGate ───────────────────────────────────────────────────────────
 // What:  the one rule for whether Dero may post in a channel on a speaker's
-//        behalf: on the guild's text allowlist, present in THIS guild's cache, a
+//        behalf: on the list a task may post in (taskChannel.ts: the guild's
+//        💬dero-commands, since the text allowlist retired), present in THIS guild's cache, a
 //        text or announcement channel, sendable by the bot, and visible to the
 //        speaker.
 // Who:   brainJob (which channels a job offers the brain) and the executor
@@ -16,9 +17,9 @@ import { ChannelType, PermissionFlagsBits, type Guild, type GuildMember, type Ne
 //        unlisted channel costs nothing and touches nothing.
 //
 // The speaker visibility check is what keeps the plan's privacy rule ("the
-// brain never receives any id the speaker could not already see") true when an
-// admin allowlists a private channel: a member who cannot read it can neither
-// see it offered to the brain nor make Dero post in it.
+// brain never receives any id the speaker could not already see") true when the
+// task channel is one a member cannot read: they can neither see it offered to
+// the brain nor make Dero post in it.
 
 export type PostableChannel = TextChannel | NewsChannel;
 
