@@ -177,18 +177,36 @@ beforeEach(() => {
 
 describe("the start press", () => {
 	it("makes its two reads in parallel and renders nothing before the modal (risk R4)", async () => {
-		const DELAY_MS = 200;
-		const slow = <T>(value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), DELAY_MS));
-		mocks.store.findOpenByHost.mockImplementation(() => slow(null));
-		mocks.config.findByGuildId.mockImplementation(() => slow(baseConfig));
+		// Each read is held open until the test lets it go, and records how many reads were in
+		// flight when it started. Proved by order, not by a stopwatch: a timed version failed
+		// under a busy machine's load although the reads ran together (2026-10 item 263).
+		let inFlight = 0;
+		let mostInFlight = 0;
+		const releases: Array<() => void> = [];
+		const held = <T>(value: T) =>
+			new Promise<T>((resolve) => {
+				inFlight += 1;
+				mostInFlight = Math.max(mostInFlight, inFlight);
+				releases.push(() => {
+					inFlight -= 1;
+					resolve(value);
+				});
+			});
+		mocks.store.findOpenByHost.mockImplementation(() => held(null));
+		mocks.config.findByGuildId.mockImplementation(() => held(baseConfig));
 		const press = pressOf();
 
-		const started = performance.now();
-		await offerChallengeDraft(press, "holdem");
-		const elapsed = performance.now() - started;
+		const pressing = offerChallengeDraft(press, "holdem");
+		// Let the press reach its reads; a sequential press would have started only the first.
+		await vi.waitFor(() => expect(releases.length).toBeGreaterThan(0));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		for (const release of releases.splice(0)) release();
+		await vi.waitFor(() => expect(press.showModal).toHaveBeenCalled());
+		for (const release of releases.splice(0)) release();
+		await pressing;
 
-		// Both reads were in flight together: one read's delay, not two.
-		expect(elapsed).toBeLessThan(DELAY_MS * 1.5);
+		// Both reads were in flight together before either answered.
+		expect(mostInFlight).toBe(2);
 		expect(mocks.store.findOpenByHost).toHaveBeenCalledOnce();
 		expect(mocks.config.findByGuildId).toHaveBeenCalledOnce();
 		expect(press.showModal).toHaveBeenCalledOnce();
