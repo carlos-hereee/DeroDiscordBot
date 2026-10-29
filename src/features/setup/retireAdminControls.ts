@@ -25,6 +25,8 @@ import { DiscordAPIError, RESTJSONErrorCodes, TextChannel, type Guild } from "di
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { adminLog } from "./adminLog.js";
 import { canManageChannels } from "./headquarters.js";
+// Read as a plain object first, or the corrupt row guard (step ③) would see no fields.
+import { asPlainRow } from "./plainRow.js";
 import { setupCopy } from "./setupCopy.js";
 
 /** What one pass did, for the boot log and the tests. */
@@ -68,16 +70,6 @@ async function fetchStoredChannel(guild: Guild, channelId: string): Promise<Stor
 		console.warn(`[admin-controls] guild ${guild.id}: could not read the stored 🎛️admin-controls ${channelId}; it is left for the next boot`, error);
 		return { kind: "unknown" };
 	}
-}
-
-// The store returns a hydrated Mongoose document, whose own enumerable keys are $__,
-// $isNew and _doc rather than its fields, so Object.entries over it sees nothing and the
-// corrupt row guard (step ③) would never fire. Read it as a plain object first; a plain
-// object (a lean read, a test fixture) passes through as it is.
-function asPlainRow(row: unknown): Record<string, unknown> | null {
-	if (!row || typeof row !== "object") return null;
-	const document = row as { toObject?: () => unknown };
-	return (typeof document.toObject === "function" ? document.toObject() : row) as Record<string, unknown>;
 }
 
 async function clearRetiredIds(guild: Guild): Promise<void> {

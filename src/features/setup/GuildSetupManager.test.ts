@@ -323,9 +323,10 @@ describe("GuildSetupManager.ensureHomebase", () => {
 
 		expect(result).toEqual({ action: "rebuilt", repairedChannels: [] });
 		// rebuild path must not delete the foreign row on a shared Mongo
-		// cluster. autoSetup with force:true is the correct invocation.
+		// cluster. autoSetup with force:true is the correct invocation, and
+		// foreignHomebase so none of the other bot's channels is kept (2026-10 item 273, D1).
 		expect(guildConfigMock.deleteByGuildId).not.toHaveBeenCalled();
-		expect(autoSetupSpy).toHaveBeenCalledWith(guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true });
+		expect(autoSetupSpy).toHaveBeenCalledWith(guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true, foreignHomebase: true });
 	});
 
 	it("does NOT rebuild when the stored schedule message is missing (10008), repairs in place", async () => {
@@ -802,8 +803,15 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 				// Resolving it is what proves the reuse branch is live on this path; before the
 				// fix it was dead here and every forced rebuild built a second 🎮 ARCADE GAMES
 				// beside the live one, orphaning its channels and every room parented under it.
-				// 🏰 DERO HEADQUARTERS (2026-10 item 257 Phase 2a) takes the same path.
-				fetch: vi.fn(async (id: string) => (id === "games-cat-1" || id === "hq-cat-1" ? { id, type: 4 } : null)),
+				// 🏰 DERO HEADQUARTERS (2026-10 item 257 Phase 2a) takes the same path. Every
+				// stored channel under the two answers live, of its own kind, so the rebuild
+				// keeps them (2026-10 item 273); GuildSetupManager.reusedCategories.test.ts
+				// covers the gone, removed and unconfirmable ones.
+				fetch: vi.fn(async (id: string) => {
+					if (id === "games-cat-1" || id === "hq-cat-1") return { id, type: 4, children: { cache: new Map() } };
+					const live = Object.create((id === "ch-arcadevoice" ? VoiceChannel : TextChannel).prototype) as { id: string };
+					return Object.assign(live, { id });
+				}),
 			},
 		} as unknown as Guild;
 	}
@@ -841,10 +849,15 @@ describe("GuildSetupManager.autoSetup persistence", () => {
 		expect(payload.gamesCategoryId).toBe("games-cat-1");
 		// So is 🏰 DERO HEADQUARTERS, for the same reason.
 		expect(payload.headquartersCategoryId).toBe("hq-cat-1");
-		const categoryCreates = (guild.channels.create as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
-			([opts]) => (opts as { type: number }).type === 4
-		);
-		expect(categoryCreates).toHaveLength(1);
+		const createCalls = (guild.channels.create as unknown as ReturnType<typeof vi.fn>).mock.calls.map(([opts]) => opts as { type: number; parent?: string });
+		expect(createCalls.filter((opts) => opts.type === 4)).toHaveLength(1);
+		// ⚠️ AND SO ARE THEIR LIVE CHANNELS (2026-10 item 273). Building them again put a second
+		// set of every arcade and Headquarters channel beside the live one and repointed the
+		// row at the copies, so not one channel may be created under a reused category, and
+		// the payload must leave their slots as stored.
+		expect(createCalls.filter((opts) => opts.parent === "games-cat-1" || opts.parent === "hq-cat-1")).toEqual([]);
+		expect(payload).not.toHaveProperty("arcadeChallengesChannelId");
+		expect(payload).not.toHaveProperty("adminChannelId");
 	});
 
 	it("logs loudly and rethrows when create hits the 11000 duplicate key error", async () => {

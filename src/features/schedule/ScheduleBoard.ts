@@ -291,11 +291,13 @@ async function postOrEdit(
 //        updates it in place with the new channel ids. If the row is
 //        foreign (shared cluster), autoSetup will hit the duplicate-key
 //        guard on its insert path and bail loudly without overwriting.
-//        Either branch keeps prod state safe.
+//        Either branch keeps prod state safe. foreignHomebase, because this only
+//        runs when another bot authored the board: every channel is built new
+//        and none of that bot's is kept (2026-10 item 273, D1).
 async function rebuildHomebase(guild: TextChannel["guild"], guildId: string): Promise<void> {
 	try {
 		console.warn(LOG_MESSAGES.schedule.rebuildingHomebase(guildId));
-		await GuildSetupManager.autoSetup(guild, { guildId, ownerId: guild.ownerId }, { force: true });
+		await GuildSetupManager.autoSetup(guild, { guildId, ownerId: guild.ownerId }, { force: true, foreignHomebase: true });
 	} catch (error) {
 		console.error(LOG_MESSAGES.schedule.rebuildHomebaseFailed(guildId), error);
 	}

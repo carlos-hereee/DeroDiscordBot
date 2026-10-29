@@ -19,7 +19,18 @@ import {
 	type MessageEditOptions,
 } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { ISetupConfig, IAdminRoleConfig, ICreatedChannels, IChannelObjects, IEnsureHomebaseResult } from "./setup.types.js";
+import type {
+	ISetupConfig,
+	IAdminRoleConfig,
+	IEnsureHomebaseResult,
+	IBuiltGroup,
+	IHomebaseChannelIds,
+	IHomebaseChannelObjects,
+	IArcadeChannelIds,
+	IArcadeChannelObjects,
+	IHeadquartersChannelIds,
+	IHeadquartersChannelObjects,
+} from "./setup.types.js";
 import { ChannelContent } from "./ChannelContent.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
@@ -50,6 +61,7 @@ import {
 } from "./communityOverwrites.js";
 import { moveIntoHeadquarters, canManageChannels } from "./headquarters.js";
 import { retireAdminControls } from "./retireAdminControls.js";
+import { asPlainRow } from "./plainRow.js";
 import { CommunityGatingAnnouncement } from "./CommunityGatingAnnouncement.js";
 import { fetchAcceptsDeroContent, findRulesChannel, findWelcomeChannel, readAdoptedChannelIds, readAdoptionChoice, type IAdoptionCandidate } from "./adoption.js";
 import { moveChosenChannel } from "./adoptionChoice.js";
@@ -118,6 +130,20 @@ function resolveHeadquartersCategoryName(): string {
 /** The managed categories other than the notice board, each resolved and built by one helper set. */
 type SecondaryCategoryField = "gamesCategoryId" | "headquartersCategoryId";
 
+/** Options for GuildSetupManager.autoSetup. */
+export interface IAutoSetupOptions {
+	// Build even though a row exists: the rebuild paths (ensureHomebase, ScheduleBoard,
+	// /setup after a self destruct) set it.
+	force?: boolean;
+	// The stored homebase was authored by another bot (ensureHomebase's "foreign" branch,
+	// ScheduleBoard's stale author). Every channel is then built new, even inside a reused
+	// category, so Dero never keeps a channel another bot owns (2026-10 item 273, D1).
+	foreignHomebase?: boolean;
+}
+
+// Every overwrite shape a first build hands out, one per posture (channelPostures).
+type IChannelPostures = Record<"public" | "intro" | "admin" | "adminLog" | "commandOutput" | "voice", IOverwriteEntry[]>;
+
 // What each secondary category is named and how it is overwritten. One table, so the
 // arcade and Headquarters are found, adopted by name and built by the same code.
 // The arcade's shape mirrors the notice board's, owner allow and nothing else (see
@@ -177,7 +203,7 @@ export class GuildSetupManager {
 	// bot only; multi-process would need a distributed lock.
 	private static inflightAutoSetups = new Map<string, Promise<void>>();
 
-	static async autoSetup(guild: Guild, config: ISetupConfig, options: { force?: boolean } = {}): Promise<void> {
+	static async autoSetup(guild: Guild, config: ISetupConfig, options: IAutoSetupOptions = {}): Promise<void> {
 		const inflight = GuildSetupManager.inflightAutoSetups.get(config.guildId);
 		if (inflight) return inflight;
 
@@ -190,7 +216,7 @@ export class GuildSetupManager {
 		}
 	}
 
-	private static async runAutoSetup(guild: Guild, config: ISetupConfig, options: { force?: boolean } = {}): Promise<void> {
+	private static async runAutoSetup(guild: Guild, config: ISetupConfig, options: IAutoSetupOptions = {}): Promise<void> {
 		const existing = await guildConfigStore.findByGuildId(config.guildId);
 		// default behavior: if a row exists, assume the homebase is already
 		// constructed (by this bot) and skip. ensureHomebase is the only
@@ -294,22 +320,41 @@ export class GuildSetupManager {
 		// rebuilds it grants the role it was just given through applyAdminRole, so trusting
 		// the old id there would re-grant a role the owner may have meant to replace.
 		const textRoles = { memberRoleId: storedRoles.memberRoleId, adminRoleId: existing?.setupComplete ? storedRoles.adminRoleId : null };
+		const roles = { voice: storedRoles, text: textRoles };
+
+		// ⚠️ A REUSED CATEGORY KEEPS ITS LIVE CHANNELS (2026-10 item 273). Building its
+		// group here as well put a second set of every arcade and Headquarters channel
+		// beside the live one, repointed the row at the copies and orphaned the originals
+		// with their pins and history. So a reused category's group is not built here;
+		// settleReusedCategoryChildren keeps or repairs each of its slots once the row is
+		// stored. A foreign homebase builds every group as before, so Dero never keeps a
+		// channel another bot owns (owner decision D1).
+		const reusedCategories: Array<{ field: SecondaryCategoryField; category: CategoryChannel }> = [];
+		if (existingArcade && !options.foreignHomebase) reusedCategories.push({ field: "gamesCategoryId", category: gamesCategory });
+		if (existingHeadquarters && !options.foreignHomebase) reusedCategories.push({ field: "headquartersCategoryId", category: headquartersCategory });
+		const keepsChildrenOf = (field: SecondaryCategoryField): boolean => reusedCategories.some((entry) => entry.field === field);
+
 		// The stored row rides along twice: createChannels' adoption scan must not take
 		// a channel that already fills another slot, and the rules post keeps the
 		// owner's saved rules through a forced rebuild.
 		const storedRow = existing as unknown as (Record<string, unknown> & IRulesConfig) | null;
-		const { ids, objects, adoptedChannelIds, adoptions } = await GuildSetupManager.createChannels(
+		const built = await GuildSetupManager.createChannels(
 			guild,
-			{ category, gamesCategory, headquartersCategory },
+			{
+				category,
+				gamesCategory: keepsChildrenOf("gamesCategoryId") ? null : gamesCategory,
+				headquartersCategory: keepsChildrenOf("headquartersCategoryId") ? null : headquartersCategory,
+			},
 			config,
-			{ voice: storedRoles, text: textRoles },
+			roles,
 			storedRow
 		);
-		const { scheduleMessageId, introMessageIds } = await GuildSetupManager.populateChannels(guild, objects, {
-			adoptedChannelIds,
-			rulesConfig: storedRow,
-			adminRoleId: textRoles.adminRoleId,
-		});
+		const { adoptedChannelIds, adoptions } = built;
+		const { scheduleMessageId, introMessageIds } = await GuildSetupManager.populateChannels(
+			guild,
+			{ homebase: built.homebase.objects, arcade: built.arcade?.objects ?? null, headquarters: built.headquarters?.objects ?? null },
+			{ adoptedChannelIds, rulesConfig: storedRow, adminRoleId: textRoles.adminRoleId }
+		);
 
 		// What: persist the freshly built channel ids.
 		// When: two mutually exclusive persist paths, chosen by the state of
@@ -326,58 +371,28 @@ export class GuildSetupManager {
 		//        fresh ids. The adminRoleId / memberRoleId / setupComplete
 		//        flags are preserved because we do not set them in the
 		//        update payload, any prior Phase 2 state carries over to
-		//        the repaired homebase.
+		//        the repaired homebase. A reused category's channel slots are
+		//        left out the same way, so they keep pointing at the live channels.
 		// Where: path A's create is wrapped in a duplicate-key guard for the
 		//        shared cluster misconfig case (dev bot running against the
 		//        same MongoDB collection as prod). We REFUSE to overwrite a
 		//        foreign row; the Discord side is already built so the least
 		//        bad outcome is that the bot logs loudly and bails on persist.
 		const persistPayload = {
-			categoryId: category.id,
-			introChannelId: ids.introChannelId,
-			commandsChannelId: ids.commandsChannelId,
-			leaderboardChannelId: ids.leaderboardChannelId,
-			scheduleChannelId: ids.scheduleChannelId,
-			announcementsChannelId: ids.announcementsChannelId,
-			adminChannelId: ids.adminChannelId,
-			// ⚠️ EVERY ID createChannels RETURNS IS STORED HERE, NO EXCEPTIONS, and
-			// the exception this payload used to carry is why that is worth stating.
-			// 🔜upcoming-events was built alongside the others but its id was left
-			// out, so the row held null until the NEXT boot, when the repair sweep's
-			// adopt-before-build scan found the orphan channel and persisted it. The
-			// channel existed the whole time; only the pointer was missing, and
-			// NextUpBoard reads that pointer, bails on null, and posts nothing. Every
-			// guild therefore had a dead 🔜upcoming-events between /setup and its
-			// first reboot. Closed 2026-08-12; the sweep still adopts for genuinely
-			// legacy rows (case ③ in repairMissingChannels), it is just no longer
-			// load bearing for a fresh install.
-			nextDecreeChannelId: ids.nextDecreeChannelId,
-			// The audit trail, so the first admin action after /setup already has a home.
-			adminLogChannelId: ids.adminLogChannelId,
-			// 👋welcome and 📘rules, and which of the two (if either) the server already
-			// had. Replaced, not merged: a build re-derives every adoption, and an id from
-			// a prior build points at a channel this one either re-adopted or never saw.
-			welcomeChannelId: ids.welcomeChannelId,
-			rulesChannelId: ids.rulesChannelId,
+			// ⚠️ EVERY ID A BUILT GROUP RETURNS IS STORED HERE, NO EXCEPTIONS, by spreading
+			// the group whole, and the exception this payload used to carry is why that is
+			// worth stating: 🔜upcoming-events was built alongside the others but its id was
+			// left out, so the row held null until the next boot's repair sweep adopted the
+			// orphan, and NextUpBoard, which bails on a null pointer, posted nothing in between.
+			// 👋welcome and 📘rules ride the homebase group, replaced rather than merged: a
+			// build re-derives every adoption, and an id from a prior build points at a
+			// channel this one either re-adopted or never saw.
+			...built.homebase.ids,
+			// A reused category writes only its own id (it may have been adopted by name
+			// under a new id); its channel slots stay as stored.
+			...(built.arcade?.ids ?? { gamesCategoryId: gamesCategory.id }),
+			...(built.headquarters?.ids ?? { headquartersCategoryId: headquartersCategory.id }),
 			adoptedChannelIds,
-			// ── 🎮 ARCADE GAMES ──
-			gamesCategoryId: ids.gamesCategoryId,
-			arcadeRulesChannelId: ids.arcadeRulesChannelId,
-			arcadeChallengesChannelId: ids.arcadeChallengesChannelId,
-			arcadeGamesChannelId: ids.arcadeGamesChannelId,
-			partyGamesChannelId: ids.partyGamesChannelId,
-			arcadeRatedChallengesChannelId: ids.arcadeRatedChallengesChannelId,
-			deroMarketChannelId: ids.deroMarketChannelId,
-			// ── the two voice rooms (2026-10 item 235) ──
-			meetingVoiceChannelId: ids.meetingVoiceChannelId,
-			arcadeVoiceChannelId: ids.arcadeVoiceChannelId,
-			// ── 🏰 DERO HEADQUARTERS and 💬dero-commands (2026-10 item 257 Phase 2a) ──
-			headquartersCategoryId: ids.headquartersCategoryId,
-			deroConfigChannelId: ids.deroConfigChannelId,
-			onboardingConfigChannelId: ids.onboardingConfigChannelId,
-			arcadeControlChannelId: ids.arcadeControlChannelId,
-			serverConfigChannelId: ids.serverConfigChannelId,
-			commandOutputChannelId: ids.commandOutputChannelId,
 			// The arcade is built, so its switches are written on (2026-10 item 257,
 			// owner item 11), except one this server already turned off.
 			...arcadeSwitchesToWrite(existing),
@@ -395,8 +410,9 @@ export class GuildSetupManager {
 			// refreshIntroEmbeds can edit them in place on subsequent boots
 			// when the copy packs (@base/copy/packs) change. This is the field that
 			// makes "rebuild the bot copy without nuking the homebase"
-			// possible.
-			introMessageIds,
+			// possible. A reused category's stored anchors are carried over, so a kept
+			// channel's intro is edited in place rather than posted a second time.
+			introMessageIds: { ...GuildSetupManager.storedAnchorsUnder(existing, reusedCategories), ...introMessageIds },
 		};
 
 		if (existing) {
@@ -404,42 +420,161 @@ export class GuildSetupManager {
 			// (adminRoleId, memberRoleId, setupComplete) is intentionally
 			// not overwritten so a repair preserves it.
 			await guildConfigStore.update(config.guildId, persistPayload);
-			GuildSetupManager.afterAdoptionPersisted(guild, adoptions);
-			void allowDeroVoiceRooms(config.guildId, [ids.meetingVoiceChannelId, ids.arcadeVoiceChannelId]);
+		} else {
+			try {
+				// path A, fresh insert. initialize Phase 2 fields to null so the
+				// unsetup state matches a clean install.
+				await guildConfigStore.create({
+					guildId: config.guildId,
+					adminRoleId: null,
+					memberRoleId: null,
+					...persistPayload,
+					setupComplete: false,
+				});
+			} catch (error) {
+				// MongoDB duplicate key (code 11000) means a row for this guildId
+				// already exists, almost certainly the shared DB scenario where
+				// another bot's row is in the collection. We REFUSE to overwrite
+				// it (that would corrupt the other bot's state). The Discord side
+				// channels are already built at this point so this is the least
+				// bad outcome: bot stays online but cannot persist its config
+				// until the operator separates the DBs. Logged loudly so the
+				// smell is impossible to miss.
+				const code = (error as { code?: number }).code;
+				if (code === 11000) {
+					console.error(LOG_MESSAGES.setup.guildConfigDuplicateKey(config.guildId));
+				}
+				throw error;
+			}
+		}
+
+		GuildSetupManager.afterAdoptionPersisted(guild, adoptions);
+		// AWAITED, not fire and forget: the boot's refreshIntroEmbeds and /setup's own
+		// check read the row next, and must see the settled slots and anchors.
+		const { keptFields } = await GuildSetupManager.settleReusedCategoryChildren(guild, reusedCategories, roles);
+		// Dero may join the voice rooms this build made (2026-10 item 257, owner item 8).
+		// Only the rooms a built group created: a kept 🎮 Arcade Lounge is on the list
+		// already and a rebuilt one was swapped there by repairOneChannel, so a dead stored
+		// id is never added.
+		void allowDeroVoiceRooms(config.guildId, [built.homebase.ids.meetingVoiceChannelId, built.arcade?.ids.arcadeVoiceChannelId]);
+		GuildSetupManager.syncHeadquartersAfterBuild(guild, built.headquarters !== null, keptFields);
+	}
+
+	// The stored intro anchors of every slot under the given reused categories (and the
+	// 🕹️games Challenge Board under the arcade), carried into the rebuilt row so a kept
+	// channel keeps the anchor refreshIntroEmbeds edits in place. A slot that is gone gets
+	// its anchor from repairOneChannel, which overwrites this one.
+	private static storedAnchorsUnder(
+		stored: unknown,
+		reused: ReadonlyArray<{ field: SecondaryCategoryField }>
+	): Record<string, string | null> {
+		const anchors = (asPlainRow(stored)?.introMessageIds ?? {}) as Record<string, string | null | undefined>;
+		const carried: Record<string, string | null> = {};
+		for (const { field } of reused) {
+			const slots: string[] = GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.categoryField === field).map((spec) => spec.configField);
+			if (field === "gamesCategoryId") slots.push("arcadeGamesBoardId");
+			for (const slot of slots) {
+				const anchor = anchors[slot];
+				if (anchor !== undefined) carried[slot] = anchor;
+			}
+		}
+		return carried;
+	}
+
+	// ── a reused category's channels on a forced rebuild (2026-10 item 273) ──
+	// What:  for every slot under a category this build reused, keep the stored channel
+	//        when it is still alive and build only what is gone, through repairOneChannel,
+	//        the boot sweep's own primitive, so a forced rebuild never builds a second set.
+	// Who:   runAutoSetup, after the row is stored and before its side effects.
+	// When:  a forced rebuild that found 🎮 ARCADE GAMES or 🏰 DERO HEADQUARTERS alive, or
+	//        a fresh row that adopted one by name (a reset database, owner decision D4);
+	//        never on a foreign homebase (D1).
+	// How:   ① read the stored row as a plain object (it now holds the new homebase anchors);
+	//        ② walk the reused categories' specs in order, skipping a slot the admin
+	//           removed (an arcade switched off stays off, D3);
+	//        ③ keep a live stored channel of the spec's kind wherever it is (D2): the boot
+	//           sweep moves a Headquarters channel found outside Headquarters, and an arcade
+	//           channel an admin moved stays where they put it, as the sweep treats it;
+	//        ④ skip a slot Discord could not confirm either way, so a transient failure
+	//           never builds a duplicate; the next boot's sweep settles it;
+	//        ⑤ hand a gone slot to repairOneChannel with the CHAINED row. It writes the whole
+	//           introMessageIds map merged onto the row it is given, so a stale row, or two
+	//           repairs in parallel, would erase anchors: sequential on purpose.
+	//        One slot's failure is logged and the walk continues; the boot sweep retries it.
+	// Returns the slots it kept, which syncHeadquartersAfterBuild reads.
+	private static async settleReusedCategoryChildren(
+		guild: Guild,
+		reused: ReadonlyArray<{ field: SecondaryCategoryField; category: CategoryChannel }>,
+		roles: { voice: IOverwriteRoles; text: IOverwriteRoles }
+	): Promise<{ keptFields: Set<string> }> {
+		const keptFields = new Set<string>();
+		if (reused.length === 0) return { keptFields };
+		// ⚠️ PLAIN, NOT HYDRATED: the row is chained by spread below, and a spread Mongoose
+		// document keeps none of its fields (plainRow.ts).
+		let row = asPlainRow(await guildConfigStore.findByGuildId(guild.id));
+		if (!row) return { keptFields };
+		const removedSlots = new Set((row.userRemovedChannels as string[] | undefined) ?? []);
+
+		for (const { field, category } of reused) {
+			for (const spec of GuildSetupManager.CHANNEL_SPECS.filter((entry) => entry.categoryField === field)) {
+				if (removedSlots.has(spec.configField)) continue;
+				const storedId = row[spec.configField];
+				if (typeof storedId === "string" && storedId.length > 0) {
+					const live = await GuildSetupManager.fetchStoredChannel(guild, storedId, GuildSetupManager.isChannelOfSpecKind(spec));
+					if (live === "unreachable") {
+						console.warn(`[setup] guild ${guild.id}: could not confirm ${spec.configField} ${storedId}; building nothing for it this pass`);
+						continue;
+					}
+					if (live) {
+						keptFields.add(spec.configField);
+						continue;
+					}
+				}
+				try {
+					const result = await GuildSetupManager.repairOneChannel(guild, category, spec, GuildSetupManager.rowViewFor(spec, row, roles));
+					// The view carried the admin role this rebuild trusts, not the row's: put the
+					// stored one back so the next spec's view starts from the truth.
+					row = { ...result.stored, adminRoleId: roles.voice.adminRoleId };
+				} catch (error) {
+					console.error(LOG_MESSAGES.setup.channelRepairFailed(spec.displayName, guild.id), error);
+				}
+			}
+		}
+		return { keptFields };
+	}
+
+	// Whether a fetched channel is the kind a spec builds. A text channel an admin named
+	// like the voice room is not the voice room (the same rule repairOneChannel's scan keeps).
+	private static isChannelOfSpecKind(spec: (typeof GuildSetupManager.CHANNEL_SPECS)[number]): (channel: unknown) => channel is TextChannel | VoiceChannel {
+		return (channel: unknown): channel is TextChannel | VoiceChannel => (spec.kind === "voice" ? channel instanceof VoiceChannel : channel instanceof TextChannel);
+	}
+
+	// The row repairOneChannel builds one slot from. A voice room takes the stored roles as
+	// is and a text channel the admin role a forced rebuild trusts (only once /setup has
+	// finished, 2026-10 item 272), because repairOneChannel reads stored.adminRoleId for both
+	// the overwrites and the admin intro. Never persisted: repairOneChannel writes only the
+	// slot, its anchor and the adopted list.
+	private static rowViewFor(
+		spec: (typeof GuildSetupManager.CHANNEL_SPECS)[number],
+		row: Record<string, unknown>,
+		roles: { voice: IOverwriteRoles; text: IOverwriteRoles }
+	): Record<string, unknown> & { adminRoleId: string | null } {
+		const trusted = spec.kind === "voice" ? roles.voice : roles.text;
+		return { ...row, adminRoleId: trusted.adminRoleId, memberRoleId: trusted.memberRoleId };
+	}
+
+	// Each 🏰 DERO HEADQUARTERS config channel gets its steps card and chart under its intro
+	// (2026-10 item 257 Phase 2b), fire and forget. A Headquarters this build made syncs
+	// every domain; a reused one syncs only the channels it kept, because repairOneChannel
+	// already synced each one it rebuilt, and a second sync of the same channel in flight
+	// could post a second steps card.
+	private static syncHeadquartersAfterBuild(guild: Guild, builtHeadquarters: boolean, keptFields: ReadonlySet<string>): void {
+		if (builtHeadquarters) {
 			void syncAllHeadquarters(guild);
 			return;
 		}
-
-		try {
-			// path A, fresh insert. initialize Phase 2 fields to null so the
-			// unsetup state matches a clean install.
-			await guildConfigStore.create({
-				guildId: config.guildId,
-				adminRoleId: null,
-				memberRoleId: null,
-				...persistPayload,
-				setupComplete: false,
-			});
-			GuildSetupManager.afterAdoptionPersisted(guild, adoptions);
-			// Dero may join the voice rooms he just built (2026-10 item 257, owner item 8).
-			void allowDeroVoiceRooms(config.guildId, [ids.meetingVoiceChannelId, ids.arcadeVoiceChannelId]);
-			// Each 🏰 DERO HEADQUARTERS config channel gets its steps card and chart under
-			// the intro just posted (2026-10 item 257 Phase 2b), fire and forget.
-			void syncAllHeadquarters(guild);
-		} catch (error) {
-			// MongoDB duplicate key (code 11000) means a row for this guildId
-			// already exists, almost certainly the shared DB scenario where
-			// another bot's row is in the collection. We REFUSE to overwrite
-			// it (that would corrupt the other bot's state). The Discord side
-			// channels are already built at this point so this is the least
-			// bad outcome: bot stays online but cannot persist its config
-			// until the operator separates the DBs. Logged loudly so the
-			// smell is impossible to miss.
-			const code = (error as { code?: number }).code;
-			if (code === 11000) {
-				console.error(LOG_MESSAGES.setup.guildConfigDuplicateKey(config.guildId));
-			}
-			throw error;
+		for (const domain of HEADQUARTERS_DOMAINS) {
+			if (keptFields.has(DOMAIN_CHANNEL_FIELDS[domain])) void syncHeadquartersChannel(guild, domain);
 		}
 	}
 
@@ -646,7 +781,8 @@ export class GuildSetupManager {
 		// board reposts its missing message on the next refresh.
 		if (ownership === "foreign") {
 			console.warn(LOG_MESSAGES.setup.homebaseNotOwned(guild.id));
-			await GuildSetupManager.rebuildFromStaleConfig(guild);
+			// Foreign: every channel is built new, none of the other bot's is kept (2026-10 item 273, D1).
+			await GuildSetupManager.rebuildFromStaleConfig(guild, { foreignHomebase: true });
 			await GuildSetupManager.postCastleRebuiltNotice(client, guild.id);
 			console.log(LOG_MESSAGES.setup.ensureHomebaseDone(guild.id, "rebuilt"));
 			return { action: "rebuilt", repairedChannels: [] };
@@ -2334,8 +2470,10 @@ export class GuildSetupManager {
 	//        written. If it is occupied by a foreign row, the unique index
 	//        on guildId throws 11000 which autoSetup catches and logs.
 	//        Either way the operator gets a signal and prod state is safe.
-	private static async rebuildFromStaleConfig(guild: Guild): Promise<void> {
-		await GuildSetupManager.autoSetup(guild, { guildId: guild.id, ownerId: guild.ownerId }, { force: true });
+	//        foreignHomebase is passed through so a foreign rebuild keeps none of
+	//        the reused categories' channels (2026-10 item 273, D1).
+	private static async rebuildFromStaleConfig(guild: Guild, options: Pick<IAutoSetupOptions, "foreignHomebase"> = {}): Promise<void> {
+		await GuildSetupManager.autoSetup(guild, { guildId: guild.id, ownerId: guild.ownerId }, { force: true, ...options });
 	}
 
 	// ── Phase 2: apply admin role to existing channels ────────
@@ -2505,13 +2643,23 @@ export class GuildSetupManager {
 		}
 	}
 
-	// The stored category, null when Discord answered that it does not exist (or the id
-	// now names something that is not a category), and "unreachable" for any other
-	// failure, which says nothing about whether it exists.
+	// The stored category, through fetchStoredChannel.
 	private static async fetchStoredCategory(guild: Guild, categoryId: string): Promise<CategoryChannel | null | "unreachable"> {
+		return GuildSetupManager.fetchStoredChannel(guild, categoryId, (channel): channel is CategoryChannel => (channel as { type?: unknown } | null)?.type === ChannelType.GuildCategory);
+	}
+
+	// A stored channel of the expected kind, null when Discord answered that it does not
+	// exist (or the id now names a channel of another kind), and "unreachable" for any
+	// other failure, which says nothing about whether it exists. Callers build nothing on
+	// "unreachable": a timeout or a 5xx read as "gone" is how a second copy gets built.
+	private static async fetchStoredChannel<TChannel>(
+		guild: Guild,
+		channelId: string,
+		isExpectedKind: (channel: unknown) => channel is TChannel
+	): Promise<TChannel | null | "unreachable"> {
 		try {
-			const channel = await guild.channels.fetch(categoryId);
-			return channel?.type === ChannelType.GuildCategory ? (channel as CategoryChannel) : null;
+			const channel = await guild.channels.fetch(channelId);
+			return isExpectedKind(channel) ? channel : null;
 		} catch (error) {
 			if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return null;
 			return "unreachable";
@@ -2533,13 +2681,20 @@ export class GuildSetupManager {
 		return matches.reduce((best, next) => (next.children.cache.size > best.children.cache.size ? next : best));
 	}
 
+	// ── a first build's channels, one group per managed category ───────
+	// What:  build the channels of every category this pass builds, under the parents
+	//        passed in. 🪧 NOTICE BOARD's group always; 🎮 ARCADE GAMES' and 🏰 DERO
+	//        HEADQUARTERS' only when their parent is passed. A null parent is a category
+	//        this forced rebuild reused WITH its live channels, which
+	//        settleReusedCategoryChildren keeps or repairs once the row is stored; building
+	//        its group here as well is what used to put a second set of every arcade and
+	//        Headquarters channel beside the live one (2026-10 item 273).
+	// Who:   runAutoSetup (fresh install, forced rebuild).
+	// How:   one Promise.all per group, the groups in parallel. The parents are passed in
+	//        rather than resolved here so the 50013 handling lives in one place above.
 	private static async createChannels(
 		guild: Guild,
-		// The three parents: 🪧 NOTICE BOARD, 🎮 ARCADE GAMES and 🏰 DERO HEADQUARTERS
-		// (2026-10 item 257 Phase 2a). Passed in rather than resolved here so
-		// createChannels stays a pure "build these channels under these parents" step
-		// and the 50013 handling lives in one place above.
-		parents: { category: CategoryChannel; gamesCategory: CategoryChannel; headquartersCategory: CategoryChannel },
+		parents: { category: CategoryChannel; gamesCategory: CategoryChannel | null; headquartersCategory: CategoryChannel | null },
 		config: ISetupConfig,
 		// The roles each posture names, all null on a fresh install. `voice` is the
 		// stored pair as is (owner decision D3); `text` carries the admin role only once
@@ -2550,30 +2705,55 @@ export class GuildSetupManager {
 		// The row a forced rebuild replaces (null on a fresh install), read only by the
 		// welcome and rules adoption scan.
 		storedRow: Record<string, unknown> | null = null
-	): Promise<{ ids: ICreatedChannels; objects: IChannelObjects; adoptedChannelIds: string[]; adoptions: Array<{ field: string; channelId: string }> }> {
-		const { category, gamesCategory, headquartersCategory } = parents;
+	): Promise<{
+		homebase: IBuiltGroup<IHomebaseChannelIds, IHomebaseChannelObjects>;
+		arcade: IBuiltGroup<IArcadeChannelIds, IArcadeChannelObjects> | null;
+		headquarters: IBuiltGroup<IHeadquartersChannelIds, IHeadquartersChannelObjects> | null;
+		adoptedChannelIds: string[];
+		adoptions: Array<{ field: string; channelId: string }>;
+	}> {
+		const postures = GuildSetupManager.channelPostures(guild, config, roles);
+		const [homebase, arcade, headquarters] = await Promise.all([
+			GuildSetupManager.createHomebaseChannels(guild, parents.category, postures, roles.text, storedRow),
+			parents.gamesCategory ? GuildSetupManager.createArcadeChannels(guild, parents.gamesCategory, postures) : null,
+			parents.headquartersCategory ? GuildSetupManager.createHeadquartersChannels(guild, parents.headquartersCategory, postures) : null,
+		]);
+		return { homebase: homebase.group, arcade, headquarters, adoptedChannelIds: homebase.adoptedChannelIds, adoptions: homebase.adoptions };
+	}
+
+	// Every overwrite shape a first build hands out, resolved once so the three group
+	// builders cannot drift from each other or from the repair path's buildSingleChannel.
+	private static channelPostures(guild: Guild, config: ISetupConfig, roles: { voice: IOverwriteRoles; text: IOverwriteRoles }): IChannelPostures {
 		const owner = { ownerId: config.ownerId };
-		const voiceRoomOverwrites = communityOverwritesFor("voice", guild, owner, roles.voice);
-		const textRoles = roles.text;
+		return {
+			// Members read, the owner and the bot write.
+			public: communityOverwritesFor("public", guild, owner, roles.text),
+			// Introductions is the one member-writable homebase channel: it doubles
+			// as a greeter surface where new members answer the welcome icebreaker
+			// (welcomeNewMember) and satisfies a Discord Onboarding gate that requires
+			// posting in a channel before full access.
+			intro: communityOverwritesFor("intro", guild, owner, roles.text),
+			// Admin channels: the owner, plus the admin role once /setup has granted one.
+			admin: communityOverwritesFor("admin", guild, owner, roles.text),
+			// The audit trail: the owner and the admin role read, only the bot writes.
+			adminLog: communityOverwritesFor("adminLog", guild, owner, roles.text),
+			// 💬dero-commands: public, and members may send, because they run commands there.
+			commandOutput: communityOverwritesFor("commandOutput", guild, owner, roles.text),
+			// The voice rooms, the posture buildSingleChannel also uses on repair, so a
+			// rebuilt room matches a fresh one.
+			voice: communityOverwritesFor("voice", guild, owner, roles.voice),
+		};
+	}
 
-		// Members read, the owner and the bot write.
-		const publicOverwrites = communityOverwritesFor("public", guild, owner, textRoles);
-
-		// Introductions is the one member-writable homebase channel: it doubles
-		// as a greeter surface where new members answer the welcome icebreaker
-		// (welcomeNewMember) and satisfies a Discord Onboarding gate that requires
-		// posting in a channel before full access.
-		const introOverwrites = communityOverwritesFor("intro", guild, owner, textRoles);
-
-		// Admin channels: the owner, plus the admin role once /setup has granted one.
-		const adminOverwrites = communityOverwritesFor("admin", guild, owner, textRoles);
-
-		// The audit trail: the owner and the admin role read, only the bot writes.
-		const adminLogOverwrites = communityOverwritesFor("adminLog", guild, owner, textRoles);
-
-		// 💬dero-commands: public, and members may send, because they run commands there.
-		const commandOutputOverwrites = communityOverwritesFor("commandOutput", guild, owner, textRoles);
-
+	// 🪧 NOTICE BOARD's channels, built on every first build because a forced rebuild only
+	// runs when this category is gone or foreign.
+	private static async createHomebaseChannels(
+		guild: Guild,
+		category: CategoryChannel,
+		postures: IChannelPostures,
+		textRoles: IOverwriteRoles,
+		storedRow: Record<string, unknown> | null
+	): Promise<{ group: IBuiltGroup<IHomebaseChannelIds, IHomebaseChannelObjects>; adoptedChannelIds: string[]; adoptions: Array<{ field: string; channelId: string }> }> {
 		// 👋welcome and 📘rules adopt the server's own channel when it has one
 		// (2026-10 item 247 Phase 2). The scan runs BEFORE the create, which is the
 		// whole guarantee against a duplicate: a match short circuits the build. The
@@ -2584,7 +2764,7 @@ export class GuildSetupManager {
 			const spec = GuildSetupManager.CHANNEL_SPECS.find((entry) => entry.configField === field)!;
 			const adopted = await GuildSetupManager.adoptExistingChannel(guild, category, spec, storedRow, textRoles, [], { deferAdminLog: true });
 			if (adopted) return { channel: adopted, adopted: true };
-			const channel = await guild.channels.create({ name: spec.displayName, type: ChannelType.GuildText, parent: category.id, permissionOverwrites: publicOverwrites });
+			const channel = await guild.channels.create({ name: spec.displayName, type: ChannelType.GuildText, parent: category.id, permissionOverwrites: postures.public });
 			return { channel, adopted: false };
 		};
 
@@ -2594,30 +2774,17 @@ export class GuildSetupManager {
 			leaderboardChannel,
 			scheduleChannel,
 			announcementsChannel,
-			adminChannel,
 			nextDecreeChannel,
-			adminLogChannel,
 			welcome,
 			rules,
-			arcadeRulesChannel,
-			arcadeChallengesChannel,
-			arcadeGamesChannel,
-			partyGamesChannel,
-			arcadeRatedChallengesChannel,
-			deroMarketChannel,
 			meetingVoiceChannel,
-			arcadeVoiceChannel,
-			deroConfigChannel,
-			onboardingConfigChannel,
-			arcadeControlChannel,
-			serverConfigChannel,
 			commandOutputChannel,
 		] = await Promise.all([
 			guild.channels.create({
 				name: channels.intro,
 				type: ChannelType.GuildText,
 				parent: category.id,
-				permissionOverwrites: introOverwrites,
+				permissionOverwrites: postures.intro,
 			}),
 			guild.channels.create({
 				name: channels.commands,
@@ -2628,33 +2795,25 @@ export class GuildSetupManager {
 				// channel's whole reason for existing; opening SendMessages
 				// would let unrelated chatter bury it. Slash commands work
 				// in any channel anyway, so the lockdown does not block use.
-				permissionOverwrites: publicOverwrites,
+				permissionOverwrites: postures.public,
 			}),
 			guild.channels.create({
 				name: channels.leaderboard,
 				type: ChannelType.GuildText,
 				parent: category.id,
-				permissionOverwrites: publicOverwrites,
+				permissionOverwrites: postures.public,
 			}),
 			guild.channels.create({
 				name: channels.schedule,
 				type: ChannelType.GuildText,
 				parent: category.id,
-				permissionOverwrites: publicOverwrites,
+				permissionOverwrites: postures.public,
 			}),
 			guild.channels.create({
 				name: channels.announcements,
 				type: ChannelType.GuildText,
 				parent: category.id,
-				permissionOverwrites: publicOverwrites,
-			}),
-			// 🔒inner-sanctum lives under 🏰 DERO HEADQUARTERS with every admin channel
-			// (2026-10 item 257 Phase 2a), so admin controls sit apart from the members'.
-			guild.channels.create({
-				name: channels.admin,
-				type: ChannelType.GuildText,
-				parent: headquartersCategory.id,
-				permissionOverwrites: adminOverwrites,
+				permissionOverwrites: postures.public,
 			}),
 			// seventh, 🛡️next-decree. public overwrites (mortals read,
 			// bot writes). Mirror of announcements at the permission
@@ -2664,182 +2823,56 @@ export class GuildSetupManager {
 				name: channels.nextDecree,
 				type: ChannelType.GuildText,
 				parent: category.id,
-				permissionOverwrites: publicOverwrites,
-			}),
-			// 🗒️admin-log (post-launch plan item 11), the bot write only audit trail.
-			guild.channels.create({
-				name: channels.adminLog,
-				type: ChannelType.GuildText,
-				parent: headquartersCategory.id,
-				permissionOverwrites: adminLogOverwrites,
+				permissionOverwrites: postures.public,
 			}),
 			// 👋welcome and 📘rules: publicOverwrites, members read and the bot writes,
 			// when built here; an adopted one keeps its own place and permissions until
 			// an admin chooses to move it (adoptionChoice).
 			adoptOrCreate("welcomeChannelId"),
 			adoptOrCreate("rulesChannelId"),
-			// ── ninth and tenth, under 🎮 ARCADE GAMES ────────────
-			// ⚠️ NOTE THE PARENT: gamesCategory.id, not category.id. These two are
-			// the only channels here that do not live in the homebase, and getting
-			// this wrong is risk R2 in a form the compiler cannot catch (both are
-			// CategoryChannel), which is why the specs carry categoryField for
-			// every OTHER consumer.
-			//
-			// Both take publicOverwrites: members read, the bot writes. The rules
-			// card is a pinned reference and the challenge board is a wall of bot
-			// posted cards with buttons, so member SendMessages would only let
-			// chatter bury them. Challenges are issued by command, not by typing
-			// here, so the lockdown costs nothing.
-			guild.channels.create({
-				name: channels.arcadeRules,
-				type: ChannelType.GuildText,
-				parent: gamesCategory.id,
-				permissionOverwrites: publicOverwrites,
-			}),
-			guild.channels.create({
-				name: channels.arcadeChallenges,
-				type: ChannelType.GuildText,
-				parent: gamesCategory.id,
-				permissionOverwrites: publicOverwrites,
-			}),
-			// 🕹️games, the third arcade channel (2026-10 item 245 Phase 4a). Same parent
-			// and same posture as its two siblings: members press its buttons and read
-			// what Dero posts there, and nobody needs to type in it.
-			guild.channels.create({
-				name: channels.arcadeGames,
-				type: ChannelType.GuildText,
-				parent: gamesCategory.id,
-				permissionOverwrites: publicOverwrites,
-			}),
-			// 🎉party-games (post-launch plan item 3), the same parent and posture.
-			guild.channels.create({
-				name: channels.partyGames,
-				type: ChannelType.GuildText,
-				parent: gamesCategory.id,
-				permissionOverwrites: publicOverwrites,
-			}),
-			// 🏆rated-challenges (2026-10 item 254, Arcade 5), the same parent and the posture
-			// of ⚔️challenges, whose rated half it holds: a wall of bot posted cards.
-			guild.channels.create({
-				name: channels.arcadeRatedChallenges,
-				type: ChannelType.GuildText,
-				parent: gamesCategory.id,
-				permissionOverwrites: publicOverwrites,
-			}),
-			// 🏪dero-market (2026-10 item 267 Session 2a), the same parent and posture: members
-			// press its two buttons and read the trades Dero posts.
-			guild.channels.create({
-				name: channels.deroMarket,
-				type: ChannelType.GuildText,
-				parent: gamesCategory.id,
-				permissionOverwrites: publicOverwrites,
-			}),
-			// ── the two voice rooms, one per category (2026-10 item 235) ──
-			// Same parent rule as above: the meeting room is homebase, the lounge is
-			// arcade. Both take the voice shape, the posture buildSingleChannel also
-			// uses on repair, so a rebuilt room matches a fresh one.
+			// The notice board's voice room (2026-10 item 235); the lounge is the arcade's.
 			guild.channels.create({
 				name: channels.meetingVoice,
 				type: ChannelType.GuildVoice,
 				parent: category.id,
-				permissionOverwrites: voiceRoomOverwrites,
-			}),
-			guild.channels.create({
-				name: channels.arcadeVoice,
-				type: ChannelType.GuildVoice,
-				parent: gamesCategory.id,
-				permissionOverwrites: voiceRoomOverwrites,
-			}),
-			// ── 🏰 DERO HEADQUARTERS' three config channels (2026-10 item 257 Phase 2a) ──
-			// ⚠️ NOTE THE PARENT, as with the arcade's: headquartersCategory.id. Admin
-			// only, the shape of 🔒inner-sanctum.
-			guild.channels.create({
-				name: channels.deroConfig,
-				type: ChannelType.GuildText,
-				parent: headquartersCategory.id,
-				permissionOverwrites: adminOverwrites,
-			}),
-			guild.channels.create({
-				name: channels.onboardingConfig,
-				type: ChannelType.GuildText,
-				parent: headquartersCategory.id,
-				permissionOverwrites: adminOverwrites,
-			}),
-			guild.channels.create({
-				name: channels.arcadeControl,
-				type: ChannelType.GuildText,
-				parent: headquartersCategory.id,
-				permissionOverwrites: adminOverwrites,
-			}),
-			// 🛠️server-config, the fourth (2026-10 item 263 Phase 4a); a fresh server never gets 🎛️admin-controls.
-			guild.channels.create({
-				name: channels.serverConfig,
-				type: ChannelType.GuildText,
-				parent: headquartersCategory.id,
-				permissionOverwrites: adminOverwrites,
+				permissionOverwrites: postures.voice,
 			}),
 			// 💬dero-commands, under the notice board where members already look.
 			guild.channels.create({
 				name: channels.commandOutput,
 				type: ChannelType.GuildText,
 				parent: category.id,
-				permissionOverwrites: commandOutputOverwrites,
+				permissionOverwrites: postures.commandOutput,
 			}),
 		]);
 
 		return {
-			ids: {
-				categoryId: category.id,
-				introChannelId: introChannel.id,
-				commandsChannelId: commandsChannel.id,
-				leaderboardChannelId: leaderboardChannel.id,
-				scheduleChannelId: scheduleChannel.id,
-				announcementsChannelId: announcementsChannel.id,
-				adminChannelId: adminChannel.id,
-				nextDecreeChannelId: nextDecreeChannel.id,
-				adminLogChannelId: adminLogChannel.id,
-				welcomeChannelId: welcome.channel.id,
-				rulesChannelId: rules.channel.id,
-				gamesCategoryId: gamesCategory.id,
-				arcadeRulesChannelId: arcadeRulesChannel.id,
-				arcadeChallengesChannelId: arcadeChallengesChannel.id,
-				arcadeGamesChannelId: arcadeGamesChannel.id,
-				partyGamesChannelId: partyGamesChannel.id,
-				arcadeRatedChallengesChannelId: arcadeRatedChallengesChannel.id,
-				deroMarketChannelId: deroMarketChannel.id,
-				meetingVoiceChannelId: meetingVoiceChannel.id,
-				arcadeVoiceChannelId: arcadeVoiceChannel.id,
-				headquartersCategoryId: headquartersCategory.id,
-				deroConfigChannelId: deroConfigChannel.id,
-				onboardingConfigChannelId: onboardingConfigChannel.id,
-				arcadeControlChannelId: arcadeControlChannel.id,
-				serverConfigChannelId: serverConfigChannel.id,
-				commandOutputChannelId: commandOutputChannel.id,
-			},
-			objects: {
-				introChannel,
-				commandsChannel,
-				leaderboardChannel,
-				scheduleChannel,
-				announcementsChannel,
-				adminChannel,
-				nextDecreeChannel,
-				adminLogChannel,
-				welcomeChannel: welcome.channel,
-				rulesChannel: rules.channel,
-				arcadeRulesChannel,
-				arcadeChallengesChannel,
-				arcadeGamesChannel,
-				partyGamesChannel,
-				arcadeRatedChallengesChannel,
-				deroMarketChannel,
-				meetingVoiceChannel,
-				arcadeVoiceChannel,
-				deroConfigChannel,
-				onboardingConfigChannel,
-				arcadeControlChannel,
-				serverConfigChannel,
-				commandOutputChannel,
+			group: {
+				ids: {
+					categoryId: category.id,
+					introChannelId: introChannel.id,
+					commandsChannelId: commandsChannel.id,
+					leaderboardChannelId: leaderboardChannel.id,
+					scheduleChannelId: scheduleChannel.id,
+					announcementsChannelId: announcementsChannel.id,
+					nextDecreeChannelId: nextDecreeChannel.id,
+					welcomeChannelId: welcome.channel.id,
+					rulesChannelId: rules.channel.id,
+					meetingVoiceChannelId: meetingVoiceChannel.id,
+					commandOutputChannelId: commandOutputChannel.id,
+				},
+				objects: {
+					introChannel,
+					commandsChannel,
+					leaderboardChannel,
+					scheduleChannel,
+					announcementsChannel,
+					nextDecreeChannel,
+					welcomeChannel: welcome.channel,
+					rulesChannel: rules.channel,
+					meetingVoiceChannel,
+					commandOutputChannel,
+				},
 			},
 			adoptedChannelIds: [welcome, rules].filter((entry) => entry.adopted).map((entry) => entry.channel.id),
 			adoptions: [
@@ -2851,97 +2884,201 @@ export class GuildSetupManager {
 		};
 	}
 
+	// 🎮 ARCADE GAMES' channels, under the arcade category.
+	// ⚠️ NOTE THE PARENT: category is the ARCADE here, not the homebase. Getting it wrong
+	// is risk R2 in a form the compiler cannot catch (both are CategoryChannel), which is
+	// why the specs carry categoryField for every OTHER consumer.
+	//
+	// Every text channel takes the public posture: members read, the bot writes. The rules
+	// card is a pinned reference and the challenge boards are walls of bot posted cards with
+	// buttons, so member SendMessages would only let chatter bury them. Challenges are
+	// issued by command or button, not by typing here, so the lockdown costs nothing.
+	private static async createArcadeChannels(
+		guild: Guild,
+		category: CategoryChannel,
+		postures: IChannelPostures
+	): Promise<IBuiltGroup<IArcadeChannelIds, IArcadeChannelObjects>> {
+		const [arcadeRulesChannel, arcadeChallengesChannel, arcadeGamesChannel, partyGamesChannel, arcadeRatedChallengesChannel, deroMarketChannel, arcadeVoiceChannel] =
+			await Promise.all([
+				guild.channels.create({
+					name: channels.arcadeRules,
+					type: ChannelType.GuildText,
+					parent: category.id,
+					permissionOverwrites: postures.public,
+				}),
+				guild.channels.create({
+					name: channels.arcadeChallenges,
+					type: ChannelType.GuildText,
+					parent: category.id,
+					permissionOverwrites: postures.public,
+				}),
+				// 🕹️games (2026-10 item 245 Phase 4a): members press its buttons and read
+				// what Dero posts there, and nobody needs to type in it.
+				guild.channels.create({
+					name: channels.arcadeGames,
+					type: ChannelType.GuildText,
+					parent: category.id,
+					permissionOverwrites: postures.public,
+				}),
+				// 🎉party-games (post-launch plan item 3).
+				guild.channels.create({
+					name: channels.partyGames,
+					type: ChannelType.GuildText,
+					parent: category.id,
+					permissionOverwrites: postures.public,
+				}),
+				// 🏆rated-challenges (2026-10 item 254, Arcade 5), the posture of ⚔️challenges,
+				// whose rated half it holds.
+				guild.channels.create({
+					name: channels.arcadeRatedChallenges,
+					type: ChannelType.GuildText,
+					parent: category.id,
+					permissionOverwrites: postures.public,
+				}),
+				// 🏪dero-market (2026-10 item 267 Session 2a): members press its two buttons
+				// and read the trades Dero posts.
+				guild.channels.create({
+					name: channels.deroMarket,
+					type: ChannelType.GuildText,
+					parent: category.id,
+					permissionOverwrites: postures.public,
+				}),
+				// 🎮 Arcade Lounge (2026-10 item 235), the arcade's voice room.
+				guild.channels.create({
+					name: channels.arcadeVoice,
+					type: ChannelType.GuildVoice,
+					parent: category.id,
+					permissionOverwrites: postures.voice,
+				}),
+			]);
+
+		return {
+			ids: {
+				gamesCategoryId: category.id,
+				arcadeRulesChannelId: arcadeRulesChannel.id,
+				arcadeChallengesChannelId: arcadeChallengesChannel.id,
+				arcadeGamesChannelId: arcadeGamesChannel.id,
+				partyGamesChannelId: partyGamesChannel.id,
+				arcadeRatedChallengesChannelId: arcadeRatedChallengesChannel.id,
+				deroMarketChannelId: deroMarketChannel.id,
+				arcadeVoiceChannelId: arcadeVoiceChannel.id,
+			},
+			objects: { arcadeRulesChannel, arcadeChallengesChannel, arcadeGamesChannel, partyGamesChannel, arcadeRatedChallengesChannel, deroMarketChannel, arcadeVoiceChannel },
+		};
+	}
+
+	// 🏰 DERO HEADQUARTERS' channels (2026-10 item 257 Phase 2a), so admin controls sit
+	// apart from the members'. ⚠️ NOTE THE PARENT, as with the arcade's: category is
+	// Headquarters here. Admin only, except 🗒️admin-log, which only the bot writes.
+	private static async createHeadquartersChannels(
+		guild: Guild,
+		category: CategoryChannel,
+		postures: IChannelPostures
+	): Promise<IBuiltGroup<IHeadquartersChannelIds, IHeadquartersChannelObjects>> {
+		const [adminChannel, adminLogChannel, deroConfigChannel, onboardingConfigChannel, arcadeControlChannel, serverConfigChannel] = await Promise.all([
+			// 🔒inner-sanctum.
+			guild.channels.create({
+				name: channels.admin,
+				type: ChannelType.GuildText,
+				parent: category.id,
+				permissionOverwrites: postures.admin,
+			}),
+			// 🗒️admin-log (post-launch plan item 11), the bot write only audit trail.
+			guild.channels.create({
+				name: channels.adminLog,
+				type: ChannelType.GuildText,
+				parent: category.id,
+				permissionOverwrites: postures.adminLog,
+			}),
+			guild.channels.create({
+				name: channels.deroConfig,
+				type: ChannelType.GuildText,
+				parent: category.id,
+				permissionOverwrites: postures.admin,
+			}),
+			guild.channels.create({
+				name: channels.onboardingConfig,
+				type: ChannelType.GuildText,
+				parent: category.id,
+				permissionOverwrites: postures.admin,
+			}),
+			guild.channels.create({
+				name: channels.arcadeControl,
+				type: ChannelType.GuildText,
+				parent: category.id,
+				permissionOverwrites: postures.admin,
+			}),
+			// 🛠️server-config, the fourth (2026-10 item 263 Phase 4a); a fresh server never gets 🎛️admin-controls.
+			guild.channels.create({
+				name: channels.serverConfig,
+				type: ChannelType.GuildText,
+				parent: category.id,
+				permissionOverwrites: postures.admin,
+			}),
+		]);
+
+		return {
+			ids: {
+				headquartersCategoryId: category.id,
+				adminChannelId: adminChannel.id,
+				adminLogChannelId: adminLogChannel.id,
+				deroConfigChannelId: deroConfigChannel.id,
+				onboardingConfigChannelId: onboardingConfigChannel.id,
+				arcadeControlChannelId: arcadeControlChannel.id,
+				serverConfigChannelId: serverConfigChannel.id,
+			},
+			objects: { adminChannel, adminLogChannel, deroConfigChannel, onboardingConfigChannel, arcadeControlChannel, serverConfigChannel },
+		};
+	}
+
 	// ── populate channels with initial content ────────────────
-	// What:  post the six intro embeds, one per homebase channel, and return
-	//        the resulting message ids so autoSetup can persist them on the
-	//        GuildConfig row.
-	// Who:   autoSetup (fresh build, Path A) and autoSetup (in place rebuild,
-	//        Path B via ensureHomebase → rebuildFromStaleConfig).
+	// What:  post the intro of every channel a first build made, one group per category,
+	//        and return the message ids so runAutoSetup can persist them on the
+	//        GuildConfig row. A group the build did not make (a reused category, null
+	//        here) posts nothing: its kept channels already hold their intros.
+	// Who:   runAutoSetup (fresh build, path A, and in place rebuild, path B).
 	// When:  exactly once per build. Subsequent boots edit the stored ids in
 	//        place via refreshIntroEmbeds rather than reposting.
 	// Where: scheduleMessage keeps its special treatment, it is still the
 	//        anchor the ScheduleBoard edits in place, and pinning is still
-	//        best effort. The other five ids are new surface, driven by the
-	//        introMessageIds field added to GuildConfig for boot time copy
-	//        refreshes.
-	// How:   Promise.all returns the messages in the same order we send them.
-	//        We destructure with names so adding a seventh channel later does
-	//        not silently shift positional indexes.
+	//        best effort. Every other id lands on introMessageIds for boot time
+	//        copy refreshes.
+	// How:   each group's Promise.all returns its messages in the order they were sent,
+	//        destructured by name so adding a channel later does not shift positions.
 	private static async populateChannels(
 		guild: Guild,
-		discordChannels: IChannelObjects,
+		built: { homebase: IHomebaseChannelObjects; arcade: IArcadeChannelObjects | null; headquarters: IHeadquartersChannelObjects | null },
 		// Which of 👋welcome and 📘rules the server already had, and the row whose
 		// saved rules the rules post shows (2026-10 item 247 Phase 2). An adopted
 		// channel holding the owner's content gets no intro, and its anchor stays null.
 		// adminRoleId is the role the rebuilt admin channels were granted (null on a
 		// fresh install), which decides between the welcome and the pending card.
 		options: { adoptedChannelIds: readonly string[]; rulesConfig: IRulesConfig | null; adminRoleId: string | null }
-	): Promise<{
-		scheduleMessageId: string;
-		introMessageIds: {
-			introChannelId: string;
-			commandsChannelId: string;
-			leaderboardChannelId: string;
-			scheduleChannelId: string;
-			announcementsChannelId: string;
-			adminChannelId: string;
-			nextDecreeChannelId: string;
-			// 🗒️admin-log's header, edited in place on later boots like every intro.
-			adminLogChannelId: string;
-			// Null when an adopted channel already held the owner's own content.
-			welcomeChannelId: string | null;
-			rulesChannelId: string | null;
-			// ── 🎮 ARCADE GAMES intro anchors ──
-			// Same one-key-per-channel slot every other intro gets, so
-			// refreshIntroEmbeds edits both cards in place on later boots instead of
-			// reposting them. GuildConfig declared these two keys in task 2.1.
-			arcadeRulesChannelId: string;
-			arcadeChallengesChannelId: string;
-			// 🕹️games' intro, and its second message, the Challenge Board.
-			arcadeGamesChannelId: string;
-			arcadeGamesBoardId: string;
-			// 🎉party-games' intro, above its admin buttons (post-launch plan item 3).
-			partyGamesChannelId: string;
-			// 🏆rated-challenges' intro (2026-10 item 254, Arcade 5).
-			arcadeRatedChallengesChannelId: string;
-			// 🏪dero-market's intro, above Buy coins and Sell coins (2026-10 item 267 Session 2a).
-			deroMarketChannelId: string;
-			// Second pinned message in #command-center: the standalone invite card.
-			inviteCardId: string;
-			// The two voice rooms' cards, one anchor per room like every channel's.
-			meetingVoiceChannelId: string;
-			arcadeVoiceChannelId: string;
-			// 🏰 DERO HEADQUARTERS' config channels and 💬dero-commands (2026-10 item 257 Phase 2a).
-			deroConfigChannelId: string;
-			onboardingConfigChannelId: string;
-			arcadeControlChannelId: string;
-			serverConfigChannelId: string;
-			commandOutputChannelId: string;
-		};
-	}> {
+	): Promise<{ scheduleMessageId: string; introMessageIds: Record<string, string | null> }> {
+		const [homebase, arcade, headquarters] = await Promise.all([
+			GuildSetupManager.postHomebaseIntros(guild, built.homebase, options),
+			built.arcade ? GuildSetupManager.postArcadeIntros(built.arcade) : null,
+			built.headquarters ? GuildSetupManager.postHeadquartersIntros(guild, built.headquarters, options.adminRoleId) : null,
+		]);
+		return { scheduleMessageId: homebase.scheduleMessageId, introMessageIds: { ...homebase.introMessageIds, ...arcade, ...headquarters } };
+	}
+
+	// 🪧 NOTICE BOARD's intros, the schedule anchor and the #command-center invite card.
+	private static async postHomebaseIntros(
+		guild: Guild,
+		discordChannels: IHomebaseChannelObjects,
+		options: { adoptedChannelIds: readonly string[]; rulesConfig: IRulesConfig | null }
+	): Promise<{ scheduleMessageId: string; introMessageIds: Record<string, string | null> }> {
 		const {
 			introChannel,
 			commandsChannel,
 			leaderboardChannel,
 			scheduleChannel,
 			announcementsChannel,
-			adminChannel,
 			nextDecreeChannel,
-			adminLogChannel,
 			welcomeChannel,
 			rulesChannel,
-			arcadeRulesChannel,
-			arcadeChallengesChannel,
-			arcadeGamesChannel,
-			partyGamesChannel,
-			arcadeRatedChallengesChannel,
-			deroMarketChannel,
 			meetingVoiceChannel,
-			arcadeVoiceChannel,
-			deroConfigChannel,
-			onboardingConfigChannel,
-			arcadeControlChannel,
-			serverConfigChannel,
 			commandOutputChannel,
 		} = discordChannels;
 
@@ -2958,39 +3095,16 @@ export class GuildSetupManager {
 			leaderboardMsg,
 			scheduleMessage,
 			announcementsMsg,
-			adminMsg,
 			nextDecreeMsg,
-			// 🗒️admin-log's header. Not pinned: only Dero writes there, so nothing buries it.
-			adminLogMsg,
 			// 👋welcome's intro and 📘rules' rules post, null where an adopted channel
 			// already held the owner's content. Neither is pinned: both are read only.
 			welcomeMsg,
 			rulesMsg,
-			// ── 🎮 ARCADE GAMES ───────────────────────
-			// The rules card and the challenge board intro. Neither is pinned, per
-			// the pinning policy below: both channels are read-only for members, so
-			// there is nothing to bury the bot's message under.
-			arcadeRulesMsg,
-			arcadeChallengesMsg,
-			// 🕹️games' two messages, the intro and the Challenge Board beneath it.
-			arcadeGamesMsgs,
-			// 🎉party-games' intro with the admin host and schedule buttons.
-			partyGamesMsg,
-			// 🏆rated-challenges' intro, a one line card like ⚔️challenges'.
-			arcadeRatedChallengesMsg,
-			// 🏪dero-market's intro with Buy coins and Sell coins, pinned below.
-			deroMarketMsg,
 			// Second #command-center message: the standalone invite card (pitch +
 			// Dero gif + Summon button), pinned separately from the command guide.
 			inviteCardMsg,
-			// The voice rooms' cards, /dero's Join, Leave and Status (2026-10 item 245).
+			// The meeting room's card, /dero's Join, Leave and Status (2026-10 item 245).
 			meetingVoiceMsg,
-			arcadeVoiceMsg,
-			// 🏰 DERO HEADQUARTERS' three config intros and 💬dero-commands' intro.
-			deroConfigMsg,
-			onboardingConfigMsg,
-			arcadeControlMsg,
-			serverConfigMsg,
 			commandOutputMsg,
 		] = await Promise.all([
 			// intro channel carries both the introduction embed AND the
@@ -3010,35 +3124,13 @@ export class GuildSetupManager {
 			leaderboardChannel.send({ embeds: [ChannelContent.leaderboardIntro()] }),
 			scheduleChannel.send({ embeds: [ChannelContent.scheduleIntro()] }),
 			announcementsChannel.send({ embeds: [ChannelContent.announcementsIntro()] }),
-			// The welcome when a forced rebuild granted the stored admin role, the pending
-			// card on a fresh install, through the one resolver refreshIntroEmbeds also reads,
-			// so the boot refresh never replaces a welcome with a pending card or the reverse
-			// (2026-10 item 272).
-			adminChannel.send({
-				embeds: [GuildSetupManager.resolveIntroEmbed("adminChannelId", guild, options.adminRoleId) ?? ChannelContent.adminPending()],
-				components: GuildSetupManager.resolveIntroComponents("adminChannelId") ?? [],
-			}),
 			// Pinned header above the NextUpBoard posts. Pinning is best
 			// effort (see schedule channel block below). The message id
 			// is persisted on introMessageIds.nextDecreeChannelId so
 			// refreshIntroEmbeds edits it in place on every boot.
 			nextDecreeChannel.send({ embeds: [ChannelContent.nextDecreeIntro()] }),
-			adminLogChannel.send({ embeds: [ChannelContent.adminLogIntro()] }),
 			postIntroUnlessOwnerContent(welcomeChannel, "welcomeChannelId"),
 			postIntroUnlessOwnerContent(rulesChannel, "rulesChannelId"),
-			// The arcade's two cards. Ordering inside this array is load bearing:
-			// the destructure above is positional, which is exactly why every entry
-			// is named rather than indexed.
-			arcadeRulesChannel.send({ embeds: [ChannelContent.arcadeRulesIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeRulesChannelId") ?? [] }),
-			arcadeChallengesChannel.send({ embeds: [ChannelContent.arcadeChallengesIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeChallengesChannelId") ?? [] }),
-			// Chained rather than two entries in this Promise.all: the board has to land
-			// BELOW the intro, and two parallel sends to one channel arrive in either order.
-			arcadeGamesChannel
-				.send({ embeds: [ChannelContent.arcadeGamesIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeGamesChannelId") ?? [] })
-				.then(async (intro) => ({ intro, board: await arcadeGamesChannel.send(GuildSetupManager.gamesBoardContent()) })),
-			partyGamesChannel.send({ embeds: [ChannelContent.partyGamesIntro()], components: GuildSetupManager.resolveIntroComponents("partyGamesChannelId") ?? [] }),
-			arcadeRatedChallengesChannel.send({ embeds: [ChannelContent.arcadeRatedChallengesIntro()] }),
-			deroMarketChannel.send({ embeds: [ChannelContent.deroMarketIntro()], components: GuildSetupManager.resolveIntroComponents("deroMarketChannelId") ?? [] }),
 			// Standalone invite card in #command-center: short pitch + Dero gif + the
 			// Summon button. Its own message so the wide button is not crammed into
 			// the command guide's row. refreshIntroEmbeds maintains it on boot.
@@ -3048,11 +3140,6 @@ export class GuildSetupManager {
 				files: [buildDeroGifAttachment()],
 			}),
 			meetingVoiceChannel.send({ embeds: [ChannelContent.voiceRoomIntro()], components: GuildSetupManager.resolveIntroComponents("meetingVoiceChannelId") ?? [] }),
-			arcadeVoiceChannel.send({ embeds: [ChannelContent.voiceRoomIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeVoiceChannelId") ?? [] }),
-			deroConfigChannel.send({ embeds: [ChannelContent.deroConfigIntro()] }),
-			onboardingConfigChannel.send({ embeds: [ChannelContent.onboardingConfigIntro()] }),
-			arcadeControlChannel.send({ embeds: [ChannelContent.arcadeControlIntro()] }),
-			serverConfigChannel.send({ embeds: [ChannelContent.serverConfigIntro()] }),
 			commandOutputChannel.send({ embeds: [ChannelContent.commandOutputIntro()] }),
 		]);
 
@@ -3066,54 +3153,108 @@ export class GuildSetupManager {
 		try {
 			await introMsg.pin();
 		} catch (error) {
-			console.warn(LOG_MESSAGES.setup.pinScheduleIntroFailed(discordChannels.introChannel.guildId), error);
+			console.warn(LOG_MESSAGES.setup.pinScheduleIntroFailed(introChannel.guildId), error);
 		}
 		// 💬dero-commands is the other member-writable channel, so its intro is pinned too.
 		try {
 			await commandOutputMsg.pin();
 		} catch (error) {
-			console.warn(LOG_MESSAGES.setup.pinScheduleIntroFailed(discordChannels.commandOutputChannel.guildId), error);
-		}
-		// 🏪dero-market is read only, but every finished trade posts there and would bury
-		// the panel, so its intro is pinned like the two above (refreshIntroEmbeds agrees).
-		try {
-			await deroMarketMsg.pin();
-		} catch (error) {
-			console.warn(LOG_MESSAGES.setup.pinScheduleIntroFailed(discordChannels.deroMarketChannel.guildId), error);
+			console.warn(LOG_MESSAGES.setup.pinScheduleIntroFailed(commandOutputChannel.guildId), error);
 		}
 
 		return {
 			scheduleMessageId: scheduleMessage.id,
-			// mirrors the GuildConfig.introMessageIds shape so autoSetup can
-			// hand this object straight into the persist payload without
-			// reshaping.
+			// mirrors the GuildConfig.introMessageIds keys so runAutoSetup can hand the
+			// merged map straight into the persist payload without reshaping.
 			introMessageIds: {
 				introChannelId: introMsg.id,
 				commandsChannelId: commandsMsg.id,
 				leaderboardChannelId: leaderboardMsg.id,
 				scheduleChannelId: scheduleMessage.id,
 				announcementsChannelId: announcementsMsg.id,
-				adminChannelId: adminMsg.id,
 				nextDecreeChannelId: nextDecreeMsg.id,
-				adminLogChannelId: adminLogMsg.id,
+				// Null when an adopted channel already held the owner's own content.
 				welcomeChannelId: welcomeMsg?.id ?? null,
 				rulesChannelId: rulesMsg?.id ?? null,
-				arcadeRulesChannelId: arcadeRulesMsg.id,
-				arcadeChallengesChannelId: arcadeChallengesMsg.id,
-				arcadeGamesChannelId: arcadeGamesMsgs.intro.id,
-				arcadeGamesBoardId: arcadeGamesMsgs.board.id,
-				partyGamesChannelId: partyGamesMsg.id,
-				arcadeRatedChallengesChannelId: arcadeRatedChallengesMsg.id,
-				deroMarketChannelId: deroMarketMsg.id,
+				// Second pinned message in #command-center: the standalone invite card.
 				inviteCardId: inviteCardMsg.id,
 				meetingVoiceChannelId: meetingVoiceMsg.id,
-				arcadeVoiceChannelId: arcadeVoiceMsg.id,
-				deroConfigChannelId: deroConfigMsg.id,
-				onboardingConfigChannelId: onboardingConfigMsg.id,
-				arcadeControlChannelId: arcadeControlMsg.id,
-				serverConfigChannelId: serverConfigMsg.id,
 				commandOutputChannelId: commandOutputMsg.id,
 			},
+		};
+	}
+
+	// 🎮 ARCADE GAMES' intros. Neither the rules card nor the challenge boards are pinned,
+	// per the pinning policy: both channels are read-only for members, so there is
+	// nothing to bury the bot's message under. 🏪dero-market is the exception below.
+	private static async postArcadeIntros(discordChannels: IArcadeChannelObjects): Promise<Record<string, string>> {
+		const { arcadeRulesChannel, arcadeChallengesChannel, arcadeGamesChannel, partyGamesChannel, arcadeRatedChallengesChannel, deroMarketChannel, arcadeVoiceChannel } = discordChannels;
+		const [arcadeRulesMsg, arcadeChallengesMsg, arcadeGamesMsgs, partyGamesMsg, arcadeRatedChallengesMsg, deroMarketMsg, arcadeVoiceMsg] = await Promise.all([
+			arcadeRulesChannel.send({ embeds: [ChannelContent.arcadeRulesIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeRulesChannelId") ?? [] }),
+			arcadeChallengesChannel.send({ embeds: [ChannelContent.arcadeChallengesIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeChallengesChannelId") ?? [] }),
+			// 🕹️games' two messages, chained rather than two entries in this Promise.all: the
+			// Challenge Board has to land BELOW the intro, and two parallel sends to one
+			// channel arrive in either order.
+			arcadeGamesChannel
+				.send({ embeds: [ChannelContent.arcadeGamesIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeGamesChannelId") ?? [] })
+				.then(async (intro) => ({ intro, board: await arcadeGamesChannel.send(GuildSetupManager.gamesBoardContent()) })),
+			// 🎉party-games' intro with the admin host and schedule buttons.
+			partyGamesChannel.send({ embeds: [ChannelContent.partyGamesIntro()], components: GuildSetupManager.resolveIntroComponents("partyGamesChannelId") ?? [] }),
+			// 🏆rated-challenges' intro, a one line card like ⚔️challenges'.
+			arcadeRatedChallengesChannel.send({ embeds: [ChannelContent.arcadeRatedChallengesIntro()] }),
+			// 🏪dero-market's intro with Buy coins and Sell coins, pinned below.
+			deroMarketChannel.send({ embeds: [ChannelContent.deroMarketIntro()], components: GuildSetupManager.resolveIntroComponents("deroMarketChannelId") ?? [] }),
+			// The lounge's card, /dero's Join, Leave and Status (2026-10 item 245).
+			arcadeVoiceChannel.send({ embeds: [ChannelContent.voiceRoomIntro()], components: GuildSetupManager.resolveIntroComponents("arcadeVoiceChannelId") ?? [] }),
+		]);
+
+		// 🏪dero-market is read only, but every finished trade posts there and would bury
+		// the panel, so its intro is pinned like the member-writable ones (refreshIntroEmbeds agrees).
+		try {
+			await deroMarketMsg.pin();
+		} catch (error) {
+			console.warn(LOG_MESSAGES.setup.pinScheduleIntroFailed(deroMarketChannel.guildId), error);
+		}
+
+		return {
+			arcadeRulesChannelId: arcadeRulesMsg.id,
+			arcadeChallengesChannelId: arcadeChallengesMsg.id,
+			// 🕹️games' intro, and its second message, the Challenge Board.
+			arcadeGamesChannelId: arcadeGamesMsgs.intro.id,
+			arcadeGamesBoardId: arcadeGamesMsgs.board.id,
+			partyGamesChannelId: partyGamesMsg.id,
+			arcadeRatedChallengesChannelId: arcadeRatedChallengesMsg.id,
+			deroMarketChannelId: deroMarketMsg.id,
+			arcadeVoiceChannelId: arcadeVoiceMsg.id,
+		};
+	}
+
+	// 🏰 DERO HEADQUARTERS' intros. None is pinned: only admins and Dero post there.
+	private static async postHeadquartersIntros(guild: Guild, discordChannels: IHeadquartersChannelObjects, adminRoleId: string | null): Promise<Record<string, string>> {
+		const { adminChannel, adminLogChannel, deroConfigChannel, onboardingConfigChannel, arcadeControlChannel, serverConfigChannel } = discordChannels;
+		const [adminMsg, adminLogMsg, deroConfigMsg, onboardingConfigMsg, arcadeControlMsg, serverConfigMsg] = await Promise.all([
+			// The welcome when a forced rebuild granted the stored admin role, the pending
+			// card on a fresh install, through the one resolver refreshIntroEmbeds also reads,
+			// so the boot refresh never replaces a welcome with a pending card or the reverse
+			// (2026-10 item 272).
+			adminChannel.send({
+				embeds: [GuildSetupManager.resolveIntroEmbed("adminChannelId", guild, adminRoleId) ?? ChannelContent.adminPending()],
+				components: GuildSetupManager.resolveIntroComponents("adminChannelId") ?? [],
+			}),
+			// 🗒️admin-log's header, edited in place on later boots like every intro.
+			adminLogChannel.send({ embeds: [ChannelContent.adminLogIntro()] }),
+			deroConfigChannel.send({ embeds: [ChannelContent.deroConfigIntro()] }),
+			onboardingConfigChannel.send({ embeds: [ChannelContent.onboardingConfigIntro()] }),
+			arcadeControlChannel.send({ embeds: [ChannelContent.arcadeControlIntro()] }),
+			serverConfigChannel.send({ embeds: [ChannelContent.serverConfigIntro()] }),
+		]);
+		return {
+			adminChannelId: adminMsg.id,
+			adminLogChannelId: adminLogMsg.id,
+			deroConfigChannelId: deroConfigMsg.id,
+			onboardingConfigChannelId: onboardingConfigMsg.id,
+			arcadeControlChannelId: arcadeControlMsg.id,
+			serverConfigChannelId: serverConfigMsg.id,
 		};
 	}
 
