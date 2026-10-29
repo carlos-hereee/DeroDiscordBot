@@ -105,7 +105,7 @@ describe("firing", () => {
 		await handleFire(interaction, makeRoom(freshMatch()));
 
 		const [modal] = shownModals(interaction);
-		expect(modal.custom_id).toBe("gameroomModal:turn:room-1:b0");
+		expect(modal.custom_id).toBe("gameroomModal:turn:room-1:b0m0");
 		const json = JSON.stringify(modal.components);
 		expect(json).toContain("Column (A to J)");
 		expect(json).toContain("Row (1 to 10)");
@@ -283,7 +283,17 @@ describe("the setup modal", () => {
 		expect(mine).toBe(fleetFingerprint(match.players[0]));
 		expect(mine).not.toBe(theirs);
 		expect(mine).not.toContain(":");
-		expect(battleshipTurnAdapter.memberFingerprintOf?.(makeRoom(freshMatch()), A)).toBe("b0");
+		expect(battleshipTurnAdapter.memberFingerprintOf?.(makeRoom(freshMatch()), A)).toBe("b0m0");
+	});
+
+	// 2026-10 item 267: a turn that runs out fires no shot, so the turn after it must still
+	// read as a new turn, or the next captain is never pinged and the old line never retires.
+	it("gives the turn after an expired turn a new fingerprint", () => {
+		const before = battleshipTurnAdapter.fingerprintOf(makeRoom(freshMatch()));
+		const expired: StoredBattleship = { ...freshMatch(), turn: 1, missedTurns: [1, 0] };
+		const after = battleshipTurnAdapter.fingerprintOf(makeRoom(expired));
+		expect(after).not.toBe(before);
+		expect(after).not.toContain(":");
 	});
 });
 

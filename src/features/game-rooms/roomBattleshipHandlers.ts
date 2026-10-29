@@ -501,6 +501,14 @@ const RANK_FIELD = "rank";
 
 const shotsFired = (state: BattleshipState): number => state.players[0].shots.size + state.players[1].shots.size;
 
+// A battle turn ends with a shot (shotsFired rises) or with its clock running out (the
+// missed count rises; it falls back only when a shot resets it), so the pair changes on
+// EVERY turn. Shots alone did not: an expired turn handed the next captain the same
+// fingerprint, so syncTurnPrompt took it for the same turn, posted no new "your turn" line
+// and never retired the old one (found by 2026-10 item 267 Session 4).
+const battleTurnFingerprint = (stored: StoredBattleship): string =>
+	`b${shotsFired(deserializeMatch(stored))}m${stored.missedTurns[0] + stored.missedTurns[1]}`;
+
 export const battleshipTurnAdapter: TurnAdapter = {
 	game: "battleship",
 	whoseTurn(room) {
@@ -517,7 +525,7 @@ export const battleshipTurnAdapter: TurnAdapter = {
 		const stored = storedMatch(room);
 		if (!stored) return null;
 		if (stored.status === "setup") return SETUP_PRESS_FINGERPRINT;
-		return stored.status === "playing" ? `b${shotsFired(deserializeMatch(stored))}` : null;
+		return stored.status === "playing" ? battleTurnFingerprint(stored) : null;
 	},
 	memberFingerprintOf(room, userId) {
 		const stored = storedMatch(room);
