@@ -13,7 +13,10 @@ import { chipWalletStore } from "@db/stores/chipWalletStore.js";
 // How, per row: ① claim it with a conditional write that stamps migratedAt and
 // migratedAmount and matches only while it is unclaimed; ② only when this boot won the
 // claim, credit the member's global row with its chips and claimed total, keeping the
-// later last claim. A second boot finds every row claimed and writes nothing.
+// later last claim. A second boot finds every row claimed and writes nothing. A member
+// whose rows never held a claim keeps a null last claim, so their 25,000 first claim is
+// still owed (owner decision of 2026-10-29: a member who only ever got vault chips or a
+// cash out has not had their first claim).
 //
 // ⚠️ MONEY INVARIANT: CLAIM, THEN CREDIT, never the other way. A crash between ① and ②
 // loses that ONE row's credit, and the row's migratedAmount says exactly what to restore
@@ -24,10 +27,6 @@ import { chipWalletStore } from "@db/stores/chipWalletStore.js";
 // with Object.entries or a spread reads Mongoose internals, not the stored fields
 // (item 263's f9a6a74).
 
-// The last claim a merged member who never claimed in any server is given. The owner's
-// decision makes every member the migration gives a global row one who has had their first
-// claim, and only a non null lastClaimAt says so; the epoch keeps the daily claim open at once.
-const NEVER_CLAIMED_AT = new Date(0);
 
 /** What one boot of the migration did. */
 export interface GlobalWalletMigrationResult {
@@ -73,7 +72,7 @@ async function mergeRow(row: ServerWalletRow, now: Date, result: GlobalWalletMig
 
 	// ②
 	try {
-		await chipWalletStore.mergeIntoGlobal({ userId: row.userId }, { amount, totalClaimed: row.totalClaimed ?? 0, lastClaimAt: row.lastClaimAt ?? NEVER_CLAIMED_AT });
+		await chipWalletStore.mergeIntoGlobal({ userId: row.userId }, { amount, totalClaimed: row.totalClaimed ?? 0, lastClaimAt: row.lastClaimAt ?? null });
 		result.rowsMerged += 1;
 		result.chipsMerged += amount;
 	} catch (error) {

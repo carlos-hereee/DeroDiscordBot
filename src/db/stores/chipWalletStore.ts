@@ -27,7 +27,8 @@ export interface WalletKey {
 export interface MigratedCredit {
 	amount: number;
 	totalClaimed: number;
-	lastClaimAt: Date;
+	/** The row's last claim, or null when the member never claimed in that server. */
+	lastClaimAt: Date | null;
 }
 
 const isDuplicateKey = (error: unknown): boolean => (error as { code?: number })?.code === DUPLICATE_KEY_CODE;
@@ -132,6 +133,11 @@ export const chipWalletStore = {
 
 	/** Add one claimed row to the member's global wallet: its chips, its claimed total, and its last claim when later. */
 	async mergeIntoGlobal(key: WalletKey, credit: MigratedCredit): Promise<void> {
-		await ChipWallet.updateOne(globalRow(key), { $inc: { balance: credit.amount, totalClaimed: credit.totalClaimed }, $max: { lastClaimAt: credit.lastClaimAt } }, { upsert: true });
+		// A row that never held a claim adds no last claim: leaving the field unset (null) keeps
+		// the member's first claim owed, which claimFirst matches on lastClaimAt null.
+		const update = credit.lastClaimAt
+			? { $inc: { balance: credit.amount, totalClaimed: credit.totalClaimed }, $max: { lastClaimAt: credit.lastClaimAt } }
+			: { $inc: { balance: credit.amount, totalClaimed: credit.totalClaimed } };
+		await ChipWallet.updateOne(globalRow(key), update, { upsert: true });
 	},
 };

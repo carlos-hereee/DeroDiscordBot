@@ -47,9 +47,10 @@ beforeEach(() => {
 		claimedRowIds.add(String(rowId));
 		return true;
 	});
-	mocks.mergeIntoGlobal.mockReset().mockImplementation(async (key: { userId: string }, credit: { amount: number; totalClaimed: number; lastClaimAt: Date }) => {
+	mocks.mergeIntoGlobal.mockReset().mockImplementation(async (key: { userId: string }, credit: { amount: number; totalClaimed: number; lastClaimAt: Date | null }) => {
 		const current = globals.get(key.userId) ?? { balance: 0, totalClaimed: 0, lastClaimAt: null };
-		const later = current.lastClaimAt && current.lastClaimAt.getTime() > credit.lastClaimAt.getTime() ? current.lastClaimAt : credit.lastClaimAt;
+		// The store's $max: a null credit leaves the stored last claim as it is.
+		const later = !credit.lastClaimAt || (current.lastClaimAt && current.lastClaimAt.getTime() > credit.lastClaimAt.getTime()) ? current.lastClaimAt : credit.lastClaimAt;
 		globals.set(key.userId, { balance: current.balance + credit.amount, totalClaimed: current.totalClaimed + credit.totalClaimed, lastClaimAt: later });
 	});
 });
@@ -103,13 +104,25 @@ describe("migrateGlobalChipWallets", () => {
 		expect(mocks.claimServerRowForMigration.mock.invocationCallOrder[0]).toBeLessThan(mocks.mergeIntoGlobal.mock.invocationCallOrder[0]);
 	});
 
-	// The owner's decision: a member the migration gives a global row has had their first claim.
-	it("marks a member who never claimed in any server as having claimed, so the first claim is spent", async () => {
+	// Owner decision of 2026-10-29: a member who never claimed in any server (only vault chips
+	// or a cash out) still has their first claim owed after the merge.
+	it("keeps a member who never claimed in any server owed their first claim", async () => {
 		rows = [ChipWallet.hydrate({ _id: new Types.ObjectId(), guildId: "gA", userId: "u1", balance: 2_000, lastClaimAt: null, totalClaimed: 0 })];
 
 		await migrateGlobalChipWallets(NOW);
 
-		expect(globals.get("u1")?.lastClaimAt).toEqual(new Date(0));
+		expect(globals.get("u1")).toEqual({ balance: 2_000, totalClaimed: 0, lastClaimAt: null });
+	});
+
+	it("keeps the real last claim when only one of a member's servers ever claimed", async () => {
+		rows = [
+			ChipWallet.hydrate({ _id: new Types.ObjectId(), guildId: "gA", userId: "u1", balance: 2_000, lastClaimAt: null, totalClaimed: 0 }),
+			ChipWallet.hydrate({ _id: new Types.ObjectId(), guildId: "gB", userId: "u1", balance: 26_000, lastClaimAt: EARLY_CLAIM, totalClaimed: 25_000 }),
+		];
+
+		await migrateGlobalChipWallets(NOW);
+
+		expect(globals.get("u1")?.lastClaimAt).toEqual(EARLY_CLAIM);
 	});
 
 	it("counts a credit that failed after its claim, and keeps going with the next row", async () => {
