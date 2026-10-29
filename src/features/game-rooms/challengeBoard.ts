@@ -34,10 +34,11 @@ import {
 	readPrivateQuotaStatus,
 	soloLuckSlugFor,
 	type SoloOpenResult,
+	freeSeatsOf,
 	startBlackjackRoomBoard,
 	startSoloBlackjackBoard,
 } from "./soloRooms.js";
-import { resolveRoomChannel } from "./roomTrail.js";
+import { resolveRoomChannel, roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { rematchedResultEmbed, roomOpenerLogo, roomResultEmbed } from "./gameRoomsEmbeds.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -51,12 +52,27 @@ import {
 	isDeroPlayable,
 	type DraftSettingAction,
 } from "./challengeBoardEmbeds.js";
-import { isSoloRematchGame, offersReferee, refereeOn, type GameSlug, type RoomVisibility } from "./roomTypes.js";
+import { isBlackjackRoomGame, isBuyInGame, isSoloRematchGame, offersReferee, refereeOn, type GameSlug, type RoomVisibility } from "./roomTypes.js";
 import { effectiveSpectatorMode } from "./roomPermissions.js";
 import { cardStateFor, challengeCardLink, editOpenerCard, readChallengeChannelIds, refreshCard, resolveChallengesChannel, type ChallengeChannelIds } from "./challengeCard.js";
 import { asChallengeReach, isWithinReach, readChallengeReach } from "./challengeReach.js";
 import { isKicked, judgeJoin } from "./joinGate.js";
-import { buyInModal, chargeJoiner, draftBuyInOf, isChipDraft, isValidDraftBuyIn, refundAllJoiners, refundJoiners, refundOpenedSeats, seatsAtStart, settleDraftBuyIns, submittedBuyIn } from "./holdemDraftBuyIn.js";
+import {
+	buyInModal,
+	chargeJoiner,
+	chargeSeats,
+	draftBuyInOf,
+	isChipDraft,
+	isValidDraftBuyIn,
+	refundAllJoiners,
+	refundJoiners,
+	refundOpenedSeats,
+	refundSeatsDirectly,
+	seatsAtStart,
+	settleDraftBuyIns,
+	submittedBuyIn,
+	type PaidSeats,
+} from "./holdemDraftBuyIn.js";
 import {
 	bandOfMatch,
 	buildSettingsModal,
@@ -76,7 +92,8 @@ import {
 	type SettingsMode,
 } from "./challengeSettings.js";
 import { applyApproval, applyRatingBand, applySpectatorMode } from "./hostControls.js";
-import { parseChipAmount } from "@features/economy/chipWallet.js";
+import { parseChipAmount, takeChips } from "@features/economy/chipWallet.js";
+import { chipTableFor } from "./holdemChips.js";
 import { isRatedGame } from "@features/ratings/ratingEngine.js";
 import type { SoloLuckGame } from "@features/games/soloLuck.js";
 import { consentPrompt, isGuildBanned, isUserBanned, readNetworkGuild } from "./networkRules.js";
@@ -801,10 +818,10 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
 	}
-	// A Hold'em chip table is paid for on the card (2026-10 item 257 Phase 4a): the buy in leaves the
-	// wallet now, whether the joiner goes straight in or waits for the host, and goes back if they
-	// are declined, removed, or the challenge is cancelled.
-	if (room.game === "holdem") {
+	// A Hold'em or Blackjack chip table is paid for on the card (2026-10 item 257 Phase 4a, item 267):
+	// the buy in leaves the wallet now, whether the joiner goes straight in or waits for the host,
+	// and goes back if they are declined, removed, or the challenge is cancelled.
+	if (isBuyInGame(room.game)) {
 		const unpaid = await chargeJoiner(room, actorId);
 		if (unpaid) {
 			await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [unpaid] });
@@ -845,7 +862,7 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 export async function acceptBuyIn(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const actorId = interaction.user.id;
 	const notice = (text: string) => showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [text] });
-	const invited = room.game === "holdem" && room.visibility === "invite" && actorId !== room.hostId && (room.spectatorIds ?? []).includes(actorId) && !isKicked(room, actorId);
+	const invited = isBuyInGame(room.game) && room.visibility === "invite" && actorId !== room.hostId && (room.spectatorIds ?? []).includes(actorId) && !isKicked(room, actorId);
 	if (!invited) return notice(gameRoomsCopy.holdem.acceptOnlyInvited);
 	if ((room.buyInPaidBy ?? []).includes(actorId)) return notice(gameRoomsCopy.holdem.buyInAlreadyPaid);
 	// A table that plays free seats every pool member at Start, so the invited member is in already.
@@ -1082,8 +1099,9 @@ async function provisionFromDraft(
 	const spectatorIds = effectiveSpectatorMode(room.visibility, room.spectatorMode) === "invite" ? others : [];
 	const botIds = botSeatIdsFor(room.game, playerIds.length, room.botSeats ?? 0);
 
-	// A Hold'em chip table seats everyone who paid on the card, and charges the host their own
-	// seat here (item 257 Phase 4a); a short wallet stops the start before any channel exists.
+	// A Hold'em or Blackjack chip table seats everyone who paid on the card, and charges the host
+	// their own seat here (item 257 Phase 4a, item 267); a short wallet stops the start before any
+	// channel exists.
 	const settled = await settleDraftBuyIns(room, pool);
 	// A short wallet is a state, so a notice titled for the room, never a ping.
 	if (!settled.ok) {
@@ -1111,7 +1129,7 @@ async function provisionFromDraft(
 		existingRoomId: room.roomId,
 		monopolyAuctions: room.monopolyAuctions ?? false,
 		botIds,
-		holdemSeats: paidSeats ?? undefined,
+		holdemSeats: room.game === "holdem" ? (paidSeats ?? undefined) : undefined,
 	});
 
 	if (!result.ok) {
@@ -1122,9 +1140,10 @@ async function provisionFromDraft(
 	// The ledger is settled: those buy ins are stacks at the table now, paid back by the table.
 	if (paidSeats) await gameRoomStore.update(room.guildId, room.roomId, { buyInPaidBy: [] });
 
-	// A Blackjack table is dealt once its room is up (2026-10 item 254, Arcade 1), every
-	// gathered player seated; a table that cannot start has already closed its room.
-	if (room.game === "blackjack" && !(await startBlackjackRoomBoard(guild, result.room, result.channel))) {
+	// A Blackjack table opens once its room is up (2026-10 item 254, Arcade 1): on a chip table
+	// every seat the card paid for, on a free one every gathered player (item 267). A table that
+	// cannot start has already closed its room and given its stacks back.
+	if (room.game === "blackjack" && !(await startBlackjackRoomBoard(guild, result.room, result.channel, paidSeats ?? freeSeatsOf(result.room)))) {
 		await answer.send({ embeds: [errorEmbed(gameRoomsCopy.errors.createFailed)] });
 		return;
 	}
@@ -1174,20 +1193,34 @@ export async function rematchFromRoom(interaction: ButtonInteraction, room: IGam
 	// run past the three second interaction window. Deferring the UPDATE (rather than a
 	// reply) is what lets ③ edit the result card the button lives on.
 	await interaction.deferUpdate();
+	// A Blackjack rematch's buy ins (2026-10 item 267): the host's was taken in checkRematch, the
+	// others' are taken just before the deal. Until the table's ledger holds them, a failure gives
+	// them back from here; once the table opened, its ledger and finish do.
+	const charge: RematchCharge = { seats: check.hostSeats, ledgered: false };
 	try {
-		const failure = await playRematchInPlace(interaction, room, check.channel);
-		if (failure) await answerInChannel(interaction, "member", { content: failure });
+		const failure = await playRematchInPlace(interaction, room, check.channel, charge);
+		if (failure) {
+			if (!charge.ledgered && charge.seats) await refundSeatsDirectly(charge.seats);
+			await answerInChannel(interaction, "member", { content: failure });
+		}
 	} catch (error) {
 		// A Mongo or Discord failure mid way. Whatever was written is safe to leave (see
 		// Where above): a new row that never reached "playing" is a draft the idle sweep
 		// closes, and its channel is archived through it.
 		console.error("[game-rooms] rematch failed", { guildId: room.guildId, roomId: room.roomId, error });
+		if (!charge.ledgered && charge.seats) await refundSeatsDirectly(charge.seats);
 		await answerInChannel(interaction, "member", { content: gameRoomsCopy.errors.createFailed });
 	}
 }
 
+// The chips a Blackjack rematch has taken so far, and whether its table's ledger holds them yet.
+interface RematchCharge {
+	seats: PaidSeats | null;
+	ledgered: boolean;
+}
+
 type RematchCheck =
-	| { ok: true; channel: TextChannel }
+	| { ok: true; channel: TextChannel; hostSeats: PaidSeats | null }
 	| { ok: false; reply: { content: string } | { embeds: EmbedBuilder[] } };
 
 // ① Every reason to refuse a rematch, checked before anything is written. On success it
@@ -1228,12 +1261,42 @@ async function checkRematch(interaction: ButtonInteraction, room: IGameRoom): Pr
 	// reach) is a state, so it opens as a titled notice rather than an error embed (R3-12).
 	if (admission) return { ok: false, reply: { content: describeRoomOpenFailure(admission) } };
 
-	return { ok: true, channel };
+	// A Blackjack rematch takes a fresh buy in (2026-10 item 267, decision 8), the presser's at the
+	// press, LAST, so no refusal above has to give it back. A short wallet is a state, refused here.
+	const hostSeats = isBlackjackRoomGame(room.game) ? await chargeRematchHost(room, interaction.user.id) : null;
+	if (hostSeats && "refusal" in hostSeats) return { ok: false, reply: { content: hostSeats.refusal } };
+
+	return { ok: true, channel, hostSeats };
+}
+
+// The rematch host's buy in: the finished table's, on a server where the table plays for chips.
+// A free table charges nobody and still answers its seats, so the deal knows what it plays for.
+async function chargeRematchHost(room: IGameRoom, hostId: string): Promise<PaidSeats | { refusal: string }> {
+	const buyIn = draftBuyInOf(room);
+	const chips = await chipTableFor(room, false);
+	if (!chips) return { buyIn, userIds: [hostId], charged: false };
+	if (!(await takeChips({ userId: hostId }, buyIn))) return { refusal: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
+	return { buyIn, userIds: [hostId], charged: true };
+}
+
+// The rest of a Blackjack rematch's seats, after the host's: on a chip table every returning
+// player is charged the same buy in again, and one who cannot pay is left out with a line in the
+// room saying so; on a free table everyone sits.
+async function seatRematchPlayers(client: Client, room: IGameRoom, hostSeats: PaidSeats): Promise<PaidSeats> {
+	const others = room.playerIds.filter((userId) => userId !== room.hostId);
+	if (!hostSeats.charged) return { ...hostSeats, userIds: [room.hostId, ...others] };
+	const { paid, short } = await chargeSeats(others, hostSeats.buyIn);
+	for (const userId of short) {
+		await roomTrail
+			.postMove(client, room, { actorId: userId, kind: "system", text: gameRoomsCopy.trail.blackjackRematchShort(userId, hostSeats.buyIn) })
+			.catch((error) => console.warn("[game-rooms] the rematch buy in line could not be posted", { roomId: room.roomId, error }));
+	}
+	return { ...hostSeats, userIds: [room.hostId, ...paid] };
 }
 
 // ② to ⑤. Returns the sentence to tell the presser when the rematch could not start,
 // or null once the new match is playable.
-async function playRematchInPlace(interaction: ButtonInteraction, finished: IGameRoom, channel: TextChannel): Promise<string | null> {
+async function playRematchInPlace(interaction: ButtonInteraction, finished: IGameRoom, channel: TextChannel, charge: RematchCharge): Promise<string | null> {
 	const guild = interaction.guild!;
 	const hostId = interaction.user.id;
 
@@ -1273,16 +1336,21 @@ async function playRematchInPlace(interaction: ButtonInteraction, finished: IGam
 		botIds: botSeatIdsFor(next.game, next.playerIds.length, next.botSeats ?? 0),
 	});
 
-	if (next.game === "solo-blackjack") {
+	// A Blackjack rematch opens its table the way its first match did, every seat paid again
+	// (2026-10 item 267). From the deal on, the table's ledger owns the buy ins: a table that
+	// cannot start closes its room, and finish gives the stacks back.
+	if (next.game === "solo-blackjack" && charge.seats) {
 		const member = guild.members.cache.get(hostId);
 		const displayName = member?.displayName ?? interaction.user.globalName ?? interaction.user.username;
-		if (!(await startSoloBlackjackBoard(guild, started, channel, { userId: hostId, displayName }))) {
+		charge.ledgered = true;
+		if (!(await startSoloBlackjackBoard(guild, started, channel, { userId: hostId, displayName }, charge.seats))) {
 			return gameRoomsCopy.errors.createFailed;
 		}
 	}
-	// A multi seat table deals its rematch the way its first match was dealt.
-	if (next.game === "blackjack" && !(await startBlackjackRoomBoard(guild, started, channel))) {
-		return gameRoomsCopy.errors.createFailed;
+	if (next.game === "blackjack" && charge.seats) {
+		charge.seats = await seatRematchPlayers(interaction.client, started, charge.seats);
+		charge.ledgered = true;
+		if (!(await startBlackjackRoomBoard(guild, started, channel, charge.seats))) return gameRoomsCopy.errors.createFailed;
 	}
 	return null;
 }
@@ -1323,6 +1391,8 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 			// And the same people watch (2026-10 item 254, Arcade 11): the rematch's unlock
 			// and its invite follow the setting the host chose for the first match.
 			spectatorMode: finished.spectatorMode ?? null,
+			// A Blackjack rematch charges the same buy in again (2026-10 item 267, decision 8).
+			holdemBuyIn: finished.holdemBuyIn ?? null,
 		});
 	} catch (error) {
 		// Almost certainly the partial unique index catching a room the presser opened

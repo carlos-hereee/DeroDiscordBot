@@ -54,7 +54,7 @@ const DECIDED: Record<SettingsGame, SettingField[]> = {
 	diceroll: ["join", "watch", "opponent"],
 	rps: ["join", "watch", "opponent"],
 	hangman: ["join", "watch"],
-	blackjack: ["join", "watch"],
+	blackjack: ["join", "watch", "buyIn"],
 	battleship: ["join", "watch", "match"],
 	holdem: ["join", "watch", "match", "buyIn", "referee"],
 	monopoly: ["join", "watch", "match", "table"],

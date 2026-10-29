@@ -65,7 +65,12 @@ export type SoloLuckSlug = (typeof SOLO_LUCK_GAMES)[number];
 // the card or the 🕹️games row instead. Read by the result card and the rematch check alike.
 export const SOLO_REMATCH_GAMES = ["solo-hangman", "solo-blackjack", "solo-rps"] as const satisfies readonly GameSlug[];
 
+// The challenge card games whose table plays for a chip buy in, set on the card and paid on
+// Join (holdemDraftBuyIn): Hold'em, and Blackjack since 2026-10 item 267.
+export const BUY_IN_GAMES = ["holdem", "blackjack"] as const satisfies readonly GameSlug[];
+
 export const isBlackjackRoomGame = (game: GameSlug): boolean => (BLACKJACK_ROOM_GAMES as readonly GameSlug[]).includes(game);
+export const isBuyInGame = (game: GameSlug): boolean => (BUY_IN_GAMES as readonly GameSlug[]).includes(game);
 export const isSoloLuckGame = (game: GameSlug): game is SoloLuckSlug => (SOLO_LUCK_GAMES as readonly GameSlug[]).includes(game);
 export const isSoloRematchGame = (game: GameSlug): boolean => (SOLO_REMATCH_GAMES as readonly GameSlug[]).includes(game);
 

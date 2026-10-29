@@ -6,18 +6,23 @@ import { parseChipAmount, returnChips, takeChips } from "@features/economy/chipW
 import { chipTableFor } from "./holdemChips.js";
 import { GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { isBuyInGame } from "./roomTypes.js";
 
 // ── holdemDraftBuyIn ─────────────────────────────────────────────────
-// What:  the Hold'em buy in on the CHALLENGE CARD (2026-10 item 257 Phase 4a, owner item 13):
-//        the host sets the amount on the draft, every joiner pays it from their wallet when
-//        they press Join, and whoever the host declines or removes, or a cancelled draft,
-//        gets it back. The room then opens with those seats already paid. The in room Set
-//        the buy in row this replaces is gone.
+// What:  the buy in of a chip table, for BOTH Hold'em (2026-10 item 257 Phase 4a, owner item
+//        13) and Blackjack (2026-10 item 267, owner decision 6), keyed by the room's game: the
+//        host sets the amount on the draft, every joiner pays it from their wallet when they
+//        press Join (or an invited member's Accept and buy in), and whoever the host declines
+//        or removes, or a cancelled draft, gets it back. The room then opens with those seats
+//        already paid. A solo Blackjack table pays the standard buy in at the press instead
+//        (chargeSoloTable), and a Blackjack rematch charges every returning player again
+//        (chargeSeats). The file keeps its Hold'em name because Hold'em is where it started.
 // Who:   challengeBoard (the host's press and its modal, the Join charge, an invited member's
-//        Accept and buy in, the cancel refund, the seats at Start),
-//        hostControls (decline and remove refunds), and RoomProvisioner (seating the paid).
-// Does NOT: decide the cards or the stacks (the engine seats a paid member at the buy in
-//        through joinTable) or move chips at a running table (holdemChips does that).
+//        Accept and buy in, the cancel refund, the seats at Start, a rematch's charge),
+//        hostControls (decline and remove refunds), RoomProvisioner (seating a paid Hold'em
+//        table), soloRooms (seating a paid Blackjack table) and arcadeHost (the solo press).
+// Does NOT: decide the cards or the stacks (each engine seats a paid member at the buy in)
+//        or move chips at a running table (holdemChips and blackjackChips do that).
 //
 // ⚠️ THE ROW IS THE LEDGER. `buyInPaidBy` lists the members whose wallet was charged and
 // has not been given back, and every refund CLAIMS its entry first (takeBuyInPaid, one
@@ -45,7 +50,7 @@ export function isValidDraftBuyIn(amount: number): boolean {
  * charge, so an admin switching chips off mid draft stops charging joiners at once.
  */
 export async function isChipDraft(room: Pick<IGameRoom, "game" | "guildId" | "network" | "botSeats">): Promise<boolean> {
-	if (room.game !== "holdem") return false;
+	if (!isBuyInGame(room.game)) return false;
 	return (await chipTableFor(room, (room.botSeats ?? 0) > 0)) !== null;
 }
 
@@ -113,7 +118,7 @@ export async function refundJoiners(room: Pick<IGameRoom, "guildId" | "roomId" |
 			const claimed = await gameRoomStore.takeBuyInPaid(room.guildId, room.roomId, userId);
 			if (claimed) await returnChips({ userId }, buyIn);
 		} catch (error) {
-			console.error("[game-rooms] a hold em buy in could not be refunded", { guildId: room.guildId, roomId: room.roomId, userId, error });
+			console.error("[game-rooms] a table buy in could not be refunded", { guildId: room.guildId, roomId: room.roomId, userId, error });
 		}
 	}
 }
@@ -151,7 +156,7 @@ export async function seatsAtStart(room: IGameRoom, pool: readonly string[]): Pr
 }
 
 /**
- * Settle a Hold'em draft's buy ins as the room opens. A chip draft charges the host (their seat
+ * Settle a Hold'em or Blackjack draft's buy ins as the room opens. A chip draft charges the host (their seat
  * is paid like everyone's) and answers the members who paid on the card and are still in the
  * pool, host first, giving back any payment whose member left the pool. A draft that plays free
  * (chips off, a network table, or a Dero bot seat, which the rulebook says plays free) gives
@@ -163,7 +168,7 @@ export async function seatsAtStart(room: IGameRoom, pool: readonly string[]): Pr
  * with Dero bots opened with the bots alone and the host unseated.
  */
 export async function settleDraftBuyIns(room: IGameRoom, pool: readonly string[]): Promise<{ ok: true; seats: PaidSeats | null } | { ok: false; reason: string }> {
-	if (room.game !== "holdem") return { ok: true, seats: null };
+	if (!isBuyInGame(room.game)) return { ok: true, seats: null };
 	const buyIn = draftBuyInOf(room);
 	if (!(await isChipDraft(room))) {
 		await refundAllJoiners(room);
@@ -186,4 +191,47 @@ export async function refundOpenedSeats(room: IGameRoom, seats: PaidSeats): Prom
 	if (!seats.charged) return;
 	await returnChips({ userId: room.hostId }, seats.buyIn);
 	await refundJoiners(room, seats.userIds.filter((userId) => userId !== room.hostId));
+}
+
+/**
+ * Give every seat its buy in straight back, for seats no row ledger holds any more: a solo
+ * press whose room did not open, or a Blackjack table whose stacks ledger could not be
+ * written. Never throws: each refund is logged by name when it fails.
+ */
+export async function refundSeatsDirectly(seats: PaidSeats): Promise<void> {
+	if (!seats.charged) return;
+	for (const userId of seats.userIds) {
+		try {
+			await returnChips({ userId }, seats.buyIn);
+		} catch (error) {
+			console.error(`[game-rooms] a buy in of ${seats.buyIn} chips could not be given back to ${userId}`, error);
+		}
+	}
+}
+
+// ── a Blackjack table charged outside a card (2026-10 item 267) ──────
+/**
+ * A solo Blackjack table's buy in, taken at the press: the standard buy in where chips are on
+ * in this server, nothing where they are off (the table then plays free with a pretend stack).
+ * A short wallet is the refusal, worded for the member, and nothing was taken.
+ */
+export async function chargeSoloTable(guildId: string, userId: string): Promise<{ ok: true; seats: PaidSeats } | { ok: false; reason: string }> {
+	const buyIn = BOT_CONSTANTS.HOLDEM_STARTING_STACK;
+	if (!(await chipTableFor({ guildId, network: false }, false))) return { ok: true, seats: { buyIn, userIds: [userId], charged: false } };
+	if (!(await takeChips({ userId }, buyIn))) return { ok: false, reason: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
+	return { ok: true, seats: { buyIn, userIds: [userId], charged: true } };
+}
+
+/**
+ * Charge each of `userIds` the buy in, in order: the ones whose wallet covered it, and the ones
+ * it did not, who were charged nothing. A Blackjack rematch charges its returning players here.
+ */
+export async function chargeSeats(userIds: readonly string[], buyIn: number): Promise<{ paid: string[]; short: string[] }> {
+	const paid: string[] = [];
+	const short: string[] = [];
+	for (const userId of userIds) {
+		if (await takeChips({ userId }, buyIn)) paid.push(userId);
+		else short.push(userId);
+	}
+	return { paid, short };
 }

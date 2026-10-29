@@ -35,15 +35,17 @@ export type SettingField = "join" | "watch" | "match" | "buyIn" | "referee" | "t
 /**
  * Each game's fields, in the order the modal shows them (owner decision 6, Round 3 decision
  * 2). Every game has Who can join and Who may watch; the rated games add The match; Hold'em
- * its Buy in and Referee; Monopoly its Table options; the luck games Who you play. Five at
- * most, Discord's ceiling for one modal, which the creation modal test counts per game.
+ * its Buy in and Referee; Blackjack its Buy in (2026-10 item 267: the table plays for chips,
+ * by the same bounds, default and refusal as Hold'em's); Monopoly its Table options; the luck
+ * games Who you play. Five at most, Discord's ceiling for one modal, which the creation modal
+ * test counts per game.
  */
 export const GAME_SETTING_FIELDS: Record<SettingsGame, readonly SettingField[]> = {
 	coinflip: ["join", "watch", "opponent"],
 	diceroll: ["join", "watch", "opponent"],
 	rps: ["join", "watch", "opponent"],
 	hangman: ["join", "watch"],
-	blackjack: ["join", "watch"],
+	blackjack: ["join", "watch", "buyIn"],
 	battleship: ["join", "watch", "match"],
 	holdem: ["join", "watch", "match", "buyIn", "referee"],
 	monopoly: ["join", "watch", "match", "table"],

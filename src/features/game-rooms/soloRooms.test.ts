@@ -15,6 +15,9 @@ vi.mock("@features/games/blackjackHandler.js", () => ({ startBlackjackTable: vi.
 vi.mock("@features/games/soloLuck.js", () => ({ playSoloLuckInChannel: vi.fn() }));
 vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, describeRoomOpenFailure: () => "nope" }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
+// The stacks ledger and the direct refund (2026-10 item 267) have their own suites.
+vi.mock("./blackjackChips.js", () => ({ openBlackjackLedger: vi.fn(async () => true) }));
+vi.mock("./holdemDraftBuyIn.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./holdemDraftBuyIn.js")>()), refundSeatsDirectly: vi.fn(async () => undefined) }));
 
 import { openSoloRoom, soloLuckSlugFor, startBlackjackRoomBoard } from "./soloRooms.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -24,6 +27,8 @@ import { RoomProvisioner } from "./RoomProvisioner.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { openBlackjackLedger } from "./blackjackChips.js";
+import { refundSeatsDirectly } from "./holdemDraftBuyIn.js";
 
 type Mock = ReturnType<typeof vi.fn>;
 const configMock = guildConfigStore as unknown as { findByGuildId: Mock };
@@ -111,26 +116,73 @@ describe("a round against Dero in its own room", () => {
 });
 
 describe("a multi seat blackjack room's table", () => {
-	it("seats every player, the host first, and deals at once", async () => {
-		tableMock.mockResolvedValue("started");
-		const room = { ...ROOM, playerIds: ["host-1", "p2", "p3"] } as unknown as IGameRoom;
-		const guild = makeGuild();
-		(guild.members.cache as Map<string, unknown>).set("host-1", { displayName: "Host" });
-
-		await expect(startBlackjackRoomBoard(guild, room, CHANNEL)).resolves.toBe(true);
-
-		expect(tableMock).toHaveBeenCalledWith(CHANNEL, "guild-1", { userId: "host-1", username: "Host" }, true, "room-1", [
-			{ userId: "p2", username: "Player Two" },
-			// A member the cache does not hold is seated by id rather than dropped.
-			{ userId: "p3", username: "p3" },
-		]);
+	const ledgerMock = openBlackjackLedger as unknown as Mock;
+	const refundMock = refundSeatsDirectly as unknown as Mock;
+	beforeEach(() => {
+		ledgerMock.mockReset().mockResolvedValue(true);
+		refundMock.mockClear();
 	});
 
-	it("closes the room as abandoned when the table cannot start", async () => {
-		tableMock.mockResolvedValue("failed");
+	it("seats every seat the card filled, the host first, and opens at once for what they paid", async () => {
+		tableMock.mockResolvedValue("started");
+		const room = { ...ROOM, playerIds: ["host-1", "p2", "p3", "p4"] } as unknown as IGameRoom;
+		const guild = makeGuild();
+		(guild.members.cache as Map<string, unknown>).set("host-1", { displayName: "Host" });
+		// p4 is a player who never paid on the card (an invited member who did not accept), so no seat.
+		const seats = { buyIn: 2500, userIds: ["host-1", "p2", "p3"], charged: true };
 
-		await expect(startBlackjackRoomBoard(makeGuild(), ROOM, CHANNEL)).resolves.toBe(false);
+		await expect(startBlackjackRoomBoard(guild, room, CHANNEL, seats)).resolves.toBe(true);
+
+		// The ledger holds every paid seat before a card is dealt (2026-10 item 267, risk R5).
+		expect(ledgerMock).toHaveBeenCalledWith(room, seats);
+		expect(tableMock).toHaveBeenCalledWith(
+			CHANNEL,
+			"guild-1",
+			{ userId: "host-1", username: "Host" },
+			true,
+			"room-1",
+			[
+				{ userId: "p2", username: "Player Two" },
+				// A member the cache does not hold is seated by id rather than dropped.
+				{ userId: "p3", username: "p3" },
+			],
+			{ buyIn: 2500, chips: true }
+		);
+	});
+
+	it("closes the room as abandoned when the table cannot start, leaving the stacks to finish", async () => {
+		tableMock.mockResolvedValue("failed");
+		const seats = { buyIn: 1000, userIds: ["host-1"], charged: true };
+
+		await expect(startBlackjackRoomBoard(makeGuild(), ROOM, CHANNEL, seats)).resolves.toBe(false);
 
 		expect(finishMock).toHaveBeenCalledWith(expect.anything(), ROOM, { abandoned: true });
+		expect(refundMock).not.toHaveBeenCalled();
+	});
+
+	it("gives the buy ins straight back when the ledger cannot be written, and deals nothing", async () => {
+		ledgerMock.mockResolvedValue(false);
+		const seats = { buyIn: 1000, userIds: ["host-1", "p2"], charged: true };
+
+		await expect(startBlackjackRoomBoard(makeGuild(), ROOM, CHANNEL, seats)).resolves.toBe(false);
+
+		expect(refundMock).toHaveBeenCalledWith(seats);
+		expect(tableMock).not.toHaveBeenCalled();
+		expect(finishMock).toHaveBeenCalledWith(expect.anything(), ROOM, { abandoned: true });
+	});
+});
+
+describe("a solo blackjack room (2026-10 item 267)", () => {
+	const refundMock = refundSeatsDirectly as unknown as Mock;
+	beforeEach(() => refundMock.mockClear());
+
+	it("gives a buy in taken at the press back when the room does not open", async () => {
+		configMock.findByGuildId.mockResolvedValue(null);
+		const seats = { buyIn: 1000, userIds: ["host-1"], charged: true };
+
+		const result = await openSoloRoom(makeGuild(), "solo-blackjack", HOST, { blackjackSeats: seats });
+
+		expect(result.ok).toBe(false);
+		expect(refundMock).toHaveBeenCalledWith(seats);
 	});
 });

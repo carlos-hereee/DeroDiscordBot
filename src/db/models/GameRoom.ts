@@ -19,6 +19,15 @@ import {
 	type SpectatorMode,
 } from "@features/game-rooms/roomTypes.js";
 
+/** One seat's chips at a Blackjack chip table; see IGameRoom.blackjackStacks. */
+export interface BlackjackStackEntry {
+	userId: string;
+	// What the seat paid to sit, which decides a winner and the room's coins.
+	buyIn: number;
+	// The seat's chips as of the last settle, outside any bet then in play.
+	stack: number;
+}
+
 /** The prompt line a turn posts for the member on the clock; see IGameRoom.turnPrompt. */
 export interface TurnPromptRecord {
 	fingerprint: string | null;
@@ -111,12 +120,23 @@ export interface IGameRoom {
 	// their own read and would drop it. Written only by gameRoomStore.claimTurnPrompt and
 	// setTurnPromptPlayed, never by a game.
 	turnPrompt: TurnPromptRecord;
-	// Hold'em only, on the DRAFT (item 257 Phase 4a): the buy in the host set on the challenge card
-	// for a chip table, or null for the default. Every joiner pays it on Join, so it cannot change
-	// once anybody has paid. buyInPaidBy lists the members whose wallet was charged, the ledger
-	// the refunds on decline, removal and cancel read.
+	// Hold'em and Blackjack, on the DRAFT (item 257 Phase 4a; Blackjack since 2026-10 item 267): the
+	// buy in the host set on the challenge card for a chip table, or null for the default. Kept
+	// under its Hold'em name because the draft buy in module serves both games through it. Every
+	// joiner pays it on Join, so it cannot change once anybody has paid. buyInPaidBy lists the
+	// members whose wallet was charged, the ledger the refunds on decline, removal and cancel read.
 	holdemBuyIn: number | null;
 	buyInPaidBy: string[];
+	// A Blackjack chip table's stacks (2026-10 item 267, risk R5): one entry per seat still owed
+	// chips, written when the table opens and after every settle. The table itself lives in
+	// blackjackHandler's process Map, so this is what a restart, the idle sweep or any other
+	// finish pays back. Each cash out CLAIMS its entry first (gameRoomStore.takeBlackjackStack),
+	// so a seat is paid once. Empty on a free table and on every other game.
+	blackjackStacks: BlackjackStackEntry[];
+	// When a member last chose a Blackjack bet or action themselves, written with the stacks.
+	// The idle sweep reads it instead of updatedAt, because a timed out turn plays itself and
+	// writes the row, and a table nobody touches must still end on the idle clock.
+	blackjackActedAt: Date | null;
 	// ── the host's say over who joins (2026-10 item 244 Phase 4) ──
 	// Set on the draft by the challenge card's host controls and read on every join,
 	// on the card and, for Hold'em, at the table's Buy in and Take a seat. Each
@@ -275,6 +295,11 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		},
 		holdemBuyIn: { type: Number, default: null },
 		buyInPaidBy: { type: [String], default: [] },
+		blackjackStacks: {
+			type: [{ _id: false, userId: { type: String, required: true }, buyIn: { type: Number, required: true }, stack: { type: Number, required: true } }],
+			default: [],
+		},
+		blackjackActedAt: { type: Date, default: null },
 		// The host controls. Every default is the open door a room had before them, so
 		// no older row needs a backfill.
 		ratingBand: { type: String, enum: [...RATING_BANDS], default: "any" },

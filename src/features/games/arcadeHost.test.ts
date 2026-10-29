@@ -22,7 +22,12 @@ vi.mock("@features/game-rooms/challengeBoard.js", () => ({
 	answerSoloRefusal: vi.fn(),
 }));
 
+// A solo Blackjack table's buy in at the press (2026-10 item 267); its wallet rules have their own suite.
+const PAID_SEATS = { buyIn: 1000, userIds: ["member-1"], charged: true };
+vi.mock("@features/game-rooms/holdemDraftBuyIn.js", () => ({ chargeSoloTable: vi.fn(async () => ({ ok: true, seats: PAID_SEATS })) }));
+
 import { buildHangmanCategoryStartRow, registerArcadeHostHandlers } from "./arcadeHost.js";
+import { chargeSoloTable } from "@features/game-rooms/holdemDraftBuyIn.js";
 import { dispatchButton, dispatchModal, dispatchSelectMenu } from "@handlers/interactionRegistry.js";
 import type { ModalSubmitInteraction } from "discord.js";
 import { openSoloRoom, readSoloRefusalAtPress } from "@features/game-rooms/soloRooms.js";
@@ -111,9 +116,37 @@ describe("the host row", () => {
 		const { interaction, challengesSend } = makeButton("blackjack");
 		await dispatchButton(interaction as unknown as ButtonInteraction);
 
-		expect(openMock).toHaveBeenCalledWith(interaction.guild, "solo-blackjack", expect.objectContaining({ userId: "member-1" }), {});
+		// The buy in taken at the press rides along, so the room's table holds it on its ledger.
+		expect(openMock).toHaveBeenCalledWith(interaction.guild, "solo-blackjack", expect.objectContaining({ userId: "member-1" }), { blackjackSeats: PAID_SEATS });
 		expect(draftMock).not.toHaveBeenCalled();
 		expect(challengesSend).not.toHaveBeenCalled();
+	});
+});
+
+// ── a solo Blackjack buy in the wallet cannot cover (2026-10 item 267) ──
+describe("a solo blackjack press with a short wallet", () => {
+	it("opens the refusal as a notice at the press, before any acknowledgement, and opens nothing", async () => {
+		(chargeSoloTable as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ok: false, reason: gameRoomsCopy.holdem.notEnoughChips(1000) });
+		const interaction = {
+			id: "press-bj",
+			customId: "arcade_host:blackjack",
+			isModalSubmit: () => false,
+			deferred: false,
+			replied: false,
+			guild: { id: "guild-1", members: { cache: new Map() } },
+			user: { id: "member-1", username: "member", globalName: "Member" },
+			showModal: vi.fn(async () => undefined),
+			deferReply: vi.fn(async () => undefined),
+			deferUpdate: vi.fn(async () => undefined),
+		};
+		openMock.mockClear();
+
+		await dispatchButton(interaction as unknown as ButtonInteraction);
+
+		expect(interaction.showModal).toHaveBeenCalledOnce();
+		expect(JSON.stringify(interaction.showModal.mock.calls[0][0])).toContain("1,000");
+		expect(interaction.deferReply).not.toHaveBeenCalled();
+		expect(openMock).not.toHaveBeenCalled();
 	});
 });
 

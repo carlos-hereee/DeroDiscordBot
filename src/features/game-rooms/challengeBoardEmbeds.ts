@@ -13,7 +13,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { bandWidth, isRatedGame } from "@features/ratings/ratingEngine.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
-import { offersReferee, type GameSlug, type RatingBand, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
+import { isBuyInGame, offersReferee, type GameSlug, type RatingBand, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
 import type { SoloLuckGame } from "@features/games/soloLuck.js";
 
 // The host controls' words are shared by every pack, so the default pack is the right
@@ -296,10 +296,10 @@ function settingsLine(state: OpenerCardState): string {
 	return `${summaryWords.lead} ${parts.join(" · ")}`;
 }
 
-// A Hold'em card names the buy in wherever a table could play for chips: not on a network table
-// (its seats come from other servers) and not with a Dero bot seat (it plays free).
+// A Hold'em or Blackjack card names the buy in wherever a table could play for chips: not on a
+// network table (its seats come from other servers) and not with a Dero bot seat (it plays free).
 function showsBuyIn(state: OpenerCardState): boolean {
-	return state.game === "holdem" && !state.network && (state.bots?.count ?? 0) === 0;
+	return isBuyInGame(state.game) && !state.network && (state.bots?.count ?? 0) === 0;
 }
 
 function buyInLines(state: OpenerCardState): string[] {
@@ -393,7 +393,7 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 		.setStyle(ButtonStyle.Primary);
 
 	// Four of the row's five, and the fifth is an invited member's Accept and buy in on an
-	// Invite only Hold'em card that may charge one (2026-10 item 263 R3-27), so the card never
+	// Invite only Hold'em or Blackjack card that may charge one (2026-10 item 263 R3-27), so the card never
 	// needs a row of its own for it. Shown to everyone, since Discord cannot show a button to some
 	// members only; the handler refuses anybody the host did not invite.
 	const accept =

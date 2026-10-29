@@ -1,10 +1,20 @@
 import { describe, it, expect } from "vitest";
 import {
+	actionsShortOfChips,
 	applyAction,
 	applyLeave,
+	bankrollWinnerOf,
+	betChoices,
+	bettingSeat,
 	buildShoe,
 	cardValue,
+	collectPayouts,
+	createBankrollTable,
 	createTable,
+	handPayout,
+	isTableOver,
+	placeBet,
+	startNextHand,
 	handValue,
 	isNatural,
 	legalActions,
@@ -30,15 +40,16 @@ import {
 const stack = (ranks: Rank[]): Card[] => ranks.map((rank) => ({ rank, suit: "S" }));
 
 function hand(ranks: Rank[], over: Partial<Hand> = {}): Hand {
-	return { cards: stack(ranks), status: "playing", doubled: false, fromSplit: false, ...over };
+	return { cards: stack(ranks), status: "playing", doubled: false, fromSplit: false, bet: 0, ...over };
 }
 
-function seat(userId: string, hands: Hand[], activeHand = 0): Seat {
-	return { userId, username: userId, hands, activeHand };
+// A zero stake seat by default, the one hand table createTable builds; `over` gives it chips.
+function seat(userId: string, hands: Hand[], activeHand = 0, over: Partial<Seat> = {}): Seat {
+	return { userId, username: userId, hands, activeHand, stack: 0, bet: 0, out: null, ...over };
 }
 
 function table(over: Partial<BlackjackTable> & { seats: Seat[] }): BlackjackTable {
-	return { dealer: hand([]), shoe: [], phase: "playing", turn: 0, hitsSoft17: false, ...over };
+	return { dealer: hand([]), shoe: [], phase: "playing", turn: 0, hitsSoft17: false, buyIn: 0, handNumber: 1, paid: false, ...over };
 }
 
 // ── hand values, where the aces live ────────────────────────────────────────
@@ -374,8 +385,8 @@ describe("settle", () => {
 			phase: "settled",
 		});
 		expect(settle(t)).toEqual([
-			{ userId: "a", username: "a", hands: ["blackjack", "lose"], doubled: [false, false] },
-			{ userId: "b", username: "b", hands: ["win"], doubled: [true] },
+			{ userId: "a", username: "a", hands: ["blackjack", "lose"], doubled: [false, false], bets: [0, 0], payouts: [0, 0] },
+			{ userId: "b", username: "b", hands: ["win"], doubled: [true], bets: [0], payouts: [0] },
 		]);
 	});
 
@@ -390,7 +401,7 @@ describe("settle", () => {
 describe("applyLeave", () => {
 	it("gives up the seat on the clock as a loss and moves the turn on", () => {
 		const live = table({ seats: [seat("a", [hand(["10", "9"])]), seat("b", [hand(["5", "6"])])], dealer: hand(["10", "7"]) });
-		expect(applyLeave(live, "a")).toEqual({ status: "left" });
+		expect(applyLeave(live, "a")).toEqual({ status: "left", cashOut: 0 });
 		expect(live.seats[0].hands[0].status).toBe("left");
 		expect(live.turn).toBe(1);
 		expect(live.phase).toBe("playing");
@@ -405,7 +416,7 @@ describe("applyLeave", () => {
 
 	it("gives up every hand of a split seat, and lets a seat off the clock leave too", () => {
 		const live = table({ seats: [seat("a", [hand(["8", "3"])]), seat("b", [hand(["8", "2"], { fromSplit: true }), hand(["8", "9"], { fromSplit: true, status: "stood" })])] });
-		expect(applyLeave(live, "b")).toEqual({ status: "left" });
+		expect(applyLeave(live, "b")).toEqual({ status: "left", cashOut: 0 });
 		expect(live.seats[1].hands.map((each) => each.status)).toEqual(["left", "left"]);
 		expect(live.turn).toBe(0);
 	});
@@ -422,5 +433,160 @@ describe("applyLeave", () => {
 		applyLeave(live, "b");
 		expect(applyLeave(live, "b")).toEqual({ status: "already-left" });
 		expect(applyLeave(table({ seats: [seat("a", [hand(["10", "6"])])], phase: "dealer" }), "a")).toEqual({ status: "not-seated" });
+	});
+});
+
+// ── the bankroll (2026-10 item 267) ─────────────────────────────────────────
+describe("a bankroll table", () => {
+	const players = [
+		{ userId: "a", username: "a" },
+		{ userId: "b", username: "b" },
+	];
+
+	it("opens on the first seat's betting turn, every seat on a stack of the buy in, nothing dealt", () => {
+		const t = createBankrollTable({ players, buyIn: 1000, rng: () => 0.5 });
+		expect(t.phase).toBe("betting");
+		expect(bettingSeat(t)?.userId).toBe("a");
+		expect(t.seats.map((s) => [s.stack, s.hands.length])).toEqual([
+			[1000, 0],
+			[1000, 0],
+		]);
+		expect(t.dealer.cards).toEqual([]);
+	});
+
+	it("offers 5, 10 and 25 percent of the buy in, rounded down, then All in", () => {
+		const t = createBankrollTable({ players, buyIn: 1010, rng: () => 0.5 });
+		expect(betChoices(t, "a")).toEqual([
+			{ percent: 5, amount: 50 },
+			{ percent: 10, amount: 101 },
+			{ percent: 25, amount: 252 },
+			{ percent: null, amount: 1010 },
+		]);
+	});
+
+	it("never offers more than the stack, and at least one chip", () => {
+		const t = createBankrollTable({ players, buyIn: 1000, rng: () => 0.5 });
+		t.seats[0].stack = 80;
+		// 5% is 50; 10% and 25% are past the stack, so they ARE all in and give way to it.
+		expect(betChoices(t, "a")).toEqual([
+			{ percent: 5, amount: 50 },
+			{ percent: null, amount: 80 },
+		]);
+		const tiny = createBankrollTable({ players, buyIn: 10, rng: () => 0.5 });
+		expect(betChoices(tiny, "a").map((choice) => choice.amount)).toEqual([1, 2, 10]);
+	});
+
+	it("takes each bet from the stack in seat order, and the last bet deals the hand", () => {
+		const t = createBankrollTable({ players, buyIn: 1000, rng: () => 0.5 });
+		expect(placeBet(t, "b", 50)).toEqual({ status: "not-your-turn" });
+		expect(placeBet(t, "a", 77)).toEqual({ status: "illegal" });
+		expect(placeBet(t, "a", 50)).toEqual({ status: "ok", amount: 50, dealt: false });
+		expect(t.seats[0].stack).toBe(950);
+		expect(bettingSeat(t)?.userId).toBe("b");
+		expect(placeBet(t, "b", 250)).toEqual({ status: "ok", amount: 250, dealt: true });
+		expect(t.phase === "playing" || t.phase === "dealer").toBe(true);
+		expect(t.seats.map((s) => s.hands[0].bet)).toEqual([50, 250]);
+		expect(t.seats.map((s) => s.hands[0].cards.length)).toEqual([2, 2]);
+	});
+
+	it("pays a win 1 to 1, a natural 3 to 2 rounded down, a push its bet back, and a loss nothing", () => {
+		expect(handPayout("win", 100)).toBe(200);
+		expect(handPayout("blackjack", 101)).toBe(101 + 151);
+		expect(handPayout("push", 100)).toBe(100);
+		expect(handPayout("lose", 100)).toBe(0);
+	});
+
+	it("pays a settled hand into the stacks exactly once", () => {
+		const t = table({
+			seats: [seat("a", [hand(["10", "9"], { bet: 100, status: "stood" })], 0, { stack: 900 }), seat("b", [hand(["A", "K"], { bet: 50, status: "blackjack" })], 0, { stack: 950 })],
+			dealer: hand(["10", "8"], { status: "stood" }),
+			phase: "settled",
+			buyIn: 1000,
+		});
+		const results = collectPayouts(t);
+		expect(results?.map((r) => r.payouts)).toEqual([[200], [125]]);
+		expect(t.seats.map((s) => s.stack)).toEqual([1100, 1075]);
+		expect(collectPayouts(t)).toBeNull();
+		expect(t.seats.map((s) => s.stack)).toEqual([1100, 1075]);
+	});
+
+	it("pushes a tie back to the stack and takes a lost bet", () => {
+		const t = table({
+			seats: [seat("a", [hand(["10", "8"], { bet: 100, status: "stood" })], 0, { stack: 900 }), seat("b", [hand(["10", "6"], { bet: 100, status: "stood" })], 0, { stack: 900 })],
+			dealer: hand(["10", "8"], { status: "stood" }),
+			phase: "settled",
+			buyIn: 1000,
+		});
+		collectPayouts(t);
+		expect(t.seats.map((s) => s.stack)).toEqual([1000, 900]);
+	});
+
+	it("doubles the bet from the stack, and refuses a double or a split the stack cannot cover", () => {
+		const covered = table({ seats: [seat("a", [hand(["5", "6"], { bet: 100 })], 0, { stack: 100 })], shoe: stack(["9"]), buyIn: 1000 });
+		expect(legalActions(covered, "a")).toContain("double");
+		applyAction(covered, "a", "double");
+		expect(covered.seats[0].hands[0].bet).toBe(200);
+		expect(covered.seats[0].stack).toBe(0);
+
+		const short = table({ seats: [seat("a", [hand(["8", "8"], { bet: 100 })], 0, { stack: 99 })], buyIn: 1000 });
+		expect(legalActions(short, "a")).toEqual(["hit", "stand"]);
+		expect(actionsShortOfChips(short, "a")).toEqual(["double", "split"]);
+		expect(applyAction(short, "a", "double")).toEqual({ status: "illegal", action: "double" });
+	});
+
+	it("bets the original bet again on a split hand", () => {
+		const t = table({ seats: [seat("a", [hand(["8", "8"], { bet: 100 })], 0, { stack: 400 })], shoe: stack(["3", "4"]), buyIn: 1000 });
+		applyAction(t, "a", "split");
+		expect(t.seats[0].hands.map((h) => h.bet)).toEqual([100, 100]);
+		expect(t.seats[0].stack).toBe(300);
+	});
+
+	it("puts a seat with no chips left out, opens the next hand on the bets of the seats still in, and ends when nobody is", () => {
+		const t = table({
+			seats: [seat("a", [hand(["10", "6"], { bet: 1000, status: "stood" })], 0, { stack: 0 }), seat("b", [hand(["10", "9"], { bet: 100, status: "stood" })], 0, { stack: 900 })],
+			dealer: hand(["10", "8"], { status: "stood" }),
+			phase: "settled",
+			buyIn: 1000,
+		});
+		collectPayouts(t);
+		expect(t.seats[0].out).toBe("broke");
+		expect(startNextHand(t)).toBe(true);
+		expect(t.handNumber).toBe(2);
+		expect(bettingSeat(t)?.userId).toBe("b");
+		expect(t.seats.map((s) => s.hands.length)).toEqual([0, 0]);
+
+		const done = table({ seats: [seat("a", [hand(["10", "6"], { bet: 100, status: "stood" })], 0, { stack: 0 })], dealer: hand(["10", "8"], { status: "stood" }), phase: "settled", buyIn: 100 });
+		collectPayouts(done);
+		expect(isTableOver(done)).toBe(true);
+		expect(startNextHand(done)).toBe(false);
+	});
+
+	it("deals only the seats still in", () => {
+		const t = createBankrollTable({ players, buyIn: 1000, rng: () => 0.5 });
+		placeBet(t, "a", 50);
+		expect(applyLeave(t, "b")).toEqual({ status: "left", cashOut: 1000 });
+		expect(t.seats[1].hands).toEqual([]);
+		expect(t.seats[0].hands[0].cards).toHaveLength(2);
+		expect(settle(t).map((r) => r.userId)).toEqual(["a"]);
+	});
+
+	it("gives a bet placed during the betting turns back with the stack, since nothing was dealt", () => {
+		const t = createBankrollTable({ players: [...players, { userId: "c", username: "c" }], buyIn: 1000, rng: () => 0.5 });
+		placeBet(t, "a", 250);
+		expect(applyLeave(t, "a")).toEqual({ status: "left", cashOut: 1000 });
+		expect(applyLeave(t, "a")).toEqual({ status: "already-left" });
+		expect(t.seats[0].stack).toBe(0);
+	});
+
+	it("takes the stack but not the bet riding on a hand when the seat leaves mid hand", () => {
+		const t = table({ seats: [seat("a", [hand(["10", "6"], { bet: 100 })], 0, { stack: 900 })], dealer: hand(["10", "7"]), buyIn: 1000 });
+		expect(applyLeave(t, "a")).toEqual({ status: "left", cashOut: 900 });
+		expect(t.seats[0].hands[0].status).toBe("left");
+	});
+
+	it("names the one member who ended with the largest stack above their buy in, or nobody", () => {
+		expect(bankrollWinnerOf([{ userId: "a", buyIn: 1000, stack: 1500 }, { userId: "b", buyIn: 1000, stack: 1200 }])).toBe("a");
+		expect(bankrollWinnerOf([{ userId: "a", buyIn: 1000, stack: 1000 }, { userId: "b", buyIn: 1000, stack: 0 }])).toBeNull();
+		expect(bankrollWinnerOf([{ userId: "a", buyIn: 1000, stack: 1500 }, { userId: "b", buyIn: 1000, stack: 1500 }])).toBeNull();
 	});
 });

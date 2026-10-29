@@ -245,6 +245,11 @@ export const gameRoomsCopy = {
 		blackjackStand: (userId: string, total: string): string => `<@${userId}> stands on ${total}.`,
 		blackjackDouble: (userId: string, hand: string, total: string): string => `<@${userId}> doubles down: ${hand} (${total}).`,
 		blackjackSplit: (userId: string, hand: string): string => `<@${userId}> splits, playing ${hand} first.`,
+		// The bankroll's betting turns (2026-10 item 267) and the turn clock's moves for a seat
+		// that let its three minutes run out.
+		blackjackBet: (userId: string, amount: number): string => `<@${userId}> bets ${chipAmount(amount)}.`,
+		blackjackTimedOutBet: (userId: string, amount: number): string => `⏱️ <@${userId}> ran out of time and bets the smallest choice, ${chipAmount(amount)}.`,
+		blackjackTimedOutStand: (userId: string, total: string): string => `⏱️ <@${userId}> ran out of time and stands on ${total}.`,
 	},
 
 	// ── notice titles (2026-10 item 254 Phase 5b) ──
@@ -1358,8 +1363,14 @@ export const gameRoomsCopy = {
 		// A departure ends the match the way a forfeit does; the line is why the board
 		// moved without anyone pressing anything.
 		playerLeftGuild: (userId: string): string => `<@${userId}> left the server. The match ends.`,
-		// The boot sweep's line for a solo blackjack room whose hand did not survive a redeploy.
-		// Says plainly that no result was settled, so nobody reads the closed room as a loss.
-		tableLostToRestart: "Dero restarted mid hand and this table was lost. No hand was settled, so nothing was paid or lost. Dero is closing the room.",
+		// The boot sweep's line for a blackjack room whose table did not survive a redeploy.
+		// Says plainly that the hand in play was not settled, so nobody reads the closed room as a
+		// loss: the stacks as of the last settled hand go back to the wallets (2026-10 item 267).
+		tableLostToRestart: "Dero restarted mid hand and this table was lost. The hand in play is called off, every stack goes back as it stood after the last settled hand, and Dero is closing the room.",
+		// The end of a Blackjack chip table: every stack still on it, back to its wallet.
+		blackjackChipsReturned: (payouts: readonly { userId: string; amount: number }[]): string =>
+			[`🪙 The table closed and its stacks went back to the wallets:`, ...payouts.map((payout) => `<@${payout.userId}> ${chipAmount(payout.amount)}`)].join("\n"),
+		// A returning player a Blackjack rematch could not charge the buy in again.
+		blackjackRematchShort: (userId: string, buyIn: number): string => `<@${userId}> could not cover the ${chipAmount(buyIn)} buy in, so this rematch deals on without them.`,
 	},
 } as const;

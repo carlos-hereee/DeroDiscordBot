@@ -1,4 +1,4 @@
-import { GameRoom, type IGameRoom, type TurnPromptRecord } from "@db/models/GameRoom.js";
+import { GameRoom, type BlackjackStackEntry, type IGameRoom, type TurnPromptRecord } from "@db/models/GameRoom.js";
 import {
 	NON_TERMINAL_ROOM_STATUSES,
 	type GameSlug,
@@ -65,6 +65,9 @@ interface ICreateGameRoom {
 	// The host's spectator setting, carried from the finished room by a rematch so the
 	// rematch is watched by exactly who watched the match before it.
 	spectatorMode?: SpectatorMode | null;
+	// The buy in, carried from the finished room by a Blackjack rematch (2026-10 item 267), so
+	// every returning player pays what they paid before.
+	holdemBuyIn?: number | null;
 }
 
 // Mongo's duplicate key error code, what the one open room per host index answers with.
@@ -107,6 +110,7 @@ export const gameRoomStore = {
 			botSeats: input.botSeats ?? 0,
 			casual: input.casual ?? false,
 			spectatorMode: input.spectatorMode ?? null,
+			holdemBuyIn: input.holdemBuyIn ?? null,
 			status: "draft",
 		});
 	},
@@ -280,6 +284,35 @@ export const gameRoomStore = {
 	// Whoever gets the row pays the chips back, so two refunds for one payment pay once.
 	async takeBuyInPaid(guildId: string, roomId: string, userId: string) {
 		return GameRoom.findOneAndUpdate({ guildId, roomId, buyInPaidBy: userId }, { $pull: { buyInPaidBy: userId } }, { new: false });
+	},
+
+	// ── A Blackjack chip table's stacks (2026-10 item 267, risk R5) ──
+	// The ledger as the table opens: one entry per paid seat. Null when the room is gone.
+	async openBlackjackStacks(guildId: string, roomId: string, entries: readonly BlackjackStackEntry[], actedAt: Date) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $set: { blackjackStacks: entries, blackjackActedAt: actedAt } }, { new: true });
+	},
+
+	// The stacks after a settle, one positional write per seat in ONE update. An entry already
+	// claimed (a seat that cashed out, or a finish that paid the table) matches no array filter,
+	// so this can never put a paid seat back on the ledger.
+	async saveBlackjackStacks(guildId: string, roomId: string, stacks: readonly { userId: string; stack: number }[], actedAt: Date | null) {
+		const set: Record<string, unknown> = {};
+		const arrayFilters: Record<string, string>[] = [];
+		stacks.forEach((entry, index) => {
+			set[`blackjackStacks.$[seat${index}].stack`] = entry.stack;
+			arrayFilters.push({ [`seat${index}.userId`]: entry.userId });
+		});
+		if (actedAt) set.blackjackActedAt = actedAt;
+		if (Object.keys(set).length === 0) return null;
+		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $set: set }, { new: true, arrayFilters });
+	},
+
+	// Claim one seat's cash out: the entry as it stood, or null when it was already claimed.
+	// Whoever gets the entry pays the chips, so a leave racing a finish pays once.
+	async takeBlackjackStack(guildId: string, roomId: string, userId: string): Promise<BlackjackStackEntry | null> {
+		const before = await GameRoom.findOneAndUpdate({ guildId, roomId, "blackjackStacks.userId": userId }, { $pull: { blackjackStacks: { userId } } }, { new: false });
+		const entry = before?.blackjackStacks?.find((candidate) => candidate.userId === userId);
+		return entry ? { userId: entry.userId, buyIn: entry.buyIn, stack: entry.stack } : null;
 	},
 
 	// Claim the referee's one silent notice for this match. Null when it was already claimed.

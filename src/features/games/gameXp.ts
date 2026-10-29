@@ -5,7 +5,7 @@ import type { GameOutcome, LevelingGameSlug } from "@features/leveling/levelingT
 import { awardForResult, coinOutcomeOf, type CoinGame } from "@features/economy/deroCoins.js";
 import type { CoinAwardOutcome } from "@db/models/CoinAward.js";
 import type { SoloLuckSlug } from "@features/game-rooms/roomTypes.js";
-import type { HandOutcome, SeatResult } from "./blackjackState.js";
+import type { FinalStack, HandOutcome, SeatResult } from "./blackjackState.js";
 
 // ── gameXp ─────────────────────────────────────────────────────────────────
 // The games feature's one seam into the leveling system.
@@ -247,6 +247,10 @@ interface BlackjackPayout {
 	seats: SeatResult[];
 	// The coin award's key: the room id, or an inline table's channel and opening time.
 	resultKey: string;
+	// True only at an inline one hand table, whose one hand is the whole game. A room table pays
+	// its coins once, at the room's finish (awardBlackjackTableCoins, 2026-10 item 267), never per
+	// hand, so a long table cannot farm coins.
+	coinsPerHand: boolean;
 }
 
 // ONE AWARD PER HAND, not per seat, which is the honest reading: a seat that
@@ -276,6 +280,7 @@ export function awardBlackjackResult(result: BlackjackPayout): void {
 		});
 	}
 
+	if (!result.coinsPerHand) return;
 	// A table with one seat is a hand against Dero's dealer alone, which the coin table
 	// prices as a solo round (and caps), however the table was opened.
 	payCoins(
@@ -289,6 +294,28 @@ export function awardBlackjackResult(result: BlackjackPayout): void {
 // Coins are paid per SEAT, not per hand like the XP above: the coin table prices a
 // result, and a seat's result is its best hand. A split that won one half reads as a
 // win; a seat with no win but a push reads as a draw.
+/**
+ * A Blackjack room table's coins, once per room at its finish (2026-10 item 267, owner decision
+ * 7): a member who ended above their buy in won, one who ended even drew, anyone else played.
+ * Keyed by the room, so a finish that runs twice pays once (deroCoins' ledger claim). A solo
+ * table pays from the solo row, which pays no coins.
+ */
+export function awardBlackjackTableCoins(input: { guildId: string; game: "blackjack" | "solo-blackjack"; roomId: string; stacks: readonly FinalStack[] }): void {
+	payCoins(
+		input.guildId,
+		input.game,
+		input.roomId,
+		input.stacks.map((entry) => ({ userId: entry.userId, outcome: blackjackTableCoinOutcome(entry) }))
+	);
+}
+
+/** How a member's whole table reads for the coin table: up on the buy in, even, or down. */
+export function blackjackTableCoinOutcome(entry: FinalStack): CoinAwardOutcome {
+	if (entry.stack > entry.buyIn) return "won";
+	if (entry.stack === entry.buyIn) return "drawn";
+	return "played";
+}
+
 export function blackjackSeatCoinOutcome(hands: readonly HandOutcome[]): CoinAwardOutcome {
 	if (hands.some((hand) => BLACKJACK_RECORD[hand] === "won")) return "won";
 	if (hands.some((hand) => BLACKJACK_RECORD[hand] === "drawn")) return "drawn";

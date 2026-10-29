@@ -14,7 +14,22 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, describeRoomOpenFailure: () => "nope" }));
-vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedValue(null), startBlackjackRoomBoard: vi.fn(), describeSoloOpenFailure: () => "nope" }));
+vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedValue(null), startBlackjackRoomBoard: vi.fn(), describeSoloOpenFailure: () => "nope", freeSeatsOf: vi.fn() }));
+// Every member's chip wallet, in memory: a Blackjack card charges its buy in like Hold'em's
+// (2026-10 item 267), and a server with no chips switch stored plays for chips.
+const wallets = vi.hoisted(() => new Map<string, number>());
+vi.mock("@features/economy/chipWallet.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@features/economy/chipWallet.js")>()),
+	takeChips: vi.fn(async (key: { userId: string }, amount: number) => {
+		const balance = wallets.get(key.userId) ?? 0;
+		if (balance < amount) return false;
+		wallets.set(key.userId, balance - amount);
+		return true;
+	}),
+	returnChips: vi.fn(async (key: { userId: string }, amount: number) => {
+		wallets.set(key.userId, (wallets.get(key.userId) ?? 0) + amount);
+	}),
+}));
 // The opener card's picture (2026-10 item 243 Phase 4). The renderer answers null
 // unless a case says otherwise, so every case written before the picture still
 // sees the text card alone; the view is a fixed fake so no case needs avatars.
@@ -283,8 +298,8 @@ describe("starting a Blackjack table", () => {
 	const openMock = RoomProvisioner.open as unknown as ReturnType<typeof vi.fn>;
 	const boardMock = startBlackjackRoomBoard as unknown as ReturnType<typeof vi.fn>;
 
-	function arcadeButton() {
-		configMock.findByGuildId.mockResolvedValue({ gamesCategoryId: "arcade-cat", adminRoleId: null });
+	function arcadeButton(options: { chipsOff?: boolean } = {}) {
+		configMock.findByGuildId.mockResolvedValue({ gamesCategoryId: "arcade-cat", adminRoleId: null, ...(options.chipsOff ? { chipEconomyEnabled: false } : {}) });
 		const interaction = makeButton(HOST, members);
 		Object.assign(interaction.guild as object, {
 			channels: { fetch: vi.fn(async () => ({ id: "arcade-cat", type: ChannelType.GuildCategory })) },
@@ -306,14 +321,15 @@ describe("starting a Blackjack table", () => {
 		const channel = { id: "bj-room-1" };
 		openMock.mockResolvedValue({ ok: true, room, channel });
 		boardMock.mockResolvedValue(true);
-		const interaction = arcadeButton();
+		const interaction = arcadeButton({ chipsOff: true });
 
 		await confirmStartMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a", "b"] }));
 
-		// The whole pool plays, nobody is asked who: one table, every seat taken.
+		// The whole pool plays, nobody is asked who: one table, every seat taken, free on a server
+		// with chips off (2026-10 item 267).
 		expect(interaction.reply).not.toHaveBeenCalled();
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ game: "blackjack", playerIds: [HOST, "a", "b"] }));
-		expect(boardMock).toHaveBeenCalledWith(interaction.guild, room, channel);
+		expect(boardMock).toHaveBeenCalledWith(interaction.guild, room, channel, { buyIn: 1000, userIds: [HOST, "a", "b"], charged: false });
 		// This server stores no 💬dero-commands, so the start answers through answerInChannel's
 		// private fallback, the edit of its private defer (2026-10 item 257 Phase 5).
 		expect(interaction.editReply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.board.cardStarted("bj-room-1") }));
@@ -322,11 +338,40 @@ describe("starting a Blackjack table", () => {
 	it("tells the host the table could not start when its board does not deal", async () => {
 		openMock.mockResolvedValue({ ok: true, room: { roomId: "room-1" }, channel: { id: "bj-room-1" } });
 		boardMock.mockResolvedValue(false);
-		const interaction = arcadeButton();
+		const interaction = arcadeButton({ chipsOff: true });
 
 		await confirmStartMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a"] }));
 
 		expect(interaction.editReply).toHaveBeenCalledWith(expect.objectContaining({ embeds: [expect.anything()] }));
+	});
+
+	// 2026-10 item 267, owner decision 1: a chip table seats the host and every joiner who paid on
+	// the card, each at the buy in the card set, and charges the host their own seat at Start.
+	it("charges the host the card's buy in at Start and seats only the members who paid", async () => {
+		wallets.clear();
+		wallets.set(HOST, 5000);
+		const room = { roomId: "room-1" };
+		const channel = { id: "bj-room-1" };
+		openMock.mockResolvedValue({ ok: true, room, channel });
+		boardMock.mockResolvedValue(true);
+		const interaction = arcadeButton();
+
+		await confirmStartMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a", "b"], holdemBuyIn: 2500, buyInPaidBy: ["a"] }));
+
+		expect(wallets.get(HOST)).toBe(2500);
+		expect(boardMock).toHaveBeenCalledWith(interaction.guild, room, channel, { buyIn: 2500, userIds: [HOST, "a"], charged: true });
+	});
+
+	it("refuses the start when the host cannot cover the buy in, before any channel exists", async () => {
+		wallets.clear();
+		wallets.set(HOST, 10);
+		const interaction = arcadeButton();
+
+		await confirmStartMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a"] }));
+
+		expect(openMock).not.toHaveBeenCalled();
+		expect(boardMock).not.toHaveBeenCalled();
+		expect(wallets.get(HOST)).toBe(10);
 	});
 });
 

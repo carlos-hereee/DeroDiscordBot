@@ -237,9 +237,12 @@ export function buildBlackjackTableEmbed(table: BlackjackTable, revealDealer: bo
 		? `${renderHand(table.dealer.cards)}  •  ${renderTotal(table.dealer.cards)}`
 		: `${renderCard(table.dealer.cards[0])}  ${c.holeCard}`;
 
-	const embed = base().setTitle(c.tableTitle).setColor(COLORS.GAME_BLACKJACK).addFields({ name: c.dealerLabel, value: dealerValue, inline: false });
+	const title = table.buyIn > 0 ? c.handTitle(table.handNumber) : c.tableTitle;
+	const embed = base().setTitle(title).setColor(COLORS.GAME_BLACKJACK).addFields({ name: c.dealerLabel, value: dealerValue, inline: false });
 
-	for (const seat of table.seats) {
+	// A seat that is out was dealt nothing this hand, so it has no field (and an empty field
+	// is one Discord refuses).
+	for (const seat of table.seats.filter((candidate) => candidate.hands.length > 0)) {
 		// One field per HAND, not per seat, so a split shows as two lines a player
 		// can actually tell apart. The active hand is marked, because after a split
 		// "which of these am I playing" is otherwise guesswork.
@@ -249,6 +252,8 @@ export function buildBlackjackTableEmbed(table: BlackjackTable, revealDealer: bo
 			const label = c.handLabel(index, seat.hands.length);
 			return `${active ? "▶ " : ""}${label}: ${renderHand(hand.cards)}  •  ${renderTotal(hand.cards)}${notes ? `  (${notes})` : ""}`;
 		});
+		// A bankroll table says what is riding on the hands and what is left behind them.
+		if (table.buyIn > 0) lines.push(c.seatStack(seat.stack, seat.hands.reduce((sum, hand) => sum + hand.bet, 0)));
 		embed.addFields({ name: seat.username, value: lines.join("\n"), inline: false });
 	}
 
@@ -287,11 +292,41 @@ export function buildBlackjackResultEmbed(table: BlackjackTable, results: SeatRe
 		const lines = result.hands.map((outcome, index) => {
 			const cards = seat ? renderHand(seat.hands[index].cards) : "";
 			const doubled = result.doubled[index] ? `  (${c.doubledNote})` : "";
-			return `**${OUTCOME_LABELS[outcome]}** ${cards}${doubled}`;
+			// What the hand paid, at a table that plays for a stack (2026-10 item 267).
+			const paid = table.buyIn > 0 ? `  ${c.payoutNote(result.bets[index] ?? 0, result.payouts[index] ?? 0)}` : "";
+			return `**${OUTCOME_LABELS[outcome]}** ${cards}${doubled}${paid}`;
 		});
 		embed.addFields({ name: result.username, value: lines.join("\n"), inline: false });
 	}
 
+	// Every seat's stack after the hand paid, out seats included, so the table reads its standings.
+	if (table.buyIn > 0) embed.addFields({ name: c.stacksAfterHand, value: table.seats.map(seatStanding).join("\n"), inline: false });
+
 	if (anyDoubledLoss) embed.setDescription(c.doubledLostAll);
 	return embed;
+}
+
+// One seat's line in a bankroll table's standings: its stack, or why it is out.
+function seatStanding(seat: BlackjackTable["seats"][number]): string {
+	const c = gamesCopy.blackjack;
+	if (seat.out === "left") return `${seat.username}: ${c.seatLeft}`;
+	if (seat.out === "broke") return `${seat.username}: ${c.seatBroke}`;
+	return `${seat.username}: ${c.seatStack(seat.stack, 0)}`;
+}
+
+// ── buildBlackjackBettingEmbed (2026-10 item 267) ────────────────────────────
+// A bankroll table's board while it takes the hand's bets: no cards yet, so no dealer and no
+// hands, only each seat's stack and its bet or that it is still choosing, with the seat on the
+// betting turn named. A free table says once that its stacks are pretend.
+export function buildBlackjackBettingEmbed(table: BlackjackTable, freeTable: boolean): EmbedBuilder {
+	const c = gamesCopy.blackjack;
+	const betting = table.phase === "betting" ? table.seats[table.turn] : undefined;
+	const lines = table.seats.map((seat) => {
+		if (seat.out) return seatStanding(seat);
+		const status = seat.bet > 0 ? c.seatStack(seat.stack, seat.bet) : `${c.seatStack(seat.stack, 0)}, ${c.seatWaitingToBet}`;
+		return `${betting?.userId === seat.userId ? "▶ " : ""}${seat.username}: ${status}`;
+	});
+	const description = [betting ? c.bettingLine(betting.userId) : null, freeTable ? c.freeTableNote : null].filter(Boolean).join("\n\n");
+	const embed = base().setTitle(c.bettingTitle(table.handNumber)).setColor(COLORS.GAME_BLACKJACK).addFields({ name: c.stacksAfterHand, value: lines.join("\n"), inline: false });
+	return description ? embed.setDescription(description) : embed;
 }

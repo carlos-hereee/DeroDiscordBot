@@ -270,6 +270,8 @@ const INVENTORY: readonly NoticeEntry[] = [
 
 	// ── games/arcadeHost.ts ──
 	{ file: "features/games/arcadeHost.ts", within: "openSoloRoomForMember", anchor: "describeSoloOpenFailure(refusal)", kind: "state" },
+	// A solo Blackjack table's buy in the wallet cannot cover (2026-10 item 267): a state at the press.
+	{ file: "features/games/arcadeHost.ts", within: "openSoloRoomForMember", anchor: "blackjackCharge.reason", kind: "state" },
 
 	// ── games/blackjackHandler.ts ──
 	{ file: "features/games/blackjackHandler.ts", within: "runBlackjack", anchor: "c.cooldownMessage(Math.ceil(gate.remainingMs / 1", kind: "state" },

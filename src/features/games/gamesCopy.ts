@@ -15,6 +15,8 @@
 // inside slash command identifiers (mini-game, secret-code) are identifiers,
 // not dashes, and are correct.
 
+import { chips as chipAmount } from "@features/economy/economyCopy.js";
+
 export const gamesCopy = {
 	// Parent command description. /mini-game is a pure container: Discord does
 	// not let a member invoke it without picking a subcommand, so this string is
@@ -301,6 +303,35 @@ export const gamesCopy = {
 		// invisible in the cards themselves.
 		doubledLostAll: "A doubled hand that loses pays nothing at all.",
 		tableTimedOut: "The table sat idle too long. The dealer clears the felt.",
+
+		// ── the bankroll (2026-10 item 267): a room table plays for a buy in, hand after hand ──
+		bettingTitle: (hand: number): string => `🪙 Hand ${hand}: place your bets`,
+		bettingLine: (userId: string): string => `<@${userId}> is choosing a bet.`,
+		handTitle: (hand: number): string => `🃏 Blackjack, hand ${hand}`,
+		// A seat's line on the board: its stack, and its bet once placed.
+		seatStack: (stack: number, bet: number): string => (bet > 0 ? `Stack ${chipAmount(stack)}, bet ${chipAmount(bet)}` : `Stack ${chipAmount(stack)}`),
+		seatWaitingToBet: "choosing a bet",
+		seatBroke: "out of chips",
+		seatLeft: "left the table",
+		// The table's chips are pretend on a free table, which the board says once.
+		freeTableNote: "This table plays free: the stacks are pretend and no wallet moves.",
+		// The bet modal, through the shared turn prompt.
+		betModalTitle: "🪙 Your bet",
+		betFieldLabel: "Your bet",
+		betChoice: (percent: number | null, amount: number): string => (percent === null ? `All in, ${chipAmount(amount)}` : `${percent}% of the buy in, ${chipAmount(amount)}`),
+		betStackText: (stack: number, buyIn: number): string => `Your stack: ${chipAmount(stack)}, from a buy in of ${chipAmount(buyIn)}.`,
+		// Why Double or Split is missing from the moves: the stack cannot cover another bet.
+		shortOfChips: (action: string, bet: number, stack: number): string => `${action} needs another ${chipAmount(bet)} and your stack holds ${chipAmount(stack)}.`,
+		// What a hand paid, beside its outcome on the result.
+		payoutNote: (bet: number, payout: number): string => `bet ${chipAmount(bet)}, paid ${chipAmount(payout)}`,
+		stacksAfterHand: "Stacks",
+		// A seat whose stack ran out; it posts in the room, so the table knows why it stopped.
+		brokeTrail: (userId: string): string => `💸 <@${userId}> is out of chips and leaves the table.`,
+		// Leave at a bankroll table: the stack goes back to the wallet at once.
+		leftWithChips: (amount: number): string => `You left the table and ${chipAmount(amount)} went back to your wallet.`,
+		leftFreeTable: "You left the table.",
+		leftTableTrail: (userId: string, amount: number, chipTable: boolean): string =>
+			chipTable ? `🚪 <@${userId}> left the table, and ${chipAmount(amount)} went back to their wallet.` : `🚪 <@${userId}> left the table.`,
 	},
 
 	// ── the challenge and accept engine copy: RETIRED (game rooms Phase 4) ──

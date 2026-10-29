@@ -50,6 +50,9 @@ const fake = vi.hoisted(() => {
 				referee: input.referee ?? false,
 				// The host's spectator setting (2026-10 item 254, Arcade 11), as the real store writes it.
 				spectatorMode: input.spectatorMode ?? null,
+				// A Blackjack rematch's buy in and its stacks ledger (2026-10 item 267).
+				holdemBuyIn: input.holdemBuyIn ?? null,
+				blackjackStacks: [],
 				secret: null,
 				moves: [],
 				winnerId: null,
@@ -102,6 +105,9 @@ const fake = vi.hoisted(() => {
 			Object.assign(row, { channelId: null, archiveAt: null });
 			return copy(row);
 		},
+		async findNonTerminal() {
+			return rows.filter((row) => LIVE.includes(row.status)).map((row) => copy(row));
+		},
 		async findExpiredArchives(now: Date) {
 			return rows
 				.filter((row) => row.status === "finished" && row.archiveAt instanceof Date && row.archiveAt.getTime() <= now.getTime())
@@ -111,6 +117,22 @@ const fake = vi.hoisted(() => {
 			const row = find(guildId, roomId);
 			if (row) Object.assign(row, { status: "archived", channelId: null });
 			return copy(row);
+		},
+		async openBlackjackStacks(guildId: string, roomId: string, entries: unknown[]) {
+			const row = find(guildId, roomId);
+			if (row) Object.assign(row, { blackjackStacks: entries.map((entry) => ({ ...(entry as object) })) });
+			return copy(row);
+		},
+		async saveBlackjackStacks() {
+			return null;
+		},
+		async takeBlackjackStack(guildId: string, roomId: string, userId: string) {
+			const row = find(guildId, roomId);
+			const entries = (row?.blackjackStacks as { userId: string }[] | undefined) ?? [];
+			const entry = entries.find((candidate) => candidate.userId === userId);
+			if (!row || !entry) return null;
+			row.blackjackStacks = entries.filter((candidate) => candidate !== entry);
+			return { ...entry };
 		},
 		async appendMove(guildId: string, roomId: string, move: unknown) {
 			const row = find(guildId, roomId);
@@ -140,6 +162,21 @@ const fake = vi.hoisted(() => {
 });
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: fake.store }));
+// Every member's chip wallet, in memory: a Blackjack rematch charges its buy in again (2026-10
+// item 267), and a server with no chips switch stored plays for chips.
+const wallets = vi.hoisted(() => new Map<string, number>());
+vi.mock("@features/economy/chipWallet.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@features/economy/chipWallet.js")>()),
+	takeChips: vi.fn(async (key: { userId: string }, amount: number) => {
+		const balance = wallets.get(key.userId) ?? 0;
+		if (balance < amount) return false;
+		wallets.set(key.userId, balance - amount);
+		return true;
+	}),
+	returnChips: vi.fn(async (key: { userId: string }, amount: number) => {
+		wallets.set(key.userId, (wallets.get(key.userId) ?? 0) + amount);
+	}),
+}));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: vi.fn() } }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
@@ -172,6 +209,7 @@ import { syncTurnPrompt } from "./turnPrompt.js";
 import { startRoomReferee } from "./roomReferee.js";
 import { soloRpsTurnAdapter } from "./soloLuckRoom.js";
 import { sweepExpiredRooms } from "./roomArchiveSweep.js";
+import { recoverGameRoomsOnBoot } from "./roomBootRecovery.js";
 import { buildRoomOverwrites } from "./roomPermissions.js";
 import { roomResultEmbed } from "./gameRoomsEmbeds.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -210,7 +248,8 @@ function makeRoomChannel() {
 		createInvite: vi.fn().mockResolvedValue({ code: "invite-2" }),
 		delete: vi.fn().mockResolvedValue(undefined),
 		permissionOverwrites: { set: vi.fn().mockResolvedValue(undefined) },
-		messages: { unpin: vi.fn().mockResolvedValue(undefined) },
+		// The boot sweep looks back for a dead Blackjack board; this channel has none.
+		messages: { unpin: vi.fn().mockResolvedValue(undefined), fetch: vi.fn().mockResolvedValue(new Map()) },
 	};
 }
 
@@ -327,6 +366,9 @@ beforeEach(() => {
 	accessMock.mockResolvedValue({ allowed: true, privateQuota: Number.POSITIVE_INFINITY });
 	blackjackMock.mockResolvedValue("started");
 	soloHangmanMock.mockResolvedValue(undefined);
+	wallets.clear();
+	wallets.set(P1, 5000);
+	wallets.set(P2, 5000);
 });
 
 describe("a rematch in the same channel", () => {
@@ -545,6 +587,41 @@ describe("refusals write nothing", () => {
 	});
 });
 
+// ── a restart mid table (2026-10 item 267, risk R5) ──────────────────
+// The table lived in a process that is gone, so the boot sweep finishes its room as abandoned,
+// and the one finish pays every stack the row stored after the last settled hand, each claimed
+// once: a second boot, or any later finish, pays nothing more.
+describe("a Blackjack table lost to a restart", () => {
+	it("pays every stored stack back once and closes the room as abandoned", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({
+			game: "blackjack",
+			status: "playing",
+			archiveAt: null,
+			endedAt: null,
+			winnerId: null,
+			blackjackStacks: [
+				{ userId: P1, buyIn: 1000, stack: 1400 },
+				{ userId: P2, buyIn: 1000, stack: 0 },
+			],
+		});
+
+		const summary = await recoverGameRoomsOnBoot(world.client);
+
+		expect(summary.lostTables).toBe(1);
+		expect(fake.row(FINISHED)?.status).toBe("finished");
+		expect(fake.row(FINISHED)?.blackjackStacks).toEqual([]);
+		expect(wallets.get(P1)).toBe(5000 + 1400);
+		expect(wallets.get(P2)).toBe(5000);
+		const lines = (fake.row(FINISHED)?.moves as { text: string }[]).map((move) => move.text);
+		expect(lines).toContain(gameRoomsCopy.trail.tableLostToRestart);
+		expect(lines).toContain(gameRoomsCopy.trail.blackjackChipsReturned([{ userId: P1, amount: 1400 }]));
+
+		await recoverGameRoomsOnBoot(world.client);
+		expect(wallets.get(P1)).toBe(5000 + 1400);
+	});
+});
+
 describe("solo rooms rematch in place", () => {
 	it("solo blackjack deals the new table into the same channel, with no new channel", async () => {
 		const world = makeWorld();
@@ -555,9 +632,56 @@ describe("solo rooms rematch in place", () => {
 		const next = rematchRow();
 		expect(next).toMatchObject({ channelId: CHANNEL, hostId: P1, playerIds: [P1], visibility: "solo", status: "playing" });
 		expect(world.guild.channels.create).not.toHaveBeenCalled();
-		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, { userId: P1, username: "Player One" }, true, next?.roomId, []);
+		// A fresh buy in, the same standard one, taken from the presser and held on the new row's ledger.
+		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, { userId: P1, username: "Player One" }, true, next?.roomId, [], { buyIn: 1000, chips: true });
+		expect(wallets.get(P1)).toBe(4000);
+		expect(next?.blackjackStacks).toEqual([{ userId: P1, buyIn: 1000, stack: 1000 }]);
 		// A solo room mints no invite, exactly like its first match.
 		expect(world.channel.createInvite).not.toHaveBeenCalled();
+	});
+
+	// 2026-10 item 267, owner decision 8: a Blackjack rematch takes a fresh buy in, and a presser
+	// who cannot pay is refused at the press, before anything is written.
+	it("refuses a solo blackjack rematch whose presser cannot cover the buy in again, writing nothing", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({ game: "solo-blackjack", visibility: "solo", playerIds: [P1], spectatorIds: [], inviteCode: null });
+		wallets.set(P1, 999);
+		const interaction = pressRematch(world, P1);
+
+		await rematchFromRoom(interaction, await roomOf(FINISHED));
+
+		expect(rematchRow()).toBeUndefined();
+		expect(blackjackMock).not.toHaveBeenCalled();
+		expect(wallets.get(P1)).toBe(999);
+		expect(interaction.deferUpdate).not.toHaveBeenCalled();
+	});
+
+	it("charges every returning blackjack player the same buy in again, and deals on without one who cannot pay", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({ game: "blackjack", visibility: "invite", playerIds: [P1, P2], spectatorIds: [], inviteCode: null, holdemBuyIn: 2500 });
+		wallets.set(P2, 100);
+
+		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
+
+		const next = rematchRow();
+		expect(next?.holdemBuyIn).toBe(2500);
+		expect(wallets.get(P1)).toBe(2500);
+		expect(wallets.get(P2)).toBe(100);
+		expect(next?.blackjackStacks).toEqual([{ userId: P1, buyIn: 2500, stack: 2500 }]);
+		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, expect.objectContaining({ userId: P1 }), true, next?.roomId, [], { buyIn: 2500, chips: true });
+		expect((next?.moves as { text: string }[]).map((move) => move.text)).toContain(gameRoomsCopy.trail.blackjackRematchShort(P2, 2500));
+	});
+
+	it("plays a blackjack rematch free, charging nobody, on a server with chips off", async () => {
+		const world = makeWorld();
+		configMock.findByGuildId.mockResolvedValue({ guildId: GUILD, adminRoleId: null, gamesCategoryId: "arcade-cat", autoHealEnabled: true, chipEconomyEnabled: false });
+		insertFinishedRoom({ game: "solo-blackjack", visibility: "solo", playerIds: [P1], spectatorIds: [], inviteCode: null });
+
+		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
+
+		expect(wallets.get(P1)).toBe(5000);
+		expect(rematchRow()?.blackjackStacks).toEqual([]);
+		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, expect.objectContaining({ userId: P1 }), true, rematchRow()?.roomId, [], { buyIn: 1000, chips: false });
 	});
 
 	it("closes the new solo blackjack room when its table cannot start, and tells the presser", async () => {
@@ -570,6 +694,9 @@ describe("solo rooms rematch in place", () => {
 
 		expect(rematchRow()?.status).toBe("finished");
 		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.errors.createFailed }));
+		// The table never started, so the room's finish paid the buy in back off its ledger, once.
+		expect(wallets.get(P1)).toBe(5000);
+		expect(rematchRow()?.blackjackStacks).toEqual([]);
 	});
 
 	// Rock paper scissors against Dero asks its throw in the room (2026-10 item 257 Phase 4b), so

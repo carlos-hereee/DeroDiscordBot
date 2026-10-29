@@ -89,6 +89,19 @@ describe("sweepIdleRooms", () => {
 		expect(finishMock).toHaveBeenCalledOnce();
 	});
 
+	// 2026-10 item 267: a Blackjack table's turn clock plays a silent seat's turn for it, which writes
+	// the row, so the sweep reads when a MEMBER last acted instead of the row's own stamp.
+	it("reads a playing Blackjack table's last member action rather than the row's stamp", async () => {
+		const silent = makeRoom({ roomId: "silent", game: "blackjack", blackjackActedAt: ago(31), updatedAt: ago(1) });
+		const played = makeRoom({ roomId: "played", game: "solo-blackjack", blackjackActedAt: ago(2), updatedAt: ago(1) });
+		storeMock.findNonTerminal.mockResolvedValue([silent, played]);
+
+		await sweepIdleRooms(client, NOW);
+
+		expect(finishMock).toHaveBeenCalledOnce();
+		expect(finishMock).toHaveBeenCalledWith(client, silent, { abandoned: true, now: NOW });
+	});
+
 	it("reads a Hold'em table's own action stamp rather than the row's", async () => {
 		const idleTable = holdemRoom(31, 1);
 		const liveTable = holdemRoom(1, 40);

@@ -17,7 +17,7 @@ vi.mock("@features/economy/deroCoins.js", async (importOriginal) => ({
 	awardForResult: mocks.awardForResult,
 }));
 
-import { awardBlackjackResult, awardMultiPlayerResult, awardSoloLuckResult, awardTwoPlayerResult } from "./gameXp.js";
+import { awardBlackjackResult, awardBlackjackTableCoins, awardMultiPlayerResult, awardSoloLuckResult, awardTwoPlayerResult } from "./gameXp.js";
 import type { SeatResult } from "./blackjackState.js";
 
 const { GAME_PLAY_XP, GAME_WIN_XP, GAME_TIE_XP, BLACKJACK_NATURAL_XP, BLACKJACK_DOUBLE_WIN_MULTIPLIER } = BOT_CONSTANTS.LEVELING;
@@ -279,21 +279,49 @@ describe("the coins each helper hands deroCoins", () => {
 		expect(coinCall()).toEqual({ guildId: "g1", game: "solo-hangman", resultKey: "room1", players: [{ userId: "solver", outcome: "won" }, { userId: "helper", outcome: "played" }] });
 	});
 
-	it("pays blackjack per seat by its best hand, and a one seat table as solo blackjack", () => {
+	it("pays an inline blackjack table per seat by its best hand, and a one seat table as solo blackjack", () => {
 		awardBlackjackResult({
 			client,
 			guildId: "g1",
-			resultKey: "room1",
+			resultKey: "chan1:1",
+			coinsPerHand: true,
 			seats: [
-				{ userId: "a", username: "a", hands: ["lose", "win"], doubled: [false, false] },
-				{ userId: "b", username: "b", hands: ["push"], doubled: [false] },
+				{ userId: "a", username: "a", hands: ["lose", "win"], doubled: [false, false], bets: [0, 0], payouts: [0, 0] },
+				{ userId: "b", username: "b", hands: ["push"], doubled: [false], bets: [0], payouts: [0] },
 			],
 		});
-		expect(coinCall()).toEqual({ guildId: "g1", game: "blackjack", resultKey: "room1", players: [{ userId: "a", outcome: "won" }, { userId: "b", outcome: "drawn" }] });
+		expect(coinCall()).toEqual({ guildId: "g1", game: "blackjack", resultKey: "chan1:1", players: [{ userId: "a", outcome: "won" }, { userId: "b", outcome: "drawn" }] });
 
 		mocks.awardForResult.mockClear();
-		awardBlackjackResult({ client, guildId: "g1", resultKey: "room2", seats: [{ userId: "a", username: "a", hands: ["lose"], doubled: [false] }] });
-		expect(coinCall()).toEqual({ guildId: "g1", game: "solo-blackjack", resultKey: "room2", players: [{ userId: "a", outcome: "played" }] });
+		awardBlackjackResult({ client, guildId: "g1", resultKey: "chan2:1", coinsPerHand: true, seats: [{ userId: "a", username: "a", hands: ["lose"], doubled: [false], bets: [0], payouts: [0] }] });
+		expect(coinCall()).toEqual({ guildId: "g1", game: "solo-blackjack", resultKey: "chan2:1", players: [{ userId: "a", outcome: "played" }] });
+	});
+
+	// 2026-10 item 267, owner decision 7: a room table pays coins once, at its finish, never per hand.
+	it("pays a room table's hand no coins, and the room's coins once by each member's final stack against the buy in", () => {
+		awardBlackjackResult({ client, guildId: "g1", resultKey: "room1", coinsPerHand: false, seats: [{ userId: "a", username: "a", hands: ["win"], doubled: [false], bets: [100], payouts: [200] }] });
+		expect(mocks.awardForResult).not.toHaveBeenCalled();
+
+		awardBlackjackTableCoins({
+			guildId: "g1",
+			game: "blackjack",
+			roomId: "room1",
+			stacks: [
+				{ userId: "a", buyIn: 1000, stack: 1500 },
+				{ userId: "b", buyIn: 1000, stack: 1000 },
+				{ userId: "c", buyIn: 1000, stack: 0 },
+			],
+		});
+		expect(coinCall()).toEqual({
+			guildId: "g1",
+			game: "blackjack",
+			resultKey: "room1",
+			players: [
+				{ userId: "a", outcome: "won" },
+				{ userId: "b", outcome: "drawn" },
+				{ userId: "c", outcome: "played" },
+			],
+		});
 	});
 
 	it("pays a solo luck round under its solo slug and key", () => {

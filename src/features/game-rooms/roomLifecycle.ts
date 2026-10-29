@@ -12,6 +12,7 @@ import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
 import { challengeResultLine, closeChallengeCard } from "./challengeCard.js";
 import type { OutcomeBucket } from "./matchOutcome.js";
 import { settleTableChips } from "./holdemChips.js";
+import { settleBlackjackStacks } from "./blackjackChips.js";
 import { revokeRoomInvite } from "./roomInvite.js";
 import { isSoloLuckGame, offersRematch } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -111,6 +112,9 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	// ends a table pays it exactly once, whoever ended it. Awaited before the lock so its
 	// line lands above the result card; it catches its own failures.
 	await settleTableChips(client, claimed);
+	// A Blackjack chip table's stacks the same way (2026-10 item 267, risk R5), from the ledger
+	// the last settle wrote, so a restart, the idle sweep or a deleted channel pays them too.
+	await settleBlackjackStacks(client, claimed);
 
 	// A network table names its winner rather than mentioning them (satelliteRooms).
 	const resultEmbed = await labelEmbedForRoom(client, room, roomResultEmbed(winnerId, input.abandoned ?? false, input.art?.ref, archiveDelayMs));

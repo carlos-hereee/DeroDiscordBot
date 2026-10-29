@@ -49,7 +49,6 @@ import {
 	SEATING_WINDOW_MS,
 	TABLE_TIMEOUT_MS,
 	MAX_SEATS,
-	roomWinnerOf,
 	blackjackTurnAdapter,
 	runBlackjack,
 } from "./blackjackHandler.js";
@@ -559,22 +558,6 @@ describe("drawing the table every turn", () => {
 	});
 });
 
-// ── a room's one winner (2026-10 item 254, Arcade 1) ─────────────────────
-// A multi seat table plays in a room now, whose result card names one winner at most.
-describe("roomWinnerOf", () => {
-	const seat = (userId: string, hands: Array<"win" | "blackjack" | "push" | "lose">) => ({ userId, username: userId, hands, doubled: hands.map(() => false) });
-
-	it("names the only seat that beat the dealer, a split seat counting once", () => {
-		expect(roomWinnerOf([seat("a", ["lose"]), seat("b", ["win", "lose"])])).toBe("b");
-		expect(roomWinnerOf([seat("a", ["blackjack"])])).toBe("a");
-	});
-
-	it("names nobody when several seats won, or none did", () => {
-		expect(roomWinnerOf([seat("a", ["win"]), seat("b", ["blackjack"])])).toBeNull();
-		expect(roomWinnerOf([seat("a", ["push"]), seat("b", ["lose"])])).toBeNull();
-	});
-});
-
 // ── leaving during a hand (2026-10 item 254, Arcade 12) ──
 describe("Leave during a hand", () => {
 	it("settles a solo seat that leaves as a loss, paid once, with nothing left to press", async () => {
@@ -623,7 +606,8 @@ describe("the turn prompt", () => {
 		await flush();
 
 		const after = blackjackTurnAdapter.fingerprintOf(roomOf("chan-1"));
-		expect(before).toMatch(/^j0\./);
+		// Hand 1, seat 0: the hand number rides the fingerprint since a room table deals many hands.
+		expect(before).toMatch(/^j1\.0\./);
 		if (after) expect(after).not.toBe(before);
 	});
 

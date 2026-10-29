@@ -14,6 +14,7 @@ import { describeSoloOpenFailure, openSoloRoom, readPrivateQuotaStatus, readSolo
 import { showNotice } from "@utils/textModal.js";
 import { answerSoloRefusal, closeHeldDraft, offerChallengeDraft, offerToFreeSlot } from "@features/game-rooms/challengeBoard.js";
 import { SOLO_LUCK_GAMES } from "@features/game-rooms/roomTypes.js";
+import { chargeSoloTable } from "@features/game-rooms/holdemDraftBuyIn.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { HANGMAN_CATEGORIES, isHangmanCategory, type HangmanCategory } from "./hangmanWords.js";
 
@@ -155,6 +156,14 @@ export async function openSoloRoomForMember(
 		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [describeSoloOpenFailure(refusal)] });
 		return;
 	}
+	// A solo Blackjack table plays for a buy in (2026-10 item 267), taken here, LAST before the
+	// acknowledgement, so a short wallet is still a notice at the press and opens nothing.
+	// openSoloRoom owns the chips from here: it gives them back if the room does not open.
+	const blackjackCharge = game === "solo-blackjack" ? await chargeSoloTable(guild.id, interaction.user.id) : null;
+	if (blackjackCharge && !blackjackCharge.ok) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [blackjackCharge.reason] });
+		return;
+	}
 	const answer = await beginChannelAnswer(interaction, "member");
 	const member = guild.members.cache.get(interaction.user.id);
 	const result = await openSoloRoom(
@@ -165,7 +174,7 @@ export async function openSoloRoomForMember(
 			displayName: member?.displayName ?? interaction.user.globalName ?? interaction.user.username,
 			user: interaction.user,
 		},
-		options
+		{ ...options, ...(blackjackCharge?.ok ? { blackjackSeats: blackjackCharge.seats } : {}) }
 	);
 	if (result.ok) {
 		// The quota status line rides the confirmation when the tier surface is

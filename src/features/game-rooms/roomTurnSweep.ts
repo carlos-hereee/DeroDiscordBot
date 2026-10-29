@@ -13,6 +13,7 @@ import { deserializeMatch, serializeMatch, type StoredBattleship } from "./roomB
 import { redrawBattleshipBoard } from "./roomBattleshipHandlers.js";
 import { applyMonopolyOutcome, monopolyStateOf, persistIfUnchanged } from "./roomMonopolyHandlers.js";
 import { isClockExpired, roomDrawingKey } from "./drawingPause.js";
+import { isBlackjackRoomGame } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { HoldemTable } from "@features/games/holdemTable.js";
 
@@ -246,13 +247,17 @@ export interface IdleRoomSummary {
 //   ① Hold em: the table's lastActionAt, the version stamp every engine mutation moves
 //      (a deal, an action, a clock fold, a leave). A buy in moves no stamp but posts a
 //      trail line, so the later of the two counts.
-//   ② Every other game, and every draft: the row's updatedAt. Each action writes the
+//   ② A playing Blackjack table: blackjackActedAt, the last bet, action or leave a MEMBER
+//      chose (2026-10 item 267). Its turn clock plays a silent seat's turn for it and every
+//      such move writes the row, so updatedAt would keep a table nobody touches alive forever.
+//   ③ Every other game, and every draft: the row's updatedAt. Each action writes the
 //      row (a trail line, an aim or an rps pick in the secret, a change to the draft),
 //      and the schema's timestamps stamp every write, so it is the latest of them all.
 //      createdAt covers a row that was never written again.
 function lastRoomActionAt(room: IGameRoom): number {
 	const table = room.game === "holdem" ? (room.secret as HoldemTable | null) : null;
 	if (table?.lastActionAt) return Math.max(table.lastActionAt, lastActivityAt(room));
+	if (isBlackjackRoomGame(room.game) && room.status === "playing" && room.blackjackActedAt) return new Date(room.blackjackActedAt).getTime();
 	const stamp = room.updatedAt ?? room.createdAt;
 	return stamp ? new Date(stamp).getTime() : 0;
 }

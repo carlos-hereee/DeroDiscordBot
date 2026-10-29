@@ -324,7 +324,17 @@ export const BOT_CONSTANTS = {
 	// pause). 60 seconds is the owner's number from the 1.7.0 test run (test fixes
 	// plan, item 13).
 	HOLDEM_TURN_TIMEOUT_MS: 60_000,
-	// How long a settled hand stays on the board before the next one deals itself,
+	// A Blackjack room seat's clock for every betting turn and every action turn (owner
+	// decision 7 of 2026-10 item 267, 3 minutes). A betting turn that runs out bets the
+	// smallest choice and an action turn that runs out stands, so one absent seat never
+	// stalls the table; a table nobody touches still ends on the 30 minute idle sweep,
+	// because neither of those moves counts as a member acting.
+	BLACKJACK_TURN_TIMEOUT_MS: 180_000,
+	// The bets a Blackjack seat chooses from each hand, as percents of its buy in, before
+	// All in (owner decision 6 of 2026-10 item 267). Rounded down to whole chips, at least
+	// one chip, never above the seat's stack.
+	BLACKJACK_BET_PERCENTS: [5, 10, 25] as readonly number[],
+	// How long a settled hand stays on the board before the next one deals itself, stays on the board before the next one deals itself,
 	// counted the same way. The host's Next hand button deals at once instead. Also
 	// the owner's number (item 13). Checked on the clock tick below, so the deal lands
 	// up to one tick later.

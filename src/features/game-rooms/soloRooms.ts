@@ -11,6 +11,8 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { SoloLuckSlug } from "./roomTypes.js";
 import { playSoloLuckRoom } from "./soloLuckRoom.js";
+import { draftBuyInOf, refundSeatsDirectly, type PaidSeats } from "./holdemDraftBuyIn.js";
+import { openBlackjackLedger } from "./blackjackChips.js";
 
 // ── soloRooms ────────────────────────────────────────────────────────
 // What:  the one-player path into a room: "Host Hangman", "Play Blackjack" and the
@@ -71,9 +73,26 @@ export interface SoloOpenOptions {
 	// (2026-10 item 245 Phase 4a). Absent draws from the whole bank, as Host Hangman
 	// always has. Ignored for solo blackjack.
 	hangmanCategory?: HangmanCategory;
+	// A solo Blackjack table's buy in, taken at the press (2026-10 item 267). Absent sits the
+	// member at a free table on the standard stack.
+	blackjackSeats?: PaidSeats;
 }
 
+/**
+ * Open a solo room of `game` for `host`. A solo Blackjack buy in handed over in `options` is this
+ * function's from then on: a room that does not open gives it straight back, and a table that
+ * opened holds it in its stacks ledger, so the caller never refunds it.
+ */
 export async function openSoloRoom(guild: Guild, game: SoloGameSlug, host: SoloHost, options: SoloOpenOptions = {}): Promise<SoloOpenResult> {
+	const result = await openSoloRoomOnce(guild, game, host, options);
+	if (result.ok) return result;
+	// The room opened and its table did not: the table's own close already settled the buy in.
+	if (result.reason === "tableNotStarted") return { ok: false, reason: "createFailed" };
+	if (options.blackjackSeats) await refundSeatsDirectly(options.blackjackSeats);
+	return result;
+}
+
+async function openSoloRoomOnce(guild: Guild, game: SoloGameSlug, host: SoloHost, options: SoloOpenOptions): Promise<SoloOpenResult | { ok: false; reason: "tableNotStarted" }> {
 	const stored = await guildConfigStore.findByGuildId(guild.id);
 	const config = stored as unknown as { gamesCategoryId?: string | null; adminRoleId?: string | null } | null;
 
@@ -97,8 +116,10 @@ export async function openSoloRoom(guild: Guild, game: SoloGameSlug, host: SoloH
 	});
 	if (!result.ok) return result;
 
-	if (game === "solo-blackjack" && !(await startSoloBlackjackBoard(guild, result.room, result.channel, host))) {
-		return { ok: false, reason: "createFailed" };
+	const blackjackSeats = options.blackjackSeats ?? freeSeatsOf(result.room);
+	// A table that did not start already closed its room and settled its buy in.
+	if (game === "solo-blackjack" && !(await startSoloBlackjackBoard(guild, result.room, result.channel, host, blackjackSeats))) {
+		return { ok: false, reason: "tableNotStarted" };
 	}
 	// A coin flip or a dice roll is played the moment the room opens and the room finishes
 	// straight after, so the member reads one result in a room already locked, with Archive
@@ -110,39 +131,54 @@ export async function openSoloRoom(guild: Guild, game: SoloGameSlug, host: SoloH
 	return result;
 }
 
+/** A room's seats at a free Blackjack table: every player, on the standard stack, charged nothing. */
+export function freeSeatsOf(room: Pick<IGameRoom, "hostId" | "playerIds" | "holdemBuyIn">): PaidSeats {
+	return { buyIn: draftBuyInOf(room), userIds: [room.hostId, ...room.playerIds.filter((userId) => userId !== room.hostId)], charged: false };
+}
+
 /**
- * Deal a solo blackjack room's table into its channel. Returns false, with the room
+ * Open a solo blackjack room's table in its channel. Returns false, with the room
  * already closed, when the table could not start.
  *
- * Solo blackjack rides its own edited board message, posted into the room. The roomId
- * rides the in-memory game so the settle path can close the room through
+ * Solo blackjack rides its own board message, posted into the room. The roomId
+ * rides the in-memory game so the table's end can close the room through
  * roomLifecycle.finish. Shared by a fresh solo room and a rematch in the same channel,
- * so both deal the same table the same way.
+ * so both open the same table the same way. `seats` is the buy in taken at the press.
  */
-export async function startSoloBlackjackBoard(guild: Guild, room: IGameRoom, channel: TextChannel, host: SoloHost): Promise<boolean> {
-	return dealRoomTable(guild, room, channel, { userId: host.userId, username: host.displayName }, []);
+export async function startSoloBlackjackBoard(guild: Guild, room: IGameRoom, channel: TextChannel, host: SoloHost, seats: PaidSeats): Promise<boolean> {
+	return dealRoomTable(guild, room, channel, { userId: host.userId, username: host.displayName }, [], seats);
 }
 
 /**
- * Deal a multi seat blackjack room's table (2026-10 item 254, Arcade 1): every player the
- * challenge card gathered takes a seat, the host first, and the hand is dealt at once,
- * since the seating already happened on the card. Returns false, with the room already
- * closed, when the table could not start. A rematch deals through here too.
+ * Open a multi seat blackjack room's table (2026-10 item 254, Arcade 1): every seat the
+ * challenge card filled sits down, the host first, at once, since the seating already
+ * happened on the card. On a chip table those are the seats that paid (2026-10 item 267);
+ * on a free one every player. Returns false, with the room already closed, when the table
+ * could not start. A rematch opens through here too.
  */
-export async function startBlackjackRoomBoard(guild: Guild, room: IGameRoom, channel: TextChannel): Promise<boolean> {
+export async function startBlackjackRoomBoard(guild: Guild, room: IGameRoom, channel: TextChannel, seats: PaidSeats): Promise<boolean> {
 	const seatOf = (userId: string) => ({ userId, username: guild.members.cache.get(userId)?.displayName ?? userId });
-	const others = room.playerIds.filter((userId) => userId !== room.hostId).map(seatOf);
-	return dealRoomTable(guild, room, channel, seatOf(room.hostId), others);
+	const others = seats.userIds.filter((userId) => userId !== room.hostId).map(seatOf);
+	return dealRoomTable(guild, room, channel, seatOf(room.hostId), others, seats);
 }
 
+// ① the stacks ledger, so every chip paid is on the row before a card is dealt, ② the table.
+// A ledger that could not be written leaves the buy ins with nobody holding them, so they go
+// straight back; a table that could not start closes its room, and finish pays the ledger.
 async function dealRoomTable(
 	guild: Guild,
 	room: IGameRoom,
 	channel: TextChannel,
 	host: { userId: string; username: string },
-	others: Array<{ userId: string; username: string }>
+	others: Array<{ userId: string; username: string }>,
+	seats: PaidSeats
 ): Promise<boolean> {
-	const started = await startBlackjackTable(channel, guild.id, host, true, room.roomId, others);
+	if (!(await openBlackjackLedger(room, seats))) {
+		await refundSeatsDirectly(seats);
+		await roomLifecycle.finish(guild.client, room, { abandoned: true });
+		return false;
+	}
+	const started = await startBlackjackTable(channel, guild.id, host, true, room.roomId, others, { buyIn: seats.buyIn, chips: seats.charged });
 	if (started === "started") return true;
 
 	// The room exists and its board does not, so the host would hold their one room

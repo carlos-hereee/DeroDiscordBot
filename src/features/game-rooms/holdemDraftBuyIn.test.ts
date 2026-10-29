@@ -4,7 +4,21 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { addBuyInPaid: v
 vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { debit: vi.fn(), credit: vi.fn() } }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 
-import { buyInModal, chargeJoiner, draftBuyInOf, isValidDraftBuyIn, refundAllJoiners, refundJoiners, refundOpenedSeats, seatsAtStart, settleDraftBuyIns } from "./holdemDraftBuyIn.js";
+import {
+	buyInModal,
+	chargeJoiner,
+	chargeSeats,
+	chargeSoloTable,
+	draftBuyInOf,
+	isChipDraft,
+	isValidDraftBuyIn,
+	refundAllJoiners,
+	refundJoiners,
+	refundOpenedSeats,
+	refundSeatsDirectly,
+	seatsAtStart,
+	settleDraftBuyIns,
+} from "./holdemDraftBuyIn.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { chipWalletStore } from "@db/stores/chipWalletStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -193,5 +207,66 @@ describe("the seats a draft would open with", () => {
 		expect(await seatsAtStart(draft({ botSeats: 1 }), [])).toBe(2);
 		configMock.findByGuildId.mockResolvedValue({ chipEconomyEnabled: false });
 		expect(await seatsAtStart(draft(), ["a", "b"])).toBe(3);
+	});
+});
+
+// ── Blackjack plays for the same buy in (2026-10 item 267, owner decisions 1 and 2) ──
+describe("a Blackjack table's buy in", () => {
+	const blackjack = (overrides: Partial<IGameRoom> = {}) => draft({ game: "blackjack", ...overrides });
+
+	it("charges a Blackjack joiner through the same ledger as Hold'em's, once", async () => {
+		expect(await chargeJoiner(blackjack(), GUEST)).toBeNull();
+		expect(walletMock.debit).toHaveBeenCalledWith(key(GUEST), 2_500);
+		expect(storeMock.addBuyInPaid).toHaveBeenCalledWith("guild-1", "room-1", GUEST, 2_500);
+
+		// A double press: the ledger refuses the second record, so its charge goes straight back.
+		storeMock.addBuyInPaid.mockResolvedValue(null);
+		storeMock.findByRoomId.mockResolvedValue(blackjack({ buyInPaidBy: [GUEST] }));
+		expect(await chargeJoiner(blackjack(), GUEST)).toBe(gameRoomsCopy.holdem.buyInAlreadyPaid);
+		expect(walletMock.credit).toHaveBeenCalledWith(key(GUEST), 2_500);
+	});
+
+	it("charges the host at Start and seats the host and every payer at the buy in", async () => {
+		const settled = await settleDraftBuyIns(blackjack({ buyInPaidBy: ["a"] }), ["a", "invited-unpaid"]);
+		expect(settled).toEqual({ ok: true, seats: { buyIn: 2_500, userIds: [HOST, "a"], charged: true } });
+		expect(walletMock.debit).toHaveBeenCalledWith(key(HOST), 2_500);
+	});
+
+	it("plays free and moves no chips on a server with chips off, or on a network table", async () => {
+		configMock.findByGuildId.mockResolvedValue({ chipEconomyEnabled: false });
+		expect(await chargeJoiner(blackjack(), GUEST)).toBeNull();
+		expect(await settleDraftBuyIns(blackjack(), ["a"])).toEqual({ ok: true, seats: { buyIn: 2_500, userIds: [HOST, "a"], charged: false } });
+
+		configMock.findByGuildId.mockResolvedValue({ chipEconomyEnabled: true });
+		expect(await isChipDraft(blackjack({ network: true }))).toBe(false);
+		expect(await chargeJoiner(blackjack({ network: true }), GUEST)).toBeNull();
+		expect(walletMock.debit).not.toHaveBeenCalled();
+	});
+
+	it("takes a solo table's standard buy in at the press, refuses a short wallet, and charges nothing with chips off", async () => {
+		expect(await chargeSoloTable("guild-1", HOST)).toEqual({ ok: true, seats: { buyIn: BOT_CONSTANTS.HOLDEM_STARTING_STACK, userIds: [HOST], charged: true } });
+		expect(walletMock.debit).toHaveBeenCalledWith(key(HOST), BOT_CONSTANTS.HOLDEM_STARTING_STACK);
+
+		walletMock.debit.mockResolvedValue(null);
+		expect(await chargeSoloTable("guild-1", HOST)).toEqual({ ok: false, reason: gameRoomsCopy.holdem.notEnoughChips(BOT_CONSTANTS.HOLDEM_STARTING_STACK) });
+
+		walletMock.debit.mockClear();
+		configMock.findByGuildId.mockResolvedValue({ chipEconomyEnabled: false });
+		expect(await chargeSoloTable("guild-1", HOST)).toEqual({ ok: true, seats: { buyIn: BOT_CONSTANTS.HOLDEM_STARTING_STACK, userIds: [HOST], charged: false } });
+		expect(walletMock.debit).not.toHaveBeenCalled();
+	});
+
+	it("charges a rematch's returning players one by one, leaving out a short wallet", async () => {
+		walletMock.debit.mockImplementation(async (wallet: { userId: string }) => (wallet.userId === "short" ? null : { balance: 0 }));
+		expect(await chargeSeats(["a", "short", "b"], 1_000)).toEqual({ paid: ["a", "b"], short: ["short"] });
+	});
+
+	it("gives seats no ledger holds straight back, and owes a free table nothing", async () => {
+		await refundSeatsDirectly({ buyIn: 1_000, userIds: [HOST, "a"], charged: true });
+		expect(walletMock.credit).toHaveBeenCalledWith(key(HOST), 1_000);
+		expect(walletMock.credit).toHaveBeenCalledWith(key("a"), 1_000);
+		walletMock.credit.mockClear();
+		await refundSeatsDirectly({ buyIn: 1_000, userIds: [HOST], charged: false });
+		expect(walletMock.credit).not.toHaveBeenCalled();
 	});
 });

@@ -17,11 +17,19 @@
 // members can click in the same tick. An uninterrupted check-then-write is what
 // stops a double click from drawing two cards for one Hit.
 //
-// ⚠️ NO INSURANCE, and it is not an oversight. Insurance is a SIDE BET, and the
-// plan fixes v1 at no chips, no wager, no economy (R22). There is nothing to
-// insure and nothing to pay it from, so the button would be theatre. Double
-// survives the same cut only because it can be re-expressed as a real decision
-// without money: take exactly one card, then stand, for a doubled XP stake.
+// ⚠️ A ROOM TABLE PLAYS FOR A BANKROLL (2026-10 item 267, owner decision 6). The first
+// version played no chips at all (R22 of the arcade plan), because no wallet existed to buy
+// in from. Chips are one global wallet now, so a room table seats every player with a stack
+// of their buy in, each hand opens with a betting turn per seat (placeBet), the hand pays
+// the bets (collectPayouts), and the table deals hand after hand (startNextHand) until every
+// seat is broke or gone. A free table plays the same way with a pretend stack. The one hand
+// table createTable builds (the inline slash forms) still bets nothing: every stake is zero.
+//
+// ⚠️ NO INSURANCE, and it is still not an oversight. Insurance is a SIDE BET on the dealer's
+// hole card, a second wager inside a hand the owner's bankroll decision never asked for, and
+// one more turn every seat would sit through on every dealer ace.
+
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 // ── Table rules, named rather than inlined ──
 // Every one of these is a rule a reader would otherwise have to infer from a
@@ -127,18 +135,33 @@ export interface Hand {
 	// A hand created by splitting. Load bearing: a 21 here is an ordinary 21, NOT
 	// a natural, which is the single most commonly mis-implemented blackjack rule.
 	fromSplit: boolean;
+	// The chips riding on this hand, already out of the seat's stack. A double doubles it and
+	// a split hand carries the original bet again, so it lives on the hand, not the seat.
+	bet: number;
 }
+
+/** Why a seat is no longer dealt in: its stack ran out, or it left the table. */
+export type SeatOut = "broke" | "left";
 
 export interface Seat {
 	userId: string;
 	username: string;
 	// One entry until the seat splits. The renderer and the settle pass both walk
-	// this, so a solo seat and a four way split take the same code path.
+	// this, so a solo seat and a four way split take the same code path. Empty for a
+	// seat that is out, and for every seat while the table takes its bets.
 	hands: Hand[];
 	activeHand: number;
+	// The seat's chips outside any bet in play. Zero at a one hand table, which bets nothing.
+	stack: number;
+	// What the seat bet this hand, taken from the stack when it was placed; zero until it bets.
+	bet: number;
+	// Null while the seat is dealt in.
+	out: SeatOut | null;
 }
 
-export type TablePhase = "playing" | "dealer" | "settled";
+// "betting" opens every hand of a bankroll table: each seat in turn picks its bet, and the
+// last bet deals the hand.
+export type TablePhase = "betting" | "playing" | "dealer" | "settled";
 
 export interface BlackjackTable {
 	seats: Seat[];
@@ -150,12 +173,19 @@ export interface BlackjackTable {
 	// The one genuine rules variant worth exposing: stand on soft 17 (player
 	// friendly, the default) versus hit it (the house edge version).
 	hitsSoft17: boolean;
+	// What every seat bought in for; the bet choices are percents of it. Zero at a one hand table.
+	buyIn: number;
+	// Counts from 1, so a turn of hand 2 never reads like the same turn of hand 1.
+	handNumber: number;
+	// ⚠️ The payout claim: set by collectPayouts, the one writer of a settled hand into the
+	// stacks, so a second call for the same hand pays nothing (risk R5).
+	paid: boolean;
 }
 
 export type BlackjackAction = "hit" | "stand" | "double" | "split";
 
-function emptyHand(fromSplit = false): Hand {
-	return { cards: [], status: "playing", doubled: false, fromSplit };
+function emptyHand(fromSplit = false, bet = 0): Hand {
+	return { cards: [], status: "playing", doubled: false, fromSplit, bet };
 }
 
 // A natural is 21 on the FIRST TWO CARDS of a hand that was not split. Both
@@ -191,45 +221,169 @@ interface CreateTableInput {
 	hitsSoft17?: boolean;
 }
 
-// Builds the table AND deals the opening round, because a table that exists but
-// is not dealt is a state no caller wants and every caller would have to
-// remember to advance past.
+function buildTable(input: CreateTableInput, buyIn: number): BlackjackTable {
+	return {
+		seats: input.players.map((player) => ({ userId: player.userId, username: player.username, hands: [], activeHand: 0, stack: buyIn, bet: 0, out: null })),
+		dealer: emptyHand(),
+		shoe: buildShoe(input.deckCount ?? DEFAULT_DECK_COUNT, input.rng ?? Math.random),
+		phase: "betting",
+		turn: 0,
+		hitsSoft17: input.hitsSoft17 ?? false,
+		buyIn,
+		handNumber: 1,
+		paid: false,
+	};
+}
+
+// Builds a one hand table AND deals it, because a table that exists but is not dealt is a
+// state no caller wants. Every stake is zero: this is the inline slash forms' table, which
+// plays for nothing and settles once.
+export function createTable(input: CreateTableInput): BlackjackTable {
+	const table = buildTable(input, 0);
+	dealRound(table);
+	return table;
+}
+
+/**
+ * A room's table (2026-10 item 267): every seat starts with a stack of the buy in and the
+ * table opens on its first betting turn. Nothing is dealt until every seat has bet.
+ */
+export function createBankrollTable(input: CreateTableInput & { buyIn: number }): BlackjackTable {
+	return buildTable(input, input.buyIn);
+}
+
+// Deals a hand to every seat still in, each hand carrying the bet its seat placed.
 //
 // Deal order is real casino order: one card to every seat, one to the dealer,
 // then a second to every seat and the dealer. It is observably different from
 // dealing each hand complete in turn (the cards land in a different order), and
 // matching the real thing costs nothing.
-export function createTable(input: CreateTableInput): BlackjackTable {
-	const table: BlackjackTable = {
-		seats: input.players.map((player) => ({
-			userId: player.userId,
-			username: player.username,
-			hands: [emptyHand()],
-			activeHand: 0,
-		})),
-		dealer: emptyHand(),
-		shoe: buildShoe(input.deckCount ?? DEFAULT_DECK_COUNT, input.rng ?? Math.random),
-		phase: "playing",
-		turn: 0,
-		hitsSoft17: input.hitsSoft17 ?? false,
-	};
-
+function dealRound(table: BlackjackTable): void {
+	table.dealer = emptyHand();
+	for (const seat of table.seats) {
+		seat.hands = seat.out ? [] : [emptyHand(false, seat.bet)];
+		seat.activeHand = 0;
+	}
+	const dealt = table.seats.filter((seat) => seat.hands.length > 0);
 	for (let round = 0; round < 2; round += 1) {
-		for (const seat of table.seats) seat.hands[0].cards.push(draw(table));
+		for (const seat of dealt) seat.hands[0].cards.push(draw(table));
 		table.dealer.cards.push(draw(table));
 	}
 
 	// Naturals are settled before anyone acts, so a seat dealt 21 never sees a Hit
 	// button it must not press.
-	for (const seat of table.seats) {
+	for (const seat of dealt) {
 		if (isNatural(seat.hands[0])) seat.hands[0].status = "blackjack";
 	}
 
 	// Everyone may already be done (a one seat table dealt a natural), so the turn
 	// pointer has to be settled through the same advance logic rather than assumed
 	// to be valid.
+	table.phase = "playing";
+	table.paid = false;
+	table.turn = 0;
 	settleTurn(table);
-	return table;
+}
+
+// ── Betting (2026-10 item 267) ──────────────────────────────────────────────
+
+/** One bet a seat may choose: a percent of the buy in, or everything it holds. */
+export interface BetChoice {
+	// The percent of the buy in, or null for All in.
+	percent: number | null;
+	amount: number;
+}
+
+/**
+ * The bets this seat may place now, smallest first: each of BLACKJACK_BET_PERCENTS of the buy
+ * in rounded down to whole chips (at least one), then All in. A percent at or above the stack
+ * IS all in, so it gives way to All in rather than offering the same chips twice. Empty for a
+ * seat with nothing to bet.
+ */
+export function betChoices(table: BlackjackTable, userId: string): BetChoice[] {
+	const seat = table.seats.find((candidate) => candidate.userId === userId);
+	if (!seat || seat.out || seat.stack <= 0) return [];
+	const choices: BetChoice[] = [];
+	for (const percent of BOT_CONSTANTS.BLACKJACK_BET_PERCENTS) {
+		const amount = Math.max(1, Math.floor((table.buyIn * percent) / 100));
+		if (amount >= seat.stack || choices.some((choice) => choice.amount === amount)) continue;
+		choices.push({ percent, amount });
+	}
+	choices.push({ percent: null, amount: seat.stack });
+	return choices;
+}
+
+/** The seat whose bet the table waits on, or undefined outside the betting phase. */
+export function bettingSeat(table: BlackjackTable): Seat | undefined {
+	return table.phase === "betting" ? table.seats[table.turn] : undefined;
+}
+
+export type BetOutcome = { status: "not-your-turn" } | { status: "illegal" } | { status: "ok"; amount: number; dealt: boolean };
+
+/**
+ * The seat on the betting turn places one of its bet choices. The bet leaves the stack at
+ * once, and the last seat's bet deals the hand. Synchronous, like applyAction, so a double
+ * Submit cannot bet twice.
+ */
+export function placeBet(table: BlackjackTable, userId: string, amount: number): BetOutcome {
+	const seat = bettingSeat(table);
+	if (!seat || seat.userId !== userId) return { status: "not-your-turn" };
+	if (!betChoices(table, userId).some((choice) => choice.amount === amount)) return { status: "illegal" };
+	seat.bet = amount;
+	seat.stack -= amount;
+	table.turn += 1;
+	return { status: "ok", amount, dealt: advanceBetting(table) };
+}
+
+// Moves the betting turn past every seat that is out or has bet, and deals once nobody is
+// left to bet. Answers whether it dealt.
+function advanceBetting(table: BlackjackTable): boolean {
+	while (table.turn < table.seats.length) {
+		const seat = table.seats[table.turn];
+		if (!seat.out && seat.bet === 0) return false;
+		table.turn += 1;
+	}
+	if (isTableOver(table)) return false;
+	dealRound(table);
+	return true;
+}
+
+/**
+ * After a settled hand has paid, open the next one on its first betting turn. False, with
+ * nothing changed, when no seat is still in: the table is over.
+ */
+export function startNextHand(table: BlackjackTable): boolean {
+	if (table.phase !== "settled" || !table.paid || isTableOver(table)) return false;
+	for (const seat of table.seats) {
+		seat.hands = [];
+		seat.activeHand = 0;
+		seat.bet = 0;
+	}
+	table.dealer = emptyHand();
+	table.handNumber += 1;
+	table.phase = "betting";
+	table.turn = 0;
+	advanceBetting(table);
+	return true;
+}
+
+/** True once every seat is broke or gone. */
+export function isTableOver(table: BlackjackTable): boolean {
+	return table.seats.every((seat) => seat.out !== null);
+}
+
+/**
+ * The actions this hand could take but for chips: a double or a split needs the stack to
+ * cover one more bet. The turn modal names them with the reason, beside the moves it offers.
+ */
+export function actionsShortOfChips(table: BlackjackTable, userId: string): BlackjackAction[] {
+	const seat = table.phase === "playing" ? table.seats[table.turn] : undefined;
+	if (!seat || seat.userId !== userId) return [];
+	const hand = seat.hands[seat.activeHand];
+	if (!hand || hand.status !== "playing" || hand.cards.length !== 2 || seat.stack >= hand.bet) return [];
+	const short: BlackjackAction[] = ["double"];
+	if (seat.hands.length < MAX_HANDS_PER_SEAT && cardValue(hand.cards[0]) === cardValue(hand.cards[1])) short.push("split");
+	return short;
 }
 
 // ── Legality ────────────────────────────────────────────────────────────────
@@ -246,12 +400,15 @@ export function legalActions(table: BlackjackTable, userId: string): BlackjackAc
 
 	const actions: BlackjackAction[] = ["hit", "stand"];
 	const isOpeningPair = hand.cards.length === 2;
+	// A double puts the hand's bet in again and a split bets it on the new hand, so both need
+	// the stack to cover one more bet (2026-10 item 267). A zero stake table always covers it.
+	const coversAnotherBet = seat.stack >= hand.bet;
 
 	// Double is a two card decision everywhere. Allowing it on three cards is a
 	// house variant nobody expects and it would let a seat double into a stiff.
-	if (isOpeningPair) actions.push("double");
+	if (isOpeningPair && coversAnotherBet) actions.push("double");
 
-	if (isOpeningPair && seat.hands.length < MAX_HANDS_PER_SEAT) {
+	if (isOpeningPair && coversAnotherBet && seat.hands.length < MAX_HANDS_PER_SEAT) {
 		// Split on equal VALUE, not equal rank, so a King and a Queen may be split.
 		// That is the standard casino rule; rank equality would silently forbid the
 		// most common ten-value split and read as a bug to any player.
@@ -295,13 +452,17 @@ export function applyAction(table: BlackjackTable, userId: string, action: Black
 			// Exactly one card, then final, win or lose. That forced stop is what
 			// makes doubling a real decision rather than a free extra card.
 			hand.doubled = true;
+			seat.stack -= hand.bet;
+			hand.bet *= 2;
 			hand.cards.push(draw(table));
 			hand.status = handValue(hand.cards).total > BLACKJACK_TARGET ? "bust" : "stood";
 			break;
 		}
 		case "split": {
 			const moved = hand.cards.pop() as Card;
-			const created = emptyHand(true);
+			// The new hand carries the original bet again, from the stack.
+			seat.stack -= hand.bet;
+			const created = emptyHand(true, hand.bet);
 			created.cards.push(moved);
 			// The original hand is retroactively a split hand too, so neither half can
 			// score a natural. Marking only the new one is the subtle version of the
@@ -331,23 +492,36 @@ export function applyAction(table: BlackjackTable, userId: string, action: Black
 
 // ── Leaving during a hand (2026-10 item 254, Arcade 12) ──────────────────────
 
-export type LeaveOutcome = { status: "left" } | { status: "not-seated" } | { status: "already-left" };
+// `cashOut` is the stack the seat walks away with, which the table no longer holds.
+export type LeaveOutcome = { status: "left"; cashOut: number } | { status: "not-seated" } | { status: "already-left" };
 
 /**
- * The seat gives up every hand it holds and leaves the table, whoever's turn it is.
- * Each hand becomes "left", which settles as a loss, never a push: a seat that walked
- * away from a bad hand must not get its stake back. The seat stays in `seats` so the
- * settle pass still records that loss. If it was the seat on the clock the turn moves
- * on, and a table with nobody left to act hands the round to the dealer.
+ * The seat leaves the table, whoever's turn it is, and takes its stack with it (2026-10 item
+ * 267). During a hand each of its hands becomes "left", which settles as a loss, never a
+ * push: a seat that walked away from a bad hand must not get its bet back. During the betting
+ * turns no card was dealt, so a bet already placed goes back to the stack first. The seat
+ * stays in `seats` so the settle pass still records that loss. If it was the seat on the
+ * clock the turn moves on, and a table with nobody left to act hands the round on. Between a
+ * hand that has paid and the next one's bets, the seat simply takes its stack.
  */
 export function applyLeave(table: BlackjackTable, userId: string): LeaveOutcome {
-	if (table.phase !== "playing") return { status: "not-seated" };
+	const settledAndPaid = table.phase === "settled" && table.paid && table.buyIn > 0;
+	if (table.phase !== "playing" && table.phase !== "betting" && !settledAndPaid) return { status: "not-seated" };
 	const seat = table.seats.find((candidate) => candidate.userId === userId);
-	if (!seat) return { status: "not-seated" };
-	if (seat.hands.every((hand) => hand.status === "left")) return { status: "already-left" };
-	for (const hand of seat.hands) hand.status = "left";
-	settleTurn(table);
-	return { status: "left" };
+	if (!seat || seat.out === "broke") return { status: "not-seated" };
+	if (seat.out === "left") return { status: "already-left" };
+	if (table.phase === "betting") {
+		seat.stack += seat.bet;
+		seat.bet = 0;
+	}
+	// A settled hand's cards stay as they were dealt: the result already on the board reads them.
+	if (table.phase === "playing") for (const hand of seat.hands) hand.status = "left";
+	seat.out = "left";
+	const cashOut = seat.stack;
+	seat.stack = 0;
+	if (table.phase === "betting") advanceBetting(table);
+	else if (table.phase === "playing") settleTurn(table);
+	return { status: "left", cashOut };
 }
 
 // ── Turn advance ────────────────────────────────────────────────────────────
@@ -413,6 +587,21 @@ export interface SeatResult {
 	// the XP payout can price each one separately.
 	hands: HandOutcome[];
 	doubled: boolean[];
+	// Per hand, in hand order: the chips that rode on it and what it pays back.
+	bets: number[];
+	payouts: number[];
+}
+
+/**
+ * What a hand pays back to its seat, its bet included (owner decision 6 of 2026-10 item 267):
+ * a win pays the bet 1 to 1, a natural 3 to 2 rounded down to whole chips, a push returns the
+ * bet, a loss pays nothing.
+ */
+export function handPayout(outcome: HandOutcome, bet: number): number {
+	if (outcome === "blackjack") return bet + Math.floor((bet * 3) / 2);
+	if (outcome === "win") return bet * 2;
+	if (outcome === "push") return bet;
+	return 0;
 }
 
 // Compares one hand against the dealer. Order matters: bust loses before
@@ -441,13 +630,59 @@ export function resolveHand(hand: Hand, dealer: Hand): HandOutcome {
 	return "push";
 }
 
-// The whole table, every seat, every hand. Safe to call more than once: it reads
-// state and writes nothing, so a re-render after a reconnect cannot double pay.
+// The whole table, every seat dealt this hand, every hand. Safe to call more than once: it
+// reads state and writes nothing, so a re-render after a reconnect cannot double pay.
 export function settle(table: BlackjackTable): SeatResult[] {
-	return table.seats.map((seat) => ({
-		userId: seat.userId,
-		username: seat.username,
-		hands: seat.hands.map((hand) => resolveHand(hand, table.dealer)),
-		doubled: seat.hands.map((hand) => hand.doubled),
-	}));
+	return table.seats
+		.filter((seat) => seat.hands.length > 0)
+		.map((seat) => {
+			const hands = seat.hands.map((hand) => resolveHand(hand, table.dealer));
+			return {
+				userId: seat.userId,
+				username: seat.username,
+				hands,
+				doubled: seat.hands.map((hand) => hand.doubled),
+				bets: seat.hands.map((hand) => hand.bet),
+				payouts: seat.hands.map((hand, index) => handPayout(hands[index], hand.bet)),
+			};
+		});
+}
+
+/**
+ * Pay a settled hand into the stacks, once (risk R5): `paid` is claimed before any stack
+ * moves, so a second call answers null and pays nothing. A bankroll seat left with no chips
+ * is out. A seat that left mid hand gave its hands up and took its stack when it left, so it
+ * is paid nothing here.
+ */
+export function collectPayouts(table: BlackjackTable): SeatResult[] | null {
+	if (table.phase !== "settled" || table.paid) return null;
+	table.paid = true;
+	const results = settle(table);
+	for (const result of results) {
+		const seat = table.seats.find((candidate) => candidate.userId === result.userId);
+		if (!seat || seat.out === "left") continue;
+		seat.stack += result.payouts.reduce((sum, payout) => sum + payout, 0);
+		if (table.buyIn > 0 && seat.stack <= 0) seat.out = "broke";
+	}
+	return results;
+}
+
+/** A seat's chips at the end of a bankroll table, against what it bought in for. */
+export interface FinalStack {
+	userId: string;
+	buyIn: number;
+	stack: number;
+}
+
+/**
+ * The one winner a bankroll table names (2026-10 item 267): the member whose final stack is
+ * the largest AND above their buy in. Null when nobody finished up, or when the largest stack
+ * is shared, since a tie names no single winner.
+ */
+export function bankrollWinnerOf(stacks: readonly FinalStack[]): string | null {
+	const ahead = stacks.filter((entry) => entry.stack > entry.buyIn);
+	if (ahead.length === 0) return null;
+	const best = Math.max(...ahead.map((entry) => entry.stack));
+	const leaders = ahead.filter((entry) => entry.stack === best);
+	return leaders.length === 1 ? leaders[0].userId : null;
 }

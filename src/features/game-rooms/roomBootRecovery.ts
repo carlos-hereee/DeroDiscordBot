@@ -21,8 +21,9 @@ import { registerDealerTable } from "@features/dero-brain/dealerNarration.js";
 //        But surviving a restart is not the same as being TRUE: while the process was
 //        down, an admin can delete a room channel and nothing was listening.
 // How:   ① every non-terminal room whose channel is gone is finished as abandoned,
-//        ①ᵇ a solo blackjack room whose channel survived but whose in-memory table did
-//        not is closed out loud (a system line, the dead board disarmed, then abandoned),
+//        ①ᵇ a blackjack room whose channel survived but whose in-memory table did
+//        not is closed out loud (a system line, the dead board disarmed, then abandoned;
+//        finish pays every stack its row stored, 2026-10 item 267),
 //        ①ᶜ a playing Hold'em room whose referee is on gets its dealer back,
 //        ② then the ordinary expiry sweep runs immediately rather than waiting up to
 //        five minutes for its first cron tick.
@@ -73,8 +74,10 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 					// SIGTERM already ended: no button on its board reaches a handler, and
 					// nothing inside the handler will ever finish it. Say so where the host will
 					// read it, take the buttons off the dead board, then close as abandoned.
-					// Abandoned rather than a loss, because no hand was settled and nothing is
-					// owed; and abandoned pays nothing, so a redeploy is not farmable for xp.
+					// Abandoned rather than a loss, because the hand in play was not settled;
+					// finish pays every stack the row stored after the last settled hand
+					// (blackjackChips, 2026-10 item 267), each claimed once, and abandoned pays
+					// no XP or coins, so a redeploy is not farmable.
 					// Any other game's room is untouched: their state lives on the row.
 					if (!isBlackjackRoomGame(room.game) || hasLiveBlackjackTable(room.channelId)) return;
 
