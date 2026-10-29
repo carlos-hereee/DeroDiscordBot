@@ -64,6 +64,8 @@ import { registerListenHandlers } from "@features/voice/listenHandler.js";
 import { registerHoldemRulesCardHandlers } from "@features/dero-brain/holdemRulesCard.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { voiceQueue } from "@features/voice/voiceQueue.js";
+import { afterQueueChange as logQueueChange, registerVoiceQueueLogHandlers } from "@features/voice/voiceQueueLog.js";
+import { afterQueueChange as redrawQueuedCards } from "@features/game-rooms/cardVoice.js";
 import { runQueuedJoin } from "@commands/utility/dero.js";
 import { registerVoiceSessionWatchers } from "@features/voice/voiceSessionWatchers.js";
 import { startVoiceListener } from "@features/voice/voiceListener.js";
@@ -375,6 +377,8 @@ process.on("uncaughtException", (err) => {
 	// like the rest, so a result card posted by an earlier deploy keeps working:
 	// a room's buttons outlive the room, and its customIds outlive the deploy.
 	registerGameRoomHandlers();
+	// The voice queue's 🗒️admin-log entries: Move up, Move down and Remove (2026-10 item 267).
+	registerVoiceQueueLogHandlers();
 	registerPollHandlers();
 	registerSelfDestructHandlers();
 	// The Edit rules button on the 📘rules post (2026-10 item 247 Phase 2).
@@ -661,6 +665,10 @@ process.on("uncaughtException", (err) => {
 		// in the command and a feature must not import a command.
 		voiceQueue.useRunner(runQueuedJoin);
 		voiceSessions.onEnd(voiceQueue.afterCallEnded);
+		// Every queue change redraws its 🗒️admin-log entry and any challenge card waiting in line
+		// (2026-10 item 267), handed over here for the same reason as the runner.
+		voiceQueue.onChange(logQueueChange);
+		voiceQueue.onChange(redrawQueuedCards);
 		// The soak test's numbers: one audit row a minute while a call is open,
 		// and only when DERO_VOICE_SAMPLER is 1. Off, it arms no timer at all.
 		soakSampler = startSoakSampler(deroVoiceSamplerEnabled);

@@ -14,6 +14,7 @@
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { VoicePriorityCategory } from "./voicePriority.js";
+import type { GameVoiceSkipReason, QueueExit } from "./voiceQueue.js";
 
 const QUEUE_EXPIRY_MINUTES = BOT_CONSTANTS.DERO_VOICE_QUEUE_EXPIRY_MS / 60_000;
 
@@ -36,6 +37,27 @@ const ordinal = (place: number): string => {
 };
 
 const onOff = (on: boolean): string => (on ? "ON" : "OFF");
+
+// Why a game's join did not happen, as the line on its channel ends. A Record over the
+// union, so a reason added without its words is a compile error.
+const GAME_VOICE_SKIP_REASONS: Record<GameVoiceSkipReason, string> = {
+	notSetUp: "Dero's voice is not set up in this server.",
+	switchedOff: "Dero's voice is switched off in this server. An admin can switch it on in ⚙️dero-config.",
+	channelNotAllowed: "that voice channel is not on Dero's allowed list. An admin can add it in ⚙️dero-config.",
+	botLacksPermission: "Dero needs permission to see, connect and speak in that voice channel.",
+	hostLeft: "the host left that voice channel before it was this match's turn.",
+	channelGone: "that voice channel no longer exists.",
+	connectFailed: "the connection did not go through. Try again in a moment.",
+};
+
+// How a waiting request's 🗒️admin-log entry ends, once it stops waiting.
+const QUEUE_EXIT_LINES: Record<QueueExit, string> = {
+	joined: "Dero joined.",
+	skipped: "Skipped: the join could not happen when it was its turn.",
+	removed: "Removed from the queue.",
+	expired: `Dropped after waiting ${QUEUE_EXPIRY_MINUTES} minutes.`,
+	replaced: "Replaced by a newer request from the same member.",
+};
 
 export const voiceCopy = {
 	// ── the Listen button and its private replies ──
@@ -136,10 +158,37 @@ export const voiceCopy = {
 		queueLine: (place: number, requesterId: string, channelId: string, category: VoicePriorityCategory): string =>
 			`${place}. <@${requesterId}> in <#${channelId}> (${PRIORITY_LABELS[category]})`,
 		queueEmpty: "Nobody is waiting for Dero.",
+		// A /dero join request's subject in its 🗒️admin-log entry: the call it asked for.
+		queueSubjectForMember: (channelId: string): string => `/dero join for <#${channelId}>`,
 		// Shown only to members on the task list, once there is a voice turn to
 		// measure: from the end of their speech to the start of Dero's answer.
 		statusLatency: (medianSeconds: string, slowestSeconds: string, turns: number): string =>
 			`Voice answers lately: median ${medianSeconds}s, slowest ${slowestSeconds}s, over the last ${turns} ${turns === 1 ? "turn" : "turns"}.`,
+	},
+
+	// ── a game's voice join (2026-10 item 267, decision 11) ──
+	// A challenge card with Dero voice on, or a room's referee, asked for Dero and the join
+	// could not happen: one short line on that card's or room's channel, never silence.
+	gameVoice: {
+		couldNotJoin: (channelId: string, reason: GameVoiceSkipReason): string => `🔊 Dero could not join <#${channelId}> for this match: ${GAME_VOICE_SKIP_REASONS[reason]}`,
+	},
+
+	// ── the voice queue in 🗒️admin-log (2026-10 item 267, decision 12) ──
+	// Admin facing, so practical: one entry per waiting request, with Move up, Move down and
+	// Remove, redrawn on every press and once the request stops waiting.
+	queueAdmin: {
+		moveUpLabel: "Move up",
+		moveDownLabel: "Move down",
+		removeLabel: "Remove",
+		waiting: (requesterId: string, channelId: string, place: number, total: number): string =>
+			`<@${requesterId}> wants Dero in <#${channelId}>. ${ordinal(place)} of ${total} in line.`,
+		ended: (requesterId: string, channelId: string, exit: QueueExit): string => `<@${requesterId}> wanted Dero in <#${channelId}>. ${QUEUE_EXIT_LINES[exit]}`,
+		noticeTitle: "🔊 Dero's voice queue",
+		adminOnly: "Only the server owner or an admin can change Dero's voice queue.",
+		// A press on an entry whose request already ran, was removed or ran out of time.
+		gone: "That request is no longer waiting for Dero.",
+		atTop: "That request is already first in line.",
+		atBottom: "That request is already last in line.",
 	},
 
 	// ── the voice presence card (2026-10 item 243 Phase 4) ──

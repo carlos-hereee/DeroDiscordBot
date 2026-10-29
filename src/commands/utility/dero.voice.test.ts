@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 	sessionJoin: vi.fn(),
 	sessionLeave: vi.fn(),
 	announceJoin: vi.fn(),
+	postNotice: vi.fn(async () => undefined),
 }));
 
 // The admin role read is a GuildConfig lookup; null keeps these suites on the allowlist only rule.
@@ -24,7 +25,7 @@ vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { f
 vi.mock("@features/voice/voiceSessions.js", () => ({
 	voiceSessions: { get: mocks.sessionGet, join: mocks.sessionJoin, leave: mocks.sessionLeave },
 }));
-vi.mock("@features/voice/joinNotice.js", () => ({ announceJoin: mocks.announceJoin }));
+vi.mock("@features/voice/joinNotice.js", () => ({ announceJoin: mocks.announceJoin, postVoiceNotice: mocks.postNotice }));
 // The queue reads the Meeting Hall and Arcade Lounge ids from GuildConfig.
 vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: { findByGuildId: vi.fn(async () => ({ meetingVoiceChannelId: "vc-meeting", arcadeVoiceChannelId: "vc-lounge" })) },
@@ -87,16 +88,16 @@ const configWith = (overrides: Record<string, unknown>) => configFor("g1", overr
 
 describe("checkJoin, the /dero join gates", () => {
 	it.each([
-		["with no config", { config: null }, voiceCopy.listen.notSetUp],
-		["when the kill switch is off", { config: configWith({ enabled: false }) }, deroBrainCopy.tell.switchedOff],
-		["for a member who is not authorized", { speaker: memberFor("g1", { roles: [], channel: voiceChannel(VC).channel }) }, deroBrainCopy.tell.notAuthorized],
-		["for a member who is not in a voice channel", { speaker: memberFor("g1") }, call.notInVoice],
-		["when Dero is already in this channel", { sessionChannelId: VC }, call.alreadyHere(VC)],
-		["for a channel that is not allowlisted", { speaker: memberFor("g1", { channel: voiceChannel("vc-unlisted").channel }) }, call.channelNotAllowed],
-		["when the bot lacks permission", { speaker: memberFor("g1", { channel: voiceChannel(VC, false).channel }) }, call.botLacksPermission],
-		["when the bot's own member is not cached", { botMember: null }, call.botLacksPermission],
-	])("refuses %s", (_label, overrides, line) => {
-		expect(checkJoin(gateInput(overrides as Partial<JoinGateInput>))).toEqual({ ok: false, line });
+		["with no config", { config: null }, voiceCopy.listen.notSetUp, "notSetUp"],
+		["when the kill switch is off", { config: configWith({ enabled: false }) }, deroBrainCopy.tell.switchedOff, "switchedOff"],
+		["for a member who is not authorized", { speaker: memberFor("g1", { roles: [], channel: voiceChannel(VC).channel }) }, deroBrainCopy.tell.notAuthorized, "notAuthorized"],
+		["for a member who is not in a voice channel", { speaker: memberFor("g1") }, call.notInVoice, "notInVoice"],
+		["when Dero is already in this channel", { sessionChannelId: VC }, call.alreadyHere(VC), "alreadyHere"],
+		["for a channel that is not allowlisted", { speaker: memberFor("g1", { channel: voiceChannel("vc-unlisted").channel }) }, call.channelNotAllowed, "channelNotAllowed"],
+		["when the bot lacks permission", { speaker: memberFor("g1", { channel: voiceChannel(VC, false).channel }) }, call.botLacksPermission, "botLacksPermission"],
+		["when the bot's own member is not cached", { botMember: null }, call.botLacksPermission, "botLacksPermission"],
+	])("refuses %s", (_label, overrides, line, reason) => {
+		expect(checkJoin(gateInput(overrides as Partial<JoinGateInput>))).toEqual({ ok: false, line, reason });
 	});
 
 	// The voice queue (2026-10 item 257, owner item 22): a request that passes every
@@ -113,7 +114,7 @@ describe("checkJoin, the /dero join gates", () => {
 
 	it("refuses rather than queues a join that would fail a gate even once Dero is free", () => {
 		const gate = checkJoin(gateInput({ speaker: memberFor("g1", { channel: voiceChannel("vc-unlisted").channel }), sessionChannelId: "vc-other" }));
-		expect(gate).toEqual({ ok: false, line: call.channelNotAllowed });
+		expect(gate).toEqual({ ok: false, line: call.channelNotAllowed, reason: "channelNotAllowed" });
 	});
 
 	it("lets the guild owner through without a role", () => {
@@ -182,6 +183,7 @@ beforeEach(() => {
 	mocks.sessionJoin.mockReset().mockResolvedValue({ status: "joined", session: { channelId: VC, speaker: SPEAKER }, readyMs: 900 });
 	mocks.sessionLeave.mockReset().mockReturnValue(true);
 	mocks.announceJoin.mockReset().mockResolvedValue("greeted");
+	mocks.postNotice.mockClear();
 });
 
 describe("/dero join", () => {
@@ -349,6 +351,53 @@ describe("runQueuedJoin, the queue's runner", () => {
 		mocks.sessionGet.mockReturnValue({ channelId: "vc-busy" });
 		await expect(runQueuedJoin(requestFor())).resolves.toBe("busy");
 		expect(mocks.sessionJoin).not.toHaveBeenCalled();
+	});
+
+	// ── a game's request (2026-10 item 267, decision 11) ──
+	// A challenge card or a room's referee: no task speaker list, the host need not be in the
+	// Lounge, but the switch and the allow list still hold, and a refused join says why.
+	function gameRequestFor(options: { target?: string; followsHost?: boolean; hostIn?: string | null } = {}): VoiceQueueRequest {
+		const target = options.target ?? VC;
+		const { channel } = voiceChannel(target);
+		const host = { ...memberFor("g-game", { id: "host", roles: [] }), voice: { channelId: options.hostIn ?? null } };
+		const guild = {
+			id: "g-game",
+			ownerId: OWNER_ID,
+			members: { me: BOT, cache: new Map([["host", host]]), fetch: vi.fn(async () => null) },
+			channels: { cache: new Map([[target, { ...channel, isVoiceBased: () => true }]]) },
+		};
+		return {
+			guild,
+			requesterId: "host",
+			channelId: target,
+			controlChannelId: "card-ch",
+			category: "casual-match",
+			requestedAt: 0,
+			gameVoice: { roomId: "room-1", followsHost: options.followsHost ?? false, subject: "card" },
+		} as unknown as VoiceQueueRequest;
+	}
+
+	it("joins for a host on no task list, into the Lounge, and keeps the card as the call's starter", async () => {
+		await expect(runQueuedJoin(gameRequestFor())).resolves.toBe("joined");
+		expect(mocks.sessionJoin).toHaveBeenCalledWith(expect.objectContaining({ controlChannelId: "card-ch", startedByRoomId: "room-1" }));
+		expect(mocks.postNotice).not.toHaveBeenCalled();
+	});
+
+	it("joins nothing for a channel off the allow list, and says why on the card's channel", async () => {
+		await expect(runQueuedJoin(gameRequestFor({ target: "vc-unlisted" }))).resolves.toBe("skipped");
+		expect(mocks.sessionJoin).not.toHaveBeenCalled();
+		expect(mocks.postNotice).toHaveBeenCalledWith(expect.anything(), "card-ch", voiceCopy.gameVoice.couldNotJoin("vc-unlisted", "channelNotAllowed"));
+	});
+
+	it("still honours the voice switch for a game, and says so", async () => {
+		mocks.findByGuildId.mockImplementation(async (guildId: string) => configFor(guildId, { enabled: false }));
+		await expect(runQueuedJoin(gameRequestFor())).resolves.toBe("skipped");
+		expect(mocks.postNotice).toHaveBeenCalledWith(expect.anything(), "card-ch", voiceCopy.gameVoice.couldNotJoin(VC, "switchedOff"));
+	});
+
+	it("skips a host call request once the host left that call, and says so", async () => {
+		await expect(runQueuedJoin(gameRequestFor({ followsHost: true, hostIn: "vc-other" }))).resolves.toBe("skipped");
+		expect(mocks.postNotice).toHaveBeenCalledWith(expect.anything(), "card-ch", voiceCopy.gameVoice.couldNotJoin(VC, "hostLeft"));
 	});
 
 	it("is what the queue singleton runs", () => {

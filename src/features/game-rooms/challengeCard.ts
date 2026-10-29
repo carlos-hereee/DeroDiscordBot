@@ -11,6 +11,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 import { labelBotMentions } from "./botSeat.js";
 import { isRatedGame } from "@features/ratings/ratingEngine.js";
 import { effectiveSpectatorMode } from "./roomPermissions.js";
+import { cardVoiceState } from "./cardVoiceState.js";
 
 // ── challengeCard ────────────────────────────────────────────────────
 // What:  the challenge card as a message: finding its channel (⚔️challenges, or
@@ -142,6 +143,8 @@ export function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState
 		holdemBuyIn: room.holdemBuyIn ?? null,
 		// What the creation modal or Edit settings could not apply (2026-10 item 263 Phase 2a).
 		settingsNotes: room.settingsNotes ?? [],
+		// The card's own Dero voice request (2026-10 item 267), memory only like the voice queue.
+		voice: cardVoiceState.get(room.roomId),
 		...overrides,
 	};
 }

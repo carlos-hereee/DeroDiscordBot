@@ -24,9 +24,9 @@ import type { ActionReport } from "@features/dero-brain/executor.js";
 import { rulesCardFor } from "@features/dero-brain/holdemRulesCard.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
-import { voiceQueue, type QueuedJoinOutcome, type VoiceQueueRequest } from "@features/voice/voiceQueue.js";
+import { voiceQueue, type GameVoiceSkipReason, type QueuedJoinOutcome, type VoiceQueueRequest } from "@features/voice/voiceQueue.js";
 import { categoryForChannel, normalizePriorityOrder } from "@features/voice/voicePriority.js";
-import { announceJoin, type GreetingOutcome } from "@features/voice/joinNotice.js";
+import { announceJoin, postVoiceNotice, type GreetingOutcome } from "@features/voice/joinNotice.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
 import { turnLatencyLog } from "@features/voice/turnLatency.js";
 import { liveVoicePresenceState, renderVoicePresenceCard } from "@features/voice/voicePresenceRenderer.js";
@@ -318,9 +318,12 @@ export async function showDeroStatus(interaction: RepliableInteraction): Promise
 
 // ── /dero join ──
 
+/** Which gate refused a join, so a game's request can say why on its own channel (voiceCopy.gameVoice). */
+export type JoinRefusalReason = "notSetUp" | "switchedOff" | "notAuthorized" | "notInVoice" | "alreadyHere" | "channelNotAllowed" | "botLacksPermission";
+
 export type JoinGate =
 	| { ok: true; channel: VoiceBasedChannel; voiceId: string }
-	| { ok: false; line: string }
+	| { ok: false; line: string; reason: JoinRefusalReason }
 	// Dero is in another call here: the request may wait in the voice queue (owner item 22).
 	| { ok: false; queue: true; channel: VoiceBasedChannel; sessionChannelId: string };
 
@@ -333,9 +336,16 @@ export interface JoinGateInput {
 	config: IDeroVoiceConfig | null;
 	/** The voice channel Dero is already in for this guild, if any. */
 	sessionChannelId: string | null;
+	/**
+	 * A game's join (2026-10 item 267 decision 11): the channel the card or the room asked
+	 * for. Narrating a game is not a task, so the task speaker list is not asked and the
+	 * target is this channel rather than the speaker's own; the switch, the allow list and
+	 * the bot's permissions still are. Absent for /dero join and the voice rooms' Join.
+	 */
+	gameVoiceChannel?: VoiceBasedChannel;
 }
 
-const refuseJoin = (line: string): JoinGate => ({ ok: false, line });
+const refuseJoin = (line: string, reason: JoinRefusalReason): JoinGate => ({ ok: false, line, reason });
 
 /**
  * The /dero join gates, in order, with nothing joined and nothing spent: the
@@ -345,19 +355,21 @@ const refuseJoin = (line: string): JoinGate => ({ ok: false, line });
  * says it, from the tell gates or the Listen copy. A request that passes all of
  * them while Dero is in ANOTHER call here comes back as `queue` (2026-10 item 257,
  * owner item 22), checked last so only a request that could run is ever queued.
+ * A game's join skips the speaker gate and targets its own channel (gameVoiceChannel).
  */
-export function checkJoin({ speaker, guildOwnerId, adminRoleId, botMember, config, sessionChannelId }: JoinGateInput): JoinGate {
-	if (!config) return refuseJoin(voiceCopy.listen.notSetUp);
-	if (!config.enabled) return refuseJoin(tellCopy.switchedOff);
-	if (!isAuthorizedSpeaker({ member: speaker, guildOwnerId, adminRoleId, voiceConfig: config })) return refuseJoin(tellCopy.notAuthorized);
+export function checkJoin({ speaker, guildOwnerId, adminRoleId, botMember, config, sessionChannelId, gameVoiceChannel }: JoinGateInput): JoinGate {
+	if (!config) return refuseJoin(voiceCopy.listen.notSetUp, "notSetUp");
+	if (!config.enabled) return refuseJoin(tellCopy.switchedOff, "switchedOff");
+	if (!gameVoiceChannel && !isAuthorizedSpeaker({ member: speaker, guildOwnerId, adminRoleId, voiceConfig: config })) return refuseJoin(tellCopy.notAuthorized, "notAuthorized");
 
 	// The speaker's own channel is the target, so "the speaker is in it" holds
-	// by construction and there is no channel option to spoof.
-	const channel = speaker.voice.channel;
-	if (!channel) return refuseJoin(callCopy.notInVoice);
-	if (sessionChannelId === channel.id) return refuseJoin(callCopy.alreadyHere(sessionChannelId));
-	if (!config.allowedVoiceChannelIds.includes(channel.id)) return refuseJoin(callCopy.channelNotAllowed);
-	if (!botMember || !channel.permissionsFor(botMember)?.has(BOT_VOICE_PERMISSIONS)) return refuseJoin(callCopy.botLacksPermission);
+	// by construction and there is no channel option to spoof. A game's channel was
+	// chosen by the bot itself (the host's call or the Arcade Lounge), never typed.
+	const channel = gameVoiceChannel ?? speaker.voice.channel;
+	if (!channel) return refuseJoin(callCopy.notInVoice, "notInVoice");
+	if (sessionChannelId === channel.id) return refuseJoin(callCopy.alreadyHere(sessionChannelId), "alreadyHere");
+	if (!config.allowedVoiceChannelIds.includes(channel.id)) return refuseJoin(callCopy.channelNotAllowed, "channelNotAllowed");
+	if (!botMember || !channel.permissionsFor(botMember)?.has(BOT_VOICE_PERMISSIONS)) return refuseJoin(callCopy.botLacksPermission, "botLacksPermission");
 	// One call per guild, and waiting never moves Dero: the request queues instead.
 	if (sessionChannelId) return { ok: false, queue: true, channel, sessionChannelId };
 	return { ok: true, channel, voiceId: resolveDeroVoiceId(config) };
@@ -480,23 +492,36 @@ async function queueJoin(
 export async function runQueuedJoin(request: VoiceQueueRequest): Promise<QueuedJoinOutcome> {
 	const { guild } = request;
 	const member = guild.members.cache.get(request.requesterId) ?? (await guild.members.fetch(request.requesterId).catch(() => null));
-	if (!member || member.voice.channelId !== request.channelId) return "skipped";
+	const game = request.gameVoice ?? null;
+	// A member's request runs only while they still stand in the channel they asked from; a
+	// game's request asks that only when its target is the host's own call, never the Lounge.
+	const leftTheCall = !member || member.voice.channelId !== request.channelId;
+	if (!game && leftTheCall) return "skipped";
+	if (game?.followsHost && leftTheCall) return skipGameJoin(request, "hostLeft");
+
+	const gameChannel = game ? voiceChannelOf(guild, request.channelId) : undefined;
+	if (game && !gameChannel) return skipGameJoin(request, "channelGone");
+	// A game's request needs no member at all (the Lounge), and the gate reads a speaker only
+	// for the task list it skips there, so the bot's own member stands in when the host is gone.
+	const speaker = member ?? guild.members.me;
+	if (!speaker) return "skipped";
 	const gate = checkJoin({
-		speaker: member,
+		speaker,
 		guildOwnerId: guild.ownerId,
 		adminRoleId: await readSpeakerAdminRoleId(guild.id),
 		botMember: guild.members.me,
 		config: await deroVoiceConfigStore.findByGuildId(guild.id),
 		sessionChannelId: voiceSessions.get(guild.id)?.channelId ?? null,
+		gameVoiceChannel: gameChannel,
 	});
 	if ("queue" in gate) return "busy";
-	if (!gate.ok) return "skipped";
+	if (!gate.ok) return game ? skipGameJoin(request, gameSkipReasonOf(gate.reason)) : "skipped";
 
 	// The same per guild window a typed join records, since this attempt costs the same traffic.
 	joinCooldown.record(guild.id);
-	const outcome = await voiceSessions.join({ guild, channel: gate.channel, controlChannelId: request.controlChannelId });
+	const outcome = await voiceSessions.join({ guild, channel: gate.channel, controlChannelId: request.controlChannelId, startedByRoomId: game?.roomId ?? null });
 	if (outcome.status === "alreadyInGuild") return "busy";
-	if (outcome.status === "failed") return "skipped";
+	if (outcome.status === "failed") return game ? skipGameJoin(request, "connectFailed") : "skipped";
 	await announceJoin({
 		guild,
 		controlChannelId: request.controlChannelId,
@@ -505,6 +530,26 @@ export async function runQueuedJoin(request: VoiceQueueRequest): Promise<QueuedJ
 		speaker: outcome.session.speaker,
 	});
 	return "joined";
+}
+
+// The voice channel a game's request named, read from the cache the gateway keeps full.
+function voiceChannelOf(guild: Guild, channelId: string): VoiceBasedChannel | undefined {
+	const channel = guild.channels.cache.get(channelId);
+	return channel?.isVoiceBased() ? channel : undefined;
+}
+
+// The refusals a game's join can meet. The speaker list is never asked for a game and the
+// target is never the speaker's own channel, so those two read as the nearest true reason.
+function gameSkipReasonOf(reason: JoinRefusalReason): GameVoiceSkipReason {
+	if (reason === "notAuthorized" || reason === "notInVoice" || reason === "alreadyHere") return "channelGone";
+	return reason;
+}
+
+// A game's join that could not happen says so on the card's or the room's channel (2026-10
+// item 267 decision 2), where the host is looking, and is dropped like any skipped request.
+async function skipGameJoin(request: VoiceQueueRequest, reason: GameVoiceSkipReason): Promise<QueuedJoinOutcome> {
+	await postVoiceNotice(request.guild, request.controlChannelId, voiceCopy.gameVoice.couldNotJoin(request.channelId, reason));
+	return "skipped";
 }
 
 // The queue lines /dero status shows: every waiting request in its place. Shown to

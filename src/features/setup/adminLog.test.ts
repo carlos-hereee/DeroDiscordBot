@@ -81,7 +81,7 @@ describe("adminLog.write", () => {
 			payload: { subject: "roles", detail: "added <@&role-1>" },
 		});
 
-		expect(result).toEqual({ persisted: true, posted: true });
+		expect(result).toEqual({ persisted: true, posted: true, message: expect.objectContaining({ channelId: LOG_CHANNEL_ID }) });
 		expect(channel.send).toHaveBeenCalledOnce();
 		const sent = channel.send.mock.calls[0]![0] as SentPayload;
 		expect(sent.allowedMentions).toEqual({ parse: [] });
@@ -107,7 +107,7 @@ describe("adminLog.write", () => {
 			return sentEmbed(channel).color;
 		};
 		const families = [
-			["config.change", "powerup.toggle", "voice.allowlist", "voice.cap"],
+			["config.change", "powerup.toggle", "voice.allowlist", "voice.cap", "voice.queue"],
 			["schedule.create", "schedule.update", "schedule.delete", "event.create", "event.update", "event.delete", "party.open"],
 			["selfdestruct.attempt"],
 			["chip.grant", "vault.topup"],
@@ -134,7 +134,7 @@ describe("adminLog.write", () => {
 			payload: { subject: "<@user-2>", detail: "500 chips" },
 		});
 
-		expect(result).toEqual({ persisted: true, posted: true });
+		expect(result).toEqual({ persisted: true, posted: true, message: expect.objectContaining({ channelId: LOG_CHANNEL_ID }) });
 		expect(channel.send).toHaveBeenCalledTimes(2);
 		const fallback = channel.send.mock.calls[1]![0] as SentPayload;
 		expect(fallback.embeds).toBeUndefined();
@@ -169,7 +169,7 @@ describe("adminLog.write", () => {
 
 		const result = await adminLog.write({ guild: makeGuild(channel), kind: "powerup.toggle", actor: { userId: "user-1" } });
 
-		expect(result).toEqual({ persisted: false, posted: true });
+		expect(result).toEqual({ persisted: false, posted: true, message: expect.objectContaining({ channelId: LOG_CHANNEL_ID }) });
 	});
 
 	it("reports a failed post, the embed and its fallback both refused, rather than throwing it, and keeps the row", async () => {

@@ -13,6 +13,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { bandWidth, isRatedGame } from "@features/ratings/ratingEngine.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
+import type { CardVoiceState } from "./cardVoiceState.js";
 import { isBuyInGame, type GameSlug, type RatingBand, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
 import type { SoloLuckGame } from "@features/games/soloLuck.js";
 
@@ -198,6 +199,9 @@ export interface OpenerCardState {
 	// What the creation modal or Edit settings could not apply, each a sentence, shown under
 	// the settings line while the card gathers (2026-10 item 263 Phase 2a).
 	settingsNotes?: readonly string[];
+	// The card's own Dero voice request (2026-10 item 267 decision 12): Dero busy elsewhere,
+	// which offers the host Queue Dero, or the card's place in line. Absent shows nothing.
+	voice?: CardVoiceState | null;
 }
 
 /** The draft's host controls the card shows: the band, approval, and how many wait for an answer. */
@@ -247,6 +251,7 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 	if (gathering) {
 		lines.push("", settingsLine(state), ...(state.settingsNotes ?? []));
 		lines.push(...buyInLines(state));
+		lines.push(...voiceLines(state));
 	}
 
 	const embed = infoEmbed(
@@ -306,6 +311,24 @@ function buyInLines(state: OpenerCardState): string[] {
 	return ["", gameRoomsCopy.board.cardBuyIn(state.holdemBuyIn)];
 }
 
+function voiceLines(state: OpenerCardState): string[] {
+	const voice = state.voice;
+	if (!voice) return [];
+	if (voice.kind === "busy") return ["", gameRoomsCopy.cardVoice.busyLine(voice.busyChannelId)];
+	return ["", gameRoomsCopy.cardVoice.queuedLine(voice.place, voice.total)];
+}
+
+// Queue Dero (2026-10 item 267 decision 12), offered only while Dero is busy and the card is
+// not queued yet. Shown to everyone, since Discord cannot show a button to the host alone; the
+// router refuses anybody but the host (HOST_STRICT_ACTIONS).
+function queueDeroButton(roomId: string): ButtonBuilder {
+	return new ButtonBuilder()
+		.setCustomId(`${GAME_ROOM_PREFIX}:dqueue:${roomId}`)
+		.setLabel(gameRoomsCopy.cardVoice.queueLabel)
+		.setEmoji("🔊")
+		.setStyle(ButtonStyle.Secondary);
+}
+
 // ── the card's controls ───────────────────────────────────────────────
 // The host's row: Requests on an open challenge while approval is on or somebody still waits
 // after it was turned off, then Remove a player. Remove a player opens a private picker
@@ -331,6 +354,7 @@ function hostControlRow(roomId: string, state: OpenerCardState, controls: DraftH
 			// A hint only: the picker answers honestly when there is nobody to remove.
 			.setDisabled(state.pool.length === 0 && controls.pendingJoinCount === 0)
 	);
+	if (state.voice?.kind === "busy") buttons.push(queueDeroButton(roomId));
 	return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(...buttons);
 }
 

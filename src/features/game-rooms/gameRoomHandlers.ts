@@ -41,6 +41,7 @@ import { roomMonopolyAuction } from "./roomMonopolyAuction.js";
 import { roomMonopolySurrender } from "./roomMonopolySurrender.js";
 import { roomMonopolyRefereeNotice } from "./roomMonopolyRefereeNotice.js";
 import { hostControls } from "./hostControls.js";
+import { confirmQueue, offerQueue } from "./cardVoice.js";
 import { PRIVATE_VIEW_ACTION, closePrivateView } from "./privateView.js";
 import { satelliteAt } from "./satelliteRooms.js";
 import { handleTurnPress, handleTurnSubmit } from "./turnPrompt.js";
@@ -61,7 +62,7 @@ const DRAFT_CONFIRM_GAMES: readonly string[] = SETTINGS_GAMES;
 // the status refusal below cannot drift from the routing switch. `requests` and `kick`
 // are host controls too but are NOT here: they also work in a live room, and each
 // refuses by the room's status itself.
-const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "startok", "dero", "cancel", "auctions", "referee", "approval", "bots", "casual", "hbuyin", "haccept", "edit", "editok"]);
+const BOARD_ACTIONS = new Set<GameRoomAction>(["vis", "invite", "join", "start", "startok", "dero", "cancel", "auctions", "referee", "approval", "bots", "casual", "hbuyin", "haccept", "edit", "editok", "dqueue", "dqueueok"]);
 
 // ── gameRoomHandlers ─────────────────────────────────────────────────
 // What:  routes every `gameroom:` button to its action, after proving the clicker is
@@ -241,6 +242,9 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			return;
 		case "edit":
 			await challengeBoard.openSettingsEditor(interaction, room);
+			return;
+		case "dqueue":
+			await offerQueue(interaction, room);
 			return;
 		case "rematch":
 			// On the result card of a finished room. rematchFromRoom refuses by status
@@ -431,6 +435,9 @@ async function runConfirmed(interaction: ConfirmInteraction, gated: GatedPress):
 			return;
 		case "editok":
 			await challengeBoard.confirmSettingsEdit(interaction, room);
+			return;
+		case "dqueueok":
+			await confirmQueue(interaction, room);
 			return;
 		case "archiveok":
 			// Acknowledged BEFORE the delete: the channel the confirm was pressed in is about

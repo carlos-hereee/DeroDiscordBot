@@ -96,6 +96,7 @@ import {
 	type SettingsMode,
 } from "./challengeSettings.js";
 import { applyApproval, applyRatingBand, applySpectatorMode } from "./hostControls.js";
+import { bringDeroToCard, releaseCard } from "./cardVoice.js";
 import { parseChipAmount, takeChips } from "@features/economy/chipWallet.js";
 import { chipTableFor } from "./holdemChips.js";
 import { isRatedGame } from "@features/ratings/ratingEngine.js";
@@ -443,6 +444,9 @@ export async function openChallengeDraft(guild: Guild, hostId: string, game: Gam
 	// The card went up as text so a press is answered inside Discord's three second
 	// window; its picture follows in a second edit once it has drawn.
 	void editOpenerCard(guild, room.roomId, card, state);
+	// Dero voice on asks for Dero now, into the host's call or the Arcade Lounge (2026-10 item
+	// 267 decision 11). Fire and forget once the card is up: a failed join never fails the card.
+	void bringDeroToCard(guild, room, channel.id);
 	return { ok: true, room, channel, card };
 }
 
@@ -1458,6 +1462,8 @@ export async function playDero(interaction: HostPress, room: IGameRoom): Promise
 	// can run past Discord's three second window.
 	const answer = await beginChannelAnswer(interaction, "member");
 	await gameRoomStore.markArchived(room.guildId, room.roomId);
+	// The card closes without its own room, so its voice request goes with it (item 267).
+	void releaseCard(guild, room.roomId);
 
 	const channel = await openDeroRoom(interaction, guild, room.game, answer);
 	const resultLine = channel ? gameRoomsCopy.board.cardPlayedDero(room.hostId, channel.id) : gameRoomsCopy.board.cardDeroUnavailable(room.hostId);
@@ -1781,6 +1787,8 @@ export async function cancelDraft(interaction: ButtonInteraction, room: IGameRoo
 	// Everyone who paid the buy in gets it back (item 257 Phase 4a), after the draft is closed.
 	await refundAllJoiners(room);
 	await interaction.deferUpdate();
+	// The card's voice request goes, and Dero with it only from a call this card started (item 267).
+	await releaseCard(interaction.guild!, room.roomId);
 	await refreshCard(interaction.guild!, room, cancelledCardState(room));
 }
 
@@ -1790,6 +1798,7 @@ export async function cancelDraft(interaction: ButtonInteraction, room: IGameRoo
 async function closeDraft(guild: Guild, room: IGameRoom): Promise<void> {
 	await gameRoomStore.markArchived(room.guildId, room.roomId);
 	await refundAllJoiners(room);
+	void releaseCard(guild, room.roomId);
 	void refreshCard(guild, room, cancelledCardState(room)).catch((error: unknown) =>
 		console.error("[game-rooms] the replaced draft's card did not redraw", { guildId: room.guildId, roomId: room.roomId, error })
 	);

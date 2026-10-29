@@ -249,6 +249,13 @@ const INVENTORY: readonly NoticeEntry[] = [
 	// ── game-rooms/roomMonopolyRefereeNotice.ts ──
 	{ file: "features/game-rooms/roomMonopolyRefereeNotice.ts", within: "handleEnableVoice", anchor: "words.enableVoiceAdminOnly", kind: "state" },
 	{ file: "features/game-rooms/roomMonopolyRefereeNotice.ts", within: "handleEnableVoice", anchor: "earlyAccessEmbed(access.generalReleaseAt", kind: "state" },
+	// ── game-rooms/cardVoice.ts (2026-10 item 267, Queue Dero) ──
+	{ file: "features/game-rooms/cardVoice.ts", within: "offerQueue", anchor: "words.alreadyQueued", kind: "state" },
+	{ file: "features/game-rooms/cardVoice.ts", within: "offerQueue", anchor: "words.noTarget", kind: "state" },
+	{ file: "features/game-rooms/cardVoice.ts", within: "offerQueue", anchor: "words.alreadyThere", kind: "state" },
+	{ file: "features/game-rooms/cardVoice.ts", within: "confirmQueue", anchor: "words.noTarget", kind: "race", why: "Queue Dero's Submit: the press answered the same state first, so a Submit meets it only when the host, Dero or the queue moved while the modal stood open (a second Submit meets the place the first took)" },
+	{ file: "features/game-rooms/cardVoice.ts", within: "confirmQueue", anchor: "words.alreadyThere", kind: "race", why: "Queue Dero's Submit: the press answered the same state first, so a Submit meets it only when the host, Dero or the queue moved while the modal stood open (a second Submit meets the place the first took)" },
+	{ file: "features/game-rooms/cardVoice.ts", within: "confirmQueue", anchor: "words.alreadyQueued", kind: "race", why: "Queue Dero's Submit: the press answered the same state first, so a Submit meets it only when the host, Dero or the queue moved while the modal stood open (a second Submit meets the place the first took)" },
 
 	// ── game-rooms/roomMonopolySurrender.ts ──
 	{ file: "features/game-rooms/roomMonopolySurrender.ts", within: "handleMsurrender", anchor: "refusal", kind: "state" },
@@ -609,6 +616,8 @@ const INVENTORY: readonly NoticeEntry[] = [
 
 	// ── voice/voiceRoomControlHandlers.ts ──
 	{ file: "features/voice/voiceRoomControlHandlers.ts", within: "handleVoiceRoomControl", kind: "state" },
+	// The voice queue's 🗒️admin-log buttons (2026-10 item 267): admin only, a stale press, a move at the edge.
+	{ file: "features/voice/voiceQueueLog.ts", within: "refuse", kind: "state" },
 
 	// ── main.ts ──
 	{ file: "main.ts", within: "gracefulShutdown", anchor: "commandExecuteFailure", count: 4, kind: "failure" },

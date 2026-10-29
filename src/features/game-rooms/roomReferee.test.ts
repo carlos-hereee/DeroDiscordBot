@@ -28,6 +28,7 @@ import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { postRefereeLine, postRefereeNotice } from "./roomMonopolyRefereeNotice.js";
 import { postBelowMonopolyBoard } from "./roomMonopolyBoard.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { cardVoiceState } from "./cardVoiceState.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 type Mock = ReturnType<typeof vi.fn>;
@@ -112,8 +113,21 @@ describe("startRoomReferee", () => {
 
 		await startRoomReferee(client, makeRoom(), channel);
 
-		expect(requestMock).toHaveBeenCalledWith({ guild: channel.guild, requesterId: HOST, channelId: HOST_CALL, controlChannelId: "room-ch-1", category: "rated-match" });
+		// A game request (2026-10 item 267): the runner skips the speaker list and says on the room why a join failed.
+		expect(requestMock).toHaveBeenCalledWith({ guild: channel.guild, requesterId: HOST, channelId: HOST_CALL, controlChannelId: "room-ch-1", category: "rated-match", gameVoice: expect.objectContaining({ roomId: expect.any(String), followsHost: true }) });
 		expect(noticeMock).not.toHaveBeenCalled();
+	});
+
+	// One call per card (2026-10 item 267 decision 11): the card already asked for Dero, so the
+	// room it opens does not ask again, though a Hold'em table still registers its dealer.
+	it("does not ask again for a room whose card already asked for Dero", async () => {
+		cardVoiceState.markRequested("room-1");
+		await startRoomReferee(client, makeRoom(), makeChannel(HOST_CALL));
+		cardVoiceState._reset();
+
+		expect(requestMock).not.toHaveBeenCalled();
+		expect(noticeMock).not.toHaveBeenCalled();
+		expect(dealerTableOf("room-1")).toEqual({ voice: true });
 	});
 
 	it("asks at the casual match priority for a casual match or one with a Dero bot seat", async () => {

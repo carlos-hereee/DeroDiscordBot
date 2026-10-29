@@ -118,12 +118,17 @@ export interface VoiceSessionView {
 	readonly controlChannelId: string;
 	readonly status: VoiceSessionStatus;
 	readonly speaker: VoiceSpeaker;
+	// The game room whose request started this call (a challenge card with Dero voice on, or a
+	// room's referee), or null for a call a member started with /dero join. Calling a card off
+	// ends only a call its own card started (2026-10 item 267 decision 11).
+	readonly startedByRoomId: string | null;
 }
 
 export interface JoinInput {
 	guild: Guild;
 	channel: { id: string };
 	controlChannelId: string;
+	startedByRoomId?: string | null;
 }
 
 export type JoinOutcome =
@@ -175,6 +180,7 @@ interface LiveSession {
 	guildId: string;
 	channelId: string;
 	controlChannelId: string;
+	startedByRoomId: string | null;
 	status: VoiceSessionStatus;
 	speaker: VoiceSpeaker;
 	connection: VoiceConnection;
@@ -436,7 +442,7 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 		return sessions.get(guildId) ?? null;
 	}
 
-	async function join({ guild, channel, controlChannelId }: JoinInput): Promise<JoinOutcome> {
+	async function join({ guild, channel, controlChannelId, startedByRoomId = null }: JoinInput): Promise<JoinOutcome> {
 		const existing = sessions.get(guild.id);
 		if (existing) return { status: "alreadyInGuild", channelId: existing.channelId };
 
@@ -478,6 +484,7 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 			guildId: guild.id,
 			channelId: channel.id,
 			controlChannelId,
+			startedByRoomId,
 			status: "connecting",
 			speaker,
 			connection,

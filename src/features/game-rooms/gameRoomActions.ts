@@ -71,6 +71,9 @@ export const GAME_ROOM_ACTIONS = {
 	// Edit settings (2026-10 item 263 Phase 2a): the host reopens the creation modal prefilled.
 	// The host's alone, like `start`: the settings decide what everyone joins and pays.
 	edit: { hostOnly: true, playersOnly: false },
+	// Queue Dero (2026-10 item 267 decision 12): while Dero is in another call, the host queues
+	// the card's voice request. Strict host only: it spends a place in the server's voice queue.
+	dqueue: { hostOnly: true, playersOnly: false },
 
 	// ── the host controls (2026-10 item 244 Phase 4) ──
 	// Every one is the host's, with the router's admin override, and each is re-checked
@@ -213,6 +216,8 @@ export const GAME_ROOM_ACTIONS = {
 	newok: { hostOnly: false, playersOnly: false },
 	// Edit settings' Submit, carrying the gate of the press that opened it.
 	editok: { hostOnly: true, playersOnly: false },
+	// Queue Dero's Submit, with its press's strict host gate.
+	dqueueok: { hostOnly: true, playersOnly: false },
 	startok: { hostOnly: true, playersOnly: false },
 	archiveok: { hostOnly: true, playersOnly: false },
 	forfeitok: { hostOnly: false, playersOnly: true },
@@ -231,7 +236,8 @@ export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;
 //        host's hand for them. An admin may still kick, manage and cancel.
 // The table's buy in (2026-10 item 250 Phase 5) is strict for the same reason: it is what
 // every player pays from their own wallet, the host's call and nobody else's.
-export const HOST_STRICT_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["start", "startok", "dero", "hbuyin", "bots", "casual", "edit", "editok"]);
+// Queue Dero (2026-10 item 267) is strict too: it decides where the server's voice queue sends Dero.
+export const HOST_STRICT_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["start", "startok", "dero", "hbuyin", "bots", "casual", "edit", "editok", "dqueue", "dqueueok"]);
 
 // ── the controls a satellite may press (2026-10 item 244 Phase 5a) ──
 // What:  the actions a member seated through a satellite channel may take there: their
@@ -253,7 +259,7 @@ export const SATELLITE_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAc
 //        Submit under GAME_ROOM_PREFIX for these alone; any other action arriving from a
 //        modal is a forged or retired id and is refused.
 // Who:   gameRoomHandlers, which routes the Submit and the fallback button alike.
-export const CONFIRM_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["newok", "editok", "startok", "archiveok", "forfeitok", "hleaveok", "hendok", "msurrenderok"]);
+export const CONFIRM_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["newok", "editok", "dqueueok", "startok", "archiveok", "forfeitok", "hleaveok", "hendok", "msurrenderok"]);
 
 /** The customId a confirm's modal and its fallback button both carry: `gameroom:<action>:<tail>[:<arg>]`. */
 export function confirmCustomId(action: GameRoomAction, tail: string, arg?: string): string {

@@ -165,3 +165,87 @@ describe("voiceQueue.requestVoice, the entry point for match requests", () => {
 		expect(place).toEqual({ place: 1, total: 2 });
 	});
 });
+
+// ── the admin controls (2026-10 item 267, decision 12) ──
+// A stable id per request; Move up and Move down pin an explicit order ahead of the category
+// ranking; Remove takes one out; every change reaches the listeners, a request as queued only
+// while it really waits.
+describe("voiceQueue admin controls", () => {
+	const idOf = (queue: ReturnType<typeof setup>["queue"], requesterId: string): string => {
+		const found = queue.list("g1", ORDER).find((request) => request.requesterId === requesterId);
+		if (!found) throw new Error(`no request from ${requesterId}`);
+		return found.id;
+	};
+	const names = (queue: ReturnType<typeof setup>["queue"]) => queue.list("g1", ORDER).map((request) => request.requesterId);
+
+	it("gives every request its own id, kept while it waits", () => {
+		const { add, queue } = setup();
+		add("a", "other");
+		const first = idOf(queue, "a");
+		add("b", "meeting-hall");
+		expect(idOf(queue, "a")).toBe(first);
+		expect(idOf(queue, "b")).not.toBe(first);
+	});
+
+	it("moves a request up past a better category and keeps that order for the next arrival", async () => {
+		const { add, queue } = setup();
+		add("hall", "meeting-hall");
+		add("other", "other");
+		await expect(queue.moveUp("g1", idOf(queue, "other"))).resolves.toEqual({ ok: true, place: { place: 1, total: 2 } });
+		expect(names(queue)).toEqual(["other", "hall"]);
+		add("hall-2", "meeting-hall");
+		expect(names(queue)).toEqual(["other", "hall", "hall-2"]);
+	});
+
+	it("moves a request down, and refuses a move past either end or for a request that is gone", async () => {
+		const { add, queue } = setup();
+		add("a", "meeting-hall");
+		add("b", "meeting-hall");
+		await expect(queue.moveDown("g1", idOf(queue, "a"))).resolves.toEqual({ ok: true, place: { place: 2, total: 2 } });
+		expect(names(queue)).toEqual(["b", "a"]);
+		await expect(queue.moveDown("g1", idOf(queue, "a"))).resolves.toEqual({ ok: false, reason: "edge" });
+		await expect(queue.moveUp("g1", idOf(queue, "b"))).resolves.toEqual({ ok: false, reason: "edge" });
+		await expect(queue.moveUp("g1", "no-such-id")).resolves.toEqual({ ok: false, reason: "gone" });
+	});
+
+	it("removes one request by its id, once", () => {
+		const { add, queue } = setup();
+		add("a", "other");
+		add("b", "other");
+		const id = idOf(queue, "a");
+		expect(queue.remove("g1", id)?.requesterId).toBe("a");
+		expect(queue.remove("g1", id)).toBeNull();
+		expect(names(queue)).toEqual(["b"]);
+	});
+
+	it("tells its listeners: queued while Dero is busy, moved, and left with the reason", async () => {
+		const { add, queue, free } = setup();
+		const changes: string[] = [];
+		queue.onChange((change) => changes.push(change.kind === "left" ? `left:${change.request.requesterId}:${change.exit}` : `${change.kind}:${change.request.requesterId}`));
+		add("a", "other");
+		add("b", "other");
+		await queue.moveUp("g1", idOf(queue, "b"));
+		queue.remove("g1", idOf(queue, "a"));
+		free();
+		await queue.drain("g1");
+		expect(changes).toEqual(["queued:a", "queued:b", "moved:b", "left:a:removed", "left:b:joined"]);
+	});
+
+	it("tells no queued change for a request that runs at once on a free Dero", async () => {
+		const { queue, free } = setup();
+		const kinds: string[] = [];
+		queue.onChange((change) => kinds.push(change.kind));
+		free();
+		await queue.requestVoice({ guild: GUILD, requesterId: "host", channelId: "vc-host", controlChannelId: "text-1", category: "rated-match" });
+		expect(kinds).toEqual(["left"]);
+	});
+
+	it("says the place a new request would take, behind pinned requests and its own category", async () => {
+		const { add, queue } = setup();
+		add("hall", "meeting-hall");
+		add("other", "other");
+		await expect(queue.placeFor("g1", "rated-match")).resolves.toEqual({ place: 2, total: 3 });
+		await queue.moveUp("g1", idOf(queue, "other"));
+		await expect(queue.placeFor("g1", "meeting-hall")).resolves.toEqual({ place: 3, total: 3 });
+	});
+});

@@ -1,4 +1,4 @@
-import { EmbedBuilder, TextChannel, type Client, type ColorResolvable } from "discord.js";
+import { EmbedBuilder, TextChannel, type ActionRowBuilder, type Client, type ColorResolvable, type MessageActionRowComponentBuilder } from "discord.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { adminLogEvent } from "@base/constants/BOT_LOG_EVENTS.js";
@@ -43,6 +43,9 @@ export const ADMIN_LOG_KINDS = [
 	"powerup.toggle",
 	"voice.allowlist",
 	"voice.cap",
+	// A request waiting for Dero's voice (2026-10 item 267 decision 12): the one kind whose
+	// entry carries buttons (Move up, Move down, Remove) and is redrawn (voice/voiceQueueLog.ts).
+	"voice.queue",
 	"selfdestruct.attempt",
 	"chip.grant",
 	"vault.topup",
@@ -72,6 +75,7 @@ const ADMIN_LOG_FAMILIES: Record<AdminLogKind, AdminLogFamily> = {
 	"powerup.toggle": "settings",
 	"voice.allowlist": "settings",
 	"voice.cap": "settings",
+	"voice.queue": "settings",
 	"selfdestruct.attempt": "destructive",
 	"chip.grant": "economy",
 	"vault.topup": "economy",
@@ -115,12 +119,17 @@ export interface AdminLogEntry {
 	kind: AdminLogKind;
 	actor: AdminLogActor;
 	payload?: AdminLogPayload;
+	// Buttons under the embed, for the one kind an admin acts on from the log (voice.queue).
+	// Every press must re-check the presser itself: a log message is a place, not a gate.
+	components?: ActionRowBuilder<MessageActionRowComponentBuilder>[];
 }
 
 /** What one write did, for tests and for callers that await it. */
 export interface AdminLogResult {
 	persisted: boolean;
 	posted: boolean;
+	// Where the entry posted, for a caller that redraws it later (voice/voiceQueueLog.ts).
+	message?: { channelId: string; messageId: string };
 }
 
 // ── helpers ──
@@ -199,12 +208,12 @@ export function buildAdminLogEmbed(entry: AdminLogLineInput, author: AdminLogAut
 // One embed per entry; when Discord refuses it (a missing Embed Links permission is the
 // usual cause), the same entry goes out as the plain line instead, so the channel never
 // loses an entry the embed could not carry. A failed fallback throws to write().
-async function postEntry(channel: TextChannel, entry: AdminLogLineInput, author: AdminLogAuthor | null): Promise<void> {
+async function postEntry(channel: TextChannel, entry: AdminLogLineInput, author: AdminLogAuthor | null, components: AdminLogEntry["components"] = []): Promise<{ id: string }> {
 	try {
-		await channel.send({ embeds: [buildAdminLogEmbed(entry, author)], allowedMentions: { parse: [] } });
+		return await channel.send({ embeds: [buildAdminLogEmbed(entry, author)], components, allowedMentions: { parse: [] } });
 	} catch (error) {
 		console.warn(`[admin-log] the ${entry.kind} embed was refused in channel ${channel.id}; posting the text line instead`, error);
-		await channel.send({ content: setupCopy.adminLog.line(entry), allowedMentions: { parse: [] } });
+		return await channel.send({ content: setupCopy.adminLog.line(entry), components, allowedMentions: { parse: [] } });
 	}
 }
 
@@ -214,7 +223,7 @@ async function postEntry(channel: TextChannel, entry: AdminLogLineInput, author:
  * Persist one audit row and post its embed. Never throws: each step catches and
  * logs its own failure, and the result says which steps landed.
  */
-async function write({ guild, kind, actor, payload = {} }: AdminLogEntry): Promise<AdminLogResult> {
+async function write({ guild, kind, actor, payload = {}, components }: AdminLogEntry): Promise<AdminLogResult> {
 	const result: AdminLogResult = { persisted: false, posted: false };
 
 	try {
@@ -235,8 +244,10 @@ async function write({ guild, kind, actor, payload = {} }: AdminLogEntry): Promi
 			subject: payload.subject,
 			detail: payload.detail,
 		};
-		await postEntry(channel, entry, author);
+		const posted = await postEntry(channel, entry, author, components);
 		result.posted = true;
+		// Read after posted is set: a test double's send may answer nothing, and the entry still posted.
+		if (posted) result.message = { channelId: channel.id, messageId: posted.id };
 	} catch (error) {
 		console.error(`[admin-log] posting ${kind} to the admin log of guild ${guild.id} failed`, error);
 	}

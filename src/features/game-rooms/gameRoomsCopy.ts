@@ -265,6 +265,32 @@ export const gameRoomsCopy = {
 		holdem: "🃏 Texas hold em",
 		monopoly: "🎩 Monopoly",
 		matchHistory: "📜 Match history",
+		deroVoice: "🔊 Dero voice",
+	},
+
+	// ── Dero voice from the challenge card (2026-10 item 267, decisions 11 and 12) ──
+	// A card with Dero voice on asks for Dero the moment it posts. While Dero is in another
+	// call the host may queue the card from its Queue Dero button; these are the card's line,
+	// the button and the modal that button opens.
+	cardVoice: {
+		queueLabel: "Queue Dero",
+		// What a game's request is for, as its 🗒️admin-log entry names it.
+		cardSubject: (game: GameSlug, cardChannelId: string): string => `${GAME_LABELS[game] ?? game} challenge card in <#${cardChannelId}>`,
+		roomSubject: (game: GameSlug, roomChannelId: string): string => `${GAME_LABELS[game] ?? game} room <#${roomChannelId}>`,
+		// The card's line while Dero is busy and the card is not queued.
+		busyLine: (busyChannelId: string): string => `🔊 Dero is in <#${busyChannelId}> right now. The host can press Queue Dero to bring him here when that call ends.`,
+		// The card's line while its request waits.
+		queuedLine: (place: number, total: number): string => `🔊 Dero is queued for this match, ${place} of ${total} in line.`,
+		// The Queue Dero modal: where Dero is, and the place the card would take.
+		confirmWhere: (busyChannelId: string): string => `Dero is in <#${busyChannelId}> right now.`,
+		confirmPlace: (place: number, total: number, targetChannelId: string): string =>
+			`Queued, this match would be ${place} of ${total} in line, and Dero joins <#${targetChannelId}> when it is its turn. Press Submit to queue it.`,
+		alreadyQueued: (place: number, total: number): string => `This match is already queued for Dero, ${place} of ${total} in line.`,
+		alreadyThere: "Dero is already in this match's voice channel.",
+		noTarget: "You are in no voice call and this server has no 🎮 Arcade Lounge, so there is nowhere to bring Dero.",
+		// A card or room join that could not happen, posted on the card's or the room's channel
+		// (decision 2), never silently.
+		noLounge: "🔊 Dero voice is on, but the host is in no voice call and this server has no 🎮 Arcade Lounge, so Dero has nowhere to join.",
 	},
 
 	// ── the opener card, pinned inside the room ──
