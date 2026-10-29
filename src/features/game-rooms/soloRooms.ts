@@ -187,7 +187,7 @@ async function dealRoomTable(
 		await roomLifecycle.finish(guild.client, room, { abandoned: true });
 		return false;
 	}
-	const started = await startBlackjackTable(channel, guild.id, host, true, room.roomId, others, { buyIn: seats.buyIn, chips: seats.charged });
+	const started = await startBlackjackTable(channel, guild.id, host, true, room.roomId, others, { buyIn: seats.buyIn, chips: seats.charged }, room.network ?? false);
 	if (started === "started") return true;
 
 	// The room exists and its board does not, so the host would hold their one room

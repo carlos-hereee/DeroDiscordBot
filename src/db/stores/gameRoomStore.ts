@@ -259,6 +259,12 @@ export const gameRoomStore = {
 		return GameRoom.findOneAndUpdate({ guildId, roomId, "turnPrompt.fingerprint": fingerprint }, { $set: { "turnPrompt.played": played } }, { new: true });
 	},
 
+	// Point the current prompt at the message that replaced its line (the turn clock's warning).
+	// Conditional on the fingerprint AND the old message, so a turn that moved on is untouched.
+	async moveTurnPromptMessage(guildId: string, roomId: string, fingerprint: string, fromMessageId: string, toMessageId: string) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId, "turnPrompt.fingerprint": fingerprint, "turnPrompt.messageId": fromMessageId }, { $set: { "turnPrompt.messageId": toMessageId } }, { new: true });
+	},
+
 	// Change only the layout stamp of the current prompt (Monopoly's extra buttons come and go
 	// within one turn). Conditional on the fingerprint, so a prompt that moved on is untouched.
 	async setTurnPromptLayout(guildId: string, roomId: string, fingerprint: string, layout: string) {

@@ -214,8 +214,8 @@ describe("one board per turn", () => {
 
 	// The acceptance case (2026-10 item 263 R3-29 and R3-4): five turns, five boards, each with its
 	// own block, every move once in the room and once in the transcript. Seat one is a Dero bot,
-	// so the newest board, on the bot's turn, carries the buttons no turn line holds for it.
-	it("plays five turns and leaves five boards, only the newest with buttons, each with its own This turn block", async () => {
+	// whose turn has its own quiet turn line, so no board ever carries a button.
+	it("plays five turns and leaves five boards, none with buttons, each with its own This turn block", async () => {
 		const room = fakeRoom();
 		const seeded = await seedMatch(room, [BOT, A]);
 		const seats = [BOT, A, BOT, A];
@@ -227,7 +227,7 @@ describe("one board per turn", () => {
 		expect(room.messages).toHaveLength(5);
 		expect(boardIsLast(room)).toBe(true);
 		const withButtons = room.messages.filter((message) => (message.payload.components ?? []).length > 0);
-		expect(withButtons.map((message) => message.id)).toEqual([stored().boardMessageId]);
+		expect(withButtons).toEqual([]);
 		for (const [index, seat] of seats.entries()) {
 			const block = descriptionOf(room.messages[index]);
 			expect(block).toContain(`**${gameRoomsCopy.turnBoard.thisTurnLabel}**`);

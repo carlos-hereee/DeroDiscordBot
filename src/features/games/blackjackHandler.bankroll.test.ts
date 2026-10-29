@@ -26,7 +26,7 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGui
 // them runs end to end in challengeBoard.rematch.test.ts; here they are what the handler asks for.
 vi.mock("@features/game-rooms/blackjackChips.js", () => ({ cashOutBlackjackSeat: vi.fn(async () => true), saveBlackjackStacks: vi.fn(async () => undefined) }));
 vi.mock("@features/game-rooms/roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn(async () => true) } }));
-vi.mock("@features/game-rooms/turnPrompt.js", () => ({ syncTurnPrompt: vi.fn(async () => undefined) }));
+vi.mock("@features/game-rooms/turnPrompt.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("@features/game-rooms/turnPrompt.js")>()), syncTurnPrompt: vi.fn(async () => undefined) }));
 vi.mock("@utils/answerInChannel.js", () => ({ answerInChannel: vi.fn(async () => undefined), beginChannelAnswer: vi.fn() }));
 vi.mock("./gameXp.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./gameXp.js")>()), awardBlackjackResult: vi.fn(), awardBlackjackTableCoins: vi.fn() }));
 vi.mock("./blackjackRenderer.js", async (importOriginal) => ({

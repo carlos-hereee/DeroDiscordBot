@@ -228,6 +228,14 @@ export const gameRoomsCopy = {
 		takeLabel: "Take your turn",
 		playedLine: (userId: string): string => `✅ <@${userId}> played their turn.`,
 		passedLine: (userId: string): string => `⏳ <@${userId}>'s turn passed.`,
+		// A Dero bot's turn line (no ping, no moves), and what it says once the bot has moved. The
+		// bot's mention becomes "🤖 **Dero Gold**" through labelBotMentions, robot mark included.
+		botLine: [
+			(botId: string): string => `<@${botId}> is thinking…`,
+			(botId: string): string => `<@${botId}> studies the table.`,
+			(botId: string): string => `<@${botId}> is making a move.`,
+		],
+		botDoneLine: (botId: string): string => `<@${botId}> made their move.`,
 		turnPassed: "That turn has passed.",
 		notYourTurn: "It is not your turn.",
 		nothingToPlay: "There is nothing to play from here right now.",

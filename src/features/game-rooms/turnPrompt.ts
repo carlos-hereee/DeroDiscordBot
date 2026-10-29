@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, type ButtonInteraction, type Client, type ModalSubmitInteraction } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageFlags, type APIActionRowComponent, type APIButtonComponent, type ButtonInteraction, type Client, type ModalSubmitInteraction } from "discord.js";
 import { showModalOrReply, showNotice } from "@utils/textModal.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { IGameRoom, TurnPromptRecord } from "@db/models/GameRoom.js";
@@ -6,7 +6,7 @@ import type { GameSlug } from "./roomTypes.js";
 import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import { buildFieldsModal, readFieldAnswers, type ModalField } from "./pickerModal.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { isBotSeatId } from "./botSeat.js";
+import { isBotSeatId, labelBotMentions } from "./botSeat.js";
 import { resolveRoomChannel, roomTrail } from "./roomTrail.js";
 import { pickLine } from "@utils/pickLine.js";
 
@@ -180,15 +180,17 @@ export async function syncTurnPrompt(client: Client, room: IGameRoom, adapter: T
 		const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId);
 		if (!fresh) return;
 		const current = fresh.turnPrompt ?? EMPTY_PROMPT;
-		const onClock = fresh.status === "playing" ? adapter.whoseTurn(fresh) : null;
-		const playerId = onClock && !isBotSeatId(onClock) ? onClock : null;
+		const playerId = fresh.status === "playing" ? adapter.whoseTurn(fresh) : null;
 		const fingerprint = playerId ? adapter.fingerprintOf(fresh) : null;
 		if (!playerId || !fingerprint) {
 			await takePromptDown(client, fresh, current);
 			return;
 		}
 
-		const rows = promptRows(adapter, fresh, fingerprint);
+		// A Dero bot on the clock gets a turn line too (owner report of 2026-10-29: the buttons
+		// jumped to the game card on every bot turn): no ping and no moves, only the buttons any
+		// player presses at any time, so the card never has to carry them.
+		const rows = isBotSeatId(playerId) ? chunkRows(adapter.extraButtons?.(fresh) ?? []) : promptRows(adapter, fresh, fingerprint);
 		const layout = layoutOf(rows);
 		if (current.fingerprint === fingerprint) {
 			if (current.layout !== layout) await refreshLayout(client, fresh, current, fingerprint, layout, rows);
@@ -210,7 +212,8 @@ interface NewPrompt {
 // ① send the line, ② claim it on the row against the prompt that was read (the loser deletes
 // its own line, so two syncs for one turn leave one), ③ edit the line it replaced.
 async function postNewPrompt(client: Client, room: IGameRoom, current: TurnPromptRecord, next: NewPrompt): Promise<void> {
-	const posted = await roomTrail.postTurnPrompt(client, room, { playerId: next.playerId, text: pickLine(gameRoomsCopy.turnPrompt.line)(next.playerId), components: next.rows });
+	const text = isBotSeatId(next.playerId) ? pickLine(gameRoomsCopy.turnPrompt.botLine)(next.playerId) : pickLine(gameRoomsCopy.turnPrompt.line)(next.playerId);
+	const posted = await roomTrail.postTurnPrompt(client, room, { playerId: next.playerId, text, components: next.rows });
 	if (!posted) return;
 	const previous = await gameRoomStore.claimTurnPrompt(room.guildId, room.roomId, current.fingerprint, {
 		fingerprint: next.fingerprint,
@@ -245,7 +248,9 @@ async function retireLine(client: Client, room: IGameRoom, record: TurnPromptRec
 	const message = await fetchPromptLine(client, room, record);
 	if (!message || !record.playerId) return;
 	const copy = gameRoomsCopy.turnPrompt;
-	const content = record.played ? copy.playedLine(record.playerId) : copy.passedLine(record.playerId);
+	let content = record.played ? copy.playedLine(record.playerId) : copy.passedLine(record.playerId);
+	// A bot's line is never "played" through a press; it says the bot moved, named as a bot.
+	if (isBotSeatId(record.playerId)) content = labelBotMentions(copy.botDoneLine(record.playerId));
 	await message.edit({ content, components: [], allowedMentions: { parse: [] } }).catch((error: unknown) => console.warn("[game-rooms] a spent turn prompt could not be edited", { roomId: room.roomId, error }));
 }
 
@@ -253,6 +258,33 @@ async function fetchPromptLine(client: Client, room: IGameRoom, record: TurnProm
 	if (!record.messageId) return null;
 	const channel = await resolveRoomChannel(client, room.channelId);
 	return channel ? channel.messages.fetch(record.messageId).catch(() => null) : null;
+}
+
+// ── the warning as the new turn line (owner report of 2026-10-29) ────────
+/**
+ * Post the turn clock's warning as the member's turn line: the warning pings them at the bottom
+ * of the room carrying the SAME buttons the line above it had, the record moves to it and the old
+ * line is deleted, so the newest message that says it is their turn always has their buttons. A
+ * member with no live line here (an auction's bidder, a line already gone) gets the warning
+ * alone, as before. Never throws.
+ */
+export async function postTurnWarning(client: Client, room: IGameRoom, memberId: string, text: string): Promise<void> {
+	try {
+		// A failed read still warns: the warning matters more than moving the buttons under it.
+		const fresh = await Promise.resolve(gameRoomStore.findByRoomId(room.guildId, room.roomId)).catch(() => null);
+		const record = fresh?.turnPrompt ?? EMPTY_PROMPT;
+		const oldLine = fresh && record.fingerprint && record.playerId === memberId ? await fetchPromptLine(client, fresh, record) : null;
+		// A row read back from Discord rebuilds into a builder; every row on a turn line is buttons.
+		const components = oldLine ? oldLine.components.flatMap((row) => (row.type === ComponentType.ActionRow ? [ActionRowBuilder.from<ButtonBuilder>(row.toJSON() as APIActionRowComponent<APIButtonComponent>)] : [])) : [];
+		const posted = await roomTrail.postTurnPrompt(client, room, { playerId: memberId, text, components });
+		if (!posted || !oldLine || !record.fingerprint) return;
+		const moved = await gameRoomStore.moveTurnPromptMessage(room.guildId, room.roomId, record.fingerprint, oldLine.id, posted.id);
+		// The turn moved on between the read and the post: the warning keeps no live buttons.
+		if (!moved) await posted.edit({ components: [], allowedMentions: { parse: [] } }).catch(() => undefined);
+		else await oldLine.delete().catch(() => undefined);
+	} catch (error) {
+		console.warn("[game-rooms] the turn warning could not be posted", { roomId: room.roomId, error });
+	}
 }
 
 // ── the press and the Submit ──────────────────────────────────────────

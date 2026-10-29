@@ -4,11 +4,11 @@ vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]):
 import type { ButtonInteraction, Client, ModalSubmitInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findByRoomId: vi.fn(), claimTurnPrompt: vi.fn(), setTurnPromptPlayed: vi.fn(), setTurnPromptLayout: vi.fn() },
+	gameRoomStore: { findByRoomId: vi.fn(), claimTurnPrompt: vi.fn(), setTurnPromptPlayed: vi.fn(), setTurnPromptLayout: vi.fn(), moveTurnPromptMessage: vi.fn() },
 }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postTurnPrompt: vi.fn() }, resolveRoomChannel: vi.fn() }));
 
-import { handleTurnMovePress, handleTurnPress, handleTurnSubmit, syncTurnPrompt, turnButtonId, type TurnAdapter } from "./turnPrompt.js";
+import { handleTurnMovePress, handleTurnPress, handleTurnSubmit, postTurnWarning, syncTurnPrompt, turnButtonId, type TurnAdapter } from "./turnPrompt.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { resolveRoomChannel, roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -19,7 +19,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // that re-checks the turn, and a spent line edited to say how it ended. Driven with a fake
 // game, so what is pinned is the shared piece and not any one game's rules.
 
-const storeMock = gameRoomStore as unknown as Record<"findByRoomId" | "claimTurnPrompt" | "setTurnPromptPlayed" | "setTurnPromptLayout", ReturnType<typeof vi.fn>>;
+const storeMock = gameRoomStore as unknown as Record<"findByRoomId" | "claimTurnPrompt" | "setTurnPromptPlayed" | "setTurnPromptLayout" | "moveTurnPromptMessage", ReturnType<typeof vi.fn>>;
 const trailMock = roomTrail as unknown as { postTurnPrompt: ReturnType<typeof vi.fn> };
 const channelMock = resolveRoomChannel as unknown as ReturnType<typeof vi.fn>;
 
@@ -81,15 +81,22 @@ describe("posting the prompt", () => {
 		expect(trailMock.postTurnPrompt).not.toHaveBeenCalled();
 	});
 
-	it("gives a Dero bot seat on the clock no prompt, and takes the last one down", async () => {
+	// A Dero bot on the clock gets a quiet line of its own (owner report of 2026-10-29), so the
+	// buttons any player presses at any time never jump back to the game card on a bot's turn.
+	it("gives a Dero bot seat on the clock a quiet line: no ping, no moves, only the anytime buttons", async () => {
+		const { ButtonBuilder, ButtonStyle } = await import("discord.js");
 		turn.who = BOT;
+		turn.extra = [new ButtonBuilder().setCustomId("gameroom:mtrade:room-1").setLabel("Trade").setStyle(ButtonStyle.Secondary)] as never[];
 		storeMock.findByRoomId.mockResolvedValue(row({ turnPrompt: { fingerprint: "t0", messageId: "m-old", playerId: A, layout: "", played: false } }));
 		storeMock.claimTurnPrompt.mockResolvedValue(row({ turnPrompt: { fingerprint: "t0", messageId: "m-old", playerId: A, layout: "", played: false } }));
 
 		await syncTurnPrompt(client, row(), adapter);
 
-		expect(trailMock.postTurnPrompt).not.toHaveBeenCalled();
-		expect(storeMock.claimTurnPrompt).toHaveBeenCalledWith("guild-1", "room-1", "t0", { fingerprint: null, messageId: null, playerId: null, layout: null });
+		const [, , prompt] = trailMock.postTurnPrompt.mock.calls[0];
+		expect(prompt.playerId).toBe(BOT);
+		expect(gameRoomsCopy.turnPrompt.botLine.map((line) => line(BOT))).toContain(prompt.text);
+		const ids = prompt.components.flatMap((component: { toJSON(): { components: { custom_id: string }[] } }) => component.toJSON().components.map((button) => button.custom_id));
+		expect(ids).toEqual(["gameroom:mtrade:room-1"]);
 	});
 
 	it("prompts neither a finished room nor a network table", async () => {
@@ -315,5 +322,43 @@ describe("a move button", () => {
 		await handleTurnMovePress(movePress(B, "fold"), lookup);
 
 		expect(applied).not.toHaveBeenCalled();
+	});
+});
+
+// ── the warning as the new turn line (owner report of 2026-10-29) ─────────
+// The warning used to post below the turn line with no buttons, so the newest "your turn" line
+// had none. It now carries the line's own buttons, takes over the record, and the old line goes.
+describe("the turn warning", () => {
+	const oldRow = { type: 1, toJSON: () => ({ type: 1, components: [{ type: 2, style: 1, custom_id: "gameroom:tmove:room-1:t1:roll", label: "Roll" }] }) };
+	const oldLine = { id: "m-old", components: [oldRow], delete: vi.fn().mockResolvedValue(undefined) };
+
+	beforeEach(() => {
+		oldLine.delete.mockClear();
+		storeMock.findByRoomId.mockResolvedValue(row({ turnPrompt: { fingerprint: "t1", messageId: "m-old", playerId: A, layout: "x", played: false } }));
+		channelMock.mockResolvedValue({ messages: { fetch: vi.fn().mockResolvedValue(oldLine) } });
+		trailMock.postTurnPrompt.mockResolvedValue(sentMessage("m-warn"));
+	});
+
+	it("posts the warning with the turn line's buttons, moves the record to it and deletes the old line", async () => {
+		storeMock.moveTurnPromptMessage.mockResolvedValue({});
+
+		await postTurnWarning(client, row(), A, "10 seconds left");
+
+		const [, , warning] = trailMock.postTurnPrompt.mock.calls[0];
+		const ids = warning.components.flatMap((component: { toJSON(): { components: { custom_id: string }[] } }) => component.toJSON().components.map((button) => button.custom_id));
+		expect(ids).toEqual(["gameroom:tmove:room-1:t1:roll"]);
+		expect(storeMock.moveTurnPromptMessage).toHaveBeenCalledWith("guild-1", "room-1", "t1", "m-old", "m-warn");
+		expect(oldLine.delete).toHaveBeenCalledOnce();
+	});
+
+	it("warns with no buttons and keeps the old line when the turn moved on in between", async () => {
+		const posted = sentMessage("m-warn");
+		trailMock.postTurnPrompt.mockResolvedValue(posted);
+		storeMock.moveTurnPromptMessage.mockResolvedValue(null);
+
+		await postTurnWarning(client, row(), A, "10 seconds left");
+
+		expect(posted.edit).toHaveBeenCalledWith(expect.objectContaining({ components: [] }));
+		expect(oldLine.delete).not.toHaveBeenCalled();
 	});
 });

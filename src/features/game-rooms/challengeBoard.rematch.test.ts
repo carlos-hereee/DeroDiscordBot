@@ -638,7 +638,7 @@ describe("solo rooms rematch in place", () => {
 		expect(next).toMatchObject({ channelId: CHANNEL, hostId: P1, playerIds: [P1], visibility: "solo", status: "playing" });
 		expect(world.guild.channels.create).not.toHaveBeenCalled();
 		// A fresh buy in, the same standard one, taken from the presser and held on the new row's ledger.
-		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, { userId: P1, username: "Player One" }, true, next?.roomId, [], { buyIn: 1000, chips: true });
+		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, { userId: P1, username: "Player One" }, true, next?.roomId, [], { buyIn: 1000, chips: true }, false);
 		expect(wallets.get(P1)).toBe(4000);
 		expect(next?.blackjackStacks).toEqual([{ userId: P1, buyIn: 1000, stack: 1000 }]);
 		// A solo room mints no invite, exactly like its first match.
@@ -673,7 +673,7 @@ describe("solo rooms rematch in place", () => {
 		expect(wallets.get(P1)).toBe(2500);
 		expect(wallets.get(P2)).toBe(100);
 		expect(next?.blackjackStacks).toEqual([{ userId: P1, buyIn: 2500, stack: 2500 }]);
-		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, expect.objectContaining({ userId: P1 }), true, next?.roomId, [], { buyIn: 2500, chips: true });
+		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, expect.objectContaining({ userId: P1 }), true, next?.roomId, [], { buyIn: 2500, chips: true }, false);
 		expect((next?.moves as { text: string }[]).map((move) => move.text)).toContain(gameRoomsCopy.trail.blackjackRematchShort(P2, 2500));
 	});
 
@@ -686,7 +686,7 @@ describe("solo rooms rematch in place", () => {
 
 		expect(wallets.get(P1)).toBe(5000);
 		expect(rematchRow()?.blackjackStacks).toEqual([]);
-		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, expect.objectContaining({ userId: P1 }), true, rematchRow()?.roomId, [], { buyIn: 1000, chips: false });
+		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, expect.objectContaining({ userId: P1 }), true, rematchRow()?.roomId, [], { buyIn: 1000, chips: false }, false);
 	});
 
 	it("closes the new solo blackjack room when its table cannot start, and tells the presser", async () => {

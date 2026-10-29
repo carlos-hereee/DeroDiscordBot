@@ -317,29 +317,15 @@ function holdingsSelect(
 
 // ── controls ──────────────────────────────────────────────────────────
 /**
- * The board message's buttons, rendered for `viewerId`, the seat on the clock (the board is ONE
- * shared message). While a member is on the clock the board carries NO buttons: the turn's moves
- * are buttons on the turn line, and Bid, Pay a debt, Build, Trade, Inventory and Surrender ride
- * the line beside them (monopolyPromptButtons), so no button is on both. A finished match gets
- * no rows. Every button is still
- * re-checked in its handler, because a rendered button is a hint, and every route a removed
- * button used stays registered, so a board posted before this change still works.
- *
- * ⚠️ A DERO BOT ON THE CLOCK GETS NO TURN LINE (turnPrompt.syncTurnPrompt skips a bot seat), and
- * that is the one time a Monopoly table runs without one: a Monopoly room is never a network
- * table. So while a bot is on the clock the board keeps what a member would otherwise have
- * nowhere to press: Bid in an auction, Trade, Inventory and Surrender (owner decision 3).
+ * The board message's buttons: none, ever, while the match plays (owner decision of 2026-10-29:
+ * no button on both the game card and the turn line). Every seat on the clock has a turn line, a
+ * Dero bot's included (turnPrompt), and it carries the turn's moves plus Bid, Pay a debt, Build,
+ * Trade, Inventory and Surrender (monopolyPromptButtons). Kept as the board's one source of rows
+ * so a later card control has one home; every route a removed button used stays registered, so
+ * a board posted before this change still works.
  */
-export function monopolyControlsRow(state: MonopolyState, viewerId: string, roomId: string): ActionRowBuilder<ButtonBuilder>[] {
-	if (state.phase === "finished") return [];
-
-	const active = state.seats[state.activeSeatIndex];
-	// A member on the clock has every one of these on the turn line (monopolyPromptButtons, owner
-	// decision of 2026-10-29: the game card keeps none of the line's buttons), so the board is bare.
-	if (!isBotSeatId(active.userId)) return [];
-	const turn = [...bidButtons(state, roomId), ...debtButtons(state, roomId)];
-	const anyTime = [...buildButtons(state, active, viewerId, roomId), ...lineButtons(state, roomId)];
-	return [turn, anyTime].filter((buttons) => buttons.length > 0).map((buttons) => row(...buttons));
+export function monopolyControlsRow(_state: MonopolyState, _viewerId: string, _roomId: string): ActionRowBuilder<ButtonBuilder>[] {
+	return [];
 }
 
 /**
@@ -398,5 +384,3 @@ function button(roomId: string, action: string, label: string, style: ButtonStyl
 	return new ButtonBuilder().setCustomId(customId).setLabel(label).setStyle(style).setEmoji(emoji);
 }
 
-const row = (...buttons: ButtonBuilder[]): ActionRowBuilder<ButtonBuilder> =>
-	new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);

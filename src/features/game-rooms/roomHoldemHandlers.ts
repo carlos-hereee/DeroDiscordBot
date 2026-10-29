@@ -1427,13 +1427,12 @@ const AMOUNT_FIELD = "amount";
 // The select value for the aggressive action, which the engine names bet or raise by street.
 const RAISE_CHOICE = "raise";
 
-// Whether a member on the clock has a turn line carrying every move and the table's player
-// buttons (turnPrompt): never at a network table, which posts no turn line, and never while a
-// Dero bot acts, since nobody is pinged for a bot.
+// Whether the seat on the clock has a turn line carrying the table's player buttons (turnPrompt):
+// a member's line with their moves, or a Dero bot's quiet line with the buttons alone. Never at a
+// network table, which posts no turn line.
 function movesOnTurnLine(room: IGameRoom, table: HoldemTable): boolean {
 	if (room.network || (room.satellites?.length ?? 0) > 0) return false;
-	const actor = whoActs(table);
-	return Boolean(actor) && !isBotSeatId(actor as string);
+	return Boolean(whoActs(table));
 }
 
 export const holdemTurnAdapter: TurnAdapter = {

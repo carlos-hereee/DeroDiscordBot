@@ -60,9 +60,19 @@ async function endCountdown(start: CountdownStart): Promise<void> {
 			return;
 		}
 		await start.open(draft);
+		await announceMatchStart(start);
 	} catch (error) {
 		console.error("[game-rooms] the start countdown could not open the room", { roomId: start.room.roomId, error });
 	}
+}
+
+// Dero opens the match out loud once its room is really playing (owner decision of 2026-10-29),
+// read back so a start the provision path refused says nothing. Speaks only when Dero is in the
+// match's call; announceToMatch never throws.
+async function announceMatchStart(start: CountdownStart): Promise<void> {
+	const opened = await gameRoomStore.findByRoomId(start.room.guildId, start.room.roomId);
+	if (opened?.status !== "playing") return;
+	await announceToMatch(start.client, opened, "commentary", pickLine(deroBrainCopy.dealer.matchStart));
 }
 
 /**

@@ -201,20 +201,23 @@ describe("monopolyControlsRow", () => {
 		expect(await descriptionOf(state)).toContain(gameRoomsCopy.monopoly.debtPrompt(B, gameRoomsCopy.monopoly.bankCreditor, 50, 30));
 	});
 
-	it("keeps Trade, Inventory and Surrender on the board while a Dero bot is on the clock, and never its Build or turn moves", () => {
+	// A Dero bot on the clock gets a quiet turn line too (turnPrompt), so these ride it, never the card.
+	const promptJson = (state: MonopolyState) => monopolyPromptButtons(state, ROOM).map((button) => button.toJSON() as { custom_id: string; label?: string });
+
+	it("puts Trade, Inventory and Surrender on a Dero bot's turn line and leaves the card bare, never its Build", () => {
 		const state = botMatch();
 		state.properties["vermillion-alley"].ownerId = BOT;
 		state.properties["burnt-umber-row"].ownerId = BOT;
-		expect(idsByRow(state, BOT)).toEqual([LINE]);
+		expect(idsByRow(state, BOT)).toEqual([]);
+		expect(promptJson(state).map((button) => button.custom_id)).toEqual(LINE);
 	});
 
-	it("keeps Bid on the board during a Dero bot's auction, with the round it belongs to, since no turn line carries it", () => {
+	it("puts Bid on the turn line during a Dero bot's auction, with the round it belongs to", () => {
 		const state = botMatch();
 		state.phase = "in-auction";
 		state.pendingAuction = { tileId: "burnt-umber-row", bids: {}, roundOpenedAt: 1_234, skippedBy: BOT };
-		const [turn, line] = rowsJson(state, BOT);
-		expect(turn).toEqual([expect.objectContaining({ custom_id: `gameroom:mauction:${ROOM}:1234`, label: gameRoomsCopy.monopoly.bidLabel("Burnt Umber Row") })]);
-		expect(line.map((button) => button.custom_id)).toEqual(LINE);
+		expect(rowsJson(state, BOT)).toEqual([]);
+		expect(promptJson(state)[0]).toEqual(expect.objectContaining({ custom_id: `gameroom:mauction:${ROOM}:1234`, label: gameRoomsCopy.monopoly.bidLabel("Burnt Umber Row") }));
 	});
 
 	it("labels Trade as an open offer while one waits", () => {
@@ -226,8 +229,7 @@ describe("monopolyControlsRow", () => {
 			request: { properties: [], chips: 0, gojf: 0 },
 			openedAt: 5,
 		};
-		const [line] = rowsJson(state, BOT);
-		expect(line[0]).toMatchObject({ custom_id: `gameroom:mtrade:${ROOM}`, label: gameRoomsCopy.monopoly.tradeOpenLabel });
+		expect(promptJson(state)[0]).toMatchObject({ custom_id: `gameroom:mtrade:${ROOM}`, label: gameRoomsCopy.monopoly.tradeOpenLabel });
 	});
 
 	it("stays inside Discord's caps and emits only Monopoly actions, in every phase, on a member's turn and a bot's", () => {

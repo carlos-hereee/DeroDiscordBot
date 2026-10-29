@@ -378,7 +378,9 @@ export async function startBlackjackTable(
 	otherSeats: ReadonlyArray<{ userId: string; username: string }> = [],
 	// What a room's table plays for (2026-10 item 267). A room's table with none named plays
 	// free on the standard stack; an inline table never has one.
-	bankroll: TableBankroll | null = null
+	bankroll: TableBankroll | null = null,
+	// A network table posts no turn line (turnPrompt skips it), so its board keeps every button.
+	network = false
 ): Promise<BlackjackStartResult> {
 	// ① Claim the channel slot SYNCHRONOUSLY, the same discipline hangman uses:
 	// the check and the write sit adjacent with no await between them, so two
@@ -392,6 +394,9 @@ export async function startBlackjackTable(
 		table: null,
 		settled: false,
 		roomId,
+		// Known from the first board, so even the opening deal keeps its moves and Leave on the
+		// turn line rather than on the card.
+		promptsTurns: roomId !== null && !network,
 		bankroll: roomId ? (bankroll ?? { buyIn: BOT_CONSTANTS.HOLDEM_STARTING_STACK, chips: false }) : null,
 		board: null,
 		resultBoardId: null,

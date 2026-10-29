@@ -146,7 +146,8 @@ describe("a multi seat blackjack room's table", () => {
 				// A member the cache does not hold is seated by id rather than dropped.
 				{ userId: "p3", username: "p3" },
 			],
-			{ buyIn: 2500, chips: true }
+			{ buyIn: 2500, chips: true },
+			false
 		);
 	});
 

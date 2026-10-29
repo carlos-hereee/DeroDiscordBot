@@ -24,7 +24,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 }));
 vi.mock("@features/game-rooms/roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn(async () => true) } }));
 // The prompt line has its own suite; here it would only read rows this fake does not keep.
-vi.mock("@features/game-rooms/turnPrompt.js", () => ({ syncTurnPrompt: vi.fn(async () => undefined) }));
+vi.mock("@features/game-rooms/turnPrompt.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("@features/game-rooms/turnPrompt.js")>()), syncTurnPrompt: vi.fn(async () => undefined) }));
 vi.mock("./gameXp.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./gameXp.js")>()), awardBlackjackResult: vi.fn(), awardBlackjackTableCoins: vi.fn() }));
 // The text table, whatever art is on disk where the suite runs.
 vi.mock("./blackjackRenderer.js", async (importOriginal) => ({
@@ -154,7 +154,8 @@ describe("a room's blackjack hand on the shared turn board", () => {
 		expect(kept.id).toBe(handBoard.id);
 		expect(kept.payload.components).toEqual([]);
 		expect(result.payload.components).toEqual([]);
-		expect(next.payload.components).toHaveLength(1);
+		// The bets and Leave ride the turn line, so no board of a room table carries a button.
+		expect(next.payload.components).toEqual([]);
 		expect(_blackjackTableOf("ch-1")?.handNumber).toBe(2);
 
 		// Every bet and move on the hand's block once, the one that ended the hand included, and

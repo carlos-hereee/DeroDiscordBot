@@ -203,6 +203,8 @@ export const deroBrainCopy = {
 			lose: [(name: string): string => `${name} loses this one.`, (name: string): string => `The house takes ${name}'s bet.`, (name: string): string => `Not this time, ${name}.`],
 		},
 		// The opener Dero says before a finished match's result line (owner decision of 2026-10-29).
+		// Said once the countdown opens the room (owner decision of 2026-10-29).
+		matchStart: ["The match begins now!", "Let the games begin!", "Here we go. The match is on!", "Gates are open. Play!"],
 		gameOver: ["Game over!", "And that's the match!", "The battle is done!", "That's it, the dust settles."],
 		// Variants (pickLine), so a long table does not hear the same words every turn.
 		toAct: [

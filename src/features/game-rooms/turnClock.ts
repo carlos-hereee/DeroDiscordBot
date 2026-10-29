@@ -5,7 +5,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isBotSeatId } from "./botSeat.js";
-import { roomTrail } from "./roomTrail.js";
+import { postTurnWarning } from "./turnPrompt.js";
 import { announceToMatch, isDeroInMatchCall, spokenNameOf, warningSeconds } from "./roomAnnouncer.js";
 import type { GameSlug } from "./roomTypes.js";
 import { pickLine } from "@utils/pickLine.js";
@@ -295,7 +295,7 @@ const isNetworkRoom = (room: IGameRoom): boolean => Boolean(room.network || room
 async function warnMember(client: Client, room: IGameRoom, memberId: string): Promise<void> {
 	if (isNetworkRoom(room)) return;
 	const seconds = warningSeconds();
-	await roomTrail.postTurnPrompt(client, room, { playerId: memberId, text: pickLine(gameRoomsCopy.turnClock.warningLine)(memberId, seconds), components: [] });
+	await postTurnWarning(client, room, memberId, pickLine(gameRoomsCopy.turnClock.warningLine)(memberId, seconds));
 	if (!isDeroInMatchCall(client, room)) return;
 	await announceToMatch(client, room, "turnWarning", pickLine(deroBrainCopy.dealer.turnWarning)(await spokenNameOf(client, room.guildId, memberId), seconds));
 }
