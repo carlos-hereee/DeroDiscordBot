@@ -186,8 +186,10 @@ export function startVoiceListener(target: ListenTarget, deps: VoiceListenerDeps
 
 		const durationMs = Math.round(capture.bytes / PCM_BYTES_PER_MS);
 		if (capture.tooLong || durationMs < BOT_CONSTANTS.DERO_VOICE_UTTERANCE_MIN_MS) {
-			const reason = capture.tooLong ? "too_long" : "too_short";
-			console.info(`[dero-voice] utterance discarded guild=${guild.id} speaker=${capture.userId} reason=${reason} ms=${durationMs}`);
+			// A too short capture is a cough, a click or a game sound through an open mic, many a
+			// minute in a busy call, so it is dropped without a line (the owner's call: it flooded
+			// the terminal). A too long one is rare and worth knowing about, so it still logs.
+			if (capture.tooLong) console.info(`[dero-voice] utterance discarded guild=${guild.id} speaker=${capture.userId} reason=too_long ms=${durationMs}`);
 			return;
 		}
 		turnLoop.submit({

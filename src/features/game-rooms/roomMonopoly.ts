@@ -318,11 +318,10 @@ function holdingsSelect(
 // ── controls ──────────────────────────────────────────────────────────
 /**
  * The board message's buttons, rendered for `viewerId`, the seat on the clock (the board is ONE
- * shared message). Since 2026-10 item 263 R3-22 the board carries only what the turn line does
- * not: Build for the seat on the clock when a build would go through, and Pay a debt for
- * whoever owes. The turn moves themselves (Roll, Buy and Skip, End turn, the jail choices) are
- * played through the line's Take your turn, and Bid, Trade, Inventory and Surrender ride the
- * line beside it (monopolyPromptButtons). A finished match gets no rows. Every button is still
+ * shared message). While a member is on the clock the board carries NO buttons: the turn's moves
+ * are buttons on the turn line, and Bid, Pay a debt, Build, Trade, Inventory and Surrender ride
+ * the line beside them (monopolyPromptButtons), so no button is on both. A finished match gets
+ * no rows. Every button is still
  * re-checked in its handler, because a rendered button is a hint, and every route a removed
  * button used stays registered, so a board posted before this change still works.
  *
@@ -335,21 +334,25 @@ export function monopolyControlsRow(state: MonopolyState, viewerId: string, room
 	if (state.phase === "finished") return [];
 
 	const active = state.seats[state.activeSeatIndex];
-	const botOnClock = isBotSeatId(active.userId);
-	const turn = [...(botOnClock ? bidButtons(state, roomId) : []), ...debtButtons(state, roomId)];
-	const anyTime = [...buildButtons(state, active, viewerId, roomId), ...(botOnClock ? lineButtons(state, roomId) : [])];
+	// A member on the clock has every one of these on the turn line (monopolyPromptButtons, owner
+	// decision of 2026-10-29: the game card keeps none of the line's buttons), so the board is bare.
+	if (!isBotSeatId(active.userId)) return [];
+	const turn = [...bidButtons(state, roomId), ...debtButtons(state, roomId)];
+	const anyTime = [...buildButtons(state, active, viewerId, roomId), ...lineButtons(state, roomId)];
 	return [turn, anyTime].filter((buttons) => buttons.length > 0).map((buttons) => row(...buttons));
 }
 
 /**
- * The buttons that ride the turn prompt line beside Take your turn (2026-10 item 257 Phase 4a,
- * item 263 R3-22): Bid while an auction is open, then Trade, Inventory and Surrender, so with
- * Take your turn the line holds five at most, one row. Bid and Trade open their own modal,
+ * The buttons that ride the turn prompt line beside the turn's moves (2026-10 item 257 Phase 4a,
+ * item 263 R3-22): Bid while an auction is open, Pay a debt while one waits, Build for the seat on
+ * the clock when a build would go through, then Trade, Inventory and Surrender. Bid and Trade open their own modal,
  * which cannot open from the turn modal's Submit (risk R6), so they stay buttons. Built with the
  * same helpers and labels as the board's bot turn rows, so a prompt and a board cannot disagree.
  */
 export function monopolyPromptButtons(state: MonopolyState, roomId: string): ButtonBuilder[] {
-	return [...bidButtons(state, roomId), ...lineButtons(state, roomId)];
+	const active = state.seats[state.activeSeatIndex];
+	const build = active ? buildButtons(state, active, active.userId, roomId) : [];
+	return [...bidButtons(state, roomId), ...debtButtons(state, roomId), ...build, ...lineButtons(state, roomId)];
 }
 
 // Bid, while an auction is open: every seat still playing bids, not only the seat on the clock.

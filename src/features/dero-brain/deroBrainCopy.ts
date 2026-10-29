@@ -192,7 +192,6 @@ export const deroBrainCopy = {
 			miss: [(name: string, at: string): string => `${name} fires at ${at}. Splash. A miss.`, (name: string, at: string): string => `${at}, says ${name}. Nothing but sea.`, (name: string, at: string): string => `${name} aims for ${at}. Missed!`],
 			hit: [(name: string, at: string): string => `${name} fires at ${at}. Hit!`, (name: string, at: string): string => `Direct hit on ${at} from ${name}!`, (name: string, at: string): string => `${at}! ${name} finds steel.`],
 			sunk: [(name: string, at: string, ship: string): string => `${name} hits ${at} and sinks the ${ship}!`, (name: string, _at: string, ship: string): string => `The ${ship} goes down! Well aimed, ${name}.`, (name: string, _at: string, ship: string): string => `Down goes the ${ship}. ${name} is hunting.`],
-			won: [(name: string): string => `That was the last ship. ${name} rules the sea!`, (name: string): string => `The fleet is gone. Victory for ${name}!`],
 		},
 		// Blackjack, the end of every hand (owner decision of 2026-10-29).
 		blackjackCalls: {
@@ -203,6 +202,8 @@ export const deroBrainCopy = {
 			push: [(name: string): string => `${name} pushes. Money back.`, (name: string): string => `A tie for ${name}. Push.`],
 			lose: [(name: string): string => `${name} loses this one.`, (name: string): string => `The house takes ${name}'s bet.`, (name: string): string => `Not this time, ${name}.`],
 		},
+		// The opener Dero says before a finished match's result line (owner decision of 2026-10-29).
+		gameOver: ["Game over!", "And that's the match!", "The battle is done!", "That's it, the dust settles."],
 		// Variants (pickLine), so a long table does not hear the same words every turn.
 		toAct: [
 			(name: string): string => `${name}, it is your turn.`,

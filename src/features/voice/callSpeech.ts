@@ -37,7 +37,12 @@ export interface CallSpeechInput {
 	text: string;
 }
 
+// Only what went wrong is logged: with Dero commentating every move, a line per rendered or
+// cached clip flooded the terminal, and the spend meter already counts what speech costs.
+const QUIET_OUTCOMES: ReadonlySet<string> = new Set(["rendered", "cacheHit"]);
+
 function audit(guildId: string, chars: number, outcome: string): void {
+	if (QUIET_OUTCOMES.has(outcome)) return;
 	console.info(`[dero-voice] call speech guild=${guildId} chars=${chars} outcome=${outcome}`);
 }
 

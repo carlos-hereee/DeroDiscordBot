@@ -59,6 +59,7 @@ import {
 	joiningRows,
 	betweenHandsRows,
 	bettingRows,
+	holdemPromptButtons,
 	aggressiveActionFor,
 	resolveRaiseAmount,
 	tableHostStateOf,
@@ -254,7 +255,7 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable, turn:
 			: table.status === "joining"
 			  ? joiningRows(room.roomId, table.seats.length, table, host)
 			  : handInProgress(table)
-			    ? bettingRows(table, room.roomId, pot, host)
+			    ? bettingRows(table, room.roomId, pot, host, movesOnTurnLine(room, table))
 			    : betweenHandsRows(room.roomId, table, host);
 
 	await withDrawingPause({
@@ -1426,6 +1427,15 @@ const AMOUNT_FIELD = "amount";
 // The select value for the aggressive action, which the engine names bet or raise by street.
 const RAISE_CHOICE = "raise";
 
+// Whether a member on the clock has a turn line carrying every move and the table's player
+// buttons (turnPrompt): never at a network table, which posts no turn line, and never while a
+// Dero bot acts, since nobody is pinged for a bot.
+function movesOnTurnLine(room: IGameRoom, table: HoldemTable): boolean {
+	if (room.network || (room.satellites?.length ?? 0) > 0) return false;
+	const actor = whoActs(table);
+	return Boolean(actor) && !isBotSeatId(actor as string);
+}
+
 export const holdemTurnAdapter: TurnAdapter = {
 	game: "holdem",
 	whoseTurn(room) {
@@ -1450,6 +1460,10 @@ export const holdemTurnAdapter: TurnAdapter = {
 		const request: HoldemMoveRequest = choice === RAISE_CHOICE ? { preset: "min", amount } : { preset: choice };
 		const refusal = await playHoldemMove(client, room, userId, request, acknowledge);
 		return refusal ? { ok: false, reason: refusal } : { ok: true };
+	},
+	extraButtons(room) {
+		const table = tableOf(room);
+		return table ? holdemPromptButtons(room.roomId, table) : [];
 	},
 };
 

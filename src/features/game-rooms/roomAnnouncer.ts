@@ -61,6 +61,31 @@ export function announceChallengers(client: Client, room: AnnouncedRoom, asking:
 	void announceToMatch(client, room, "challengers", pickLine(asking ? dealerWords.challengersAsking : dealerWords.challengers));
 }
 
+// Hold'em's dealer and the Monopoly referee already say who won, in their own narration, so the
+// result is spoken here for every other game only, never twice.
+const NARRATES_OWN_RESULT: ReadonlySet<string> = new Set(["holdem", "monopoly"]);
+
+// The result line is written for the card: an emoji, bold and mentions. Speech wants the words.
+const LINE_EMOJI = /\p{Extended_Pictographic}️?\s*/gu;
+const BOLD = /\*\*/g;
+const MENTION = /<@!?([\w-]+)>/g;
+
+/**
+ * Dero calls a finished match's result in its call (owner decision of 2026-10-29): a "game over"
+ * opener and the same line the closed challenge card shows, mentions read as names. Fire and
+ * forget after the finish; it never throws and speaks only when Dero is in the match's call.
+ */
+export function announceMatchResult(client: Client, room: AnnouncedRoom, resultLine: string): void {
+	if (NARRATES_OWN_RESULT.has(room.game)) return;
+	void (async () => {
+		if (!isDeroInMatchCall(client, room)) return;
+		const ids = [...new Set([...resultLine.matchAll(MENTION)].map((match) => match[1]))];
+		const names = new Map(await Promise.all(ids.map(async (id) => [id, await spokenNameOf(client, room.guildId, id)] as const)));
+		const said = resultLine.replace(MENTION, (_mention, id: string) => names.get(id) ?? dealerWords.unknownPlayer).replace(BOLD, "").replace(LINE_EMOJI, "").trim();
+		await announceToMatch(client, room, "commentary", `${pickLine(dealerWords.gameOver)} ${said}`);
+	})().catch((error: unknown) => console.warn("[game-rooms] the match result was not spoken", { roomId: room.roomId, error }));
+}
+
 /** The name Dero says for a member: their name in the server, or a neutral word when it cannot be read. */
 export async function spokenNameOf(client: Client, guildId: string, userId: string): Promise<string> {
 	const guild = client.guilds.cache.get(guildId);

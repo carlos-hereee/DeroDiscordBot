@@ -252,6 +252,11 @@ export function holdemTurnView(table: HoldemTable, viewerId: string, potTotal: n
 		}
 	});
 	const raiseLegal = Boolean(aggressiveActionFor(table, viewerId));
+	// The board's two raise presets ride the moves too, so the turn line offers every size a
+	// press used to (playHoldemMove clamps each into the legal band, like the board did).
+	if (raiseLegal) {
+		options.push({ label: copy.halfPotLabel(Math.floor(potTotal / 2)), value: "half" }, { label: copy.potLabelButton(potTotal), value: "pot" });
+	}
 
 	return {
 		title: copy.turnModalTitle,
@@ -278,30 +283,32 @@ export function holdemTurnView(table: HoldemTable, viewerId: string, potTotal: n
 // I'm back joins them once the game starts while any seat sits out. Discord cannot
 // show a button to one member only, so it is on the shared board for everybody, and
 // the handler refuses anybody who is not sitting out.
-function tableExitButtons(roomId: string, table?: HoldemTable): ButtonBuilder[] {
+/**
+ * The buttons a seated player presses whatever the turn: Show my cards, I'm back while any seat
+ * sits out, and Leave table. They ride the turn line (holdemTurnAdapter.extraButtons) whenever a
+ * member is on the clock, and the board keeps them only when no turn line is up (between hands,
+ * a Dero bot on the clock, a network table), so a button is never on both.
+ */
+export function holdemPromptButtons(roomId: string, table: HoldemTable): ButtonBuilder[] {
+	return [showCardsButton(roomId), ...imBackButtons(roomId, table), leaveTableButton(roomId)];
+}
+
+const showCardsButton = (roomId: string): ButtonBuilder =>
+	new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:hcards:${roomId}`).setLabel(gameRoomsCopy.holdem.showCardsLabel).setEmoji("👀").setStyle(ButtonStyle.Secondary);
+
+const leaveTableButton = (roomId: string): ButtonBuilder =>
+	new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:hleave:${roomId}`).setLabel(gameRoomsCopy.holdem.leaveLabel).setEmoji("🚪").setStyle(ButtonStyle.Secondary);
+
+const endTableButton = (roomId: string): ButtonBuilder =>
+	new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:hend:${roomId}`).setLabel(gameRoomsCopy.holdem.endLabel).setEmoji("🏁").setStyle(ButtonStyle.Danger);
+
+function imBackButtons(roomId: string, table?: HoldemTable): ButtonBuilder[] {
 	const anySittingOut = table?.seats.some((seat) => seat.sittingOut && !seat.out) ?? false;
-	const imBack = anySittingOut
-		? [
-				new ButtonBuilder()
-					.setCustomId(`${GAME_ROOM_PREFIX}:hback:${roomId}`)
-					.setLabel(gameRoomsCopy.holdem.imBackLabel)
-					.setEmoji("👋")
-					.setStyle(ButtonStyle.Success),
-		  ]
-		: [];
-	return [
-		...imBack,
-		new ButtonBuilder()
-			.setCustomId(`${GAME_ROOM_PREFIX}:hleave:${roomId}`)
-			.setLabel(gameRoomsCopy.holdem.leaveLabel)
-			.setEmoji("🚪")
-			.setStyle(ButtonStyle.Secondary),
-		new ButtonBuilder()
-			.setCustomId(`${GAME_ROOM_PREFIX}:hend:${roomId}`)
-			.setLabel(gameRoomsCopy.holdem.endLabel)
-			.setEmoji("🏁")
-			.setStyle(ButtonStyle.Danger),
-	];
+	return anySittingOut ? [new ButtonBuilder().setCustomId(`${GAME_ROOM_PREFIX}:hback:${roomId}`).setLabel(gameRoomsCopy.holdem.imBackLabel).setEmoji("👋").setStyle(ButtonStyle.Success)] : [];
+}
+
+function tableExitButtons(roomId: string, table?: HoldemTable): ButtonBuilder[] {
+	return [...imBackButtons(roomId, table), leaveTableButton(roomId), endTableButton(roomId)];
 }
 
 // `table` carries the buy in and the seat cap; without it (or for a table without
@@ -351,11 +358,7 @@ export function betweenHandsRows(roomId: string, table?: HoldemTable, host?: Tab
 				.setLabel(gameRoomsCopy.holdem.nextHandLabel)
 				.setEmoji("🃏")
 				.setStyle(ButtonStyle.Primary),
-			new ButtonBuilder()
-				.setCustomId(`${GAME_ROOM_PREFIX}:hcards:${roomId}`)
-				.setLabel(gameRoomsCopy.holdem.showCardsLabel)
-				.setEmoji("👀")
-				.setStyle(ButtonStyle.Secondary),
+			showCardsButton(roomId),
 			...tableExitButtons(roomId, table)
 		),
 		...(table && host ? [seatRow(roomId, table, host)] : []),
@@ -377,7 +380,11 @@ export const aggressiveActionFor = (table: HoldemTable, userId: string) =>
 // trip and a focus change on every aggressive action, in a game where the turn
 // clock is 3 minutes. The presets below are why a modal is not needed: they cover
 // the sizes players actually use, and all in covers the rest.
-export function bettingRows(table: HoldemTable, roomId: string, potTotal: number, host?: TableHostState): ActionRowBuilder<ButtonBuilder>[] {
+export function bettingRows(table: HoldemTable, roomId: string, potTotal: number, host?: TableHostState, movesOnTurnLine = false): ActionRowBuilder<ButtonBuilder>[] {
+	// A member on the clock has every move, Show my cards and Leave table on the turn line
+	// (owner decision of 2026-10-29: the game card keeps only the table's settings), so the board
+	// keeps the host's End table and seat controls alone.
+	if (movesOnTurnLine) return [new ActionRowBuilder<ButtonBuilder>().addComponents(endTableButton(roomId)), ...(host ? [seatRow(roomId, table, host)] : [])];
 	const acting = whoActs(table);
 	const legal = acting ? actionsFor(table, acting).map((entry) => entry.action) : [];
 	const raise = acting ? aggressiveActionFor(table, acting) : undefined;
@@ -418,11 +425,7 @@ export function bettingRows(table: HoldemTable, roomId: string, potTotal: number
 
 	rows.push(
 		new ActionRowBuilder<ButtonBuilder>().addComponents(
-			new ButtonBuilder()
-				.setCustomId(`${GAME_ROOM_PREFIX}:hcards:${roomId}`)
-				.setLabel(gameRoomsCopy.holdem.showCardsLabel)
-				.setEmoji("👀")
-				.setStyle(ButtonStyle.Secondary),
+			showCardsButton(roomId),
 			...tableExitButtons(roomId, table)
 		)
 	);

@@ -171,13 +171,15 @@ describe("monopolyControlsRow", () => {
 		expect(monopolyControlsRow(state, A, ROOM)).toEqual([]);
 	});
 
-	it("offers Build to the seat on the clock before its roll when a build would go through, and nowhere else", () => {
+	it("puts Build on the turn line for the seat on the clock before its roll, and never on the board", () => {
 		const state = brownOwner();
-		expect(idsByRow(state, A)).toEqual([[`gameroom:mbuild:${ROOM}`]]);
-		// Off turn, and after the roll, the engine would refuse, so the button is absent.
-		expect(idsByRow(state, B)).toEqual([]);
-		state.phase = "post-roll";
+		const promptIds = () => monopolyPromptButtons(state, ROOM).map((button) => (button.toJSON() as { custom_id: string }).custom_id);
+		expect(promptIds()).toContain(`gameroom:mbuild:${ROOM}`);
+		// The board keeps none of the line's buttons while a member is on the clock.
 		expect(idsByRow(state, A)).toEqual([]);
+		// After the roll the engine would refuse, so the button is absent.
+		state.phase = "post-roll";
+		expect(promptIds()).not.toContain(`gameroom:mbuild:${ROOM}`);
 	});
 
 	it("leaves Build off when the seat owns only part of a color group", () => {
@@ -192,10 +194,10 @@ describe("monopolyControlsRow", () => {
 		state.seats[1].chips = 30;
 		state.pendingDebt = { debts: [{ debtorId: B, creditorId: "bank", amount: 50 }], resumePhase: "post-roll", moveAfter: null };
 
-		for (const viewer of [A, B]) {
-			const [turn] = rowsJson(state, viewer);
-			expect(turn).toEqual([expect.objectContaining({ custom_id: `gameroom:mpaydebt:${ROOM}`, label: gameRoomsCopy.monopoly.payDebtLabel(50) })]);
-		}
+		// On the turn line every seat can press it, and the board keeps none of the line's buttons.
+		const pay = monopolyPromptButtons(state, ROOM).map((button) => button.toJSON());
+		expect(pay).toContainEqual(expect.objectContaining({ custom_id: `gameroom:mpaydebt:${ROOM}`, label: gameRoomsCopy.monopoly.payDebtLabel(50) }));
+		for (const viewer of [A, B]) expect(rowsJson(state, viewer)).toEqual([]);
 		expect(await descriptionOf(state)).toContain(gameRoomsCopy.monopoly.debtPrompt(B, gameRoomsCopy.monopoly.bankCreditor, 50, 30));
 	});
 

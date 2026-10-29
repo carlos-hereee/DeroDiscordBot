@@ -382,6 +382,9 @@ export function createVoiceSessions(deps: VoiceSessionDeps = defaultVoiceSession
 		// The spike reads these lines on Railway: status names, a reason and a close
 		// code, and the library's own error messages (UDP, socket, DAVE faults).
 		connection.on("stateChange", (oldState, newState) => {
+			// The library repeats a state while it retries (connecting to connecting); only a real
+			// change is worth a line.
+			if (oldState.status === newState.status) return;
 			const code = closeCodeOf(newState);
 			console.info(
 				`[dero-voice] state guild=${session.guildId} from=${oldState.status} to=${newState.status}${code === null ? "" : ` closeCode=${code}`}`,

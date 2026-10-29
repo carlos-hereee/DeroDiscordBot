@@ -10,6 +10,7 @@ import { roomResultEmbed, roomArchiveRow } from "./gameRoomsEmbeds.js";
 import { deleteSatellites, labelEmbedForRoom, lockSatellites } from "./satelliteRooms.js";
 import { scheduleNetworkBoardRefresh } from "./networkBoard.js";
 import { challengeResultLine, closeChallengeCard } from "./challengeCard.js";
+import { announceMatchResult } from "./roomAnnouncer.js";
 import type { OutcomeBucket } from "./matchOutcome.js";
 import { settleTableChips } from "./holdemChips.js";
 import { settleBlackjackStacks } from "./blackjackChips.js";
@@ -175,6 +176,7 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 		roomWon: input.outcome?.roomWon,
 	});
 	void closeChallengeCard(client, room, resultLine);
+	announceMatchResult(client, room, resultLine);
 
 	return true;
 }

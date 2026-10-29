@@ -153,6 +153,10 @@ interface BlackjackGame {
 	roomId: string | null;
 	// A room's table only (2026-10 item 267); null at an inline table, which bets nothing.
 	bankroll: TableBankroll | null;
+	// True once a room's table has a turn line (promptTurn found a room that is no network table):
+	// from then on every move and Leave are buttons on that line, and the board carries none of
+	// them (owner decision of 2026-10-29: no button on both). False at an inline table.
+	promptsTurns?: boolean;
 	// The newest board, which the turn modal's Submit and the turn clock edit (a message edit,
 	// unlike a click's token, never expires), and which a room table's next board replaces.
 	board: Message | null;
@@ -247,9 +251,18 @@ function seatingRow(channelId: string): ActionRowBuilder<ButtonBuilder> {
 const leaveButton = (channelId: string): ButtonBuilder =>
 	new ButtonBuilder().setCustomId(customId(channelId, "leave")).setLabel(gamesCopy.blackjack.leaveHandLabel).setStyle(ButtonStyle.Danger);
 
-// A betting board's one button: the bets themselves are chosen in the turn modal.
-function bettingRow(channelId: string): ActionRowBuilder<ButtonBuilder> {
-	return new ActionRowBuilder<ButtonBuilder>().addComponents(leaveButton(channelId));
+// Whether this channel's table plays from a turn line, so its board keeps no buttons.
+const playsFromTurnLine = (channelId: string): boolean => games.get(channelId)?.promptsTurns === true;
+
+// A betting board's one button, Leave, unless the turn line carries it: the bets themselves are
+// buttons on the turn line.
+function bettingRows(channelId: string): ActionRowBuilder<ButtonBuilder>[] {
+	return playsFromTurnLine(channelId) ? [] : [new ActionRowBuilder<ButtonBuilder>().addComponents(leaveButton(channelId))];
+}
+
+// The board's move row, unless the turn line carries the moves and Leave.
+function actionRows(channelId: string, table: BlackjackTable): ActionRowBuilder<ButtonBuilder>[] {
+	return playsFromTurnLine(channelId) ? [] : [actionRow(channelId, table)];
 }
 
 // Built FROM legalActions rather than from a hand written condition, so a button
@@ -422,7 +435,7 @@ export async function startBlackjackTable(
 			// drawing status on, and the table's lifetime only starts once it is posted.
 			board = await channel.send({
 				...(result ? await resultParts(result) : await tableParts(table, embed)),
-				components: result ? [] : [actionRow(channel.id, table)],
+				components: result ? [] : actionRows(channel.id, table),
 				allowedMentions: { parse: [] },
 			});
 		} else {
@@ -466,7 +479,7 @@ export async function startBlackjackTable(
 async function openBankrollTable(game: BlackjackGame, channel: TextChannel, bankroll: TableBankroll): Promise<void> {
 	const table = createBankrollTable({ players: game.seated, buyIn: bankroll.buyIn });
 	game.table = table;
-	const board = await channel.send({ embeds: [bettingEmbedOf(game, table)], components: [bettingRow(channel.id)], allowedMentions: { parse: [] } });
+	const board = await channel.send({ embeds: [bettingEmbedOf(game, table)], components: bettingRows(channel.id), allowedMentions: { parse: [] } });
 	wireChannelCollector(game, channel);
 	game.board = board;
 	// The idle sweep's clock starts at the open: nobody has acted yet, and a table nobody
@@ -771,7 +784,7 @@ function bettingEmbedOf(game: BlackjackGame, table: BlackjackTable): EmbedBuilde
 function redrawCurrent(game: BlackjackGame, channelId: string, writer: BoardWriter, carried: readonly RoomMoveInput[] = []): Promise<void> {
 	const table = game.table;
 	if (!table) return Promise.resolve();
-	if (table.phase === "betting") return redrawBoard(channelId, writer, async () => null, bettingEmbedOf(game, table), [bettingRow(channelId)], carried);
+	if (table.phase === "betting") return redrawBoard(channelId, writer, async () => null, bettingEmbedOf(game, table), bettingRows(channelId), carried);
 	return redrawTable(channelId, table, writer, tableEmbedOf(game, table), carried);
 }
 
@@ -1017,7 +1030,7 @@ function redrawTable(
 	embed: EmbedBuilder = buildBlackjackTableEmbed(table, false),
 	carried: readonly RoomMoveInput[] = []
 ): Promise<void> {
-	return redrawBoard(channelId, writer, () => drawTableCard(table), embed, [actionRow(channelId, table)], carried);
+	return redrawBoard(channelId, writer, () => drawTableCard(table), embed, actionRows(channelId, table), carried);
 }
 
 // The settled result, with nothing left to press.
@@ -1133,7 +1146,7 @@ async function postNextHandBoard(game: BlackjackGame, channelId: string): Promis
 		channel,
 		{ guildId: game.guildId, roomId: game.roomId },
 		game.resultBoardId ?? previous.id,
-		{ embeds: [bettingEmbedOf(game, table)], components: [bettingRow(channelId)] },
+		{ embeds: [bettingEmbedOf(game, table)], components: bettingRows(channelId) },
 		{ boardField: null }
 	).catch((error) => {
 		console.warn(`[mini-game] blackjack could not post the next hand's board in channel ${channelId}`, error);
@@ -1243,6 +1256,8 @@ async function promptTurn(game: BlackjackGame, client: Client): Promise<void> {
 	const room = await gameRoomStore.findByRoomId(game.guildId, game.roomId).catch(() => null);
 	if (!room) return;
 	if (room.status !== "playing" && !game.ended) retireTable(game);
+	// A network table posts no turn line (syncTurnPrompt skips it), so its board keeps its buttons.
+	game.promptsTurns = !room.network && (room.satellites?.length ?? 0) === 0;
 	await syncTurnPrompt(client, room, blackjackTurnAdapter);
 	// A network table too, which gets no prompt line but still runs out of time.
 	await syncTurnClocks(client, room, [blackjackTurnClock]);
@@ -1308,6 +1323,10 @@ export const blackjackTurnAdapter: TurnAdapter = {
 		if (!BLACKJACK_ACTIONS.includes(action)) return { ok: false, reason: gamesCopy.blackjack.illegalAction };
 		await acknowledge();
 		return answerOf(await playBlackjackAction(game, room.channelId ?? "", userId, action as BlackjackAction, boardClient, writer));
+	},
+	// Leave rides the turn line, any seat's at any time; the channel collector hears it there.
+	extraButtons(room) {
+		return room.channelId ? [leaveButton(room.channelId)] : [];
 	},
 };
 

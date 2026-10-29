@@ -264,14 +264,14 @@ async function fireAt(client: Client, room: IGameRoom, shooterId: string, aim: {
  * deferUpdate always ran.
  */
 // Dero calls the shot in the match's call like a commentator (owner decision of 2026-10-29):
-// the square and whether it missed, hit or sank, and the last ship. Fire and forget after the
+// the square and whether it missed, hit or sank. Fire and forget after the
 // board: announceToMatch speaks only when Dero is in this match's call and never throws.
 function callShot(client: Client, room: IGameRoom, shooterName: string, outcome: FireOutcome): void {
 	if (!outcome.call) return;
 	const calls = deroBrainCopy.dealer.battleshipCalls;
 	const { result, at } = outcome.call;
-	let line = result === "sunk" && outcome.sunk ? pickLine(calls.sunk)(shooterName, at, outcome.sunk) : pickLine(calls[result === "hit" ? "hit" : "miss"])(shooterName, at);
-	if (outcome.won) line = `${line} ${pickLine(calls.won)(shooterName)}`;
+	// The winning shot is called like any other; the result itself is the finish's to say (announceMatchResult).
+	const line = result === "sunk" && outcome.sunk ? pickLine(calls.sunk)(shooterName, at, outcome.sunk) : pickLine(calls[result === "hit" ? "hit" : "miss"])(shooterName, at);
 	void announceToMatch(client, room, "commentary", line);
 }
 
