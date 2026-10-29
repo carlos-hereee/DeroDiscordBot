@@ -21,8 +21,9 @@ import { answerInChannel } from "@utils/answerInChannel.js";
 //        gated at runtime by /arcade in ADMIN_COMMANDS (the guild owner or the bot's
 //        admin role), from the slash command or the /arcade button on the admin guide,
 //        whose settings panel holds the switch and runs `toggle` through this run.
-// Where: GuildConfig.chipEconomyEnabled is read by /claim, the /account chips line and
-//        every Hold'em table at open (features/economy/chipWallet.isChipEconomyOn). The
+// Where: GuildConfig.chipEconomyEnabled is read by every Hold'em table at open, the
+//        vault grant and the monthly vault award (features/economy/chipWallet.isChipEconomyOn).
+//        It never closes a member's global wallet or their /claim (2026-10 item 267). The
 //        vault lives in features/economy/serverVault.ts.
 // How:   ① guild gate; ② setup gate; ③ dispatch; ④ one private reply. A toggle and a
 //        grant each write one 🗒️admin-log line; an unchanged toggle writes nothing.

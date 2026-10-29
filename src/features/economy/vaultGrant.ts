@@ -10,7 +10,7 @@ import { answerInChannel } from "@utils/answerInChannel.js";
 
 // ── vaultGrant ───────────────────────────────────────────────────────
 // What:  /arcade chips grant (2026-10 item 250 Phase 5): an admin moves chips from the server
-//        vault to a member's wallet, and the grant becomes one 🗒️admin-log line.
+//        vault to a member's global wallet, and the grant becomes one 🗒️admin-log line.
 // Who:   features/economy/chipEconomySubcommands.ts, behind /arcade's ADMIN_COMMANDS gate, from the slash
 //        command or the /arcade chips panel's grant form.
 // When:  on demand. The chip switch is checked by the command before this runs.
@@ -20,7 +20,10 @@ import { answerInChannel } from "@utils/answerInChannel.js";
 
 const copy = economyCopy.admin;
 
-function refusalText(result: Extract<GrantResult, { ok: false }>): string {
+// A refused grant is a state, answered privately to the admin as a notice. The daily cap
+// names what the member may still receive today (2026-10 item 267, risk R3).
+function refusalText(result: Extract<GrantResult, { ok: false }>, recipientId: string): string {
+	if (result.reason === "dailyCap") return copy.dailyCapReached(recipientId, result.leftToday);
 	if (result.reason === "vaultShort") return copy.vaultShort(result.vaultBalance);
 	if (result.reason === "invalidAmount") return copy.invalidAmount(BOT_CONSTANTS.ECONOMY.MAX_GRANT_CHIPS);
 	return copy.grantFailed;
@@ -35,7 +38,7 @@ export async function runVaultGrant(interaction: RepliableInteraction, guildId: 
 
 	const result = await grantFromVault({ guildId, toUserId: recipient.id, amount, byAdminId: interaction.user.id });
 	if (!result.ok) {
-		await showNotice(interaction, { title: copy.title, sections: [refusalText(result)] });
+		await showNotice(interaction, { title: copy.title, sections: [refusalText(result, recipient.id)] });
 		return;
 	}
 

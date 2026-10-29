@@ -42,7 +42,9 @@ vi.mock("@db/stores/gameResultCountStore.js", () => ({ gameResultCountStore: { d
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { deleteGuild: m.rooms } }));
 vi.mock("@db/stores/gameRequestStore.js", () => ({ gameRequestStore: { deleteGuild: m.requests } }));
 vi.mock("@db/stores/partyGameStore.js", () => ({ partyGameStore: { deleteGuild: m.partyGames } }));
-vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { deleteGuild: m.wallets } }));
+// Every method of the chip wallet store answers to one spy, so a reset that reached a
+// wallet by any write at all would show (2026-10 item 267, risk R2).
+vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: new Proxy({}, { get: () => m.wallets }) }));
 vi.mock("@db/stores/serverVaultStore.js", () => ({ serverVaultStore: { deleteGuild: m.vaults } }));
 vi.mock("@db/stores/pollResultStore.js", () => ({ pollResultStore: { deleteGuild: m.polls } }));
 vi.mock("@db/stores/eventOverrideStore.js", () => ({ eventOverrideStore: { deleteGuild: m.overrides } }));
@@ -81,12 +83,19 @@ describe("wipeServerData", () => {
 		const result = await wipeServerData("g1");
 
 		expect(result).toEqual({ failed: [] });
-		for (const fn of [m.memberLevels, m.xpPeriods, m.xpDaily, m.luck, m.tallies, m.rooms, m.requests, m.partyGames, m.wallets, m.vaults, m.polls, m.overrides, m.pairing]) {
+		for (const fn of [m.memberLevels, m.xpPeriods, m.xpDaily, m.luck, m.tallies, m.rooms, m.requests, m.partyGames, m.vaults, m.polls, m.overrides, m.pairing]) {
 			expect(fn).toHaveBeenCalledWith("g1");
 		}
 		expect(m.attendance).toHaveBeenCalledWith(["evt-1", "evt-2"]);
 		expect(m.retireEvent).toHaveBeenCalledWith("evt-1", "g1");
 		expect(m.retireEvent).toHaveBeenCalledWith("evt-2", "g1");
+	});
+
+	// Risk R2: chips are one global wallet per member, so one server's "Delete my data"
+	// must leave every member's global row, and the per server rows kept for rollback.
+	it("leaves every chip wallet, the global row included", async () => {
+		await wipeServerData("g1");
+		expect(m.wallets).not.toHaveBeenCalled();
 	});
 
 	it("keeps going past a failed step and names it", async () => {

@@ -35,6 +35,7 @@ import { registerSuggestionBoxHandlers } from "@features/suggestion-box/Suggesti
 import { registerArcadeHostHandlers } from "@features/games/arcadeHost.js";
 import { registerSoloLuckHandlers } from "@features/games/soloLuck.js";
 import { registerClaimRoundHandlers } from "@features/economy/chipClaim.js";
+import { migrateGlobalChipWallets } from "@features/economy/migrateGlobalChipWallets.js";
 import { registerPartyGameHandlers } from "@features/game-rooms/partyGames.js";
 import { registerGameRequestHandlers } from "@features/game-rooms/gameRequestHandlers.js";
 import { registerGameRoomHandlers } from "@features/game-rooms/gameRoomHandlers.js";
@@ -247,6 +248,16 @@ process.on("uncaughtException", (err) => {
 
 	// step 2 - connect to db before starting the bot to ensure it's ready when commands are executed
 	await connectMongoose();
+
+	// step 2b - sum the per server chip wallets into each member's global wallet (2026-10
+	// item 267 Session 1a) before any handler registers, so no claim or buy in reads a
+	// global row the migration has not filled yet. Idempotent, so it runs every boot; a
+	// failure is logged and boot continues, because unmigrated rows are retried next boot.
+	try {
+		await migrateGlobalChipWallets();
+	} catch (error) {
+		console.error("[economy] the global chip wallet migration failed; it runs again next boot", error);
+	}
 
 	// step 3 - set up event listeners before logging in, to avoid missing any events that fire on startup (like guildCreate)
 	//

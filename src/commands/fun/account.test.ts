@@ -209,27 +209,29 @@ describe("/account", () => {
 
 	// 2026-10 item 250 Phase 5: the chips line, beside the luck, completing Phase 4's scaffold.
 	it("shows the member's chips and that their claim is ready", async () => {
-		mocks.findWallet.mockResolvedValue({ guildId: "g1", userId: "u1", balance: 26_000, lastClaimAt: new Date("2020-01-01T00:00:00Z"), totalClaimed: 26_000 });
+		mocks.findWallet.mockResolvedValue({ guildId: "global", userId: "u1", balance: 26_000, lastClaimAt: new Date("2020-01-01T00:00:00Z"), totalClaimed: 26_000 });
 		const { interaction: command, editReply } = interaction();
 
 		await execute(command);
 
 		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
 		expect(fields.find((field) => field.name === "Currencies")?.value).toBe("Hold'em chips: **26,000** chips. Your claim is ready: `/claim`.\nDero coins: **0**");
-		expect(mocks.findWallet).toHaveBeenCalledWith({ guildId: "g1", userId: "u1" });
+		expect(mocks.findWallet).toHaveBeenCalledWith({ userId: "u1" });
 	});
 
-	// 2026-10 item 257 Phase 3a: with chips off the currencies say so, beside the global coins.
-	it("says chips are off when the server switched them off, and still shows the Dero coins", async () => {
+	// 2026-10 item 267 Session 1a: chips are one global wallet, so a server with chips off
+	// shows the same balance as any other, beside the global coins.
+	it("shows the member's global chips on a server with chips off, beside the Dero coins", async () => {
 		mocks.findConfig.mockResolvedValue({ chipEconomyEnabled: false });
+		mocks.findWallet.mockResolvedValue({ guildId: "global", userId: "u1", balance: 7_000, lastClaimAt: new Date("2020-01-01T00:00:00Z"), totalClaimed: 7_000 });
 		mocks.findCoinWallet.mockResolvedValue({ userId: "u1", balance: 45, totalEarned: 45 });
 		const { interaction: command, editReply } = interaction();
 
 		await execute(command);
 
 		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
-		expect(fields.find((field) => field.name === "Currencies")?.value).toBe("Hold'em chips: off in this server\nDero coins: **45**");
-		expect(mocks.findWallet).not.toHaveBeenCalled();
+		expect(fields.find((field) => field.name === "Currencies")?.value).toBe("Hold'em chips: **7,000** chips. Your claim is ready: `/claim`.\nDero coins: **45**");
+		expect(mocks.findWallet).toHaveBeenCalledWith({ userId: "u1" });
 		expect(mocks.findCoinWallet).toHaveBeenCalledWith("u1");
 	});
 

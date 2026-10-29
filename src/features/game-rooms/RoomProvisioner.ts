@@ -524,7 +524,7 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 		// since the card settled (chips switched off) get their chips back and sit free.
 		const seats = input.holdemSeats;
 		if (seats?.charged && chips) setHoldemBuyIn(table, seats.buyIn);
-		else if (seats?.charged) for (const userId of seats.userIds) await returnChips({ guildId: guild.id, userId }, seats.buyIn);
+		else if (seats?.charged) for (const userId of seats.userIds) await returnChips({ userId }, seats.buyIn);
 		for (const userId of seats?.userIds ?? []) joinHoldemTable(table, userId, guild.members.cache.get(userId)?.displayName ?? userId);
 		// The host's Dero bots take their seats after the members.
 		for (const botId of botIds) joinHoldemTable(table, botId, botSeatName(botId));

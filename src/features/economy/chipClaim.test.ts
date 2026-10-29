@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ButtonInteraction, ModalSubmitInteraction } from "discord.js";
 
 // ── the daily claim round (2026-10 item 257, Phase 3a) ──────────────────────
-// The press opens the throw modal after the chips switch and the cooldown; the Submit
-// lets Dero throw and pays 2x, 1.5x or 1x the daily base on chips (where chips are on)
-// and on Dero coins, posts the reveal in 💬dero-commands, and never touches the luck
-// board. The chip and coin stores are mocked, so the amounts asserted are the real math
-// of claimChips and awardForClaim.
+// The press opens the throw modal after the cooldown; the Submit lets Dero throw and
+// pays 2x, 1.5x or 1x the daily chips and 3, 2 or 1 Dero coins, posts the reveal in
+// 💬dero-commands, and never touches the luck board. Both wallets are global and so is
+// the claim (2026-10 item 267 Session 1a): one claim a day per member across every
+// server, chips paid whatever the server's chip switch says. The chip and coin stores
+// are mocked, so the amounts asserted are the real math of claimChips and awardForClaim.
 
 const mocks = vi.hoisted(() => ({
 	findConfig: vi.fn(),
@@ -55,10 +56,10 @@ function press() {
 	return { fake: fake as unknown as ButtonInteraction, showModal };
 }
 
-function submit(memberThrow: string, channel: { send: ReturnType<typeof vi.fn> } | null = { send: vi.fn(async () => ({ id: "m1" })) }) {
+function submit(memberThrow: string, channel: { send: ReturnType<typeof vi.fn> } | null = { send: vi.fn(async () => ({ id: "m1" })) }, guildId = "g1") {
 	const followUp = vi.fn(async () => undefined);
 	const fake: Record<string, unknown> = {
-		guildId: "g1",
+		guildId,
 		id: "submit1",
 		user: { id: "u1", username: "silent", globalName: "Silent" },
 		deferred: false,
@@ -127,20 +128,23 @@ describe("runChipClaim, the press", () => {
 		expect((showModal.mock.calls[0] as unknown as [{ data: { custom_id: string } }])[0].data.custom_id).toBe("dailyclaim:throw");
 	});
 
-	it("lets a member play for coins when chips are off, gated by today's coin claim", async () => {
+	// The switch decides only whether chip games run (owner decision of 2026-10-28): the
+	// member's own global wallet and its cooldown gate the claim in every server.
+	it("gates a press with chips off on the member's global chip wallet, like any other server", async () => {
 		mocks.findConfig.mockResolvedValue({ chipEconomyEnabled: false });
 		const { fake, showModal } = press();
 		await runChipClaim(fake);
-		expect(mocks.hasClaim).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}-\d{2}:g1$/), "u1");
+		expect(mocks.findChipWallet).toHaveBeenCalledWith({ userId: "u1" });
+		expect(mocks.hasClaim).not.toHaveBeenCalled();
 		expect((showModal.mock.calls[0] as unknown as [{ data: { custom_id: string } }])[0].data.custom_id).toBe("dailyclaim:throw");
 	});
 });
 
 describe("playClaimRound, the Submit", () => {
 	it.each([
-		["paper", "won", 2_000, 20],
-		["rock", "tie", 1_500, 15],
-		["scissors", "lost", 1_000, 10],
+		["paper", "won", 2_000, 3],
+		["rock", "tie", 1_500, 2],
+		["scissors", "lost", 1_000, 1],
 	])("throwing %s against Dero's rock (%s) pays %i chips and %i coins", async (memberThrow, _outcome, chips, coins) => {
 		const channel = { send: vi.fn(async () => ({ id: "m1" })) };
 		const { fake, deferUpdate } = submit(memberThrow, channel);
@@ -148,7 +152,7 @@ describe("playClaimRound, the Submit", () => {
 		await playClaimRound(fake, DERO_THROWS_ROCK);
 
 		expect(deferUpdate).toHaveBeenCalled();
-		expect(mocks.claimDaily).toHaveBeenCalledWith({ guildId: "g1", userId: "u1" }, chips, expect.any(Date), expect.any(Date));
+		expect(mocks.claimDaily).toHaveBeenCalledWith({ userId: "u1" }, chips, expect.any(Date), expect.any(Date));
 		expect(mocks.insertAward).toHaveBeenCalledWith(expect.objectContaining({ userId: "u1", guildId: "g1", amount: coins, source: "claim" }));
 		expect(mocks.credit).toHaveBeenCalledWith("u1", coins);
 		expect(descriptionOf(channel.send)).toContain(`<@u1>`);
@@ -160,21 +164,20 @@ describe("playClaimRound, the Submit", () => {
 		mocks.claimFirst.mockImplementation(async (_key: unknown, amount: number) => ({ balance: amount }));
 		const { fake } = submit("paper");
 		await playClaimRound(fake, DERO_THROWS_ROCK);
-		expect(mocks.claimFirst).toHaveBeenCalledWith({ guildId: "g1", userId: "u1" }, 50_000, expect.any(Date));
+		expect(mocks.claimFirst).toHaveBeenCalledWith({ userId: "u1" }, 50_000, expect.any(Date));
 		expect(mocks.claimDaily).not.toHaveBeenCalled();
 	});
 
-	it("pays coins only with chips off, and the card names the command for an admin", async () => {
+	it("pays chips and coins on a server with chips off, since the wallet is global", async () => {
 		mocks.findConfig.mockResolvedValue({ chipEconomyEnabled: false, commandOutputChannelId: "commands" });
 		const channel = { send: vi.fn(async () => ({ id: "m1" })) };
 		const { fake } = submit("paper", channel);
 
 		await playClaimRound(fake, DERO_THROWS_ROCK);
 
-		expect(mocks.claimFirst).not.toHaveBeenCalled();
-		expect(mocks.claimDaily).not.toHaveBeenCalled();
-		expect(mocks.credit).toHaveBeenCalledWith("u1", 20);
-		expect(descriptionOf(channel.send)).toContain("`/arcade chips toggle enabled:True`");
+		expect(mocks.claimDaily).toHaveBeenCalledWith({ userId: "u1" }, 2_000, expect.any(Date), expect.any(Date));
+		expect(mocks.credit).toHaveBeenCalledWith("u1", 3);
+		expect(descriptionOf(channel.send)).not.toContain("/arcade chips toggle");
 	});
 
 	it("pays the coins once when a second Submit lands the same day", async () => {
@@ -219,6 +222,69 @@ describe("playClaimRound, the Submit", () => {
 
 		const answer = (followUp.mock.calls[0] as unknown as [{ embeds: Array<{ data: { description?: string } }> }])[0];
 		expect(answer.embeds[1].data.description).toBe(economyCopy.round.noCommandsChannel);
-		expect(mocks.credit).toHaveBeenCalledWith("u1", 20);
+		expect(mocks.credit).toHaveBeenCalledWith("u1", 3);
+	});
+});
+
+// ── one claim a day across every server (2026-10 item 267 Session 1a) ──
+// A stateful wallet stands in for the store, applying the same conditions its writes
+// filter on, so these prove the claim keys on the member alone: a Submit in a second
+// server reaches the same wallet and meets its cooldown.
+describe("the global claim", () => {
+	interface FakeWallet {
+		balance: number;
+		lastClaimAt: Date | null;
+	}
+	let wallets: Map<string, FakeWallet>;
+	const MEMBER_KEY = JSON.stringify({ userId: "u1" });
+
+	beforeEach(() => {
+		wallets = new Map();
+		const keyOf = (key: unknown): string => JSON.stringify(key);
+		mocks.findChipWallet.mockImplementation(async (key: unknown) => wallets.get(keyOf(key)) ?? null);
+		mocks.claimFirst.mockImplementation(async (key: unknown, amount: number, now: Date) => {
+			const wallet = wallets.get(keyOf(key));
+			// The store's upsert collides with the unique index once the wallet has claimed.
+			if (wallet && wallet.lastClaimAt !== null) return null;
+			const next = { balance: (wallet?.balance ?? 0) + amount, lastClaimAt: now };
+			wallets.set(keyOf(key), next);
+			return next;
+		});
+		mocks.claimDaily.mockImplementation(async (key: unknown, amount: number, now: Date, claimedBy: Date) => {
+			const wallet = wallets.get(keyOf(key));
+			if (!wallet || wallet.lastClaimAt === null || wallet.lastClaimAt.getTime() > claimedBy.getTime()) return null;
+			const next = { balance: wallet.balance + amount, lastClaimAt: now };
+			wallets.set(keyOf(key), next);
+			return next;
+		});
+	});
+
+	it("pays a claim in server A, then pays nothing in server B the same day", async () => {
+		wallets.set(MEMBER_KEY, { balance: 30_000, lastClaimAt: LAST_CLAIM });
+		const channelA = { send: vi.fn(async () => ({ id: "mA" })) };
+		const channelB = { send: vi.fn(async () => ({ id: "mB" })) };
+
+		await playClaimRound(submit("scissors", channelA, "gA").fake, DERO_THROWS_ROCK);
+		await playClaimRound(submit("scissors", channelB, "gB").fake, DERO_THROWS_ROCK);
+
+		expect(mocks.claimDaily).toHaveBeenCalledTimes(1);
+		expect(wallets.get(MEMBER_KEY)?.balance).toBe(31_000);
+		expect(mocks.insertAward).toHaveBeenCalledTimes(1);
+		expect((channelB.send.mock.calls[0] as unknown as [{ content: string }])[0].content).toContain("next claim opens");
+	});
+
+	it("pays the 25,000 first claim once per member, then only the daily claim in another server", async () => {
+		await playClaimRound(submit("scissors", undefined, "gA").fake, DERO_THROWS_ROCK);
+		// A day and a minute later, in another server.
+		vi.useFakeTimers({ now: Date.now() + 24 * 60 * 60 * 1000 + 60_000, toFake: ["Date"] });
+		try {
+			await playClaimRound(submit("scissors", undefined, "gB").fake, DERO_THROWS_ROCK);
+		} finally {
+			vi.useRealTimers();
+		}
+
+		// The second first claim is refused by the claimed wallet, and the daily claim pays.
+		expect(mocks.claimFirst.mock.calls.map((call) => call[1])).toEqual([25_000, 25_000]);
+		expect(wallets.get(MEMBER_KEY)?.balance).toBe(26_000);
 	});
 });

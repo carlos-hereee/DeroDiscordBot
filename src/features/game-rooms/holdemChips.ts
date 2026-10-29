@@ -33,11 +33,11 @@ export interface ChipPayout {
 	amount: number;
 }
 
-/** The server whose wallets a new table plays for, or null for a free play table. */
+/** The chips a new table plays for (the server it is in; every wallet is global), or null for a free play table. */
 export async function chipTableFor(room: Pick<IGameRoom, "guildId" | "network">, hasBotSeats: boolean): Promise<TableChips | null> {
-	// A network table seats members of other servers, whose wallets are in their own
-	// servers, and a table with a Dero bot would pay a human chips the bot never paid
-	// in, so both play free by the owner's decision (Phase 5, question 1).
+	// A network table seats members of other servers, and a table with a Dero bot would
+	// pay a human chips the bot never paid in, so both play free by the owner's decision
+	// (Phase 5, question 1). The wallets are global, but the network rule still stands.
 	if (room.network || hasBotSeats) return null;
 	const config = await guildConfigStore.findByGuildId(room.guildId);
 	if (!config || !isChipEconomyOn(config)) return null;
@@ -52,7 +52,7 @@ export function isValidBuyIn(amount: number): boolean {
 /** Take the table's buy in from a player's wallet. True when paid, or when the table is free play. */
 export async function payBuyIn(table: HoldemTable, userId: string): Promise<boolean> {
 	if (!table.chips) return true;
-	return takeChips({ guildId: table.chips.guildId, userId }, startingStackOf(table));
+	return takeChips({ userId }, startingStackOf(table));
 }
 
 /** Give a buy in back: a seat that never landed, a late seat withdrawn before its deal. Never throws. */
@@ -103,12 +103,13 @@ export async function settleTableChips(client: Client, room: IGameRoom): Promise
 	return owed;
 }
 
-// One wallet credit, logged by what it was for. A failure costs the member their chips
-// until the owner credits them by hand, so the line names the guild, member and amount.
+// One credit to the member's global wallet, logged by what it was for. A failure costs the
+// member their chips until the owner credits them by hand, so the line names the guild the
+// table was in, the member and the amount.
 async function payOut(chips: TableChips | undefined, payout: ChipPayout, reason: string): Promise<void> {
 	if (!chips || payout.amount <= 0) return;
 	try {
-		await returnChips({ guildId: chips.guildId, userId: payout.userId }, payout.amount);
+		await returnChips({ userId: payout.userId }, payout.amount);
 	} catch (error) {
 		console.error(`[game-rooms] Hold'em ${reason} of ${payout.amount} chips to ${payout.userId} in guild ${chips.guildId} failed`, error);
 	}

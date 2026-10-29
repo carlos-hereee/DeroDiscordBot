@@ -106,8 +106,8 @@ export interface HoldemTable {
 	startingStack?: number;
 	maxSeats?: number;
 	// Present when the table plays for the members' wallet chips (2026-10 item 250 Phase
-	// 5): the server whose wallets paid the buy ins, which holdemChips pays back. Absent
-	// on a free play table and on every row stored before chips existed.
+	// 5), which holdemChips pays back into each member's global wallet. Absent on a free
+	// play table and on every row stored before chips existed.
 	chips?: TableChips;
 	// Late joiners who claimed a free seat while the host had seats open (2026-10 item
 	// 244 Phase 4), waiting for the next deal. ⚠️ NOT SEATS. Nothing that reads the
@@ -117,7 +117,10 @@ export interface HoldemTable {
 	pendingSeats?: PendingSeat[];
 }
 
-/** Where a chip table's buy ins came from: the server whose wallets pay and are paid back. */
+/**
+ * The mark of a chip table: the server it was opened in, kept for the logs. The buy ins
+ * come from, and are paid back to, each member's one global wallet (2026-10 item 267).
+ */
 export interface TableChips {
 	guildId: string;
 }

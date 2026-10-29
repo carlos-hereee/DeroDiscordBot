@@ -133,7 +133,7 @@ describe("Accept and buy in", () => {
 		await acceptBuyIn(interaction, holdemDraft());
 
 		expect(walletMock.debit).toHaveBeenCalledOnce();
-		expect(walletMock.debit).toHaveBeenCalledWith({ guildId: "guild-1", userId: INVITED }, 2_500);
+		expect(walletMock.debit).toHaveBeenCalledWith({ userId: INVITED }, 2_500);
 		expect(storeMock.addBuyInPaid).toHaveBeenCalledWith("guild-1", "room-1", INVITED, 2_500);
 		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
 		expect(walletMock.credit).not.toHaveBeenCalled();

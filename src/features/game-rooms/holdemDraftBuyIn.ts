@@ -90,13 +90,13 @@ export function submittedBuyIn(interaction: ModalSubmitInteraction): number | nu
 export async function chargeJoiner(room: IGameRoom, userId: string): Promise<string | null> {
 	if (!(await isChipDraft(room))) return null;
 	const buyIn = draftBuyInOf(room);
-	if (!(await takeChips({ guildId: room.guildId, userId }, buyIn))) return gameRoomsCopy.holdem.notEnoughChips(buyIn);
+	if (!(await takeChips({ userId }, buyIn))) return gameRoomsCopy.holdem.notEnoughChips(buyIn);
 
 	const recorded = await gameRoomStore.addBuyInPaid(room.guildId, room.roomId, userId, room.holdemBuyIn ?? null);
 	if (recorded) return null;
 	// The record refused: this member was already on the ledger (a double press, whose first
 	// charge stands), or the host changed the amount or the draft closed since the charge.
-	await returnChips({ guildId: room.guildId, userId }, buyIn);
+	await returnChips({ userId }, buyIn);
 	const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId);
 	return (fresh?.buyInPaidBy ?? []).includes(userId) ? gameRoomsCopy.holdem.buyInAlreadyPaid : gameRoomsCopy.board.buyInChangedJoining;
 }
@@ -111,7 +111,7 @@ export async function refundJoiners(room: Pick<IGameRoom, "guildId" | "roomId" |
 	for (const userId of new Set(userIds)) {
 		try {
 			const claimed = await gameRoomStore.takeBuyInPaid(room.guildId, room.roomId, userId);
-			if (claimed) await returnChips({ guildId: room.guildId, userId }, buyIn);
+			if (claimed) await returnChips({ userId }, buyIn);
 		} catch (error) {
 			console.error("[game-rooms] a hold em buy in could not be refunded", { guildId: room.guildId, roomId: room.roomId, userId, error });
 		}
@@ -170,7 +170,7 @@ export async function settleDraftBuyIns(room: IGameRoom, pool: readonly string[]
 		const members = pool.filter((userId) => userId !== room.hostId);
 		return { ok: true, seats: { buyIn, userIds: [room.hostId, ...members], charged: false } };
 	}
-	if (!(await takeChips({ guildId: room.guildId, userId: room.hostId }, buyIn))) return { ok: false, reason: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
+	if (!(await takeChips({ userId: room.hostId }, buyIn))) return { ok: false, reason: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
 
 	// A payer who is no longer in the pool would otherwise lose the buy in for good, since the
 	// ledger is cleared once the room opens. Refunded only after the host's charge landed, so a
@@ -184,6 +184,6 @@ export async function settleDraftBuyIns(room: IGameRoom, pool: readonly string[]
 /** The room did not open: give the host and every paid seat their buy in back. A free table owes nobody. */
 export async function refundOpenedSeats(room: IGameRoom, seats: PaidSeats): Promise<void> {
 	if (!seats.charged) return;
-	await returnChips({ guildId: room.guildId, userId: room.hostId }, seats.buyIn);
+	await returnChips({ userId: room.hostId }, seats.buyIn);
 	await refundJoiners(room, seats.userIds.filter((userId) => userId !== room.hostId));
 }

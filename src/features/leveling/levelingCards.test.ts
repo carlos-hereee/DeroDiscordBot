@@ -130,9 +130,9 @@ describe("accountRenderer", () => {
 		expect(isPng(attachmentBytes(payload))).toBe(true);
 	});
 
-	// 2026-10 item 257 Phase 3a: chips off still draws the currencies, with the coins.
-	it("draws the currencies with chips off", async () => {
-		const payload = await renderAccountCard({ ...ACCOUNT_VIEW, chips: "off", coins: 40 });
+	// A failed chips read still draws the currencies, with the coins.
+	it("draws the currencies with the chips line left out", async () => {
+		const payload = await renderAccountCard({ ...ACCOUNT_VIEW, chips: null, coins: 40 });
 		expect(isPng(attachmentBytes(payload))).toBe(true);
 	});
 

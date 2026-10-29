@@ -72,7 +72,7 @@ describe("chipsOwedAtEnd", () => {
 describe("settleTableChips", () => {
 	const room = (table: HoldemTable | null, game = "holdem") => ({ roomId: "r1", guildId: "g1", hostId: "a", game, secret: table }) as unknown as IGameRoom;
 
-	it("pays every seat back to the wallet of the table's server and posts one line", async () => {
+	it("pays every seat back to their global wallet and posts one line", async () => {
 		const owed = await settleTableChips(client, room(chipTable()));
 
 		expect(owed).toEqual([
@@ -80,7 +80,7 @@ describe("settleTableChips", () => {
 			{ userId: "b", amount: 1_000 },
 			{ userId: "c", amount: 1_000 },
 		]);
-		expect(mocks.credit).toHaveBeenCalledWith({ guildId: "g1", userId: "b" }, 1_000);
+		expect(mocks.credit).toHaveBeenCalledWith({ userId: "b" }, 1_000);
 		expect(mocks.postMove).toHaveBeenCalledOnce();
 	});
 

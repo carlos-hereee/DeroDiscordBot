@@ -8,6 +8,15 @@
 //
 // Never a dash in any of it (house rule 1). Amounts always go through `chips`, so one
 // place decides how a number of chips reads.
+//
+// A member's chips and coins are ONE global wallet each (2026-10 item 267 Session 1a):
+// no line here may say chips belong to a server. A server's chip switch decides only
+// whether its Hold'em tables play for chips.
+
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+
+const CLAIM_COINS = BOT_CONSTANTS.DERO_COINS.CLAIM;
+const VAULT_DAILY_RECEIVE_CAP = BOT_CONSTANTS.ECONOMY.VAULT_DAILY_RECEIVE_CAP;
 
 /** A number of chips as members read it: "25,000 chips", "1 chip". */
 export function chips(amount: number): string {
@@ -27,32 +36,27 @@ export const economyCopy = {
 		title: "🪙 Chips",
 		cooldown: (balance: number, nextClaimAt: Date): string =>
 			`You already claimed today. Your next claim opens ${relative(nextClaimAt)}.\nYour balance: **${chips(balance)}**.`,
-		notInGuild: "Chips belong to a server, so `/claim` only works inside one.",
+		notInGuild: "`/claim` works inside a server Dero is in. Your chips are yours in every one of them.",
 		failed: "Dero could not reach the chip ledger just now. Try `/claim` again in a moment.",
 	},
 
 	// ── the daily claim round (2026-10 item 257, Phase 3a) ──
 	// Claim daily rewards and /claim are a round of rock paper scissors against Dero, paid
-	// on both currencies: a win doubles the claim, a draw pays it one and a half times, a
-	// loss pays it as it always was.
+	// on both currencies: a win doubles the chips, a draw pays them one and a half times, a
+	// loss pays them as they always were, and the coins follow DERO_COINS.CLAIM. One claim
+	// a day across every server.
 	round: {
 		commandDescription: "Throw rock paper scissors against Dero for your daily chips and Dero coins",
 		modalTitle: "🪨 📄 ✂️ Daily claim",
-		prompt: "Throw against Dero. A win pays your daily claim twice over, a draw one and a half times, and a loss pays it as usual.",
+		prompt: `Throw against Dero, once a day across every server. A win pays your daily chips twice over and ${coins(CLAIM_COINS.won)}, a draw one and a half times and ${coins(CLAIM_COINS.tie)}, and a loss the usual chips and ${coins(CLAIM_COINS.lost)}.`,
 		selectLabel: "Your throw",
 		// The payout under the drawn reveal, in 💬dero-commands. The member is mentioned
-		// without a ping.
-		payout: (input: { userId: string; chipsPaid: number | null; coinsPaid: number; multiplier: number }): string => {
-			const pay = [input.chipsPaid === null ? null : `**${chips(input.chipsPaid)}**`, input.coinsPaid > 0 ? `**${coins(input.coinsPaid)}**` : null].filter(Boolean).join(" and ");
-			const head = pay ? `Dero pays <@${input.userId}> ${pay} (x${input.multiplier}).` : `<@${input.userId}> played today's round.`;
-			return input.coinsPaid > 0 ? head : `${head}\nToday's Dero coins from this server were paid already.`;
+		// without a ping. The multiplier is the chips' alone; the coins are their own table.
+		payout: (input: { userId: string; chipsPaid: number; coinsPaid: number; multiplier: number }): string => {
+			const pay = [`**${chips(input.chipsPaid)}** (x${input.multiplier})`, input.coinsPaid > 0 ? `**${coins(input.coinsPaid)}**` : null].filter(Boolean).join(" and ");
+			const head = `Dero pays <@${input.userId}> ${pay}. Your chips and coins are yours in every server.`;
+			return input.coinsPaid > 0 ? head : `${head}\nToday's Dero coins were paid already.`;
 		},
-		// Chips off: the round still pays coins, for admins and members alike, and the card
-		// names the command that switches chips on: an admin runs it, a member copies it to
-		// send one. The card is the only place the claim points at the switch.
-		chipsOff: "Chips are switched off on this server, so this round paid Dero coins only.\nAn admin switches chips on with this command (copy it to send one):\n`/arcade chips toggle enabled:True`",
-		// The cooldown with chips off: only the coins' UTC day decides it.
-		coinsCooldown: (nextClaimAt: Date): string => `You already claimed today. Your next claim opens ${relative(nextClaimAt)}.`,
 		// No 💬dero-commands yet (setup not rerun since it was added): the result answers
 		// the member privately instead, with the reason.
 		noCommandsChannel: "This server has no Dero commands channel yet, so your round shows only to you.",
@@ -63,7 +67,7 @@ export const economyCopy = {
 		commandDescription: "Chip economy: switch it on or off, see the server vault, and grant chips from it",
 		statusDescription: "Show the server vault, recent grants, and whether chips are on",
 		toggleDescription: "Turn the chip economy on or off for this server",
-		toggleOption: "On: members claim chips and buy into Hold'em with them. Off: tables deal free stacks",
+		toggleOption: "On: Hold'em here buys in with chips. Off: free stacks. Members keep their chips either way",
 		grantDescription: "Grant chips from the server vault to a member",
 		grantUserOption: "The member who receives the chips",
 		grantAmountOption: "How many chips to grant",
@@ -82,12 +86,16 @@ export const economyCopy = {
 		},
 		toggled: (on: boolean): string =>
 			on
-				? "Chip economy: **ON**. Members can `/claim` chips, and new Hold'em tables in this server ask for a buy in from them."
-				: "Chip economy: **OFF**. `/claim` is closed and new Hold'em tables deal free stacks. Balances and the vault are kept for when it comes back on. Tables already open keep their chips.",
+				? "Chip economy: **ON**. New Hold'em tables in this server ask for a buy in from members' chips."
+				: "Chip economy: **OFF**. New Hold'em tables in this server deal free stacks. Members keep their chips and their daily `/claim`, which are theirs in every server, and the vault is kept for when it comes back on. Tables already open keep their chips.",
 		unchanged: (on: boolean): string => `The chip economy is already **${on ? "ON" : "OFF"}**. Nothing changed.`,
 		granted: (input: { userId: string; amount: number; walletBalance: number; vaultBalance: number }): string =>
 			`Granted **${chips(input.amount)}** to <@${input.userId}>. Their balance: ${chips(input.walletBalance)}. Vault left: ${chips(input.vaultBalance)}.`,
 		vaultShort: (vaultBalance: number): string => `The vault holds only **${chips(vaultBalance)}**, not enough for that grant.`,
+		// The daily vault cap (2026-10 item 267, risk R3): a member's chips are global, so
+		// every server's grants to them share one cap a UTC day.
+		dailyCapReached: (userId: string, leftToday: number): string =>
+			`<@${userId}> can receive only **${chips(leftToday)}** more from server vaults today. Vault grants are capped at ${chips(VAULT_DAILY_RECEIVE_CAP)} per member a day across every server, since their chips are theirs everywhere. Nothing moved.`,
 		invalidAmount: (max: number): string => `A grant is a whole number of chips from 1 to ${max.toLocaleString("en-US")}.`,
 		botTarget: "Bots do not hold chips. Pick a member.",
 		economyOff: "Chips are switched off in this server. Turn them on with `/arcade chips toggle` before granting.",
@@ -101,7 +109,7 @@ export const economyCopy = {
 	// The chip switch on the /arcade settings panel.
 	panel: {
 		economy: "Chips",
-		economyHint: "Members claim chips and buy into Hold'em with them",
+		economyHint: "Hold'em tables here buy in with members' chips",
 	},
 
 	// ── 🗒️admin-log lines ──

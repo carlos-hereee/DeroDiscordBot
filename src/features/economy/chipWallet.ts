@@ -2,13 +2,16 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { chipWalletStore, type WalletKey } from "@db/stores/chipWalletStore.js";
 
 // ── chipWallet ───────────────────────────────────────────────────────
-// What:  a member's chips in one server (2026-10 item 250 Phase 5): the claim (a large
-//        first one, then one every 24 hours), and the debit and credit the Hold'em buy
-//        in and cash out move chips through.
-// Who:   /claim (chipClaim.ts), the vault grant (serverVault.ts), the Hold'em table
-//        (game-rooms/holdemChips.ts) and the /account chips line.
-// Does NOT: decide whether chips are on in a server (isChipEconomyOn is the one place
-//        that reads the switch, and each caller asks it), or show anything.
+// What:  a member's chips (2026-10 item 250 Phase 5), in ONE global wallet across every
+//        server (2026-10 item 267 Session 1a, owner decision 1): the claim (a large first
+//        one once per member ever, then one every 24 hours wherever it is claimed), and
+//        the debit and credit the Hold'em buy in and cash out move chips through.
+// Who:   /claim (chipClaim.ts), the Hold'em table (game-rooms/holdemChips.ts and
+//        holdemDraftBuyIn.ts) and the /account chips line. The vault grant credits
+//        through chipWalletStore itself, beside its day reservation.
+// Does NOT: decide whether chip games run in a server (isChipEconomyOn is the one place
+//        that reads the switch, and each game asks it; the wallet and the claim work in
+//        every server whatever it says), or show anything.
 //
 // ⚠️ EVERY CHANGE IS ONE CONDITIONAL WRITE, never a read then a write. A claim matches
 // only a wallet whose cooldown has run, and a debit only a balance that covers it, so

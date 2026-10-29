@@ -22,33 +22,31 @@ import { isRenderPayload, withRenderFallback, type RenderPayload } from "@featur
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { answerChannelId, answerInChannel } from "@utils/answerInChannel.js";
 import { acknowledgeTextModal, showErrorNotice, showNotice } from "@utils/textModal.js";
-import { nextUtcDayStart } from "@utils/utcMonthKey.js";
-import { claimChips, isChipEconomyOn, readWallet } from "./chipWallet.js";
-import { awardForClaim, hasClaimedCoinsToday } from "./deroCoins.js";
+import { claimChips, readWallet } from "./chipWallet.js";
+import { awardForClaim } from "./deroCoins.js";
 import { economyCopy } from "./economyCopy.js";
 
 // ── chipClaim ────────────────────────────────────────────────────────
 // What:  the daily claim as a round of rock paper scissors against Dero (2026-10 item
 //        257, Phase 3a, owner decision 11). The press opens a modal with one throw
-//        select; on Submit Dero throws, and a win pays the daily claim twice, a draw one
-//        and a half times and a loss once, on BOTH currencies: chips (per server, only
-//        where chips are on) and Dero coins (global). The drawn reveal card with the
-//        payout posts in 💬dero-commands.
+//        select; on Submit Dero throws, and the result pays BOTH currencies: chips (a win
+//        twice the claim, a draw one and a half times, a loss once) and Dero coins (3, 2
+//        or 1, BOT_CONSTANTS.DERO_COINS.CLAIM). Both wallets are global, and so is the
+//        claim: once a day per member across every server (2026-10 item 267 Session 1a,
+//        owner decision 2). The drawn reveal card with the payout posts in 💬dero-commands.
 // Who:   the Claim daily rewards button (PowerUps, `powerup:member:claim`) and /claim
 //        (commands/fun/claim.ts) call runChipClaim; main.ts registers the round's modal
 //        and its fallback select once at boot (registerClaimRoundHandlers).
 // Does NOT: own an amount or a cooldown. claimChips (chipWallet.ts) owns the chips and
 //        their 24 hour cooldown, awardForClaim (deroCoins.ts) the coins and their one
-//        claim per UTC day per server; this module plays the round and words it.
+//        claim per UTC day; this module plays the round and words it.
 //
 // ⚠️ THE ROUND NEVER TOUCHES THE LUCK BOARD: no recordLuckResult and no XP here. A daily
 // claim is not a match, and every member playing it once a day would swamp the board.
 //
-// With chips off everyone, admins included, plays the round for coins only, and the
-// card's chips off line names the command that switches chips on (owner decision of
-// 2026-10-27, replacing Phase 1b's routing of an admin's press to the arcade panel: a
-// modal opens only one thing, so that routing left an admin who keeps chips off with no
-// way to claim at all).
+// The claim pays chips in every server, chips switched off included: since the wallet is
+// global, the server's switch decides only whether chip GAMES run there (owner decision
+// of 2026-10-28), never whether a member's own wallet works.
 
 const copy = economyCopy.claim;
 const roundCopy = economyCopy.round;
@@ -74,10 +72,9 @@ export async function runChipClaim(interaction: ButtonInteraction | ChatInputCom
 	let config: GuildConfigRow = null;
 	try {
 		config = await guildConfigStore.findByGuildId(guildId);
-		const chipsOn = isChipEconomyOn(config);
 		// Read before the modal so a member never throws for nothing; the Submit reads it
 		// again, because the claim itself is what decides.
-		const wait = await claimWaitText(guildId, interaction.user.id, chipsOn, new Date());
+		const wait = await claimWaitText(interaction.user.id, new Date());
 		if (wait) {
 			await showNotice(interaction, { title: copy.title, sections: [wait] });
 			return;
@@ -105,15 +102,12 @@ export async function runChipClaim(interaction: ButtonInteraction | ChatInputCom
 }
 
 // When the claim is not open yet, the words saying when it opens; null when it is open.
-// With chips on, the chip wallet's 24 hour cooldown decides (it always spans a UTC day,
-// so the coins are open whenever the chips are); with chips off, the coins' UTC day does.
-async function claimWaitText(guildId: string, userId: string, chipsOn: boolean, now: Date): Promise<string | null> {
-	if (chipsOn) {
-		const wallet = await readWallet({ guildId, userId });
-		if (wallet.nextClaimAt && wallet.nextClaimAt.getTime() > now.getTime()) return copy.cooldown(wallet.balance, wallet.nextClaimAt);
-		return null;
-	}
-	return (await hasClaimedCoinsToday(guildId, userId, now)) ? roundCopy.coinsCooldown(nextUtcDayStart(now)) : null;
+// The global chip wallet's 24 hour cooldown decides: it always spans a UTC day, so the
+// coins are open whenever the chips are.
+async function claimWaitText(userId: string, now: Date): Promise<string | null> {
+	const wallet = await readWallet({ userId });
+	if (wallet.nextClaimAt && wallet.nextClaimAt.getTime() > now.getTime()) return copy.cooldown(wallet.balance, wallet.nextClaimAt);
+	return null;
 }
 
 // ── the Submit ──
@@ -140,9 +134,8 @@ export async function playClaimRound(interaction: ModalSubmitInteraction | Strin
 	let config: GuildConfigRow = null;
 	try {
 		config = await guildConfigStore.findByGuildId(guildId);
-		const chipsOn = isChipEconomyOn(config);
 		const now = new Date();
-		const wait = await claimWaitText(guildId, userId, chipsOn, now);
+		const wait = await claimWaitText(userId, now);
 		if (wait) {
 			await answerInChannel(interaction, "member", { content: wait }, { config });
 			return;
@@ -154,21 +147,18 @@ export async function playClaimRound(interaction: ModalSubmitInteraction | Strin
 		if (round.game !== "rps") return;
 		const multiplier = BOT_CONSTANTS.ECONOMY.CLAIM_ROUND_MULTIPLIERS[round.outcome];
 
-		// ① Chips first, only where chips are on (risk R11): its conditional write is the
-		// claim, so a second Submit racing this one lands on the cooldown and pays nothing.
-		let chipsPaid: number | null = null;
-		if (chipsOn) {
-			const claimed = await claimChips({ guildId, userId }, now, multiplier);
-			if (claimed.kind === "cooldown") {
-				await answerInChannel(interaction, "member", { content: copy.cooldown(claimed.balance, claimed.nextClaimAt) }, { config });
-				return;
-			}
-			chipsPaid = claimed.amount;
+		// ① Chips first: the global wallet's conditional write is the claim, so a second
+		// Submit racing this one, in this server or another, lands on the cooldown and pays
+		// nothing.
+		const claimed = await claimChips({ userId }, now, multiplier);
+		if (claimed.kind === "cooldown") {
+			await answerInChannel(interaction, "member", { content: copy.cooldown(claimed.balance, claimed.nextClaimAt) }, { config });
+			return;
 		}
-		// ② Then the coins, whose own unique claim key pays them once a day in this server.
-		const coinsPaid = await awardForClaim({ guildId, userId, multiplier, now });
+		// ② Then the coins, whose own unique claim key pays them once a UTC day.
+		const coinsPaid = await awardForClaim({ guildId, userId, outcome: round.outcome, now });
 
-		const payout = [roundCopy.payout({ userId, chipsPaid, coinsPaid, multiplier }), chipsOn ? null : roundCopy.chipsOff].filter(Boolean).join("\n\n");
+		const payout = roundCopy.payout({ userId, chipsPaid: claimed.amount, coinsPaid, multiplier });
 		await postRound(interaction, { config, memberThrow, deroThrow: round.deroThrow, outcome: round.outcome, payout });
 	} catch (error) {
 		console.error(`[economy] the daily claim round for ${userId} in guild ${guildId} failed`, error);

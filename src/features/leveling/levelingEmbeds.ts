@@ -132,10 +132,9 @@ export interface AccountView {
 	// This UTC month's coin flip, dice and rps luck, the luck board's numbers, or
 	// null when the member decided none (post-launch plan item 7).
 	luck: AccountLuck | null;
-	// The member's chips in this server (2026-10 item 250 Phase 5), "off" when the server
-	// has chips switched off, which the currencies say (2026-10 item 257 Phase 3a), or null
-	// when the read failed, which leaves the line out.
-	chips: AccountChips | "off" | null;
+	// The member's chips (2026-10 item 250 Phase 5), one global wallet shown alike in every
+	// server (2026-10 item 267), or null when the read failed, which leaves the line out.
+	chips: AccountChips | null;
 	// The member's Dero coins, global across servers (2026-10 item 257 Phase 3a), or null
 	// when the read failed.
 	coins: number | null;
@@ -198,14 +197,13 @@ function luckField(view: Pick<AccountView, "luck" | "luckBoost">): APIEmbedField
 	return { name: c.luck, value, inline: false };
 }
 
-// The currencies (2026-10 item 257 Phase 3a): Hold'em chips in this server, or "off"
-// where the server switched them off, and the global Dero coins. A read that failed
+// The currencies (2026-10 item 257 Phase 3a): the member's global chips and the global
+// Dero coins. A read that failed
 // leaves its own line out, and both failing leaves the field out.
 function currenciesFields(view: Pick<AccountView, "chips" | "coins">): APIEmbedField[] {
 	const c = levelingCopy.labels;
 	const lines: string[] = [];
-	if (view.chips === "off") lines.push(`${c.holdemChips}: ${c.chipsOff}`);
-	else if (view.chips) lines.push(`${c.holdemChips}: ${c.chipsLine(view.chips.balance, view.chips.claim)}`);
+	if (view.chips) lines.push(`${c.holdemChips}: ${c.chipsLine(view.chips.balance, view.chips.claim)}`);
 	if (view.coins !== null) lines.push(`${c.deroCoins}: ${c.coinsLine(view.coins)}`);
 	return lines.length === 0 ? [] : [{ name: c.currencies, value: lines.join("\n"), inline: false }];
 }

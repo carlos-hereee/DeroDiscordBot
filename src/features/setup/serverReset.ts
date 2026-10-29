@@ -6,7 +6,6 @@ import { gameResultCountStore } from "@db/stores/gameResultCountStore.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { gameRequestStore } from "@db/stores/gameRequestStore.js";
 import { partyGameStore } from "@db/stores/partyGameStore.js";
-import { chipWalletStore } from "@db/stores/chipWalletStore.js";
 import { serverVaultStore } from "@db/stores/serverVaultStore.js";
 import { pollResultStore } from "@db/stores/pollResultStore.js";
 import { eventOverrideStore } from "@db/stores/eventOverrideStore.js";
@@ -97,6 +96,10 @@ async function retireEventsAndAttendance(guildId: string): Promise<void> {
 	for (const eventId of eventIds) await eventStore.deleteInGuild(eventId, guildId);
 }
 
+// ⚠️ NO CHIP WALLET STEP, on purpose (2026-10 item 267, risk R2). A member's chips are
+// one global wallet across every server, so one server's "Delete my data" must never
+// touch them. The per server rows the migration summed are kept as the owner's rollback.
+// Dero coins are global for the same reason and are not wiped either.
 const WIPE_STEPS: readonly WipeStep[] = [
 	{ label: "member levels", run: (guildId) => memberLevelStore.deleteGuild(guildId) },
 	{ label: "renown history", run: (guildId) => xpPeriodStore.deleteGuild(guildId) },
@@ -106,7 +109,6 @@ const WIPE_STEPS: readonly WipeStep[] = [
 	{ label: "game rooms", run: (guildId) => gameRoomStore.deleteGuild(guildId) },
 	{ label: "game requests", run: (guildId) => gameRequestStore.deleteGuild(guildId) },
 	{ label: "party games", run: (guildId) => partyGameStore.deleteGuild(guildId) },
-	{ label: "chip wallets", run: (guildId) => chipWalletStore.deleteGuild(guildId) },
 	{ label: "server vault", run: (guildId) => serverVaultStore.deleteGuild(guildId) },
 	{ label: "poll votes", run: (guildId) => pollResultStore.deleteGuild(guildId) },
 	{ label: "event overrides", run: (guildId) => eventOverrideStore.deleteGuild(guildId) },

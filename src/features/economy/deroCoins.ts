@@ -14,7 +14,7 @@ import { utcDayKey, utcDayStart } from "@utils/utcMonthKey.js";
 //        Hold'em placements in roomHoldemHandlers.ts, the daily claim round in
 //        features/economy/chipClaim.ts (awardForClaim), and the /account card
 //        (readCoinBalance).
-// Does NOT: spend coins (nothing does in 2.0.0), or decide amounts inline: every number
+// Does NOT: spend coins, or decide amounts inline: every number
 //        is BOT_CONSTANTS.DERO_COINS, the owner's to tune.
 // How:   ① insert the CoinAward row; ② only when that insert succeeded, $inc the wallet.
 //        A duplicate key at ① means the award was already paid (risk R3: a retry, a
@@ -131,31 +131,39 @@ async function cappedAmount(game: CoinGame, userId: string, amount: number, now:
 
 // ── the daily claim ──
 
-/** The claim key: the UTC day plus the guild, so a member claims once a day in each server. */
-export function claimKeyFor(guildId: string, now: Date): string {
-	return `${utcDayKey(now)}:${guildId}`;
+/** How the daily claim's round of rock paper scissors went for the member, the key of DERO_COINS.CLAIM. */
+export type ClaimRoundOutcome = keyof typeof BOT_CONSTANTS.DERO_COINS.CLAIM;
+
+/**
+ * The claim key: the UTC day alone, so a member claims coins once a day across every
+ * server (2026-10 item 267 Session 1a). Rows written before that carry the day plus the
+ * guild, so on the day this shipped a member could take one more claim; never again.
+ */
+export function claimKeyFor(now: Date): string {
+	return utcDayKey(now);
 }
 
-/** Whether the member already took today's coins in this server. */
-export function hasClaimedCoinsToday(guildId: string, userId: string, now: Date): Promise<boolean> {
-	return deroCoinStore.hasClaim(claimKeyFor(guildId, now), userId);
+/** Whether the member already took today's coins, in any server. */
+export function hasClaimedCoinsToday(userId: string, now: Date): Promise<boolean> {
+	return deroCoinStore.hasClaim(claimKeyFor(now), userId);
 }
 
 /**
- * Pay the daily claim's coins: CLAIM_BASE times the round's multiplier. Answers the coins
- * paid, 0 when today's claim was already paid or the write failed. Never throws.
+ * Pay the daily claim's coins: DERO_COINS.CLAIM's amount for the round's outcome. Answers
+ * the coins paid, 0 when today's claim was already paid or the write failed. Never throws.
+ * The guild only names where the claim was made on its ledger row.
  */
-export async function awardForClaim(claim: { guildId: string; userId: string; multiplier: number; now: Date }): Promise<number> {
-	const amount = Math.round(BOT_CONSTANTS.DERO_COINS.CLAIM_BASE * claim.multiplier);
+export async function awardForClaim(claim: { guildId: string; userId: string; outcome: ClaimRoundOutcome; now: Date }): Promise<number> {
+	const amount = BOT_CONSTANTS.DERO_COINS.CLAIM[claim.outcome];
 	try {
-		// ⚠️ Money invariant: one claim row per member per UTC day per server, so a second
-		// Submit of the same day pays nothing.
+		// ⚠️ Money invariant: one claim row per member per UTC day, across every server, so
+		// a second Submit of the same day, here or in another server, pays nothing.
 		const inserted = await deroCoinStore.insertAward({
 			userId: claim.userId,
 			guildId: claim.guildId,
 			amount,
 			source: "claim",
-			claimKey: claimKeyFor(claim.guildId, claim.now),
+			claimKey: claimKeyFor(claim.now),
 			at: claim.now,
 		});
 		if (!inserted) return 0;

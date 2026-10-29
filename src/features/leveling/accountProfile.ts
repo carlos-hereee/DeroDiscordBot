@@ -12,11 +12,10 @@ import { ACCOUNT_AVATAR_SIZE, renderAccountCard } from "@features/leveling/accou
 import { LEVELING_GAME_SLUGS, type IGameRecord } from "@features/leveling/levelingTypes.js";
 import { avatarRequestFor, isRenderPayload, withRenderFallback } from "@features/renderer/index.js";
 import { memberLuckInGuild } from "@features/ratings/ratingBoards.js";
-import { isChipEconomyOn, readWallet } from "@features/economy/chipWallet.js";
+import { readWallet } from "@features/economy/chipWallet.js";
 import { readCoinBalance } from "@features/economy/deroCoins.js";
 import { ULTRA_WEIGHT } from "@features/fortune/rollFortune.js";
 import { fortuneBuffStore } from "@db/stores/fortuneBuffStore.js";
-import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { utcMonthKey } from "@utils/utcMonthKey.js";
 import { beginChannelAnswer, type PendingChannelAnswer } from "@utils/answerInChannel.js";
 import { showNotice, showPendingNotice } from "@utils/textModal.js";
@@ -94,7 +93,7 @@ export async function showAccountProfile(interaction: RepliableInteraction, { ta
 		rankInPeriod(guildId, target.id, week),
 		rankInPeriod(guildId, target.id, month),
 		readLuck(guildId, target.id, now),
-		readChips(guildId, target.id, isSelf, now),
+		readChips(target.id, isSelf, now),
 		readCoins(target.id),
 		readLuckBoost(target.id),
 	]);
@@ -184,18 +183,17 @@ async function readLuck(guildId: string, userId: string, now: Date): Promise<Acc
 	}
 }
 
-// The member's chips (2026-10 item 250 Phase 5): "off" when the server has chips off,
-// which the currencies say (2026-10 item 257 Phase 3a), and a failed read leaves the line
-// out rather than failing the profile around it, like the luck. The claim hint is only
-// for the member's own profile.
-async function readChips(guildId: string, userId: string, isSelf: boolean, now: Date): Promise<AccountView["chips"]> {
+// The member's chips (2026-10 item 250 Phase 5), from their one global wallet (2026-10
+// item 267 Session 1a), so the card shows the same balance in every server, chips
+// switched off included: the switch decides only whether Hold'em plays for chips. A
+// failed read leaves the line out rather than failing the profile around it, like the
+// luck. The claim hint is only for the member's own profile.
+async function readChips(userId: string, isSelf: boolean, now: Date): Promise<AccountView["chips"]> {
 	try {
-		const config = await guildConfigStore.findByGuildId(guildId);
-		if (!isChipEconomyOn(config)) return "off";
-		const wallet = await readWallet({ guildId, userId });
+		const wallet = await readWallet({ userId });
 		return { balance: wallet.balance, claim: isSelf ? { nextClaimAt: wallet.nextClaimAt, now } : null };
 	} catch (error) {
-		console.error(`[account] reading the chips of ${userId} in guild ${guildId} failed`, error);
+		console.error(`[account] reading the chips of ${userId} failed`, error);
 		return null;
 	}
 }

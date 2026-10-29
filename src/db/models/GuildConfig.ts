@@ -902,11 +902,12 @@ const guildConfigSchema = new Schema(
 		networkBoardMessageId: { type: String, required: false, default: null },
 
 		// ── chip economy and bot opponents (2026-10 item 250 Phase 5) ───
-		// What:  chipEconomyEnabled is whether members claim chips and buy into Hold'em
-		//        with them (off, a table deals the free stack it always did);
+		// What:  chipEconomyEnabled is whether Hold'em tables in this server buy in with
+		//        members' chips (off, a table deals the free stack it always did). It never
+		//        closes a member's global wallet or the daily claim (2026-10 item 267);
 		//        botOpponentsEnabled is whether a host may fill seats with Dero bots.
-		// Who:   chipEconomyEnabled is written by /arcade chips toggle and read by /claim,
-		//        the /account chips line and the Hold'em table at open
+		// Who:   chipEconomyEnabled is written by /arcade chips toggle and read by the
+		//        Hold'em table at open, the vault grant and the monthly vault award
 		//        (features/economy/). botOpponentsEnabled is written by /arcade
 		//        bots and read by the challenge card's Play vs bots button
 		//        (features/game-rooms/botSeat.ts), on the card and again on the press.

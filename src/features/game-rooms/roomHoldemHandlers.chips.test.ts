@@ -94,7 +94,7 @@ describe("buying in at a chip table", () => {
 
 		await handleBuyIn(makeInteraction(HOST), makeRoom(table));
 
-		expect(walletMock.debit).toHaveBeenCalledWith({ guildId: GUILD, userId: HOST }, 2_500);
+		expect(walletMock.debit).toHaveBeenCalledWith({ userId: HOST }, 2_500);
 		expect(walletMock.debit.mock.invocationCallOrder[0]).toBeLessThan(storeMock.updateSecretIf.mock.invocationCallOrder[0]);
 		expect(trailMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ text: words.chipsSeatTaken(HOST, 2_500, 1) }));
 		expect(walletMock.credit).not.toHaveBeenCalled();
@@ -126,7 +126,7 @@ describe("buying in at a chip table", () => {
 
 		await handleBuyIn(interaction, makeRoom(chipTable()));
 
-		expect(walletMock.credit).toHaveBeenCalledWith({ guildId: GUILD, userId: HOST }, 2_500);
+		expect(walletMock.credit).toHaveBeenCalledWith({ userId: HOST }, 2_500);
 		expect(noticeText(interaction)).toBe(`${words.buyInChanged} ${words.buyInBack}`);
 	});
 
@@ -147,7 +147,7 @@ describe("cashing out", () => {
 
 		await handleLeaveTable(interaction, makeRoom(table, { status: "playing" }));
 
-		expect(walletMock.credit).toHaveBeenCalledWith({ guildId: GUILD, userId: "a" }, 2_500);
+		expect(walletMock.credit).toHaveBeenCalledWith({ userId: "a" }, 2_500);
 		expect(storeMock.updateSecretIf.mock.invocationCallOrder[0]).toBeLessThan(walletMock.credit.mock.invocationCallOrder[0]);
 		expect(trailMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ text: words.chipsLeftTable("a", false, 2_500) }));
 	});

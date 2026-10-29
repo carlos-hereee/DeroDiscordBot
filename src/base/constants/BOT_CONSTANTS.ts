@@ -792,29 +792,33 @@ export const BOT_CONSTANTS = {
 	// ── Dero coins (2026-10 item 257, Phase 3a) ─────────────────────────
 	// The Verse currency: one global wallet per member, paid beside the XP above by every
 	// game result and by the daily claim. Kept beside the XP amounts so a retune of the
-	// economy reads both tables at once. Every amount is the owner's default of
-	// 2026-10-27 and the owner's to tune; features/economy/deroCoins.ts is the only
-	// reader, so no game pays a number of its own. Nothing spends coins in 2.0.0.
+	// economy reads both tables at once. Every amount is the owner's decision of
+	// 2026-10-28 (2026-10 item 267, decision 4, "drip"): coins are the premium currency
+	// and stay scarce, so a member earns a handful a day, never hundreds. Balances held
+	// before that decision stay. features/economy/deroCoins.ts is the only reader, so no
+	// game pays a number of its own.
 	DERO_COINS: {
 		// The rated games (ratingEngine.RATED_GAMES: holdem, monopoly, battleship) pay
 		// most, because a match there is the longest and needs other players. A casual
 		// match of a rated game pays this full table too: the tier is the game's, never
 		// the badge's.
-		RATED: { WIN: 30, DRAW: 15, PLAY: 10 },
+		RATED: { WIN: 5, DRAW: 2, PLAY: 1 },
 		// The room games between members: hangman, blackjack, two player coin flip, dice
 		// roll and rps.
-		ROOM: { WIN: 12, DRAW: 6, PLAY: 4 },
+		ROOM: { WIN: 2, DRAW: 1, PLAY: 1 },
 		// A round against Dero alone (every solo- room slug: the luck rooms, solo hangman and
 		// solo blackjack, plus the in place solo luck row and a one seat blackjack table)
-		// needs nobody else, so it pays least, and only up to the cap below.
-		SOLO: { WIN: 3, OTHER: 1 },
+		// pays no coins at all (owner decision of 2026-10-28): coins come from playing
+		// other members and from the daily claim. The round still writes its zero row.
+		SOLO: { WIN: 0, OTHER: 0 },
 		// The most coins solo rounds pay one member in one UTC day, across every server,
-		// since the wallet is global. Ten wins' worth: a member who farms flips earns
-		// what one rated win pays and no more.
+		// since the wallet is global. Kept as the ceiling should a solo amount above
+		// ever turn positive again.
 		SOLO_DAILY_CAP: 30,
-		// The daily claim's coin base, before the rock paper scissors multiplier
-		// (ECONOMY.CLAIM_ROUND_MULTIPLIERS).
-		CLAIM_BASE: 10,
+		// The daily claim's coins by the rock paper scissors result. An explicit table,
+		// not a base times ECONOMY.CLAIM_ROUND_MULTIPLIERS, because no multiplier of 1
+		// rounds to the owner's 2 and 3 (owner decision of 2026-10-28).
+		CLAIM: { lost: 1, tie: 2, won: 3 },
 	},
 
 	// ── PINGABLE ──────────────────────────────────────────────────
@@ -898,22 +902,30 @@ export const BOT_CONSTANTS = {
 	},
 
 	// ── chip economy (2026-10 item 250 Phase 5) ───────────────────
-	// The per server chips a member claims and buys into Hold'em with, and the server
-	// vault admins grant from. Every amount below is an owner decision of 2026-10-24
+	// The chips a member claims and buys into Hold'em with, one global wallet per member
+	// across every server (owner decision of 2026-10-28, 2026-10 item 267), and the
+	// server vault admins grant from. Every amount below is an owner decision of 2026-10-24
 	// (the plan's chip economy rounds) unless its line says otherwise. Chips are never
 	// sold, bought or cashed out of Discord: they are a scorekeeping currency only.
 	ECONOMY: {
-		// Owner decision 2026-10-24: a member's first ever claim in a server.
+		// The ChipWallet row whose guildId is this sentinel is a member's one global
+		// wallet (2026-10 item 267 Session 1a). The rows with a real guildId are the per
+		// server balances from before, kept after the boot migration summed them so the
+		// owner can restore from them (risk R1). No Discord guild id is ever this word.
+		GLOBAL_CHIP_WALLET_ID: "global",
+		// Owner decision 2026-10-24, kept 2026-10-28: a member's first ever claim, paid
+		// once per member across every server.
 		FIRST_CLAIM_CHIPS: 25_000,
 		// Owner decision 2026-10-24: every later claim, once per cooldown.
 		DAILY_CLAIM_CHIPS: 1_000,
 		// Owner decision 2026-10-24: a claim every 24 hours, counted from the last claim.
+		// Global since 2026-10-28: a claim in any server starts the one cooldown everywhere.
 		CLAIM_COOLDOWN_MS: 24 * 60 * 60 * 1000,
 		// Owner decision 2026-10-27 (2026-10 item 257, decision 11): the daily claim is a
-		// round of rock paper scissors against Dero, and its result multiplies the claim on
-		// BOTH currencies, the chips above and DERO_COINS.CLAIM_BASE. A loss still pays the
-		// base, so claiming is never worth less than before the round existed. The first
-		// claim's 25,000 is the base the multiplier applies to (risk R11 in the plan).
+		// round of rock paper scissors against Dero, and its result multiplies the chips
+		// claimed. A loss still pays the base, so claiming is never worth less than before
+		// the round existed. The first claim's 25,000 is the base the multiplier applies to
+		// (risk R11 in that plan). The coins the round pays are DERO_COINS.CLAIM's table.
 		CLAIM_ROUND_MULTIPLIERS: { won: 2, tie: 1.5, lost: 1 },
 		// Owner decision 2026-10-24: a server's vault starts here the first time anything reads it.
 		VAULT_STARTING_CHIPS: 100_000,
@@ -921,6 +933,11 @@ export const BOT_CONSTANTS = {
 		VAULT_GRANT_HISTORY_LIMIT: 50,
 		// How many of those grants /arcade chips status lists; the rest stay on the row for the dashboard.
 		VAULT_STATUS_GRANTS_SHOWN: 5,
+		// Owner decision 2026-10-28 (2026-10 item 267, decision 3, risk R3): the most vault
+		// chips one member receives in one UTC day across every server, so a vault rich
+		// server cannot flood the global wallet. serverVault.grantFromVault reserves each
+		// grant against it before the vault pays.
+		VAULT_DAILY_RECEIVE_CAP: 5_000,
 		// The largest single grant an admin may type. Far above any vault a month of awards
 		// builds, so it only refuses a typo (an extra zero), never a real grant.
 		MAX_GRANT_CHIPS: 1_000_000,

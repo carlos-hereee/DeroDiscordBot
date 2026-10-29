@@ -142,17 +142,16 @@ function luckLines(luck: AccountLuck | null, luckBoost: number | null): CardLine
 	return lines;
 }
 
-// The currencies (2026-10 item 257 Phase 3a): the server's chips, or "off" where it
-// switched them off, then the global coins, then the member's own claim hint. A read
+// The currencies (2026-10 item 257 Phase 3a): the member's global chips, then the global
+// coins, then the member's own claim hint. A read
 // that failed leaves its own line out. Rounded to the minute, so the card cache is not
 // split by the second.
 function currencyLines(chips: AccountView["chips"], coins: number | null): CardLine[] {
 	const cards = levelingCopy.cards;
 	const lines: CardLine[] = [];
-	if (chips === "off") lines.push({ text: cards.chipsOffCard });
-	else if (chips) lines.push({ text: cards.chipsCard(chips.balance) });
+	if (chips) lines.push({ text: cards.chipsCard(chips.balance) });
 	if (coins !== null) lines.push({ text: cards.coinsCard(coins) });
-	const claim = chips && chips !== "off" ? claimLine(chips) : null;
+	const claim = chips ? claimLine(chips) : null;
 	if (claim) lines.push({ text: claim });
 	return lines;
 }

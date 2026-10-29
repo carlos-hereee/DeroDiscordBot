@@ -7,7 +7,7 @@ import mongoose from "mongoose";
 // Who:   written ONLY by features/economy/deroCoins.ts through deroCoinStore, after a
 //        CoinAward row was inserted; read by the /account card.
 // Where: GLOBAL, deliberately, with no guildId (owner decision 8): coins follow a member
-//        across every server, where chips (ChipWallet) stay per server.
+//        across every server, as chips (ChipWallet's global row) do since 2026-10 item 267.
 //
 // ⚠️ THE MONEY INVARIANT: the balance only ever moves by an $inc that follows a
 // successful CoinAward insert, so the award ledger is the truth and a wallet can always

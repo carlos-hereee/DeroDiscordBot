@@ -23,7 +23,8 @@ const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<ty
 
 const HOST = "host";
 const GUEST = "guest";
-const key = (userId: string) => ({ guildId: "guild-1", userId });
+// A member's one global wallet (2026-10 item 267): the key names the member alone.
+const key = (userId: string) => ({ userId });
 
 function draft(overrides: Partial<IGameRoom> = {}): IGameRoom {
 	return {
