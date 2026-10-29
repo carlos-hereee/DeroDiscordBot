@@ -369,9 +369,11 @@ function hostControlRow(roomId: string, state: OpenerCardState, controls: DraftH
 	);
 	// Add bots opens the host's private count picker (challengeBoard.openBotPicker, the one door a
 	// bot comes through). Offered only where the game takes bots and the server allows them: `bots`
-	// is on the state exactly then. Shown to everyone because Discord cannot show a button to the
-	// host alone; the router refuses anybody else (HOST_STRICT_ACTIONS).
-	if (state.bots) buttons.push(addBotsButton(roomId));
+	// is on the state exactly then. Never on a RATED card, which lives in 🏆rated-challenges and
+	// cannot seat a bot (botRefusal says the same on a press of an older card). Shown to everyone
+	// because Discord cannot show a button to the host alone; the router refuses anybody else
+	// (HOST_STRICT_ACTIONS).
+	if (state.bots && badgeOfCard(state) === "casual") buttons.push(addBotsButton(roomId));
 	if (state.voice?.kind === "busy") buttons.push(queueDeroButton(roomId));
 	return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(...buttons);
 }

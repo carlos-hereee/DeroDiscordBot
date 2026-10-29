@@ -48,6 +48,7 @@ import { GAME_ROOM_SELECT_PREFIX, confirmCustomId } from "./gameRoomActions.js";
 import { isPickerPrefix, pickedValues, showPicker } from "./pickerModal.js";
 import { buildInviteOptions, refilterInvitees } from "./invitePicker.js";
 import {
+	challengeBadge,
 	openerCardEmbed,
 	openerCardRows,
 	isCooperativeGame,
@@ -1610,8 +1611,17 @@ async function botRefusal(room: IGameRoom): Promise<string | null> {
 	return botsAllowedIn(config) ? null : gameRoomsCopy.board.botsOff;
 }
 
+// ⚠️ A RATED CARD TAKES NO BOT THROUGH THE ADD BOTS BUTTON. A rated card lives in 🏆rated-challenges,
+// its match is fixed at creation, and a match with a bot is never rated, so the picker refuses it
+// (the card does not even show the button). The creation modal's Casual with bots choice never
+// comes through here: it decides the match BEFORE the card posts, so that card is not rated.
+async function pickerRefusal(room: IGameRoom): Promise<string | null> {
+	if (challengeBadge(room.game, room.botSeats ?? 0, room.casual ?? false) === "rated") return gameRoomsCopy.board.botsNotInRated;
+	return botRefusal(room);
+}
+
 export async function openBotPicker(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
-	const refusal = await botRefusal(room);
+	const refusal = await pickerRefusal(room);
 	if (refusal) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
@@ -1656,7 +1666,7 @@ export async function handleBotSelect(interaction: StringSelectMenuInteraction |
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.onlyHostStarts] });
 		return;
 	}
-	const refusal = await botRefusal(room);
+	const refusal = await pickerRefusal(room);
 	if (refusal) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;

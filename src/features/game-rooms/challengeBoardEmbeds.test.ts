@@ -197,9 +197,11 @@ describe("Rated or Casual on the card", () => {
 		}
 	});
 
-	it("offers Add bots on the host's row only where the game takes bots", () => {
-		expect(customIds(base)).toContain("gameroom:bots:room-1");
-		const { bots: _bots, ...withoutBots } = base;
+	it("offers Add bots on the host's row only on a casual card of a game that takes bots", () => {
+		expect(customIds({ ...base, casual: true })).toContain("gameroom:bots:room-1");
+		// A rated card lives in 🏆rated-challenges and cannot seat a bot.
+		expect(customIds(base).some((id) => id.includes(":bots:"))).toBe(false);
+		const { bots: _bots, ...withoutBots } = { ...base, casual: true };
 		expect(customIds(withoutBots).some((id) => id.includes(":bots:"))).toBe(false);
 		expect(customIds({ ...base, hostControls: undefined }).some((id) => id.includes(":bots:"))).toBe(false);
 	});

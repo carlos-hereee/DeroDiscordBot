@@ -12,7 +12,9 @@ vi.mock("@utils/config.js", () => ({ discordBotS3Enabled: false }));
 vi.mock("@utils/aws/index.js", () => ({ putObject: vi.fn(), getObjectBytes: vi.fn(async () => null) }));
 
 import { clearCardCache } from "@features/renderer/cardCache.js";
-import { drawStatusWatermark, renderChallengeCard, type ChallengeCardStatus, type ChallengeCardView } from "./challengeCardRenderer.js";
+import type { Guild } from "discord.js";
+import { challengeCardView, drawStatusWatermark, renderChallengeCard, type ChallengeCardStatus, type ChallengeCardView } from "./challengeCardRenderer.js";
+import type { OpenerCardState } from "./challengeBoardEmbeds.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
 const STATUSES = Object.keys(gameRoomsCopy.board.cardImage.status) as ChallengeCardStatus[];
@@ -83,5 +85,48 @@ describe("renderChallengeCard with the watermark", () => {
 			const bytes = card!.attachment.attachment;
 			expect(Buffer.isBuffer(bytes) && bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)).toBe(true);
 		}
+	});
+});
+
+// ── the Dero bots on the picture ─────────────────────────────────────────
+// A bot the host seats with Add bots is a face of its own after the joiners, so the picture
+// agrees with the settings line instead of showing an empty table.
+describe("challengeCardView with Dero bots", () => {
+	const member = (id: string) => ({ displayName: `Member ${id}`, user: { id, avatar: null, displayAvatarURL: () => `https://cdn.example/${id}.png` } });
+	const guild = { members: { cache: { get: (id: string) => member(id) }, fetch: async (id: string) => member(id) } } as unknown as Guild;
+	const state = (overrides: Partial<OpenerCardState>): OpenerCardState => ({ game: "holdem", hostId: "host-1", visibility: "public", pool: [], ...overrides });
+
+	it("draws each seated bot after the joiners, named and in its variant", async () => {
+		const result = await challengeCardView(guild, state({ pool: ["joiner-1"], bots: { count: 2 }, casual: true }));
+		expect(result.challengers.map((face) => face.name)).toEqual(["Member joiner-1", "Dero Red", "Dero Orange"]);
+		expect(result.challengers.slice(1).every((face) => face.bot && face.avatar === null)).toBe(true);
+		expect(result.hiddenCount).toBe(0);
+	});
+
+	it("gives a Monopoly bot the token after the host and every joiner", async () => {
+		const result = await challengeCardView(guild, state({ game: "monopoly", pool: ["joiner-1"], bots: { count: 1 }, casual: true }));
+		expect(result.challengers.at(-1)?.name).toBe("Dero Gold");
+		expect(result.challengers.at(-1)?.bot?.token).toBe("monopolyToken3");
+	});
+
+	it("keeps every joiner on the picture and counts the bots that do not fit", async () => {
+		const pool = ["a", "b", "c", "d", "e", "f"];
+		const result = await challengeCardView(guild, state({ pool, bots: { count: 2 }, casual: true }));
+		expect(result.challengers).toHaveLength(6);
+		expect(result.challengers.some((face) => face.bot)).toBe(false);
+		expect(result.hiddenCount).toBe(2);
+	});
+
+	it("shows no bot for a card that seats none", async () => {
+		const result = await challengeCardView(guild, state({ pool: [], bots: { count: 0 } }));
+		expect(result.challengers).toEqual([]);
+	});
+
+	it("renders a PNG with bots on it", async () => {
+		const withBots = await challengeCardView(guild, state({ bots: { count: 3 }, casual: true }));
+		const card = await renderChallengeCard(withBots);
+		expect(card).not.toBeNull();
+		const bytes = card!.attachment.attachment;
+		expect(Buffer.isBuffer(bytes) && bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)).toBe(true);
 	});
 });

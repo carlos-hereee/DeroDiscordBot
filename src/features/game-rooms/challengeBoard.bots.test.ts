@@ -33,7 +33,7 @@ const openMock = RoomProvisioner.open as unknown as Mock;
 const logMock = adminLog.emitFor as unknown as Mock;
 
 const makeRoom = (game: string, overrides: Partial<IGameRoom> = {}): IGameRoom =>
-	({ roomId: "room-1", guildId: "guild-1", game, hostId: HOST, status: "draft", visibility: "invite", spectatorIds: [], botsOffered: true, botSeats: 0, ...overrides }) as unknown as IGameRoom;
+	({ roomId: "room-1", guildId: "guild-1", game, hostId: HOST, status: "draft", visibility: "invite", spectatorIds: [], botsOffered: true, botSeats: 0, casual: true, ...overrides }) as unknown as IGameRoom;
 
 const category = { id: "cat", type: ChannelType.GuildCategory };
 const guild = {

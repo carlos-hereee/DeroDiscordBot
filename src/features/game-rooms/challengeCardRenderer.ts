@@ -1,5 +1,5 @@
 import type { ColorResolvable, Guild } from "discord.js";
-import { COLORS } from "@base/copy/brand.js";
+import { COLORS, DERO_VARIANTS } from "@base/copy/brand.js";
 import {
 	avatarRequestFor,
 	canvasColor,
@@ -8,8 +8,10 @@ import {
 	drawMemberFace,
 	drawPill,
 	drawText,
+	fillCircle,
 	renderCard,
 	strokeCircle,
+	withAlpha,
 	type AvatarRequest,
 	type DrawOutcome,
 	type Rect,
@@ -18,6 +20,7 @@ import {
 import type { SKRSContext2D } from "@features/renderer/canvasModule.js";
 import { loadGameArt } from "@features/games/gamesArt.js";
 import { gameAssetPath, type GameAssetKey } from "@features/games/gamesAssets.js";
+import { botSeatIdsFor, botSeatName, botVariantOf } from "./botSeat.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { openerLogoKey } from "./gameRoomsEmbeds.js";
 import { badgeOfCard, type ChallengeBadge, type OpenerCardState } from "./challengeBoardEmbeds.js";
@@ -39,10 +42,12 @@ import type { GameSlug } from "./roomTypes.js";
 // is the shared card sheet in the arcade's color instead. Members are named in
 // plain text here; the embed above keeps the mentions.
 
-/** One face on the card: a display name and the avatar to fetch. */
+/** One face on the card: a display name and the avatar to fetch, or a Dero bot's token and color. */
 export interface ChallengeFace {
 	name: string;
 	avatar: AvatarRequest | null;
+	/** Set for a Dero bot seat, which has no avatar: its Monopoly token art and its variant's color. */
+	bot?: { token: GameAssetKey; color: ColorResolvable };
 }
 
 export type ChallengeCardStatus = keyof typeof gameRoomsCopy.board.cardImage.status;
@@ -69,8 +74,8 @@ const CHALLENGERS_PER_ROW = 3;
 
 // Bump whenever the drawing changes, or members keep seeing cached cards. 3 added the
 // RATED or CASUAL badge pill (2026-10 item 254, Arcade 5); 4 the status watermark (Arcade 6);
-// 5 the rock paper scissors logo (Arcade 3).
-const CHALLENGE_CARD_VERSION = 5;
+// 5 the rock paper scissors logo (Arcade 3); 6 the Dero bots the host seats, drawn after the joiners.
+const CHALLENGE_CARD_VERSION = 6;
 const CARD_WIDTH = 960;
 const CARD_HEIGHT = 380;
 const PADDING = 32;
@@ -82,6 +87,9 @@ const GRID_TOP = 130;
 const FACE_DIAMETER = 72;
 const CELL_WIDTH = 150;
 const CELL_HEIGHT = 120;
+// A bot's disc is its variant color, light enough that the token reads over it.
+const BOT_DISC_ALPHA = 0.35;
+const BOT_RING_WIDTH = 4;
 
 // ── the game's art band ──
 // The logo is the game's room opener logo (openerLogoKey), so a challenge post
@@ -148,19 +156,39 @@ export function challengeCardStatus(state: OpenerCardState): ChallengeCardStatus
  * The picture's view of one opener card: the host and the first joiners
  * resolved to names and avatars. A member who cannot be found (they left) is
  * drawn by the placeholder with an empty name rather than dropped, so the count
- * on the card still matches the pool in the embed.
+ * on the card still matches the pool in the embed. The Dero bots the host seated follow the
+ * joiners as faces of their own (their token and variant color), so the picture shows the table
+ * the embed's settings line describes; they count toward the faces the grid has room for.
  */
 export async function challengeCardView(guild: Guild, state: OpenerCardState): Promise<ChallengeCardView> {
-	const shown = state.pool.slice(0, MAX_CHALLENGER_FACES);
-	const [host, ...challengers] = await Promise.all([state.hostId, ...shown].map((userId) => resolveFace(guild, userId)));
+	const bots = botFacesFor(state);
+	// Humans take the grid first and bots fill what is left, so a joiner is never pushed off the
+	// picture by a bot; what does not fit is counted in hiddenCount.
+	const shownHumans = state.pool.slice(0, MAX_CHALLENGER_FACES);
+	const [host, ...humans] = await Promise.all([state.hostId, ...shownHumans].map((userId) => resolveFace(guild, userId)));
+	const challengers = [...humans, ...bots].slice(0, MAX_CHALLENGER_FACES);
 	return {
 		game: state.game,
 		status: challengeCardStatus(state),
 		badge: badgeOfCard(state),
 		host,
 		challengers,
-		hiddenCount: Math.max(0, state.pool.length - shown.length),
+		hiddenCount: Math.max(0, state.pool.length + bots.length - challengers.length),
 	};
+}
+
+// The bot seats this draft will sit down at Start, as faces. In Monopoly a seat's token is its
+// place at the table, so the host and every joiner come first and the bots take the next
+// variants (botSeatIdsFor), the same ids the room seed seats.
+function botFacesFor(state: OpenerCardState): ChallengeFace[] {
+	const count = state.bots?.count ?? 0;
+	if (count <= 0) return [];
+	return botSeatIdsFor(state.game, 1 + state.pool.length, count).flatMap((id) => {
+		const variant = botVariantOf(id);
+		if (!variant) return [];
+		const token = `monopolyToken${DERO_VARIANTS.indexOf(variant) + 1}` as GameAssetKey;
+		return [{ name: botSeatName(id), avatar: null, bot: { token, color: variant.color } }];
+	});
 }
 
 async function resolveFace(guild: Guild, userId: string): Promise<ChallengeFace> {
@@ -319,7 +347,8 @@ async function drawChallengers(context: SKRSContext2D, view: ChallengeCardView):
 	for (const [index, face] of view.challengers.entries()) {
 		const centerX = GRID_LEFT + (index % CHALLENGERS_PER_ROW) * CELL_WIDTH + CELL_WIDTH / 2;
 		const centerY = GRID_TOP + Math.floor(index / CHALLENGERS_PER_ROW) * CELL_HEIGHT + FACE_DIAMETER / 2;
-		if (await drawMemberFace(context, face.avatar, face.name, centerX, centerY, FACE_DIAMETER)) standIn = true;
+		const drewStandIn = face.bot ? await drawBotFace(context, face, centerX, centerY) : await drawMemberFace(context, face.avatar, face.name, centerX, centerY, FACE_DIAMETER);
+		if (drewStandIn) standIn = true;
 		drawName(context, face.name, centerX, centerY + FACE_DIAMETER / 2 + 20, 18, CELL_WIDTH - 12);
 	}
 	if (view.hiddenCount > 0) {
@@ -335,6 +364,19 @@ async function drawChallengers(context: SKRSContext2D, view: ChallengeCardView):
 		});
 	}
 	return standIn;
+}
+
+// A Dero bot's face: its variant's color as a disc with its Monopoly token over it, the same art
+// the dice card draws a Dero from. Answers true when the token did not load, in which case the
+// disc carries the bot's first letter like a member's placeholder and the card is not cached.
+async function drawBotFace(context: SKRSContext2D, face: ChallengeFace, centerX: number, centerY: number): Promise<boolean> {
+	if (!face.bot) return false;
+	fillCircle(context, centerX, centerY, FACE_DIAMETER, withAlpha(face.bot.color, BOT_DISC_ALPHA));
+	strokeCircle(context, centerX, centerY, FACE_DIAMETER, canvasColor(face.bot.color), BOT_RING_WIDTH);
+	const token = await loadGameArt(face.bot.token).catch(() => null);
+	if (!token) return drawMemberFace(context, null, face.name, centerX, centerY, FACE_DIAMETER);
+	drawImageContained(context, token, { x: centerX - FACE_DIAMETER / 2, y: centerY - FACE_DIAMETER / 2, width: FACE_DIAMETER, height: FACE_DIAMETER });
+	return false;
 }
 
 function drawName(context: SKRSContext2D, name: string, centerX: number, y: number, size: number, maxWidth: number): void {

@@ -85,7 +85,13 @@ describe("the challenge card's rows", () => {
 		const ids = idsOf(fullestState("monopoly", "public"));
 		expect(ids).toContain("gameroom:requests:room-1");
 		expect(ids).toContain("gameroom:kick:room-1");
-		expect(ids).toContain("gameroom:bots:room-1");
+	});
+
+	// Add bots is the host row's fourth control on a CASUAL card and never on a rated one, which lives in
+	// 🏆rated-challenges and cannot seat a bot.
+	it("offers Add bots on a casual card of a game that takes bots, and on no rated card", () => {
+		expect(idsOf(fullestState("monopoly", "public", { casual: true }))).toContain("gameroom:bots:room-1");
+		expect(idsOf(fullestState("monopoly", "public", { casual: false }))).not.toContain("gameroom:bots:room-1");
 	});
 
 	it("shows the Hold'em buy in on the card as a line, set in the creation modal", () => {

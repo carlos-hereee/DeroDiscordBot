@@ -233,7 +233,7 @@ describe("the creation Submit", () => {
 		// A rated match posts in 🏆rated-challenges, at its gather step, with every setting named.
 		expect(challenges.send).not.toHaveBeenCalled();
 		expect(rated.send).toHaveBeenCalledOnce();
-		expect(actionsOf(rated.send)).toEqual(["join", "start", "edit", "cancel", "requests", "kick", "bots"]);
+		expect(actionsOf(rated.send)).toEqual(["join", "start", "edit", "cancel", "requests", "kick"]);
 		const description = descriptionOf(rated.send);
 		expect(description).toContain(gameRoomsCopy.creation.summary.join.approve);
 		expect(description).toContain(gameRoomsCopy.creation.summary.voice(false));

@@ -727,6 +727,7 @@ export const gameRoomsCopy = {
 		botOptionCount: (count: number): string => (count === 1 ? "1 Dero bot" : `${count} Dero bots`),
 		botsSaved: (count: number): string => (count === 0 ? "No Dero bots will sit down." : `${count === 1 ? "1 Dero bot" : `${count} Dero bots`} will sit down when you press Start.`),
 		botsOff: "An admin switched Dero bot opponents off in this server.",
+		botsNotInRated: "A rated challenge cannot have Dero bots. Call it off and start a Casual match to play against them.",
 		botsNotHere: "Dero bots can only join a Hold'em, Monopoly or Battleship challenge in this server.",
 		// The 🗒️admin-log detail when the host removes a bot mid match.
 		botRemovedDetail: (botName: string): string => `${botName} removed from the match`,
