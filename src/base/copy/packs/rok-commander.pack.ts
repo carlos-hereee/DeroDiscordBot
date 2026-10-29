@@ -329,6 +329,9 @@ export const rokCommanderCopy = {
 		commands: "📜 Commands",
 		rules: "📖 Rules",
 		ownerTools: "👑 Owner tools",
+		// 🏪dero-market's states (2026-10 item 267 Session 2a): chips off here, the day's buys
+		// spent, nothing to sell, a wallet short of one coin.
+		market: "🏪 Dero market",
 	},
 
 	// The words utils/answerInChannel.ts shows itself. Discord cuts a notice title at 45.
@@ -454,6 +457,10 @@ export const rokCommanderCopy = {
 			// match that counts finds them apart from the luck games. A plain text channel,
 			// bot written like ⚔️challenges. Universal across packs.
 			arcadeRatedChallenges: "🏆rated-challenges",
+			// The sixth (2026-10 item 267 Session 2a): the market where chips buy Dero coins and
+			// coins sell back for chips, from the two buttons under its intro. Only Dero posts
+			// there. Universal across packs.
+			deroMarket: "🏪dero-market",
 			// ── the two VOICE rooms, one per managed category ───────────
 			// Plain voice channels, groundwork for a later meeting notes feature:
 			// nothing listens in either, and neither is on Dero's voice allowlist
@@ -843,6 +850,22 @@ export const rokCommanderCopy = {
 			description:
 				"When the keepers call a party game, the whole kingdom plays together here. A hangman round opens in this hall for every warrior at once, and the keepers may call a Texas hold em table or a Monopoly match from here too, whose challenge is cried in 🏆rated-challenges.\n\n" +
 				"Revels to come are cried in 📢announcements, and the roll of who will attend is kept in 🔜upcoming-events. Mark yourself there so the host knows to wait for you.",
+		},
+
+		// ── 🏪dero-market's intro (2026-10 item 267 Session 2a) ─────────────────
+		// Above the Buy coins and Sell coins buttons. The rate and the cap arrive formatted
+		// from BOT_CONSTANTS.ECONOMY.MARKET (ChannelContent.deroMarketIntro), so a number
+		// changed there changes here without an edit. `closed` replaces the description on a
+		// server with chips switched off.
+		deroMarket: {
+			title: "🏪 The Dero Market",
+			description: (rate: { buyPrice: string; sellPrice: string; dailyCap: string }): string =>
+				"Here chips become Dero coins, and coins become chips again.\n\n" +
+				`**Buy.** One Dero coin costs ${rate.buyPrice}, and a warrior may buy ${rate.dailyCap} a day across every realm I serve.\n` +
+				`**Sell.** One Dero coin returns ${rate.sellPrice}, as many as you hold.\n\n` +
+				"Press a button below. I show you both purses before you trade, and every finished trade is cried here with its trader's name.",
+			closed:
+				"The keepers of this realm have switched chips off, so the market is shut here. Your chips and coins are yours in every realm, and the market trades wherever chips are on.",
 		},
 
 		// ── the voice rooms' intro (2026-10 item 245 Phase 4b) ──────────────

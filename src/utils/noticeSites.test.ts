@@ -386,6 +386,16 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/economy/chipClaim.ts", within: "runChipClaim", anchor: "copy.failed", kind: "failure" },
 	{ file: "features/economy/chipClaim.ts", within: "playClaimRound", anchor: "copy.notInGuild", kind: "race", why: "the daily claim's throw picker Submit: runChipClaim refused outside a server at the press, so only a forged Submit meets it" },
 	{ file: "features/economy/chipClaim.ts", within: "playClaimRound", anchor: "copy.failed", kind: "failure" },
+	// ── economy/coinMarketPanel.ts, 🏪dero-market (2026-10 item 267 Session 2a) ──
+	{ file: "features/economy/coinMarketPanel.ts", within: "handleMarketPress", anchor: "sections: [copy.notInGuild", kind: "state" },
+	{ file: "features/economy/coinMarketPanel.ts", within: "handleMarketPress", anchor: "sections: [copy.closed", kind: "state" },
+	{ file: "features/economy/coinMarketPanel.ts", within: "handleMarketPress", anchor: "sections: [state]", kind: "state" },
+	{ file: "features/economy/coinMarketPanel.ts", within: "handleMarketPress", anchor: "copy.failed", kind: "failure" },
+	{ file: "features/economy/coinMarketPanel.ts", within: "handleMarketSubmit", anchor: "sections: [copy.notInGuild", kind: "race", why: "the trade modal's Submit: handleMarketPress refused outside a server at the press, so only a forged Submit meets it" },
+	{ file: "features/economy/coinMarketPanel.ts", within: "handleMarketSubmit", anchor: "sections: [copy.invalidAmount", kind: "race", why: "the trade modal's Submit: an amount that is no whole number of coins is typed into the modal, so only its Submit can meet it" },
+	{ file: "features/economy/coinMarketPanel.ts", within: "handleMarketSubmit", anchor: "sections: [copy.closed", kind: "race", why: "the trade modal's Submit: the press refused a server with chips off, so a Submit meets it only when an admin switched chips off while the modal stood open" },
+	{ file: "features/economy/coinMarketPanel.ts", within: "handleMarketSubmit", anchor: "sections: [refusal]", kind: "race", why: "the trade modal's Submit: the press read the cap, the chips and the coins, so a refusal here means another trade (in any server, since both wallets are global) spent them while the modal stood open, or the amount typed passes what is left" },
+	{ file: "features/economy/coinMarketPanel.ts", within: "handleMarketSubmit", anchor: "copy.failed", kind: "failure" },
 
 	// ── economy/chipEconomySubcommands.ts ──
 	{ file: "features/economy/chipEconomySubcommands.ts", within: "toggle", kind: "state" },

@@ -99,6 +99,11 @@ const guildConfigSchema = new Schema(
 		// so every existing row loads and the boot sweep reads the null as "missing, build
 		// it", which is how existing guilds get the channel once, on their next boot.
 		arcadeRatedChallengesChannelId: { type: String, required: false, default: null },
+		// 🏪dero-market, the sixth arcade channel (2026-10 item 267 Session 2a): members buy Dero
+		// coins with chips and sell them back from the two buttons under its intro, and every
+		// finished trade posts there (answerInChannel's "market" audience). Nullable like its
+		// siblings, so the boot sweep reads the null as "missing, build it" once.
+		deroMarketChannelId: { type: String, required: false, default: null },
 
 		// ── the two managed VOICE rooms (2026-10 item 235) ──
 		// 🏛️ Meeting Hall under the homebase category and 🎮 Arcade Lounge under the
@@ -483,6 +488,9 @@ const guildConfigSchema = new Schema(
 				// 🏆rated-challenges' intro (2026-10 item 254, Arcade 5). Declared for the
 				// reason the post mortem gives: undeclared, it would repost on every boot.
 				arcadeRatedChallengesChannelId: { type: String, required: false, default: null },
+				// 🏪dero-market's intro (2026-10 item 267 Session 2a). Declared for the reason the
+				// post mortem gives: undeclared, it would repost on every boot.
+				deroMarketChannelId: { type: String, required: false, default: null },
 				// The two voice rooms' cards (/dero's Join, Leave and Status, 2026-10 item
 				// 245 Phase 4b), one anchor per room. Declared for the reason the post
 				// mortem gives: undeclared, the card would repost on every boot.

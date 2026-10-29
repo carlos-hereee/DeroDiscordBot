@@ -61,6 +61,7 @@ const EXISTING_IDS = {
 	arcadeGamesChannelId: "ch-arcadegames",
 	partyGamesChannelId: "ch-partygames",
 	arcadeRatedChallengesChannelId: "ch-ratedchallenges",
+	deroMarketChannelId: "ch-deromarket",
 	meetingVoiceChannelId: "ch-meetingvoice",
 	arcadeVoiceChannelId: "ch-arcadevoice",
 };

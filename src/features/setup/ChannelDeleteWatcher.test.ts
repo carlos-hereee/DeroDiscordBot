@@ -648,6 +648,8 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			"partyGamesChannelId",
 			// 🏆rated-challenges, the fifth (2026-10 item 254, Arcade 5).
 			"arcadeRatedChallengesChannelId",
+			// 🏪dero-market, the sixth (2026-10 item 267 Session 2a).
+			"deroMarketChannelId",
 			// The two voice rooms, one per category (2026-10 item 235).
 			"meetingVoiceChannelId",
 			"arcadeVoiceChannelId",
@@ -681,6 +683,7 @@ describe("GuildSetupManager.CHANNEL_SPECS", () => {
 			"arcadeRatedChallengesChannelId",
 			"arcadeRulesChannelId",
 			"arcadeVoiceChannelId",
+			"deroMarketChannelId",
 			"partyGamesChannelId",
 		]);
 		// Every admin channel lives under Headquarters: the two that moved out of the

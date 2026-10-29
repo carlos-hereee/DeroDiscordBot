@@ -76,6 +76,8 @@ export const SLOT_LABELS: ReadonlyArray<{ label: string; configField: string }> 
 	{ label: "Party games", configField: "partyGamesChannelId" },
 	// 🏆rated-challenges (2026-10 item 254, Arcade 5), an autocomplete row like Games.
 	{ label: "Rated challenges", configField: "arcadeRatedChallengesChannelId" },
+	// 🏪dero-market (2026-10 item 267 Session 2a), an autocomplete row like Games.
+	{ label: "Dero market", configField: "deroMarketChannelId" },
 	// ── the two voice rooms (2026-10 item 235) ──
 	// Renameable like every other managed channel; the drift sweep and the
 	// repair path both honor the stored override for a voice room too.

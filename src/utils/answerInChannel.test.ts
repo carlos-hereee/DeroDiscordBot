@@ -16,6 +16,8 @@ import { RECORDS_ANSWERS, answerChannelId, answerInChannel, askInChannel, beginA
 
 const CONFIG = {
 	commandOutputChannelId: "c-commands",
+	// 🏪dero-market, where a finished trade posts (2026-10 item 267 Session 2a).
+	deroMarketChannelId: "c-market",
 	deroConfigChannelId: "c-dero-config",
 	onboardingConfigChannelId: "c-onboarding",
 	arcadeControlChannelId: "c-arcade",
@@ -70,6 +72,7 @@ beforeEach(() => {
 describe("answerChannelId", () => {
 	const routes: Array<[AnswerAudience, string]> = [
 		["member", "c-commands"],
+		["market", "c-market"],
 		["deroConfig", "c-dero-config"],
 		["onboarding", "c-onboarding"],
 		["arcade", "c-arcade"],
@@ -88,6 +91,16 @@ describe("answerChannelId", () => {
 });
 
 describe("answerInChannel", () => {
+	it("posts a finished trade in 🏪dero-market, pinging only the trader", async () => {
+		const channels = allChannels();
+		const fake = interaction({ kind: "modal", channels });
+		const place = await answerInChannel(fake, "market", { content: "bought 1 Dero coin." });
+
+		expect(place.channelId).toBe("c-market");
+		expect(channels.get("c-market")!.send).toHaveBeenCalledWith(expect.objectContaining({ content: "<@u-asker> bought 1 Dero coin.", allowedMentions: { parse: [], users: ["u-asker"] } }));
+		expect(channels.get("c-commands")!.send).not.toHaveBeenCalled();
+	});
+
 	it("posts a member's answer in the commands channel, pinging that one member in the content, and leaves no private message", async () => {
 		const channels = allChannels();
 		const fake = interaction({ kind: "component", channels });

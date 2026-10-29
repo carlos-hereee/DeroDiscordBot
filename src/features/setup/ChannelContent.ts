@@ -5,6 +5,8 @@ import { DERO_GIF_URL, COLORS, DERO_GIF_REF } from "@base/copy/brand.js";
 import { deroArtAttachment } from "@features/renderer/deroArt.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { rulesContent, type IRulesConfig } from "./rulesContent.js";
+import { isChipEconomyOn, type ChipEconomySetting } from "@features/economy/chipWallet.js";
+import { chips, coins } from "@features/economy/economyCopy.js";
 // botInviteLink is composed in @utils/config from the env-driven
 // clientId, so a dev process serves the dev install URL and a prod
 // process serves the prod install URL automatically. We deliberately
@@ -268,6 +270,21 @@ export const ChannelContent = {
 		const copy = getPluginCopy(guildConfig);
 		const cc = copy.channelContent;
 		return infoEmbed(cc.partyGames.title, cc.partyGames.description, copy.COLORS.ARCADE);
+	},
+
+	// 🏪dero-market's intro (2026-10 item 267 Session 2a), above the Buy coins and Sell
+	// coins buttons (features/economy/coinMarketPanel). The rate and the cap are read from
+	// ECONOMY.MARKET here, so the card never states a number the trade does not charge.
+	// A server with chips off reads closed: the intro is drawn from the stored row on
+	// every refresh, so switching chips changes the card on the next boot.
+	deroMarketIntro(guildConfig?: (ICopyConfig & ChipEconomySetting) | null): EmbedBuilder {
+		const copy = getPluginCopy(guildConfig);
+		const market = copy.channelContent.deroMarket;
+		const rate = BOT_CONSTANTS.ECONOMY.MARKET;
+		const description = isChipEconomyOn(guildConfig)
+			? market.description({ buyPrice: chips(rate.COIN_BUY_PRICE_CHIPS), sellPrice: chips(rate.COIN_SELL_PRICE_CHIPS), dailyCap: coins(rate.DAILY_COIN_BUY_CAP) })
+			: market.closed;
+		return infoEmbed(market.title, description, copy.COLORS.ARCADE);
 	},
 
 	// ── 👋welcome and 📘rules (2026-10 item 247 Phase 2) ──────────────

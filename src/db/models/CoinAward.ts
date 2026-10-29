@@ -3,7 +3,8 @@ import mongoose from "mongoose";
 
 // ── CoinAward ──
 // What:  the append only ledger of Dero coins paid (2026-10 item 257, Phase 3a): one row
-//        per member per game result, and one per member per daily claim.
+//        per member per game result, one per member per daily claim, and one per trade in
+//        🏪dero-market (2026-10 item 267 Session 2a): a buy adds coins, a sell takes them.
 // Who:   written ONLY by features/economy/deroCoins.ts through deroCoinStore; read by the
 //        same module for the solo daily cap, and by the owner's Verse view (Phase 3b) for
 //        coins collected and games completed.
@@ -13,13 +14,20 @@ import mongoose from "mongoose";
 // ⚠️ THE MONEY INVARIANT (risk R3 in the plan): a retry, a rematch press, two racing
 // presses or a sweep finishing a finished room must never pay twice. The two partial
 // unique indexes below make the SECOND insert of one award fail with a duplicate key,
-// and deroCoins only moves a wallet after its own insert succeeded.
+// and deroCoins only moves a wallet after its own insert succeeded. A market row is no
+// award and has no such index: each one records a trade whose own conditional wallet
+// write already ran once (coinMarket.ts), so a wallet is rebuilt from this ledger as
+// every game, claim and buy row's amount, less every sell row's.
 
-export const COIN_AWARD_SOURCES = ["game", "claim"] as const;
+export const COIN_AWARD_SOURCES = ["game", "claim", "market"] as const;
 export type CoinAwardSource = (typeof COIN_AWARD_SOURCES)[number];
 
 export const COIN_AWARD_OUTCOMES = ["won", "drawn", "played"] as const;
 export type CoinAwardOutcome = (typeof COIN_AWARD_OUTCOMES)[number];
+
+/** Which way a market trade went: coins bought with chips, or coins sold for chips. */
+export const MARKET_SIDES = ["buy", "sell"] as const;
+export type MarketSide = (typeof MARKET_SIDES)[number];
 
 export interface ICoinAward {
 	userId: string;
@@ -33,8 +41,13 @@ export interface ICoinAward {
 	// A game award only: the result's key, the room id for a game played in a room, or the
 	// stable key of its own a channel game names (deroCoins.ts lists them).
 	roomId?: string;
-	// A claim only: the UTC day plus the guild ("2026-10-27:<guildId>").
+	// A claim only: the UTC day ("2026-10-28"); rows written before 2026-10 item 267 carry
+	// the day plus the guild.
 	claimKey?: string;
+	// A market trade only: its side, and the chips it cost or paid. `amount` stays the
+	// coins moved, positive either way; the side says which way.
+	marketSide?: MarketSide;
+	chips?: number;
 	at: Date;
 }
 
@@ -47,6 +60,8 @@ const coinAwardSchema = new mongoose.Schema<ICoinAward>({
 	outcome: { type: String, enum: COIN_AWARD_OUTCOMES },
 	roomId: { type: String },
 	claimKey: { type: String },
+	marketSide: { type: String, enum: MARKET_SIDES },
+	chips: { type: Number, min: 0 },
 	at: { type: Date, required: true },
 });
 

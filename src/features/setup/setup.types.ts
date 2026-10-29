@@ -49,6 +49,8 @@ export interface ICreatedChannels {
 	partyGamesChannelId: string;
 	// 🏆rated-challenges, the rated games' challenges (2026-10 item 254, Arcade 5).
 	arcadeRatedChallengesChannelId: string;
+	// 🏪dero-market, chips for Dero coins and back (2026-10 item 267 Session 2a).
+	deroMarketChannelId: string;
 	// ── the two voice rooms (2026-10 item 235), one under each category ──
 	meetingVoiceChannelId: string;
 	arcadeVoiceChannelId: string;
@@ -85,6 +87,7 @@ export interface IChannelObjects {
 	arcadeGamesChannel: TextChannel;
 	partyGamesChannel: TextChannel;
 	arcadeRatedChallengesChannel: TextChannel;
+	deroMarketChannel: TextChannel;
 	// The two voice rooms, so a fresh build can post their intros (2026-10 item 245).
 	meetingVoiceChannel: VoiceChannel;
 	arcadeVoiceChannel: VoiceChannel;

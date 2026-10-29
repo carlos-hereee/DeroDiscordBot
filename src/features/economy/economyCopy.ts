@@ -17,6 +17,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 const CLAIM_COINS = BOT_CONSTANTS.DERO_COINS.CLAIM;
 const VAULT_DAILY_RECEIVE_CAP = BOT_CONSTANTS.ECONOMY.VAULT_DAILY_RECEIVE_CAP;
+const MARKET = BOT_CONSTANTS.ECONOMY.MARKET;
 
 /** A number of chips as members read it: "25,000 chips", "1 chip". */
 export function chips(amount: number): string {
@@ -60,6 +61,47 @@ export const economyCopy = {
 		// No 💬dero-commands yet (setup not rerun since it was added): the result answers
 		// the member privately instead, with the reason.
 		noCommandsChannel: "This server has no Dero commands channel yet, so your round shows only to you.",
+	},
+
+	// ── 🏪dero-market (2026-10 item 267 Session 2a, owner decision 5) ──
+	// The Buy coins and Sell coins buttons under the channel's intro, their modals, the
+	// states a press or a Submit can meet, and the answer a finished trade posts in the
+	// channel. Every price and the cap read ECONOMY.MARKET, never a typed number.
+	market: {
+		buyLabel: "Buy coins",
+		sellLabel: "Sell coins",
+		buyModalTitle: "🪙 Buy Dero coins",
+		sellModalTitle: "💰 Sell Dero coins",
+		buyRate: `1 Dero coin costs ${chips(MARKET.COIN_BUY_PRICE_CHIPS)}. You may buy up to ${coins(MARKET.DAILY_COIN_BUY_CAP)} a day across every server.`,
+		sellRate: `1 Dero coin sells for ${chips(MARKET.COIN_SELL_PRICE_CHIPS)}, as many as you like.`,
+		balances: (view: { chips: number; coins: number; buyLeftToday: number }): string =>
+			`You hold **${chips(view.chips)}** and **${coins(view.coins)}**. Coins you may still buy today: **${view.buyLeftToday}**.`,
+		amountLabel: "How many coins",
+		amountPlaceholder: (most: number): string => (most === 1 ? "1" : `1 to ${most.toLocaleString("en-US")}`),
+		// A press on a server with chips off, and the line the closed intro also gives.
+		closed: "Chips are switched off in this server, so the market is closed here. Your chips and coins are yours in every server, and the market is open wherever chips are on.",
+		capSpent: (nextDay: Date): string =>
+			`You bought your ${coins(MARKET.DAILY_COIN_BUY_CAP)} for today. Buying opens again at midnight UTC, ${relative(nextDay)}. Selling is open any time.`,
+		capLeft: (leftToday: number): string =>
+			leftToday > 0
+				? `You may buy only **${coins(leftToday)}** more today, across every server. Nothing moved.`
+				: `You already bought your ${coins(MARKET.DAILY_COIN_BUY_CAP)} for today. Nothing moved.`,
+		cannotAfford: (balance: number): string =>
+			`One Dero coin costs ${chips(MARKET.COIN_BUY_PRICE_CHIPS)}, and you hold ${chips(balance)}. Claim your daily chips or win a table first.`,
+		shortChips: (balance: number, price: number): string => `That buy costs ${chips(price)}, and you hold ${chips(balance)}. Nothing moved.`,
+		nothingToSell: "You hold no Dero coins to sell. Games and the daily claim pay them.",
+		shortCoins: (balance: number): string => `You hold only ${coins(balance)}. Nothing moved.`,
+		invalidAmount: "Type a whole number of coins, like 2. Nothing moved.",
+		bought: (input: { coins: number; chipsPaid: number; chips: number; coinBalance: number; buyLeftToday: number }): string =>
+			`bought **${coins(input.coins)}** for **${chips(input.chipsPaid)}**. You now hold ${chips(input.chips)} and ${coins(input.coinBalance)}, and may buy ${input.buyLeftToday} more today.`,
+		sold: (input: { coins: number; chipsPaid: number; chips: number; coinBalance: number }): string =>
+			`sold **${coins(input.coins)}** for **${chips(input.chipsPaid)}**. You now hold ${chips(input.chips)} and ${coins(input.coinBalance)}.`,
+		// No 🏪dero-market stored yet (the boot that builds it has not run): the trade
+		// answers the member privately instead, with the reason.
+		noMarketChannel: "This server has no market channel yet, so your trade shows only to you.",
+		modalRefused: "Discord did not open the market's form just now. Press the button again in a moment.",
+		notInGuild: "The market works inside a server Dero is in.",
+		failed: "Dero could not finish that trade just now. Check your balances on `/account` before you try again.",
 	},
 
 	// ── /arcade chips (admin facing, plain and practical) ──

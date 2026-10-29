@@ -964,6 +964,18 @@ export const BOT_CONSTANTS = {
 		HOLDEM_BUY_IN_PRESETS: [1_000, 2_500, 5_000, 10_000] as readonly number[],
 		HOLDEM_MIN_BUY_IN: 200,
 		HOLDEM_MAX_BUY_IN: 1_000_000,
+		// ── 🏪dero-market (2026-10 item 267 Session 2a, owner decision 5 of 2026-10-28) ──
+		// The one place chips and Dero coins trade (features/economy/coinMarket.ts).
+		MARKET: {
+			// A coin costs 2,000 chips and sells back for 500. The 4 to 1 gap is deliberate:
+			// every round trip burns 1,500 chips, so the market drains chips from the economy
+			// rather than becoming a free exchange between the two currencies.
+			COIN_BUY_PRICE_CHIPS: 2_000,
+			COIN_SELL_PRICE_CHIPS: 500,
+			// At most 3 coins bought per member per UTC day, across every server, so chips
+			// cannot buy coins out of their scarcity (risk R4). Selling is uncapped.
+			DAILY_COIN_BUY_CAP: 3,
+		},
 	},
 
 	// ── Dero bot opponents (2026-10 item 250 Phase 5) ─────────────

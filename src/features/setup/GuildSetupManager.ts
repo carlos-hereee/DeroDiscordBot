@@ -26,6 +26,7 @@ import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox
 import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
 import { buildArcadeHostRow, buildHangmanCategoryStartRow } from "@features/games/arcadeHost.js";
 import { buildPartyGamesRow } from "@features/game-rooms/partyGames.js";
+import { buildMarketRow } from "@features/economy/coinMarketPanel.js";
 import { buildSoloLuckRow } from "@features/games/soloLuck.js";
 import { boardStartRows } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { buildGameRequestRow } from "@features/game-rooms/gameRequestHandlers.js";
@@ -353,6 +354,7 @@ export class GuildSetupManager {
 			arcadeGamesChannelId: ids.arcadeGamesChannelId,
 			partyGamesChannelId: ids.partyGamesChannelId,
 			arcadeRatedChallengesChannelId: ids.arcadeRatedChallengesChannelId,
+			deroMarketChannelId: ids.deroMarketChannelId,
 			// ── the two voice rooms (2026-10 item 235) ──
 			meetingVoiceChannelId: ids.meetingVoiceChannelId,
 			arcadeVoiceChannelId: ids.arcadeVoiceChannelId,
@@ -799,6 +801,8 @@ export class GuildSetupManager {
 		"partyGamesChannelId",
 		// 🏆rated-challenges, the fifth (2026-10 item 254, Arcade 5).
 		"arcadeRatedChallengesChannelId",
+		// 🏪dero-market, the sixth (2026-10 item 267 Session 2a).
+		"deroMarketChannelId",
 		// ── the two VOICE rooms, one under each category (2026-10 item 235) ──
 		// They widen the resolveIntroEmbed switch like every other field; each
 		// carries the small /dero card in its text chat (2026-10 item 245 Phase 4b).
@@ -918,6 +922,14 @@ export class GuildSetupManager {
 		// ⚔️challenges: members read the cards and press their buttons, Dero writes them.
 		// arcadeSwitch reads the arcade's specs by category, so arcade off takes it too.
 		{ configField: "arcadeRatedChallengesChannelId", displayName: channels.arcadeRatedChallenges, kind: "public", categoryField: "gamesCategoryId" },
+		// 🏪dero-market (2026-10 item 267 Session 2a, owner decision 5). ⚠️ THIS LINE ARMS THE
+		// BOOT REPAIR SWEEP for every existing guild, exactly as 🏆rated-challenges did: a
+		// legacy row loads deroMarketChannelId as null, the sweep reads null as case ③
+		// "missing, build it", and the channel appears under 🎮 ARCADE GAMES on the next boot,
+		// once. "public" because members only press its two buttons and read the trades Dero
+		// posts; nobody types there. arcadeSwitch reads the arcade's specs by category, so
+		// arcade off takes it too.
+		{ configField: "deroMarketChannelId", displayName: channels.deroMarket, kind: "public", categoryField: "gamesCategoryId" },
 
 		// ── the two VOICE rooms (2026-10 item 235) ──
 		// ⚠️ THESE ARM THE BOOT REPAIR SWEEP for every existing guild, by the owner's
@@ -1017,6 +1029,10 @@ export class GuildSetupManager {
 				return ChannelContent.partyGamesIntro(guildConfig);
 			case "arcadeRatedChallengesChannelId":
 				return ChannelContent.arcadeRatedChallengesIntro(guildConfig);
+			// The rate, the cap, and closed on a server with chips off: the stored row carries
+			// the switch, which is why the market's intro takes the whole config.
+			case "deroMarketChannelId":
+				return ChannelContent.deroMarketIntro(guildConfig);
 			// ── the voice rooms ──
 			// One small card in each room's built in text chat, carrying /dero's
 			// Join, Leave and Status (2026-10 item 245 Phase 4b, the owner's decision).
@@ -1098,6 +1114,10 @@ export class GuildSetupManager {
 				// card because a message cannot show a button to admins only; partyGames
 				// refuses anyone else on the press.
 				return [buildPartyGamesRow()];
+			case "deroMarketChannelId":
+				// Buy coins and Sell coins (2026-10 item 267 Session 2a). Each press reads the
+				// chip switch again, so a closed market refuses even under an older intro.
+				return [buildMarketRow()];
 			case "rulesChannelId":
 				// Edit rules, the owner and admins' way to replace the rules post's text
 				// (2026-10 item 247 Phase 2). It rides the public post because a message
@@ -2573,6 +2593,7 @@ export class GuildSetupManager {
 			arcadeGamesChannel,
 			partyGamesChannel,
 			arcadeRatedChallengesChannel,
+			deroMarketChannel,
 			meetingVoiceChannel,
 			arcadeVoiceChannel,
 			deroConfigChannel,
@@ -2694,6 +2715,14 @@ export class GuildSetupManager {
 				parent: gamesCategory.id,
 				permissionOverwrites: publicOverwrites,
 			}),
+			// 🏪dero-market (2026-10 item 267 Session 2a), the same parent and posture: members
+			// press its two buttons and read the trades Dero posts.
+			guild.channels.create({
+				name: channels.deroMarket,
+				type: ChannelType.GuildText,
+				parent: gamesCategory.id,
+				permissionOverwrites: publicOverwrites,
+			}),
 			// ── the two voice rooms, one per category (2026-10 item 235) ──
 			// Same parent rule as above: the meeting room is homebase, the lounge is
 			// arcade. Both take the voice shape, the posture buildSingleChannel also
@@ -2766,6 +2795,7 @@ export class GuildSetupManager {
 				arcadeGamesChannelId: arcadeGamesChannel.id,
 				partyGamesChannelId: partyGamesChannel.id,
 				arcadeRatedChallengesChannelId: arcadeRatedChallengesChannel.id,
+				deroMarketChannelId: deroMarketChannel.id,
 				meetingVoiceChannelId: meetingVoiceChannel.id,
 				arcadeVoiceChannelId: arcadeVoiceChannel.id,
 				headquartersCategoryId: headquartersCategory.id,
@@ -2791,6 +2821,7 @@ export class GuildSetupManager {
 				arcadeGamesChannel,
 				partyGamesChannel,
 				arcadeRatedChallengesChannel,
+				deroMarketChannel,
 				meetingVoiceChannel,
 				arcadeVoiceChannel,
 				deroConfigChannel,
@@ -2860,6 +2891,8 @@ export class GuildSetupManager {
 			partyGamesChannelId: string;
 			// 🏆rated-challenges' intro (2026-10 item 254, Arcade 5).
 			arcadeRatedChallengesChannelId: string;
+			// 🏪dero-market's intro, above Buy coins and Sell coins (2026-10 item 267 Session 2a).
+			deroMarketChannelId: string;
 			// Second pinned message in #command-center: the standalone invite card.
 			inviteCardId: string;
 			// The two voice rooms' cards, one anchor per room like every channel's.
@@ -2889,6 +2922,7 @@ export class GuildSetupManager {
 			arcadeGamesChannel,
 			partyGamesChannel,
 			arcadeRatedChallengesChannel,
+			deroMarketChannel,
 			meetingVoiceChannel,
 			arcadeVoiceChannel,
 			deroConfigChannel,
@@ -2931,6 +2965,8 @@ export class GuildSetupManager {
 			partyGamesMsg,
 			// 🏆rated-challenges' intro, a one line card like ⚔️challenges'.
 			arcadeRatedChallengesMsg,
+			// 🏪dero-market's intro with Buy coins and Sell coins, pinned below.
+			deroMarketMsg,
 			// Second #command-center message: the standalone invite card (pitch +
 			// Dero gif + Summon button), pinned separately from the command guide.
 			inviteCardMsg,
@@ -2982,6 +3018,7 @@ export class GuildSetupManager {
 				.then(async (intro) => ({ intro, board: await arcadeGamesChannel.send(GuildSetupManager.gamesBoardContent()) })),
 			partyGamesChannel.send({ embeds: [ChannelContent.partyGamesIntro()], components: GuildSetupManager.resolveIntroComponents("partyGamesChannelId") ?? [] }),
 			arcadeRatedChallengesChannel.send({ embeds: [ChannelContent.arcadeRatedChallengesIntro()] }),
+			deroMarketChannel.send({ embeds: [ChannelContent.deroMarketIntro()], components: GuildSetupManager.resolveIntroComponents("deroMarketChannelId") ?? [] }),
 			// Standalone invite card in #command-center: short pitch + Dero gif + the
 			// Summon button. Its own message so the wide button is not crammed into
 			// the command guide's row. refreshIntroEmbeds maintains it on boot.
@@ -3017,6 +3054,13 @@ export class GuildSetupManager {
 		} catch (error) {
 			console.warn(LOG_MESSAGES.setup.pinScheduleIntroFailed(discordChannels.commandOutputChannel.guildId), error);
 		}
+		// 🏪dero-market is read only, but every finished trade posts there and would bury
+		// the panel, so its intro is pinned like the two above (refreshIntroEmbeds agrees).
+		try {
+			await deroMarketMsg.pin();
+		} catch (error) {
+			console.warn(LOG_MESSAGES.setup.pinScheduleIntroFailed(discordChannels.deroMarketChannel.guildId), error);
+		}
 
 		return {
 			scheduleMessageId: scheduleMessage.id,
@@ -3040,6 +3084,7 @@ export class GuildSetupManager {
 				arcadeGamesBoardId: arcadeGamesMsgs.board.id,
 				partyGamesChannelId: partyGamesMsg.id,
 				arcadeRatedChallengesChannelId: arcadeRatedChallengesMsg.id,
+				deroMarketChannelId: deroMarketMsg.id,
 				inviteCardId: inviteCardMsg.id,
 				meetingVoiceChannelId: meetingVoiceMsg.id,
 				arcadeVoiceChannelId: arcadeVoiceMsg.id,
@@ -3229,7 +3274,9 @@ export class GuildSetupManager {
 			// homebase channel is read-only, so the bot's message stays put with
 			// nothing to bury it and a pin is just noise (see populateChannels).
 			// The two member-writable channels: introductions and 💬dero-commands.
-			const shouldBePinned = spec.configField === "introChannelId" || spec.configField === "commandOutputChannelId";
+			// 🏪dero-market is the third: members never type there, but every finished trade
+			// posts there and would bury the panel its two buttons ride on.
+			const shouldBePinned = spec.configField === "introChannelId" || spec.configField === "commandOutputChannelId" || spec.configField === "deroMarketChannelId";
 
 			// Try to fetch the stored message. If present, compare its
 			// embed to the fresh one; if equivalent, we are done for

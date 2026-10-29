@@ -111,6 +111,8 @@ export const HOMEBASE_CHANNEL_FIELDS = [
 	"partyGamesChannelId",
 	// 🏆rated-challenges (2026-10 item 254, Arcade 5)
 	"arcadeRatedChallengesChannelId",
+	// 🏪dero-market (2026-10 item 267 Session 2a)
+	"deroMarketChannelId",
 	// The two voice rooms, one per category (2026-10 item 235)
 	"meetingVoiceChannelId",
 	"arcadeVoiceChannelId",

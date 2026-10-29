@@ -252,6 +252,9 @@ export const generalEventsCopy: IPluginCopy = {
 		commands: "📜 Commands",
 		rules: "📖 Rules",
 		ownerTools: "👑 Owner tools",
+		// 🏪dero-market's states (2026-10 item 267 Session 2a): chips off here, the day's buys
+		// spent, nothing to sell, a wallet short of one coin.
+		market: "🏪 Dero market",
 	},
 
 	// The words utils/answerInChannel.ts shows itself. Discord cuts a notice title at 45.
@@ -338,6 +341,8 @@ export const generalEventsCopy: IPluginCopy = {
 			// The rated games' challenges and the network board (mirrors rok-commander,
 			// 2026-10 item 254, Arcade 5).
 			arcadeRatedChallenges: "🏆rated-challenges",
+			// The coin market (mirrors rok-commander, 2026-10 item 267 Session 2a).
+			deroMarket: "🏪dero-market",
 			// The two voice rooms, universal names for the same reason (mirrors
 			// rok-commander, 2026-10 item 235).
 			meetingVoice: "🏛️ Meeting Hall",
@@ -625,6 +630,18 @@ export const generalEventsCopy: IPluginCopy = {
 			description:
 				"When an admin starts a party game, everyone plays together here. A hangman round opens in this channel for the whole server at once, and admins can host a Texas hold em table or a Monopoly match from here too, with its challenge posted in 🏆rated-challenges.\n\n" +
 				"Upcoming party games are announced in 📢announcements, and the list of who is coming lives in 🔜upcoming-events. RSVP there so the host knows to wait for you.",
+		},
+
+		// 🏪dero-market's intro, plain voice (mirrors rok-commander, 2026-10 item 267 Session 2a).
+		deroMarket: {
+			title: "🏪 Dero Market",
+			description: (rate: { buyPrice: string; sellPrice: string; dailyCap: string }): string =>
+				"Trade chips for Dero coins and coins back for chips.\n\n" +
+				`**Buy.** One Dero coin costs ${rate.buyPrice}, up to ${rate.dailyCap} a day across every server.\n` +
+				`**Sell.** One Dero coin pays ${rate.sellPrice}, as many as you hold.\n\n` +
+				"Press a button below. You see both balances before you trade, and every finished trade is posted here with its trader's name.",
+			closed:
+				"Chips are switched off in this server, so the market is closed here. Your chips and coins are yours in every server, and the market is open wherever chips are on.",
 		},
 
 		// ── the voice rooms' intro (2026-10 item 245 Phase 4b) ──────────────

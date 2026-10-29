@@ -35,6 +35,7 @@ import { registerSuggestionBoxHandlers } from "@features/suggestion-box/Suggesti
 import { registerArcadeHostHandlers } from "@features/games/arcadeHost.js";
 import { registerSoloLuckHandlers } from "@features/games/soloLuck.js";
 import { registerClaimRoundHandlers } from "@features/economy/chipClaim.js";
+import { registerCoinMarketHandlers } from "@features/economy/coinMarketPanel.js";
 import { migrateGlobalChipWallets } from "@features/economy/migrateGlobalChipWallets.js";
 import { registerPartyGameHandlers } from "@features/game-rooms/partyGames.js";
 import { registerGameRequestHandlers } from "@features/game-rooms/gameRequestHandlers.js";
@@ -392,6 +393,7 @@ process.on("uncaughtException", (err) => {
 	registerNoticeModal();
 	registerPowerUpHandlers();
 	registerClaimRoundHandlers();
+	registerCoinMarketHandlers();
 	// Every admin command's button on the admin guide, with the pick, the optional
 	// field pick and the form each one opens (2026-10 item 245 Phase 4b).
 	registerAdminCommandLauncher();

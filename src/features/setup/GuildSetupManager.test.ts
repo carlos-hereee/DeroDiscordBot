@@ -75,6 +75,9 @@ function makeStoredConfig(overrides: Partial<Record<string, unknown>> = {}) {
 		// 🏆rated-challenges (2026-10 item 254, Arcade 5), present for the same reason; its
 		// boot test in GuildSetupManager.gamesChannel.test.ts nulls it.
 		arcadeRatedChallengesChannelId: "ch-ratedchallenges",
+		// 🏪dero-market (2026-10 item 267 Session 2a), present for the same reason; its boot
+		// test in GuildSetupManager.gamesChannel.test.ts nulls it.
+		deroMarketChannelId: "ch-deromarket",
 		// The two voice rooms (2026-10 item 235), present for the same reason:
 		// a null id reads as "missing, rebuild too". Their own tests null them.
 		meetingVoiceChannelId: "ch-meetingvoice",
@@ -174,6 +177,7 @@ function makeGuild(options: {
 		"ch-arcadegames": { id: "ch-arcadegames" },
 		"ch-partygames": { id: "ch-partygames" },
 		"ch-ratedchallenges": { id: "ch-ratedchallenges" },
+		"ch-deromarket": { id: "ch-deromarket" },
 		"ch-meetingvoice": { id: "ch-meetingvoice" },
 		"ch-arcadevoice": { id: "ch-arcadevoice" },
 		// 🏰 DERO HEADQUARTERS and its channels, and 💬dero-commands, present by default too.
@@ -955,7 +959,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		};
 	}
 
-	it("builds exactly three categories and twenty channels, each once", async () => {
+	it("builds exactly three categories and twenty one channels, each once", async () => {
 		const { categories, textChannels } = await runFreshInstall();
 
 		// All three categories, in build order, with NO dev suffix: vitest runs under
@@ -968,7 +972,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 			rokCommanderCopy.setup.headquartersCategoryName,
 		]);
 
-		expect(textChannels).toHaveLength(20);
+		expect(textChannels).toHaveLength(21);
 		expect(textChannels.map((channel) => channel.name).sort()).toEqual(
 			[
 				packChannels.intro,
@@ -986,6 +990,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 				packChannels.arcadeGames,
 				packChannels.partyGames,
 				packChannels.arcadeRatedChallenges,
+				packChannels.deroMarket,
 				packChannels.deroConfig,
 				packChannels.onboardingConfig,
 				packChannels.arcadeControl,
@@ -999,7 +1004,7 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 	// the compiler cannot tell them apart and a swapped parent.id is a silent
 	// misfile. CHANNEL_SPECS.categoryField protects every OTHER consumer;
 	// createChannels passes the parent literally, so only a test protects it.
-	it("files the nine homebase channels, the five arcade channels and the six Headquarters channels under their own categories", async () => {
+	it("files the nine homebase channels, the six arcade channels and the six Headquarters channels under their own categories", async () => {
 		const { textChannels } = await runFreshInstall();
 
 		const homebaseParent = `cat-${rokCommanderCopy.setup.categoryName}`;
@@ -1035,14 +1040,14 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 			expect(parentOf(name), `${name} belongs under 🏰 DERO HEADQUARTERS`).toBe(headquartersParent);
 		}
 
-		for (const name of [packChannels.arcadeRules, packChannels.arcadeChallenges, packChannels.arcadeGames, packChannels.partyGames, packChannels.arcadeRatedChallenges]) {
+		for (const name of [packChannels.arcadeRules, packChannels.arcadeChallenges, packChannels.arcadeGames, packChannels.partyGames, packChannels.arcadeRatedChallenges, packChannels.deroMarket]) {
 			expect(parentOf(name), `${name} belongs under the arcade category`).toBe(arcadeParent);
 		}
 
 		// No channel may land unparented or under a third parent, which a typo
 		// in a parent id would otherwise produce without failing either loop.
 		expect(textChannels.filter((channel) => channel.parent === homebaseParent)).toHaveLength(9);
-		expect(textChannels.filter((channel) => channel.parent === arcadeParent)).toHaveLength(5);
+		expect(textChannels.filter((channel) => channel.parent === arcadeParent)).toHaveLength(6);
 		expect(textChannels.filter((channel) => channel.parent === headquartersParent)).toHaveLength(6);
 	});
 
@@ -1108,6 +1113,8 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		[packChannels.partyGames, "public"],
 		// 🏆rated-challenges: the rated half of ⚔️challenges, the same wall of bot cards.
 		[packChannels.arcadeRatedChallenges, "public"],
+		// 🏪dero-market: members press Buy and Sell and read the trades Dero posts.
+		[packChannels.deroMarket, "public"],
 		// 🏰 DERO HEADQUARTERS' four config channels: admin only, like 🔒inner-sanctum.
 		[packChannels.deroConfig, "admin"],
 		[packChannels.onboardingConfig, "admin"],
@@ -1131,14 +1138,14 @@ describe("GuildSetupManager.autoSetup channel creation", () => {
 		}
 	});
 
-	it("carries the bot self overwrite on all twenty channels", async () => {
+	it("carries the bot self overwrite on all twenty one channels", async () => {
 		// Not decoration. Without it the @everyone SendMessages deny suppresses
 		// the bot's OWN posts on a public channel, and the @everyone ViewChannel
 		// deny hides an admin channel from the bot entirely. Both fail at post
 		// time, long after setup reported success, so the failure surfaces as a
 		// missing intro embed rather than as a setup error.
 		const { textChannels } = await runFreshInstall();
-		expect(textChannels).toHaveLength(20);
+		expect(textChannels).toHaveLength(21);
 
 		for (const created of textChannels) {
 			const botEntry = (created.permissionOverwrites ?? []).find((entry) => entry.id === BOT_ID);

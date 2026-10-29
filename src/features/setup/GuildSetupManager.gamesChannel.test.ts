@@ -141,6 +141,8 @@ const EXISTING_IDS = {
 	partyGamesChannelId: "ch-partygames",
 	// 🏆rated-challenges (2026-10 item 254, Arcade 5), present for the same reason.
 	arcadeRatedChallengesChannelId: "ch-ratedchallenges",
+	// 🏪dero-market (2026-10 item 267 Session 2a), present for the same reason.
+	deroMarketChannelId: "ch-deromarket",
 	// 🕹️games itself exists as a channel, so the 🏆rated-challenges suite below can boot a
 	// guild that has it; legacyRow stores its id as null, which is what the 🕹️games suite
 	// repairs.
@@ -490,5 +492,58 @@ describe("🏆rated-challenges on an existing guild's boot", () => {
 
 		expect(world.create).not.toHaveBeenCalled();
 		expect(world.readStored().arcadeRatedChallengesChannelId).toBeNull();
+	});
+});
+
+// ── 🏪dero-market (2026-10 item 267 Session 2a) ─────────────────────────
+// The same boot repair path: a guild set up before the market existed loads its id as
+// null, and the next boot builds it once, under 🎮 ARCADE GAMES, with its pinned panel.
+describe("🏪dero-market on an existing guild's boot", () => {
+	const MARKET_NAME = rokCommanderCopy.setup.channels.deroMarket;
+	const marketLegacyRow = (overrides: Record<string, unknown> = {}) => legacyRow({ arcadeGamesChannelId: "ch-games", deroMarketChannelId: null, ...overrides });
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.spyOn(console, "log").mockImplementation(() => undefined);
+		vi.spyOn(console, "warn").mockImplementation(() => undefined);
+	});
+	afterEach(() => vi.restoreAllMocks());
+
+	it("builds it exactly once, under 🎮 ARCADE GAMES, with its pinned Buy and Sell panel, and persists its id", async () => {
+		const world = makeWorld(marketLegacyRow());
+
+		await world.boot();
+
+		expect(world.create).toHaveBeenCalledOnce();
+		const call = world.create.mock.calls[0][0] as CreateCall;
+		expect(call).toMatchObject({ name: MARKET_NAME, type: ChannelType.GuildText, parent: GAMES_CATEGORY_ID });
+		// Read only for members: they press the two buttons and read the trades Dero posts.
+		expect(call.permissionOverwrites?.find((entry) => entry.id === "everyone")).toEqual({
+			id: "everyone",
+			allow: [PermissionFlagsBits.ViewChannel],
+			deny: [PermissionFlagsBits.SendMessages],
+		});
+		const market = world.created[0];
+		expect(market.send.mock.calls.map(titleOf)).toEqual([rokCommanderCopy.channelContent.deroMarket.title]);
+		const [intro] = [...market.messages.values()];
+		expect(customIdsOf(intro.components)).toEqual(["market:buy", "market:sell"]);
+		expect(intro.pin).toHaveBeenCalled();
+		const stored = world.readStored();
+		expect(stored.deroMarketChannelId).toBe(market.channel.id);
+		expect(stored.introMessageIds).toMatchObject({ deroMarketChannelId: intro.id });
+
+		// A second boot builds nothing more and posts nothing more.
+		await world.boot();
+		expect(world.create).toHaveBeenCalledOnce();
+		expect(market.send).toHaveBeenCalledOnce();
+	});
+
+	it("states the rate and the cap from ECONOMY.MARKET, and reads closed with chips off", () => {
+		const open = ChannelContent.deroMarketIntro({ chipEconomyEnabled: true }).data.description ?? "";
+		expect(open).toContain("2,000 chips");
+		expect(open).toContain("500 chips");
+		expect(open).toContain("3 Dero coins");
+		const closed = ChannelContent.deroMarketIntro({ chipEconomyEnabled: false }).data.description;
+		expect(closed).toBe(rokCommanderCopy.channelContent.deroMarket.closed);
 	});
 });

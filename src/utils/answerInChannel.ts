@@ -18,9 +18,10 @@ import { acknowledgeTextModal, showNotice } from "./textModal.js";
 // What:  posts an answer to a command, a button or a modal in the channel it belongs
 //        in, instead of a private reply that sits under "Only you can see this •
 //        Dismiss message" (2026-10 item 257, owner decision 7, Phase 5). A member's
-//        answer posts in 💬dero-commands (GuildConfig.commandOutputChannelId); an
-//        admin's answer posts in the matching 🏰 DERO HEADQUARTERS channel by its
-//        domain. Every post mentions the member it answers in its content and pings
+//        answer posts in 💬dero-commands (GuildConfig.commandOutputChannelId), a
+//        finished trade in 🏪dero-market (deroMarketChannelId, 2026-10 item 267 Session
+//        2a); an admin's answer posts in the matching 🏰 DERO HEADQUARTERS channel by
+//        its domain. Every post mentions the member it answers in its content and pings
 //        that one member, nobody else (2026-10 item 263 Phase 1a, R3-10).
 // Who:   every site the private reply audit kept private for Discord's reasons (a
 //        slow answer after a defer, a modal Submit, a followUp, a reply carrying
@@ -45,6 +46,8 @@ import { acknowledgeTextModal, showNotice } from "./textModal.js";
 export type AnswerAudience =
 	/** a member's answer: 💬dero-commands */
 	| "member"
+	/** a finished trade in Dero coins: 🏪dero-market */
+	| "market"
 	/** Dero's own config and voice: ⚙️dero-config */
 	| "deroConfig"
 	/** Community and Onboarding: 🧭onboarding */
@@ -59,6 +62,7 @@ export type AnswerAudience =
 /** The GuildConfig fields an answer's channel is read from. */
 export interface AnswerChannelConfig extends ICopyConfig {
 	commandOutputChannelId?: string | null;
+	deroMarketChannelId?: string | null;
 	deroConfigChannelId?: string | null;
 	onboardingConfigChannelId?: string | null;
 	arcadeControlChannelId?: string | null;
@@ -109,6 +113,7 @@ export const RECORDS_ANSWERS = Symbol.for("dero.recordsAnswers");
 
 const AUDIENCE_FIELD: Record<AnswerAudience, keyof AnswerChannelConfig> = {
 	member: "commandOutputChannelId",
+	market: "deroMarketChannelId",
 	deroConfig: "deroConfigChannelId",
 	onboarding: "onboardingConfigChannelId",
 	arcade: "arcadeControlChannelId",
