@@ -61,11 +61,11 @@ describe("the opener card's settings line", () => {
 	const settingsLineOf = (state: OpenerCardState): string | undefined =>
 		(openerCardEmbed(state).data.description ?? "").split("\n").find((line) => line.startsWith(words.lead));
 
-	it("names Monopoly's auctions and referee, as the host set them", () => {
-		expect(settingsLineOf(card())).toBe(`${words.lead} ${[words.join.public, words.rated, words.watch.open, words.auctions(false), words.referee(false)].join(" · ")}`);
-		const on = settingsLineOf(card({ monopolyAuctions: true, referee: true })) ?? "";
+	it("names Monopoly's auctions and Dero voice, as the host set them", () => {
+		expect(settingsLineOf(card())).toBe(`${words.lead} ${[words.join.public, words.rated, words.watch.open, words.auctions(false), words.voice(false)].join(" · ")}`);
+		const on = settingsLineOf(card({ monopolyAuctions: true, deroVoice: true })) ?? "";
 		expect(on).toContain(words.auctions(true));
-		expect(on).toContain(words.referee(true));
+		expect(on).toContain(words.voice(true));
 	});
 
 	it("names who can join: Invite only, Open to all, approving each joiner, or the network", () => {
@@ -90,8 +90,8 @@ describe("the opener card's settings line", () => {
 		expect(settingsLineOf(card({ game: "holdem", network: true })) ?? "").not.toContain(words.watch.open);
 	});
 
-	it("gives a game with no match or switch only who can join and who may watch", () => {
-		expect(settingsLineOf(card({ game: "rps" }))).toBe(`${words.lead} ${words.join.public} · ${words.watch.open}`);
+	it("gives a game with no match only who can join, who may watch and Dero voice", () => {
+		expect(settingsLineOf(card({ game: "rps" }))).toBe(`${words.lead} ${words.join.public} · ${words.watch.open} · ${words.voice(false)}`);
 	});
 
 	it("shows what the host chose that could not apply, under the line", () => {

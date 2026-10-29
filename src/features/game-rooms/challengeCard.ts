@@ -121,7 +121,7 @@ export function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState
 		visibility: overrides.visibility ?? null,
 		pool: room.spectatorIds ?? [],
 		monopolyAuctions: room.monopolyAuctions ?? false,
-		referee: refereeOn(room),
+		deroVoice: refereeOn(room),
 		// A table the host opened to the network (2026-10 item 244 Phase 5b), off the row.
 		network: room.network ?? false,
 		// The host's say over who joins (2026-10 item 244 Phase 4), off the draft row.

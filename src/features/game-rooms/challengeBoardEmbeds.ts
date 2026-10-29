@@ -13,7 +13,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { bandWidth, isRatedGame } from "@features/ratings/ratingEngine.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
-import { isBuyInGame, offersReferee, type GameSlug, type RatingBand, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
+import { isBuyInGame, type GameSlug, type RatingBand, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
 import type { SoloLuckGame } from "@features/games/soloLuck.js";
 
 // The host controls' words are shared by every pack, so the default pack is the right
@@ -173,9 +173,8 @@ export interface OpenerCardState {
 	pool: string[];
 	// Monopoly only: the host's auction choice, named on the card's settings line.
 	monopolyAuctions?: boolean;
-	// The host's voice referee choice, on the games with voice lines (roomTypes.offersReferee:
-	// Monopoly and Hold'em, 2026-10 item 257 Phase 4b). Ignored for every other game.
-	referee?: boolean;
+	// The host's Dero voice choice, on every game's card (2026-10 item 267, decision 10).
+	deroVoice?: boolean;
 	// Terminal states. When any is set the card stops offering controls.
 	cancelled?: boolean;
 	startedChannelId?: string | null;
@@ -292,7 +291,7 @@ function settingsLine(state: OpenerCardState): string {
 	// A network table's watchers in other servers are its satellites' business, so it names none.
 	if (!state.network && state.hostControls) parts.push(summaryWords.watch[state.hostControls.spectatorMode]);
 	if (state.game === "monopoly") parts.push(summaryWords.auctions(state.monopolyAuctions ?? false));
-	if (offersReferee(state.game)) parts.push(summaryWords.referee(state.referee ?? false));
+	parts.push(summaryWords.voice(state.deroVoice ?? false));
 	return `${summaryWords.lead} ${parts.join(" · ")}`;
 }
 
@@ -350,8 +349,8 @@ function editSettingsButton(roomId: string): ButtonBuilder {
 // dead controls a member can still press.
 //
 // ⚠️ NO SETTING IS A CARD CONTROL (2026-10 item 263 R3-13). Visibility, the network, Play
-// Dero, approval, the band, who may watch, Rated or Casual, Play vs bots, the buy in, the
-// referee and the auctions are all chosen in the creation modal and changed through Edit
+// Dero, approval, the band, who may watch, Rated or Casual, Play vs bots, the buy in, Dero
+// voice and the auctions are all chosen in the creation modal and changed through Edit
 // settings. Their routes stay registered in gameRoomHandlers, so a card posted before the
 // change still works until its next redraw, which shows these rows.
 export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[] {

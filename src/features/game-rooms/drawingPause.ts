@@ -43,8 +43,8 @@ interface GameDrawingState {
 }
 
 // How long a finished span is kept. The longest clock that reads these spans is a
-// Monopoly seat's day, and a span that ended before a clock started is never counted
-// toward it, so a day is the furthest back any deadline can reach.
+// Monopoly seat's idle budget, and a span that ended before a clock started is never
+// counted toward it, so that budget is the furthest back any deadline can reach.
 const HELD_SPAN_RETENTION_MS = BOT_CONSTANTS.GAME_ROOM_MONOPOLY_IDLE_MS;
 
 const games = new Map<string, GameDrawingState>();

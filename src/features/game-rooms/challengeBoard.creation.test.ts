@@ -216,7 +216,7 @@ describe("the start press", () => {
 
 describe("the creation Submit", () => {
 	it("applies every Hold'em choice through the card's own functions, in a host's order, and posts the card configured", async () => {
-		const submit = submitOf("gameroom:newok:holdem", { join: "approve", watch: "invite", match: "rated-close", buyIn: "5,000", referee: "off" });
+		const submit = submitOf("gameroom:newok:holdem", { join: "approve", watch: "invite", match: "rated-close", buyIn: "5,000", voice: "off" });
 
 		await confirmChallengeDraft(submit, "holdem", null);
 
@@ -236,7 +236,7 @@ describe("the creation Submit", () => {
 		expect(actionsOf(rated.send)).toEqual(["join", "start", "edit", "cancel", "requests", "kick"]);
 		const description = descriptionOf(rated.send);
 		expect(description).toContain(gameRoomsCopy.creation.summary.join.approve);
-		expect(description).toContain(gameRoomsCopy.creation.summary.referee(false));
+		expect(description).toContain(gameRoomsCopy.creation.summary.voice(false));
 		expect(description).toContain(gameRoomsCopy.board.cardBuyIn(5_000));
 
 		// Acknowledged quietly, and no private line follows the card (R3-6).
@@ -245,21 +245,26 @@ describe("the creation Submit", () => {
 		expect(submit.followUp).not.toHaveBeenCalled();
 	});
 
-	// A new Hold'em row already reads as referee on (refereeOn, 2026-10 item 263 R3-28), so the
-	// default writes nothing and only the host's off is stored.
-	it("leaves the referee on for Hold'em by default (owner decision 5), storing only an off", async () => {
-		await confirmChallengeDraft(submitOf("gameroom:newok:holdem", { join: "public", watch: "open", match: "rated-any", buyIn: "", referee: "on" }), "holdem", null);
-		expect(patches().some((patch) => "referee" in patch)).toBe(false);
+	// A new Hold'em row already reads as voice on (refereeOn, 2026-10 item 263 R3-28), so the
+	// default writes nothing and only the host's off is stored, as deroVoice (2026-10 item 267).
+	it("leaves Dero voice on for Hold'em by default (owner decision 5), storing only an off", async () => {
+		await confirmChallengeDraft(submitOf("gameroom:newok:holdem", { join: "public", watch: "open", match: "rated-any", buyIn: "", voice: "on" }), "holdem", null);
+		expect(patches().some((patch) => "deroVoice" in patch)).toBe(false);
 
 		mocks.store.update.mockClear();
-		await confirmChallengeDraft(submitOf("gameroom:newok:holdem", { join: "public", watch: "open", match: "rated-any", buyIn: "", referee: "off" }), "holdem", null);
-		expect(patches()).toContainEqual({ referee: false });
+		await confirmChallengeDraft(submitOf("gameroom:newok:holdem", { join: "public", watch: "open", match: "rated-any", buyIn: "", voice: "off" }), "holdem", null);
+		expect(patches()).toContainEqual({ deroVoice: false });
+	});
+
+	it("stores Dero voice on for a game whose default is off, such as a coin flip", async () => {
+		await confirmChallengeDraft(submitOf("gameroom:newok:coinflip", { join: "public", watch: "open", opponent: "anyone", voice: "on" }), "coinflip", null);
+		expect(patches()).toContainEqual({ deroVoice: true });
 	});
 
 	it("accepts Casual without bots on a server with bots off, and posts the card in ⚔️challenges (R3-5)", async () => {
 		mocks.config.findByGuildId.mockResolvedValue({ ...baseConfig, botOpponentsEnabled: false });
 
-		await confirmChallengeDraft(submitOf("gameroom:newok:monopoly", { join: "public", watch: "open", match: "casual", table: [] }), "monopoly", null);
+		await confirmChallengeDraft(submitOf("gameroom:newok:monopoly", { join: "public", watch: "open", match: "casual", auctions: "off" }), "monopoly", null);
 
 		expect(patches()).toContainEqual({ casual: true, botSeats: 0 });
 		expect(rated.send).not.toHaveBeenCalled();
@@ -267,25 +272,33 @@ describe("the creation Submit", () => {
 		expect(descriptionOf(challenges.send).split("\n")[0]).toBe(gameRoomsCopy.board.badgeLine("casual", "monopoly"));
 	});
 
-	it("fills a casual table with Dero bots where they may sit", async () => {
-		await confirmChallengeDraft(submitOf("gameroom:newok:monopoly", { join: "public", watch: "open", match: "casual-bots", table: ["auctions"] }), "monopoly", null);
+	it("seats exactly the Dero bot count the host picked in The match, not the casual table's fill", async () => {
+		await confirmChallengeDraft(submitOf("gameroom:newok:monopoly", { join: "public", watch: "open", match: "casual-bots-2", auctions: "on" }), "monopoly", null);
 
-		expect(patches()).toContainEqual({ casual: true, botSeats: 3 });
+		expect(patches()).toContainEqual({ casual: true, botSeats: 2 });
 		expect(patches()).toContainEqual({ monopolyAuctions: true });
 		expect(challenges.send).toHaveBeenCalledOnce();
+	});
+
+	it("saves each Hold'em bot count from 1 to 5 exactly as picked", async () => {
+		for (const count of [1, 2, 3, 4, 5]) {
+			mocks.store.update.mockClear();
+			await confirmChallengeDraft(submitOf("gameroom:newok:holdem", { join: "public", watch: "open", match: `casual-bots-${count}`, buyIn: "" }), "holdem", null);
+			expect(patches()).toContainEqual({ casual: true, botSeats: count });
+		}
 	});
 
 	it("keeps a casual table with bots off a server that refuses them, rated, and says so on the card", async () => {
 		mocks.config.findByGuildId.mockResolvedValue({ ...baseConfig, botOpponentsEnabled: false });
 
-		await confirmChallengeDraft(submitOf("gameroom:newok:monopoly", { join: "public", watch: "open", match: "casual-bots", table: [] }), "monopoly", null);
+		await confirmChallengeDraft(submitOf("gameroom:newok:monopoly", { join: "public", watch: "open", match: "casual-bots-1", auctions: "off" }), "monopoly", null);
 
 		expect(rated.send).toHaveBeenCalledOnce();
 		expect(descriptionOf(rated.send)).toContain(gameRoomsCopy.creation.notApplied(gameRoomsCopy.creation.settingNames.casualBots, gameRoomsCopy.board.botsOff));
 	});
 
 	it("posts the card at the standard buy in when the typed one is out of range, and says so", async () => {
-		await confirmChallengeDraft(submitOf("gameroom:newok:holdem", { join: "public", watch: "open", match: "rated-any", buyIn: "12", referee: "on" }), "holdem", null);
+		await confirmChallengeDraft(submitOf("gameroom:newok:holdem", { join: "public", watch: "open", match: "rated-any", buyIn: "12", voice: "on" }), "holdem", null);
 
 		expect(mocks.store.setHoldemBuyIn).not.toHaveBeenCalled();
 		expect(rated.send).toHaveBeenCalledOnce();
@@ -325,27 +338,27 @@ describe("Edit settings", () => {
 	it("shows every field but the match until somebody joins, and only the three a joiner leaves after", async () => {
 		const before = pressOf();
 		await openSettingsEditor(before, makeRoom({ visibility: "public", boardMessageId: "card-1" }));
-		expect(fieldsShown(before)).toEqual(["join", "watch", "buyIn", "referee"]);
+		expect(fieldsShown(before)).toEqual(["join", "watch", "buyIn", "voice"]);
 
 		const after = pressOf();
 		await openSettingsEditor(after, makeRoom({ visibility: "public", boardMessageId: "card-1", spectatorIds: ["joiner-2"] }));
-		expect(fieldsShown(after)).toEqual(["watch", "referee"]);
+		expect(fieldsShown(after)).toEqual(["watch", "voice"]);
 	});
 
 	it("applies after a joiner only what a joiner leaves editable, whatever the Submit carries", async () => {
 		row = makeRoom({ game: "monopoly", visibility: "public", boardMessageId: "card-1", spectatorIds: ["joiner-2"] });
 
-		await confirmSettingsEdit(submitOf("gameroom:editok:room-1", { join: "invite", watch: "none", table: ["referee"] }), row);
+		await confirmSettingsEdit(submitOf("gameroom:editok:room-1", { join: "invite", watch: "none", voice: "on" }), row);
 
 		expect(patches()).toContainEqual({ spectatorMode: "none" });
-		expect(patches()).toContainEqual({ referee: true });
+		expect(patches()).toContainEqual({ deroVoice: true });
 		expect(patches().some((patch) => "visibility" in patch)).toBe(false);
 	});
 
 	it("changes who can join and the buy in before anybody joins, through the same functions", async () => {
 		row = makeRoom({ visibility: "public", boardMessageId: "card-1", holdemBuyIn: 5_000 });
 
-		await confirmSettingsEdit(submitOf("gameroom:editok:room-1", { join: "invite", watch: "invite", buyIn: "", referee: "on" }), row);
+		await confirmSettingsEdit(submitOf("gameroom:editok:room-1", { join: "invite", watch: "invite", buyIn: "", voice: "on" }), row);
 
 		expect(patches()).toContainEqual({ visibility: "invite" });
 		// A cleared buy in goes back to the standard stack.

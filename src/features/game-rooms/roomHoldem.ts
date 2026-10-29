@@ -375,7 +375,7 @@ export const aggressiveActionFor = (table: HoldemTable, userId: string) =>
 
 // ⚠️ FIVE BUTTONS IN ONE ROW AND NO MODAL. A modal for a raise size costs a round
 // trip and a focus change on every aggressive action, in a game where the turn
-// clock is 60 seconds. The presets below are why a modal is not needed: they cover
+// clock is 3 minutes. The presets below are why a modal is not needed: they cover
 // the sizes players actually use, and all in covers the rest.
 export function bettingRows(table: HoldemTable, roomId: string, potTotal: number, host?: TableHostState): ActionRowBuilder<ButtonBuilder>[] {
 	const acting = whoActs(table);
@@ -407,7 +407,7 @@ export function bettingRows(table: HoldemTable, roomId: string, potTotal: number
 	if (raise) {
 		// Two presets, not four. Half pot and pot are the sizes players actually
 		// reach for; anything larger is what All in is for, and a row of five
-		// near-identical numbers is harder to read under a 60 second clock than two.
+		// near-identical numbers is harder to read under a turn clock than two.
 		rows.push(
 			new ActionRowBuilder<ButtonBuilder>().addComponents(
 				action("half", gameRoomsCopy.holdem.halfPotLabel(Math.floor(potTotal / 2)), ButtonStyle.Secondary, true),

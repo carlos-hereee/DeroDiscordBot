@@ -5,7 +5,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 import { buildFieldsModal, readFieldAnswers, type FieldOption, type ModalField } from "./pickerModal.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isWithinReach } from "./challengeReach.js";
-import { takesBots } from "./botSeat.js";
+import { maxBotSeats, takesBots } from "./botSeat.js";
 import { effectiveSpectatorMode } from "./roomPermissions.js";
 import { SPECTATOR_MODES, refereeOn, type ChallengeReach, type GameSlug, type RatingBand, type SpectatorMode } from "./roomTypes.js";
 
@@ -30,35 +30,40 @@ export type SettingsGame = (typeof SETTINGS_GAMES)[number];
 export const isSettingsGame = (game: string): game is SettingsGame => (SETTINGS_GAMES as readonly string[]).includes(game);
 
 /** One setting of the creation modal; its name is also its field id on the modal. */
-export type SettingField = "join" | "watch" | "match" | "buyIn" | "referee" | "table" | "opponent";
+export type SettingField = "join" | "watch" | "match" | "buyIn" | "auctions" | "voice" | "opponent";
 
 /**
  * Each game's fields, in the order the modal shows them (owner decision 6, Round 3 decision
  * 2). Every game has Who can join and Who may watch; the rated games add The match; Hold'em
- * its Buy in and Referee; Blackjack its Buy in (2026-10 item 267: the table plays for chips,
- * by the same bounds, default and refusal as Hold'em's); Monopoly its Table options; the luck
- * games Who you play. Five at most, Discord's ceiling for one modal, which the creation modal
+ * its Buy in; Blackjack its Buy in (2026-10 item 267: the table plays for chips, by the same
+ * bounds, default and refusal as Hold'em's); Monopoly its Auctions; the luck games Who you
+ * play. Every game ends with Dero voice (2026-10 item 267, decision 10), which took the place
+ * of Hold'em's Referee and of the referee choice inside Monopoly's old Table options, so no
+ * game grew past five. Five at most, Discord's ceiling for one modal, which the creation modal
  * test counts per game.
  */
 export const GAME_SETTING_FIELDS: Record<SettingsGame, readonly SettingField[]> = {
-	coinflip: ["join", "watch", "opponent"],
-	diceroll: ["join", "watch", "opponent"],
-	rps: ["join", "watch", "opponent"],
-	hangman: ["join", "watch"],
-	blackjack: ["join", "watch", "buyIn"],
-	battleship: ["join", "watch", "match"],
-	holdem: ["join", "watch", "match", "buyIn", "referee"],
-	monopoly: ["join", "watch", "match", "table"],
+	coinflip: ["join", "watch", "opponent", "voice"],
+	diceroll: ["join", "watch", "opponent", "voice"],
+	rps: ["join", "watch", "opponent", "voice"],
+	hangman: ["join", "watch", "voice"],
+	blackjack: ["join", "watch", "buyIn", "voice"],
+	battleship: ["join", "watch", "match", "voice"],
+	holdem: ["join", "watch", "match", "buyIn", "voice"],
+	monopoly: ["join", "watch", "match", "auctions", "voice"],
 };
 
 // ── the choices ──
 export const JOIN_CHOICES = ["invite", "public", "approve", "network"] as const;
 export type JoinChoice = (typeof JOIN_CHOICES)[number];
-export const MATCH_CHOICES = ["rated-any", "rated-close", "rated-tight", "casual", "casual-bots"] as const;
-export type MatchChoice = (typeof MATCH_CHOICES)[number];
+export const MATCH_CHOICES = ["rated-any", "rated-close", "rated-tight", "casual"] as const;
+// A casual match with its Dero bot count (2026-10 item 267, decision 9): one option per count,
+// "casual-bots-1" up to botSeat.maxBotSeats, so the host picks the number inside The match.
+const CASUAL_BOTS_PREFIX = "casual-bots-";
+export type CasualBotsChoice = `casual-bots-${number}`;
+export type MatchChoice = (typeof MATCH_CHOICES)[number] | CasualBotsChoice;
 export const OPPONENT_CHOICES = ["anyone", "dero"] as const;
 export type OpponentChoice = (typeof OPPONENT_CHOICES)[number];
-const TABLE_OPTIONS = ["auctions", "referee"] as const;
 const SWITCH_VALUES = { on: "on", off: "off" } as const;
 
 /** Every setting a creation modal can carry, whatever the game shows of it. */
@@ -68,7 +73,8 @@ export interface ChallengeSettings {
 	match: MatchChoice;
 	// What the host typed, trimmed; empty means the standard stack.
 	buyIn: string;
-	referee: boolean;
+	// Dero voice (2026-10 item 267, decision 10), stored on the row as deroVoice.
+	voice: boolean;
 	auctions: boolean;
 	opponent: OpponentChoice;
 }
@@ -91,7 +97,7 @@ interface FieldSpec {
 	writes: readonly (keyof IGameRoom)[];
 	// Owner decision 7: the match is fixed at creation and never on the edit modal.
 	onEdit: boolean;
-	// Owner decision 7: once somebody joined, only Who may watch, Referee and Table options remain.
+	// Owner decision 7: once somebody joined, only Who may watch, Auctions and Dero voice remain.
 	afterJoiner: boolean;
 	build: (context: SettingsContext, values: ChallengeSettings) => ModalField;
 }
@@ -124,10 +130,37 @@ function matchOptions(context: SettingsContext): FieldOption[] {
 		{ value: "rated-tight", label: match.ratedTight.label, description: match.ratedTight.description(bandWidth("tight") ?? 0) },
 		{ value: "casual", label: match.casual.label, description: match.casual.description(channelNameFor(context, true)) },
 	];
-	// Filling the seats with Dero bots is offered only where a bot may sit (botSeat.takesBots
-	// and the server's switch), the same doors Play vs bots keeps.
-	if (takesBots(context.game) && context.botsAllowed) options.push({ value: "casual-bots", label: match.casualBots.label, description: match.casualBots.description });
+	// A casual match with Dero bots is offered only where a bot may sit (botSeat.takesBots and
+	// the server's switch), the same doors Play vs bots keeps, one option per count up to the
+	// game's limit (2026-10 item 267, decision 9).
+	if (!takesBots(context.game) || !context.botsAllowed) return options;
+	for (let count = 1; count <= maxBotSeats(context.game); count++) {
+		options.push({ value: casualBotsChoice(count), label: match.casualBots.label(count), description: match.casualBots.description });
+	}
 	return options;
+}
+
+/** The match choice of a casual match with `count` Dero bots. */
+export const casualBotsChoice = (count: number): CasualBotsChoice => `${CASUAL_BOTS_PREFIX}${count}`;
+
+/** How many Dero bots a match choice seats: its count for a casual bots choice, else 0. */
+export function botCountOfMatch(match: MatchChoice): number {
+	if (!match.startsWith(CASUAL_BOTS_PREFIX)) return 0;
+	return Number.parseInt(match.slice(CASUAL_BOTS_PREFIX.length), 10);
+}
+
+/** Whether a match choice is casual, with Dero bots or without. */
+export const isCasualMatch = (match: MatchChoice): boolean => match === "casual" || botCountOfMatch(match) > 0;
+
+// A submitted match value checked against what this game may offer: a fixed choice, or a bot
+// count from 1 to the game's limit. The value is user input whoever built the modal.
+const WHOLE_NUMBER = /^\d+$/;
+function parseMatchChoice(game: SettingsGame, value: string): MatchChoice | null {
+	if ((MATCH_CHOICES as readonly string[]).includes(value)) return value as MatchChoice;
+	if (!value.startsWith(CASUAL_BOTS_PREFIX)) return null;
+	const digits = value.slice(CASUAL_BOTS_PREFIX.length);
+	const count = WHOLE_NUMBER.test(digits) ? Number.parseInt(digits, 10) : 0;
+	return count >= 1 && count <= maxBotSeats(game) ? casualBotsChoice(count) : null;
 }
 
 const FIELD_SPECS: Record<SettingField, FieldSpec> = {
@@ -181,28 +214,28 @@ const FIELD_SPECS: Record<SettingField, FieldSpec> = {
 			};
 		},
 	},
-	referee: {
-		writes: ["referee"],
+	auctions: {
+		writes: ["monopolyAuctions"],
 		onEdit: true,
 		afterJoiner: true,
 		build: (_context, values) => ({
 			kind: "select",
-			id: "referee",
-			label: words.fields.referee.label,
-			options: [option(SWITCH_VALUES.on, words.fields.referee.on), option(SWITCH_VALUES.off, words.fields.referee.off)],
-			value: values.referee ? SWITCH_VALUES.on : SWITCH_VALUES.off,
+			id: "auctions",
+			label: words.fields.auctions.label,
+			options: [option(SWITCH_VALUES.on, words.fields.auctions.on), option(SWITCH_VALUES.off, words.fields.auctions.off)],
+			value: values.auctions ? SWITCH_VALUES.on : SWITCH_VALUES.off,
 		}),
 	},
-	table: {
-		writes: ["monopolyAuctions", "referee"],
+	voice: {
+		writes: ["deroVoice"],
 		onEdit: true,
 		afterJoiner: true,
 		build: (_context, values) => ({
-			kind: "multi",
-			id: "table",
-			label: words.fields.table.label,
-			options: TABLE_OPTIONS.map((entry) => option(entry, words.fields.table[entry])),
-			value: TABLE_OPTIONS.filter((entry) => (entry === "auctions" ? values.auctions : values.referee)),
+			kind: "select",
+			id: "voice",
+			label: words.fields.voice.label,
+			options: [option(SWITCH_VALUES.on, words.fields.voice.on), option(SWITCH_VALUES.off, words.fields.voice.off)],
+			value: values.voice ? SWITCH_VALUES.on : SWITCH_VALUES.off,
 		}),
 	},
 	opponent: {
@@ -226,8 +259,8 @@ export const settingWrites = (field: SettingField): readonly (keyof IGameRoom)[]
 /**
  * A new challenge's settings before the host touches anything: Open to all where the reach
  * allows it (Invite only where it does not), watched as that visibility always defaulted,
- * rated at any rating, the standard buy in, the referee on for Hold'em (owner decision 5)
- * and Monopoly's own defaults (auctions and referee off), against anyone.
+ * rated at any rating, the standard buy in, Dero voice on for Hold'em and off for every other
+ * game (the referee defaults it replaced, 2026-10 item 267), auctions off, against anyone.
  */
 export function defaultSettings(context: SettingsContext): ChallengeSettings {
 	const open = isWithinReach(context.reach, "public");
@@ -236,7 +269,7 @@ export function defaultSettings(context: SettingsContext): ChallengeSettings {
 		watch: effectiveSpectatorMode(open ? "public" : "invite", null),
 		match: "rated-any",
 		buyIn: "",
-		referee: context.game === "holdem",
+		voice: context.game === "holdem",
 		auctions: false,
 		opponent: "anyone",
 	};
@@ -251,7 +284,7 @@ export function settingsOfRoom(room: IGameRoom): ChallengeSettings {
 		watch: room.spectatorMode ?? effectiveSpectatorMode(room.visibility, null),
 		match: matchOfRoom(room),
 		buyIn: room.holdemBuyIn == null ? "" : String(room.holdemBuyIn),
-		referee: refereeOn(room),
+		voice: refereeOn(room),
 		auctions: room.monopolyAuctions ?? false,
 		opponent: "anyone",
 	};
@@ -264,7 +297,7 @@ export function joinOfRoom(room: Pick<IGameRoom, "network" | "visibility" | "req
 }
 
 export function matchOfRoom(room: Pick<IGameRoom, "casual" | "botSeats" | "ratingBand">): MatchChoice {
-	if (room.casual) return (room.botSeats ?? 0) > 0 ? "casual-bots" : "casual";
+	if (room.casual) return (room.botSeats ?? 0) > 0 ? casualBotsChoice(room.botSeats ?? 0) : "casual";
 	return BAND_MATCH[room.ratingBand ?? "any"];
 }
 
@@ -294,8 +327,9 @@ const MODAL_COMPONENT_LIMIT = 5;
 /**
  * The fields left once a notice needs a slot of its own (the held draft Submit will close).
  * A setting the host can still change after anybody joins gives its place first, from the
- * end: on Hold'em's five that is the referee, which keeps its default (on) and stays on
- * Edit settings. Every other game has room for the notice already.
+ * end: on Hold'em's and Monopoly's five that is Dero voice, which keeps its default (on for
+ * Hold'em, off for Monopoly) and stays on Edit settings. Every other game has room for the
+ * notice already.
  */
 function fitAroundNotice(fields: SettingField[], hasNotice: boolean): SettingField[] {
 	const kept = [...fields];
@@ -353,6 +387,12 @@ export function buildSettingsModal(context: SettingsContext, request: SettingsMo
 }
 
 // ── reading a Submit back ──
+// An On or Off select's answer, or null for anything else (a field not shown, or forged input).
+function readSwitch(answer: string | undefined): boolean | null {
+	if (answer === SWITCH_VALUES.on) return true;
+	return answer === SWITCH_VALUES.off ? false : null;
+}
+
 const isOneOf = <T extends string>(list: readonly T[], value: string): value is T => (list as readonly string[]).includes(value);
 
 /**
@@ -371,16 +411,13 @@ export function readSettingsAnswers(interaction: ModalSubmitInteraction, context
 	if (isOneOf(JOIN_CHOICES, join)) read.join = join;
 	const watch = answers.watch ?? "";
 	if (isOneOf(SPECTATOR_MODES, watch)) read.watch = watch;
-	const match = answers.match ?? "";
-	if (isOneOf(MATCH_CHOICES, match)) read.match = match;
+	const match = parseMatchChoice(context.game, answers.match ?? "");
+	if (match) read.match = match;
 	if (fields.includes("buyIn")) read.buyIn = answers.buyIn ?? "";
-	const referee = answers.referee ?? "";
-	if (referee === SWITCH_VALUES.on || referee === SWITCH_VALUES.off) read.referee = referee === SWITCH_VALUES.on;
-	if (fields.includes("table")) {
-		const chosen = (answers.table ?? "").split(",");
-		read.auctions = chosen.includes("auctions");
-		read.referee = chosen.includes("referee");
-	}
+	const voice = readSwitch(answers.voice);
+	if (voice !== null) read.voice = voice;
+	const auctions = readSwitch(answers.auctions);
+	if (auctions !== null) read.auctions = auctions;
 	const opponent = answers.opponent ?? "";
 	if (isOneOf(OPPONENT_CHOICES, opponent)) read.opponent = opponent;
 	return read;

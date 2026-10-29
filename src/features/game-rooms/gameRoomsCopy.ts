@@ -21,7 +21,6 @@ import { chips as chipAmount } from "@features/economy/economyCopy.js";
 // reads, so the opener's promise and the forfeit line can never name a different
 // number from the clock that enforces it.
 const monopolyIdleHours = (): number => Math.round(BOT_CONSTANTS.GAME_ROOM_MONOPOLY_IDLE_MS / (60 * 60 * 1000));
-const monopolyAuctionSeconds = (): number => Math.round(BOT_CONSTANTS.MONOPOLY_AUCTION_ROUND_MS / 1000);
 // Discord's relative timestamp ("in 45 seconds"), which every reader sees in their
 // own clock and which ticks down on its own.
 const discordRelativeTime = (epochMs: number): string => `<t:${Math.floor(epochMs / 1000)}:R>`;
@@ -531,22 +530,30 @@ export const gameRoomsCopy = {
 				ratedClose: { label: "Rated, close ratings", description: (width: number): string => `Only ratings within ${width} of yours may join.` },
 				ratedTight: { label: "Rated, tight ratings", description: (width: number): string => `Only ratings within ${width} of yours may join.` },
 				casual: { label: "Casual", description: (channelName: string): string => `Not rated. Posts in ${channelName}.` },
-				casualBots: { label: "Casual, empty seats filled by Dero bots", description: "Not rated. Each person who joins takes a bot's seat." },
+				// One option per bot count (2026-10 item 267, decision 9), labelled from the count.
+				casualBots: {
+					label: (count: number): string => `Casual, ${count === 1 ? "1 Dero bot" : `${count} Dero bots`}`,
+					description: "Not rated. Each person who joins takes a bot's seat.",
+				},
 			},
 			buyIn: {
 				label: "Buy in (chips)",
 				placeholder: (min: number, max: number, standard: number): string =>
 					`${min.toLocaleString("en-US")} to ${max.toLocaleString("en-US")}, blank for ${standard.toLocaleString("en-US")}`,
 			},
-			referee: {
-				label: "Voice referee",
-				on: { label: "On", description: "Dero calls the key moments out loud in your voice call." },
-				off: { label: "Off", description: "The match plays in text only." },
+			// Monopoly's auctions, an On or Off of its own since Dero voice took the referee out of
+			// its old Table options (2026-10 item 267, decision 10). The round's length comes from
+			// the constant the auction sweep reads, so the promise and the clock cannot disagree.
+			auctions: {
+				label: "Auctions",
+				on: { label: "On", description: `A lot a player passes on goes to a sealed bid of ${archiveWindowWords(BOT_CONSTANTS.MONOPOLY_AUCTION_ROUND_MS)}.` },
+				off: { label: "Off", description: "A lot a player passes on stays with the bank." },
 			},
-			table: {
-				label: "Table options",
-				auctions: { label: "Auctions", description: `A lot a player passes on goes to a ${monopolyAuctionSeconds()} second sealed bid.` },
-				referee: { label: "Voice referee", description: "Dero calls the key moments out loud in your voice call." },
+			// Every game's Dero voice (2026-10 item 267, decision 10), in place of the voice referee.
+			voice: {
+				label: "Dero voice",
+				on: { label: "On", description: "Dero speaks for this match out loud in voice." },
+				off: { label: "Off", description: "The match plays in text only." },
 			},
 			opponent: {
 				label: "Who you play",
@@ -563,7 +570,7 @@ export const gameRoomsCopy = {
 			casual: "Casual",
 			bots: (count: number): string => (count === 1 ? "1 Dero bot" : `${count} Dero bots`),
 			watch: { open: "anyone may watch", invite: "invited members watch", none: "no spectators" },
-			referee: (enabled: boolean): string => (enabled ? "voice referee on" : "voice referee off"),
+			voice: (enabled: boolean): string => (enabled ? "Dero voice on" : "Dero voice off"),
 			auctions: (enabled: boolean): string => (enabled ? "auctions on" : "auctions off"),
 		},
 		// A choice the card's own rules refused, said on the card under the summary.
@@ -576,7 +583,7 @@ export const gameRoomsCopy = {
 		// A network table's watchers in other servers are its satellites' business, so it keeps
 		// the network default rather than a choice made here.
 		networkWatch: "A table open to the network keeps its own spectators: its players in other servers watch from there.",
-		settingNames: { network: "Open to the network", join: "Who can join", match: "The match", casualBots: "Casual with Dero bots", band: "The rating band", buyIn: "Your buy in", referee: "The voice referee", auctions: "Auctions", watch: "Who may watch" },
+		settingNames: { network: "Open to the network", join: "Who can join", match: "The match", casualBots: "Casual with Dero bots", band: "The rating band", buyIn: "Your buy in", voice: "Dero voice", auctions: "Auctions", watch: "Who may watch" },
 		editLabel: "Edit settings",
 	},
 

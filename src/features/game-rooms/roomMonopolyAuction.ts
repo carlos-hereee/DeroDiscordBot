@@ -31,7 +31,7 @@ import { showNotice } from "@utils/textModal.js";
 // ── roomMonopolyAuction ──────────────────────────────────────────────
 // What:  the room side of a Monopoly auction: the bid button's sealed bid modal,
 //        the submit that places the bid, and the sweep that closes a round once
-//        its 60 seconds are up.
+//        its MONOPOLY_AUCTION_ROUND_MS is up.
 // Who:   gameRoomHandlers routes the `mauction` button and the `mbid` modal here;
 //        main.ts runs sweepMonopolyAuctions on its own short interval.
 // When:  only while a match is "in-auction", which applySkip enters when the host

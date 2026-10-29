@@ -181,7 +181,7 @@ describe("the release announcement", () => {
 		expect(members.description).toContain("**Rematch** starts the next one in the same room");
 		expect(members.description).toContain(`${BOT_CONSTANTS.GAME_ROOM_IDLE_ABANDON_MS / 60_000} minutes without a move`);
 		// Hold'em's clock and the way out of a table.
-		expect(members.description).toContain(`${BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS / 1000} seconds on a live clock`);
+		expect(members.description).toContain(`${BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS / 60_000} minutes on a live clock`);
 		expect(members.description).toContain("**Leave table** gives up your seat and its chips");
 		// holdemTable.leaveTable zeroes the leaver's stack, because chips exist only for
 		// their table, so neither embed may promise a cash out the engine never pays.

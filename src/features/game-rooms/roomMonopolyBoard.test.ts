@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TextChannel, type Client } from "discord.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 // ── roomMonopolyBoard ────────────────────────────────────────────────
 // One board per turn (2026-10 item 263 R3-29): a turn's board is edited in place while the
@@ -262,9 +263,9 @@ describe("one board per turn", () => {
 		expect(JSON.stringify(room.messages.at(-1)?.payload.embeds)).toContain(`<@${B}> rolled 1 and 2.`);
 
 		// The idle sweep's forfeit passes the turn, so it posts the next turn's board.
-		const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
-		stored().turnStartedAt = twoDaysAgo;
-		for (const move of row.current?.moves as { at: Date }[]) move.at = new Date(twoDaysAgo);
+		const pastTheIdleBudget = Date.now() - BOT_CONSTANTS.GAME_ROOM_MONOPOLY_IDLE_MS - 60 * 60 * 1000;
+		stored().turnStartedAt = pastTheIdleBudget;
+		for (const move of row.current?.moves as { at: Date }[]) move.at = new Date(pastTheIdleBudget);
 		await sweepMonopolyIdle(room.client, new Date());
 		expect(stored().boardMessageId).not.toBe(movedTo);
 		expect(boardIsLast(room)).toBe(true);

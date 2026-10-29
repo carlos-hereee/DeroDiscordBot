@@ -75,6 +75,16 @@ describe("refereeOn", () => {
 		expect(refereeOn({ game: "monopoly", referee: null, monopolyReferee: false })).toBe(false);
 	});
 
+	// 2026-10 item 267, decision 10: Dero voice is read first, and a row written before it keeps
+	// the choice its older referee fields hold.
+	it("reads Dero voice first, then a row's old referee choice, then the game's default", () => {
+		expect(refereeOn({ game: "holdem", deroVoice: false, referee: true })).toBe(false);
+		expect(refereeOn({ game: "coinflip", deroVoice: true })).toBe(true);
+		expect(refereeOn({ game: "holdem", deroVoice: null, referee: false })).toBe(false);
+		expect(refereeOn({ game: "monopoly", deroVoice: null, referee: null, monopolyReferee: true })).toBe(true);
+		expect(refereeOn({ game: "battleship", deroVoice: null })).toBe(false);
+	});
+
 	it("registers a Hold'em table with no stored referee as its dealer, voice on", async () => {
 		await startRoomReferee(client, makeRoom({ referee: null }), makeChannel(null));
 		expect(dealerTableOf("room-1")).toEqual({ voice: true });

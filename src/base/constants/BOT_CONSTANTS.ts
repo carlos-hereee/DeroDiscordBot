@@ -234,11 +234,13 @@ export const BOT_CONSTANTS = {
 	// minutes after the last shot rather than sitting open until the archive window.
 	//
 	// ⚠️ CHECKED ON THE 5 MINUTE ROOM SWEEP, so the real expiry lands somewhere
-	// between 10 and 15 minutes. That granularity is deliberate rather than a
+	// between 30 and 35 minutes. That granularity is deliberate rather than a
 	// limitation: a second, faster cron for one game's clock would cost a tick every
 	// minute across every guild to save a casual player five minutes, and the number
 	// that matters is that a walked-away match terminates at all.
-	GAME_ROOM_TURN_TIMEOUT_MS: 10 * 60_000, // 10 minutes
+	// Thirty minutes is the owner's decision of 2026-10-28 (decision 7 of 2026-10 item
+	// 267: every turn clock three times longer). It also times Battleship's setup.
+	GAME_ROOM_TURN_TIMEOUT_MS: 30 * 60 * 1000, // 30 minutes
 
 	// ── scheduled party games (post-launch plan item 3) ──
 	// The schedule modal's defaults are the owner's (30 minutes, 20 attendees, 0 for no
@@ -267,28 +269,35 @@ export const BOT_CONSTANTS = {
 	// How long a Monopoly seat may sit on the clock before the idle sweep forfeits
 	// it (2026-10 item 241). Its own constant rather than the battleship budget
 	// above, because a Monopoly match is played across days by people who check in
-	// between other things: ten minutes would forfeit every seat that went to
+	// between other things: a short clock would forfeit every seat that went to
 	// sleep. Checked on the same 5 minute room sweep, so the real forfeit lands
-	// within five minutes after this.
-	GAME_ROOM_MONOPOLY_IDLE_MS: 24 * 60 * 60 * 1000, // 24 hours
+	// within five minutes after this. Three days is the owner's decision of
+	// 2026-10-28 (decision 7 of 2026-10 item 267, three times the old day).
+	GAME_ROOM_MONOPOLY_IDLE_MS: 72 * 60 * 60 * 1000, // 72 hours
 	// Any room in a non terminal status with no action for this long is finished as
 	// abandoned by sweepIdleRooms, so a forgotten draft or match can never hold its
 	// host's one room slot (the partial unique index) for good. 30 minutes is the
-	// owner's number from the 1.7.0 test run (test fixes plan, item 13). It sits above
-	// every live turn clock here (battleship's 10 minute turn, Hold'em's 60 seconds),
-	// so a slow game is never cut off mid turn. Monopoly is exempt: its seats get the
-	// day above, which its opener promises, and that sweep already ends every match.
+	// owner's number from the 1.7.0 test run (test fixes plan, item 13), kept when the
+	// turn clocks tripled (2026-10 item 267). It sits above Hold'em's and Blackjack's
+	// 3 minute clocks and EQUALS Battleship's 30 minute turn; a Battleship turn still
+	// expires first, because the battleship sweep runs before this one in the same tick
+	// and its forfeit writes the row, which resets the idle stamp (only a turn clock
+	// held by a long board draw could lose that race). Monopoly is exempt:
+	// its seats get the clock above, which its opener promises, and that sweep already
+	// ends every match.
 	// A hangman room in play is exempt too (owner decision, 2026-10-23): hangman has no
 	// clock, and its host frees the slot with Give up. A hangman draft is still swept.
 	// Checked on the same 5 minute room sweep, so the close lands up to 5 minutes later.
 	GAME_ROOM_IDLE_ABANDON_MS: 30 * 60_000, // 30 minutes
 	// How long a Monopoly auction takes sealed bids, from the pass that opened it
 	// (master plan Section 1). Long enough for every seat to see the board and type
-	// a number; short enough that the seller's turn is not held for long.
-	MONOPOLY_AUCTION_ROUND_MS: 60_000,
+	// a number; short enough that the seller's turn is not held for long. Three minutes
+	// is the owner's decision of 2026-10-28 (decision 7 of 2026-10 item 267, three times
+	// the old minute).
+	MONOPOLY_AUCTION_ROUND_MS: 180_000,
 	// How often expired auctions are closed. Its own interval for the same reason as
-	// the hold em clock below: on the 5 minute room sweep a 60 second round would
-	// close anywhere inside five minutes. At 10 seconds a round runs 60 to 70.
+	// the hold em clock below: on the 5 minute room sweep a 3 minute round would
+	// close anywhere inside five minutes. At 10 seconds a round runs 180 to 190.
 	MONOPOLY_AUCTION_TICK_MS: 10_000,
 	// The smallest rent the voice referee says out loud (Session 5c, key moments only).
 	// $200 is GO's salary and the rent of all four rails, so a rent this big costs a
@@ -321,9 +330,9 @@ export const BOT_CONSTANTS = {
 	// the board shows them their turn. Never paused for the player: pausing hands one
 	// absent player the power to stall five present ones, which is the failure mode a
 	// turn clock exists to prevent. Only a board that is drawing holds it (the drawing
-	// pause). 60 seconds is the owner's number from the 1.7.0 test run (test fixes
-	// plan, item 13).
-	HOLDEM_TURN_TIMEOUT_MS: 60_000,
+	// pause). 3 minutes is the owner's decision of 2026-10-28 (decision 7 of 2026-10
+	// item 267, three times the 1.7.0 test run's 60 seconds).
+	HOLDEM_TURN_TIMEOUT_MS: 180_000,
 	// A Blackjack room seat's clock for every betting turn and every action turn (owner
 	// decision 7 of 2026-10 item 267, 3 minutes). A betting turn that runs out bets the
 	// smallest choice and an action turn that runs out stands, so one absent seat never
@@ -343,9 +352,9 @@ export const BOT_CONSTANTS = {
 	// blinds but is folded each hand until it presses I'm back. Two, so one slow turn
 	// is forgiven and a player who has walked away stops costing the table a minute.
 	HOLDEM_SIT_OUT_TIMEOUTS: 2,
-	// How often the clock is checked. A 60 second budget needs a tick well under
+	// How often the clock is checked. A 3 minute budget needs a tick well under
 	// it, so this is its own interval rather than a passenger on the 5 minute room
-	// sweep, which would make a 60 second clock fire somewhere inside 5 minutes.
+	// sweep, which would make a 3 minute clock fire somewhere inside 5 minutes.
 	HOLDEM_CLOCK_TICK_MS: 10_000,
 	// How many times a buy in re-reads and retries when another player's seat write
 	// beat it. Six members can click Buy in at once, and each retry only loses to a

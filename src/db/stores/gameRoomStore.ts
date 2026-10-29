@@ -56,6 +56,9 @@ interface ICreateGameRoom {
 	// Null (the default) reads as the game's own default in roomTypes.refereeOn: on for Hold'em
 	// (2026-10 item 263 R3-28), off for Monopoly. A rematch carries the finished room's choice.
 	referee?: boolean | null;
+	// The host's Dero voice (2026-10 item 267), read before referee by roomTypes.refereeOn. A
+	// rematch carries the finished room's choice here.
+	deroVoice?: boolean | null;
 	// The host controls, carried from the finished room by a rematch in the same
 	// channel, so a member removed from that channel stays removed. A board challenge
 	// sets them on its draft with the card's controls instead.
@@ -103,6 +106,7 @@ export const gameRoomStore = {
 			channelId: input.channelId ?? null,
 			monopolyAuctions: input.monopolyAuctions ?? false,
 			referee: input.referee ?? null,
+			deroVoice: input.deroVoice ?? null,
 			ratingBand: input.ratingBand ?? "any",
 			requireApproval: input.requireApproval ?? false,
 			kickedIds: input.kickedIds ?? [],

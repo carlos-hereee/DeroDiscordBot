@@ -16,6 +16,7 @@ import {
 	type SettingsMode,
 } from "./challengeSettings.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { maxBotSeats } from "./botSeat.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── the creation modal (2026-10 item 263 Phase 2a, R3-13) ──────────────────
@@ -48,16 +49,16 @@ const fieldIds = (json: ModalJson): string[] => json.components.flatMap((entry) 
 const fieldOf = (json: ModalJson, id: string): ModalComponentJson | undefined => json.components.find((entry) => entry.component?.custom_id === id)?.component;
 const optionValues = (json: ModalJson, id: string): string[] => fieldOf(json, id)?.options?.map((option) => option.value) ?? [];
 
-// Owner decision 6, game by game.
+// Owner decision 6, game by game, each ending with Dero voice (2026-10 item 267, decision 10).
 const DECIDED: Record<SettingsGame, SettingField[]> = {
-	coinflip: ["join", "watch", "opponent"],
-	diceroll: ["join", "watch", "opponent"],
-	rps: ["join", "watch", "opponent"],
-	hangman: ["join", "watch"],
-	blackjack: ["join", "watch", "buyIn"],
-	battleship: ["join", "watch", "match"],
-	holdem: ["join", "watch", "match", "buyIn", "referee"],
-	monopoly: ["join", "watch", "match", "table"],
+	coinflip: ["join", "watch", "opponent", "voice"],
+	diceroll: ["join", "watch", "opponent", "voice"],
+	rps: ["join", "watch", "opponent", "voice"],
+	hangman: ["join", "watch", "voice"],
+	blackjack: ["join", "watch", "buyIn", "voice"],
+	battleship: ["join", "watch", "match", "voice"],
+	holdem: ["join", "watch", "match", "buyIn", "voice"],
+	monopoly: ["join", "watch", "match", "auctions", "voice"],
 };
 
 describe("each game's creation modal", () => {
@@ -80,8 +81,16 @@ describe("each game's creation modal", () => {
 		});
 	}
 
-	it("gives Hold'em's referee slot to a held draft's line, the one field a joiner never locks that has to yield", () => {
+	it("gives Dero voice's slot to a held draft's line on the two five field games, and keeps it everywhere else", () => {
 		expect(fieldIds(modalJson("holdem", { kind: "create" }, {}, "held"))).toEqual(["join", "watch", "match", "buyIn"]);
+		expect(fieldIds(modalJson("monopoly", { kind: "create" }, {}, "held"))).toEqual(["join", "watch", "match", "auctions"]);
+		for (const game of SETTINGS_GAMES) {
+			if (DECIDED[game].length < MAX_COMPONENTS) expect(fieldIds(modalJson(game, { kind: "create" }, {}, "held"))).toContain("voice");
+		}
+	});
+
+	it("puts Dero voice on every game's modal", () => {
+		for (const game of SETTINGS_GAMES) expect(fieldIds(modalJson(game))).toContain("voice");
 	});
 
 	it("names #challenges in a rated game's title while the server has no 🏆rated-challenges", () => {
@@ -108,23 +117,32 @@ describe("the options", () => {
 		for (const game of SETTINGS_GAMES) expect(optionValues(modalJson(game), "watch")).toEqual(["open", "invite", "none"]);
 	});
 
-	it("offers Casual with Dero bots only where a bot may sit", () => {
-		expect(optionValues(modalJson("monopoly"), "match")).toEqual(["rated-any", "rated-close", "rated-tight", "casual", "casual-bots"]);
-		expect(optionValues(modalJson("monopoly", { kind: "create" }, { botsAllowed: false }), "match")).toEqual(["rated-any", "rated-close", "rated-tight", "casual"]);
+	it("offers one Casual option per Dero bot count up to the game's limit, only where a bot may sit", () => {
+		const rated = ["rated-any", "rated-close", "rated-tight", "casual"];
+		expect(optionValues(modalJson("holdem"), "match")).toEqual([...rated, "casual-bots-1", "casual-bots-2", "casual-bots-3", "casual-bots-4", "casual-bots-5"]);
+		expect(optionValues(modalJson("monopoly"), "match")).toEqual([...rated, ...Array.from({ length: maxBotSeats("monopoly") }, (_, index) => `casual-bots-${index + 1}`)]);
+		expect(optionValues(modalJson("battleship"), "match")).toEqual([...rated, "casual-bots-1"]);
+		expect(optionValues(modalJson("monopoly", { kind: "create" }, { botsAllowed: false }), "match")).toEqual(rated);
 	});
 
-	it("opens rated at any rating, the referee on for Hold'em, Monopoly's table options off, against anyone", () => {
+	it("labels each bot count from the count, never typed per number", () => {
+		const labels = fieldOf(modalJson("holdem"), "match")?.options?.slice(4).map((option) => (option as { label?: string }).label);
+		expect(labels).toEqual([1, 2, 3, 4, 5].map((count) => gameRoomsCopy.creation.fields.match.casualBots.label(count)));
+		expect(labels?.slice(0, 2)).toEqual(["Casual, 1 Dero bot", "Casual, 2 Dero bots"]);
+	});
+
+	it("opens rated at any rating, Dero voice on for Hold'em and off elsewhere, Monopoly's auctions off, against anyone", () => {
 		const chosen = (json: ModalJson, id: string) => fieldOf(json, id)?.options?.filter((option) => option.default).map((option) => option.value);
 		expect(chosen(modalJson("holdem"), "match")).toEqual(["rated-any"]);
-		expect(chosen(modalJson("holdem"), "referee")).toEqual(["on"]);
-		expect(chosen(modalJson("monopoly"), "table")).toEqual([]);
+		expect(chosen(modalJson("holdem"), "voice")).toEqual(["on"]);
+		for (const game of SETTINGS_GAMES) if (game !== "holdem") expect(chosen(modalJson(game), "voice")).toEqual(["off"]);
+		expect(chosen(modalJson("monopoly"), "auctions")).toEqual(["off"]);
 		expect(chosen(modalJson("rps"), "opponent")).toEqual(["anyone"]);
 	});
 
-	it("makes Monopoly's table options a multi choice select that may be left empty", () => {
-		const table = fieldOf(modalJson("monopoly"), "table");
-		expect(table).toMatchObject({ min_values: 0, max_values: 2, required: false });
-		expect(table?.options?.map((option) => option.value)).toEqual(["auctions", "referee"]);
+	it("makes Monopoly's auctions and every game's Dero voice an On or Off select", () => {
+		expect(optionValues(modalJson("monopoly"), "auctions")).toEqual(["on", "off"]);
+		for (const game of SETTINGS_GAMES) expect(optionValues(modalJson(game), "voice")).toEqual(["on", "off"]);
 	});
 
 	it("states the buy in's allowed range in its placeholder", () => {
@@ -135,31 +153,37 @@ describe("the options", () => {
 
 describe("Edit settings (owner decision 7)", () => {
 	it("shows every field but the match until somebody joins", () => {
-		expect(fieldIds(modalJson("holdem", { kind: "edit", hasJoiner: false }))).toEqual(["join", "watch", "buyIn", "referee"]);
-		expect(fieldIds(modalJson("monopoly", { kind: "edit", hasJoiner: false }))).toEqual(["join", "watch", "table"]);
-		expect(fieldIds(modalJson("rps", { kind: "edit", hasJoiner: false }))).toEqual(["join", "watch", "opponent"]);
+		expect(fieldIds(modalJson("holdem", { kind: "edit", hasJoiner: false }))).toEqual(["join", "watch", "buyIn", "voice"]);
+		expect(fieldIds(modalJson("monopoly", { kind: "edit", hasJoiner: false }))).toEqual(["join", "watch", "auctions", "voice"]);
+		expect(fieldIds(modalJson("rps", { kind: "edit", hasJoiner: false }))).toEqual(["join", "watch", "opponent", "voice"]);
 	});
 
-	it("shows only Who may watch, Referee and Table options once somebody joined", () => {
-		expect(fieldIds(modalJson("holdem", { kind: "edit", hasJoiner: true }))).toEqual(["watch", "referee"]);
-		expect(fieldIds(modalJson("monopoly", { kind: "edit", hasJoiner: true }))).toEqual(["watch", "table"]);
-		expect(fieldIds(modalJson("battleship", { kind: "edit", hasJoiner: true }))).toEqual(["watch"]);
+	it("shows only Who may watch, Auctions and Dero voice once somebody joined", () => {
+		expect(fieldIds(modalJson("holdem", { kind: "edit", hasJoiner: true }))).toEqual(["watch", "voice"]);
+		expect(fieldIds(modalJson("monopoly", { kind: "edit", hasJoiner: true }))).toEqual(["watch", "auctions", "voice"]);
+		expect(fieldIds(modalJson("battleship", { kind: "edit", hasJoiner: true }))).toEqual(["watch", "voice"]);
 	});
 
 	it("prefills the draft's own values", () => {
 		const room = { visibility: "public", network: false, requireApproval: true, spectatorMode: "none", casual: false, botSeats: 0, ratingBand: "tight", holdemBuyIn: 5_000, referee: false, monopolyAuctions: true } as unknown as IGameRoom;
 		const values = settingsOfRoom(room);
-		expect(values).toMatchObject({ join: "approve", watch: "none", match: "rated-tight", buyIn: "5000", referee: false, auctions: true });
+		expect(values).toMatchObject({ join: "approve", watch: "none", match: "rated-tight", buyIn: "5000", voice: false, auctions: true });
 
 		const json = buildSettingsModal(contextFor("holdem"), { customId: "gameroom:editok:room-1", mode: { kind: "edit", hasJoiner: false }, values }).modal.toJSON() as unknown as ModalJson;
 		expect(fieldOf(json, "buyIn")?.value).toBe("5000");
-		expect(fieldOf(json, "referee")?.options?.find((option) => option.default)?.value).toBe("off");
+		expect(fieldOf(json, "voice")?.options?.find((option) => option.default)?.value).toBe("off");
 		expect(json.title).toBe("Edit your Texas hold em challenge");
 	});
 
 	it("reads a casual draft's match back, with or without its bots", () => {
 		expect(matchOfRoom({ casual: true, botSeats: 0, ratingBand: "any" })).toBe("casual");
-		expect(matchOfRoom({ casual: true, botSeats: 2, ratingBand: "any" })).toBe("casual-bots");
+		expect(matchOfRoom({ casual: true, botSeats: 2, ratingBand: "any" })).toBe("casual-bots-2");
+	});
+
+	it("reads a row with only the old referee field through to its old choice", () => {
+		expect(settingsOfRoom({ game: "holdem", referee: false, deroVoice: null } as unknown as IGameRoom).voice).toBe(false);
+		expect(settingsOfRoom({ game: "monopoly", referee: null, monopolyReferee: true } as unknown as IGameRoom).voice).toBe(true);
+		expect(settingsOfRoom({ game: "monopoly", referee: true, deroVoice: false } as unknown as IGameRoom).voice).toBe(false);
 	});
 });
 
@@ -183,19 +207,27 @@ describe("reading a Submit back", () => {
 
 	it("reads every field the modal showed over the defaults", () => {
 		const context = contextFor("monopoly");
-		const read = readSettingsAnswers(submitOf({ join: "invite", watch: "none", match: "casual", table: ["auctions", "referee"] }), context, GAME_SETTING_FIELDS.monopoly, defaultSettings(context));
-		expect(read).toMatchObject({ join: "invite", watch: "none", match: "casual", auctions: true, referee: true });
+		const read = readSettingsAnswers(submitOf({ join: "invite", watch: "none", match: "casual-bots-3", auctions: "on", voice: "on" }), context, GAME_SETTING_FIELDS.monopoly, defaultSettings(context));
+		expect(read).toMatchObject({ join: "invite", watch: "none", match: "casual-bots-3", auctions: true, voice: true });
+	});
+
+	it("refuses a bot count past the game's limit, or none, as a forged Submit", () => {
+		const context = contextFor("battleship");
+		for (const match of ["casual-bots-2", "casual-bots-0", "casual-bots-x", "casual-bots"]) {
+			expect(readSettingsAnswers(submitOf({ match }), context, GAME_SETTING_FIELDS.battleship, defaultSettings(context)).match).toBe("rated-any");
+		}
 	});
 
 	it("keeps the defaults for a value no option has, which only a forged Submit sends", () => {
 		const context = contextFor("holdem");
-		const read = readSettingsAnswers(submitOf({ join: "everyone", match: "ranked", referee: "maybe", buyIn: " 5,000 " }), context, GAME_SETTING_FIELDS.holdem, defaultSettings(context));
-		expect(read).toMatchObject({ join: "public", match: "rated-any", referee: true, buyIn: "5,000" });
+		const read = readSettingsAnswers(submitOf({ join: "everyone", match: "ranked", voice: "maybe", buyIn: " 5,000 " }), context, GAME_SETTING_FIELDS.holdem, defaultSettings(context));
+		expect(read).toMatchObject({ join: "public", match: "rated-any", voice: true, buyIn: "5,000" });
 	});
 
 	it("names the draft fields each setting writes through the card's functions", () => {
 		expect(settingWrites("join")).toEqual(["visibility", "network", "requireApproval"]);
 		expect(settingWrites("match")).toEqual(["casual", "botSeats", "ratingBand"]);
-		expect(settingWrites("table")).toEqual(["monopolyAuctions", "referee"]);
+		expect(settingWrites("auctions")).toEqual(["monopolyAuctions"]);
+		expect(settingWrites("voice")).toEqual(["deroVoice"]);
 	});
 });

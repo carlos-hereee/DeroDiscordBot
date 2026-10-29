@@ -412,7 +412,7 @@ describe("the spectator setting at start", () => {
 // ── Monopoly's auction choice ─────────────────────────────────────────
 // The host turns auctions on or off on the draft card; the choice rides the draft
 // row, which the provisioner adopts, so it is read once when the match is seeded.
-describe("the draft's on or off settings (auctions, and the referee on Monopoly and Hold'em)", () => {
+describe("the draft's on or off settings (auctions, and Dero voice on every game)", () => {
 	const members = makeMembers([{ id: HOST, bot: false, name: "Host" }]);
 	const openMock = RoomProvisioner.open as unknown as ReturnType<typeof vi.fn>;
 
@@ -439,18 +439,19 @@ describe("the draft's on or off settings (auctions, and the referee on Monopoly 
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
-	it.each(["monopoly", "holdem"] as const)("stores %s's voice referee choice through the same handler, in its own field", async (game) => {
+	// An older card's referee toggle writes Dero voice (2026-10 item 267, decision 10), on every game.
+	it.each(["monopoly", "holdem", "battleship", "rps"] as const)("stores %s's Dero voice through the same handler, in its own field", async (game) => {
 		const interaction = makeButton(HOST, members);
 		await chooseDraftSetting(interaction, makeRoom({ game, visibility: "public" }), "referee", "on");
-		expect(storeMock.update).toHaveBeenCalledWith("guild-1", "room-1", { referee: true });
+		expect(storeMock.update).toHaveBeenCalledWith("guild-1", "room-1", { deroVoice: true });
 		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
 
-		await chooseDraftSetting(makeButton(HOST, members), makeRoom({ game, referee: true }), "referee", "off");
-		expect(storeMock.update).toHaveBeenLastCalledWith("guild-1", "room-1", { referee: false });
+		await chooseDraftSetting(makeButton(HOST, members), makeRoom({ game, deroVoice: true }), "referee", "off");
+		expect(storeMock.update).toHaveBeenLastCalledWith("guild-1", "room-1", { deroVoice: false });
 	});
 
-	it("refuses the referee toggle on a game with no voice lines, and the auctions on Hold'em, writing nothing", async () => {
-		for (const [game, action] of [["battleship", "referee"], ["rps", "referee"], ["holdem", "auctions"]] as const) {
+	it("refuses the auctions on Hold'em, and Dero voice on a slug with no card, writing nothing", async () => {
+		for (const [game, action] of [["solo-coinflip", "referee"], ["holdem", "auctions"]] as const) {
 			const interaction = makeButton(HOST, members);
 			await chooseDraftSetting(interaction, makeRoom({ game }), action, "on");
 			expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.errors.controlRetired }));

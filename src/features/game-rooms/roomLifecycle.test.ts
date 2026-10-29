@@ -250,12 +250,15 @@ describe("roomLifecycle.finish room-rate top up", () => {
 		expect(awardMock).not.toHaveBeenCalled();
 	});
 
-	it.each(["solo-coinflip", "solo-diceroll"] as const)("offers no Rematch on a %s room's result card, only Archive now", async (game) => {
+	// Every game ends with Rematch (2026-10 item 267, decision 8), a coin flip and a dice roll
+	// included: their next round plays in the same channel as the rematch seeds.
+	it.each(["solo-coinflip", "solo-diceroll"] as const)("offers Rematch beside Archive now on a %s room's result card", async (game) => {
 		const channel = makeChannel();
 		await finish(makeClient(channel), makeRoom({ game, visibility: "solo", playerIds: ["host-1"] }));
 		const card = channel.send.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id: string }[] } }[] };
 		const ids = card.components[0].toJSON().components.map((button) => button.custom_id);
-		expect(ids).toEqual(["gameroom:archive:room-1"]);
+		expect(ids).toContain("gameroom:rematch:room-1");
+		expect(ids).toContain("gameroom:archive:room-1");
 	});
 
 	// Rock paper scissors asks its throw in the room (2026-10 item 257 Phase 4b), so its result

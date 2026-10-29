@@ -33,7 +33,7 @@ import { act, createTable, dealHand, joinTable, whoActs, type HoldemTable } from
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── the hold em clock (Dero 1.7.0 test fixes, Phase 3a, item 13) ───────────
-// What:  60 seconds a decision counted from when the board shows the prompt, a
+// What:  3 minutes a decision (2026-10 item 267, decision 7) counted from when the board shows the prompt, a
 //        countdown on the board, the next hand dealing itself 10 seconds after the
 //        last, two timeouts in a row sitting a seat out until I'm back, and the
 //        live table card on every redraw behind the drawing pause.
@@ -118,13 +118,17 @@ beforeEach(() => {
 	storeMock.moveBoardMessage.mockResolvedValue({} as never);
 });
 
+// The owner's three minute turn clock (2026-10 item 267, decision 7), pinned as a number so a
+// change to the constant shows up here rather than passing through it.
+const TURN_MS = 180_000;
+
 describe("the turn clock", () => {
-	it("gives a player 60 seconds, counted from when the board showed them their turn", async () => {
-		expect(BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS).toBe(60_000);
+	it("gives a player 3 minutes, counted from when the board showed them their turn", async () => {
+		expect(BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS).toBe(TURN_MS);
 		const table = dealtTable();
-		// Dealt five minutes ago, but the board only showed the prompt 59 seconds ago.
+		// Dealt five minutes ago, but the board only showed the prompt a second short of the clock.
 		table.lastActionAt = NOW - 5 * 60_000;
-		table.turnPrompt = { stamp: table.lastActionAt, shownAt: NOW - 59_000 };
+		table.turnPrompt = { stamp: table.lastActionAt, shownAt: NOW - (TURN_MS - 1_000) };
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(table)]);
 
 		expect(await sweepAt(0)).toEqual({ forced: 0, dealt: 0 });
@@ -133,7 +137,7 @@ describe("the turn clock", () => {
 
 	it("ignores a prompt the board showed for an earlier state", async () => {
 		const table = dealtTable();
-		table.lastActionAt = NOW - 61_000;
+		table.lastActionAt = NOW - (TURN_MS + 1_000);
 		table.turnPrompt = { stamp: table.lastActionAt - 1, shownAt: NOW - 1_000 };
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(table)]);
 
@@ -142,7 +146,7 @@ describe("the turn clock", () => {
 
 	it("holds while the board draws, so a render never costs the player their turn", async () => {
 		const table = dealtTable();
-		table.lastActionAt = NOW - 61_000;
+		table.lastActionAt = NOW - (TURN_MS + 1_000);
 		const room = makeRoom(table);
 		storeMock.findPlayingByGame.mockResolvedValue([room]);
 		let finish: (value: null) => void = () => undefined;
@@ -166,7 +170,7 @@ describe("the turn clock", () => {
 		const table = dealtTable();
 		const stalling = whoActs(table)!;
 		table.seats.find((seat) => seat.userId === stalling)!.timeoutsInRow = 1;
-		table.lastActionAt = NOW - 61_000;
+		table.lastActionAt = NOW - (TURN_MS + 1_000);
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(table)]);
 
 		await sweepAt(0);
@@ -203,7 +207,7 @@ describe("the board", () => {
 		expect(swapped.embeds[0].data.description).toContain(
 			gameRoomsCopy.holdem.turnClockLine(whoActs(table)!, prompt.shownAt + BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS)
 		);
-		expect(swapped.embeds[0].data.description).toContain(relative(prompt.shownAt + 60_000));
+		expect(swapped.embeds[0].data.description).toContain(relative(prompt.shownAt + TURN_MS));
 		// The prompt is kept on the row only while the table is still in the state shown.
 		expect(storeMock.updateSecretIf.mock.calls.at(-1)![2]).toEqual({ "secret.lastActionAt": table.lastActionAt, "secret.status": "playing", "secret.boardMessageId": "board-1" });
 	});

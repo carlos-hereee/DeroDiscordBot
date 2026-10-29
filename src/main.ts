@@ -912,8 +912,8 @@ process.on("uncaughtException", (err) => {
 		// ── hold em turn clock ─────────────────────────────────────
 		// What: force-folds a player who has run out of time at a poker table, and
 		//       deals the next hand once the last one has sat on the board long enough.
-		// When: every HOLDEM_CLOCK_TICK_MS (10s), because the turn budget is 60s
-		//       and the 5 minute room cron would let a 60 second clock fire
+		// When: every HOLDEM_CLOCK_TICK_MS (10s), because the turn budget is 3 minutes
+		//       and the 5 minute room cron would let a 3 minute clock fire
 		//       anywhere inside five minutes.
 		// Why an interval rather than a cron: node-cron's finest granularity is a
 		//       minute, which is twice the budget it is meant to enforce.
@@ -924,9 +924,9 @@ process.on("uncaughtException", (err) => {
 		}, BOT_CONSTANTS.HOLDEM_CLOCK_TICK_MS).unref();
 
 		// ── monopoly auction clock ─────────────────────────────────
-		// Closes each sealed bid round once its 60 seconds are up. Its own interval
-		// for the hold em clock's reason: the 5 minute room cron would close a 60
-		// second round anywhere inside five minutes. A no-op when no auction is open.
+		// Closes each sealed bid round once its 3 minutes are up. Its own interval
+		// for the hold em clock's reason: the 5 minute room cron would close a 3
+		// minute round anywhere inside five minutes. A no-op when no auction is open.
 		setInterval(() => {
 			void sweepMonopolyAuctions(client).catch((error) => console.error("[game-rooms] monopoly auction tick failed", error));
 		}, BOT_CONSTANTS.MONOPOLY_AUCTION_TICK_MS).unref();

@@ -10,7 +10,7 @@ import { activeSeatOf, cloneState, completeAction,
 //        the bank.
 // Who:   applySkip in monopolyState opens one; the Phase 5 bid modal calls
 //        placeBid; the room glue calls closeAuction when the round's timer
-//        (60 seconds from roundOpenedAt, master plan Section 1) runs out. All
+//        (MONOPOLY_AUCTION_ROUND_MS from roundOpenedAt) runs out. All
 //        three are re-exported from monopolyState.
 // When:  only in the "in-auction" phase, which nothing but closeAuction (or the
 //        seller leaving the match) ends, so the seller's turn waits on it.

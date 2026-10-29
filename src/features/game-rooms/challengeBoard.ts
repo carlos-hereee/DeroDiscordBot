@@ -35,8 +35,10 @@ import {
 	soloLuckSlugFor,
 	type SoloOpenResult,
 	freeSeatsOf,
+	playSoloRoundAtOpen,
 	startBlackjackRoomBoard,
 	startSoloBlackjackBoard,
+	type SoloHost,
 } from "./soloRooms.js";
 import { resolveRoomChannel, roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
@@ -52,7 +54,7 @@ import {
 	isDeroPlayable,
 	type DraftSettingAction,
 } from "./challengeBoardEmbeds.js";
-import { isBlackjackRoomGame, isBuyInGame, isSoloRematchGame, offersReferee, refereeOn, type GameSlug, type RoomVisibility } from "./roomTypes.js";
+import { isBlackjackRoomGame, isBuyInGame, isSoloLuckGame, isSoloRematchGame, refereeOn, type GameSlug, type RoomVisibility } from "./roomTypes.js";
 import { effectiveSpectatorMode } from "./roomPermissions.js";
 import { cardStateFor, challengeCardLink, editOpenerCard, readChallengeChannelIds, refreshCard, resolveChallengesChannel, type ChallengeChannelIds } from "./challengeCard.js";
 import { asChallengeReach, isWithinReach, readChallengeReach } from "./challengeReach.js";
@@ -75,8 +77,10 @@ import {
 } from "./holdemDraftBuyIn.js";
 import {
 	bandOfMatch,
+	botCountOfMatch,
 	buildSettingsModal,
 	defaultSettings,
+	isCasualMatch,
 	isSettingsGame,
 	joinOfRoom,
 	matchOfRoom,
@@ -302,7 +306,7 @@ export async function confirmChallengeDraft(interaction: ConfirmInteraction, gam
 
 	await acknowledgeConfirm(interaction);
 	const opened = await openChallengeDraft(guild, interaction.user.id, game, {
-		wantsCasual: wanted.match === "casual" || wanted.match === "casual-bots",
+		wantsCasual: isCasualMatch(wanted.match),
 		configure: (room) => applySettings(interaction, room, wanted, fields, CREATE_MODE),
 	});
 	// Every refusal here is a race: the press already found the slot free and the game valid,
@@ -446,8 +450,8 @@ export async function openChallengeDraft(guild: Guild, hostId: string, game: Gam
 // What:  a creation or Edit settings Submit's choices, written onto the draft by calling the
 //        SAME function each card control calls, in the order a host pressing them would: who
 //        can join (the visibility or the network, then approval), the match (Rated or Casual,
-//        its Dero bots through Play vs bots' one write, then the band), Hold'em's buy in, the
-//        referee and the auctions, and who may watch last, since a network table refuses it.
+//        its Dero bots through Play vs bots' one write, then the band), Hold'em's buy in, Dero
+//        voice and the auctions, and who may watch last, since a network table refuses it.
 // Why:   one path onto the row per setting. A second writer here would be a second set of
 //        rules about the reach, the network, consent, bots and the chip ledger to keep in step.
 // How:   a choice that equals the row is skipped, so an edit writes only what changed. A choice
@@ -480,9 +484,11 @@ async function applySettings(interaction: HostPress, room: IGameRoom, wanted: Ch
 		if (current.visibility === "public" && (current.requireApproval ?? false) !== approve) take(await applyApproval(current, approve ? "on" : "off"), names.join);
 	}
 
-	// ② The match, fixed at creation: Rated or Casual, then the band of a rated match.
+	// ② The match, fixed at creation: Rated or Casual (with the host's own Dero bot count,
+	// 2026-10 item 267 decision 9), then the band of a rated match.
+	const wantedBots = botCountOfMatch(wanted.match);
 	if (fields.includes("match") && matchOfRoom(current) !== wanted.match) {
-		if (wanted.match === "casual-bots") take(await applyCasualChoice(interaction, current, "on"), names.casualBots);
+		if (wantedBots > 0) take(await applyCasualChoice(interaction, current, "on", wantedBots), names.casualBots);
 		else if (wanted.match === "casual") take(await applyCasualChoice(interaction, current, CASUAL_WITHOUT_BOTS), names.match);
 		else {
 			if (current.casual) take(await applyCasualChoice(interaction, current, "off"), names.match);
@@ -502,13 +508,13 @@ async function applySettings(interaction: HostPress, room: IGameRoom, wanted: Ch
 		}
 	}
 
-	// ④ The referee and Monopoly's auctions. Hold'em's referee is applied even when the held
-	// draft's line took its field: the field's default is on (owner decision 5), which a new
-	// Hold'em row already reads as (refereeOn), so nothing is written unless the host chose off.
-	if (offersReferee(current.game) && refereeOn(current) !== wanted.referee && (mode.kind === "create" || fields.includes("referee") || fields.includes("table"))) {
-		take(await applyDraftSetting(current, "referee", wanted.referee ? "on" : "off"), names.referee);
+	// ④ Dero voice and Monopoly's auctions. Dero voice is applied even when the held draft's
+	// line took its field: the field opens on the game's default, which a new row already reads
+	// as (refereeOn), so nothing is written unless the host chose otherwise.
+	if (refereeOn(current) !== wanted.voice && (mode.kind === "create" || fields.includes("voice"))) {
+		take(await applyDraftSetting(current, "referee", wanted.voice ? "on" : "off"), names.voice);
 	}
-	if (fields.includes("table") && (current.monopolyAuctions ?? false) !== wanted.auctions) take(await applyDraftSetting(current, "auctions", wanted.auctions ? "on" : "off"), names.auctions);
+	if (fields.includes("auctions") && (current.monopolyAuctions ?? false) !== wanted.auctions) take(await applyDraftSetting(current, "auctions", wanted.auctions ? "on" : "off"), names.auctions);
 
 	// ⑤ Who may watch, last: a network table keeps its own spectators, so only a choice other
 	// than the default it opens with is worth a note there.
@@ -597,19 +603,20 @@ export async function confirmSettingsEdit(interaction: ConfirmInteraction, room:
 
 // ── the draft's on or off settings ────────────────────────────────────
 // The host decides at open whether a Monopoly lot a player passes on goes to auction
-// (master plan Section 1) and whether Dero referees the match out loud (Session 5c,
-// Monopoly and Hold'em since 2026-10 item 257 Phase 4b). Both live on the draft row,
-// which the provisioner adopts, so each reaches the match without a second copy anywhere.
-// One handler for both, keyed by the card action that carries it, so the toggles cannot
-// drift into different rules.
+// (master plan Section 1) and whether Dero's voice is on for the match (every game since
+// 2026-10 item 267, decision 10). Both live on the draft row, which the provisioner adopts,
+// so each reaches the match without a second copy anywhere. One handler for both, keyed by
+// the card action that carries it, so the toggles cannot drift into different rules. The
+// voice action keeps the name "referee" because a card posted before the creation modal
+// still carries referee toggle buttons with that action in their customId.
 const DRAFT_SETTINGS = {
 	auctions: { field: "monopolyAuctions", offeredFor: (game: GameSlug) => game === "monopoly" },
-	referee: { field: "referee", offeredFor: offersReferee },
+	referee: { field: "deroVoice", offeredFor: isSettingsGame },
 } as const satisfies Record<DraftSettingAction, { field: keyof IGameRoom; offeredFor: (game: GameSlug) => boolean }>;
 
 /**
  * Switch one on or off draft setting: the one write behind a card's auctions or referee toggle
- * and the creation modal's Referee and Table options (2026-10 item 263 Phase 2a).
+ * and the creation modal's Auctions and Dero voice (2026-10 item 263 Phase 2a, item 267).
  */
 export async function applyDraftSetting(room: IGameRoom, action: DraftSettingAction, choice: string): Promise<DraftChoice> {
 	const setting = DRAFT_SETTINGS[action];
@@ -1231,10 +1238,10 @@ async function checkRematch(interaction: ButtonInteraction, room: IGameRoom): Pr
 	if (room.status !== "finished") return { ok: false, reply: { content: gameRoomsCopy.errors.notFound } };
 
 	// Solo visibility rematches only for the solo games whose result card offers it
-	// (roomTypes.SOLO_REMATCH_GAMES). A coin flip or dice round against Dero is a single
-	// press from the card instead, and solo-rps asks its throw in the room, so its rematch is
-	// one more prompt (2026-10 item 257 Phase 4b); any other game with solo visibility is a
-	// row no current path writes, and seeding it would open the wrong thing.
+	// (roomTypes.SOLO_REMATCH_GAMES, every solo game since 2026-10 item 267 decision 8):
+	// solo-rps asks its throw in the room, and a coin flip or a dice roll plays its round as
+	// the rematch seeds (playRematchInPlace). Any other game with solo visibility is a row no
+	// current path writes, and seeding it would open the wrong thing.
 	if (room.visibility === "solo" && !isSoloRematchGame(room.game)) {
 		return { ok: false, reply: { content: gameRoomsCopy.errors.notFound } };
 	}
@@ -1340,10 +1347,8 @@ async function playRematchInPlace(interaction: ButtonInteraction, finished: IGam
 	// (2026-10 item 267). From the deal on, the table's ledger owns the buy ins: a table that
 	// cannot start closes its room, and finish gives the stacks back.
 	if (next.game === "solo-blackjack" && charge.seats) {
-		const member = guild.members.cache.get(hostId);
-		const displayName = member?.displayName ?? interaction.user.globalName ?? interaction.user.username;
 		charge.ledgered = true;
-		if (!(await startSoloBlackjackBoard(guild, started, channel, { userId: hostId, displayName }, charge.seats))) {
+		if (!(await startSoloBlackjackBoard(guild, started, channel, rematchHostOf(interaction), charge.seats))) {
 			return gameRoomsCopy.errors.createFailed;
 		}
 	}
@@ -1352,7 +1357,20 @@ async function playRematchInPlace(interaction: ButtonInteraction, finished: IGam
 		charge.ledgered = true;
 		if (!(await startBlackjackRoomBoard(guild, started, channel, charge.seats))) return gameRoomsCopy.errors.createFailed;
 	}
+	// A coin flip or dice rematch plays its round now, the way its room's open did (2026-10 item
+	// 267, decision 8), and finishes the new row, whose result card offers the next Rematch. A
+	// round that cannot post closes the row as abandoned inside playSoloLuckRoom, so nothing
+	// is left holding the presser's one room slot.
+	if (isSoloLuckGame(next.game)) await playSoloRoundAtOpen(interaction.client, next.game, started, channel, rematchHostOf(interaction));
 	return null;
+}
+
+// The presser of a solo rematch as its table or round names them: their server name where the
+// member is cached, else their Discord name.
+function rematchHostOf(interaction: ButtonInteraction): SoloHost {
+	const member = interaction.guild?.members.cache.get(interaction.user.id);
+	const displayName = member?.displayName ?? interaction.user.globalName ?? interaction.user.username;
+	return { userId: interaction.user.id, displayName, user: interaction.user };
 }
 
 type ChannelTakeover = { ok: true; room: IGameRoom } | { ok: false; reason: "alreadyHosting" | "rematchTaken" };
@@ -1375,9 +1393,9 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 			channelId,
 			rematchedFromRoomId: finished.roomId,
 			// The same match settings as the game it rematches. Nothing else carries
-			// them: Monopoly's referee in particular is read off the ROW on every move.
+			// them: Dero voice in particular is read off the ROW on every Monopoly move.
 			monopolyAuctions: finished.monopolyAuctions ?? false,
-			referee: refereeOn(finished),
+			deroVoice: refereeOn(finished),
 			// And the host controls (2026-10 item 244 Phase 4), above all who was removed:
 			// the rematch plays in the SAME channel, so a member removed from it stays
 			// removed, and a public Hold'em rematch's Buy in refuses them like the first.
@@ -1638,8 +1656,10 @@ export const CASUAL_WITHOUT_BOTS = "plain";
 /**
  * Set a rated game's draft Rated or Casual, its Dero bots with it. Refused only where bots are
  * asked for ("on") and cannot sit (botRefusal): Rated and a casual match without bots seat none.
+ * `botCount` is the host's own count from The match (2026-10 item 267, decision 9), saved
+ * exactly; without it "on" fills to the casual table, as the card's older Casual toggle did.
  */
-export async function applyCasualChoice(interaction: HostPress, room: IGameRoom, choice: string): Promise<DraftChoice> {
+export async function applyCasualChoice(interaction: HostPress, room: IGameRoom, choice: string, botCount?: number): Promise<DraftChoice> {
 	// The arg is user input like the rest of a customId: anything but the values a card or
 	// the creation modal sends is a retired or forged control.
 	if (choice !== "on" && choice !== "off" && choice !== CASUAL_WITHOUT_BOTS) return { ok: false, refusal: gameRoomsCopy.errors.controlRetired };
@@ -1652,9 +1672,16 @@ export async function applyCasualChoice(interaction: HostPress, room: IGameRoom,
 	if (!isRatedGame(room.game)) return { ok: false, refusal: gameRoomsCopy.errors.controlRetired };
 	const words = gameRoomsCopy.board.casual;
 	const casual = choice !== "off";
-	const bots = wantsBots ? casualBotSeats(room.game, (room.spectatorIds ?? []).length) : 0;
+	const bots = wantsBots ? casualBotCount(room, botCount) : 0;
 	const detail = casual ? words.logFilled(bots) : words.logCleared;
 	return { ok: true, room: await saveBotSeats(interaction, room, { casual, botSeats: bots }, detail) };
+}
+
+// The bots a casual "on" seats: the host's count from The match, held to the game's limit since
+// a count is user input, or the casual table's fill when no count was chosen.
+function casualBotCount(room: IGameRoom, botCount: number | undefined): number {
+	if (botCount === undefined) return casualBotSeats(room.game, (room.spectatorIds ?? []).length);
+	return Math.min(Math.max(0, botCount), maxBotSeats(room.game));
 }
 
 export async function chooseCasual(interaction: ButtonInteraction, room: IGameRoom, choice: string): Promise<void> {

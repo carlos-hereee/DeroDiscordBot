@@ -1,4 +1,4 @@
-import { ChannelType, type CategoryChannel, type Guild, type TextChannel, type User } from "discord.js";
+import { ChannelType, type CategoryChannel, type Client, type Guild, type TextChannel, type User } from "discord.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
@@ -9,7 +9,7 @@ import { RoomProvisioner, checkRoomAdmission, describeRoomOpenFailure, type Room
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
-import type { SoloLuckSlug } from "./roomTypes.js";
+import type { GameSlug, SoloLuckSlug } from "./roomTypes.js";
 import { playSoloLuckRoom } from "./soloLuckRoom.js";
 import { draftBuyInOf, refundSeatsDirectly, type PaidSeats } from "./holdemDraftBuyIn.js";
 import { openBlackjackLedger } from "./blackjackChips.js";
@@ -23,7 +23,7 @@ import { openBlackjackLedger } from "./blackjackChips.js";
 //        through the turn prompt (soloLuckRoom, 2026-10 item 257 Phase 4b). A rematch of
 //        a finished solo room does not come through here (it plays on in the same
 //        channel), but it deals its blackjack table through startSoloBlackjackBoard
-//        below. That dealing is shared with a multi seat blackjack room
+//        and plays its coin or dice round through playSoloRoundAtOpen below. That dealing is shared with a multi seat blackjack room
 //        (startBlackjackRoomBoard), so a table is dealt one way wherever it plays.
 // Who:   arcadeHost (the buttons), challengeBoard (Play Dero instead, a blackjack
 //        challenge's start and every rematch's table), and miniGameInChallenges.
@@ -36,7 +36,8 @@ import { openBlackjackLedger } from "./blackjackChips.js";
 // How:   resolve the arcade category from GuildConfig exactly the way
 //        provisionFromDraft does, open the room, then hand solo-blackjack its board or
 //        play the coin or the dice. A solo-rps room's prompt is posted by seedRoom, so a
-//        rematch in the same channel posts it the same way.
+//        rematch in the same channel posts it the same way, and a coin or dice rematch
+//        plays its round through the same playSoloRoundAtOpen as the open.
 
 export type SoloGameSlug = "solo-hangman" | "solo-blackjack" | SoloLuckSlug;
 
@@ -121,14 +122,22 @@ async function openSoloRoomOnce(guild: Guild, game: SoloGameSlug, host: SoloHost
 	if (game === "solo-blackjack" && !(await startSoloBlackjackBoard(guild, result.room, result.channel, host, blackjackSeats))) {
 		return { ok: false, reason: "tableNotStarted" };
 	}
-	// A coin flip or a dice roll is played the moment the room opens and the room finishes
-	// straight after, so the member reads one result in a room already locked, with Archive
-	// now on its result card. The pay is the round's own, through soloLuck (the daily cap
-	// included), and finish adds no room rate on top (roomLifecycle.payRoomRateTopUp).
-	const playedAtOpen = PLAYED_AT_OPEN[game as SoloLuckSlug];
-	if (playedAtOpen) await playSoloLuckRoom(guild.client, result.room, result.channel, host, playedAtOpen);
-
+	await playSoloRoundAtOpen(guild.client, game, result.room, result.channel, host);
 	return result;
+}
+
+/**
+ * Play a coin flip or a dice roll room's round the moment the room is seeded, and finish it;
+ * any other room is left alone. The one path for both doors: a room's open above and a
+ * rematch in the same channel (challengeBoard.playRematchInPlace, 2026-10 item 267 decision 8),
+ * so the two cannot play a round differently. The member reads one result in a room already
+ * locked, with Archive and Rematch on its result card. The pay is the round's own, through
+ * soloLuck (the daily cap included), and finish adds no room rate on top
+ * (roomLifecycle.payRoomRateTopUp).
+ */
+export async function playSoloRoundAtOpen(client: Client, game: GameSlug, room: IGameRoom, channel: TextChannel, host: SoloHost): Promise<void> {
+	const playedAtOpen = PLAYED_AT_OPEN[game as SoloLuckSlug];
+	if (playedAtOpen) await playSoloLuckRoom(client, room, channel, host, playedAtOpen);
 }
 
 /** A room's seats at a free Blackjack table: every player, on the standard stack, charged nothing. */

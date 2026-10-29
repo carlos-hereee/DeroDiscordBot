@@ -59,11 +59,13 @@ export const BLACKJACK_ROOM_GAMES = ["blackjack", "solo-blackjack"] as const sat
 export const SOLO_LUCK_GAMES = ["solo-coinflip", "solo-diceroll", "solo-rps"] as const satisfies readonly GameSlug[];
 export type SoloLuckSlug = (typeof SOLO_LUCK_GAMES)[number];
 
-// The solo rooms a finished match offers Rematch in. Rock paper scissors is the one luck
-// round here (2026-10 item 257 Phase 4b): its throw is asked in the room, so a second round
-// is one more prompt in the same channel; a coin flip or a dice roll is a single press from
-// the card or the 🕹️games row instead. Read by the result card and the rematch check alike.
-export const SOLO_REMATCH_GAMES = ["solo-hangman", "solo-blackjack", "solo-rps"] as const satisfies readonly GameSlug[];
+// The solo rooms a finished match offers Rematch in: every one of them since the owner's
+// decision of 2026-10-28 (decision 8 of 2026-10 item 267, every game ends with Rematch).
+// Rock paper scissors asks its next throw in the same channel (2026-10 item 257 Phase 4b),
+// and a coin flip or a dice roll plays its next round there the moment the rematch seeds,
+// exactly as its room's open does (soloRooms.playSoloRoundAtOpen). Read by the result card
+// and the rematch check alike, so a game listed here is offered and accepted together.
+export const SOLO_REMATCH_GAMES = ["solo-hangman", "solo-blackjack", "solo-coinflip", "solo-diceroll", "solo-rps"] as const satisfies readonly GameSlug[];
 
 // The challenge card games whose table plays for a chip buy in, set on the card and paid on
 // Join (holdemDraftBuyIn): Hold'em, and Blackjack since 2026-10 item 267.
@@ -74,25 +76,31 @@ export const isBuyInGame = (game: GameSlug): boolean => (BUY_IN_GAMES as readonl
 export const isSoloLuckGame = (game: GameSlug): game is SoloLuckSlug => (SOLO_LUCK_GAMES as readonly GameSlug[]).includes(game);
 export const isSoloRematchGame = (game: GameSlug): boolean => (SOLO_REMATCH_GAMES as readonly GameSlug[]).includes(game);
 
-/** Whether a finished room of this game offers Rematch on its result card. */
+/**
+ * Whether a finished room of this game offers Rematch on its result card. Every game does
+ * today (2026-10 item 267, decision 8); the check stays so a solo luck game added later is
+ * offered Rematch only once SOLO_REMATCH_GAMES lists it and its rematch can seed a round.
+ */
 export const offersRematch = (game: GameSlug): boolean => !isSoloLuckGame(game) || isSoloRematchGame(game);
 
 // The games whose matches Dero can referee out loud (2026-10 item 257 Phase 4b, decision 13):
-// the ones with voice lines. A game gains the challenge card's referee toggle only when its
-// lines exist, so this list grows with them and never ahead of them.
+// the ones with voice lines, which narrate while refereeOn reads true. Every game's card now
+// carries Dero voice (2026-10 item 267, decision 10), but only these games have lines to speak
+// during play, so this list still grows with them and never ahead of them.
 export const REFEREE_GAMES = ["monopoly", "holdem"] as const satisfies readonly GameSlug[];
 export const offersReferee = (game: GameSlug): boolean => (REFEREE_GAMES as readonly GameSlug[]).includes(game);
 
 /**
- * Whether Dero referees this match. The field is `referee`; a row written before it existed
- * carries Monopoly's old `monopolyReferee` instead, so a null falls through to that, and a
- * live draft or match keeps its referee across the deploy that introduced the new field.
- * Hold'em never had that old flag and defaults ON (2026-10 item 263 R3-28, owner decision 5),
- * so a Hold'em row with no stored choice narrates; only a host's explicit off keeps it quiet.
- * Structural rather than typed on IGameRoom, so this module stays import free.
+ * Whether Dero's voice is on for this match: the host's Dero voice choice (`deroVoice`, 2026-10
+ * item 267, decision 10) first. A row written before that field existed carries the older
+ * `referee`, and one older still Monopoly's `monopolyReferee`, so each null falls through to
+ * the next and a live draft or match keeps its choice across the deploys that introduced them.
+ * With nothing stored, Hold'em defaults ON (2026-10 item 263 R3-28, owner decision 5) and every
+ * other game OFF, the defaults the creation modal opens with. REFEREE_GAMES' narration reads
+ * this. Structural rather than typed on IGameRoom, so this module stays import free.
  */
-export const refereeOn = (room: { game?: string; referee?: boolean | null; monopolyReferee?: boolean | null }): boolean =>
-	room.referee ?? (room.game === "holdem" ? true : (room.monopolyReferee ?? false));
+export const refereeOn = (room: { game?: string; deroVoice?: boolean | null; referee?: boolean | null; monopolyReferee?: boolean | null }): boolean =>
+	room.deroVoice ?? room.referee ?? (room.game === "holdem" ? true : (room.monopolyReferee ?? false));
 
 // ── Who may see the room ──
 // "invite": @everyone is denied ViewChannel and each accepted member gets an explicit

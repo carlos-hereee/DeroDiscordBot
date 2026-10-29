@@ -19,7 +19,7 @@ import type { HoldemTable } from "@features/games/holdemTable.js";
 
 // ── roomTurnSweep ────────────────────────────────────────────────────
 // What:  forfeits a battleship turn nobody took, and the MATCH after two in a row;
-//        forfeits a Monopoly seat that sat on the clock for a day; and finishes any
+//        forfeits a Monopoly seat that sat on the clock past its idle budget; and finishes any
 //        room, draft or match, that saw no action for GAME_ROOM_IDLE_ABANDON_MS.
 // Who:   the 5 minute room cron, beside the archive sweep.
 // When:  every tick, over every live battleship and Monopoly match in every guild.
@@ -30,7 +30,7 @@ import type { HoldemTable } from "@features/games/holdemTable.js";
 //        one writer), the archive sweep never sees the room, and it holds its
 //        host's one-room slot forever. The quick games resolve in a single press or
 //        when their word is guessed; the long ones can be abandoned MID-match,
-//        which is why each sweep is game-scoped. (Hold em's 60 second clock is too
+//        which is why each sweep is game-scoped. (Hold em's 3 minute clock is too
 //        fast for this 5 minute tick and runs on its own interval in main.ts.)
 // How:   compare the last activity against the game's budget, plus any time the
 //        board spent drawing (drawingPause), call the pure engine's expiry
@@ -171,7 +171,7 @@ export interface MonopolyIdleSummary {
 
 // The later of the turn's start and the last trail line. The turn start alone
 // would forfeit a seat that has been ACTING all along inside one long turn (a roll
-// at hour 23 and a buy at hour 23 and a half still leave turnStartedAt a day old),
+// near the budget's end and a buy just after it still leave turnStartedAt that old),
 // and the trail alone would misread a match whose last line was the previous
 // seat's, posted long before this seat was handed the clock.
 function monopolyLastActivityAt(room: IGameRoom, turnStartedAt: number): number {
@@ -181,7 +181,7 @@ function monopolyLastActivityAt(room: IGameRoom, turnStartedAt: number): number 
 /**
  * Forfeit the seat on the clock in every Monopoly match that has seen no move for
  * GAME_ROOM_MONOPOLY_IDLE_MS, and finish the match when that leaves one seat.
- * One seat per match per tick: the next seat gets a fresh day from the passTurn
+ * One seat per match per tick: the next seat gets a fresh budget from the passTurn
  * inside applyForfeit, so a match is never emptied in a single sweep.
  */
 export async function sweepMonopolyIdle(client: Client, now: Date = new Date()): Promise<MonopolyIdleSummary> {
@@ -274,8 +274,8 @@ function isHangmanRoundInPlay(room: IGameRoom): boolean {
  * another path finished in the same tick is skipped, and `abandoned` pays nobody,
  * which is also why an abandoned room is never rated.
  *
- * ⚠️ MONOPOLY IS EXEMPT. Its opener tells players a seat has a day on the clock, and
- * sweepMonopolyIdle above already forfeits one idle seat per day until one is left,
+ * ⚠️ MONOPOLY IS EXEMPT. Its opener tells players a seat has GAME_ROOM_MONOPOLY_IDLE_MS on the clock,
+ * and sweepMonopolyIdle above already forfeits one idle seat per budget until one is left,
  * so a Monopoly room cannot strand its host's slot either.
  *
  * ⚠️ A HANGMAN ROUND IN PLAY IS EXEMPT TOO, hosted or solo, by the owner's decision of

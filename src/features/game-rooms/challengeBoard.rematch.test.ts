@@ -48,6 +48,8 @@ const fake = vi.hoisted(() => {
 				monopolyReferee: input.monopolyReferee ?? false,
 				// The referee flag (2026-10 item 257 Phase 4b), as the real store writes it.
 				referee: input.referee ?? false,
+				// Dero voice (2026-10 item 267), as the real store writes it.
+				deroVoice: input.deroVoice ?? null,
 				// The host's spectator setting (2026-10 item 254, Arcade 11), as the real store writes it.
 				spectatorMode: input.spectatorMode ?? null,
 				// A Blackjack rematch's buy in and its stacks ledger (2026-10 item 267).
@@ -207,6 +209,8 @@ vi.mock("./roomReferee.js", () => ({ startRoomReferee: vi.fn() }));
 import { rematchFromRoom } from "./challengeBoard.js";
 import { syncTurnPrompt } from "./turnPrompt.js";
 import { startRoomReferee } from "./roomReferee.js";
+import { resolveSoloLuck } from "@features/games/soloLuck.js";
+import { buildSoloLuckEmbed } from "@features/games/gamesEmbeds.js";
 import { soloRpsTurnAdapter } from "./soloLuckRoom.js";
 import { sweepExpiredRooms } from "./roomArchiveSweep.js";
 import { recoverGameRoomsOnBoot } from "./roomBootRecovery.js";
@@ -458,15 +462,16 @@ describe("a rematch in the same channel", () => {
 
 	// A row from before the referee field carries only monopolyReferee; the rematch writes the
 	// new field, read through refereeOn (2026-10 item 257 Phase 4b), so the referee survives.
-	it("carries Monopoly's settings to the rematch row, where the referee is read every move", async () => {
+	it("carries Monopoly's settings to the rematch row as Dero voice, which is read every move", async () => {
 		const world = makeWorld();
+		// A row from before Dero voice: only the oldest referee flag says the voice was on.
 		insertFinishedRoom({ game: "monopoly", monopolyAuctions: true, monopolyReferee: true });
 
 		await rematchFromRoom(pressRematch(world, P2), await roomOf(FINISHED));
 
-		expect(rematchRow()).toMatchObject({ monopolyAuctions: true, referee: true, status: "playing" });
+		expect(rematchRow()).toMatchObject({ monopolyAuctions: true, deroVoice: true, status: "playing" });
 		// And the rematch starts its referee exactly as a first match does, through seedRoom.
-		expect(startRoomReferee).toHaveBeenCalledWith(world.client, expect.objectContaining({ roomId: rematchRow()?.roomId, referee: true }), world.channel);
+		expect(startRoomReferee).toHaveBeenCalledWith(world.client, expect.objectContaining({ roomId: rematchRow()?.roomId, deroVoice: true }), world.channel);
 	});
 });
 
@@ -714,13 +719,29 @@ describe("solo rooms rematch in place", () => {
 		expect(world.channel.createInvite).not.toHaveBeenCalled();
 	});
 
-	it("still refuses a rematch of a coin flip against Dero, a single press from the card instead", async () => {
+	// 2026-10 item 267, owner decision 8: every game ends with Rematch, a coin flip and a dice
+	// roll included, and their next round plays in the same channel as the rematch seeds. The
+	// round is the real one (soloLuck), its dice pinned, so the round posted is the one expected.
+	it.each([
+		["solo-coinflip", "coinflip"],
+		["solo-diceroll", "diceroll"],
+	] as const)("%s plays a fresh round in the same channel and finishes its new row", async (game, play) => {
 		const world = makeWorld();
-		insertFinishedRoom({ game: "solo-coinflip", visibility: "solo", playerIds: [P1], spectatorIds: [], inviteCode: null });
+		insertFinishedRoom({ game, visibility: "solo", playerIds: [P1], spectatorIds: [], inviteCode: null });
+		vi.spyOn(Math, "random").mockReturnValue(0.1);
+		const round = resolveSoloLuck({ game: play }, () => 0.1);
 
 		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
 
-		expect(rematchRow()).toBeUndefined();
+		const next = rematchRow();
+		expect(next).toMatchObject({ game, channelId: CHANNEL, hostId: P1, visibility: "solo", status: "finished", winnerId: round.outcome === "won" ? P1 : null });
+		expect(world.guild.channels.create).not.toHaveBeenCalled();
+		// The round's own embed, matched on what it says (its timestamp is the send's).
+		const { title, description } = buildSoloLuckEmbed(P1, round).data;
+		expect(world.channel.send).toHaveBeenCalledWith(expect.objectContaining({ embeds: [expect.objectContaining({ data: expect.objectContaining({ title, description }) })] }));
+		// The finished row let the channel go to the new one, the rematch rule of every game.
+		expect(await roomOf(FINISHED)).toMatchObject({ channelId: null, archiveAt: null });
+		vi.mocked(Math.random).mockRestore();
 	});
 
 	it("solo hangman seeds a new round from the bank into the same channel, with no new channel", async () => {

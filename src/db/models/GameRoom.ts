@@ -99,6 +99,11 @@ export interface IGameRoom {
 	// by the card's toggle and read once, when the provisioner seeds the match, which then
 	// carries it in its own settings; nothing reads this field after the match starts.
 	monopolyAuctions: boolean;
+	// The host's Dero voice choice, on every game's creation modal (2026-10 item 267, decision
+	// 10), which replaces the meaning of `referee` and `monopolyReferee` below. Set on the DRAFT
+	// and read off the ROW like the referee was. Null on a row written before it existed, which
+	// then reads the two older fields: ALWAYS read the three through roomTypes.refereeOn.
+	deroVoice: boolean | null;
 	// Whether the host opened the match with Dero as its voice referee, on Monopoly and
 	// Hold'em (2026-10 item 257 Phase 4b). Set on the DRAFT by the card's toggle and read off
 	// the ROW (Monopoly on every move), because no match state copies it. Null on a row
@@ -281,6 +286,9 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		// field when it loads, and a false there would hide an older Monopoly row's
 		// monopolyReferee: true. Null falls through to it in roomTypes.refereeOn.
 		referee: { type: Boolean, default: null },
+		// NULL by default for the referee's reason above: a false filled into an older row
+		// would hide the referee choice that row was written with.
+		deroVoice: { type: Boolean, default: null },
 		// Off by default for the same reason as the auctions: an older row reads as no referee.
 		monopolyReferee: { type: Boolean, default: false },
 		// Null on every older row, which reads as no notice posted yet.
