@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
 
-vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn(), moveBoardMessage: vi.fn() } }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn(), setSecretFieldsIf: vi.fn(), moveBoardMessage: vi.fn() } }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), recordCarriedMoves: vi.fn() }, resolveRoomChannel: vi.fn() }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
@@ -31,6 +31,8 @@ import { answerInChannel } from "@utils/answerInChannel.js";
 import { roomTrail, resolveRoomChannel } from "./roomTrail.js";
 import { playingBoardPicture } from "@features/games/hangmanBoard.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { roomLifecycle } from "./roomLifecycle.js";
+import { awardMultiPlayerResult } from "@features/games/gameXp.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX, GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
 import { HANGMAN_CATEGORIES, HANGMAN_ENTRIES, HANGMAN_WORD_BANK } from "@features/games/hangmanWords.js";
 import { HANGMAN_HINT_MAX } from "@features/games/hangmanAuthoring.js";
@@ -69,8 +71,11 @@ const storeMock = gameRoomStore as unknown as {
 	update: ReturnType<typeof vi.fn>;
 	findByRoomId: ReturnType<typeof vi.fn>;
 	setSecretField: ReturnType<typeof vi.fn>;
+	setSecretFieldsIf: ReturnType<typeof vi.fn>;
 	moveBoardMessage: ReturnType<typeof vi.fn>;
 };
+const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
+const awardMock = awardMultiPlayerResult as unknown as ReturnType<typeof vi.fn>;
 const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn>; recordCarriedMoves: ReturnType<typeof vi.fn> };
 const resolveChannelMock = resolveRoomChannel as unknown as ReturnType<typeof vi.fn>;
 const boardMock = playingBoardPicture as unknown as ReturnType<typeof vi.fn>;
@@ -207,6 +212,14 @@ const onlyNoticesShown = (interaction: { showModal: unknown }): boolean => shown
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
+	// A guess's compare and swap lands by default, answering the row the test's last read gave
+	// with the guess's fields written on it, as the store's dotted write would.
+	storeMock.setSecretFieldsIf.mockImplementation(async (_guildId: string, _roomId: string, _expected: unknown, fields: Record<string, unknown>) => {
+		const read = (await storeMock.findByRoomId.mock.results.at(-1)?.value) as IGameRoom | undefined;
+		return read ? { ...read, secret: { ...(read.secret as object), ...fields } } : null;
+	});
+	// The round's ending wins finish's claim unless a test says another ending got there first.
+	finishMock.mockResolvedValue(true);
 	trailMock.postMove.mockResolvedValue(undefined);
 	openerEdit = vi.fn().mockResolvedValue(undefined);
 	// A gallows card is a turn board (2026-10 item 263 R3-29): it is posted, then claimed.
@@ -500,6 +513,97 @@ describe("handleGuessModal, the gallows card", () => {
 	});
 });
 
+// ── a guess is a compare and swap (2026-10 item 276, audit P1-6 and P1-7) ──
+// Two guesses read from one row used to both write the whole secret back, so the second erased
+// the first; and a round's ending posted its word line and paid even when another ending had
+// already finished the room.
+describe("handleGuessModal, the compare and swap", () => {
+	it("saves only the fields a guess moves, on the version of the round it read", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+
+		await handleGuessModal(makeSubmit(GUESSER, "z"));
+
+		expect(storeMock.setSecretFieldsIf).toHaveBeenCalledOnce();
+		expect(storeMock.setSecretFieldsIf).toHaveBeenCalledWith(
+			"guild-1",
+			"room-1",
+			{ "secret.guessedLetters": { $size: 0 }, "secret.wrong": 0 },
+			{ guessedLetters: ["z"], wrong: 1, revealedHints: 0 }
+		);
+		// The whole secret is never written back by a guess, so the gallows card id the last
+		// guess's card claimed cannot be put back over it.
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("plays the letter on top of a guess that won the write, so neither guess is lost", async () => {
+		const first = makeRoom();
+		const after = makeRoom();
+		(after.secret as { guessedLetters: string[]; wrong: number }).guessedLetters = ["q"];
+		(after.secret as { guessedLetters: string[]; wrong: number }).wrong = 1;
+		storeMock.findByRoomId.mockResolvedValueOnce(first).mockResolvedValueOnce(after);
+		storeMock.setSecretFieldsIf.mockResolvedValueOnce(null);
+
+		await handleGuessModal(makeSubmit(GUESSER, "z"));
+
+		expect(storeMock.setSecretFieldsIf).toHaveBeenCalledTimes(2);
+		const [, , version, fields] = storeMock.setSecretFieldsIf.mock.calls[1] as [string, string, unknown, { guessedLetters: string[]; wrong: number }];
+		expect(version).toEqual({ "secret.guessedLetters": { $size: 1 }, "secret.wrong": 1 });
+		expect(fields.guessedLetters).toEqual(["q", "z"]);
+		expect(fields.wrong).toBe(2);
+		expect(channelSend).toHaveBeenCalledOnce();
+	});
+
+	it("answers busy and posts nothing when the write is lost twice", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		storeMock.setSecretFieldsIf.mockResolvedValue(null);
+		const interaction = makeSubmit(GUESSER, "z");
+
+		await handleGuessModal(interaction);
+
+		expect(storeMock.setSecretFieldsIf).toHaveBeenCalledTimes(2);
+		expect(answerOf(interaction).content).toBe(gameRoomsCopy.monopoly.boardBusy);
+		expect(channelSend).not.toHaveBeenCalled();
+		expect(finishMock).not.toHaveBeenCalled();
+	});
+
+	it("answers that the round is over when the re-read finds it finished, and writes nothing more", async () => {
+		storeMock.findByRoomId.mockResolvedValueOnce(makeRoom()).mockResolvedValueOnce({ ...makeRoom(), status: "finished" });
+		storeMock.setSecretFieldsIf.mockResolvedValueOnce(null);
+		const interaction = makeSubmit(GUESSER, "z");
+
+		await handleGuessModal(interaction);
+
+		expect(storeMock.setSecretFieldsIf).toHaveBeenCalledOnce();
+		expect(answerOf(interaction).content).toBe(gameRoomsCopy.hangman.closed);
+		expect(channelSend).not.toHaveBeenCalled();
+	});
+
+	it("posts no word line and pays nothing when another ending won finish's claim", async () => {
+		const room = makeRoom();
+		(room.secret as { guessedLetters: string[] }).guessedLetters = ["p", "l", "a", "n", "e"];
+		storeMock.findByRoomId.mockResolvedValue(room);
+		finishMock.mockResolvedValue(false);
+
+		await handleGuessModal(makeSubmit(GUESSER, "t"));
+
+		expect(finishMock).toHaveBeenCalledOnce();
+		expect(trailMock.postMove).not.toHaveBeenCalled();
+		expect(awardMock).not.toHaveBeenCalled();
+	});
+
+	it("posts the word line and pays once when this ending won the claim", async () => {
+		const room = makeRoom();
+		(room.secret as { guessedLetters: string[] }).guessedLetters = ["p", "l", "a", "n", "e"];
+		storeMock.findByRoomId.mockResolvedValue(room);
+
+		await handleGuessModal(makeSubmit(GUESSER, "t"));
+
+		expect(trailMock.postMove).toHaveBeenCalledOnce();
+		expect((trailMock.postMove.mock.calls[0][2] as { text: string }).text).toBe(gameRoomsCopy.hangman.wonLine(WORD));
+		expect(awardMock).toHaveBeenCalledOnce();
+	});
+});
+
 // ── what acceptance actually stores and says ──────────────────────────
 describe("handleAuthoringModal, acceptance", () => {
 	beforeEach(() => storeMock.findByRoomId.mockResolvedValue(makeUnwordedRoom()));
@@ -593,7 +697,7 @@ describe("handleGuessModal, the host gate", () => {
 
 		await handleGuessModal(makeSubmit(HOST));
 
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.setSecretFieldsIf).not.toHaveBeenCalled();
 		expect(trailMock.postMove).not.toHaveBeenCalled();
 	});
 
@@ -602,7 +706,7 @@ describe("handleGuessModal, the host gate", () => {
 
 		await handleGuessModal(makeSubmit(GUESSER));
 
-		expect(storeMock.update).toHaveBeenCalledOnce();
+		expect(storeMock.setSecretFieldsIf).toHaveBeenCalledOnce();
 		// The guess rides its card's This turn block and is recorded once, never posted as a line.
 		expect(trailMock.postMove).not.toHaveBeenCalled();
 		expect(trailMock.recordCarriedMoves).toHaveBeenCalledOnce();

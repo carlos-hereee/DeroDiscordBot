@@ -252,6 +252,10 @@ export async function commitMonopolyMove(
 	// ② Re-read rather than trust the row the router loaded: it is a few hundred
 	// milliseconds older, and a stale read only loses the compare and swap below.
 	const fresh = (await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? room;
+	// A room finished from outside the match (the leave watcher, a removal that ended it) leaves
+	// the engine's phase as it was, so the room's own status is read too (2026-10 item 276, audit
+	// P3). The compare and swap below refuses it as well, for a finish that lands after this read.
+	if (fresh.status !== "playing") return { ok: false, reason: gameRoomsCopy.monopoly.matchOver };
 	const state = monopolyStateOf(fresh);
 	if (!state) return { ok: false, reason: gameRoomsCopy.monopoly.noBoard };
 	if (state.phase === "finished") return { ok: false, reason: gameRoomsCopy.monopoly.matchOver };

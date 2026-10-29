@@ -60,9 +60,19 @@ export interface TurnAdapter {
 	/**
 	 * Play the move through the game's own move function. `acknowledge` is called once the move
 	 * is claimed, where the game's button path always acknowledged. Answers a refusal worded for
-	 * the member.
+	 * the member. `fingerprint` is the turn the press or the modal was for, checked here against
+	 * the row read moments ago; a game whose state lives in memory (Blackjack) checks it again
+	 * where the move applies, since the awaits between this check and that one are where a
+	 * double press slipped through (2026-10 item 276, audit P2-12).
 	 */
-	apply(client: Client, room: IGameRoom, userId: string, answers: Readonly<Record<string, string>>, acknowledge: () => Promise<unknown>): Promise<TurnApplyResult>;
+	apply(
+		client: Client,
+		room: IGameRoom,
+		userId: string,
+		answers: Readonly<Record<string, string>>,
+		acknowledge: () => Promise<unknown>,
+		fingerprint: string
+	): Promise<TurnApplyResult>;
 	/** Buttons that ride the prompt line beside Take your turn (Monopoly's Trade and Bid). */
 	extraButtons?(room: IGameRoom): ButtonBuilder[];
 }
@@ -390,7 +400,7 @@ async function playTurnMove(
 		acknowledged = true;
 		await interaction.deferUpdate().catch(() => undefined);
 	};
-	const result = await adapter.apply(interaction.client, room, interaction.user.id, answers, acknowledge);
+	const result = await adapter.apply(interaction.client, room, interaction.user.id, answers, acknowledge, fingerprint);
 	if (result.ok) {
 		if (!acknowledged) await acknowledge();
 		return;

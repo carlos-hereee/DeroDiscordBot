@@ -286,7 +286,12 @@ export async function handleRpsSelect(interaction: StringSelectMenuInteraction |
 	// user input and this handler is reachable without it.
 	const claimed = await gameRoomStore.claimSecretField(guildId, roomId, `picks.${interaction.user.id}`, choice);
 	if (!claimed) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.games.rpsAlreadyPicked] });
+		// The claim also refuses a room no longer playing (2026-10 item 276, root cause A), so a
+		// lost claim is either this player's earlier pick or a forfeit that ended the match since
+		// the read; one more read tells the player which.
+		const latest = await gameRoomStore.findByRoomId(guildId, roomId);
+		const refusal = latest?.status === "playing" ? gameRoomsCopy.games.rpsAlreadyPicked : gameRoomsCopy.errors.notFound;
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [refusal] });
 		return;
 	}
 	// Ephemeral confirmation. Naming the choice back to the player who made it is
@@ -336,9 +341,11 @@ export async function handleRpsSelect(interaction: StringSelectMenuInteraction |
 		outcome: { bucket: luckOutcome(outcome === "tie") },
 	});
 
-	// The luck board's tally (2026-10 item 244), only from the reveal that won finish's
-	// claim, so the match counts once. A tie records nothing. Fire and forget.
-	if (ended) void recordLuckResult({ guildId: room.guildId, game: room.game, playerIds: [challengerId, opponentId], winnerId });
+	// The tally and the pay belong to the reveal that won finish's claim (2026-10 item 276, audit
+	// P3): a forfeit that finished the room first already settled it, so the match counts and
+	// pays once. A tie records nothing on the luck board (2026-10 item 244). Fire and forget.
+	if (!ended) return;
+	void recordLuckResult({ guildId: room.guildId, game: room.game, playerIds: [challengerId, opponentId], winnerId });
 
 	awardTwoPlayerResult({
 		client: interaction.client,

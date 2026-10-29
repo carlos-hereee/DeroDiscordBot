@@ -2,18 +2,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Client, ButtonInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn(), updateSecretIf: vi.fn() },
+	gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn(), setSecretFieldsIf: vi.fn(), updateSecretIf: vi.fn() },
 }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardTwoPlayerResult: vi.fn() }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
+vi.mock("@features/ratings/recordMatchRatings.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("@features/ratings/recordMatchRatings.js")>()), recordMatchRatings: vi.fn() }));
 
 import { battleshipTurnAdapter, handleFire, handleViewBoard, handleRandomize, handleReady } from "./roomBattleshipHandlers.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { roomTrail } from "./roomTrail.js";
+import { roomLifecycle } from "./roomLifecycle.js";
+import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
 import { startMatch, deserializeMatch, serializeMatch, fleetFingerprint, type StoredBattleship } from "./roomBattleship.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -23,10 +26,15 @@ const storeMock = gameRoomStore as unknown as {
 	update: ReturnType<typeof vi.fn>;
 	findByRoomId: ReturnType<typeof vi.fn>;
 	setSecretField: ReturnType<typeof vi.fn>;
+	setSecretFieldsIf: ReturnType<typeof vi.fn>;
 	updateSecretIf: ReturnType<typeof vi.fn>;
 };
 const awardXpMock = awardXp as unknown as ReturnType<typeof vi.fn>;
 const awardMatchMock = awardTwoPlayerResult as unknown as ReturnType<typeof vi.fn>;
+const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
+const ratingsMock = recordMatchRatings as unknown as ReturnType<typeof vi.fn>;
+// The secret the last shot saved through its compare and swap.
+const lastSavedShot = (): StoredBattleship => storeMock.updateSecretIf.mock.calls[storeMock.updateSecretIf.mock.calls.length - 1][3] as StoredBattleship;
 
 const A = "player-a";
 const B = "player-b";
@@ -87,6 +95,9 @@ const noticeText = (interaction: { showModal: unknown }): string =>
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
+	// A shot's compare and swap lands unless a test says the turn moved first.
+	storeMock.updateSecretIf.mockImplementation(async (_guildId: string, _roomId: string, _expected: unknown, secret: unknown) => ({ secret }));
+	finishMock.mockResolvedValue(true);
 });
 
 describe("firing", () => {
@@ -95,7 +106,7 @@ describe("firing", () => {
 
 		await handleFire(interaction, makeRoom(freshMatch()));
 
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 		expect(noticeText(interaction)).toBe(gameRoomsCopy.turnPrompt.notYourTurn);
 	});
 
@@ -111,7 +122,7 @@ describe("firing", () => {
 		expect(json).toContain("Row (1 to 10)");
 		expect((json.match(/"custom_id":"file"/g) ?? []).length).toBe(1);
 		expect((json.match(/"custom_id":"rank"/g) ?? []).length).toBe(1);
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	// The shot rides its own board's This turn block (2026-10 item 263 R3-29), recorded once that
@@ -130,7 +141,7 @@ describe("firing", () => {
 		const result = await fireAtCell(makeRoom(freshMatch()), B, 0, 0);
 
 		expect(result).toEqual({ ok: false, reason: gameRoomsCopy.battleship.notYourTurn });
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	it("refuses a repeat target without spending the turn", async () => {
@@ -142,7 +153,7 @@ describe("firing", () => {
 		const result = await fireAtCell(makeRoom(serializeMatch(state, { boardMessageId: null })), A, 0, 0);
 
 		expect(result.ok).toBe(false);
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	it("refuses a coordinate that is not on the grid", async () => {
@@ -154,7 +165,7 @@ describe("firing", () => {
 	it("keeps no half finished aim on the row any more", async () => {
 		await fireAtCell(makeRoom(freshMatch()), A, 0, 0);
 
-		const saved = storeMock.update.mock.calls[0][2].secret as StoredBattleship & { pending?: unknown };
+		const saved = lastSavedShot() as StoredBattleship & { pending?: unknown };
 		expect(saved.pending).toBeUndefined();
 	});
 });
@@ -192,7 +203,7 @@ describe("the per sink bonus", () => {
 		for (const cell of cells) {
 			match = { ...match, turn: 0 };
 			await fireAtCell(makeRoom(match), A, cell.x, cell.y);
-			match = storeMock.update.mock.calls[storeMock.update.mock.calls.length - 1][2].secret as StoredBattleship;
+			match = lastSavedShot();
 		}
 
 		expect(awardXpMock).toHaveBeenCalledOnce();
@@ -304,21 +315,24 @@ describe("Randomize", () => {
 		const interaction = makeInteraction(A);
 		const order: string[] = [];
 		(interaction.showModal as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => void order.push("modal"));
-		storeMock.setSecretField.mockImplementation(async () => void order.push("write"));
+		storeMock.setSecretFieldsIf.mockImplementation(async () => void order.push("write"));
 
 		await handleRandomize(interaction, room);
 
-		const [, , path, value] = storeMock.setSecretField.mock.calls[0];
+		const [, , expected, fields] = storeMock.setSecretFieldsIf.mock.calls[0] as [string, string, Record<string, unknown>, Record<string, unknown>];
 		// ⚠️ THE PATH IS THE ASSERTION. A whole-secret write here reverted whatever the opponent
 		// did between this handler's read and its write; a dotted $set on ONE player's slot
 		// cannot touch the other's.
-		expect(path).toBe("players.0");
-		const laid = value as StoredBattleship["players"][number];
+		expect(Object.keys(fields)).toEqual(["players.0"]);
+		// And only while setup runs and this captain is not ready (2026-10 item 276): a battle
+		// started since the press read setup keeps the fleet it started with.
+		expect(expected).toEqual({ "secret.status": "setup", "secret.ready.0": { $ne: true } });
+		const laid = fields["players.0"] as StoredBattleship["players"][number];
 		expect(JSON.stringify(laid.ships)).not.toBe(before);
 		// The modal is the press's first answer (risk R5) and shows the fleet just written.
 		expect(order).toEqual(["modal", "write"]);
 		expect(shownModals(interaction)[0].custom_id).toBe(`gameroomModal:turn:room-1:${fleetFingerprint(laid)}`);
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 		expect(interaction.reply).not.toHaveBeenCalled();
 	});
 
@@ -328,7 +342,7 @@ describe("Randomize", () => {
 
 		await handleRandomize(interaction, room);
 
-		expect(storeMock.setSecretField).not.toHaveBeenCalled();
+		expect(storeMock.setSecretFieldsIf).not.toHaveBeenCalled();
 		expect(noticeText(interaction)).toBe(gameRoomsCopy.battleship.alreadyReady);
 	});
 
@@ -343,7 +357,7 @@ describe("Randomize", () => {
 		const interaction = makeInteraction(A);
 		await handleRandomize(interaction, room);
 
-		expect(storeMock.setSecretField).not.toHaveBeenCalled();
+		expect(storeMock.setSecretFieldsIf).not.toHaveBeenCalled();
 		expect(noticeText(interaction)).toMatch(/first shot/i);
 	});
 });
@@ -400,7 +414,7 @@ describe("ready (post-launch plan item 17)", () => {
 		const match = setupMatch();
 		await handleFire(interaction, makeRoom(match));
 
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 		expect(shownModals(interaction)[0].custom_id).toBe(`gameroomModal:turn:room-1:${fleetFingerprint(match.players[0])}`);
 	});
 });
@@ -417,10 +431,66 @@ describe("winning", () => {
 		for (const cell of allCells) {
 			current = { ...current, turn: 0 };
 			await fireAtCell(makeRoom(current), A, cell.x, cell.y);
-			current = storeMock.update.mock.calls[storeMock.update.mock.calls.length - 1][2].secret as StoredBattleship;
+			current = lastSavedShot();
 		}
 
 		expect(awardMatchMock).toHaveBeenCalledOnce();
 		expect(awardMatchMock.mock.calls[0][0]).toMatchObject({ game: "battleship", winner: "challenger" });
+	});
+});
+
+// ── a shot is a compare and swap, and the win pays behind finish's claim (2026-10 item 276, audit P2-5) ──
+describe("a shot's claim", () => {
+	it("saves the shot only on the turn it was aimed in, while the battle runs", async () => {
+		const match = freshMatch();
+
+		await fireAtCell(makeRoom(match), A, 0, 0);
+
+		expect(storeMock.update).not.toHaveBeenCalled();
+		const [, , expected] = storeMock.updateSecretIf.mock.calls[0] as [string, string, Record<string, unknown>];
+		expect(expected).toEqual({
+			"secret.status": "playing",
+			"secret.turn": match.turn,
+			"secret.missedTurns": match.missedTurns,
+			"secret.players.0.shots": match.players[0].shots,
+			"secret.players.1.shots": match.players[1].shots,
+		});
+	});
+
+	it("plays nothing when the turn moved first: no acknowledgement, no board, no bonus, the turn passed", async () => {
+		storeMock.updateSecretIf.mockResolvedValue(null);
+		const acknowledge = vi.fn().mockResolvedValue(undefined);
+		const match = freshMatch();
+		const destroyer = deserializeMatch(match).players[1].ships.find((ship) => ship.name === "destroyer")!;
+		const fetchChannel = modalClient.channels.fetch as unknown as ReturnType<typeof vi.fn>;
+		fetchChannel.mockClear();
+
+		const result = await fireAtCell(makeRoom(match), A, destroyer.cells[0].x, destroyer.cells[0].y, acknowledge);
+
+		expect(result).toEqual({ ok: false, reason: gameRoomsCopy.turnPrompt.turnPassed });
+		expect(acknowledge).not.toHaveBeenCalled();
+		expect(fetchChannel).not.toHaveBeenCalled();
+		expect(awardXpMock).not.toHaveBeenCalled();
+		expect(finishMock).not.toHaveBeenCalled();
+	});
+
+	it("neither rates nor pays a winning shot whose finish lost the claim", async () => {
+		const match = freshMatch();
+		const allCells = deserializeMatch(match).players[1].ships.flatMap((ship) => ship.cells);
+		let current = match;
+		// Every shot but the winning one lands and pays nothing; the winning shot's finish loses.
+		for (const cell of allCells.slice(0, -1)) {
+			current = { ...current, turn: 0 };
+			await fireAtCell(makeRoom(current), A, cell.x, cell.y);
+			current = lastSavedShot();
+		}
+		finishMock.mockResolvedValue(false);
+		const last = allCells[allCells.length - 1];
+
+		await fireAtCell(makeRoom({ ...current, turn: 0 }), A, last.x, last.y);
+
+		expect(finishMock).toHaveBeenCalledOnce();
+		expect(ratingsMock).not.toHaveBeenCalled();
+		expect(awardMatchMock).not.toHaveBeenCalled();
 	});
 });

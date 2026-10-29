@@ -262,7 +262,7 @@ describe("the modal's Submit", () => {
 		await handleTurnSubmit(interaction, lookup);
 
 		expect(storeMock.setTurnPromptPlayed).toHaveBeenNthCalledWith(1, "guild-1", "room-1", "t1", true);
-		expect(applied).toHaveBeenCalledWith(client, expect.anything(), A, { move: "fold" }, expect.any(Function));
+		expect(applied).toHaveBeenCalledWith(client, expect.anything(), A, { move: "fold" }, expect.any(Function), "t1");
 		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
 	});
 
@@ -302,7 +302,7 @@ describe("a move button", () => {
 
 		await handleTurnMovePress(interaction, lookup);
 
-		expect(applied).toHaveBeenCalledWith(client, expect.anything(), A, { move: "fold" }, expect.any(Function));
+		expect(applied).toHaveBeenCalledWith(client, expect.anything(), A, { move: "fold" }, expect.any(Function), "t1");
 		expect(storeMock.setTurnPromptPlayed).toHaveBeenNthCalledWith(1, "guild-1", "room-1", "t1", true);
 		expect(interaction.showModal).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ custom_id: expect.stringMatching(/^gameroomModal:turn/) }) }));
 		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
@@ -313,7 +313,7 @@ describe("a move button", () => {
 
 		await handleTurnMovePress(movePress(A, "buy:boardwalk"), () => buying);
 
-		expect(applied).toHaveBeenCalledWith(client, expect.anything(), A, { move: "buy:boardwalk" }, expect.any(Function));
+		expect(applied).toHaveBeenCalledWith(client, expect.anything(), A, { move: "buy:boardwalk" }, expect.any(Function), "t1");
 	});
 
 	it("refuses a move the turn no longer offers, a passed turn and anybody off the clock, playing nothing", async () => {

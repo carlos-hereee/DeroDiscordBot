@@ -25,6 +25,19 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 			setPath(row.current, `secret.${path}`, value);
 			return structuredClone(row.current);
 		}),
+		// The conditional sibling (2026-10 item 276): Randomize writes its fleet only while setup
+		// runs and the captain is not ready, `$ne` or a plain value, as Mongo matches them.
+		setSecretFieldsIf: vi.fn(async (_guildId: string, _roomId: string, expected: Record<string, unknown>, fields: Record<string, unknown>) => {
+			if (!row.current || row.current.status !== "playing") return null;
+			const holds = Object.entries(expected).every(([path, wanted]) => {
+				const value = path.split(".").reduce<unknown>((at, key) => (at === null || at === undefined ? undefined : (at as Record<string, unknown>)[key]), row.current);
+				const notEqual = (wanted as { $ne?: unknown } | null)?.$ne;
+				return notEqual === undefined ? value === wanted : value !== notEqual;
+			});
+			if (!holds) return null;
+			for (const [path, value] of Object.entries(fields)) setPath(row.current, `secret.${path}`, value);
+			return structuredClone(row.current);
+		}),
 		updateSecretIf: vi.fn(async () => null),
 		setTurnPromptPlayed: vi.fn(async () => null),
 	},
@@ -161,5 +174,39 @@ describe("Randomize, then Submit", () => {
 
 		expect(stored().ready?.[0]).toBe(true);
 		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+	});
+});
+
+// ── a fleet never changes once the battle starts (2026-10 item 276, audit P3) ──
+// Randomize reads setup, opens its modal, then writes. The setup clock or the second Ready can
+// start the battle in between, and the old unconditional write then re-laid a fleet the first
+// shot could already be aimed at.
+describe("Randomize racing the battle's start", () => {
+	it("writes no fleet when the battle started after the press read setup", async () => {
+		const read = snapshot();
+		(row.current!.secret as StoredBattleship).status = "playing";
+		const before = JSON.stringify(stored().players[0].ships);
+
+		await handleRandomize(press(A), read);
+
+		expect(JSON.stringify(stored().players[0].ships)).toBe(before);
+	});
+
+	it("writes no fleet when this captain readied after the press read setup", async () => {
+		const read = snapshot();
+		(row.current!.secret as StoredBattleship).ready = [true, false];
+		const before = JSON.stringify(stored().players[0].ships);
+
+		await handleRandomize(press(A), read);
+
+		expect(JSON.stringify(stored().players[0].ships)).toBe(before);
+	});
+
+	it("still lays the fleet again while setup runs, so the guard refuses only a started battle", async () => {
+		const before = JSON.stringify(stored().players[0].ships);
+
+		await handleRandomize(press(A), snapshot());
+
+		expect(JSON.stringify(stored().players[0].ships)).not.toBe(before);
 	});
 });

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TextChannel, type Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findPlayingByGame: vi.fn(), findByRoomId: vi.fn(), update: vi.fn(), updateSecretIf: vi.fn() },
+	gameRoomStore: { findPlayingByGame: vi.fn(), findByRoomId: vi.fn(), update: vi.fn(), updateSecretIf: vi.fn(), setSecretFieldsIf: vi.fn() },
 }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
@@ -29,6 +29,7 @@ const storeMock = gameRoomStore as unknown as {
 	findPlayingByGame: ReturnType<typeof vi.fn>;
 	update: ReturnType<typeof vi.fn>;
 	updateSecretIf: ReturnType<typeof vi.fn>;
+	setSecretFieldsIf: ReturnType<typeof vi.fn>;
 };
 const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn> };
 const lifecycleMock = roomLifecycle as unknown as { finish: ReturnType<typeof vi.fn> };
@@ -267,20 +268,23 @@ describe("sweepBattleshipTurns, setup", () => {
 
 	it("starts the battle as laid when the setup clock runs out, and forfeits nobody", async () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000, inSetup())]);
-		storeMock.updateSecretIf.mockResolvedValue({});
+		storeMock.setSecretFieldsIf.mockResolvedValue({ secret: { ...inSetup(), status: "playing", ready: [true, true] } });
 
 		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 1 });
-		const [, , expected, saved] = storeMock.updateSecretIf.mock.calls[0] as [string, string, Record<string, unknown>, StoredBattleship];
+		const [, , expected, saved] = storeMock.setSecretFieldsIf.mock.calls[0] as [string, string, Record<string, unknown>, Partial<StoredBattleship>];
 		expect(expected).toEqual({ "secret.status": "setup" });
-		expect(saved.status).toBe("playing");
-		expect(saved.ready).toEqual([true, true]);
+		// ⚠️ THE STATUS AND THE READY FLAGS ONLY, never the fleets (2026-10 item 276): the fleets this
+		// sweep read can be older than a Randomize that landed since, and the battle starts with the
+		// fleet the captain was last shown.
+		expect(saved).toEqual({ status: "playing", ready: [true, true] });
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 		expect(lifecycleMock.finish).not.toHaveBeenCalled();
 		expect(trailMock.postMove.mock.calls[0][2]).toMatchObject({ text: gameRoomsCopy.battleship.setupTimedOut });
 	});
 
 	it("says nothing when a Ready started the battle first", async () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000, inSetup())]);
-		storeMock.updateSecretIf.mockResolvedValue(null);
+		storeMock.setSecretFieldsIf.mockResolvedValue(null);
 
 		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
 		expect(trailMock.postMove).not.toHaveBeenCalled();

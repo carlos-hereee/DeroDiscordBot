@@ -17,6 +17,7 @@ import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { renderRpsCard } from "@features/games/rpsRenderer.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { AttachmentBuilder } from "discord.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -286,6 +287,43 @@ describe("rock paper scissors secrecy", () => {
 		seedRoom(makeRoom({ status: "finished" }));
 		await handleRpsSelect(makeSelect(HOST, "rock"));
 		expect(storeMock.claimSecretField).not.toHaveBeenCalled();
+	});
+
+	// 2026-10 item 276, audit P3: a forfeit that finished the room first has already settled the
+	// match, so the reveal that lost finish's claim neither tallies nor pays it a second time.
+	it("pays and tallies nothing when a forfeit won finish's claim first", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		storeMock.claimSecretField.mockResolvedValue(makeRoom({ secret: { picks: { [HOST]: "rock", [OPPONENT]: "paper" } } as never }));
+		lifecycleMock.finish.mockResolvedValue(false);
+
+		await handleRpsSelect(makeSelect(OPPONENT, "paper"));
+
+		expect(lifecycleMock.finish).toHaveBeenCalledOnce();
+		expect(awardMock).not.toHaveBeenCalled();
+	});
+
+	it("pays the reveal that won the claim, once", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		storeMock.claimSecretField.mockResolvedValue(makeRoom({ secret: { picks: { [HOST]: "rock", [OPPONENT]: "paper" } } as never }));
+
+		await handleRpsSelect(makeSelect(OPPONENT, "paper"));
+
+		expect(awardMock).toHaveBeenCalledOnce();
+	});
+
+	// The claim refuses a room no longer playing too (root cause A), so a pick that lost to a
+	// forfeit since the read is told the match is gone, not that they already picked.
+	it("tells a pick that lost to a finish that the match is gone, not that they already picked", async () => {
+		storeMock.findByRoomId.mockResolvedValueOnce(makeRoom()).mockResolvedValueOnce(makeRoom({ status: "finished" }));
+		storeMock.claimSecretField.mockResolvedValue(null);
+		const interaction = makeSelect(HOST, "rock");
+
+		await handleRpsSelect(interaction);
+
+		const notices = JSON.stringify((interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls);
+		expect(notices).toContain(gameRoomsCopy.errors.notFound);
+		expect(notices).not.toContain(gameRoomsCopy.games.rpsAlreadyPicked);
+		expect(trailMock.postMove).not.toHaveBeenCalled();
 	});
 });
 

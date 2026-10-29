@@ -84,6 +84,25 @@ export type AdmittedJoinField = "spectatorIds" | "playerIds";
 // hangman gallows card's own `gallowsMessageId`, which predates the shared turn board.
 export type BoardMessageField = "boardMessageId" | "gallowsMessageId";
 
+// ⚠️ EVERY MOVE WRITE MATCHES A ROOM STILL IN PLAY (2026-10 item 276, audit root cause A). A move
+// is read, decided and written back with awaits between, and in that gap the room can be finished
+// from outside the game (a surrender, the leave watcher, the idle sweep, a give up), which never
+// touches the game's own state in `secret`. A compare and swap on `secret` alone then still
+// matches, and the move lands on a finished match: a shot after a surrender, a Monopoly payment
+// after the watcher ended it, a hangman guess after the give up. Matching the status here, in the
+// three writers every move goes through, is decided once for every game instead of per caller,
+// so a new move writer cannot forget it.
+const STILL_IN_PLAY = { status: "playing" } as const;
+
+// The one body behind setSecretField and setSecretFieldsIf (read their comments). Same two write
+// shape as claimSecretField: `secret` defaults to null and Mongo will not create a dotted path
+// inside a null, and the seeding write is safe to race.
+async function setSecretPathsIf(guildId: string, roomId: string, expected: Record<string, unknown>, fields: Record<string, unknown>) {
+	await GameRoom.updateOne({ guildId, roomId, secret: null }, { $set: { secret: {} } });
+	const set = Object.fromEntries(Object.entries(fields).map(([path, value]) => [`secret.${path}`, value]));
+	return GameRoom.findOneAndUpdate({ guildId, roomId, ...expected, ...STILL_IN_PLAY }, { $set: set }, { new: true });
+}
+
 export const gameRoomStore = {
 	// Insert a new draft room.
 	//
@@ -202,6 +221,9 @@ export const gameRoomStore = {
 	// what keeps a seat and its playerIds entry atomic with each other. Use an atomic
 	// operator there ($addToSet, $push), never another read-modify-write.
 	//
+	// The room must also still be playing (STILL_IN_PLAY above), so a move read before a finish
+	// writes nothing once the room is finished, whatever `expected` names.
+	//
 	// Returns the updated row, or null when the expectation did not hold. A null is
 	// an ordinary outcome, not an error: the caller re-reads and retries, or defers
 	// to whoever won.
@@ -213,7 +235,7 @@ export const gameRoomStore = {
 		extra: Record<string, unknown> = {}
 	) {
 		return GameRoom.findOneAndUpdate(
-			{ guildId, roomId, ...expected },
+			{ guildId, roomId, ...expected, ...STILL_IN_PLAY },
 			{ $set: { secret }, ...extra },
 			{ new: true }
 		);
@@ -371,17 +393,21 @@ export const gameRoomStore = {
 	// null when the slot was already taken. Read the follow-on state off the returned row rather
 	// than off the row you read before calling, which is the half of this bug that made both
 	// players think they were waiting on each other.
+	//
+	// A claim is a move, so it lands only while the room is still playing (STILL_IN_PLAY): a throw
+	// picked after a forfeit finished the room claims nothing.
 	async claimSecretField(guildId: string, roomId: string, path: string, value: unknown) {
 		const field = `secret.${path}`;
 		await GameRoom.updateOne({ guildId, roomId, secret: null }, { $set: { secret: {} } });
 		return GameRoom.findOneAndUpdate(
-			{ guildId, roomId, [field]: { $exists: false } },
+			{ guildId, roomId, [field]: { $exists: false }, ...STILL_IN_PLAY },
 			{ $set: { [field]: value } },
 			{ new: true }
 		);
 	},
 
-	// Write ONE field inside the `secret` blob, whether or not it already holds a value.
+	// Write ONE field inside the `secret` blob, whether or not it already holds a value, while the
+	// room is still playing (STILL_IN_PLAY).
 	//
 	// ⚠️ THE SIBLING OF claimSecretField, AND THE DIFFERENCE IS THE ONLY THING THAT MATTERS.
 	// That one refuses to overwrite (`$exists: false`), which is what makes it a CLAIM. This one
@@ -400,9 +426,23 @@ export const gameRoomStore = {
 	// `path` is interpolated into the update, so it must never carry user text. Every caller today
 	// passes a Discord snowflake or an array index, both digits only.
 	async setSecretField(guildId: string, roomId: string, path: string, value: unknown) {
-		const field = `secret.${path}`;
-		await GameRoom.updateOne({ guildId, roomId, secret: null }, { $set: { secret: {} } });
-		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $set: { [field]: value } }, { new: true });
+		return setSecretPathsIf(guildId, roomId, {}, { [path]: value });
+	},
+
+	// Write SEVERAL fields inside the `secret` blob in one write, only while the row still matches
+	// `expected` (dotted paths, as updateSecretIf takes them) and the room is still playing. Null
+	// when it lost. The conditional sibling of setSecretField, which is this with nothing expected.
+	//
+	// ⚠️ WHY DOTTED AND NOT THE WHOLE BLOB. A whole blob write carries every field the caller read,
+	// so it puts back a field another writer moved since: hangman's guess carried a stale
+	// `gallowsMessageId` back over the card the last guess posted, and the setup clock's start put a
+	// captain's old fleet back over the one Randomize had just shown them. A dotted $set changes
+	// only the fields that move, and `expected` is the version they were decided on (2026-10 item
+	// 276, audit P1-6 and the Battleship setup P3).
+	//
+	// The `fields` keys are interpolated like `path` above, so they never carry user text.
+	async setSecretFieldsIf(guildId: string, roomId: string, expected: Record<string, unknown>, fields: Record<string, unknown>) {
+		return setSecretPathsIf(guildId, roomId, expected, fields);
 	},
 
 	// Add one member to a draft's joiner pool.

@@ -323,6 +323,20 @@ describe("handleMroll", () => {
 		expect(followUpText(second)).toBe(gameRoomsCopy.monopoly.matchOver);
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
+
+	// 2026-10 item 276, audit P3: the leave watcher or a removal can finish the ROOM while the
+	// engine's phase still reads mid turn, and a move must not commit onto that finished match.
+	it("refuses a move on a room finished from outside the match, whose board still reads mid turn", async () => {
+		const room = { ...makeRoom(freshMatch()), status: "finished" } as unknown as IGameRoom;
+		storeMock.findByRoomId.mockResolvedValue(room);
+		const interaction = makeInteraction(A);
+
+		await handleMroll(interaction, room);
+
+		expect(followUpText(interaction)).toBe(gameRoomsCopy.monopoly.matchOver);
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+		expect(carriedMock).not.toHaveBeenCalled();
+	});
 });
 
 describe("handleMbuy, handleMskip and handleMend", () => {

@@ -11,11 +11,17 @@ import type { ButtonInteraction, Client, TextChannel } from "discord.js";
 // once, when nobody is left. The payout arithmetic itself is pinned in blackjackState.test.ts;
 // each shoe below is stacked so the hand it deals is known.
 
-const roomRow = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
+const roomRow = vi.hoisted(() => ({ current: null as Record<string, unknown> | null, duringRead: [] as (null | (() => Promise<unknown>))[] }));
 const moves = vi.hoisted(() => ({ recorded: [] as { actorId: string; kind: string; text: string }[] }));
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: {
-		findByRoomId: vi.fn(async () => roomRow.current),
+		// `duringRead` runs inside one chosen read, to land a member's move in the window a
+		// clock spends awaiting the row (2026-10 item 276).
+		findByRoomId: vi.fn(async () => {
+			const hook = roomRow.duringRead.shift();
+			if (hook) await hook();
+			return roomRow.current;
+		}),
 		appendMove: vi.fn(async (_guildId: string, _roomId: string, move: { actorId: string; kind: string; text: string }) => {
 			moves.recorded.push(move);
 		}),
@@ -148,6 +154,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	moves.recorded = [];
 	roomRow.current = { ...ROOM, game: "blackjack", status: "playing" };
+	roomRow.duringRead = [];
 	finishMock.mockResolvedValue(true);
 	cashOutMock.mockResolvedValue(true);
 	vi.spyOn(Math, "random").mockReturnValue(0.5);
@@ -394,6 +401,59 @@ describe("the turn clock", () => {
 
 		expect(_activeBlackjackGameCount()).toBe(0);
 		expect(moves.recorded).toEqual([]);
+	});
+});
+
+// ── a turn is claimed once (2026-10 item 276, audit P2-12 and the turn clock P3) ──
+describe("claiming a turn", () => {
+	it("plays a double pressed Hit once: the second press meets a passed turn", async () => {
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [], FREE_TABLE);
+		// Alice 2 and 3 against the dealer's 10 and 7, then small cards, so no hit can end the hand.
+		table().shoe = cards(["2", "10", "3", "7", "2", "2", "2"]);
+		await bet(ALICE.userId, 100);
+		const turn = blackjackTurnAdapter.fingerprintOf(roomOf);
+		expect(turn).toMatch(/^j1\./);
+		// Both presses passed the turn line's check on the same turn, then awaited their acknowledgement.
+		let release = (): void => undefined;
+		const acknowledged = new Promise<void>((resolve) => (release = resolve));
+		const first = blackjackTurnAdapter.apply({} as never, roomOf, ALICE.userId, { move: "hit" }, () => acknowledged, turn!);
+		const second = blackjackTurnAdapter.apply({} as never, roomOf, ALICE.userId, { move: "hit" }, () => acknowledged, turn!);
+		release();
+
+		const results = await Promise.all([first, second]);
+
+		expect(results).toEqual([{ ok: true }, { ok: false, reason: gameRoomsCopy.turnPrompt.turnPassed }]);
+		expect(table().seats[0].hands[0].cards).toHaveLength(3);
+	});
+
+	it("still plays the next press, made on the turn the first one opened", async () => {
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [], FREE_TABLE);
+		table().shoe = cards(["2", "10", "3", "7", "2", "2", "2"]);
+		await bet(ALICE.userId, 100);
+		await blackjackTurnAdapter.apply({} as never, roomOf, ALICE.userId, { move: "hit" }, async () => undefined, blackjackTurnAdapter.fingerprintOf(roomOf)!);
+
+		const next = await blackjackTurnAdapter.apply({} as never, roomOf, ALICE.userId, { move: "hit" }, async () => undefined, blackjackTurnAdapter.fingerprintOf(roomOf)!);
+
+		expect(next).toEqual({ ok: true });
+		expect(table().seats[0].hands[0].cards).toHaveLength(4);
+	});
+
+	it("never bets for the next seat when the counted seat bet while the clock read the row", async () => {
+		vi.useFakeTimers();
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], FREE_TABLE);
+		await vi.advanceTimersByTimeAsync(BOT_CONSTANTS.BLACKJACK_TURN_TIMEOUT_MS - 1);
+		// At the deadline the shared clock reads the row first, then the table's own timeout reads
+		// it again to see the room still plays; Alice's bet lands inside that second read.
+		roomRow.duringRead = [null, () => bet(ALICE.userId, 100)];
+
+		await vi.advanceTimersByTimeAsync(1);
+
+		expect(table().seats[0].bet).toBe(100);
+		expect(table().seats[1].bet).toBe(0);
+		expect(moves.recorded.map((move) => move.text)).not.toContain(gameRoomsCopy.turnBoard.blackjackTimedOutBet(BOB.userId, 50));
 	});
 });
 

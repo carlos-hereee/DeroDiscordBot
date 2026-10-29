@@ -21,6 +21,19 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 			Object.assign(row.current, structuredClone(patch));
 			return structuredClone(row.current);
 		}),
+		// The guess's compare and swap (2026-10 item 276): lands only while the row is still playing
+		// and still holds the version the guess read, `$size` on an array or a plain value.
+		setSecretFieldsIf: vi.fn(async (_guildId: string, _roomId: string, expected: Record<string, unknown>, fields: Record<string, unknown>) => {
+			if (!row.current || row.current.status !== "playing") return null;
+			const holds = Object.entries(expected).every(([path, wanted]) => {
+				const value = valueAt(row.current, path);
+				const size = (wanted as { $size?: number } | null)?.$size;
+				return size === undefined ? value === wanted : Array.isArray(value) && value.length === size;
+			});
+			if (!holds) return null;
+			Object.assign(row.current.secret as Record<string, unknown>, structuredClone(fields));
+			return structuredClone(row.current);
+		}),
 		moveBoardMessage: vi.fn(async (_guildId: string, _roomId: string, fromId: string | null, toId: string, _alsoSet: unknown, field = "boardMessageId") => {
 			const secret = row.current?.secret as Record<string, unknown> | undefined;
 			if (!secret || ((valueAt(secret, field) as string | null | undefined) ?? null) !== fromId) return null;

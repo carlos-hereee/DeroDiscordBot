@@ -25,6 +25,7 @@ import {
 	maskedWord,
 	wrongLetters,
 	remainingAttempts,
+	type HangmanGuess,
 	type HangmanState,
 } from "@features/games/hangmanState.js";
 import { awardMultiPlayerResult } from "@features/games/gameXp.js";
@@ -108,16 +109,62 @@ function rehydrate(room: Pick<IGameRoom, "secret">): HangmanState | null {
 	return state;
 }
 
-function persist(room: IGameRoom, state: HangmanState) {
+// ── saving a guess (2026-10 item 276, audit P1-6) ─────────────────────
+// A guess is a compare and swap on the round as it was read: the letters guessed and the misses.
+// Every guess that counts adds a letter, so the count of guessed letters is the round's version,
+// and two guesses read from one row cannot both land; the old unconditional write let the second
+// erase the first (a miss forgotten, a revealed letter hidden again). Only the three fields a
+// guess moves are written, so the gallows card id the last guess's card claimed is never put back
+// (gameRoomStore.setSecretFieldsIf). The store also refuses a room that is no longer playing, so a
+// guess read before a give up or a solving letter finished the round writes nothing.
+// `$size` needs the array to exist, and every round starts through startRoomHangmanRound, which
+// writes `guessedLetters: []`.
+const roundVersion = (room: Pick<IGameRoom, "secret">): Record<string, unknown> => {
 	const secret = room.secret as HangmanSecret;
-	return gameRoomStore.update(room.guildId, room.roomId, {
-		secret: {
-			...secret,
+	return { "secret.guessedLetters": { $size: (secret.guessedLetters ?? []).length }, "secret.wrong": secret.wrong ?? 0 };
+};
+
+// A guess the round took, on the row as written, or the answer for one it did not take.
+type GuessLanding =
+	| { landed: true; room: IGameRoom; state: HangmanState; outcome: Extract<HangmanGuess, { status: "hit" | "miss" }> }
+	| { landed: false; answer: string };
+
+// Reads beyond the first, when another guess landed between the read and the write: one re-read
+// plays the letter on top of that guess, and a second loss answers busy rather than spinning.
+const GUESS_RETRIES = 1;
+
+/**
+ * Apply one letter to the round and save it, re-reading once when another guess won the write.
+ * A letter the re-read round no longer takes (guessed meanwhile, the round over) answers the way a
+ * first read would. The one path a guess is saved through.
+ */
+async function landGuess(read: IGameRoom, letter: string, userId: string): Promise<GuessLanding> {
+	let room: IGameRoom | null = read;
+	for (let attempt = 0; attempt <= GUESS_RETRIES; attempt++) {
+		if (attempt > 0) room = await gameRoomStore.findByRoomId(read.guildId, read.roomId);
+		if (!room || room.status !== "playing") return { landed: false, answer: gameRoomsCopy.hangman.closed };
+		const state = rehydrate(room);
+		if (!state) return { landed: false, answer: gameRoomsCopy.hangman.waitingForWord(room.hostId) };
+		// Re-gated: a modal submit is reachable without the button that opened it.
+		if (state.authoredBy && state.authoredBy === userId) return { landed: false, answer: gameRoomsCopy.hangman.hostCannotGuess };
+
+		const outcome = applyGuess(state, letter);
+		// The three no-cost outcomes stay OUT OF THE ROOM. A "that is not a letter" there per
+		// fat-fingered submit would bury the actual game in noise, and none of them changed
+		// the round, so they post where it was pressed (2026-10 item 257 Phase 5).
+		if (outcome.status === "invalid") return { landed: false, answer: gameRoomsCopy.hangman.invalid };
+		if (outcome.status === "repeat") return { landed: false, answer: gameRoomsCopy.hangman.repeat(outcome.letter) };
+		if (outcome.status === "closed") return { landed: false, answer: gameRoomsCopy.hangman.closed };
+
+		const written = await gameRoomStore.setSecretFieldsIf(room.guildId, room.roomId, roundVersion(room), {
 			guessedLetters: [...state.guessed],
 			wrong: state.wrong,
 			revealedHints: state.revealedHints,
-		} as never,
-	});
+		});
+		if (written) return { landed: true, room: written, state, outcome };
+	}
+	// The board's own busy words: nothing landed, and the guesser can simply submit again.
+	return { landed: false, answer: gameRoomsCopy.monopoly.boardBusy };
 }
 
 // ── the controls ──────────────────────────────────────────────────────
@@ -468,43 +515,21 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	const guildId = interaction.guildId;
 	if (!guildId) return;
 
-	const room = await gameRoomStore.findByRoomId(guildId, roomId);
-	if (!room || room.status !== "playing") {
+	const read = await gameRoomStore.findByRoomId(guildId, roomId);
+	if (!read) {
 		await answerInChannel(interaction, "here", { content: gameRoomsCopy.hangman.closed });
 		return;
 	}
-
-	const state = rehydrate(room);
-	if (!state) {
-		await answerInChannel(interaction, "here", { content: gameRoomsCopy.hangman.waitingForWord(room.hostId) });
+	const landing = await landGuess(read, interaction.fields.getTextInputValue("letter"), interaction.user.id);
+	if (!landing.landed) {
+		await answerInChannel(interaction, "here", { content: landing.answer });
 		return;
 	}
-	// Re-gated: a modal submit is reachable without the button that opened it.
-	if (state.authoredBy && state.authoredBy === interaction.user.id) {
-		await answerInChannel(interaction, "here", { content: gameRoomsCopy.hangman.hostCannotGuess });
-		return;
-	}
-
-	const outcome = applyGuess(state, interaction.fields.getTextInputValue("letter"));
-
-	// The three no-cost outcomes stay OUT OF THE ROOM. A "that is not a letter" there per
-	// fat-fingered submit would bury the actual game in noise, and none of them changed
-	// the round, so they post where it was pressed (2026-10 item 257 Phase 5).
-	if (outcome.status === "invalid" || outcome.status === "repeat" || outcome.status === "closed") {
-		const message =
-			outcome.status === "invalid"
-				? gameRoomsCopy.hangman.invalid
-				: outcome.status === "repeat"
-				  ? gameRoomsCopy.hangman.repeat(outcome.letter)
-				  : gameRoomsCopy.hangman.closed;
-		await answerInChannel(interaction, "here", { content: message });
-		return;
-	}
+	const { room, state, outcome } = landing;
 
 	// The guess's own gallows card below IS the answer, so the Submit only closes
 	// (2026-10 item 257 Phase 5, replacing a private "You played" line).
 	await acknowledgeTextModal(interaction);
-	await persist(room, state);
 
 	const mask = maskedWord(state);
 	const remaining = remainingAttempts(state);
@@ -538,14 +563,6 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	await postGallowsCard(interaction.client, room, state, previousCardId, { moves, roundOver: won || lost });
 	if (!won && !lost) return;
 
-	// ⚠️ THE ONLY PLACE THE WORD IS EVER RENDERED, and it is after the round is over. A
-	// result, not a guess, so it posts as its own line under the last card.
-	await roomTrail.postMove(interaction.client, room, {
-		actorId: interaction.user.id,
-		kind: "system",
-		text: won ? gameRoomsCopy.hangman.wonLine(state.word) : gameRoomsCopy.hangman.lostLine(state.word),
-	});
-
 	// A hangman room has no single winner: the guessers win or lose together, and the
 	// host is not competing. winnerId stays null and the XP hook takes the whole
 	// participant list.
@@ -554,13 +571,26 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	// card takes revealedLetters, never the word, so this line adds no third read of it.
 	// A solved word closes the challenge card as the room's win (post-launch plan item
 	// 21), clean or one miss from the rope; a lost round closes it with no winner.
-	await roomLifecycle.finish(interaction.client, room, {
+	const claimed = await roomLifecycle.finish(interaction.client, room, {
 		winnerId: null,
 		...(won ? { outcome: { bucket: hangmanOutcome(state.wrong), roomWon: true } } : {}),
 		art: await withRenderFallback(
 			() => renderHangmanCard(hangmanCardView(state, won ? "solved" : "lost")),
 			() => resolveGameAsset(won ? "hangmanWin" : "hangmanLose")
 		),
+	});
+	// The word line and the pay belong to the call that won finish's claim (2026-10 item 276,
+	// audit P1-7), the shape giveUpHangmanRound has: a give up or another ending that finished
+	// the round first already said how it ended, and a second line or a second XP award would
+	// end the round twice.
+	if (!claimed) return;
+
+	// ⚠️ THE ONLY PLACE THE WORD IS EVER RENDERED, and it is after the round is over. A
+	// result, not a guess, so it posts as its own line under the last card.
+	await roomTrail.postMove(interaction.client, room, {
+		actorId: interaction.user.id,
+		kind: "system",
+		text: won ? gameRoomsCopy.hangman.wonLine(state.word) : gameRoomsCopy.hangman.lostLine(state.word),
 	});
 
 	// The host is excluded from the award list: they set the word, so they were never

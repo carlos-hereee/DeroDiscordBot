@@ -10,9 +10,24 @@ import { TextChannel, type Client } from "discord.js";
 
 const row = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
 
+// True when every dotted path in `expected` holds the same value on the row, as Mongo's equality
+// match on a plain value or an array does.
+const rowHolds = (expected: Record<string, unknown>): boolean =>
+	Object.entries(expected).every(([path, wanted]) => {
+		const value = path.split(".").reduce<unknown>((at, key) => (at === null || at === undefined ? undefined : (at as Record<string, unknown>)[key]), row.current);
+		return JSON.stringify(value) === JSON.stringify(wanted);
+	});
+
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: {
 		findByRoomId: vi.fn(async () => (row.current ? structuredClone(row.current) : null)),
+		// A shot's compare and swap (2026-10 item 276): lands only while the room plays and the
+		// row still holds the turn the shot was aimed in.
+		updateSecretIf: vi.fn(async (_guildId: string, _roomId: string, expected: Record<string, unknown>, secret: unknown) => {
+			if (!row.current || row.current.status !== "playing" || !rowHolds(expected)) return null;
+			row.current.secret = structuredClone(secret);
+			return structuredClone(row.current);
+		}),
 		update: vi.fn(async (_guildId: string, _roomId: string, patch: Record<string, unknown>) => {
 			if (!row.current) return null;
 			Object.assign(row.current, structuredClone(patch));

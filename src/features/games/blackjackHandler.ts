@@ -572,7 +572,8 @@ function noteTurnStart(game: BlackjackGame): void {
 async function runOutTurnIfDue(game: BlackjackGame, channelId: string): Promise<boolean> {
 	await drawingSettled(drawingKeyOf(channelId));
 	const table = game.table;
-	if (games.get(channelId) !== game || !table || !game.board || fingerprintOfTable(table) !== game.clockTurn) return false;
+	const turn = game.clockTurn;
+	if (games.get(channelId) !== game || !table || !game.board || !turn || fingerprintOfTable(table) !== turn) return false;
 	if (!isClockExpired(drawingKeyOf(channelId), game.clockStartedAt, BOT_CONSTANTS.BLACKJACK_TURN_TIMEOUT_MS)) return false;
 	game.clockTurn = null;
 	// The room may have ended another way (the idle sweep, a deleted channel), which already
@@ -581,19 +582,20 @@ async function runOutTurnIfDue(game: BlackjackGame, channelId: string): Promise<
 		retireTable(game);
 		return false;
 	}
+	// The seat is read after the room read, but the move carries the turn this clock counted, so
+	// a seat the turn moved to while it waited is never bet or stood for (2026-10 item 276).
 	const client = game.board.client;
 	const writer = messageWriter(game.board);
+	const timedOut: MoveSource = { timedOut: true, turn };
 	const betting = bettingSeat(table);
 	if (betting) {
 		const smallest = betChoices(table, betting.userId)[0];
 		if (!smallest) return false;
-		await placeBlackjackBet(game, channelId, betting.userId, smallest.amount, client, writer, { timedOut: true });
-		return true;
+		return (await placeBlackjackBet(game, channelId, betting.userId, smallest.amount, client, writer, timedOut)) === "played";
 	}
 	const acting = table.phase === "playing" ? table.seats[table.turn] : undefined;
 	if (!acting) return false;
-	await playBlackjackAction(game, channelId, acting.userId, "stand", client, writer, { timedOut: true });
-	return true;
+	return (await playBlackjackAction(game, channelId, acting.userId, "stand", client, writer, timedOut)) === "played";
 }
 
 // Takes no Message: every render on the click path goes through click.update(),
@@ -664,12 +666,25 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 
 const BLACKJACK_ACTIONS: readonly string[] = ["hit", "stand", "double", "split"];
 
-type PlayResult = "played" | "not-your-turn" | "illegal";
+// "passed": the turn the move was for is no longer the table's (a double press, the clock).
+type PlayResult = "played" | "not-your-turn" | "illegal" | "passed";
 
-// How a move came to be played: by the member, or by the turn clock for them.
+// How a move came to be played: by the member, or by the turn clock for them. `turn` is the
+// table's fingerprint the move was decided on, from the turn line or the clock; a board button
+// carries none and plays whatever turn the table is on.
 interface MoveSource {
 	timedOut: boolean;
+	turn?: string;
 }
+
+// ⚠️ THE CLAIM ON A TURN (2026-10 item 276, audit P2-12). A turn line press checks the turn's
+// fingerprint, then awaits the row, the played mark and the acknowledgement before the move
+// applies, so a double press passed the check twice and played twice (two Hits). The table lives
+// in this process, so checking the fingerprint in the same synchronous step that applies the move
+// IS the claim: the first press moves the fingerprint on, and the second meets a passed turn.
+// The turn clock claims the same way, so it never acts for a seat the turn moved to while it
+// waited on the room read.
+const turnHasPassed = (table: BlackjackTable, source: MoveSource): boolean => source.turn !== undefined && fingerprintOfTable(table) !== source.turn;
 
 const BY_MEMBER: MoveSource = { timedOut: false };
 
@@ -688,6 +703,7 @@ async function playBlackjackAction(
 	source: MoveSource = BY_MEMBER
 ): Promise<PlayResult> {
 	if (!game.table) return "illegal";
+	if (turnHasPassed(game.table, source)) return "passed";
 	const handIndex = game.table.seats.find((seat) => seat.userId === userId)?.activeHand ?? 0;
 	const outcome = applyAction(game.table, userId, action);
 	if (outcome.status === "not-your-turn") return "not-your-turn";
@@ -734,6 +750,7 @@ async function placeBlackjackBet(
 ): Promise<PlayResult> {
 	const table = game.table;
 	if (!table) return "illegal";
+	if (turnHasPassed(table, source)) return "passed";
 	const outcome = placeBet(table, userId, amount);
 	if (outcome.status !== "ok") return outcome.status;
 	if (!source.timedOut) noteMemberAction(game);
@@ -1351,10 +1368,11 @@ export const blackjackTurnAdapter: TurnAdapter = {
 			fields: [{ kind: "select", id: MOVE_FIELD, label: gameRoomsCopy.turnPrompt.moveLabel, options: legal.map((action) => ({ label: labels[action], value: action })) }],
 		};
 	},
-	async apply(client, room, userId, answers, acknowledge) {
+	async apply(client, room, userId, answers, acknowledge, fingerprint) {
 		const game = gameOf(room);
 		if (!game?.table || !game.board) return { ok: false, reason: gameRoomsCopy.turnPrompt.turnPassed };
 		const writer = messageWriter(game.board);
+		const byMember: MoveSource = { timedOut: false, turn: fingerprint };
 		// The board message was fetched by this very process, so its client is the ready one.
 		const boardClient = game.board.client;
 		const bet = answers[BET_FIELD];
@@ -1362,12 +1380,12 @@ export const blackjackTurnAdapter: TurnAdapter = {
 			const amount = Number(bet);
 			if (!Number.isSafeInteger(amount)) return { ok: false, reason: gamesCopy.blackjack.illegalAction };
 			await acknowledge();
-			return answerOf(await placeBlackjackBet(game, room.channelId ?? "", userId, amount, boardClient, writer));
+			return answerOf(await placeBlackjackBet(game, room.channelId ?? "", userId, amount, boardClient, writer, byMember));
 		}
 		const action = answers[MOVE_FIELD] ?? "";
 		if (!BLACKJACK_ACTIONS.includes(action)) return { ok: false, reason: gamesCopy.blackjack.illegalAction };
 		await acknowledge();
-		return answerOf(await playBlackjackAction(game, room.channelId ?? "", userId, action as BlackjackAction, boardClient, writer));
+		return answerOf(await playBlackjackAction(game, room.channelId ?? "", userId, action as BlackjackAction, boardClient, writer, byMember));
 	},
 	// Leave rides the turn line, any seat's at any time; the channel collector hears it there.
 	extraButtons(room) {
@@ -1406,6 +1424,7 @@ export const blackjackTurnClock: TurnClockGame = {
 
 // A bet's or a move's result, worded for the turn modal's Submit.
 function answerOf(played: PlayResult): { ok: true } | { ok: false; reason: string } {
+	if (played === "passed") return { ok: false, reason: gameRoomsCopy.turnPrompt.turnPassed };
 	if (played === "not-your-turn") return { ok: false, reason: gamesCopy.blackjack.notYourTurn };
 	return played === "illegal" ? { ok: false, reason: gamesCopy.blackjack.illegalAction } : { ok: true };
 }

@@ -54,10 +54,6 @@ import { announceToMatch } from "./roomAnnouncer.js";
 
 const storedMatch = (room: IGameRoom): StoredBattleship | null => (room.secret as StoredBattleship | null) ?? null;
 
-async function persist(room: IGameRoom, stored: StoredBattleship) {
-	return gameRoomStore.update(room.guildId, room.roomId, { secret: stored as never });
-}
-
 /**
  * Draw the battle's board behind the drawing pause, so the turn clock holds while the card
  * renders. Shared by a shot, the turn sweep's expiry and the battle's start. `turn` is the
@@ -115,12 +111,16 @@ export type BattleshipExpiry = "expired" | "forfeited" | "setupTimedOut" | null;
 // The setup clock ran out (post-launch plan item 17): start the battle with both
 // fleets as they are. A compare and swap on the status, so a second Ready landing in
 // the same moment and this sweep cannot both start it. True when this call started it.
+// ⚠️ ONLY THE STATUS AND THE READY FLAGS ARE WRITTEN, never the fleets (2026-10 item 276, audit
+// P3). The fleets this sweep read can be older than a Randomize that landed since, and writing
+// them back would sail a fleet the captain was never shown; the board is redrawn from the row as
+// written, so it shows the fleets the battle really starts with.
 async function startBattleOnSetupTimeout(client: Client, room: IGameRoom, stored: StoredBattleship): Promise<boolean> {
 	const state = deserializeMatch(stored);
 	if (!startBattle(state)) return false;
-	const next = serializeMatch(state, { boardMessageId: stored.boardMessageId });
-	const started = await gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.status": "setup" }, next);
-	if (!started) return false;
+	const started = await gameRoomStore.setSecretFieldsIf(room.guildId, room.roomId, { "secret.status": "setup" }, { status: state.status, ready: state.ready });
+	const next = (started?.secret as StoredBattleship | null) ?? null;
+	if (!next) return false;
 	await roomTrail.postMove(client, room, { actorId: room.hostId, kind: "system", text: gameRoomsCopy.battleship.setupTimedOut, meta: { expired: true } });
 	await roomTrail.postMove(client, room, { actorId: room.hostId, kind: "system", text: gameRoomsCopy.battleship.battleBegins(state.players[state.turn].userId) });
 	await redrawBattleshipBoard(client, room, next);
@@ -277,8 +277,8 @@ async function fireAt(client: Client, room: IGameRoom, shooterId: string, aim: {
 	// and everyone watching what the shot did, so a private copy of the same sentence
 	// only doubled it. Without some acknowledgement Discord shows the shooter
 	// "interaction failed" after three seconds.
-	await commitShot(client, room, stored, { ...outcome, state: outcome.state }, { userId: shooterId, name: shooterName }, acknowledge);
-	return null;
+	const landed = await commitShot(client, room, stored, { ...outcome, state: outcome.state }, { userId: shooterId, name: shooterName }, acknowledge);
+	return landed ? null : gameRoomsCopy.turnPrompt.turnPassed;
 }
 
 /**
@@ -307,9 +307,15 @@ export async function commitShot(
 	outcome: FireOutcome & { state: BattleshipState },
 	shooter: { userId: string; name: string },
 	acknowledge: () => Promise<unknown> = async () => undefined
-): Promise<void> {
+): Promise<boolean> {
 	const next = serializeMatch(outcome.state, { boardMessageId: stored.boardMessageId });
-	await persist(room, next);
+	// ⚠️ A COMPARE AND SWAP ON THE TURN THE SHOT WAS AIMED IN (2026-10 item 276, audit P2-5). The
+	// old unconditional write let a shot land on top of the turn clock's forfeit, or two devices
+	// submitting one turn post two shots; the store also refuses a room no longer playing, so a
+	// shot read before a Surrender or a server leave finished the room lands nothing. The loser
+	// writes nothing and says so; the turn it aimed at has passed.
+	const written = await gameRoomStore.updateSecretIf(room.guildId, room.roomId, sameTurnFilter(stored), next);
+	if (!written) return false;
 	await acknowledge();
 
 	// The narration is a MOVE: it belongs in the transcript that is the product, and it
@@ -345,7 +351,7 @@ export async function commitShot(
 		});
 	}
 
-	if (!outcome.won) return;
+	if (!outcome.won) return true;
 
 	// The captains off the match, not the row: against a Dero bot the row holds the host
 	// alone (2026-10 item 250 Phase 5). recordMatchRatings leaves a bot match unrated, and
@@ -359,9 +365,11 @@ export async function commitShot(
 		...(finalBoard ? { art: finalBoard } : {}),
 		outcome: { bucket: battleshipWinOutcome(captains, room, outcome.state, shooter.userId) },
 	});
-	// Rated once, by the shot that won finish's claim: the shooter first, the other
-	// player second (2026-10 item 244). Fire and forget, never awaited.
-	if (claimed) void recordMatchRatings(room, twoPlayerFinishingOrder(captains, shooter.userId));
+	// Rated and paid once, by the shot that won finish's claim (2026-10 item 276, audit P2-5, the
+	// shape finishOnForfeit has): a surrender or the turn clock that finished the match first has
+	// already rated and paid it. The shooter first, the other player second (2026-10 item 244).
+	if (!claimed) return true;
+	void recordMatchRatings(room, twoPlayerFinishingOrder(captains, shooter.userId));
 
 	const [a, b] = captains;
 	awardTwoPlayerResult({
@@ -374,6 +382,7 @@ export async function commitShot(
 		winner: shooter.userId === a ? "challenger" : "opponent",
 		resultKey: room.roomId,
 	});
+	return true;
 }
 
 // How the winning shot's match was won (post-launch plan item 21): ships still afloat,
@@ -439,7 +448,15 @@ export async function handleRandomize(interaction: ButtonInteraction, room: IGam
 	// the opponent did between this handler's read and its write. The opponent's own Randomize
 	// is a DIFFERENT index. Written after the modal opened; if it fails, the modal's Submit
 	// meets the old fleet's fingerprint and locks nothing.
-	await gameRoomStore.setSecretField(room.guildId, room.roomId, `players.${relaid.index}`, relaid.board);
+	// ⚠️ ONLY WHILE SETUP STILL RUNS AND THIS CAPTAIN IS NOT READY (2026-10 item 276, audit P3). The
+	// press read setup, but the setup clock or the second Ready can start the battle before this
+	// write lands, and a fleet must never change once the first shot can be aimed at it.
+	await gameRoomStore.setSecretFieldsIf(
+		room.guildId,
+		room.roomId,
+		{ "secret.status": "setup", [`secret.ready.${relaid.index}`]: { $ne: true } },
+		{ [`players.${relaid.index}`]: relaid.board }
+	);
 }
 
 type RelaidFleet = { ok: true; state: BattleshipState; index: 0 | 1; board: StoredBattleship["players"][number] } | { ok: false; reason: string };
