@@ -183,17 +183,25 @@ describe("challengeBadge", () => {
 
 // ── Rated or Casual on the card (2026-10 item 254, Arcade 6) ─────────────
 // The match is the creation modal's and fixed at creation (2026-10 item 263 Phase 2a), so the
-// card offers neither the Casual toggle nor Play vs bots; the badge still reads the choice.
+// card offers no Casual toggle; the badge still reads the choice. Add bots is the one setting
+// door kept on the card, because a host who cannot find the bot count cannot play a bot.
 describe("Rated or Casual on the card", () => {
 	const controls: DraftHostControls = { ratingBand: "any", requireApproval: false, pendingJoinCount: 0, spectatorMode: "open" };
 	const base: OpenerCardState = { game: "monopoly", hostId: "host-1", visibility: "public", pool: [], hostControls: controls, bots: { count: 0 } };
 	const customIds = (state: OpenerCardState): string[] =>
 		openerCardRows("room-1", state).flatMap((row) => row.toJSON().components.map((component) => ("custom_id" in component ? component.custom_id : "")));
 
-	it("offers no Casual toggle and no Play vs bots, rated or casual", () => {
+	it("offers no Casual toggle, rated or casual", () => {
 		for (const state of [base, { ...base, casual: true, bots: { count: 3 } }]) {
-			expect(customIds(state).some((id) => id.includes(":casual:") || id.includes(":bots:"))).toBe(false);
+			expect(customIds(state).some((id) => id.includes(":casual:"))).toBe(false);
 		}
+	});
+
+	it("offers Add bots on the host's row only where the game takes bots", () => {
+		expect(customIds(base)).toContain("gameroom:bots:room-1");
+		const { bots: _bots, ...withoutBots } = base;
+		expect(customIds(withoutBots).some((id) => id.includes(":bots:"))).toBe(false);
+		expect(customIds({ ...base, hostControls: undefined }).some((id) => id.includes(":bots:"))).toBe(false);
 	});
 
 	it("reads CASUAL on the card while the draft gathers", () => {

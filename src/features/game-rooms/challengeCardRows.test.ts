@@ -46,9 +46,9 @@ const STATES: ReadonlyArray<{ name: string; state: Partial<OpenerCardState> & Pi
 const idsOf = (state: OpenerCardState): (string | undefined)[] =>
 	openerCardRows("room-1", state).flatMap((row) => row.toJSON().components.map((component) => (component as { custom_id?: string }).custom_id));
 
-// Every control the creation modal took over (R3-13). Their routes stay registered, so only the
+// Every control the creation modal took over (R3-13), except Add bots, which stays on the host row. Their routes stay registered, so only the
 // card's rows lose them.
-const SETTINGS_ACTIONS = ["vis", "dero", "auctions", "referee", "hbuyin", "approval", "bots", "casual"];
+const SETTINGS_ACTIONS = ["vis", "dero", "auctions", "referee", "hbuyin", "approval", "casual"];
 const SETTINGS_SELECTS = ["gameroomSelect:band:", "gameroomSelect:spectators:"];
 
 describe("the challenge card's rows", () => {
@@ -85,6 +85,7 @@ describe("the challenge card's rows", () => {
 		const ids = idsOf(fullestState("monopoly", "public"));
 		expect(ids).toContain("gameroom:requests:room-1");
 		expect(ids).toContain("gameroom:kick:room-1");
+		expect(ids).toContain("gameroom:bots:room-1");
 	});
 
 	it("shows the Hold'em buy in on the card as a line, set in the creation modal", () => {

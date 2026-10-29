@@ -720,6 +720,7 @@ export const gameRoomsCopy = {
 		// ── Play vs bots (2026-10 item 250 Phase 5) ──
 		// Hold'em, Monopoly and Battleship: the host fills seats with Dero bots, who sit
 		// down when the match starts. Bots never take a member's place and never rate.
+		addBotsLabel: "Add bots",
 		botPickerPrompt: "How many Dero bots should take a seat? They sit down when you press Start, and a match with a bot is never rated.",
 		botPickerPlaceholder: "Dero bots",
 		botOptionNone: "No bots",
@@ -1345,7 +1346,7 @@ export const gameRoomsCopy = {
 			`Monopoly seats at most ${maxSeats} players, counting you, and ${joined} have joined. Call this one off and start a new challenge with fewer.`,
 		// The same refusal with Dero bots in the count (2026-10 item 250 Phase 5).
 		tooManyWithBots: (maxSeats: number, joined: number, bots: number): string =>
-			`Monopoly seats at most ${maxSeats} players, counting you, and ${joined} joined with ${bots} Dero ${bots === 1 ? "bot" : "bots"} on top. Choose fewer bots with Play vs bots, then start.`,
+			`Monopoly seats at most ${maxSeats} players, counting you, and ${joined} joined with ${bots} Dero ${bots === 1 ? "bot" : "bots"} on top. Choose fewer bots with Add bots, then start.`,
 
 		// ── the idle sweep ──
 		// Public, so the table knows why a seat left without anyone pressing anything.

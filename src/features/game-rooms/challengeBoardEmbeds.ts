@@ -334,6 +334,14 @@ function queueDeroButton(roomId: string): ButtonBuilder {
 		.setStyle(ButtonStyle.Secondary);
 }
 
+function addBotsButton(roomId: string): ButtonBuilder {
+	return new ButtonBuilder()
+		.setCustomId(`${GAME_ROOM_PREFIX}:bots:${roomId}`)
+		.setLabel(gameRoomsCopy.board.addBotsLabel)
+		.setEmoji("🤖")
+		.setStyle(ButtonStyle.Secondary);
+}
+
 // ── the card's controls ───────────────────────────────────────────────
 // The host's row: Requests on an open challenge while approval is on or somebody still waits
 // after it was turned off, then Remove a player. Remove a player opens a private picker
@@ -359,6 +367,11 @@ function hostControlRow(roomId: string, state: OpenerCardState, controls: DraftH
 			// A hint only: the picker answers honestly when there is nobody to remove.
 			.setDisabled(state.pool.length === 0 && controls.pendingJoinCount === 0)
 	);
+	// Add bots opens the host's private count picker (challengeBoard.openBotPicker, the one door a
+	// bot comes through). Offered only where the game takes bots and the server allows them: `bots`
+	// is on the state exactly then. Shown to everyone because Discord cannot show a button to the
+	// host alone; the router refuses anybody else (HOST_STRICT_ACTIONS).
+	if (state.bots) buttons.push(addBotsButton(roomId));
 	if (state.voice?.kind === "busy") buttons.push(queueDeroButton(roomId));
 	return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(...buttons);
 }
@@ -377,10 +390,11 @@ function editSettingsButton(roomId: string): ButtonBuilder {
 // terminal, which is what strips the buttons off a finished card rather than leaving
 // dead controls a member can still press.
 //
-// ⚠️ NO SETTING IS A CARD CONTROL (2026-10 item 263 R3-13). Visibility, the network, Play
-// Dero, approval, the band, who may watch, Rated or Casual, Play vs bots, the buy in, Dero
-// voice and the auctions are all chosen in the creation modal and changed through Edit
-// settings. Their routes stay registered in gameRoomHandlers, so a card posted before the
+// ⚠️ NO SETTING IS A CARD CONTROL (2026-10 item 263 R3-13), with ONE owner approved exception:
+// Add bots, on the host's row, because a host who cannot find the bot count cannot play a bot.
+// Visibility, the network, Play Dero, approval, the band, who may watch, Rated or Casual, the
+// buy in, Dero voice and the auctions are all chosen in the creation modal and changed through
+// Edit settings. Their routes stay registered in gameRoomHandlers, so a card posted before the
 // change still works until its next redraw, which shows these rows.
 export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[] {
 	if (state.cancelled || state.startedChannelId || state.resultLine) return [];
