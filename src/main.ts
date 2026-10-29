@@ -249,7 +249,7 @@ process.on("uncaughtException", (err) => {
 	// step 2 - connect to db before starting the bot to ensure it's ready when commands are executed
 	await connectMongoose();
 
-	// step 2b - sum the per server chip wallets into each member's global wallet (2026-10
+	// step 2b: sum the per server chip wallets into each member's global wallet (2026-10
 	// item 267 Session 1a) before any handler registers, so no claim or buy in reads a
 	// global row the migration has not filled yet. Idempotent, so it runs every boot; a
 	// failure is logged and boot continues, because unmigrated rows are retried next boot.
