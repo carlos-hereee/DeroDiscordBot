@@ -391,10 +391,10 @@ export async function handleBuyIn(interaction: ButtonInteraction, room: IGameRoo
 	const verdict = await judgeJoin(room, userId, { alreadyApproved: room.playerIds.includes(userId) });
 	if (verdict.kind === "refuse") {
 		// A network table's seat needs the network notice first (2026-10 item 244 Phase 5b):
-		// the member gets the notice in 💬dero-commands (2026-10 item 257 Phase 5), and presses
+		// the member gets the notice where it was pressed (2026-10 item 257 Phase 5), and presses
 		// Buy in again once they accept it.
 		if (verdict.reason === "noConsent") {
-			await answerInChannel(interaction, "member", consentPrompt({ kind: "again" }));
+			await answerInChannel(interaction, "here", consentPrompt({ kind: "again" }));
 			return;
 		}
 		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [joinRefusalText(room, verdict.reason)] });
@@ -413,8 +413,8 @@ export async function handleBuyIn(interaction: ButtonInteraction, room: IGameRoo
 	}
 	if (claim.late) {
 		// A held seat is work done, so it is an answer (owner rule 1, 2026-10 item 263 R3-11):
-		// it posts in 💬dero-commands and pings the member it seated.
-		await answerInChannel(interaction, "member", { content: hostWords.seats.heldReply(startingStackOf(claim.table)) });
+		// it posts where it was pressed and pings the member it seated.
+		await answerInChannel(interaction, "here", { content: hostWords.seats.heldReply(startingStackOf(claim.table)) });
 	} else {
 		await interaction.deferUpdate();
 	}
@@ -443,7 +443,7 @@ async function askHostForSeat(interaction: ButtonInteraction, room: IGameRoom): 
 		return;
 	}
 	// A request filed is work done, so it is an answer (owner rule 1, R3-11).
-	await answerInChannel(interaction, "member", { content: hostWords.approval.asked });
+	await answerInChannel(interaction, "here", { content: hostWords.approval.asked });
 	const table = tableOf(updated);
 	if (table) await redraw(interaction.client, updated, table);
 }

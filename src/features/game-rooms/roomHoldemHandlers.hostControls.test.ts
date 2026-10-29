@@ -44,6 +44,7 @@ function pressWithCommandsChannel(userId: string): { interaction: ButtonInteract
 	const channel = { id: "c-commands", isSendable: () => true, send: sent };
 	const interaction = {
 		...makeInteraction(userId),
+		channelId: "c-commands",
 		client: { channels: { fetch: vi.fn().mockResolvedValue(channel) } },
 		isModalSubmit: () => false,
 		isMessageComponent: () => true,

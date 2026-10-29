@@ -434,7 +434,7 @@ export async function handleMjail(interaction: ButtonInteraction, room: IGameRoo
 // ── the peek ──────────────────────────────────────────────────────────
 // No defer and no write: it reads the row the router loaded and answers at once. A
 // Monopoly seat's holdings are on the board for every player already, and the peek
-// carries selects, so it posts in 💬dero-commands (2026-10 item 257 Phase 5). Its
+// carries selects, so it posts where it was pressed (2026-10 item 257 Phase 5). Its
 // mortgage selects are answered in roomMonopolyMortgage, each for its presser's own seat.
 export async function handleMinventory(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const state = monopolyStateOf(room);
@@ -442,7 +442,7 @@ export async function handleMinventory(interaction: ButtonInteraction, room: IGa
 		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.noBoard] });
 		return;
 	}
-	await answerInChannel(interaction, "member", monopolyInventoryReply(state, interaction.user.id, room.roomId));
+	await answerInChannel(interaction, "here", monopolyInventoryReply(state, interaction.user.id, room.roomId));
 }
 
 // ── the clocks' ends (the sweeps' and the turn clock's) ───────────────

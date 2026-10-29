@@ -314,9 +314,9 @@ export async function runBlackjack(interaction: ChatInputCommandInteraction): Pr
 		return;
 	}
 
-	// The table itself posts where the command ran; the member's own answer (seated) posts in
-	// 💬dero-commands (2026-10 item 257 Phase 5), and a state met from here on is a private notice.
-	const answer = await beginChannelAnswer(interaction, "member");
+	// The table itself posts where the command ran; the member's own answer (seated) posts
+	// where it was pressed (2026-10 item 257 Phase 5), and a state met from here on is a private notice.
+	const answer = await beginChannelAnswer(interaction, "here");
 
 	const solo = interaction.options.getString("mode") !== "table";
 	const host = { userId: interaction.user.id, username: interaction.user.globalName ?? interaction.user.username };
@@ -794,7 +794,7 @@ async function leaveDuringHand(click: ButtonInteraction, game: BlackjackGame, ch
 	const result = game.table.phase === "dealer" ? settleGame(game, channelId, click.client) : null;
 	if (result) await redrawResult(channelId, result, clickWriter(click));
 	else await redrawTable(channelId, game.table, clickWriter(click), tableEmbedOf(game, game.table));
-	await answerInChannel(click, "member", { content: c.leftHand });
+	await answerInChannel(click, "here", { content: c.leftHand });
 	if (result) game.stop();
 }
 
@@ -824,7 +824,7 @@ async function leaveBankrollTable(click: ButtonInteraction, game: BlackjackGame,
 		await redrawCurrent(game, channelId, writer);
 		await promptTurn(game, click.client);
 	}
-	await answerInChannel(click, "member", { content: bankroll.chips ? c.leftWithChips(cashOut) : c.leftFreeTable });
+	await answerInChannel(click, "here", { content: bankroll.chips ? c.leftWithChips(cashOut) : c.leftFreeTable });
 }
 
 // ── phase transitions ───────────────────────────────────────────────────────

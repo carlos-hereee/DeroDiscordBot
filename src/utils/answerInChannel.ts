@@ -20,8 +20,9 @@ import { acknowledgeTextModal, showNotice } from "./textModal.js";
 //        Dismiss message" (2026-10 item 257, owner decision 7, Phase 5). A member's
 //        answer posts in 💬dero-commands (GuildConfig.commandOutputChannelId), a
 //        finished trade in 🏪dero-market (deroMarketChannelId, 2026-10 item 267 Session
-//        2a); an admin's answer posts in the matching 🏰 DERO HEADQUARTERS channel by
-//        its domain. Every post mentions the member it answers in its content and pings
+//        2a); a game's answer posts where its button was pressed (the room, or the
+//        challenge card's channel), never in 💬dero-commands; an admin's answer posts in
+//        the matching 🏰 DERO HEADQUARTERS channel by its domain. Every post mentions the member it answers in its content and pings
 //        that one member, nobody else (2026-10 item 263 Phase 1a, R3-10).
 // Who:   every site the private reply audit kept private for Discord's reasons (a
 //        slow answer after a defer, a modal Submit, a followUp, a reply carrying
@@ -46,6 +47,8 @@ import { acknowledgeTextModal, showNotice } from "./textModal.js";
 export type AnswerAudience =
 	/** a member's answer: 💬dero-commands */
 	| "member"
+	/** a game's answer: the channel the press or command happened in (a game room, a challenge channel), so play never spills into 💬dero-commands */
+	| "here"
 	/** a finished trade in Dero coins: 🏪dero-market */
 	| "market"
 	/** Dero's own config and voice: ⚙️dero-config */
@@ -111,7 +114,8 @@ type PromptMessage = Pick<Message, "awaitMessageComponent" | "createMessageCompo
  */
 export const RECORDS_ANSWERS = Symbol.for("dero.recordsAnswers");
 
-const AUDIENCE_FIELD: Record<AnswerAudience, keyof AnswerChannelConfig> = {
+// "here" has no stored field: its channel is the interaction's own (resolveAnswerChannel).
+const AUDIENCE_FIELD: Record<Exclude<AnswerAudience, "here">, keyof AnswerChannelConfig> = {
 	member: "commandOutputChannelId",
 	market: "deroMarketChannelId",
 	deroConfig: "deroConfigChannelId",
@@ -125,6 +129,7 @@ const AUDIENCE_FIELD: Record<AnswerAudience, keyof AnswerChannelConfig> = {
 
 /** The stored channel id an audience's answer posts in, or null when setup never stored it. */
 export function answerChannelId(config: AnswerChannelConfig | null | undefined, audience: AnswerAudience): string | null {
+	if (audience === "here") return null;
 	const value = config?.[AUDIENCE_FIELD[audience]];
 	return typeof value === "string" && value.length > 0 ? value : null;
 }
@@ -283,7 +288,7 @@ async function readConfig(interaction: RepliableInteraction): Promise<AnswerChan
 // recording stand in gets no channel, so its answers take the private path it records.
 async function resolveAnswerChannel(interaction: RepliableInteraction, audience: AnswerAudience, config: AnswerChannelConfig | null | undefined): Promise<SendableChannels | null> {
 	if ((interaction as unknown as Record<symbol, unknown>)[RECORDS_ANSWERS] === true) return null;
-	const channelId = answerChannelId(config, audience);
+	const channelId = audience === "here" ? interaction.channelId : answerChannelId(config, audience);
 	if (!channelId) return null;
 	const channel = await settle(() => interaction.client.channels.fetch(channelId), `fetching channel ${channelId}`, interaction.id);
 	return channel?.isSendable() ? channel : null;

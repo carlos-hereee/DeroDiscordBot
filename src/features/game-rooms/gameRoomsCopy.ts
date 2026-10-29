@@ -1261,9 +1261,10 @@ export const gameRoomsCopy = {
 		giveChipsLabel: "Chips you give",
 		wantChipsLabel: "Chips you want",
 		chipsPlaceholder: "0",
+		jailCardOption: "🎫 Get out of jail free card",
 		jailCardsLabel: "Jail cards: you give, you want",
 		jailCardsPlaceholder: "0, 0",
-		tradeNotANumber: "Chips and jail cards are whole numbers, zero or more. Jail cards take two, like 1, 0.",
+		tradeNotANumber: "Chips are whole numbers, zero or more.",
 		tradeSent: (partnerId: string): string =>
 			`Your offer is with <@${partnerId}>. They answer it from the Trade button on the board, and you can withdraw it from the same button.`,
 		tradeOfferTitle: "🤝 Trade offer",

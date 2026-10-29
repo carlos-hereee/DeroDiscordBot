@@ -31,18 +31,16 @@ import {
 	type MonopolyState,
 	type TradeProposal,
 } from "@features/games/monopolyState.js";
-import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
+import { GAME_ROOM_MODAL_PREFIX, GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import {
 	commitMonopolyMove,
 	loadSeatedRoom,
 	monopolyStateOf,
 	parseWholeCount,
-	resolveParticipants,
 	type MonopolyMove,
 } from "./roomMonopolyHandlers.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
-import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showNotice } from "@utils/textModal.js";
 
 // ── roomMonopolyTrade ────────────────────────────────────────────────
@@ -54,12 +52,13 @@ import { showNotice } from "@utils/textModal.js";
 //        (the standard rule). One offer may be open at a time.
 // Where: the engine (monopolyTrade) owns every rule and moves everything at once
 //        on accept; this file gathers the terms and keeps them private.
-// How:   ① Trade, with no offer open, replies with a picker of the other seats.
-//        ② The pick opens the offer modal. Discord allows five fields in a modal,
-//        so the plan's seven become five: the two lot lists are multi selects of
-//        exactly the lots each side may trade, chips are one field each way, and
-//        the two jail card counts share one field (shown only when a card exists).
-//        ③ The submit opens the trade. ④ While it is open, the same Trade button
+// How:   ① Trade, with no offer open, opens the offer modal at once (the owner's call:
+//        a partner picker posted first was too slow). Discord allows five fields: who
+//        you trade with (only when there is more than one other seat), the lots you
+//        give, the lots you want (every other seat's, each named by its owner), and
+//        chips each way. A Get out of jail free card rides the lot lists as one more
+//        option, so it needs no field of its own. ② The old partner picker, kept for a
+//        picker posted before, opens the same modal. ③ The submit opens the trade. ④ While it is open, the same Trade button
 //        shows the terms to the two players in it, privately, with the answers.
 //
 // ⚠️ THE TERMS NEVER REACH THE CHANNEL BEFORE AN ACCEPT (risk M6). Every surface
@@ -71,12 +70,15 @@ const PRIVATE = { flags: MessageFlags.Ephemeral } as const;
 
 // The modal's field ids, read back on submit.
 const FIELD = {
+	partner: "partner",
 	giveLots: "give_lots",
 	wantLots: "want_lots",
 	giveChips: "give_chips",
 	wantChips: "want_chips",
-	jailCards: "jail_cards",
 } as const;
+
+// The lot list value a Get out of jail free card rides as. No tile id is this word.
+const JAIL_CARD_VALUE = "gojf";
 
 // Discord's ceiling on options in one select. A seat holding more than 25 tradable
 // lots (the board has 28) offers the rest in a second trade; the slice keeps the
@@ -84,13 +86,9 @@ const FIELD = {
 const MAX_SELECT_OPTIONS = 25;
 // Nine digits, the ceiling parseWholeCount accepts.
 const COUNT_MAX_LENGTH = 9;
-// "give, want": two counts and a separator, with room for spaces.
-const JAIL_CARDS_MAX_LENGTH = 10;
-// The jail card field holds exactly two counts, separated by a comma or spaces.
-const JAIL_CARDS_SEPARATOR = /[\s,]+/;
 
 // ── ① the Trade button ────────────────────────────────────────────────
-/** Trade: the partner picker when no offer is open, or the open offer for the two players in it. */
+/** Trade: the offer modal when no offer is open, or the open offer for the two players in it. */
 export async function handleMtrade(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const state = monopolyStateOf(room);
 	if (!state || state.phase === "finished") {
@@ -112,26 +110,16 @@ export async function handleMtrade(interaction: ButtonInteraction, room: IGameRo
 		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.noTradePartners] });
 		return;
 	}
-	// Names take a member fetch, which can outrun Discord's three second window. The picker
-	// names only the other seats, never a term, so it posts in 💬dero-commands (2026-10 item
-	// 257 Phase 5); its pick opens the offer modal for the presser's own seat alone.
-	const answer = await beginChannelAnswer(interaction, "member");
-	const named = await resolveParticipants(interaction.client, room.guildId, partners.map((seat) => seat.userId));
-	const picker = new StringSelectMenuBuilder()
-		.setCustomId(`${GAME_ROOM_SELECT_PREFIX}:mtradeWith:${room.roomId}`)
-		.setPlaceholder(gameRoomsCopy.monopoly.tradePartnerPlaceholder)
-		.addOptions(
-			named.map(({ userId, username }) => ({
-				// A member who left the server has no name, and the seat number is the
-				// one thing the board shows for every seat.
-				label: username ?? `Seat ${state.seats.findIndex((seat) => seat.userId === userId) + 1}`,
-				value: userId,
-			}))
-		);
-	await answer.send({
-		content: gameRoomsCopy.monopoly.tradePartnerPrompt,
-		components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(picker)],
-	});
+	// The modal must be the first answer to the press, so names come from the member cache
+	// only (a fetch cannot fit Discord's three seconds); a seat number stands in for a miss.
+	const nameOf = seatNamer(state, (userId) => interaction.guild?.members.cache.get(userId)?.displayName ?? null);
+	await interaction.showModal(offerModal(room.roomId, state, actorId, partners.map((seat) => seat.userId), nameOf));
+}
+
+// A seat's name for the modal: the member's display name, else "Seat N", the one thing the
+// board shows for every seat.
+function seatNamer(state: MonopolyState, cachedName: (userId: string) => string | null): (userId: string) => string {
+	return (userId) => cachedName(userId) ?? `Seat ${state.seats.findIndex((seat) => seat.userId === userId) + 1}`;
 }
 
 // ── ② the partner pick opens the offer modal ──────────────────────────
@@ -157,40 +145,75 @@ export async function handleTradePartnerSelect(interaction: StringSelectMenuInte
 		return;
 	}
 	// The modal must be the first response to the pick, so nothing above defers.
-	await interaction.showModal(offerModal(room.roomId, state, initiatorId, partnerId));
+	const nameOf = seatNamer(state, (userId) => interaction.guild?.members.cache.get(userId)?.displayName ?? null);
+	await interaction.showModal(offerModal(room.roomId, state, initiatorId, [partnerId], nameOf));
 }
 
-function offerModal(roomId: string, state: MonopolyState, initiatorId: string, partnerId: string): ModalBuilder {
-	const labels: LabelBuilder[] = [];
-	// A select needs at least one option, so a side with nothing tradable gets no
-	// lot field at all rather than an empty one.
-	const giveLots = tradableLots(state, initiatorId);
-	if (giveLots.length > 0) labels.push(lotsField(FIELD.giveLots, gameRoomsCopy.monopoly.giveLotsLabel, giveLots));
-	const wantLots = tradableLots(state, partnerId);
-	if (wantLots.length > 0) labels.push(lotsField(FIELD.wantLots, gameRoomsCopy.monopoly.wantLotsLabel, wantLots));
-	labels.push(countField(FIELD.giveChips, gameRoomsCopy.monopoly.giveChipsLabel, gameRoomsCopy.monopoly.chipsPlaceholder, COUNT_MAX_LENGTH));
-	labels.push(countField(FIELD.wantChips, gameRoomsCopy.monopoly.wantChipsLabel, gameRoomsCopy.monopoly.chipsPlaceholder, COUNT_MAX_LENGTH));
-	if (holdsJailCard(state, initiatorId) || holdsJailCard(state, partnerId)) {
-		labels.push(
-			countField(FIELD.jailCards, gameRoomsCopy.monopoly.jailCardsLabel, gameRoomsCopy.monopoly.jailCardsPlaceholder, JAIL_CARDS_MAX_LENGTH)
-		);
-	}
+/** One option of a lot list: a lot, or a Get out of jail free card. */
+interface LotOption {
+	label: string;
+	value: string;
+}
 
+/**
+ * The offer modal. With one possible partner the partner rides the customId and the modal has
+ * no partner field; with more, the first field picks them and the wanted lots list every other
+ * seat's lots, each named by its owner (the engine refuses a lot the chosen partner does not
+ * own, in words the player reads). Exported for the test.
+ */
+export function offerModal(roomId: string, state: MonopolyState, initiatorId: string, partnerIds: readonly string[], nameOf: (userId: string) => string): ModalBuilder {
+	const copy = gameRoomsCopy.monopoly;
+	const labels: LabelBuilder[] = [];
+	const onlyPartner = partnerIds.length === 1 ? partnerIds[0] : null;
+	if (!onlyPartner) labels.push(partnerField(partnerIds, nameOf));
+
+	// A select needs at least one option, so a side with nothing tradable gets no lot field
+	// at all rather than an empty one.
+	const giveOptions = lotOptions(state, [initiatorId], () => null);
+	if (giveOptions.length > 0) labels.push(lotsField(FIELD.giveLots, copy.giveLotsLabel, giveOptions));
+	const wantOptions = lotOptions(state, partnerIds, onlyPartner ? () => null : nameOf);
+	if (wantOptions.length > 0) labels.push(lotsField(FIELD.wantLots, copy.wantLotsLabel, wantOptions));
+	labels.push(countField(FIELD.giveChips, copy.giveChipsLabel, copy.chipsPlaceholder, COUNT_MAX_LENGTH));
+	labels.push(countField(FIELD.wantChips, copy.wantChipsLabel, copy.chipsPlaceholder, COUNT_MAX_LENGTH));
+
+	const partnerArg = onlyPartner ? `:${onlyPartner}` : "";
 	return new ModalBuilder()
-		.setCustomId(`${GAME_ROOM_MODAL_PREFIX}:mtrade:${roomId}:${partnerId}`)
-		.setTitle(gameRoomsCopy.monopoly.tradeModalTitle)
+		.setCustomId(`${GAME_ROOM_MODAL_PREFIX}:mtrade:${roomId}${partnerArg}`)
+		.setTitle(copy.tradeModalTitle)
 		.addLabelComponents(...labels);
 }
 
-function lotsField(customId: string, label: string, lots: OwnableTile[]): LabelBuilder {
-	const options = lots.slice(0, MAX_SELECT_OPTIONS);
+function partnerField(partnerIds: readonly string[], nameOf: (userId: string) => string): LabelBuilder {
+	const select = new StringSelectMenuBuilder()
+		.setCustomId(FIELD.partner)
+		.setPlaceholder(gameRoomsCopy.monopoly.tradePartnerPlaceholder)
+		.setMinValues(1)
+		.setMaxValues(1)
+		.addOptions(partnerIds.slice(0, MAX_SELECT_OPTIONS).map((userId) => ({ label: nameOf(userId), value: userId })));
+	return new LabelBuilder().setLabel(gameRoomsCopy.monopoly.tradePartnerPrompt).setStringSelectMenuComponent(select);
+}
+
+// The lots these seats may trade, led by one jail card option when any of them holds a card,
+// so a seat with 25 lots still offers it. `ownerName` labels each lot with its owner when the
+// list spans several seats.
+function lotOptions(state: MonopolyState, ownerIds: readonly string[], ownerName: (userId: string) => string | null): LotOption[] {
+	const lots = ownerIds.flatMap((ownerId) => {
+		const owner = ownerName(ownerId);
+		return tradableLots(state, ownerId).map((tile: OwnableTile) => ({ label: owner ? `${tile.name} (${owner})` : tile.name, value: tile.id }));
+	});
+	const holdsCard = ownerIds.some((ownerId) => holdsJailCard(state, ownerId));
+	const jailCard = holdsCard ? [{ label: gameRoomsCopy.monopoly.jailCardOption, value: JAIL_CARD_VALUE }] : [];
+	return [...jailCard, ...lots].slice(0, MAX_SELECT_OPTIONS);
+}
+
+function lotsField(customId: string, label: string, options: LotOption[]): LabelBuilder {
 	const select = new StringSelectMenuBuilder()
 		.setCustomId(customId)
 		.setPlaceholder(gameRoomsCopy.monopoly.lotsPlaceholder)
 		.setRequired(false)
 		.setMinValues(0)
 		.setMaxValues(options.length)
-		.addOptions(options.map((tile) => ({ label: tile.name, value: tile.id })));
+		.addOptions(options);
 	return new LabelBuilder().setLabel(label).setStringSelectMenuComponent(select);
 }
 
@@ -207,8 +230,10 @@ function countField(customId: string, label: string, placeholder: string, maxLen
 // ── ③ the offer modal's submit ────────────────────────────────────────
 /** The offer modal: open the trade, and confirm privately to the player who made it. */
 export async function handleTradeModal(interaction: ModalSubmitInteraction): Promise<void> {
-	const [, , roomId, partnerId] = interaction.customId.split(":");
+	const [, , roomId, partnerArg] = interaction.customId.split(":");
 	const room = await loadSeatedRoom(interaction, roomId);
+	// One possible partner rides the customId; with more, the modal's partner field names them.
+	const partnerId = partnerArg ?? selectValues(interaction.fields, FIELD.partner)[0];
 	if (!room || !partnerId) return;
 
 	await interaction.deferReply(PRIVATE);
@@ -242,26 +267,17 @@ type OfferTerms = Pick<TradeProposal, "offer" | "request">;
 
 // The modal's fields as the two sides of a proposal, or null when a count is not
 // a plain whole number. The lot values are whatever Discord sent back, which the
-// engine re-validates; only the typed counts need parsing here.
+// engine re-validates; only the typed counts need parsing here. A jail card picked
+// in a lot list is one card on that side.
 function readOfferTerms(fields: ModalSubmitFields): OfferTerms | null {
 	const giveChips = parseWholeCount(textValue(fields, FIELD.giveChips));
 	const wantChips = parseWholeCount(textValue(fields, FIELD.wantChips));
-	const jailCards = parseJailCards(textValue(fields, FIELD.jailCards));
-	if (giveChips === null || wantChips === null || jailCards === null) return null;
-	return {
-		offer: { properties: selectValues(fields, FIELD.giveLots), chips: giveChips, gojf: jailCards.give },
-		request: { properties: selectValues(fields, FIELD.wantLots), chips: wantChips, gojf: jailCards.want },
-	};
+	if (giveChips === null || wantChips === null) return null;
+	return { offer: tradeSide(selectValues(fields, FIELD.giveLots), giveChips), request: tradeSide(selectValues(fields, FIELD.wantLots), wantChips) };
 }
 
-// "give, want", blank for none. Exactly two counts, because one would leave the
-// player guessing which side it meant.
-function parseJailCards(text: string): { give: number; want: number } | null {
-	const parts = text.trim().split(JAIL_CARDS_SEPARATOR).filter((part) => part !== "");
-	if (parts.length === 0) return { give: 0, want: 0 };
-	if (parts.length !== 2) return null;
-	const [give, want] = parts.map(parseWholeCount);
-	return give === null || want === null ? null : { give, want };
+function tradeSide(picked: readonly string[], chips: number): TradeProposal["offer"] {
+	return { properties: picked.filter((value) => value !== JAIL_CARD_VALUE), chips, gojf: picked.includes(JAIL_CARD_VALUE) ? 1 : 0 };
 }
 
 // A field the modal left out (no tradable lots, no jail cards) reads as empty

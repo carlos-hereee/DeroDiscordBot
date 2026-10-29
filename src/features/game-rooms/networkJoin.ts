@@ -164,9 +164,9 @@ export async function handleNetworkBoardSelect(interaction: StringSelectMenuInte
 		return;
 	}
 	// A satellite opening talks to Discord several times, which can outrun three seconds,
-	// so the press is acknowledged first and the outcome posts in 💬dero-commands (2026-10
+	// so the press is acknowledged first and the outcome posts where it was pressed (2026-10
 	// item 257 Phase 5).
-	const answer = await beginChannelAnswer(interaction, "member");
+	const answer = await beginChannelAnswer(interaction, "here");
 	const outcome = await requestNetworkSeat(interaction.client, interaction.guild, interaction.user.id, target.hostGuildId, target.roomId);
 	if (outcome.kind === "consent") {
 		await answer.send(consentPrompt({ kind: "join", ...target }));

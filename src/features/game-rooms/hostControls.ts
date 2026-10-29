@@ -216,7 +216,7 @@ const canAnswerRequests = (room: IGameRoom): boolean => room.status === "draft" 
 
 /**
  * The Requests button: a panel with an Accept and a Decline select over everyone waiting,
- * posted in 💬dero-commands (2026-10 item 257 Phase 5: two multi picks are no single choice a
+ * posted where it was pressed (2026-10 item 257 Phase 5: two multi picks are no single choice a
  * modal holds). Each select re-gates its presser through loadRoomForHost.
  */
 export async function openJoinRequests(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
@@ -230,7 +230,7 @@ export async function openJoinRequests(interaction: ButtonInteraction, room: IGa
 		return;
 	}
 	const options = await memberOptions(interaction.guild!, waiting);
-	await answerInChannel(interaction, "member", {
+	await answerInChannel(interaction, "here", {
 		content: words.approval.requestsPrompt,
 		components: [
 			pickerRow("accept", room.roomId, words.approval.acceptPlaceholder, options, options.length),

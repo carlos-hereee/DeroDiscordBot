@@ -137,7 +137,7 @@ const trailTexts = (): string[] =>
 function answered(interaction: ReturnType<typeof makeInteraction>): { embeds: { data: { description?: string } }[]; components: { toJSON(): { components: { custom_id: string }[] } }[] } {
 	const call = answerMock.mock.calls.find((args) => args[0] === interaction);
 	if (!call) throw new Error("the interaction was not answered through answerInChannel");
-	expect(call[1]).toBe("member");
+	expect(call[1]).toBe("here");
 	return call[2] as ReturnType<typeof answered>;
 }
 // The text of the private notice a refusal answered with, after the deferUpdate: a state never

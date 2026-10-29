@@ -211,7 +211,7 @@ describe("a two seat chip table, hand after hand", () => {
 		await vi.waitFor(() => expect(finishMock).toHaveBeenCalledOnce());
 		expect(cashOutMock).toHaveBeenCalledOnce();
 		expect(cashOutMock).toHaveBeenCalledWith(ROOM, BOB.userId, 1125);
-		expect(answerInChannel).toHaveBeenCalledWith(leave, "member", { content: gamesCopy.blackjack.leftWithChips(1125) });
+		expect(answerInChannel).toHaveBeenCalledWith(leave, "here", { content: gamesCopy.blackjack.leftWithChips(1125) });
 
 		// The room finishes once, naming the one member who ended above the buy in, and pays its coins once.
 		expect(finishMock.mock.calls[0][2]).toEqual({ winnerId: BOB.userId });

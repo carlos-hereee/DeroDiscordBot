@@ -11,9 +11,12 @@ import { resolveRoomChannel, roomTrail } from "./roomTrail.js";
 
 // ── turnPrompt ───────────────────────────────────────────────────────
 // What:  the one piece every turn based game shares (2026-10 item 257 Phase 4a): when a
-//        turn starts, one line in the room pings the member on the clock with a Take your
-//        turn button; the button opens a modal that IS their hand and their moves; its
-//        Submit plays the move; the line is edited to say it was played or passed. The room
+//        turn starts, one line in the room pings the member on the clock with their moves
+//        as buttons, each played in one press (quickMovesOf: a lone Roll is one press, no
+//        modal), and a Take your turn button only when a move needs typing or a second
+//        pick (Hold'em's raise amount, Battleship's column and row); that button opens a
+//        modal that IS their hand and their moves, and its Submit plays the move. The
+//        line is edited to say it was played or passed. The room
 //        channel stays the event log and the table, the modal stays the private hand.
 // Who:   Hold'em, Monopoly, Battleship and Blackjack, each through a small TurnAdapter that
 //        answers whose turn it is, what the hand and the legal moves are, and how a move is
@@ -83,9 +86,69 @@ export const turnButtonId = (roomId: string, fingerprint: string): string => `${
 
 const turnModalId = (roomId: string, fingerprint: string): string => `${GAME_ROOM_MODAL_PREFIX}:${TURN_ACTION}:${roomId}:${fingerprint}`;
 
+/** The action word of a move button: one legal move played in one press, with no modal. */
+export const TURN_MOVE_ACTION = "tmove";
+
+const turnMoveButtonId = (roomId: string, fingerprint: string, value: string): string => `${GAME_ROOM_PREFIX}:${TURN_MOVE_ACTION}:${roomId}:${fingerprint}:${value}`;
+
+// Discord's limits: a custom id of 100 characters, a button label of 80, five buttons a row and
+// five rows a message. Moves past MOVE_BUTTONS_MAX keep the modal, so the extras always fit.
+const CUSTOM_ID_MAX = 100;
+const BUTTON_LABEL_MAX = 80;
+const BUTTONS_PER_ROW = 5;
+const MOVE_BUTTONS_MAX = 15;
+
+/** The moves a turn plays from buttons, and whether the modal is still needed for the rest. */
+interface QuickMoves {
+	fieldId: string;
+	options: readonly { label: string; value: string }[];
+	/** True when the view asks for more than the move (Hold'em's typed raise), so Take your turn stays. */
+	keepsModal: boolean;
+}
+
+/**
+ * The one-press moves of a turn (the owner's call: a modal for a lone Roll was too slow). A view
+ * whose FIRST field is a single choice select, and whose other fields are only optional typed
+ * text, plays every option of that select as its own button; a view with a second select
+ * (Battleship's column and row) or too many options keeps the modal. Built from the view the
+ * modal would show, so a button and the modal can never offer different moves.
+ */
+export function quickMovesOf(adapter: TurnAdapter, room: IGameRoom, playerId: string): QuickMoves | null {
+	const view = adapter.view(room, playerId);
+	if (!view) return null;
+	const [first, ...rest] = view.fields;
+	if (first?.kind !== "select" || rest.some((field) => field.kind !== "text")) return null;
+	if (first.options.length === 0 || first.options.length > MOVE_BUTTONS_MAX) return null;
+	return { fieldId: first.id, options: first.options, keepsModal: rest.length > 0 };
+}
+
 function promptRows(adapter: TurnAdapter, room: IGameRoom, fingerprint: string): ActionRowBuilder<ButtonBuilder>[] {
 	const take = new ButtonBuilder().setCustomId(turnButtonId(room.roomId, fingerprint)).setLabel(gameRoomsCopy.turnPrompt.takeLabel).setEmoji("🎯").setStyle(ButtonStyle.Primary);
-	return [new ActionRowBuilder<ButtonBuilder>().addComponents(take, ...(adapter.extraButtons?.(room) ?? []))];
+	const extras = adapter.extraButtons?.(room) ?? [];
+	const playerId = adapter.whoseTurn(room);
+	const quick = playerId ? quickMovesOf(adapter, room, playerId) : null;
+	const moveButtons = quick ? moveButtonsOf(room.roomId, fingerprint, quick) : null;
+	if (!quick || !moveButtons) return chunkRows([take, ...extras]);
+	return [...chunkRows(moveButtons), ...chunkRows(quick.keepsModal ? [take, ...extras] : extras)];
+}
+
+// One button per move, or null when any custom id would pass Discord's limit (a long value),
+// in which case the turn keeps the modal rather than losing a move.
+function moveButtonsOf(roomId: string, fingerprint: string, quick: QuickMoves): ButtonBuilder[] | null {
+	const buttons: ButtonBuilder[] = [];
+	for (const [index, option] of quick.options.entries()) {
+		const customId = turnMoveButtonId(roomId, fingerprint, option.value);
+		if (customId.length > CUSTOM_ID_MAX) return null;
+		const style = index === 0 ? ButtonStyle.Primary : ButtonStyle.Secondary;
+		buttons.push(new ButtonBuilder().setCustomId(customId).setLabel(option.label.slice(0, BUTTON_LABEL_MAX)).setStyle(style));
+	}
+	return buttons;
+}
+
+function chunkRows(buttons: readonly ButtonBuilder[]): ActionRowBuilder<ButtonBuilder>[] {
+	const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+	for (let start = 0; start < buttons.length; start += BUTTONS_PER_ROW) rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons.slice(start, start + BUTTONS_PER_ROW)));
+	return rows;
 }
 
 // What the prompt's buttons are, as a string, so a change to the extras (an auction opening
@@ -248,7 +311,44 @@ export async function handleTurnSubmit(interaction: ModalSubmitInteraction, adap
 	const view = adapter.view(room, interaction.user.id);
 	if (!view) return notice(copy.turnPassed);
 
-	const answers = readFieldAnswers(interaction, view.fields);
+	await playTurnMove(interaction, room, adapter, fingerprint, readFieldAnswers(interaction, view.fields));
+}
+
+/**
+ * A move button's press: the same checks as the modal's Submit (risk R4), then the one move it
+ * names, through the adapter's apply like every other way of playing a turn. The value must
+ * still be one of the moves the view offers now, so a button drawn for an earlier step of a
+ * Monopoly turn (Roll after the roll) plays nothing.
+ */
+export async function handleTurnMovePress(interaction: ButtonInteraction, adapterFor: TurnAdapterLookup): Promise<void> {
+	// The value may hold a colon of its own (Monopoly's buy:<lot>), so it is everything after the fourth.
+	const [, , roomId, fingerprint, ...valueParts] = interaction.customId.split(":");
+	const value = valueParts.join(":");
+	const guildId = interaction.guildId;
+	if (!guildId || !roomId || !fingerprint || !value) return;
+	const copy = gameRoomsCopy.turnPrompt;
+	const notice = (text: string) => showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [text] });
+
+	const room = await gameRoomStore.findByRoomId(guildId, roomId);
+	const adapter = room ? adapterFor(room.game) : undefined;
+	if (!room || !adapter || room.status !== "playing") return notice(copy.turnPassed);
+	if (!room.playerIds.includes(interaction.user.id)) return notice(gameRoomsCopy.errors.notYours);
+	if (!canActNow(adapter, room, interaction.user.id)) return notice(copy.notYourTurn);
+	if (memberFingerprint(adapter, room, interaction.user.id) !== fingerprint) return notice(copy.turnPassed);
+	const quick = quickMovesOf(adapter, room, interaction.user.id);
+	if (!quick || !quick.options.some((option) => option.value === value)) return notice(copy.turnPassed);
+	await playTurnMove(interaction, room, adapter, fingerprint, { [quick.fieldId]: value });
+}
+
+// Play one move for the member on the clock, from the modal's Submit or a move button.
+async function playTurnMove(
+	interaction: ModalSubmitInteraction | ButtonInteraction,
+	room: IGameRoom,
+	adapter: TurnAdapter,
+	fingerprint: string,
+	answers: Readonly<Record<string, string>>
+): Promise<void> {
+	const notice = (text: string) => showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [text] });
 	// Marked BEFORE the move, so the redraw the move triggers retires the old line as played;
 	// taken back below if the game refuses the move.
 	await markPlayed(room, fingerprint, true);

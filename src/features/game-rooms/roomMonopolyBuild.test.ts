@@ -34,7 +34,7 @@ const answerMock = answerInChannel as unknown as ReturnType<typeof vi.fn>;
 function answered<T>(interaction: unknown): T {
 	const call = answerMock.mock.calls.find((args) => args[0] === interaction);
 	if (!call) throw new Error("the interaction was not answered through answerInChannel");
-	expect(call[1]).toBe("member");
+	expect(call[1]).toBe("here");
 	return call[2] as T;
 }
 // Every line a move recorded, in order: the finished turn's board, then the new one's.

@@ -213,7 +213,7 @@ const REJECTION_COPY: Record<HangmanAuthoringRejection, string> = {
 	extraHintTooLong: `Keep each extra hint under ${HANGMAN_HINT_MAX} characters.`,
 };
 
-// The word modal's answers post in 💬dero-commands (2026-10 item 257 Phase 5): a modal Submit
+// The word modal's answers post where it was pressed (2026-10 item 257 Phase 5): a modal Submit
 // cannot open a notice. None of them carries the word, only a refusal or the hint.
 export async function handleAuthoringModal(interaction: ModalSubmitInteraction): Promise<void> {
 	const [prefix, action, roomId] = interaction.customId.split(":");
@@ -224,13 +224,13 @@ export async function handleAuthoringModal(interaction: ModalSubmitInteraction):
 
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (!room || room.status !== "playing") {
-		await answerInChannel(interaction, "member", { content: gameRoomsCopy.errors.notFound });
+		await answerInChannel(interaction, "here", { content: gameRoomsCopy.errors.notFound });
 		return;
 	}
 	// Only the host sets the word, and only once. A second submit would replace a
 	// word the room has already been guessing at.
 	if (room.hostId !== interaction.user.id || (room.secret as HangmanSecret | null)?.word) {
-		await answerInChannel(interaction, "member", { content: gameRoomsCopy.errors.notYours });
+		await answerInChannel(interaction, "here", { content: gameRoomsCopy.errors.notYours });
 		return;
 	}
 
@@ -241,7 +241,7 @@ export async function handleAuthoringModal(interaction: ModalSubmitInteraction):
 	);
 
 	if (!result.ok) {
-		await answerInChannel(interaction, "member", { content: REJECTION_COPY[result.reason] });
+		await answerInChannel(interaction, "here", { content: REJECTION_COPY[result.reason] });
 		return;
 	}
 
@@ -262,7 +262,7 @@ export async function handleAuthoringModal(interaction: ModalSubmitInteraction):
 		{ actorId: interaction.user.id, text: gameRoomsCopy.hangman.opener(interaction.user.id, result.hint) },
 		// ⚠️ THE HINT, NEVER THE WORD. The host knows the word already; echoing it buys
 		// nothing and puts it one mis-click from a public channel.
-		() => answerInChannel(interaction, "member", { content: gameRoomsCopy.hangman.authored(result.hint, result.extraHints.length) })
+		() => answerInChannel(interaction, "here", { content: gameRoomsCopy.hangman.authored(result.hint, result.extraHints.length) })
 	);
 }
 
@@ -310,8 +310,8 @@ export async function handleCategorySelect(interaction: StringSelectMenuInteract
 		bankSecret(pick),
 		{ actorId: interaction.user.id, text: gameRoomsCopy.hangman.categoryOpener(interaction.user.id, label, pick.hint) },
 		// Which shelf Dero drew from is an answer (owner rule 1, 2026-10 item 263 R3-11), so it
-		// posts in 💬dero-commands like the authoring modal's own answer, and names no word.
-		() => answerInChannel(interaction, "member", { content: gameRoomsCopy.hangman.categoryPicked(label) })
+		// posts where it was pressed like the authoring modal's own answer, and names no word.
+		() => answerInChannel(interaction, "here", { content: gameRoomsCopy.hangman.categoryPicked(label) })
 	);
 }
 
@@ -470,18 +470,18 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (!room || room.status !== "playing") {
-		await answerInChannel(interaction, "member", { content: gameRoomsCopy.hangman.closed });
+		await answerInChannel(interaction, "here", { content: gameRoomsCopy.hangman.closed });
 		return;
 	}
 
 	const state = rehydrate(room);
 	if (!state) {
-		await answerInChannel(interaction, "member", { content: gameRoomsCopy.hangman.waitingForWord(room.hostId) });
+		await answerInChannel(interaction, "here", { content: gameRoomsCopy.hangman.waitingForWord(room.hostId) });
 		return;
 	}
 	// Re-gated: a modal submit is reachable without the button that opened it.
 	if (state.authoredBy && state.authoredBy === interaction.user.id) {
-		await answerInChannel(interaction, "member", { content: gameRoomsCopy.hangman.hostCannotGuess });
+		await answerInChannel(interaction, "here", { content: gameRoomsCopy.hangman.hostCannotGuess });
 		return;
 	}
 
@@ -489,7 +489,7 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 
 	// The three no-cost outcomes stay OUT OF THE ROOM. A "that is not a letter" there per
 	// fat-fingered submit would bury the actual game in noise, and none of them changed
-	// the round, so they post in 💬dero-commands (2026-10 item 257 Phase 5).
+	// the round, so they post where it was pressed (2026-10 item 257 Phase 5).
 	if (outcome.status === "invalid" || outcome.status === "repeat" || outcome.status === "closed") {
 		const message =
 			outcome.status === "invalid"
@@ -497,7 +497,7 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 				: outcome.status === "repeat"
 				  ? gameRoomsCopy.hangman.repeat(outcome.letter)
 				  : gameRoomsCopy.hangman.closed;
-		await answerInChannel(interaction, "member", { content: message });
+		await answerInChannel(interaction, "here", { content: message });
 		return;
 	}
 

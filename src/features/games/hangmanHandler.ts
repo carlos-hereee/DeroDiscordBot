@@ -183,9 +183,9 @@ export async function runHangman(interaction: ChatInputCommandInteraction): Prom
 	}
 
 	// Acknowledged before the room read and the board post, which are I/O that eats into the
-	// three second window. The answer posts in 💬dero-commands (2026-10 item 257 Phase 5); the
+	// three second window. The answer posts where it was pressed (2026-10 item 257 Phase 5); the
 	// board, where the command ran. Every state met from here on is a private notice.
-	const answer = await beginChannelAnswer(interaction, "member");
+	const answer = await beginChannelAnswer(interaction, "here");
 
 	// ── casual mode vs room mode (game rooms plan task 5.8) ──
 	// What:  refuse the CASUAL board inside a game room channel.

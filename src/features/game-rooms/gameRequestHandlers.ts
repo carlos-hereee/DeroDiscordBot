@@ -177,11 +177,11 @@ async function handleGameRequestButton(interaction: ButtonInteraction): Promise<
 	const context = await loadContext(interaction);
 	if (!context) return replyOutsideGuild(interaction);
 
-	// The ballot carries several independent controls, so it posts in 💬dero-commands
+	// The ballot carries several independent controls, so it posts where it was pressed
 	// (2026-10 item 257 Phase 5). Every vote is the presser's own and redraws the ballot as
 	// they see it, and Remove re-gates its presser in removeAsAdmin.
 	if (action === ACTION.open) {
-		await answerInChannel(interaction, "member", await currentView(context, interaction.user.id));
+		await answerInChannel(interaction, "here", await currentView(context, interaction.user.id));
 		return;
 	}
 	if (action === ACTION.add) {
@@ -220,12 +220,12 @@ async function handleGameRequestModal(interaction: ModalSubmitInteraction): Prom
 	const view = await currentView(context, interaction.user.id, addNotice(result, context.copy));
 
 	// Opened from the ballot's own button, so the ballot itself is redrawn; a submit
-	// with no message behind it gets a fresh ballot in 💬dero-commands instead.
+	// with no message behind it gets a fresh ballot where it was pressed instead.
 	if (interaction.isFromMessage()) {
 		await interaction.update({ ...view, allowedMentions: NO_PINGS });
 		return;
 	}
-	await answerInChannel(interaction, "member", view);
+	await answerInChannel(interaction, "here", view);
 }
 
 function addNotice(result: Awaited<ReturnType<typeof addGameRequest>>, copy: BallotCopy): string {

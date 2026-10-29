@@ -215,7 +215,7 @@ describe("the two presses", () => {
 		const interaction = press(B);
 		await handleMsurrenderConfirm(interaction, room);
 		expect(vi.mocked(acknowledgeConfirm).mock.invocationCallOrder[0]).toBeLessThan(commitMock.mock.invocationCallOrder[0]);
-		expect(answerInChannel).toHaveBeenCalledWith(interaction, "member", { content: words.surrenderDone });
+		expect(answerInChannel).toHaveBeenCalledWith(interaction, "here", { content: words.surrenderDone });
 		expect(showNotice).not.toHaveBeenCalled();
 		expect(seatOf(B)?.bankrupt).toBe(true);
 	});

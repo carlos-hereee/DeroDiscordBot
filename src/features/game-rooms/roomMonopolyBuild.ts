@@ -37,8 +37,8 @@ const MAX_SELECT_OPTIONS = 25;
 
 /**
  * The Build button: answers with the picker, or says why there is nothing to build. The
- * picker rebuilds itself after each build, which a modal cannot, so it posts in
- * 💬dero-commands (2026-10 item 257 Phase 5); every pick builds only for its presser's own
+ * picker rebuilds itself after each build, which a modal cannot, so it posts
+ * where it was pressed (2026-10 item 257 Phase 5); every pick builds only for its presser's own
  * seat, re-checked by loadSeatedRoom and the engine.
  */
 export async function handleMbuild(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
@@ -52,7 +52,7 @@ export async function handleMbuild(interaction: ButtonInteraction, room: IGameRo
 		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.nothingToBuild] });
 		return;
 	}
-	await answerInChannel(interaction, "member", { content: gameRoomsCopy.monopoly.buildPickerPrompt, components: [buildPickerRow(room.roomId, options)] });
+	await answerInChannel(interaction, "here", { content: gameRoomsCopy.monopoly.buildPickerPrompt, components: [buildPickerRow(room.roomId, options)] });
 }
 
 /** A pick from the picker: build on that lot, then refresh the picker with what is left. */

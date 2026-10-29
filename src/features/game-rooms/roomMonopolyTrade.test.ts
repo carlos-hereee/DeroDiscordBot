@@ -83,12 +83,15 @@ function makeButton(userId: string) {
 	return {
 		user: { id: userId },
 		client,
+		// No member is cached, so the modal names each seat by its number, as the board does.
+		guild: { members: { cache: { get: () => undefined } } },
+		showModal: vi.fn().mockResolvedValue(undefined),
 		reply: vi.fn().mockResolvedValue(undefined),
 		deferReply: vi.fn().mockResolvedValue(undefined),
 		deferUpdate: vi.fn().mockResolvedValue(undefined),
 		editReply: vi.fn().mockResolvedValue(undefined),
 		followUp: vi.fn().mockResolvedValue(undefined),
-	} as unknown as ButtonInteraction & Record<"reply" | "deferReply" | "deferUpdate" | "editReply" | "followUp", Spy>;
+	} as unknown as ButtonInteraction & Record<"showModal" | "reply" | "deferReply" | "deferUpdate" | "editReply" | "followUp", Spy>;
 }
 
 // A modal submit whose fields answer like discord.js: a field the modal did not
@@ -131,20 +134,37 @@ beforeEach(() => {
 });
 
 describe("the Trade button with no offer open", () => {
-	it("offers a private picker of the other seats still playing", async () => {
+	type TradeModalJson = { custom_id: string; components: { component: { custom_id: string; options?: { label: string; value: string }[] } }[] };
+	const openedModal = (interaction: { showModal: Spy }): TradeModalJson => (interaction.showModal.mock.calls[0][0] as { toJSON(): TradeModalJson }).toJSON();
+
+	it("opens the offer modal at once, with the one partner left riding the modal (no picker posted)", async () => {
 		const state = tradeMatch();
 		state.seats[2].bankrupt = true;
 		const interaction = makeButton(A);
 
 		await handleMtrade(interaction, seed(state));
 
-		expect(interaction.deferReply).toHaveBeenCalledWith({ flags: 64 });
-		const payload = interaction.editReply.mock.calls[0][0] as { components: { toJSON(): { components: { custom_id: string; options: { label: string; value: string }[] }[] } }[] };
-		const picker = payload.components[0].toJSON().components[0];
-		expect(picker.custom_id).toBe("gameroomSelect:mtradeWith:room-1");
-		// Only B: A is the one asking, and C is out of the match. B's member could not
-		// be fetched, so the label falls back to the seat number the board shows.
-		expect(picker.options).toEqual([{ label: "Seat 2", value: B }]);
+		expect(interaction.deferReply).not.toHaveBeenCalled();
+		const modal = openedModal(interaction);
+		// Only B: A is the one asking, and C is out of the match.
+		expect(modal.custom_id).toBe(`gameroomModal:mtrade:room-1:${B}`);
+		expect(modal.components.map((label) => label.component.custom_id)).not.toContain("partner");
+	});
+
+	it("asks who to trade with inside the modal when more than one seat is still playing, naming each wanted lot's owner", async () => {
+		const interaction = makeButton(A);
+
+		await handleMtrade(interaction, seed(tradeMatch()));
+
+		const modal = openedModal(interaction);
+		expect(modal.custom_id).toBe("gameroomModal:mtrade:room-1");
+		const [partner, , want] = modal.components.map((label) => label.component);
+		expect(partner.custom_id).toBe("partner");
+		expect(partner.options).toEqual([
+			{ label: "Seat 2", value: B },
+			{ label: "Seat 3", value: C },
+		]);
+		expect(want.options?.map((option) => option.label)).toEqual(["Vermillion Alley (Seat 2)", "Burnt Umber Row (Seat 2)"]);
 	});
 
 	it("says so when nobody is left to trade with", async () => {
@@ -153,7 +173,7 @@ describe("the Trade button with no offer open", () => {
 		state.seats[2].bankrupt = true;
 		const interaction = makeButton(A);
 		await handleMtrade(interaction, seed(state));
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.monopoly.noTradePartners }));
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.monopoly.noTradePartners);
 	});
 
 	it("turns away a seat that is out of the match", async () => {
@@ -161,7 +181,7 @@ describe("the Trade button with no offer open", () => {
 		state.seats[0].bankrupt = true;
 		const interaction = makeButton(A);
 		await handleMtrade(interaction, seed(state));
-		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.monopoly.inventoryOut }));
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.monopoly.inventoryOut);
 	});
 });
 
@@ -180,7 +200,7 @@ describe("the offer modal", () => {
 	type ModalJson = { custom_id: string; components: { component: { custom_id: string; options?: { value: string }[] } }[] };
 	const shownModal = (interaction: { showModal: Spy }): ModalJson => (interaction.showModal.mock.calls[0][0] as { toJSON(): ModalJson }).toJSON();
 
-	it("lists exactly the lots each side may trade, chips each way, and jail cards because a card exists", async () => {
+	it("lists exactly the lots each side may trade, the jail card as a lot option, and chips each way", async () => {
 		seed(tradeMatch());
 		const interaction = pickPartner(A, B);
 
@@ -188,15 +208,15 @@ describe("the offer modal", () => {
 
 		const modal = shownModal(interaction);
 		expect(modal.custom_id).toBe(`gameroomModal:mtrade:room-1:${B}`);
-		// Discord allows five fields in a modal, and this is the fullest one there is.
-		expect(modal.components).toHaveLength(5);
+		expect(modal.components).toHaveLength(4);
 		const [give, want, ...counts] = modal.components.map((label) => label.component);
-		expect(give.options?.map((option) => option.value)).toEqual(["reader-dock"]);
+		// A holds a Get out of jail free card, so it leads A's list.
+		expect(give.options?.map((option) => option.value)).toEqual(["gojf", "reader-dock"]);
 		expect(want.options?.map((option) => option.value)).toEqual(["vermillion-alley", "burnt-umber-row"]);
-		expect(counts.map((field) => field.custom_id)).toEqual(["give_chips", "want_chips", "jail_cards"]);
+		expect(counts.map((field) => field.custom_id)).toEqual(["give_chips", "want_chips"]);
 	});
 
-	it("leaves out a lot field for a side with nothing to trade, and the jail card field when nobody holds one", async () => {
+	it("leaves out a lot field for a side with nothing to trade, and the jail card when nobody holds one", async () => {
 		const state = tradeMatch();
 		state.seats[0].gojfCards = 0;
 		seed(state);
@@ -220,8 +240,8 @@ describe("submitting an offer", () => {
 	it("opens the trade with the terms typed, and confirms privately", async () => {
 		seed(tradeMatch());
 		const interaction = makeModal(A, {
-			selects: { give_lots: ["reader-dock"], want_lots: ["vermillion-alley"] },
-			texts: { give_chips: "100", want_chips: "", jail_cards: "1, 0" },
+			selects: { give_lots: ["gojf", "reader-dock"], want_lots: ["vermillion-alley"] },
+			texts: { give_chips: "100", want_chips: "" },
 		});
 
 		await handleTradeModal(interaction);
@@ -241,7 +261,7 @@ describe("submitting an offer", () => {
 	it("posts only who offered whom to the channel, with no lot, amount or card in it", async () => {
 		seed(tradeMatch());
 		await handleTradeModal(
-			makeModal(A, { selects: { give_lots: ["reader-dock"], want_lots: ["vermillion-alley"] }, texts: { give_chips: "100", jail_cards: "1, 0" } })
+			makeModal(A, { selects: { give_lots: ["gojf", "reader-dock"], want_lots: ["vermillion-alley"] }, texts: { give_chips: "100" } })
 		);
 
 		expect(trailTexts()).toEqual([`<@${A}> offered <@${B}> a trade.`]);
@@ -249,7 +269,7 @@ describe("submitting an offer", () => {
 	});
 
 	it("refuses a count that is not a plain whole number, and writes nothing", async () => {
-		for (const texts of [{ give_chips: "1e3" }, { want_chips: "-5" }, { jail_cards: "1" }, { jail_cards: "1, 2, 3" }]) {
+		for (const texts of [{ give_chips: "1e3" }, { want_chips: "-5" }, { give_chips: "1, 2" }]) {
 			vi.clearAllMocks();
 			seed(tradeMatch());
 			const interaction = makeModal(A, { texts });

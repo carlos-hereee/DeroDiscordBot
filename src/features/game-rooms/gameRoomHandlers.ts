@@ -44,7 +44,7 @@ import { hostControls } from "./hostControls.js";
 import { confirmQueue, offerQueue } from "./cardVoice.js";
 import { PRIVATE_VIEW_ACTION, closePrivateView } from "./privateView.js";
 import { satelliteAt } from "./satelliteRooms.js";
-import { handleTurnPress, handleTurnSubmit } from "./turnPrompt.js";
+import { handleTurnMovePress, handleTurnPress, handleTurnSubmit } from "./turnPrompt.js";
 import { turnAdapterFor } from "./turnAdapters.js";
 import { registerNetworkHandlers } from "./networkJoin.js";
 import type { GameSlug, SatelliteRoom } from "./roomTypes.js";
@@ -271,6 +271,9 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		// re-checks the presser is on the clock and the turn is still the one it was posted for.
 		case "turn":
 			await handleTurnPress(interaction, room, parsed.arg ?? "", turnAdapterFor);
+			return;
+		case "tmove":
+			await handleTurnMovePress(interaction, turnAdapterFor);
 			return;
 		case "author":
 			await openAuthoringModal(interaction, room);

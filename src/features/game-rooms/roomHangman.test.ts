@@ -549,7 +549,7 @@ describe("handleAuthoringModal, acceptance", () => {
 
 		await handleAuthoringModal(interaction);
 
-		expect(answerOf(interaction).audience).toBe("member");
+		expect(answerOf(interaction).audience).toBe("here");
 		expect(interaction.reply).not.toHaveBeenCalled();
 	});
 });
@@ -740,7 +740,7 @@ describe("handleCategorySelect, starting the round", () => {
 		const { word, hint } = savedSecret() as { word: string; hint: string };
 		const confirmation = answerOf(interaction);
 		const opener = trailMock.postMove.mock.calls[0][2] as { text: string };
-		expect(confirmation.audience).toBe("member");
+		expect(confirmation.audience).toBe("here");
 		expect(confirmation.content).toBe(gameRoomsCopy.hangman.categoryPicked("Dero's realm"));
 		expect(opener.text).toBe(gameRoomsCopy.hangman.categoryOpener(HOST, "Dero's realm", hint));
 		expect(confirmation.content).not.toMatch(new RegExp(word, "i"));

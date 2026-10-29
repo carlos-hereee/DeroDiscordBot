@@ -48,6 +48,8 @@ function makeButton(): ButtonInteraction {
 	const button: Record<string, unknown> = {
 		guildId: "guild-1",
 		guild: GUILD,
+		// A game answer posts where the press happened (the card's channel), never in 💬dero-commands.
+		channelId: commandsChannel.id,
 		user: { id: HOST, username: "host" },
 		deferred: false,
 		replied: false,
@@ -122,9 +124,9 @@ describe("playDero", () => {
 		expect(cardStateMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ resultLine: gameRoomsCopy.board.cardDeroUnavailable(HOST) }));
 	});
 
-	it("answers privately with the room when the server has no commands channel yet", async () => {
-		configMock.mockResolvedValue({ commandOutputChannelId: null });
+	it("answers privately with the room when the press has no channel to answer in", async () => {
 		const interaction = makeButton();
+		(interaction as unknown as { channelId: string | null }).channelId = null;
 
 		await playDero(interaction, makeRoom("coinflip"));
 

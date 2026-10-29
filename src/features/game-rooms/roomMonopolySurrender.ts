@@ -51,9 +51,9 @@ export async function handleMsurrenderConfirm(interaction: ConfirmInteraction, r
 	const words = gameRoomsCopy.monopoly;
 	const answers: Record<SurrenderOutcome, string> = { surrendered: words.surrenderDone, busy: words.surrenderStillSeated, notInMatch: words.matchOver };
 	const answer = outcome === "notInMatch" ? (surrenderRefusal(monopolyStateOf(room), interaction.user.id) ?? answers.notInMatch) : answers[outcome];
-	// The confirm was acknowledged above, so no notice can open; the answer posts in
-	// 💬dero-commands (2026-10 item 257 Phase 5) instead of a private reply.
-	await answerInChannel(interaction, "member", { content: answer });
+	// The confirm was acknowledged above, so no notice can open; the answer posts
+	// where it was pressed (2026-10 item 257 Phase 5) instead of a private reply.
+	await answerInChannel(interaction, "here", { content: answer });
 }
 
 // Why a seat cannot surrender now, or null when it can.

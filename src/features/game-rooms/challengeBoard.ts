@@ -483,7 +483,7 @@ async function applySettings(interaction: HostPress, room: IGameRoom, wanted: Ch
 			if (!chosen.ok && visibility === "network") {
 				notes.push(words.notApplied(names.network, chosen.refusal));
 				// The network notice is the card's own answer to a host who never accepted it.
-				if (chosen.needsConsent) await answerInChannel(interaction, "member", consentPrompt({ kind: "again" }));
+				if (chosen.needsConsent) await answerInChannel(interaction, "here", consentPrompt({ kind: "again" }));
 				if (current.visibility !== "public") take(await applyVisibilityChoice(interaction, current, "public"), names.join);
 			} else take(chosen, names.join);
 		}
@@ -668,7 +668,7 @@ export async function chooseVisibility(interaction: ButtonInteraction, room: IGa
 	const chosen = await applyVisibilityChoice(interaction, room, choice);
 	if (!chosen.ok) {
 		// A host who never accepted the network notice is shown it, then presses the choice again.
-		if (chosen.needsConsent) await answerInChannel(interaction, "member", consentPrompt({ kind: "again" }));
+		if (chosen.needsConsent) await answerInChannel(interaction, "here", consentPrompt({ kind: "again" }));
 		else await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [chosen.refusal] });
 		return;
 	}
@@ -680,12 +680,12 @@ export async function chooseVisibility(interaction: ButtonInteraction, room: IGa
 	// could: "Your server has 6/10 private rooms open on the Starter plan." Null
 	// (and therefore silent) while the tier surface is not enforcing, which is
 	// production today. Fire and forget after the card edit; a failed post must
-	// not undo a visibility choice that already landed. It posts in 💬dero-commands
+	// not undo a visibility choice that already landed. It posts where it was pressed
 	// (2026-10 item 257 Phase 5), the card's own update having acknowledged the press.
 	if (updated.visibility === "invite") {
 		readPrivateQuotaStatus(room.guildId, interaction.user.id)
 			.then((status) =>
-				status ? answerInChannel(interaction, "member", { content: `Invite only. ${status}` }) : undefined
+				status ? answerInChannel(interaction, "here", { content: `Invite only. ${status}` }) : undefined
 			)
 			.catch((error) => console.warn("[game-rooms] private quota status failed", error));
 	}
@@ -746,9 +746,9 @@ export async function openInvitePicker(interaction: ButtonInteraction, room: IGa
 		.setMaxValues(options.length)
 		.addOptions(options);
 
-	// A pick of several members is no single choice a modal holds, so it posts in
-	// 💬dero-commands (2026-10 item 257 Phase 5); handleInviteSelect refuses anyone but the host.
-	await answerInChannel(interaction, "member", {
+	// A pick of several members is no single choice a modal holds, so it posts
+	// where it was pressed (2026-10 item 257 Phase 5); handleInviteSelect refuses anyone but the host.
+	await answerInChannel(interaction, "here", {
 		content: gameRoomsCopy.board.pickerPrompt,
 		components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
 	});
@@ -788,7 +788,7 @@ export async function handleInviteSelect(interaction: StringSelectMenuInteractio
 	// Each person the host invites onto a Casual draft takes a Dero bot's seat (Arcade 6).
 	const updated = await yieldBotSeatsTo(interaction.client, room, saved);
 	// Who was invited is an answer, not a state (owner rule 1, 2026-10 item 263 R3-11), and it
-	// belongs to the picker the host pressed in 💬dero-commands, so the picker becomes it and
+	// belongs to the picker the host pressed, so the picker becomes it and
 	// loses its select. No ping: the host is answering their own prompt where they pressed it.
 	await interaction.update({ content: gameRoomsCopy.board.pickerSaved(picked.length), components: [], allowedMentions: { parse: [] } });
 	await refreshCard(interaction.guild, updated, cardStateFor(updated, { visibility: "invite", pool: picked }));
@@ -825,7 +825,7 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 		// A network table needs the network notice first (2026-10 item 244 Phase 5b); the
 		// member presses Join again once they accept it.
 		if (verdict.reason === "noConsent") {
-			await answerInChannel(interaction, "member", consentPrompt({ kind: "again" }));
+			await answerInChannel(interaction, "here", consentPrompt({ kind: "again" }));
 			return;
 		}
 		const refusal = verdict.reason === "kicked" ? hostWords.kick.refusedRejoin : hostWords.band.refused(gameRoomsCopy.gameLabel(room.game));
@@ -911,9 +911,9 @@ async function askHostToJoin(interaction: ButtonInteraction, room: IGameRoom): P
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
 	}
-	// A request filed is work done, so it is an answer (owner rule 1, R3-11): it posts in
-	// 💬dero-commands and pings the member who asked.
-	await answerInChannel(interaction, "member", { content: hostWords.approval.asked });
+	// A request filed is work done, so it is an answer (owner rule 1, R3-11): it posts
+	// where it was pressed and pings the member who asked.
+	await answerInChannel(interaction, "here", { content: hostWords.approval.asked });
 	// Dero tells the card's call, and the host to check Requests (2026-10 item 267, decision 14).
 	announceChallengers(interaction.client, updated, true);
 	await refreshDraftCard(interaction.guild!, updated);
@@ -974,13 +974,13 @@ export async function confirmStartMatch(interaction: ConfirmInteraction, room: I
  * begun beside it and waits for the end of the count, which reads the draft again.
  */
 async function countInThenOpen(interaction: ConfirmInteraction | StringSelectMenuInteraction, room: IGameRoom, opponentId: string | null): Promise<void> {
-	const answer = beginChannelAnswer(interaction, "member");
+	const answer = beginChannelAnswer(interaction, "here");
 	beginStartCountdown({
 		client: interaction.client,
 		room,
 		open: async (draft) => openAfterCountdown(interaction, await answer, draft, opponentId),
 		// The draft closed during the count. Only the private fallback has a defer waiting for words;
-		// a start answered in 💬dero-commands posts nothing, since the card already says it was called off.
+		// a start answered where it was pressed posts nothing, since the card already says it was called off.
 		calledOff: async () => {
 			const pending = await answer;
 			if (pending.channelId === null) await pending.send({ content: gameRoomsCopy.board.draftGone });
@@ -1131,7 +1131,7 @@ export async function handleOpponentSelect(interaction: StringSelectMenuInteract
 // a player and who ends up a spectator.
 async function provisionFromDraft(
 	interaction: ConfirmInteraction | StringSelectMenuInteraction,
-	// The start's slow answer, already acknowledged: it posts in 💬dero-commands (2026-10
+	// The start's slow answer, already acknowledged: it posts where it was pressed (2026-10
 	// item 257 Phase 5), or privately where that channel does not exist.
 	answer: PendingChannelAnswer,
 	room: IGameRoom,
@@ -1270,7 +1270,7 @@ export async function rematchFromRoom(interaction: ButtonInteraction, room: IGam
 		const failure = await playRematchInPlace(interaction, room, check.channel, charge);
 		if (failure) {
 			if (!charge.ledgered && charge.seats) await refundSeatsDirectly(charge.seats);
-			await answerInChannel(interaction, "member", { content: failure });
+			await answerInChannel(interaction, "here", { content: failure });
 		}
 	} catch (error) {
 		// A Mongo or Discord failure mid way. Whatever was written is safe to leave (see
@@ -1278,7 +1278,7 @@ export async function rematchFromRoom(interaction: ButtonInteraction, room: IGam
 		// closes, and its channel is archived through it.
 		console.error("[game-rooms] rematch failed", { guildId: room.guildId, roomId: room.roomId, error });
 		if (!charge.ledgered && charge.seats) await refundSeatsDirectly(charge.seats);
-		await answerInChannel(interaction, "member", { content: gameRoomsCopy.errors.createFailed });
+		await answerInChannel(interaction, "here", { content: gameRoomsCopy.errors.createFailed });
 	}
 }
 
@@ -1518,7 +1518,7 @@ export async function playDero(interaction: HostPress, room: IGameRoom): Promise
 	if (!guild) return;
 	// Acknowledged quietly first: opening a room is a channel create plus its opener, which
 	// can run past Discord's three second window.
-	const answer = await beginChannelAnswer(interaction, "member");
+	const answer = await beginChannelAnswer(interaction, "here");
 	await gameRoomStore.markArchived(room.guildId, room.roomId);
 	// The card closes without its own room, so its voice request goes with it (item 267).
 	void releaseCard(guild, room.roomId);
@@ -1530,7 +1530,7 @@ export async function playDero(interaction: HostPress, room: IGameRoom): Promise
 
 // The creation modal's Who you play: Dero: the same round with no draft to close and no card.
 async function playDeroRound(interaction: ConfirmInteraction, guild: Guild, game: SoloLuckGame): Promise<void> {
-	const answer = await beginChannelAnswer(interaction, "member");
+	const answer = await beginChannelAnswer(interaction, "here");
 	await openDeroRoom(interaction, guild, game, answer);
 }
 
@@ -1555,8 +1555,8 @@ async function openDeroRoom(interaction: HostPress, guild: Guild, game: SoloLuck
 /**
  * A solo room that would not open, answered after its press was acknowledged. A held slot is
  * only a race by now, since every solo start refuses it at the press (2026-10 item 263 R3-9),
- * so it is a notice linking the card or the room that holds it, never an error embed pinging in
- * 💬dero-commands; every other refusal is answered by answerOpenRefusal. Shared with arcadeHost.
+ * so it is a notice linking the card or the room that holds it, never an error embed pinging
+ * where it was pressed; every other refusal is answered by answerOpenRefusal. Shared with arcadeHost.
  */
 export async function answerSoloRefusal(interaction: RepliableInteraction, answer: PendingChannelAnswer, failure: Exclude<SoloOpenResult, { ok: true }>): Promise<void> {
 	if (failure.reason !== "alreadyHosting") {

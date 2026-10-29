@@ -6,7 +6,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postTurnPrompt: vi.fn() }, resolveRoomChannel: vi.fn() }));
 
-import { handleTurnPress, handleTurnSubmit, syncTurnPrompt, turnButtonId, type TurnAdapter } from "./turnPrompt.js";
+import { handleTurnMovePress, handleTurnPress, handleTurnSubmit, syncTurnPrompt, turnButtonId, type TurnAdapter } from "./turnPrompt.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { resolveRoomChannel, roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -60,14 +60,14 @@ beforeEach(() => {
 });
 
 describe("posting the prompt", () => {
-	it("pings the member on the clock with one Take your turn button carrying the room and the fingerprint", async () => {
+	it("pings the member on the clock with each move as its own button, and no modal when nothing needs typing", async () => {
 		await syncTurnPrompt(client, row(), adapter);
 
 		const [, , prompt] = trailMock.postTurnPrompt.mock.calls[0];
 		expect(prompt.playerId).toBe(A);
 		expect(prompt.text).toBe(gameRoomsCopy.turnPrompt.line(A));
 		const buttons = prompt.components.flatMap((component: { toJSON(): { components: { custom_id: string; label: string }[] } }) => component.toJSON().components);
-		expect(buttons).toEqual([expect.objectContaining({ custom_id: turnButtonId("room-1", "t1"), label: gameRoomsCopy.turnPrompt.takeLabel })]);
+		expect(buttons).toEqual([expect.objectContaining({ custom_id: "gameroom:tmove:room-1:t1:fold", label: "Fold" })]);
 		expect(storeMock.claimTurnPrompt).toHaveBeenCalledWith("guild-1", "room-1", null, expect.objectContaining({ fingerprint: "t1", messageId: "m-new", playerId: A }));
 	});
 
@@ -108,14 +108,41 @@ describe("posting the prompt", () => {
 		expect(posted.delete).toHaveBeenCalledOnce();
 	});
 
-	it("carries Monopoly style extra buttons beside Take your turn", async () => {
+	it("carries Monopoly style extra buttons on the row below the moves", async () => {
 		const { ButtonBuilder, ButtonStyle } = await import("discord.js");
 		turn.extra = [new ButtonBuilder().setCustomId("gameroom:mtrade:room-1").setLabel("Trade").setStyle(ButtonStyle.Secondary)] as never[];
 
 		await syncTurnPrompt(client, row(), adapter);
 
 		const [, , prompt] = trailMock.postTurnPrompt.mock.calls[0];
-		expect(prompt.components[0].components).toHaveLength(2);
+		const ids = prompt.components.map((component: { toJSON(): { components: { custom_id: string }[] } }) => component.toJSON().components.map((button) => button.custom_id));
+		expect(ids).toEqual([["gameroom:tmove:room-1:t1:fold"], ["gameroom:mtrade:room-1"]]);
+	});
+
+	it("keeps Take your turn beside the moves when a move can take a typed amount", async () => {
+		const typed: TurnAdapter = {
+			...adapter,
+			view: () => ({ title: "Your turn", text: [], fields: [{ kind: "select", id: "move", label: "Your move", options: [{ label: "Call", value: "call" }, { label: "Raise", value: "raise" }] }, { kind: "text", id: "amount", label: "Raise to", placeholder: "", maxLength: 9 }] }),
+		};
+
+		await syncTurnPrompt(client, row(), typed);
+
+		const [, , prompt] = trailMock.postTurnPrompt.mock.calls[0];
+		const ids = prompt.components.flatMap((component: { toJSON(): { components: { custom_id: string }[] } }) => component.toJSON().components.map((button) => button.custom_id));
+		expect(ids).toEqual(["gameroom:tmove:room-1:t1:call", "gameroom:tmove:room-1:t1:raise", turnButtonId("room-1", "t1")]);
+	});
+
+	it("keeps only Take your turn for a turn of two picks (a Battleship shot)", async () => {
+		const twoPicks: TurnAdapter = {
+			...adapter,
+			view: () => ({ title: "Fire", text: [], fields: [{ kind: "select", id: "file", label: "Column", options: [{ label: "A", value: "0" }] }, { kind: "select", id: "rank", label: "Row", options: [{ label: "1", value: "0" }] }] }),
+		};
+
+		await syncTurnPrompt(client, row(), twoPicks);
+
+		const [, , prompt] = trailMock.postTurnPrompt.mock.calls[0];
+		const ids = prompt.components.flatMap((component: { toJSON(): { components: { custom_id: string }[] } }) => component.toJSON().components.map((button) => button.custom_id));
+		expect(ids).toEqual([turnButtonId("room-1", "t1")]);
 	});
 });
 
@@ -238,5 +265,53 @@ describe("the modal's Submit", () => {
 
 		expect(storeMock.setTurnPromptPlayed).toHaveBeenLastCalledWith("guild-1", "room-1", "t1", false);
 		expect(repliedWith(interaction)).toContain("That is not a legal action right now.");
+	});
+});
+
+// ── a move played from its own button ──────────────────────────────────
+function movePress(userId: string, value: string, fingerprint = "t1"): ButtonInteraction {
+	return {
+		id: "i-3",
+		customId: `gameroom:tmove:room-1:${fingerprint}:${value}`,
+		guildId: "guild-1",
+		user: { id: userId },
+		client,
+		showModal: vi.fn().mockResolvedValue(undefined),
+		deferUpdate: vi.fn().mockResolvedValue(undefined),
+		reply: vi.fn().mockResolvedValue(undefined),
+		followUp: vi.fn().mockResolvedValue(undefined),
+		deferred: false,
+		replied: false,
+	} as unknown as ButtonInteraction;
+}
+
+describe("a move button", () => {
+	beforeEach(() => storeMock.findByRoomId.mockResolvedValue(row()));
+
+	it("plays its one move through the adapter in a single press, with no modal", async () => {
+		const interaction = movePress(A, "fold");
+
+		await handleTurnMovePress(interaction, lookup);
+
+		expect(applied).toHaveBeenCalledWith(client, expect.anything(), A, { move: "fold" }, expect.any(Function));
+		expect(storeMock.setTurnPromptPlayed).toHaveBeenNthCalledWith(1, "guild-1", "room-1", "t1", true);
+		expect(interaction.showModal).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ custom_id: expect.stringMatching(/^gameroomModal:turn/) }) }));
+		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+	});
+
+	it("keeps a colon inside the move's value (Monopoly's buy:<lot>)", async () => {
+		const buying: TurnAdapter = { ...adapter, view: () => ({ title: "Your turn", text: [], fields: [{ kind: "select", id: "move", label: "Your move", options: [{ label: "Buy", value: "buy:boardwalk" }] }] }) };
+
+		await handleTurnMovePress(movePress(A, "buy:boardwalk"), () => buying);
+
+		expect(applied).toHaveBeenCalledWith(client, expect.anything(), A, { move: "buy:boardwalk" }, expect.any(Function));
+	});
+
+	it("refuses a move the turn no longer offers, a passed turn and anybody off the clock, playing nothing", async () => {
+		await handleTurnMovePress(movePress(A, "roll"), lookup);
+		await handleTurnMovePress(movePress(A, "fold", "t0"), lookup);
+		await handleTurnMovePress(movePress(B, "fold"), lookup);
+
+		expect(applied).not.toHaveBeenCalled();
 	});
 });

@@ -125,6 +125,9 @@ export const GAME_ROOM_ACTIONS = {
 	// here, and turnPrompt re-checks that the presser is the one on the clock and that the
 	// fingerprint is still current, since the line stays in the channel's history forever.
 	turn: { hostOnly: false, playersOnly: true },
+	// One move played from its own button on the same line (turnPrompt.quickMovesOf): the args are
+	// the fingerprint and the move, and the press re-checks both like the modal's Submit does.
+	tmove: { hostOnly: false, playersOnly: true },
 
 	// ── hold em ──
 	// Buying in is how you BECOME a player, so it cannot be playersOnly: that gate

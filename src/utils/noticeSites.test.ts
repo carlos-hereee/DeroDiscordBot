@@ -279,6 +279,8 @@ const INVENTORY: readonly NoticeEntry[] = [
 	// ── game-rooms/turnPrompt.ts ──
 	{ file: "features/game-rooms/turnPrompt.ts", within: "handleTurnPress", anchor: "text", kind: "state" },
 	{ file: "features/game-rooms/turnPrompt.ts", within: "handleTurnSubmit", anchor: "text", kind: "race", why: "the turn modal's Submit: handleTurnPress refuses the same turn first, so only a turn that passed while the modal stood open meets it (risk R4)" },
+	{ file: "features/game-rooms/turnPrompt.ts", within: "handleTurnMovePress", anchor: "text", kind: "state" },
+	{ file: "features/game-rooms/turnPrompt.ts", within: "playTurnMove", anchor: "text", kind: "race", why: "the game refused the move after every check passed: another press or the clock moved the turn between the read and the move's compare and swap" },
 
 	// ── games/arcadeHost.ts ──
 	{ file: "features/games/arcadeHost.ts", within: "openSoloRoomForMember", anchor: "describeSoloOpenFailure(refusal)", kind: "state" },

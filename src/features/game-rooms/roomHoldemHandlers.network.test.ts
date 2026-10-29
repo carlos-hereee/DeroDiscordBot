@@ -115,6 +115,7 @@ describe("Buy in at a network table", () => {
 		const interaction = {
 			id: "press-1",
 			guildId: HOST_GUILD,
+			channelId: "c-commands",
 			guild: { members: { cache: { get: () => null } } },
 			user: { id: "newcomer", username: "newcomer", globalName: "newcomer" },
 			client: { channels: { fetch: vi.fn(async (id: string) => (id === "c-commands" ? commands : null)) } },
