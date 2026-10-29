@@ -138,11 +138,11 @@ const doneOf = (view: { steps: { done: boolean }[] }, key: (typeof SERVER_CONFIG
 	view.steps[SERVER_CONFIG_STEPS.indexOf(key)]?.done;
 
 describe("🛠️server-config's steps and chart", () => {
-	it("on a fresh server marks only leveling, which ships on, and names every step in order", () => {
+	it("on a fresh server marks only the template and leveling, which work from the start, and names every step in order", () => {
 		const view = serverConfigView({}, noEvents);
 		expect(view.title).toBe(copy.serverConfig.title);
 		expect(view.steps.map((step) => step.label)).toEqual(SERVER_CONFIG_STEPS.map((key) => copy.serverConfig.steps[key]));
-		expect(view.steps.map((step) => step.done)).toEqual([false, false, false, false, false, true]);
+		expect(view.steps.map((step) => step.done)).toEqual([false, true, false, false, false, false, true]);
 		expect(view.steps.map((step) => step.customId)).toEqual(SERVER_CONFIG_STEPS.map((_key, index) => stepCustomId("serverConfig", index + 1)));
 	});
 
@@ -161,8 +161,16 @@ describe("🛠️server-config's steps and chart", () => {
 	});
 
 	// ── step 1, the server's timezone (2026-10 item 263 Phase 4c) ──
-	it("puts the server's timezone first, so steps 2 to 6 are the five steps that were 1 to 5", () => {
-		expect([...SERVER_CONFIG_STEPS]).toEqual(["timezone", "kvkSeason", "streams", "events", "channels", "leveling"]);
+	it("puts the server's timezone first and Dero's template second, so steps 3 to 7 are the five steps that were 1 to 5", () => {
+		expect([...SERVER_CONFIG_STEPS]).toEqual(["timezone", "template", "kvkSeason", "streams", "events", "channels", "leveling"]);
+	});
+
+	// ── step 2, Dero's template (2026-10 item 262 Phase 4) ──
+	it("shows the server's template on the chart, kingdom for any id but the streamer one", () => {
+		const templateRow = (row: HeadquartersRow) => serverConfigView(row, noEvents).chart.rows.find((chartRow) => chartRow.label === copy.serverConfig.rows.template);
+		expect(templateRow({ pluginId: "general-events" })).toMatchObject({ value: copy.serverConfig.template.names["general-events"] });
+		expect(templateRow({ pluginId: "rok-commander" })).toMatchObject({ value: copy.serverConfig.template.names["rok-commander"] });
+		expect(templateRow({})).toMatchObject({ value: copy.serverConfig.template.names["rok-commander"] });
 	});
 
 	it("marks the timezone done for a picked zone or a UTC an admin saved, never for the default", () => {

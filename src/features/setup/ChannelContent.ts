@@ -68,15 +68,11 @@ export const ChannelContent = {
 	//        caller must also upload the gif file (buildDeroGifAttachment).
 	// Who:   populateChannels (initial post) + refreshIntroEmbeds (maintains it).
 	// How:   brand-indigo (COLORS.DERO) so it reads as a Dero card, not a channel
-	//        intro. NOTE: like buildInviteButton, the pitch is hardcoded kingdom
-	//        voice and is NOT pack-aware, a general-events guild sees ROK wording.
-	//        Same pre-existing debt as the button it pairs with; tracked separately.
-	inviteCard(): EmbedBuilder {
-		return infoEmbed(
-			"🔱 Summon Dero to Your Realm",
-			"Command a kingdom of your own? Dero answers the call. Bring him to your server and let the events, reminders, and rankings run themselves.",
-			COLORS.DERO
-		).setImage(DERO_GIF_REF);
+	//        intro. The pitch is the guild's pack (channelContent.inviteCard), so a
+	//        template switch rewrites it through refreshIntroEmbeds.
+	inviteCard(guildConfig?: ICopyConfig | null): EmbedBuilder {
+		const card = getPluginCopy(guildConfig).channelContent.inviteCard;
+		return infoEmbed(card.title, card.description, COLORS.DERO).setImage(DERO_GIF_REF);
 	},
 
 	// ── invite button ────────────────────────────────────────────────
@@ -92,17 +88,11 @@ export const ChannelContent = {
 	//        manual rebuild. Returned as a bare ButtonBuilder so it can share one
 	//        ActionRow with the other command-center buttons.
 	// How:   ButtonStyle.Link, URL from @utils/config.botInviteLink so the client
-	//        id + permissions track the running environment automatically.
-	// NOTE:  the label + emoji are hardcoded kingdom voice and are NOT pack-aware
-	//        (no pack field exists for them). A general-events guild would see this
-	//        ROK-voiced label until a pack field is added. Pre-existing limitation,
-	//        just relocated; tracked outside this pass.
-	buildInviteButton(): ButtonBuilder {
-		return new ButtonBuilder()
-			.setLabel("Summon me to your server, Mortal")
-			.setStyle(ButtonStyle.Link)
-			.setURL(botInviteLink)
-			.setEmoji("🔱");
+	//        id + permissions track the running environment automatically. The
+	//        label and emoji come from the guild's pack, beside the card's pitch.
+	buildInviteButton(guildConfig?: ICopyConfig | null): ButtonBuilder {
+		const card = getPluginCopy(guildConfig).channelContent.inviteCard;
+		return new ButtonBuilder().setLabel(card.buttonLabel).setStyle(ButtonStyle.Link).setURL(botInviteLink).setEmoji(card.buttonEmoji);
 	},
 
 	commandGuide(guildConfig?: ICopyConfig | null): EmbedBuilder {

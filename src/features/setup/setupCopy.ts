@@ -407,6 +407,7 @@ export const setupCopy = {
 			title: "🛠️ Server setup",
 			steps: {
 				timezone: "The server's timezone",
+				template: "Dero's template: kingdom or streamer",
 				kvkSeason: "The KvK season",
 				streams: "The weekly stream schedule",
 				events: "Your events: list, pause, resume or delete",
@@ -417,6 +418,7 @@ export const setupCopy = {
 			chartSubtitle: "This server's schedule, channels, leveling and switches.",
 			rows: {
 				timezone: "Timezone",
+				template: "Dero's template",
 				kvkSeason: "KvK season",
 				weeklySchedules: "Weekly schedules",
 				activeEvents: "Active events",
@@ -445,6 +447,28 @@ export const setupCopy = {
 				notAdmin: "Only the server owner or an admin can set the server's timezone.",
 				saved: (zone: string): string => `This server's timezone is now **${zone}**. Times typed from now on are read in it.`,
 				auditSubject: "server timezone",
+			},
+			// Step 2, Dero's template (2026-10 item 262 Phase 4): kingdom or streamer, free
+			// for every server. Keyed by the plugin id each template stores. Discord caps a
+			// modal title and a label at 45 characters, an option description at 100.
+			template: {
+				names: { "rok-commander": "Kingdom", "general-events": "Streamer" } as Record<"rok-commander" | "general-events", string>,
+				descriptions: {
+					"rok-commander": "Dero's medieval voice, made for Rise of Kingdoms alliances.",
+					"general-events": "A plain voice for streamers and communities.",
+				} as Record<"rok-commander" | "general-events", string>,
+				modalTitle: "Dero's template",
+				intro:
+					"The template sets how Dero speaks in this server. Switching rewrites Dero's pinned intros and renames the channels still on their default names. A name set with /server channels rename stays. Both templates are free.",
+				selectLabel: "Template",
+				notAdmin: "Only the server owner or an admin can switch Dero's template.",
+				unchanged: (name: string): string => `This server already uses the **${name}** template. Nothing changed.`,
+				saved: (name: string): string => `Dero now uses the **${name}** template in this server. The pinned intros are rewritten.`,
+				renamed: (count: number): string => `Renamed ${count} channel${count === 1 ? "" : "s"} to the new default name.`,
+				kept: (count: number): string => `Kept ${count} channel name${count === 1 ? "" : "s"} an admin or the server set.`,
+				failed: (count: number): string =>
+					`Discord refused ${count} rename${count === 1 ? "" : "s"} for now. Dero tries again on its next restart while auto heal is on.`,
+				auditSubject: "Dero's template",
 			},
 		},
 	},

@@ -12,7 +12,7 @@ import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import { registerButton, registerModal } from "@handlers/interactionRegistry.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
-import { answerInChannel } from "@utils/answerInChannel.js";
+import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showModalOrReply, showNotice } from "@utils/textModal.js";
 import { COLORS } from "@base/copy/brand.js";
 import { normalizePriorityOrder, VOICE_PRIORITY_CATEGORIES, type VoicePriorityCategory } from "@features/voice/voicePriority.js";
@@ -31,6 +31,7 @@ import { setupCopy } from "./setupCopy.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import { TIMEZONE_OPTIONS, resolveServerTimezone } from "@utils/tzParser.js";
+import { TEMPLATE_PLUGIN_IDS, isTemplatePluginId, switchTemplate, type ISwitchTemplateResult, type TemplatePluginId, type TemplateRow } from "./switchTemplate.js";
 
 // ── headquartersSteps ───────────────────────────────────────────────────────
 // What:  where a 🏰 DERO HEADQUARTERS step button goes (2026-10 item 257 Phase 2b,
@@ -38,14 +39,15 @@ import { TIMEZONE_OPTIONS, resolveServerTimezone } from "@utils/tzParser.js";
 //        /dero-config, /arcade, /server channels and /leveling settings panels, the
 //        /events pick, or an /arcade, /events or /server subcommand's form,
 //        through the admin command launcher. Two flows are new: ⚙️dero-config's step
-//        2, the voice priority order (owner decision 4), a modal of four selects, and
+//        2, the voice priority order (owner decision 4), a modal of four selects,
 //        🛠️server-config's step 1, the server's timezone (2026-10 item 263 Phase 4c), a
-//        modal of one select.
+//        modal of one select, and its step 2, Dero's template (2026-10 item 262 Phase 4),
+//        a modal of one select that hands the pick to switchTemplate.
 // Who:   the buttons headquartersCards.ts puts on the steps cards, as
 //        `hqstep:<domain>:<step>`. The 🧭onboarding steps carry the Community and
 //        adoption customIds themselves and never come here.
-// How:   the launcher re-runs its owner or admin gate at every step, and the priority
-//        and timezone modals run gateOwnerOrAdmin on the press and again on the
+// How:   the launcher re-runs its owner or admin gate at every step, and the priority,
+//        timezone and template modals run gateOwnerOrAdmin on the press and again on the
 //        Submit, because a modal is reachable without the button that opened it.
 
 /** What one routed step opens. */
@@ -53,7 +55,8 @@ type StepTarget =
 	| { kind: "launch"; launchId: string }
 	| { kind: "leaf"; command: string; path: string }
 	| { kind: "priority" }
-	| { kind: "timezone" };
+	| { kind: "timezone" }
+	| { kind: "template" };
 
 const panel = (launchId: string): StepTarget => ({ kind: "launch", launchId });
 const leaf = (command: string, path: string): StepTarget => ({ kind: "leaf", command, path });
@@ -67,11 +70,12 @@ const leaf = (command: string, path: string): StepTarget => ({ kind: "leaf", com
 //
 // 🛠️server-config (2026-10 item 263 Phase 4a) routes by step key, so a step inserted in
 // SERVER_CONFIG_STEPS takes its route with it: the server's timezone opens its own
-// modal (Phase 4c), the KvK season and the weekly stream
+// modal (Phase 4c), Dero's template its own (2026-10 item 262 Phase 4), the KvK season and the weekly stream
 // schedule open their /events forms, events opens the /events pick (list, pause,
 // resume, delete), the channels the /server channels panel and leveling its panel.
 const SERVER_CONFIG_ROUTES: Record<ServerConfigStep, StepTarget> = {
 	timezone: { kind: "timezone" },
+	template: { kind: "template" },
 	kvkSeason: leaf("events", "kvk-season"),
 	streams: leaf("events", "stream weekly"),
 	events: panel("events"),
@@ -120,6 +124,10 @@ async function handleStepButton(interaction: ButtonInteraction): Promise<void> {
 	}
 	if (target.kind === "timezone") {
 		await openTimezoneModal(interaction);
+		return;
+	}
+	if (target.kind === "template") {
+		await openTemplateModal(interaction);
 		return;
 	}
 	const launcher = await import("@features/command-buttons/adminCommandLauncher.js");
@@ -260,9 +268,87 @@ async function handleTimezoneSubmit(interaction: ModalSubmitInteraction): Promis
 	refreshHeadquartersCards(guild, "serverConfig");
 }
 
-/** Register the step buttons and the priority and timezone modals. Called once at boot from main.ts. */
+// ── 🛠️server-config step 2, Dero's template (2026-10 item 262 Phase 4) ──
+
+const TEMPLATE_MODAL_ID = `${HEADQUARTERS_STEP_PREFIX}template`;
+const TEMPLATE_FIELD_ID = "template";
+const templateCopy = setupCopy.headquarters.serverConfig.template;
+
+// The template a row uses now: any id but the streamer one is the kingdom template, the
+// way getPluginCopy falls back for an id it has no pack for.
+function currentTemplate(config: { pluginId?: string | null } | null): TemplatePluginId {
+	return config?.pluginId === "general-events" ? "general-events" : "rok-commander";
+}
+
+/** The modal: one select of the two templates, the server's own picked already. */
+export function buildTemplateModal(current: TemplatePluginId): ModalBuilder {
+	const select = new StringSelectMenuBuilder()
+		.setCustomId(TEMPLATE_FIELD_ID)
+		.setMinValues(1)
+		.setMaxValues(1)
+		.addOptions(TEMPLATE_PLUGIN_IDS.map((id) => ({ label: templateCopy.names[id], value: id, description: templateCopy.descriptions[id], default: id === current })));
+	return new ModalBuilder()
+		.setCustomId(TEMPLATE_MODAL_ID)
+		.setTitle(templateCopy.modalTitle)
+		.addTextDisplayComponents(new TextDisplayBuilder().setContent(templateCopy.intro))
+		.addLabelComponents(new LabelBuilder().setLabel(templateCopy.selectLabel).setStringSelectMenuComponent(select));
+}
+
+async function openTemplateModal(interaction: ButtonInteraction): Promise<void> {
+	const guild = interaction.guild;
+	if (!guild) return;
+	const config = await guildConfigStore.findByGuildId(guild.id);
+	if (!(await gateOwnerOrAdmin(interaction, config))) {
+		await showNotice(interaction, { title: getPluginCopy(config).notice.server, sections: [templateCopy.notAdmin] });
+		return;
+	}
+	await showModalOrReply(interaction, buildTemplateModal(currentTemplate(config)), () => ({ content: setupCopy.headquarters.stepUnavailable, flags: MessageFlags.Ephemeral }));
+}
+
+async function handleTemplateSubmit(interaction: ModalSubmitInteraction): Promise<void> {
+	const guild = interaction.guild;
+	if (!guild) return;
+	const config = await guildConfigStore.findByGuildId(guild.id);
+	if (!(await gateOwnerOrAdmin(interaction, config))) {
+		await showNotice(interaction, { title: getPluginCopy(config).notice.server, sections: [templateCopy.notAdmin] });
+		return;
+	}
+	const picked = interaction.fields.getStringSelectValues(TEMPLATE_FIELD_ID)[0];
+	// A server with no row has nothing to switch, so the card it came from is stale.
+	if (!config || !isTemplatePluginId(picked)) {
+		await showNotice(interaction, { title: getPluginCopy(config).notice.server, sections: [setupCopy.headquarters.staleStep] });
+		return;
+	}
+	// Picking the template the server already uses is a state, so it is a notice and
+	// nothing is renamed or rewritten.
+	if (picked === currentTemplate(config)) {
+		await showNotice(interaction, { title: getPluginCopy(config).notice.server, sections: [templateCopy.unchanged(templateCopy.names[picked])] });
+		return;
+	}
+	// Acknowledged before the switch runs: Discord holds a rename past its limit rather
+	// than refuse it, which would outlast a modal Submit's three second window.
+	const answer = await beginChannelAnswer(interaction, "serverConfig", { config });
+	const result = await switchTemplate(interaction.client, guild, config as unknown as TemplateRow, picked);
+	const name = templateCopy.names[picked];
+	await answer.send({ embeds: [infoEmbed(templateCopy.modalTitle, templateAnswerLines(result, name).join("\n\n"), COLORS.ADMIN)] });
+	if (result.changed) adminLog.emitFor(interaction, guild.id, "config.change", { subject: templateCopy.auditSubject, detail: `${templateCopy.names[result.previousPluginId]} to ${name}` });
+}
+
+/** The answer to a switch: the new template, then one line per rename count that is not zero. */
+export function templateAnswerLines(result: ISwitchTemplateResult, name: string): string[] {
+	// Another admin switched first, between this Submit's read and its write.
+	if (!result.changed) return [templateCopy.unchanged(name)];
+	const lines = [templateCopy.saved(name)];
+	if (result.renamed.length > 0) lines.push(templateCopy.renamed(result.renamed.length));
+	if (result.kept.length > 0) lines.push(templateCopy.kept(result.kept.length));
+	if (result.failed.length > 0) lines.push(templateCopy.failed(result.failed.length));
+	return lines;
+}
+
+/** Register the step buttons and the priority, timezone and template modals. Called once at boot from main.ts. */
 export function registerHeadquartersStepHandlers(): void {
 	registerButton(HEADQUARTERS_STEP_PREFIX, handleStepButton);
 	registerModal(PRIORITY_MODAL_ID, handlePrioritySubmit);
 	registerModal(TIMEZONE_MODAL_ID, handleTimezoneSubmit);
+	registerModal(TEMPLATE_MODAL_ID, handleTemplateSubmit);
 }

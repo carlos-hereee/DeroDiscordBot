@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 	emitFor: vi.fn(),
 	showNotice: vi.fn(),
 	showModalOrReply: vi.fn(),
+	switchTemplate: vi.fn(),
 	buttons: new Map<string, (interaction: ButtonInteraction) => Promise<void>>(),
 	modals: new Map<string, (interaction: ModalSubmitInteraction) => Promise<void>>(),
 }));
@@ -25,16 +26,31 @@ vi.mock("@utils/textModal.js", () => ({ showNotice: mocks.showNotice, showModalO
 vi.mock("./adminLog.js", () => ({ adminLog: { emitFor: mocks.emitFor } }));
 vi.mock("./headquartersCards.js", () => ({
 	HEADQUARTERS_STEP_PREFIX: "hqstep",
-	SERVER_CONFIG_STEPS: ["timezone", "kvkSeason", "streams", "events", "channels", "leveling"],
+	SERVER_CONFIG_STEPS: ["timezone", "template", "kvkSeason", "streams", "events", "channels", "leveling"],
 	SWITCH_STEP_TAIL: "switch-",
 	refreshHeadquartersCards: mocks.refresh,
+}));
+// The switch itself is switchTemplate.test.ts's; here only the step around it.
+vi.mock("./switchTemplate.js", () => ({
+	TEMPLATE_PLUGIN_IDS: ["rok-commander", "general-events"],
+	isTemplatePluginId: (value: unknown) => value === "rok-commander" || value === "general-events",
+	switchTemplate: mocks.switchTemplate,
 }));
 vi.mock("@handlers/interactionRegistry.js", () => ({
 	registerButton: (prefix: string, handler: (interaction: ButtonInteraction) => Promise<void>) => mocks.buttons.set(prefix, handler),
 	registerModal: (prefix: string, handler: (interaction: ModalSubmitInteraction) => Promise<void>) => mocks.modals.set(prefix, handler),
 }));
 
-import { buildPriorityModal, buildTimezoneModal, orderFromPicks, pickedTimezone, registerHeadquartersStepHandlers, stepTarget } from "./headquartersSteps.js";
+import {
+	buildPriorityModal,
+	buildTemplateModal,
+	buildTimezoneModal,
+	orderFromPicks,
+	pickedTimezone,
+	registerHeadquartersStepHandlers,
+	stepTarget,
+	templateAnswerLines,
+} from "./headquartersSteps.js";
 import { TIMEZONE_OPTIONS } from "@utils/tzParser.js";
 import GuildConfigModel from "@db/models/GuildConfig.js";
 import { SERVER_CONFIG_STEPS } from "./headquartersCards.js";
@@ -50,6 +66,7 @@ registerHeadquartersStepHandlers();
 const pressStep = mocks.buttons.get("hqstep")!;
 const submitPriority = mocks.modals.get("hqsteppriority")!;
 const submitTimezone = mocks.modals.get("hqsteptimezone")!;
+const submitTemplate = mocks.modals.get("hqsteptemplate")!;
 
 const press = (customId: string) => ({ customId, guild: { id: "g1" } }) as unknown as ButtonInteraction;
 
@@ -70,13 +87,15 @@ describe("the step to flow map", () => {
 		["hqstep:arcadeControl:3", { kind: "leaf", command: "arcade", path: "reach" }],
 		["hqstep:arcadeControl:4", { kind: "leaf", command: "arcade", path: "server block" }],
 		// 🛠️server-config (2026-10 item 263 Phase 4a): every step an existing /events, /server or /leveling flow.
-		// Step 1 is the server's timezone (2026-10 item 263 Phase 4c); 2 to 6 open what 1 to 5 did.
+		// Step 1 is the server's timezone (2026-10 item 263 Phase 4c), step 2 Dero's template
+		// (2026-10 item 262 Phase 4); 3 to 7 open what 1 to 5 did before both.
 		["hqstep:serverConfig:1", { kind: "timezone" }],
-		["hqstep:serverConfig:2", { kind: "leaf", command: "events", path: "kvk-season" }],
-		["hqstep:serverConfig:3", { kind: "leaf", command: "events", path: "stream weekly" }],
-		["hqstep:serverConfig:4", { kind: "launch", launchId: "events" }],
-		["hqstep:serverConfig:5", { kind: "launch", launchId: "server-channels" }],
-		["hqstep:serverConfig:6", { kind: "launch", launchId: "leveling" }],
+		["hqstep:serverConfig:2", { kind: "template" }],
+		["hqstep:serverConfig:3", { kind: "leaf", command: "events", path: "kvk-season" }],
+		["hqstep:serverConfig:4", { kind: "leaf", command: "events", path: "stream weekly" }],
+		["hqstep:serverConfig:5", { kind: "launch", launchId: "events" }],
+		["hqstep:serverConfig:6", { kind: "launch", launchId: "server-channels" }],
+		["hqstep:serverConfig:7", { kind: "launch", launchId: "leveling" }],
 		// The server switches message.
 		["hqstep:serverConfig:switch-autoHeal", { kind: "leaf", command: "server", path: "auto-heal" }],
 		["hqstep:serverConfig:switch-tracking", { kind: "leaf", command: "server", path: "leaderboard tracking" }],
@@ -100,7 +119,7 @@ describe("the step to flow map", () => {
 		expect(stepTarget("hqstep:deroConfig:3")).toBeNull();
 		expect(stepTarget("hqstep:arcadeControl:5")).toBeNull();
 		expect(stepTarget("hqstep:onboarding:1")).toBeNull();
-		expect(stepTarget("hqstep:serverConfig:7")).toBeNull();
+		expect(stepTarget("hqstep:serverConfig:8")).toBeNull();
 		// A switch exists only on 🛠️server-config, and only by its own name.
 		expect(stepTarget("hqstep:serverConfig:switch-nope")).toBeNull();
 		expect(stepTarget("hqstep:serverConfig:switch-toString")).toBeNull();
@@ -226,5 +245,93 @@ describe("step 1 of 🛠️server-config, the server's timezone", () => {
 		mocks.gate.mockResolvedValue(false);
 		await submitTimezone(submit("Europe/Berlin"));
 		expect(mocks.updateConfig).not.toHaveBeenCalled();
+	});
+});
+
+// ── 🛠️server-config step 2, Dero's template (2026-10 item 262 Phase 4) ──
+describe("step 2 of 🛠️server-config, Dero's template", () => {
+	const words = setupCopy.headquarters.serverConfig.template;
+	const serverNotice = getPluginCopy(null).notice.server;
+
+	it("opens a modal of the two templates with the server's own picked", async () => {
+		mocks.findConfig.mockResolvedValue(GuildConfigModel.hydrate({ guildId: "g1", pluginId: "general-events" }));
+		await pressStep(press("hqstep:serverConfig:2"));
+		expect(mocks.showModalOrReply).toHaveBeenCalledOnce();
+		const json = JSON.stringify((mocks.showModalOrReply.mock.calls[0][1] as ReturnType<typeof buildTemplateModal>).toJSON());
+		expect(json).toContain(`"label":"${words.names["general-events"]}","value":"general-events","description":"${words.descriptions["general-events"]}","default":true`);
+		expect(json.match(/"default":true/g)).toHaveLength(1);
+		expect(buildTemplateModal("rok-commander").toJSON().title).toBe(words.modalTitle);
+	});
+
+	it("refuses a member before any modal opens, with a Server notice", async () => {
+		mocks.gate.mockResolvedValue(false);
+		await pressStep(press("hqstep:serverConfig:2"));
+		expect(mocks.showModalOrReply).not.toHaveBeenCalled();
+		expect(mocks.showNotice).toHaveBeenCalledWith(expect.anything(), { title: serverNotice, sections: [words.notAdmin] });
+	});
+
+	function submit(picked: string) {
+		return {
+			guild: { id: "g1" },
+			client: {},
+			fields: { getStringSelectValues: () => [picked] },
+			deferReply: vi.fn(async () => undefined),
+			editReply: vi.fn(async () => undefined),
+		} as unknown as ModalSubmitInteraction & { deferReply: ReturnType<typeof vi.fn>; editReply: ReturnType<typeof vi.fn> };
+	}
+
+	it("re-checks the admin on Submit and switches nothing for a member", async () => {
+		mocks.gate.mockResolvedValue(false);
+		await submitTemplate(submit("general-events"));
+		expect(mocks.switchTemplate).not.toHaveBeenCalled();
+		expect(mocks.showNotice).toHaveBeenCalledWith(expect.anything(), { title: serverNotice, sections: [words.notAdmin] });
+	});
+
+	it("answers the template the server already uses with a notice, and switches nothing", async () => {
+		mocks.findConfig.mockResolvedValue({ guildId: "g1", pluginId: "rok-commander" });
+		await submitTemplate(submit("rok-commander"));
+		expect(mocks.switchTemplate).not.toHaveBeenCalled();
+		expect(mocks.showNotice).toHaveBeenCalledWith(expect.anything(), { title: serverNotice, sections: [words.unchanged(words.names["rok-commander"])] });
+	});
+
+	it("reads a row with no pluginId as kingdom, so picking kingdom there is the same notice", async () => {
+		await submitTemplate(submit("rok-commander"));
+		expect(mocks.switchTemplate).not.toHaveBeenCalled();
+	});
+
+	it("switches nothing for a value that is not one of the two templates", async () => {
+		await submitTemplate(submit("toString"));
+		expect(mocks.switchTemplate).not.toHaveBeenCalled();
+		expect(mocks.showNotice).toHaveBeenCalledWith(expect.anything(), { title: serverNotice, sections: [setupCopy.headquarters.staleStep] });
+	});
+
+	it("acknowledges first, switches, answers with the counts and logs the change", async () => {
+		const order: string[] = [];
+		const interaction = submit("general-events");
+		interaction.deferReply.mockImplementation(async () => void order.push("acknowledged"));
+		mocks.switchTemplate.mockImplementation(async () => {
+			order.push("switched");
+			return { changed: true, previousPluginId: "rok-commander", renamed: ["adminChannelId"], kept: [], failed: [] };
+		});
+		await submitTemplate(interaction);
+
+		expect(order).toEqual(["acknowledged", "switched"]);
+		expect(mocks.switchTemplate).toHaveBeenCalledWith(interaction.client, interaction.guild, expect.objectContaining({ guildId: "g1" }), "general-events");
+		// No 🛠️server-config stored here, so the answer takes the sanctioned private fallback.
+		expect(interaction.editReply).toHaveBeenCalledOnce();
+		expect(JSON.stringify(interaction.editReply.mock.calls[0])).toContain(words.renamed(1));
+		expect(mocks.emitFor).toHaveBeenCalledWith(interaction, "g1", "config.change", { subject: words.auditSubject, detail: "Kingdom to Streamer" });
+	});
+
+	it("words the answer from the counts, and says nothing changed when another admin switched first", () => {
+		const base = { changed: true, previousPluginId: "rok-commander" as const, renamed: [], kept: [], failed: [] };
+		expect(templateAnswerLines(base, "Streamer")).toEqual([words.saved("Streamer")]);
+		expect(templateAnswerLines({ ...base, renamed: ["a", "b"], kept: ["c"], failed: ["d"] }, "Streamer")).toEqual([
+			words.saved("Streamer"),
+			words.renamed(2),
+			words.kept(1),
+			words.failed(1),
+		]);
+		expect(templateAnswerLines({ ...base, changed: false }, "Streamer")).toEqual([words.unchanged("Streamer")]);
 	});
 });

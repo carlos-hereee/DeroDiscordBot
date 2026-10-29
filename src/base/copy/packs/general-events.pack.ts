@@ -278,14 +278,14 @@ export const generalEventsCopy: IPluginCopy = {
 	// ── pairing claim code DM (FUTURE_PLANS item 63) ──
 	// Same role as the rok-commander pairingCode, in plain streamer voice.
 	// Names the code, the 15 minute expiry, where to paste it, and that
-	// re-inviting the bot issues a fresh code.
+	// /dero plan issues a fresh code (2026-10 item 262 Phase 4).
 	pairingCode: {
 		title: "🔑 Connect this server",
 		description: (code: string) =>
 			"Use this code to connect this server to your dashboard:\n\n" +
 			`**\`${code}\`**\n\n` +
 			"Open the plugin panel on your Company Uno dashboard at companyuno.com and paste it in.\n\n" +
-			"The code expires in **15 minutes**. Re-invite the bot to get a fresh code.",
+			"The code expires in **15 minutes**. Run `/dero plan` in this server to get a fresh code.",
 	},
 
 	setup: {
@@ -364,6 +364,14 @@ export const generalEventsCopy: IPluginCopy = {
 				"⚙️ Configurable from Discord slash commands or the dashboard.\n\n" +
 				"*Stick around, the next event is on its way.*\n\n" +
 				"**Want me on your server?** The button below will summon me.",
+		},
+
+		// The invite card in #command-center (mirrors rok-commander), in plain voice.
+		inviteCard: {
+			title: "📺 Add Dero to your server",
+			description: "Running a community of your own? Add Dero to your server and let the events, reminders, and rankings run themselves.",
+			buttonLabel: "Add Dero to your server",
+			buttonEmoji: "➕",
 		},
 
 		commandGuide: {

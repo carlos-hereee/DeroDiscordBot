@@ -2225,6 +2225,23 @@ describe("GuildSetupManager voice rooms", () => {
 		expect(settled.setName).not.toHaveBeenCalled();
 	});
 
+	// 2026-10 item 262 Phase 4: a name is the guild's pack default, so the drift sweep is
+	// what finishes a template switch whose rename Discord refused.
+	it("names a streamer server's admin channel from its own pack, and a kingdom server's from the kingdom pack", async () => {
+		const makeAdmin = (name: string) => {
+			const channel = Object.create(TextChannel.prototype) as TextChannel & { setName: ReturnType<typeof vi.fn> };
+			Object.assign(channel, { id: "ch-admin", name, setName: vi.fn().mockResolvedValue(undefined) });
+			return channel;
+		};
+		const streamer = makeAdmin("🔒inner-sanctum");
+		await runRename(makeStoredConfig({ pluginId: "general-events" }), { "ch-admin": streamer });
+		expect(streamer.setName).toHaveBeenCalledWith("🔒admin");
+
+		const kingdom = makeAdmin("🔒inner-sanctum");
+		await runRename(makeStoredConfig(), { "ch-admin": kingdom });
+		expect(kingdom.setName).not.toHaveBeenCalled();
+	});
+
 	// ── /setup admin grant ──────────────────────────────────────────────
 
 	it("grants the member role and then the admin role on both rooms", async () => {

@@ -56,8 +56,9 @@ export const DOMAIN_CHANNEL_FIELDS: Record<HeadquartersDomain, "deroConfigChanne
 // 🛠️server-config's steps by key, in card order (2026-10 item 263 Phase 4a). Each key
 // carries its label (setupCopy), its mark (serverConfigView) and its route
 // (headquartersSteps.ts), so a step inserted anywhere moves its number, its mark and
-// its button together; Phase 4c's timezone came in at the front that way.
-export const SERVER_CONFIG_STEPS = ["timezone", "kvkSeason", "streams", "events", "channels", "leveling"] as const;
+// its button together; Phase 4c's timezone came in at the front that way, and Dero's
+// template after it (2026-10 item 262 Phase 4).
+export const SERVER_CONFIG_STEPS = ["timezone", "template", "kvkSeason", "streams", "events", "channels", "leveling"] as const;
 export type ServerConfigStep = (typeof SERVER_CONFIG_STEPS)[number];
 
 // The server switches message's buttons by key, in order; Refresh standings follows them.
@@ -108,6 +109,8 @@ export interface HeadquartersRow extends IAdoptionChoiceRow {
 	// 🛠️server-config's reads, all off the row.
 	timezone?: string | null;
 	timezoneSetAt?: Date | string | null;
+	// Dero's template, the copy pack id (the schema default is rok-commander).
+	pluginId?: string | null;
 	kvkSeasonEnd?: Date | string | null;
 	autoHealEnabled?: boolean | null;
 	leaderboardTrackingEnabled?: boolean | null;
@@ -293,9 +296,14 @@ export function serverConfigView(row: HeadquartersRow, facts: ServerConfigFacts)
 	const tracking = row.leaderboardTrackingEnabled !== false;
 	const weekStart = row.weekStart === "monday" ? "monday" : "sunday";
 	const timezone = resolveServerTimezone(row.timezone);
+	// Any id but the streamer one reads as the kingdom template, as getPluginCopy reads it.
+	const template = row.pluginId === "general-events" ? "general-events" : "rok-commander";
 	const done: Record<ServerConfigStep, boolean> = {
 		// Every row reads UTC by default, so UTC alone is done only once an admin saved it.
 		timezone: timezone !== DEFAULT_SERVER_TIMEZONE || Boolean(row.timezoneSetAt),
+		// Either template is a working answer, so the step is done from the start; it shows
+		// which one in the chart rather than nag for a choice.
+		template: true,
 		kvkSeason: seasonEnd !== null && seasonEnd.getTime() > facts.now,
 		streams: facts.weeklySchedules > 0,
 		events: facts.activeEvents > 0,
@@ -304,7 +312,7 @@ export function serverConfigView(row: HeadquartersRow, facts: ServerConfigFacts)
 	};
 	// Not every server runs a KvK season, streams or custom channel names, so those
 	// steps say they are optional rather than nag.
-	const optional: Record<ServerConfigStep, boolean> = { timezone: false, kvkSeason: true, streams: true, events: false, channels: true, leveling: false };
+	const optional: Record<ServerConfigStep, boolean> = { timezone: false, template: false, kvkSeason: true, streams: true, events: false, channels: true, leveling: false };
 	return {
 		title: domain.title,
 		steps: SERVER_CONFIG_STEPS.map((key, index) => ({
@@ -319,6 +327,7 @@ export function serverConfigView(row: HeadquartersRow, facts: ServerConfigFacts)
 			...onOff,
 			rows: [
 				value(domain.rows.timezone, timezone),
+				value(domain.rows.template, domain.template.names[template]),
 				value(domain.rows.kvkSeason, seasonEnd ? domain.seasonEnds(seasonEnd) : copy.notSet),
 				value(domain.rows.weeklySchedules, copy.count(facts.weeklySchedules)),
 				value(domain.rows.activeEvents, copy.count(facts.activeEvents)),

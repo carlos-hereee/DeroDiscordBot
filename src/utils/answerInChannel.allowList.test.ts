@@ -53,7 +53,7 @@ const ALLOWED: readonly AllowedLine[] = [
 	// ── notices whose modal Discord refused ──
 	{ file: "features/community/enableCommunity.ts", contains: "flags: MessageFlags.Ephemeral,", reason: "fallback", why: "the Community already on notice's fallback, used only when Discord refuses the modal" },
 	{ file: "features/setup/adoptionChoice.ts", contains: "flags: MessageFlags.Ephemeral }));", reason: "fallback", why: "the channel choice modal's fallback, used only when Discord refuses the modal" },
-	{ file: "features/setup/headquartersSteps.ts", contains: "flags: MessageFlags.Ephemeral }));", count: 2, reason: "fallback", why: "the voice priority and server timezone modals' fallbacks, used only when Discord refuses the modal" },
+	{ file: "features/setup/headquartersSteps.ts", contains: "flags: MessageFlags.Ephemeral }));", count: 3, reason: "fallback", why: "the voice priority, server timezone and template modals' fallbacks, used only when Discord refuses the modal" },
 	{ file: "features/economy/coinMarketPanel.ts", contains: "copy.modalRefused, flags: MessageFlags.Ephemeral", reason: "fallback", why: "🏪dero-market's trade modal fallback, used only when Discord refuses the modal (2026-10 item 267 Session 2a)" },
 
 	// ── private data: a hand, a fleet, a sealed bid, trade terms ──

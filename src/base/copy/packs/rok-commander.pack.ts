@@ -360,15 +360,15 @@ export const rokCommanderCopy = {
 	// Second DM after arrival on a fresh install, and the only DM on a
 	// re-invite. Gives the owner a one-time code to claim this guild from the
 	// plugin dashboard with no slash command. Copy names the code, the 15
-	// minute expiry, where to paste it, and that re-inviting issues a fresh
-	// code.
+	// minute expiry, where to paste it, and that /dero plan issues a fresh
+	// code (2026-10 item 262 Phase 4), since the DM is sent only on a join.
 	pairingCode: {
 		title: "🔑 Claim This Realm",
 		description: (code: string) =>
 			"To bind this server to your dashboard, present this code:\n\n" +
 			`**\`${code}\`**\n\n` +
 			"Open the ROK Commander panel on your Company Uno dashboard at companyuno.com and enter it there.\n\n" +
-			"The code expires in **15 minutes**. Re-invite me and I will issue a fresh one.",
+			"The code expires in **15 minutes**. Run `/dero plan` in your server and I will issue a fresh one.",
 	},
 
 	setup: {
@@ -503,6 +503,19 @@ export const rokCommanderCopy = {
 				"Now then.\n\n" +
 				"Gather your people. Organize your ranks. Build something worthy of legend.\n\n" +
 				"Command me in a realm of your own. The button below shall summon me.",
+		},
+
+		// ── the Summon Dero card in #command-center ──────────────
+		// Its own pinned message (ChannelContent.inviteCard), with the invite Link
+		// button (ChannelContent.buildInviteButton) beneath it. Pack fields so a
+		// streamer server reads its own pitch and label (2026-10 item 262 Phase 4).
+		// Discord caps a button label at 80 characters.
+		inviteCard: {
+			title: "🔱 Summon Dero to Your Realm",
+			description:
+				"Command a kingdom of your own? Dero answers the call. Bring him to your server and let the events, reminders, and rankings run themselves.",
+			buttonLabel: "Summon me to your server, Mortal",
+			buttonEmoji: "🔱",
 		},
 
 		// ── public #command-center guide ──────────────────────────

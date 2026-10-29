@@ -226,6 +226,11 @@ export const BOT_LOG_EVENTS = {
 	// actor and the payload the caller passed: ids and short labels, never message
 	// text a member typed.
 	ADMIN_LOG_PREFIX: "admin_log",
+	// ── Dero's template switch (2026-10 item 262 Phase 4) ──
+	// One row per switch between the kingdom and streamer templates: the two plugin
+	// ids and which managed channels were renamed, kept or refused, so an operator
+	// can tell why a channel kept its old name. Written by switchTemplate.
+	TEMPLATE_SWITCHED: "template_switched",
 	// add more here as needed
 } as const;
 
