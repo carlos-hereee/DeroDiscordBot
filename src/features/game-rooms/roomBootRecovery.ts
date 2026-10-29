@@ -9,6 +9,8 @@ import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isBlackjackRoomGame, refereeOn } from "./roomTypes.js";
 import { registerDealerTable } from "@features/dero-brain/dealerNarration.js";
+import { rebuildTurnClocks } from "./turnClock.js";
+import { turnClocksFor } from "./turnClocks.js";
 
 // ── roomBootRecovery ─────────────────────────────────────────────────
 // What:  reconciles what the GameRoom rows CLAIM with what Discord actually has, once
@@ -25,6 +27,8 @@ import { registerDealerTable } from "@features/dero-brain/dealerNarration.js";
 //        not is closed out loud (a system line, the dead board disarmed, then abandoned;
 //        finish pays every stack its row stored, 2026-10 item 267),
 //        ①ᶜ a playing Hold'em room whose referee is on gets its dealer back,
+//        ①ᵈ every playing room's turn clocks are armed again from the row (2026-10 item 267,
+//        risk R7): the clocks are memory only, and a deadline already past is the sweep's,
 //        ② then the ordinary expiry sweep runs immediately rather than waiting up to
 //        five minutes for its first cron tick.
 
@@ -35,6 +39,8 @@ export interface BootRecoverySummary {
 	lostTables: number;
 	// Hold'em rooms whose dealer narration this boot registered again (2026-10 item 263 R3-28).
 	dealersRestored: number;
+	// Turn clocks armed again from the stored deadlines (2026-10 item 267, risk R7).
+	clocksRebuilt: number;
 	archived: number;
 }
 
@@ -42,6 +48,7 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 	let abandoned = 0;
 	let lostTables = 0;
 	let dealersRestored = 0;
+	let clocksRebuilt = 0;
 
 	try {
 		const live = await gameRoomStore.findNonTerminal();
@@ -57,6 +64,12 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 
 				const channel = await client.channels.fetch(room.channelId).catch(() => null);
 				if (channel) {
+					// ①ᵈ The turn clocks are memory only (turnClock), so a restart dropped every warning
+					// and every on time end. Each is armed again from the deadline its game stores (a
+					// turn's start, the last move, an auction's open); one already past is left to the
+					// game's sweep, which ends it on its next tick. A Blackjack table is not rebuilt:
+					// it did not survive the restart either, and ①ᵇ below closes its room.
+					clocksRebuilt += rebuildTurnClocks(client, room, turnClocksFor(room.game));
 					// ①ᶜ The dealer registry is memory only (dealerNarration), so a restart silenced every
 					// table that narrated. Registered again exactly as roomReferee.startRoomReferee does,
 					// voice on, and only while the host's referee is on: a host who turned it off stays
@@ -126,5 +139,6 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 	if (abandoned > 0) console.log(`[game-rooms] boot recovery: ${abandoned} abandoned room(s) closed`);
 	if (lostTables > 0) console.log(`[game-rooms] boot recovery: ${lostTables} solo blackjack table(s) lost to the restart, room(s) closed`);
 	if (dealersRestored > 0) console.log(`[game-rooms] boot recovery: ${dealersRestored} hold em dealer(s) registered again`);
-	return { abandoned, lostTables, dealersRestored, archived };
+	if (clocksRebuilt > 0) console.log(`[game-rooms] boot recovery: ${clocksRebuilt} turn clock(s) armed again`);
+	return { abandoned, lostTables, dealersRestored, clocksRebuilt, archived };
 }

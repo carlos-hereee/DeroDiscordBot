@@ -1,6 +1,6 @@
 import { TextChannel, type ButtonInteraction, type Client } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
-import { COLUMNS, FLEET, GRID_SIZE, markReady, rerollFleet, shipsRemaining, type BattleshipState, type SetupRefusal } from "@features/games/battleshipState.js";
+import { COLUMNS, FLEET, GRID_SIZE, expireTurn, markReady, rerollFleet, shipsRemaining, startBattle, type BattleshipState, type SetupRefusal } from "@features/games/battleshipState.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -8,7 +8,9 @@ import { recordMatchRatings, twoPlayerFinishingOrder } from "@features/ratings/r
 import { roomTrail, type RoomMoveInput } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { roomDrawingKey, withDrawingPause } from "./drawingPause.js";
+import { isClockExpired, pausedDeadline, roomDrawingKey, withDrawingPause } from "./drawingPause.js";
+import { lastActivityAt } from "./roomActivity.js";
+import { syncTurnClocks, type TurnClockGame } from "./turnClock.js";
 import {
 	fire,
 	deserializeMatch,
@@ -97,9 +99,132 @@ export async function redrawBattleshipBoard(
 			await message?.edit({ ...board, content: null, attachments: [] });
 		},
 	}).catch((error) => console.warn("[game-rooms] failed to redraw the battleship board", error));
-	// The line that pings the captain whose turn it now is, below the board that was just drawn.
+	// The line that pings the captain whose turn it now is, below the board that was just drawn,
+	// and that captain's turn clock (2026-10 item 267), counted from the move the board shows.
 	await syncTurnPrompt(client, room, battleshipTurnAdapter);
+	await syncTurnClocks(client, room, [battleshipTurnClock]);
 }
+
+// ── the turn's end (the sweep's and the turn clock's) ─────────────────
+/** What one look at a battleship match's clock did. */
+export type BattleshipExpiry = "expired" | "forfeited" | "setupTimedOut" | null;
+
+// The setup clock ran out (post-launch plan item 17): start the battle with both
+// fleets as they are. A compare and swap on the status, so a second Ready landing in
+// the same moment and this sweep cannot both start it. True when this call started it.
+async function startBattleOnSetupTimeout(client: Client, room: IGameRoom, stored: StoredBattleship): Promise<boolean> {
+	const state = deserializeMatch(stored);
+	if (!startBattle(state)) return false;
+	const next = serializeMatch(state, { boardMessageId: stored.boardMessageId });
+	const started = await gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.status": "setup" }, next);
+	if (!started) return false;
+	await roomTrail.postMove(client, room, { actorId: room.hostId, kind: "system", text: gameRoomsCopy.battleship.setupTimedOut, meta: { expired: true } });
+	await roomTrail.postMove(client, room, { actorId: room.hostId, kind: "system", text: gameRoomsCopy.battleship.battleBegins(state.players[state.turn].userId) });
+	await redrawBattleshipBoard(client, room, next);
+	return true;
+}
+
+// The turn this expiry was decided on, as a filter: the same captain to fire, the same missed
+// turn count and not one shot since. Two paths can end a turn now (the turn clock at the deadline
+// and the 5 minute sweep), and each would otherwise count a second missed turn for one silence,
+// which forfeits the match; whichever writes first wins and the other writes nothing.
+const sameTurnFilter = (stored: StoredBattleship): Record<string, unknown> => ({
+	"secret.status": "playing",
+	"secret.turn": stored.turn,
+	"secret.missedTurns": stored.missedTurns,
+	"secret.players.0.shots": stored.players[0].shots,
+	"secret.players.1.shots": stored.players[1].shots,
+});
+
+/**
+ * Forfeit the captain's turn when it has sat past GAME_ROOM_TURN_TIMEOUT_MS (the match after two
+ * in a row), or start a battle whose setup clock ran out. THE one timeout function: the 5 minute
+ * sweep (roomTurnSweep) calls it for every match and the turn clock calls it at the deadline
+ * (2026-10 item 267). Answers what it did, or null when nothing was due or another path won.
+ */
+export async function expireBattleshipTurnIfDue(client: Client, room: IGameRoom, now: Date): Promise<BattleshipExpiry> {
+	const stored = storedMatch(room);
+	// A room whose match never started, or whose secret is some other game's shape, is not this clock's business.
+	if (!stored?.players) return null;
+
+	// Never while the board is drawing, and every held millisecond is added back,
+	// so a slow render never costs a player their turn (the drawing pause).
+	if (!isClockExpired(roomDrawingKey(room), lastActivityAt(room), BOT_CONSTANTS.GAME_ROOM_TURN_TIMEOUT_MS, now.getTime())) return null;
+
+	const state = deserializeMatch(stored);
+	// A captain who never pressed Ready costs nobody the match (post-launch plan
+	// item 17): when the setup clock runs out the fleets sail as Dero laid them.
+	if (state.status === "setup") return (await startBattleOnSetupTimeout(client, room, stored)) ? "setupTimedOut" : null;
+	if (state.status !== "playing") return null;
+
+	// Whose turn is being forfeited, captured BEFORE expireTurn mutates the
+	// state, because it passes the turn to the other player.
+	const loserId = state.players[state.turn].userId;
+	const result = expireTurn(state);
+	const next = serializeMatch(state, { boardMessageId: stored.boardMessageId });
+	const written = await gameRoomStore.updateSecretIf(room.guildId, room.roomId, sameTurnFilter(stored), next);
+	if (!written) return null;
+
+	// The expiry is a MOVE: it belongs in the transcript that is the product, and it is
+	// the only record of why the match ended the way it did. It is the turn the captain
+	// let pass, so it rides that turn's board as its This turn block (2026-10 item 263
+	// R3-29), recorded once the board is posted rather than posted as a line of its own.
+	const expired: RoomMoveInput = {
+		actorId: loserId,
+		kind: "system",
+		text: result.forfeited ? gameRoomsCopy.battleship.forfeitedMatch(loserId) : gameRoomsCopy.battleship.forfeitedTurn(loserId),
+		meta: { expired: true },
+	};
+	await redrawBattleshipBoard(client, room, next, null, [expired]);
+	if (!result.forfeited) return "expired";
+
+	const claimed = await roomLifecycle.finish(client, room, { winnerId: result.winnerId, outcome: { bucket: "timeout" } });
+	// A turn timeout forfeit IS rated, by owner decision (2026-10 item 244): the
+	// player who stopped taking turns lost a match they started. Once, by the call
+	// that won finish's claim; fire and forget.
+	if (claimed && result.winnerId) void recordMatchRatings(room, [result.winnerId, loserId]);
+
+	// The win still pays, because the opponent turning up and the other player
+	// not is exactly the behaviour being rewarded. No sink bonus is involved:
+	// nothing was sunk by walking away.
+	// The captains off the match, not the row: against a Dero bot the row holds the
+	// host alone (2026-10 item 250 Phase 5), and awardXp pays the bot nothing.
+	const [a, b] = state.players.map((player) => player.userId);
+	awardTwoPlayerResult({
+		client,
+		guildId: room.guildId,
+		channelId: room.channelId,
+		game: "battleship",
+		challenger: { id: a } as never,
+		opponent: { id: b } as never,
+		winner: result.winnerId === a ? "challenger" : "opponent",
+		resultKey: room.roomId,
+	});
+	return "forfeited";
+}
+
+/**
+ * Battleship's turn clock (2026-10 item 267): the captain to fire, from the last move the trail
+ * holds plus GAME_ROOM_TURN_TIMEOUT_MS and every drawing hold, the same stamp the sweep reads.
+ * Setup is no one captain's turn, so it is left to the sweep, which still sails the fleets.
+ */
+export const battleshipTurnClock: TurnClockGame = {
+	kind: "battleship",
+	current(room, now) {
+		const stored = storedMatch(room);
+		const fingerprint = battleshipTurnAdapter.fingerprintOf(room);
+		if (stored?.status !== "playing" || !fingerprint) return null;
+		return {
+			memberId: stored.players[stored.turn].userId,
+			fingerprint,
+			deadline: pausedDeadline(roomDrawingKey(room), lastActivityAt(room), BOT_CONSTANTS.GAME_ROOM_TURN_TIMEOUT_MS, now),
+		};
+	},
+	async expire(client, room, now) {
+		const ended = await expireBattleshipTurnIfDue(client, room, now);
+		return ended === "expired" || ended === "forfeited";
+	},
+};
 
 // ── firing ────────────────────────────────────────────────────────────
 // Take your turn opens one modal: the target grid and two selects, a file A to J and a rank 1 to

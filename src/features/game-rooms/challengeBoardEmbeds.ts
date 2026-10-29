@@ -14,6 +14,7 @@ import { bandWidth, isRatedGame } from "@features/ratings/ratingEngine.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import type { CardVoiceState } from "./cardVoiceState.js";
+import { countdownSeconds } from "./startCountdownState.js";
 import { isBuyInGame, type GameSlug, type RatingBand, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
 import type { SoloLuckGame } from "@features/games/soloLuck.js";
 
@@ -202,6 +203,9 @@ export interface OpenerCardState {
 	// The card's own Dero voice request (2026-10 item 267 decision 12): Dero busy elsewhere,
 	// which offers the host Queue Dero, or the card's place in line. Absent shows nothing.
 	voice?: CardVoiceState | null;
+	// True while the host's Start counts the match in (2026-10 item 267 decision 13,
+	// startCountdown.ts), which the card says above everything else it gathers.
+	countingDown?: boolean;
 }
 
 /** The draft's host controls the card shows: the band, approval, and how many wait for an answer. */
@@ -249,6 +253,7 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 	// host chose that could not apply, then what a joiner pays at a Hold'em chip table.
 	const gathering = Boolean(state.visibility && !state.cancelled && !state.startedChannelId && !state.resultLine);
 	if (gathering) {
+		if (state.countingDown) lines.push("", gameRoomsCopy.board.cardCountdown(countdownSeconds()));
 		lines.push("", settingsLine(state), ...(state.settingsNotes ?? []));
 		lines.push(...buyInLines(state));
 		lines.push(...voiceLines(state));

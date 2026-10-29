@@ -54,6 +54,8 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { _runStartCountdownsOut } from "./startCountdown.js";
+import { startCountdownState } from "./startCountdownState.js";
 
 const storeMock = gameRoomStore as unknown as {
 	findByRoomId: ReturnType<typeof vi.fn>;
@@ -65,6 +67,13 @@ const storeMock = gameRoomStore as unknown as {
 const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
 
 const HOST = "host-1";
+
+// Start counts the match in (2026-10 item 267, decision 13): the room opens when the count ends,
+// on the draft the count reads again. A case about what Start opens runs the count out at once.
+async function countIn(draft: IGameRoom): Promise<void> {
+	storeMock.findByRoomId.mockResolvedValue(draft);
+	await _runStartCountdownsOut();
+}
 
 function makeRoom(overrides: Partial<IGameRoom> = {}): IGameRoom {
 	return {
@@ -131,6 +140,7 @@ function makeSelect(userId: string, values: string[], members: ReturnType<typeof
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	startCountdownState._reset();
 	storeMock.update.mockResolvedValue(undefined);
 	storeMock.addPoolMember.mockResolvedValue(undefined);
 	cardMocks.renderChallengeCard.mockResolvedValue(null);
@@ -322,8 +332,10 @@ describe("starting a Blackjack table", () => {
 		openMock.mockResolvedValue({ ok: true, room, channel });
 		boardMock.mockResolvedValue(true);
 		const interaction = arcadeButton({ chipsOff: true });
+		const draft = makeRoom({ game: "blackjack", spectatorIds: ["a", "b"] });
 
-		await confirmStartMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a", "b"] }));
+		await confirmStartMatch(interaction, draft);
+		await countIn(draft);
 
 		// The whole pool plays, nobody is asked who: one table, every seat taken, free on a server
 		// with chips off (2026-10 item 267).
@@ -339,8 +351,10 @@ describe("starting a Blackjack table", () => {
 		openMock.mockResolvedValue({ ok: true, room: { roomId: "room-1" }, channel: { id: "bj-room-1" } });
 		boardMock.mockResolvedValue(false);
 		const interaction = arcadeButton({ chipsOff: true });
+		const draft = makeRoom({ game: "blackjack", spectatorIds: ["a"] });
 
-		await confirmStartMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a"] }));
+		await confirmStartMatch(interaction, draft);
+		await countIn(draft);
 
 		expect(interaction.editReply).toHaveBeenCalledWith(expect.objectContaining({ embeds: [expect.anything()] }));
 	});
@@ -355,8 +369,10 @@ describe("starting a Blackjack table", () => {
 		openMock.mockResolvedValue({ ok: true, room, channel });
 		boardMock.mockResolvedValue(true);
 		const interaction = arcadeButton();
+		const draft = makeRoom({ game: "blackjack", spectatorIds: ["a", "b"], holdemBuyIn: 2500, buyInPaidBy: ["a"] });
 
-		await confirmStartMatch(interaction, makeRoom({ game: "blackjack", spectatorIds: ["a", "b"], holdemBuyIn: 2500, buyInPaidBy: ["a"] }));
+		await confirmStartMatch(interaction, draft);
+		await countIn(draft);
 
 		expect(wallets.get(HOST)).toBe(2500);
 		expect(boardMock).toHaveBeenCalledWith(interaction.guild, room, channel, { buyIn: 2500, userIds: [HOST, "a"], charged: true });
@@ -393,6 +409,7 @@ describe("the spectator setting at start", () => {
 		};
 		Object.assign(select.guild as object, { channels: { fetch: vi.fn(async () => ({ id: "arcade-cat", type: ChannelType.GuildCategory })) } });
 		await handleOpponentSelect(select as unknown as StringSelectMenuInteraction);
+		await countIn(room);
 	}
 
 	it.each([
@@ -467,9 +484,91 @@ describe("the draft's on or off settings (auctions, and Dero voice on every game
 			channels: { fetch: vi.fn(async () => ({ id: "arcade-cat", type: ChannelType.GuildCategory })) },
 		});
 
-		await confirmStartMatch(interaction, makeRoom({ game: "monopoly", spectatorIds: ["a"], monopolyAuctions: true }));
+		const draft = makeRoom({ game: "monopoly", spectatorIds: ["a"], monopolyAuctions: true });
+		await confirmStartMatch(interaction, draft);
+		await countIn(draft);
 
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ game: "monopoly", monopolyAuctions: true }));
+	});
+});
+
+// ── the start countdown (2026-10 item 267, owner decision 13) ─────────
+// Start counts the match in for START_COUNTDOWN_MS on the card, then opens the room only if the
+// draft is still open; Call it off during the count opens nothing, and a second Start is a state.
+describe("the start countdown", () => {
+	const members = makeMembers([{ id: HOST, bot: false, name: "Host" }]);
+	const openMock = RoomProvisioner.open as unknown as ReturnType<typeof vi.fn>;
+	const COUNT = BOT_CONSTANTS.START_COUNTDOWN_MS;
+
+	function arcadeHost() {
+		configMock.findByGuildId.mockResolvedValue({ gamesCategoryId: "arcade-cat", adminRoleId: null });
+		openMock.mockResolvedValue({ ok: false, reason: "channel-failed" });
+		const interaction = makeButton(HOST, members);
+		Object.assign(interaction.guild as object, { channels: { fetch: vi.fn(async () => ({ id: "arcade-cat", type: ChannelType.GuildCategory })) } });
+		return interaction;
+	}
+
+	it("opens the room only once the count has run its ten seconds", async () => {
+		vi.useFakeTimers();
+		try {
+			const draft = makeRoom({ game: "monopoly", spectatorIds: ["a"] });
+			storeMock.findByRoomId.mockResolvedValue(draft);
+
+			await confirmStartMatch(arcadeHost(), draft);
+			await vi.advanceTimersByTimeAsync(COUNT - 1);
+			expect(openMock).not.toHaveBeenCalled();
+			expect(startCountdownState.isCountingDown(draft)).toBe(true);
+
+			await vi.advanceTimersByTimeAsync(1);
+			await vi.waitFor(() => expect(openMock).toHaveBeenCalledOnce());
+			expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ game: "monopoly", playerIds: [HOST, "a"] }));
+			expect(startCountdownState.isCountingDown(draft)).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("opens nothing when the host called the challenge off during the count", async () => {
+		vi.useFakeTimers();
+		try {
+			const draft = makeRoom({ game: "monopoly", spectatorIds: ["a"] });
+			await confirmStartMatch(arcadeHost(), draft);
+			// Call it off archived the draft while the card counted.
+			storeMock.findByRoomId.mockResolvedValue({ ...draft, status: "archived" });
+
+			await vi.advanceTimersByTimeAsync(COUNT);
+			await _runStartCountdownsOut();
+			expect(openMock).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("answers a second Start during the count with a notice, and counts once", async () => {
+		const draft = makeRoom({ game: "monopoly", spectatorIds: ["a"] });
+		await confirmStartMatch(arcadeHost(), draft);
+
+		const again = makeButton(HOST, members);
+		await startMatch(again, draft);
+		const reply = (again.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
+		expect(reply.content).toBe(gameRoomsCopy.board.countdownRunning);
+
+		const confirmAgain = arcadeHost();
+		await confirmStartMatch(confirmAgain, draft);
+		expect((confirmAgain.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({ content: gameRoomsCopy.board.countdownRunning });
+
+		await countIn(draft);
+		expect(openMock).toHaveBeenCalledOnce();
+	});
+
+	it("opens nothing when the pool emptied during the count, and says why", async () => {
+		const draft = makeRoom({ game: "rps", spectatorIds: ["a"] });
+		const interaction = arcadeHost();
+		await confirmStartMatch(interaction, draft);
+
+		await countIn({ ...draft, spectatorIds: [] } as unknown as IGameRoom);
+		expect(openMock).not.toHaveBeenCalled();
+		expect(interaction.editReply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.board.poolEmpty }));
 	});
 });
 

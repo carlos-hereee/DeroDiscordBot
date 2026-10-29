@@ -180,6 +180,16 @@ export const deroBrainCopy = {
 		toAct: (name: string): string => `${name}, it is your turn.`,
 		result: (winners: DealerWinner[]): string => winners.map(winnerPhrase).join(" "),
 		tournamentWon: (name: string): string => `${name} wins the tournament.`,
+		// ── Dero calls the room to order (2026-10 item 267, decisions 13 to 15) ──
+		// Spoken only, into the card's or the room's call: a member joining or asking to join a
+		// card, the Start countdown, and the warning before a timed turn ends and its end.
+		challengers: "New challengers at the door.",
+		challengersAsking: "New challengers at the door. Host, check Requests to let them in.",
+		countdown: (seconds: number): string => `The match starts in ${seconds} seconds.`,
+		turnWarning: (name: string, seconds: number): string => `${name}, ${seconds} seconds left on your turn.`,
+		turnOver: (name: string): string => `${name}, your turn is over.`,
+		// Said in place of a member whose server name cannot be read.
+		unknownPlayer: "a player",
 		spokenCard: (rank: number, suit: string): string => `the ${RANK_WORDS[rank] ?? String(rank)} of ${SUIT_WORDS[suit] ?? suit}`,
 		// "the two of clubs, the ten of hearts and the ace of spades"
 		spokenCards: (names: string[]): string =>

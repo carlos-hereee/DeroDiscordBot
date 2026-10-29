@@ -233,11 +233,9 @@ export const BOT_CONSTANTS = {
 	// TWO consecutive expiries forfeit the MATCH, so an abandoned game dies about 20
 	// minutes after the last shot rather than sitting open until the archive window.
 	//
-	// ⚠️ CHECKED ON THE 5 MINUTE ROOM SWEEP, so the real expiry lands somewhere
-	// between 30 and 35 minutes. That granularity is deliberate rather than a
-	// limitation: a second, faster cron for one game's clock would cost a tick every
-	// minute across every guild to save a casual player five minutes, and the number
-	// that matters is that a walked-away match terminates at all.
+	// The turn clock (turnClock.ts, 2026-10 item 267 decision 15) ends a turn at exactly
+	// this deadline; the 5 minute room sweep still checks it as the backstop for a clock a
+	// restart could not rebuild, where the expiry lands up to five minutes late.
 	// Thirty minutes is the owner's decision of 2026-10-28 (decision 7 of 2026-10 item
 	// 267: every turn clock three times longer). It also times Battleship's setup.
 	GAME_ROOM_TURN_TIMEOUT_MS: 30 * 60 * 1000, // 30 minutes
@@ -270,8 +268,8 @@ export const BOT_CONSTANTS = {
 	// it (2026-10 item 241). Its own constant rather than the battleship budget
 	// above, because a Monopoly match is played across days by people who check in
 	// between other things: a short clock would forfeit every seat that went to
-	// sleep. Checked on the same 5 minute room sweep, so the real forfeit lands
-	// within five minutes after this. Three days is the owner's decision of
+	// sleep. The turn clock forfeits at the deadline, and the 5 minute room sweep is its
+	// backstop after a restart. Three days is the owner's decision of
 	// 2026-10-28 (decision 7 of 2026-10 item 267, three times the old day).
 	GAME_ROOM_MONOPOLY_IDLE_MS: 72 * 60 * 60 * 1000, // 72 hours
 	// Any room in a non terminal status with no action for this long is finished as
@@ -280,9 +278,11 @@ export const BOT_CONSTANTS = {
 	// owner's number from the 1.7.0 test run (test fixes plan, item 13), kept when the
 	// turn clocks tripled (2026-10 item 267). It sits above Hold'em's and Blackjack's
 	// 3 minute clocks and EQUALS Battleship's 30 minute turn; a Battleship turn still
-	// expires first, because the battleship sweep runs before this one in the same tick
-	// and its forfeit writes the row, which resets the idle stamp (only a turn clock
-	// held by a long board draw could lose that race). Monopoly is exempt:
+	// expires first, because its turn clock ends it at its deadline, which is never later
+	// than this one (the row's last write is never earlier than its last move), and the
+	// forfeit writes the row, which resets the idle stamp. On the sweep backstop the
+	// battleship sweep runs before this one in the same tick for the same reason. Only a
+	// turn clock held by a long board draw could lose that race. Monopoly is exempt:
 	// its seats get the clock above, which its opener promises, and that sweep already
 	// ends every match.
 	// A hangman room in play is exempt too (owner decision, 2026-10-23): hangman has no
@@ -297,7 +297,8 @@ export const BOT_CONSTANTS = {
 	MONOPOLY_AUCTION_ROUND_MS: 180_000,
 	// How often expired auctions are closed. Its own interval for the same reason as
 	// the hold em clock below: on the 5 minute room sweep a 3 minute round would
-	// close anywhere inside five minutes. At 10 seconds a round runs 180 to 190.
+	// close anywhere inside five minutes. The turn clock closes a round at its deadline,
+	// so this tick is the backstop after a restart, when a round runs 180 to 190 seconds.
 	MONOPOLY_AUCTION_TICK_MS: 10_000,
 	// The smallest rent the voice referee says out loud (Session 5c, key moments only).
 	// $200 is GO's salary and the rent of all four rails, so a rent this big costs a
@@ -356,6 +357,19 @@ export const BOT_CONSTANTS = {
 	// it, so this is its own interval rather than a passenger on the 5 minute room
 	// sweep, which would make a 3 minute clock fire somewhere inside 5 minutes.
 	HOLDEM_CLOCK_TICK_MS: 10_000,
+	// ── the turn clock and the start countdown (2026-10 item 267, owner decisions 13 and 15) ──
+	// How long before a timed turn ends Dero warns the member on the clock (turnClock.ts):
+	// the owner's ten seconds, on every timed turn.
+	TURN_WARNING_LEAD_MS: 10_000,
+	// When a turn's deadline arrives but the game's own timeout function ends nothing while the
+	// same turn is still on the clock (its compare and swap lost to a move landing that instant,
+	// or a board still drawing), the clock looks again this much later, at most this many times,
+	// and then leaves the turn to the game's sweep. Small, because the turn is already due.
+	TURN_CLOCK_RETRY_MS: 1_000,
+	TURN_CLOCK_RETRIES: 3,
+	// The host's Start counts the match in for this long before the room opens (startCountdown.ts),
+	// and Call it off during it opens nothing: the owner's ten seconds.
+	START_COUNTDOWN_MS: 10_000,
 	// How many times a buy in re-reads and retries when another player's seat write
 	// beat it. Six members can click Buy in at once, and each retry only loses to a
 	// DIFFERENT winner, so the attempts need to cover a full table plus headroom

@@ -1,14 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Client } from "discord.js";
+import { TextChannel, type Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findPlayingByGame: vi.fn(), update: vi.fn(), updateSecretIf: vi.fn() },
+	gameRoomStore: { findPlayingByGame: vi.fn(), findByRoomId: vi.fn(), update: vi.fn(), updateSecretIf: vi.fn() },
 }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardTwoPlayerResult: vi.fn() }));
-// The battle's board is drawn by the handlers' own suites; here only what the sweep hands it.
-vi.mock("./roomBattleshipHandlers.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./roomBattleshipHandlers.js")>()), redrawBattleshipBoard: vi.fn() }));
+// The battle's board is drawn by the handlers' own suites; here only what the expiry hands the
+// shared turn board. The expiry lives beside the redraw since 2026-10 item 267 (the turn clock calls
+// it too), so the board is watched where the redraw posts it, with no picture drawn.
+vi.mock("./turnBoard.js", () => ({ postTurnBoard: vi.fn(async () => "board-2") }));
+vi.mock("./roomBattleship.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./roomBattleship.js")>()), battleshipBoardCard: vi.fn(async () => null) }));
 
 import { sweepBattleshipTurns } from "./roomTurnSweep.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
@@ -20,7 +23,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { _resetDrawingPauses, roomDrawingKey, withDrawingPause } from "./drawingPause.js";
-import { redrawBattleshipBoard } from "./roomBattleshipHandlers.js";
+import { postTurnBoard } from "./turnBoard.js";
 
 const storeMock = gameRoomStore as unknown as {
 	findPlayingByGame: ReturnType<typeof vi.fn>;
@@ -37,6 +40,13 @@ const A = "player-a";
 const B = "player-b";
 
 const client = { channels: { fetch: vi.fn().mockResolvedValue(null) } } as unknown as Client;
+
+// A client whose room channel resolves, so the expiry's redraw reaches the turn board.
+function boardClient(): Client {
+	const channel = Object.assign(Object.create(TextChannel.prototype) as TextChannel, { messages: { fetch: vi.fn(async () => null) } });
+	return { channels: { fetch: vi.fn(async () => channel) } } as unknown as Client;
+}
+const boardMock = postTurnBoard as unknown as ReturnType<typeof vi.fn>;
 
 // ⚠️ A CONSTANT rng CANNOT PLACE A FLEET. placeFleet retries on a collision, so
 // `() => 0.5` puts every ship in the same square and it throws after 500 attempts,
@@ -75,6 +85,8 @@ function makeRoom(idleMs: number, match: StoredBattleship = makeMatch(), moves =
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
+	// The expiry is a compare and swap on the turn it read (2026-10 item 267); written unless a test says otherwise.
+	storeMock.updateSecretIf.mockResolvedValue({});
 	trailMock.postMove.mockResolvedValue(true);
 	lifecycleMock.finish.mockResolvedValue(undefined);
 });
@@ -90,7 +102,7 @@ describe("sweepBattleshipTurns", () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT - 1000)]);
 
 		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	it("expires the turn once the budget has passed, and passes play to the other side", async () => {
@@ -100,10 +112,28 @@ describe("sweepBattleshipTurns", () => {
 
 		expect(summary).toEqual({ turnsExpired: 1, matchesForfeited: 0, setupsTimedOut: 0 });
 		// The turn moved, and the match is NOT over on a single expiry.
-		const saved = storeMock.update.mock.calls[0][2].secret as StoredBattleship;
+		const saved = storeMock.updateSecretIf.mock.calls[0][3] as StoredBattleship;
 		expect(saved.turn).toBe(1);
 		expect(saved.status).toBe("playing");
 		expect(lifecycleMock.finish).not.toHaveBeenCalled();
+	});
+
+	// Two paths end a turn now, the turn clock at its deadline and this sweep (2026-10 item 267), so
+	// the expiry writes only over the turn it read: the same captain, missed count and shots.
+	it("writes the expiry only over the turn it read, so a clock and a sweep landing together expire it once", async () => {
+		const match = makeMatch({ boardMessageId: "board-1" });
+		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000, match)]);
+		storeMock.updateSecretIf.mockResolvedValueOnce(null);
+
+		expect(await sweepBattleshipTurns(boardClient(), NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(storeMock.updateSecretIf.mock.calls[0][2]).toEqual({
+			"secret.status": "playing",
+			"secret.turn": match.turn,
+			"secret.missedTurns": match.missedTurns,
+			"secret.players.0.shots": match.players[0].shots,
+			"secret.players.1.shots": match.players[1].shots,
+		});
+		expect(boardMock).not.toHaveBeenCalled();
 	});
 
 	// ⚠️ THE POINT OF THE WHOLE SWEEP. Without it a walked-away match never reaches
@@ -135,16 +165,15 @@ describe("sweepBattleshipTurns", () => {
 	// The expired turn is a turn: its line rides that turn's board as its This turn block, which
 	// records it once the board posts (2026-10 item 263 R3-29), never as a line of its own.
 	it("records the expiry as a MOVE on the expired turn's board, so the transcript says why the match ended", async () => {
-		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000)]);
+		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000, makeMatch({ boardMessageId: "board-1" }))]);
 
-		await sweepBattleshipTurns(client, NOW);
+		await sweepBattleshipTurns(boardClient(), NOW);
 
 		expect(trailMock.postMove).not.toHaveBeenCalled();
-		const redraws = (redrawBattleshipBoard as unknown as ReturnType<typeof vi.fn>).mock.calls;
-		expect(redraws).toHaveLength(1);
+		expect(boardMock).toHaveBeenCalledOnce();
 		// Attributed to the player who missed, captured BEFORE expireTurn passes the
 		// turn to the other one.
-		expect(redraws[0][4]).toEqual([expect.objectContaining({ actorId: A, kind: "system", meta: { expired: true } })]);
+		expect(boardMock.mock.calls[0][4]).toEqual({ carried: [expect.objectContaining({ actorId: A, kind: "system", meta: { expired: true } })] });
 	});
 
 	// A match with no shots yet falls back to startedAt, which gives the first
@@ -160,12 +189,12 @@ describe("sweepBattleshipTurns", () => {
 		storeMock.findPlayingByGame.mockResolvedValue([room]);
 
 		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	it("keeps sweeping when one room throws", async () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000), makeRoom(TIMEOUT + 1000)]);
-		storeMock.update.mockRejectedValueOnce(new Error("mongo blip"));
+		storeMock.updateSecretIf.mockRejectedValueOnce(new Error("mongo blip"));
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -205,7 +234,7 @@ describe("a board that is drawing", () => {
 		});
 
 		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 
 		finish(null);
 		await drawing;

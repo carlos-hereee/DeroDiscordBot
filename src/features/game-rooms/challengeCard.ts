@@ -12,6 +12,7 @@ import { labelBotMentions } from "./botSeat.js";
 import { isRatedGame } from "@features/ratings/ratingEngine.js";
 import { effectiveSpectatorMode } from "./roomPermissions.js";
 import { cardVoiceState } from "./cardVoiceState.js";
+import { startCountdownState } from "./startCountdownState.js";
 
 // ── challengeCard ────────────────────────────────────────────────────
 // What:  the challenge card as a message: finding its channel (⚔️challenges, or
@@ -145,6 +146,8 @@ export function cardStateFor(room: IGameRoom, overrides: Partial<OpenerCardState
 		settingsNotes: room.settingsNotes ?? [],
 		// The card's own Dero voice request (2026-10 item 267), memory only like the voice queue.
 		voice: cardVoiceState.get(room.roomId),
+		// The host's Start counting the match in (2026-10 item 267), memory only like the voice line.
+		countingDown: startCountdownState.isCountingDown(room),
 		...overrides,
 	};
 }

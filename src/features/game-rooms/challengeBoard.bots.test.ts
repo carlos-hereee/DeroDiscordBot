@@ -16,6 +16,8 @@ import { adminLog } from "@features/setup/adminLog.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { _runStartCountdownsOut } from "./startCountdown.js";
+import { startCountdownState } from "./startCountdownState.js";
 
 // ── Play vs bots on the challenge card (2026-10 item 250 Phase 5) ───────────
 // The host's private picker is the one door a bot comes through: it refuses a game no
@@ -66,10 +68,19 @@ function select(userId: string, value: string): StringSelectMenuInteraction {
 	} as unknown as StringSelectMenuInteraction;
 }
 
+// Start counts the match in (2026-10 item 267, decision 13) and opens on the draft the count reads
+// again, so a case about what Start opens starts the match and runs the count out at once.
+async function startCounted(interaction: Parameters<typeof confirmStartMatch>[0], draft: IGameRoom): Promise<void> {
+	await confirmStartMatch(interaction, draft);
+	storeMock.findByRoomId.mockResolvedValue(draft);
+	await _runStartCountdownsOut();
+}
+
 const replyText = (interaction: { reply: unknown }): string => (((interaction.reply as Mock).mock.calls[0]?.[0] ?? {}) as { content?: string }).content ?? "";
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	startCountdownState._reset();
 	configMock.mockResolvedValue({ guildId: "guild-1", gamesCategoryId: "cat" });
 	openMock.mockResolvedValue({ ok: false, reason: "createFailed" });
 });
@@ -130,7 +141,7 @@ describe("the bot count select", () => {
 
 describe("starting against bots", () => {
 	it("opens a Hold'em table with nobody else joined when bots are chosen, seating the bots", async () => {
-		await confirmStartMatch(button(), makeRoom("holdem", { botSeats: 2 }));
+		await startCounted(button(), makeRoom("holdem", { botSeats: 2 }));
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ playerIds: [HOST], botIds: ["dero-bot-red", "dero-bot-orange"] }));
 	});
 
@@ -142,7 +153,7 @@ describe("starting against bots", () => {
 	});
 
 	it("makes the bot a battleship host's opponent, keeping the pool as spectators", async () => {
-		await confirmStartMatch(button(), makeRoom("battleship", { botSeats: 1, spectatorIds: ["friend"] }));
+		await startCounted(button(), makeRoom("battleship", { botSeats: 1, spectatorIds: ["friend"] }));
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ playerIds: [HOST], spectatorIds: ["friend"], botIds: ["dero-bot-red"] }));
 	});
 

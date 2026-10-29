@@ -230,6 +230,13 @@ export const gameRoomsCopy = {
 		invalidAmount: "That is not a number of chips.",
 	},
 
+	// ── the turn clock (2026-10 item 267, decision 15) ──
+	// The room line that warns the member on the clock before a timed turn ends. It pings that
+	// member alone; the turn's end is the game's own timeout line.
+	turnClock: {
+		warningLine: (userId: string, seconds: number): string => `⏰ <@${userId}> ${seconds} seconds left on your turn.`,
+	},
+
 	// ── the shared turn board (2026-10 item 263 R3-29) ──
 	// Over a turn's lines at the bottom of every game's board. Each turn's board stays in
 	// the room with its block, so the room reads as the match's log.
@@ -668,6 +675,10 @@ export const gameRoomsCopy = {
 		},
 		cardCancelled: (hostId: string): string => `<@${hostId}> called off the challenge.`,
 		cardStarted: (channelId: string): string => `The match is under way in <#${channelId}>.`,
+		// The host pressed Start (2026-10 item 267, decision 13): the card counts the match in, and
+		// a second Start while it counts is a state.
+		cardCountdown: (seconds: number): string => `⏳ The match starts in ${seconds} seconds.`,
+		countdownRunning: "The match is already counting in. It starts in a few seconds, or Call it off stops it.",
 		// A Blackjack table's start refusal (2026-10 item 254, Arcade 1): the table has five
 		// seats, counted like Monopoly's, the host included.
 		blackjackTooManyPlayers: (maxSeats: number, joined: number): string =>

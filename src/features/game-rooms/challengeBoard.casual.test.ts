@@ -19,6 +19,8 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { HOST_STRICT_ACTIONS } from "./gameRoomActions.js";
 import { casualBotSeats } from "./botSeat.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { _runStartCountdownsOut } from "./startCountdown.js";
+import { startCountdownState } from "./startCountdownState.js";
 
 // ── Rated or Casual (2026-10 item 254, Arcade 6) ────────────────────────────
 // Casual fills the empty seats with Dero bots through the write Play vs bots makes (one
@@ -76,10 +78,19 @@ function button(userId = HOST): ButtonInteraction {
 	} as unknown as ButtonInteraction;
 }
 
+// Start counts the match in (2026-10 item 267, decision 13) and opens on the draft the count reads
+// again, so a case about what Start opens starts the match and runs the count out at once.
+async function startCounted(interaction: Parameters<typeof confirmStartMatch>[0], draft: IGameRoom): Promise<void> {
+	await confirmStartMatch(interaction, draft);
+	storeMock.findByRoomId.mockResolvedValue(draft);
+	await _runStartCountdownsOut();
+}
+
 const replyText = (interaction: { reply: unknown }): string => (((interaction.reply as Mock).mock.calls[0]?.[0] ?? {}) as { content?: string }).content ?? "";
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	startCountdownState._reset();
 	configMock.mockResolvedValue({ guildId: "guild-1", gamesCategoryId: "cat" });
 	openMock.mockResolvedValue({ ok: false, reason: "createFailed" });
 	// The update answers the row with the patch applied, as Mongo's findOneAndUpdate does.
@@ -117,7 +128,7 @@ describe("choosing Casual", () => {
 	it("starts the filled table with the bots in the match and only the host in playerIds", async () => {
 		current = makeRoom("holdem", { casual: true, botSeats: 3 });
 
-		await confirmStartMatch(button(), current);
+		await startCounted(button(), current);
 
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ playerIds: [HOST], botIds: ["dero-bot-red", "dero-bot-orange", "dero-bot-gold"] }));
 	});
@@ -177,7 +188,7 @@ describe("a person joining a Casual table", () => {
 	it("then sits as a player beside the bots that are left, never a bot in playerIds", async () => {
 		current = makeRoom("holdem", { casual: true, botSeats: 2, spectatorIds: [JOINER] });
 
-		await confirmStartMatch(button(), current);
+		await startCounted(button(), current);
 
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ playerIds: [HOST, JOINER], botIds: ["dero-bot-red", "dero-bot-orange"] }));
 	});
@@ -219,7 +230,7 @@ describe("a person joining a Casual table", () => {
 		await joinChallenge(button(JOINER), current);
 		expect(storeMock.lowerBotSeats).toHaveBeenCalledWith("guild-1", "room-1", 0);
 
-		await confirmStartMatch(button(), makeRoom("battleship", { casual: true, botSeats: 0, spectatorIds: [JOINER] }));
+		await startCounted(button(), makeRoom("battleship", { casual: true, botSeats: 0, spectatorIds: [JOINER] }));
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ playerIds: [HOST, JOINER], botIds: [] }));
 	});
 });

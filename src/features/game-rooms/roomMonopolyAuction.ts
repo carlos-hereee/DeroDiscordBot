@@ -11,19 +11,18 @@ import {
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
 import { ownableTileName } from "@features/games/monopolyBoard.js";
-import { closeAuction, placeBid, type AuctionState, type MonopolyResult, type MonopolyState } from "@features/games/monopolyState.js";
+import { placeBid, type AuctionState, type MonopolyResult, type MonopolyState } from "@features/games/monopolyState.js";
 import { monopolyAuctionView, renderAuctionCard } from "@features/games/monopolyRenderer.js";
 import { withRenderFallback } from "@features/renderer/index.js";
 import { GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { auctionClosesAt } from "./roomMonopoly.js";
 import {
-	applyMonopolyOutcome,
+	closeExpiredAuction,
 	commitMonopolyMove,
 	loadSeatedRoom,
 	monopolyStateOf,
 	parseWholeCount,
-	persistIfUnchanged,
 } from "./roomMonopolyHandlers.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { showNotice } from "@utils/textModal.js";
@@ -38,7 +37,9 @@ import { showNotice } from "@utils/textModal.js";
 //        opened the match with auctions on and the seat on the clock passes.
 // Where: the round lives on the stored match (pendingAuction.roundOpenedAt), not
 //        in a timer, so a Railway deploy mid round costs nothing: the next tick
-//        after the boot closes it.
+//        after the boot closes it. The turn clock (2026-10 item 267) closes a round at
+//        its deadline through the same roomMonopolyHandlers.closeExpiredAuction, and
+//        this sweep stays as its backstop.
 // How:   every bid and the close go through the same compare and swap as any
 //        move. Bids are sealed: the reply with the amount is ephemeral, and the
 //        engine's public trail line for a bid names the bidder and never the
@@ -168,24 +169,6 @@ export async function sweepMonopolyAuctions(client: Client, now: Date = new Date
 	} finally {
 		sweepInFlight = false;
 	}
-}
-
-async function closeExpiredAuction(client: Client, room: IGameRoom, now: number): Promise<boolean> {
-	const state = monopolyStateOf(room);
-	const auction = state?.pendingAuction;
-	if (!state || state.phase !== "in-auction" || !auction || now < auctionClosesAt(auction)) return false;
-
-	const result = closeAuction(state);
-	if (!result.ok) return false;
-	// A bid that landed after this sweep read the row wins the compare and swap, and
-	// the next tick closes the round with that bid counted.
-	const written = await persistIfUnchanged(room, state, result.state, result.trailLines);
-	if (!written) return false;
-
-	// "system": no player pressed anything; the close happens because the clock ran out.
-	const sellerId = written.seats[written.activeSeatIndex].userId;
-	await applyMonopolyOutcome(client, room, state, written, { actorId: sellerId, kind: "system", lines: result.trailLines });
-	return true;
 }
 
 export const roomMonopolyAuction = { handleMauction, handleBidModal, sweepMonopolyAuctions };

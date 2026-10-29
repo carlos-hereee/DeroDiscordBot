@@ -45,7 +45,7 @@ import { HAND_CATEGORIES } from "@features/games/holdemHand.js";
 import { roomTrail, type RoomMoveInput } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { isClockExpired, roomDrawingKey, withDrawingPause } from "./drawingPause.js";
+import { isClockExpired, pausedDeadline, roomDrawingKey, withDrawingPause } from "./drawingPause.js";
 import { judgeJoin } from "./joinGate.js";
 import { labelEmbedForRoom, labelForRoom, relayMove, relayState } from "./satelliteRooms.js";
 import { consentPrompt } from "./networkRules.js";
@@ -67,6 +67,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 import { answerInChannel } from "@utils/answerInChannel.js";
 import { acknowledgeConfirm, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
 import { syncTurnPrompt, type TurnAdapter } from "./turnPrompt.js";
+import { syncTurnClocks, type TurnClockGame } from "./turnClock.js";
 import { postTurnBoard } from "./turnBoard.js";
 import { splitTurnAt, turnBlockLines } from "./turnLog.js";
 
@@ -307,8 +308,10 @@ async function redraw(client: Client, room: IGameRoom, table: HoldemTable, turn:
 			if (room.network) scheduleNetworkBoardRefresh();
 		},
 	}).catch((error) => console.warn("[game-rooms] failed to redraw the hold em table", error));
-	// The line that pings whoever the hand is waiting on, below the table that was just drawn.
+	// The line that pings whoever the hand is waiting on, below the table that was just drawn, and
+	// their turn clock (2026-10 item 267), counted from when this board showed them the turn.
 	await syncTurnPrompt(client, room, holdemTurnAdapter);
+	await syncTurnClocks(client, room, [holdemTurnClock]);
 }
 
 // A closed street's block as the room shows lines: a network table names its players.
@@ -1447,6 +1450,27 @@ export const holdemTurnAdapter: TurnAdapter = {
 		const request: HoldemMoveRequest = choice === RAISE_CHOICE ? { preset: "min", amount } : { preset: choice };
 		const refusal = await playHoldemMove(client, room, userId, request, acknowledge);
 		return refusal ? { ok: false, reason: refusal } : { ok: true };
+	},
+};
+
+/**
+ * Hold'em's turn clock (2026-10 item 267): the seat to act, from when the board showed the turn
+ * (clockStartOf) plus HOLDEM_TURN_TIMEOUT_MS and every drawing hold, the deadline the board's
+ * countdown line and the clock sweep both read. Its end is forceFoldIfDue, the sweep's own.
+ */
+export const holdemTurnClock: TurnClockGame = {
+	kind: "holdem",
+	current(room, now) {
+		const table = tableOf(room);
+		const memberId = holdemTurnAdapter.whoseTurn(room);
+		const fingerprint = holdemTurnAdapter.fingerprintOf(room);
+		if (!table || !memberId || !fingerprint) return null;
+		return { memberId, fingerprint, deadline: pausedDeadline(roomDrawingKey(room), clockStartOf(table), BOT_CONSTANTS.HOLDEM_TURN_TIMEOUT_MS, now) };
+	},
+	async expire(client, room, now) {
+		const table = tableOf(room);
+		if (!table || table.status !== "playing" || !handInProgress(table)) return false;
+		return forceFoldIfDue(client, room, table, now);
 	},
 };
 

@@ -118,7 +118,16 @@ export function toPublicResult(outcome: ActionOutcome | undefined): PublicResult
 
 // ── the narrator ──
 
-export type DealerLineKind = "handStart" | "flop" | "turn" | "river" | "result" | "toAct";
+/**
+ * What a dealer line is. The first six are a Hold'em hand's narration; the last four are Dero
+ * calling any card or room to order (2026-10 item 267): new challengers, the Start countdown and
+ * the turn clock's warning and end. Those four never pass through narrate or the per hand caps,
+ * they are spoken one at a time through announcementLine.
+ */
+export type DealerLineKind = "handStart" | "flop" | "turn" | "river" | "result" | "toAct" | AnnouncementKind;
+
+/** A line Dero says to a card or a room outside any hand. */
+export type AnnouncementKind = "challengers" | "countdown" | "turnWarning" | "turnOver";
 
 /** One thing the dealer says, in its text form (mentions) and its spoken form (names). */
 export interface DealerLine {
@@ -131,8 +140,14 @@ export interface DealerLine {
 
 // Which lines survive when the spoken cap bites: the turn prompts go first,
 // because the board embed already shows whose turn it is.
-const LINE_VALUE: Record<DealerLineKind, number> = { handStart: 3, result: 3, flop: 2, turn: 2, river: 2, toAct: 1 };
+// The announcements outrank everything, though no hand ever carries one into the cap.
+const LINE_VALUE: Record<DealerLineKind, number> = { handStart: 3, result: 3, flop: 2, turn: 2, river: 2, toAct: 1, challengers: 3, countdown: 3, turnWarning: 3, turnOver: 3 };
 const LOWEST_VALUE = 1;
+
+/** One announcement as a dealer line: spoken words with no mention, so its text form is the same. */
+export function announcementLine(kind: AnnouncementKind, spoken: string): DealerLine {
+	return { kind, text: spoken, spoken, cards: [] };
+}
 
 // The lines a hand can still produce that outrank a turn prompt: every street not
 // dealt yet, plus the result. A turn prompt is spoken only if these still fit.

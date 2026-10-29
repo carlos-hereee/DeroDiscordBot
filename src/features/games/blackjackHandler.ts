@@ -54,6 +54,7 @@ import { cashOutBlackjackSeat, saveBlackjackStacks } from "@features/game-rooms/
 import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showCooldownNotice, showNotice, showPendingNotice } from "@utils/textModal.js";
 import { syncTurnPrompt, type TurnAdapter } from "@features/game-rooms/turnPrompt.js";
+import { disarmTurnClock, syncTurnClocks, type TurnClockGame } from "@features/game-rooms/turnClock.js";
 
 // ── /mini-game blackjack ───────────────────────────────────────────────────
 // What:  two kinds of table on ONE engine. A ROOM's table (a solo room, or a multi seat
@@ -163,11 +164,10 @@ interface BlackjackGame {
 	// the table TABLE_TIMEOUT_MS later plus any time the board spent drawing.
 	openedAt: number;
 	lifetimeTimer: NodeJS.Timeout | null;
-	// A room table's turn clock (BLACKJACK_TURN_TIMEOUT_MS): the turn it was armed for, when
-	// that turn started, and its timer.
+	// A room table's turn clock (BLACKJACK_TURN_TIMEOUT_MS): the turn it counts and when that turn
+	// started. The timer itself is the shared turn clock's (blackjackTurnClock below).
 	clockTurn: string | null;
 	clockStartedAt: number;
-	clockTimer: NodeJS.Timeout | null;
 	// What each member who left walked away with, kept for the room's winner and its coins.
 	cashedOut: Map<string, number>;
 	// When a member last chose a bet, an action or a leave themselves; a timed out turn does not
@@ -193,8 +193,7 @@ export const _clearBlackjackGames = (): void => {
 function clearGameTimers(game: BlackjackGame): void {
 	if (game.seatingTimer) clearTimeout(game.seatingTimer);
 	if (game.lifetimeTimer) clearTimeout(game.lifetimeTimer);
-	if (game.clockTimer) clearTimeout(game.clockTimer);
-	game.clockTimer = null;
+	if (game.roomId) disarmTurnClock({ guildId: game.guildId, roomId: game.roomId }, "blackjack");
 }
 export const _activeBlackjackGameCount = (): number => games.size;
 // The live table in a channel, so a test can stack the shoe before the deal it wants to see.
@@ -384,7 +383,6 @@ export async function startBlackjackTable(
 		lifetimeTimer: null,
 		clockTurn: null,
 		clockStartedAt: 0,
-		clockTimer: null,
 		cashedOut: new Map(),
 		actedAt: null,
 		ended: false,
@@ -532,57 +530,48 @@ async function endLifetimeIfDue(game: BlackjackGame, channelId: string): Promise
 	armLifetime(game, channelId);
 }
 
-// ── a room table's turn clock (2026-10 item 267, owner decision 7) ──────────
-// One timer per table, for whichever turn the table waits on: a betting turn that runs
-// out bets the seat's smallest choice, an action turn stands. Armed from promptTurn, so a
-// new turn re-arms it and the same turn keeps it; held while the board draws, like every
-// clock here. Neither timed out move counts as the member acting.
+// ── a room table's turn clock (2026-10 item 267, owner decisions 7 and 15) ─────
+// One clock per table, for whichever turn the table waits on, run by the shared turn clock
+// (turnClock.ts): it warns the seat before the turn runs out and calls runOutTurnIfDue at the
+// deadline, where a betting turn bets the seat's smallest choice and an action turn stands. The
+// turn's start is kept here, since the table lives in this process: promptTurn notes it when a new
+// turn begins, and the same turn keeps it. Held while the board draws, like every clock here.
+// Neither timed out move counts as the member acting.
 
-function armTurnClock(game: BlackjackGame, channelId: string): void {
+function noteTurnStart(game: BlackjackGame): void {
 	const turn = game.table ? fingerprintOfTable(game.table) : null;
-	if (turn === game.clockTurn && game.clockTimer) return;
-	if (game.clockTimer) clearTimeout(game.clockTimer);
-	game.clockTimer = null;
+	if (turn === game.clockTurn) return;
 	game.clockTurn = turn;
-	if (!turn) return;
 	game.clockStartedAt = Date.now();
-	scheduleTurnClock(game, channelId);
 }
 
-function scheduleTurnClock(game: BlackjackGame, channelId: string): void {
-	const remaining = pausedDeadline(drawingKeyOf(channelId), game.clockStartedAt, BOT_CONSTANTS.BLACKJACK_TURN_TIMEOUT_MS) - Date.now();
-	game.clockTimer = setTimeout(() => {
-		void runOutTurnIfDue(game, channelId);
-	}, Math.max(0, remaining));
-}
-
-async function runOutTurnIfDue(game: BlackjackGame, channelId: string): Promise<void> {
+// The turn ran out: bet the smallest choice or stand for the seat. Answers whether a timed out
+// move was played; false for a turn played while this waited on a draw, or a table gone since.
+async function runOutTurnIfDue(game: BlackjackGame, channelId: string): Promise<boolean> {
 	await drawingSettled(drawingKeyOf(channelId));
 	const table = game.table;
-	// A turn that was played while this waited, or a table gone since, owes nothing.
-	if (games.get(channelId) !== game || !table || !game.board || fingerprintOfTable(table) !== game.clockTurn) return;
-	if (!isClockExpired(drawingKeyOf(channelId), game.clockStartedAt, BOT_CONSTANTS.BLACKJACK_TURN_TIMEOUT_MS)) {
-		scheduleTurnClock(game, channelId);
-		return;
-	}
-	game.clockTimer = null;
+	if (games.get(channelId) !== game || !table || !game.board || fingerprintOfTable(table) !== game.clockTurn) return false;
+	if (!isClockExpired(drawingKeyOf(channelId), game.clockStartedAt, BOT_CONSTANTS.BLACKJACK_TURN_TIMEOUT_MS)) return false;
 	game.clockTurn = null;
 	// The room may have ended another way (the idle sweep, a deleted channel), which already
 	// paid its stacks: this table then stops playing instead of dealing on in a closed room.
 	if (!(await isRoomStillPlaying(game))) {
 		retireTable(game);
-		return;
+		return false;
 	}
 	const client = game.board.client;
 	const writer = messageWriter(game.board);
 	const betting = bettingSeat(table);
 	if (betting) {
 		const smallest = betChoices(table, betting.userId)[0];
-		if (smallest) await placeBlackjackBet(game, channelId, betting.userId, smallest.amount, client, writer, { timedOut: true });
-		return;
+		if (!smallest) return false;
+		await placeBlackjackBet(game, channelId, betting.userId, smallest.amount, client, writer, { timedOut: true });
+		return true;
 	}
 	const acting = table.phase === "playing" ? table.seats[table.turn] : undefined;
-	if (acting) await playBlackjackAction(game, channelId, acting.userId, "stand", client, writer, { timedOut: true });
+	if (!acting) return false;
+	await playBlackjackAction(game, channelId, acting.userId, "stand", client, writer, { timedOut: true });
+	return true;
 }
 
 // Takes no Message: every render on the click path goes through click.update(),
@@ -1145,8 +1134,7 @@ async function endTable(game: BlackjackGame, client: Message["client"]): Promise
 	if (!table || !game.roomId || !game.bankroll || game.ended) return;
 	// ⚠️ Claimed synchronously, before anything awaits (see `ended`).
 	game.ended = true;
-	if (game.clockTimer) clearTimeout(game.clockTimer);
-	game.clockTimer = null;
+	disarmTurnClock({ guildId: game.guildId, roomId: game.roomId }, "blackjack");
 
 	const finalStacks: FinalStack[] = table.seats.map((seat) => ({ userId: seat.userId, buyIn: game.bankroll?.buyIn ?? 0, stack: game.cashedOut.get(seat.userId) ?? seat.stack }));
 	const roomId = game.roomId;
@@ -1230,12 +1218,13 @@ function fingerprintOfTable(table: BlackjackTable): string | null {
 // Rooms only; the inline forms have no row. A room that finished another way retires the table.
 async function promptTurn(game: BlackjackGame, client: Client): Promise<void> {
 	if (!game.roomId) return;
-	const channelId = game.board?.channelId;
-	if (channelId && !game.ended) armTurnClock(game, channelId);
+	if (!game.ended) noteTurnStart(game);
 	const room = await gameRoomStore.findByRoomId(game.guildId, game.roomId).catch(() => null);
 	if (!room) return;
 	if (room.status !== "playing" && !game.ended) retireTable(game);
 	await syncTurnPrompt(client, room, blackjackTurnAdapter);
+	// A network table too, which gets no prompt line but still runs out of time.
+	await syncTurnClocks(client, room, [blackjackTurnClock]);
 }
 
 export const blackjackTurnAdapter: TurnAdapter = {
@@ -1298,6 +1287,35 @@ export const blackjackTurnAdapter: TurnAdapter = {
 		if (!BLACKJACK_ACTIONS.includes(action)) return { ok: false, reason: gamesCopy.blackjack.illegalAction };
 		await acknowledge();
 		return answerOf(await playBlackjackAction(game, room.channelId ?? "", userId, action as BlackjackAction, boardClient, writer));
+	},
+};
+
+/**
+ * A room table's turn clock (2026-10 item 267, decision 15), solo or multi seat: the seat the
+ * table waits on, from the turn's start promptTurn noted plus BLACKJACK_TURN_TIMEOUT_MS and every
+ * drawing hold. Its end is runOutTurnIfDue, the timeout this table always had. A restart loses the
+ * table itself (roomBootRecovery closes the room), so there is never a clock to rebuild.
+ */
+export const blackjackTurnClock: TurnClockGame = {
+	kind: "blackjack",
+	current(room, now) {
+		const game = gameOf(room);
+		const table = game?.table;
+		if (!game || !table || !room.channelId || game.ended) return null;
+		const fingerprint = fingerprintOfTable(table);
+		const memberId = (bettingSeat(table) ?? actingSeat(game))?.userId;
+		if (!fingerprint || !memberId || fingerprint !== game.clockTurn) return null;
+		return { memberId, fingerprint, deadline: pausedDeadline(drawingKeyOf(room.channelId), game.clockStartedAt, BOT_CONSTANTS.BLACKJACK_TURN_TIMEOUT_MS, now) };
+	},
+	async expire(_client, room) {
+		const game = gameOf(room);
+		return game && room.channelId ? runOutTurnIfDue(game, room.channelId) : false;
+	},
+	// The room ended another way (the idle sweep, a deleted channel), which already paid its
+	// stacks: the table stops playing instead of dealing on in a closed room.
+	roomEnded(room) {
+		const game = gameOf(room);
+		if (game && !game.ended) retireTable(game);
 	},
 };
 

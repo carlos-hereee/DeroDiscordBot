@@ -99,6 +99,14 @@ describe("the opener card's settings line", () => {
 		expect(openerCardEmbed(card({ settingsNotes: [note] })).data.description).toContain(note);
 	});
 
+	// The host's Start counts the match in (2026-10 item 267, decision 13), and the card says so while it gathers.
+	it("says the match starts in ten seconds while the Start counts in, and never on a card that started", () => {
+		const line = gameRoomsCopy.board.cardCountdown(10);
+		expect(openerCardEmbed(card()).data.description).not.toContain(line);
+		expect(openerCardEmbed(card({ countingDown: true })).data.description).toContain(line);
+		expect(openerCardEmbed(card({ countingDown: true, startedChannelId: "ch-1" })).data.description).not.toContain(line);
+	});
+
 	it("shows no settings line on a closed card", () => {
 		for (const closed of [card({ startedChannelId: "ch-1" }), card({ cancelled: true }), card({ resultLine: "over" })]) {
 			expect(settingsLineOf(closed)).toBeUndefined();

@@ -14,6 +14,9 @@ vi.mock("@db/stores/playerRatingStore.js", () => ({ playerRatingStore: { findFor
 vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, describeRoomOpenFailure: () => "nope" }));
 vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedValue(null), describeSoloOpenFailure: () => "nope" }));
 vi.mock("./challengeCardRenderer.js", () => ({ renderChallengeCard: vi.fn().mockResolvedValue(null), challengeCardView: vi.fn().mockResolvedValue({}) }));
+// Dero's voice (2026-10 item 267, decision 14): which call he is in, and what he would say there.
+vi.mock("@features/voice/voiceSessions.js", () => ({ voiceSessions: { get: vi.fn(() => null) } }));
+vi.mock("@features/voice/callAnnouncer.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("@features/voice/callAnnouncer.js")>()), speakInCall: vi.fn(async () => "spoken") }));
 
 import { chooseVisibility, handleInviteSelect, handleOpponentSelect, joinChallenge, openInvitePicker } from "./challengeBoard.js";
 import { buildSettingsModal, defaultSettings, type SettingsGame } from "./challengeSettings.js";
@@ -25,6 +28,9 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { voiceSessions } from "@features/voice/voiceSessions.js";
+import { speakInCall } from "@features/voice/callAnnouncer.js";
+import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 
 // ── the challenge card under the host controls (2026-10 item 244 Phase 4) ──
 // What:  the server's reach caps the visibility a host is offered AND may choose; the
@@ -228,5 +234,62 @@ describe("a removed member cannot come back by a select", () => {
 
 		expect(interaction.deferReply).not.toHaveBeenCalled();
 		expect(replyText(interaction)).toBe(gameRoomsCopy.board.poolEmpty);
+	});
+});
+
+// ── new challengers at the door (2026-10 item 267, owner decision 14) ──
+// A member joining a card's pool, or asking to under approval, makes Dero say so in the card's
+// call, and only when the host turned Dero voice on and Dero is in that call. Never a text line.
+describe("Dero greets new challengers", () => {
+	const sessionMock = voiceSessions.get as unknown as Mock;
+	const speakMock = speakInCall as unknown as Mock;
+	const settle = async () => {
+		for (let i = 0; i < 20; i++) await Promise.resolve();
+	};
+
+	beforeEach(() => {
+		// Dero is in the call this card's own request started.
+		sessionMock.mockReturnValue({ channelId: "vc-1", startedByRoomId: "room-1" });
+	});
+
+	it("says the challenger line in the card's call when a member joins with Dero voice on", async () => {
+		storeMock.addPoolMember.mockResolvedValue(makeRoom({ game: "rps", deroVoice: true, spectatorIds: [JOINER] }));
+		await joinChallenge(makeButton(JOINER), makeRoom({ game: "rps", deroVoice: true }));
+
+		await vi.waitFor(() => expect(speakMock).toHaveBeenCalledWith("guild-1", deroBrainCopy.dealer.challengers));
+		expect(speakMock).toHaveBeenCalledOnce();
+	});
+
+	it("says nothing when a member joins with Dero voice off", async () => {
+		storeMock.addPoolMember.mockResolvedValue(makeRoom({ game: "rps", deroVoice: false, spectatorIds: [JOINER] }));
+		await joinChallenge(makeButton(JOINER), makeRoom({ game: "rps", deroVoice: false }));
+		await settle();
+
+		expect(speakMock).not.toHaveBeenCalled();
+	});
+
+	it("tells the host to check Requests when a member asks to join with Dero voice on", async () => {
+		storeMock.addPendingJoin.mockResolvedValue(makeRoom({ game: "rps", deroVoice: true, requireApproval: true, pendingJoinIds: [JOINER] }));
+		await joinChallenge(makeButton(JOINER), makeRoom({ game: "rps", deroVoice: true, requireApproval: true }));
+
+		await vi.waitFor(() => expect(speakMock).toHaveBeenCalledWith("guild-1", deroBrainCopy.dealer.challengersAsking));
+		expect(speakMock).toHaveBeenCalledOnce();
+	});
+
+	it("says nothing when a member asks to join with Dero voice off", async () => {
+		storeMock.addPendingJoin.mockResolvedValue(makeRoom({ game: "rps", deroVoice: false, requireApproval: true, pendingJoinIds: [JOINER] }));
+		await joinChallenge(makeButton(JOINER), makeRoom({ game: "rps", deroVoice: false, requireApproval: true }));
+		await settle();
+
+		expect(speakMock).not.toHaveBeenCalled();
+	});
+
+	it("says nothing while Dero is in another match's call", async () => {
+		sessionMock.mockReturnValue({ channelId: "vc-2", startedByRoomId: "room-9" });
+		storeMock.addPoolMember.mockResolvedValue(makeRoom({ game: "rps", deroVoice: true, spectatorIds: [JOINER] }));
+		await joinChallenge(makeButton(JOINER), makeRoom({ game: "rps", deroVoice: true }));
+		await settle();
+
+		expect(speakMock).not.toHaveBeenCalled();
 	});
 });

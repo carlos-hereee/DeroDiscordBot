@@ -2,17 +2,10 @@ import type { Client } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { mapWithConcurrency } from "@utils/mapWithConcurrency.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import { expireTurn, startBattle } from "@features/games/battleshipState.js";
-import { awardTwoPlayerResult } from "@features/games/gameXp.js";
-import { applyDebtDefault, applyForfeit, waitingDebt } from "@features/games/monopolyState.js";
-import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
-import { roomTrail, type RoomMoveInput } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
-import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { deserializeMatch, serializeMatch, type StoredBattleship } from "./roomBattleship.js";
-import { redrawBattleshipBoard } from "./roomBattleshipHandlers.js";
-import { applyMonopolyOutcome, monopolyStateOf, persistIfUnchanged } from "./roomMonopolyHandlers.js";
-import { isClockExpired, roomDrawingKey } from "./drawingPause.js";
+import { expireBattleshipTurnIfDue } from "./roomBattleshipHandlers.js";
+import { forfeitIdleMonopolySeatIfDue } from "./roomMonopolyHandlers.js";
+import { lastActivityAt } from "./roomActivity.js";
 import { isBlackjackRoomGame } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { HoldemTable } from "@features/games/holdemTable.js";
@@ -32,9 +25,14 @@ import type { HoldemTable } from "@features/games/holdemTable.js";
 //        when their word is guessed; the long ones can be abandoned MID-match,
 //        which is why each sweep is game-scoped. (Hold em's 3 minute clock is too
 //        fast for this 5 minute tick and runs on its own interval in main.ts.)
-// How:   compare the last activity against the game's budget, plus any time the
-//        board spent drawing (drawingPause), call the pure engine's expiry
-//        (`expireTurn`, `applyForfeit`), and either pass the turn or end the match.
+//        Since 2026-10 item 267 the turn clock (turnClock.ts) ends a Battleship turn and a
+//        Monopoly idle seat at their deadlines through the very functions these sweeps call
+//        (expireBattleshipTurnIfDue, forfeitIdleMonopolySeatIfDue), so the two sweeps here
+//        are its backstop: a clock a restart could not rebuild is still ended on a tick.
+// How:   each game's timeout function compares the last activity against the game's
+//        budget, plus any time the board spent drawing (drawingPause), and passes the
+//        turn or ends the match through a compare and swap, so a sweep and a clock that
+//        land together end a turn once.
 
 export interface TurnSweepSummary {
 	turnsExpired: number;
@@ -43,33 +41,11 @@ export interface TurnSweepSummary {
 	setupsTimedOut: number;
 }
 
-// When this match last saw activity. The move trail is the record of that: every
-// shot appends one entry, so its last timestamp is the last time somebody played.
-//
-// A match with NO moves falls back to `startedAt`, which is what gives the first
-// player a full turn budget rather than an instant expiry on the next tick.
-function lastActivityAt(room: IGameRoom): number {
-	const moves = room.moves ?? [];
-	const last = moves.length > 0 ? moves[moves.length - 1]?.at : null;
-	const stamp = last ?? room.startedAt;
-	return stamp ? new Date(stamp).getTime() : 0;
-}
-
-// The setup clock ran out (post-launch plan item 17): start the battle with both
-// fleets as they are. A compare and swap on the status, so a second Ready landing in
-// the same moment and this sweep cannot both start it. True when this call started it.
-async function startBattleOnSetupTimeout(client: Client, room: IGameRoom, stored: StoredBattleship): Promise<boolean> {
-	const state = deserializeMatch(stored);
-	if (!startBattle(state)) return false;
-	const next = serializeMatch(state, { boardMessageId: stored.boardMessageId });
-	const started = await gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.status": "setup" }, next);
-	if (!started) return false;
-	await roomTrail.postMove(client, room, { actorId: room.hostId, kind: "system", text: gameRoomsCopy.battleship.setupTimedOut, meta: { expired: true } });
-	await roomTrail.postMove(client, room, { actorId: room.hostId, kind: "system", text: gameRoomsCopy.battleship.battleBegins(state.players[state.turn].userId) });
-	await redrawBattleshipBoard(client, room, next);
-	return true;
-}
-
+/**
+ * Forfeit every battleship turn nobody took within GAME_ROOM_TURN_TIMEOUT_MS, and start every
+ * battle whose setup clock ran out. The backstop of the turn clock (2026-10 item 267), which ends
+ * a turn at its deadline through the same expireBattleshipTurnIfDue below.
+ */
 export async function sweepBattleshipTurns(client: Client, now: Date = new Date()): Promise<TurnSweepSummary> {
 	const rooms = await gameRoomStore.findPlayingByGame("battleship");
 	if (rooms.length === 0) return { turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 };
@@ -80,71 +56,10 @@ export async function sweepBattleshipTurns(client: Client, now: Date = new Date(
 
 	await mapWithConcurrency(rooms, BOT_CONSTANTS.SCHEDULER_GUILD_CONCURRENCY, async (room) => {
 		try {
-			const stored = room.secret as StoredBattleship | null;
-			// A room whose match never started, or whose secret is some other game's
-			// shape, is not this sweep's business.
-			if (!stored?.players) return;
-
-			// Never while the board is drawing, and every held millisecond is added back,
-			// so a slow render never costs a player their turn (the drawing pause).
-			if (!isClockExpired(roomDrawingKey(room), lastActivityAt(room), BOT_CONSTANTS.GAME_ROOM_TURN_TIMEOUT_MS, now.getTime())) return;
-
-			const state = deserializeMatch(stored);
-			// A captain who never pressed Ready costs nobody the match (post-launch plan
-			// item 17): when the setup clock runs out the fleets sail as Dero laid them.
-			if (state.status === "setup") {
-				if (await startBattleOnSetupTimeout(client, room, stored)) setupsTimedOut++;
-				return;
-			}
-			if (state.status !== "playing") return;
-
-			// Whose turn is being forfeited, captured BEFORE expireTurn mutates the
-			// state, because it passes the turn to the other player.
-			const loserId = state.players[state.turn].userId;
-			const result = expireTurn(state);
-			const next = serializeMatch(state, { boardMessageId: stored.boardMessageId });
-			await gameRoomStore.update(room.guildId, room.roomId, { secret: next as never });
-
-			// The expiry is a MOVE: it belongs in the transcript that is the product, and it is
-			// the only record of why the match ended the way it did. It is the turn the captain
-			// let pass, so it rides that turn's board as its This turn block (2026-10 item 263
-			// R3-29), recorded once the board is posted rather than posted as a line of its own.
-			const expired: RoomMoveInput = {
-				actorId: loserId,
-				kind: "system",
-				text: result.forfeited ? gameRoomsCopy.battleship.forfeitedMatch(loserId) : gameRoomsCopy.battleship.forfeitedTurn(loserId),
-				meta: { expired: true },
-			};
-			await redrawBattleshipBoard(client, room, next, null, [expired]);
-
-			if (!result.forfeited) {
-				turnsExpired++;
-				return;
-			}
-
-			matchesForfeited++;
-			const claimed = await roomLifecycle.finish(client, room, { winnerId: result.winnerId, outcome: { bucket: "timeout" } });
-			// A turn timeout forfeit IS rated, by owner decision (2026-10 item 244): the
-			// player who stopped taking turns lost a match they started. Once, by the call
-			// that won finish's claim; fire and forget.
-			if (claimed && result.winnerId) void recordMatchRatings(room, [result.winnerId, loserId]);
-
-			// The win still pays, because the opponent turning up and the other player
-			// not is exactly the behaviour being rewarded. No sink bonus is involved:
-			// nothing was sunk by walking away.
-			// The captains off the match, not the row: against a Dero bot the row holds the
-			// host alone (2026-10 item 250 Phase 5), and awardXp pays the bot nothing.
-			const [a, b] = state.players.map((player) => player.userId);
-			awardTwoPlayerResult({
-				client,
-				guildId: room.guildId,
-				channelId: room.channelId,
-				game: "battleship",
-				challenger: { id: a } as never,
-				opponent: { id: b } as never,
-				winner: result.winnerId === a ? "challenger" : "opponent",
-				resultKey: room.roomId,
-			});
+			const ended = await expireBattleshipTurnIfDue(client, room, now);
+			if (ended === "expired") turnsExpired++;
+			if (ended === "forfeited") matchesForfeited++;
+			if (ended === "setupTimedOut") setupsTimedOut++;
 		} catch (error) {
 			// Isolated per ROOM. This runs on a cron with nobody watching, so a throw
 			// would be swallowed by the tick wrapper while every other stalled match
@@ -169,20 +84,13 @@ export interface MonopolyIdleSummary {
 	matchesFinished: number;
 }
 
-// The later of the turn's start and the last trail line. The turn start alone
-// would forfeit a seat that has been ACTING all along inside one long turn (a roll
-// near the budget's end and a buy just after it still leave turnStartedAt that old),
-// and the trail alone would misread a match whose last line was the previous
-// seat's, posted long before this seat was handed the clock.
-function monopolyLastActivityAt(room: IGameRoom, turnStartedAt: number): number {
-	return Math.max(lastActivityAt(room), turnStartedAt);
-}
-
 /**
  * Forfeit the seat on the clock in every Monopoly match that has seen no move for
  * GAME_ROOM_MONOPOLY_IDLE_MS, and finish the match when that leaves one seat.
  * One seat per match per tick: the next seat gets a fresh budget from the passTurn
- * inside applyForfeit, so a match is never emptied in a single sweep.
+ * inside applyForfeit, so a match is never emptied in a single sweep. The backstop of the
+ * turn clock (2026-10 item 267), which forfeits at the deadline through the same
+ * forfeitIdleMonopolySeatIfDue.
  */
 export async function sweepMonopolyIdle(client: Client, now: Date = new Date()): Promise<MonopolyIdleSummary> {
 	const rooms = await gameRoomStore.findPlayingByGame("monopoly");
@@ -193,35 +101,10 @@ export async function sweepMonopolyIdle(client: Client, now: Date = new Date()):
 
 	await mapWithConcurrency(rooms, BOT_CONSTANTS.SCHEDULER_GUILD_CONCURRENCY, async (room) => {
 		try {
-			const state = monopolyStateOf(room);
-			if (!state || state.phase === "finished") return;
-
-			const lastActive = monopolyLastActivityAt(room, state.turnStartedAt);
-			if (!isClockExpired(roomDrawingKey(room), lastActive, BOT_CONSTANTS.GAME_ROOM_MONOPOLY_IDLE_MS, now.getTime())) return;
-
-			// The seat holding the match up: the debtor while it waits on a debt (who may
-			// not be the seat on the clock, since a card can charge a rival), otherwise the
-			// seat on the clock. Captured BEFORE the move, which hands the clock on.
-			//
-			// A debtor who never pays is bankrupt to whoever they owed (applyDebtDefault),
-			// not forfeited to the bank: the creditor is owed that money, and the rules
-			// give a player creditor everything a debtor who cannot pay holds.
-			const debt = waitingDebt(state);
-			const idleId = debt?.debtorId ?? state.seats[state.activeSeatIndex].userId;
-			const result = debt ? applyDebtDefault(state, now.getTime()) : applyForfeit(state, idleId, now.getTime());
-			if (!result.ok) return;
-			const reason = debt ? gameRoomsCopy.monopoly.idleDebtDefault(idleId) : gameRoomsCopy.monopoly.idleForfeit(idleId);
-
-			// ⚠️ THE PLAYER WINS A TIE. A move that landed after this sweep read the row
-			// changes the turn, so the compare and swap finds nothing and the seat that
-			// just woke up keeps playing instead of being forfeited on a stale read.
-			const lines = [reason, ...result.trailLines];
-			const written = await persistIfUnchanged(room, state, result.state, lines);
+			const written = await forfeitIdleMonopolySeatIfDue(client, room, now);
 			if (!written) return;
-
 			seatsForfeited++;
 			if (written.phase === "finished") matchesFinished++;
-			await applyMonopolyOutcome(client, room, state, written, { actorId: idleId, kind: "system", lines }, "timeout");
 		} catch (error) {
 			// Isolated per ROOM, for the same reason as the battleship sweep above.
 			console.error("[game-rooms] monopoly idle sweep failed for one room", {

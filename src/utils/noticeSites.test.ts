@@ -109,6 +109,11 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/game-rooms/challengeBoard.ts", within: "handleOpponentSelect", anchor: "gameRoomsCopy.board.draftGone", kind: "race", why: "the opponent picker's Submit (or its select fallback): the draft ended after the Start press" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "handleOpponentSelect", anchor: "gameRoomsCopy.board.notYourChallenge", kind: "race", why: "the opponent picker's Submit: the Start press is host strict, so only a forged or replayed Submit is not the host's" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "handleOpponentSelect", anchor: "gameRoomsCopy.board.poolEmpty", kind: "race", why: "the opponent picker's Submit: the chosen member left or was removed after the picker opened" },
+	// The start countdown (2026-10 item 267, decision 13): a second Start while the match counts in.
+	{ file: "features/game-rooms/challengeBoard.ts", within: "startMatch", anchor: "gameRoomsCopy.board.countdownRunning", kind: "state" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "confirmStartMatch", anchor: "gameRoomsCopy.board.countdownRunning", kind: "race", why: "the start confirm's Submit: startMatch refuses a Start while the match counts in, so only a confirm opened before another Submit began the count meets this" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "handleOpponentSelect", anchor: "gameRoomsCopy.board.countdownRunning", kind: "race", why: "the opponent picker's Submit: startMatch refuses a Start while the match counts in, so only a picker opened before the count began meets this" },
+	{ file: "features/game-rooms/challengeBoard.ts", within: "openAfterCountdown", anchor: "refusal", kind: "race", why: "the end of the start countdown, after the Start's Submit was acknowledged: the pool moved during the ten seconds, so the draft can no longer start as it was" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "rematchFromRoom", anchor: "check.reply", kind: "state" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "playDero", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
 	{ file: "features/game-rooms/challengeBoard.ts", within: "openBotPicker", anchor: "refusal", kind: "state" },

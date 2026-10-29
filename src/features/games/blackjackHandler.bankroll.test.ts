@@ -305,6 +305,48 @@ describe("the turn clock", () => {
 		expect(saveMock.mock.calls.every((call) => call[2] === openedAt)).toBe(true);
 	});
 
+	// The shared turn clock (2026-10 item 267, decision 15) warns before the table's own timeout.
+	const LEAD = BOT_CONSTANTS.TURN_WARNING_LEAD_MS;
+	const sentLines = (room: ReturnType<typeof fakeRoom>, line: string) =>
+		(room.channel.send as unknown as ReturnType<typeof vi.fn>).mock.calls.filter((call) => (call[0] as { content?: string }).content === line);
+
+	it("warns the seat on the clock once, ten seconds before its turn runs out, pinging only that seat", async () => {
+		vi.useFakeTimers({ now: Date.UTC(2026, 9, 29, 12, 0, 0) });
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], FREE_TABLE);
+		const warning = gameRoomsCopy.turnClock.warningLine(ALICE.userId, LEAD / 1000);
+
+		await vi.advanceTimersByTimeAsync(CLOCK - LEAD - 1);
+		expect(sentLines(room, warning)).toHaveLength(0);
+		await vi.advanceTimersByTimeAsync(1);
+		const warned = sentLines(room, warning);
+		expect(warned).toHaveLength(1);
+		expect((warned[0][0] as { allowedMentions: unknown }).allowedMentions).toEqual({ users: [ALICE.userId] });
+		expect(table().seats[0].bet).toBe(0);
+
+		// The turn ends at the deadline through the table's own timeout, and the warning stays one.
+		await vi.advanceTimersByTimeAsync(LEAD);
+		expect(table().seats[0].bet).toBe(50);
+		expect(sentLines(room, warning)).toHaveLength(1);
+	});
+
+	it("never warns or times out a seat whose turn was played first", async () => {
+		vi.useFakeTimers({ now: Date.UTC(2026, 9, 29, 12, 0, 0) });
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], FREE_TABLE);
+		await vi.advanceTimersByTimeAsync(60_000);
+		await bet(ALICE.userId, 100);
+		await flush();
+
+		await vi.advanceTimersByTimeAsync(CLOCK - 60_000);
+		expect(sentLines(room, gameRoomsCopy.turnClock.warningLine(ALICE.userId, LEAD / 1000))).toHaveLength(0);
+		expect(table().seats[0].bet).toBe(100);
+		// Bob's betting turn started with Alice's bet and has its own full clock.
+		expect(sentLines(room, gameRoomsCopy.turnClock.warningLine(BOB.userId, LEAD / 1000))).toHaveLength(0);
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(sentLines(room, gameRoomsCopy.turnClock.warningLine(BOB.userId, LEAD / 1000))).toHaveLength(1);
+	});
+
 	it("stops a table whose room was finished another way instead of playing on in it", async () => {
 		vi.useFakeTimers();
 		const room = fakeRoom();

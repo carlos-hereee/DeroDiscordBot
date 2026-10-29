@@ -97,6 +97,8 @@ import {
 } from "./challengeSettings.js";
 import { applyApproval, applyRatingBand, applySpectatorMode } from "./hostControls.js";
 import { bringDeroToCard, releaseCard } from "./cardVoice.js";
+import { announceChallengers } from "./roomAnnouncer.js";
+import { beginStartCountdown, isCountingDown } from "./startCountdown.js";
 import { parseChipAmount, takeChips } from "@features/economy/chipWallet.js";
 import { chipTableFor } from "./holdemChips.js";
 import { isRatedGame } from "@features/ratings/ratingEngine.js";
@@ -889,6 +891,9 @@ export async function acceptBuyIn(interaction: ButtonInteraction, room: IGameRoo
 		return notice(fresh && fresh.status === "draft" ? gameRoomsCopy.holdem.acceptOnlyInvited : gameRoomsCopy.board.draftGone);
 	}
 	await interaction.deferUpdate();
+	// An invited member who buys in is a challenger arriving (2026-10 item 267, decision 14). Their
+	// pool place came from the host's picker, so this is the one arrival yieldBotSeatsTo never sees.
+	announceChallengers(interaction.client, fresh, false);
 	await refreshDraftCard(interaction.guild!, fresh);
 }
 
@@ -908,17 +913,24 @@ async function askHostToJoin(interaction: ButtonInteraction, room: IGameRoom): P
 	// A request filed is work done, so it is an answer (owner rule 1, R3-11): it posts in
 	// 💬dero-commands and pings the member who asked.
 	await answerInChannel(interaction, "member", { content: hostWords.approval.asked });
+	// Dero tells the card's call, and the host to check Requests (2026-10 item 267, decision 14).
+	announceChallengers(interaction.client, updated, true);
 	await refreshDraftCard(interaction.guild!, updated);
 }
 
 // ── start the match ───────────────────────────────────────────────────
-// Start match asks first (2026-10 item 257, owner item 12): the room channel is made only
-// on the confirm's Submit (confirmStartMatch), or on the opponent picker's Submit when the
-// host has a choice to make, since choosing who plays is itself the yes.
+// Start match asks first (2026-10 item 257, owner item 12): the confirm's Submit
+// (confirmStartMatch), or the opponent picker's Submit when the host has a choice to make,
+// since choosing who plays is itself the yes, begins the start countdown (2026-10 item 267,
+// decision 13), and the room channel is made only when the count ends on a draft still open.
 export async function startMatch(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const refusal = startRefusal(room) ?? (await holdemSeatRefusal(room));
 	if (refusal) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
+		return;
+	}
+	if (isCountingDown(room)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.countdownRunning] });
 		return;
 	}
 	if (needsOpponentPick(room)) {
@@ -944,11 +956,54 @@ export async function confirmStartMatch(interaction: ConfirmInteraction, room: I
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.confirms.startPickNeeded] });
 		return;
 	}
-	const answer = await beginChannelAnswer(interaction, "member");
+	if (isCountingDown(room)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.countdownRunning] });
+		return;
+	}
 	// A battleship match against a Dero bot and a cooperative game single nobody out; a
 	// head to head start with one candidate seats that one (none for a bots or network start).
 	const singlesOut = !isCooperativeGame(room.game) && !(room.game === "battleship" && (room.botSeats ?? 0) > 0);
-	await provisionFromDraft(interaction, answer, room, singlesOut ? ((room.spectatorIds ?? [])[0] ?? null) : null);
+	await countInThenOpen(interaction, room, singlesOut ? ((room.spectatorIds ?? [])[0] ?? null) : null);
+}
+
+// ── the start countdown (2026-10 item 267, owner decision 13) ─────────
+/**
+ * Count the match in, then open it. The countdown is begun before this awaits anything, so a
+ * caller that checked isCountingDown just before cannot begin two; the start's slow answer is
+ * begun beside it and waits for the end of the count, which reads the draft again.
+ */
+async function countInThenOpen(interaction: ConfirmInteraction | StringSelectMenuInteraction, room: IGameRoom, opponentId: string | null): Promise<void> {
+	const answer = beginChannelAnswer(interaction, "member");
+	beginStartCountdown({
+		client: interaction.client,
+		room,
+		open: async (draft) => openAfterCountdown(interaction, await answer, draft, opponentId),
+		// The draft closed during the count. Only the private fallback has a defer waiting for words;
+		// a start answered in 💬dero-commands posts nothing, since the card already says it was called off.
+		calledOff: async () => {
+			const pending = await answer;
+			if (pending.channelId === null) await pending.send({ content: gameRoomsCopy.board.draftGone });
+		},
+	});
+	await answer;
+	await refreshDraftCard(interaction.guild!, room);
+}
+
+// The end of the count. The pool may have moved for ten seconds, so every refusal is checked
+// again on the draft as it stands, and a chosen opponent who left the pool opens nothing. A start
+// that opened nothing redraws the card, which no longer counts.
+async function openAfterCountdown(interaction: ConfirmInteraction | StringSelectMenuInteraction, answer: PendingChannelAnswer, draft: IGameRoom, opponentId: string | null): Promise<void> {
+	const guild = interaction.guild!;
+	const opponentLeft = opponentId !== null && !(draft.spectatorIds ?? []).includes(opponentId);
+	const refusal = startRefusal(draft) ?? (await holdemSeatRefusal(draft)) ?? (opponentLeft ? gameRoomsCopy.board.poolEmpty : null);
+	if (refusal) {
+		await showPendingNotice(interaction, answer, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
+		await refreshDraftCard(guild, draft);
+		return;
+	}
+	await provisionFromDraft(interaction, answer, draft, opponentId);
+	const after = await gameRoomStore.findByRoomId(draft.guildId, draft.roomId);
+	if (after?.status === "draft") await refreshDraftCard(guild, after);
 }
 
 // Every reason Start match is refused before any channel exists, the same on the press and
@@ -1063,9 +1118,11 @@ export async function handleOpponentSelect(interaction: StringSelectMenuInteract
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.poolEmpty] });
 		return;
 	}
-
-	const answer = await beginChannelAnswer(interaction, "member");
-	await provisionFromDraft(interaction, answer, room, chosen);
+	if (isCountingDown(room)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.countdownRunning] });
+		return;
+	}
+	await countInThenOpen(interaction, room, chosen);
 }
 
 // Shared tail of both start paths: promote the chosen member, provision, and close
@@ -1711,8 +1768,11 @@ export async function chooseCasual(interaction: ButtonInteraction, room: IGameRo
  * actor, since the joiner pressed Join, not a bot control.
  */
 export async function yieldBotSeatsTo(client: Client, before: IGameRoom, after: IGameRoom): Promise<IGameRoom> {
-	if (!after.casual || after.status !== "draft" || (after.botSeats ?? 0) === 0) return after;
 	const gained = (after.spectatorIds ?? []).length - (before.spectatorIds ?? []).length;
+	// Every pool add ends here (Join, the invite picker, the host accepting a request), so Dero
+	// greets the new challengers in the card's call once, from here (2026-10 item 267, decision 14).
+	if (gained > 0 && after.status === "draft") announceChallengers(client, after, false);
+	if (!after.casual || after.status !== "draft" || (after.botSeats ?? 0) === 0) return after;
 	if (gained <= 0) return after;
 	const lowered = await gameRoomStore.lowerBotSeats(after.guildId, after.roomId, (before.botSeats ?? 0) - gained);
 	if (!lowered) return after;

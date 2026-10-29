@@ -10,7 +10,9 @@ import { secureRandom } from "@utils/secureRng.js";
 import { BOARD, JAIL_BAIL, describeTile, isOwnableTile, ownableTileName } from "@features/games/monopolyBoard.js";
 import {
 	applyBuy,
+	applyDebtDefault,
 	applyEndTurn,
+	closeAuction,
 	applyForfeit,
 	applyJailChoice,
 	applyPayDebt,
@@ -31,6 +33,9 @@ import { monopolyOutcome, type FinishCause, type OutcomeBucket } from "./matchOu
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { auctionClosesAt, monopolyInventoryReply, monopolyPromptButtons } from "./roomMonopoly.js";
 import { syncTurnPrompt, type TurnAdapter, type TurnView } from "./turnPrompt.js";
+import { syncTurnClocks, type TurnClockGame } from "./turnClock.js";
+import { isClockExpired, pausedDeadline, roomDrawingKey } from "./drawingPause.js";
+import { lastActivityAt } from "./roomActivity.js";
 import { monopolyStateOf, placeMonopolyBoard, splitTurnLines, withTurnLog } from "./roomMonopolyBoard.js";
 import { postRefereeNotice } from "./roomMonopolyRefereeNotice.js";
 import { announceReferee } from "./roomMonopolyReferee.js";
@@ -135,6 +140,10 @@ export async function applyMonopolyOutcome(
 	// The prompt line for whoever the turn passed to posts inside the placement, between the
 	// finished turn's kept board and the new turn's board (item 257 Phase 4a, item 263).
 	await placeMonopolyBoard(client, room, state, { split, actorId: trail.actorId, kind: trail.kind, promptSync: () => syncTurnPrompt(client, room, monopolyTurnAdapter) });
+	// The seat's idle clock and an auction's round clock (2026-10 item 267), after every placed
+	// move rather than inside the prompt sync: an auction opens and a seat acts inside one turn,
+	// which posts no new prompt line but moves what the clocks count from.
+	await syncTurnClocks(client, room, MONOPOLY_TURN_CLOCKS);
 	// Voice only, for a room whose host turned the referee on. Fire and forget, so a
 	// slow render never holds up the finish below or the next press. A move it cannot
 	// speak posts the match's one notice saying why (2026-10 item 254, Arcade 7).
@@ -435,6 +444,126 @@ export async function handleMinventory(interaction: ButtonInteraction, room: IGa
 	}
 	await answerInChannel(interaction, "member", monopolyInventoryReply(state, interaction.user.id, room.roomId));
 }
+
+// ── the clocks' ends (the sweeps' and the turn clock's) ───────────────
+// The later of the turn's start and the last trail line. The turn start alone
+// would forfeit a seat that has been ACTING all along inside one long turn (a roll
+// near the budget's end and a buy just after it still leave turnStartedAt that old),
+// and the trail alone would misread a match whose last line was the previous
+// seat's, posted long before this seat was handed the clock.
+function monopolyLastActivityAt(room: IGameRoom, turnStartedAt: number): number {
+	return Math.max(lastActivityAt(room), turnStartedAt);
+}
+
+// The seat holding the match up: the debtor while it waits on a debt (who may not be the seat
+// on the clock, since a card can charge a rival), otherwise the seat on the clock.
+function idleSeatOf(state: MonopolyState): string {
+	return waitingDebt(state)?.debtorId ?? activeSeatOf(state).userId;
+}
+
+/**
+ * Forfeit the seat holding the match up once it has sat past GAME_ROOM_MONOPOLY_IDLE_MS, and
+ * finish the match when that leaves one seat. THE one idle timeout function: the 5 minute sweep
+ * (roomTurnSweep.sweepMonopolyIdle) calls it for every match and the turn clock at the deadline
+ * (2026-10 item 267). Answers the state it wrote, or null when nothing was due or a move won.
+ */
+export async function forfeitIdleMonopolySeatIfDue(client: Client, room: IGameRoom, now: Date): Promise<MonopolyState | null> {
+	const state = monopolyStateOf(room);
+	if (!state || state.phase === "finished") return null;
+
+	const lastActive = monopolyLastActivityAt(room, state.turnStartedAt);
+	if (!isClockExpired(roomDrawingKey(room), lastActive, BOT_CONSTANTS.GAME_ROOM_MONOPOLY_IDLE_MS, now.getTime())) return null;
+
+	// Captured BEFORE the move, which hands the clock on.
+	//
+	// A debtor who never pays is bankrupt to whoever they owed (applyDebtDefault),
+	// not forfeited to the bank: the creditor is owed that money, and the rules
+	// give a player creditor everything a debtor who cannot pay holds.
+	const debt = waitingDebt(state);
+	const idleId = idleSeatOf(state);
+	const result = debt ? applyDebtDefault(state, now.getTime()) : applyForfeit(state, idleId, now.getTime());
+	if (!result.ok) return null;
+	const reason = debt ? gameRoomsCopy.monopoly.idleDebtDefault(idleId) : gameRoomsCopy.monopoly.idleForfeit(idleId);
+
+	// ⚠️ THE PLAYER WINS A TIE. A move that landed after this read changes the turn, so the
+	// compare and swap finds nothing and the seat that just woke up keeps playing instead of
+	// being forfeited on a stale read; the same claim stops a sweep and a clock from both forfeiting.
+	const lines = [reason, ...result.trailLines];
+	const written = await persistIfUnchanged(room, state, result.state, lines);
+	if (!written) return null;
+	await applyMonopolyOutcome(client, room, state, written, { actorId: idleId, kind: "system", lines }, "timeout");
+	return written;
+}
+
+/**
+ * Close an auction whose round has run out: the highest bid its bidder can still pay buys the
+ * lot, or the bank keeps it, and the seller's turn carries on. THE one close: the 10 second
+ * sweep (roomMonopolyAuction.sweepMonopolyAuctions) and the turn clock (2026-10 item 267) both
+ * call it. True when this call closed it.
+ */
+export async function closeExpiredAuction(client: Client, room: IGameRoom, now: number): Promise<boolean> {
+	const state = monopolyStateOf(room);
+	const auction = state?.pendingAuction;
+	if (!state || state.phase !== "in-auction" || !auction || now < auctionClosesAt(auction)) return false;
+
+	const result = closeAuction(state);
+	if (!result.ok) return false;
+	// A bid that landed after this read wins the compare and swap, and the next look closes
+	// the round with that bid counted.
+	const written = await persistIfUnchanged(room, state, result.state, result.trailLines);
+	if (!written) return false;
+
+	// "system": no player pressed anything; the close happens because the clock ran out.
+	const sellerId = written.seats[written.activeSeatIndex].userId;
+	await applyMonopolyOutcome(client, room, state, written, { actorId: sellerId, kind: "system", lines: result.trailLines });
+	return true;
+}
+
+/**
+ * Monopoly's idle clock (2026-10 item 267): the seat holding the match up, from the later of its
+ * turn's start and the last trail line plus GAME_ROOM_MONOPOLY_IDLE_MS and every drawing hold,
+ * the stamp the idle sweep reads. A debt makes the debtor the one on the clock, so the turn's
+ * identity names the debtor too.
+ */
+export const monopolyIdleTurnClock: TurnClockGame = {
+	kind: "monopoly-idle",
+	current(room, now) {
+		const state = monopolyStateOf(room);
+		const fingerprint = monopolyTurnAdapter.fingerprintOf(room);
+		if (!state || state.phase === "finished" || !fingerprint) return null;
+		const debtorId = waitingDebt(state)?.debtorId;
+		return {
+			memberId: idleSeatOf(state),
+			fingerprint: debtorId ? `${fingerprint}.d${debtorId}` : fingerprint,
+			deadline: pausedDeadline(roomDrawingKey(room), monopolyLastActivityAt(room, state.turnStartedAt), BOT_CONSTANTS.GAME_ROOM_MONOPOLY_IDLE_MS, now),
+		};
+	},
+	async expire(client, room, now) {
+		return (await forfeitIdleMonopolySeatIfDue(client, room, now)) !== null;
+	},
+};
+
+/**
+ * An auction round's clock (2026-10 item 267). A sealed bid is open to every seat, but the clock
+ * belongs to the turn the auction interrupts, so the seat on the clock (the seller) is the one
+ * warned, as the owner's rule pings only the member on the clock. Its close is the round's
+ * nominal end (auctionClosesAt), never held by a draw, because the bid gates read it too.
+ */
+export const monopolyAuctionTurnClock: TurnClockGame = {
+	kind: "monopoly-auction",
+	current(room) {
+		const state = monopolyStateOf(room);
+		const auction = state?.pendingAuction;
+		if (!state || state.phase !== "in-auction" || !auction) return null;
+		return { memberId: activeSeatOf(state).userId, fingerprint: `a${auction.roundOpenedAt}`, deadline: auctionClosesAt(auction) };
+	},
+	expire(client, room, now) {
+		return closeExpiredAuction(client, room, now.getTime());
+	},
+};
+
+/** Both of a Monopoly match's clocks, which every placed move syncs. */
+export const MONOPOLY_TURN_CLOCKS: readonly TurnClockGame[] = [monopolyIdleTurnClock, monopolyAuctionTurnClock];
 
 // ── the turn prompt (turnPrompt.ts, 2026-10 item 257 Phase 4a) ────────
 // What:  Monopoly's side of the shared turn piece: whose turn it is, a fingerprint that holds

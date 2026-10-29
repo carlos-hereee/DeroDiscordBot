@@ -24,8 +24,9 @@ import { chipTableFor } from "./holdemChips.js";
 import { botSeatName, isBotSeatId, labelBotMentions } from "./botSeat.js";
 import { monopolyBoardEmbed, monopolyControlsRow } from "./roomMonopoly.js";
 import { seatNamesForBoard } from "./roomMonopolyBoard.js";
-import { monopolyTurnAdapter } from "./roomMonopolyHandlers.js";
+import { MONOPOLY_TURN_CLOCKS, monopolyTurnAdapter } from "./roomMonopolyHandlers.js";
 import { syncTurnPrompt } from "./turnPrompt.js";
+import { syncTurnClocks } from "./turnClock.js";
 import { soloRpsTurnAdapter } from "./soloLuckRoom.js";
 import { startRoomReferee } from "./roomReferee.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
@@ -567,6 +568,8 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 		// The first seat's prompt line (2026-10 item 257 Phase 4a). Every later turn posts its line
 		// above the fresh board; this first one has no board to go above, so it sits below it.
 		await syncTurnPrompt(guild.client, started ?? room, monopolyTurnAdapter);
+		// The first seat's idle clock (2026-10 item 267), counted from the turn the match opened on.
+		await syncTurnClocks(guild.client, started ?? room, MONOPOLY_TURN_CLOCKS);
 	}
 
 	// Solo hangman is seeded HERE rather than authored: the host is the guesser, so
