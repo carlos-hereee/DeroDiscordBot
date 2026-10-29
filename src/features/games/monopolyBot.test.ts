@@ -352,15 +352,17 @@ describe("waiting and the apply guards", () => {
 // ⚠️ Bot only Monopoly can stalemate, and does so on about half of all seeds.
 // Bots never propose trades (owner decision), so a monopoly only forms by luck,
 // a bankruptcy transfer or an auction, and without one no rent is big enough to
-// bankrupt anyone while GO salary keeps adding chips. A scan of seeds 1 to 10 at
-// 100,000 actions found seeds 1, 3, 5, 6 and 8 still running at the cap (seed 6
-// with one bot past a million chips). So the finishing seeds below assert a
-// finish, and the stalemate seeds assert only that every move was legal up to
-// the cap, which is the endless guard. The room layer needs its own end for a
-// table of bots (see the report for 2026-10 item 250 Phase 5).
+// bankrupt anyone while GO salary keeps adding chips. A scan of seeds 1 to 20 at
+// 20,000 actions finished 8 seeds plain and 9 with auctions, the rest running at
+// the cap. So the finishing seeds below assert a finish, and the stalemate seeds
+// assert only that every move was legal up to the cap, which is the endless
+// guard. The auction finishers include seeds whose bots bid and skip, which the
+// coverage test below needs. Re-scan when a rule changes how many rolls a turn
+// gets: the seeds move with it. The room layer needs its own end for a table of
+// bots (see the report for 2026-10 item 250 Phase 5).
 const ACTION_CAP = 20_000;
-const FINISHING_SEEDS: Record<"plain" | "auctions", number[]> = { plain: [4, 7, 9, 10], auctions: [2, 4, 7, 9, 10] };
-const STALEMATE_SEEDS = [1, 6];
+const FINISHING_SEEDS: Record<"plain" | "auctions", number[]> = { plain: [6, 10, 14, 18], auctions: [6, 10, 11, 15, 17] };
+const STALEMATE_SEEDS = [1, 4];
 const SIMULATION_TIMEOUT_MS = 120_000;
 
 interface SimulationResult {

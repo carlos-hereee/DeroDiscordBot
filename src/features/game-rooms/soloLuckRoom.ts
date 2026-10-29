@@ -4,6 +4,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { playSoloLuckInChannel, type SoloLuckPlay } from "@features/games/soloLuck.js";
 import { RPS_CHOICES, type RpsChoice } from "@features/games/rpsWinner.js";
+import { secureRandom } from "@utils/secureRng.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { resolveRoomChannel } from "./roomTrail.js";
@@ -34,7 +35,8 @@ const SOLO_LUCK_ARCHIVE_DELAY_MS = BOT_CONSTANTS.GAME_ROOM_SOLO_LUCK_ARCHIVE_DEL
  */
 export async function playSoloLuckRoom(client: Client, room: IGameRoom, channel: TextChannel | null, host: SoloHost, play: SoloLuckPlay | undefined): Promise<void> {
 	const user = host.user ?? (await client.users.fetch(host.userId).catch(() => null));
-	const result = play && user && channel ? await playSoloLuckInChannel(channel, { user, displayName: host.displayName }, play) : null;
+	// secureRandom, because the round pays XP and coins; the soloLuck default is Math.random.
+	const result = play && user && channel ? await playSoloLuckInChannel(channel, { user, displayName: host.displayName }, play, secureRandom) : null;
 	if (!result) {
 		await roomLifecycle.finish(client, room, { abandoned: true, archiveDelayMs: SOLO_LUCK_ARCHIVE_DELAY_MS });
 		return;

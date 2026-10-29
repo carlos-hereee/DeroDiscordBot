@@ -205,6 +205,12 @@ vi.mock("./turnPrompt.js", async (importOriginal) => ({
 	syncTurnPrompt: vi.fn(),
 }));
 vi.mock("./roomReferee.js", () => ({ startRoomReferee: vi.fn() }));
+// The solo rooms roll with secureRandom, so a test pins the round here; null keeps the real source.
+const securePin = vi.hoisted(() => ({ value: null as number | null }));
+vi.mock("@utils/secureRng.js", async (importOriginal) => {
+	const real = await importOriginal<typeof import("@utils/secureRng.js")>();
+	return { ...real, secureRandom: () => securePin.value ?? real.secureRandom() };
+});
 
 import { rematchFromRoom } from "./challengeBoard.js";
 import { syncTurnPrompt } from "./turnPrompt.js";
@@ -728,7 +734,7 @@ describe("solo rooms rematch in place", () => {
 	] as const)("%s plays a fresh round in the same channel and finishes its new row", async (game, play) => {
 		const world = makeWorld();
 		insertFinishedRoom({ game, visibility: "solo", playerIds: [P1], spectatorIds: [], inviteCode: null });
-		vi.spyOn(Math, "random").mockReturnValue(0.1);
+		securePin.value = 0.1;
 		const round = resolveSoloLuck({ game: play }, () => 0.1);
 
 		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
@@ -741,7 +747,7 @@ describe("solo rooms rematch in place", () => {
 		expect(world.channel.send).toHaveBeenCalledWith(expect.objectContaining({ embeds: [expect.objectContaining({ data: expect.objectContaining({ title, description }) })] }));
 		// The finished row let the channel go to the new one, the rematch rule of every game.
 		expect(await roomOf(FINISHED)).toMatchObject({ channelId: null, archiveAt: null });
-		vi.mocked(Math.random).mockRestore();
+		securePin.value = null;
 	});
 
 	it("solo hangman seeds a new round from the bank into the same channel, with no new channel", async () => {

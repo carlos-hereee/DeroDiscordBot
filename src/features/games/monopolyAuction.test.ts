@@ -166,6 +166,7 @@ describe("closeAuction", () => {
 		const doubles = offeringLot();
 		doubles.rolledThisTurn = false;
 		doubles.doublesStreak = 1;
+		doubles.diceRoll = [3, 3];
 		const closed = expectOk(closeAuction(expectOk(applySkip(doubles, ALICE)).state)).state;
 		const { state } = expectOk(applyEndTurn(closed));
 		expect(state.phase).toBe("pre-roll");

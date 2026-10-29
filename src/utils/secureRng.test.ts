@@ -104,3 +104,23 @@ describe("the shuffle call sites", () => {
 		expect(handlers).not.toMatch(/Math\.random/);
 	});
 });
+
+// Every engine default for dice is Math.random, so a call site that leaves its rng out
+// rolls with it silently. These pin each room door that rolls dice to secureRandom.
+describe("the dice call sites", () => {
+	const read = (...path: string[]) => readFileSync(join(SRC, ...path), "utf8");
+	const lastArgument = (args: string) => args.split(",").pop()?.trim();
+
+	it("Monopoly rolls, jail rolls and Dero bot rolls pass secureRandom", () => {
+		const handlers = read("features", "game-rooms", "roomMonopolyHandlers.ts");
+		expect(callsOf(handlers, "applyRoll").map(lastArgument)).toEqual(["secureRandom"]);
+		expect(callsOf(handlers, "applyJailChoice").map(lastArgument)).toEqual(["secureRandom"]);
+		const botTurns = read("features", "game-rooms", "botTurns.ts");
+		expect(callsOf(botTurns, "applyMonopolyBotAction").map((args) => args.split(",")[3]?.trim())).toEqual(["secureRandom"]);
+	});
+
+	it("the dice duel and the solo rooms against Dero pass secureRandom", () => {
+		expect(callsOf(read("features", "game-rooms", "roomGames.ts"), "resolveVersus").map(lastArgument)).toEqual(["secureRandom"]);
+		expect(callsOf(read("features", "game-rooms", "soloLuckRoom.ts"), "playSoloLuckInChannel").map(lastArgument)).toEqual(["secureRandom"]);
+	});
+});

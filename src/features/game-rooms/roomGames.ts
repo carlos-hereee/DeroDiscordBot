@@ -9,6 +9,7 @@ import {
 } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { resolveVersus, type VersusFlip } from "@features/games/versusResolve.js";
+import { secureRandom } from "@utils/secureRng.js";
 import { resolveGameAsset, type GameAssetKey } from "@features/games/gamesAssets.js";
 import { renderDiceCard } from "@features/games/diceRenderer.js";
 import { renderRpsCard } from "@features/games/rpsRenderer.js";
@@ -95,7 +96,9 @@ async function runVersusMove(interaction: ButtonInteraction, room: IGameRoom): P
 	const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId);
 	if (!fresh || fresh.status !== "playing") return;
 
-	const result = resolveVersus(flip);
+	// secureRandom rather than resolveVersus's Math.random default, because this roll
+	// or flip decides a match that pays XP and counts toward luck stats.
+	const result = resolveVersus(flip, secureRandom);
 	const winnerId =
 		result.winner === "tie" ? null : result.winner === "challenger" ? challengerId : opponentId;
 

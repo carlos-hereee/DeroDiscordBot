@@ -309,6 +309,10 @@ export function applyRoll(state: MonopolyState, rng: () => number = Math.random,
 		next.phase = "pre-roll";
 	}
 	else {
+		// The streak counts doubles IN A ROW, so a plain roll ends it. Left standing,
+		// a doubles roll followed by a plain one kept the streak above zero, and
+		// applyEndTurn handed the seat another roll on every End turn, forever.
+		next.doublesStreak = 0;
 		next.rolledThisTurn = true;
 		next.phase = "post-roll";
 	}
@@ -376,7 +380,10 @@ export function applyEndTurn(state: MonopolyState, now: number = Date.now()): Mo
 	const next = cloneState(state);
 	const seat = activeSeatOf(next);
 
-	if (next.doublesStreak > 0) {
+	// Both checks, because a match stored before applyRoll reset the streak on a plain
+	// roll can still hold a streak above zero after one; the dice on the state are what
+	// the seat actually rolled last, so that match ends its turn normally too.
+	if (next.doublesStreak > 0 && lastRollWasDoubles(next)) {
 		next.rolledThisTurn = false;
 		next.phase = "pre-roll";
 		return completeAction(next, seat.userId, [`${mentionPlayer(seat.userId)} rolled doubles and rolls again.`]);
@@ -386,3 +393,5 @@ export function applyEndTurn(state: MonopolyState, now: number = Date.now()): Mo
 	const nextPlayer = activeSeatOf(next).userId;
 	return completeAction(next, seat.userId, [`It is now ${mentionPlayer(nextPlayer)}'s turn.`]);
 }
+
+const lastRollWasDoubles = (state: MonopolyState): boolean => state.diceRoll !== null && state.diceRoll[0] === state.diceRoll[1];

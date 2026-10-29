@@ -48,6 +48,8 @@ import {
 	type MonopolyState,
 } from "./monopolyState.js";
 import { createSeededRng } from "@utils/seededRng.js";
+import { secureRandom } from "@utils/secureRng.js";
+import { rollDice } from "./monopolyLanding.js";
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
@@ -328,6 +330,52 @@ describe("rent on landing", () => {
 	});
 });
 
+// ── the dice ────────────────────────────────────────────────────────────────
+// A statistical check on the dice the room actually rolls with (rollDice fed by
+// secureRandom, as rollMove, jailMove and the bot tick pass it). The bounds sit far
+// out in the tail (a chance near 1 in 50,000 each of failing on fair dice), so a
+// red run means biased dice, not bad luck.
+
+describe("rollDice with secureRandom", () => {
+	const ROLLS = 36_000;
+	const FACE_LIMIT_CHI_SQUARE = 30; // 5 degrees of freedom
+	const PAIR_LIMIT_CHI_SQUARE = 80; // 35 degrees of freedom
+	const DOUBLES_TOLERANCE = 0.015; // about 7.5 standard deviations at this sample size
+
+	const chiSquare = (counts: number[], expected: number): number =>
+		counts.reduce((sum, count) => sum + (count - expected) ** 2 / expected, 0);
+
+	const firstFaces = new Array<number>(6).fill(0);
+	const secondFaces = new Array<number>(6).fill(0);
+	const pairs = new Array<number>(36).fill(0);
+	let doubles = 0;
+	for (let roll = 0; roll < ROLLS; roll++) {
+		const [first, second] = rollDice(secureRandom);
+		firstFaces[first - 1]++;
+		secondFaces[second - 1]++;
+		pairs[(first - 1) * 6 + (second - 1)]++;
+		if (first === second) doubles++;
+	}
+
+	it("only ever shows faces 1 to 6", () => {
+		expect(firstFaces.reduce((sum, count) => sum + count, 0)).toBe(ROLLS);
+		expect(secondFaces.reduce((sum, count) => sum + count, 0)).toBe(ROLLS);
+	});
+
+	it("gives each die every face equally often", () => {
+		expect(chiSquare(firstFaces, ROLLS / 6)).toBeLessThan(FACE_LIMIT_CHI_SQUARE);
+		expect(chiSquare(secondFaces, ROLLS / 6)).toBeLessThan(FACE_LIMIT_CHI_SQUARE);
+	});
+
+	it("rolls the two dice independently, so all 36 pairs are equally likely", () => {
+		expect(chiSquare(pairs, ROLLS / 36)).toBeLessThan(PAIR_LIMIT_CHI_SQUARE);
+	});
+
+	it("rolls doubles about one time in six", () => {
+		expect(Math.abs(doubles / ROLLS - 1 / 6)).toBeLessThan(DOUBLES_TOLERANCE);
+	});
+});
+
 // ── buy and skip ────────────────────────────────────────────────────────────
 
 describe("applyBuy and applySkip", () => {
@@ -375,6 +423,25 @@ describe("applyEndTurn", () => {
 		expect(state.activeSeatIndex).toBe(1);
 		expect(state).toMatchObject({ rolledThisTurn: false, doublesStreak: 0, phase: "pre-roll", turnStartedAt: LATER });
 		expect(trailLines).toEqual(["It is now <@bob>'s turn."]);
+	});
+
+	it("ends the turn when doubles are followed by a plain roll", () => {
+		const doubles = rollFrom(newMatch(), 0, 2, 2).state;
+		expect(doubles.doublesStreak).toBe(1);
+		const plain = rollFrom(doubles, 15, 2, 3).state;
+		expect(plain).toMatchObject({ doublesStreak: 0, rolledThisTurn: true, phase: "post-roll" });
+		const { state, trailLines } = expectOk(applyEndTurn(plain, LATER));
+		expect(state.activeSeatIndex).toBe(1);
+		expect(trailLines).toEqual(["It is now <@bob>'s turn."]);
+	});
+
+	it("ends the turn of a stored match whose streak outlived a plain roll", () => {
+		const stale = newMatch();
+		stale.phase = "post-roll";
+		stale.rolledThisTurn = true;
+		stale.doublesStreak = 1;
+		stale.diceRoll = [2, 3];
+		expect(expectOk(applyEndTurn(stale, LATER)).state.activeSeatIndex).toBe(1);
 	});
 
 	it("wraps round and skips a bankrupt seat", () => {
@@ -1365,7 +1432,7 @@ describe("a 50 turn two player match", () => {
 // a mortgage, builds hotels and plays to a finish inside 100 turns. A change to
 // the engine's rules or the decks can move that; if this fails on the tally or
 // the finish alone, rescan for a seed rather than loosening the assertions.
-const THREE_PLAYER_SEED = 128;
+const THREE_PLAYER_SEED = 32;
 
 describe("a 100 turn three player match", () => {
 	it("plays through mortgages and hotel builds to a winner without throwing", () => {
@@ -1384,7 +1451,7 @@ describe("a 100 turn three player match", () => {
 // Picked from the same kind of scan (seeds 1 to 400) as one where a five seat
 // match with auctions and trading on accepts a trade, sells a lot at auction
 // and bankrupts three seats inside 100 turns. Rescan rather than loosen.
-const FIVE_PLAYER_SEED = 258;
+const FIVE_PLAYER_SEED = 220;
 const FIVE_PLAYERS = [ALICE, BOB, CARA, "dana", "eli"];
 
 describe("a 100 turn five player match", () => {

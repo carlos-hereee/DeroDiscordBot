@@ -23,6 +23,7 @@ import { openSoloRoom, soloLuckSlugFor, startBlackjackRoomBoard } from "./soloRo
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { startBlackjackTable } from "@features/games/blackjackHandler.js";
 import { playSoloLuckInChannel } from "@features/games/soloLuck.js";
+import { secureRandom } from "@utils/secureRng.js";
 import { RoomProvisioner } from "./RoomProvisioner.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -74,7 +75,7 @@ describe("a round against Dero in its own room", () => {
 
 		expect(result.ok).toBe(true);
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ game: "solo-coinflip", visibility: "solo", playerIds: ["host-1"], spectatorIds: [] }));
-		expect(playMock).toHaveBeenCalledWith(CHANNEL, { user: HOST.user, displayName: "Host" }, { game: "coinflip" });
+		expect(playMock).toHaveBeenCalledWith(CHANNEL, { user: HOST.user, displayName: "Host" }, { game: "coinflip" }, secureRandom);
 		expect(finishMock).toHaveBeenCalledWith(guild.client, ROOM, { winnerId: "host-1", archiveDelayMs: SHORT });
 	});
 
@@ -83,7 +84,7 @@ describe("a round against Dero in its own room", () => {
 
 		await openSoloRoom(makeGuild(), "solo-diceroll", HOST);
 
-		expect(playMock).toHaveBeenCalledWith(CHANNEL, expect.anything(), { game: "diceroll" });
+		expect(playMock).toHaveBeenCalledWith(CHANNEL, expect.anything(), { game: "diceroll" }, secureRandom);
 		expect(finishMock).toHaveBeenCalledWith(expect.anything(), ROOM, { winnerId: null, archiveDelayMs: SHORT });
 	});
 

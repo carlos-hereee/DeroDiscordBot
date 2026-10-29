@@ -17,6 +17,7 @@ import { playSoloLuckRoom, soloRpsTurnAdapter } from "./soloLuckRoom.js";
 import { turnAdapterFor } from "./turnAdapters.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { playSoloLuckInChannel } from "@features/games/soloLuck.js";
+import { secureRandom } from "@utils/secureRng.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { resolveRoomChannel } from "./roomTrail.js";
 import { syncTurnPrompt } from "./turnPrompt.js";
@@ -81,7 +82,7 @@ describe("the rock paper scissors room's turn", () => {
 		expect(result).toEqual({ ok: true });
 		expect(claimMock).toHaveBeenCalledWith("guild-1", "room-1", "throw", "paper");
 		expect(acknowledge).toHaveBeenCalledOnce();
-		expect(playMock).toHaveBeenCalledWith(CHANNEL, { user: MEMBER.user, displayName: "Host" }, { game: "rps", memberThrow: "paper" });
+		expect(playMock).toHaveBeenCalledWith(CHANNEL, { user: MEMBER.user, displayName: "Host" }, { game: "rps", memberThrow: "paper" }, secureRandom);
 		expect(finishMock).toHaveBeenCalledWith(client, claimed, { winnerId: HOST, archiveDelayMs: SHORT });
 		expect(syncMock).toHaveBeenCalledWith(client, claimed, soloRpsTurnAdapter);
 		// The claim lands before the round is played, so a racing Submit cannot play a second one.
