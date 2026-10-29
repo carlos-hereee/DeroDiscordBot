@@ -7,6 +7,8 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		update: vi.fn(),
 		addBuyInPaid: vi.fn(),
 		takeBuyInPaid: vi.fn(),
+		markArchived: vi.fn(),
+		archiveDraft: vi.fn(),
 	},
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
@@ -15,7 +17,7 @@ vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, des
 vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedValue(null), describeSoloOpenFailure: () => "nope", startBlackjackRoomBoard: vi.fn() }));
 vi.mock("./challengeCardRenderer.js", () => ({ renderChallengeCard: vi.fn().mockResolvedValue(null), challengeCardView: vi.fn() }));
 
-import { acceptBuyIn, confirmStartMatch, handleInviteSelect, startMatch } from "./challengeBoard.js";
+import { acceptBuyIn, cancelDraft, confirmStartMatch, handleInviteSelect, startMatch } from "./challengeBoard.js";
 import { RoomProvisioner } from "./RoomProvisioner.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
@@ -28,7 +30,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // table that could not deal a hand, and an Invite only card's invited members pay through
 // Accept and buy in, on the same ledger Join uses, charged once and refunded once (risk R7).
 
-const storeMock = gameRoomStore as unknown as Record<"findByRoomId" | "update" | "addBuyInPaid" | "takeBuyInPaid", ReturnType<typeof vi.fn>>;
+const storeMock = gameRoomStore as unknown as Record<"findByRoomId" | "update" | "addBuyInPaid" | "takeBuyInPaid" | "archiveDraft", ReturnType<typeof vi.fn>>;
 const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
 const walletMock = chipWalletStore as unknown as Record<"debit" | "credit", ReturnType<typeof vi.fn>>;
 
@@ -124,6 +126,33 @@ describe("the card's Start, for a table dealt as it opens", () => {
 		await startMatch(interaction, holdemDraft({ network: true, visibility: "public", spectatorIds: [] }));
 
 		expect(said(interaction)).not.toContain("A hand needs at least");
+	});
+});
+
+// 2026-10 item 276, audit P1-2: Call it off and the end of the start countdown race for one
+// draft. The cancel closes only a row still a draft, so whichever lands first wins and the
+// loser moves nothing.
+describe("Call it off", () => {
+	it("refunds nothing and closes nothing once the countdown's start claimed the draft", async () => {
+		storeMock.archiveDraft.mockResolvedValue(null);
+		const interaction = press(HOST);
+
+		await cancelDraft(interaction, holdemDraft({ buyInPaidBy: [INVITED] }));
+
+		expect(storeMock.takeBuyInPaid).not.toHaveBeenCalled();
+		expect(walletMock.credit).not.toHaveBeenCalled();
+		expect(said(interaction)).toContain(gameRoomsCopy.board.draftGone);
+	});
+
+	it("refunds every payer the ledger held as the close found it, one claim each", async () => {
+		// "late" paid after the press read the card; the close's own row still names them.
+		storeMock.archiveDraft.mockResolvedValue(holdemDraft({ status: "archived", buyInPaidBy: [INVITED, "late"] }));
+
+		await cancelDraft(press(HOST), holdemDraft({ buyInPaidBy: [INVITED] }));
+
+		expect(storeMock.archiveDraft).toHaveBeenCalledWith("guild-1", "room-1");
+		expect(storeMock.takeBuyInPaid.mock.calls.map((call) => call[2])).toEqual([INVITED, "late"]);
+		expect(paidBack()).toEqual([INVITED, "late"]);
 	});
 });
 

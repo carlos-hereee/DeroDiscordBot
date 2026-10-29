@@ -275,8 +275,7 @@ export async function offerToFreeSlot(interaction: ModalOpeningInteraction, conf
 export async function closeHeldDraft(guild: Guild, roomId: string, hostId: string): Promise<boolean> {
 	const open = await gameRoomStore.findByRoomId(guild.id, roomId);
 	if (!open || open.status !== "draft" || open.hostId !== hostId) return false;
-	await closeDraft(guild, open);
-	return true;
+	return closeDraft(guild, open);
 }
 
 /**
@@ -1198,21 +1197,25 @@ async function provisionFromDraft(
 		existingRoomId: room.roomId,
 		monopolyAuctions: room.monopolyAuctions ?? false,
 		botIds,
-		holdemSeats: room.game === "holdem" ? (paidSeats ?? undefined) : undefined,
+		draftSeats: paidSeats ?? undefined,
 	});
 
 	if (!result.ok) {
+		// The host's seat is the one Start charged outside the ledger; refundJoiners claims each
+		// joiner's entry first, so a cancel that already refunded them pays nobody twice.
 		if (paidSeats) await refundOpenedSeats(room, paidSeats);
 		await answerOpenRefusal(interaction, answer, result);
 		return;
 	}
-	// The ledger is settled: those buy ins are stacks at the table now, paid back by the table.
-	if (paidSeats) await gameRoomStore.update(room.guildId, room.roomId, { buyInPaidBy: [] });
+	// The start claim emptied the ledger (gameRoomStore.claimForPlay): those buy ins are stacks
+	// at the table now, paid back by the table.
 
 	// A Blackjack table opens once its room is up (2026-10 item 254, Arcade 1): on a chip table
-	// every seat the card paid for, on a free one every gathered player (item 267). A table that
-	// cannot start has already closed its room and given its stacks back.
-	if (room.game === "blackjack" && !(await startBlackjackRoomBoard(guild, result.room, result.channel, paidSeats ?? freeSeatsOf(result.room)))) {
+	// every seat the card paid for and the start claim still found paid, on a free one every
+	// gathered player (item 267). A table that cannot start has already closed its room and given
+	// its stacks back.
+	const blackjackSeats = result.seats ?? paidSeats ?? freeSeatsOf(result.room);
+	if (room.game === "blackjack" && !(await startBlackjackRoomBoard(guild, result.room, result.channel, blackjackSeats))) {
 		await answer.send({ embeds: [errorEmbed(gameRoomsCopy.errors.createFailed)] });
 		return;
 	}
@@ -1392,7 +1395,7 @@ async function playRematchInPlace(interaction: ButtonInteraction, finished: IGam
 	// ⑤ Seeded exactly as RoomProvisioner seeds a first match of this game. A rematch
 	// opens a standard hold em table, the same as a board challenge does: a table's
 	// custom terms come only from Dero's rules card.
-	const started = await seedRoom({
+	const seeded = await seedRoom({
 		guild,
 		channel,
 		room: next,
@@ -1404,6 +1407,10 @@ async function playRematchInPlace(interaction: ButtonInteraction, finished: IGam
 		monopolyAuctions: next.monopolyAuctions,
 		botIds: botSeatIdsFor(next.game, next.playerIds.length, next.botSeats ?? 0),
 	});
+	// The rematch row closed before it could start (the idle sweep or the leave watcher finished
+	// it first), so it seats nothing; its finish already locked the channel and started its clock.
+	if (!seeded) return gameRoomsCopy.errors.createFailed;
+	const started = seeded.room;
 
 	// A Blackjack rematch opens its table the way its first match did, every seat paid again
 	// (2026-10 item 267). From the deal on, the table's ledger owns the buy ins: a table that
@@ -1852,10 +1859,18 @@ export async function applyDraftBuyIn(room: IGameRoom, amount: number | null): P
 export async function cancelDraft(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	// "archived" rather than a delete: the row is the audit trail, and the partial
 	// unique index only counts non-terminal statuses, so archiving is what actually
-	// frees the host's slot.
-	await gameRoomStore.markArchived(room.guildId, room.roomId);
-	// Everyone who paid the buy in gets it back (item 257 Phase 4a), after the draft is closed.
-	await refundAllJoiners(room);
+	// frees the host's slot. Only a row still a draft closes (2026-10 item 276, P1-2): a start
+	// countdown that ended a moment ago may have claimed it for play, and then the match stands
+	// and nothing is refunded, since the buy ins are its stacks now.
+	const closed = await gameRoomStore.archiveDraft(room.guildId, room.roomId);
+	if (!closed) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.draftGone] });
+		return;
+	}
+	// Everyone who paid the buy in gets it back (item 257 Phase 4a), after the draft is closed,
+	// from the ledger as the close left it, so a payment that landed after the press read the card
+	// is refunded too.
+	await refundAllJoiners(closed);
 	await interaction.deferUpdate();
 	// The card's voice request goes, and Dero with it only from a call this card started (item 267).
 	await releaseCard(interaction.guild!, room.roomId);
@@ -1865,13 +1880,17 @@ export async function cancelDraft(interaction: ButtonInteraction, room: IGameRoo
 // Cancel's close, for the one room per host confirm (item 15): the same archive that frees
 // the slot, with the card redrawn as cancelled in the background, since the confirm still
 // has to post the new card inside Discord's three second window.
-async function closeDraft(guild: Guild, room: IGameRoom): Promise<void> {
-	await gameRoomStore.markArchived(room.guildId, room.roomId);
-	await refundAllJoiners(room);
+async function closeDraft(guild: Guild, room: IGameRoom): Promise<boolean> {
+	// Draft only, like Call it off (2026-10 item 276, P1-2): a draft its countdown already started
+	// is a match now, and its buy ins are stacks at the table.
+	const closed = await gameRoomStore.archiveDraft(room.guildId, room.roomId);
+	if (!closed) return false;
+	await refundAllJoiners(closed);
 	void releaseCard(guild, room.roomId);
 	void refreshCard(guild, room, cancelledCardState(room)).catch((error: unknown) =>
 		console.error("[game-rooms] the replaced draft's card did not redraw", { guildId: room.guildId, roomId: room.roomId, error })
 	);
+	return true;
 }
 
 const cancelledCardState = (room: IGameRoom) => cardStateFor(room, { visibility: room.visibility, cancelled: true });

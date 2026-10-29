@@ -653,7 +653,15 @@ function settleHand(table: HoldemTable, showdown: boolean, _rng: () => number = 
 	// leave the same chips inside a pot AND in a stack, paying the top bettor twice,
 	// and the pots test would not catch it: expectConserved computes the uncalled
 	// portion and never asserts on it.
-	const uncalled = uncalledPortion(commitments);
+	//
+	// ⚠️ EXCEPT A SEAT THAT LEFT THE TABLE (2026-10 item 276, audit P2-9). A leaver's bet stays
+	// in the pot like any folded chips: handed back here it landed on a seat that is out, and an
+	// out seat is never paid again (its stack was cashed out as it left, and the end of the table
+	// skips it), so the chips left the table for good. Left in its commitment, the layer only the
+	// leaver reached has no eligible winner, and buildPots carries it into the last pot somebody
+	// can win, so the pot's winner takes it.
+	const topBet = uncalledPortion(commitments);
+	const uncalled = topBet && !seatOf(table, topBet.userId)?.out ? topBet : null;
 	if (uncalled) {
 		const owner = commitments.find((entry) => entry.userId === uncalled.userId);
 		if (owner) owner.committed -= uncalled.amount;
@@ -849,9 +857,10 @@ export function leaveTable(table: HoldemTable, userId: string, rng: () => number
 	if (holdsCards) outcome = whoActs(table) === userId ? act(table, userId, "fold", 0, rng) : foldOutOfTurn(table, userId, rng);
 	else table.lastActionAt = Date.now();
 
-	// After the fold, because settling a hand can hand an uncalled bet back to this
-	// seat, and the betting round's copy is zeroed too so the next writeBack cannot
-	// put the chips back on a player who has gone.
+	// After the fold, so the stack read is the one the fold left (settleHand never hands an
+	// out seat its uncalled bet back, so nothing a later settle does can owe this seat more),
+	// and the betting round's copy is zeroed too so the next writeBack cannot put the chips back
+	// on a player who has gone.
 	const stackLeft = seat.stack;
 	seat.stack = 0;
 	const bettingSeat = table.betting?.seats.find((entry) => entry.userId === userId);
@@ -900,15 +909,42 @@ export function standings(table: HoldemTable): string[] {
 }
 
 /**
- * End the table now, the host's End table button. A running hand is called off, so
- * every chip a seat still in put into it goes back to that seat, and the standings
- * are read from the stacks that leaves. A seat that left mid hand forfeited its
- * chips when it folded, so nothing comes back to it. A table ended before its first
+ * What each seat still in gets back when a running hand is called off (the host's End table,
+ * or a room finished from outside the table): every chip it put into the hand, plus an even
+ * share of what seats that left mid hand put in (2026-10 item 276, audit P2-14). A leaver
+ * forfeited those chips when it folded, and with no showdown to win them they belong to the
+ * seats still playing; dropping them, as the table once did, took them off the table for good.
+ * An odd chip goes first left of the button, the house rule awardPots keeps. Between hands every
+ * commitment is zero, so this answers nothing. Pure: it reads the table and writes nothing.
+ */
+export function chipsBackOnCallOff(table: HoldemTable): Map<string, number> {
+	const back = new Map<string, number>();
+	const stillIn = seatOrderAfterButton(table);
+	for (const seat of stillIn) if (seat.totalCommitted > 0) back.set(seat.userId, seat.totalCommitted);
+	const forfeited = table.seats.filter((seat) => seat.out).reduce((sum, seat) => sum + seat.totalCommitted, 0);
+	if (forfeited === 0 || stillIn.length === 0) return back;
+
+	const share = Math.floor(forfeited / stillIn.length);
+	let oddChips = forfeited - share * stillIn.length;
+	for (const seat of stillIn) {
+		const extra = share + (oddChips > 0 ? 1 : 0);
+		if (oddChips > 0) oddChips--;
+		if (extra > 0) back.set(seat.userId, (back.get(seat.userId) ?? 0) + extra);
+	}
+	return back;
+}
+
+/**
+ * End the table now, the host's End table button. A running hand is called off
+ * (chipsBackOnCallOff): every chip a seat still in put into it goes back to that
+ * seat, with an even share of what a seat that left mid hand put in, and the
+ * standings are read from the stacks that leaves. A table ended before its first
  * deal had nothing played, so it has no winner. Returns the standings, best first.
  */
 export function endTable(table: HoldemTable): string[] {
+	const back = chipsBackOnCallOff(table);
 	for (const seat of table.seats) {
-		if (!seat.out) seat.stack += seat.totalCommitted;
+		seat.stack += back.get(seat.userId) ?? 0;
 		seat.committed = 0;
 		seat.totalCommitted = 0;
 	}

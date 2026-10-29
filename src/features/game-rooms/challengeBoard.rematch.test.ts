@@ -95,6 +95,24 @@ const fake = vi.hoisted(() => {
 			if (row) Object.assign(row, patch, { status });
 			return copy(row);
 		},
+		// The start claim (2026-10 item 276): only a row not yet playing moves, with its ledger
+		// emptied in the same write, answering the row as it was BEFORE.
+		async claimForPlay(guildId: string, roomId: string, patch: Record<string, unknown>) {
+			const row = find(guildId, roomId);
+			if (!row || !["draft", "open"].includes(row.status as string)) return null;
+			const before = copy(row);
+			Object.assign(row, patch, { status: "playing", buyInPaidBy: [] });
+			return before;
+		},
+		async archiveDraft(guildId: string, roomId: string) {
+			const row = find(guildId, roomId);
+			if (!row || row.status !== "draft") return null;
+			Object.assign(row, { status: "archived", channelId: null });
+			return copy(row);
+		},
+		async closeHoldemTable() {
+			return { matchedCount: 0 };
+		},
 		async finish(guildId: string, roomId: string, outcome: Record<string, unknown>) {
 			const row = find(guildId, roomId);
 			if (!row || !LIVE.includes(row.status)) return null;

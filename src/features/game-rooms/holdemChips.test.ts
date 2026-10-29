@@ -63,8 +63,11 @@ describe("chipsOwedAtEnd", () => {
 		const total = owed.reduce((sum, payout) => sum + payout.amount, 0);
 		expect(owed.map((payout) => payout.userId).sort()).toEqual(["a", "b", "d"]);
 		expect(owed.find((payout) => payout.userId === "d")?.amount).toBe(1_000);
-		// Every chip still on the table goes somewhere: the leaver's stack was paid at the leave.
-		const onTable = table.seats.filter((seat) => !seat.out).reduce((sum, seat) => sum + seat.stack + seat.totalCommitted, 0);
+		// Every chip still on the table goes somewhere, the leaver's chips in the hand included
+		// (2026-10 item 276, audit P2-14): the leaver's stack was paid at the leave, and what it
+		// had put into the hand is shared by the seats still in, never lost.
+		const onTable = table.seats.reduce((sum, seat) => sum + seat.stack + seat.totalCommitted, 0);
+		expect(table.seats.find((seat) => seat.userId === "c")!.totalCommitted).toBeGreaterThan(0);
 		expect(total).toBe(onTable + 1_000);
 	});
 });

@@ -5,6 +5,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: {
 		finish: vi.fn(),
 		markArchived: vi.fn(),
+		closeHoldemTable: vi.fn(),
 		appendMove: vi.fn(),
 		setSatelliteTableMessage: vi.fn(),
 		addSatellite: vi.fn(),

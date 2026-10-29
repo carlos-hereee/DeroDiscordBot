@@ -143,6 +143,10 @@ export type RoomStatus = (typeof ROOM_STATUSES)[number];
 //        quietly evaporates with no error anywhere, which is why there is exactly one copy.
 export const NON_TERMINAL_ROOM_STATUSES = ["draft", "open", "playing"] as const;
 
+// The statuses a room can be STARTED from: every non terminal status but "playing". The one
+// reader is gameRoomStore.claimForPlay, whose filter is the start claim (2026-10 item 276).
+export const ROOMS_AWAITING_PLAY = NON_TERMINAL_ROOM_STATUSES.filter((status) => status !== "playing");
+
 // ── How wide a host's rating band is (2026-10 item 244 Phase 4) ──
 // "any" admits everyone; "close" and "tight" admit a joiner whose display rating sits
 // within BOT_CONSTANTS.RATINGS.BAND_CLOSE or BAND_TIGHT of the host's. Declared HERE,

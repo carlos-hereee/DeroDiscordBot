@@ -1,6 +1,7 @@
 import { GameRoom, type BlackjackStackEntry, type IGameRoom, type TurnPromptRecord } from "@db/models/GameRoom.js";
 import {
 	NON_TERMINAL_ROOM_STATUSES,
+	ROOMS_AWAITING_PLAY,
 	type GameSlug,
 	type RatingBand,
 	type RoomMove,
@@ -679,6 +680,26 @@ export const gameRoomStore = {
 		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $set: { status, ...patch } }, { new: true });
 	},
 
+	// The one move of a room into "playing", called only by RoomProvisioner.seedRoom.
+	//
+	// ⚠️ THE STATUS FILTER IS THE START CLAIM (2026-10 item 276, audit P1-2). Provisioning takes
+	// seconds after the countdown read "draft", and Call it off, the idle sweep or the leave
+	// watcher can close the draft in that window; an unconditional write here revived the closed
+	// row as playing with its joiners seated. Only a row still waiting to start matches, so the
+	// loser of the race gets null and opens nothing.
+	//
+	// The buy in ledger is EMPTIED IN THE SAME WRITE and the row BEFORE it is returned (P2-13):
+	// the payers it held are the seats the table opens with, so a removal refunded a moment
+	// before this write is not on it and is never seated, and none refunded after it can claim
+	// an entry, because the entry is gone. Null when the claim was lost.
+	async claimForPlay(guildId: string, roomId: string, patch: Partial<IGameRoom>) {
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, status: { $in: [...ROOMS_AWAITING_PLAY] } },
+			{ $set: { status: "playing", ...patch, buyInPaidBy: [] } },
+			{ new: false }
+		);
+	},
+
 	// Terminal write for a match that ended.
 	//
 	// archiveAt is computed by roomLifecycle.finish and passed in, never derived here: the store
@@ -783,6 +804,25 @@ export const gameRoomStore = {
 			{ guildId, roomId },
 			{ $set: { status: "archived", channelId: null } },
 			{ new: true }
+		);
+	},
+
+	// Close a challenge that never started: Call it off, or a draft replaced by a new one.
+	// ⚠️ THE "draft" FILTER IS THE CANCEL CLAIM (2026-10 item 276, audit P1-2), the other half
+	// of claimForPlay: whichever lands first wins, so a cancel that lost to the start writes
+	// nothing and refunds nothing, and a start that lost to the cancel opens nothing. Null when
+	// the draft had already started or closed.
+	async archiveDraft(guildId: string, roomId: string) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId, status: "draft" }, { $set: { status: "archived", channelId: null } }, { new: true });
+	},
+
+	// Mark a Hold'em table finished inside its row, when the room finished from outside the table
+	// (the idle sweep, the leave watcher, a deleted channel, boot recovery). Only a table still
+	// joining or playing matches, so a table that ended itself is left as it ended (audit P1-1).
+	async closeHoldemTable(guildId: string, roomId: string) {
+		return GameRoom.updateOne(
+			{ guildId, roomId, game: "holdem", "secret.status": { $in: ["joining", "playing"] } },
+			{ $set: { "secret.status": "finished", "secret.betting": null } }
 		);
 	},
 

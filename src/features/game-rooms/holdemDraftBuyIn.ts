@@ -186,6 +186,23 @@ export async function settleDraftBuyIns(room: IGameRoom, pool: readonly string[]
 	return { ok: true, seats: { buyIn, userIds: [room.hostId, ...paid], charged: true } };
 }
 
+/**
+ * The seats a card's table opens with, read against the buy in ledger as the start claim found it
+ * (2026-10 item 276, audit P2-13). Start answered its seats from the card as it read it, and the
+ * room takes seconds to build: a joiner the host removed meanwhile was refunded and is off the
+ * ledger, so they do not sit, and a joiner who paid after Start's read is on the ledger but not
+ * in the seats, so they are owed their buy in back (`unseatedPayers`), since the claim emptied
+ * the ledger. The host paid at Start and is never on the ledger, so the host always sits. A free
+ * table seats everyone it named, and any payer still on its ledger is owed their buy in back.
+ */
+export function seatsAtClaim(seats: PaidSeats, hostId: string, ledgerAtClaim: readonly string[]): { seats: PaidSeats; unseatedPayers: string[] } {
+	if (!seats.charged) return { seats, unseatedPayers: [...new Set(ledgerAtClaim)] };
+	const stillPaid = new Set(ledgerAtClaim);
+	const seated = seats.userIds.filter((userId) => userId === hostId || stillPaid.has(userId));
+	const unseatedPayers = [...stillPaid].filter((userId) => !seated.includes(userId));
+	return { seats: { ...seats, userIds: seated }, unseatedPayers };
+}
+
 /** The room did not open: give the host and every paid seat their buy in back. A free table owes nobody. */
 export async function refundOpenedSeats(room: IGameRoom, seats: PaidSeats): Promise<void> {
 	if (!seats.charged) return;

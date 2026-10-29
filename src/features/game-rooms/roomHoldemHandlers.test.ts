@@ -465,6 +465,20 @@ describe("dealing the next hand", () => {
 		expect(table.handNumber).toBe(2);
 		expect(interaction.deferUpdate).toHaveBeenCalled();
 	});
+
+	// 2026-10 item 276, audit P1-1: a room finished from outside the table (the idle sweep, a
+	// member leaving the server) deals nothing, even while its stored table still reads as live.
+	it("deals nothing in a room that finished from outside the table", async () => {
+		const table = dealtTable(2);
+		act(table, whoActs(table)!, "fold");
+		const interaction = makeInteraction("p0");
+
+		await handleDeal(interaction, { ...makeRoom(table), status: "finished" } as IGameRoom);
+
+		expect(noticeText(interaction)).toBe(gameRoomsCopy.holdem.tournamentOver);
+		expect(table.handNumber).toBe(1);
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+	});
 });
 
 // 2026-10 item 263 R3-27: a table a challenge card opens is seated already and deals its first
@@ -575,10 +589,28 @@ describe("leaving and ending the table", () => {
 		await handleLeaveTable(makeInteraction("p1"), hostedRoom(table));
 
 		expect(storeMock.updateSecretIf.mock.calls[0][2]).toEqual({
+			// And on the room still playing (2026-10 item 276, audit P1-1): a room finished from
+			// outside the table already paid every stack back.
+			status: "playing",
 			"secret.lastActionAt": readAt,
 			"secret.seats": { $size: 2 },
 			"secret.boardMessageId": null,
 		});
+	});
+
+	// 2026-10 item 276, audit P1-1: the room's finish already paid every stack back from its
+	// claimed row, so a Leave or an End read off a table still marked playing would pay again.
+	it("refuses Leave table and End table in a room that finished from outside the table, paying nothing again", async () => {
+		const room = { ...hostedRoom(dealtTable(3)), status: "finished" } as IGameRoom;
+		const leaver = makeInteraction("p1");
+		const host = makeInteraction("p0");
+
+		await handleLeaveTable(leaver, room);
+		await handleEndTable(host, room);
+
+		expect(noticeText(leaver)).toBe(gameRoomsCopy.holdem.tournamentOver);
+		expect(noticeText(host)).toBe(gameRoomsCopy.holdem.tournamentOver);
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	it("refuses a member with no seat and writes nothing", async () => {

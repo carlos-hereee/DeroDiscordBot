@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 		create: vi.fn(),
 		update: vi.fn(),
 		markArchived: vi.fn(),
+		archiveDraft: vi.fn(async (guildId: string, roomId: string) => ({ guildId, roomId, status: "archived", buyInPaidBy: [] })),
 		setHoldemBuyIn: vi.fn(),
 	},
 	config: { findByGuildId: vi.fn() },
@@ -324,8 +325,8 @@ describe("the creation Submit", () => {
 
 		await confirmChallengeDraft(submitOf("gameroom:newok:holdem:old-room", { join: "public", watch: "open", match: "rated-any", buyIn: "" }), "holdem", "old-room");
 
-		expect(mocks.store.markArchived).toHaveBeenCalledWith("guild-1", "old-room");
-		expect(mocks.store.markArchived.mock.invocationCallOrder[0]).toBeLessThan(mocks.store.create.mock.invocationCallOrder[0]);
+		expect(mocks.store.archiveDraft).toHaveBeenCalledWith("guild-1", "old-room");
+		expect(mocks.store.archiveDraft.mock.invocationCallOrder[0]).toBeLessThan(mocks.store.create.mock.invocationCallOrder[0]);
 		expect(rated.send).toHaveBeenCalledOnce();
 	});
 });
@@ -386,6 +387,7 @@ describe("a held slot at a start that opens a room (R3-9)", () => {
 		expect(await offerToFreeSlot(press, () => "unused")).toBe(true);
 		expect(JSON.stringify((press.showModal.mock.calls[0][0] as { toJSON: () => unknown }).toJSON())).toContain(gameRoomsCopy.confirms.matchInPlay("room-ch"));
 		expect(mocks.store.markArchived).not.toHaveBeenCalled();
+		expect(mocks.store.archiveDraft).not.toHaveBeenCalled();
 	});
 
 	it("answers false when the slot is free, so the start goes ahead", async () => {

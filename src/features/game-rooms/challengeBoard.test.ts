@@ -8,6 +8,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		update: vi.fn(),
 		addPoolMember: vi.fn(),
 		markArchived: vi.fn(),
+		archiveDraft: vi.fn(async (guildId: string, roomId: string) => ({ guildId, roomId, status: "archived", buyInPaidBy: [] })),
 		create: vi.fn(),
 		findOpenByHost: vi.fn(),
 	},
@@ -661,7 +662,7 @@ describe("starting a challenge from a game button", () => {
 		Object.assign(interaction, { showModal: vi.fn().mockResolvedValue(undefined) }) as ButtonInteraction & { showModal: ReturnType<typeof vi.fn> };
 	const modalOf = (interaction: { showModal: ReturnType<typeof vi.fn> }) => (interaction.showModal.mock.calls[0][0] as ShownModal).toJSON();
 	const replyOf = (interaction: ButtonInteraction): { content: string } => (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
-	const markArchived = () => (gameRoomStore as unknown as { markArchived: ReturnType<typeof vi.fn> }).markArchived;
+	const markArchived = () => (gameRoomStore as unknown as { archiveDraft: ReturnType<typeof vi.fn> }).archiveDraft;
 	const asSubmit = (interaction: ButtonInteraction) => Object.assign(interaction, { isModalSubmit: () => false });
 
 	it("opens the creation modal and posts nothing on the press", async () => {

@@ -8,7 +8,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		countOpenInGuild: vi.fn(),
 		countOpenInGuildByVisibility: vi.fn(),
 		create: vi.fn(),
-		setStatus: vi.fn(),
+		claimForPlay: vi.fn(),
 		update: vi.fn(),
 		findByRoomId: vi.fn(),
 	},
@@ -42,7 +42,8 @@ const storeMock = gameRoomStore as unknown as {
 	countOpenInGuild: ReturnType<typeof vi.fn>;
 	countOpenInGuildByVisibility: ReturnType<typeof vi.fn>;
 	create: ReturnType<typeof vi.fn>;
-	setStatus: ReturnType<typeof vi.fn>;
+	claimForPlay: ReturnType<typeof vi.fn>;
+	findByRoomId: ReturnType<typeof vi.fn>;
 	update: ReturnType<typeof vi.fn>;
 };
 const logMock = botLogStore as unknown as { log: ReturnType<typeof vi.fn> };
@@ -63,7 +64,7 @@ function makeGuild(
 ): Guild {
 	const created = {
 		id: "room-channel-1",
-		send: vi.fn().mockResolvedValue({ id: "opener-1", pin: vi.fn().mockResolvedValue(undefined) }),
+		send: vi.fn().mockResolvedValue({ id: "opener-1", pin: vi.fn().mockResolvedValue(undefined), delete: vi.fn().mockResolvedValue(undefined) }),
 		delete: vi.fn().mockResolvedValue(undefined),
 		createInvite: vi.fn(createInviteImpl ?? (async () => ({ code: "invite-1" }))),
 	};
@@ -108,10 +109,33 @@ beforeEach(() => {
 	storeMock.countOpenInGuild.mockResolvedValue(0);
 	storeMock.countOpenInGuildByVisibility.mockResolvedValue(0);
 	storeMock.create.mockResolvedValue({ roomId: "room-1", guildId: "guild-1" });
-	storeMock.setStatus.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", status: "playing" });
+	// The start claim answers the row BEFORE it (a draft), and the re-read the row after it.
+	storeMock.claimForPlay.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", hostId: "host-1", status: "draft", buyInPaidBy: [] });
+	storeMock.findByRoomId.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", status: "playing" });
 	logMock.log.mockResolvedValue(undefined);
 	// Production default: not enforcing, infinite quota, zero cost.
 	accessMock.mockResolvedValue({ allowed: true, privateQuota: Number.POSITIVE_INFINITY });
+});
+
+// 2026-10 item 276, audit P1-2: the move to playing is a claim on a row still waiting to start.
+// A draft Call it off (or the idle sweep, or the leave watcher) closed while the room was being
+// built must not come back to life as a playing room with its joiners seated.
+describe("RoomProvisioner.open, a draft that closed while its room was built", () => {
+	it("opens nothing, and takes back the channel and the opener it already made", async () => {
+		storeMock.claimForPlay.mockResolvedValue(null);
+		const input = makeInput({ existingRoomId: "room-1" });
+		storeMock.findByRoomId.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", status: "draft" });
+
+		const result = await RoomProvisioner.open(input);
+
+		expect(result).toEqual({ ok: false, reason: "calledOff" });
+		const created = (await (input.guild.channels.create as unknown as ReturnType<typeof vi.fn>).mock.results[0].value) as { delete: ReturnType<typeof vi.fn> };
+		expect(created.delete).toHaveBeenCalled();
+		const opener = (await (await createdChannelOf(input.guild)).send.mock.results[0].value) as { delete: ReturnType<typeof vi.fn> };
+		expect(opener.delete).toHaveBeenCalled();
+		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(describeRoomOpenFailure({ ok: false, reason: "calledOff" })).toBe(gameRoomsCopy.board.draftGone);
+	});
 });
 
 describe("RoomProvisioner.open, happy path", () => {
@@ -128,7 +152,7 @@ describe("RoomProvisioner.open, happy path", () => {
 		// The row's channelId is written on the SAME transition that marks it playing,
 		// so a room is never "playing" with a null channel for any observable moment.
 		// An invite only room takes no invite link (2026-10 item 254, Arcade 10).
-		expect(storeMock.setStatus).toHaveBeenCalledWith("guild-1", "room-1", "playing", {
+		expect(storeMock.claimForPlay).toHaveBeenCalledWith("guild-1", "room-1", {
 			channelId: "room-channel-1",
 			openerMessageId: "opener-1",
 			inviteCode: null,
@@ -182,10 +206,9 @@ describe("RoomProvisioner.open, the invite link", () => {
 			expect.objectContaining({ maxAge: 0, maxUses: 0, unique: true })
 		);
 		// The code, not the URL: the renderer owns the URL shape.
-		expect(storeMock.setStatus).toHaveBeenCalledWith(
+		expect(storeMock.claimForPlay).toHaveBeenCalledWith(
 			"guild-1",
 			"room-1",
-			"playing",
 			expect.objectContaining({ inviteCode: "invite-1" })
 		);
 		// And the URL rides the opener description as an inline link.
@@ -208,7 +231,7 @@ describe("RoomProvisioner.open, the invite link", () => {
 		expect(channel.createInvite).not.toHaveBeenCalled();
 		const opener = channel.send.mock.calls[0][0] as { embeds: { data: { description?: string } }[] };
 		expect(opener.embeds[0].data.description).not.toContain("discord.gg");
-		expect(storeMock.setStatus).toHaveBeenCalledWith("guild-1", "room-1", "playing", expect.objectContaining({ inviteCode: null }));
+		expect(storeMock.claimForPlay).toHaveBeenCalledWith("guild-1", "room-1", expect.objectContaining({ inviteCode: null }));
 	});
 
 	it("mints for a public room open to spectators by the host's explicit choice", async () => {
@@ -231,10 +254,9 @@ describe("RoomProvisioner.open, the invite link", () => {
 		const result = await RoomProvisioner.open(input);
 
 		expect(result.ok).toBe(true);
-		expect(storeMock.setStatus).toHaveBeenCalledWith(
+		expect(storeMock.claimForPlay).toHaveBeenCalledWith(
 			"guild-1",
 			"room-1",
-			"playing",
 			expect.objectContaining({ inviteCode: null })
 		);
 		const channel = await createdChannelOf(input.guild);
@@ -289,10 +311,9 @@ describe("RoomProvisioner.open, solo rooms", () => {
 		// No invite for a room only one member can ever see.
 		const channel = await createdChannelOf(input.guild);
 		expect(channel.createInvite).not.toHaveBeenCalled();
-		expect(storeMock.setStatus).toHaveBeenCalledWith(
+		expect(storeMock.claimForPlay).toHaveBeenCalledWith(
 			"guild-1",
 			"room-1",
-			"playing",
 			expect.objectContaining({ inviteCode: null })
 		);
 		warnSpy.mockRestore();

@@ -610,6 +610,12 @@ export async function seatAcceptedPlayer(client: Client, room: IGameRoom, userId
 export async function handleDeal(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
 	const table = tableOf(room);
 	if (!table) return;
+	// A finished room deals nothing (2026-10 item 276, audit P1-1), even while its table still
+	// reads as joining or playing: a new hand there would pay its XP again.
+	if (isTableClosed(room, table)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tournamentOver] });
+		return;
+	}
 
 	// ⚠️ REFUSE A DEAL WHILE A HAND IS LIVE, and note the status check below cannot do
 	// this job. `dealHand` is not a restart: it reshuffles and zeroes every seat's
@@ -1009,14 +1015,23 @@ function awardHoldemXp(client: Client, room: IGameRoom, award: Omit<AwardXpInput
 // stamp catches a racing action or clock fold; the count catches a racing buy in,
 // which moves no stamp, so a leave or an end can never erase a seat that landed
 // between this handler's read and its write.
+// ⚠️ AND THE ROOM MUST STILL BE PLAYING (2026-10 item 276, audit P1-1). A leave and a removal
+// cash a stack out right after this write, and a room finished from outside the table (the idle
+// sweep, the leave watcher) has already paid every stack back from its claimed row without
+// moving the stamp, so a leave read before that finish would otherwise pay the same stack twice.
 function persistLeaveOrEnd(room: IGameRoom, table: HoldemTable, readAt: number, seatsRead: number) {
 	return gameRoomStore.updateSecretIf(
 		room.guildId,
 		room.roomId,
-		{ "secret.lastActionAt": readAt, "secret.seats": { $size: seatsRead }, ...sameBoard(table) },
+		{ status: "playing", "secret.lastActionAt": readAt, "secret.seats": { $size: seatsRead }, ...sameBoard(table) },
 		table
 	);
 }
+
+// A table whose ROOM is over, whatever its own row says: the room finished from outside the
+// table, which marks the table finished only after it has paid the stacks back (roomLifecycle
+// finish), so a press read in between still sees a live table (2026-10 item 276, audit P1-1).
+const isTableClosed = (room: IGameRoom, table: HoldemTable): boolean => room.status !== "playing" || table.status === "finished";
 
 /**
  * Why a member cannot leave this table, or null when they can: the same reading on the Leave
@@ -1025,7 +1040,7 @@ function persistLeaveOrEnd(room: IGameRoom, table: HoldemTable, readAt: number, 
  */
 function leaveRefusal(room: IGameRoom, userId: string): string | null {
 	const table = tableOf(room);
-	if (!table || table.status === "finished") return gameRoomsCopy.holdem.tournamentOver;
+	if (!table || isTableClosed(room, table)) return gameRoomsCopy.holdem.tournamentOver;
 	const seat = table.seats.find((candidate) => candidate.userId === userId);
 	return !seat || seat.out ? gameRoomsCopy.holdem.notSeated : null;
 }
@@ -1033,7 +1048,7 @@ function leaveRefusal(room: IGameRoom, userId: string): string | null {
 /** Why this table cannot be ended, or null when it can: read on the End press and again on its Submit (R3-6). */
 function endRefusal(room: IGameRoom): string | null {
 	const table = tableOf(room);
-	return !table || table.status === "finished" ? gameRoomsCopy.holdem.tournamentOver : null;
+	return !table || isTableClosed(room, table) ? gameRoomsCopy.holdem.tournamentOver : null;
 }
 
 /** Leave table's confirm (2026-10 item 257): its Submit, or the fallback reply's button. The press only asks, after leaveRefusal. */

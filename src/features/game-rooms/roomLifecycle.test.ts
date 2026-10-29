@@ -3,8 +3,9 @@ import { PermissionFlagsBits } from "discord.js";
 import type { Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { finish: vi.fn(), markArchived: vi.fn(), appendMove: vi.fn() },
+	gameRoomStore: { finish: vi.fn(), markArchived: vi.fn(), appendMove: vi.fn(), closeHoldemTable: vi.fn(), takeBuyInPaid: vi.fn() },
 }));
+vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { credit: vi.fn(), debit: vi.fn() } }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: { findByGuildId: vi.fn() },
 }));
@@ -18,13 +19,18 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { chipWalletStore } from "@db/stores/chipWalletStore.js";
+import { createTable, joinTable } from "@features/games/holdemTable.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 const storeMock = gameRoomStore as unknown as {
 	finish: ReturnType<typeof vi.fn>;
 	markArchived: ReturnType<typeof vi.fn>;
 	appendMove: ReturnType<typeof vi.fn>;
+	closeHoldemTable: ReturnType<typeof vi.fn>;
+	takeBuyInPaid: ReturnType<typeof vi.fn>;
 };
+const creditMock = chipWalletStore.credit as unknown as ReturnType<typeof vi.fn>;
 const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
 const logMock = botLogStore as unknown as { log: ReturnType<typeof vi.fn> };
 const awardMock = awardXp as unknown as ReturnType<typeof vi.fn>;
@@ -402,6 +408,66 @@ describe("roomLifecycle.finish, the room invite", () => {
 		await new Promise((resolve) => setImmediate(resolve));
 
 		expect(deleteInvite).not.toHaveBeenCalled();
+	});
+});
+
+// ── 2026-10 item 276: the money a room still holds when something outside the game ends it ──
+describe("roomLifecycle.finish, what a room ended from outside still holds", () => {
+	// Audit P1-3: the idle sweep, the leave watcher and a deleted channel finish a draft too, and
+	// once it is finished Call it off can no longer reach the buy ins its joiners paid.
+	it("refunds every buy in a challenge that never started still holds, each claimed before it pays", async () => {
+		const order: string[] = [];
+		storeMock.finish.mockImplementation(async () => {
+			order.push("claim");
+			return makeRoom({ game: "holdem", status: "finished", buyInPaidBy: ["a", "b"], holdemBuyIn: 2_500 });
+		});
+		storeMock.takeBuyInPaid.mockImplementation(async (_guildId: string, _roomId: string, userId: string) => {
+			order.push(`take:${userId}`);
+			return makeRoom();
+		});
+		creditMock.mockImplementation(async (key: { userId: string }) => void order.push(`pay:${key.userId}`));
+
+		await finish(makeClient(null), makeRoom({ game: "holdem", status: "draft", channelId: null }), { abandoned: true });
+
+		expect(creditMock.mock.calls).toEqual([
+			[{ userId: "a" }, 2_500],
+			[{ userId: "b" }, 2_500],
+		]);
+		expect(order).toEqual(["claim", "take:a", "pay:a", "take:b", "pay:b"]);
+	});
+
+	it("refunds nothing when another caller already finished the room", async () => {
+		storeMock.finish.mockResolvedValue(null);
+
+		await finish(makeClient(null), makeRoom({ game: "holdem", status: "draft", buyInPaidBy: ["a"] }), { abandoned: true });
+
+		expect(storeMock.takeBuyInPaid).not.toHaveBeenCalled();
+		expect(creditMock).not.toHaveBeenCalled();
+	});
+
+	// Audit P1-1: the table in the row is marked finished AFTER its stacks are paid back, so no
+	// table control can pay a stack again or deal a new hand in a finished room.
+	it("marks a Hold'em table finished in its row after paying its stacks back", async () => {
+		const table = createTable();
+		table.chips = { guildId: "guild-1" };
+		joinTable(table, "host-1", "Host");
+		joinTable(table, "player-2", "Player");
+		table.status = "playing";
+		const order: string[] = [];
+		storeMock.finish.mockResolvedValue(makeRoom({ game: "holdem", status: "finished", secret: table as never }));
+		creditMock.mockImplementation(async (key: { userId: string }) => void order.push(`pay:${key.userId}`));
+		storeMock.closeHoldemTable.mockImplementation(async () => void order.push("close"));
+
+		await finish(makeClient(null), makeRoom({ game: "holdem" }), { abandoned: true });
+
+		expect(storeMock.closeHoldemTable).toHaveBeenCalledWith("guild-1", "room-1");
+		expect(order).toEqual(["pay:host-1", "pay:player-2", "close"]);
+	});
+
+	it("leaves every other game's state alone", async () => {
+		await finish(makeClient(null), makeRoom());
+
+		expect(storeMock.closeHoldemTable).not.toHaveBeenCalled();
 	});
 });
 

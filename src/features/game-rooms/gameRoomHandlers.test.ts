@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { InteractionType, type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findByRoomId: vi.fn(), markArchived: vi.fn(), findOpenByHost: vi.fn(), update: vi.fn() },
+	gameRoomStore: { findByRoomId: vi.fn(), markArchived: vi.fn(), archiveDraft: vi.fn(async () => ({ status: "archived", buyInPaidBy: [] })), findOpenByHost: vi.fn(), update: vi.fn() },
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: { findByGuildId: vi.fn() },
@@ -354,7 +354,7 @@ describe("gameRoomHandlers gates", () => {
 		await _handleGameRoomButton(interaction);
 
 		expect(gateMock).toHaveBeenCalledOnce();
-		expect((gameRoomStore as unknown as { markArchived: ReturnType<typeof vi.fn> }).markArchived).toHaveBeenCalledWith("guild-1", "room-1");
+		expect((gameRoomStore as unknown as { archiveDraft: ReturnType<typeof vi.fn> }).archiveDraft).toHaveBeenCalledWith("guild-1", "room-1");
 	});
 
 	// ⚠️ main.ts DOES NOT GATE BUTTONS. Its permission checks live inside

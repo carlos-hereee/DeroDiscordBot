@@ -7,7 +7,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		countOpenInGuild: vi.fn(),
 		countOpenInGuildByVisibility: vi.fn(),
 		create: vi.fn(),
-		setStatus: vi.fn(),
+		claimForPlay: vi.fn(),
 		update: vi.fn(),
 		findByRoomId: vi.fn(),
 	},
@@ -77,7 +77,9 @@ beforeEach(() => {
 	storeMock.findOpenByHost.mockResolvedValue(null);
 	storeMock.countOpenInGuild.mockResolvedValue(0);
 	storeMock.create.mockResolvedValue({ roomId: "room-1", guildId: "guild-1" });
-	storeMock.setStatus.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", status: "playing" });
+	// The start claim answers the row BEFORE it (a draft), and the re-read the row after it.
+	storeMock.claimForPlay.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", hostId: "host-1", status: "draft", buyInPaidBy: [] });
+	storeMock.findByRoomId.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", status: "playing" });
 	storeMock.update.mockResolvedValue(undefined);
 	(botLogStore.log as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 	(checkGameRoomAccess as ReturnType<typeof vi.fn>).mockResolvedValue({ allowed: true, privateQuota: Number.POSITIVE_INFINITY });
@@ -138,18 +140,23 @@ describe("RoomProvisioner.open with Dero bots", () => {
 });
 
 // 2026-10 item 263 R3-27: a table a challenge card opens sits everyone the card seated and
-// deals at once, with no joining phase; Dero's rules card (no holdemSeats) still gathers.
+// deals at once, with no joining phase; Dero's rules card (no draftSeats) still gathers.
 describe("RoomProvisioner.open for a challenge card's table", () => {
 	const dealMock = dealOpeningHand as unknown as ReturnType<typeof vi.fn>;
 	const boardOf = (send: ReturnType<typeof vi.fn>) =>
 		send.mock.calls.map((call) => call[0]).find((payload) => payload.embeds?.[0]?.data.title === gameRoomsCopy.holdem.tableTitle) as { components: unknown[] };
 	const seatsOf = () => (storedTable() as { seats: Array<{ userId: string; stack: number }> }).seats.map((seat) => [seat.userId, seat.stack]);
 
+	// The ledger as the start claim found it: the card's payers (the host paid at Start, off it).
+	const ledgerAtClaim = (payers: string[]) =>
+		storeMock.claimForPlay.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", hostId: "host-1", status: "draft", buyInPaidBy: payers });
+
 	it("seats the host and two payers at the buy in they paid and deals the first hand", async () => {
 		(guildConfigStore.findByGuildId as ReturnType<typeof vi.fn>).mockResolvedValue({ chipEconomyEnabled: true });
+		ledgerAtClaim(["a", "b"]);
 		const { guild, send } = makeGuild();
 
-		await RoomProvisioner.open(input(guild, { holdemSeats: { buyIn: 2_500, userIds: ["host-1", "a", "b"], charged: true } }));
+		await RoomProvisioner.open(input(guild, { draftSeats: { buyIn: 2_500, userIds: ["host-1", "a", "b"], charged: true } }));
 
 		expect(seatsOf()).toEqual([["host-1", 2_500], ["a", 2_500], ["b", 2_500]]);
 		expect(boardOf(send).components).toEqual([]);
@@ -159,26 +166,54 @@ describe("RoomProvisioner.open for a challenge card's table", () => {
 	it("seats every joiner free on a server with chips off", async () => {
 		const { guild } = makeGuild();
 
-		await RoomProvisioner.open(input(guild, { holdemSeats: { buyIn: 2_500, userIds: ["host-1", "a", "b"], charged: false } }));
+		await RoomProvisioner.open(input(guild, { draftSeats: { buyIn: 2_500, userIds: ["host-1", "a", "b"], charged: false } }));
 
 		expect(seatsOf()).toEqual([["host-1", 1_000], ["a", 1_000], ["b", 1_000]]);
 		expect(chipWalletStore.credit).not.toHaveBeenCalled();
 		expect(dealMock).toHaveBeenCalledOnce();
 	});
 
-	it("gives a paid seat its chips back and seats it free when chips went off since the card settled", async () => {
+	// 2026-10 item 276, audit P3: what a card's table plays for is what its Start charged, never
+	// the server's switch as it reads at the open.
+	it("plays for the chips its Start charged even when chips went off since the card settled", async () => {
+		ledgerAtClaim(["a"]);
 		const { guild } = makeGuild();
 
-		await RoomProvisioner.open(input(guild, { holdemSeats: { buyIn: 2_500, userIds: ["host-1", "a"], charged: true } }));
+		await RoomProvisioner.open(input(guild, { draftSeats: { buyIn: 2_500, userIds: ["host-1", "a"], charged: true } }));
 
+		expect(seatsOf()).toEqual([["host-1", 2_500], ["a", 2_500]]);
+		expect((storedTable() as { chips?: unknown }).chips).toEqual({ guildId: "guild-1" });
+		expect(chipWalletStore.credit).not.toHaveBeenCalled();
+	});
+
+	it("plays free when its Start charged nobody, even when chips went on since the card settled", async () => {
+		(guildConfigStore.findByGuildId as ReturnType<typeof vi.fn>).mockResolvedValue({ chipEconomyEnabled: true });
+		const { guild } = makeGuild();
+
+		await RoomProvisioner.open(input(guild, { draftSeats: { buyIn: 2_500, userIds: ["host-1", "a"], charged: false } }));
+
+		// A chip table here would pay these unpaid stacks out of nothing when it ends.
+		expect((storedTable() as { chips?: unknown }).chips).toBeUndefined();
 		expect(seatsOf()).toEqual([["host-1", 1_000], ["a", 1_000]]);
-		expect((chipWalletStore.credit as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { userId: string }).userId)).toEqual(["host-1", "a"]);
+	});
+
+	// 2026-10 item 276, audit P2-13: the seats are the ledger as the start claim found it.
+	it("never seats a payer the host removed while the room was built, and refunds a payer Start never read", async () => {
+		(guildConfigStore.findByGuildId as ReturnType<typeof vi.fn>).mockResolvedValue({ chipEconomyEnabled: true });
+		// "a" was removed and refunded after Start read the card; "c" paid after Start read it.
+		ledgerAtClaim(["b", "c"]);
+		const { guild } = makeGuild();
+
+		await RoomProvisioner.open(input(guild, { draftSeats: { buyIn: 2_500, userIds: ["host-1", "a", "b"], charged: true } }));
+
+		expect(seatsOf()).toEqual([["host-1", 2_500], ["b", 2_500]]);
+		expect((chipWalletStore.credit as ReturnType<typeof vi.fn>).mock.calls).toEqual([[{ userId: "c" }, 2_500]]);
 	});
 
 	it("seats the host and every member beside the Dero bots (risk R8)", async () => {
 		const { guild } = makeGuild();
 
-		await RoomProvisioner.open(input(guild, { botIds: ["dero-bot-red"], holdemSeats: { buyIn: 1_000, userIds: ["host-1", "a"], charged: false } }));
+		await RoomProvisioner.open(input(guild, { botIds: ["dero-bot-red"], draftSeats: { buyIn: 1_000, userIds: ["host-1", "a"], charged: false } }));
 
 		expect(seatsOf().map(([userId]) => userId)).toEqual(["host-1", "a", "dero-bot-red"]);
 		expect(dealMock).toHaveBeenCalledOnce();
@@ -187,7 +222,7 @@ describe("RoomProvisioner.open for a challenge card's table", () => {
 	it("lets a network table short of two seats gather from the network board instead", async () => {
 		const { guild, send } = makeGuild();
 
-		await RoomProvisioner.open(input(guild, { holdemSeats: { buyIn: 1_000, userIds: ["host-1"], charged: false } }));
+		await RoomProvisioner.open(input(guild, { draftSeats: { buyIn: 1_000, userIds: ["host-1"], charged: false } }));
 
 		expect(boardOf(send).components).not.toEqual([]);
 		expect(dealMock).not.toHaveBeenCalled();

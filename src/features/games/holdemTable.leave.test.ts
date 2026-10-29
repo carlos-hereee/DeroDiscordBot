@@ -133,6 +133,25 @@ describe("leaving a live hand", () => {
 		expect(seatOf(table, leaver).stack).toBe(0);
 		expect(livePlayers(table).map((seat) => seat.userId)).not.toContain(leaver);
 	});
+
+	// 2026-10 item 276, audit P2-9: an uncalled raise handed back at the settle used to land on
+	// the out seat, whose stack was already cashed out and is never paid again, so the chips
+	// left the table. A leaver's bet stays in the pot like any folded chips.
+	it("gives a leaver's uncalled raise to the pot's winner, never back to the seat that left", () => {
+		const table = tableWith(3);
+		const raiser = whoActs(table)!;
+		const raise = actionsFor(table, raiser).find((entry) => entry.action === "raise" || entry.action === "bet")!;
+		act(table, raiser, raise.action, raise.min);
+		const { stackLeft } = leaveTable(table, raiser);
+		const raised = seatOf(table, raiser).totalCommitted;
+
+		act(table, whoActs(table)!, "fold");
+
+		expect(handInProgress(table)).toBe(false);
+		const winner = livePlayers(table).find((seat) => !seat.folded)!;
+		expect(winner.stack).toBeGreaterThan(START + raised - 1);
+		expect(liveChips(table) + (stackLeft ?? 0)).toBe(3 * START);
+	});
 });
 
 describe("leaving between hands", () => {
@@ -187,6 +206,21 @@ describe("ending the table", () => {
 		expect(table.seats.map((seat) => seat.stack)).toEqual([START, START, START]);
 		expect(order).toHaveLength(3);
 		expect(table.winnerId).toBe(order[0]);
+	});
+
+	// 2026-10 item 276, audit P2-14: a seat that left mid hand forfeited what it put in, and with
+	// no showdown those chips go to the seats still in rather than off the table.
+	it("calls off a running hand a seat left, sharing the leaver's chips among the seats still in", () => {
+		const table = tableWith(3);
+		const acting = whoActs(table)!;
+		const leaver = table.seats.find((seat) => seat.userId !== acting && seat.totalCommitted > 0)!.userId;
+		const { stackLeft } = leaveTable(table, leaver);
+		expect(seatOf(table, leaver).totalCommitted).toBeGreaterThan(0);
+
+		endTable(table);
+
+		expect(liveChips(table) + (stackLeft ?? 0)).toBe(3 * START);
+		expect(seatOf(table, leaver).stack).toBe(0);
 	});
 
 	it("ranks the seats still in by chips, then the seats that are out, last one out first", () => {

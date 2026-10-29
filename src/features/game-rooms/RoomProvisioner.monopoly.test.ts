@@ -7,7 +7,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		countOpenInGuild: vi.fn(),
 		countOpenInGuildByVisibility: vi.fn(),
 		create: vi.fn(),
-		setStatus: vi.fn(),
+		claimForPlay: vi.fn(),
 		update: vi.fn(),
 		findByRoomId: vi.fn(),
 	},
@@ -80,7 +80,9 @@ beforeEach(() => {
 	storeMock.findOpenByHost.mockResolvedValue(null);
 	storeMock.countOpenInGuild.mockResolvedValue(0);
 	storeMock.create.mockResolvedValue({ roomId: "room-1", guildId: "guild-1" });
-	storeMock.setStatus.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", status: "playing" });
+	// The start claim answers the row BEFORE it (a draft), and the re-read the row after it.
+	storeMock.claimForPlay.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", hostId: "host-1", status: "draft", buyInPaidBy: [] });
+	storeMock.findByRoomId.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", status: "playing" });
 	storeMock.update.mockResolvedValue(undefined);
 	(botLogStore.log as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 	(checkGameRoomAccess as ReturnType<typeof vi.fn>).mockResolvedValue({ allowed: true, privateQuota: Number.POSITIVE_INFINITY });
@@ -106,7 +108,8 @@ describe("RoomProvisioner.open for monopoly", () => {
 			status: "playing",
 			channelId: "room-channel-1",
 			playerIds: ["host-1", "player-2", "player-3"],
-			secret: storedState(),
+			// Read before the board's write too (seedRoom re-reads the row after its start claim).
+			secret: storeMock.update.mock.calls.length > 0 ? storedState() : null,
 			turnPrompt: null,
 		}));
 

@@ -14,6 +14,7 @@ import { announceMatchResult } from "./roomAnnouncer.js";
 import type { OutcomeBucket } from "./matchOutcome.js";
 import { settleTableChips } from "./holdemChips.js";
 import { settleBlackjackStacks } from "./blackjackChips.js";
+import { refundAllJoiners } from "./holdemDraftBuyIn.js";
 import { revokeRoomInvite } from "./roomInvite.js";
 import { isSoloLuckGame, offersRematch } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -113,9 +114,28 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	// ends a table pays it exactly once, whoever ended it. Awaited before the lock so its
 	// line lands above the result card; it catches its own failures.
 	await settleTableChips(client, claimed);
+	// ①ᵈ A Hold'em table whose room ended from outside it (the idle sweep, the leave watcher, a
+	// deleted channel, boot recovery) is marked finished in its row too, AFTER the settle paid
+	// its stacks (2026-10 item 276, audit P1-1). Every table control refuses a finished table,
+	// so Leave can never pay a settled stack a second time and nobody deals a new hand in a
+	// finished room. A table that ended itself is already finished and the write matches nothing.
+	if (claimed.game === "holdem") {
+		try {
+			await gameRoomStore.closeHoldemTable(room.guildId, room.roomId);
+		} catch (error) {
+			console.error("[game-rooms] the finished room's Hold'em table could not be marked finished", { roomId: room.roomId, error });
+		}
+	}
 	// A Blackjack chip table's stacks the same way (2026-10 item 267, risk R5), from the ledger
 	// the last settle wrote, so a restart, the idle sweep or a deleted channel pays them too.
 	await settleBlackjackStacks(client, claimed);
+	// ①ᵉ A challenge that ended before it started (the idle sweep, the leave watcher, a deleted
+	// channel) still holds the buy ins its joiners paid on the card (2026-10 item 276, audit
+	// P1-3), and once the row is finished Call it off can no longer reach them. Refunded from the
+	// CLAIMED row, claim first and pay second: each refund claims its own ledger entry
+	// (refundJoiners), so nothing pays twice. A room that started has an empty ledger, because
+	// the start claim emptied it.
+	if ((claimed.buyInPaidBy ?? []).length > 0) await refundAllJoiners(claimed);
 
 	// A network table names its winner rather than mentioning them (satelliteRooms).
 	const resultEmbed = await labelEmbedForRoom(client, room, roomResultEmbed(winnerId, input.abandoned ?? false, input.art?.ref, archiveDelayMs));

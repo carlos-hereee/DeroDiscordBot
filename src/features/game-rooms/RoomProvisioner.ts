@@ -14,13 +14,12 @@ import {
 	battleshipBoardMessage,
 } from "./roomBattleship.js";
 import { createTable as createHoldemTable, joinTable as joinHoldemTable, setBuyIn as setHoldemBuyIn, type HoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
-import { returnChips } from "@features/economy/chipWallet.js";
-import type { PaidSeats } from "./holdemDraftBuyIn.js";
+import { refundSeatsDirectly, seatsAtClaim, type PaidSeats } from "./holdemDraftBuyIn.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
 import { dealOpeningHand } from "./roomHoldemHandlers.js";
 import { createInitialState as createMonopolyState } from "@features/games/monopolyState.js";
-import { chipTableFor } from "./holdemChips.js";
+import { chipTableFor, tableChipsOf } from "./holdemChips.js";
 import { botSeatName, isBotSeatId, labelBotMentions } from "./botSeat.js";
 import { monopolyBoardEmbed, monopolyControlsRow } from "./roomMonopoly.js";
 import { seatNamesForBoard } from "./roomMonopolyBoard.js";
@@ -33,7 +32,7 @@ import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isWithinReach, readChallengeReach } from "./challengeReach.js";
-import { mintRoomInvite } from "./roomInvite.js";
+import { mintRoomInvite, revokeRoomInvite } from "./roomInvite.js";
 import type { GameSlug, RoomVisibility, SpectatorMode } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -148,7 +147,9 @@ function openerComponents(game: GameSlug, roomId: string) {
 export const _clearInflightOpens = (): void => inflightOpens.clear();
 
 export type RoomOpenResult =
-	| { ok: true; room: IGameRoom; channel: TextChannel }
+	// `seats` is the card's seats as the start claim left them (seedRoom), present only when
+	// the open was given `draftSeats`.
+	| { ok: true; room: IGameRoom; channel: TextChannel; seats?: PaidSeats }
 	// Every failure names itself, so the caller renders one reply per reason rather
 	// than a single "could not open a room" that tells the member nothing about
 	// whether waiting, upgrading or asking an admin is the fix.
@@ -161,7 +162,10 @@ export type RoomOpenResult =
 	// Phase 4). Every door into a room ends here, so this is the refusal that counts.
 	| { ok: false; reason: "outsideReach" }
 	| { ok: false; reason: "missingPermissions" }
-	| { ok: false; reason: "createFailed" };
+	| { ok: false; reason: "createFailed" }
+	// The draft closed while its room was being built (Call it off, the idle sweep, a member
+	// leaving the server) and won the start claim, so nothing opened (2026-10 item 276, P1-2).
+	| { ok: false; reason: "calledOff" };
 
 export type RoomOpenFailure = Exclude<RoomOpenResult, { ok: true }>;
 
@@ -189,11 +193,12 @@ export interface RoomOpenInput {
 	// asked for a table and confirmed its terms). Absent everywhere else, which
 	// opens the standard table exactly as before. Ignored for every other game.
 	holdemTerms?: HoldemTerms;
-	// Who sits down as a table opened from a challenge card opens, host first (2026-10 item
-	// 263 R3-27): the payers at a chip table, every pool member at a free one. Present only
-	// for a card's table, which deals its first hand at once; absent (the rules card, a
-	// rematch) opens the joining table.
-	holdemSeats?: PaidSeats;
+	// Who sits down as a Hold'em or Blackjack table opened from a challenge card opens, host
+	// first (2026-10 item 263 R3-27): the payers at a chip table, every pool member at a free
+	// one, as settleDraftBuyIns answered at Start. seedRoom reconciles them with the buy in
+	// ledger at the start claim (2026-10 item 276, P2-13). Present only for a card's table;
+	// absent (the rules card, a rematch) opens Hold'em's joining table.
+	draftSeats?: PaidSeats;
 	// The voice referee the row opens with, written on the new row (absent writes null, which
 	// roomTypes.refereeOn reads as the game's default). Only Dero's rules card sets it, false,
 	// because its table registers its own dealer and must not gain the referee's voice join.
@@ -327,13 +332,19 @@ export const RoomProvisioner = {
 			visibility,
 			spectatorMode: input.spectatorMode ?? null,
 			holdemTerms: input.holdemTerms,
-			holdemSeats: input.holdemSeats,
+			draftSeats: input.draftSeats,
 			monopolyAuctions: input.monopolyAuctions,
 			hangmanCategory: input.hangmanCategory,
 			botIds: input.botIds,
 		});
 
-		return { ok: true, room: started, channel };
+		// A draft that closed while its room was built keeps no channel: nothing points at it,
+		// and the sweep only ever looks at rows.
+		if (!started) {
+			await channel.delete("game room start called off").catch(() => undefined);
+			return { ok: false, reason: "calledOff" };
+		}
+		return { ok: true, room: started.room, channel, ...(started.seats ? { seats: started.seats } : {}) };
 	},
 };
 
@@ -442,13 +453,19 @@ export interface RoomSeedInput {
 	// about who can watch. Absent or null reads as the visibility's default.
 	spectatorMode?: SpectatorMode | null;
 	holdemTerms?: HoldemTerms;
-	holdemSeats?: PaidSeats;
+	draftSeats?: PaidSeats;
 	monopolyAuctions?: boolean;
 	hangmanCategory?: HangmanCategory;
 	// The Dero bot seats the host chose on the challenge card (2026-10 item 250 Phase 5),
 	// from botSeat.botSeatIdsFor. They sit in the game's own state and NEVER in playerIds,
 	// which carry channel permissions. Absent or empty seats no bot.
 	botIds?: string[];
+}
+
+/** A room seedRoom moved to playing, and the card's seats as the start claim left them. */
+export interface SeededRoom {
+	room: IGameRoom;
+	seats?: PaidSeats;
 }
 
 // ── seeding: from a channel and a row to a playable match ─────────────
@@ -459,7 +476,9 @@ export interface RoomSeedInput {
 //        challengeBoard.rematchFromRoom for a rematch in the channel the finished room
 //        handed over. ONE function, so a rematch can never open a game differently
 //        from how a first match opens it.
-// When:  once per room, right after its row exists and its channel is writable.
+// When:  once per room, right after its row exists and its channel is writable. Answers
+//        null when the row closed before the start claim landed (2026-10 item 276, P1-2):
+//        nothing is seeded, and the opener and invite it already posted are taken back.
 // How:   ⑤ᵃ invite, ⑤ opener and status, then the per game state, then ⑥ the audit
 //        line. A blackjack table is NOT here, solo or multi seat: soloRooms deals it
 //        (startSoloBlackjackBoard, startBlackjackRoomBoard), because a table that fails
@@ -467,7 +486,7 @@ export interface RoomSeedInput {
 //        provisioner's. Nor is a coin flip or dice round against Dero, which soloRooms
 //        plays once the room is up; a solo-rps room's throw prompt IS here, so a rematch in
 //        the same channel asks for the next throw exactly as the first room did.
-export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
+export async function seedRoom(input: RoomSeedInput): Promise<SeededRoom | null> {
 	const { guild, channel, room, game, hostId, playerIds, visibility } = input;
 	const botIds = input.botIds ?? [];
 
@@ -498,12 +517,21 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 		.catch(() => null);
 	await opener?.pin().catch(() => undefined);
 
-	const started = await gameRoomStore.setStatus(guild.id, room.roomId, "playing", {
+	// The start claim: only a row still waiting to start moves to playing, and its buy in
+	// ledger is emptied in the same write (gameRoomStore.claimForPlay explains both).
+	const beforeClaim = await gameRoomStore.claimForPlay(guild.id, room.roomId, {
 		channelId: channel.id,
 		openerMessageId: opener?.id ?? null,
 		inviteCode,
 		startedAt: new Date(),
 	});
+	if (!beforeClaim) {
+		await opener?.delete().catch(() => undefined);
+		void revokeRoomInvite(guild.client, { roomId: room.roomId, guildId: guild.id, inviteCode });
+		return null;
+	}
+	const started = await gameRoomStore.findByRoomId(guild.id, room.roomId);
+	const seats = input.draftSeats ? await seatsTheClaimLeft(input.draftSeats, beforeClaim) : undefined;
 
 	// Battleship needs a MATCH, not just a room: two fleets laid out and a board
 	// message to edit every turn. Done here rather than lazily on the first click
@@ -516,16 +544,18 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 	if (game === "holdem") {
 		const table = createHoldemTable(Date.now(), input.holdemTerms);
 		// Whether the table plays for the members' wallet chips (2026-10 item 250 Phase 5),
-		// decided once, here, so a table never changes what it plays for mid way. A table
-		// with a bot seat plays free, so a bot never pays a member chips it never had.
-		const chips = await chipTableFor(room, botIds.length > 0);
+		// decided once, so a table never changes what it plays for mid way. A table with a bot
+		// seat plays free, so a bot never pays a member chips it never had.
+		// ⚠️ A CARD'S TABLE PLAYS FOR WHAT ITS START CHARGED, never for the server's switch as it
+		// reads now (2026-10 item 276, audit P3): chips switched on between Start and this line
+		// would otherwise seat a free table's players on chip stacks nobody paid for, and the end
+		// of the table would pay those stacks out of nothing. Only a table with no card's seats
+		// (the rules card, a rematch's joining table) decides here, where its players buy in.
+		const chips = seats ? (seats.charged ? tableChipsOf(room.guildId) : null) : await chipTableFor(room, botIds.length > 0);
 		if (chips) table.chips = chips;
 		// Everyone the card seated sits down: at a chip table at the buy in they paid, at a free
-		// one on the standard stack. Seats paid for at a table that turned free in the moment
-		// since the card settled (chips switched off) get their chips back and sit free.
-		const seats = input.holdemSeats;
-		if (seats?.charged && chips) setHoldemBuyIn(table, seats.buyIn);
-		else if (seats?.charged) for (const userId of seats.userIds) await returnChips({ userId }, seats.buyIn);
+		// one on the standard stack.
+		if (seats?.charged) setHoldemBuyIn(table, seats.buyIn);
 		for (const userId of seats?.userIds ?? []) joinHoldemTable(table, userId, guild.members.cache.get(userId)?.displayName ?? userId);
 		// The host's Dero bots take their seats after the members.
 		for (const botId of botIds) joinHoldemTable(table, botId, botSeatName(botId));
@@ -638,7 +668,16 @@ export async function seedRoom(input: RoomSeedInput): Promise<IGameRoom> {
 		})
 		.catch((error) => console.error("[game-rooms] botLog for room create failed", error));
 
-	return started ?? room;
+	return { room: started ?? room, ...(seats ? { seats } : {}) };
+}
+
+// The card's seats as the start claim left them, and the buy in back to every payer the claim
+// emptied off the ledger who is not seated (a joiner who paid after Start read the card). The
+// claim emptied the ledger, so no other path can still refund them.
+async function seatsTheClaimLeft(draftSeats: PaidSeats, beforeClaim: IGameRoom): Promise<PaidSeats> {
+	const { seats, unseatedPayers } = seatsAtClaim(draftSeats, beforeClaim.hostId, beforeClaim.buyInPaidBy ?? []);
+	if (unseatedPayers.length > 0) await refundSeatsDirectly({ buyIn: draftSeats.buyIn, userIds: unseatedPayers, charged: true });
+	return seats;
 }
 
 // ── the opener's ping (2026-10 item 263 R3-24) ────────────────────────
@@ -696,5 +735,7 @@ export function describeRoomOpenFailure(result: RoomOpenFailure): string {
 			return gameRoomsCopy.errors.missingPermissions;
 		case "createFailed":
 			return gameRoomsCopy.errors.createFailed;
+		case "calledOff":
+			return gameRoomsCopy.board.draftGone;
 	}
 }

@@ -2,7 +2,7 @@ import type { Client } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { isChipEconomyOn, returnChips, takeChips } from "@features/economy/chipWallet.js";
-import { startingStackOf, type HoldemTable, type TableChips } from "@features/games/holdemTable.js";
+import { chipsBackOnCallOff, startingStackOf, type HoldemTable, type TableChips } from "@features/games/holdemTable.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -41,8 +41,11 @@ export async function chipTableFor(room: Pick<IGameRoom, "guildId" | "network">,
 	if (room.network || hasBotSeats) return null;
 	const config = await guildConfigStore.findByGuildId(room.guildId);
 	if (!config || !isChipEconomyOn(config)) return null;
-	return { guildId: room.guildId };
+	return tableChipsOf(room.guildId);
 }
+
+/** The chips a table in this server plays for, once something has decided it plays for chips at all. */
+export const tableChipsOf = (guildId: string): TableChips => ({ guildId });
 
 /** Whether a buy in amount is one the host may set: a whole number of chips inside the table's bounds. */
 export function isValidBuyIn(amount: number): boolean {
@@ -67,15 +70,17 @@ export async function cashOut(table: HoldemTable, userId: string, amount: number
 
 /**
  * What each seat holds at the end of a table: a seat still in keeps its stack plus
- * anything it put into a hand that never settled (a table closed mid hand calls the
- * hand off), and a late seat still waiting gets its buy in back. Seats that are out
+ * what a hand that never settled gives back as it is called off (chipsBackOnCallOff,
+ * the same rule End table uses, so a leaver's chips in that hand are shared out rather
+ * than lost), and a late seat still waiting gets its buy in back. Seats that are out
  * hold nothing: they busted, or were paid when they left. Seats with nothing are left out.
  */
 export function chipsOwedAtEnd(table: HoldemTable): ChipPayout[] {
 	const owed: ChipPayout[] = [];
+	const back = chipsBackOnCallOff(table);
 	for (const seat of table.seats) {
 		if (seat.out) continue;
-		const amount = seat.stack + seat.totalCommitted;
+		const amount = seat.stack + (back.get(seat.userId) ?? 0);
 		if (amount > 0) owed.push({ userId: seat.userId, amount });
 	}
 	for (const waiting of table.pendingSeats ?? []) owed.push({ userId: waiting.userId, amount: startingStackOf(table) });
