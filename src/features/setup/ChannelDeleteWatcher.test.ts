@@ -291,6 +291,34 @@ describe("ChannelDeleteWatcher", () => {
 		expect(sent.embeds[0].data.title).toBe(rokCommanderCopy.channelContent.channelRepairNotice.summaryTitle);
 	});
 
+	// The store returns a HYDRATED Mongoose document, and the notice used to go to
+	// result.stored.adminChannelId, read off a spread of it, which keeps no field: the
+	// notice was dropped for every channel but 🔒inner-sanctum (2026-10 item 274). The
+	// plain fixture above can never show that, so this one feeds a hydrated stand in:
+	// fields on the prototype, a non enumerable toObject. Twins: asHydrated in
+	// GuildSetupManager.test.ts and GuildSetupManager.reusedCategories.test.ts.
+	it("posts the notice in the stored inner sanctum when the store hands back a hydrated row", async () => {
+		const row = makeStoredConfig();
+		const hydrated = Object.create(row) as Record<string, unknown>;
+		Object.defineProperty(hydrated, "toObject", { value: () => ({ ...row }), enumerable: false });
+		guildConfigMock.findByGuildId.mockResolvedValue(hydrated);
+		guildConfigMock.update.mockResolvedValue(undefined);
+
+		const adminChannel = makeAdminChannel("ch-admin");
+		const captured = makeClientCapturing({
+			selfId: "bot-1",
+			channelFetchMap: { "ch-admin": adminChannel, "ch-schedule": makeScheduleChannel("bot-1") },
+		});
+		registerChannelDeleteWatcher(captured.client);
+		const guild = makeGuild({ categoryFetchMap: { "cat-1": makeCategory() } });
+
+		await captured.handler!(makeDeletedChannel("ch-announcements", guild, "📢announcements"));
+
+		expect(guildConfigMock.update).toHaveBeenCalledOnce();
+		expect(captured.client.channels.fetch).toHaveBeenCalledWith("ch-admin");
+		expect(adminChannel.send).toHaveBeenCalledOnce();
+	});
+
 	// ── 🎮 ARCADE GAMES, the second category ──────────────────────────
 
 	const arcadeConfig = () =>

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TextChannel, VoiceChannel, DiscordAPIError, ChannelType, PermissionFlagsBits } from "discord.js";
-import type { Client, Guild } from "discord.js";
+import type { CategoryChannel, Client, Guild } from "discord.js";
 
 // mock the guild config store before importing the unit under test. the
 // mongoose model chain tries to open a real DB connection at import time
@@ -751,6 +751,103 @@ describe("GuildSetupManager.ensureHomebase", () => {
 		expect(result).toEqual({ action: "skipped", repairedChannels: [] });
 		expect(autoSetupSpy).not.toHaveBeenCalled();
 		expect(guildConfigMock.deleteByGuildId).not.toHaveBeenCalled();
+	});
+});
+
+// ── the repair path with a HYDRATED row (2026-10 item 274) ────────────────
+// The store returns a hydrated Mongoose document, whose fields live on getters and
+// whose spread keeps none of them. repairOneChannel used to return a spread of its
+// input, and the boot sweep chained that return, so after one repair every later slot
+// read as missing; every plain object fixture above hides it. This stand in puts the
+// fields on the prototype with a non enumerable toObject, like Mongoose. Twins: the
+// same helper in ChannelDeleteWatcher.test.ts and GuildSetupManager.reusedCategories.test.ts.
+function asHydrated(row: Record<string, unknown>): Record<string, unknown> {
+	const document = Object.create(row) as Record<string, unknown>;
+	Object.defineProperty(document, "toObject", { value: () => ({ ...row }), enumerable: false });
+	return document;
+}
+
+describe("GuildSetupManager repair path with a hydrated config row (2026-10 item 274)", () => {
+	const STORED_ANCHORS = Object.fromEntries(GuildSetupManager.CHANNEL_FIELDS.map((field) => [field, `anchor-${field}`]));
+	const RENAMED_LEADERBOARD = "🏆stream-rankings";
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("repairs only the gone slots in one boot sweep, keeps every other anchor, and posts the notice in the stored inner sanctum", async () => {
+		const row = makeStoredConfig({
+			introMessageIds: { ...STORED_ANCHORS },
+			// A live slot renamed with /server channels rename, BETWEEN the two gone ones:
+			// read off a spread row it would have looked missing under its default name.
+			channelNames: new Map([["leaderboardChannelId", RENAMED_LEADERBOARD]]),
+		});
+		guildConfigMock.findByGuildId.mockResolvedValue(asHydrated(row));
+		const writes: Array<Record<string, unknown>> = [];
+		guildConfigMock.update.mockImplementation(async (_guildId: string, data: Record<string, unknown>) => {
+			writes.push(data);
+			return undefined;
+		});
+
+		const intact = { id: "intact" };
+		const guild = makeGuild({
+			categoryId: { id: "cat-1" },
+			channelFetchMap: {
+				// 📜introductions is the FIRST spec and 🔜upcoming-events the seventh, so every
+				// spec between and after them is walked after a repair.
+				"ch-intro": null,
+				"ch-commands": intact,
+				"ch-leaderboard": intact,
+				"ch-schedule": intact,
+				"ch-announcements": intact,
+				"ch-admin": intact,
+				"ch-nextdecree": null,
+			},
+		});
+		const adminChannel = makeAdminChannel("ch-admin");
+		const client = makeClient({
+			selfId: "bot-1",
+			fetchChannel: async (id) => {
+				if (id === "ch-schedule") return makeScheduleChannel(async () => ({ id: "msg-schedule", author: { id: "bot-1" } }));
+				if (id === "ch-admin") return adminChannel;
+				return null;
+			},
+		});
+
+		const result = await GuildSetupManager.ensureHomebase(client, guild);
+
+		const created = (guild.channels.create as unknown as ReturnType<typeof vi.fn>).mock.calls.map(([opts]) => (opts as { name: string }).name);
+		expect(created).toEqual([rokCommanderCopy.setup.channels.intro, rokCommanderCopy.setup.channels.nextDecree]);
+		expect(result.repairedChannels).toEqual([rokCommanderCopy.setup.channels.intro, rokCommanderCopy.setup.channels.nextDecree]);
+		// Exactly one write per repair, each carrying the whole anchor map with every
+		// untouched slot's anchor intact.
+		expect(writes).toHaveLength(2);
+		const finalAnchors = writes[1]!.introMessageIds as Record<string, string | null>;
+		for (const field of GuildSetupManager.CHANNEL_FIELDS) {
+			if (field === "introChannelId" || field === "nextDecreeChannelId") continue;
+			expect(finalAnchors[field], field).toBe(`anchor-${field}`);
+		}
+		expect(finalAnchors.introChannelId).toBe(`intro-${rokCommanderCopy.setup.channels.intro}`);
+		// The one notice reaches the stored 🔒inner-sanctum, which was never walked, so it
+		// got no second admin card either: the summary is the only thing sent there.
+		expect(adminChannel.send).toHaveBeenCalledOnce();
+		const summary = adminChannel.send.mock.calls[0][0] as { embeds: Array<{ data: { title: string; description: string } }> };
+		expect(summary.embeds[0].data.title).toBe(rokCommanderCopy.channelContent.channelRepairNotice.summaryTitle);
+	});
+
+	it("returns a row from repairOneChannel that carries every stored field plus the update", async () => {
+		const row = makeStoredConfig({ introMessageIds: { ...STORED_ANCHORS } });
+		guildConfigMock.update.mockResolvedValue(undefined);
+		const guild = makeGuild({});
+		const category = { id: "cat-1", children: { cache: { find: () => undefined } } } as unknown as CategoryChannel;
+		const spec = GuildSetupManager.CHANNEL_SPECS.find((entry) => entry.configField === "announcementsChannelId")!;
+
+		const result = await GuildSetupManager.repairOneChannel(guild, category, spec, asHydrated(row) as Record<string, unknown> & { adminRoleId?: string | null });
+
+		expect(result.stored.adminChannelId).toBe("ch-admin");
+		expect(result.stored.gamesCategoryId).toBe("games-cat-1");
+		expect(result.stored.announcementsChannelId).toBe(`new-${rokCommanderCopy.setup.channels.announcements}`);
+		expect((result.stored.introMessageIds as Record<string, string>).leaderboardChannelId).toBe("anchor-leaderboardChannelId");
 	});
 });
 

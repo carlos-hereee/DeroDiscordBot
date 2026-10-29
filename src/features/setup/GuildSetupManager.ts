@@ -1740,7 +1740,8 @@ export class GuildSetupManager {
 	//           schedule channel, scheduleMessageId: null so ScheduleBoard
 	//           reposts a fresh pinned board on its next refresh.
 	//        ④ return the merged stored so caller has the fresh adminChannelId
-	//           if the admin channel itself was the one repaired.
+	//           if the admin channel itself was the one repaired. It is a plain
+	//           object whatever the caller passed, so its fields survive a spread.
 	static async repairOneChannel(
 		guild: Guild,
 		category: CategoryChannel,
@@ -1884,8 +1885,11 @@ export class GuildSetupManager {
 		const domain = HEADQUARTERS_DOMAINS.find((candidate) => DOMAIN_CHANNEL_FIELDS[candidate] === spec.configField);
 		if (domain) void syncHeadquartersChannel(guild, domain, { forcePost: intro.posted });
 
-		// merge so caller sees the fresh ids without a second round trip.
-		return { newChannel, stored: { ...stored, ...update } };
+		// merge so caller sees the fresh ids without a second round trip. ⚠️ Merged onto the
+		// PLAIN row: a caller usually passes the store's hydrated Mongoose document, and a
+		// spread of one keeps none of its fields (plainRow.ts), which left every caller that
+		// read the return with only this slot (2026-10 item 274).
+		return { newChannel, stored: { ...(asPlainRow(stored) ?? stored), ...update } };
 	}
 
 	// ── repair intro, post or adopt ───────────────────────────
@@ -1991,8 +1995,9 @@ export class GuildSetupManager {
 	//       the others.
 	static async repairMissingChannels(client: Client, guild: Guild, category: CategoryChannel): Promise<string[]> {
 		// re read the config here so we pick up the freshest admin role /
-		// owner / channel ids. the caller only passed us the initial state.
-		let stored = (await guildConfigStore.findByGuildId(guild.id)) as
+		// owner / channel ids. the caller only passed us the initial state. Read
+		// plain, like the repairs it chains (2026-10 item 274).
+		let stored = asPlainRow(await guildConfigStore.findByGuildId(guild.id)) as
 			| (Record<string, unknown> & { adminRoleId?: string | null; adminChannelId: string; autoHealEnabled?: boolean })
 			| null;
 		if (!stored) return [];
@@ -2144,6 +2149,9 @@ export class GuildSetupManager {
 				// step below see the new ids. Notably: if the admin channel
 				// was the one repaired, stored.adminChannelId now points at
 				// the new channel which is exactly where we want the notice.
+				// repairOneChannel returns a PLAIN row for exactly this chain: a
+				// spread hydrated row would leave every later spec reading its
+				// stored id as missing (2026-10 item 274).
 				stored = result.stored as typeof stored;
 				// Audit notice uses the EFFECTIVE channel name (override if
 				// set via /server channels rename, otherwise spec default). Without

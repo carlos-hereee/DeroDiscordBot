@@ -112,6 +112,7 @@ function makeStoredRow(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 // Fields on the prototype and none of its own, with toObject, like a Mongoose document.
+// Twins: asHydrated in GuildSetupManager.test.ts and the stand in in ChannelDeleteWatcher.test.ts.
 function asHydrated(row: Record<string, unknown>): Record<string, unknown> {
 	const document = Object.create(row) as Record<string, unknown>;
 	Object.defineProperty(document, "toObject", { value: () => ({ ...row }), enumerable: false });
