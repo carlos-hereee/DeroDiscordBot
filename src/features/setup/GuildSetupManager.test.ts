@@ -31,6 +31,7 @@ import { ChannelContent } from "./ChannelContent.js";
 import { DERO_ART_FILES } from "@features/renderer/deroArt.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
+import { communityOverwritesFor, overwriteKindOf } from "./communityOverwrites.js";
 
 const guildConfigMock = guildConfigStore as unknown as {
 	findByGuildId: ReturnType<typeof vi.fn>;
@@ -1802,7 +1803,7 @@ describe("GuildSetupManager voice rooms", () => {
 		const calls = create.mock.calls.map((call) => call[0] as ICreateCall);
 		const voiceCalls = calls.filter((call) => call.type === ChannelType.GuildVoice);
 		const voiceCreated = created.filter((channel) => channel instanceof VoiceChannel);
-		return { calls, voiceCalls, voiceCreated };
+		return { guild, calls, voiceCalls, voiceCreated, created };
 	}
 
 	it("builds both rooms on a fresh install, as voice channels under their own categories", async () => {
@@ -1887,6 +1888,65 @@ describe("GuildSetupManager voice rooms", () => {
 			const everyoneEntries = (call.permissionOverwrites ?? []).filter((entry) => entry.id === EVERYONE_ID);
 			expect(everyoneEntries).toEqual([{ id: EVERYONE_ID, allow: JOIN_AND_SPEAK }]);
 		}
+	});
+
+	// ── forced rebuild, the text channels (2026-10 item 272) ─────────────
+	// A forced rebuild of a server that already ran /setup must give the rebuilt text
+	// channels the posture the repair path's buildSingleChannel gives them, stored
+	// admin role included, or every admin who is not the owner loses Headquarters.
+
+	const TEXT_SPECS = GuildSetupManager.CHANNEL_SPECS.filter((spec) => spec.kind !== "voice");
+	const ADMIN_TEXT_KINDS = new Set(["admin", "adminLog"]);
+
+	function textCallsBySpec(calls: ICreateCall[]) {
+		return TEXT_SPECS.map((spec) => ({ spec, call: calls.find((call) => call.type === ChannelType.GuildText && call.name === spec.displayName) }));
+	}
+
+	function adminCardDescription(created: Array<{ id: string; send: ReturnType<typeof vi.fn> }>): string | undefined {
+		const adminChannel = created.find((channel) => channel.id === `new-${packChannels.admin}`);
+		const [sent] = adminChannel?.send.mock.calls[0] as [{ embeds: Array<{ data: { description?: string } }> }];
+		return sent.embeds[0]?.data.description;
+	}
+
+	it("gives every rebuilt text channel buildSingleChannel's posture with the stored roles", async () => {
+		const roles = { memberRoleId: "role-member", adminRoleId: "role-admin" };
+		const { guild, calls } = await runAutoSetup(makeStoredConfig({ ...roles, setupComplete: true }), { force: true });
+
+		for (const { spec, call } of textCallsBySpec(calls)) {
+			expect(call, `${spec.displayName} built`).toBeDefined();
+			// Compared against the shared shape, never a hand written list, so the create
+			// path and the repair path cannot drift (plan risk R1).
+			expect(call?.permissionOverwrites, `${spec.displayName} posture`).toEqual(communityOverwritesFor(overwriteKindOf(spec), guild, { ownerId: OWNER_ID }, roles));
+			if (ADMIN_TEXT_KINDS.has(spec.kind)) expect(overwriteFor(call, "role-admin"), `${spec.displayName} admin role`).toBeDefined();
+		}
+	});
+
+	it("posts the populated admin welcome in the rebuilt inner sanctum", async () => {
+		const { created } = await runAutoSetup(makeStoredConfig({ adminRoleId: "role-admin", setupComplete: true }), { force: true });
+
+		expect(adminCardDescription(created)).toBe(ChannelContent.adminWelcome(OWNER_ID, "role-admin").data.description);
+	});
+
+	it("still posts the pending card and grants no admin role on a fresh install", async () => {
+		const { guild, calls, created } = await runAutoSetup(null);
+
+		for (const { spec, call } of textCallsBySpec(calls)) {
+			expect(call?.permissionOverwrites, `${spec.displayName} posture`).toEqual(
+				communityOverwritesFor(overwriteKindOf(spec), guild, { ownerId: OWNER_ID }, { memberRoleId: null, adminRoleId: null })
+			);
+		}
+		expect(adminCardDescription(created)).toBe(ChannelContent.adminPending().data.description);
+	});
+
+	it("trusts no stored admin role on a self destructed row, so /setup grants the new one", async () => {
+		// selfDestruct keeps adminRoleId and clears setupComplete; the /setup that rebuilds
+		// it grants the role it was just given (owner decision D2).
+		const { calls, created } = await runAutoSetup(makeStoredConfig({ adminRoleId: "role-admin", setupComplete: false }), { force: true });
+
+		for (const { spec, call } of textCallsBySpec(calls)) {
+			expect(overwriteFor(call, "role-admin"), `${spec.displayName} admin role`).toBeUndefined();
+		}
+		expect(adminCardDescription(created)).toBe(ChannelContent.adminPending().data.description);
 	});
 
 	// ── boot repair sweep ───────────────────────────────────────────────

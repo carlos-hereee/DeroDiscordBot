@@ -45,6 +45,7 @@ import {
 	overwriteKindOf,
 	reconcileChannelOverwrite,
 	type IOverwriteEntry,
+	type IOverwriteRoles,
 	type ManagedOverwriteKind,
 } from "./communityOverwrites.js";
 import { moveIntoHeadquarters, canManageChannels } from "./headquarters.js";
@@ -285,6 +286,14 @@ export class GuildSetupManager {
 		// threads its stored roles through and the rebuilt rooms open to members at
 		// once instead of waiting for /setup to run again. Both null on a fresh install.
 		const storedRoles = { memberRoleId: existing?.memberRoleId ?? null, adminRoleId: existing?.adminRoleId ?? null };
+		// The text channels take the stored admin role only while the row says /setup
+		// finished (2026-10 item 272, owner decision D2). A forced rebuild of a set up
+		// server then grants it exactly as the repair path's buildSingleChannel does, so
+		// admins keep 🔒inner-sanctum and the rest of Headquarters. A self destructed row
+		// keeps its old adminRoleId but has setupComplete false, and the /setup that
+		// rebuilds it grants the role it was just given through applyAdminRole, so trusting
+		// the old id there would re-grant a role the owner may have meant to replace.
+		const textRoles = { memberRoleId: storedRoles.memberRoleId, adminRoleId: existing?.setupComplete ? storedRoles.adminRoleId : null };
 		// The stored row rides along twice: createChannels' adoption scan must not take
 		// a channel that already fills another slot, and the rules post keeps the
 		// owner's saved rules through a forced rebuild.
@@ -293,10 +302,14 @@ export class GuildSetupManager {
 			guild,
 			{ category, gamesCategory, headquartersCategory },
 			config,
-			storedRoles,
+			{ voice: storedRoles, text: textRoles },
 			storedRow
 		);
-		const { scheduleMessageId, introMessageIds } = await GuildSetupManager.populateChannels(guild, objects, { adoptedChannelIds, rulesConfig: storedRow });
+		const { scheduleMessageId, introMessageIds } = await GuildSetupManager.populateChannels(guild, objects, {
+			adoptedChannelIds,
+			rulesConfig: storedRow,
+			adminRoleId: textRoles.adminRoleId,
+		});
 
 		// What: persist the freshly built channel ids.
 		// When: two mutually exclusive persist paths, chosen by the state of
@@ -2528,22 +2541,20 @@ export class GuildSetupManager {
 		// and the 50013 handling lives in one place above.
 		parents: { category: CategoryChannel; gamesCategory: CategoryChannel; headquartersCategory: CategoryChannel },
 		config: ISetupConfig,
-		// Read by the voice rooms' posture (see the call site in runAutoSetup), and the
-		// member role by the public text channels while it gates a Community guild.
-		storedRoles: { memberRoleId: string | null; adminRoleId: string | null },
+		// The roles each posture names, all null on a fresh install. `voice` is the
+		// stored pair as is (owner decision D3); `text` carries the admin role only once
+		// /setup has finished (runAutoSetup decides), and the member role while it gates
+		// a Community guild. Every text posture and the welcome and rules adoption read
+		// `text`, so a forced rebuild matches what buildSingleChannel builds on repair.
+		roles: { voice: IOverwriteRoles; text: IOverwriteRoles },
 		// The row a forced rebuild replaces (null on a fresh install), read only by the
 		// welcome and rules adoption scan.
 		storedRow: Record<string, unknown> | null = null
 	): Promise<{ ids: ICreatedChannels; objects: IChannelObjects; adoptedChannelIds: string[]; adoptions: Array<{ field: string; channelId: string }> }> {
 		const { category, gamesCategory, headquartersCategory } = parents;
 		const owner = { ownerId: config.ownerId };
-		const voiceRoomOverwrites = communityOverwritesFor("voice", guild, owner, storedRoles);
-
-		// The text channels never take the admin role here, as they never have: /setup
-		// grants it (applyAdminRole) and the repair path layers it on (buildSingleChannel).
-		// A forced rebuild of a gated Community guild therefore opens to members at once
-		// and to an admin without the member role only after /setup runs again.
-		const textRoles = { memberRoleId: storedRoles.memberRoleId, adminRoleId: null };
+		const voiceRoomOverwrites = communityOverwritesFor("voice", guild, owner, roles.voice);
+		const textRoles = roles.text;
 
 		// Members read, the owner and the bot write.
 		const publicOverwrites = communityOverwritesFor("public", guild, owner, textRoles);
@@ -2554,10 +2565,10 @@ export class GuildSetupManager {
 		// posting in a channel before full access.
 		const introOverwrites = communityOverwritesFor("intro", guild, owner, textRoles);
 
-		// Admin channels: owner only until /setup grants the admin role.
+		// Admin channels: the owner, plus the admin role once /setup has granted one.
 		const adminOverwrites = communityOverwritesFor("admin", guild, owner, textRoles);
 
-		// The audit trail: the owner reads, only the bot writes (the admin role joins at /setup).
+		// The audit trail: the owner and the admin role read, only the bot writes.
 		const adminLogOverwrites = communityOverwritesFor("adminLog", guild, owner, textRoles);
 
 		// 💬dero-commands: public, and members may send, because they run commands there.
@@ -2741,7 +2752,7 @@ export class GuildSetupManager {
 			}),
 			// ── 🏰 DERO HEADQUARTERS' three config channels (2026-10 item 257 Phase 2a) ──
 			// ⚠️ NOTE THE PARENT, as with the arcade's: headquartersCategory.id. Admin
-			// only, the shape of 🔒inner-sanctum; the admin role joins at /setup.
+			// only, the shape of 🔒inner-sanctum.
 			guild.channels.create({
 				name: channels.deroConfig,
 				type: ChannelType.GuildText,
@@ -2862,7 +2873,9 @@ export class GuildSetupManager {
 		// Which of 👋welcome and 📘rules the server already had, and the row whose
 		// saved rules the rules post shows (2026-10 item 247 Phase 2). An adopted
 		// channel holding the owner's content gets no intro, and its anchor stays null.
-		options: { adoptedChannelIds: readonly string[]; rulesConfig: IRulesConfig | null }
+		// adminRoleId is the role the rebuilt admin channels were granted (null on a
+		// fresh install), which decides between the welcome and the pending card.
+		options: { adoptedChannelIds: readonly string[]; rulesConfig: IRulesConfig | null; adminRoleId: string | null }
 	): Promise<{
 		scheduleMessageId: string;
 		introMessageIds: {
@@ -2997,7 +3010,14 @@ export class GuildSetupManager {
 			leaderboardChannel.send({ embeds: [ChannelContent.leaderboardIntro()] }),
 			scheduleChannel.send({ embeds: [ChannelContent.scheduleIntro()] }),
 			announcementsChannel.send({ embeds: [ChannelContent.announcementsIntro()] }),
-			adminChannel.send({ embeds: [ChannelContent.adminPending()], components: GuildSetupManager.resolveIntroComponents("adminChannelId") ?? [] }),
+			// The welcome when a forced rebuild granted the stored admin role, the pending
+			// card on a fresh install, through the one resolver refreshIntroEmbeds also reads,
+			// so the boot refresh never replaces a welcome with a pending card or the reverse
+			// (2026-10 item 272).
+			adminChannel.send({
+				embeds: [GuildSetupManager.resolveIntroEmbed("adminChannelId", guild, options.adminRoleId) ?? ChannelContent.adminPending()],
+				components: GuildSetupManager.resolveIntroComponents("adminChannelId") ?? [],
+			}),
 			// Pinned header above the NextUpBoard posts. Pinning is best
 			// effort (see schedule channel block below). The message id
 			// is persisted on introMessageIds.nextDecreeChannelId so
