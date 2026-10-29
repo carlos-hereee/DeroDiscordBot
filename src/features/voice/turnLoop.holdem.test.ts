@@ -45,6 +45,7 @@ function rig(reports: ActionReport[]) {
 		latency: createLatencyLog(),
 		troubleCooldown: new CooldownManager(30_000),
 		presentHoldemCard,
+		isCovered: vi.fn(async () => false),
 	};
 	const target: TurnTarget = {
 		guild,

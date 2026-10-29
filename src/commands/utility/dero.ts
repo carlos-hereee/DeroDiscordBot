@@ -1,6 +1,7 @@
 import {
 	SlashCommandBuilder,
 	PermissionFlagsBits,
+	MessageFlags,
 	type ChatInputCommandInteraction,
 	type RepliableInteraction,
 	type EmbedBuilder,
@@ -35,6 +36,9 @@ import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showCooldownNotice, showErrorNotice, showNotice, showPendingNotice } from "@utils/textModal.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
+import { pendingPairingStore, PAIRING_CODE_TTL_MS } from "@db/stores/pendingPairingStore.js";
+import { isServerCovered } from "@features/entitlements/serverPlanAccess.js";
+import { serverPlanCommandCopy, serverPlanLine } from "@features/entitlements/serverPlanCopy.js";
 
 // ── /dero ─────────────────────────────────────────────────────────────────
 // What:  the text path to Dero's brain and Dero's way into a voice call. `tell`
@@ -62,6 +66,9 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 //        speak the greeting; one private line saying how it went. While Dero
 //        is in another call here the request waits in voiceQueue instead, and
 //        runQueuedJoin runs it when that call ends (2026-10 item 257, item 22).
+// How (plan): the guild owner only; a fresh one time code, privately, for the
+//        Dero server plan checkout or the dashboard's pairing panel (2026-10
+//        item 262). See sendServerPlanCode.
 //
 // ⚠️ PRIVACY: the task text goes to the brain and nowhere else. It is never
 // logged, stored, or put in an error; the audit row carries its length. In a
@@ -99,7 +106,8 @@ export const data = new SlashCommandBuilder()
 	)
 	.addSubcommand((sub) => sub.setName("status").setDescription(deroBrainCopy.command.status))
 	.addSubcommand((sub) => sub.setName("join").setDescription(deroBrainCopy.command.join))
-	.addSubcommand((sub) => sub.setName("leave").setDescription(deroBrainCopy.command.leave));
+	.addSubcommand((sub) => sub.setName("leave").setDescription(deroBrainCopy.command.leave))
+	.addSubcommand((sub) => sub.setName("plan").setDescription(deroBrainCopy.command.plan));
 
 // ── replies ──
 
@@ -448,7 +456,10 @@ export async function bringDeroIntoCall(interaction: RepliableInteraction): Prom
 			voiceId: gate.voiceId,
 			speaker: outcome.session.speaker,
 		});
-		await answer.send({ embeds: [infoEmbed(callCopy.replyTitle, callCopy.joined[greeting](voiceChannelId))] });
+		const line = greeting === "capReached"
+			? callCopy.joined.capReached(voiceChannelId, await isServerCovered(guild.id))
+			: callCopy.joined[greeting](voiceChannelId);
+		await answer.send({ embeds: [infoEmbed(callCopy.replyTitle, line)] });
 	}
 	catch (err) {
 		console.error(`[dero-voice] join command failed guild=${guild.id} channel=${voiceChannelId}`, err);
@@ -594,6 +605,51 @@ export async function sendDeroAwayFromCall(interaction: RepliableInteraction): P
 	await answerInChannel(interaction, "member", { embeds: [infoEmbed(callCopy.replyTitle, callCopy.left(session.channelId))] });
 }
 
+// ── /dero plan (2026-10 item 262) ──
+
+const MS_PER_MINUTE = 60_000;
+const PAIRING_CODE_TTL_MINUTES = PAIRING_CODE_TTL_MS / MS_PER_MINUTE;
+
+/**
+ * /dero plan: hands the guild owner a fresh one time code, privately. The code buys the Dero
+ * server plan on the pricing page and also pairs the server in the dashboard's "Connect your
+ * Discord server" panel, so it is issued for EVERY owner, covered servers included (the
+ * owner's decision of 2026-10-29); only the plan pitch depends on coverage. Issuing replaces
+ * any live code for the guild, the store keeps one per guild.
+ */
+async function sendServerPlanCode(interaction: ChatInputCommandInteraction): Promise<void> {
+	if (!interaction.inCachedGuild()) {
+		await refuse(interaction, serverPlanCommandCopy.notInGuild);
+		return;
+	}
+	const guild = interaction.guild;
+	// The guild owner only, not admins: the code claims the server for whoever redeems it,
+	// and the pairing DM on join goes to the owner for the same reason.
+	if (interaction.user.id !== guild.ownerId) {
+		await refuse(interaction, serverPlanCommandCopy.ownerOnly);
+		return;
+	}
+
+	// Private from the first byte: the code is a claim token and must never post in a channel.
+	// Deferred because the issue and the coverage read can outlast Discord's 3 second window.
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	try {
+		const [code, covered] = await Promise.all([pendingPairingStore.issue(guild.id, guild.ownerId), isServerCovered(guild.id)]);
+		const pitch = covered ? serverPlanCommandCopy.covered : serverPlanLine();
+		await interaction.editReply({
+			embeds: [infoEmbed(serverPlanCommandCopy.title, [serverPlanCommandCopy.code(code, PAIRING_CODE_TTL_MINUTES), pitch].join("\n\n"))],
+		});
+		// Fire and forget (house rule 7): the owner already has the code.
+		botLogStore.log(guild.id, BOT_LOG_EVENTS.PAIRING_CODE_SENT, { ownerId: guild.ownerId, source: "dero_plan" }).catch((err) => {
+			console.error(`[dero] plan code audit write failed guild=${guild.id}`, err);
+		});
+	}
+	catch (err) {
+		console.error(`[dero] plan code failed guild=${guild.id}`, err);
+		await interaction.editReply({ embeds: [errorEmbed(serverPlanCommandCopy.failed)] });
+	}
+}
+
 async function runSubcommand(interaction: ChatInputCommandInteraction): Promise<void> {
 	switch (interaction.options.getSubcommand(true)) {
 		case "tell":
@@ -602,6 +658,8 @@ async function runSubcommand(interaction: ChatInputCommandInteraction): Promise<
 			return bringDeroIntoCall(interaction);
 		case "leave":
 			return sendDeroAwayFromCall(interaction);
+		case "plan":
+			return sendServerPlanCode(interaction);
 		default:
 			return showDeroStatus(interaction);
 	}

@@ -1,5 +1,6 @@
 import type { HandCategory } from "@features/games/holdemHand.js";
 import type { HoldemTerms } from "@features/games/holdemTable.js";
+import { serverPlanLine } from "@features/entitlements/serverPlanCopy.js";
 
 // ── Dero brain user-facing copy ───────────────────────────────────────
 // Feature-local copy module, the sibling of voiceCopy.ts and gameRoomsCopy.ts,
@@ -72,6 +73,7 @@ export const deroBrainCopy = {
 		status: "Show whether Dero's brain is online and whether Dero is in a voice call",
 		join: "Bring Dero into your voice channel. Dero listens only to members on its task list",
 		leave: "Send Dero out of this server's voice call",
+		plan: "Server owner: get a code for the Dero server plan or to connect this server to Company Uno",
 	},
 
 	// ── /dero tell, before and after the brain answers ──
@@ -115,7 +117,12 @@ export const deroBrainCopy = {
 		// /dero leave answers with.
 		spoke: "Dero said it in the call.",
 		sayNoCall: "Dero is not in a voice call in this server, so nothing was said.",
-		sayCapReached: "Dero's voice budget for the month is used up, so nothing was said.",
+		// An uncovered server is told the Dero server plan raises the budget (2026-10 item
+		// 262). A voice turn that speaks this summary drops the link (cleanListenText).
+		sayCapReached: (covered: boolean): string =>
+			covered
+				? "Dero's voice budget for the month is used up, so nothing was said. It comes back next month."
+				: `Dero's voice budget for the month is used up, so nothing was said. ${serverPlanLine()}`,
 		sayFailed: "Dero could not find his voice just now, so nothing was said.",
 		sayQueueFull: "Dero has too much to say in the call right now, so that line was dropped.",
 		leaveNoCall: "Dero is not in a voice call in this server, so there was nothing to leave.",

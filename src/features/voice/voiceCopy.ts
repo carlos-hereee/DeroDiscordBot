@@ -13,10 +13,18 @@
 // House rule for every string below: no dashes in user-facing copy.
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { serverPlanLine } from "@features/entitlements/serverPlanCopy.js";
 import type { VoicePriorityCategory } from "./voicePriority.js";
 import type { GameVoiceSkipReason, QueueExit } from "./voiceQueue.js";
 
 const QUEUE_EXPIRY_MINUTES = BOT_CONSTANTS.DERO_VOICE_QUEUE_EXPIRY_MS / 60_000;
+
+// The voice budget is the platform's ceiling for the server (2026-10 item 262), so
+// every budget line picks its ending by coverage: a covered server only waits for the
+// month to turn, and an uncovered one is told the Dero server plan raises it. No admin
+// can raise the budget from Discord any more, so no line says one can.
+const BUDGET_USED = "Dero has used this server's voice budget for the month.";
+const budgetEnding = (covered: boolean, coveredLine: string): string => (covered ? coveredLine : serverPlanLine());
 
 // What each voice priority category reads as, on the queue lines, the priority
 // step's selects and the ⚙️dero-config chart (2026-10 item 257, owner item 22). A
@@ -70,7 +78,7 @@ export const voiceCopy = {
 		listenOff: "Listening is turned off in this server.",
 		nothingToRead: "There is nothing in this post for Dero to read aloud.",
 		cooldown: (seconds: number): string => `Dero needs a breath. Try Listen again in ${seconds}s.`,
-		capReached: "Dero has used this server's voice budget for the month. Listen comes back next month.",
+		capReached: (covered: boolean): string => `${BUDGET_USED} ${budgetEnding(covered, "Listen comes back next month.")}`,
 		providerTrouble: "Dero could not find his voice just now. Try again in a little while.",
 		// Rides the clip when the post was longer than Listen reads, so the member
 		// knows the recording stops early on purpose.
@@ -112,8 +120,8 @@ export const voiceCopy = {
 		// so a silent Dero always says why it is silent.
 		joined: {
 			greeted: (channelId: string): string => `Dero joined <#${channelId}> and said hello.`,
-			capReached: (channelId: string): string =>
-				`Dero joined <#${channelId}> but stays quiet: this server's voice budget for the month is used up.`,
+			capReached: (channelId: string, covered: boolean): string =>
+				`Dero joined <#${channelId}> but stays quiet: this server's voice budget for the month is used up. ${budgetEnding(covered, "It comes back next month.")}`,
 			providerTrouble: (channelId: string): string =>
 				`Dero joined <#${channelId}> but could not find his voice just now, so Dero is in the call in silence.`,
 			// The speaker could not start the clip (an audio encoder fault), which is
@@ -221,15 +229,21 @@ export const voiceCopy = {
 			timeout: "That took me too long to think about. Please ask again.",
 			notUnderstood: "I did not understand that. Try saying it another way.",
 			notAllowed: "You are not on my task list, so I cannot do that.",
-			capReached: "My voice budget for this month is used up, so I cannot answer out loud.",
+			// Spoken, so it never carries a link: the uncovered line names the plan in words.
+			capReached: (covered: boolean): string =>
+				covered
+					? "My voice budget for this month is used up, so I cannot answer out loud. It comes back next month."
+					: "My voice budget for this month is used up, so I cannot answer out loud. The Dero server plan gives this server a bigger one.",
 			hearingTrouble: "Sorry, I could not hear that clearly. Please say it again.",
 		},
 		// Posted in the control channel instead, when the spoken line itself could
 		// not be rendered (the budget is gone or the provider is down). At most one
 		// every 30 seconds per server, like the spoken versions.
 		text: {
-			capReached:
-				"Dero's voice budget for the month is used up, so Dero cannot listen or answer in the call until an admin raises the cap or the month turns.",
+			capReached: (covered: boolean): string =>
+				covered
+					? `${BUDGET_USED} Dero cannot listen or answer in the call until the month turns.`
+					: `${BUDGET_USED} Dero cannot listen or answer in the call this month. ${serverPlanLine()}`,
 			hearingTrouble: "Dero could not turn that into text just now. Try again in a moment.",
 			voiceTrouble: "Dero could not speak his answer just now. Here is what happened:",
 		},

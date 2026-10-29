@@ -201,7 +201,7 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/game-rooms/roomGames.ts", within: "promptRpsChoice", anchor: "gameRoomsCopy.games.rpsAlreadyPicked", kind: "state" },
 	{ file: "features/game-rooms/roomGames.ts", within: "handleRpsSelect", anchor: "gameRoomsCopy.errors.notFound", kind: "race", why: "the throw picker's Submit (or its select fallback): the match ended after the press" },
 	{ file: "features/game-rooms/roomGames.ts", within: "handleRpsSelect", anchor: "gameRoomsCopy.errors.notYours", kind: "race", why: "the throw picker's Submit: the press is players only, so only a forged or replayed Submit is not a player's" },
-	{ file: "features/game-rooms/roomGames.ts", within: "handleRpsSelect", anchor: "gameRoomsCopy.games.rpsAlreadyPicked", kind: "race", why: "the throw picker's Submit: promptRpsChoice refused a second pick first, so only a double Submit meets the claim" },
+	{ file: "features/game-rooms/roomGames.ts", within: "handleRpsSelect", anchor: "sections: [refusal]", kind: "race", why: "the throw picker's Submit: promptRpsChoice refused a second pick first, so only a double Submit or a forfeit since the read meets the claim (rpsAlreadyPicked or notFound, 2026-10 item 276)" },
 	{ file: "features/game-rooms/roomGames.ts", within: "handleRpsSelect", anchor: "gameRoomsCopy.games.rpsLocked(choice)", kind: "private", why: "names the member's own throw before the reveal; from the picker's Submit it is the private fallback, and the room's public line names nobody's choice" },
 
 	// ── game-rooms/roomHangman.ts ──
@@ -343,6 +343,7 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "commands/utility/dero.ts", within: "tell", count: 8, kind: "state" },
 	{ file: "commands/utility/dero.ts", within: "bringDeroIntoCall", count: 4, kind: "state" },
 	{ file: "commands/utility/dero.ts", within: "sendDeroAwayFromCall", count: 4, kind: "state" },
+	{ file: "commands/utility/dero.ts", within: "sendServerPlanCode", count: 2, kind: "state" },
 	{ file: "commands/utility/dero.ts", within: "execute", kind: "failure" },
 
 	// ── command-buttons/adminCommandLauncher.ts ──

@@ -6,6 +6,7 @@ import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import type { FlavorTable } from "./matchOutcome.js";
 // Aliased: Monopoly's copy below names its own parameters `chips`.
 import { chips as chipAmount } from "@features/economy/economyCopy.js";
+import { serverPlanLine } from "@features/entitlements/serverPlanCopy.js";
 
 // ── game rooms user-facing copy ──────────────────────────────────────
 // Feature-local copy module, the exact sibling of gamesCopy.ts and fortuneCopy.ts,
@@ -74,7 +75,18 @@ const TIER_NAMES: Record<string, string> = {
 	free: "Starter",
 	pro: "Creator Pro",
 	business: "Creator Studio",
+	// The per server add on (2026-10 item 262), reported when it raised the quota.
+	serverPlan: "Dero server plan",
 };
+
+// The tier key the server sends for a guild nothing covers, the one case the room limit
+// names the Dero server plan for.
+const UNCOVERED_TIER_KEY = "unsubscribed";
+const tierNameOf = (tierKey: string): string => TIER_NAMES[tierKey] ?? tierKey;
+// "the Starter plan", but "the Dero server plan" rather than "the Dero server plan plan":
+// the add on's name already ends in the word the sentences add.
+const PLAN_WORD = "plan";
+const asPlanName = (tierName: string): string => (tierName.endsWith(PLAN_WORD) ? tierName : `${tierName} ${PLAN_WORD}`);
 
 // ── the post match flavor table (post-launch plan item 21) ──────────────
 // One line under the winner on the closed challenge card, picked at random from the
@@ -204,7 +216,7 @@ const POST_MATCH_FLAVOR: FlavorTable = {
 
 export const gameRoomsCopy = {
 	gameLabel: (game: GameSlug): string => GAME_LABELS[game] ?? game,
-	tierName: (tierKey: string): string => TIER_NAMES[tierKey] ?? tierKey,
+	tierName: tierNameOf,
 
 	// ── the drawing pause (drawingPause.ts) ──
 	// The status line on a board while its card renders. Every timed or per turn
@@ -495,9 +507,12 @@ export const gameRoomsCopy = {
 		guildFull: (): string =>
 			`This server already has ${BOT_CONSTANTS.GAME_ROOM_MAX_PER_GUILD} rooms open. Wait for one to finish and try again.`,
 		// The tier-gated private ceiling. Names the number, the plan, and all three
-		// ways out, because "no" alone reads as the button being broken.
-		privateQuotaHit: (quota: number, tierName: string): string =>
-			`This server has reached its private room limit (${quota}) for the ${tierName} plan. Wait for one to finish, upgrade the plan, or start a public room.`,
+		// ways out, because "no" alone reads as the button being broken. A server
+		// nothing covers also gets the Dero server plan line and its link.
+		privateQuotaHit: (quota: number, tierKey: string): string => {
+			const limit = `This server has reached its private room limit (${quota}) for the ${asPlanName(tierNameOf(tierKey))}. Wait for one to finish, upgrade the plan, or start a public room.`;
+			return tierKey === UNCOVERED_TIER_KEY ? `${limit}\n${serverPlanLine()}` : limit;
+		},
 		// 50013. Names the missing permission and where to grant it (2026-10 item 257,
 		// owner item 15), because the member who clicked cannot fix it and the admin who
 		// can needs to know what to grant and where.
@@ -789,7 +804,7 @@ export const gameRoomsCopy = {
 		// ceiling is visible BEFORE the refusal would be. Rendered only while the
 		// tier surface is enforcing (a finite quota).
 		privateQuotaStatus: (open: number, quota: number, tierName: string): string =>
-			`Your server has ${open}/${quota} private rooms open on the ${tierName} plan.`,
+			`Your server has ${open}/${quota} private rooms open on the ${asPlanName(tierName)}.`,
 
 		joinLabel: "Join",
 		startLabel: "Start the match",

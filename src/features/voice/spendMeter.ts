@@ -1,6 +1,6 @@
-import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { deroVoiceConfigStore } from "@db/stores/deroVoiceConfigStore.js";
 import { deroVoiceSpendStore } from "@db/stores/deroVoiceSpendStore.js";
+import { resolveServerPlanAccess } from "@features/entitlements/serverPlanAccess.js";
 import { usdToCents } from "./pricing.js";
 
 // ── spend meter ────────────────────────────────────────────────────────────
@@ -11,8 +11,13 @@ import { usdToCents } from "./pricing.js";
 //        exceptions.
 // When:  only on a clip cache miss. A cache hit costs nothing and never touches
 //        the meter.
-// Where: the cap is read from DeroVoiceConfig at reservation time, so an admin
-//        lowering the cap (to 0, say) takes effect on the very next click.
+// Where: the cap is the guild's voice CEILING from the platform server
+//        (serverPlanAccess: $2 uncovered, $5 covered by the Dero server plan
+//        or a Company Uno subscription, 2026-10 item 262), read at reservation
+//        time. A stored DeroVoiceConfig.monthlyCapUsd is read for ONE value
+//        only: 0 is still the second kill switch and refuses every call. Any
+//        other stored number is ignored, because rows carry the old schema
+//        seed and a stored $5 must not outrank an uncovered guild's $2.
 // How:   ① compute the UTC month key; ② make sure the month's row exists;
 //        ③ one conditional atomic $inc that only matches while the estimate
 //        plus this amount still fits under the cap. Two clicks racing at the cap
@@ -22,6 +27,7 @@ import { usdToCents } from "./pricing.js";
 
 const MONGO_DUPLICATE_KEY = 11000;
 const MONTH_DIGITS = 2;
+const KILL_SWITCH_CAP_USD = 0;
 
 export interface SpendReservation {
 	guildId: string;
@@ -39,10 +45,17 @@ export function monthKey(now: Date): string {
 	return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(MONTH_DIGITS, "0")}`;
 }
 
+// A stored 0 is the kill switch and short circuits before the network read,
+// so a switched off guild costs no server call either.
+async function capUsdFor(guildId: string, storedCapUsd: number | undefined, now?: Date): Promise<number> {
+	if (storedCapUsd === KILL_SWITCH_CAP_USD) return KILL_SWITCH_CAP_USD;
+	return (await resolveServerPlanAccess(guildId, now)).voiceCeilingUsd;
+}
+
 /**
  * Reserve `cents` of this month's budget. Returns capReached, with nothing
  * written, when the reservation would take the month past the guild's cap.
- * A guild with no config row is metered against the default cap.
+ * The cap is the server's ceiling for the guild, or 0 when the guild stored 0.
  */
 export async function tryReserve(
 	guildId: string,
@@ -51,7 +64,7 @@ export async function tryReserve(
 ): Promise<ReserveResult> {
 	const month = monthKey(options.now ?? new Date());
 	const config = await deroVoiceConfigStore.findByGuildId(guildId);
-	const capCents = usdToCents(config?.monthlyCapUsd ?? BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD);
+	const capCents = usdToCents(await capUsdFor(guildId, config?.monthlyCapUsd, options.now));
 	// sttSeconds rides along only when there is some, so a speech out
 	// reservation keeps exactly the shape it always had.
 	const usage = {

@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({ deroVoiceConfigStore: { findByGuildId: mocks.findByGuildId } }));
 vi.mock("./spendMeter.js", () => ({ tryReserve: mocks.tryReserve, refund: mocks.refund }));
+// The budget line's ending follows coverage; these suites read the uncovered one.
+vi.mock("@features/entitlements/serverPlanAccess.js", () => ({ isServerCovered: async () => false }));
 vi.mock("./elevenLabsTts.js", () => ({ elevenLabsTts: { modelId: "test-model", synthesize: mocks.synthesize } }));
 vi.mock("./voiceSessions.js", () => ({ voiceSessions: { get: mocks.sessionGet } }));
 
@@ -127,7 +129,7 @@ describe("a member in Dero's voice channel", () => {
 		mocks.tryReserve.mockResolvedValue({ status: "capReached" });
 		const interaction = click();
 		await handleListen(interaction);
-		expect(lastReply(interaction)).toEqual({ content: voiceCopy.listen.capReached });
+		expect(lastReply(interaction)).toEqual({ content: voiceCopy.listen.capReached(false) });
 		expect(mocks.synthesize).not.toHaveBeenCalled();
 		expect(speak).not.toHaveBeenCalled();
 	});

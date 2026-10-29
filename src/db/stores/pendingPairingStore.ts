@@ -21,6 +21,9 @@ const CODE_LENGTH = 6;
 // short enough that a leaked DM screenshot is worthless soon after. Mongo's TTL
 // monitor reaps the row once this passes.
 const TTL_MS = 15 * 60 * 1000;
+// Exported so the copy that tells an owner how long a code lasts (/dero plan) reads
+// the same number the row expires on.
+export const PAIRING_CODE_TTL_MS = TTL_MS;
 
 export function generateCode(): string {
 	let code = "";

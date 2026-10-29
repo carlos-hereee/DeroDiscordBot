@@ -37,6 +37,13 @@ vi.mock("@utils/config.js", async (importOriginal) => ({
 	elevenLabsApiKey: "",
 }));
 vi.mock("@db/stores/botLogStore.js", () => ({ botLogStore: { log: hoisted.log } }));
+// The voice ceiling comes from the platform server (2026-10 item 262). This matrix runs an
+// uncovered guild whose ceiling is the matrix's own cap (CAP_CENTS, $25), so every cap case
+// below meters against the same number it did when the ceiling was the stored cap.
+vi.mock("@features/entitlements/serverPlanAccess.js", () => ({
+	resolveServerPlanAccess: async () => ({ covered: false, voiceCeilingUsd: 25 }),
+	isServerCovered: async () => false,
+}));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: async (guildId: string) => ({ guildId }) } }));
 // Voice switched off routes /dero join to the switch (2026-10 item 257): the launcher's
 // own tests cover the admin's panel; here the member's answer stands in for it.
@@ -602,7 +609,7 @@ describe("the spend cap", () => {
 
 		expect(world.tts.calls).toBe(0);
 		expect(row).toMatchObject({ outcome: "ok", actions: ["say:cap_reached"], delivery: "posted" });
-		expect(postsIn(world.control)).toEqual([`${voiceCopy.turn.text.voiceTrouble}\n${deroBrainCopy.result.sayCapReached}`]);
+		expect(postsIn(world.control)).toEqual([`${voiceCopy.turn.text.voiceTrouble}\n${deroBrainCopy.result.sayCapReached(false)}`]);
 		expect(spendRow()?.estimatedCents).toBe(CAP_CENTS);
 	});
 
@@ -616,7 +623,7 @@ describe("the spend cap", () => {
 		expect(world.stt.calls).toBe(0);
 		expect(world.tts.calls).toBe(0);
 		expect(row).toMatchObject({ outcome: "cap_reached", delivery: "posted" });
-		expect(postsIn(world.control)).toEqual([voiceCopy.turn.text.capReached]);
+		expect(postsIn(world.control)).toEqual([voiceCopy.turn.text.capReached(false)]);
 		expect(world.queue.openJobCount()).toBe(0);
 	});
 });
@@ -1030,7 +1037,7 @@ describe("privacy proof: the kill switch and a cap of 0 stop every provider call
 			editReply: listenReply,
 		} as unknown as ButtonInteraction);
 		const listenLine = (listenReply.mock.calls[0] as unknown as [{ content: string }])[0].content;
-		expect(listenLine).toBe(kind === "off" ? voiceCopy.listen.voiceOff : voiceCopy.listen.capReached);
+		expect(listenLine).toBe(kind === "off" ? voiceCopy.listen.voiceOff : voiceCopy.listen.capReached(false));
 
 		// A voice turn: nothing transcribed, nothing spoken.
 		world.loop?.submit(utterance());
@@ -1045,7 +1052,7 @@ describe("privacy proof: the kill switch and a cap of 0 stop every provider call
 			voiceConfig: await deroVoiceConfigStore.findByGuildId(GUILD_ID),
 			deps: { fetchMember: world.fetchMember, voice: defaultExecutorVoiceDeps },
 		});
-		expect(say).toMatchObject(kind === "off" ? { outcome: "switched_off" } : { outcome: "cap_reached", line: deroBrainCopy.result.sayCapReached });
+		expect(say).toMatchObject(kind === "off" ? { outcome: "switched_off" } : { outcome: "cap_reached", line: deroBrainCopy.result.sayCapReached(false) });
 
 		// The dealer of a table opened from this call.
 		const postText = vi.fn(async () => undefined);
@@ -1062,7 +1069,7 @@ describe("privacy proof: the kill switch and a cap of 0 stop every provider call
 		world.sessions.leave(GUILD_ID);
 		const join = await runJoinCommand(world);
 		if (kind === "off") expect((join.reply.mock.calls[0] as unknown as [{ content: string }])[0].content).toContain(voiceCopy.call.voiceOffForMember[0]);
-		else expect(embedText(join.editReply)).toBe(voiceCopy.call.joined.capReached(VC));
+		else expect(embedText(join.editReply)).toBe(voiceCopy.call.joined.capReached(VC, false));
 
 		expect(world.tts.calls).toBe(0);
 		expect(world.stt.calls).toBe(0);

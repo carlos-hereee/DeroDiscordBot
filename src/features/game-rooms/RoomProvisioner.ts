@@ -727,7 +727,7 @@ export function describeRoomOpenFailure(result: RoomOpenFailure): string {
 		case "guildFull":
 			return gameRoomsCopy.errors.guildFull();
 		case "privateQuotaHit":
-			return gameRoomsCopy.errors.privateQuotaHit(result.quota, gameRoomsCopy.tierName(result.tier));
+			return gameRoomsCopy.errors.privateQuotaHit(result.quota, result.tier);
 		case "outsideReach":
 			// Both packs share the host control words, so the default pack is right here.
 			return rokCommanderCopy.arcadeHostControls.reach.publicRefused;

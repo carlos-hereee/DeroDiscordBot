@@ -26,6 +26,8 @@ vi.mock("@features/voice/voiceSessions.js", () => ({
 	voiceSessions: { get: mocks.sessionGet, join: mocks.sessionJoin, leave: mocks.sessionLeave },
 }));
 vi.mock("@features/voice/joinNotice.js", () => ({ announceJoin: mocks.announceJoin, postVoiceNotice: mocks.postNotice }));
+// The budget line's ending follows coverage (2026-10 item 262); this suite reads the uncovered one.
+vi.mock("@features/entitlements/serverPlanAccess.js", () => ({ isServerCovered: async () => false }));
 // The queue reads the Meeting Hall and Arcade Lounge ids from GuildConfig.
 vi.mock("@db/stores/guildConfigStore.js", () => ({
 	guildConfigStore: { findByGuildId: vi.fn(async () => ({ meetingVoiceChannelId: "vc-meeting", arcadeVoiceChannelId: "vc-lounge" })) },
@@ -207,7 +209,7 @@ describe("/dero join", () => {
 		mocks.announceJoin.mockResolvedValue("capReached");
 		const { interaction, editReply } = interactionFor("join");
 		await execute(interaction);
-		expect(textOf(editReply)).toContain(call.joined.capReached(VC));
+		expect(textOf(editReply)).toContain(call.joined.capReached(VC, false));
 	});
 
 	it("refuses through the gates with no session touched and no cooldown burned", async () => {

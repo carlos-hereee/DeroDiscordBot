@@ -47,6 +47,7 @@ interface Rig {
 	clock: { now: number };
 	speakerState: { lastOwnLineEndedAt: number | null };
 	member: { roles: Set<string> };
+	isCovered: ReturnType<typeof vi.fn>;
 }
 
 function answered(reports: ActionReport[], resultAt: number): BrainTurnResult {
@@ -80,6 +81,7 @@ function makeRig(transcript = GATE_B): Rig {
 		ownerId: "owner",
 		channels: { cache: new Map([[GENERAL_ID, { name: "general" }]]) },
 	} as unknown as Guild;
+	const isCovered = vi.fn(async (_guildId: string) => false);
 	const deps: TurnLoopDeps = {
 		now: () => clock.now,
 		loadConfig: vi.fn(async () => CONFIG),
@@ -93,6 +95,7 @@ function makeRig(transcript = GATE_B): Rig {
 		audit,
 		latency,
 		troubleCooldown: new CooldownManager(30_000),
+		isCovered,
 	};
 	const target: TurnTarget = {
 		guild,
@@ -105,7 +108,7 @@ function makeRig(transcript = GATE_B): Rig {
 			},
 		} as unknown as TurnTarget["speaker"],
 	};
-	return { deps, target, speak, transcribe, runTurn, render, reserve, refund, postNotice, audit, latency, clock, speakerState, member };
+	return { deps, target, speak, transcribe, runTurn, render, reserve, refund, postNotice, audit, latency, clock, speakerState, member, isCovered };
 }
 
 function utterance(rig: Rig, durationMs = 2000): Utterance {
@@ -270,8 +273,20 @@ describe("spend and provider trouble", () => {
 		createTurnLoop(rig.target, rig.deps).submit(utterance(rig));
 		await runTurns(rig, 1);
 		expect(rig.transcribe).not.toHaveBeenCalled();
-		expect(rig.postNotice).toHaveBeenCalledWith(rig.target.guild, "text-1", voiceCopy.turn.text.capReached);
+		expect(rig.postNotice).toHaveBeenCalledWith(rig.target.guild, "text-1", voiceCopy.turn.text.capReached(false));
 		expect(lastAudit(rig)).toMatchObject({ outcome: "cap_reached", delivery: "posted" });
+	});
+
+	// The budget line follows coverage (2026-10 item 262), and the spoken one never carries a link.
+	it("speaks the budget line for the server's coverage, with no link in it", async () => {
+		rig.reserve.mockResolvedValue({ status: "capReached" });
+		rig.isCovered.mockResolvedValue(true);
+		createTurnLoop(rig.target, rig.deps).submit(utterance(rig));
+		await runTurns(rig, 1);
+		expect(rig.isCovered).toHaveBeenCalledWith(GUILD_ID);
+		expect(spokenLines(rig)).toEqual([voiceCopy.turn.spoken.capReached(true)]);
+		expect(voiceCopy.turn.spoken.capReached(false)).not.toContain("http");
+		expect(voiceCopy.turn.spoken.capReached(true)).not.toContain("http");
 	});
 
 	it("speaks a trouble line at most once every 30 seconds per server", async () => {

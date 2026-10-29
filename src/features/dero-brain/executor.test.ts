@@ -269,8 +269,9 @@ function fakeVoice(session: VoiceSessionView | null) {
 	const sessionIn = vi.fn((_guildId: string) => session);
 	const leave = vi.fn((_guildId: string) => session !== null);
 	const render = vi.fn(async () => ({ status: "ok" as const, pcm48kStereo: PCM, cached: false }));
-	const voice: ExecutorVoiceDeps = { sessionIn, leave, render };
-	return { voice, sessionIn, leave, render };
+	const isCovered = vi.fn(async (_guildId: string) => false);
+	const voice: ExecutorVoiceDeps = { sessionIn, leave, render, isCovered };
+	return { voice, sessionIn, leave, render, isCovered };
 }
 
 function openCall(speakResult = "playing") {
@@ -308,7 +309,7 @@ describe("executeActions: say", () => {
 	});
 
 	it.each([
-		["at the monthly cap", { status: "capReached" }, "cap_reached", deroBrainCopy.result.sayCapReached],
+		["at the monthly cap", { status: "capReached" }, "cap_reached", deroBrainCopy.result.sayCapReached(false)],
 		["when the provider fails", { status: "failed", kind: "providerDown" }, "voice_failed", deroBrainCopy.result.sayFailed],
 	])("stays quiet %s and says why", async (_label, result, outcome, line) => {
 		const { world, render, speak } = worldWithCall();
@@ -316,6 +317,23 @@ describe("executeActions: say", () => {
 		const { reports } = await run([{ type: "say", text: "hello" }], world);
 		expect(reports[0]).toEqual({ type: "say", outcome, line });
 		expect(speak).not.toHaveBeenCalled();
+	});
+
+	// The budget line follows the server's coverage (2026-10 item 262): the plan and its link
+	// for an uncovered server, the month turning for a covered one.
+	it("names the Dero server plan at the cap only for an uncovered server", async () => {
+		const uncovered = worldWithCall();
+		uncovered.render.mockResolvedValueOnce({ status: "capReached" } as never);
+		const [plain] = (await run([{ type: "say", text: "hello" }], uncovered.world)).reports;
+		expect(plain.line).toContain(BOT_CONSTANTS.DERO_SERVER_PLAN_URL);
+		expect(uncovered.isCovered).toHaveBeenCalledWith(GUILD_ID);
+
+		const covered = worldWithCall();
+		covered.isCovered.mockResolvedValue(true);
+		covered.render.mockResolvedValueOnce({ status: "capReached" } as never);
+		const [paid] = (await run([{ type: "say", text: "hello" }], covered.world)).reports;
+		expect(paid.line).toBe(deroBrainCopy.result.sayCapReached(true));
+		expect(paid.line).not.toContain("http");
 	});
 
 	it("speaks in Dero's default voice when the row stored no voice id", async () => {

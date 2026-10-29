@@ -18,6 +18,7 @@ import {
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import type { ActionReport } from "@features/dero-brain/executor.js";
 import { presentRulesCardInCall, type PresentInCallInput } from "@features/dero-brain/holdemRulesCard.js";
+import { isServerCovered } from "@features/entitlements/serverPlanAccess.js";
 import { addressingOf } from "./addressing.js";
 import { renderCallSpeech, type CallSpeechInput, type CallSpeechResult } from "./callSpeech.js";
 import { elevenLabsStt } from "./elevenLabsStt.js";
@@ -106,6 +107,8 @@ export interface TurnLoopDeps {
 	troubleCooldown: CooldownManager;
 	/** Post a hold em rules card in the call's text channel for the member who asked. */
 	presentHoldemCard(input: PresentInCallInput): Promise<boolean>;
+	/** Whether the server is covered, which picks the voice budget line (2026-10 item 262). */
+	isCovered(guildId: string): Promise<boolean>;
 }
 
 export type SubmitResult = "started" | "queued" | "dropped";
@@ -161,6 +164,7 @@ export const defaultTurnLoopDeps: TurnLoopDeps = {
 	latency: turnLatencyLog,
 	troubleCooldown: sharedTroubleCooldown,
 	presentHoldemCard: (input) => presentRulesCardInCall(input),
+	isCovered: isServerCovered,
 };
 
 /**
@@ -214,10 +218,19 @@ export function createTurnLoop(target: TurnTarget, deps: TurnLoopDeps = defaultT
 		const now = deps.now();
 		if (deps.troubleCooldown.check(guild.id, now).onCooldown) return "quiet";
 		deps.troubleCooldown.record(guild.id, now);
-		const spoken = await speakOwnLine(voiceId, voiceCopy.turn.spoken[kind]);
+		const lines = await troubleLines(kind);
+		const spoken = await speakOwnLine(voiceId, lines.spoken);
 		if (spoken === "playing" || spoken === "queued") return "spoken";
-		await deps.postNotice(guild, target.controlChannelId, voiceCopy.turn.text[kind]);
+		await deps.postNotice(guild, target.controlChannelId, lines.text);
 		return "posted";
+	}
+
+	// The budget lines depend on coverage: an uncovered server is told about the Dero
+	// server plan, a covered one that the budget returns next month.
+	async function troubleLines(kind: TroubleKind): Promise<{ spoken: string; text: string }> {
+		if (kind === "hearingTrouble") return { spoken: voiceCopy.turn.spoken.hearingTrouble, text: voiceCopy.turn.text.hearingTrouble };
+		const covered = await deps.isCovered(guild.id);
+		return { spoken: voiceCopy.turn.spoken.capReached(covered), text: voiceCopy.turn.text.capReached(covered) };
 	}
 
 	async function postSilentAnswer(reports: ActionReport[]): Promise<string> {

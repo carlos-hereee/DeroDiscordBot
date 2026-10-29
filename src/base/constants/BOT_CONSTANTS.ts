@@ -440,13 +440,26 @@ export const BOT_CONSTANTS = {
 	//        per guild knob an admin owns (the cap) lives on DeroVoiceConfig, and
 	//        this default only seeds it.
 	//
-	// The default monthly speech budget per guild, in whole dollars, and the
-	// highest value /dero-config cap accepts. 0 is a valid cap and refuses every
-	// provider call, which makes it a second kill switch. $5 is the owner's
-	// decision (2026-10-21): every guild's speech bills the one ElevenLabs account,
-	// so the default is what a guild costs before an admin raises it.
-	DERO_VOICE_DEFAULT_CAP_USD: 5,
+	// The monthly speech budget is the CEILING the platform server sends per guild
+	// (features/entitlements/serverPlanAccess.ts): $2 for an uncovered server, $5
+	// for one covered by the Dero server plan or a Company Uno subscription. The
+	// owner's decision of 2026-10-29 (2026-10 item 262) dropped the free budget
+	// from $5 to $2, because every guild's speech bills the one ElevenLabs account.
+	// DERO_VOICE_FREE_CEILING_USD is the ceiling the bot falls back to when the
+	// server cannot answer and no earlier answer is cached; it must never be the
+	// covered number, or an outage would hand every guild a paid budget.
+	DERO_VOICE_FREE_CEILING_USD: 2,
+	// The Mongoose seed for DeroVoiceConfig.monthlyCapUsd, equal to the free
+	// ceiling. A stored value is read only as the 0 kill switch (spendMeter), so
+	// this seed never prices anything on its own.
+	DERO_VOICE_DEFAULT_CAP_USD: 2,
+	// The highest value the retired /dero-config cap input accepted; kept for its
+	// commented out callers and never read as a ceiling.
 	DERO_VOICE_MAX_CAP_USD: 500,
+	// Where an uncovered server learns about the Dero server plan. Mirrors the
+	// server's DERO_SERVER_PLAN_URL (features/plans/entitlements.ts); the
+	// /server-plan answer also carries it as upgradeUrl for an uncovered guild.
+	DERO_SERVER_PLAN_URL: "https://www.companyuno.com/pricing#dero-server-plan",
 	// Dero's one speaking voice, the ElevenLabs premade voice "George". The owner
 	// picked it (1.7.0 test fixes plan, item 6) so a guild needs no voice id step
 	// before /dero-config enable. DeroVoiceConfig defaults to it, and every reader

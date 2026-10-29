@@ -19,6 +19,11 @@ const mocks = vi.hoisted(() => ({
 	rows: new Map<string, { estimatedCents: number; ttsChars: number }>(),
 }));
 
+// The ceiling comes from the platform server through serverPlanAccess; the fake
+// answers whatever a case sets, uncovered at $2 by default.
+const access = vi.hoisted(() => ({ resolve: vi.fn() }));
+vi.mock("@features/entitlements/serverPlanAccess.js", () => ({ resolveServerPlanAccess: access.resolve }));
+
 vi.mock("@db/stores/deroVoiceConfigStore.js", () => ({
 	deroVoiceConfigStore: { findByGuildId: mocks.findByGuildId },
 }));
@@ -38,13 +43,22 @@ const rowKey = (guildId: string, month: string): string => `${guildId}|${month}`
 const OCTOBER = new Date(Date.UTC(2026, 9, 14, 12));
 const NOVEMBER = new Date(Date.UTC(2026, 10, 1, 0, 0, 1));
 
-function capUsd(usd: number | null): void {
-	mocks.findByGuildId.mockResolvedValue(usd === null ? null : { monthlyCapUsd: usd });
+// The guild's ceiling from the server, with a config row carrying the schema
+// seed, which the meter ignores. A cap of 0 is stored instead, since 0 is the
+// one stored value the meter reads (the kill switch).
+function capUsd(usd: number): void {
+	if (usd === 0) {
+		mocks.findByGuildId.mockResolvedValue({ monthlyCapUsd: 0 });
+		return;
+	}
+	mocks.findByGuildId.mockResolvedValue({ monthlyCapUsd: BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD });
+	access.resolve.mockResolvedValue({ covered: false, voiceCeilingUsd: usd });
 }
 
 beforeEach(() => {
 	mocks.rows.clear();
 	mocks.findByGuildId.mockReset();
+	access.resolve.mockReset().mockResolvedValue({ covered: false, voiceCeilingUsd: 2 });
 	mocks.ensureMonth.mockReset().mockImplementation(async (guildId: string, month: string) => {
 		if (!mocks.rows.has(rowKey(guildId, month))) mocks.rows.set(rowKey(guildId, month), { estimatedCents: 0, ttsChars: 0 });
 	});
@@ -98,24 +112,36 @@ describe("tryReserve against the cap", () => {
 		expect((await tryReserve("g1", 1, { now: OCTOBER })).status).toBe("capReached");
 	});
 
-	it("meters a guild with no config row against the default cap", async () => {
-		capUsd(null);
-		expect((await tryReserve("g1", 500, { now: OCTOBER })).status).toBe("ok");
+	it("meters a guild with no config row against the server's ceiling", async () => {
+		mocks.findByGuildId.mockResolvedValue(null);
+		expect((await tryReserve("g1", 200, { now: OCTOBER })).status).toBe("ok");
 		expect((await tryReserve("g1", 1, { now: OCTOBER })).status).toBe("capReached");
 	});
 
-	// The budget is hidden from /dero-config, its panel and ⚙️dero-config's chart by the
-	// owner's decision of 2026-10-27 (2026-10 item 263 Phase 4b), and stays ENFORCED here:
-	// a stored cap still stops a spend, and a row that never stored one stops at $5.
-	it("still stops a spend at the stored cap or the $5 default while the budget is hidden", async () => {
-		expect(BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD).toBe(5);
-		capUsd(2);
+	// The ceiling is the server's (2026-10 item 262): $2 uncovered, $5 covered. A
+	// stored cap is read only as the 0 kill switch, because persisted rows carry
+	// the old $5 schema seed and must not outrank an uncovered guild's $2.
+	it("refuses everything at a stored 0, without asking the server", async () => {
+		mocks.findByGuildId.mockResolvedValue({ monthlyCapUsd: 0 });
+		access.resolve.mockResolvedValue({ covered: true, voiceCeilingUsd: 5 });
+		expect((await tryReserve("g1", 1, { now: OCTOBER })).status).toBe("capReached");
+		expect(access.resolve).not.toHaveBeenCalled();
+	});
+
+	it("ignores a stored $5 on an uncovered guild and stops it at $2", async () => {
+		expect(BOT_CONSTANTS.DERO_VOICE_DEFAULT_CAP_USD).toBe(2);
+		mocks.findByGuildId.mockResolvedValue({ monthlyCapUsd: 5 });
+		access.resolve.mockResolvedValue({ covered: false, voiceCeilingUsd: 2 });
 		expect((await tryReserve("g1", 200, { now: OCTOBER })).status).toBe("ok");
 		expect((await tryReserve("g1", 1, { now: OCTOBER })).status).toBe("capReached");
+	});
 
-		mocks.findByGuildId.mockResolvedValue({ enabled: true });
-		expect((await tryReserve("g2", 500, { now: OCTOBER })).status).toBe("ok");
-		expect((await tryReserve("g2", 1, { now: OCTOBER })).status).toBe("capReached");
+	it("lets a covered guild spend up to $5", async () => {
+		mocks.findByGuildId.mockResolvedValue({ monthlyCapUsd: 2 });
+		access.resolve.mockResolvedValue({ covered: true, voiceCeilingUsd: 5 });
+		expect((await tryReserve("g1", 500, { now: OCTOBER })).status).toBe("ok");
+		expect((await tryReserve("g1", 1, { now: OCTOBER })).status).toBe("capReached");
+		expect(access.resolve).toHaveBeenCalledWith("g1", OCTOBER);
 	});
 
 	it("counts the characters alongside the cents", async () => {

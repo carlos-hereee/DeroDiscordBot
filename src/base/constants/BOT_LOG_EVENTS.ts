@@ -40,7 +40,8 @@ export const BOT_LOG_EVENTS = {
 	// with PAIRING_REDEEMED (added in Phase 2) it yields the activation funnel:
 	// redemption rate = redeemed / sent, and time-to-redeem from the row
 	// timestamps. Not idempotent on purpose: every invite issues a new code and
-	// logs a new row.
+	// logs a new row. /dero plan (2026-10 item 262) logs it too, with
+	// `source: "dero_plan"` beside `ownerId`, since its code redeems the same way.
 	PAIRING_CODE_SENT: "pairing_code_sent",
 	// ── pairing code redeemed (FUTURE_PLANS item 63, Phase 2, 2026-06-10) ─
 	// Logged once when the platform server successfully redeems a code through

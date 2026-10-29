@@ -5,6 +5,7 @@ import { resolveDeroVoiceId } from "@features/voice/deroVoiceId.js";
 import { renderCallSpeech, type CallSpeechInput, type CallSpeechResult } from "@features/voice/callSpeech.js";
 import { voiceSessions, type VoiceSessionView } from "@features/voice/voiceSessions.js";
 import { voiceCopy } from "@features/voice/voiceCopy.js";
+import { isServerCovered } from "@features/entitlements/serverPlanAccess.js";
 import type { BrainAction, BrainActionType, OpenHoldemAction, PostMessageAction, SayAction } from "./brainTypes.js";
 import { isAuthorizedSpeaker } from "./authorizer.js";
 import { readSpeakerAdminRoleId } from "./speakerAdminRole.js";
@@ -73,6 +74,8 @@ export interface ExecutorVoiceDeps {
 	sessionIn(guildId: string): VoiceSessionView | null;
 	leave(guildId: string): boolean;
 	render(input: CallSpeechInput): Promise<CallSpeechResult>;
+	/** Whether the server is covered, which picks the budget line (2026-10 item 262). */
+	isCovered(guildId: string): Promise<boolean>;
 }
 
 export interface ExecutorDeps {
@@ -122,6 +125,7 @@ export const defaultExecutorVoiceDeps: ExecutorVoiceDeps = {
 	sessionIn: (guildId) => voiceSessions.get(guildId),
 	leave: (guildId) => voiceSessions.leave(guildId, "left"),
 	render: renderCallSpeech,
+	isCovered: isServerCovered,
 };
 
 export const defaultExecutorDeps: ExecutorDeps = {
@@ -175,7 +179,9 @@ async function sayInCall(guild: Guild, action: SayAction, voiceId: string, voice
 	if (!session) return report(action.type, "no_call", deroBrainCopy.result.sayNoCall);
 
 	const speech = await voice.render({ guildId: guild.id, voiceId, text: action.text });
-	if (speech.status === "capReached") return report(action.type, "cap_reached", deroBrainCopy.result.sayCapReached);
+	if (speech.status === "capReached") {
+		return report(action.type, "cap_reached", deroBrainCopy.result.sayCapReached(await voice.isCovered(guild.id)));
+	}
 	if (speech.status === "failed") return report(action.type, "voice_failed", deroBrainCopy.result.sayFailed);
 	// The call can end during the render; a line for a call that is gone is dropped.
 	if (voice.sessionIn(guild.id) !== session) return report(action.type, "no_call", deroBrainCopy.result.sayNoCall);

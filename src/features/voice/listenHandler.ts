@@ -17,6 +17,7 @@ import { TtsError, type TtsClip, type TtsErrorKind } from "./ttsProvider.js";
 import { voiceCopy } from "./voiceCopy.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import { showCooldownNotice } from "@utils/textModal.js";
+import { isServerCovered } from "@features/entitlements/serverPlanAccess.js";
 
 // ── Listen handler ─────────────────────────────────────────────────────────
 // What:  answer a Listen press with the post read aloud in Dero's voice: in the
@@ -137,7 +138,7 @@ async function deliverPrivately(interaction: ButtonInteraction, { guildId, userI
 
 	const reserved = await tryReserve(guildId, estimateTtsCents(text.length), { ttsChars: text.length });
 	if (reserved.status === "capReached") {
-		await replyPlain(interaction, voiceCopy.listen.capReached);
+		await replyPlain(interaction, voiceCopy.listen.capReached(await isServerCovered(guildId)));
 		return "capReached";
 	}
 
@@ -182,7 +183,7 @@ async function deliverInCall(interaction: ButtonInteraction, request: ListenRequ
 		// refund on failure, cache, resample.
 		const speech = await renderCallSpeech({ guildId, voiceId, text });
 		if (speech.status === "capReached") {
-			await replyPlain(interaction, voiceCopy.listen.capReached);
+			await replyPlain(interaction, voiceCopy.listen.capReached(await isServerCovered(guildId)));
 			return "capReached";
 		}
 		if (speech.status === "failed") {
