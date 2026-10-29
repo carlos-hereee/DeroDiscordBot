@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+// Dero's variant lines always pick the first, so these tests read exact words.
+vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]): Line => lines[0] as Line }));
 import type { Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn() } }));
@@ -92,7 +94,7 @@ describe("Dero's voice", () => {
 	it("says the count in the card's call with Dero voice on", async () => {
 		sessionMock.mockReturnValue({ channelId: "vc-1", startedByRoomId: "room-1" });
 		begin(draftOf({ deroVoice: true }));
-		await vi.waitFor(() => expect(speakMock).toHaveBeenCalledWith("guild-1", deroBrainCopy.dealer.countdown(10)));
+		await vi.waitFor(() => expect(speakMock).toHaveBeenCalledWith("guild-1", deroBrainCopy.dealer.countdown[0](10)));
 	});
 
 	it("says nothing with Dero voice off", async () => {

@@ -9,6 +9,7 @@ import { utcDayStart } from "@utils/utcMonthKey.js";
 import { isChipEconomyOn } from "./chipWallet.js";
 import { buyCoins, buyPriceOf, parseCoinAmount, readMarketView, sellCoins, type MarketView } from "./coinMarket.js";
 import { economyCopy } from "./economyCopy.js";
+import { pickLine } from "@utils/pickLine.js";
 
 // ── coinMarketPanel ──────────────────────────────────────────────────
 // What:  🏪dero-market's two buttons, Buy coins and Sell coins, under the channel's intro
@@ -181,7 +182,7 @@ async function tradeBuy(interaction: ModalSubmitInteraction, config: GuildConfig
 	if (result.kind === "cap") return copy.capLeft(result.leftToday);
 	if (result.kind === "chips") return copy.shortChips(result.balance, result.price);
 	const view = await readMarketView(trade.userId, trade.now);
-	await postTrade(interaction, config, copy.bought({ coins: result.coins, chipsPaid: result.chipsPaid, chips: view.chips, coinBalance: view.coins, buyLeftToday: view.buyLeftToday }));
+	await postTrade(interaction, config, `${copy.bought({ coins: result.coins, chipsPaid: result.chipsPaid, chips: view.chips, coinBalance: view.coins, buyLeftToday: view.buyLeftToday })} *${pickLine(copy.boughtQuips)}*`);
 	return null;
 }
 
@@ -190,7 +191,7 @@ async function tradeSell(interaction: ModalSubmitInteraction, config: GuildConfi
 	const result = await sellCoins(trade);
 	if (result.kind === "coins") return copy.shortCoins(result.balance);
 	const view = await readMarketView(trade.userId, trade.now);
-	await postTrade(interaction, config, copy.sold({ coins: result.coins, chipsPaid: result.chipsPaid, chips: view.chips, coinBalance: view.coins }));
+	await postTrade(interaction, config, `${copy.sold({ coins: result.coins, chipsPaid: result.chipsPaid, chips: view.chips, coinBalance: view.coins })} *${pickLine(copy.soldQuips)}*`);
 	return null;
 }
 

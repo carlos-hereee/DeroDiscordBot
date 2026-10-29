@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+// Dero's variant lines always pick the first, so these tests read exact words.
+vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]): Line => lines[0] as Line }));
 import type { Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn() } }));
@@ -59,7 +61,7 @@ const client = {
 	guilds: { cache: new Map([["guild-1", { voiceStates: { cache: new Map() }, members: { cache: members, fetch: vi.fn(async () => null) } }]]) },
 } as unknown as Client;
 
-const warnings = () => promptMock.mock.calls.filter((call) => (call[2] as { text: string }).text === gameRoomsCopy.turnClock.warningLine(ALICE, SECONDS));
+const warnings = () => promptMock.mock.calls.filter((call) => (call[2] as { text: string }).text === gameRoomsCopy.turnClock.warningLine[0](ALICE, SECONDS));
 
 beforeEach(() => {
 	vi.useFakeTimers({ now: NOW });
@@ -86,7 +88,7 @@ describe("the warning", () => {
 		await vi.advanceTimersByTimeAsync(1);
 		expect(promptMock).toHaveBeenCalledOnce();
 		// The turn prompt's own sender: its mention allowlist names this one id, and it writes no move.
-		expect(promptMock.mock.calls[0][2]).toEqual({ playerId: ALICE, text: gameRoomsCopy.turnClock.warningLine(ALICE, SECONDS), components: [] });
+		expect(promptMock.mock.calls[0][2]).toEqual({ playerId: ALICE, text: gameRoomsCopy.turnClock.warningLine[0](ALICE, SECONDS), components: [] });
 
 		// Armed again for the same turn after a redraw: still one warning.
 		await syncTurnClocks(client, row, [game]);
@@ -232,9 +234,9 @@ describe("Dero's voice", () => {
 		await syncTurnClocks(client, row, [game]);
 
 		await vi.advanceTimersByTimeAsync(TURN_MS - LEAD);
-		expect(wordsFor()).toEqual([deroBrainCopy.dealer.turnWarning("Alice", SECONDS)]);
+		expect(wordsFor()).toEqual([deroBrainCopy.dealer.turnWarning[0]("Alice", SECONDS)]);
 		await vi.advanceTimersByTimeAsync(LEAD);
-		expect(wordsFor()).toEqual([deroBrainCopy.dealer.turnWarning("Alice", SECONDS), deroBrainCopy.dealer.turnOver("Alice")]);
+		expect(wordsFor()).toEqual([deroBrainCopy.dealer.turnWarning[0]("Alice", SECONDS), deroBrainCopy.dealer.turnOver[0]("Alice")]);
 		expect(speakMock.mock.calls.every((call) => call[0] === "guild-1")).toBe(true);
 	});
 });

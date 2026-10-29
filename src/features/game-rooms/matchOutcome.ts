@@ -1,5 +1,6 @@
 import { HAND_CATEGORIES, type HandCategory } from "@features/games/holdemHand.js";
 import type { GameSlug } from "./roomTypes.js";
+import { pickLine } from "@utils/pickLine.js";
 
 // ── matchOutcome ─────────────────────────────────────────────────────
 // What:  decides HOW a match was won (post-launch plan item 21), as one of eight
@@ -185,5 +186,5 @@ export interface FlavorTable {
 export function pickFlavor(table: FlavorTable, game: FlavorGame, bucket: OutcomeBucket, rng: () => number = Math.random): string {
 	const own = table.byGame[game]?.[bucket];
 	const lines = own && own.length > 0 ? own : table.shared[bucket];
-	return lines[Math.floor(rng() * lines.length)] ?? "";
+	return lines.length > 0 ? pickLine(lines, rng) : "";
 }

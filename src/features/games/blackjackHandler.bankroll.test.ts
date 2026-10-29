@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+// Dero's variant lines always pick the first, so these tests read exact words.
+vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]): Line => lines[0] as Line }));
 import type { ButtonInteraction, Client, TextChannel } from "discord.js";
 
 // ── a room's Blackjack table plays for a bankroll (2026-10 item 267) ──────────
@@ -314,7 +316,7 @@ describe("the turn clock", () => {
 		vi.useFakeTimers({ now: Date.UTC(2026, 9, 29, 12, 0, 0) });
 		const room = fakeRoom();
 		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], FREE_TABLE);
-		const warning = gameRoomsCopy.turnClock.warningLine(ALICE.userId, LEAD / 1000);
+		const warning = gameRoomsCopy.turnClock.warningLine[0](ALICE.userId, LEAD / 1000);
 
 		await vi.advanceTimersByTimeAsync(CLOCK - LEAD - 1);
 		expect(sentLines(room, warning)).toHaveLength(0);
@@ -339,12 +341,12 @@ describe("the turn clock", () => {
 		await flush();
 
 		await vi.advanceTimersByTimeAsync(CLOCK - 60_000);
-		expect(sentLines(room, gameRoomsCopy.turnClock.warningLine(ALICE.userId, LEAD / 1000))).toHaveLength(0);
+		expect(sentLines(room, gameRoomsCopy.turnClock.warningLine[0](ALICE.userId, LEAD / 1000))).toHaveLength(0);
 		expect(table().seats[0].bet).toBe(100);
 		// Bob's betting turn started with Alice's bet and has its own full clock.
-		expect(sentLines(room, gameRoomsCopy.turnClock.warningLine(BOB.userId, LEAD / 1000))).toHaveLength(0);
+		expect(sentLines(room, gameRoomsCopy.turnClock.warningLine[0](BOB.userId, LEAD / 1000))).toHaveLength(0);
 		await vi.advanceTimersByTimeAsync(60_000);
-		expect(sentLines(room, gameRoomsCopy.turnClock.warningLine(BOB.userId, LEAD / 1000))).toHaveLength(1);
+		expect(sentLines(room, gameRoomsCopy.turnClock.warningLine[0](BOB.userId, LEAD / 1000))).toHaveLength(1);
 	});
 
 	it("stops a table whose room was finished another way instead of playing on in it", async () => {

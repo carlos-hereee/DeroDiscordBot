@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+// Dero's variant lines always pick the first, so these tests read exact words.
+vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]): Line => lines[0] as Line }));
 import type { ButtonInteraction, Client, ModalSubmitInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
@@ -65,7 +67,7 @@ describe("posting the prompt", () => {
 
 		const [, , prompt] = trailMock.postTurnPrompt.mock.calls[0];
 		expect(prompt.playerId).toBe(A);
-		expect(prompt.text).toBe(gameRoomsCopy.turnPrompt.line(A));
+		expect(prompt.text).toBe(gameRoomsCopy.turnPrompt.line[0](A));
 		const buttons = prompt.components.flatMap((component: { toJSON(): { components: { custom_id: string; label: string }[] } }) => component.toJSON().components);
 		expect(buttons).toEqual([expect.objectContaining({ custom_id: "gameroom:tmove:room-1:t1:fold", label: "Fold" })]);
 		expect(storeMock.claimTurnPrompt).toHaveBeenCalledWith("guild-1", "room-1", null, expect.objectContaining({ fingerprint: "t1", messageId: "m-new", playerId: A }));

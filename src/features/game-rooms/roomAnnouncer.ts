@@ -7,6 +7,7 @@ import { speakInCall } from "@features/voice/callAnnouncer.js";
 import { voiceSessions } from "@features/voice/voiceSessions.js";
 import { cardVoiceState } from "./cardVoiceState.js";
 import { refereeOn } from "./roomTypes.js";
+import { pickLine } from "@utils/pickLine.js";
 
 // ── roomAnnouncer ────────────────────────────────────────────────────
 // What:  Dero calling a challenge card or a room to order out loud (2026-10 item 267, owner
@@ -57,7 +58,7 @@ export async function announceToMatch(client: Client, room: AnnouncedRoom, kind:
 
 /** "New challengers at the door", and under approval that the host should check Requests. */
 export function announceChallengers(client: Client, room: AnnouncedRoom, asking: boolean): void {
-	void announceToMatch(client, room, "challengers", asking ? dealerWords.challengersAsking : dealerWords.challengers);
+	void announceToMatch(client, room, "challengers", pickLine(asking ? dealerWords.challengersAsking : dealerWords.challengers));
 }
 
 /** The name Dero says for a member: their name in the server, or a neutral word when it cannot be read. */

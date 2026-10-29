@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+// Dero's variant lines always pick the first, so these tests read exact words.
+vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]): Line => lines[0] as Line }));
 import type { ButtonInteraction, StringSelectMenuInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
@@ -256,7 +258,7 @@ describe("Dero greets new challengers", () => {
 		storeMock.addPoolMember.mockResolvedValue(makeRoom({ game: "rps", deroVoice: true, spectatorIds: [JOINER] }));
 		await joinChallenge(makeButton(JOINER), makeRoom({ game: "rps", deroVoice: true }));
 
-		await vi.waitFor(() => expect(speakMock).toHaveBeenCalledWith("guild-1", deroBrainCopy.dealer.challengers));
+		await vi.waitFor(() => expect(speakMock).toHaveBeenCalledWith("guild-1", deroBrainCopy.dealer.challengers[0]));
 		expect(speakMock).toHaveBeenCalledOnce();
 	});
 
@@ -272,7 +274,7 @@ describe("Dero greets new challengers", () => {
 		storeMock.addPendingJoin.mockResolvedValue(makeRoom({ game: "rps", deroVoice: true, requireApproval: true, pendingJoinIds: [JOINER] }));
 		await joinChallenge(makeButton(JOINER), makeRoom({ game: "rps", deroVoice: true, requireApproval: true }));
 
-		await vi.waitFor(() => expect(speakMock).toHaveBeenCalledWith("guild-1", deroBrainCopy.dealer.challengersAsking));
+		await vi.waitFor(() => expect(speakMock).toHaveBeenCalledWith("guild-1", deroBrainCopy.dealer.challengersAsking[0]));
 		expect(speakMock).toHaveBeenCalledOnce();
 	});
 

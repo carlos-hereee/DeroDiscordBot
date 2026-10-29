@@ -94,6 +94,20 @@ export const economyCopy = {
 		invalidAmount: "Type a whole number of coins, like 2. Nothing moved.",
 		bought: (input: { coins: number; chipsPaid: number; chips: number; coinBalance: number; buyLeftToday: number }): string =>
 			`bought **${coins(input.coins)}** for **${chips(input.chipsPaid)}**. You now hold ${chips(input.chips)} and ${coins(input.coinBalance)}, and may buy ${input.buyLeftToday} more today.`,
+		// Dero's aside after a finished trade (pickLine), in italics after the receipt.
+		boughtQuips: [
+			"Dero bites the coin to make sure it is real.",
+			"A fine purchase. Dero approves.",
+			"Spend them wisely. Or do not. Dero is not your accountant.",
+			"The vault rattles with satisfaction.",
+			"Shiny. Very shiny.",
+		],
+		soldQuips: [
+			"Dero counts the chips twice. They are all there.",
+			"Cashing out. A bold move.",
+			"The coins go back in the vault. For now.",
+			"Chips in hand. Go make them work.",
+		],
 		sold: (input: { coins: number; chipsPaid: number; chips: number; coinBalance: number }): string =>
 			`sold **${coins(input.coins)}** for **${chips(input.chipsPaid)}**. You now hold ${chips(input.chips)} and ${coins(input.coinBalance)}.`,
 		// No 🏪dero-market stored yet (the boot that builds it has not run): the trade

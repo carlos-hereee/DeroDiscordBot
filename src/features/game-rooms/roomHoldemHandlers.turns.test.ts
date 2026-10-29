@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+// Dero's variant lines always pick the first, so these tests read exact words.
+vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]): Line => lines[0] as Line }));
 import { TextChannel, type Client, type ModalSubmitInteraction } from "discord.js";
 
 // ── a full Hold'em hand through the turn prompt (2026-10 item 257 Phase 4a) ──

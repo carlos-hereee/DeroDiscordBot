@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+// Dero's variant lines always pick the first, so these tests read exact words.
+vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]): Line => lines[0] as Line }));
 import type { Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
@@ -166,7 +168,7 @@ describe.each(CASES)("$name", ({ clock, room, turnMs, member, passed }) => {
 		expect(promptMock).not.toHaveBeenCalled();
 		await vi.advanceTimersByTimeAsync(1);
 		expect(promptMock).toHaveBeenCalledOnce();
-		expect(promptMock.mock.calls[0][2]).toEqual({ playerId: memberId, text: gameRoomsCopy.turnClock.warningLine(memberId, LEAD / 1000), components: [] });
+		expect(promptMock.mock.calls[0][2]).toEqual({ playerId: memberId, text: gameRoomsCopy.turnClock.warningLine[0](memberId, LEAD / 1000), components: [] });
 
 		await vi.advanceTimersByTimeAsync(LEAD - 1);
 		expect(writeMock).not.toHaveBeenCalled();

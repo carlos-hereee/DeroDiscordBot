@@ -177,17 +177,50 @@ export const deroBrainCopy = {
 		flop: (cards: string): string => `The flop: ${cards}.`,
 		turn: (card: string): string => `The turn: ${card}.`,
 		river: (card: string): string => `The river: ${card}.`,
-		toAct: (name: string): string => `${name}, it is your turn.`,
+		// Variants (pickLine), so a long table does not hear the same words every turn.
+		toAct: [
+			(name: string): string => `${name}, it is your turn.`,
+			(name: string): string => `${name}, the table waits on you.`,
+			(name: string): string => `Your move, ${name}.`,
+			(name: string): string => `${name}, show us what you are made of.`,
+			(name: string): string => `All eyes on ${name}.`,
+		],
 		result: (winners: DealerWinner[]): string => winners.map(winnerPhrase).join(" "),
 		tournamentWon: (name: string): string => `${name} wins the tournament.`,
 		// ── Dero calls the room to order (2026-10 item 267, decisions 13 to 15) ──
 		// Spoken only, into the card's or the room's call: a member joining or asking to join a
-		// card, the Start countdown, and the warning before a timed turn ends and its end.
-		challengers: "New challengers at the door.",
-		challengersAsking: "New challengers at the door. Host, check Requests to let them in.",
-		countdown: (seconds: number): string => `The match starts in ${seconds} seconds.`,
-		turnWarning: (name: string, seconds: number): string => `${name}, ${seconds} seconds left on your turn.`,
-		turnOver: (name: string): string => `${name}, your turn is over.`,
+		// card, the Start countdown, and the warning before a timed turn ends and its end. Each is
+		// a list of variants Dero picks from (pickLine); the first is the plain one.
+		challengers: [
+			"New challengers at the door.",
+			"Fresh blood at the gate. Make room at the table.",
+			"Another brave soul answers the call.",
+			"The table grows. Someone thinks they can win.",
+			"I hear footsteps. A new challenger approaches.",
+		],
+		challengersAsking: [
+			"New challengers at the door. Host, check Requests to let them in.",
+			"Someone knocks at the gate. Host, check Requests.",
+			"A challenger waits outside the walls. Host, open Requests and decide their fate.",
+		],
+		countdown: [
+			(seconds: number): string => `The match starts in ${seconds} seconds.`,
+			(seconds: number): string => `${seconds} seconds. Sharpen your blades.`,
+			(seconds: number): string => `Take your seats. We begin in ${seconds} seconds.`,
+			(seconds: number): string => `${seconds} seconds until the gates open. May the best one win.`,
+		],
+		turnWarning: [
+			(name: string, seconds: number): string => `${name}, ${seconds} seconds left on your turn.`,
+			(name: string, seconds: number): string => `${name}, the hourglass is nearly empty. ${seconds} seconds.`,
+			(name: string, seconds: number): string => `Clock is ticking, ${name}. ${seconds} seconds left.`,
+			(name: string, seconds: number): string => `${name}, ${seconds} seconds. Decide, or the clock decides for you.`,
+		],
+		turnOver: [
+			(name: string): string => `${name}, your turn is over.`,
+			(name: string): string => `Time is up, ${name}. The table moves on.`,
+			(name: string): string => `${name} ran out the clock. Next.`,
+			(name: string): string => `The sand has run out for ${name}.`,
+		],
 		// Said in place of a member whose server name cannot be read.
 		unknownPlayer: "a player",
 		spokenCard: (rank: number, suit: string): string => `the ${RANK_WORDS[rank] ?? String(rank)} of ${SUIT_WORDS[suit] ?? suit}`,

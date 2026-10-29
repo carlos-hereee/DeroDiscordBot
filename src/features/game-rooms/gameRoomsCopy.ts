@@ -186,19 +186,19 @@ const POST_MATCH_FLAVOR: FlavorTable = {
 		},
 	},
 	shared: {
-		decisive: ["A victory without a doubt in it.", "Clear, clean and beyond argument.", "The field was theirs from start to end.", "No rival came close."],
-		narrow: ["Close enough to feel the other blade.", "Won by a hair and a prayer.", "The margin was thin, the crown is not.", "A hard fought win, and an honest one."],
-		comeback: ["Written off, then written into the chronicle.", "Rose from behind and took the throne.", "The tide turned, and they rode it in.", "Down but never out."],
-		routing: ["A rout from the first horn.", "The rivals broke and ran.", "Swift, total and decisive.", "Nothing left standing on the other side."],
-		tactic: ["Planned like a siege, executed like a charge.", "A strategist's victory.", "Cunning won this one.", "The better plan carried the day."],
+		decisive: ["A victory without a doubt in it.", "Clear, clean and beyond argument.", "The field was theirs from start to end.", "No rival came close.", "Dero barely had time to sharpen his quill.", "The scribes will need a bigger scroll."],
+		narrow: ["Close enough to feel the other blade.", "Won by a hair and a prayer.", "The margin was thin, the crown is not.", "A hard fought win, and an honest one.", "Dero held his breath for that one.", "A coin could have landed either way."],
+		comeback: ["Written off, then written into the chronicle.", "Rose from behind and took the throne.", "The tide turned, and they rode it in.", "Down but never out.", "Dero had already started the eulogy. He is tearing it up.", "Never bet against a cornered champion."],
+		routing: ["A rout from the first horn.", "The rivals broke and ran.", "Swift, total and decisive.", "Nothing left standing on the other side.", "The rivals are still looking for their armor.", "Dero has seen storms gentler than that."],
+		tactic: ["Planned like a siege, executed like a charge.", "A strategist's victory.", "Cunning won this one.", "The better plan carried the day.", "Every move was three moves ahead.", "Dero is taking notes."],
 		forfeit: [
 			"The rival left the field, and the field is theirs.",
 			"Victory by the other side's retreat.",
 			"An empty chair across the table, and a win.",
 			"The challenger quit the field.",
 		],
-		timeout: ["The rival's clock ran dry.", "Time itself took the other side.", "The rival went quiet and the hourglass decided.", "Won while the rival slept."],
-		draw: ["Neither side would yield.", "Two crowns, one table, no winner.", "Even steel, even luck.", "The realm calls it a draw."],
+		timeout: ["The rival's clock ran dry.", "Time itself took the other side.", "The rival went quiet and the hourglass decided.", "Won while the rival slept.", "The hourglass picks a winner too."],
+		draw: ["Neither side would yield.", "Two crowns, one table, no winner.", "Even steel, even luck.", "The realm calls it a draw.", "Dero declares a truce and pours two cups."],
 	},
 };
 
@@ -217,7 +217,14 @@ export const gameRoomsCopy = {
 	// The one line that pings the member on the clock, the modal their button opens, and
 	// the words the line is edited to once the turn is over. Every game shares them.
 	turnPrompt: {
-		line: (userId: string): string => `<@${userId}> it's your turn`,
+		// Variants (pickLine); every one pings the member on the clock by leading with them.
+		line: [
+			(userId: string): string => `<@${userId}> it's your turn`,
+			(userId: string): string => `<@${userId}> you're up. The table is watching.`,
+			(userId: string): string => `<@${userId}> your move. Make it count.`,
+			(userId: string): string => `<@${userId}> the dice, the cards and the crown wait on you.`,
+			(userId: string): string => `<@${userId}> step up. Dero is keeping score.`,
+		],
 		takeLabel: "Take your turn",
 		playedLine: (userId: string): string => `✅ <@${userId}> played their turn.`,
 		passedLine: (userId: string): string => `⏳ <@${userId}>'s turn passed.`,
@@ -234,7 +241,13 @@ export const gameRoomsCopy = {
 	// The room line that warns the member on the clock before a timed turn ends. It pings that
 	// member alone; the turn's end is the game's own timeout line.
 	turnClock: {
-		warningLine: (userId: string, seconds: number): string => `⏰ <@${userId}> ${seconds} seconds left on your turn.`,
+		// Variants (pickLine), each leading with the member it pings.
+		warningLine: [
+			(userId: string, seconds: number): string => `⏰ <@${userId}> ${seconds} seconds left on your turn.`,
+			(userId: string, seconds: number): string => `⏰ <@${userId}> the hourglass is almost empty: ${seconds} seconds.`,
+			(userId: string, seconds: number): string => `⏰ <@${userId}> ${seconds} seconds. Choose, or the clock chooses for you.`,
+			(userId: string, seconds: number): string => `⏰ <@${userId}> tick tock. ${seconds} seconds left.`,
+		],
 	},
 
 	// ── the shared turn board (2026-10 item 263 R3-29) ──

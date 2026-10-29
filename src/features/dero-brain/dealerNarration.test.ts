@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+// Dero's variant lines always pick the first, so these tests read exact words.
+vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]): Line => lines[0] as Line }));
 import type { Client } from "discord.js";
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import { createTable, joinTable, dealHand, act, actionsFor, whoActs, handInProgress, type HoldemTable } from "@features/games/holdemTable.js";

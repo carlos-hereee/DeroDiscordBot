@@ -5,6 +5,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import { announceToMatch } from "./roomAnnouncer.js";
 import { countdownSeconds, startCountdownState } from "./startCountdownState.js";
+import { pickLine } from "@utils/pickLine.js";
 
 // ── startCountdown ───────────────────────────────────────────────────
 // What:  the host's Start counts the match in (2026-10 item 267, owner decision 13): for
@@ -46,7 +47,7 @@ export function beginStartCountdown(start: CountdownStart): boolean {
 	if (startCountdownState.isCountingDown(start.room)) return false;
 	const end = (): Promise<void> => endCountdown(start);
 	startCountdownState.hold(start.room, { timer: setTimeout(() => void end(), BOT_CONSTANTS.START_COUNTDOWN_MS), end });
-	void announceToMatch(start.client, start.room, "countdown", deroBrainCopy.dealer.countdown(countdownSeconds()));
+	void announceToMatch(start.client, start.room, "countdown", pickLine(deroBrainCopy.dealer.countdown)(countdownSeconds()));
 	return true;
 }
 

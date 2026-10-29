@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+// Dero's variant lines always pick the first, so these tests read exact words.
+vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]): Line => lines[0] as Line }));
 import type { ButtonInteraction, ModalSubmitInteraction } from "discord.js";
 
 // ── coinMarketPanel (2026-10 item 267 Session 2a) ─────────────────────────────
@@ -168,7 +170,7 @@ describe("handleMarketSubmit", () => {
 		expect(mocks.buyCoins).toHaveBeenCalledWith(expect.objectContaining({ userId: "u-trader", guildId: "g1", coins: 3 }));
 		expect(channel.send).toHaveBeenCalledOnce();
 		const sent = (channel.send.mock.calls[0] as unknown as [{ content: string; allowedMentions: unknown }])[0];
-		expect(sent.content).toBe(`<@u-trader> ${copy.bought({ coins: 3, chipsPaid: 6_000, chips: 4_000, coinBalance: 7, buyLeftToday: 0 })}`);
+		expect(sent.content).toBe(`<@u-trader> ${copy.bought({ coins: 3, chipsPaid: 6_000, chips: 4_000, coinBalance: 7, buyLeftToday: 0 })} *${copy.boughtQuips[0]}*`);
 		expect(sent.allowedMentions).toEqual({ parse: [], users: ["u-trader"] });
 		expect(fake.followUp).not.toHaveBeenCalled();
 	});

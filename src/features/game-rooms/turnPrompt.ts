@@ -8,6 +8,7 @@ import { buildFieldsModal, readFieldAnswers, type ModalField } from "./pickerMod
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isBotSeatId } from "./botSeat.js";
 import { resolveRoomChannel, roomTrail } from "./roomTrail.js";
+import { pickLine } from "@utils/pickLine.js";
 
 // ── turnPrompt ───────────────────────────────────────────────────────
 // What:  the one piece every turn based game shares (2026-10 item 257 Phase 4a): when a
@@ -209,7 +210,7 @@ interface NewPrompt {
 // ① send the line, ② claim it on the row against the prompt that was read (the loser deletes
 // its own line, so two syncs for one turn leave one), ③ edit the line it replaced.
 async function postNewPrompt(client: Client, room: IGameRoom, current: TurnPromptRecord, next: NewPrompt): Promise<void> {
-	const posted = await roomTrail.postTurnPrompt(client, room, { playerId: next.playerId, text: gameRoomsCopy.turnPrompt.line(next.playerId), components: next.rows });
+	const posted = await roomTrail.postTurnPrompt(client, room, { playerId: next.playerId, text: pickLine(gameRoomsCopy.turnPrompt.line)(next.playerId), components: next.rows });
 	if (!posted) return;
 	const previous = await gameRoomStore.claimTurnPrompt(room.guildId, room.roomId, current.fingerprint, {
 		fingerprint: next.fingerprint,

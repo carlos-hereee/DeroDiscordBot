@@ -7,6 +7,7 @@ import { defaultCallAnnouncerDeps, speakInCall, type CallAnnouncerDeps } from "@
 import { withRenderFallback, type RenderPayload } from "@features/renderer/index.js";
 import { deroBrainCopy, type DealerWinner } from "./deroBrainCopy.js";
 import { dealerShowdownView, renderDealerShowdownCard, type DealerShowdownView } from "./dealerShowdownRenderer.js";
+import { pickLine } from "@utils/pickLine.js";
 
 // ── dealerNarration ───────────────────────────────────────────────────────
 // What:  Dero as the dealer of a hold em table it opened: a few lines in the
@@ -226,10 +227,12 @@ export function narrate(prev: PublicView, next: PublicView, result: PublicResult
 	}
 
 	if (next.actingUserId && next.actingUserId !== options.lastTurnUserId) {
+		// One variant for both forms, so the text and the speech say the same words.
+		const toAct = pickLine(dealerCopy.toAct);
 		lines.push({
 			kind: "toAct",
-			text: dealerCopy.toAct(name.text(next.actingUserId)),
-			spoken: dealerCopy.toAct(name.spoken(next.actingUserId)),
+			text: toAct(name.text(next.actingUserId)),
+			spoken: toAct(name.spoken(next.actingUserId)),
 			cards: [],
 		});
 	}

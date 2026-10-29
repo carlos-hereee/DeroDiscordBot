@@ -8,6 +8,7 @@ import { isBotSeatId } from "./botSeat.js";
 import { roomTrail } from "./roomTrail.js";
 import { announceToMatch, isDeroInMatchCall, spokenNameOf, warningSeconds } from "./roomAnnouncer.js";
 import type { GameSlug } from "./roomTypes.js";
+import { pickLine } from "@utils/pickLine.js";
 
 // ── turnClock ────────────────────────────────────────────────────────
 // What:  the one per turn timer every timed game arms from its own deadline (2026-10 item 267,
@@ -294,14 +295,14 @@ const isNetworkRoom = (room: IGameRoom): boolean => Boolean(room.network || room
 async function warnMember(client: Client, room: IGameRoom, memberId: string): Promise<void> {
 	if (isNetworkRoom(room)) return;
 	const seconds = warningSeconds();
-	await roomTrail.postTurnPrompt(client, room, { playerId: memberId, text: gameRoomsCopy.turnClock.warningLine(memberId, seconds), components: [] });
+	await roomTrail.postTurnPrompt(client, room, { playerId: memberId, text: pickLine(gameRoomsCopy.turnClock.warningLine)(memberId, seconds), components: [] });
 	if (!isDeroInMatchCall(client, room)) return;
-	await announceToMatch(client, room, "turnWarning", deroBrainCopy.dealer.turnWarning(await spokenNameOf(client, room.guildId, memberId), seconds));
+	await announceToMatch(client, room, "turnWarning", pickLine(deroBrainCopy.dealer.turnWarning)(await spokenNameOf(client, room.guildId, memberId), seconds));
 }
 
 async function sayTurnOver(client: Client, room: IGameRoom, memberId: string): Promise<void> {
 	if (isNetworkRoom(room) || !isDeroInMatchCall(client, room)) return;
-	await announceToMatch(client, room, "turnOver", deroBrainCopy.dealer.turnOver(await spokenNameOf(client, room.guildId, memberId)));
+	await announceToMatch(client, room, "turnOver", pickLine(deroBrainCopy.dealer.turnOver)(await spokenNameOf(client, room.guildId, memberId)));
 }
 
 // ── test seams ────────────────────────────────────────────────────────
