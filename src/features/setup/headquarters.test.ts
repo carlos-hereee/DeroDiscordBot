@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { PermissionFlagsBits, TextChannel, type CategoryChannel, type Guild } from "discord.js";
-import { canManageChannels, moveIntoHeadquarters } from "./headquarters.js";
+import { canManageChannels, moveIntoCategory } from "./headquarters.js";
 
 const BOT_ID = "bot-1";
 const OWNER_ID = "owner-1";
@@ -31,11 +31,11 @@ function makeChannel(parentId: string) {
 
 const headquarters = { id: HEADQUARTERS_ID } as unknown as CategoryChannel;
 
-describe("moveIntoHeadquarters", () => {
+describe("moveIntoCategory", () => {
 	it("moves the channel without syncing it to the category, then re-applies its spec's overwrites", async () => {
 		const { channel, setParent, set } = makeChannel("cat-1");
 
-		expect(await moveIntoHeadquarters(makeGuild([]), channel, headquarters, "admin", ROLES)).toBe(true);
+		expect(await moveIntoCategory(makeGuild([]), channel, headquarters, "admin", ROLES)).toBe(true);
 
 		expect(setParent).toHaveBeenCalledExactlyOnceWith(HEADQUARTERS_ID, { lockPermissions: false });
 		const written = set.mock.calls[0][0] as unknown as Array<{ id: string; deny?: bigint[] }>;
@@ -46,7 +46,7 @@ describe("moveIntoHeadquarters", () => {
 	it("writes nothing when the channel is already in Headquarters", async () => {
 		const { channel, setParent, set } = makeChannel(HEADQUARTERS_ID);
 
-		expect(await moveIntoHeadquarters(makeGuild([]), channel, headquarters, "admin", ROLES)).toBe(false);
+		expect(await moveIntoCategory(makeGuild([]), channel, headquarters, "admin", ROLES)).toBe(false);
 
 		expect(setParent).not.toHaveBeenCalled();
 		expect(set).not.toHaveBeenCalled();

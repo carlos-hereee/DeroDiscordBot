@@ -137,6 +137,8 @@ function makeChannel(id: string, name: string, kind: "text" | "voice", parentId:
 		guildId: GUILD_ID,
 		send: vi.fn(async () => ({ id: `msg-${id}`, pin: vi.fn().mockResolvedValue(undefined) })),
 		messages: { fetch: vi.fn().mockResolvedValue(new Collection()) },
+		// moveIntoCategory re-applies the spec overwrites through set (2026-10 item 275).
+		permissionOverwrites: { cache: new Collection(), set: vi.fn().mockResolvedValue(undefined) },
 		setParent: vi.fn(),
 		delete: vi.fn(),
 		edit: vi.fn(),
@@ -170,6 +172,8 @@ interface IRigOptions {
 	cachedCategories?: Array<ReturnType<typeof makeCategory>>;
 	// Whether the stored categories still answer a fetch.
 	categoriesLive?: boolean;
+	// Further live channels a fetch by id answers (a notice board survivor, 2026-10 item 275).
+	extraLive?: Array<TextChannel | VoiceChannel>;
 }
 
 function makeRig(options: IRigOptions) {
@@ -217,6 +221,8 @@ function makeRig(options: IRigOptions) {
 		if (id === HEADQUARTERS_CATEGORY_ID) return options.categoriesLive === false ? Promise.reject(unknownChannel()) : headquartersCategory;
 		if (goneIds.has(id)) throw unknownChannel();
 		if (unreachableIds.has(id)) throw new Error("503 Service Unavailable");
+		const extra = options.extraLive?.find((channel) => channel.id === id);
+		if (extra) return extra;
 		const live = liveBySlot.get(id);
 		if (live) return live;
 		throw unknownChannel();
@@ -409,5 +415,168 @@ describe("GuildSetupManager.autoSetup keeps a reused category's live channels (2
 		// Headquarters had no category, so it was built whole, as on any fresh install.
 		expect(rig.childCreatesUnder(`new-cat-${headquartersCategoryName}`)).toHaveLength(Object.keys(HEADQUARTERS_SLOTS).length);
 		expect(syncAllHeadquarters).toHaveBeenCalledTimes(1);
+	});
+});
+
+// ── the notice board's survivors (2026-10 item 275) ──────────────────────
+// Discord keeps a deleted category's channels, uncategorized (parentId null). So when
+// 🪧 NOTICE BOARD is gone, its stored channels may still answer a fetch, and the rebuild
+// must move them into the new category instead of building a second set beside them.
+const HOMEBASE_SLOTS: Record<string, string> = {
+	introChannelId: "ch-intro",
+	commandsChannelId: "ch-commands",
+	leaderboardChannelId: "ch-leaderboard",
+	scheduleChannelId: "ch-schedule",
+	announcementsChannelId: "ch-announcements",
+	nextDecreeChannelId: "ch-nextdecree",
+	welcomeChannelId: "ch-welcome",
+	rulesChannelId: "ch-rules",
+	meetingVoiceChannelId: "ch-meetingvoice",
+	commandOutputChannelId: "ch-commandoutput",
+};
+const NEW_NOTICE_BOARD_ID = `new-cat-${rokCommanderCopy.setup.categoryName}`;
+
+function makeNoticeBoardRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return makeStoredRow({
+		categoryId: "cat-deleted",
+		...HOMEBASE_SLOTS,
+		scheduleMessageId: "msg-old-schedule",
+		introMessageIds: {
+			...STORED_ANCHORS,
+			...Object.fromEntries(Object.keys(HOMEBASE_SLOTS).map((field) => [field, `anchor-${field}`])),
+			inviteCardId: "anchor-inviteCardId",
+		},
+		...overrides,
+	});
+}
+
+// One survivor per stored slot not listed as gone, uncategorized unless told otherwise.
+function makeSurvivors(options: { gone?: string[]; parentOf?: Record<string, string> } = {}) {
+	const gone = new Set(options.gone ?? []);
+	return Object.entries(HOMEBASE_SLOTS)
+		.filter(([field]) => !gone.has(field))
+		.map(([field, id]) => makeChannel(id, specFor(field).displayName, field === "meetingVoiceChannelId" ? "voice" : "text", options.parentOf?.[field] ?? null));
+}
+
+describe("GuildSetupManager.autoSetup moves the notice board's surviving channels into the rebuilt category (2026-10 item 275)", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("moves every uncategorized survivor into the new notice board, builds none of them, and keeps their slots and anchors", async () => {
+		const survivors = makeSurvivors();
+		const rig = makeRig({ stored: makeNoticeBoardRow(), extraLive: survivors });
+
+		await forcedRebuild(rig);
+
+		expect(rig.childCreatesUnder(NEW_NOTICE_BOARD_ID)).toEqual([]);
+		const textRoles = { memberRoleId: MEMBER_ROLE, adminRoleId: ADMIN_ROLE };
+		for (const channel of survivors) {
+			const field = Object.keys(HOMEBASE_SLOTS).find((key) => HOMEBASE_SLOTS[key] === channel.id)!;
+			expect(channel.setParent, field).toHaveBeenCalledExactlyOnceWith(NEW_NOTICE_BOARD_ID, { lockPermissions: false });
+			const written = (channel.permissionOverwrites as unknown as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0]?.[0];
+			expect(written, field).toEqual(expectedOverwrites(rig, field, textRoles));
+		}
+
+		const [, payload] = configMock.update.mock.calls[0] as [string, Record<string, unknown>];
+		expect(payload.categoryId).toBe(NEW_NOTICE_BOARD_ID);
+		for (const field of Object.keys(HOMEBASE_SLOTS)) expect(payload, field).not.toHaveProperty(field);
+		expect(payload).not.toHaveProperty("scheduleMessageId");
+		expect(payload).not.toHaveProperty("adoptedChannelIds");
+
+		const row = rig.row()!;
+		for (const [field, id] of Object.entries(HOMEBASE_SLOTS)) expect(row[field], field).toBe(id);
+		expect(row.scheduleMessageId).toBe("msg-old-schedule");
+		const anchors = row.introMessageIds as Record<string, string | null>;
+		for (const field of Object.keys(HOMEBASE_SLOTS)) expect(anchors[field], field).toBe(`anchor-${field}`);
+		expect(anchors.inviteCardId).toBe("anchor-inviteCardId");
+		// A moved 🏛️ Meeting Hall keeps its id, and no dead id reaches the voice allow list.
+		const allowed = (allowDeroVoiceRooms as unknown as ReturnType<typeof vi.fn>).mock.calls.flatMap((call) => call[1] as unknown[]);
+		expect(allowed.filter((id) => typeof id === "string")).toEqual([]);
+	});
+
+	it("builds only the gone slots under the new notice board, through the repair path, and moves the rest", async () => {
+		const gone = ["leaderboardChannelId", "announcementsChannelId"];
+		const survivors = makeSurvivors({ gone });
+		const rig = makeRig({ stored: makeNoticeBoardRow(), extraLive: survivors });
+
+		await forcedRebuild(rig);
+
+		const creates = rig.childCreatesUnder(NEW_NOTICE_BOARD_ID);
+		expect(creates.map((call) => call.name).sort()).toEqual([names.leaderboard, names.announcements].sort());
+		for (const channel of survivors) expect(channel.setParent, channel.id).toHaveBeenCalledOnce();
+		const row = rig.row()!;
+		expect(row.leaderboardChannelId).toBe(`new-${names.leaderboard}`);
+		expect((row.introMessageIds as Record<string, string>).introChannelId).toBe("anchor-introChannelId");
+	});
+
+	it("never moves the server's own adopted welcome channel (D3)", async () => {
+		const ownWelcome = makeChannel("ch-own-welcome", "welcome", "text", null);
+		const survivors = makeSurvivors({ gone: ["welcomeChannelId"] });
+		const rig = makeRig({
+			stored: makeNoticeBoardRow({ welcomeChannelId: "ch-own-welcome", adoptedChannelIds: ["ch-own-welcome"] }),
+			extraLive: [...survivors, ownWelcome],
+		});
+
+		await forcedRebuild(rig);
+
+		expect(ownWelcome.setParent).not.toHaveBeenCalled();
+		expect(rig.childCreatesUnder(NEW_NOTICE_BOARD_ID)).toEqual([]);
+		expect(rig.row()!.welcomeChannelId).toBe("ch-own-welcome");
+	});
+
+	it("keeps a survivor an admin placed in a category of their own where it is (D1)", async () => {
+		const survivors = makeSurvivors({ parentOf: { leaderboardChannelId: "cat-admins-own" } });
+		const rig = makeRig({ stored: makeNoticeBoardRow(), extraLive: survivors });
+
+		await forcedRebuild(rig);
+
+		const leaderboard = survivors.find((channel) => channel.id === "ch-leaderboard")!;
+		expect(leaderboard.setParent).not.toHaveBeenCalled();
+		expect(rig.childCreatesUnder(NEW_NOTICE_BOARD_ID)).toEqual([]);
+		expect(rig.row()!.leaderboardChannelId).toBe("ch-leaderboard");
+	});
+
+	it("keeps a survivor whose move fails where it is, and builds nothing in its place (R4)", async () => {
+		const survivors = makeSurvivors();
+		const commands = survivors.find((channel) => channel.id === "ch-commands")!;
+		commands.setParent.mockRejectedValueOnce(new Error("Missing Permissions"));
+		const rig = makeRig({ stored: makeNoticeBoardRow(), extraLive: survivors });
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+		await forcedRebuild(rig);
+
+		expect(warn.mock.calls.some((call) => String(call[0]).includes("could not move commandsChannelId"))).toBe(true);
+		expect(rig.childCreatesUnder(NEW_NOTICE_BOARD_ID)).toEqual([]);
+		expect(rig.row()!.commandsChannelId).toBe("ch-commands");
+		warn.mockRestore();
+	});
+
+	it("builds the notice board in bulk, exactly as before, when none of Dero's channels survived (D2)", async () => {
+		// Only the server's own adopted welcome is left, which is what a self destruct leaves.
+		const ownWelcome = makeChannel("ch-own-welcome", "welcome", "text", null);
+		const rig = makeRig({
+			stored: makeNoticeBoardRow({ welcomeChannelId: "ch-own-welcome", adoptedChannelIds: ["ch-own-welcome"] }),
+			extraLive: [ownWelcome],
+		});
+
+		await forcedRebuild(rig);
+
+		expect(ownWelcome.setParent).not.toHaveBeenCalled();
+		const [, payload] = configMock.update.mock.calls[0] as [string, Record<string, unknown>];
+		expect(payload.introChannelId).toBe(`new-${names.intro}`);
+		expect(payload.scheduleMessageId).toBe(`msg-new-${names.schedule}`);
+		expect(rig.childCreatesUnder(NEW_NOTICE_BOARD_ID).length).toBeGreaterThanOrEqual(Object.keys(HOMEBASE_SLOTS).length - 1);
+	});
+
+	it("builds every notice board channel new on a foreign homebase, moving none (D1 of item 273)", async () => {
+		const survivors = makeSurvivors();
+		const rig = makeRig({ stored: makeNoticeBoardRow(), extraLive: survivors });
+
+		await forcedRebuild(rig, { foreignHomebase: true });
+
+		for (const channel of survivors) expect(channel.setParent).not.toHaveBeenCalled();
+		const [, payload] = configMock.update.mock.calls[0] as [string, Record<string, unknown>];
+		expect(payload.introChannelId).toBe(`new-${names.intro}`);
 	});
 });
