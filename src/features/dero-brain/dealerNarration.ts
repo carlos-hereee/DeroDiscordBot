@@ -125,10 +125,10 @@ export function toPublicResult(outcome: ActionOutcome | undefined): PublicResult
  * the turn clock's warning and end. Those four never pass through narrate or the per hand caps,
  * they are spoken one at a time through announcementLine.
  */
-export type DealerLineKind = "handStart" | "flop" | "turn" | "river" | "result" | "toAct" | AnnouncementKind;
+export type DealerLineKind = "handStart" | "flop" | "turn" | "river" | "result" | "action" | "toAct" | AnnouncementKind;
 
 /** A line Dero says to a card or a room outside any hand. */
-export type AnnouncementKind = "challengers" | "countdown" | "turnWarning" | "turnOver";
+export type AnnouncementKind = "challengers" | "countdown" | "turnWarning" | "turnOver" | "commentary";
 
 /** One thing the dealer says, in its text form (mentions) and its spoken form (names). */
 export interface DealerLine {
@@ -142,7 +142,7 @@ export interface DealerLine {
 // Which lines survive when the spoken cap bites: the turn prompts go first,
 // because the board embed already shows whose turn it is.
 // The announcements outrank everything, though no hand ever carries one into the cap.
-const LINE_VALUE: Record<DealerLineKind, number> = { handStart: 3, result: 3, flop: 2, turn: 2, river: 2, toAct: 1, challengers: 3, countdown: 3, turnWarning: 3, turnOver: 3 };
+const LINE_VALUE: Record<DealerLineKind, number> = { handStart: 3, result: 3, flop: 2, turn: 2, river: 2, action: 1, toAct: 1, challengers: 3, countdown: 3, turnWarning: 3, turnOver: 3, commentary: 2 };
 const LOWEST_VALUE = 1;
 
 /** One announcement as a dealer line: spoken words with no mention, so its text form is the same. */
@@ -204,6 +204,13 @@ export function narrate(prev: PublicView, next: PublicView, result: PublicResult
 		});
 	}
 
+	// The call on the action just taken (owner decision of 2026-10-29: Dero as a commentator),
+	// before the streets it may have turned. Spoken only; the trail already posts the action.
+	if (!newHand) {
+		const action = actionLine(prev, next, name);
+		if (action) lines.push(action);
+	}
+
 	// A new hand starts from an empty board whatever the last hand left showing.
 	// An all in run out can turn several streets in one action, so each is checked.
 	const shownBefore = newHand ? 0 : prev.board.length;
@@ -237,6 +244,18 @@ export function narrate(prev: PublicView, next: PublicView, result: PublicResult
 		});
 	}
 	return lines;
+}
+
+// The seat that was on the clock, if its last action changed in this table change: what it did,
+// called in Dero's words. One variant for both forms, so text and speech agree.
+function actionLine(prev: PublicView, next: PublicView, name: { text: Namer; spoken: Namer }): DealerLine | null {
+	const actorId = prev.actingUserId;
+	if (!actorId) return null;
+	const before = prev.seats.find((seat) => seat.userId === actorId)?.lastAction ?? null;
+	const after = next.seats.find((seat) => seat.userId === actorId)?.lastAction ?? null;
+	if (!after || (before && before.action === after.action && before.amount === after.amount)) return null;
+	const call = pickLine(dealerCopy.actionCalls[after.action]);
+	return { kind: "action", text: call(name.text(actorId), after.amount), spoken: call(name.spoken(actorId), after.amount), cards: [] };
 }
 
 // ── ③ the per hand caps ──

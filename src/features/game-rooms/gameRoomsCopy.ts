@@ -1413,6 +1413,31 @@ export const gameRoomsCopy = {
 		// Spoken in place of a player whose display name cannot be found (they left the
 		// server), because Dero must never read a raw mention or snowflake aloud.
 		refereeUnknownPlayer: "a player",
+		// ── the referee's commentary (owner decision of 2026-10-29: Dero as a commentator) ──
+		// Spoken only, built from the engine's own trail lines (roomMonopolyReferee), so what Dero
+		// says can never disagree with the board. `player` and `next` are mentions the referee
+		// swaps for display names before speaking. Each moment is a list of variants (pickLine).
+		refereeRolled: [
+			(player: string, first: number, second: number): string => `${player} rolled a ${first} and a ${second}. That's ${first + second}.`,
+			(player: string, first: number, second: number): string => `${player} throws the dice: ${first} and ${second}, ${first + second} in all.`,
+			(player: string, first: number, second: number): string => `${first + second} for ${player}, a ${first} and a ${second}.`,
+		],
+		refereeDoubles: [
+			(player: string): string => `Doubles! ${player} rolls again after this.`,
+			(player: string): string => `Doubles! ${player} gets another throw.`,
+			(player: string): string => `A matching pair. ${player} goes again.`,
+		],
+		refereeLanded: [
+			(player: string, tile: string): string => `${player} landed on ${tile}.`,
+			(player: string, tile: string): string => `And ${player} lands on ${tile}.`,
+			(player: string, tile: string): string => `${player} comes to rest on ${tile}.`,
+		],
+		refereeHandoff: [
+			(player: string, next: string): string => `${player} ends their turn. It is now ${next}'s turn.`,
+			(player: string, next: string): string => `That's all for ${player}. ${next}, you're up.`,
+			(player: string, next: string): string => `${player} passes the dice to ${next}.`,
+			(player: string, next: string): string => `${player} is done. Over to ${next}.`,
+		],
 	},
 
 	// ── the move trail ──

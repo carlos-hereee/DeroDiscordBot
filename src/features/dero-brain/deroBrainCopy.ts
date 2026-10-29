@@ -177,6 +177,32 @@ export const deroBrainCopy = {
 		flop: (cards: string): string => `The flop: ${cards}.`,
 		turn: (card: string): string => `The turn: ${card}.`,
 		river: (card: string): string => `The river: ${card}.`,
+		// Dero calling the action just taken, like a commentator (owner decision of 2026-10-29).
+		// Spoken only; `amount` is the bet or raise total, or what an all in put in.
+		actionCalls: {
+			fold: [(name: string): string => `${name} folds.`, (name: string): string => `${name} lays the cards down. Folded.`, (name: string): string => `${name} wants no part of this one. Fold.`],
+			check: [(name: string): string => `${name} checks.`, (name: string): string => `A quiet tap from ${name}. Check.`, (name: string): string => `${name} checks it along.`],
+			call: [(name: string): string => `${name} calls.`, (name: string): string => `${name} is not going anywhere. Call.`, (name: string): string => `${name} matches the bet.`],
+			bet: [(name: string, amount: number): string => `${name} bets ${amount}.`, (name: string, amount: number): string => `${name} leads out for ${amount}.`, (name: string, amount: number): string => `${amount} from ${name}. Who wants it?`],
+			raise: [(name: string, amount: number): string => `${name} raises to ${amount}.`, (name: string, amount: number): string => `${name} turns up the heat. ${amount}.`, (name: string, amount: number): string => `A raise! ${name} makes it ${amount}.`],
+			allIn: [(name: string): string => `${name} is all in!`, (name: string): string => `${name} pushes every chip forward. All in!`, (name: string): string => `All in from ${name}! This is the moment.`],
+		} as Record<"fold" | "check" | "call" | "bet" | "raise" | "allIn", readonly ((name: string, amount: number) => string)[]>,
+		// Battleship, called shot by shot (owner decision of 2026-10-29). `at` is the square, like "B7".
+		battleshipCalls: {
+			miss: [(name: string, at: string): string => `${name} fires at ${at}. Splash. A miss.`, (name: string, at: string): string => `${at}, says ${name}. Nothing but sea.`, (name: string, at: string): string => `${name} aims for ${at}. Missed!`],
+			hit: [(name: string, at: string): string => `${name} fires at ${at}. Hit!`, (name: string, at: string): string => `Direct hit on ${at} from ${name}!`, (name: string, at: string): string => `${at}! ${name} finds steel.`],
+			sunk: [(name: string, at: string, ship: string): string => `${name} hits ${at} and sinks the ${ship}!`, (name: string, _at: string, ship: string): string => `The ${ship} goes down! Well aimed, ${name}.`, (name: string, _at: string, ship: string): string => `Down goes the ${ship}. ${name} is hunting.`],
+			won: [(name: string): string => `That was the last ship. ${name} rules the sea!`, (name: string): string => `The fleet is gone. Victory for ${name}!`],
+		},
+		// Blackjack, the end of every hand (owner decision of 2026-10-29).
+		blackjackCalls: {
+			dealerBust: [(total: number): string => `The dealer busts with ${total}!`, (total: number): string => `${total} for the house. Bust!`],
+			dealerStands: [(total: number): string => `The dealer stands on ${total}.`, (total: number): string => `House shows ${total}.`],
+			blackjack: [(name: string): string => `Blackjack for ${name}!`, (name: string): string => `${name} hits a natural twenty one!`],
+			win: [(name: string): string => `${name} wins the hand.`, (name: string): string => `${name} beats the house.`, (name: string): string => `A win for ${name}.`],
+			push: [(name: string): string => `${name} pushes. Money back.`, (name: string): string => `A tie for ${name}. Push.`],
+			lose: [(name: string): string => `${name} loses this one.`, (name: string): string => `The house takes ${name}'s bet.`, (name: string): string => `Not this time, ${name}.`],
+		},
 		// Variants (pickLine), so a long table does not hear the same words every turn.
 		toAct: [
 			(name: string): string => `${name}, it is your turn.`,

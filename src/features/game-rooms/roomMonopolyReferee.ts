@@ -6,6 +6,7 @@ import { defaultCallAnnouncerDeps, isVoiceEnabled, speakInCall, type CallAnnounc
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { displayNamesIn, isTurnHandoffLine, PLAYER_MENTION_PATTERN } from "./roomMonopolyBoard.js";
 import { refereeOn } from "./roomTypes.js";
+import { pickLine } from "@utils/pickLine.js";
 
 // ── roomMonopolyReferee ──────────────────────────────────────────────
 // What:  Dero as a Monopoly match's voice referee: the key moments of each move
@@ -74,8 +75,34 @@ function withoutCardFlavor(line: string): string {
 	return sentenceEnd === -1 ? line : line.slice(0, sentenceEnd + 1);
 }
 
-function spokenForm(line: string): string | null {
-	if (isTurnHandoffLine(line)) return line;
+// ── the commentary (owner decision of 2026-10-29: Dero narrates like a commentator) ──
+// The roll, the landing and the turn handoff are spoken in Dero's own words, built only from
+// what the engine's line says (and, for a handoff, who held the dice before), so the voice and
+// the board never disagree.
+const ROLLED = new RegExp(String.raw`^(${PLAYER}) rolled (\d+) and (\d+)\.$`);
+const LANDED = new RegExp(String.raw`^(${PLAYER}) landed on (.+)\.$`);
+const HANDOFF_TO = new RegExp(String.raw`^It is now (${PLAYER})'s turn\.$`);
+
+function rollCommentary(player: string, first: number, second: number): string {
+	const rolled = pickLine(gameRoomsCopy.monopoly.refereeRolled)(player, first, second);
+	return first === second ? `${rolled} ${pickLine(gameRoomsCopy.monopoly.refereeDoubles)(player)}` : rolled;
+}
+
+// "It is now B's turn." names who comes next; with who held the dice before (the seat before
+// the new active one), Dero says the whole handoff. A first turn or an unknown seat keeps the
+// engine's line.
+function handoffCommentary(line: string, previousPlayer: string | null): string {
+	const next = HANDOFF_TO.exec(line)?.[1];
+	if (!next || !previousPlayer || previousPlayer === next) return line;
+	return pickLine(gameRoomsCopy.monopoly.refereeHandoff)(previousPlayer, next);
+}
+
+function spokenForm(line: string, previousPlayer: string | null): string | null {
+	if (isTurnHandoffLine(line)) return handoffCommentary(line, previousPlayer);
+	const roll = ROLLED.exec(line);
+	if (roll) return rollCommentary(roll[1], Number(roll[2]), Number(roll[3]));
+	const landed = LANDED.exec(line);
+	if (landed) return pickLine(gameRoomsCopy.monopoly.refereeLanded)(landed[1], landed[2]);
 	if (CARD_DRAWN.test(line)) return withoutCardFlavor(line);
 	const rent = RENT_PAID.exec(line);
 	if (rent) return Number(rent[1]) >= BOT_CONSTANTS.MONOPOLY_REFEREE_BIG_RENT ? line : null;
@@ -83,11 +110,15 @@ function spokenForm(line: string): string | null {
 	return null;
 }
 
-/** ① The trail lines Dero says, in trail order: the allowlist, the card cut and the rent bar applied. */
-export function pickRefereeLines(lines: readonly string[]): SpokenRefereeLine[] {
+/**
+ * ① The trail lines Dero says, in trail order: the allowlist, the card cut, the rent bar and the
+ * commentary applied. `previousPlayer` is the mention of the seat that held the dice before a
+ * handoff in these lines, when the caller knows it.
+ */
+export function pickRefereeLines(lines: readonly string[], previousPlayer: string | null = null): SpokenRefereeLine[] {
 	const spoken: SpokenRefereeLine[] = [];
 	for (const line of lines) {
-		const text = spokenForm(line);
+		const text = spokenForm(line, previousPlayer);
 		if (text !== null) spoken.push({ text, handoff: isTurnHandoffLine(line) });
 	}
 	return spoken;
@@ -204,7 +235,7 @@ export interface AnnounceRefereeInput {
 export function announceReferee({ client, room, state, lines, onSilent = () => undefined }: AnnounceRefereeInput, deps: CallAnnouncerDeps = defaultCallAnnouncerDeps): void {
 	if (!refereeOn(room)) return;
 	try {
-		const clips = groupIntoClips(pickRefereeLines(lines));
+		const clips = groupIntoClips(pickRefereeLines(lines, previousSeatMention(state)));
 		if (clips.length === 0) return;
 		const seatIds = state.seats.filter((seat) => !seat.bankrupt).map((seat) => seat.userId);
 		const roomId = room.roomId;
@@ -221,6 +252,25 @@ export function announceReferee({ client, room, state, lines, onSilent = () => u
 	catch (error) {
 		console.error(`[monopoly-referee] announcement skipped room=${room.roomId}`, error);
 	}
+}
+
+// The seat still playing just before the active one in turn order: who handed the dice over
+// when a move ends in a handoff. A mention, so withNames speaks it like every other name.
+function previousSeatMention(state: MonopolyState): string | null {
+	const seats = state.seats;
+	for (let step = 1; step < seats.length; step++) {
+		const seat = seats[(state.activeSeatIndex - step + seats.length) % seats.length];
+		if (seat && !seat.bankrupt) return `<@${seat.userId}>`;
+	}
+	return null;
+}
+
+/**
+ * Whether the referee still has clips waiting or playing for this room. The bot driver waits on
+ * it, so a Dero bot never rolls over the commentary of the move before.
+ */
+export function isRefereeSpeaking(roomId: string): boolean {
+	return refereeChains.has(roomId);
 }
 
 /** Test seam: resolves once every clip queued for the room so far has been delivered. */

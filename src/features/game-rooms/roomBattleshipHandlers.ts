@@ -34,6 +34,9 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 import { showNotice } from "@utils/textModal.js";
 import { postTurnBoard } from "./turnBoard.js";
 import { handleTurnPress, showTurnModal, syncTurnPrompt, type TurnAdapter, type TurnView } from "./turnPrompt.js";
+import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
+import { pickLine } from "@utils/pickLine.js";
+import { announceToMatch } from "./roomAnnouncer.js";
 
 // ── roomBattleshipHandlers ───────────────────────────────────────────
 // What:  the interaction half of battleship: aiming, firing, looking at your own
@@ -260,6 +263,18 @@ async function fireAt(client: Client, room: IGameRoom, shooterId: string, aim: {
  * like a member's. `acknowledge` runs right after the persist, where the button's
  * deferUpdate always ran.
  */
+// Dero calls the shot in the match's call like a commentator (owner decision of 2026-10-29):
+// the square and whether it missed, hit or sank, and the last ship. Fire and forget after the
+// board: announceToMatch speaks only when Dero is in this match's call and never throws.
+function callShot(client: Client, room: IGameRoom, shooterName: string, outcome: FireOutcome): void {
+	if (!outcome.call) return;
+	const calls = deroBrainCopy.dealer.battleshipCalls;
+	const { result, at } = outcome.call;
+	let line = result === "sunk" && outcome.sunk ? pickLine(calls.sunk)(shooterName, at, outcome.sunk) : pickLine(calls[result === "hit" ? "hit" : "miss"])(shooterName, at);
+	if (outcome.won) line = `${line} ${pickLine(calls.won)(shooterName)}`;
+	void announceToMatch(client, room, "commentary", line);
+}
+
 export async function commitShot(
 	client: Client,
 	room: IGameRoom,
@@ -281,6 +296,7 @@ export async function commitShot(
 	// A shot that sank a ship redraws with the sinking reveal on the card.
 	const sinking = outcome.sunk ? { shooterId: shooter.userId, ship: outcome.sunk } : null;
 	await redrawBattleshipBoard(client, room, next, sinking, [shot]);
+	callShot(client, room, shooter.name, outcome);
 
 	// ── the per sink bonus ──
 	// ⚠️ AWARDED WITHOUT `game`, DELIBERATELY. awardXp increments

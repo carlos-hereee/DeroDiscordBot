@@ -46,6 +46,29 @@ export async function isVoiceEnabled(guildId: string, deps: CallAnnouncerDeps = 
 	return config?.enabled === true && config.guildId === guildId;
 }
 
+// ── is Dero still talking ──
+// The announcements whose speech is rendering right now, per guild. A render takes a second or
+// two before the clip reaches the speaker, and in that window the speaker still reads idle, so
+// "talking" counts these too. Memory only, like the call itself.
+const rendersInFlight = new Map<string, number>();
+
+function countRender(guildId: string, delta: 1 | -1): void {
+	const next = (rendersInFlight.get(guildId) ?? 0) + delta;
+	if (next <= 0) rendersInFlight.delete(guildId);
+	else rendersInFlight.set(guildId, next);
+}
+
+/**
+ * Whether Dero is talking in the guild's call, or about to: a clip playing or queued, or an
+ * announcement still rendering. The bot driver waits on it, so a Dero bot never moves over
+ * Dero's commentary of the move before (the owner's call: bots raced the game).
+ */
+export function isDeroTalking(guildId: string, deps: Pick<CallAnnouncerDeps, "sessionIn"> = defaultCallAnnouncerDeps): boolean {
+	if ((rendersInFlight.get(guildId) ?? 0) > 0) return true;
+	const speaker = deps.sessionIn(guildId)?.speaker;
+	return speaker !== undefined && (speaker.status === "playing" || speaker.queuedCount > 0);
+}
+
 /** Speak `text` as one clip in the guild's live call, or do nothing when any check fails, and say which. */
 export async function speakInCall(guildId: string, text: string, deps: CallAnnouncerDeps = defaultCallAnnouncerDeps): Promise<CallAnnouncement> {
 	// ①
@@ -54,8 +77,14 @@ export async function speakInCall(guildId: string, text: string, deps: CallAnnou
 	// ②
 	const config = await deps.loadConfig(guildId);
 	if (!config?.enabled || config.guildId !== guildId) return "voiceOff";
-	// ③
-	const speech = await deps.render({ guildId, voiceId: resolveDeroVoiceId(config), text });
+	// ③ counted while it renders, so isDeroTalking covers the gap before the clip plays.
+	countRender(guildId, 1);
+	let speech: CallSpeechResult;
+	try {
+		speech = await deps.render({ guildId, voiceId: resolveDeroVoiceId(config), text });
+	} finally {
+		countRender(guildId, -1);
+	}
 	if (speech.status === "capReached") return "budgetSpent";
 	if (speech.status !== "ok") return "failed";
 	// ④ A line for a call that is gone is dropped rather than played into the next one.

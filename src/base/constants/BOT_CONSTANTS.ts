@@ -616,10 +616,12 @@ export const BOT_CONSTANTS = {
 	// open a table nobody is waiting for.
 	DERO_HOLDEM_REQUEST_TTL_MS: 2 * 60_000,
 	// The dealer (dealerNarration). Text is the hand start and the result, so two
-	// lines per hand is the whole of it; speech caps at eight so a six seat hand
-	// cannot queue a minute of talking, dropping "your turn" lines first.
+	// lines per hand is the whole of it. Speech caps at sixteen (owner decision of
+	// 2026-10-29: Dero calls every action like a commentator, which doubled the lines a
+	// hand speaks) so a six seat hand still cannot queue minutes of talking; the action
+	// calls and "your turn" lines are the first dropped.
 	DERO_DEALER_TEXT_LINES_PER_HAND: 2,
-	DERO_DEALER_SPOKEN_LINES_PER_HAND: 8,
+	DERO_DEALER_SPOKEN_LINES_PER_HAND: 16,
 	// A dealer entry silent this long (no announcement: its table ended some other way, a
 	// forfeit or a deleted channel) is dropped, so the in memory map cannot grow forever.
 	// Every announcement restarts the window, so a table still dealing is never dropped.
@@ -1005,11 +1007,18 @@ export const BOT_CONSTANTS = {
 	// The bot driver (game-rooms/botTurns.ts) wakes every TICK_MS and moves each room's
 	// bot at most once per tick, so a bot's turn reads at a human pace: a hold'em bot acts
 	// THINK_MS after the board showed it the turn, and a Monopoly or Battleship bot takes
-	// one step per tick. Fast enough that a member never waits on a bot, slow enough that
-	// the trail can be followed and Discord's rate limits are never close.
+	// one step per tick. Owner decision of 2026-10-29: bots raced the game and talked over
+	// Dero, so every bot step now waits for Dero to finish speaking in the match's call, then
+	// for QUIET_BEFORE_MOVE_MS of silence, and never comes sooner than MOVE_GAP_MS after the
+	// same room's last bot step. Slower means a member can follow every move by ear.
 	BOT_TURNS: {
-		TICK_MS: 3_000,
-		THINK_MS: 2_500,
+		TICK_MS: 2_000,
+		// A hold'em bot's think time, from when the board showed it the turn.
+		THINK_MS: 6_000,
+		// The least time between two bot steps in one room (a roll, then a buy, then an end turn).
+		MOVE_GAP_MS: 5_000,
+		// The beat after Dero stops talking before a bot moves, so his line lands first.
+		QUIET_BEFORE_MOVE_MS: 1_500,
 	},
 
 	// ── invite URL provenance ─────────────────────────────────────

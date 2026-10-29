@@ -1,4 +1,6 @@
 import type { Client } from "discord.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { isDeroTalking } from "@features/voice/callAnnouncer.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { secureRandom } from "@utils/secureRng.js";
 import { applyForfeit, type MonopolyState } from "@features/games/monopolyState.js";
@@ -11,6 +13,8 @@ import { playHoldemBotTurn } from "./roomHoldemHandlers.js";
 import { commitMonopolyMove, monopolyStateOf, withAuctionNotice } from "./roomMonopolyHandlers.js";
 import { commitReady, commitShot } from "./roomBattleshipHandlers.js";
 import { deserializeMatch, fire, type StoredBattleship } from "./roomBattleship.js";
+import { isDeroInMatchCall } from "./roomAnnouncer.js";
+import { isRefereeSpeaking } from "./roomMonopolyReferee.js";
 
 // ── botTurns ─────────────────────────────────────────────────────────
 // What:  the driver that moves every Dero bot seat (2026-10 item 250 Phase 5): each tick
@@ -55,17 +59,46 @@ export async function sweepBotTurns(client: Client, now: Date = new Date()): Pro
 	}
 }
 
+// ── pacing (owner decision of 2026-10-29: the bots raced the game) ──────
+// When each room's bots last stepped, and when Dero was last heard in each room's call.
+// Memory only: a restart forgets both, which costs at most one early step.
+const lastBotStepAt = new Map<string, number>();
+const lastHeardAt = new Map<string, number>();
+
+/**
+ * Whether a bot may step in this room now: never while Dero is talking in the match's call
+ * (a clip playing, queued or rendering, or the Monopoly referee's clips still waiting), never
+ * within QUIET_BEFORE_MOVE_MS of him falling silent, and never within MOVE_GAP_MS of the
+ * room's last bot step. A room Dero is not in waits only on the gap.
+ */
+export function botMayStep(client: Client, room: IGameRoom, nowMs: number): boolean {
+	const pacing = BOT_CONSTANTS.BOT_TURNS;
+	if (nowMs - (lastBotStepAt.get(room.roomId) ?? 0) < pacing.MOVE_GAP_MS) return false;
+	if (isDeroInMatchCall(client, room) && (isDeroTalking(room.guildId) || isRefereeSpeaking(room.roomId))) {
+		lastHeardAt.set(room.roomId, nowMs);
+		return false;
+	}
+	return nowMs - (lastHeardAt.get(room.roomId) ?? 0) >= pacing.QUIET_BEFORE_MOVE_MS;
+}
+
 // Per room, so one room's failure never stalls another's bots.
 async function driveRoom(client: Client, room: IGameRoom, now: Date): Promise<boolean> {
 	try {
-		if (room.game === "holdem") return await playHoldemBotTurn(client, room, now);
-		if (room.game === "monopoly") return await playMonopolyBotTurn(client, room);
-		if (room.game === "battleship") return await playBattleshipBotTurn(client, room);
-		return false;
+		if (!botMayStep(client, room, now.getTime())) return false;
+		const moved = await stepRoom(client, room, now);
+		if (moved) lastBotStepAt.set(room.roomId, now.getTime());
+		return moved;
 	} catch (error) {
 		console.error("[game-rooms] a bot turn failed for one room", { guildId: room.guildId, roomId: room.roomId, error });
 		return false;
 	}
+}
+
+function stepRoom(client: Client, room: IGameRoom, now: Date): Promise<boolean> {
+	if (room.game === "holdem") return playHoldemBotTurn(client, room, now);
+	if (room.game === "monopoly") return playMonopolyBotTurn(client, room);
+	if (room.game === "battleship") return playBattleshipBotTurn(client, room);
+	return Promise.resolve(false);
 }
 
 // ── Monopoly ──────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 // Dero's variant lines always pick the first, so these tests read exact words.
 vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]): Line => lines[0] as Line }));
@@ -111,9 +112,11 @@ describe("narrate on a scripted six player hand", () => {
 	const lines = hand.lines.map((entry) => entry.line);
 
 	it("tells the deal, every street, the result and whose turn it is, in order", () => {
-		const kinds = lines.map((line) => line.kind).filter((kind) => kind !== "toAct");
+		const kinds = lines.map((line) => line.kind).filter((kind) => kind !== "toAct" && kind !== "action");
 		expect(kinds).toEqual(["handStart", "flop", "turn", "river", "result"]);
 		expect(lines.some((line) => line.kind === "toAct")).toBe(true);
+		// Every call and check of the scripted hand is called aloud, like a commentator.
+		expect(lines.some((line) => line.kind === "action")).toBe(true);
 		expect(lines[0].text).toMatch(/^Hand 1\. Blinds are 100 and 200\. <@p\d> has the button\.$/);
 		expect(lines[0].spoken).toMatch(/^Hand 1\. Blinds are 100 and 200\. Player \d has the button\.$/);
 	});
@@ -205,25 +208,28 @@ describe("the per hand caps", () => {
 		expect(pickTextLines(lines, 2)).toEqual([]);
 	});
 
-	it("speaks at most eight lines a hand, dropping turn prompts first so the streets and result still fit", () => {
+	it("speaks at most the cap a hand, dropping action calls and turn prompts first so the streets and result still fit", () => {
+		const cap = BOT_CONSTANTS.DERO_DEALER_SPOKEN_LINES_PER_HAND;
 		const preflop: PublicView = { ...toPublicView(sixPlayerTable()), status: "playing", street: "preflop", board: [] };
-		// Four streets and the result are still to come preflop, so with 4 spoken a
-		// turn prompt would crowd them out (4 + 1 + 4 > 8) and is dropped.
-		expect(pickSpokenLines([line("toAct")], 3, preflop).map((entry) => entry.kind)).toEqual(["toAct"]);
-		expect(pickSpokenLines([line("toAct")], 4, preflop)).toEqual([]);
+		// Four streets and the result are still to come preflop, so a low value line that would
+		// crowd them out (spoken + 1 + 4 > cap) is dropped.
+		for (const kind of ["toAct", "action"] as const) {
+			expect(pickSpokenLines([line(kind)], cap - 5, preflop).map((entry) => entry.kind)).toEqual([kind]);
+			expect(pickSpokenLines([line(kind)], cap - 4, preflop)).toEqual([]);
+		}
 		// A high value line still goes out until the cap itself.
-		expect(pickSpokenLines([line("flop")], 7, preflop).map((entry) => entry.kind)).toEqual(["flop"]);
-		expect(pickSpokenLines([line("flop")], 8, preflop)).toEqual([]);
+		expect(pickSpokenLines([line("flop")], cap - 1, preflop).map((entry) => entry.kind)).toEqual(["flop"]);
+		expect(pickSpokenLines([line("flop")], cap, preflop)).toEqual([]);
 	});
 
-	it("never speaks more than eight lines over a whole scripted hand", () => {
+	it("never speaks more than the cap over a whole scripted hand", () => {
 		const hand = playCallingHand(23);
 		let spoken = 0;
 		for (const { line: entry, board } of hand.lines) {
 			const view = { ...toPublicView(hand.table), board, street: board.length === 5 ? ("river" as const) : ("flop" as const) };
 			spoken += pickSpokenLines([entry], spoken, view).length;
 		}
-		expect(spoken).toBeLessThanOrEqual(8);
+		expect(spoken).toBeLessThanOrEqual(BOT_CONSTANTS.DERO_DEALER_SPOKEN_LINES_PER_HAND);
 	});
 });
 

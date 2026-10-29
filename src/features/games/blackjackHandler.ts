@@ -30,6 +30,7 @@ import {
 	bettingSeat,
 	collectPayouts,
 	createBankrollTable,
+	handValue,
 	createTable,
 	isTableOver,
 	legalActions,
@@ -43,6 +44,9 @@ import {
 	type SeatResult,
 } from "./blackjackState.js";
 import { awardBlackjackResult, awardBlackjackTableCoins } from "./gameXp.js";
+import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
+import { announceToMatch } from "@features/game-rooms/roomAnnouncer.js";
+import { pickLine } from "@utils/pickLine.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { roomLifecycle } from "@features/game-rooms/roomLifecycle.js";
@@ -1074,6 +1078,7 @@ async function finishHand(game: BlackjackGame, channelId: string, client: Messag
 	awardBlackjackResult({ client, guildId: game.guildId, channelId, seats: results, resultKey: game.roomId, coinsPerHand: false });
 	await persistStacks(game);
 	await redrawResult(channelId, settledTableOf(table, results), resultWriter(game, writer, closing));
+	callHandResults(game, client, table, results);
 	await announceBroke(game, client, results);
 
 	if (!startNextHand(table)) {
@@ -1083,6 +1088,22 @@ async function finishHand(game: BlackjackGame, channelId: string, client: Messag
 	game.turnLog = [];
 	await postNextHandBoard(game, channelId);
 	await promptTurn(game, client);
+}
+
+// Dero calls the hand in the match's call like a commentator (owner decision of 2026-10-29):
+// the dealer's total or bust, then each seat's outcome, one clip. Fire and forget after the
+// result board; announceToMatch speaks only when Dero is in this match's call and never throws.
+function callHandResults(game: BlackjackGame, client: Message["client"], table: BlackjackTable, results: readonly SeatResult[]): void {
+	const roomId = game.roomId;
+	if (!roomId) return;
+	const calls = deroBrainCopy.dealer.blackjackCalls;
+	const dealerTotal = handValue(table.dealer.cards).total;
+	const lines = [table.dealer.status === "bust" ? pickLine(calls.dealerBust)(dealerTotal) : pickLine(calls.dealerStands)(dealerTotal)];
+	for (const result of results) for (const outcome of result.hands) lines.push(pickLine(calls[outcome])(result.username));
+	void gameRoomStore
+		.findByRoomId(game.guildId, roomId)
+		.then((room) => (room ? announceToMatch(client, room, "commentary", lines.join(" ")) : undefined))
+		.catch((error: unknown) => console.warn("[mini-game] the hand call could not be spoken", { roomId, error }));
 }
 
 // Every seat this hand left with no chips says so in the room, so the table knows why it stopped.

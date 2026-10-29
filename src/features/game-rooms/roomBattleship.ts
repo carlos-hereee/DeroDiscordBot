@@ -431,6 +431,8 @@ function setupRow(roomId: string): ActionRowBuilder<ButtonBuilder> {
 export interface FireOutcome {
 	ok: boolean;
 	message: string;
+	/** What a landed shot did and where, for Dero's call of it; absent on a refusal. */
+	call?: { result: "miss" | "hit" | "sunk"; at: string };
 	state?: BattleshipState;
 	sunk?: string;
 	won?: boolean;
@@ -462,13 +464,14 @@ export function fire(stored: StoredBattleship, shooterId: string, aim: Coord): F
 		case "finished":
 			return { ok: false, message: gameRoomsCopy.battleship.matchOver };
 		case "miss":
-			return { ok: true, state, message: gameRoomsCopy.battleship.miss(shooterId, formatCoord(result.coord)) };
+			return { ok: true, state, call: { result: "miss", at: formatCoord(result.coord) }, message: gameRoomsCopy.battleship.miss(shooterId, formatCoord(result.coord)) };
 		case "hit":
-			return { ok: true, state, message: gameRoomsCopy.battleship.hit(shooterId, formatCoord(result.coord)) };
+			return { ok: true, state, call: { result: "hit", at: formatCoord(result.coord) }, message: gameRoomsCopy.battleship.hit(shooterId, formatCoord(result.coord)) };
 		case "sunk":
 			return {
 				ok: true,
 				state,
+				call: { result: "sunk", at: formatCoord(result.coord) },
 				sunk: result.ship,
 				won: result.fleetDestroyed,
 				message: gameRoomsCopy.battleship.sank(shooterId, formatCoord(result.coord), result.ship),

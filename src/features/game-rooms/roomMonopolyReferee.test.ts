@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { Client } from "discord.js";
+// Dero's variant lines always pick the first, so these tests read exact words.
+vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]): Line => lines[0] as Line }));
 import type { IDeroVoiceConfig } from "@db/models/DeroVoiceConfig.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -57,16 +59,20 @@ const giveTiles = (state: MonopolyState, ownerId: string, ...ids: string[]): voi
 };
 
 const spokenTexts = (lines: string[]): string[] => pickRefereeLines(lines).map((line) => line.text);
+// The commentary on every roll and landing (owner decision of 2026-10-29) left out, so a test
+// about one of the allowlisted moments reads that moment alone.
+const COMMENTARY = [/ rolled a \d+ and a \d+\. That's \d+\./, /^<@[\w-]+> landed on /];
+const eventTexts = (lines: string[]): string[] => spokenTexts(lines).filter((text) => !COMMENTARY.some((pattern) => pattern.test(text)));
 
 // ── ① the allowlist ──
 describe("the spoken allowlist, from real engine moves", () => {
-	it("speaks a purchase but not the roll, the landing or the lot being for sale", () => {
+	it("calls the roll with its total and the landing, then speaks a purchase, never the lot being for sale", () => {
 		const rolled = rollFrom(newMatch(), 0, 1, 2);
 		expect(rolled.trailLines).toHaveLength(3);
-		expect(spokenTexts(rolled.trailLines)).toEqual([]);
+		expect(spokenTexts(rolled.trailLines)).toEqual(["<@alice> rolled a 1 and a 2. That's 3.", expect.stringMatching(/^<@alice> landed on Burnt Umber Row/)]);
 
 		const bought = expectOk(applyBuy(rolled.state, ALICE, "burnt-umber-row"));
-		expect(spokenTexts(bought.trailLines)).toEqual(["<@alice> bought Burnt Umber Row for $60."]);
+		expect(eventTexts(bought.trailLines)).toEqual(["<@alice> bought Burnt Umber Row for $60."]);
 	});
 
 	it("speaks a rent at the big rent bar and leaves a smaller one unspoken", () => {
@@ -74,20 +80,20 @@ describe("the spoken allowlist, from real engine moves", () => {
 		expect(BOT_CONSTANTS.MONOPOLY_REFEREE_BIG_RENT).toBe(200);
 		const fourRails = newMatch();
 		giveTiles(fourRails, BOB, "rail-one", "rail-two", "rail-three", "rail-four");
-		expect(spokenTexts(rollFrom(fourRails, 0, 2, 3).trailLines)).toEqual(["<@alice> paid $200 rent to <@bob>."]);
+		expect(eventTexts(rollFrom(fourRails, 0, 2, 3).trailLines)).toEqual(["<@alice> paid $200 rent to <@bob>."]);
 
 		const threeRails = newMatch();
 		giveTiles(threeRails, BOB, "rail-one", "rail-two", "rail-three");
 		const small = rollFrom(threeRails, 0, 2, 3).trailLines;
 		expect(small).toContain("<@alice> paid $100 rent to <@bob>.");
-		expect(spokenTexts(small)).toEqual([]);
+		expect(eventTexts(small)).toEqual([]);
 	});
 
 	it("speaks a hotel's rent", () => {
 		const state = newMatch();
 		giveTiles(state, BOB, "reader-dock", "teal-vale", "teal-ridge");
 		state.properties["reader-dock"].hotel = true;
-		expect(spokenTexts(rollFrom(state, 0, 2, 4).trailLines)).toEqual(["<@alice> paid $550 rent to <@bob>."]);
+		expect(eventTexts(rollFrom(state, 0, 2, 4).trailLines)).toEqual(["<@alice> paid $550 rent to <@bob>."]);
 	});
 
 	it("speaks a card by its title only, cutting the flavor and the card's small print", () => {
@@ -95,31 +101,38 @@ describe("the spoken allowlist, from real engine moves", () => {
 		state.chanceDeck = ["chance-dividend", ...state.chanceDeck.filter((id) => id !== "chance-dividend")];
 		const { trailLines } = rollFrom(state, 0, 3, 4);
 		expect(trailLines).toContain("<@alice> drew Guild Dividend. Your shares in the Dero Trading Guild paid out.");
-		expect(spokenTexts(trailLines)).toEqual(["<@alice> drew Guild Dividend."]);
+		expect(eventTexts(trailLines)).toEqual(["<@alice> drew Guild Dividend."]);
 	});
 
 	it("speaks going to jail, a doubles streak to jail, and every way out", () => {
-		expect(spokenTexts(rollFrom(newMatch(), 24, 2, 4).trailLines)).toEqual(["<@alice> goes straight to Jail."]);
+		expect(eventTexts(rollFrom(newMatch(), 24, 2, 4).trailLines)).toEqual(["<@alice> goes straight to Jail."]);
 
 		const streak = newMatch();
 		streak.doublesStreak = 2;
-		expect(spokenTexts(rollFrom(streak, 0, 1, 1).trailLines)).toEqual(["<@alice> rolled doubles 3 times in a row and goes to Jail."]);
+		expect(eventTexts(rollFrom(streak, 0, 1, 1).trailLines)).toEqual(["<@alice> rolled doubles 3 times in a row and goes to Jail."]);
 
 		const jailed = (): MonopolyState => {
 			const state = newMatch();
 			Object.assign(state.seats[0], { position: JAIL_INDEX, inJail: true, jailTurnsRemaining: JAIL_SENTENCE_TURNS });
 			return state;
 		};
-		expect(spokenTexts(expectOk(applyJailChoice(jailed(), "bail")).trailLines)).toEqual(["<@alice> paid $50 bail and is free to roll."]);
+		expect(eventTexts(expectOk(applyJailChoice(jailed(), "bail")).trailLines)).toEqual(["<@alice> paid $50 bail and is free to roll."]);
 		const walked = expectOk(applyJailChoice(jailed(), "roll", diceRng(2, 2))).trailLines;
-		expect(spokenTexts(walked)).toContain("<@alice> rolled doubles and walks out of Jail.");
+		expect(eventTexts(walked)).toContain("<@alice> rolled doubles and walks out of Jail.");
 		const stayed = expectOk(applyJailChoice(jailed(), "roll", diceRng(1, 2))).trailLines;
-		expect(spokenTexts(stayed)).toEqual([]);
+		expect(eventTexts(stayed)).toEqual([]);
 		const lastTry = jailed();
 		lastTry.seats[0].jailTurnsRemaining = 1;
-		expect(spokenTexts(expectOk(applyJailChoice(lastTry, "roll", diceRng(1, 2))).trailLines)).toContain(
+		expect(eventTexts(expectOk(applyJailChoice(lastTry, "roll", diceRng(1, 2))).trailLines)).toContain(
 			"<@alice> used the last try, pays $50 bail and moves."
 		);
+	});
+
+	it("says who ended their turn on a handoff when it knows, and calls doubles on the roll", () => {
+		expect(pickRefereeLines(["It is now <@bob>'s turn."], "<@alice>")).toEqual([{ text: "<@alice> ends their turn. It is now <@bob>'s turn.", handoff: true }]);
+		// The seat that holds the dice again keeps the engine's line.
+		expect(pickRefereeLines(["It is now <@bob>'s turn."], "<@bob>")[0].text).toBe("It is now <@bob>'s turn.");
+		expect(spokenTexts(["<@alice> rolled 4 and 4."])).toEqual(["<@alice> rolled a 4 and a 4. That's 8. Doubles! <@alice> rolls again after this."]);
 	});
 
 	it("speaks a doubles reroll and the turn handoff, and marks only the handoff", () => {
@@ -135,15 +148,15 @@ describe("the spoken allowlist, from real engine moves", () => {
 
 	it("speaks an auction opening and its close, won or with no bids, but never a sealed bid", () => {
 		const opened = expectOk(applySkip(rollFrom(newMatch(true), 0, 1, 2).state, ALICE));
-		expect(spokenTexts(opened.trailLines)).toEqual(["<@alice> passed on Burnt Umber Row, and it goes up for auction."]);
+		expect(eventTexts(opened.trailLines)).toEqual(["<@alice> passed on Burnt Umber Row, and it goes up for auction."]);
 
 		const bid = expectOk(placeBid(opened.state, BOB, 80));
-		expect(spokenTexts(bid.trailLines)).toEqual([]);
-		expect(spokenTexts(expectOk(closeAuction(bid.state)).trailLines)).toEqual(["<@bob> won Burnt Umber Row at auction for $80."]);
-		expect(spokenTexts(expectOk(closeAuction(opened.state)).trailLines)).toEqual(["Nobody bid on Burnt Umber Row, so it stays with the bank."]);
+		expect(eventTexts(bid.trailLines)).toEqual([]);
+		expect(eventTexts(expectOk(closeAuction(bid.state)).trailLines)).toEqual(["<@bob> won Burnt Umber Row at auction for $80."]);
+		expect(eventTexts(expectOk(closeAuction(opened.state)).trailLines)).toEqual(["Nobody bid on Burnt Umber Row, so it stays with the bank."]);
 
 		// A pass with auctions off is a plain pass, and says nothing.
-		expect(spokenTexts(expectOk(applySkip(rollFrom(newMatch(), 0, 1, 2).state, ALICE)).trailLines)).toEqual([]);
+		expect(eventTexts(expectOk(applySkip(rollFrom(newMatch(), 0, 1, 2).state, ALICE)).trailLines)).toEqual([]);
 	});
 
 	it("speaks a held debt", () => {
@@ -153,7 +166,7 @@ describe("the spoken allowlist, from real engine moves", () => {
 		state.seats[0].chips = 10;
 		const { state: held, trailLines } = rollFrom(state, 0, 2, 4);
 		expect(held.phase).toBe("awaiting-debt");
-		expect(spokenTexts(trailLines)).toEqual([
+		expect(eventTexts(trailLines)).toEqual([
 			"<@alice> owes <@bob> $12 and has $10, so they need to mortgage lots or sell buildings to raise the rest, then pay.",
 		]);
 	});
@@ -164,7 +177,7 @@ describe("the spoken allowlist, from real engine moves", () => {
 		state.seats[0].chips = 4;
 		const { state: finished, trailLines } = rollFrom(state, 0, 2, 4);
 		expect(finished.phase).toBe("finished");
-		expect(spokenTexts(trailLines)).toEqual([
+		expect(eventTexts(trailLines)).toEqual([
 			"<@alice> cannot cover $12, even by selling and mortgaging everything, and is bankrupt.",
 			"<@bob> wins the match.",
 		]);
@@ -251,7 +264,7 @@ describe("announceReferee", () => {
 		announceReferee({ client, room, state: newMatch(), lines: RENT_THEN_HANDOFF }, deps);
 		await _refereeSettled(room.roomId);
 
-		expect(spoken()).toEqual(["Alice paid $200 rent to Bob.", "It is now Bob's turn."]);
+		expect(spoken()).toEqual(["Alice rolled a 2 and a 3. That's 5. Alice paid $200 rent to Bob.", "It is now Bob's turn."]);
 		expect(speak).toHaveBeenCalledWith(expect.any(Buffer), "dealer");
 		// Alice was cached, so only Bob is fetched, once for the whole move.
 		expect(fetch).toHaveBeenCalledExactlyOnceWith({ user: [BOB] });
@@ -278,7 +291,7 @@ describe("announceReferee", () => {
 		const { client } = fakeClient();
 		for (const [room, lines] of [
 			[refereeRoom(false), RENT_THEN_HANDOFF],
-			[refereeRoom(), ["<@alice> rolled 1 and 2.", "<@alice> paid $6 rent to <@bob>."]],
+			[refereeRoom(), ["<@alice> paid $6 rent to <@bob>."]],
 		] as const) {
 			const { deps } = fakeDeps();
 			announceReferee({ client, room, state: newMatch(), lines: [...lines] }, deps);
