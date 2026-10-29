@@ -309,6 +309,24 @@ describe("roomLifecycle.finish room-rate top up", () => {
 		expect(awardMock).not.toHaveBeenCalled();
 	});
 
+	// 2026-10 item 276 (audit P3): the member who set a hangman word was never playing the
+	// round, so the room's play top up skips them like the round's own award does.
+	it("leaves a hangman word's author out of the top up", async () => {
+		const room = makeRoom({ playerIds: ["host-1", "player-2", "player-3"], secret: { word: "planet", authoredBy: "host-1" } as never });
+		await finish(makeClient(makeChannel(), makeGuild(["host-1", "player-2", "player-3"])), room, { winnerId: null });
+		await awaitAwards(2);
+
+		expect(awardMock.mock.calls.map(([call]) => call.userId)).not.toContain("host-1");
+	});
+
+	it("tops up the host of a hangman word Dero drew, who guessed it", async () => {
+		const room = makeRoom({ secret: { word: "planet", authoredBy: null } as never });
+		await finish(makeClient(makeChannel()), room, { winnerId: null });
+		await awaitAwards(2);
+
+		expect(awardMock.mock.calls.map(([call]) => call.userId)).toContain("host-1");
+	});
+
 	it("excludes hold em, whose placement prize already includes the room win", async () => {
 		await finish(makeClient(makeChannel()), makeRoom({ game: "holdem" }), { winnerId: "player-2" });
 

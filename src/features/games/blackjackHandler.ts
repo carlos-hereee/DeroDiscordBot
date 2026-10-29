@@ -809,7 +809,10 @@ async function leaveDuringHand(click: ButtonInteraction, game: BlackjackGame, ch
 		return;
 	}
 	if (game.bankroll) {
-		await leaveBankrollTable(click, game, channelId, outcome.cashOut);
+		// The member chose to leave, so the idle sweep's clock starts again; a server leave does not.
+		noteMemberAction(game);
+		await leaveBankrollTable(game, channelId, click.user.id, outcome.cashOut, click.client, clickSurface(click));
+		await answerInChannel(click, "here", { content: game.bankroll.chips ? c.leftWithChips(outcome.cashOut) : c.leftFreeTable });
 		return;
 	}
 
@@ -820,33 +823,70 @@ async function leaveDuringHand(click: ButtonInteraction, game: BlackjackGame, ch
 	if (result) game.stop();
 }
 
-async function leaveBankrollTable(click: ButtonInteraction, game: BlackjackGame, channelId: string, cashOut: number): Promise<void> {
+/**
+ * A member left the server while seated at a room's table (roomDeparture, 2026-10 item 276,
+ * audit P1-4): the seat leaves exactly as their Leave would, its hand lost and its stack cashed
+ * out, and the table plays on, or ends when nobody is left. Answers whether a seat left; false
+ * when this process holds no live table for the channel or the member had already left it.
+ */
+export async function leaveBlackjackRoomSeat(channelId: string, userId: string): Promise<boolean> {
+	const game = games.get(channelId);
+	if (!game?.table || !game.bankroll || !game.board || game.ended) return false;
+	const outcome = applyLeave(game.table, userId);
+	if (outcome.status !== "left") return false;
+	// The board message was fetched by this very process, so its client is the ready one.
+	await leaveBankrollTable(game, channelId, userId, outcome.cashOut, game.board.client, boardSurface(game.board));
+	return true;
+}
+
+// How a leave reaches the board: the Leave click answers through its own token, while a server
+// leave has no click and edits the board message itself (the turn clock's way).
+interface LeaveSurface {
+	writer: BoardWriter;
+	// Acknowledge without drawing, for a hand that is still posting its result.
+	acknowledge: () => Promise<unknown>;
+	// Take the board's buttons off, for a table nobody is left at.
+	clearButtons: () => Promise<unknown>;
+}
+
+const clickSurface = (click: ButtonInteraction): LeaveSurface => ({
+	writer: clickWriter(click),
+	acknowledge: () => click.deferUpdate(),
+	clearButtons: () => click.update({ components: [] }),
+});
+
+const boardSurface = (board: Message): LeaveSurface => ({
+	writer: messageWriter(board),
+	acknowledge: () => Promise.resolve(),
+	clearButtons: () => board.edit({ components: [] }),
+});
+
+// The one seat leave at a room's table, after applyLeave took the seat out: Leave's press and a
+// server leave both come here, so a seat has one way off the table.
+async function leaveBankrollTable(game: BlackjackGame, channelId: string, userId: string, cashOut: number, client: Message["client"], surface: LeaveSurface): Promise<void> {
 	const c = gamesCopy.blackjack;
 	const table = game.table;
 	const bankroll = game.bankroll;
 	if (!table || !bankroll || !game.roomId) return;
 	const room = { guildId: game.guildId, roomId: game.roomId, channelId };
-	game.cashedOut.set(click.user.id, cashOut);
-	noteMemberAction(game);
-	if (bankroll.chips) await cashOutBlackjackSeat(room, click.user.id, cashOut);
+	game.cashedOut.set(userId, cashOut);
+	if (bankroll.chips) await cashOutBlackjackSeat(room, userId, cashOut);
 	void roomTrail
-		.postMove(click.client, room, { actorId: click.user.id, kind: "forfeit", text: c.leftTableTrail(click.user.id, cashOut, bankroll.chips) })
+		.postMove(client, room, { actorId: userId, kind: "forfeit", text: c.leftTableTrail(userId, cashOut, bankroll.chips) })
 		.catch((error) => console.warn("[mini-game] the left the table line could not be posted", { roomId: room.roomId, error }));
 
-	const writer = clickWriter(click);
-	if (table.phase === "dealer") await finishHand(game, channelId, click.client, writer);
+	if (table.phase === "dealer") await finishHand(game, channelId, client, surface.writer);
 	// A hand that just paid is still posting its result and the next board, which leave this
 	// seat out (or end the table) on their own, so there is nothing to redraw here.
-	else if (table.phase === "settled") await click.deferUpdate().catch(() => undefined);
+	else if (table.phase === "settled") await surface.acknowledge().catch(() => undefined);
 	else if (isTableOver(table)) {
 		// Nobody is left to bet or act, so the board loses its buttons and the room ends.
-		await click.update({ components: [] }).catch(() => undefined);
-		await endTable(game, click.client);
+		await surface.clearButtons().catch(() => undefined);
+		await endTable(game, client);
 	} else {
-		await redrawCurrent(game, channelId, writer);
-		await promptTurn(game, click.client);
+		await redrawCurrent(game, channelId, surface.writer);
+		await promptTurn(game, client);
 	}
-	await answerInChannel(click, "here", { content: bankroll.chips ? c.leftWithChips(cashOut) : c.leftFreeTable });
 }
 
 // ── phase transitions ───────────────────────────────────────────────────────

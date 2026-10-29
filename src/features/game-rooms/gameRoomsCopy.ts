@@ -529,6 +529,10 @@ export const gameRoomsCopy = {
 	confirms: {
 		archive: "Archive this room now? Its channel is deleted at once, and the match record is kept. Submit to archive it.",
 		forfeit: "Forfeit this match? It counts as a loss for you. Submit to forfeit.",
+		// Hangman's Give up (2026-10 item 276, audit P2-6): the round is cooperative, so it is the
+		// host's to call off, nobody wins it, and the word is shown once it is over.
+		giveUp: "Give up this round? Nobody wins it, and Dero shows the word. Submit to give up.",
+		giveUpHostOnly: "Only the host can give up this round.",
 		start: "Start the match? Dero opens its room now and seats the players. Submit to start.",
 		// The creation modal's fallback when Discord will not show it (2026-10 item 263 Phase 2a).
 		newChallenge: (game: GameSlug): string =>
@@ -942,6 +946,8 @@ export const gameRoomsCopy = {
 		// The ONLY place the word is ever rendered.
 		wonLine: (word: string): string => `🎉 The room got it. The word was **${word.toUpperCase()}**.`,
 		lostLine: (word: string): string => `💀 The gallows wins. The word was **${word.toUpperCase()}**.`,
+		// The host gave up, or nobody is left to guess (2026-10 item 276, audit P2-6).
+		gaveUpLine: (word: string): string => `🏳️ The round was given up. The word was **${word.toUpperCase()}**.`,
 	},
 
 	// ── battleship in a room (Phase 7) ──
@@ -1453,9 +1459,10 @@ export const gameRoomsCopy = {
 		// A join is the one move kind posted by the room itself rather than by a game.
 		joined: (actorId: string): string => `<@${actorId}> joined the room.`,
 		forfeited: (actorId: string): string => `<@${actorId}> forfeited.`,
-		// A departure ends the match the way a forfeit does; the line is why the board
-		// moved without anyone pressing anything.
-		playerLeftGuild: (userId: string): string => `<@${userId}> left the server. The match ends.`,
+		// A departure is that player's own Leave or forfeit (2026-10 item 276, audit P1-4), and
+		// the game's own lines say what it did to the match; this one says why it happened
+		// without anyone pressing anything.
+		playerLeftGuild: (userId: string): string => `<@${userId}> left the server.`,
 		// The boot sweep's line for a blackjack room whose table did not survive a redeploy.
 		// Says plainly that the hand in play was not settled, so nobody reads the closed room as a
 		// loss: the stacks as of the last settled hand go back to the wallets (2026-10 item 267).

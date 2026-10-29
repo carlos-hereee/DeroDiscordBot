@@ -72,9 +72,12 @@ export type SurrenderOutcome = "surrendered" | "notInMatch" | "busy";
 
 /**
  * Take `userId`'s seat out of the match as a surrender. Retried up to
- * GAME_ROOM_KICK_ATTEMPTS times when a move lands first, like the host's removal.
+ * GAME_ROOM_KICK_ATTEMPTS times when a move lands first, like the host's removal. The one way a
+ * seat leaves of its own accord: Surrender's confirm, and a member leaving the server
+ * (roomDeparture, 2026-10 item 276 audit P1-4), whose `leadLine` says why instead of the
+ * surrender line.
  */
-export async function surrenderMonopolySeat(client: Client, room: IGameRoom, userId: string): Promise<SurrenderOutcome> {
+export async function surrenderMonopolySeat(client: Client, room: IGameRoom, userId: string, leadLine: string = gameRoomsCopy.monopoly.surrendered(userId)): Promise<SurrenderOutcome> {
 	// Decided once: a retry after a busy board must not hand hosting on a second time,
 	// and must still say who hosts now.
 	let handOff: HandOff | null = null;
@@ -87,7 +90,7 @@ export async function surrenderMonopolySeat(client: Client, room: IGameRoom, use
 		// left the forfeit itself ends the match and frees the slot.
 		handOff ??= fresh.hostId === userId && seatsStillIn(state, userId).length > 1 ? await handHostingOn(fresh, state, userId) : { kind: "notHost" };
 		const decided = handOff;
-		const leadLines = [gameRoomsCopy.monopoly.surrendered(userId), ...(decided.kind === "handedOn" ? [gameRoomsCopy.monopoly.hostHandedOn(decided.successorId)] : [])];
+		const leadLines = [leadLine, ...(decided.kind === "handedOn" ? [gameRoomsCopy.monopoly.hostHandedOn(decided.successorId)] : [])];
 
 		// ② ③
 		const outcome = await commitMonopolyMove(

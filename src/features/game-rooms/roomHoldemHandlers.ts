@@ -1054,47 +1054,77 @@ function endRefusal(room: IGameRoom): string | null {
 /** Leave table's confirm (2026-10 item 257): its Submit, or the fallback reply's button. The press only asks, after leaveRefusal. */
 export async function handleLeaveTable(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
 	const refusal = leaveRefusal(room, interaction.user.id);
-	const table = tableOf(room);
-	if (refusal || !table) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [refusal ?? gameRoomsCopy.holdem.tournamentOver] });
+	if (refusal) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [refusal] });
 		return;
 	}
+	// One attempt, no retry: a member who pressed Leave is told the table was busy and presses
+	// again. The confirm is acknowledged only once the leave's write landed, so a refusal can
+	// still answer privately.
+	const left = await leaveSeatOnce(interaction.client, room, interaction.user.id, interaction.user.id, {
+		leaveLine: true,
+		onClaimed: () => acknowledgeConfirm(interaction),
+	});
+	if (left === "notAtTable") {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.notSeated] });
+		return;
+	}
+	if (left === "busy") await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tableBusy] });
+}
+
+/** How one attempt at taking a seat off the table went. */
+type SeatLeave = "left" | "notAtTable" | "busy";
+
+interface SeatLeaveOptions {
+	// Runs once the leave's write landed and before anything posts: the Leave confirm is
+	// acknowledged here, so a refused or busy leave can still answer privately.
+	onClaimed?: () => Promise<unknown>;
+	// Post the seat's own leave line, saying what went back to the wallet. A host's removal and
+	// a server leave post their own reason first instead.
+	leaveLine?: boolean;
+}
+
+/**
+ * ONE attempt at taking a seat off the table: a waiting late seat is dropped with its buy in
+ * back, and a seated one is given up through the engine's leave (a live hand folded, the seat
+ * out in the bust order) and cashed out. The same settle path a fold takes then pays a hand the
+ * fold ended, or ends the tournament when one player is left. Leave table, the host's removal
+ * and a member leaving the server all come here, so a seat has one way off the table
+ * (2026-10 item 276, audit P1-4).
+ */
+async function leaveSeatOnce(client: Client, room: IGameRoom, userId: string, actorId: string, options: SeatLeaveOptions = {}): Promise<SeatLeave> {
+	const table = tableOf(room);
+	if (!table || table.status === "finished") return "notAtTable";
 
 	const readAt = table.lastActionAt;
 	const seatsRead = table.seats.length;
 	const before = toPublicView(table);
 	const handStartChips = chipsAtHandStart(table.seats);
 	const revealBefore = holdemRevealKey(table);
-	const outcome = leaveTable(table, interaction.user.id, secureRandom);
-	if (!outcome.ok) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.notSeated] });
-		return;
-	}
+	const withdrewLateSeat = withdrawLateSeat(table, userId);
+	const outcome = withdrewLateSeat ? null : leaveTable(table, userId, secureRandom);
+	if (outcome && !outcome.ok) return "notAtTable";
 	// The leave's own line posts below (a leave is no bet of a street); what its fold set off
 	// rides the street's block, stamped into the leave's own write.
-	const turn = stampHoldemTurn(table, revealBefore, holdemMoveLines(outcome, []));
+	const turn = outcome ? stampHoldemTurn(table, revealBefore, holdemMoveLines(outcome, [])) : NO_NEW_LINES;
 
-	const written = await persistLeaveOrEnd(room, table, readAt, seatsRead);
-	if (!written) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.holdem.tableBusy] });
-		return;
+	if (!(await persistLeaveOrEnd(room, table, readAt, seatsRead))) return "busy";
+	await options.onClaimed?.();
+	// At a chip table the leaving player keeps their chips: a waiting seat's buy in, or the
+	// stack the write above took off the table (2026-10 item 250 Phase 5). That write was the
+	// claim, so this pays once.
+	if (!outcome) {
+		await refundBuyIn(table, userId);
+		await redraw(client, room, table);
+		return "left";
 	}
-
-	await acknowledgeConfirm(interaction);
-	// A chip table pays the stack the write above zeroed back to the wallet (2026-10 item
-	// 250 Phase 5); that write was the claim, so this runs once.
-	if (table.chips) await cashOut(table, interaction.user.id, outcome.stackLeft ?? 0);
-	await roomTrail.postMove(interaction.client, room, {
-		actorId: interaction.user.id,
-		kind: "system",
-		text: leftTableLine(table, interaction.user.id, outcome.foldedHand ?? false, outcome.stackLeft ?? 0),
-	});
-	// The same settle path a fold takes, so a leave that ends the hand pays the pot and
-	// one that leaves a single seat ends the tournament exactly the way a bust does.
-	await settleOutcome(interaction.client, room, table, outcome, interaction.user.id, { cause: "forfeit", handStartChips }, turn);
-	if (outcome.foldedHand) {
-		announceDealer({ client: interaction.client, roomId: room.roomId, before, after: toPublicView(table), outcome });
+	if (table.chips) await cashOut(table, userId, outcome.stackLeft ?? 0);
+	if (options.leaveLine) {
+		await roomTrail.postMove(client, room, { actorId: userId, kind: "system", text: leftTableLine(table, userId, outcome.foldedHand ?? false, outcome.stackLeft ?? 0) });
 	}
+	await settleOutcome(client, room, table, outcome, actorId, { cause: "forfeit", handStartChips }, turn);
+	if (outcome.foldedHand) announceDealer({ client, roomId: room.roomId, before, after: toPublicView(table), outcome });
+	return "left";
 }
 
 // A chip table's leave says what went back to the wallet; a free table's keeps its line.
@@ -1246,46 +1276,21 @@ export async function handleSeatsToggle(interaction: ButtonInteraction, room: IG
 export type TableRemoval = "removed" | "notAtTable" | "busy";
 
 /**
- * Take a player the host removed off the table: a waiting late seat is dropped, and
- * a seat is given up exactly the way Leave table gives it up (a live hand folded, the
- * seat out in the bust order, its stack gone with it, since chips die with the
- * table). The same settle path a leave takes then pays a hand the fold ended, or ends
- * the tournament when one player is left.
+ * Take a player off the table, the host's removal or a member who left the server
+ * (roomDeparture), through leaveSeatOnce, the same leave Leave table plays.
  *
- * `room` must be the row AFTER the removal was written (hostControls writes kickedIds
- * first), so a removal that ends the tournament rates it without the removed player.
+ * For a removal `room` must be the row AFTER the removal was written (hostControls writes
+ * kickedIds first), so a removal that ends the tournament rates it without the removed player;
+ * a server leave writes none, so the leaver is rated as out, like a Leave.
  * Retries a lost compare and swap up to GAME_ROOM_KICK_ATTEMPTS times; "busy" means
  * every attempt lost to a move, and the host is told to press again.
  */
-export async function removeFromTable(client: Client, room: IGameRoom, userId: string, actorId: string): Promise<TableRemoval> {
+export async function removeFromTable(client: Client, room: IGameRoom, userId: string, actorId: string, options: SeatLeaveOptions = {}): Promise<TableRemoval> {
 	let current = room;
 	for (let attempt = 0; attempt < BOT_CONSTANTS.GAME_ROOM_KICK_ATTEMPTS; attempt++) {
-		const table = tableOf(current);
-		if (!table || table.status === "finished") return "notAtTable";
-
-		const readAt = table.lastActionAt;
-		const seatsRead = table.seats.length;
-		const before = toPublicView(table);
-		const handStartChips = chipsAtHandStart(table.seats);
-		const revealBefore = holdemRevealKey(table);
-		const withdrewLateSeat = withdrawLateSeat(table, userId);
-		const outcome = withdrewLateSeat ? null : leaveTable(table, userId, secureRandom);
-		if (outcome && !outcome.ok) return "notAtTable";
-		const turn = outcome ? stampHoldemTurn(table, revealBefore, holdemMoveLines(outcome, [])) : NO_NEW_LINES;
-
-		if (await persistLeaveOrEnd(current, table, readAt, seatsRead)) {
-			// At a chip table the removed player keeps their chips: a waiting seat's buy in,
-			// or the stack the write above took off the table (2026-10 item 250 Phase 5).
-			if (!outcome) {
-				await refundBuyIn(table, userId);
-				await redraw(client, current, table);
-				return "removed";
-			}
-			if (table.chips) await cashOut(table, userId, outcome.stackLeft ?? 0);
-			await settleOutcome(client, current, table, outcome, actorId, { cause: "forfeit", handStartChips }, turn);
-			if (outcome.foldedHand) announceDealer({ client, roomId: current.roomId, before, after: toPublicView(table), outcome });
-			return "removed";
-		}
+		const left = await leaveSeatOnce(client, current, userId, actorId, options);
+		if (left === "left") return "removed";
+		if (left === "notAtTable") return "notAtTable";
 		current = (await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? current;
 	}
 	return "busy";

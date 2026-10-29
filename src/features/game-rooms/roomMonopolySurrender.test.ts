@@ -132,6 +132,21 @@ describe("surrenderMonopolySeat", () => {
 		expect(commitMock.mock.calls[0][4]).toMatchObject({ onTurnOnly: false, kind: "forfeit" });
 	});
 
+	// A member who leaves the server surrenders through this same path (2026-10 item 276, audit
+	// P1-4): the match goes on for the other three, led by the reason instead of the surrender line.
+	it("takes a seat whose member left the server out with the leave line, and the match goes on", async () => {
+		seed([A, B, C, "player-d"]);
+		const leftLine = gameRoomsCopy.trail.playerLeftGuild(B);
+
+		expect(await surrenderMonopolySeat(client, row.current as unknown as IGameRoom, B, leftLine)).toBe("surrendered");
+
+		expect(seatOf(B)?.bankrupt).toBe(true);
+		expect(stored().phase).not.toBe("finished");
+		const lines = committedLines();
+		expect(lines[0]).toBe(leftLine);
+		expect(lines).not.toContain(words.surrendered(B));
+	});
+
 	it("hands a surrendering host's room to the next member in turn order, skipping bots and anyone hosting another room", async () => {
 		seed([A, RED, B, C]);
 		storeMock.findOpenByHost.mockImplementation(async (_guildId: string, userId: string) => (userId === B ? { roomId: "elsewhere" } : null));

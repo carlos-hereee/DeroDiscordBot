@@ -415,6 +415,53 @@ describe("gameRoomHandlers forfeit", () => {
 		expect((late.reply.mock.calls[0][0] as { content?: string }).content).toBe(gameRoomsCopy.confirms.matchOver);
 	});
 
+	// Hangman's Give up (2026-10 item 276, audit P2-6): the round is cooperative, so only the host
+	// may give it up, nobody wins it, and no guesser can farm a win off a partner's give up.
+	describe("Hangman's Give up", () => {
+		const hangmanRoom = (overrides: Record<string, unknown> = {}) => makeRoom({ game: "hangman", status: "playing", secret: null, ...overrides });
+
+		it("refuses a guesser's press before any confirm", async () => {
+			storeMock.findByRoomId.mockResolvedValue(hangmanRoom());
+			const press = pressWithModal("gameroom:forfeit:room-1", "player-2");
+
+			await _handleGameRoomButton(press);
+
+			const modal = press.showModal.mock.calls[0][0] as { data: { custom_id: string } };
+			expect(modal.data.custom_id).toMatch(/^notice:/);
+			expect(JSON.stringify(modal)).toContain(gameRoomsCopy.confirms.giveUpHostOnly);
+		});
+
+		it("asks the host with the Give up words", async () => {
+			storeMock.findByRoomId.mockResolvedValue(hangmanRoom());
+			const press = pressWithModal("gameroom:forfeit:room-1", "host-1");
+
+			await _handleGameRoomButton(press);
+
+			expect(modalIdOf(press)).toBe("gameroom:forfeitok:room-1");
+			expect(JSON.stringify(press.showModal.mock.calls[0][0])).toContain(gameRoomsCopy.confirms.giveUp);
+		});
+
+		it("plays nothing for a guesser's confirm that skipped the press", async () => {
+			storeMock.findByRoomId.mockResolvedValue(hangmanRoom());
+			const forged = submit("gameroom:forfeitok:room-1", "player-2");
+
+			await _handleGameRoomConfirm(forged);
+
+			expect(lifecycleMock.finish).not.toHaveBeenCalled();
+			expect((forged.reply.mock.calls[0][0] as { content?: string }).content).toBe(gameRoomsCopy.confirms.giveUpHostOnly);
+		});
+
+		it("ends the host's round with no winner and no forfeit line", async () => {
+			storeMock.findByRoomId.mockResolvedValue(hangmanRoom());
+
+			await _handleGameRoomConfirm(submit("gameroom:forfeitok:room-1", "host-1"));
+
+			expect(lifecycleMock.finish).toHaveBeenCalledOnce();
+			expect(lifecycleMock.finish.mock.calls[0][2]).toEqual({ winnerId: null, outcome: { bucket: "forfeit" } });
+			expect(trailMock.postMove).not.toHaveBeenCalled();
+		});
+	});
+
 	it("forfeits from the fallback reply's button exactly as from Submit", async () => {
 		const button = { ...makeInteraction("gameroom:forfeitok:room-1", "player-2"), deferUpdate: vi.fn().mockResolvedValue(undefined) } as unknown as ButtonInteraction;
 		await _handleGameRoomButton(button);

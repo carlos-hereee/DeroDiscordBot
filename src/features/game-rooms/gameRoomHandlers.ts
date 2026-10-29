@@ -19,7 +19,6 @@ import {
 } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { roomLifecycle } from "./roomLifecycle.js";
-import { roomTrail } from "./roomTrail.js";
 import { challengeBoard } from "./challengeBoard.js";
 import { CHALLENGE_GAMES } from "./challengeBoardEmbeds.js";
 import { SETTINGS_GAMES } from "./challengeSettings.js";
@@ -30,7 +29,9 @@ import {
 	handleAuthoringModal,
 	handleGuessModal,
 	handleCategorySelect,
+	isHangmanRoom,
 } from "./roomHangman.js";
+import { departMatch } from "./roomDeparture.js";
 import { roomBattleshipHandlers } from "./roomBattleshipHandlers.js";
 import { roomHoldemHandlers } from "./roomHoldemHandlers.js";
 import { roomMonopolyHandlers } from "./roomMonopolyHandlers.js";
@@ -407,15 +408,18 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 				confirmId: confirmCustomId("archiveok", room.roomId),
 			});
 			return;
-		case "forfeit":
-			// A match already over is refused at the press, so confirmForfeit meets it only when
-			// the match ended while the confirm stood open (R3-6).
-			if (isMatchOver(room)) {
-				await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.confirms.matchOver] });
+		case "forfeit": {
+			// Refused at the press, so confirmForfeit meets a refusal only when the match ended
+			// while the confirm stood open (R3-6).
+			const refusal = forfeitRefusal(room, interaction.user.id);
+			if (refusal) {
+				await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [refusal] });
 				return;
 			}
-			await showConfirm(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.confirms.forfeit], confirmId: confirmCustomId("forfeitok", room.roomId) });
+			const prompt = isHangmanRoom(room) ? gameRoomsCopy.confirms.giveUp : gameRoomsCopy.confirms.forfeit;
+			await showConfirm(interaction, { title: gameRoomsCopy.notices.room, sections: [prompt], confirmId: confirmCustomId("forfeitok", room.roomId) });
 			return;
+		}
 	}
 }
 
@@ -467,31 +471,30 @@ async function runConfirmed(interaction: ConfirmInteraction, gated: GatedPress):
 
 const isMatchOver = (room: IGameRoom): boolean => room.status === "finished" || room.status === "archived";
 
+/**
+ * Why `userId` cannot forfeit this room, or null when they can. A match already over has nothing
+ * to forfeit, and Hangman's Give up is the host's alone (2026-10 item 276, audit P2-6): the round
+ * is cooperative, so one guesser giving up would end it for every other guesser. Read on the
+ * press and again on the confirm's Submit, which a forged id can reach without the press.
+ */
+function forfeitRefusal(room: IGameRoom, userId: string): string | null {
+	if (isMatchOver(room)) return gameRoomsCopy.confirms.matchOver;
+	return isHangmanRoom(room) && userId !== room.hostId ? gameRoomsCopy.confirms.giveUpHostOnly : null;
+}
+
 // A confirmed forfeit. The row was read again by gatePress, and a match that ended while
 // the confirm stood open is refused rather than given a forfeit line after its result.
 async function confirmForfeit(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
-	if (isMatchOver(room)) {
-		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.confirms.matchOver] });
+	const refusal = forfeitRefusal(room, interaction.user.id);
+	if (refusal) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [refusal] });
 		return;
 	}
-	const actorId = interaction.user.id;
 	// The result card in the room is the answer, so the confirm closes with no message.
 	await acknowledgeConfirm(interaction);
-	// The forfeit is a MOVE first: it belongs in the transcript that is the
-	// product, not only in the result card. postMove sends, then appends (law).
-	await roomTrail.postMove(interaction.client, room, {
-		actorId,
-		kind: "forfeit",
-		text: gameRoomsCopy.trail.forfeited(actorId),
-	});
-	// The winner is whoever did not forfeit, and only when exactly one player
-	// remains. A three seat room losing one player has no winner yet, so it
-	// resolves to null rather than to an arbitrary survivor.
-	const remaining = room.playerIds.filter((id) => id !== actorId);
-	await roomLifecycle.finish(interaction.client, room, {
-		winnerId: remaining.length === 1 ? remaining[0] : null,
-		outcome: { bucket: "forfeit" },
-	});
+	// The game's own forfeit, the one a server leave plays too (2026-10 item 276): its line in
+	// the transcript first, then the ending with the game's own rating and payout.
+	await departMatch(interaction.client, room, interaction.user.id, "forfeit");
 }
 
 // A confirm's Submit. Only the actions in CONFIRM_ACTIONS come this way; any other id

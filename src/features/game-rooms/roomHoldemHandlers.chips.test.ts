@@ -162,6 +162,21 @@ describe("cashing out", () => {
 		expect(noticeText(interaction)).toBe(words.tableBusy);
 	});
 
+	// A member who leaves the server leaves through the same seat leave as Leave table (2026-10
+	// item 276, audit P1-4), so they keep their stack and the table plays on for the others.
+	it("cashes out a member who left the server and keeps the table going for the rest", async () => {
+		const table = chipTable(["a", "b", "c"]);
+		table.status = "playing";
+		dealHand(table, () => 0.5);
+
+		await expect(removeFromTable(makeInteraction("c").client, makeRoom(table), "c", "c")).resolves.toBe("removed");
+
+		expect(walletMock.credit.mock.calls.some((call) => (call[0] as { userId: string }).userId === "c")).toBe(true);
+		const written = storeMock.updateSecretIf.mock.calls[0][3] as HoldemTable;
+		expect(written.status).not.toBe("finished");
+		expect(written.seats.filter((seat) => !seat.out).map((seat) => seat.userId)).toEqual(["a", "b"]);
+	});
+
 	it("pays a player the host removes mid tournament what they walked away with", async () => {
 		const table = chipTable(["a", "b", "c"]);
 		table.status = "playing";

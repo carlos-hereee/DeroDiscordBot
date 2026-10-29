@@ -584,3 +584,53 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 		coinGame: room.game === "solo-hangman" ? "solo-hangman" : "hangman",
 	});
 }
+
+// ── giving up, and leaving (2026-10 item 276, audit P2-6 and P1-4) ──
+// What:  the round's two ways to end with nobody winning: the host's Give up, and a departure
+//        that leaves the round with nobody to set the word or nobody to guess it.
+// Who:   roomDeparture, for the Give up confirm's Submit and for the server leave watcher, so a
+//        departure has one path whoever reaches it.
+// Why:   the round is cooperative and the host is not competing, so a Give up names no winner
+//        and pays no win (the old forfeit named the host the winner whenever one guesser gave
+//        up, which two members could farm). Only the host may give up, since one guesser
+//        giving up would end the round for every other guesser.
+
+/** True for the two hangman room games, the shared and the solo one. */
+export const isHangmanRoom = (room: Pick<IGameRoom, "game">): boolean => room.game === "hangman" || room.game === "solo-hangman";
+
+/**
+ * End the round with no winner and show the word, once: the line posts only for the call that
+ * won finish's claim, so a give up racing the solving letter never shows a second ending. A round
+ * whose word was never set ends the same way with no word to show. Answers whether it ended it.
+ */
+export async function giveUpHangmanRound(client: Client, room: IGameRoom): Promise<boolean> {
+	const state = rehydrate(room);
+	const claimed = await roomLifecycle.finish(client, room, {
+		winnerId: null,
+		outcome: { bucket: "forfeit" },
+		...(state
+			? { art: await withRenderFallback(() => renderHangmanCard(hangmanCardView(state, "lost")), () => resolveGameAsset("hangmanLose")) }
+			: {}),
+	});
+	if (!claimed || !state) return claimed;
+	// ⚠️ The one other render of the word (risk R12), and it is after the round is over.
+	await roomTrail.postMove(client, room, { actorId: room.hostId, kind: "system", text: gameRoomsCopy.hangman.gaveUpLine(state.word) });
+	return true;
+}
+
+/**
+ * A member left the round's server. The round goes on while it still has a host to have set the
+ * word and someone to guess it; otherwise it is given up. The guessers are the players other
+ * than the word's author, or other than the host while no word is set.
+ */
+export async function leaveHangmanRound(client: Client, room: IGameRoom, userId: string): Promise<void> {
+	if (userId === room.hostId) {
+		await giveUpHangmanRound(client, room);
+		return;
+	}
+	const state = rehydrate(room);
+	// A word Dero drew has no author, so every player guesses it; before a word, the host is setting one.
+	const setter = state ? state.authoredBy : room.hostId;
+	const guessersLeft = room.playerIds.filter((id) => id !== userId && id !== setter);
+	if (guessersLeft.length === 0) await giveUpHangmanRound(client, room);
+}

@@ -155,11 +155,23 @@ describe("sweepBattleshipTurns", () => {
 		// Turning up when the other player did not is exactly the behaviour being
 		// rewarded, so a forfeit win is a win.
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000, makeMatch({ missedTurns: [1, 0] }))]);
+		lifecycleMock.finish.mockResolvedValue(true);
 
 		await sweepBattleshipTurns(client, NOW);
 
 		expect(awardMock).toHaveBeenCalledOnce();
 		expect(awardMock.mock.calls[0][0]).toMatchObject({ game: "battleship", winner: "opponent" });
+	});
+
+	// The forfeit shares Surrender's result (2026-10 item 276), which pays only the call that won
+	// finish's claim, so a match a surrender or the last shot already ended is never paid twice.
+	it("pays nothing when another path already finished the match", async () => {
+		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000, makeMatch({ missedTurns: [1, 0] }))]);
+		lifecycleMock.finish.mockResolvedValue(false);
+
+		await sweepBattleshipTurns(client, NOW);
+
+		expect(awardMock).not.toHaveBeenCalled();
 	});
 
 	// The expired turn is a turn: its line rides that turn's board as its This turn block, which

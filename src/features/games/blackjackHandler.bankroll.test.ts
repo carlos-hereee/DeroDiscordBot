@@ -35,7 +35,7 @@ vi.mock("./blackjackRenderer.js", async (importOriginal) => ({
 	renderBlackjackResultCard: vi.fn(async () => null),
 }));
 
-import { _activeBlackjackGameCount, _blackjackTableOf, _clearBlackjackGames, blackjackTurnAdapter, startBlackjackTable } from "./blackjackHandler.js";
+import { _activeBlackjackGameCount, _blackjackTableOf, _clearBlackjackGames, blackjackTurnAdapter, leaveBlackjackRoomSeat, startBlackjackTable } from "./blackjackHandler.js";
 import type { Card, Rank } from "./blackjackState.js";
 import { gamesCopy } from "./gamesCopy.js";
 import { awardBlackjackResult, awardBlackjackTableCoins } from "./gameXp.js";
@@ -248,6 +248,41 @@ describe("a two seat chip table, hand after hand", () => {
 		expect(cashOutMock).toHaveBeenCalledOnce();
 		expect(finishMock).not.toHaveBeenCalled();
 		expect(blackjackTurnAdapter.whoseTurn(roomOf)).toBe(ALICE.userId);
+	});
+
+	// A member who leaves the server (2026-10 item 276, audit P1-4) leaves through the same seat
+	// leave their Leave plays: cashed out once, and the table goes on for the rest. The watcher
+	// used to finish the whole room instead.
+	it("takes a seat whose member left the server off the table exactly as their Leave would", async () => {
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], CHIP_TABLE);
+		table().shoe = cards(["10", "10", "10", "6", "7", "8"]);
+		await bet(ALICE.userId, 100);
+		await bet(BOB.userId, 100);
+
+		expect(await leaveBlackjackRoomSeat("ch-1", BOB.userId)).toBe(true);
+		expect(cashOutMock).toHaveBeenCalledWith(ROOM, BOB.userId, 900);
+		expect(moves.recorded).toContainEqual(expect.objectContaining({ actorId: BOB.userId, kind: "forfeit" }));
+
+		expect(await leaveBlackjackRoomSeat("ch-1", BOB.userId)).toBe(false);
+		expect(cashOutMock).toHaveBeenCalledOnce();
+		expect(finishMock).not.toHaveBeenCalled();
+		expect(blackjackTurnAdapter.whoseTurn(roomOf)).toBe(ALICE.userId);
+	});
+
+	it("ends the table when the last seat's member leaves the server", async () => {
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [], CHIP_TABLE);
+
+		expect(await leaveBlackjackRoomSeat("ch-1", ALICE.userId)).toBe(true);
+
+		await vi.waitFor(() => expect(finishMock).toHaveBeenCalledOnce());
+		expect(cashOutMock).toHaveBeenCalledWith(ROOM, ALICE.userId, 1000);
+	});
+
+	it("leaves nothing when this process holds no table for the channel", async () => {
+		expect(await leaveBlackjackRoomSeat("ch-gone", ALICE.userId)).toBe(false);
+		expect(cashOutMock).not.toHaveBeenCalled();
 	});
 
 	it("pays no coins when the room was already finished another way", async () => {

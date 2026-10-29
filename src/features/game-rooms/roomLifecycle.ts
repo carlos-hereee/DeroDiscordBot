@@ -315,7 +315,11 @@ function payRoomRateTopUp(client: Client, room: IGameRoom, winnerId: string | nu
 		// on that shape is a bug waiting for the first one-player room.
 		await guild.members.fetch({ user: room.playerIds }).catch(() => null);
 
+		// The member who set a hangman word was never playing the round, so the room's play top
+		// up skips them like the round's own award does (2026-10 item 276, audit P3).
+		const wordAuthorId = room.game === "hangman" ? ((room.secret as { authoredBy?: string | null } | null)?.authoredBy ?? null) : null;
 		for (const userId of room.playerIds) {
+			if (userId === wordAuthorId) continue;
 			const member = guild.members.cache.get(userId);
 			// ⚠️ SKIP rather than fall back to the raw id. memberLevelStore does
 			// `$set: { username }` on EVERY award, so handing it a snowflake would overwrite a

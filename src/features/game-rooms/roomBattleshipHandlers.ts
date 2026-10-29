@@ -181,18 +181,31 @@ export async function expireBattleshipTurnIfDue(client: Client, room: IGameRoom,
 	await redrawBattleshipBoard(client, room, next, null, [expired]);
 	if (!result.forfeited) return "expired";
 
-	const claimed = await roomLifecycle.finish(client, room, { winnerId: result.winnerId, outcome: { bucket: "timeout" } });
-	// A turn timeout forfeit IS rated, by owner decision (2026-10 item 244): the
-	// player who stopped taking turns lost a match they started. Once, by the call
-	// that won finish's claim; fire and forget.
-	if (claimed && result.winnerId) void recordMatchRatings(room, [result.winnerId, loserId]);
+	await finishOnForfeit(client, room, state.players, loserId, "timeout");
+	return "forfeited";
+}
+
+// ── a captain gives the match up (2026-10 item 276, audit P2-4 and P1-4) ──
+// The forfeit's result, ONE function for every way a captain loses by not playing: two lapsed
+// turns (above), Surrender's confirm and leaving the server (roomDeparture). The other captain
+// wins, a Dero bot captain included, and the match is finished, rated and paid exactly like a
+// played loss for the captain who left.
+async function finishOnForfeit(client: Client, room: IGameRoom, captains: readonly { userId: string }[], loserId: string, bucket: "timeout" | "forfeit"): Promise<boolean> {
+	const winnerId = captains.find((captain) => captain.userId !== loserId)?.userId ?? null;
+	const claimed = await roomLifecycle.finish(client, room, { winnerId, outcome: { bucket } });
+	// Rated and paid once, by the call that won finish's claim: a surrender racing the last shot
+	// or the turn clock must not rate or pay the match a second time.
+	if (!claimed || !winnerId) return claimed;
+	// A forfeit IS rated, by owner decision (2026-10 item 244): the captain who stopped playing
+	// lost a match they started. recordMatchRatings leaves out a match with a Dero bot. Fire and forget.
+	void recordMatchRatings(room, [winnerId, loserId]);
 
 	// The win still pays, because the opponent turning up and the other player
 	// not is exactly the behaviour being rewarded. No sink bonus is involved:
 	// nothing was sunk by walking away.
 	// The captains off the match, not the row: against a Dero bot the row holds the
 	// host alone (2026-10 item 250 Phase 5), and awardXp pays the bot nothing.
-	const [a, b] = state.players.map((player) => player.userId);
+	const [a, b] = captains.map((captain) => captain.userId);
 	awardTwoPlayerResult({
 		client,
 		guildId: room.guildId,
@@ -200,10 +213,22 @@ export async function expireBattleshipTurnIfDue(client: Client, room: IGameRoom,
 		game: "battleship",
 		challenger: { id: a } as never,
 		opponent: { id: b } as never,
-		winner: result.winnerId === a ? "challenger" : "opponent",
+		winner: winnerId === a ? "challenger" : "opponent",
 		resultKey: room.roomId,
 	});
-	return "forfeited";
+	return true;
+}
+
+/**
+ * A captain surrenders or leaves the server: the match ends as their loss, in setup or in battle.
+ * Answers whether this call ended it. A match whose fleets were never laid has no captains to
+ * read, so it ends on the room's players with no rating, as a two player forfeit always did.
+ */
+export async function forfeitBattleship(client: Client, room: IGameRoom, loserId: string): Promise<boolean> {
+	const stored = storedMatch(room);
+	if (stored?.players) return finishOnForfeit(client, room, stored.players, loserId, "forfeit");
+	const remaining = room.playerIds.filter((id) => id !== loserId);
+	return roomLifecycle.finish(client, room, { winnerId: remaining.length === 1 ? remaining[0] : null, outcome: { bucket: "forfeit" } });
 }
 
 /**
