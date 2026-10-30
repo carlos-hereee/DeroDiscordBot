@@ -47,7 +47,12 @@ export interface CoinResult {
 	now?: Date;
 }
 
-const isRatedGame = (game: CoinGame): boolean => (RATED_GAMES as readonly string[]).includes(game);
+// ⚠️ BLACKJACK IS RATED BUT KEEPS THE ROOM ROW. It joined RATED_GAMES for its ratings (2026-10
+// item 276, owner decision D8), and nothing in that decision moved its coins: a table is played
+// against the house, so a seat alone could take the rated row's win off Dero's dealer hand after
+// hand. Raising it is the owner's call, made by deleting it from this list.
+const ROOM_TIER_RATED_GAMES: readonly CoinGame[] = ["blackjack"];
+const isRatedGame = (game: CoinGame): boolean => (RATED_GAMES as readonly string[]).includes(game) && !ROOM_TIER_RATED_GAMES.includes(game);
 const isSoloGame = (game: CoinGame): boolean => (SOLO_COIN_GAMES as readonly string[]).includes(game);
 
 /** Which row of the coin table a game pays from. */

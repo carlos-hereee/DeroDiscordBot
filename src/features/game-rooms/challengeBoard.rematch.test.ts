@@ -734,19 +734,21 @@ describe("solo rooms rematch in place", () => {
 		const next = rematchRow();
 		expect(next).toMatchObject({ channelId: CHANNEL, hostId: P1, playerIds: [P1], visibility: "solo", status: "playing" });
 		expect(world.guild.channels.create).not.toHaveBeenCalled();
-		// A fresh buy in, the same standard one, taken from the presser and held on the new row's ledger.
-		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, { userId: P1, username: "Player One" }, true, next?.roomId, [], { buyIn: 1000, chips: true }, false);
-		expect(wallets.get(P1)).toBe(4000);
-		expect(next?.blackjackStacks).toEqual([{ userId: P1, buyIn: 1000, stack: 1000 }]);
+		// A solo table against Dero is never a ranked match (2026-10 item 276, owner decision D1), so
+		// it deals on the standard pretend stack, takes nothing and writes no ledger.
+		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, { userId: P1, username: "Player One" }, true, next?.roomId, [], { buyIn: 1000, chips: false }, false);
+		expect(wallets.get(P1)).toBe(5000);
+		expect(next?.blackjackStacks).toEqual([]);
 		// A solo room mints no invite, exactly like its first match.
 		expect(world.channel.createInvite).not.toHaveBeenCalled();
 	});
 
 	// 2026-10 item 267, owner decision 8: a Blackjack rematch takes a fresh buy in, and a presser
-	// who cannot pay is refused at the press, before anything is written.
-	it("refuses a solo blackjack rematch whose presser cannot cover the buy in again, writing nothing", async () => {
+	// who cannot pay is refused at the press, before anything is written. Only a ranked table
+	// charges since 2026-10 item 276 (decision D1), so a short wallet no longer stops a solo one.
+	it("refuses a ranked blackjack rematch whose host cannot cover the buy in again, writing nothing", async () => {
 		const world = makeWorld();
-		insertFinishedRoom({ game: "solo-blackjack", visibility: "solo", playerIds: [P1], spectatorIds: [], inviteCode: null });
+		insertFinishedRoom({ game: "blackjack", visibility: "invite", playerIds: [P1, P2], spectatorIds: [], inviteCode: null, holdemBuyIn: 2500 });
 		wallets.set(P1, 999);
 		const interaction = pressRematch(world, P1);
 
@@ -756,6 +758,29 @@ describe("solo rooms rematch in place", () => {
 		expect(blackjackMock).not.toHaveBeenCalled();
 		expect(wallets.get(P1)).toBe(999);
 		expect(interaction.deferUpdate).not.toHaveBeenCalled();
+	});
+
+	it("deals a solo blackjack rematch free for a presser with an empty wallet, since it is never ranked", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({ game: "solo-blackjack", visibility: "solo", playerIds: [P1], spectatorIds: [], inviteCode: null });
+		wallets.set(P1, 0);
+
+		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
+
+		expect(rematchRow()?.status).toBe("playing");
+		expect(wallets.get(P1)).toBe(0);
+	});
+
+	// 2026-10 item 276, owner decision D1: a casual Blackjack table's rematch charges nobody either.
+	it("plays a casual blackjack rematch free with chips on, charging nobody", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({ game: "blackjack", visibility: "invite", playerIds: [P1, P2], spectatorIds: [], inviteCode: null, holdemBuyIn: 2500, casual: true });
+
+		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
+
+		expect(wallets.get(P1)).toBe(5000);
+		expect(rematchRow()?.blackjackStacks).toEqual([]);
+		expect(blackjackMock).toHaveBeenCalledWith(world.channel, GUILD, expect.objectContaining({ userId: P1 }), true, rematchRow()?.roomId, expect.anything(), { buyIn: 2500, chips: false }, false);
 	});
 
 	it("charges every returning blackjack player the same buy in again, and deals on without one who cannot pay", async () => {

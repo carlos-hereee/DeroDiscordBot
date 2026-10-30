@@ -849,7 +849,8 @@ export const BOT_CONSTANTS = {
 		// The rated games (ratingEngine.RATED_GAMES: holdem, monopoly, battleship) pay
 		// most, because a match there is the longest and needs other players. A casual
 		// match of a rated game pays this full table too: the tier is the game's, never
-		// the badge's.
+		// the badge's. Blackjack is rated (2026-10 item 276, decision D8) but still pays
+		// the room row below (deroCoins.ROOM_TIER_RATED_GAMES says why).
 		RATED: { WIN: 5, DRAW: 2, PLAY: 1 },
 		// The room games between members: hangman, blackjack, two player coin flip, dice
 		// roll and rps.
@@ -915,7 +916,7 @@ export const BOT_CONSTANTS = {
 	},
 
 	// ── arcade ratings (2026-10 item 244) ─────────────────────────
-	// OpenSkill ratings for Hold'em, Battleship and Monopoly, luck stats for the
+	// OpenSkill ratings for Hold'em, Battleship, Monopoly and Blackjack, luck stats for the
 	// three luck games and Hold'em hand counts, read by features/ratings/. Every
 	// number below is an owner decision of 2026-10-23 (2026-10 item 244).
 	RATINGS: {
@@ -927,6 +928,11 @@ export const BOT_CONSTANTS = {
 		PROVISIONAL_GAMES: 10,
 		// Owner decision 2026-10-23 (2026-10 item 244): a Hold'em session with fewer dealt hands is recorded but never rated, so "deal, bust, repeat" farms nothing.
 		HOLDEM_MIN_RATED_HANDS: 10,
+		// A ranked Blackjack table that settled fewer hands is recorded but never rated (2026-10 item 276,
+		// decision D8). One, so a table left before any hand settles moves nothing: every seat would tie
+		// the house there, and a draw against a fresh rating still narrows the uncertainty and lifts the
+		// number a member sees, which would let anyone farm it by opening and leaving ranked tables.
+		BLACKJACK_MIN_RATED_HANDS: 1,
 		// Owner decision 2026-10-23 (2026-10 item 244): a luck score is shown only from this many decided games, below which it is noise.
 		LUCK_MIN_DECIDED: 20,
 		// Owner decision 2026-10-23 (2026-10 item 244): the host's Close band admits joiners within this many display points.

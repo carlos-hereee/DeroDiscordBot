@@ -7,7 +7,7 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isWithinReach } from "./challengeReach.js";
 import { maxBotSeats, takesBots } from "./botSeat.js";
 import { effectiveSpectatorMode } from "./roomPermissions.js";
-import { SPECTATOR_MODES, refereeOn, type ChallengeReach, type GameSlug, type RatingBand, type SpectatorMode } from "./roomTypes.js";
+import { SPECTATOR_MODES, isBuyInGame, refereeOn, type ChallengeReach, type GameSlug, type RatingBand, type SpectatorMode } from "./roomTypes.js";
 
 // ── challengeSettings ────────────────────────────────────────────────
 // What:  the one creation modal every game starts from (2026-10 item 263 Phase 2a, R3-13):
@@ -34,9 +34,11 @@ export type SettingField = "join" | "watch" | "match" | "buyIn" | "auctions" | "
 
 /**
  * Each game's fields, in the order the modal shows them (owner decision 6, Round 3 decision
- * 2). Every game has Who can join and Who may watch; the rated games add The match; Hold'em
- * its Buy in; Blackjack its Buy in (2026-10 item 267: the table plays for chips, by the same
- * bounds, default and refusal as Hold'em's); Monopoly its Auctions; the luck games Who you
+ * 2). Every game has Who can join and Who may watch; the rated games add The match, Blackjack
+ * among them since 2026-10 item 276 (owner decisions D2 and D8: Ranked plays for its chip buy in
+ * and is rated, Casual plays free); Hold'em and Blackjack their Buy in (2026-10 item 267, the
+ * same bounds, default and refusal for both), which only a Rated match charges (decision D1);
+ * Monopoly its Auctions; the luck games Who you
  * play. Every game ends with Dero voice (2026-10 item 267, decision 10), which took the place
  * of Hold'em's Referee and of the referee choice inside Monopoly's old Table options, so no
  * game grew past five. Five at most, Discord's ceiling for one modal, which the creation modal
@@ -47,7 +49,7 @@ export const GAME_SETTING_FIELDS: Record<SettingsGame, readonly SettingField[]> 
 	diceroll: ["join", "watch", "opponent", "voice"],
 	rps: ["join", "watch", "opponent", "voice"],
 	hangman: ["join", "watch", "voice"],
-	blackjack: ["join", "watch", "buyIn", "voice"],
+	blackjack: ["join", "watch", "match", "buyIn", "voice"],
 	battleship: ["join", "watch", "match", "voice"],
 	holdem: ["join", "watch", "match", "buyIn", "voice"],
 	monopoly: ["join", "watch", "match", "auctions", "voice"],
@@ -124,11 +126,13 @@ function joinOptions(context: SettingsContext): FieldOption[] {
 
 function matchOptions(context: SettingsContext): FieldOption[] {
 	const match = words.fields.match;
+	// A buy in game says what each choice does with chips: only a Rated match charges one (D1).
+	const forChips = isBuyInGame(context.game);
 	const options: FieldOption[] = [
-		{ value: "rated-any", label: match.ratedAny.label, description: match.ratedAny.description(channelNameFor(context, false)) },
+		{ value: "rated-any", label: match.ratedAny.label, description: match.ratedAny.description(channelNameFor(context, false), forChips) },
 		{ value: "rated-close", label: match.ratedClose.label, description: match.ratedClose.description(bandWidth("close") ?? 0) },
 		{ value: "rated-tight", label: match.ratedTight.label, description: match.ratedTight.description(bandWidth("tight") ?? 0) },
-		{ value: "casual", label: match.casual.label, description: match.casual.description(channelNameFor(context, true)) },
+		{ value: "casual", label: match.casual.label, description: match.casual.description(channelNameFor(context, true), forChips) },
 	];
 	// A casual match with Dero bots is offered only where a bot may sit (botSeat.takesBots and
 	// the server's switch), the same doors Play vs bots keeps, one option per count up to the
@@ -327,8 +331,8 @@ const MODAL_COMPONENT_LIMIT = 5;
 /**
  * The fields left once a notice needs a slot of its own (the held draft Submit will close).
  * A setting the host can still change after anybody joins gives its place first, from the
- * end: on Hold'em's and Monopoly's five that is Dero voice, which keeps its default (on for
- * Hold'em, off for Monopoly) and stays on Edit settings. Every other game has room for the
+ * end: on Hold'em's, Blackjack's and Monopoly's five that is Dero voice, which keeps its default
+ * (on for Hold'em, off for the others) and stays on Edit settings. Every other game has room for the
  * notice already.
  */
 function fitAroundNotice(fields: SettingField[], hasNotice: boolean): SettingField[] {

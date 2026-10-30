@@ -410,6 +410,15 @@ export function startNextHand(table: BlackjackTable): boolean {
 	return true;
 }
 
+/**
+ * How many hands this table has settled: the hand on the table counts once collectPayouts has
+ * paid it, since handNumber counts the hand being played from 1. A table everyone left during
+ * its first betting turn settled none.
+ */
+export function settledHandsOf(table: Pick<BlackjackTable, "handNumber" | "paid">): number {
+	return table.paid ? table.handNumber : table.handNumber - 1;
+}
+
 /** True once every seat is broke or gone. */
 export function isTableOver(table: BlackjackTable): boolean {
 	return table.seats.every((seat) => seat.out !== null);

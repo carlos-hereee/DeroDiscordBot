@@ -37,6 +37,7 @@ import {
 	placeBet,
 	playDealer,
 	settle,
+	settledHandsOf,
 	startNextHand,
 	type BlackjackAction,
 	type BlackjackTable,
@@ -44,6 +45,8 @@ import {
 	type SeatResult,
 } from "./blackjackState.js";
 import { awardBlackjackResult, awardBlackjackTableCoins } from "./gameXp.js";
+import { recordHouseTableRatings } from "@features/ratings/recordMatchRatings.js";
+import type { IGameRoom } from "@db/models/GameRoom.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import { announceToMatch } from "@features/game-rooms/roomAnnouncer.js";
 import { pickLine } from "@utils/pickLine.js";
@@ -1223,7 +1226,8 @@ async function postNextHandBoard(game: BlackjackGame, channelId: string): Promis
  * The table is over: every seat is broke or gone. Its room finishes through roomLifecycle.finish
  * (the one writer of a date into archiveAt), which pays every stack still on the ledger; this
  * table's winner is the member who ended with the largest stack above their buy in, and the
- * room's coins pay once, only when this finish was the one that ended the room.
+ * room's coins pay once, only when this finish was the one that ended the room. A ranked table
+ * is rated here too, on the same claim (rateBlackjackTable).
  */
 async function endTable(game: BlackjackGame, client: Message["client"]): Promise<void> {
 	const table = game.table;
@@ -1239,13 +1243,31 @@ async function endTable(game: BlackjackGame, client: Message["client"]): Promise
 		if (room) {
 			const ended = await roomLifecycle.finish(client, room, { winnerId: bankrollWinnerOf(finalStacks) });
 			const coinGame = room.game === "solo-blackjack" ? "solo-blackjack" : "blackjack";
-			if (ended) awardBlackjackTableCoins({ guildId: game.guildId, game: coinGame, roomId, stacks: finalStacks });
+			if (ended) {
+				awardBlackjackTableCoins({ guildId: game.guildId, game: coinGame, roomId, stacks: finalStacks });
+				rateBlackjackTable(room, table, finalStacks);
+			}
 		}
 	} catch (error) {
 		console.error("[mini-game] blackjack room finish failed", { roomId, error });
 	}
 	await promptTurn(game, client);
 	game.stop();
+}
+
+/**
+ * Rate a finished Blackjack table (2026-10 item 276, owner decision D8): one OpenSkill update
+ * placing every seat by its final stack against its own buy in, a Leave counting at the stack
+ * it cashed out (finalStacks reads cashedOut first), with the house as a fixed entrant. Called
+ * only by the call that won finish's claim, so a table is rated once. recordHouseTableRatings
+ * refuses what is not rated: a casual table, and a solo table against Dero (solo-blackjack is no
+ * rated game). A table that settled fewer than BLACKJACK_MIN_RATED_HANDS hands writes its result
+ * unrated, so opening a ranked table and leaving it at once moves no rating.
+ */
+function rateBlackjackTable(room: IGameRoom, table: BlackjackTable, finalStacks: readonly FinalStack[]): void {
+	const results = finalStacks.map((entry) => ({ userId: entry.userId, net: entry.stack - entry.buyIn }));
+	const rated = settledHandsOf(table) >= BOT_CONSTANTS.RATINGS.BLACKJACK_MIN_RATED_HANDS;
+	void recordHouseTableRatings(room, results, room.kickedIds ?? [], { rated });
 }
 
 // The stacks after a settle (chip tables only) and when a member last acted, on the row.

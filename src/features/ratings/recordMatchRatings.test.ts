@@ -8,7 +8,9 @@ vi.mock("@db/stores/matchResultStore.js", () => ({ matchResultStore: { insertOnc
 import {
 	monopolyFinishingOrder,
 	onRatedWin,
+	placingsOfHouseTable,
 	ratedOrder,
+	recordHouseTableRatings,
 	recordMatchRatings,
 	twoPlayerFinishingOrder,
 	type RatingRoom,
@@ -194,7 +196,7 @@ describe("what is never rated", () => {
 		expect(ratingStore.applyRating).not.toHaveBeenCalled();
 	});
 
-	it("writes nothing for a game outside the rated three", async () => {
+	it("writes nothing for a game outside the rated games", async () => {
 		for (const game of ["coinflip", "diceroll", "rps", "hangman", "solo-blackjack"]) {
 			await recordMatchRatings(room(game), ["a", "b"], [], { now: NOW });
 		}
@@ -251,6 +253,81 @@ describe("what is never rated", () => {
 
 		expect(insertedResult().rated).toBe(false);
 		expect(ratingStore.applyRating).not.toHaveBeenCalled();
+	});
+});
+
+// ── a Blackjack table, rated against the house (2026-10 item 276, owner decision D8) ──
+describe("Blackjack against the house", () => {
+	it("places each seat by its result against its own buy in, with the house between", async () => {
+		await recordHouseTableRatings(room("blackjack"), [
+			{ userId: "down", net: -40 },
+			{ userId: "up", net: 120 },
+		], [], { now: NOW });
+
+		const result = insertedResult();
+		expect(result.rated).toBe(true);
+		// The house stands at place 2 and is never written: only the two seats are stored.
+		expect(result.entries.map((entry) => [entry.userId, entry.rank])).toEqual([
+			["up", 1],
+			["down", 3],
+		]);
+		expect(ratingStore.findForPlayers).toHaveBeenCalledWith(["up", "down"], "blackjack");
+		expect(ratingStore.applyRating.mock.calls.map((call) => call[0]).sort()).toEqual(["down", "up"]);
+		expect(appliedFor("up")!.displayRating).toBeGreaterThan(FRESH_DISPLAY);
+		expect(appliedFor("down")!.mu).toBeLessThan(newRating().mu);
+	});
+
+	it("rates a lone seat against the house, the house counting as the second entrant", async () => {
+		await recordHouseTableRatings(room("blackjack"), [{ userId: "solo", net: 60 }], [], { now: NOW });
+
+		expect(insertedResult().rated).toBe(true);
+		expect(ratingStore.applyRating).toHaveBeenCalledOnce();
+		expect(appliedFor("solo")!.mu).toBeGreaterThan(newRating().mu);
+	});
+
+	it("records a Casual table, a table marked unrated and a kicked seat without rating them", async () => {
+		await recordHouseTableRatings({ ...room("blackjack", "room-casual"), casual: true }, [{ userId: "a", net: 50 }], [], { now: NOW });
+		await recordHouseTableRatings(room("blackjack", "room-short"), [{ userId: "a", net: 50 }], [], { rated: false, now: NOW });
+		await recordHouseTableRatings(room("blackjack", "room-kicked"), [{ userId: "k", net: 50 }], ["k"], { now: NOW });
+
+		expect(resultStore.insertOnce).toHaveBeenCalledTimes(3);
+		expect(resultStore.insertOnce.mock.calls.every((call) => (call[0] as IMatchResult).rated === false)).toBe(true);
+		expect(ratingStore.applyRating).not.toHaveBeenCalled();
+	});
+
+	it("writes nothing for an abandoned table", async () => {
+		await recordHouseTableRatings(room("blackjack"), [{ userId: "a", net: 50 }], [], { abandoned: true, now: NOW });
+
+		expect(resultStore.insertOnce).not.toHaveBeenCalled();
+	});
+
+	it("announces a seat that finished first alone and ahead of the house, and nobody otherwise", async () => {
+		const heard: string[] = [];
+		const stop = onRatedWin((win) => heard.push(win.winnerId));
+		try {
+			await recordHouseTableRatings(room("blackjack", "room-win"), [{ userId: "up", net: 10 }, { userId: "b", net: -10 }], [], { now: NOW });
+			await recordHouseTableRatings(room("blackjack", "room-even"), [{ userId: "even", net: 0 }], [], { now: NOW });
+			await recordHouseTableRatings(room("blackjack", "room-tie"), [{ userId: "x", net: 30 }, { userId: "y", net: 30 }], [], { now: NOW });
+			expect(heard).toEqual(["up"]);
+		} finally {
+			stop();
+		}
+	});
+});
+
+describe("placingsOfHouseTable", () => {
+	it("keeps each member once, leaves out bots and the excluded, and names no winner when the house led", () => {
+		expect(
+			placingsOfHouseTable(
+				[
+					{ userId: "a", net: -10 },
+					{ userId: "a", net: 500 },
+					{ userId: "dero-bot-red", net: 900 },
+					{ userId: "k", net: 900 },
+				],
+				["k"]
+			)
+		).toEqual({ order: ["a"], ranks: [2], houseRank: 1, winnerId: null });
 	});
 });
 

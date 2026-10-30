@@ -161,7 +161,7 @@ describe("the opener card's closed state, and no Play Dero button", () => {
 // ── the rated or casual badge (2026-10 item 254, Arcade 5) ──────────────
 describe("challengeBadge", () => {
 	it("is RATED for a rated game with no bot seated", () => {
-		for (const game of ["holdem", "battleship", "monopoly"] as const) expect(challengeBadge(game, 0)).toBe("rated");
+		for (const game of ["holdem", "battleship", "monopoly", "blackjack"] as const) expect(challengeBadge(game, 0)).toBe("rated");
 	});
 
 	it("is CASUAL once a Dero bot is seated, since a match with a bot is never rated", () => {
@@ -170,7 +170,7 @@ describe("challengeBadge", () => {
 	});
 
 	it("is CASUAL for every game that is not rated", () => {
-		for (const game of ["coinflip", "diceroll", "rps", "hangman", "blackjack"] as const) expect(challengeBadge(game, 0)).toBe("casual");
+		for (const game of ["coinflip", "diceroll", "rps", "hangman", "solo-blackjack"] as const) expect(challengeBadge(game, 0)).toBe("casual");
 	});
 
 	// 2026-10 item 254, Arcade 6: the host's Casual choice, even once people took every bot's seat.
@@ -178,6 +178,31 @@ describe("challengeBadge", () => {
 		expect(challengeBadge("holdem", 0, true)).toBe("casual");
 		expect(challengeBadge("monopoly", 2, true)).toBe("casual");
 		expect(challengeBadge("monopoly", 0, false)).toBe("rated");
+	});
+
+	// 2026-10 item 276, owner decisions D2 and D8: Blackjack carries the same Rated or Casual choice.
+	it("reads a Blackjack card RATED or CASUAL by the host's choice, and a solo table against Dero never RATED", () => {
+		expect(challengeBadge("blackjack", 0, false)).toBe("rated");
+		expect(challengeBadge("blackjack", 0, true)).toBe("casual");
+		expect(challengeBadge("solo-blackjack", 0, false)).toBe("casual");
+	});
+});
+
+// ── the buy in on a buy in game's card (2026-10 item 276, owner decision D1) ──
+// Chips move only in ranked matches, so a card names its buy in only where its table will charge it.
+describe("the buy in line", () => {
+	const description = (state: OpenerCardState): string => openerCardEmbed(state).toJSON().description ?? "";
+	const ranked: OpenerCardState = { game: "blackjack", hostId: "host-1", visibility: "public", pool: [], holdemBuyIn: 5000 };
+
+	it("names the buy in on a Rated Hold'em or Blackjack card", () => {
+		expect(description(ranked)).toContain(gameRoomsCopy.board.cardBuyIn(5000));
+		expect(description({ ...ranked, game: "holdem" })).toContain(gameRoomsCopy.board.cardBuyIn(5000));
+	});
+
+	it("names none on a Casual card, a network table or a card with a Dero bot, since each plays free", () => {
+		for (const state of [{ ...ranked, casual: true }, { ...ranked, game: "holdem" as const, casual: true }, { ...ranked, game: "holdem" as const, network: true }, { ...ranked, game: "holdem" as const, bots: { count: 1 } }]) {
+			expect(description(state)).not.toContain(gameRoomsCopy.board.cardBuyIn(5000));
+		}
 	});
 });
 

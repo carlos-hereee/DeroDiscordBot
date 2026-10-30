@@ -243,16 +243,28 @@ describe("a Blackjack table's buy in", () => {
 		expect(walletMock.debit).not.toHaveBeenCalled();
 	});
 
-	it("takes a solo table's standard buy in at the press, refuses a short wallet, and charges nothing with chips off", async () => {
-		expect(await chargeSoloTable("guild-1", HOST)).toEqual({ ok: true, seats: { buyIn: BOT_CONSTANTS.HOLDEM_STARTING_STACK, userIds: [HOST], charged: true } });
-		expect(walletMock.debit).toHaveBeenCalledWith(key(HOST), BOT_CONSTANTS.HOLDEM_STARTING_STACK);
+	// 2026-10 item 276, owner decision D1: chips move only in ranked matches, so a Casual card, of
+	// either buy in game, charges nobody even where chips are on, seats everyone on a pretend stack,
+	// and gives back anything its ledger still holds.
+	it("charges nobody on a Casual card with chips on, Blackjack and Hold'em alike, and seats everyone free", async () => {
+		configMock.findByGuildId.mockResolvedValue({ chipEconomyEnabled: true });
+		for (const casualCard of [blackjack({ casual: true }), draft({ casual: true })]) {
+			expect(await isChipDraft(casualCard)).toBe(false);
+			expect(await chargeJoiner(casualCard, GUEST)).toBeNull();
+			expect(await settleDraftBuyIns(casualCard, ["a"])).toEqual({ ok: true, seats: { buyIn: casualCard.holdemBuyIn ?? BOT_CONSTANTS.HOLDEM_STARTING_STACK, userIds: [HOST, "a"], charged: false } });
+		}
+		expect(walletMock.debit).not.toHaveBeenCalled();
+		// The Rated card beside it still charges.
+		expect(await isChipDraft(blackjack())).toBe(true);
+	});
 
-		walletMock.debit.mockResolvedValue(null);
-		expect(await chargeSoloTable("guild-1", HOST)).toEqual({ ok: false, reason: gameRoomsCopy.holdem.notEnoughChips(BOT_CONSTANTS.HOLDEM_STARTING_STACK) });
-
-		walletMock.debit.mockClear();
+	// 2026-10 item 276, owner decision D1: a solo table against Dero is never a ranked match, so
+	// it plays free on the standard pretend stack wherever it is opened, chips on or off.
+	it("charges a solo table nothing at the press, with chips on or off, since it is never a ranked match", async () => {
+		const free = { ok: true, seats: { buyIn: BOT_CONSTANTS.HOLDEM_STARTING_STACK, userIds: [HOST], charged: false } };
+		expect(await chargeSoloTable("guild-1", HOST)).toEqual(free);
 		configMock.findByGuildId.mockResolvedValue({ chipEconomyEnabled: false });
-		expect(await chargeSoloTable("guild-1", HOST)).toEqual({ ok: true, seats: { buyIn: BOT_CONSTANTS.HOLDEM_STARTING_STACK, userIds: [HOST], charged: false } });
+		expect(await chargeSoloTable("guild-1", HOST)).toEqual(free);
 		expect(walletMock.debit).not.toHaveBeenCalled();
 	});
 

@@ -78,7 +78,7 @@ const COUNT_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seve
 
 // How the copy names each rated game. A Record over RatedGame, so a game newly rated
 // in ratingEngine fails to compile here until the copy is checked for it.
-const RATED_GAME_NAMES: Record<RatedGame, string> = { holdem: "Hold'em", battleship: "Battleship", monopoly: "Monopoly" };
+const RATED_GAME_NAMES: Record<RatedGame, string> = { holdem: "Hold'em", battleship: "Battleship", monopoly: "Monopoly", blackjack: "Blackjack" };
 
 const PACKS = [
 	{ name: "rok-commander", copy: rokCommanderCopy },

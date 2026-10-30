@@ -1396,7 +1396,7 @@ async function playersStillInServer(guild: Guild, playerIds: readonly string[]):
 // A free table charges nobody and still answers its seats, so the deal knows what it plays for.
 async function chargeRematchHost(room: IGameRoom, hostId: string): Promise<PaidSeats | { refusal: string }> {
 	const buyIn = draftBuyInOf(room);
-	const chips = await chipTableFor(room, false);
+	const chips = await chipTableFor(room, room.botSeats ?? 0);
 	if (!chips) return { buyIn, userIds: [hostId], charged: false };
 	if (!(await takeChips({ userId: hostId }, buyIn))) return { refusal: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
 	return { buyIn, userIds: [hostId], charged: true };

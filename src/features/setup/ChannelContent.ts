@@ -4,6 +4,7 @@ import { infoEmbed } from "@utils/embedBuilder.js";
 import { DERO_GIF_URL, COLORS, DERO_GIF_REF } from "@base/copy/brand.js";
 import { deroArtAttachment } from "@features/renderer/deroArt.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { CUT_CARD_PENETRATION } from "@features/games/blackjackState.js";
 import { rulesContent, type IRulesConfig } from "./rulesContent.js";
 import { isChipEconomyOn, type ChipEconomySetting } from "@features/economy/chipWallet.js";
 import { chips, coins } from "@features/economy/economyCopy.js";
@@ -19,6 +20,8 @@ import { botInviteLink } from "@utils/config.js";
 // in milliseconds, the unit the sweeps run on.
 const MS_PER_MINUTE = 60_000;
 const MS_PER_HOUR = 60 * MS_PER_MINUTE;
+// The cut card share is a fraction in the engine and a percent on the rules card.
+const PERCENT = 100;
 
 // ── ChannelContent ───────────────────────────────────────────────────────
 // What:  builders for the pinned intro embeds + self-heal notices the bot
@@ -206,7 +209,9 @@ export const ChannelContent = {
 				name: c.ratingsTitle,
 				value: c.ratingsBody(RATINGS.PROVISIONAL_GAMES, RATINGS.HOLDEM_MIN_RATED_HANDS, RATINGS.LUCK_MIN_DECIDED),
 				inline: false,
-			}
+			},
+			{ name: c.chipsTitle, value: c.chipsBody, inline: false },
+			{ name: c.houseRulesTitle, value: c.houseRulesBody(Math.round(CUT_CARD_PENETRATION * PERCENT)), inline: false }
 		);
 	},
 

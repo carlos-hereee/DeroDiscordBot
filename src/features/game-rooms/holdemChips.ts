@@ -4,6 +4,7 @@ import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { isChipEconomyOn, returnChips, takeChips } from "@features/economy/chipWallet.js";
 import { chipsBackOnCallOff, startingStackOf, type HoldemTable, type TableChips } from "@features/games/holdemTable.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
+import { movesChips, type ChipMatch } from "./chipMatch.js";
 import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
@@ -33,15 +34,18 @@ export interface ChipPayout {
 	amount: number;
 }
 
-/** The chips a new table plays for (the server it is in; every wallet is global), or null for a free play table. */
-export async function chipTableFor(room: Pick<IGameRoom, "guildId" | "network">, hasBotSeats: boolean): Promise<TableChips | null> {
-	// A network table seats members of other servers, and a table with a Dero bot would
-	// pay a human chips the bot never paid in, so both play free by the owner's decision
-	// (Phase 5, question 1). The wallets are global, but the network rule still stands.
-	if (room.network || hasBotSeats) return null;
-	const config = await guildConfigStore.findByGuildId(room.guildId);
+/**
+ * The chips a new table plays for (the server it is in; every wallet is global), or null for a
+ * free play table: the ONE answer to whether a match moves chips, read by the draft's charges
+ * (isChipDraft), a solo or rematch charge and the seed of a table no card paid for. A match that
+ * moves chips (chipMatch.movesChips: ranked, not a network table, no Dero bot, 2026-10 item 276
+ * decision D1) in a server whose chip switch is on.
+ */
+export async function chipTableFor(match: ChipMatch & Pick<IGameRoom, "guildId">, botCount: number): Promise<TableChips | null> {
+	if (!movesChips(match, botCount)) return null;
+	const config = await guildConfigStore.findByGuildId(match.guildId);
 	if (!config || !isChipEconomyOn(config)) return null;
-	return tableChipsOf(room.guildId);
+	return tableChipsOf(match.guildId);
 }
 
 /** The chips a table in this server plays for, once something has decided it plays for chips at all. */

@@ -21,9 +21,12 @@ const LIMITS = BOT_CONSTANTS.RATINGS;
 const ORDINAL_SIGMAS = 3;
 
 // The games that move a rating, and the ones that only feed the luck board.
-// Luck games (pure chance) and hangman (cooperative) and blackjack (against the
-// house) are never rated: a rating there would measure nothing a player did.
-export const RATED_GAMES = ["holdem", "battleship", "monopoly"] as const;
+// Luck games (pure chance) and hangman (cooperative) are never rated: a rating
+// there would measure nothing a player did. Blackjack is rated by the owner's
+// ruling (2026-10 item 276, decision D8) against the house: each seat's result
+// against its own buy in places it, and the house is one fixed entrant (see
+// houseTablePlaces and rateAgainstHouse).
+export const RATED_GAMES = ["holdem", "battleship", "monopoly", "blackjack"] as const;
 export type RatedGame = (typeof RATED_GAMES)[number];
 
 export const LUCK_GAMES = ["coinflip", "diceroll", "rps"] as const;
@@ -59,32 +62,91 @@ export const isRatedGame = (game: string): game is RatedGame => (RATED_GAMES as 
 
 export const isLuckGame = (game: string): game is LuckGame => (LUCK_GAMES as readonly string[]).includes(game);
 
+/**
+ * Whether a match is ranked: a rated game, the host's Rated choice (not Casual) and no Dero bot
+ * seated. The one rule behind a card's RATED badge and whether a table plays for wallet chips
+ * (2026-10 item 276, owner decision D1: chips move only in ranked matches), so a card can never
+ * say RATED over a table that plays free, or CASUAL over one that takes a buy in.
+ */
+export function isRankedMatch(game: string, botCount: number, casual: boolean): boolean {
+	return isRatedGame(game) && botCount === 0 && !casual;
+}
+
 /** The rating every player starts a game at, before their first rated result. */
 export function newRating(): SkillRating {
 	const fresh = rating();
 	return { mu: fresh.mu, sigma: fresh.sigma };
 }
 
-/**
- * One OpenSkill update for a finished match. `bestFirst` is each player's rating
- * before the match, in finishing order (the winner first); the answer is each
- * player's rating after it, in the same order.
- *
- * Every player is a team of one and ranks are 1, 2, 3 by position, lower better,
- * which is how openskill reads a free for all finishing order. Fewer than two
- * players is not a match, so it answers the ratings unchanged.
- */
-export function rateFinishingOrder(bestFirst: readonly SkillRating[]): SkillRating[] {
-	if (bestFirst.length < 2) return bestFirst.map((entry) => ({ mu: entry.mu, sigma: entry.sigma }));
+/** One entrant's rating before a match and the place it finished in: 1 is first, and entrants who tied share a place. */
+export interface PlacedSkill extends SkillRating {
+	rank: number;
+}
 
-	const teams = bestFirst.map((entry) => [{ mu: entry.mu, sigma: entry.sigma }]);
-	const ranks = bestFirst.map((_entry, index) => index + 1);
-	const rated = rate(teams, { rank: ranks });
+/**
+ * One OpenSkill update over entrants at their places, ties allowed (equal ranks are a draw
+ * between those entrants, lower is better). Every entrant is a team of one, which is how
+ * openskill reads a free for all. Fewer than two entrants is not a match, so it answers the
+ * ratings unchanged. The answer is each entrant's rating after the match, in the same order.
+ */
+export function rateRanks(entries: readonly PlacedSkill[]): SkillRating[] {
+	if (entries.length < 2) return entries.map((entry) => ({ mu: entry.mu, sigma: entry.sigma }));
+
+	const teams = entries.map((entry) => [{ mu: entry.mu, sigma: entry.sigma }]);
+	const rated = rate(teams, { rank: entries.map((entry) => entry.rank) });
 
 	return rated.map((team, index) => {
-		const after = team[0] ?? bestFirst[index];
+		const after = team[0] ?? entries[index];
 		return { mu: after.mu, sigma: after.sigma };
 	});
+}
+
+/**
+ * One OpenSkill update for a finished match. `bestFirst` is each player's rating
+ * before the match, in finishing order (the winner first), every place its own (ranks
+ * 1, 2, 3 by position); the answer is each player's rating after it, in the same order.
+ */
+export function rateFinishingOrder(bestFirst: readonly SkillRating[]): SkillRating[] {
+	return rateRanks(bestFirst.map((entry, index) => ({ mu: entry.mu, sigma: entry.sigma, rank: index + 1 })));
+}
+
+// ── a table played against the house (2026-10 item 276, owner decision D8) ──
+/** A seat's result at a table played against the house: the chips it ended with less what it bought in for. */
+export interface HouseTableResult {
+	userId: string;
+	net: number;
+}
+
+/** Every seat's place at a house table, best first, and the house's own place among them. */
+export interface HouseTablePlaces {
+	seats: Array<{ userId: string; rank: number }>;
+	houseRank: number;
+}
+
+/**
+ * The places of a table played against the house (Blackjack): each seat by its result against
+ * its own buy in, with the house as one more entrant standing at a result of zero. A seat that
+ * ended above its buy in places ahead of the house, level ties it, below places behind it, and
+ * seats place against each other the same way, so a table of several seats is one finishing
+ * order of the players and the house. Equal results share a place, numbered densely (1, 1, 2),
+ * so a place reads as "how many distinct results finished ahead, plus one".
+ */
+export function houseTablePlaces(results: readonly HouseTableResult[]): HouseTablePlaces {
+	const resultsBestFirst = [...new Set([0, ...results.map((result) => result.net)])].sort((first, second) => second - first);
+	const placeOf = (net: number): number => resultsBestFirst.indexOf(net) + 1;
+	const seats = [...results].sort((first, second) => second.net - first.net).map((result) => ({ userId: result.userId, rank: placeOf(result.net) }));
+	return { seats, houseRank: placeOf(0) };
+}
+
+/**
+ * One OpenSkill update for a house table: the seats at their places plus the house at
+ * `houseRank`, which always enters at a fresh rating and whose own update is thrown away, so
+ * the house is a fixed yardstick that never drifts and is never stored (owner decision D8).
+ * Answers the seats' ratings after the match, in the order given.
+ */
+export function rateAgainstHouse(seats: readonly PlacedSkill[], houseRank: number): SkillRating[] {
+	const house: PlacedSkill = { ...newRating(), rank: houseRank };
+	return rateRanks([...seats, house]).slice(0, seats.length);
 }
 
 /** The number members see: round(1000 + 40 x (mu minus 3 sigma)). A fresh rating reads 1000. */

@@ -118,7 +118,7 @@ describe("the builder", () => {
 		expect(network.options?.map((sub) => sub.name)).toEqual(["leave"]);
 		const boardOptions = (subs[1] as { options?: Array<{ required?: boolean; choices?: Array<{ value: string }> }> }).options ?? [];
 		expect(boardOptions[0].required).toBe(true);
-		expect(boardOptions[0].choices?.map((choice) => choice.value)).toEqual(["holdem", "battleship", "monopoly"]);
+		expect(boardOptions[0].choices?.map((choice) => choice.value)).toEqual(["holdem", "battleship", "monopoly", "blackjack"]);
 	});
 
 	it("never calls it Elo", () => {

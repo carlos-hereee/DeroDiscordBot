@@ -35,6 +35,8 @@ vi.mock("@features/game-rooms/roomLifecycle.js", () => ({ roomLifecycle: { finis
 vi.mock("@features/game-rooms/turnPrompt.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("@features/game-rooms/turnPrompt.js")>()), syncTurnPrompt: vi.fn(async () => undefined) }));
 vi.mock("@utils/answerInChannel.js", () => ({ answerInChannel: vi.fn(async () => undefined), beginChannelAnswer: vi.fn() }));
 vi.mock("./gameXp.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./gameXp.js")>()), awardBlackjackResult: vi.fn(), awardBlackjackTableCoins: vi.fn() }));
+// The rating write has its own suite (recordMatchRatings.test.ts); here it is what the end asks for.
+vi.mock("@features/ratings/recordMatchRatings.js", () => ({ recordHouseTableRatings: vi.fn(async () => undefined) }));
 vi.mock("./blackjackRenderer.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("./blackjackRenderer.js")>()),
 	renderBlackjackTableCard: vi.fn(async () => null),
@@ -51,6 +53,7 @@ import { answerInChannel } from "@utils/answerInChannel.js";
 import { gameRoomsCopy } from "@features/game-rooms/gameRoomsCopy.js";
 import { _resetDrawingPauses } from "@features/game-rooms/drawingPause.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { recordHouseTableRatings } from "@features/ratings/recordMatchRatings.js";
 
 const ALICE = { userId: "alice", username: "Alice" };
 const BOB = { userId: "bob", username: "Bob" };
@@ -63,6 +66,7 @@ const saveMock = saveBlackjackStacks as unknown as ReturnType<typeof vi.fn>;
 const cashOutMock = cashOutBlackjackSeat as unknown as ReturnType<typeof vi.fn>;
 const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
 const coinsMock = awardBlackjackTableCoins as unknown as ReturnType<typeof vi.fn>;
+const rateMock = recordHouseTableRatings as unknown as ReturnType<typeof vi.fn>;
 
 // A room channel that keeps its messages, hears every board through one collector, and is
 // the channel the trail resolves.
@@ -234,6 +238,18 @@ describe("a two seat chip table, hand after hand", () => {
 				{ userId: BOB.userId, buyIn: 1000, stack: 1125 },
 			],
 		});
+		// Rated once against the house (2026-10 item 276, D8): each seat by its stack against its
+		// buy in, Bob's at the stack his Leave cashed out.
+		expect(rateMock).toHaveBeenCalledOnce();
+		expect(rateMock).toHaveBeenCalledWith(
+			roomRow.current,
+			[
+				{ userId: ALICE.userId, net: -1000 },
+				{ userId: BOB.userId, net: 125 },
+			],
+			[],
+			{ rated: true }
+		);
 		expect(_activeBlackjackGameCount()).toBe(0);
 	});
 
@@ -285,6 +301,8 @@ describe("a two seat chip table, hand after hand", () => {
 
 		await vi.waitFor(() => expect(finishMock).toHaveBeenCalledOnce());
 		expect(cashOutMock).toHaveBeenCalledWith(ROOM, ALICE.userId, 1000);
+		// No hand settled, so opening a ranked table and leaving it moves no rating.
+		expect(rateMock).toHaveBeenCalledWith(roomRow.current, [{ userId: ALICE.userId, net: 0 }], [], { rated: false });
 	});
 
 	it("leaves nothing when this process holds no table for the channel", async () => {
@@ -299,6 +317,7 @@ describe("a two seat chip table, hand after hand", () => {
 		room.click(press("leave", ALICE.userId, room.client));
 		await vi.waitFor(() => expect(finishMock).toHaveBeenCalledOnce());
 		expect(coinsMock).not.toHaveBeenCalled();
+		expect(rateMock).not.toHaveBeenCalled();
 	});
 });
 

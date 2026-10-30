@@ -55,7 +55,8 @@ const DECIDED: Record<SettingsGame, SettingField[]> = {
 	diceroll: ["join", "watch", "opponent", "voice"],
 	rps: ["join", "watch", "opponent", "voice"],
 	hangman: ["join", "watch", "voice"],
-	blackjack: ["join", "watch", "buyIn", "voice"],
+	// The Rated or Casual choice of 2026-10 item 276 (owner decision D2).
+	blackjack: ["join", "watch", "match", "buyIn", "voice"],
 	battleship: ["join", "watch", "match", "voice"],
 	holdem: ["join", "watch", "match", "buyIn", "voice"],
 	monopoly: ["join", "watch", "match", "auctions", "voice"],
@@ -76,13 +77,14 @@ describe("each game's creation modal", () => {
 		it(`${game}'s title fits ${MAX_TITLE} characters and names where its card posts`, () => {
 			const title = modalJson(game).title;
 			expect(title.length).toBeLessThanOrEqual(MAX_TITLE);
-			const rated = game === "holdem" || game === "battleship" || game === "monopoly";
+			const rated = game === "holdem" || game === "battleship" || game === "monopoly" || game === "blackjack";
 			expect(title).toContain(rated ? "#rated-challenges" : "#challenges");
 		});
 	}
 
-	it("gives Dero voice's slot to a held draft's line on the two five field games, and keeps it everywhere else", () => {
+	it("gives Dero voice's slot to a held draft's line on the three five field games, and keeps it everywhere else", () => {
 		expect(fieldIds(modalJson("holdem", { kind: "create" }, {}, "held"))).toEqual(["join", "watch", "match", "buyIn"]);
+		expect(fieldIds(modalJson("blackjack", { kind: "create" }, {}, "held"))).toEqual(["join", "watch", "match", "buyIn"]);
 		expect(fieldIds(modalJson("monopoly", { kind: "create" }, {}, "held"))).toEqual(["join", "watch", "match", "auctions"]);
 		for (const game of SETTINGS_GAMES) {
 			if (DECIDED[game].length < MAX_COMPONENTS) expect(fieldIds(modalJson(game, { kind: "create" }, {}, "held"))).toContain("voice");
@@ -106,6 +108,18 @@ describe("each game's creation modal", () => {
 });
 
 describe("the options", () => {
+	// 2026-10 item 276, owner decisions D1 and D2: Blackjack carries Rated or Casual, and a buy in
+	// game says that only a Rated match plays for chips.
+	it("offers Blackjack Rated or Casual, saying only a Rated match plays for the chip buy in", () => {
+		const options = (fieldOf(modalJson("blackjack"), "match")?.options ?? []) as Array<{ value: string; description?: string }>;
+		expect(options.map((option) => option.value)).toEqual(["rated-any", "rated-close", "rated-tight", "casual"]);
+		const described = (value: string): string => options.find((option) => option.value === value)?.description ?? "";
+		expect(described("rated-any")).toContain("plays for the chip buy in");
+		expect(described("casual")).toContain("free");
+		const battleship = (fieldOf(modalJson("battleship"), "match")?.options ?? []) as Array<{ value: string; description?: string }>;
+		expect(battleship.every((option) => !(option.description ?? "").includes("chip"))).toBe(true);
+	});
+
 	it("offers Open to all only within the reach, and the network only at network reach for a game it mirrors", () => {
 		expect(optionValues(modalJson("holdem"), "join")).toEqual(["invite", "public", "approve", "network"]);
 		expect(optionValues(modalJson("holdem", { kind: "create" }, { reach: "server" }), "join")).toEqual(["invite", "public", "approve"]);

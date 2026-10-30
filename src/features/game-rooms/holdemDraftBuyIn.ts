@@ -30,7 +30,8 @@ import { isBuyInGame } from "./roomTypes.js";
 // a charge is the reverse of a refund and for the same reason: take the chips, record the
 // payment against the buy in that was charged (a host who changed the amount meanwhile makes
 // the record refuse), and give the chips back if it did. Network tables and tables with a
-// Dero bot play free, so nobody pays on a draft that chipTableFor refuses.
+// Dero bot play free, and so does a casual match (2026-10 item 276, owner decision D1: chips
+// move only in ranked matches), so nobody pays on a draft that chipTableFor refuses.
 
 /** The two fields of the buy in modal: the preset select and the typed amount. */
 export const BUY_IN_FIELDS = { preset: "preset", custom: "custom" } as const;
@@ -45,13 +46,14 @@ export function isValidDraftBuyIn(amount: number): boolean {
 }
 
 /**
- * Whether this draft will open as a chip table, the same question the provisioner asks:
- * chips on in the server, no network table and no Dero bot seat. Read fresh on every
- * charge, so an admin switching chips off mid draft stops charging joiners at once.
+ * Whether this draft will open as a chip table, the same question the provisioner asks
+ * (holdemChips.chipTableFor): a ranked match, chips on in the server, no network table and no
+ * Dero bot seat, so a casual card charges nobody (2026-10 item 276, owner decision D1). Read
+ * fresh on every charge, so an admin switching chips off mid draft stops charging joiners at once.
  */
-export async function isChipDraft(room: Pick<IGameRoom, "game" | "guildId" | "network" | "botSeats">): Promise<boolean> {
+export async function isChipDraft(room: Pick<IGameRoom, "game" | "guildId" | "network" | "botSeats" | "casual">): Promise<boolean> {
 	if (!isBuyInGame(room.game)) return false;
-	return (await chipTableFor(room, (room.botSeats ?? 0) > 0)) !== null;
+	return (await chipTableFor(room, room.botSeats ?? 0)) !== null;
 }
 
 // ── the host's modal ──────────────────────────────────────────────────
@@ -228,13 +230,16 @@ export async function refundSeatsDirectly(seats: PaidSeats): Promise<void> {
 
 // ── a Blackjack table charged outside a card (2026-10 item 267) ──────
 /**
- * A solo Blackjack table's buy in, taken at the press: the standard buy in where chips are on
- * in this server, nothing where they are off (the table then plays free with a pretend stack).
- * A short wallet is the refusal, worded for the member, and nothing was taken.
+ * A solo Blackjack table's buy in, asked at the press through the one chip rule
+ * (holdemChips.chipTableFor). A solo table against Dero is never a ranked match, so since
+ * 2026-10 item 276 (owner decision D1) it always answers free seats on the standard pretend
+ * stack and takes nothing; a member who wants to play for chips alone opens a ranked Blackjack
+ * card and starts it with nobody else. Kept on the rule rather than hard coded free, so the
+ * press can never charge where the rule says a table plays free, or the reverse.
  */
 export async function chargeSoloTable(guildId: string, userId: string): Promise<{ ok: true; seats: PaidSeats } | { ok: false; reason: string }> {
 	const buyIn = BOT_CONSTANTS.HOLDEM_STARTING_STACK;
-	if (!(await chipTableFor({ guildId, network: false }, false))) return { ok: true, seats: { buyIn, userIds: [userId], charged: false } };
+	if (!(await chipTableFor({ guildId, network: false, game: "solo-blackjack" }, 0))) return { ok: true, seats: { buyIn, userIds: [userId], charged: false } };
 	if (!(await takeChips({ userId }, buyIn))) return { ok: false, reason: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
 	return { ok: true, seats: { buyIn, userIds: [userId], charged: true } };
 }

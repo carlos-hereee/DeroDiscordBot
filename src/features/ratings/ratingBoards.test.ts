@@ -69,6 +69,7 @@ describe("memberRatings", () => {
 			{ game: "holdem", rating: null },
 			{ game: "battleship", rating: { displayRating: 1120, ratedGames: 4, provisional: true } },
 			{ game: "monopoly", rating: null },
+			{ game: "blackjack", rating: null },
 		]);
 	});
 

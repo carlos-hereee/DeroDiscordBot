@@ -414,7 +414,7 @@ export const generalEventsCopy: IPluginCopy = {
 						"`/account view:levels`",
 						"See who is most active in the server, this week, this month, or all time.",
 						"`/rating`",
-						"Your arcade rating in Hold'em, Battleship and Monopoly, the server's best, and the luckiest players.",
+						"Your arcade rating in Hold'em, Battleship, Monopoly and Blackjack, the server's best, and the luckiest players.",
 						"`/account view:achievements`",
 						"What you have unlocked and what is closest. A few stay hidden until you earn them.",
 					].join("\n"),
@@ -543,7 +543,7 @@ export const generalEventsCopy: IPluginCopy = {
 		arcadeRules: {
 			title: "📋 Arcade rules",
 			description:
-				"Every game in this arcade is free and open to everyone, and every one starts from 🕹️games. These are the rules each match follows.",
+				"Every game in this arcade is open to everyone, and every one starts from 🕹️games. Only a ranked match ever costs chips. These are the rules each match follows.",
 
 			roomTitle: "🏛️ How a room works",
 			roomBody:
@@ -572,13 +572,27 @@ export const generalEventsCopy: IPluginCopy = {
 
 			ratingsTitle: "🏆 Ratings and the luck board",
 			ratingsBody: (provisionalGames: number, minRatedHands: number, luckMinDecided: number): string =>
-				"Only games of skill are rated: Texas Hold'em, Battleship and Monopoly. Every finished match moves each player's **rating**, " +
+				"Only games of skill are rated: Texas Hold'em, Battleship, Monopoly and Blackjack. Every finished match moves each player's **rating**, " +
 				`and a rating from fewer than ${provisionalGames} rated matches shows a **?** while it settles. ` +
 				`A Hold'em table counts once ${minRatedHands} hands are dealt, running out of time in Battleship counts as a loss, and a room closed as abandoned moves no rating. ` +
-				"Blackjack is played against the dealer and hangman together, so neither is rated.\n\n" +
+				"A Blackjack table is rated against the dealer: finish above your buy in and you beat the house, level with it is a draw, below it a loss. Hangman is played together, so it is never rated.\n\n" +
 				"Coin flip, dice roll and rock paper scissors are games of chance and are never rated. " +
 				`Played against another member, they count toward this month's luck board instead, scored by wins above an even split, and a member shows up there from ${luckMinDecided} decided games. ` +
 				"`/rating me` shows yours, `/rating board` the top players here in one game, and `/rating luck` the luckiest.",
+
+			chipsTitle: "🪙 Chips only move in ranked matches",
+			chipsBody:
+				"A **Rated** Hold'em or Blackjack table plays for a chip buy in from your wallet, and every chip it holds goes back to your wallet when you leave or the table ends. " +
+				"A **Casual** match never takes or pays a single chip: it plays with pretend chips that disappear when it ends, and so does a network table, a table with Dero bots, and a Blackjack table against Dero alone. " +
+				"Leaving a Blackjack table cashes out your stack, and a bet already in play is lost.",
+
+			houseRulesTitle: "📜 House rules",
+			houseRulesBody: (cutCardPercent: number): string =>
+				"**Monopoly:** the host rolls first, and a player bankrupt to the bank returns every lot unowned, with no auction. " +
+				"**Battleship:** the host fires first. " +
+				"**Hangman:** guess single letters only, never the whole word. " +
+				"**Coin flip:** nobody calls it; heads is the challenger. " +
+				`**Blackjack:** US rules. The dealer peeks for blackjack before anyone acts, and a cut card reshuffles the shoe once about ${cutCardPercent} percent of it is dealt.`,
 
 			voteButtonLabel: "Don't see your favorite game?",
 		},
@@ -591,7 +605,7 @@ export const generalEventsCopy: IPluginCopy = {
 		// Same one line shape as rok-commander's, plain voice.
 		arcadeRatedChallenges: {
 			title: "🏆 Rated Challenges",
-			description: "Hold'em, Battleship and Monopoly challenges show up here, each with its badge: **RATED** counts toward `/rating`, **CASUAL** does not. Start one from 🕹️games.",
+			description: "Hold'em, Battleship, Monopoly and Blackjack challenges show up here, each with its badge: **RATED** counts toward `/rating` and plays for chips, **CASUAL** does neither. Start one from 🕹️games.",
 		},
 
 		// Same two message structure as rok-commander's, plain voice.
@@ -945,7 +959,7 @@ export const generalEventsCopy: IPluginCopy = {
 		public: {
 			title: "⚔️ THE VERSE AWAKENS",
 			description:
-				"Warriors.\n\nMuch arrives at once. I have been busy.\n\n**Renown.** The realm now keeps score. Speak in the halls, answer a comrade with a reaction, sit in an approved war room, or play a game, and you earn renown. A message or a reaction earns 1, and messages, reactions and quick games against me earn at most 50 a day, counted from midnight Central. Gather enough and you rise a level. I shall announce it here, and I shall never ping a soul doing it. A secret, since you would find it anyway: level 2, level 3, level 5, level 7, level 11. Look at those numbers until you see it.\n`/account` shows your level, your rank and your record in every game, `/account view:levels` shows who is most present, and `/account view:achievements` the honors you have claimed. The Account, Levels and Achievements buttons in #command-center show yours to you alone.\n\n**The arcade.** A new 🕹️games channel holds every game. Flip a coin, roll a die or throw rock paper scissors against me on the spot: 3 renown for a win, 1 for anything else. Hang a word alone from one of ten shelves, each word with its hint, or start a challenge for a rival. Once your rivals are gathered a room opens in the arcade for that match alone. Hangman, coin flip, dice roll, rock paper scissors, battleship and Texas Hold'em are played there, and a hangman host writes the word or lets me draw one from a shelf. When a match ends, **Rematch** starts the next one in the same room. A room left 30 minutes without a move is closed, Monopoly and hangman aside. Blackjack is dealt right where you ask for it with `/mini-game blackjack`. Every move goes into the match's record, which outlives the room.\nAt Hold'em each decision has 3 minutes on a live clock, the next hand deals itself, two timeouts in a row sit you out until you press I'm back, and **Leave table** gives up your seat and its chips whenever you choose.\nAnd **Monopoly** has arrived, for two to six, on a board of my own. You know the rules. Start a match from 🕹️games or with `/mini-game monopoly`, and settle in: a good one runs for days. `/rating` shows where you stand in Hold'em, Battleship and Monopoly.\n\n**Pictures.** Your `/account`, your level ups, the levels board, a fresh honor, a role you earn, every turn of blackjack and Hold'em, the end of a hangman or battleship match, a Monopoly trade, bid or victory, a welcome, a fortune and the challenge card now arrive as painted cards instead of lines of text. And on Mondays I send the most present among you a private card of your week.\n\n**My voice.** Where your keepers switch it on, I can speak. A Listen button on welcomes and on most fortunes reads the post aloud to you alone, or plays it in your voice call when I sit there with you. Members on my task list can give me small tasks with `/dero tell`, bring me into a voice call with `/dero join` or the Join button in 🏛️ Meeting Hall and 🎮 Arcade Lounge, and ask me for a Hold'em table, which I deal myself. When the host of a Monopoly match turns on the voice referee at its challenge card, I call the big moments out loud while I sit in a call with one of its players. Every bankruptcy, announced with the gravity it deserves. In a call I listen only to members on my task list. Their speech goes to ElevenLabs to become text, and I record and keep nothing. Anyone on the task list can send me away with `/dero leave`.\n\nWant something I do not do yet? Press the Suggestion Box below. I read every one of them, which is more than I can say for most prophecies.\n\nRise well, warriors. The scroll is open.",
+				"Warriors.\n\nMuch arrives at once. I have been busy.\n\n**Renown.** The realm now keeps score. Speak in the halls, answer a comrade with a reaction, sit in an approved war room, or play a game, and you earn renown. A message or a reaction earns 1, and messages, reactions and quick games against me earn at most 50 a day, counted from midnight Central. Gather enough and you rise a level. I shall announce it here, and I shall never ping a soul doing it. A secret, since you would find it anyway: level 2, level 3, level 5, level 7, level 11. Look at those numbers until you see it.\n`/account` shows your level, your rank and your record in every game, `/account view:levels` shows who is most present, and `/account view:achievements` the honors you have claimed. The Account, Levels and Achievements buttons in #command-center show yours to you alone.\n\n**The arcade.** A new 🕹️games channel holds every game. Flip a coin, roll a die or throw rock paper scissors against me on the spot: 3 renown for a win, 1 for anything else. Hang a word alone from one of ten shelves, each word with its hint, or start a challenge for a rival. Once your rivals are gathered a room opens in the arcade for that match alone. Hangman, coin flip, dice roll, rock paper scissors, battleship and Texas Hold'em are played there, and a hangman host writes the word or lets me draw one from a shelf. When a match ends, **Rematch** starts the next one in the same room. A room left 30 minutes without a move is closed, Monopoly and hangman aside. Blackjack is dealt right where you ask for it with `/mini-game blackjack`. Every move goes into the match's record, which outlives the room.\nAt Hold'em each decision has 3 minutes on a live clock, the next hand deals itself, two timeouts in a row sit you out until you press I'm back, and **Leave table** gives up your seat and its chips whenever you choose.\nAnd **Monopoly** has arrived, for two to six, on a board of my own. You know the rules. Start a match from 🕹️games or with `/mini-game monopoly`, and settle in: a good one runs for days. `/rating` shows where you stand in Hold'em, Battleship, Monopoly and Blackjack.\n\n**Pictures.** Your `/account`, your level ups, the levels board, a fresh honor, a role you earn, every turn of blackjack and Hold'em, the end of a hangman or battleship match, a Monopoly trade, bid or victory, a welcome, a fortune and the challenge card now arrive as painted cards instead of lines of text. And on Mondays I send the most present among you a private card of your week.\n\n**My voice.** Where your keepers switch it on, I can speak. A Listen button on welcomes and on most fortunes reads the post aloud to you alone, or plays it in your voice call when I sit there with you. Members on my task list can give me small tasks with `/dero tell`, bring me into a voice call with `/dero join` or the Join button in 🏛️ Meeting Hall and 🎮 Arcade Lounge, and ask me for a Hold'em table, which I deal myself. When the host of a Monopoly match turns on the voice referee at its challenge card, I call the big moments out loud while I sit in a call with one of its players. Every bankruptcy, announced with the gravity it deserves. In a call I listen only to members on my task list. Their speech goes to ElevenLabs to become text, and I record and keep nothing. Anyone on the task list can send me away with `/dero leave`.\n\nWant something I do not do yet? Press the Suggestion Box below. I read every one of them, which is more than I can say for most prophecies.\n\nRise well, warriors. The scroll is open.",
 		},
 		innerSanctum: {
 			title: "🏛️ THE ORACLE EXPLAINS WHAT CHANGED",

@@ -2,12 +2,16 @@ import { describe, it, expect } from "vitest";
 import {
 	displayRating,
 	fitsBand,
+	houseTablePlaces,
+	isRankedMatch,
 	isLuckGame,
 	isProvisional,
 	isRatedGame,
 	isRatedHoldemSession,
 	newRating,
+	rateAgainstHouse,
 	rateFinishingOrder,
+	rateRanks,
 	UNRATED_STANDING,
 	type RatingStanding,
 } from "./ratingEngine.js";
@@ -86,8 +90,8 @@ describe("isRatedHoldemSession", () => {
 });
 
 describe("rated and luck games", () => {
-	it("rates exactly Hold'em, Battleship and Monopoly", () => {
-		expect(["holdem", "battleship", "monopoly"].every(isRatedGame)).toBe(true);
+	it("rates exactly Hold'em, Battleship, Monopoly and Blackjack", () => {
+		expect(["holdem", "battleship", "monopoly", "blackjack"].every(isRatedGame)).toBe(true);
 		for (const game of ["coinflip", "diceroll", "rps", "hangman", "solo-blackjack", "solo-hangman"]) {
 			expect(isRatedGame(game)).toBe(false);
 		}
@@ -127,5 +131,85 @@ describe("fitsBand", () => {
 		expect(fitsBand(settled(1200), settled(1125), "tight")).toBe(true);
 		expect(fitsBand(settled(1200), settled(1276), "tight")).toBe(false);
 		expect(fitsBand(settled(1200), settled(1124), "tight")).toBe(false);
+	});
+});
+
+// ── ties and the house (2026-10 item 276, owner decision D8) ──────────────
+describe("rateRanks", () => {
+	it("moves two fresh players who tie by nothing in mu", () => {
+		const [first, second] = rateRanks([
+			{ ...newRating(), rank: 1 },
+			{ ...newRating(), rank: 1 },
+		]);
+		expect(first.mu).toBeCloseTo(newRating().mu, 6);
+		expect(second.mu).toBeCloseTo(newRating().mu, 6);
+		expect(first.sigma).toBeLessThan(newRating().sigma);
+	});
+
+	it("answers a lone entrant unchanged", () => {
+		expect(rateRanks([{ mu: 30, sigma: 4, rank: 1 }])).toEqual([{ mu: 30, sigma: 4 }]);
+	});
+});
+
+describe("houseTablePlaces", () => {
+	it("places seats by their result against their buy in, the house standing at zero", () => {
+		expect(
+			houseTablePlaces([
+				{ userId: "loser", net: -50 },
+				{ userId: "winner", net: 200 },
+				{ userId: "level", net: 0 },
+			])
+		).toEqual({
+			seats: [
+				{ userId: "winner", rank: 1 },
+				{ userId: "level", rank: 2 },
+				{ userId: "loser", rank: 3 },
+			],
+			houseRank: 2,
+		});
+	});
+
+	it("gives equal results one place, so two seats on top share first and the house sits second", () => {
+		const places = houseTablePlaces([
+			{ userId: "a", net: 100 },
+			{ userId: "b", net: 100 },
+			{ userId: "c", net: -100 },
+		]);
+		expect(places.seats.map((seat) => seat.rank)).toEqual([1, 1, 3]);
+		expect(places.houseRank).toBe(2);
+	});
+});
+
+describe("rateAgainstHouse", () => {
+	it("lifts a seat that beat the house, lowers one that lost, and answers only the seats", () => {
+		const after = rateAgainstHouse(
+			[
+				{ ...newRating(), rank: 1 },
+				{ ...newRating(), rank: 3 },
+			],
+			2
+		);
+		expect(after).toHaveLength(2);
+		expect(after[0].mu).toBeGreaterThan(newRating().mu);
+		expect(after[1].mu).toBeLessThan(newRating().mu);
+	});
+
+	// A draw still shrinks sigma, so it lifts the shown number: why a table must settle a hand to rate.
+	it("rates a lone seat that broke even as a draw with the house, which still lifts the shown number", () => {
+		const [after] = rateAgainstHouse([{ ...newRating(), rank: 1 }], 1);
+		expect(after.mu).toBeCloseTo(newRating().mu, 6);
+		expect(after.sigma).toBeLessThan(newRating().sigma);
+		expect(displayRating(after)).toBeGreaterThan(displayRating(newRating()));
+	});
+});
+
+describe("isRankedMatch", () => {
+	it("is a rated game with no Dero bot whose host did not choose Casual", () => {
+		expect(isRankedMatch("blackjack", 0, false)).toBe(true);
+		expect(isRankedMatch("holdem", 0, false)).toBe(true);
+		expect(isRankedMatch("holdem", 1, false)).toBe(false);
+		expect(isRankedMatch("holdem", 0, true)).toBe(false);
+		expect(isRankedMatch("solo-blackjack", 0, false)).toBe(false);
+		expect(isRankedMatch("hangman", 0, false)).toBe(false);
 	});
 });

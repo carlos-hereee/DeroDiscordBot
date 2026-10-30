@@ -32,16 +32,31 @@ beforeEach(() => {
 });
 
 describe("chipTableFor", () => {
+	const ranked = { guildId: "g1", game: "holdem" as const, network: false, casual: false };
+
 	it("plays for chips only in a set up server with chips on, never at a network or bot table", async () => {
 		mocks.findConfig.mockResolvedValue({ chipEconomyEnabled: true });
-		await expect(chipTableFor({ guildId: "g1", network: false }, false)).resolves.toEqual({ guildId: "g1" });
-		await expect(chipTableFor({ guildId: "g1", network: true }, false)).resolves.toBeNull();
-		await expect(chipTableFor({ guildId: "g1", network: false }, true)).resolves.toBeNull();
+		await expect(chipTableFor(ranked, 0)).resolves.toEqual({ guildId: "g1" });
+		await expect(chipTableFor({ ...ranked, network: true }, 0)).resolves.toBeNull();
+		await expect(chipTableFor(ranked, 1)).resolves.toBeNull();
 
 		mocks.findConfig.mockResolvedValue({ chipEconomyEnabled: false });
-		await expect(chipTableFor({ guildId: "g1", network: false }, false)).resolves.toBeNull();
+		await expect(chipTableFor(ranked, 0)).resolves.toBeNull();
 		mocks.findConfig.mockResolvedValue(null);
-		await expect(chipTableFor({ guildId: "g1", network: false }, false)).resolves.toBeNull();
+		await expect(chipTableFor(ranked, 0)).resolves.toBeNull();
+	});
+
+	// 2026-10 item 276, owner decision D1: chips move only in ranked matches, whatever the switch says.
+	it("plays a casual match free with chips on, Hold'em and Blackjack alike, and a solo table against Dero too", async () => {
+		mocks.findConfig.mockResolvedValue({ chipEconomyEnabled: true });
+		await expect(chipTableFor({ ...ranked, casual: true }, 0)).resolves.toBeNull();
+		await expect(chipTableFor({ ...ranked, game: "blackjack" }, 0)).resolves.toEqual({ guildId: "g1" });
+		await expect(chipTableFor({ ...ranked, game: "blackjack", casual: true }, 0)).resolves.toBeNull();
+		await expect(chipTableFor({ ...ranked, game: "solo-blackjack" }, 0)).resolves.toBeNull();
+		// A casual match never reads the switch at all.
+		mocks.findConfig.mockClear();
+		await chipTableFor({ ...ranked, casual: true }, 0);
+		expect(mocks.findConfig).not.toHaveBeenCalled();
 	});
 });
 

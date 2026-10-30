@@ -5,6 +5,7 @@ import { generalEventsCopy } from "@base/copy/packs/general-events.pack.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { CHALLENGE_GAMES } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { LUCK_GAMES, RATED_GAMES, type LuckGame, type RatedGame } from "@features/ratings/ratingEngine.js";
+import { CUT_CARD_PENETRATION } from "@features/games/blackjackState.js";
 
 // ── the 🎮 ARCADE GAMES cards ──────────────────────────────────────────────
 // Since 2026-10 item 245 Phase 4a the arcade has three cards with three jobs:
@@ -20,10 +21,17 @@ describe("arcadeRulesIntro", () => {
 	const embed = ChannelContent.arcadeRulesIntro();
 	const c = rokCommanderCopy.channelContent.arcadeRules;
 
-	it("holds exactly the six rules, in the order a newcomer meets them", () => {
+	it("holds exactly the eight rules, in the order a newcomer meets them", () => {
 		// What a room is, how many a host may hold, what closes one, what follows one,
-		// what any of it earns, and which games are rated.
-		expect(fields(embed).map((f) => f.name)).toEqual([c.roomTitle, c.slotTitle, c.idleTitle, c.rematchTitle, c.xpTitle, c.ratingsTitle]);
+		// what any of it earns, which games are rated, where chips ride (2026-10 item 276,
+		// decision D1), and the house rules where the arcade departs from the printed ones.
+		expect(fields(embed).map((f) => f.name)).toEqual([c.roomTitle, c.slotTitle, c.idleTitle, c.rematchTitle, c.xpTitle, c.ratingsTitle, c.chipsTitle, c.houseRulesTitle]);
+	});
+
+	it("fits Discord's limits: every field under 1024 and the whole card under 6000", () => {
+		for (const field of fields(embed)) expect(field.value.length, field.name).toBeLessThanOrEqual(1024);
+		const total = (embed.data.title ?? "").length + (embed.data.description ?? "").length + fields(embed).reduce((sum, f) => sum + f.name.length + f.value.length, 0);
+		expect(total).toBeLessThanOrEqual(6000);
 	});
 
 	it("carries no game roster, because the roster lives in 🕹️games", () => {
@@ -53,6 +61,7 @@ describe("the rules card's ratings field", () => {
 		holdem: "hold'em",
 		battleship: "battleship",
 		monopoly: "monopoly",
+		blackjack: "blackjack",
 		coinflip: "coin flip",
 		diceroll: "dice roll",
 		rps: "rock paper scissors",
@@ -64,6 +73,22 @@ describe("the rules card's ratings field", () => {
 	];
 
 	for (const { name, config, pack } of packs) {
+		const card = fields(ChannelContent.arcadeRulesIntro(config));
+		const chips = card.find((f) => f.name === pack.channelContent.arcadeRules.chipsTitle)?.value ?? "";
+		const houseRules = card.find((f) => f.name === pack.channelContent.arcadeRules.houseRulesTitle)?.value ?? "";
+
+		it(`says chips ride only on a Rated match and a Casual one plays free (${name})`, () => {
+			expect(chips).toContain("**Rated** Hold'em or Blackjack table plays for a chip buy in");
+			expect(chips).toContain("**Casual** match never takes or pays a single chip");
+			expect(chips).toContain("Leaving a Blackjack table cashes out your stack");
+		});
+
+		it(`states every house rule, the cut card at the share the engine runs (${name})`, () => {
+			for (const game of ["**Monopoly:**", "**Battleship:**", "**Hangman:**", "**Coin flip:**", "**Blackjack:**"]) expect(houseRules).toContain(game);
+			expect(houseRules).toContain(`about ${Math.round(CUT_CARD_PENETRATION * 100)} percent`);
+			expect(houseRules).toContain("peeks for blackjack");
+		});
+
 		const ratings = fields(ChannelContent.arcadeRulesIntro(config)).find((f) => f.name === pack.channelContent.arcadeRules.ratingsTitle)?.value ?? "";
 
 		it(`names every rated game and every luck game (${name})`, () => {
@@ -155,7 +180,7 @@ describe("both packs describe the same arcade", () => {
 	it("renders every card in the neutral voice too", () => {
 		const neutral = { pluginId: "general-events" } as never;
 		expect(ChannelContent.arcadeRulesIntro(neutral).data.title).toBe(generalEventsCopy.channelContent.arcadeRules.title);
-		expect(fields(ChannelContent.arcadeRulesIntro(neutral))).toHaveLength(6);
+		expect(fields(ChannelContent.arcadeRulesIntro(neutral))).toHaveLength(8);
 		expect(ChannelContent.arcadeGamesIntro(neutral).data.title).toBe(generalEventsCopy.channelContent.arcadeGames.title);
 		expect(ChannelContent.arcadeGamesBoard(neutral).data.title).toBe(generalEventsCopy.channelContent.arcadeGames.boardTitle);
 		expect(ChannelContent.arcadeChallengesIntro(neutral).data.title).toBe(generalEventsCopy.channelContent.arcadeChallenges.title);

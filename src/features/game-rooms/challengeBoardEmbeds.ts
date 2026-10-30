@@ -10,11 +10,12 @@ import { infoEmbed } from "@utils/embedBuilder.js";
 import { COLORS } from "@base/copy/brand.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import { bandWidth, isRatedGame } from "@features/ratings/ratingEngine.js";
+import { bandWidth, isRankedMatch, isRatedGame } from "@features/ratings/ratingEngine.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import type { CardVoiceState } from "./cardVoiceState.js";
 import { countdownSeconds } from "./startCountdownState.js";
+import { movesChips } from "./chipMatch.js";
 import { isBuyInGame, type GameSlug, type RatingBand, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
 import type { SoloLuckGame } from "@features/games/soloLuck.js";
 
@@ -121,7 +122,7 @@ export type ChallengeBadge = "rated" | "casual";
  * badge later says (a card from before the creation modal can still seat a Dero bot).
  */
 export function challengeBadge(game: GameSlug, botCount: number, casual = false): ChallengeBadge {
-	return isRatedGame(game) && botCount === 0 && !casual ? "rated" : "casual";
+	return isRankedMatch(game, botCount, casual) ? "rated" : "casual";
 }
 
 /** The badge of one card state: its game, the bots the host seated and the host's Casual choice. */
@@ -305,10 +306,11 @@ function settingsLine(state: OpenerCardState): string {
 	return `${summaryWords.lead} ${parts.join(" · ")}`;
 }
 
-// A Hold'em or Blackjack card names the buy in wherever a table could play for chips: not on a
-// network table (its seats come from other servers) and not with a Dero bot seat (it plays free).
+// A Hold'em or Blackjack card names the buy in wherever its table could play for chips, by the
+// one chip rule (chipMatch.movesChips): a ranked match, not a network table and no Dero bot seat.
+// A casual card names none, because it plays free (2026-10 item 276, owner decision D1).
 function showsBuyIn(state: OpenerCardState): boolean {
-	return isBuyInGame(state.game) && !state.network && (state.bots?.count ?? 0) === 0;
+	return isBuyInGame(state.game) && movesChips({ game: state.game, network: state.network ?? false, casual: state.casual ?? false }, state.bots?.count ?? 0);
 }
 
 function buyInLines(state: OpenerCardState): string[] {

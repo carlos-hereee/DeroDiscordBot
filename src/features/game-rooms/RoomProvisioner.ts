@@ -564,7 +564,7 @@ export async function seedRoom(input: RoomSeedInput): Promise<SeededRoom | null>
 		// would otherwise seat a free table's players on chip stacks nobody paid for, and the end
 		// of the table would pay those stacks out of nothing. Only a table with no card's seats
 		// (the rules card, a rematch's joining table) decides here, where its players buy in.
-		const chips = seats ? (seats.charged ? tableChipsOf(room.guildId) : null) : await chipTableFor(room, botIds.length > 0);
+		const chips = seats ? (seats.charged ? tableChipsOf(room.guildId) : null) : await chipTableFor(room, botIds.length);
 		if (chips) table.chips = chips;
 		// Everyone the card seated sits down: at a chip table at the buy in they paid, at a free
 		// one on the standard stack.

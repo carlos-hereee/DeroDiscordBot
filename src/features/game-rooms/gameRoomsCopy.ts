@@ -1,7 +1,7 @@
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { STARTING_CHIPS } from "@features/games/monopolyBoard.js";
 import type { BuildingKind } from "@features/games/monopolyState.js";
-import type { GameSlug, RoomVisibility, SpectatorMode } from "./roomTypes.js";
+import { isBuyInGame, type GameSlug, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import type { FlavorTable } from "./matchOutcome.js";
 // Aliased: Monopoly's copy below names its own parameters `chips`.
@@ -608,10 +608,20 @@ export const gameRoomsCopy = {
 			watch: { label: "Who may watch" },
 			match: {
 				label: "The match",
-				ratedAny: { label: "Rated, any rating", description: (channelName: string): string => `Counts toward /rating. Posts in ${channelName}.` },
+				// A buy in game (Hold'em, Blackjack) says what the match does with chips, since only a
+				// Rated match charges its buy in (2026-10 item 276, owner decision D1).
+				ratedAny: {
+					label: "Rated, any rating",
+					description: (channelName: string, forChips: boolean): string =>
+						forChips ? `Counts toward /rating and plays for the chip buy in. Posts in ${channelName}.` : `Counts toward /rating. Posts in ${channelName}.`,
+				},
 				ratedClose: { label: "Rated, close ratings", description: (width: number): string => `Only ratings within ${width} of yours may join.` },
 				ratedTight: { label: "Rated, tight ratings", description: (width: number): string => `Only ratings within ${width} of yours may join.` },
-				casual: { label: "Casual", description: (channelName: string): string => `Not rated. Posts in ${channelName}.` },
+				casual: {
+					label: "Casual",
+					description: (channelName: string, forChips: boolean): string =>
+						forChips ? `Not rated, free, played with pretend chips. Posts in ${channelName}.` : `Not rated. Posts in ${channelName}.`,
+				},
 				// One option per bot count (2026-10 item 267, decision 9), labelled from the count.
 				casualBots: {
 					label: (count: number): string => `Casual, ${count === 1 ? "1 Dero bot" : `${count} Dero bots`}`,
@@ -619,7 +629,7 @@ export const gameRoomsCopy = {
 				},
 			},
 			buyIn: {
-				label: "Buy in (chips)",
+				label: "Buy in (chips, Rated matches only)",
 				placeholder: (min: number, max: number, standard: number): string =>
 					`${min.toLocaleString("en-US")} to ${max.toLocaleString("en-US")}, blank for ${standard.toLocaleString("en-US")}`,
 			},
@@ -746,8 +756,11 @@ export const gameRoomsCopy = {
 		// the one helper that decides it. Hold'em says when a table starts to count, because
 		// a short table is recorded and never rated (ratingEngine.isRatedHoldemSession).
 		badgeLine: (badge: "rated" | "casual", game: GameSlug): string => {
-			if (badge === "casual") return "🎲 **CASUAL** · not rated";
+			// A casual Hold'em or Blackjack card charges no buy in (2026-10 item 276, decision D1).
+			if (badge === "casual") return isBuyInGame(game) ? "🎲 **CASUAL** · not rated, plays free" : "🎲 **CASUAL** · not rated";
 			if (game === "holdem") return `🏆 **RATED** · counts once the table has played ${BOT_CONSTANTS.RATINGS.HOLDEM_MIN_RATED_HANDS} hands`;
+			// Blackjack is rated against the house (2026-10 item 276, owner decision D8).
+			if (game === "blackjack") return "🏆 **RATED** · plays for chips, each seat rated against the house";
 			return "🏆 **RATED** · counts toward `/rating`";
 		},
 

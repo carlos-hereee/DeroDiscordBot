@@ -153,7 +153,7 @@ describe("serverBoard", () => {
 		mocks.allConsenting.mockClear();
 		mocks.ratingsOf.mockClear();
 		const boards = await serverBoardsByGame(clientWithPlayers(Object.fromEntries(players.map((id) => [id, wearing]))));
-		expect([...boards.keys()]).toEqual(["holdem", "battleship", "monopoly"]);
+		expect([...boards.keys()]).toEqual(["holdem", "battleship", "monopoly", "blackjack"]);
 		expect(boards.get("holdem")).toEqual([{ guildId: TAGGED, name: "Tagged", tag: "TG", rating: 1100, members: MIN }]);
 		expect(boards.get("battleship")).toEqual([]);
 		expect(mocks.allConsenting).toHaveBeenCalledOnce();

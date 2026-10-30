@@ -103,7 +103,7 @@ describe("runMonthlyArcadePost", () => {
 		expect(fetchChannel).toHaveBeenCalledWith("lb-1");
 		expect(mocks.topWinningHands).toHaveBeenCalledWith(expect.objectContaining({ guildId: "g1", month: "2026-10", limit: 3 }));
 		// Every rated game is read for October's players only.
-		expect(mocks.topRatedInGuild).toHaveBeenCalledTimes(3);
+		expect(mocks.topRatedInGuild).toHaveBeenCalledTimes(4);
 		expect(mocks.topRatedInGuild).toHaveBeenCalledWith(
 			expect.objectContaining({ finishedBetween: { start: new Date("2026-10-01T00:00:00Z"), end: new Date("2026-11-01T00:00:00Z") } })
 		);

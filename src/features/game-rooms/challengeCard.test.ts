@@ -68,20 +68,20 @@ describe("resolveChallengesChannel", () => {
 
 	const BOTH = { arcadeChallengesChannelId: "challenges-1", arcadeRatedChallengesChannelId: "rated-1" };
 
-	it.each(["holdem", "battleship", "monopoly"] as const)("posts a rated game's card (%s) in 🏆rated-challenges", async (game) => {
+	it.each(["holdem", "battleship", "monopoly", "blackjack"] as const)("posts a rated game's card (%s) in 🏆rated-challenges", async (game) => {
 		configMock.findByGuildId.mockResolvedValue(BOTH);
 		const channel = await resolveChallengesChannel(guildWith({ "challenges-1": textChannel("challenges-1"), "rated-1": textChannel("rated-1") }), game);
 		expect(channel?.id).toBe("rated-1");
 	});
 
-	it.each(["coinflip", "diceroll", "rps", "hangman", "blackjack"] as const)("keeps %s, which is not rated, in ⚔️challenges", async (game) => {
+	it.each(["coinflip", "diceroll", "rps", "hangman"] as const)("keeps %s, which is not rated, in ⚔️challenges", async (game) => {
 		configMock.findByGuildId.mockResolvedValue(BOTH);
 		const channel = await resolveChallengesChannel(guildWith({ "challenges-1": textChannel("challenges-1"), "rated-1": textChannel("rated-1") }), game);
 		expect(channel?.id).toBe("challenges-1");
 	});
 
 	// Owner decision 8 (2026-10 item 263 R3-5): the channel is the game's AND the match's.
-	it.each(["holdem", "battleship", "monopoly"] as const)("posts a casual %s card in ⚔️challenges", async (game) => {
+	it.each(["holdem", "battleship", "monopoly", "blackjack"] as const)("posts a casual %s card in ⚔️challenges", async (game) => {
 		configMock.findByGuildId.mockResolvedValue(BOTH);
 		const channel = await resolveChallengesChannel(guildWith({ "challenges-1": textChannel("challenges-1"), "rated-1": textChannel("rated-1") }), game, true);
 		expect(channel?.id).toBe("challenges-1");

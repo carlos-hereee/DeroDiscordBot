@@ -69,7 +69,7 @@ describe("ratingDistribution", () => {
 describe("gameSpreads", () => {
 	it("answers every rated game in order, a game nobody plays with no players and no buckets", () => {
 		const spreads = gameSpreads([rating("a", "holdem", 1010), rating("b", "holdem", 1190), rating("a", "monopoly", 950)]);
-		expect(spreads.map((spread) => spread.game)).toEqual(["holdem", "battleship", "monopoly"]);
+		expect(spreads.map((spread) => spread.game)).toEqual(["holdem", "battleship", "monopoly", "blackjack"]);
 		expect(spreads[0]).toEqual({ game: "holdem", players: 2, distribution: [{ bucket: 1000, count: 1 }, { bucket: 1100, count: 1 }] });
 		expect(spreads[1]).toEqual({ game: "battleship", players: 0, distribution: [] });
 		expect(spreads[2]).toEqual({ game: "monopoly", players: 1, distribution: [{ bucket: 900, count: 1 }] });
@@ -108,7 +108,7 @@ describe("buildPlatformRatings", () => {
 		expect(mocks.allConsenting).toHaveBeenCalledWith(BOT_CONSTANTS.NETWORK.CONSENT_VERSION);
 		expect(mocks.ratingsOf).toHaveBeenCalledWith(["a", "b"]);
 		expect(mocks.boards).toHaveBeenCalledWith(client);
-		expect(block.games.map((spread) => spread.players)).toEqual([1, 1, 0]);
+		expect(block.games.map((spread) => spread.players)).toEqual([1, 1, 0, 0]);
 		expect(block.servers).toEqual([{ guildName: "Fleet", tag: "FLT", game: "battleship", rating: 1210 }]);
 	});
 
