@@ -17,9 +17,10 @@ import { isBuyInGame } from "./roomTypes.js";
 //        host sets the amount on the draft, every joiner pays it from their wallet when they
 //        press Join (or an invited member's Accept and buy in), and whoever the host declines
 //        or removes, or a cancelled draft, gets it back. The room then opens with those seats
-//        already paid. A solo Blackjack table pays the standard buy in at the press instead
-//        (chargeSoloTable), and a Blackjack rematch charges every returning player again
-//        (chargeSeats). The file keeps its Hold'em name because Hold'em is where it started.
+//        already paid. A solo Blackjack table against Dero is never ranked, so since 2026-10
+//        item 276 (owner decision D1) it plays free on the standard pretend stack and its press
+//        takes nothing (chargeSoloTable asks the one chip rule), and a Blackjack rematch charges
+//        every returning player again (chargeSeats). The file keeps its Hold'em name because Hold'em is where it started.
 // Who:   challengeBoard (the host's press and its modal, the Join charge, an invited member's
 //        Accept and buy in, the cancel refund, the seats at Start, a rematch's charge),
 //        hostControls (decline and remove refunds), RoomProvisioner (seating a paid Hold'em

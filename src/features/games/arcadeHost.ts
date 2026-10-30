@@ -156,9 +156,11 @@ export async function openSoloRoomForMember(
 		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [describeSoloOpenFailure(refusal)] });
 		return;
 	}
-	// A solo Blackjack table plays for a buy in (2026-10 item 267), taken here, LAST before the
-	// acknowledgement, so a short wallet is still a notice at the press and opens nothing.
-	// openSoloRoom owns the chips from here: it gives them back if the room does not open.
+	// A solo Blackjack table's seats, asked here through the one chip rule (chargeSoloTable), LAST
+	// before the acknowledgement. A solo table is never ranked, so since 2026-10 item 276 (owner
+	// decision D1) the rule answers free seats on the standard stack and takes nothing; kept on
+	// the rule so a refusal would still be a notice at the press, and openSoloRoom would own any
+	// chips it took and give them back if the room does not open.
 	const blackjackCharge = game === "solo-blackjack" ? await chargeSoloTable(guild.id, interaction.user.id) : null;
 	if (blackjackCharge && !blackjackCharge.ok) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [blackjackCharge.reason] });
