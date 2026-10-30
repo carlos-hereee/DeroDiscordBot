@@ -15,6 +15,7 @@ import {
 } from "./roomBattleship.js";
 import { createTable as createHoldemTable, joinTable as joinHoldemTable, setBuyIn as setHoldemBuyIn, type HoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
 import { refundSeatsDirectly, seatsAtClaim, type PaidSeats } from "./holdemDraftBuyIn.js";
+import { openChipPot } from "./chipPot.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
 import { dealOpeningHand } from "./roomHoldemHandlers.js";
@@ -195,11 +196,12 @@ export interface RoomOpenInput {
 	// asked for a table and confirmed its terms). Absent everywhere else, which
 	// opens the standard table exactly as before. Ignored for every other game.
 	holdemTerms?: HoldemTerms;
-	// Who sits down as a Hold'em or Blackjack table opened from a challenge card opens, host
-	// first (2026-10 item 263 R3-27): the payers at a chip table, every pool member at a free
-	// one, as settleDraftBuyIns answered at Start. seedRoom reconciles them with the buy in
-	// ledger at the start claim (2026-10 item 276, P2-13). Present only for a card's table;
-	// absent (the rules card, a rematch) opens Hold'em's joining table.
+	// Who sits down as a match opened from a challenge card opens, host first (2026-10 item 263
+	// R3-27): the payers at a chip match, every pool member at a free one, as settleDraftBuyIns
+	// answered at Start. seedRoom reconciles them with the buy in ledger at the start claim
+	// (2026-10 item 276, P2-13), and a ranked Monopoly or Battleship match opens its pot from
+	// them (chipPot.openChipPot, D4 and D10). Absent (the rules card, a rematch) opens Hold'em's
+	// joining table and gives any other game no pot.
 	draftSeats?: PaidSeats;
 	// The voice referee the row opens with, written on the new row (absent writes null, which
 	// roomTypes.refereeOn reads as the game's default). Only Dero's rules card sets it, false,
@@ -541,6 +543,10 @@ export async function seedRoom(input: RoomSeedInput): Promise<SeededRoom | null>
 	// for its game closes at once, rather than throwing in the game's engine on a row already
 	// playing, which no sweep could find (audit P1-5).
 	const playerIds = await dropUnseatedPlayers(channel, input.playerIds, beforeClaim.playerIds ?? input.playerIds);
+	// A ranked Monopoly or Battleship match's pot (2026-10 item 276, D4 and D10), from the seats the
+	// claim left and the players it seated, BEFORE the seat check below: a room that closes at
+	// once then gives every buy in back through the same finish that pays a played match.
+	if (seats) await openChipPot(room, seats, playerIds);
 	if (!seatsFit(game, playerIds.length + botIds.length)) {
 		await roomLifecycle.finish(guild.client, started ?? { ...beforeClaim, status: "playing" }, { abandoned: true });
 		return null;

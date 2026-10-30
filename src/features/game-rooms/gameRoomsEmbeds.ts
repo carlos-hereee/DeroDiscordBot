@@ -97,16 +97,17 @@ export function roomOpenerLogo(game: GameSlug): { attachment: AttachmentBuilder;
 // posted once, so it earns the weight.
 // archiveDelayMs is the window finish stamped, so the notice names it; absent is the
 // ordinary room's window.
-export function roomResultEmbed(winnerId: string | null, abandoned = false, imageRef?: string, archiveDelayMs?: number): EmbedBuilder {
+export function roomResultEmbed(winnerId: string | null, abandoned = false, imageRef?: string, archiveDelayMs?: number, prizeLine?: string | null): EmbedBuilder {
 	const outcome = abandoned
 		? gameRoomsCopy.result.abandonedLine
 		: winnerId
 		  ? gameRoomsCopy.result.winnerLine(winnerId)
 		  : gameRoomsCopy.result.noWinnerLine;
 
+	// A ranked Monopoly or Battleship match says what its pot paid under the outcome (2026-10 item 276, D4).
 	const embed = infoEmbed(
 		gameRoomsCopy.result.title,
-		[outcome, "", gameRoomsCopy.result.archiveNotice(archiveDelayMs)].join("\n"),
+		[outcome, ...(prizeLine ? [prizeLine] : []), "", gameRoomsCopy.result.archiveNotice(archiveDelayMs)].join("\n"),
 		COLORS.ARCADE as ColorResolvable
 	);
 

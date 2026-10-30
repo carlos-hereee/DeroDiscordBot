@@ -4,13 +4,15 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { parseChipAmount, returnChips, takeChips } from "@features/economy/chipWallet.js";
 import { chipTableFor } from "./holdemChips.js";
+import { stakeOf } from "./chipMatch.js";
 import { GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isBuyInGame } from "./roomTypes.js";
 
 // ── holdemDraftBuyIn ─────────────────────────────────────────────────
-// What:  the buy in of a chip table, for BOTH Hold'em (2026-10 item 257 Phase 4a, owner item
-//        13) and Blackjack (2026-10 item 267, owner decision 6), keyed by the room's game: the
+// What:  the buy in of a chip match, for Hold'em (2026-10 item 257 Phase 4a, owner item 13),
+//        Blackjack (2026-10 item 267, owner decision 6), and ranked Monopoly's fixed buy in and
+//        Battleship's wager (2026-10 item 276, D4 and D10), keyed by the room's game: the
 //        host sets the amount on the draft, every joiner pays it from their wallet when they
 //        press Join (or an invited member's Accept and buy in), and whoever the host declines
 //        or removes, or a cancelled draft, gets it back. The room then opens with those seats
@@ -36,13 +38,24 @@ import { isBuyInGame } from "./roomTypes.js";
 /** The two fields of the buy in modal: the preset select and the typed amount. */
 export const BUY_IN_FIELDS = { preset: "preset", custom: "custom" } as const;
 
-/** The buy in a draft will charge: what the host set, or the standard stack. */
-export const draftBuyInOf = (room: Pick<IGameRoom, "holdemBuyIn">): number => room.holdemBuyIn ?? BOT_CONSTANTS.HOLDEM_STARTING_STACK;
+/**
+ * The buy in a draft will charge, by the one stake rule (chipMatch.stakeOf): what the host set,
+ * the standard stack, Monopoly's fixed buy in or Battleship's wager. A Battleship card with no
+ * wager charges nobody (isChipDraft is false), so the standard stack it answers is never taken.
+ */
+export const draftBuyInOf = (room: Pick<IGameRoom, "game" | "holdemBuyIn">): number => stakeOf(room)?.amount ?? BOT_CONSTANTS.HOLDEM_STARTING_STACK;
 
-/** Whether a buy in amount is one the host may set: a whole number of chips inside the table's bounds. */
-export function isValidDraftBuyIn(amount: number): boolean {
+/** The bounds a host's stake must sit inside: Battleship's wager, or a table's buy in. */
+export function stakeBoundsOf(game: IGameRoom["game"]): { min: number; max: number } {
 	const economy = BOT_CONSTANTS.ECONOMY;
-	return Number.isSafeInteger(amount) && amount >= economy.HOLDEM_MIN_BUY_IN && amount <= economy.HOLDEM_MAX_BUY_IN;
+	if (game === "battleship") return { min: economy.BATTLESHIP_MIN_WAGER, max: economy.BATTLESHIP_MAX_WAGER };
+	return { min: economy.HOLDEM_MIN_BUY_IN, max: economy.HOLDEM_MAX_BUY_IN };
+}
+
+/** Whether a buy in amount is one the host may set: a whole number of chips inside the game's bounds. */
+export function isValidDraftBuyIn(amount: number, game: IGameRoom["game"] = "holdem"): boolean {
+	const { min, max } = stakeBoundsOf(game);
+	return Number.isSafeInteger(amount) && amount >= min && amount <= max;
 }
 
 /**
@@ -51,7 +64,17 @@ export function isValidDraftBuyIn(amount: number): boolean {
  * Dero bot seat, so a casual card charges nobody (2026-10 item 276, owner decision D1). Read
  * fresh on every charge, so an admin switching chips off mid draft stops charging joiners at once.
  */
-export async function isChipDraft(room: Pick<IGameRoom, "game" | "guildId" | "network" | "botSeats" | "casual">): Promise<boolean> {
+export async function isChipDraft(room: Pick<IGameRoom, "game" | "guildId" | "network" | "botSeats" | "casual" | "holdemBuyIn">): Promise<boolean> {
+	if (stakeOf(room) === null) return false;
+	return playsForChips(room);
+}
+
+/**
+ * Whether this draft's match moves chips at all, before asking what it stakes: the question a
+ * host setting a stake needs answered, since a ranked Battleship card stakes nothing until its
+ * wager is set (2026-10 item 276, D10) and must still accept one.
+ */
+export async function playsForChips(room: Pick<IGameRoom, "game" | "guildId" | "network" | "botSeats" | "casual">): Promise<boolean> {
 	if (!isBuyInGame(room.game)) return false;
 	return (await chipTableFor(room, room.botSeats ?? 0)) !== null;
 }
@@ -113,7 +136,7 @@ export async function chargeJoiner(room: IGameRoom, userId: string): Promise<str
  * row first, so a member listed twice, or a decline racing a cancel, is paid once. Never
  * throws: a refund is a side effect of the decision that triggered it.
  */
-export async function refundJoiners(room: Pick<IGameRoom, "guildId" | "roomId" | "holdemBuyIn">, userIds: readonly string[]): Promise<void> {
+export async function refundJoiners(room: Pick<IGameRoom, "guildId" | "roomId" | "game" | "holdemBuyIn">, userIds: readonly string[]): Promise<void> {
 	const buyIn = draftBuyInOf(room);
 	for (const userId of new Set(userIds)) {
 		try {
@@ -126,7 +149,7 @@ export async function refundJoiners(room: Pick<IGameRoom, "guildId" | "roomId" |
 }
 
 /** Refund everybody the draft still holds a buy in for: a cancelled or replaced draft. */
-export async function refundAllJoiners(room: Pick<IGameRoom, "guildId" | "roomId" | "holdemBuyIn" | "buyInPaidBy">): Promise<void> {
+export async function refundAllJoiners(room: Pick<IGameRoom, "guildId" | "roomId" | "game" | "holdemBuyIn" | "buyInPaidBy">): Promise<void> {
 	await refundJoiners(room, room.buyInPaidBy ?? []);
 }
 
@@ -168,14 +191,29 @@ export async function seatsAtStart(room: IGameRoom, pool: readonly string[]): Pr
  * ⚠️ A FREE TABLE STILL SEATS EVERYBODY (2026-10 item 263 risk R8). This used to answer no seats
  * when the draft was not a chip draft, and isChipDraft is false whenever a bot sits, so a card
  * with Dero bots opened with the bots alone and the host unseated.
+ *
+ * The pool is who the match seats beside the host: the whole pool at a table or a Monopoly match,
+ * the chosen opponent alone in Battleship, so every other payer on a wager card is given their
+ * wager back. everyonePays refuses the start, before the host is charged, when one of them has
+ * not paid: a Battleship captain who never paid would otherwise sit at a match whose pot holds
+ * the host's wager alone (2026-10 item 276, D10).
  */
-export async function settleDraftBuyIns(room: IGameRoom, pool: readonly string[]): Promise<{ ok: true; seats: PaidSeats | null } | { ok: false; reason: string }> {
+export async function settleDraftBuyIns(
+	room: IGameRoom,
+	pool: readonly string[],
+	options: { everyonePays?: boolean } = {}
+): Promise<{ ok: true; seats: PaidSeats | null } | { ok: false; reason: string }> {
 	if (!isBuyInGame(room.game)) return { ok: true, seats: null };
 	const buyIn = draftBuyInOf(room);
 	if (!(await isChipDraft(room))) {
 		await refundAllJoiners(room);
 		const members = pool.filter((userId) => userId !== room.hostId);
 		return { ok: true, seats: { buyIn, userIds: [room.hostId, ...members], charged: false } };
+	}
+	if (options.everyonePays) {
+		const paid = new Set(room.buyInPaidBy ?? []);
+		const unpaid = pool.find((userId) => userId !== room.hostId && !paid.has(userId));
+		if (unpaid) return { ok: false, reason: gameRoomsCopy.holdem.opponentNotPaid(unpaid, buyIn) };
 	}
 	if (!(await takeChips({ userId: room.hostId }, buyIn))) return { ok: false, reason: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
 

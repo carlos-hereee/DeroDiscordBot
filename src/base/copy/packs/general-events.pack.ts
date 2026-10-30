@@ -581,8 +581,11 @@ export const generalEventsCopy: IPluginCopy = {
 				"`/rating me` shows yours, `/rating board` the top players here in one game, and `/rating luck` the luckiest.",
 
 			chipsTitle: "🪙 Chips only move in ranked matches",
-			chipsBody:
-				"A **Rated** Hold'em or Blackjack table plays for a chip buy in from your wallet, and every chip it holds goes back to your wallet when you leave or the table ends. " +
+			chipsBody: (monopolyBuyIn: string): string =>
+				"A **Rated** Hold'em or Blackjack table plays for a chip buy in from your wallet, and every chip a table holds goes back to the wallets when it ends. " +
+				`A **Rated** Monopoly match costs each player ${monopolyBuyIn} and the winner takes the whole pot. Monopoly money stays on the board and never becomes chips. ` +
+				"A **Rated** Battleship challenge can carry a chip wager both captains pay, and the winner takes both. " +
+				"Once a ranked Hold'em, Monopoly or Battleship match begins, a player who leaves, surrenders, is removed, times out of it or leaves the server forfeits their chips to the winner, and Dero shows the amount before you confirm. " +
 				"A **Casual** match never takes or pays a single chip: it plays with pretend chips that disappear when it ends, and so does a network table, a table with Dero bots, and a Blackjack table against Dero alone. " +
 				"Leaving a Blackjack table cashes out your stack, and a bet already in play is lost.",
 

@@ -43,7 +43,7 @@ vi.mock("./blackjackRenderer.js", async (importOriginal) => ({
 	renderBlackjackResultCard: vi.fn(async () => null),
 }));
 
-import { _activeBlackjackGameCount, _blackjackTableOf, _clearBlackjackGames, blackjackTurnAdapter, leaveBlackjackRoomSeat, startBlackjackTable } from "./blackjackHandler.js";
+import { _activeBlackjackGameCount, _blackjackTableOf, _clearBlackjackGames, blackjackTurnAdapter, confirmBlackjackLeave, leaveBlackjackRoomSeat, startBlackjackTable } from "./blackjackHandler.js";
 import type { Card, Rank } from "./blackjackState.js";
 import { gamesCopy } from "./gamesCopy.js";
 import { awardBlackjackResult, awardBlackjackTableCoins } from "./gameXp.js";
@@ -148,6 +148,18 @@ const table = () => {
 const bet = (userId: string, amount: number) => blackjackTurnAdapter.apply({} as never, roomOf, userId, { bet: String(amount) }, async () => undefined);
 const act = (userId: string, move: string) => blackjackTurnAdapter.apply({} as never, roomOf, userId, { move }, async () => undefined);
 const lastStacks = () => saveMock.mock.calls.filter((call) => (call[1] as unknown[]).length > 0).at(-1)?.[1];
+
+// Leave at a chip table asks first (2026-10 item 276, D6 and D9): the press opens the confirm,
+// and its Submit, which the game room confirms route to confirmBlackjackLeave, takes the seat off.
+async function leaveAndConfirm(room: ReturnType<typeof fakeRoom>, userId: string) {
+	const leave = press("leave", userId, room.client);
+	room.click(leave);
+	await vi.waitFor(() => expect(leave.showModal).toHaveBeenCalled());
+	const submit = press("bleaveok", userId, room.client);
+	await confirmBlackjackLeave(submit as never, "ch-1");
+	return { leave, submit };
+}
+const modalText = (click: ReturnType<typeof press>): string => JSON.stringify((click.showModal.mock.calls as unknown[][]).map((call) => (call[0] as { toJSON(): unknown }).toJSON()));
 const flush = async () => {
 	for (let i = 0; i < 20; i++) await Promise.resolve();
 };
@@ -219,12 +231,11 @@ describe("a two seat chip table, hand after hand", () => {
 		expect(coinsMock).not.toHaveBeenCalled();
 
 		// Bob leaves: his stack goes back to his wallet at once, through the ledger claim, once.
-		const leave = press("leave", BOB.userId, room.client);
-		room.click(leave);
+		const { submit } = await leaveAndConfirm(room, BOB.userId);
 		await vi.waitFor(() => expect(finishMock).toHaveBeenCalledOnce());
 		expect(cashOutMock).toHaveBeenCalledOnce();
 		expect(cashOutMock).toHaveBeenCalledWith(ROOM, BOB.userId, 1125);
-		expect(answerInChannel).toHaveBeenCalledWith(leave, "here", { content: gamesCopy.blackjack.leftWithChips(1125) });
+		expect(answerInChannel).toHaveBeenCalledWith(submit, "here", { content: gamesCopy.blackjack.leftWithChips(1125) });
 
 		// The room finishes once, naming the one member who ended above the buy in, and pays its coins once.
 		expect(finishMock.mock.calls[0][2]).toEqual({ winnerId: BOB.userId });
@@ -260,10 +271,19 @@ describe("a two seat chip table, hand after hand", () => {
 		await bet(ALICE.userId, 100);
 		await bet(BOB.userId, 100);
 
-		// Bob leaves with a hand in play: the bet on it is lost, the rest of his stack goes home.
-		room.click(press("leave", BOB.userId, room.client));
-		await vi.waitFor(() => expect(cashOutMock).toHaveBeenCalledOnce());
+		// Bob leaves with a hand in play: the confirm names the 900 he takes and nothing moves
+		// before Submit; then the bet on the hand is lost and the rest of his stack goes home.
+		const leave = press("leave", BOB.userId, room.client);
+		room.click(leave);
+		await vi.waitFor(() => expect(leave.showModal).toHaveBeenCalled());
+		expect(modalText(leave)).toContain(JSON.stringify(gameRoomsCopy.confirms.leaveBlackjackTable(900)).slice(1, -1));
+		expect(cashOutMock).not.toHaveBeenCalled();
+		await confirmBlackjackLeave(press("bleaveok", BOB.userId, room.client) as never, "ch-1");
+		expect(cashOutMock).toHaveBeenCalledOnce();
 		expect(cashOutMock).toHaveBeenCalledWith(ROOM, BOB.userId, 900);
+
+		// A second Submit (the fallback reply's button, say) finds the seat gone and cashes nothing.
+		await confirmBlackjackLeave(press("bleaveok", BOB.userId, room.client) as never, "ch-1");
 
 		const again = press("leave", BOB.userId, room.client);
 		room.click(again);
@@ -314,7 +334,7 @@ describe("a two seat chip table, hand after hand", () => {
 		const room = fakeRoom();
 		finishMock.mockResolvedValue(false);
 		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [], CHIP_TABLE);
-		room.click(press("leave", ALICE.userId, room.client));
+		await leaveAndConfirm(room, ALICE.userId);
 		await vi.waitFor(() => expect(finishMock).toHaveBeenCalledOnce());
 		expect(coinsMock).not.toHaveBeenCalled();
 		expect(rateMock).not.toHaveBeenCalled();

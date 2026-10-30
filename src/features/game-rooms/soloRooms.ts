@@ -141,7 +141,7 @@ export async function playSoloRoundAtOpen(client: Client, game: GameSlug, room: 
 }
 
 /** A room's seats at a free Blackjack table: every player, on the standard stack, charged nothing. */
-export function freeSeatsOf(room: Pick<IGameRoom, "hostId" | "playerIds" | "holdemBuyIn">): PaidSeats {
+export function freeSeatsOf(room: Pick<IGameRoom, "game" | "hostId" | "playerIds" | "holdemBuyIn">): PaidSeats {
 	return { buyIn: draftBuyInOf(room), userIds: [room.hostId, ...room.playerIds.filter((userId) => userId !== room.hostId)], charged: false };
 }
 

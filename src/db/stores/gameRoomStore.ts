@@ -1,4 +1,4 @@
-import { GameRoom, type BlackjackStackEntry, type IGameRoom, type TurnPromptRecord } from "@db/models/GameRoom.js";
+import { GameRoom, type BlackjackStackEntry, type ChipPot, type IGameRoom, type TurnPromptRecord } from "@db/models/GameRoom.js";
 import {
 	NON_TERMINAL_ROOM_STATUSES,
 	ROOMS_AWAITING_PLAY,
@@ -321,7 +321,7 @@ export const gameRoomStore = {
 	// ── The Hold'em buy in on a draft (2026-10 item 257 Phase 4a) ──
 	// The host sets the amount while nobody has paid it: conditional on an empty ledger, so a
 	// joiner who paid first makes this refuse. An older draft row may lack the ledger field.
-	async setHoldemBuyIn(guildId: string, roomId: string, amount: number) {
+	async setHoldemBuyIn(guildId: string, roomId: string, amount: number | null) {
 		return GameRoom.findOneAndUpdate(
 			{ guildId, roomId, status: "draft", $or: [{ buyInPaidBy: { $exists: false } }, { buyInPaidBy: { $size: 0 } }] },
 			{ $set: { holdemBuyIn: amount } },
@@ -345,6 +345,14 @@ export const gameRoomStore = {
 
 	// ── A Blackjack chip table's stacks (2026-10 item 267, risk R5) ──
 	// The ledger as the table opens: one entry per paid seat. Null when the room is gone.
+	// A ranked Monopoly or Battleship match's pot (2026-10 item 276), written once as the room
+	// opens. Only on a row still playing: a finish that landed first has already run its payout
+	// over a row with no pot, so a pot written after it would never be paid, and the caller
+	// gives the buy ins back instead.
+	async openChipPot(guildId: string, roomId: string, pot: ChipPot) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId, status: "playing" }, { $set: { chipPot: pot } }, { new: true });
+	},
+
 	async openBlackjackStacks(guildId: string, roomId: string, entries: readonly BlackjackStackEntry[], actedAt: Date) {
 		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $set: { blackjackStacks: entries, blackjackActedAt: actedAt } }, { new: true });
 	},

@@ -85,6 +85,26 @@ describe("chipsOwedAtEnd", () => {
 		expect(table.seats.find((seat) => seat.userId === "c")!.totalCommitted).toBeGreaterThan(0);
 		expect(total).toBe(onTable + 1_000);
 	});
+
+	// 2026-10 item 276, owner decisions D3 and D12: a ranked leaver's stack waits on the table and
+	// goes to the seats still in, all of it to a lone winner, shared (the remainder to the first)
+	// among several, so the table always pays out exactly what was paid in.
+	it("pays what leavers forfeited to the seats still in, never back to the leavers", () => {
+		const table = chipTable();
+		table.forfeitedChips = 1_001;
+		const owed = chipsOwedAtEnd(table);
+		expect(owed).toEqual([
+			{ userId: "a", amount: 1_000 + 335 },
+			{ userId: "b", amount: 1_000 + 333 },
+			{ userId: "c", amount: 1_000 + 333 },
+		]);
+
+		const won = chipTable();
+		won.seats[1].out = true;
+		won.seats[2].out = true;
+		won.forfeitedChips = 2_000;
+		expect(chipsOwedAtEnd(won)).toEqual([{ userId: "a", amount: 3_000 }]);
+	});
 });
 
 describe("settleTableChips", () => {

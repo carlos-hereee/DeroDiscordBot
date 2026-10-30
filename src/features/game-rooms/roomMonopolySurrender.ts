@@ -43,7 +43,9 @@ export async function handleMsurrender(interaction: ButtonInteraction, room: IGa
 		await showNotice(interaction, { title: words.surrenderConfirmTitle, sections: [refusal] });
 		return;
 	}
-	await showConfirm(interaction, { title: words.surrenderConfirmTitle, sections: [words.surrenderConfirmPrompt], confirmId: confirmCustomId("msurrenderok", room.roomId) });
+	// A ranked match says the buy in stays in the pot before Submit (2026-10 item 276, D6).
+	const prompt = room.chipPot ? words.surrenderConfirmRanked(room.chipPot.buyIn) : words.surrenderConfirmPrompt;
+	await showConfirm(interaction, { title: words.surrenderConfirmTitle, sections: [prompt], confirmId: confirmCustomId("msurrenderok", room.roomId) });
 }
 
 /** The confirm's Submit, or the fallback reply's button: surrender, then say how it went. */

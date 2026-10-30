@@ -70,15 +70,18 @@ import {
 	draftBuyInOf,
 	isChipDraft,
 	isValidDraftBuyIn,
+	playsForChips,
 	refundAllJoiners,
 	refundJoiners,
 	refundOpenedSeats,
 	refundSeatsDirectly,
 	seatsAtStart,
 	settleDraftBuyIns,
+	stakeBoundsOf,
 	submittedBuyIn,
 	type PaidSeats,
 } from "./holdemDraftBuyIn.js";
+import { isPotGame } from "./chipPot.js";
 import {
 	bandOfMatch,
 	botCountOfMatch,
@@ -516,6 +519,12 @@ async function applySettings(interaction: HostPress, room: IGameRoom, wanted: Ch
 			else notes.push(words.notApplied(names.buyIn, `${chosen.refusal} ${words.buyInKept(draftBuyInOf(current))}`));
 		}
 	}
+	// ③ᵇ Battleship's wager (2026-10 item 276, D10), the same way: a refused wager leaves the one in force.
+	if (fields.includes("wager")) {
+		const chosen = await applyDraftWager(current, wanted.wager);
+		if (chosen?.ok) current = chosen.room;
+		else if (chosen) notes.push(words.notApplied(names.wager, `${chosen.refusal} ${words.wagerKept(current.holdemBuyIn ?? null)}`));
+	}
 
 	// ④ Dero voice and Monopoly's auctions. Dero voice is applied even when the held draft's
 	// line took its field: the field opens on the game's default, which a new row already reads
@@ -834,9 +843,10 @@ export async function joinChallenge(interaction: ButtonInteraction, room: IGameR
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
 	}
-	// A Hold'em or Blackjack chip table is paid for on the card (2026-10 item 257 Phase 4a, item 267):
-	// the buy in leaves the wallet now, whether the joiner goes straight in or waits for the host,
-	// and goes back if they are declined, removed, or the challenge is cancelled.
+	// A chip match is paid for on the card (2026-10 item 257 Phase 4a, item 267, and ranked Monopoly
+	// and Battleship since item 276): the stake leaves the wallet now, whether the joiner goes
+	// straight in or waits for the host, and goes back if they are declined, removed, or the
+	// challenge is cancelled.
 	if (isBuyInGame(room.game)) {
 		const unpaid = await chargeJoiner(room, actorId);
 		if (unpaid) {
@@ -927,7 +937,7 @@ async function askHostToJoin(interaction: ButtonInteraction, room: IGameRoom): P
 // since choosing who plays is itself the yes, begins the start countdown (2026-10 item 267,
 // decision 13), and the room channel is made only when the count ends on a draft still open.
 export async function startMatch(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
-	const refusal = startRefusal(room) ?? (await holdemSeatRefusal(room));
+	const refusal = startRefusal(room) ?? (await startSeatRefusal(room));
 	if (refusal) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
@@ -948,7 +958,7 @@ export async function startMatch(interaction: ButtonInteraction, room: IGameRoom
  * since the pool may have moved while the confirm stood open, then the room is provisioned.
  */
 export async function confirmStartMatch(interaction: ConfirmInteraction, room: IGameRoom): Promise<void> {
-	const refusal = startRefusal(room) ?? (await holdemSeatRefusal(room));
+	const refusal = startRefusal(room) ?? (await startSeatRefusal(room));
 	if (refusal) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		return;
@@ -998,7 +1008,7 @@ async function countInThenOpen(interaction: ConfirmInteraction | StringSelectMen
 async function openAfterCountdown(interaction: ConfirmInteraction | StringSelectMenuInteraction, answer: PendingChannelAnswer, draft: IGameRoom, opponentId: string | null): Promise<void> {
 	const guild = interaction.guild!;
 	const opponentLeft = opponentId !== null && !(draft.spectatorIds ?? []).includes(opponentId);
-	const refusal = startRefusal(draft) ?? (await holdemSeatRefusal(draft)) ?? (opponentLeft ? gameRoomsCopy.board.poolEmpty : null);
+	const refusal = startRefusal(draft) ?? (await startSeatRefusal(draft)) ?? (opponentLeft ? gameRoomsCopy.board.poolEmpty : null);
 	if (refusal) {
 		await showPendingNotice(interaction, answer, { title: gameRoomsCopy.notices.challenge, sections: [refusal] });
 		await refreshDraftCard(guild, draft);
@@ -1045,13 +1055,23 @@ function startRefusal(room: IGameRoom): string | null {
 // (HOLDEM_MIN_SEATS, Dero bots counting, owner decision 4) and fit the table. Async apart from
 // startRefusal because which pool members sit depends on whether chips are on (seatsAtStart).
 // A network table may open shorter, as before: its players come from the network board, which
-// lists a table while it gathers, so only the seat cap is checked there.
-async function holdemSeatRefusal(room: IGameRoom): Promise<string | null> {
+// lists a table while it gathers, so only the seat cap is checked there. A ranked Monopoly match
+// seats only its payers (2026-10 item 276, D4), so it is refused the same way when too few paid.
+async function startSeatRefusal(room: IGameRoom): Promise<string | null> {
+	if (room.game === "monopoly") return monopolyPaidSeatRefusal(room);
 	if (room.game !== "holdem") return null;
 	const seats = await seatsAtStart(room, room.spectatorIds ?? []);
 	if (seats > BOT_CONSTANTS.HOLDEM_MAX_SEATS) return gameRoomsCopy.holdem.startTooManySeats(BOT_CONSTANTS.HOLDEM_MAX_SEATS, seats);
 	if (!room.network && seats < BOT_CONSTANTS.HOLDEM_MIN_SEATS) return gameRoomsCopy.holdem.startTooFewSeats(BOT_CONSTANTS.HOLDEM_MIN_SEATS, seats);
 	return null;
+}
+
+// A ranked Monopoly match's Start with fewer payers than the game's fewest seats, or null.
+async function monopolyPaidSeatRefusal(room: IGameRoom): Promise<string | null> {
+	if (!(await isChipDraft(room))) return null;
+	const seats = await seatsAtStart(room, room.spectatorIds ?? []);
+	const fewest = seatRangeOf("monopoly").min;
+	return seats < fewest ? gameRoomsCopy.monopoly.tooFewPaid(fewest, seats) : null;
 }
 
 // Whether the host must choose who plays: more than one candidate in a head to head game.
@@ -1177,21 +1197,26 @@ async function provisionFromDraft(
 	const spectatorIds = effectiveSpectatorMode(room.visibility, room.spectatorMode) === "invite" ? others : [];
 	const botIds = botSeatIdsFor(room.game, playerIds.length, room.botSeats ?? 0);
 
-	// A Hold'em or Blackjack chip table seats everyone who paid on the card, and charges the host
-	// their own seat here (item 257 Phase 4a, item 267); a short wallet stops the start before any
-	// channel exists.
-	const settled = await settleDraftBuyIns(room, pool);
+	// A chip match seats everyone who paid on the card, and charges the host their own seat here
+	// (item 257 Phase 4a, item 267, item 276); a short wallet stops the start before any channel
+	// exists. A head to head match settles its chosen opponent alone, who must have paid, so every
+	// other payer on a Battleship wager card has their wager back (D10).
+	const settled = await settleDraftBuyIns(room, cooperative ? pool : humanOpponents, { everyonePays: !cooperative });
 	// A short wallet is a state, so a notice titled for the room, never a ping.
 	if (!settled.ok) {
 		await showPendingNotice(interaction, answer, { title: gameRoomsCopy.notices.room, sections: [settled.reason] });
 		return;
 	}
 	const paidSeats = settled.seats;
+	// A ranked Monopoly match seats only those who paid its buy in (D4): an invited member who
+	// never pressed Accept and buy in has no seat in a pot they paid nothing into. A table keeps
+	// its whole pool on the row, since its own engine seats only the payers.
+	const matchPlayerIds = paidSeats?.charged && isPotGame(room.game) ? paidSeats.userIds : playerIds;
 
 	// Written against the pool as it is stored NOW, not as Start read it (gameRoomStore.seatDraft),
 	// so a member removed or gone from the server since then is neither seated nor let in. The
 	// channel's overwrites below come from what was written.
-	const seated = await gameRoomStore.seatDraft(room.guildId, room.roomId, room.hostId, playerIds, spectatorIds);
+	const seated = await gameRoomStore.seatDraft(room.guildId, room.roomId, room.hostId, matchPlayerIds, spectatorIds);
 	if (!seated) {
 		// Call it off, the idle sweep or the leave watcher closed the draft first: give the host's
 		// seat back the way a refused open does, and say the challenge is gone.
@@ -1905,6 +1930,25 @@ export async function applyDraftBuyIn(room: IGameRoom, amount: number | null): P
 	if (amount === null || !isValidDraftBuyIn(amount)) return { ok: false, refusal: gameRoomsCopy.holdem.buyInInvalid(economy.HOLDEM_MIN_BUY_IN, economy.HOLDEM_MAX_BUY_IN) };
 	const updated = await gameRoomStore.setHoldemBuyIn(room.guildId, room.roomId, amount);
 	return updated ? { ok: true, room: updated } : { ok: false, refusal: gameRoomsCopy.holdem.buyInLocked };
+}
+
+/**
+ * Set or clear a ranked Battleship draft's wager from what the host typed (2026-10 item 276,
+ * owner decision D10): blank means no wager, so the match plays chip free. Answers null when the
+ * Submit asks for the wager already in force. Refused on a match that plays free (a casual card,
+ * chips off, a Dero bot), for an amount outside the wager's bounds, and once anybody has paid,
+ * since a payment is for the wager it was charged (the store's write matches an empty ledger).
+ */
+export async function applyDraftWager(room: IGameRoom, typed: string): Promise<DraftChoice | null> {
+	const text = typed.trim();
+	const amount = text === "" ? null : parseChipAmount(text);
+	const { min, max } = stakeBoundsOf("battleship");
+	if (text !== "" && amount === null) return { ok: false, refusal: gameRoomsCopy.holdem.wagerInvalid(min, max) };
+	if (amount === (room.holdemBuyIn ?? null)) return null;
+	if (!(await playsForChips(room))) return { ok: false, refusal: gameRoomsCopy.holdem.wagerFreeMatch };
+	if (amount !== null && !isValidDraftBuyIn(amount, "battleship")) return { ok: false, refusal: gameRoomsCopy.holdem.wagerInvalid(min, max) };
+	const updated = await gameRoomStore.setHoldemBuyIn(room.guildId, room.roomId, amount);
+	return updated ? { ok: true, room: updated } : { ok: false, refusal: gameRoomsCopy.holdem.wagerLocked };
 }
 
 // ── cancel ────────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		archiveDraft: vi.fn(async (guildId: string, roomId: string) => ({ guildId, roomId, status: "archived", buyInPaidBy: [] })),
 		create: vi.fn(),
 		findOpenByHost: vi.fn(),
+		setHoldemBuyIn: vi.fn(),
 	},
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
@@ -50,6 +51,7 @@ import {
 	handleOpponentSelect,
 	offerChallengeDraft,
 	confirmChallengeDraft,
+	applyDraftWager,
 } from "./challengeBoard.js";
 import { RoomProvisioner } from "./RoomProvisioner.js";
 import { startBlackjackRoomBoard } from "./soloRooms.js";
@@ -504,7 +506,7 @@ describe("the draft's on or off settings (auctions, and Dero voice on every game
 			channels: { fetch: vi.fn(async () => ({ id: "arcade-cat", type: ChannelType.GuildCategory })) },
 		});
 
-		const draft = makeRoom({ game: "monopoly", spectatorIds: ["a"], monopolyAuctions: true });
+		const draft = makeRoom({ game: "monopoly", spectatorIds: ["a"], monopolyAuctions: true, casual: true });
 		await confirmStartMatch(interaction, draft);
 		await countIn(draft);
 
@@ -531,7 +533,7 @@ describe("the start countdown", () => {
 	it("opens the room only once the count has run its ten seconds", async () => {
 		vi.useFakeTimers();
 		try {
-			const draft = makeRoom({ game: "monopoly", spectatorIds: ["a"] });
+			const draft = makeRoom({ game: "monopoly", spectatorIds: ["a"], casual: true });
 			storeMock.findByRoomId.mockResolvedValue(draft);
 
 			await confirmStartMatch(arcadeHost(), draft);
@@ -551,7 +553,7 @@ describe("the start countdown", () => {
 	it("opens nothing when the host called the challenge off during the count", async () => {
 		vi.useFakeTimers();
 		try {
-			const draft = makeRoom({ game: "monopoly", spectatorIds: ["a"] });
+			const draft = makeRoom({ game: "monopoly", spectatorIds: ["a"], casual: true });
 			await confirmStartMatch(arcadeHost(), draft);
 			// Call it off archived the draft while the card counted.
 			storeMock.findByRoomId.mockResolvedValue({ ...draft, status: "archived" });
@@ -564,8 +566,19 @@ describe("the start countdown", () => {
 		}
 	});
 
-	it("answers a second Start during the count with a notice, and counts once", async () => {
+	// 2026-10 item 276, owner decision D4: a ranked Monopoly match seats only those who paid its
+	// buy in, so a Start with fewer payers than the game's fewest seats opens nothing.
+	it("refuses a ranked Monopoly Start with too few paid seats, opening nothing", async () => {
 		const draft = makeRoom({ game: "monopoly", spectatorIds: ["a"] });
+		const interaction = arcadeHost();
+		await confirmStartMatch(interaction, draft);
+		expect((interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({ content: gameRoomsCopy.monopoly.tooFewPaid(2, 1) });
+		expect(startCountdownState.isCountingDown(draft)).toBe(false);
+		expect(openMock).not.toHaveBeenCalled();
+	});
+
+	it("answers a second Start during the count with a notice, and counts once", async () => {
+		const draft = makeRoom({ game: "monopoly", spectatorIds: ["a"], casual: true });
 		await confirmStartMatch(arcadeHost(), draft);
 
 		const again = makeButton(HOST, members);
@@ -744,5 +757,53 @@ describe("starting a challenge from a game button", () => {
 		const followUp = (interaction as unknown as { followUp?: ReturnType<typeof vi.fn> }).followUp;
 		const answer = (followUp?.mock.calls[0]?.[0] ?? replyOf(interaction)) as { content: string };
 		expect(answer.content).toBe(gameRoomsCopy.errors.alreadyHosting("ch-live"));
+	});
+});
+
+// ── Battleship's chip wager (2026-10 item 276, owner decision D10) ─────
+// Typed on the creation modal or Edit settings: blank means none, so the match plays free. It is
+// refused on a match that plays free, outside its bounds, and once a payment locked the ledger.
+describe("the Battleship wager", () => {
+	const setMock = (gameRoomStore as unknown as { setHoldemBuyIn: ReturnType<typeof vi.fn> }).setHoldemBuyIn;
+	const words = gameRoomsCopy.holdem;
+	const { BATTLESHIP_MIN_WAGER, BATTLESHIP_MAX_WAGER } = BOT_CONSTANTS.ECONOMY;
+	const ranked = (overrides: Partial<IGameRoom> = {}) => makeRoom({ game: "battleship", holdemBuyIn: null, ...overrides });
+
+	beforeEach(() => {
+		configMock.findByGuildId.mockResolvedValue({ chipEconomyEnabled: true });
+		setMock.mockImplementation(async (_guildId: string, _roomId: string, amount: number | null) => ranked({ holdemBuyIn: amount }));
+	});
+
+	it("writes a wager inside its bounds on a ranked card, and clears it on a blank", async () => {
+		expect(await applyDraftWager(ranked(), "250")).toEqual({ ok: true, room: ranked({ holdemBuyIn: 250 }) });
+		expect(setMock).toHaveBeenCalledWith("guild-1", "room-1", 250);
+		expect(await applyDraftWager(ranked({ holdemBuyIn: 250 }), "  ")).toEqual({ ok: true, room: ranked({ holdemBuyIn: null }) });
+		expect(setMock).toHaveBeenLastCalledWith("guild-1", "room-1", null);
+	});
+
+	it("answers null for the wager already in force, writing nothing", async () => {
+		expect(await applyDraftWager(ranked(), "")).toBeNull();
+		expect(await applyDraftWager(ranked({ holdemBuyIn: 500 }), "500")).toBeNull();
+		expect(setMock).not.toHaveBeenCalled();
+	});
+
+	it("refuses an amount that is no number or outside the bounds", async () => {
+		const invalid = { ok: false, refusal: words.wagerInvalid(BATTLESHIP_MIN_WAGER, BATTLESHIP_MAX_WAGER) };
+		expect(await applyDraftWager(ranked(), "lots")).toEqual(invalid);
+		expect(await applyDraftWager(ranked(), String(BATTLESHIP_MIN_WAGER - 1))).toEqual(invalid);
+		expect(await applyDraftWager(ranked(), String(BATTLESHIP_MAX_WAGER + 1))).toEqual(invalid);
+		expect(setMock).not.toHaveBeenCalled();
+	});
+
+	it("refuses a wager on a match that plays free: Casual, or chips off", async () => {
+		expect(await applyDraftWager(ranked({ casual: true }), "250")).toEqual({ ok: false, refusal: words.wagerFreeMatch });
+		configMock.findByGuildId.mockResolvedValue({ chipEconomyEnabled: false });
+		expect(await applyDraftWager(ranked(), "250")).toEqual({ ok: false, refusal: words.wagerFreeMatch });
+		expect(setMock).not.toHaveBeenCalled();
+	});
+
+	it("keeps the wager a captain already paid", async () => {
+		setMock.mockResolvedValue(null);
+		expect(await applyDraftWager(ranked({ holdemBuyIn: 250 }), "500")).toEqual({ ok: false, refusal: words.wagerLocked });
 	});
 });

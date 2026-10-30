@@ -67,9 +67,11 @@ export type SoloLuckSlug = (typeof SOLO_LUCK_GAMES)[number];
 // and the rematch check alike, so a game listed here is offered and accepted together.
 export const SOLO_REMATCH_GAMES = ["solo-hangman", "solo-blackjack", "solo-coinflip", "solo-diceroll", "solo-rps"] as const satisfies readonly GameSlug[];
 
-// The challenge card games whose table plays for a chip buy in, set on the card and paid on
-// Join (holdemDraftBuyIn): Hold'em, and Blackjack since 2026-10 item 267.
-export const BUY_IN_GAMES = ["holdem", "blackjack"] as const satisfies readonly GameSlug[];
+// The challenge card games whose ranked match plays for chips paid on Join (holdemDraftBuyIn):
+// Hold'em, Blackjack since 2026-10 item 267, and since 2026-10 item 276 Monopoly (a fixed buy in,
+// winner takes all, owner decision D4) and Battleship (the host's optional wager, D10). What a seat
+// pays is chipMatch.stakeOf's answer; a Battleship card with no wager stakes nothing.
+export const BUY_IN_GAMES = ["holdem", "blackjack", "monopoly", "battleship"] as const satisfies readonly GameSlug[];
 
 export const isBlackjackRoomGame = (game: GameSlug): boolean => (BLACKJACK_ROOM_GAMES as readonly GameSlug[]).includes(game);
 export const isBuyInGame = (game: GameSlug): boolean => (BUY_IN_GAMES as readonly GameSlug[]).includes(game);

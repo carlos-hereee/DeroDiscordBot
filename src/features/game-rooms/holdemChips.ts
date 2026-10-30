@@ -10,8 +10,9 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 
 // ── holdemChips ──────────────────────────────────────────────────────
 // What:  every move of wallet chips at a Hold'em table (2026-10 item 250 Phase 5): the
-//        one buy in each player pays to sit, the stack a leaver walks away with, and
-//        what every seat holds when the table ends, back to the wallets.
+//        one buy in each player pays to sit, the stack a seat takes from a table still
+//        gathering, the stack a ranked leaver forfeits to the winner once play began
+//        (item 276, D3), and what every seat holds when the table ends, back to the wallets.
 // Who:   roomHoldemHandlers (a buy in, a leave, a removal, a withdrawn late seat),
 //        RoomProvisioner.seedRoom (whether a new table plays for chips at all), and
 //        roomLifecycle.finish (the end of the table, on every path that ends one).
@@ -76,19 +77,40 @@ export async function cashOut(table: HoldemTable, userId: string, amount: number
  * What each seat holds at the end of a table: a seat still in keeps its stack plus
  * what a hand that never settled gives back as it is called off (chipsBackOnCallOff,
  * the same rule End table uses, so a leaver's chips in that hand are shared out rather
- * than lost), and a late seat still waiting gets its buy in back. Seats that are out
- * hold nothing: they busted, or were paid when they left. Seats with nothing are left out.
+ * than lost), plus its share of what leavers forfeited, and a late seat still waiting gets
+ * its buy in back. Seats that are out hold nothing: they busted, or left. Seats with nothing
+ * are left out.
+ *
+ * ⚠️ A RANKED LEAVER'S STACK IS THE WINNER'S PRIZE (2026-10 item 276, owner decisions D3 and
+ * D12). It waits on the table as forfeitedChips and goes to the seats still in: all of it to
+ * the winner of a tournament played out, or shared evenly (the remainder to the first seat)
+ * when End table or anything outside the table closes it with several seats in. A table with
+ * no seat left in has nobody to pay, which no path reaches, since the last leave ends the
+ * tournament with one seat standing; it is logged rather than paid to the leavers.
  */
 export function chipsOwedAtEnd(table: HoldemTable): ChipPayout[] {
-	const owed: ChipPayout[] = [];
 	const back = chipsBackOnCallOff(table);
-	for (const seat of table.seats) {
-		if (seat.out) continue;
-		const amount = seat.stack + (back.get(seat.userId) ?? 0);
+	const stillIn = table.seats.filter((seat) => !seat.out);
+	const forfeitShares = sharesOf(table.forfeitedChips ?? 0, stillIn.map((seat) => seat.userId));
+	const owed: ChipPayout[] = [];
+	for (const seat of stillIn) {
+		const amount = seat.stack + (back.get(seat.userId) ?? 0) + (forfeitShares.get(seat.userId) ?? 0);
 		if (amount > 0) owed.push({ userId: seat.userId, amount });
+	}
+	if ((table.forfeitedChips ?? 0) > 0 && stillIn.length === 0) {
+		console.error(`[game-rooms] a Hold'em table ended with ${table.forfeitedChips} forfeited chips and no seat left in to take them`);
 	}
 	for (const waiting of table.pendingSeats ?? []) owed.push({ userId: waiting.userId, amount: startingStackOf(table) });
 	return owed;
+}
+
+// An even split of `total` among `userIds`, the remainder to the first, so nothing is lost to rounding.
+function sharesOf(total: number, userIds: readonly string[]): Map<string, number> {
+	const shares = new Map<string, number>();
+	if (total <= 0 || userIds.length === 0) return shares;
+	const share = Math.floor(total / userIds.length);
+	userIds.forEach((userId, index) => shares.set(userId, share + (index === 0 ? total - share * userIds.length : 0)));
+	return shares;
 }
 
 /**

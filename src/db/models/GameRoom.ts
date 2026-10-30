@@ -19,6 +19,14 @@ import {
 	type SpectatorMode,
 } from "@features/game-rooms/roomTypes.js";
 
+/** The chips a ranked Monopoly or Battleship match holds for its winner; see IGameRoom.chipPot. */
+export interface ChipPot {
+	// What each seat paid at the start.
+	buyIn: number;
+	// Every member who paid it, in seat order. The pot is buyIn times their count.
+	userIds: string[];
+}
+
 /** One seat's chips at a Blackjack chip table; see IGameRoom.blackjackStacks. */
 export interface BlackjackStackEntry {
 	userId: string;
@@ -142,6 +150,11 @@ export interface IGameRoom {
 	// The idle sweep reads it instead of updatedAt, because a timed out turn plays itself and
 	// writes the row, and a table nobody touches must still end on the idle clock.
 	blackjackActedAt: Date | null;
+	// A ranked Monopoly or Battleship match's pot (2026-10 item 276, owner decisions D3, D4 and
+	// D10): the buy ins the start claim found paid, written once as the room opens and paid out
+	// once by roomLifecycle.finish from the row its claim returned (chipPot.ts). Null on a free
+	// match and on every other game, whose chips live on their own tables.
+	chipPot: ChipPot | null;
 	// ── the host's say over who joins (2026-10 item 244 Phase 4) ──
 	// Set on the draft by the challenge card's host controls and read on every join,
 	// on the card and, for Hold'em, at the table's Buy in and Take a seat. Each
@@ -308,6 +321,10 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 			default: [],
 		},
 		blackjackActedAt: { type: Date, default: null },
+		chipPot: {
+			type: new mongoose.Schema({ buyIn: { type: Number, required: true }, userIds: { type: [String], default: [] } }, { _id: false }),
+			default: null,
+		},
 		// The host controls. Every default is the open door a room had before them, so
 		// no older row needs a backfill.
 		ratingBand: { type: String, enum: [...RATING_BANDS], default: "any" },

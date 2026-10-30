@@ -122,6 +122,17 @@ describe("challengeCardView with Dero bots", () => {
 		expect(result.challengers).toEqual([]);
 	});
 
+	// 2026-10 item 276, D4 and D10: the picture names a chip match's stake through the same helper
+	// as the embed (challengeBoardEmbeds.cardStakeOf), and a match that plays free names none.
+	it("carries a ranked match's stake, and none for a free one", async () => {
+		expect((await challengeCardView(guild, state({ game: "battleship", holdemBuyIn: 250 }))).stake).toEqual({ kind: "wager", amount: 250 });
+		expect((await challengeCardView(guild, state({ game: "battleship", holdemBuyIn: null }))).stake).toBeNull();
+		expect((await challengeCardView(guild, state({ game: "monopoly", casual: true }))).stake).toBeNull();
+		const pot = await challengeCardView(guild, state({ game: "monopoly" }));
+		expect(pot.stake).toEqual({ kind: "pot", amount: 1_500 });
+		expect(await renderChallengeCard(pot)).not.toBeNull();
+	});
+
 	it("renders a PNG with bots on it", async () => {
 		const withBots = await challengeCardView(guild, state({ bots: { count: 3 }, casual: true }));
 		const card = await renderChallengeCard(withBots);

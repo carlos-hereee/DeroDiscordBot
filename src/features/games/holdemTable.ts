@@ -109,6 +109,10 @@ export interface HoldemTable {
 	// 5), which holdemChips pays back into each member's global wallet. Absent on a free
 	// play table and on every row stored before chips existed.
 	chips?: TableChips;
+	// The stacks of seats that left a chip table once play began (2026-10 item 276, owner
+	// decisions D3 and D12): a ranked leaver forfeits their chips into the winner's prize, so
+	// they stay with the table, outside every seat, until holdemChips pays them at the end.
+	forfeitedChips?: number;
 	// Late joiners who claimed a free seat while the host had seats open (2026-10 item
 	// 244 Phase 4), waiting for the next deal. ⚠️ NOT SEATS. Nothing that reads the
 	// hand, the pots, the blinds, the button or the bust order looks here, and the

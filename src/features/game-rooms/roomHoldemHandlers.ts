@@ -1102,8 +1102,18 @@ async function leaveSeatOnce(client: Client, room: IGameRoom, userId: string, ac
 	const handStartChips = chipsAtHandStart(table.seats);
 	const revealBefore = holdemRevealKey(table);
 	const withdrewLateSeat = withdrawLateSeat(table, userId);
+	// Read before the leave, which may end the tournament: a seat that leaves a table still
+	// gathering takes its buy in back, since no match has begun to forfeit.
+	const playStarted = table.status !== "joining";
 	const outcome = withdrewLateSeat ? null : leaveTable(table, userId, secureRandom);
 	if (outcome && !outcome.ok) return "notAtTable";
+	// ⚠️ A RANKED LEAVE IS A FORFEIT (2026-10 item 276, owner decisions D3 and D12): at a chip
+	// table, which only a ranked match is (chipMatch.movesChips), the stack the leave took off the
+	// seat stays with the table for the winner (holdemChips.chipsOwedAtEnd), whether the seat left
+	// by Leave table, a removal or leaving the server. Written in the same claim as the leave, so
+	// the table's chips always add up to what was paid in.
+	const forfeited = outcome && table.chips && playStarted ? (outcome.stackLeft ?? 0) : 0;
+	if (forfeited > 0) table.forfeitedChips = (table.forfeitedChips ?? 0) + forfeited;
 	// The leave's own line posts below (a leave is no bet of a street); what its fold set off
 	// rides the street's block, stamped into the leave's own write.
 	const turn = outcome ? stampHoldemTurn(table, revealBefore, holdemMoveLines(outcome, [])) : NO_NEW_LINES;
@@ -1118,19 +1128,36 @@ async function leaveSeatOnce(client: Client, room: IGameRoom, userId: string, ac
 		await redraw(client, room, table);
 		return "left";
 	}
-	if (table.chips) await cashOut(table, userId, outcome.stackLeft ?? 0);
+	if (table.chips && !playStarted) await cashOut(table, userId, outcome.stackLeft ?? 0);
 	if (options.leaveLine) {
-		await roomTrail.postMove(client, room, { actorId: userId, kind: "system", text: leftTableLine(table, userId, outcome.foldedHand ?? false, outcome.stackLeft ?? 0) });
+		await roomTrail.postMove(client, room, { actorId: userId, kind: "system", text: leftTableLine(table, userId, outcome.foldedHand ?? false, outcome.stackLeft ?? 0, playStarted) });
+	} else if (forfeited > 0) {
+		// A removal or a server leave posted its own reason; this says where the stack went.
+		await roomTrail.postMove(client, room, { actorId: userId, kind: "system", text: gameRoomsCopy.holdem.stackForfeited(userId, forfeited) });
 	}
 	await settleOutcome(client, room, table, outcome, actorId, { cause: "forfeit", handStartChips }, turn);
 	if (outcome.foldedHand) announceDealer({ client, roomId: room.roomId, before, after: toPublicView(table), outcome });
 	return "left";
 }
 
-// A chip table's leave says what went back to the wallet; a free table's keeps its line.
-function leftTableLine(table: HoldemTable, userId: string, foldedHand: boolean, stackLeft: number): string {
-	if (table.chips) return gameRoomsCopy.holdem.chipsLeftTable(userId, foldedHand, stackLeft);
-	return gameRoomsCopy.holdem.leftTable(userId, foldedHand);
+// A chip table's leave says where the stack went: forfeited to the winner once play began
+// (D3), or back to the wallet from a table still gathering. A free table's keeps its line.
+function leftTableLine(table: HoldemTable, userId: string, foldedHand: boolean, stackLeft: number, playStarted: boolean): string {
+	if (!table.chips) return gameRoomsCopy.holdem.leftTable(userId, foldedHand);
+	if (playStarted) return gameRoomsCopy.holdem.forfeitLeftTable(userId, foldedHand, stackLeft);
+	return gameRoomsCopy.holdem.chipsLeftTable(userId, foldedHand, stackLeft);
+}
+
+/**
+ * What Leave table's confirm says (2026-10 item 276, owner decision D6): at a ranked chip table
+ * in play, that the seat's stack stays for the winner and how much it is; otherwise the plain
+ * leave. Read on the press, from the row in hand.
+ */
+function leaveConfirmText(room: IGameRoom, userId: string): string {
+	const table = tableOf(room);
+	const seat = table?.seats.find((candidate) => candidate.userId === userId);
+	if (!table?.chips || !seat || table.status === "joining") return gameRoomsCopy.confirms.leaveTable;
+	return gameRoomsCopy.confirms.leaveRankedTable(seat.stack);
 }
 
 // ⚠️ NO PLACEMENT XP ON AN ENDED TABLE. payPlacements prizes a tournament that was
@@ -1515,6 +1542,7 @@ export const roomHoldemHandlers = {
 	handleLeaveTable,
 	handleEndTable,
 	leaveRefusal,
+	leaveConfirmText,
 	endRefusal,
 	handleImBack,
 	handleSeatsToggle,

@@ -62,7 +62,10 @@ describe("the opener card's settings line", () => {
 		(openerCardEmbed(state).data.description ?? "").split("\n").find((line) => line.startsWith(words.lead));
 
 	it("names Monopoly's auctions and Dero voice, as the host set them", () => {
-		expect(settingsLineOf(card())).toBe(`${words.lead} ${[words.join.public, words.rated, words.watch.open, words.auctions(false), words.voice(false)].join(" · ")}`);
+		// A Rated card names its fixed buy in beside Rated (2026-10 item 276, D4); a Casual one plays free.
+		const pot = words.stake({ kind: "pot", amount: BOT_CONSTANTS.ECONOMY.MONOPOLY_RANKED_BUY_IN });
+		expect(settingsLineOf(card())).toBe(`${words.lead} ${[words.join.public, words.rated, pot, words.watch.open, words.auctions(false), words.voice(false)].join(" · ")}`);
+		expect(settingsLineOf(card({ casual: true }))).not.toContain(pot);
 		const on = settingsLineOf(card({ monopolyAuctions: true, deroVoice: true })) ?? "";
 		expect(on).toContain(words.auctions(true));
 		expect(on).toContain(words.voice(true));

@@ -32,6 +32,7 @@ import {
 	isHangmanRoom,
 } from "./roomHangman.js";
 import { departMatch } from "./roomDeparture.js";
+import { confirmBlackjackLeave } from "@features/games/blackjackHandler.js";
 import { roomBattleshipHandlers } from "./roomBattleshipHandlers.js";
 import { roomHoldemHandlers } from "./roomHoldemHandlers.js";
 import { roomMonopolyHandlers } from "./roomMonopolyHandlers.js";
@@ -304,7 +305,7 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 				await showNotice(interaction, { title: gameRoomsCopy.notices.holdem, sections: [refusal] });
 				return;
 			}
-			await showConfirm(interaction, { title: gameRoomsCopy.notices.holdem, sections: [gameRoomsCopy.confirms.leaveTable], confirmId: confirmCustomId("hleaveok", room.roomId) });
+			await showConfirm(interaction, { title: gameRoomsCopy.notices.holdem, sections: [roomHoldemHandlers.leaveConfirmText(room, interaction.user.id)], confirmId: confirmCustomId("hleaveok", room.roomId) });
 			return;
 		}
 		case "hend": {
@@ -416,8 +417,7 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 				await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [refusal] });
 				return;
 			}
-			const prompt = isHangmanRoom(room) ? gameRoomsCopy.confirms.giveUp : gameRoomsCopy.confirms.forfeit;
-			await showConfirm(interaction, { title: gameRoomsCopy.notices.room, sections: [prompt], confirmId: confirmCustomId("forfeitok", room.roomId) });
+			await showConfirm(interaction, { title: gameRoomsCopy.notices.room, sections: [forfeitPrompt(room)], confirmId: confirmCustomId("forfeitok", room.roomId) });
 			return;
 		}
 	}
@@ -464,6 +464,9 @@ async function runConfirmed(interaction: ConfirmInteraction, gated: GatedPress):
 		case "msurrenderok":
 			await roomMonopolySurrender.handleMsurrenderConfirm(interaction, room);
 			return;
+		case "bleaveok":
+			if (room.channelId) await confirmBlackjackLeave(interaction, room.channelId);
+			return;
 		default:
 			await showNotice(interaction, { title: gameRoomsCopy.notices.room, sections: [gameRoomsCopy.errors.controlRetired] });
 	}
@@ -477,6 +480,16 @@ const isMatchOver = (room: IGameRoom): boolean => room.status === "finished" || 
  * is cooperative, so one guesser giving up would end it for every other guesser. Read on the
  * press and again on the confirm's Submit, which a forged id can reach without the press.
  */
+// What the Forfeit confirm says: Hangman's Give up, or a forfeit that names what a ranked match
+// takes from the leaver (2026-10 item 276, owner decision D6): a Battleship wager goes to the
+// other captain, a Monopoly buy in stays in the pot. Read off the pot the room opened with.
+function forfeitPrompt(room: IGameRoom): string {
+	if (isHangmanRoom(room)) return gameRoomsCopy.confirms.giveUp;
+	const pot = room.chipPot;
+	if (!pot) return gameRoomsCopy.confirms.forfeit;
+	return room.game === "monopoly" ? gameRoomsCopy.monopoly.surrenderConfirmRanked(pot.buyIn) : gameRoomsCopy.confirms.forfeitWager(pot.buyIn);
+}
+
 function forfeitRefusal(room: IGameRoom, userId: string): string | null {
 	if (isMatchOver(room)) return gameRoomsCopy.confirms.matchOver;
 	return isHangmanRoom(room) && userId !== room.hostId ? gameRoomsCopy.confirms.giveUpHostOnly : null;

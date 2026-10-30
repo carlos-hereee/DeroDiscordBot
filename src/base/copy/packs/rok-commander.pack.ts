@@ -787,10 +787,15 @@ export const rokCommanderCopy = {
 				"`/rating me` shows yours, `/rating board` the finest of this realm in one game, and `/rating luck` fortune's favorites.",
 
 			// Chips ride only on a ranked match (2026-10 item 276, owner decision D1), and a
-			// Blackjack Leave is a cash out on either kind of table (decision D9).
+			// Blackjack Leave is a cash out on either kind of table (decision D9). The Monopoly
+			// pot, the Battleship wager and the forfeit rule are decisions D3, D4, D7, D10 and D12;
+			// Discord caps a field at 1024 characters, so a new sentence here needs a cut elsewhere.
 			chipsTitle: "🪙 Chips ride only on ranked matches",
-			chipsBody:
-				"A **Rated** Hold'em or Blackjack table plays for a chip buy in from your wallet, and every chip it holds goes back to your wallet when you leave or the table ends. " +
+			chipsBody: (monopolyBuyIn: string): string =>
+				"A **Rated** Hold'em or Blackjack table plays for a chip buy in from your wallet, and every chip a table holds goes back to the wallets when it ends. " +
+				`A **Rated** Monopoly match costs each player ${monopolyBuyIn} and the winner takes the whole pot; Monopoly money stays on the board and never becomes chips. ` +
+				"A **Rated** Battleship challenge may carry a chip wager both captains pay, and the winner takes both. " +
+				"Once a ranked Hold'em, Monopoly or Battleship match begins, whoever leaves, surrenders, is removed, times out of it or departs the realm forfeits their chips to the winner, and I name the amount before you confirm. " +
 				"A **Casual** match never takes or pays a single chip: it is played with pretend chips that vanish when it ends, and so is a table open to the network, a table with my bots, and a Blackjack table against me alone. " +
 				"Leaving a Blackjack table cashes out your stack, and a bet already on the felt is lost.",
 

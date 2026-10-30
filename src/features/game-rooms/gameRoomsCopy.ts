@@ -6,6 +6,7 @@ import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import type { FlavorTable } from "./matchOutcome.js";
 // Aliased: Monopoly's copy below names its own parameters `chips`.
 import { chips as chipAmount } from "@features/economy/economyCopy.js";
+import type { Stake, StakeKind } from "./chipMatch.js";
 import { serverPlanLine } from "@features/entitlements/serverPlanCopy.js";
 
 // ── game rooms user-facing copy ──────────────────────────────────────
@@ -576,6 +577,15 @@ export const gameRoomsCopy = {
 		// who plays, which takes a picker a modal Submit cannot open.
 		startPickNeeded: "More players joined while you were deciding. Press Start match again to choose who plays.",
 		leaveTable: "Leave the table? A hand you are in is folded and your seat is given up. Submit to leave.",
+		// The ranked leave and forfeit warnings (2026-10 item 276, owner decision D6): every ranked
+		// confirm says what the leaver forfeits, and how much, before Submit.
+		leaveRankedTable: (stack: number): string =>
+			`Leave the table? This is a ranked table, so your stack of **${chipAmount(stack)}** stays on it for the winner, and a hand you are in is folded. Submit to leave.`,
+		forfeitWager: (wager: number): string =>
+			`Forfeit this match? It counts as a loss for you, and your **${chipAmount(wager)}** wager goes to the other captain with theirs. Submit to forfeit.`,
+		// Blackjack's Leave is a cash out, not a forfeit (D9): the dealer is no opponent to collect it.
+		leaveBlackjackTable: (stack: number): string =>
+			`Leave the table? The hand you are playing is lost, and your stack of **${chipAmount(stack)}** is cashed out to your wallet. Submit to leave.`,
 		endTable: "End the table now? It closes on the standings as they are. Submit to end it.",
 		matchOver: "That match is already over, so there is nothing to forfeit.",
 		// The archive confirm's one choice (2026-10 item 257 Phase 3b): a modal holds no button,
@@ -608,25 +618,39 @@ export const gameRoomsCopy = {
 			watch: { label: "Who may watch" },
 			match: {
 				label: "The match",
-				// A buy in game (Hold'em, Blackjack) says what the match does with chips, since only a
-				// Rated match charges its buy in (2026-10 item 276, owner decision D1).
+				// A buy in game says what the match does with chips, since only a Rated match charges
+				// one (2026-10 item 276, owner decision D1): a table's buy in, Monopoly's winner takes
+				// all buy in, or Battleship's wager when the host sets one.
 				ratedAny: {
 					label: "Rated, any rating",
-					description: (channelName: string, forChips: boolean): string =>
-						forChips ? `Counts toward /rating and plays for the chip buy in. Posts in ${channelName}.` : `Counts toward /rating. Posts in ${channelName}.`,
+					description: (channelName: string, stake: StakeKind | null): string => {
+						// A select option's description stops at Discord's 100 characters, channel name included.
+						if (stake === "wager") return `Counts toward /rating, and for any chip wager you set. Posts in ${channelName}.`;
+						if (stake === "pot") return `Counts toward /rating, and the winner takes every chip buy in. Posts in ${channelName}.`;
+						return stake ? `Counts toward /rating and plays for the chip buy in. Posts in ${channelName}.` : `Counts toward /rating. Posts in ${channelName}.`;
+					},
 				},
 				ratedClose: { label: "Rated, close ratings", description: (width: number): string => `Only ratings within ${width} of yours may join.` },
 				ratedTight: { label: "Rated, tight ratings", description: (width: number): string => `Only ratings within ${width} of yours may join.` },
 				casual: {
 					label: "Casual",
-					description: (channelName: string, forChips: boolean): string =>
-						forChips ? `Not rated, free, played with pretend chips. Posts in ${channelName}.` : `Not rated. Posts in ${channelName}.`,
+					description: (channelName: string, stake: StakeKind | null): string => {
+						if (stake === "buyIn") return `Not rated, free, played with pretend chips. Posts in ${channelName}.`;
+						return stake ? `Not rated, and no chips change hands. Posts in ${channelName}.` : `Not rated. Posts in ${channelName}.`;
+					},
 				},
 				// One option per bot count (2026-10 item 267, decision 9), labelled from the count.
 				casualBots: {
 					label: (count: number): string => `Casual, ${count === 1 ? "1 Dero bot" : `${count} Dero bots`}`,
 					description: "Not rated. Each person who joins takes a bot's seat.",
 				},
+			},
+			// Battleship's wager (2026-10 item 276, owner decision D10): one text field, the same
+			// shape as the Buy in above, because Battleship's modal has one slot left of Discord's five.
+			wager: {
+				label: "Chip wager (Rated matches only)",
+				placeholder: (presets: readonly number[], min: number, max: number): string =>
+					`blank for none, or ${presets.map((amount) => amount.toLocaleString("en-US")).join(", ")} (${min.toLocaleString("en-US")} to ${max.toLocaleString("en-US")})`,
 			},
 			buyIn: {
 				label: "Buy in (chips, Rated matches only)",
@@ -664,6 +688,12 @@ export const gameRoomsCopy = {
 			watch: { open: "anyone may watch", invite: "invited members watch", none: "no spectators" },
 			voice: (enabled: boolean): string => (enabled ? "Dero voice on" : "Dero voice off"),
 			auctions: (enabled: boolean): string => (enabled ? "auctions on" : "auctions off"),
+			// What a seat stakes, by chipMatch.stakeOf, so every chip card reads its stake one way.
+			stake: (stake: Stake): string => {
+				if (stake.kind === "wager") return `${chipAmount(stake.amount)} wager each`;
+				if (stake.kind === "pot") return `${chipAmount(stake.amount)} buy in, winner takes all`;
+				return `${chipAmount(stake.amount)} buy in`;
+			},
 		},
 		// A choice the card's own rules refused, said on the card under the summary.
 		notApplied: (setting: string, reason: string): string => `⚠️ ${setting} was not applied. ${reason}`,
@@ -675,7 +705,9 @@ export const gameRoomsCopy = {
 		// A network table's watchers in other servers are its satellites' business, so it keeps
 		// the network default rather than a choice made here.
 		networkWatch: "A table open to the network keeps its own spectators: its players in other servers watch from there.",
-		settingNames: { network: "Open to the network", join: "Who can join", match: "The match", casualBots: "Casual with Dero bots", band: "The rating band", buyIn: "Your buy in", voice: "Dero voice", auctions: "Auctions", watch: "Who may watch" },
+		settingNames: { network: "Open to the network", join: "Who can join", match: "The match", casualBots: "Casual with Dero bots", band: "The rating band", buyIn: "Your buy in", wager: "Your wager", voice: "Dero voice", auctions: "Auctions", watch: "Who may watch" },
+		wagerKept: (amount: number | null): string =>
+			amount === null ? "The match plays with no wager until you change it with Edit settings." : `The match plays for a ${chipAmount(amount)} wager until you change it with Edit settings.`,
 		editLabel: "Edit settings",
 	},
 
@@ -699,10 +731,26 @@ export const gameRoomsCopy = {
 		results: { won: "Won", lost: "Lost", noWinner: "No winner" },
 	},
 
+	// ── the ranked pot (2026-10 item 276, owner decisions D3, D4 and D10) ──
+	// A ranked Monopoly or Battleship match's buy ins, paid once at its finish (chipPot.ts).
+	chipPot: {
+		winnerTakes: (userId: string, total: number): string => `🏆 <@${userId}> takes the pot of **${chipAmount(total)}**.`,
+		shared: (total: number, payouts: readonly { userId: string; amount: number }[]): string =>
+			[`🪙 Nobody won the pot of ${chipAmount(total)}, so it went to the players still in:`, ...payouts.map((payout) => `<@${payout.userId}> ${chipAmount(payout.amount)}`)].join("\n"),
+		// The result card's and the closed challenge card's line under the outcome.
+		prizeLine: (total: number, won: boolean): string =>
+			won ? `🏆 Prize: **${chipAmount(total)}**` : `🪙 The pot of **${chipAmount(total)}** went to the players still in.`,
+	},
+
 	// ── the challenge board (Phase 4) ──
 	board: {
 		// The Hold'em buy in on the card (2026-10 item 257 Phase 4a).
 		cardBuyIn: (amount: number): string => `🪙 Buy in: **${chipAmount(amount)}**, paid from your wallet when you join and given back if you are declined or the challenge is cancelled.`,
+		// Ranked Monopoly's pot and Battleship's wager (2026-10 item 276, D4 and D10), worded like the buy in.
+		cardPot: (amount: number): string =>
+			`🪙 Buy in: **${chipAmount(amount)}** each, paid from your wallet when you join and given back if you are declined or the challenge is cancelled. The winner takes every buy in at the table.`,
+		cardWager: (amount: number): string =>
+			`🪙 Wager: **${chipAmount(amount)}** each, paid from your wallet when you join and given back if you are declined or the challenge is cancelled. The winner takes both.`,
 		buyInChangedJoining: "The host changed the buy in as you joined, so your chips went back to your wallet. Press Join again.",
 		buyInSetNotice: (amount: number): string => `The buy in is now ${chipAmount(amount)}.`,
 		introTitle: "⚔️ The challenge board",
@@ -811,6 +859,12 @@ export const gameRoomsCopy = {
 			badge: { rated: "RATED", casual: "CASUAL" },
 			waiting: "Waiting for challengers",
 			more: (count: number): string => `+${count} more`,
+			// The stake under the kicker (2026-10 item 276, D10), from the same stakeOf as the settings line.
+			stake: (stake: Stake): string => {
+				if (stake.kind === "wager") return `WAGER ${chipAmount(stake.amount).toUpperCase()} EACH`;
+				if (stake.kind === "pot") return `BUY IN ${chipAmount(stake.amount).toUpperCase()}, WINNER TAKES ALL`;
+				return `BUY IN ${chipAmount(stake.amount).toUpperCase()}`;
+			},
 			status: {
 				choosing: "SETTING UP",
 				invite: "INVITE ONLY",
@@ -1168,6 +1222,13 @@ export const gameRoomsCopy = {
 		buyInInvalid: (min: number, max: number): string => `A buy in is a whole number of chips from ${min.toLocaleString("en-US")} to ${max.toLocaleString("en-US")}.`,
 		buyInLocked: "Somebody already paid the buy in, so it stays as it is.",
 		buyInFreeTable: "This table plays for table chips only, so it has no buy in to set.",
+		// A ranked Battleship start whose opponent never paid the wager (2026-10 item 276, D10).
+		opponentNotPaid: (userId: string, wager: number): string =>
+			`<@${userId}> has not paid the ${chipAmount(wager)} wager yet. They pay it with Join, or Accept and buy in on an invite only card, and then you can start.`,
+		wagerFreeMatch: "This match plays free, so it takes no wager. Only a Rated match where chips are on plays for one.",
+		wagerLocked: "Somebody already paid the wager, so it stays as it is.",
+		wagerInvalid: (min: number, max: number): string =>
+			`A wager is a whole number of chips from ${min.toLocaleString("en-US")} to ${max.toLocaleString("en-US")}, or blank for none.`,
 
 		// ── the trail ──
 		seatTaken: (userId: string, seated: number): string => `🪙 <@${userId}> bought in. ${seated} at the table.`,
@@ -1198,6 +1259,11 @@ export const gameRoomsCopy = {
 		// A chip table's leave, saying what went back to the wallet.
 		chipsLeftTable: (userId: string, foldedHand: boolean, stackLeft: number): string =>
 			`🚪 <@${userId}> ${foldedHand ? "folded and left" : "left"} the table, and ${chipAmount(stackLeft)} went back to their wallet.`,
+		// A removal's or a server leave's line under its own reason (2026-10 item 276, D3 and D12).
+		stackForfeited: (userId: string, amount: number): string => `🪙 <@${userId}>'s ${chipAmount(amount)} stay on the table for the winner's prize.`,
+		// A ranked table's leave (2026-10 item 276, D3): the stack stays for the winner.
+		forfeitLeftTable: (userId: string, foldedHand: boolean, stackLeft: number): string =>
+			`🏳️ <@${userId}> ${foldedHand ? "folded and left" : "left"} the table and forfeits ${chipAmount(stackLeft)} to the winner's prize.`,
 		// The end of a chip table: every stack still on it, back to its wallet.
 		chipsReturned: (payouts: readonly { userId: string; amount: number }[]): string =>
 			[`🪙 The table closed and its chips went back to the wallets:`, ...payouts.map((payout) => `<@${payout.userId}> ${chipAmount(payout.amount)}`)].join("\n"),
@@ -1408,6 +1474,9 @@ export const gameRoomsCopy = {
 		boardBusy: "The board just changed. Try that again.",
 		// The challenge board's start refusal. The pool is everyone who joined; the host
 		// is the extra seat, which is why the copy says "counting you".
+		// A ranked match seats only those who paid its buy in (2026-10 item 276, D4).
+		tooFewPaid: (minSeats: number, paid: number): string =>
+			`A ranked Monopoly match needs at least ${minSeats} players who paid the buy in, counting you, and ${paid} would sit. Invited players pay with Accept and buy in.`,
 		tooManyPlayers: (maxSeats: number, joined: number): string =>
 			`Monopoly seats at most ${maxSeats} players, counting you, and ${joined} have joined. Call this one off and start a new challenge with fewer.`,
 		// The same refusal with Dero bots in the count (2026-10 item 250 Phase 5).
@@ -1431,6 +1500,9 @@ export const gameRoomsCopy = {
 		surrenderConfirmTitle: "Surrender this match?",
 		surrenderConfirmPrompt:
 			"Your chips and lots go back to the bank and you are out of the match for good. The match goes on without you. Submit to surrender.",
+		// A ranked match's surrender (2026-10 item 276, D6): the buy in stays in the pot for the winner.
+		surrenderConfirmRanked: (buyIn: number): string =>
+			`This is a ranked match, so your **${chipAmount(buyIn)}** buy in stays in the pot for the winner. Your money and lots go back to the bank and you are out of the match for good. Submit to surrender.`,
 		surrenderDone: "You surrendered. The board shows the match going on without you.",
 		surrenderStillSeated: "The board kept changing, so your seat is still in the match. Press Surrender again.",
 		// Public trail lines, ahead of the engine's own forfeit line, which says where the

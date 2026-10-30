@@ -11,7 +11,7 @@ import type { GameSlug } from "./roomTypes.js";
 //        reads a Monopoly row with no board, so the host's one room slot was held for good. So a
 //        rematch is refused before any write, and a seed the claim left short closes its room.
 // Does NOT: gate a challenge card's Start, which keeps its own refusals (challengeBoard
-//        startRefusal and holdemSeatRefusal) with words of their own for the card.
+//        startRefusal and startSeatRefusal) with words of their own for the card.
 //
 // A Hold'em room's players are everyone the card gathered, payers or not, and its TABLE seats
 // only those who bought in, under its own cap (holdemTable.seatCapOf); a rematch opens a joining

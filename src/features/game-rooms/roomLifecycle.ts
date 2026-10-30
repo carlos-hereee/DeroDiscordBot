@@ -15,6 +15,8 @@ import type { OutcomeBucket } from "./matchOutcome.js";
 import { settleTableChips } from "./holdemChips.js";
 import { settleBlackjackStacks } from "./blackjackChips.js";
 import { refundAllJoiners } from "./holdemDraftBuyIn.js";
+import { settleChipPot } from "./chipPot.js";
+import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { revokeRoomInvite } from "./roomInvite.js";
 import { isSoloLuckGame, offersRematch } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -136,9 +138,15 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	// (refundJoiners), so nothing pays twice. A room that started has an empty ledger, because
 	// the start claim emptied it.
 	if ((claimed.buyInPaidBy ?? []).length > 0) await refundAllJoiners(claimed);
+	// ①ᶠ A ranked Monopoly or Battleship match's pot (2026-10 item 276, owner decisions D3, D4 and
+	// D10), paid from the CLAIMED row the same way, so it pays once whatever ended the match: the
+	// winner takes it all, and a match with no winner shares it among the payers still in. A
+	// leaver's buy in is part of it, which is the forfeit. It catches its own failures.
+	const pot = await settleChipPot(client, claimed, winnerId, input.abandoned ?? false);
+	const prizeLine = pot ? gameRoomsCopy.chipPot.prizeLine(pot.total, pot.payouts.length === 1 && pot.payouts[0].userId === winnerId) : null;
 
 	// A network table names its winner rather than mentioning them (satelliteRooms).
-	const resultEmbed = await labelEmbedForRoom(client, room, roomResultEmbed(winnerId, input.abandoned ?? false, input.art?.ref, archiveDelayMs));
+	const resultEmbed = await labelEmbedForRoom(client, room, roomResultEmbed(winnerId, input.abandoned ?? false, input.art?.ref, archiveDelayMs, prizeLine));
 
 	const channel = await resolveRoomChannel(client, room.channelId);
 	// An already-deleted channel is the ordinary abandonment case, not an error. The
@@ -195,7 +203,8 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 		bucket: input.outcome?.bucket,
 		roomWon: input.outcome?.roomWon,
 	});
-	void closeChallengeCard(client, room, resultLine);
+	// The closed card says the prize under the result (D4); Dero reads only the result aloud.
+	void closeChallengeCard(client, room, prizeLine ? `${resultLine}\n${prizeLine}` : resultLine);
 	announceMatchResult(client, room, resultLine);
 
 	return true;

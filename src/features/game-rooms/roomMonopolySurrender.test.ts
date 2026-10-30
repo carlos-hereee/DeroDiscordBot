@@ -249,6 +249,13 @@ describe("the two presses", () => {
 		expect(commitMock).not.toHaveBeenCalled();
 	});
 
+	// 2026-10 item 276, owner decision D6: a ranked match names the buy in the surrender leaves in the pot.
+	it("warns a ranked match's seat that its buy in stays in the pot, naming the amount", async () => {
+		const room = { ...seed([A, B]), chipPot: { buyIn: 1_500, userIds: [A, B] } } as IGameRoom;
+		await handleMsurrender(press(B), room);
+		expect(showConfirm).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sections: [words.surrenderConfirmRanked(1_500)] }));
+	});
+
 	it("refuses a seat already out with a private notice, and opens no confirm", async () => {
 		const room = seed([A, B, C]);
 		stored().seats[2].bankrupt = true;

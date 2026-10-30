@@ -59,7 +59,8 @@ import { setTurnBlock, turnBlockLines } from "@features/game-rooms/turnLog.js";
 import { drawingSettled, isClockExpired, pausedDeadline, withDrawingPause } from "@features/game-rooms/drawingPause.js";
 import { cashOutBlackjackSeat, saveBlackjackStacks } from "@features/game-rooms/blackjackChips.js";
 import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
-import { showCooldownNotice, showNotice, showPendingNotice } from "@utils/textModal.js";
+import { acknowledgeConfirm, showConfirm, showCooldownNotice, showNotice, showPendingNotice, type ConfirmInteraction } from "@utils/textModal.js";
+import { confirmCustomId } from "@features/game-rooms/gameRoomActions.js";
 import { syncTurnPrompt, type TurnAdapter } from "@features/game-rooms/turnPrompt.js";
 import { disarmTurnClock, syncTurnClocks, type TurnClockGame } from "@features/game-rooms/turnClock.js";
 
@@ -653,6 +654,13 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 
 	// ── playing phase ──
 	if (action === "leave") {
+		// A chip table asks first, saying the stack is cashed out and the hand in play lost
+		// (2026-10 item 276, owner decisions D6 and D9); its Submit is confirmBlackjackLeave.
+		const cashOut = game.roomId && game.bankroll?.chips && game.table ? cashOutIfLeaving(game.table, click.user.id) : null;
+		if (cashOut !== null && game.roomId) {
+			await showConfirm(click, { title: gamesCopy.notices.blackjack, sections: [gameRoomsCopy.confirms.leaveBlackjackTable(cashOut)], confirmId: confirmCustomId("bleaveok", game.roomId) });
+			return;
+		}
 		await leaveDuringHand(click, game, channelId);
 		return;
 	}
@@ -841,6 +849,37 @@ async function leaveDuringHand(click: ButtonInteraction, game: BlackjackGame, ch
 	else await redrawTable(channelId, game.table, clickWriter(click), tableEmbedOf(game, game.table));
 	await answerInChannel(click, "here", { content: c.leftHand });
 	if (result) game.stop();
+}
+
+// What a seat would walk away with if it left now, or null when it is not at the table: a bet
+// placed in the betting turn comes back with it (applyLeave), a hand in play is lost.
+function cashOutIfLeaving(table: BlackjackTable, userId: string): number | null {
+	const seat = table.seats.find((candidate) => candidate.userId === userId);
+	if (!seat || seat.out) return null;
+	return table.phase === "betting" ? seat.stack + seat.bet : seat.stack;
+}
+
+/**
+ * Leave's confirm at a chip table (2026-10 item 276, D6 and D9): its Submit, or the fallback
+ * reply's button, routed through the game room confirms. The same leave the press made before it
+ * asked, on the board message rather than the click, since a confirm is no board click.
+ */
+export async function confirmBlackjackLeave(interaction: ConfirmInteraction, channelId: string): Promise<void> {
+	const c = gamesCopy.blackjack;
+	const game = games.get(channelId);
+	if (!game?.table || !game.bankroll || !game.board || game.ended) {
+		await showNotice(interaction, { title: gamesCopy.notices.blackjack, sections: [c.notPlaying] });
+		return;
+	}
+	const outcome = applyLeave(game.table, interaction.user.id);
+	if (outcome.status !== "left") {
+		await showNotice(interaction, { title: gamesCopy.notices.blackjack, sections: [outcome.status === "already-left" ? c.leftAlready : c.notPlaying] });
+		return;
+	}
+	noteMemberAction(game);
+	await acknowledgeConfirm(interaction);
+	await leaveBankrollTable(game, channelId, interaction.user.id, outcome.cashOut, game.board.client, boardSurface(game.board));
+	await answerInChannel(interaction, "here", { content: game.bankroll.chips ? c.leftWithChips(outcome.cashOut) : c.leftFreeTable });
 }
 
 /**

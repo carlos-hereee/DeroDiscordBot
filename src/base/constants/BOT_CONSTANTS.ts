@@ -1008,6 +1008,19 @@ export const BOT_CONSTANTS = {
 		HOLDEM_BUY_IN_PRESETS: [1_000, 2_500, 5_000, 10_000] as readonly number[],
 		HOLDEM_MIN_BUY_IN: 200,
 		HOLDEM_MAX_BUY_IN: 1_000_000,
+		// ── the ranked Monopoly pot and the ranked Battleship wager (2026-10 item 276) ──
+		// Owner decision D4: every seat of a ranked Monopoly match pays this fixed buy in (no host
+		// choice, so no modal), and the winner takes it times the seats. It matches the engine's
+		// own 1,500 dollar opening cash only by the rules' tradition; Monopoly dollars are never
+		// chips (D7), so changing one never changes the other.
+		MONOPOLY_RANKED_BUY_IN: 1_500,
+		// Owner decision D10: the host of a ranked Battleship card may set a wager both captains
+		// pay; blank means none, and the match is chip free. The presets are the amounts the
+		// creation modal suggests; the bounds are what it accepts, the floor keeping a wager worth
+		// a line on the card and the ceiling matching a Hold'em buy in's.
+		BATTLESHIP_WAGER_PRESETS: [100, 250, 500, 1_000] as readonly number[],
+		BATTLESHIP_MIN_WAGER: 50,
+		BATTLESHIP_MAX_WAGER: 1_000_000,
 		// ── 🏪dero-market (2026-10 item 267 Session 2a, owner decision 5 of 2026-10-28) ──
 		// The one place chips and Dero coins trade (features/economy/coinMarket.ts).
 		MARKET: {

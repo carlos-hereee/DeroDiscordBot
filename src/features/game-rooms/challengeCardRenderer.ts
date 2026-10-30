@@ -23,7 +23,8 @@ import { gameAssetPath, type GameAssetKey } from "@features/games/gamesAssets.js
 import { botSeatIdsFor, botSeatName, botVariantOf } from "./botSeat.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { openerLogoKey } from "./gameRoomsEmbeds.js";
-import { badgeOfCard, type ChallengeBadge, type OpenerCardState } from "./challengeBoardEmbeds.js";
+import { badgeOfCard, cardStakeOf, type ChallengeBadge, type OpenerCardState } from "./challengeBoardEmbeds.js";
+import type { Stake } from "./chipMatch.js";
 import type { GameSlug } from "./roomTypes.js";
 
 // ── challengeCardRenderer ────────────────────────────────────────────
@@ -58,6 +59,8 @@ export interface ChallengeCardView {
 	status: ChallengeCardStatus;
 	/** RATED or CASUAL, from challengeBadge, the helper the embed's badge line reads too. */
 	badge: ChallengeBadge;
+	/** What a seat stakes, from cardStakeOf, the helper the embed's settings line reads too; null for a free card. */
+	stake: Stake | null;
 	host: ChallengeFace;
 	/** At most MAX_CHALLENGER_FACES joiners, in the order they joined. */
 	challengers: ChallengeFace[];
@@ -74,8 +77,9 @@ const CHALLENGERS_PER_ROW = 3;
 
 // Bump whenever the drawing changes, or members keep seeing cached cards. 3 added the
 // RATED or CASUAL badge pill (2026-10 item 254, Arcade 5); 4 the status watermark (Arcade 6);
-// 5 the rock paper scissors logo (Arcade 3); 6 the Dero bots the host seats, drawn after the joiners.
-const CHALLENGE_CARD_VERSION = 6;
+// 5 the rock paper scissors logo (Arcade 3); 6 the Dero bots the host seats, drawn after the joiners;
+// 7 the stake under the kicker (2026-10 item 276, D10).
+const CHALLENGE_CARD_VERSION = 7;
 const CARD_WIDTH = 960;
 const CARD_HEIGHT = 380;
 const PADDING = 32;
@@ -171,6 +175,7 @@ export async function challengeCardView(guild: Guild, state: OpenerCardState): P
 		game: state.game,
 		status: challengeCardStatus(state),
 		badge: badgeOfCard(state),
+		stake: cardStakeOf(state),
 		host,
 		challengers,
 		hiddenCount: Math.max(0, state.pool.length + bots.length - challengers.length),
@@ -309,6 +314,18 @@ function drawHeader(context: SKRSContext2D, view: ChallengeCardView, accent: Col
 		baseline: "middle",
 		maxWidth: CARD_WIDTH - PADDING * 2 - 220 - BADGE_PILL_WIDTH - PILL_GAP,
 	});
+	// The stake under the kicker, in the space above the faces (the host's ring starts below it).
+	if (view.stake) {
+		drawText(context, copy.stake(view.stake), {
+			x: PADDING,
+			y: PADDING + 64,
+			size: 22,
+			weight: "bold",
+			color: canvasColor(accent),
+			baseline: "middle",
+			maxWidth: GRID_LEFT - PADDING * 2,
+		});
+	}
 	drawPill(context, {
 		x: CARD_WIDTH - PADDING - 200 - PILL_GAP - BADGE_PILL_WIDTH,
 		y: PADDING + 4,

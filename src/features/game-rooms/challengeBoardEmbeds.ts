@@ -15,7 +15,7 @@ import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { GAME_ROOM_PREFIX } from "./gameRoomActions.js";
 import type { CardVoiceState } from "./cardVoiceState.js";
 import { countdownSeconds } from "./startCountdownState.js";
-import { movesChips } from "./chipMatch.js";
+import { movesChips, stakeOf, type Stake } from "./chipMatch.js";
 import { isBuyInGame, type GameSlug, type RatingBand, type RoomVisibility, type SpectatorMode } from "./roomTypes.js";
 import type { SoloLuckGame } from "@features/games/soloLuck.js";
 
@@ -256,7 +256,7 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 	if (gathering) {
 		if (state.countingDown) lines.push("", gameRoomsCopy.board.cardCountdown(countdownSeconds()));
 		lines.push("", settingsLine(state), ...(state.settingsNotes ?? []));
-		lines.push(...buyInLines(state));
+		lines.push(...stakeLines(state));
 		lines.push(...voiceLines(state));
 	}
 
@@ -299,6 +299,8 @@ function matchPart(state: OpenerCardState): string {
 function settingsLine(state: OpenerCardState): string {
 	const parts = [joinPart(state)];
 	if (isRatedGame(state.game)) parts.push(matchPart(state));
+	const stake = cardStakeOf(state);
+	if (stake) parts.push(summaryWords.stake(stake));
 	// A network table's watchers in other servers are its satellites' business, so it names none.
 	if (!state.network && state.hostControls) parts.push(summaryWords.watch[state.hostControls.spectatorMode]);
 	if (state.game === "monopoly") parts.push(summaryWords.auctions(state.monopolyAuctions ?? false));
@@ -306,16 +308,31 @@ function settingsLine(state: OpenerCardState): string {
 	return `${summaryWords.lead} ${parts.join(" · ")}`;
 }
 
-// A Hold'em or Blackjack card names the buy in wherever its table could play for chips, by the
-// one chip rule (chipMatch.movesChips): a ranked match, not a network table and no Dero bot seat.
-// A casual card names none, because it plays free (2026-10 item 276, owner decision D1).
-function showsBuyIn(state: OpenerCardState): boolean {
-	return isBuyInGame(state.game) && movesChips({ game: state.game, network: state.network ?? false, casual: state.casual ?? false }, state.bots?.count ?? 0);
+/**
+ * What a seat of this card stakes, or null when the card names no stake: the ONE helper behind
+ * the settings line, the stake line under it, the picture's stake (challengeCardRenderer) and the
+ * Accept and buy in button, so a chip card reads its stake one way (2026-10 item 276, D10). A
+ * buy in game's card names its stake wherever its match could play for chips, by the one chip
+ * rule (chipMatch.movesChips: a ranked match, not a network table, no Dero bot seat), and
+ * chipMatch.stakeOf says how much: a table's buy in, ranked Monopoly's fixed buy in, or a ranked
+ * Battleship card's wager (none until the host sets one). A casual card names none (D1).
+ */
+export function cardStakeOf(state: Pick<OpenerCardState, "game" | "network" | "casual" | "bots" | "holdemBuyIn">): Stake | null {
+	if (!isBuyInGame(state.game)) return null;
+	if (!movesChips({ game: state.game, network: state.network ?? false, casual: state.casual ?? false }, state.bots?.count ?? 0)) return null;
+	return stakeOf({ game: state.game, holdemBuyIn: state.holdemBuyIn ?? null });
 }
 
-function buyInLines(state: OpenerCardState): string[] {
-	if (!showsBuyIn(state) || state.holdemBuyIn == null) return [];
-	return ["", gameRoomsCopy.board.cardBuyIn(state.holdemBuyIn)];
+// The line under the settings line saying what a joiner pays and what the winner takes.
+function stakeDetail(stake: Stake): string {
+	if (stake.kind === "pot") return gameRoomsCopy.board.cardPot(stake.amount);
+	if (stake.kind === "wager") return gameRoomsCopy.board.cardWager(stake.amount);
+	return gameRoomsCopy.board.cardBuyIn(stake.amount);
+}
+
+function stakeLines(state: OpenerCardState): string[] {
+	const stake = cardStakeOf(state);
+	return stake ? ["", stakeDetail(stake)] : [];
 }
 
 function voiceLines(state: OpenerCardState): string[] {
@@ -439,11 +456,11 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 		.setStyle(ButtonStyle.Primary);
 
 	// Four of the row's five, and the fifth is an invited member's Accept and buy in on an
-	// Invite only Hold'em or Blackjack card that may charge one (2026-10 item 263 R3-27), so the card never
-	// needs a row of its own for it. Shown to everyone, since Discord cannot show a button to some
-	// members only; the handler refuses anybody the host did not invite.
+	// Invite only card that may charge a stake (2026-10 item 263 R3-27; every chip game since item
+	// 276), so the card never needs a row of its own for it. Shown to everyone, since Discord cannot
+	// show a button to some members only; the handler refuses anybody the host did not invite.
 	const accept =
-		state.visibility === "invite" && showsBuyIn(state)
+		state.visibility === "invite" && cardStakeOf(state) !== null
 			? [
 					new ButtonBuilder()
 						.setCustomId(`${GAME_ROOM_PREFIX}:haccept:${roomId}`)

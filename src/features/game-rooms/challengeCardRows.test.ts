@@ -78,7 +78,10 @@ describe("the challenge card's rows", () => {
 		expect(gatherIds(fullestState("holdem", "public"))).toEqual(["join", "start", "edit", "cancel"]);
 		// A table that plays free (a Dero bot seat, or the network) charges nobody, so it offers no Accept.
 		expect(gatherIds(fullestState("holdem", "invite", { bots: { count: 1 } }))).toEqual(["invite", "start", "edit", "cancel"]);
-		expect(gatherIds(fullestState("monopoly", "invite"))).toEqual(["invite", "start", "edit", "cancel"]);
+		// Ranked Monopoly always carries its buy in, Battleship only with a wager (2026-10 item 276).
+		expect(gatherIds(fullestState("monopoly", "invite"))).toEqual(["invite", "start", "edit", "cancel", "haccept"]);
+		expect(gatherIds(fullestState("battleship", "invite", { holdemBuyIn: null }))).toEqual(["invite", "start", "edit", "cancel"]);
+		expect(gatherIds(fullestState("battleship", "invite"))).toEqual(["invite", "start", "edit", "cancel", "haccept"]);
 	});
 
 	it("keeps the host's Requests and Remove a player on the row below", () => {

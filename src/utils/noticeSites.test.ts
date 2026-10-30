@@ -299,6 +299,8 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/games/blackjackHandler.ts", within: "onClick", anchor: "seated ? c.notYourTurn : c.notPlaying", kind: "state" },
 	{ file: "features/games/blackjackHandler.ts", within: "onClick", anchor: "c.illegalAction", kind: "state" },
 	{ file: "features/games/blackjackHandler.ts", within: "leaveDuringHand", anchor: "refusal", kind: "state" },
+	{ file: "features/games/blackjackHandler.ts", within: "confirmBlackjackLeave", anchor: "sections: [c.notPlaying]", kind: "race", why: "the table ended between Leave and the confirm's Submit" },
+	{ file: "features/games/blackjackHandler.ts", within: "confirmBlackjackLeave", anchor: "c.leftAlready : c.notPlaying", kind: "race", why: "the seat left another way (a second Submit, a server leave) since Leave asked" },
 
 	// ── games/challengeEntry.ts ──
 

@@ -57,7 +57,8 @@ const DECIDED: Record<SettingsGame, SettingField[]> = {
 	hangman: ["join", "watch", "voice"],
 	// The Rated or Casual choice of 2026-10 item 276 (owner decision D2).
 	blackjack: ["join", "watch", "match", "buyIn", "voice"],
-	battleship: ["join", "watch", "match", "voice"],
+	// Battleship's chip wager (2026-10 item 276, owner decision D10).
+	battleship: ["join", "watch", "match", "wager", "voice"],
 	holdem: ["join", "watch", "match", "buyIn", "voice"],
 	monopoly: ["join", "watch", "match", "auctions", "voice"],
 };
@@ -86,6 +87,7 @@ describe("each game's creation modal", () => {
 		expect(fieldIds(modalJson("holdem", { kind: "create" }, {}, "held"))).toEqual(["join", "watch", "match", "buyIn"]);
 		expect(fieldIds(modalJson("blackjack", { kind: "create" }, {}, "held"))).toEqual(["join", "watch", "match", "buyIn"]);
 		expect(fieldIds(modalJson("monopoly", { kind: "create" }, {}, "held"))).toEqual(["join", "watch", "match", "auctions"]);
+		expect(fieldIds(modalJson("battleship", { kind: "create" }, {}, "held"))).toEqual(["join", "watch", "match", "wager"]);
 		for (const game of SETTINGS_GAMES) {
 			if (DECIDED[game].length < MAX_COMPONENTS) expect(fieldIds(modalJson(game, { kind: "create" }, {}, "held"))).toContain("voice");
 		}
@@ -116,8 +118,27 @@ describe("the options", () => {
 		const described = (value: string): string => options.find((option) => option.value === value)?.description ?? "";
 		expect(described("rated-any")).toContain("plays for the chip buy in");
 		expect(described("casual")).toContain("free");
-		const battleship = (fieldOf(modalJson("battleship"), "match")?.options ?? []) as Array<{ value: string; description?: string }>;
-		expect(battleship.every((option) => !(option.description ?? "").includes("chip"))).toBe(true);
+		// Monopoly's fixed pot and Battleship's wager (2026-10 item 276, D4 and D10) say so on Rated
+		// alone; every description fits Discord's 100 characters.
+		const optionsOf = (game: SettingsGame): Array<{ value: string; description?: string }> =>
+			(fieldOf(modalJson(game), "match")?.options ?? []) as Array<{ value: string; description?: string }>;
+		const describedIn = (game: SettingsGame, value: string): string => optionsOf(game).find((option) => option.value === value)?.description ?? "";
+		expect(describedIn("monopoly", "rated-any")).toContain("winner takes every chip buy in");
+		expect(describedIn("battleship", "rated-any")).toContain("chip wager");
+		for (const game of ["monopoly", "battleship"] as const) expect(describedIn(game, "casual")).toContain("no chips change hands");
+		for (const game of SETTINGS_GAMES) {
+			for (const option of optionsOf(game)) expect((option.description ?? "").length).toBeLessThanOrEqual(100);
+		}
+	});
+
+	// The wager is one text field, presets named in its placeholder, since a preset select beside a
+	// custom amount would take a sixth component (2026-10 item 276, D10).
+	it("asks Battleship's host for a chip wager in one optional text field, blank meaning none", () => {
+		const wager = fieldOf(modalJson("battleship"), "wager");
+		expect(wager?.type).toBe(4);
+		expect(wager?.required).toBe(false);
+		expect(wager?.value ?? "").toBe("");
+		expect(fieldOf(modalJson("holdem"), "wager")).toBeUndefined();
 	});
 
 	it("offers Open to all only within the reach, and the network only at network reach for a game it mirrors", () => {

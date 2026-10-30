@@ -6,6 +6,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { CHALLENGE_GAMES } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { LUCK_GAMES, RATED_GAMES, type LuckGame, type RatedGame } from "@features/ratings/ratingEngine.js";
 import { CUT_CARD_PENETRATION } from "@features/games/blackjackState.js";
+import { chips as chipAmount } from "@features/economy/economyCopy.js";
 
 // ── the 🎮 ARCADE GAMES cards ──────────────────────────────────────────────
 // Since 2026-10 item 245 Phase 4a the arcade has three cards with three jobs:
@@ -81,6 +82,15 @@ describe("the rules card's ratings field", () => {
 			expect(chips).toContain("**Rated** Hold'em or Blackjack table plays for a chip buy in");
 			expect(chips).toContain("**Casual** match never takes or pays a single chip");
 			expect(chips).toContain("Leaving a Blackjack table cashes out your stack");
+		});
+
+		// 2026-10 item 276, owner decisions D3, D4, D7, D10 and D12, inside Discord's 1024 character field.
+		it(`names the Monopoly buy in and pot, the Battleship wager and the ranked forfeit (${name})`, () => {
+			expect(chips).toContain(`**Rated** Monopoly match costs each player ${chipAmount(BOT_CONSTANTS.ECONOMY.MONOPOLY_RANKED_BUY_IN)}`);
+			expect(chips).toContain("never becomes chips");
+			expect(chips).toContain("chip wager both captains pay");
+			expect(chips).toContain("forfeits their chips to the winner");
+			expect(chips.length).toBeLessThanOrEqual(1024);
 		});
 
 		it(`states every house rule, the cut card at the share the engine runs (${name})`, () => {

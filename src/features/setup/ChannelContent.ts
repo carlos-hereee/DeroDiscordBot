@@ -210,7 +210,7 @@ export const ChannelContent = {
 				value: c.ratingsBody(RATINGS.PROVISIONAL_GAMES, RATINGS.HOLDEM_MIN_RATED_HANDS, RATINGS.LUCK_MIN_DECIDED),
 				inline: false,
 			},
-			{ name: c.chipsTitle, value: c.chipsBody, inline: false },
+			{ name: c.chipsTitle, value: c.chipsBody(chips(BOT_CONSTANTS.ECONOMY.MONOPOLY_RANKED_BUY_IN)), inline: false },
 			{ name: c.houseRulesTitle, value: c.houseRulesBody(Math.round(CUT_CARD_PENETRATION * PERCENT)), inline: false }
 		);
 	},

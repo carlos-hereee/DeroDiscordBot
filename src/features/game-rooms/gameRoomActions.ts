@@ -226,6 +226,9 @@ export const GAME_ROOM_ACTIONS = {
 	forfeitok: { hostOnly: false, playersOnly: true },
 	hleaveok: { hostOnly: false, playersOnly: true },
 	hendok: { hostOnly: true, playersOnly: false },
+	// Blackjack's Leave at a chip table (2026-10 item 276, owner decisions D6 and D9): the table's
+	// own Leave button asks first, and this Submit cashes the seat out (blackjackHandler).
+	bleaveok: { hostOnly: false, playersOnly: true },
 } as const satisfies Record<string, { hostOnly: boolean; playersOnly: boolean }>;
 
 export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;
@@ -262,7 +265,7 @@ export const SATELLITE_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAc
 //        Submit under GAME_ROOM_PREFIX for these alone; any other action arriving from a
 //        modal is a forged or retired id and is refused.
 // Who:   gameRoomHandlers, which routes the Submit and the fallback button alike.
-export const CONFIRM_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["newok", "editok", "dqueueok", "startok", "archiveok", "forfeitok", "hleaveok", "hendok", "msurrenderok"]);
+export const CONFIRM_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["newok", "editok", "dqueueok", "startok", "archiveok", "forfeitok", "hleaveok", "hendok", "msurrenderok", "bleaveok"]);
 
 /** The customId a confirm's modal and its fallback button both carry: `gameroom:<action>:<tail>[:<arg>]`. */
 export function confirmCustomId(action: GameRoomAction, tail: string, arg?: string): string {

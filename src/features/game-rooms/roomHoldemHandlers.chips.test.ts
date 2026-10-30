@@ -162,22 +162,43 @@ describe("cashing out", () => {
 		expect(noticeText(interaction)).toBe(words.tableBusy);
 	});
 
+	// ⚠️ A ranked leave once play began is a forfeit (2026-10 item 276, owner decisions D3 and D12):
+	// the stack stays on the table as forfeitedChips for the winner, whether the seat left by
+	// Leave table, a removal or leaving the server, and no wallet is credited on the leave.
+	const forfeitedOn = (call = 0): number => (storeMock.updateSecretIf.mock.calls[call][3] as HoldemTable).forfeitedChips ?? 0;
+	const creditedTo = (userId: string): boolean => walletMock.credit.mock.calls.some((call) => (call[0] as { userId: string }).userId === userId);
+
+	it("keeps the stack of a seat that presses Leave table in play on the table for the winner", async () => {
+		const table = chipTable(["a", "b", "c"]);
+		table.status = "playing";
+		dealHand(table, () => 0.5);
+
+		await handleLeaveTable(makeInteraction("a"), makeRoom(table));
+
+		expect(creditedTo("a")).toBe(false);
+		expect(forfeitedOn()).toBeGreaterThan(0);
+		const texts = trailMock.mock.calls.map((call) => (call[2] as { text: string }).text);
+		expect(texts.some((text) => [false, true].some((folded) => text === words.forfeitLeftTable("a", folded, forfeitedOn())))).toBe(true);
+	});
+
 	// A member who leaves the server leaves through the same seat leave as Leave table (2026-10
-	// item 276, audit P1-4), so they keep their stack and the table plays on for the others.
-	it("cashes out a member who left the server and keeps the table going for the rest", async () => {
+	// item 276, audit P1-4), so they forfeit the same way and the table plays on for the others.
+	it("forfeits the stack of a member who left the server and keeps the table going for the rest", async () => {
 		const table = chipTable(["a", "b", "c"]);
 		table.status = "playing";
 		dealHand(table, () => 0.5);
 
 		await expect(removeFromTable(makeInteraction("c").client, makeRoom(table), "c", "c")).resolves.toBe("removed");
 
-		expect(walletMock.credit.mock.calls.some((call) => (call[0] as { userId: string }).userId === "c")).toBe(true);
+		expect(creditedTo("c")).toBe(false);
 		const written = storeMock.updateSecretIf.mock.calls[0][3] as HoldemTable;
 		expect(written.status).not.toBe("finished");
 		expect(written.seats.filter((seat) => !seat.out).map((seat) => seat.userId)).toEqual(["a", "b"]);
+		expect(forfeitedOn()).toBeGreaterThan(0);
+		expect(trailMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ text: words.stackForfeited("c", forfeitedOn()) }));
 	});
 
-	it("pays a player the host removes mid tournament what they walked away with", async () => {
+	it("forfeits the stack of a player the host removes mid tournament, at most what they held", async () => {
 		const table = chipTable(["a", "b", "c"]);
 		table.status = "playing";
 		dealHand(table, () => 0.5);
@@ -185,9 +206,9 @@ describe("cashing out", () => {
 
 		await expect(removeFromTable(makeInteraction(HOST).client, makeRoom(table), "c", HOST)).resolves.toBe("removed");
 
-		const paid = walletMock.credit.mock.calls.find((call) => (call[0] as { userId: string }).userId === "c");
+		expect(creditedTo("c")).toBe(false);
 		// Folded out of a hand they never had to put more into: their stack, less any blind they had posted.
-		expect(paid?.[1]).toBeGreaterThan(0);
-		expect(paid?.[1]).toBeLessThanOrEqual(stackBefore + 2_500);
+		expect(forfeitedOn()).toBeGreaterThan(0);
+		expect(forfeitedOn()).toBeLessThanOrEqual(stackBefore + 2_500);
 	});
 });

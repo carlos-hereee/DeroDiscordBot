@@ -180,8 +180,10 @@ describe("opening the table", () => {
 		expect(walletMock.debit).not.toHaveBeenCalled();
 	});
 
-	it("is not a Hold'em chip draft for any other game", async () => {
-		expect(await settleDraftBuyIns(draft({ game: "monopoly" }), [])).toEqual({ ok: true, seats: null });
+	it("is not a chip draft for a game with no stake, or a Battleship card with no wager", async () => {
+		expect(await settleDraftBuyIns(draft({ game: "hangman" }), [])).toEqual({ ok: true, seats: null });
+		// A Battleship card with no wager seats its captains free, like any free table.
+		expect(await settleDraftBuyIns(draft({ game: "battleship", holdemBuyIn: null }), ["a"])).toEqual({ ok: true, seats: { buyIn: BOT_CONSTANTS.HOLDEM_STARTING_STACK, userIds: [HOST, "a"], charged: false } });
 		expect(walletMock.debit).not.toHaveBeenCalled();
 	});
 
@@ -213,6 +215,39 @@ describe("the seats a draft would open with", () => {
 // ── Blackjack plays for the same buy in (2026-10 item 267, owner decisions 1 and 2) ──
 describe("a Blackjack table's buy in", () => {
 	const blackjack = (overrides: Partial<IGameRoom> = {}) => draft({ game: "blackjack", ...overrides });
+
+	// 2026-10 item 276, owner decisions D4 and D10: ranked Monopoly's fixed buy in and Battleship's
+	// wager ride the same ledger as a table's buy in.
+	it("charges a ranked Monopoly joiner the fixed buy in, whatever the row holds", async () => {
+		const monopoly = draft({ game: "monopoly", holdemBuyIn: null });
+		storeMock.findByRoomId.mockResolvedValue(monopoly);
+		expect(draftBuyInOf(monopoly)).toBe(BOT_CONSTANTS.ECONOMY.MONOPOLY_RANKED_BUY_IN);
+		expect(await chargeJoiner(monopoly, GUEST)).toBeNull();
+		expect(walletMock.debit).toHaveBeenCalledWith(key(GUEST), BOT_CONSTANTS.ECONOMY.MONOPOLY_RANKED_BUY_IN);
+	});
+
+	it("charges a Battleship wager only when the host set one, inside the wager's bounds", async () => {
+		const { BATTLESHIP_MIN_WAGER, BATTLESHIP_MAX_WAGER } = BOT_CONSTANTS.ECONOMY;
+		expect(isValidDraftBuyIn(BATTLESHIP_MIN_WAGER - 1, "battleship")).toBe(false);
+		expect(isValidDraftBuyIn(BATTLESHIP_MIN_WAGER, "battleship")).toBe(true);
+		expect(isValidDraftBuyIn(BATTLESHIP_MAX_WAGER + 1, "battleship")).toBe(false);
+		expect(await isChipDraft(draft({ game: "battleship", holdemBuyIn: null }))).toBe(false);
+		expect(await isChipDraft(draft({ game: "battleship", holdemBuyIn: 250 }))).toBe(true);
+		expect(await isChipDraft(draft({ game: "battleship", holdemBuyIn: 250, casual: true }))).toBe(false);
+	});
+
+	it("refuses a head to head Start whose chosen opponent never paid, before the host is charged", async () => {
+		const battleship = draft({ game: "battleship", holdemBuyIn: 250, buyInPaidBy: [] });
+		const settled = await settleDraftBuyIns(battleship, [GUEST], { everyonePays: true });
+		expect(settled).toEqual({ ok: false, reason: gameRoomsCopy.holdem.opponentNotPaid(GUEST, 250) });
+		expect(walletMock.debit).not.toHaveBeenCalled();
+	});
+
+	it("charges the host and seats both captains once the opponent paid the wager", async () => {
+		const battleship = draft({ game: "battleship", holdemBuyIn: 250, buyInPaidBy: [GUEST] });
+		expect(await settleDraftBuyIns(battleship, [GUEST], { everyonePays: true })).toEqual({ ok: true, seats: { buyIn: 250, userIds: [HOST, GUEST], charged: true } });
+		expect(walletMock.debit).toHaveBeenCalledWith(key(HOST), 250);
+	});
 
 	it("charges a Blackjack joiner through the same ledger as Hold'em's, once", async () => {
 		expect(await chargeJoiner(blackjack(), GUEST)).toBeNull();
