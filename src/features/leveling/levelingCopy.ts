@@ -150,10 +150,11 @@ export const levelingCopy = {
 			if (claim.nextClaimAt === null || claim.nextClaimAt.getTime() <= claim.now.getTime()) return `${amount}. Your claim is ready: \`/claim\`.`;
 			return `${amount}. Next claim <t:${Math.floor(claim.nextClaimAt.getTime() / 1000)}:R>.`;
 		},
-		// The currencies field (2026-10 item 257, Phase 3a): Hold'em chips and Dero coins,
-		// both one global wallet per member (2026-10 item 267).
+		// The currencies field (2026-10 item 257, Phase 3a): chips and Dero coins, both one
+		// global wallet per member (2026-10 item 267). Chips ride every ranked game, not only
+		// Hold'em, so the label names no game.
 		currencies: "Currencies",
-		holdemChips: "Hold'em chips",
+		chips: "Chips",
 		deroCoins: "Dero coins",
 		coinsLine: (balance: number): string => `**${balance.toLocaleString("en-US")}**`,
 		// The secret code boost (FortuneBuff), its own line beside the game luck: the gold
@@ -234,7 +235,7 @@ export const levelingCopy = {
 		noLuck: "Nothing decided yet",
 		claimReady: "Claim ready: /claim",
 		// The currencies panel and the luck boost line (2026-10 item 257, Phase 3a).
-		chipsCard: (balance: number): string => `Hold'em chips ${balance.toLocaleString("en-US")}`,
+		chipsCard: (balance: number): string => `Chips ${balance.toLocaleString("en-US")}`,
 		coinsCard: (balance: number): string => `Dero coins ${balance.toLocaleString("en-US")}`,
 		luckBoost: (percent: number): string => `Luck boost +${percent}% gold chance`,
 		// ── the achievements card (2026-10 item 254) ──

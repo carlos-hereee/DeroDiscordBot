@@ -203,7 +203,7 @@ function luckField(view: Pick<AccountView, "luck" | "luckBoost">): APIEmbedField
 function currenciesFields(view: Pick<AccountView, "chips" | "coins">): APIEmbedField[] {
 	const c = levelingCopy.labels;
 	const lines: string[] = [];
-	if (view.chips) lines.push(`${c.holdemChips}: ${c.chipsLine(view.chips.balance, view.chips.claim)}`);
+	if (view.chips) lines.push(`${c.chips}: ${c.chipsLine(view.chips.balance, view.chips.claim)}`);
 	if (view.coins !== null) lines.push(`${c.deroCoins}: ${c.coinsLine(view.coins)}`);
 	return lines.length === 0 ? [] : [{ name: c.currencies, value: lines.join("\n"), inline: false }];
 }

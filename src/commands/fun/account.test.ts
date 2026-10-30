@@ -215,7 +215,7 @@ describe("/account", () => {
 		await execute(command);
 
 		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
-		expect(fields.find((field) => field.name === "Currencies")?.value).toBe("Hold'em chips: **26,000** chips. Your claim is ready: `/claim`.\nDero coins: **0**");
+		expect(fields.find((field) => field.name === "Currencies")?.value).toBe("Chips: **26,000** chips. Your claim is ready: `/claim`.\nDero coins: **0**");
 		expect(mocks.findWallet).toHaveBeenCalledWith({ userId: "u1" });
 	});
 
@@ -230,7 +230,7 @@ describe("/account", () => {
 		await execute(command);
 
 		const fields = (editReply.mock.calls[0][0] as ReplyPayload).embeds[0].data.fields as Array<{ name: string; value: string }>;
-		expect(fields.find((field) => field.name === "Currencies")?.value).toBe("Hold'em chips: **7,000** chips. Your claim is ready: `/claim`.\nDero coins: **45**");
+		expect(fields.find((field) => field.name === "Currencies")?.value).toBe("Chips: **7,000** chips. Your claim is ready: `/claim`.\nDero coins: **45**");
 		expect(mocks.findWallet).toHaveBeenCalledWith({ userId: "u1" });
 		expect(mocks.findCoinWallet).toHaveBeenCalledWith("u1");
 	});
