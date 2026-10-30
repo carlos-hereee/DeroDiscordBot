@@ -252,7 +252,8 @@ describe("roomLifecycle.finish room-rate top up", () => {
 	// 2026-10 item 254, Arcade 1: a round against Dero plays in a solo room so nothing is
 	// played in ⚔️challenges, and it already paid its own capped solo luck award. A room rate
 	// on top would pay one coin flip like a whole match, outside the daily cap.
-	it.each(["solo-coinflip", "solo-diceroll", "solo-rps"] as const)("pays NO room rate for a %s round against Dero", async (game) => {
+	// A solo hangman round joined them in 2026-10 item 280 (owner ruling): it pays the capped solo award too.
+	it.each(["solo-coinflip", "solo-diceroll", "solo-rps", "solo-hangman"] as const)("pays NO room rate for a %s round against Dero", async (game) => {
 		await finish(makeClient(makeChannel()), makeRoom({ game, visibility: "solo", playerIds: ["host-1"] }), { winnerId: "host-1" });
 		await new Promise((resolve) => setImmediate(resolve));
 		expect(awardMock).not.toHaveBeenCalled();

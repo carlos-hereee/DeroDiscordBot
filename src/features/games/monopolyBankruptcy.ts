@@ -194,7 +194,10 @@ const ownedLots = (state: MonopolyState, userId: string): OwnableTile[] =>
 /**
  * Every chip the seat could raise from its lots: each building sold back (a hotel
  * counts as itself plus the four houses it replaced, since selling it down walks
- * all five rungs), then every unmortgaged lot mortgaged.
+ * all five rungs), then every unmortgaged lot mortgaged. The house shortage sale
+ * (2026-10 item 280) brings a whole group down at once but still pays half the
+ * house cost per rung removed, so this sum stays exactly what selling everything
+ * raises, which is what the debt hold promises the debtor.
  */
 export function liquidationValue(state: MonopolyState, userId: string): number {
 	let value = 0;

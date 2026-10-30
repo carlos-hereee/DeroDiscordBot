@@ -782,8 +782,10 @@ export const rokCommanderCopy = {
 				`and a rating earned in fewer than ${provisionalGames} rated matches wears a **?** while it settles. ` +
 				`A Hold'em table counts once ${minRatedHands} hands are dealt, running out of time at Battleship is a loss, and a room closed as abandoned moves no rating. ` +
 				"A Blackjack table is rated against my dealer: end above your buy in and you beat the house, level with it is a draw, below it a loss. Hangman is played together, so it is never rated.\n\n" +
-				"Coin flip, dice roll and rock paper scissors are games of chance and are never rated. " +
+				"Coin flip and dice roll are games of chance and are never rated. " +
 				`Played against another warrior, they feed this month's luck board instead, scored by wins above an even split, and a warrior appears there from ${luckMinDecided} decided games. ` +
+				// Rock paper scissors left the luck board (2026-10 item 280, owner ruling).
+				"Rock paper scissors is a game of wits, not fortune, so it is neither rated nor counted on the luck board. " +
 				"`/rating me` shows yours, `/rating board` the finest of this realm in one game, and `/rating luck` fortune's favorites.",
 
 			// Chips ride only on a ranked match (2026-10 item 276, owner decision D1), and a
@@ -807,11 +809,14 @@ export const rokCommanderCopy = {
 			houseRulesBody: (cutCardPercent: number): string =>
 				"**Monopoly:** the host rolls first, and a warrior bankrupt to the bank returns every lot unowned, with no auction. " +
 				"**Battleship:** the host fires first. " +
+				// The dead button rule (2026-10 item 280, owner ruling).
+				"**Hold'em:** the big blind moves one seat every hand, so nobody skips it when a warrior busts; when last hand's big blind is gone, that hand has no small blind. " +
 				"**Hangman:** guess single letters only, never the whole word. " +
 				"**Coin flip:** nobody calls it in the air; heads is the challenger. " +
-				`**Blackjack:** played by US rules from a six deck shoe. My dealer peeks for blackjack before anyone acts, and a cut card reshuffles the shoe once about ${cutCardPercent} percent of it is dealt. ` +
-				// A ranked table is shared (2026-10 item 276, owner decisions D13 to D16).
-				"A **Rated** table needs two warriors to start, and anyone may take an empty seat while it deals, sitting down at the next hand; a table against me alone is for sport, free and unrated.",
+				`**Blackjack:** played by US rules from a six deck shoe, with no insurance or even money, and a blackjack pays 3 to 2 rounded down. My dealer peeks for blackjack before anyone acts, and a cut card reshuffles the shoe once about ${cutCardPercent} percent of it is dealt. ` +
+				// A ranked table is shared (2026-10 item 276, owner decisions D13 to D16); who may take
+				// a seat mid game follows lateSeatRefusalOf (2026-10 item 280).
+				"A **Rated** table needs two warriors to start, and while it deals any warrior may take an empty seat at one open to all, sitting down at the next hand. An invite only table takes nobody new, and a warrior who left it or went broke cannot sit again. A table against me alone is for sport, free and unrated.",
 
 			// The one button this card carries: it opens the game request ballot
 			// privately. Read by GuildSetupManager.resolveIntroComponents.
@@ -852,7 +857,7 @@ export const rokCommanderCopy = {
 				{ name: "🎲 Dice Roll", how: "Both roll a d20 and the highest takes it. Against me here, or a warrior from the board." },
 				{ name: "✊ Rock Paper Scissors", how: "Throw against me here, or face a warrior who chooses in secret." },
 				{ name: "🪢 Hangman", how: "Guess my word alone, from a shelf of your choosing, or open a room where the host writes the word." },
-				{ name: "🃏 Blackjack", how: "Beat my dealer alone for sport, or open a table of up to five that others may join mid game." },
+				{ name: "🃏 Blackjack", how: "Beat my dealer alone for sport, or open a table of up to five; a Rated table open to all takes new warriors while it deals." },
 				{ name: "🚢 Battleship", how: "I place the fleets, you fire one shot a turn. Head to head, from the board." },
 				{ name: "🃏 Texas hold em", how: "Up to six buy in with equal stacks, and the last one holding chips takes the table. From the board." },
 				{ name: "🏠 Monopoly", how: "Two to six on a board of my own, and a good match runs for days. From the board." },

@@ -1111,7 +1111,7 @@ describe("applySellBuilding and listSellOptions", () => {
 
 	it("sells evenly: only from the tallest lot in the group", () => {
 		expectRefusal(applySellBuilding(builtBrown(), ALICE, "vermillion-alley"), "Sell evenly: the other lots in the brown group have more buildings.");
-		expect(listSellOptions(builtBrown(), ALICE)).toEqual([{ tileId: "burnt-umber-row", name: "Burnt Umber Row", kind: "house", amount: 25 }]);
+		expect(listSellOptions(builtBrown(), ALICE)).toEqual([{ tileId: "burnt-umber-row", name: "Burnt Umber Row", kind: "house", amount: 25, tearsDownGroup: false }]);
 	});
 
 	it("sells a hotel back for the four houses it replaced when the bank has them", () => {
@@ -1121,26 +1121,31 @@ describe("applySellBuilding and listSellOptions", () => {
 		state.properties["burnt-umber-row"].hotel = true;
 		state.bank.houses = BANK_HOUSES - 4;
 		state.bank.hotels = BANK_HOTELS - 1;
-		expect(listSellOptions(state, ALICE)).toEqual([{ tileId: "burnt-umber-row", name: "Burnt Umber Row", kind: "hotel", amount: 25 }]);
+		expect(listSellOptions(state, ALICE)).toEqual([{ tileId: "burnt-umber-row", name: "Burnt Umber Row", kind: "hotel", amount: 25, tearsDownGroup: false }]);
 		const { state: next, trailLines } = expectOk(applySellBuilding(state, ALICE, "burnt-umber-row"));
 		expect(trailLines[0]).toBe("<@alice> sold the hotel on Burnt Umber Row back to the bank for $25.");
 		expect(next.properties["burnt-umber-row"]).toMatchObject({ hotel: false, houses: 4 });
 		expect(next.bank).toEqual({ houses: BANK_HOUSES - 8, hotels: BANK_HOTELS });
 	});
 
-	it("tears a hotel down to bare ground when the bank has no houses to give back, and prices the option that way", () => {
+	it("brings the whole group down evenly when the bank has too few houses to give back, and prices the option that way", () => {
+		// 2026-10 item 280: two hotels with 3 houses in the bank come down to 2 and 1
+		// houses, seven rungs at $25, where the sold lot alone used to be torn down.
 		const state = newMatch();
 		giveTiles(state, ALICE, ...COLOR_GROUPS.brown);
 		state.properties["vermillion-alley"].hotel = true;
 		state.properties["burnt-umber-row"].hotel = true;
 		state.bank.houses = 3;
 		state.bank.hotels = BANK_HOTELS - 2;
-		expect(listSellOptions(state, ALICE).map((option) => option.amount)).toEqual([125, 125]);
+		expect(listSellOptions(state, ALICE).map((option) => option.amount)).toEqual([175, 175]);
 		const { state: next, trailLines } = expectOk(applySellBuilding(state, ALICE, "vermillion-alley"));
-		expect(trailLines[0]).toBe("<@alice> sold the hotel on Vermillion Alley and, with no houses left in the bank, every rung under it for $125.");
-		expect(next.properties["vermillion-alley"]).toMatchObject({ hotel: false, houses: 0 });
-		expect(next.bank).toEqual({ houses: 3, hotels: BANK_HOTELS - 1 });
-		expect(next.seats[0].chips).toBe(STARTING_CHIPS + 125);
+		expect(trailLines[0]).toBe(
+			"<@alice> sold the hotel on Vermillion Alley, and with too few houses in the bank to rebuild under it, the brown group came down evenly to 3 houses for $175."
+		);
+		expect(next.properties["vermillion-alley"]).toMatchObject({ hotel: false, houses: 2 });
+		expect(next.properties["burnt-umber-row"]).toMatchObject({ hotel: false, houses: 1 });
+		expect(next.bank).toEqual({ houses: 0, hotels: BANK_HOTELS });
+		expect(next.seats[0].chips).toBe(STARTING_CHIPS + 175);
 	});
 
 	it("refuses a bare lot, a lot of someone else's, and a lot that takes no buildings", () => {

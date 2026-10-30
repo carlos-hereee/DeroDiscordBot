@@ -333,11 +333,28 @@ function nextActableIndex(state: BettingState, from: number): number {
  */
 export function postBlinds(seats: Seat[], smallBlindIndex: number, smallBlind: number, bigBlind: number): BettingState {
 	const next = seats.map((seat) => ({ ...seat }));
-	const bigBlindIndex = (smallBlindIndex + 1) % next.length;
-
 	commit(next[smallBlindIndex], Math.min(smallBlind, next[smallBlindIndex].stack));
-	commit(next[bigBlindIndex], Math.min(bigBlind, next[bigBlindIndex].stack));
+	return postBigBlindAndOpen(next, (smallBlindIndex + 1) % next.length, bigBlind);
+}
 
+/**
+ * Post a big blind with nobody on the small blind and open the preflop round: the dead
+ * small blind of the tournament dead button rule, dealt when last hand's big blind busted
+ * or left (2026-10 item 280). The round opens at the full big blind exactly as postBlinds
+ * does, so a dead small blind changes only what is in the pot.
+ */
+export function postBigBlindOnly(seats: Seat[], bigBlindIndex: number, bigBlind: number): BettingState {
+	return postBigBlindAndOpen(
+		seats.map((seat) => ({ ...seat })),
+		bigBlindIndex,
+		bigBlind
+	);
+}
+
+// Shared by both posts, so the big blind, its option and who opens never differ between
+// a hand with a small blind and one without. Mutates `next`, which each caller copied.
+function postBigBlindAndOpen(next: Seat[], bigBlindIndex: number, bigBlind: number): BettingState {
+	commit(next[bigBlindIndex], Math.min(bigBlind, next[bigBlindIndex].stack));
 	const firstToAct = (bigBlindIndex + 1) % next.length;
 	return openRound(next, firstToAct, bigBlind, bigBlind);
 }

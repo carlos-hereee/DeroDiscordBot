@@ -143,16 +143,15 @@ export async function announceStream(interaction: RepliableInteraction, options:
 			return;
 		}
 
-		// confirmed, persist as a one-time event. intervalHours is set
-		// to a sentinel-ish value (1) because the schema requires it and
-		// the recurring math is ignored for type:"one-time" events. The
-		// scheduler reads firstOccurrence directly for one-time fires.
+		// confirmed, persist as a one-time event. intervalHours 0 is the one time value every
+		// reader agrees on (a required Number accepts 0); the 1 written here before read as an
+		// hourly repeat on the schedule boards (2026-10 item 280).
 		try {
 			await eventStore.create({
 				name: title,
 				description,
 				type: "one-time",
-				intervalHours: 1, // unused for one-time events but required by schema
+				intervalHours: 0,
 				firstOccurrence: startDate,
 				guildId,
 				prepSteps: [],

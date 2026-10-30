@@ -48,10 +48,15 @@ const PATCHABLE_EVENT_FIELDS = [
 	"imageUrl",
 ] as const;
 
-/** Keep only the fields PATCH may write, so a body cannot reach any other column. */
-function pickPatchableFields(body: Record<string, unknown>): Record<string, unknown> {
+// The fields POST may write: every PATCH field plus the weekly zone a create may set. The
+// route adds guildId itself, and active, eventId and _id stay the schema's own, so a create
+// can neither land deleted nor pick its own id (2026-10 item 280, owner ruling).
+const CREATABLE_EVENT_FIELDS = [...PATCHABLE_EVENT_FIELDS, "timezone"] as const;
+
+/** Keep only `fields` from a write's body, so a body cannot reach any other column. */
+function pickEventFields(body: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> {
 	const picked: Record<string, unknown> = {};
-	for (const field of PATCHABLE_EVENT_FIELDS) {
+	for (const field of fields) {
 		if (body[field] !== undefined) picked[field] = body[field];
 	}
 	return picked;
@@ -191,7 +196,10 @@ export function createEventsRouter(client: Client): Router {
 			}
 			delete body.announcementType;
 
-			const event = await eventStore.create(body);
+			// The cast only restates what the body always was: the Event schema's required fields
+			// are what refuse a create missing a name, type or start, as before the allowlist.
+			const fields = { ...pickEventFields(body, CREATABLE_EVENT_FIELDS), guildId } as Parameters<typeof eventStore.create>[0];
+			const event = await eventStore.create(fields);
 			res.status(201).json({ data: event });
 			adminLog.emit({ guild: { id: guildId, client }, kind: "event.create", actor: { source: "dashboard" }, payload: { subject: String(body.name ?? ""), detail: setupCopy.adminLog.created } });
 			kickScheduleRefresh(client, guildId, "POST /api/events");
@@ -218,7 +226,7 @@ export function createEventsRouter(client: Client): Router {
 				res.status(400).json({ error: "Cannot change guildId via PATCH" });
 				return;
 			}
-			const patch = pickPatchableFields(body);
+			const patch = pickEventFields(body, PATCHABLE_EVENT_FIELDS);
 			const problem = scheduleProblem(patch, existing);
 			if (problem) {
 				res.status(400).json({ error: "Invalid event schedule", detail: problem });

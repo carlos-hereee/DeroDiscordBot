@@ -249,7 +249,7 @@ export function monopolyInventoryReply(state: MonopolyState, viewerId: string, r
 		value: option.tileId,
 	}));
 	const sell = listSellOptions(state, viewerId).map((option) => ({
-		label: gameRoomsCopy.monopoly.sellOptionLabel(option.name, option.kind, option.amount),
+		label: gameRoomsCopy.monopoly.sellOptionLabel(option.name, option.kind, option.amount, option.tearsDownGroup),
 		value: option.tileId,
 	}));
 	const components = [

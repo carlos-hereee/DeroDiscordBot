@@ -30,7 +30,7 @@ import {
 	type HangmanGuess,
 	type HangmanState,
 } from "@features/games/hangmanState.js";
-import { awardMultiPlayerResult } from "@features/games/gameXp.js";
+import { awardMultiPlayerResult, awardSoloLuckResult } from "@features/games/gameXp.js";
 import { resolveGameAsset } from "@features/games/gamesAssets.js";
 import { hangmanCardView, renderHangmanCard } from "@features/games/hangmanRenderer.js";
 import { playingBoardPicture } from "@features/games/hangmanBoard.js";
@@ -683,6 +683,24 @@ async function endHangmanRound(client: Client, room: IGameRoom, state: HangmanSt
 			return { userId: id, username: member?.displayName ?? member?.user.username };
 		});
 
+	// A round against Dero pays the capped solo award, the way every other game against Dero
+	// does, with no per game record: the full match XP it paid before was uncapped and a 300
+	// word bank with fixed hints can be learned by heart (2026-10 item 280, owner ruling).
+	if (room.game === "solo-hangman") {
+		for (const participant of participants) {
+			awardSoloLuckResult({
+				client,
+				guildId: room.guildId,
+				channelId: room.channelId,
+				user: { id: participant.userId, username: participant.username },
+				won,
+				game: "solo-hangman",
+				resultKey: room.roomId,
+			});
+		}
+		return;
+	}
+
 	awardMultiPlayerResult({
 		client,
 		guildId: room.guildId,
@@ -691,7 +709,6 @@ async function endHangmanRound(client: Client, room: IGameRoom, state: HangmanSt
 		participants,
 		winnerId: won ? ending.solverId : null,
 		resultKey: room.roomId,
-		coinGame: room.game === "solo-hangman" ? "solo-hangman" : "hangman",
 	});
 }
 

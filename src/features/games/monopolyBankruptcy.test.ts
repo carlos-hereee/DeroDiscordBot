@@ -1,12 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { BANK_HOTELS, BANK_HOUSES, STARTING_CHIPS, boardIndexOf } from "./monopolyBoard.js";
-import { settleDebt, settleDebts, type MonopolyDebt } from "./monopolyBankruptcy.js";
+import { liquidationValue, settleDebt, settleDebts, type MonopolyDebt } from "./monopolyBankruptcy.js";
 import {
 	BANK_CREDITOR,
 	applyMortgage,
 	applyPayDebt,
 	applyRoll,
+	applySellBuilding,
 	createInitialState,
+	listMortgageOptions,
+	listSellOptions,
 	resolveDebt,
 	type MonopolyResult,
 	type MonopolyState,
@@ -216,6 +219,56 @@ describe("bankruptcy", () => {
 		expect(over.phase).toBe("finished");
 		expect(over.winnerId).toBe(CARA);
 		expect(trailLines.at(-1)).toBe("<@cara> wins the match.");
+	});
+});
+
+// ── a house shortage ────────────────────────────────────────────────────────
+
+// 2026-10 item 280: a hotel sold while the bank is short of houses brings its
+// whole color group down evenly. Every rung removed still pays half its house
+// cost, so what selling everything raises is unchanged, and the debt rules keep
+// promising exactly what a held debtor can raise.
+describe("raising cash during a house shortage", () => {
+	// Alice holds the orange group with a hotel on every lot, no chips, and the
+	// bank has only 2 houses: 15 rungs at $50 plus mortgages of $90, $90 and $100.
+	const orangeHotelsInAShortage = (): MonopolyState => {
+		const state = newMatch();
+		state.seats[0].chips = 0;
+		giveTiles(state, ALICE, "amber-walk", "market-avenue", "market-row");
+		for (const id of ["amber-walk", "market-avenue", "market-row"]) state.properties[id].hotel = true;
+		state.bank.houses = 2;
+		state.bank.hotels = BANK_HOTELS - 3;
+		return state;
+	};
+	const EVERYTHING_RAISES = 15 * 50 + 90 + 90 + 100;
+
+	it("counts exactly what selling and mortgaging everything raises", () => {
+		let state = orangeHotelsInAShortage();
+		expect(liquidationValue(state, ALICE)).toBe(EVERYTHING_RAISES);
+		for (let sale = listSellOptions(state, ALICE)[0]; sale; sale = listSellOptions(state, ALICE)[0]) {
+			state = expectOk(applySellBuilding(state, ALICE, sale.tileId)).state;
+		}
+		for (let mortgage = listMortgageOptions(state, ALICE)[0]; mortgage; mortgage = listMortgageOptions(state, ALICE)[0]) {
+			state = expectOk(applyMortgage(state, ALICE, mortgage.tileId)).state;
+		}
+		expect(seatOf(state, ALICE).chips).toBe(EVERYTHING_RAISES);
+		expect(liquidationValue(state, ALICE)).toBe(0);
+		expect(state.bank).toEqual({ houses: 2, hotels: BANK_HOTELS });
+	});
+
+	it("holds a debt up to that total and bankrupts only past it", () => {
+		expect(expectOk(resolveDebt(orangeHotelsInAShortage(), ALICE, BOB, EVERYTHING_RAISES, NOW)).state.phase).toBe("awaiting-debt");
+		expect(seatOf(expectOk(resolveDebt(orangeHotelsInAShortage(), ALICE, BOB, EVERYTHING_RAISES + 1, NOW)).state, ALICE).bankrupt).toBe(true);
+	});
+
+	it("sells every building before a bankruptcy to a player and hands over every rung's price", () => {
+		const { state: next } = expectOk(resolveDebt(orangeHotelsInAShortage(), ALICE, BOB, 5000, NOW));
+		expect(seatOf(next, ALICE).bankrupt).toBe(true);
+		expect(seatOf(next, BOB).chips).toBe(STARTING_CHIPS + 15 * 50);
+		for (const id of ["amber-walk", "market-avenue", "market-row"]) {
+			expect(next.properties[id]).toEqual({ ownerId: BOB, houses: 0, hotel: false, mortgaged: false });
+		}
+		expect(next.bank).toEqual({ houses: 2, hotels: BANK_HOTELS });
 	});
 });
 

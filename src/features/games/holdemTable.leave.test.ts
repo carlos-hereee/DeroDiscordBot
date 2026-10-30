@@ -242,13 +242,22 @@ describe("the button (2026-10 item 276, P2-7 and P2-8)", () => {
 		expect(buttonHolder(table)).toBe("p2");
 	});
 
-	it("passes the next button on as usual when the button leaves between hands", () => {
+	// The dead button rule (2026-10 item 280): the button does not pass on to the next seat
+	// when its holder leaves between hands, it stays dead on the leaver's seat, so the live
+	// seat before it acts last. Button p1, blinds p2 and p3 on hand one; next hand p3 posts
+	// the small blind, p0 the big blind and the button is p2's, who leaves.
+	it("leaves the button dead on its seat when its holder leaves between hands", () => {
 		const table = fourDealtWithButtonOn(1);
 		while (handInProgress(table)) act(table, whoActs(table)!, "fold");
-		const seating = ["p0", "p1", "p2", "p3"];
-		const next = buttonHolder(table);
-		leaveTable(table, next);
-		expect(buttonHolder(table)).toBe(seating[(seating.indexOf(next) + 1) % seating.length]);
+		expect(buttonHolder(table)).toBe("p2");
+		leaveTable(table, "p2");
+		expect(buttonHolder(table)).toBe("p1");
+
+		dealHand(table, seededRng());
+		expect(buttonHolder(table)).toBe("p1");
+		expect(seatOf(table, "p3").committed).toBe(table.smallBlind);
+		expect(seatOf(table, "p0").committed).toBe(table.bigBlind);
+		expect(whoActs(table)).toBe("p1");
 	});
 });
 

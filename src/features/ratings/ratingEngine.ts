@@ -29,7 +29,9 @@ const ORDINAL_SIGMAS = 3;
 export const RATED_GAMES = ["holdem", "battleship", "monopoly", "blackjack"] as const;
 export type RatedGame = (typeof RATED_GAMES)[number];
 
-export const LUCK_GAMES = ["coinflip", "diceroll", "rps"] as const;
+// Rock paper scissors is left out (2026-10 item 280, owner ruling): it is a game of choice,
+// not chance, so two members trading wins could top a board meant to measure fortune.
+export const LUCK_GAMES = ["coinflip", "diceroll"] as const;
 export type LuckGame = (typeof LUCK_GAMES)[number];
 
 // The band list lives in the game rooms vocabulary, where the GameRoom model reads it

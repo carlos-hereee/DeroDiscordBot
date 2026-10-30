@@ -56,6 +56,8 @@ describe("announceStream", () => {
 		expect(preview).toContain(c.zoneLine("America/New_York"));
 		// 7 PM New York after the 2026-11-01 change is midnight UTC.
 		expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ firstOccurrence: new Date("2026-11-08T00:00:00.000Z") }));
+		// One time means an interval of 0 to every reader (2026-10 item 280).
+		expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ type: "one-time", intervalHours: 0 }));
 	});
 
 	it("names the zone when it cannot read the time", async () => {

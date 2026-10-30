@@ -176,11 +176,17 @@ export function rankRatings(rows: readonly IPlayerRating[]): Array<RatingSnapsho
 export function sumLuckByPlayer(rows: readonly ILuckStat[]): Map<string, LuckTally> {
 	const tallies = new Map<string, LuckTally>();
 	for (const row of rows) {
+		if (RETIRED_LUCK_GAMES.has(row.game)) continue;
 		const tally = tallies.get(row.userId) ?? { decided: 0, wins: 0 };
 		tallies.set(row.userId, row.game === FORTUNE_LUCK_GAME ? addReadings(tally, row) : { ...tally, decided: tally.decided + row.decided, wins: tally.wins + row.wins });
 	}
 	return tallies;
 }
+
+// Rock paper scissors left the luck board (2026-10 item 280, owner ruling); its rows written
+// before that stay in the collection, so the board skips them rather than counting a month
+// of a game of choice it no longer ranks.
+const RETIRED_LUCK_GAMES: ReadonlySet<string> = new Set(["rps"]);
 
 function addReadings(tally: LuckTally, row: ILuckStat): LuckTally {
 	return { ...tally, readings: (tally.readings ?? 0) + row.decided, fortunePoints: (tally.fortunePoints ?? 0) + (row.points ?? 0) };
@@ -188,7 +194,7 @@ function addReadings(tally: LuckTally, row: ILuckStat): LuckTally {
 
 /**
  * The players past the luck minimum, by wins above an even split, luckiest first.
- * The three games add up into one score because each is a fair two player game,
+ * The luck games add up into one score because each is a fair two player game,
  * so half of every decided game is the expected share in all of them alike.
  */
 export function rankLuck(tallies: ReadonlyMap<string, LuckTally>): Array<LuckTally & { userId: string; score: number }> {

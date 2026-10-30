@@ -4,7 +4,7 @@ import { MessageFlags, type ButtonInteraction, type ModalSubmitInteraction } fro
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { update: vi.fn(), updateSecretIf: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn(), setSecretFieldsIf: vi.fn(), moveBoardMessage: vi.fn() } }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), recordCarriedMoves: vi.fn() }, resolveRoomChannel: vi.fn() }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
-vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
+vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn(), awardSoloLuckResult: vi.fn() }));
 vi.mock("@features/games/gamesAssets.js", () => ({ resolveGameAsset: vi.fn(() => null) }));
 // A modal Submit's answer posts in 💬dero-commands through answerInChannel (2026-10 item 257
 // Phase 5); where it lands is that helper's own suite, so here only WHAT is answered, and
@@ -32,7 +32,7 @@ import { roomTrail, resolveRoomChannel } from "./roomTrail.js";
 import { playingBoardPicture } from "@features/games/hangmanBoard.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { roomLifecycle } from "./roomLifecycle.js";
-import { awardMultiPlayerResult } from "@features/games/gameXp.js";
+import { awardMultiPlayerResult, awardSoloLuckResult } from "@features/games/gameXp.js";
 import { GAME_ROOM_PREFIX, GAME_ROOM_SELECT_PREFIX, GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
 import { HANGMAN_CATEGORIES, HANGMAN_ENTRIES, HANGMAN_WORD_BANK } from "@features/games/hangmanWords.js";
 import { HANGMAN_HINT_MAX } from "@features/games/hangmanAuthoring.js";
@@ -77,6 +77,7 @@ const storeMock = gameRoomStore as unknown as {
 };
 const finishMock = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
 const awardMock = awardMultiPlayerResult as unknown as ReturnType<typeof vi.fn>;
+const soloAwardMock = awardSoloLuckResult as unknown as ReturnType<typeof vi.fn>;
 const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn>; recordCarriedMoves: ReturnType<typeof vi.fn> };
 const resolveChannelMock = resolveRoomChannel as unknown as ReturnType<typeof vi.fn>;
 const boardMock = playingBoardPicture as unknown as ReturnType<typeof vi.fn>;
@@ -785,6 +786,19 @@ describe("handleGuessModal, a round whose ending never ran", () => {
 		expect(storeMock.setSecretFieldsIf).not.toHaveBeenCalled();
 		expect((trailMock.postMove.mock.calls[0][2] as { text: string }).text).toBe(gameRoomsCopy.hangman.lostLine(WORD));
 		expect(awardMock).toHaveBeenCalledWith(expect.objectContaining({ winnerId: null }));
+	});
+
+	it("pays a round against Dero the capped solo award, never match XP (2026-10 item 280)", async () => {
+		const room = { ...makeRoom(null), game: "solo-hangman", playerIds: [HOST] } as IGameRoom;
+		(room.secret as { guessedLetters: string[]; wrong: number }).guessedLetters = ["q", "w", "x", "y", "z", "j"];
+		(room.secret as { guessedLetters: string[]; wrong: number }).wrong = 6;
+		storeMock.findByRoomId.mockResolvedValue(room);
+
+		await handleGuessModal(makeSubmit(HOST, "p"));
+
+		expect(awardMock).not.toHaveBeenCalled();
+		expect(soloAwardMock).toHaveBeenCalledOnce();
+		expect(soloAwardMock).toHaveBeenCalledWith(expect.objectContaining({ game: "solo-hangman", won: false, resultKey: "room-1", user: expect.objectContaining({ id: HOST }) }));
 	});
 });
 

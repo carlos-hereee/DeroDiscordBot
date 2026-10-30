@@ -2,6 +2,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { freshDeck, shuffle, evaluateHand, compareHands, type Card } from "./holdemHand.js";
 import {
 	postBlinds,
+	postBigBlindOnly,
 	nextStreet,
 	applyAction,
 	legalActions,
@@ -119,10 +120,11 @@ export interface HoldemTable {
 	// only code that turns one into a seat is seatLatePlayers at the top of dealHand,
 	// before the next hand exists. Absent on every table stored before it existed.
 	pendingSeats?: PendingSeat[];
-	// Who posted the big blind on the hand dealt last, written by dealHand. Read once, when a
-	// hand ends with two players left, so the button can be set so nobody posts the big blind
-	// twice in a row (2026-10 item 280). Absent on a row stored before it existed, which
-	// passes the button the ordinary way.
+	// Who posted the big blind on the hand dealt last, written by dealHand. The dead button
+	// rule (2026-10 item 280) reads every next hand from it: the next big blind is the next
+	// live seat after it, the small blind is this seat while it is still in, and the button
+	// sits before that (deadButtonPlan). Absent on a row stored before it existed, whose next
+	// hand is dealt from the stored button the old way, which writes it.
 	bigBlindUserId?: string;
 }
 
@@ -374,12 +376,14 @@ export function dealHand(table: HoldemTable, rng: () => number = Math.random): A
 		table.bigBlind *= 2;
 	}
 
+	// The dead button plan when last hand's big blind is known, and the stored button
+	// otherwise: the first hand of a table, and a row stored before bigBlindUserId existed.
+	const plan = deadButtonPlan(table);
+	if (plan) table.buttonIndex = plan.buttonIndex;
 	const order = seatOrderFrom(table, table.buttonIndex);
-	// Heads up posts the small blind ON the button. With three or more it is the
-	// seat after it. Getting this wrong is invisible until somebody counts.
-	const smallBlindSeat = order.length === 2 ? 0 : 1;
-	table.bigBlindUserId = order[(smallBlindSeat + 1) % order.length]?.userId;
-	table.betting = postBlinds(toBettingSeats(order), smallBlindSeat, table.smallBlind, table.bigBlind);
+	const blinds = plan ?? movingButtonBlinds(order);
+	table.bigBlindUserId = blinds.bigBlindUserId;
+	table.betting = postPlannedBlinds(table, order, blinds);
 	writeBack(table);
 	table.lastActionAt = Date.now();
 	// ⚠️ THE BLINDS CAN END THE BETTING BEFORE ANYBODY ACTS (2026-10 item 280): every
@@ -394,6 +398,106 @@ export function dealHand(table: HoldemTable, rng: () => number = Math.random): A
 	// and would otherwise drop the late seats a deal made.
 	const outcome = foldSeatsSittingOut(table, rng, { ok: true });
 	return lateSeated.length > 0 ? { ...outcome, lateSeated } : outcome;
+}
+
+// ── the blinds and the dead button (2026-10 item 280) ─────────────────
+// The owner's ruling: the big blind moves forward one seat every hand, the tournament
+// "dead button" rule, so a bust never lets a seat skip the big blind. A moving button
+// (passed to the next live seat, blinds posted after it) cannot promise that: four handed
+// with the small blind busting, it sits the next seat on the small blind and then the
+// button while last hand's big blind pays the big blind again.
+//
+// Each hand under the rule:
+//  ① the big blind is the next live seat after last hand's big blind, in seating order;
+//  ② the small blind is last hand's big blind while it is still in, and otherwise there
+//    is none that hand (the dead small blind, the standard variant: nobody pays a blind
+//    for a seat that is gone, and nobody pays the small blind twice);
+//  ③ the button sits on the seat before the small blind's seat, which can be a seat that
+//    busted or left (a dead button).
+// Heads up is the exception: the button posts the small blind and acts first preflop, so
+// the button is simply the player who is not the big blind, and ① alone already keeps
+// anybody from posting the big blind twice in a row going heads up.
+//
+// ⚠️ buttonIndex STAYS AN INDEX INTO THE LIVE SEATS, so a dead button is held by the live
+// seat behind it: the seat that acts last after the flop. That is every rule the button
+// drives here, because the first live seat left of a dead button is the first live seat
+// left of the seat behind it. So post flop action, the odd chip (seatOrderAfterButton)
+// and keepButtonOnItsSeat read one index that is already right, and no reader has to
+// learn that a seat which is out can hold the button.
+
+/** Who posts the blinds on a hand. A null small blind is a dead small blind. */
+interface BlindPosts {
+	smallBlindUserId: string | null;
+	bigBlindUserId: string;
+}
+
+/** The dead button rule's next hand: its blinds, and the live index of the seat that acts last after the flop. */
+interface DeadButtonPlan extends BlindPosts {
+	buttonIndex: number;
+}
+
+/**
+ * The next hand under the dead button rule, read from the table as it stands between
+ * hands. Null when the rule has nothing to go on: no hand dealt yet, a row stored before
+ * bigBlindUserId existed, or fewer than two players left. Pure: it writes nothing.
+ */
+function deadButtonPlan(table: HoldemTable): DeadButtonPlan | null {
+	const live = livePlayers(table);
+	const lastBigBlind = table.bigBlindUserId ? seatOf(table, table.bigBlindUserId) : undefined;
+	if (live.length < BOT_CONSTANTS.HOLDEM_MIN_SEATS || !lastBigBlind) return null;
+
+	const bigBlind = nextLiveSeatAfter(table, lastBigBlind);
+	const bigBlindAt = live.indexOf(bigBlind);
+	const liveSeatBefore = (steps: number): TableSeat => live[(bigBlindAt - steps + live.length) % live.length];
+
+	if (live.length === 2) {
+		const button = liveSeatBefore(1);
+		return { buttonIndex: live.indexOf(button), smallBlindUserId: button.userId, bigBlindUserId: bigBlind.userId };
+	}
+
+	// A live last big blind is the live seat right before this one (① found nothing live
+	// between them), so the button's seat, the one before it, is two live seats back. A
+	// dead small blind leaves the button dead on a seat that is out, held by the first
+	// live seat behind it, which is one live seat back.
+	const smallBlind = lastBigBlind.out ? null : lastBigBlind;
+	const button = liveSeatBefore(smallBlind ? 2 : 1);
+	return { buttonIndex: live.indexOf(button), smallBlindUserId: smallBlind?.userId ?? null, bigBlindUserId: bigBlind.userId };
+}
+
+// Walks the seat array, the table's fixed seating order with out seats still in it, so a
+// seat that busted or left is stepped over and a late seat (appended at the end) takes
+// its place in the ring like any other.
+function nextLiveSeatAfter(table: HoldemTable, from: TableSeat): TableSeat {
+	const start = table.seats.indexOf(from);
+	for (let step = 1; step <= table.seats.length; step++) {
+		const seat = table.seats[(start + step) % table.seats.length];
+		if (!seat.out) return seat;
+	}
+	return from;
+}
+
+// The moving button's blinds, read from the button already on the table: the first hand
+// of every table, and the next hand of a row stored before bigBlindUserId existed. Heads
+// up posts the small blind ON the button; with three or more it is the seat after it.
+function movingButtonBlinds(order: TableSeat[]): BlindPosts {
+	const smallBlindSeat = order.length === 2 ? 0 : 1;
+	return { smallBlindUserId: order[smallBlindSeat].userId, bigBlindUserId: order[(smallBlindSeat + 1) % order.length].userId };
+}
+
+// Post the blinds onto the button-first order. postBlinds takes the big blind as the seat
+// after the small blind, which both plans keep: nothing live sits between them.
+function postPlannedBlinds(table: HoldemTable, order: TableSeat[], blinds: BlindPosts): BettingState {
+	const seats = toBettingSeats(order);
+	const indexOf = (userId: string): number => order.findIndex((seat) => seat.userId === userId);
+	if (blinds.smallBlindUserId === null) return postBigBlindOnly(seats, indexOf(blinds.bigBlindUserId), table.bigBlind);
+	return postBlinds(seats, indexOf(blinds.smallBlindUserId), table.smallBlind, table.bigBlind);
+}
+
+// Between hands under the dead button rule the next button is derived from the big
+// blind rather than passed, so a change to who is in (a seat leaving) moves it with them.
+function showNextDealsButton(table: HoldemTable): void {
+	const plan = deadButtonPlan(table);
+	if (plan) table.buttonIndex = plan.buttonIndex;
 }
 
 // The live seats in play order starting AT the button. Dealing and the blinds are
@@ -768,25 +872,21 @@ function settleHand(table: HoldemTable, showdown: boolean, _rng: () => number = 
 	};
 }
 
-// The button passes to the next seat still in after the one that held it, walking the
-// seat array (the table's fixed seating order, out seats included) rather than adding
-// one to an index into the live seats. Busts shrink that live list under the index, so
-// "plus one" slid the button backwards or past a seat: A B C D with the button on C and
-// A busting gave it to B, and D never got it. Answers an index into the live seats,
-// which is what buttonIndex counts.
+// The button for the next hand, as settleHand leaves it between hands. Under the dead
+// button rule it is the next deal's own plan (deadButtonPlan), so what the table shows
+// between hands is what the deal plays, and nobody posts the big blind twice in a row
+// going heads up. Answers an index into the live seats, which is what buttonIndex counts.
 //
-// ⚠️ TWO PLAYERS LEFT IS THE EXCEPTION (2026-10 item 280). Heads up the button posts the
-// small blind, so passing it on as usual when a table drops to two can hand the big
-// blind straight back to whoever just posted it: A button, B small, C big, A busts, and
-// the button passing to B leaves C on the big blind again. The tournament rule is that
-// nobody posts the big blind twice in a row going heads up, so when last hand's big
-// blind is still in, the button goes to them and the other player takes the big blind.
-// When that player busted, the ordinary pass already gives each survivor a blind they
-// did not just post. Heads up to heads up this lands where the ordinary pass does.
+// A hand dealt before bigBlindUserId existed passes the button the old way, to the next
+// seat still in after the one that held it, walking the seat array (the table's fixed
+// seating order, out seats included) rather than adding one to an index into the live
+// seats: busts shrink that live list under the index, so "plus one" slid the button
+// backwards or past a seat (2026-10 item 276, P2-7). The deal after it writes
+// bigBlindUserId, so the dead button rule takes over from there.
 function nextButtonIndex(table: HoldemTable, buttonSeat: TableSeat | undefined): number {
+	const plan = deadButtonPlan(table);
+	if (plan) return plan.buttonIndex;
 	const live = livePlayers(table);
-	const lastBigBlind = live.length === 2 && table.bigBlindUserId ? live.findIndex((seat) => seat.userId === table.bigBlindUserId) : -1;
-	if (lastBigBlind !== -1) return lastBigBlind;
 	const from = buttonSeat ? table.seats.indexOf(buttonSeat) : -1;
 	if (live.length === 0 || from === -1) return 0;
 	for (let step = 1; step <= table.seats.length; step++) {
@@ -909,6 +1009,9 @@ export function leaveTable(table: HoldemTable, userId: string, rng: () => number
 	// player left in the tournament) already count this seat as gone.
 	seat.out = true;
 	table.bustOrder.push(userId);
+	// keepButtonOnItsSeat kept the index on its holder; between hands the dead button rule
+	// re-derives it now this seat is out, so the table shows the button the deal will play.
+	if (!handInProgress(table)) showNextDealsButton(table);
 
 	let outcome: ActionOutcome = { ok: true };
 	if (holdsCards) outcome = whoActs(table) === userId ? act(table, userId, "fold", 0, rng) : foldOutOfTurn(table, userId, rng);

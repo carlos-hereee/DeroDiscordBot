@@ -307,6 +307,10 @@ export async function releaseChannel(room: Pick<IGameRoom, "guildId" | "roomId" 
 // inside the daily cap (soloLuck). A room rate on top would pay a single coin flip like a
 // whole match, outside that cap, as often as a member cared to press Play Dero instead.
 //
+// A SOLO HANGMAN ROUND IS THE SAME CASE (2026-10 item 280, owner ruling): it pays the capped
+// solo award (roomHangman), so a room rate on top would let a memorised 300 word bank farm XP
+// outside the cap.
+//
 // ABANDONED PAYS NOTHING, and it is the reason this function takes the flag at all.
 // `finish` is also called with abandoned:true by the boot recovery sweep and by the R14
 // path in ChannelDeleteWatcher, neither of which involves a match anyone played. Paying
@@ -315,7 +319,7 @@ export async function releaseChannel(room: Pick<IGameRoom, "guildId" | "roomId" 
 // an admin tidying channels pays its players nothing.
 function payRoomRateTopUp(client: Client, room: IGameRoom, winnerId: string | null, abandoned: boolean): void {
 	if (abandoned) return;
-	if (room.game === "holdem" || isSoloLuckGame(room.game)) return;
+	if (room.game === "holdem" || room.game === "solo-hangman" || isSoloLuckGame(room.game)) return;
 	if (!room.guildId || room.playerIds.length === 0) return;
 
 	const { GAME_PLAY_XP, GAME_WIN_XP, GAME_ROOM_PLAY_XP, GAME_ROOM_WIN_XP } = BOT_CONSTANTS.LEVELING;

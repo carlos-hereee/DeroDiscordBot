@@ -195,7 +195,7 @@ describe("/rating luck", () => {
 	it("ranks this month's players past 20 decided games by wins above even", async () => {
 		mocks.luckForGuildMonth.mockResolvedValue([
 			{ guildId: "g1", userId: "a", game: "coinflip", month: "2026-10", decided: 12, wins: 9 },
-			{ guildId: "g1", userId: "a", game: "rps", month: "2026-10", decided: 10, wins: 6 },
+			{ guildId: "g1", userId: "a", game: "diceroll", month: "2026-10", decided: 10, wins: 6 },
 			{ guildId: "g1", userId: "b", game: "diceroll", month: "2026-10", decided: 20, wins: 8 },
 			{ guildId: "g1", userId: "c", game: "coinflip", month: "2026-10", decided: 19, wins: 19 },
 		]);

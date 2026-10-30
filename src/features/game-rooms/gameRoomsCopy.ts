@@ -1503,7 +1503,8 @@ export const gameRoomsCopy = {
 		unmortgagePlaceholder: "Lift a mortgage",
 		unmortgageOptionLabel: (tileName: string, cost: number): string => `${tileName}: pay $${cost}`,
 		sellPlaceholder: "Sell a building back to the bank",
-		sellOptionLabel: (tileName: string, kind: BuildingKind, amount: number): string => `${tileName}: sell the ${kind} for $${amount}`,
+		sellOptionLabel: (tileName: string, kind: BuildingKind, amount: number, tearsDownGroup = false): string =>
+			tearsDownGroup ? `${tileName}: house shortage, the whole group comes down evenly for $${amount}` : `${tileName}: sell the ${kind} for $${amount}`,
 
 		// ── a held debt (Session 5b) ──
 		// The board's prompt while the match waits on a debt. It names who must act,

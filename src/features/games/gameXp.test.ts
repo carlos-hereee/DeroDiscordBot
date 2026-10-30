@@ -27,6 +27,7 @@ const user = (id: string): User => ({ id, username: id, globalName: id }) as unk
 
 interface Award {
 	userId: string;
+	username?: string;
 	amount: number;
 	outcome?: string;
 	game?: string;
@@ -273,10 +274,10 @@ describe("the coins each helper hands deroCoins", () => {
 		expect(coinCall().players).toContainEqual({ userId: "dero-bot-red", outcome: "played" });
 	});
 
-	it("reads a hangman assist and a Monopoly loss as played, and prices solo hangman as a solo round", () => {
+	it("reads a hangman assist as played", () => {
 		const participants = [{ userId: "solver" }, { userId: "helper" }];
-		awardMultiPlayerResult({ client, guildId: "g1", game: "hangman", participants, winnerId: "solver", resultKey: "room1", coinGame: "solo-hangman" });
-		expect(coinCall()).toEqual({ guildId: "g1", game: "solo-hangman", resultKey: "room1", players: [{ userId: "solver", outcome: "won" }, { userId: "helper", outcome: "played" }] });
+		awardMultiPlayerResult({ client, guildId: "g1", game: "hangman", participants, winnerId: "solver", resultKey: "room1" });
+		expect(coinCall()).toEqual({ guildId: "g1", game: "hangman", resultKey: "room1", players: [{ userId: "solver", outcome: "won" }, { userId: "helper", outcome: "played" }] });
 	});
 
 	it("pays an inline blackjack table per seat by its best hand, and a one seat table as solo blackjack", () => {
@@ -327,6 +328,14 @@ describe("the coins each helper hands deroCoins", () => {
 	it("pays a solo luck round under its solo slug and key", () => {
 		awardSoloLuckResult({ client, guildId: "g1", user: user("a"), won: true, game: "solo-rps", resultKey: "interaction1" });
 		expect(coinCall()).toEqual({ guildId: "g1", game: "solo-rps", resultKey: "interaction1", players: [{ userId: "a", outcome: "won" }] });
+	});
+
+	it("pays a solo hangman round as a capped solo round, with no per game record (2026-10 item 280)", () => {
+		awardSoloLuckResult({ client, guildId: "g1", user: { id: "a" }, won: true, game: "solo-hangman", resultKey: "room1" });
+		expect(awards()).toEqual([expect.objectContaining({ userId: "a", source: "soloLuck", amount: BOT_CONSTANTS.LEVELING.SOLO_LUCK_WIN_XP })]);
+		expect(awards()[0]).not.toHaveProperty("game");
+		expect(awards()[0].username).toBeUndefined();
+		expect(coinCall()).toEqual({ guildId: "g1", game: "solo-hangman", resultKey: "room1", players: [{ userId: "a", outcome: "won" }] });
 	});
 
 	it("pays no coins outside a guild", () => {

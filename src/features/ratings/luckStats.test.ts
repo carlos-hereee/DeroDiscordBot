@@ -89,11 +89,16 @@ describe("recordLuckResult", () => {
 		expect(storeMock.increment).not.toHaveBeenCalled();
 	});
 
+	it("writes nothing for rock paper scissors between members, a game of choice (2026-10 item 280)", async () => {
+		await recordLuckResult({ guildId: "guild-1", game: "rps", playerIds: ["a", "b"], winnerId: "a", now: NOW });
+		expect(storeMock.increment).not.toHaveBeenCalled();
+	});
+
 	it("never rejects when the write fails", async () => {
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 		storeMock.increment.mockRejectedValue(new Error("atlas down"));
 
-		await expect(recordLuckResult({ guildId: "guild-1", game: "rps", playerIds: ["a", "b"], winnerId: "b", now: NOW })).resolves.toBeUndefined();
+		await expect(recordLuckResult({ guildId: "guild-1", game: "diceroll", playerIds: ["a", "b"], winnerId: "b", now: NOW })).resolves.toBeUndefined();
 		expect(errorSpy).toHaveBeenCalledOnce();
 		errorSpy.mockRestore();
 	});

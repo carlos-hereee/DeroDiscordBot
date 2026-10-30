@@ -65,7 +65,6 @@ describe("the rules card's ratings field", () => {
 		blackjack: "blackjack",
 		coinflip: "coin flip",
 		diceroll: "dice roll",
-		rps: "rock paper scissors",
 	};
 	const { RATINGS } = BOT_CONSTANTS;
 	const packs = [

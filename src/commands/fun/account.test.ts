@@ -162,7 +162,7 @@ describe("/account", () => {
 		});
 		mocks.luckForMember.mockResolvedValue([
 			{ guildId: "g1", userId: "u1", game: "coinflip", month: "2026-10", decided: 12, wins: 8 },
-			{ guildId: "g1", userId: "u1", game: "rps", month: "2026-10", decided: 10, wins: 6 },
+			{ guildId: "g1", userId: "u1", game: "diceroll", month: "2026-10", decided: 10, wins: 6 },
 		]);
 		mocks.renderAccountCard.mockResolvedValue({ attachment: new AttachmentBuilder(Buffer.from("png"), { name: "a.png" }), ref: "attachment://a.png" });
 		const { interaction: command, editReply } = interaction();

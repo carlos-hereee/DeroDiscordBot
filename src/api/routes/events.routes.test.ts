@@ -159,6 +159,22 @@ describe("events routes schedule validation and PATCH allowlist", () => {
 		expect(res.status).toBe(201);
 	});
 
+	// 2026-10 item 280 (owner ruling): a create writes only the fields the dashboard sends,
+	// so a body cannot land an event deleted or choose its own id.
+	it("POST writes the dashboard's fields and drops active, eventId and _id", async () => {
+		const res = await request(buildApp())
+			.post("/api/events")
+			.query({ guildId: "guild-mine" })
+			.send({ ...recurringBody, active: false, eventId: "evt-mine", _id: "abc", timezone: "America/Chicago" });
+
+		expect(res.status).toBe(201);
+		const created = eventStoreMock.create.mock.calls[0][0] as Record<string, unknown>;
+		expect(created).toMatchObject({ guildId: "guild-mine", timezone: "America/Chicago" });
+		expect(created).not.toHaveProperty("active");
+		expect(created).not.toHaveProperty("eventId");
+		expect(created).not.toHaveProperty("_id");
+	});
+
 	it("PATCH refuses a negative interval with a 400", async () => {
 		const res = await request(buildApp()).patch("/api/events/evt-1").query({ guildId: "guild-mine" }).send({ intervalHours: -1 });
 

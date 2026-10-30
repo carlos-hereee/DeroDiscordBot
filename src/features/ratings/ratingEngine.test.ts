@@ -97,8 +97,9 @@ describe("rated and luck games", () => {
 		}
 	});
 
-	it("keeps luck stats for exactly coin flip, dice roll and rock paper scissors", () => {
-		expect(["coinflip", "diceroll", "rps"].every(isLuckGame)).toBe(true);
+	it("keeps luck stats for exactly coin flip and dice roll, never rock paper scissors (2026-10 item 280)", () => {
+		expect(["coinflip", "diceroll"].every(isLuckGame)).toBe(true);
+		expect(isLuckGame("rps")).toBe(false);
 		expect(isLuckGame("holdem")).toBe(false);
 		expect(isLuckGame("hangman")).toBe(false);
 	});

@@ -115,8 +115,8 @@ describe("topRatedInGuild", () => {
 });
 
 describe("the luck board", () => {
-	it("adds a player's three games into one tally", () => {
-		const tallies = sumLuckByPlayer([luckRow("a", "coinflip", 10, 7), luckRow("a", "rps", 12, 5), luckRow("b", "diceroll", 3, 1)]);
+	it("adds a player's luck games into one tally, skipping rock paper scissors rows written before it left (2026-10 item 280)", () => {
+		const tallies = sumLuckByPlayer([luckRow("a", "coinflip", 10, 7), luckRow("a", "diceroll", 12, 5), luckRow("a", "rps", 40, 40), luckRow("b", "diceroll", 3, 1)]);
 		expect(tallies.get("a")).toEqual({ decided: 22, wins: 12 });
 		expect(tallies.get("b")).toEqual({ decided: 3, wins: 1 });
 	});

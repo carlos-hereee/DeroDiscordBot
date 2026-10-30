@@ -35,11 +35,19 @@ export const HANGMAN_MIN_DISTINCT = 3;
 export const HANGMAN_HINT_MAX = 100;
 export const HANGMAN_MAX_EXTRA_HINTS = 3;
 
-// A small screen, not a profanity filter. The bundled bank documents the same rule
-// for itself: a PARTIALLY revealed word can read as a slur even when the whole word
-// is innocent, and the mask is on screen for the entire round. Kept short and
-// obvious on purpose; this is a guard rail, not moderation.
-const DENYLIST: readonly string[] = ["nazi", "rape", "slut", "whore", "nigg", "fagg", "kike", "spic", "chink"];
+// A small screen, not a profanity filter. Kept short and obvious on purpose; this is a
+// guard rail, not moderation.
+//
+// Two lists because one substring match refused ordinary words (2026-10 item 280, owner
+// ruling): "rape" sits inside grape and drape, "spic" inside spice and spicy. A STEM is a
+// slur root no ordinary word contains, so it is still refused anywhere in the word, since a
+// partly revealed mask would show it. A WHOLE word is refused only as the word itself, which
+// accepts that a mask such as "_rape" can show one mid round, the cost the owner chose over
+// refusing innocent words.
+const DENIED_STEMS: readonly string[] = ["nazi", "slut", "whore", "nigg", "fagg", "kike"];
+const DENIED_WHOLE_WORDS: ReadonlySet<string> = new Set(["rape", "rapes", "raped", "rapist", "spic", "spics", "chink", "chinks"]);
+
+const isDeniedWord = (word: string): boolean => DENIED_WHOLE_WORDS.has(word) || DENIED_STEMS.some((stem) => word.includes(stem));
 
 export type HangmanAuthoringRejection =
 	| "wordMissing"
@@ -79,7 +87,7 @@ export function validateHangmanAuthoring(
 	if (word.length < HANGMAN_WORD_MIN) return { ok: false, reason: "wordTooShort" };
 	if (word.length > HANGMAN_WORD_MAX) return { ok: false, reason: "wordTooLong" };
 	if (new Set(word).size < HANGMAN_MIN_DISTINCT) return { ok: false, reason: "wordTooFewDistinct" };
-	if (DENYLIST.some((entry) => word.includes(entry))) return { ok: false, reason: "wordDenied" };
+	if (isDeniedWord(word)) return { ok: false, reason: "wordDenied" };
 
 	const hint = rawHint.trim().replace(/\s+/g, " ");
 	if (!hint) return { ok: false, reason: "hintMissing" };

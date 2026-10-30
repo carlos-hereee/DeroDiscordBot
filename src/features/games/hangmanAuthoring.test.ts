@@ -49,6 +49,14 @@ describe("the word", () => {
 	it("screens a word containing a denied fragment", () => {
 		expect(ok("nazis")).toEqual({ ok: false, reason: "wordDenied" });
 	});
+
+	// 2026-10 item 280 (owner ruling): a word only refused as itself no longer refuses the
+	// ordinary words that contain it.
+	it("refuses a denied whole word but lets ordinary words that contain it through", () => {
+		expect(ok("rape")).toEqual({ ok: false, reason: "wordDenied" });
+		expect(ok("chinks")).toEqual({ ok: false, reason: "wordDenied" });
+		for (const word of ["grape", "drape", "scrape", "spice", "spicy", "auspicious"]) expect(ok(word).ok).toBe(true);
+	});
 });
 
 describe("the hint", () => {

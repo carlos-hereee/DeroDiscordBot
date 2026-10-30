@@ -2,7 +2,7 @@
 import mongoose from "mongoose";
 
 // ── LuckStat ──
-// One row per guild, player, luck game (coin flip, dice roll, rock paper scissors)
+// One row per guild, player, luck game (coin flip, dice roll; rock paper scissors rows predate 2026-10 item 280)
 // and UTC month: how many decided games the player had and how many they won. Ties
 // are not decided games and never land here. Written only by
 // features/ratings/luckStats.ts through luckStatStore; read by the Phase 3b luck

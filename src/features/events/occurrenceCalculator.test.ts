@@ -67,6 +67,18 @@ describe("getUpcomingOccurrences", () => {
 
 		expect(getUpcomingOccurrences(event, 1)).toEqual([]);
 	});
+
+	// 2026-10 item 280: /events stream once saved one time events with an interval of 1, and
+	// those rows are still stored, so the type alone makes an event one time.
+	it("reads a one-time event stored with an interval of 1 as one time, never an hourly repeat", () => {
+		vi.setSystemTime(new Date("2026-04-17T00:00:00Z"));
+		const start = new Date("2026-04-18T12:00:00Z");
+		const event = makeEvent({ type: "one-time", intervalHours: 1, firstOccurrence: start });
+
+		expect(getUpcomingOccurrences(event, 5)).toEqual([start]);
+		expect(isEventWindowOpen(event, new Date("2026-04-18T12:30:00Z"))).toBe(true);
+		expect(isEventWindowOpen(event, new Date("2026-04-18T14:30:00Z"))).toBe(false);
+	});
 });
 
 // ── rok-events.json cadence regression ────────────────────────────────

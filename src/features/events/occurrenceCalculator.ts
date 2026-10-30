@@ -63,10 +63,15 @@ function zonedWeeklyOccurrences(event: IGameEvent, zone: string, count: number, 
 	return occurrences;
 }
 
+// A one time event is one by its type or by an interval of 0. The type alone counts because
+// /events stream once wrote one time events with an interval of 1, which the walk below read
+// as an hourly repeat on every board (2026-10 item 280); those rows are still stored.
+const isOneTimeEvent = (event: IGameEvent): boolean => event.type === "one-time" || event.intervalHours === 0;
+
 export function getUpcomingOccurrences(event: IGameEvent, count: number): Date[] {
-	// if intervalHours is 0, it's a one-time event  either it hasn't happened yet (return the single occurrence)
-	// or it has already passed (return an empty array)
-	if (event.intervalHours === 0) {
+	// a one-time event has either not happened yet (return the single occurrence)
+	// or has already passed (return an empty array)
+	if (isOneTimeEvent(event)) {
 		const t = new Date(event.firstOccurrence).getTime();
 		return t > Date.now() ? [new Date(t)] : [];
 	}
@@ -131,7 +136,7 @@ export function openWindowStart(event: IGameEvent, now = new Date(), windowMinut
 	const windowMs = windowMinutes * 60 * 1000;
 
 	// one-time event: the window is open between firstOccurrence and firstOccurrence + windowMinutes
-	if (event.intervalHours === 0) {
+	if (isOneTimeEvent(event)) {
 		const start = new Date(event.firstOccurrence);
 		return now >= start && now.getTime() <= start.getTime() + windowMs ? start : null;
 	}

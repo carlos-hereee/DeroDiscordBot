@@ -2,9 +2,8 @@ import type { Client, User } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { awardXp } from "@features/leveling/awardXp.js";
 import type { GameOutcome, LevelingGameSlug } from "@features/leveling/levelingTypes.js";
-import { awardForResult, coinOutcomeOf, type CoinGame } from "@features/economy/deroCoins.js";
+import { awardForResult, coinOutcomeOf, type CoinGame, type SoloCoinGame } from "@features/economy/deroCoins.js";
 import type { CoinAwardOutcome } from "@db/models/CoinAward.js";
-import type { SoloLuckSlug } from "@features/game-rooms/roomTypes.js";
 import type { FinalStack, HandOutcome, SeatResult } from "./blackjackState.js";
 
 // ── gameXp ─────────────────────────────────────────────────────────────────
@@ -98,16 +97,20 @@ interface SoloLuckPayout {
 	client: Client;
 	guildId: string | null;
 	channelId?: string | null;
-	user: User;
+	// The one player. A solo hangman room knows only the member's id and a cached name, so
+	// the shape is the part of a User this reads, not a whole User.
+	user: Pick<User, "id"> & Partial<Pick<User, "username" | "globalName">>;
 	won: boolean;
-	// The solo slug the coins are recorded under, which is what their daily cap counts.
-	game: SoloLuckSlug;
+	// The solo slug the coins are recorded under, which is what their daily cap counts. Solo
+	// hangman pays the same capped award as the luck rounds (2026-10 item 280, owner ruling).
+	game: SoloCoinGame;
 	// The coin award's key: the round's interaction id in place, its result message in a solo room.
 	resultKey: string;
 }
 
 // The solo luck payout (the 1.7.0 test fixes, item 14): a coin flip, dice roll or
-// rps against Dero. A win pays SOLO_LUCK_WIN_XP and a loss or a tie pays
+// rps against Dero, and since 2026-10 item 280 a solo hangman round, which the arcade
+// rules copy already counted among the games against Dero that pay inside the cap. A win pays SOLO_LUCK_WIN_XP and a loss or a tie pays
 // SOLO_LUCK_OTHER_XP, as source "soloLuck", which puts it inside the daily cap.
 //
 // ⚠️ NO `game` AND NO `outcome`, deliberately. A per game record would move
@@ -124,7 +127,7 @@ export function awardSoloLuckResult(result: SoloLuckPayout): void {
 		client: result.client,
 		guildId: result.guildId,
 		userId: result.user.id,
-		username: result.user.globalName ?? result.user.username,
+		username: result.user.globalName ?? result.user.username ?? undefined,
 		amount: result.won ? SOLO_LUCK_WIN_XP : SOLO_LUCK_OTHER_XP,
 		source: "soloLuck",
 		channelId: result.channelId ?? null,
@@ -152,9 +155,6 @@ interface MultiPlayerResult {
 	nonWinnerOutcome?: Extract<GameOutcome, "assist" | "lost">;
 	// The coin award's key: the room id, or a channel round's board message id.
 	resultKey: string;
-	// The game the coins are priced as, when it is not `game`: a solo hangman room records
-	// XP as hangman but pays coins as the solo round against Dero it is.
-	coinGame?: CoinGame;
 }
 
 // The hangman shape, and the reason the ASSIST outcome exists at all: a public
@@ -192,7 +192,7 @@ export function awardMultiPlayerResult(result: MultiPlayerResult): void {
 		});
 	}
 
-	payCoins(result.guildId, result.coinGame ?? result.game, result.resultKey, coinPlayers);
+	payCoins(result.guildId, result.game, result.resultKey, coinPlayers);
 }
 
 // ── blackjack ───────────────────────────────────────────────────────────────

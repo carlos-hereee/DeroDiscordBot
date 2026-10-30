@@ -11,7 +11,7 @@ import {
 	type TileId,
 } from "./monopolyBoard.js";
 import type { MonopolyResult, MonopolySeat, MonopolyState, PropertyState } from "./monopolyState.js";
-import { activeSeatOf, cloneState, completeAction, guardActiveTurn, mentionPlayer, rejectAction } from "./monopolySeats.js";
+import { activeSeatOf, cloneState, completeAction, countNoun, guardActiveTurn, mentionPlayer, rejectAction } from "./monopolySeats.js";
 
 // ── monopolyBuildings ───────────────────────────────────────────────────────
 // What:  what an owner does with lots between rolls: mortgage one for cash, lift
@@ -166,9 +166,9 @@ export function listUnmortgageOptions(state: MonopolyState, ownerId: string): Mo
  * Sells one rung of buildings on `tile` back to the bank, mutating `state` (the
  * caller's clone), and returns the trail line. A house goes for half its cost. A
  * hotel goes for half its cost too and hands the four houses it replaced back to
- * the lot when the bank has them; when it does not, the standard house shortage
- * rule tears the lot down to bare ground and pays for all five rungs at once.
- * Shared by the player's own sale and the forced sale at bankruptcy.
+ * the lot when the bank has them; when it does not, the house shortage rule
+ * brings the whole color group down evenly (sellHotelInShortage). Shared by the
+ * player's own sale and the forced sale at bankruptcy.
  */
 export function sellBuildingRung(state: MonopolyState, seat: MonopolySeat, tile: PropertyTile): string {
 	const property = state.properties[tile.id];
@@ -180,25 +180,84 @@ export function sellBuildingRung(state: MonopolyState, seat: MonopolySeat, tile:
 		seat.chips += unitPrice;
 		return `${player} sold a house on ${tile.name} back to the bank for $${unitPrice}.`;
 	}
+	if (isHouseShortageSale(state, tile)) return sellHotelInShortage(state, seat, tile);
 	state.bank.hotels += 1;
 	property.hotel = false;
-	if (state.bank.houses >= MAX_HOUSES_PER_LOT) {
-		state.bank.houses -= MAX_HOUSES_PER_LOT;
-		property.houses = MAX_HOUSES_PER_LOT;
-		seat.chips += unitPrice;
-		return `${player} sold the hotel on ${tile.name} back to the bank for $${unitPrice}.`;
-	}
-	const teardown = unitPrice * (MAX_HOUSES_PER_LOT + 1);
-	seat.chips += teardown;
-	return `${player} sold the hotel on ${tile.name} and, with no houses left in the bank, every rung under it for $${teardown}.`;
+	state.bank.houses -= MAX_HOUSES_PER_LOT;
+	property.houses = MAX_HOUSES_PER_LOT;
+	seat.chips += unitPrice;
+	return `${player} sold the hotel on ${tile.name} back to the bank for $${unitPrice}.`;
 }
 
-// What a sale of the next rung on this lot pays: the teardown price for a hotel
-// the bank has no houses to give back for, otherwise one rung.
+// ── the house shortage sale (2026-10 item 280) ──────────────────────────────
+// The owner's ruling of 2026-10-30, the official rule: a hotel sold while the
+// bank holds fewer than the four houses that would replace it brings the WHOLE
+// color group down evenly to what the bank can supply. Tearing only the sold lot
+// down left a group like (0, 5, 5), which broke even building and let the
+// siblings keep charging hotel rent.
+
+// A hotel sale the bank cannot hand four houses back for. Below four houses the
+// sold lot cannot stand at four, and the even rule then forbids any hotel beside
+// it, so every hotel in the group has to come down with it.
+const isHouseShortageSale = (state: MonopolyState, tile: PropertyTile): boolean =>
+	state.properties[tile.id].hotel && state.bank.houses < MAX_HOUSES_PER_LOT;
+
+/** What a house shortage sale leaves on each lot of the group, and what it pays. */
+interface ShortageSalePlan {
+	// House count per lot, in the order of COLOR_GROUPS[group] (board order).
+	housesAfter: number[];
+	rungsRemoved: number;
+	payout: number;
+}
+
+/**
+ * Plans the shortage sale without touching `state`, so the sell picker's price
+ * (rungSaleValue) and the sale itself read one plan and cannot disagree (rule
+ * 17). The houses the group can keep are the bank's stock plus the houses
+ * already on its lots, which go back to the bank and come out again as placed.
+ * They are spread as evenly as possible, the extra house going to the first
+ * lots in board order, so the result is deterministic and no two lots end more
+ * than one rung apart. No lot rises: a group with a hotel has four houses on
+ * every other lot (the even rule), so the supply is at most the bank's three
+ * plus four per remaining lot, which spreads to at most four per lot.
+ */
+function planShortageSale(state: MonopolyState, tile: PropertyTile): ShortageSalePlan {
+	const lots = COLOR_GROUPS[tile.group].map((id) => state.properties[id]);
+	const housesOnGroup = lots.reduce((sum, lot) => sum + lot.houses, 0);
+	const supply = state.bank.houses + housesOnGroup;
+	const evenShare = Math.floor(supply / lots.length);
+	const lotsWithExtraHouse = supply % lots.length;
+	const housesAfter = lots.map((_, index) => evenShare + (index < lotsWithExtraHouse ? 1 : 0));
+
+	const rungsBefore = lots.reduce((sum, lot) => sum + buildingLevel(lot), 0);
+	const rungsRemoved = rungsBefore - supply;
+	// The board prints one house cost per color group, so every rung removed
+	// across the group pays the sold lot's half house cost.
+	return { housesAfter, rungsRemoved, payout: rungsRemoved * buildingSaleValue(tile) };
+}
+
+// Carries out planShortageSale on the caller's clone: every hotel in the group
+// goes back to the bank, every lot's houses go back too, then the planned houses
+// come out of the bank onto the lots, so the bank's stock of both conserves.
+function sellHotelInShortage(state: MonopolyState, seat: MonopolySeat, tile: PropertyTile): string {
+	const plan = planShortageSale(state, tile);
+	COLOR_GROUPS[tile.group].forEach((id, index) => {
+		const lot = state.properties[id];
+		if (lot.hotel) state.bank.hotels += 1;
+		state.bank.houses += lot.houses - plan.housesAfter[index];
+		lot.hotel = false;
+		lot.houses = plan.housesAfter[index];
+	});
+	seat.chips += plan.payout;
+	const housesLeft = plan.housesAfter.reduce((sum, houses) => sum + houses, 0);
+	return `${mentionPlayer(seat.userId)} sold the hotel on ${tile.name}, and with too few houses in the bank to rebuild under it, the ${tile.group} group came down evenly to ${countNoun(housesLeft, "house")} for $${plan.payout}.`;
+}
+
+// What a sale of the next rung on this lot pays: the whole group's planned
+// shortage payout for a hotel the bank has too few houses to give back for,
+// otherwise one rung.
 function rungSaleValue(state: MonopolyState, tile: PropertyTile): number {
-	const unitPrice = buildingSaleValue(tile);
-	const tearsDown = state.properties[tile.id].hotel && state.bank.houses < MAX_HOUSES_PER_LOT;
-	return tearsDown ? unitPrice * (MAX_HOUSES_PER_LOT + 1) : unitPrice;
+	return isHouseShortageSale(state, tile) ? planShortageSale(state, tile).payout : buildingSaleValue(tile);
 }
 
 type SellCheck = { ok: true; seatIndex: number; tile: PropertyTile } | { ok: false; reason: string };
@@ -232,6 +291,9 @@ export interface SellOption {
 	name: string;
 	kind: BuildingKind;
 	amount: number;
+	// True when the house shortage brings the whole color group down with this hotel, so the
+	// picker can say so before the press rather than only in the trail after it (2026-10 item 280).
+	tearsDownGroup: boolean;
 }
 
 /** Every lot `ownerId` could sell a building from right now, in board order, with what the sale pays. */
@@ -240,7 +302,7 @@ export function listSellOptions(state: MonopolyState, ownerId: string): SellOpti
 	for (const tile of BOARD) {
 		if (tile.kind !== "property" || !checkSell(state, ownerId, tile.id).ok) continue;
 		const kind: BuildingKind = state.properties[tile.id].hotel ? "hotel" : "house";
-		options.push({ tileId: tile.id, name: tile.name, kind, amount: rungSaleValue(state, tile) });
+		options.push({ tileId: tile.id, name: tile.name, kind, amount: rungSaleValue(state, tile), tearsDownGroup: isHouseShortageSale(state, tile) });
 	}
 	return options;
 }
