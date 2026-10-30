@@ -105,17 +105,22 @@ const fake = vi.hoisted(() => {
 			return copy(row);
 		},
 		// The start claim (2026-10 item 276): only a row not yet playing moves, with its ledger
-		// emptied in the same write, answering the row as it was BEFORE.
-		// A Blackjack table's claim also opens the stacks ledger from the seats on the draft ledger,
-		// in the same write, as the real pipeline update does.
-		async claimForPlay(guildId: string, roomId: string, patch: Record<string, unknown>, blackjackTable?: { buyIn: number; seatIds: string[]; actedAt: Date }) {
+		// emptied in the same write, answering the row as it was BEFORE. A chip match's claim also
+		// moves the draft ledger to the game's own in the same write, as the real pipeline update does:
+		// a Blackjack table's stacks from the seats still paid, and a pot or a Hold'em table's held
+		// seats from every payer, the seats Start read first (2026-10 item 278).
+		async claimForPlay(guildId: string, roomId: string, patch: Record<string, unknown>, ledger?: { kind: string; buyIn: number; seatIds: string[]; actedAt?: Date }) {
 			const row = find(guildId, roomId);
 			if (!row || !["draft", "open"].includes(row.status as string)) return null;
-			const before = { ...copy(row), buyInPaidBy: [...((row.buyInPaidBy as string[] | undefined) ?? [])] };
-			const stacks = blackjackTable
-				? blackjackTable.seatIds.filter((userId) => ((row.buyInPaidBy as string[] | undefined) ?? []).includes(userId)).map((userId) => ({ userId, buyIn: blackjackTable.buyIn, stack: blackjackTable.buyIn }))
-				: null;
-			Object.assign(row, patch, { status: "playing", buyInPaidBy: [] }, stacks ? { blackjackStacks: stacks, blackjackActedAt: blackjackTable?.actedAt } : {});
+			const paid = [...((row.buyInPaidBy as string[] | undefined) ?? [])];
+			const before = { ...copy(row), buyInPaidBy: paid };
+			const stillPaidSeats = (ledger?.seatIds ?? []).filter((userId) => paid.includes(userId));
+			Object.assign(row, patch, { status: "playing", buyInPaidBy: [] });
+			if (ledger?.kind === "blackjackStacks") {
+				Object.assign(row, { blackjackStacks: stillPaidSeats.map((userId) => ({ userId, buyIn: ledger.buyIn, stack: ledger.buyIn })), blackjackActedAt: ledger.actedAt });
+			} else if (ledger) {
+				row[ledger.kind] = { buyIn: ledger.buyIn, userIds: [...stillPaidSeats, ...paid.filter((userId) => !ledger.seatIds.includes(userId))] };
+			}
 			return before;
 		},
 		async archiveDraft(guildId: string, roomId: string) {
@@ -152,12 +157,14 @@ const fake = vi.hoisted(() => {
 			if (row) Object.assign(row, { status: "archived", channelId: null });
 			return copy(row);
 		},
-		// A ranked Monopoly or Battleship pot, opened on a playing row (2026-10 item 276).
-		async openChipPot(guildId: string, roomId: string, pot: unknown) {
+		// A payer the room seated nowhere comes off a playing row's pot (2026-10 item 278).
+		async takePotPayer(guildId: string, roomId: string, userId: string) {
 			const row = find(guildId, roomId);
-			if (!row || row.status !== "playing") return null;
-			Object.assign(row, { chipPot: pot });
-			return copy(row);
+			const pot = row?.chipPot as { userIds: string[] } | null | undefined;
+			if (!row || row.status !== "playing" || !pot?.userIds.includes(userId)) return null;
+			const before = copy(row);
+			pot.userIds = pot.userIds.filter((id) => id !== userId);
+			return before;
 		},
 		async openBlackjackStacks(guildId: string, roomId: string, entries: unknown[]) {
 			const row = find(guildId, roomId);

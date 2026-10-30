@@ -9,6 +9,8 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		create: vi.fn(),
 		claimForPlay: vi.fn(),
 		update: vi.fn(),
+		saveOpeningHoldemTable: vi.fn(),
+		takeHeldBuyIn: vi.fn(),
 		findByRoomId: vi.fn(),
 	},
 }));
@@ -68,8 +70,9 @@ const input = (guild: Guild, overrides: Partial<RoomOpenInput> = {}): RoomOpenIn
 	...overrides,
 });
 
-// The secret the provisioner stored on the row for the hold em table.
-const storedTable = () => (storeMock.update.mock.calls.find((call) => "secret" in (call[2] as object))?.[2] as { secret: Record<string, unknown> }).secret;
+// The secret the provisioner stored on the row for the hold em table, through the one write that
+// also releases the held buy ins (2026-10 item 278).
+const storedTable = () => storeMock.saveOpeningHoldemTable.mock.calls[0][2] as Record<string, unknown>;
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -81,6 +84,9 @@ beforeEach(() => {
 	storeMock.claimForPlay.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", hostId: "host-1", status: "draft", buyInPaidBy: [] });
 	storeMock.findByRoomId.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", status: "playing" });
 	storeMock.update.mockResolvedValue(undefined);
+	storeMock.saveOpeningHoldemTable.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", status: "playing" });
+	// A held buy in is still on the row, so the pull lands and the refund pays.
+	storeMock.takeHeldBuyIn.mockResolvedValue({ roomId: "room-1", guildId: "guild-1" });
 	(botLogStore.log as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 	(checkGameRoomAccess as ReturnType<typeof vi.fn>).mockResolvedValue({ allowed: true, privateQuota: Number.POSITIVE_INFINITY });
 	(guildConfigStore.findByGuildId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
@@ -161,6 +167,23 @@ describe("RoomProvisioner.open for a challenge card's table", () => {
 		expect(seatsOf()).toEqual([["host-1", 2_500], ["a", 2_500], ["b", 2_500]]);
 		expect(boardOf(send).components).toEqual([]);
 		expect(dealMock).toHaveBeenCalledWith(guild.client, expect.objectContaining({ roomId: "room-1" }));
+		// 2026-10 item 278, G2: the claim holds every buy in on the row, and the table write takes the
+		// seats it pays off the held buy ins in the same update.
+		expect(storeMock.claimForPlay).toHaveBeenCalledWith("guild-1", "room-1", expect.any(Object), { kind: "heldBuyIns", buyIn: 2_500, seatIds: ["host-1", "a", "b"] });
+		expect(storeMock.saveOpeningHoldemTable.mock.calls[0][3]).toEqual(["host-1", "a", "b"]);
+	});
+
+	it("deals nothing when a finish landed before the opening table was saved", async () => {
+		(guildConfigStore.findByGuildId as ReturnType<typeof vi.fn>).mockResolvedValue({ chipEconomyEnabled: true });
+		ledgerAtClaim(["a", "host-1"]);
+		storeMock.saveOpeningHoldemTable.mockResolvedValue(null);
+		vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const { guild } = makeGuild();
+
+		await RoomProvisioner.open(input(guild, { draftSeats: { buyIn: 2_500, userIds: ["host-1", "a"], charged: true } }));
+
+		expect(dealMock).not.toHaveBeenCalled();
+		expect(chipWalletStore.credit).not.toHaveBeenCalled();
 	});
 
 	it("seats every joiner free on a server with chips off", async () => {
@@ -171,6 +194,9 @@ describe("RoomProvisioner.open for a challenge card's table", () => {
 		expect(seatsOf()).toEqual([["host-1", 1_000], ["a", 1_000], ["b", 1_000]]);
 		expect(chipWalletStore.credit).not.toHaveBeenCalled();
 		expect(dealMock).toHaveBeenCalledOnce();
+		// Nobody paid, so nothing is held and the table write releases nobody.
+		expect(storeMock.claimForPlay.mock.calls[0][3]).toBeUndefined();
+		expect(storeMock.saveOpeningHoldemTable.mock.calls[0][3]).toEqual([]);
 	});
 
 	// 2026-10 item 276, audit P3: what a card's table plays for is what its Start charged, never
@@ -207,6 +233,9 @@ describe("RoomProvisioner.open for a challenge card's table", () => {
 		await RoomProvisioner.open(input(guild, { draftSeats: { buyIn: 2_500, userIds: ["host-1", "a", "b"], charged: true } }));
 
 		expect(seatsOf()).toEqual([["host-1", 2_500], ["b", 2_500]]);
+		// "c" is refunded by pulling their held entry first (2026-10 item 278), so a finish racing the
+		// open pays them once.
+		expect(storeMock.takeHeldBuyIn.mock.calls).toEqual([["guild-1", "room-1", "c"]]);
 		expect((chipWalletStore.credit as ReturnType<typeof vi.fn>).mock.calls).toEqual([[{ userId: "c" }, 2_500]]);
 	});
 

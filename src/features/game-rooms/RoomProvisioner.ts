@@ -1,5 +1,5 @@
 import { ChannelType, DiscordAPIError, type CategoryChannel, type Guild, type TextChannel } from "discord.js";
-import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { gameRoomStore, type StartLedger } from "@db/stores/gameRoomStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { gameRoomCreatedEvent } from "@base/constants/BOT_LOG_EVENTS.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -14,8 +14,8 @@ import {
 	battleshipBoardMessage,
 } from "./roomBattleship.js";
 import { createTable as createHoldemTable, joinTable as joinHoldemTable, setBuyIn as setHoldemBuyIn, type HoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
-import { refundSeatsDirectly, seatsAtClaim, type PaidSeats } from "./holdemDraftBuyIn.js";
-import { openChipPot } from "./chipPot.js";
+import { refundClaimedPayers, refundSeatsDirectly, seatsAtClaim, type PaidSeats } from "./holdemDraftBuyIn.js";
+import { isPotGame } from "./chipPot.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
 import { dealOpeningHand } from "./roomHoldemHandlers.js";
@@ -201,9 +201,9 @@ export interface RoomOpenInput {
 	// Who sits down as a match opened from a challenge card opens, host first (2026-10 item 263
 	// R3-27): the payers at a chip match, every pool member at a free one, as settleDraftBuyIns
 	// answered at Start. seedRoom reconciles them with the buy in ledger at the start claim
-	// (2026-10 item 276, P2-13), and a ranked Monopoly or Battleship match opens its pot from
-	// them (chipPot.openChipPot, D4 and D10). Absent (the rules card, a rematch) opens Hold'em's
-	// joining table and gives any other game no pot.
+	// (2026-10 item 276, P2-13), and the claim itself moves a chip match's buy ins to the game's
+	// own ledger (gameRoomStore.StartLedger, 2026-10 item 278). Absent (the rules card, a
+	// rematch) opens Hold'em's joining table and gives any other game no pot.
 	draftSeats?: PaidSeats;
 	// The voice referee the row opens with, written on the new row (absent writes null, which
 	// roomTypes.refereeOn reads as the game's default). Only Dero's rules card sets it, false,
@@ -524,22 +524,19 @@ export async function seedRoom(input: RoomSeedInput): Promise<SeededRoom | null>
 	await opener?.pin().catch(() => undefined);
 
 	// The start claim: only a row still waiting to start moves to playing, and its buy in
-	// ledger is emptied in the same write (gameRoomStore.claimForPlay explains both). A Blackjack
-	// chip table's stacks ledger is written by that same write (2026-10 item 276, audit P3), so no
-	// moment holds a buy in that neither ledger has.
-	const blackjackTable = game === "blackjack" && input.draftSeats?.charged ? { buyIn: input.draftSeats.buyIn, seatIds: input.draftSeats.userIds, actedAt: new Date() } : undefined;
+	// ledger is emptied in the same write (gameRoomStore.claimForPlay explains both). A chip
+	// match's buy ins move to the game's own ledger in that same write, so no moment holds a buy
+	// in that no ledger has: a Blackjack table's stacks (2026-10 item 276, audit P3), a ranked
+	// Monopoly or Battleship pot and a Hold'em table's held seats (2026-10 item 278, G1 and G2).
+	const startLedger = startLedgerOf(game, input.draftSeats);
 	const claimPatch = { channelId: channel.id, openerMessageId: opener?.id ?? null, inviteCode, startedAt: new Date() };
-	const beforeClaim = blackjackTable
-		? await gameRoomStore.claimForPlay(guild.id, room.roomId, claimPatch, blackjackTable)
-		: await gameRoomStore.claimForPlay(guild.id, room.roomId, claimPatch);
+	const beforeClaim = await gameRoomStore.claimForPlay(guild.id, room.roomId, claimPatch, startLedger);
 	if (!beforeClaim) {
 		await opener?.delete().catch(() => undefined);
 		void revokeRoomInvite(guild.client, { roomId: room.roomId, guildId: guild.id, inviteCode });
 		return null;
 	}
 	const started = await gameRoomStore.findByRoomId(guild.id, room.roomId);
-	const claimedSeats = input.draftSeats ? await seatsTheClaimLeft(input.draftSeats, beforeClaim) : undefined;
-	const seats = claimedSeats && blackjackTable ? { ...claimedSeats, ledgered: true } : claimedSeats;
 
 	// The players are the ones the claimed row still lists (2026-10 item 276, found in Phase 1): a
 	// member the host removed or who left the server while the room was built was pulled off it,
@@ -547,10 +544,10 @@ export async function seedRoom(input: RoomSeedInput): Promise<SeededRoom | null>
 	// for its game closes at once, rather than throwing in the game's engine on a row already
 	// playing, which no sweep could find (audit P1-5).
 	const playerIds = await dropUnseatedPlayers(channel, input.playerIds, beforeClaim.playerIds ?? input.playerIds);
-	// A ranked Monopoly or Battleship match's pot (2026-10 item 276, D4 and D10), from the seats the
-	// claim left and the players it seated, BEFORE the seat check below: a room that closes at
-	// once then gives every buy in back through the same finish that pays a played match.
-	if (seats) await openChipPot(room, seats, playerIds);
+	// Who sits, and the buy in back to every payer the claim took off the draft ledger whom the
+	// room does not seat, BEFORE the seat check below: a room that closes at once then gives every
+	// seat's buy in back through the same finish that pays a played match.
+	const seats = input.draftSeats ? await seatsTheClaimLeft(room, input.draftSeats, beforeClaim, startLedger, playerIds) : undefined;
 	if (!seatsFit(game, playerIds.length + botIds.length)) {
 		await roomLifecycle.finish(guild.client, started ?? { ...beforeClaim, status: "playing" }, { abandoned: true });
 		return null;
@@ -588,9 +585,15 @@ export async function seedRoom(input: RoomSeedInput): Promise<SeededRoom | null>
 		const boardMessage = await channel
 			.send({ embeds: [firstTableEmbed(table)], components: holdemDealsAtOpen ? [] : holdemJoiningRows(room.roomId, table.seats.length, table) })
 			.catch(() => null);
-		await gameRoomStore.update(guild.id, room.roomId, {
-			secret: { ...table, boardMessageId: boardMessage?.id ?? null } as never,
-		});
+		// The table takes every seat it pays off the held buy ins in the same write (2026-10 item 278,
+		// G2). Refused only when a finish landed while the room was built: that finish refunded the
+		// held buy ins, so this table holds nothing and must deal nothing.
+		const seatedPayers = startLedger?.kind === "heldBuyIns" && seats ? seats.userIds : [];
+		const opened = await gameRoomStore.saveOpeningHoldemTable(guild.id, room.roomId, { ...table, boardMessageId: boardMessage?.id ?? null } as never, seatedPayers);
+		if (!opened) {
+			console.warn("[game-rooms] a Hold'em room finished before its opening table was saved; it deals nothing", { roomId: room.roomId });
+			holdemDealsAtOpen = false;
+		}
 	}
 
 	// Monopoly opens straight on the first seat's roll: every player is already
@@ -707,13 +710,43 @@ async function dropUnseatedPlayers(channel: TextChannel, listed: readonly string
 	return seated;
 }
 
+// Where the start claim moves a chip match's buy ins (gameRoomStore.StartLedger), or nowhere for
+// a match nobody paid for and a game with no ledger of its own.
+function startLedgerOf(game: GameSlug, draftSeats: PaidSeats | undefined): StartLedger | undefined {
+	if (!draftSeats?.charged) return undefined;
+	const { buyIn, userIds: seatIds } = draftSeats;
+	if (game === "blackjack") return { kind: "blackjackStacks", buyIn, seatIds, actedAt: new Date() };
+	if (isPotGame(game)) return { kind: "chipPot", buyIn, seatIds };
+	if (game === "holdem") return { kind: "heldBuyIns", buyIn, seatIds };
+	return undefined;
+}
+
 // The card's seats as the start claim left them, and the buy in back to every payer the claim
-// emptied off the ledger who is not seated (a joiner who paid after Start read the card). The
-// claim emptied the ledger, so no other path can still refund them.
-async function seatsTheClaimLeft(draftSeats: PaidSeats, beforeClaim: IGameRoom): Promise<PaidSeats> {
-	const { seats, unseatedPayers } = seatsAtClaim(draftSeats, beforeClaim.hostId, beforeClaim.buyInPaidBy ?? []);
-	if (unseatedPayers.length > 0) await refundSeatsDirectly({ buyIn: draftSeats.buyIn, userIds: unseatedPayers, charged: true });
-	return seats;
+// took off the draft ledger whom the room does not seat: a joiner who paid after Start read the
+// card, and in a pot match a payer the claimed row no longer lists as a player (they left the
+// server while the room was built). A pot or a Hold'em table's held seats still hold them, so
+// each refund pulls its entry first (refundClaimedPayers, 2026-10 item 278) and a crash before it
+// leaves the buy in where finish pays it. Any other ledger was emptied by the claim, so those
+// payers are paid straight back, the one step a crash there can still lose.
+async function seatsTheClaimLeft(room: IGameRoom, draftSeats: PaidSeats, beforeClaim: IGameRoom, startLedger: StartLedger | undefined, playerIds: readonly string[]): Promise<PaidSeats> {
+	const ledgerAtClaim = beforeClaim.buyInPaidBy ?? [];
+	const { seats, unseatedPayers } = seatsAtClaim(draftSeats, beforeClaim.hostId, ledgerAtClaim);
+	switch (startLedger?.kind) {
+		case "chipPot": {
+			const inPot = seats.userIds.filter((userId) => playerIds.includes(userId));
+			await refundClaimedPayers(room, "chipPot", seats.buyIn, ledgerAtClaim.filter((userId) => !inPot.includes(userId)));
+			return { ...seats, userIds: inPot };
+		}
+		case "heldBuyIns":
+			await refundClaimedPayers(room, "heldBuyIns", seats.buyIn, unseatedPayers);
+			return seats;
+		case "blackjackStacks":
+			await refundSeatsDirectly({ buyIn: seats.buyIn, userIds: unseatedPayers, charged: true });
+			return { ...seats, ledgered: true };
+		default:
+			await refundSeatsDirectly({ buyIn: draftSeats.buyIn, userIds: unseatedPayers, charged: true });
+			return seats;
+	}
 }
 
 // ── the opener's ping (2026-10 item 263 R3-24) ────────────────────────

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { addBuyInPaid: vi.fn(), takeBuyInPaid: vi.fn(), findByRoomId: vi.fn() } }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { addBuyInPaid: vi.fn(), takeBuyInPaid: vi.fn(), takePotPayer: vi.fn(), takeHeldBuyIn: vi.fn(), findByRoomId: vi.fn() } }));
 vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { debit: vi.fn(), credit: vi.fn() } }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 
@@ -13,6 +13,8 @@ import {
 	isChipDraft,
 	isValidDraftBuyIn,
 	refundAllJoiners,
+	refundClaimedPayers,
+	refundHeldBuyIns,
 	refundJoiners,
 	refundOpenedSeats,
 	refundSeatsDirectly,
@@ -31,7 +33,7 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // with the payers seated. Driven over mocked stores: the ledger's conditional writes are the
 // store's, and the order of take, record and give back is what is pinned here.
 
-const storeMock = gameRoomStore as unknown as Record<"addBuyInPaid" | "takeBuyInPaid" | "findByRoomId", ReturnType<typeof vi.fn>>;
+const storeMock = gameRoomStore as unknown as Record<"addBuyInPaid" | "takeBuyInPaid" | "takePotPayer" | "takeHeldBuyIn" | "findByRoomId", ReturnType<typeof vi.fn>>;
 const walletMock = chipWalletStore as unknown as Record<"debit" | "credit", ReturnType<typeof vi.fn>>;
 const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
 
@@ -145,6 +147,44 @@ describe("getting it back", () => {
 		vi.spyOn(console, "error").mockImplementation(() => undefined);
 		storeMock.takeBuyInPaid.mockRejectedValue(new Error("mongo down"));
 		await expect(refundJoiners(draft(), [GUEST])).resolves.toBeUndefined();
+	});
+});
+
+// 2026-10 item 278: the start claim moves every buy in onto the pot or a Hold'em table's held
+// seats, and a payer the room seats nowhere comes back off it by a pull that answers whether it
+// landed. Claim first, pay second, so the open and a finish racing it pay a payer once.
+describe("giving back a buy in the start claim moved", () => {
+	it("pulls each unseated payer off the pot and pays only the pulls that landed", async () => {
+		storeMock.takePotPayer.mockResolvedValueOnce({ roomId: "room-1" }).mockResolvedValueOnce(null);
+		await refundClaimedPayers(draft(), "chipPot", 1_500, ["late", "finished-first", "late"]);
+		expect(storeMock.takePotPayer.mock.calls).toEqual([
+			["guild-1", "room-1", "late"],
+			["guild-1", "room-1", "finished-first"],
+		]);
+		expect(walletMock.credit.mock.calls).toEqual([[key("late"), 1_500]]);
+		expect(storeMock.takeHeldBuyIn).not.toHaveBeenCalled();
+	});
+
+	it("pulls from a Hold'em table's held seats, and keeps going past a pull that threw", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		storeMock.takeHeldBuyIn.mockRejectedValueOnce(new Error("mongo down")).mockResolvedValueOnce({ roomId: "room-1" });
+		await expect(refundClaimedPayers(draft(), "heldBuyIns", 2_500, ["a", "b"])).resolves.toBeUndefined();
+		// A pull that threw may have landed, so nothing is paid for it: a crash loses, never mints.
+		expect(walletMock.credit.mock.calls).toEqual([[key("b"), 2_500]]);
+	});
+
+	it("refunds every seat a finished row still holds, and nothing when none is held", async () => {
+		storeMock.takeHeldBuyIn.mockResolvedValue({ roomId: "room-1" });
+		await refundHeldBuyIns(draft({ heldBuyIns: { buyIn: 2_500, userIds: ["host", "a"] } }));
+		expect(walletMock.credit.mock.calls).toEqual([
+			[key("host"), 2_500],
+			[key("a"), 2_500],
+		]);
+
+		vi.clearAllMocks();
+		await refundHeldBuyIns(draft({ heldBuyIns: null }));
+		await refundHeldBuyIns(draft({ heldBuyIns: { buyIn: 2_500, userIds: [] } }));
+		expect(storeMock.takeHeldBuyIn).not.toHaveBeenCalled();
 	});
 });
 

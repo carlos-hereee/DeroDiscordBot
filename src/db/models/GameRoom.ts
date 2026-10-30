@@ -19,13 +19,16 @@ import {
 	type SpectatorMode,
 } from "@features/game-rooms/roomTypes.js";
 
-/** The chips a ranked Monopoly or Battleship match holds for its winner; see IGameRoom.chipPot. */
-export interface ChipPot {
+/** One buy in paid by each of several members: a ranked pot, or a Hold'em table's held seats. */
+export interface SeatBuyIns {
 	// What each seat paid at the start.
 	buyIn: number;
-	// Every member who paid it, in seat order. The pot is buyIn times their count.
+	// Every member who paid it, in seat order. The chips held are buyIn times their count.
 	userIds: string[];
 }
+
+/** The chips a ranked Monopoly or Battleship match holds for its winner; see IGameRoom.chipPot. */
+export type ChipPot = SeatBuyIns;
 
 /** One seat's chips at a Blackjack chip table; see IGameRoom.blackjackStacks. */
 export interface BlackjackStackEntry {
@@ -164,10 +167,19 @@ export interface IGameRoom {
 	// writes the row, and a table nobody touches must still end on the idle clock.
 	blackjackActedAt: Date | null;
 	// A ranked Monopoly or Battleship match's pot (2026-10 item 276, owner decisions D3, D4 and
-	// D10): the buy ins the start claim found paid, written once as the room opens and paid out
-	// once by roomLifecycle.finish from the row its claim returned (chipPot.ts). Null on a free
-	// match and on every other game, whose chips live on their own tables.
+	// D10): every buy in the draft ledger held, moved here BY the start claim's own write (2026-10
+	// item 278), so no moment holds a buy in that neither ledger has. A payer the room then seats
+	// nowhere is pulled off and refunded; the rest are paid out once by roomLifecycle.finish from
+	// the row its claim returned (chipPot.ts). Null on a free match and on every other game, whose
+	// chips live on their own tables.
 	chipPot: ChipPot | null;
+	// A Hold'em chip table's buy ins between the start claim and the write that saves its opening
+	// table (2026-10 item 278, gap G2): the claim moves the whole draft ledger here, a payer the
+	// table does not seat is pulled off and refunded, and the table write pulls every seat it gives
+	// a stack in the same update, so each buy in is on the row exactly once, as held or as a stack.
+	// One still here when the room finishes is a buy in a crash or a racing finish stranded, which
+	// finish refunds by pulling each entry first. Null on every other row, older rows included (D2).
+	heldBuyIns: SeatBuyIns | null;
 	// ── the host's say over who joins (2026-10 item 244 Phase 4) ──
 	// Set on the draft by the challenge card's host controls and read on every join,
 	// on the card and, for Hold'em, at the table's Buy in and Take a seat. Each
@@ -280,6 +292,9 @@ const pendingNetworkJoinSchema = new mongoose.Schema<PendingNetworkJoin>(
 	{ _id: false }
 );
 
+// One buy in per seat, shared by a ranked match's pot and a Hold'em table's held seats.
+const seatBuyInsSchema = new mongoose.Schema<SeatBuyIns>({ buyIn: { type: Number, required: true }, userIds: { type: [String], default: [] } }, { _id: false });
+
 const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 	{
 		// Rides every customId, so it must be stable and URL/customId safe. uuid v4 matches
@@ -339,7 +354,11 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		},
 		blackjackActedAt: { type: Date, default: null },
 		chipPot: {
-			type: new mongoose.Schema({ buyIn: { type: Number, required: true }, userIds: { type: [String], default: [] } }, { _id: false }),
+			type: seatBuyInsSchema,
+			default: null,
+		},
+		heldBuyIns: {
+			type: seatBuyInsSchema,
 			default: null,
 		},
 		// The host controls. Every default is the open door a room had before them, so

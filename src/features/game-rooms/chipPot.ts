@@ -1,9 +1,7 @@
 import type { Client } from "discord.js";
-import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { ChipPot, IGameRoom } from "@db/models/GameRoom.js";
 import { returnChips } from "@features/economy/chipWallet.js";
 import type { MonopolySeat } from "@features/games/monopolyState.js";
-import { refundSeatsDirectly, type PaidSeats } from "./holdemDraftBuyIn.js";
 import type { ChipPayout } from "./holdemChips.js";
 import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -12,11 +10,13 @@ import type { GameSlug } from "./roomTypes.js";
 // ── chipPot ──────────────────────────────────────────────────────────
 // What:  the winner takes all pot of a ranked Monopoly match (a fixed buy in per seat, owner
 //        decision D4) and a ranked Battleship match with a wager (both captains, D10), 2026-10
-//        item 276: opened on the row as the room opens, paid out once when the room finishes.
-// Who:   RoomProvisioner.seedRoom (openChipPot, with the seats the start claim left) and
-//        roomLifecycle.finish (settleChipPot, with the row its claim returned).
-// Does NOT: charge anybody (the draft ledger in holdemDraftBuyIn did, on Join and at Start) or
-//        touch a Hold'em or Blackjack table, whose chips live on their own tables.
+//        item 276: paid out once when the room finishes.
+// Who:   roomLifecycle.finish (settleChipPot, with the row its claim returned). The pot is
+//        OPENED by the start claim itself (gameRoomStore.claimForPlay, 2026-10 item 278), which
+//        moves every buy in off the draft ledger in its own write, and RoomProvisioner.seedRoom
+//        then refunds a payer the room seated nowhere (holdemDraftBuyIn.refundClaimedPayers).
+// Does NOT: charge anybody (the draft ledger in holdemDraftBuyIn did, on Join and at Start),
+//        write the pot, or touch a Hold'em or Blackjack table, whose chips live on their own tables.
 //
 // ⚠️ A LEAVER'S BUY IN STAYS IN THE POT (owner decisions D3 and D12). A surrender, a removal,
 // an idle forfeit or leaving the server takes the seat out of the match and pays it nothing,
@@ -35,34 +35,6 @@ export const isPotGame = (game: GameSlug): boolean => (POT_GAMES as readonly Gam
 
 /** Every chip a pot holds: each payer's buy in. */
 export const potTotalOf = (pot: ChipPot): number => pot.buyIn * pot.userIds.length;
-
-/**
- * Open a ranked match's pot as its room opens, from the seats the start claim left: every payer
- * the room seated goes in, and a payer it did not seat (gone from the server while the room was
- * built) has their buy in back. Answers the pot written, or null for a free match.
- *
- * The write matches a row still playing (gameRoomStore.openChipPot): a finish that landed first
- * paid out a row with no pot, so the buy ins go straight back. A write that THREW is logged and
- * refunds nothing, since it may have landed, and a refund on top of a pot the finish pays would
- * mint chips; a crash here loses buy ins and never mints them, the order every chip path keeps.
- */
-export async function openChipPot(room: Pick<IGameRoom, "guildId" | "roomId" | "game">, seats: PaidSeats, playerIds: readonly string[]): Promise<ChipPot | null> {
-	if (!isPotGame(room.game) || !seats.charged) return null;
-	const seated = seats.userIds.filter((userId) => playerIds.includes(userId));
-	const unseated = seats.userIds.filter((userId) => !playerIds.includes(userId));
-	if (unseated.length > 0) await refundSeatsDirectly({ ...seats, userIds: unseated });
-	if (seated.length === 0) return null;
-
-	const pot: ChipPot = { buyIn: seats.buyIn, userIds: seated };
-	try {
-		if (await gameRoomStore.openChipPot(room.guildId, room.roomId, pot)) return pot;
-	} catch (error) {
-		console.error(`[game-rooms] the chip pot of room ${room.roomId} could not be written; its ${potTotalOf(pot)} chips are owed by hand`, error);
-		return null;
-	}
-	await refundSeatsDirectly({ ...seats, userIds: seated });
-	return null;
-}
 
 /**
  * Who a finished match's pot pays: the whole pot to a winner who paid into it, or, with no such

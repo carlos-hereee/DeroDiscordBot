@@ -1,4 +1,4 @@
-import { GameRoom, type BlackjackLateCharge, type BlackjackStackEntry, type ChipPot, type IGameRoom, type TurnPromptRecord } from "@db/models/GameRoom.js";
+import { GameRoom, type BlackjackLateCharge, type BlackjackStackEntry, type IGameRoom, type TurnPromptRecord } from "@db/models/GameRoom.js";
 import {
 	NON_TERMINAL_ROOM_STATUSES,
 	ROOMS_AWAITING_PLAY,
@@ -104,6 +104,36 @@ async function setSecretPathsIf(guildId: string, roomId: string, expected: Recor
 	await GameRoom.updateOne({ guildId, roomId, secret: null }, { $set: { secret: {} } });
 	const set = Object.fromEntries(Object.entries(fields).map(([path, value]) => [`secret.${path}`, value]));
 	return GameRoom.findOneAndUpdate({ guildId, roomId, ...expected, ...STILL_IN_PLAY }, { $set: set }, { new: true });
+}
+
+/**
+ * Where the start claim moves a chip match's buy ins as it empties the draft ledger
+ * (gameRoomStore.claimForPlay), so no moment holds a buy in that no ledger has. `seatIds` are the
+ * seats Start read, host first, and `buyIn` what each of them paid.
+ * - `blackjackStacks`: each seat still paid becomes a stacks entry at its buy in (2026-10 item 276).
+ * - `chipPot`: a ranked Monopoly or Battleship match's pot takes EVERY payer (2026-10 item 278, G1).
+ * - `heldBuyIns`: a Hold'em chip table holds EVERY payer until its table is saved (item 278, G2).
+ * The pot and the held seats take every payer, not only the seats Start read, so a payer the room
+ * then seats nowhere is still on a ledger until a pull claims their refund.
+ */
+export type StartLedger =
+	| { kind: "blackjackStacks"; buyIn: number; seatIds: readonly string[]; actedAt: Date }
+	| { kind: "chipPot" | "heldBuyIns"; buyIn: number; seatIds: readonly string[] };
+
+// The claim pipeline's fields for `ledger`, every one read from the draft ledger as the write
+// finds it. The pot and the held seats list the seats Start read that are still paid, in seat
+// order (potPayouts gives a remainder to the first), then every other payer in the order they
+// paid. The target field is null on a draft, so the embedded document replaces it whole.
+function startLedgerFields(ledger: StartLedger): Record<string, unknown> {
+	const paid = { $ifNull: ["$buyInPaidBy", []] };
+	const seatIds = { $literal: [...ledger.seatIds] };
+	const stillPaidSeats = { $filter: { input: seatIds, cond: { $in: ["$$this", paid] } } };
+	if (ledger.kind === "blackjackStacks") {
+		const stacks = { $map: { input: stillPaidSeats, as: "seat", in: { userId: "$$seat", buyIn: { $literal: ledger.buyIn }, stack: { $literal: ledger.buyIn } } } };
+		return { blackjackStacks: stacks, blackjackActedAt: { $literal: ledger.actedAt } };
+	}
+	const otherPayers = { $filter: { input: paid, cond: { $not: [{ $in: ["$$this", seatIds] }] } } };
+	return { [ledger.kind]: { buyIn: { $literal: ledger.buyIn }, userIds: { $concatArrays: [stillPaidSeats, otherPayers] } } };
 }
 
 export const gameRoomStore = {
@@ -354,16 +384,36 @@ export const gameRoomStore = {
 		return GameRoom.findOneAndUpdate({ guildId, roomId, buyInPaidBy: userId }, { $pull: { buyInPaidBy: userId } }, { new: false });
 	},
 
-	// ── A Blackjack chip table's stacks (2026-10 item 267, risk R5) ──
-	// The ledger as the table opens: one entry per paid seat. Null when the room is gone.
-	// A ranked Monopoly or Battleship match's pot (2026-10 item 276), written once as the room
-	// opens. Only on a row still playing: a finish that landed first has already run its payout
-	// over a row with no pot, so a pot written after it would never be paid, and the caller
-	// gives the buy ins back instead.
-	async openChipPot(guildId: string, roomId: string, pot: ChipPot) {
-		return GameRoom.findOneAndUpdate({ guildId, roomId, status: "playing" }, { $set: { chipPot: pot } }, { new: true });
+	// ── The buy ins the start claim moved off the draft ledger (2026-10 item 278) ──
+	// A payer the room did not seat comes off a ranked match's pot: the row BEFORE the pull, or
+	// null when they were not in it. Only on a row still playing, because finish pays the pot from
+	// the row its own claim returned: a pull that landed after that claim would refund a buy in the
+	// finish already paid out as a share, so a finished row refuses it and the share stands.
+	async takePotPayer(guildId: string, roomId: string, userId: string) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId, ...STILL_IN_PLAY, "chipPot.userIds": userId }, { $pull: { "chipPot.userIds": userId } }, { new: false });
 	},
 
+	// One payer comes off a Hold'em table's held buy ins: the row BEFORE the pull, or null when they
+	// were not held. No status filter: finish refunds these by this same pull, entry by entry, so
+	// whoever pulls an entry pays it and nobody pays it twice.
+	async takeHeldBuyIn(guildId: string, roomId: string, userId: string) {
+		return GameRoom.findOneAndUpdate({ guildId, roomId, "heldBuyIns.userIds": userId }, { $pull: { "heldBuyIns.userIds": userId } }, { new: false });
+	},
+
+	// Save a Hold'em room's opening table, pulling every seat it gives a stack off the held buy ins
+	// in the SAME write (2026-10 item 278, gap G2), so each buy in is on the row as held or as a
+	// stack and never as both or neither. Matches only a room still playing whose held buy ins still
+	// name every one of `seatedPayers`: a finish that landed first refunds the held entries itself,
+	// and a table written after it would be a second claim on the same chips. Null when refused. A
+	// table nobody paid for (free play, the rules card, a rematch's joining table) passes no payers.
+	async saveOpeningHoldemTable(guildId: string, roomId: string, secret: IGameRoom["secret"], seatedPayers: readonly string[]) {
+		const filter = { guildId, roomId, ...STILL_IN_PLAY, ...(seatedPayers.length > 0 ? { "heldBuyIns.userIds": { $all: [...seatedPayers] } } : {}) };
+		const update = { $set: { secret }, ...(seatedPayers.length > 0 ? { $pull: { "heldBuyIns.userIds": { $in: [...seatedPayers] } } } : {}) };
+		return GameRoom.findOneAndUpdate(filter, update, { new: true });
+	},
+
+	// ── A Blackjack chip table's stacks (2026-10 item 267, risk R5) ──
+	// The ledger as the table opens: one entry per paid seat. Null when the room is gone.
 	async openBlackjackStacks(guildId: string, roomId: string, entries: readonly BlackjackStackEntry[], actedAt: Date) {
 		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $set: { blackjackStacks: entries, blackjackActedAt: actedAt } }, { new: true });
 	},
@@ -840,24 +890,18 @@ export const gameRoomStore = {
 	// before this write is not on it and is never seated, and none refunded after it can claim
 	// an entry, because the entry is gone. Null when the claim was lost.
 	//
-	// ⚠️ A BLACKJACK CHIP TABLE'S STACKS ARE WRITTEN IN THIS SAME WRITE (2026-10 item 276, audit P3).
-	// The ledger it empties held every buy in, and the table used to write its stacks ledger seconds
-	// later, after the room was built and the cards dealt; a crash in between had emptied one ledger
-	// and never written the other, so those chips were lost. `blackjackTable` names the seats Start
-	// read and their buy in: every one of them still on the ledger becomes a stacks entry here. An
-	// update pipeline, since only a pipeline can read the ledger in the write; the patch's values go
-	// in as literals so no id can be read as a field path.
-	async claimForPlay(guildId: string, roomId: string, patch: Partial<IGameRoom>, blackjackTable?: { buyIn: number; seatIds: readonly string[]; actedAt: Date }) {
+	// ⚠️ A CHIP MATCH'S BUY INS MOVE TO THE GAME'S OWN LEDGER IN THIS SAME WRITE (2026-10 item 276,
+	// audit P3, for Blackjack; item 278, gaps G1 and G2, for the rest). The ledger it empties held
+	// every buy in, and each game used to write its own ledger seconds later, after Discord calls; a
+	// crash in between had emptied one ledger and never written the other, so those chips were lost.
+	// `startLedger` names where they go (see StartLedger). An update pipeline, since only a pipeline
+	// can read the ledger in the write; every value from the caller goes in as a literal so no id
+	// can be read as a field path.
+	async claimForPlay(guildId: string, roomId: string, patch: Partial<IGameRoom>, startLedger?: StartLedger) {
 		const filter = { guildId, roomId, status: { $in: [...ROOMS_AWAITING_PLAY] } };
-		if (!blackjackTable) return GameRoom.findOneAndUpdate(filter, { $set: { status: "playing", ...patch, buyInPaidBy: [] } }, { new: false });
+		if (!startLedger) return GameRoom.findOneAndUpdate(filter, { $set: { status: "playing", ...patch, buyInPaidBy: [] } }, { new: false });
 		const literals = Object.fromEntries(Object.entries(patch).map(([field, value]) => [field, { $literal: value }]));
-		const stillPaidSeats = { $filter: { input: { $ifNull: ["$buyInPaidBy", []] }, cond: { $in: ["$$this", [...blackjackTable.seatIds]] } } };
-		const stacks = { $map: { input: stillPaidSeats, as: "seat", in: { userId: "$$seat", buyIn: blackjackTable.buyIn, stack: blackjackTable.buyIn } } };
-		return GameRoom.findOneAndUpdate(
-			filter,
-			[{ $set: { ...literals, status: "playing", blackjackStacks: stacks, blackjackActedAt: { $literal: blackjackTable.actedAt }, buyInPaidBy: [] } }],
-			{ new: false }
-		);
+		return GameRoom.findOneAndUpdate(filter, [{ $set: { ...literals, status: "playing", ...startLedgerFields(startLedger), buyInPaidBy: [] } }], { new: false });
 	},
 
 	// Terminal write for a match that ended.

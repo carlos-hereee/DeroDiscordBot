@@ -148,6 +148,39 @@ export async function refundJoiners(room: Pick<IGameRoom, "guildId" | "roomId" |
 	}
 }
 
+/** The ledgers the start claim moves a pot match's or a Hold'em table's buy ins onto (gameRoomStore.StartLedger). */
+export type ClaimedLedger = "chipPot" | "heldBuyIns";
+
+/**
+ * Give the buy in back to each of `userIds` that the start claim moved onto `ledger` (2026-10 item
+ * 278): a payer the room seated nowhere, or a Hold'em table's held seat a finish found unsaved.
+ * Each refund pulls its entry first and pays only when the pull landed, as refundJoiners does, so
+ * a finish and an open refunding the same payer pay once. A pot refuses the pull once the room has
+ * finished, since that finish paid the pot out (gameRoomStore.takePotPayer). Never throws.
+ */
+export async function refundClaimedPayers(room: Pick<IGameRoom, "guildId" | "roomId">, ledger: ClaimedLedger, buyIn: number, userIds: readonly string[]): Promise<void> {
+	const pullEntry = (userId: string) =>
+		ledger === "chipPot" ? gameRoomStore.takePotPayer(room.guildId, room.roomId, userId) : gameRoomStore.takeHeldBuyIn(room.guildId, room.roomId, userId);
+	for (const userId of new Set(userIds)) {
+		try {
+			if (await pullEntry(userId)) await returnChips({ userId }, buyIn);
+		} catch (error) {
+			console.error(`[game-rooms] a claimed buy in of ${buyIn} chips could not be given back to ${userId}`, { guildId: room.guildId, roomId: room.roomId, ledger, error });
+		}
+	}
+}
+
+/**
+ * Refund every Hold'em buy in still held on a finished row (2026-10 item 278, gap G2): a crash, or a
+ * finish that landed first, left them between the start claim and the opening table's write.
+ * Called by roomLifecycle.finish with the row its claim returned. Never throws.
+ */
+export async function refundHeldBuyIns(room: Pick<IGameRoom, "guildId" | "roomId" | "heldBuyIns">): Promise<void> {
+	const held = room.heldBuyIns;
+	if (!held || held.userIds.length === 0) return;
+	await refundClaimedPayers(room, "heldBuyIns", held.buyIn, held.userIds);
+}
+
 /** Refund everybody the draft still holds a buy in for: a cancelled or replaced draft. */
 export async function refundAllJoiners(room: Pick<IGameRoom, "guildId" | "roomId" | "game" | "holdemBuyIn" | "buyInPaidBy">): Promise<void> {
 	await refundJoiners(room, room.buyInPaidBy ?? []);
@@ -242,10 +275,11 @@ export async function settleDraftBuyIns(
  * (2026-10 item 276, audit P2-13). Start answered its seats from the card as it read it, and the
  * room takes seconds to build: a joiner the host removed meanwhile was refunded and is off the
  * ledger, so they do not sit, and a joiner who paid after Start's read is on the ledger but not
- * in the seats, so they are owed their buy in back (`unseatedPayers`), since the claim emptied
- * the ledger. The host always sits: their seat went on the ledger at Start, and a claim that found
- * it gone (Call it off refunded it) never landed. A free table seats everyone it named, and any
- * payer still on its ledger is owed their buy in back.
+ * in the seats, so they are owed their buy in back (`unseatedPayers`): from the pot or the held
+ * seats the claim moved them onto (refundClaimedPayers, 2026-10 item 278), or straight back where
+ * the claim moved them nowhere. The host always sits: their seat went on the ledger at Start, and
+ * a claim that found it gone (Call it off refunded it) never landed. A free table seats everyone
+ * it named, and any payer still on its ledger is owed their buy in back.
  */
 export function seatsAtClaim(seats: PaidSeats, hostId: string, ledgerAtClaim: readonly string[]): { seats: PaidSeats; unseatedPayers: string[] } {
 	if (!seats.charged) return { seats, unseatedPayers: [...new Set(ledgerAtClaim)] };

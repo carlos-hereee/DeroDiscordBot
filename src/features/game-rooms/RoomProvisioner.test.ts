@@ -157,7 +157,7 @@ describe("RoomProvisioner.open, happy path", () => {
 			openerMessageId: "opener-1",
 			inviteCode: null,
 			startedAt: expect.any(Date),
-		});
+		}, undefined);
 	});
 
 	it("hands the real permission matrix to Discord rather than an empty array", async () => {
@@ -209,7 +209,7 @@ describe("RoomProvisioner.open, the invite link", () => {
 		expect(storeMock.claimForPlay).toHaveBeenCalledWith(
 			"guild-1",
 			"room-1",
-			expect.objectContaining({ inviteCode: "invite-1" })
+			expect.objectContaining({ inviteCode: "invite-1" }), undefined
 		);
 		// And the URL rides the opener description as an inline link.
 		const opener = channel.send.mock.calls[0][0] as { embeds: { data: { description?: string } }[] };
@@ -231,7 +231,7 @@ describe("RoomProvisioner.open, the invite link", () => {
 		expect(channel.createInvite).not.toHaveBeenCalled();
 		const opener = channel.send.mock.calls[0][0] as { embeds: { data: { description?: string } }[] };
 		expect(opener.embeds[0].data.description).not.toContain("discord.gg");
-		expect(storeMock.claimForPlay).toHaveBeenCalledWith("guild-1", "room-1", expect.objectContaining({ inviteCode: null }));
+		expect(storeMock.claimForPlay).toHaveBeenCalledWith("guild-1", "room-1", expect.objectContaining({ inviteCode: null }), undefined);
 	});
 
 	it("mints for a public room open to spectators by the host's explicit choice", async () => {
@@ -257,7 +257,7 @@ describe("RoomProvisioner.open, the invite link", () => {
 		expect(storeMock.claimForPlay).toHaveBeenCalledWith(
 			"guild-1",
 			"room-1",
-			expect.objectContaining({ inviteCode: null })
+			expect.objectContaining({ inviteCode: null }), undefined
 		);
 		const channel = await createdChannelOf(input.guild);
 		const opener = channel.send.mock.calls[0][0] as { embeds: { data: { description?: string } }[] };
@@ -314,7 +314,7 @@ describe("RoomProvisioner.open, solo rooms", () => {
 		expect(storeMock.claimForPlay).toHaveBeenCalledWith(
 			"guild-1",
 			"room-1",
-			expect.objectContaining({ inviteCode: null })
+			expect.objectContaining({ inviteCode: null }), undefined
 		);
 		warnSpy.mockRestore();
 	});

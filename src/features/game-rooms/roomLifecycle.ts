@@ -14,7 +14,7 @@ import { announceMatchResult } from "./roomAnnouncer.js";
 import type { OutcomeBucket } from "./matchOutcome.js";
 import { settleTableChips } from "./holdemChips.js";
 import { refundStrandedLateCharges, settleBlackjackStacks } from "./blackjackChips.js";
-import { refundAllJoiners } from "./holdemDraftBuyIn.js";
+import { refundAllJoiners, refundHeldBuyIns } from "./holdemDraftBuyIn.js";
 import { settleChipPot } from "./chipPot.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { revokeRoomInvite } from "./roomInvite.js";
@@ -119,6 +119,10 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	// ends a table pays it exactly once, whoever ended it. Awaited before the lock so its
 	// line lands above the result card; it catches its own failures.
 	await settleTableChips(client, claimed);
+	// A Hold'em table's buy ins the start claim held for a table never saved (2026-10 item 278, G2):
+	// a crash, or this finish landing while the room was built. Each entry is pulled before it is
+	// paid, so a refund the open made itself pays nothing twice.
+	await refundHeldBuyIns(claimed);
 	// ①ᵈ A Hold'em table whose room ended from outside it (the idle sweep, the leave watcher, a
 	// deleted channel, boot recovery) is marked finished in its row too, AFTER the settle paid
 	// its stacks (2026-10 item 276, audit P1-1). Every table control refuses a finished table,
