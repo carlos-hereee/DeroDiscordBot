@@ -46,12 +46,8 @@ export interface TurnSweepSummary {
 }
 
 // ── a match ended but never finished (2026-10 item 280) ───────────────
-// How long a match whose own state says it is over is left to the move that ended it. That move
-// saves the ending, then draws the board and a result card before its finish, which takes seconds;
-// past this window (counted from the row's last write, and held while a board draws) the process
-// that saved it is taken to have stopped, and the sweep finishes the match itself. Two minutes is
-// far beyond any draw and far inside the idle window that would otherwise abandon the room.
-const SETTLED_MATCH_GRACE_MS = 2 * 60_000;
+// The sweeps leave such a match to the move that ended it for
+// BOT_CONSTANTS.GAME_ROOM_SETTLED_MATCH_GRACE_MS, which says why that window is safe.
 
 /** True when a game's own state says the match is over while the room still says it is playing. */
 export function hasSettledMatch(room: IGameRoom): boolean {
@@ -62,7 +58,7 @@ export function hasSettledMatch(room: IGameRoom): boolean {
  * Finish a match whose ending was saved but whose finish never ran, through the finish its own
  * ending uses, so the pot is paid, the seats rated and the host's slot freed. finish's claim means
  * a live move still finishing, or a second caller, pays nothing twice. Boot recovery calls this
- * at once (no move survives a restart); the sweeps wait SETTLED_MATCH_GRACE_MS first.
+ * at once (no move survives a restart); the sweeps wait GAME_ROOM_SETTLED_MATCH_GRACE_MS first.
  */
 export async function finishSettledMatch(client: Client, room: IGameRoom): Promise<boolean> {
 	if (isSettledMonopolyMatch(room)) return finishSettledMonopolyMatch(client, room);
@@ -74,7 +70,7 @@ export async function finishSettledMatch(client: Client, room: IGameRoom): Promi
 async function finishSettledMatchIfStranded(client: Client, room: IGameRoom, now: Date): Promise<boolean> {
 	const stamp = room.updatedAt ?? room.createdAt;
 	const lastWriteAt = stamp ? new Date(stamp).getTime() : 0;
-	if (!isClockExpired(roomDrawingKey(room), lastWriteAt, SETTLED_MATCH_GRACE_MS, now.getTime())) return false;
+	if (!isClockExpired(roomDrawingKey(room), lastWriteAt, BOT_CONSTANTS.GAME_ROOM_SETTLED_MATCH_GRACE_MS, now.getTime())) return false;
 	return finishSettledMatch(client, room);
 }
 

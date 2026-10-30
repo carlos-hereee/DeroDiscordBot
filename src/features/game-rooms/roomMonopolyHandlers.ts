@@ -228,7 +228,7 @@ export function isSettledMonopolyMatch(room: IGameRoom): boolean {
 export async function finishSettledMonopolyMatch(client: Client, room: IGameRoom): Promise<boolean> {
 	const state = monopolyStateOf(room);
 	if (!isSettledMonopolyMatch(room) || !state) return false;
-	return finishMonopolyMatch(client, room, state, "played");
+	return finishMonopolyMatch(client, room, state, state.finishCause ?? "played");
 }
 
 /**
@@ -532,7 +532,10 @@ export async function forfeitIdleMonopolySeatIfDue(client: Client, room: IGameRo
 	// compare and swap finds nothing and the seat that just woke up keeps playing instead of
 	// being forfeited on a stale read; the same claim stops a sweep and a clock from both forfeiting.
 	const lines = [reason, ...result.trailLines];
-	const written = await persistIfUnchanged(room, state, result.state, lines);
+	// A forfeit that ends the match saves its cause with it, so a finish this process never
+	// reaches still settles as a timeout rather than a played win.
+	const next: MonopolyState = result.state.phase === "finished" ? { ...result.state, finishCause: "timeout" } : result.state;
+	const written = await persistIfUnchanged(room, state, next, lines);
 	if (!written) return null;
 	await applyMonopolyOutcome(client, room, state, written, { actorId: idleId, kind: "system", lines }, "timeout");
 	return written;

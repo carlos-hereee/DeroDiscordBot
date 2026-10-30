@@ -287,6 +287,13 @@ export const BOT_CONSTANTS = {
 	// clock, and its host frees the slot with Give up. A hangman draft is still swept.
 	// Checked on the same 5 minute room sweep, so the close lands up to 5 minutes later.
 	GAME_ROOM_IDLE_ABANDON_MS: 30 * 60_000, // 30 minutes
+	// How long a match whose own state says it is over is left to the move that ended it
+	// (2026-10 item 280). That move saves the ending, then draws the board and a result card
+	// before its finish, which takes seconds; past this window (counted from the row's last
+	// write, and held while a board draws) the process that saved it is taken to have stopped,
+	// and roomTurnSweep finishes the match itself. Two minutes is far beyond any draw and far
+	// inside the idle window above that would otherwise abandon the room.
+	GAME_ROOM_SETTLED_MATCH_GRACE_MS: 2 * 60_000, // 2 minutes
 	// How long a Monopoly auction takes sealed bids, from the pass that opened it
 	// (master plan Section 1). Long enough for every seat to see the board and type
 	// a number; short enough that the seller's turn is not held for long. Three minutes

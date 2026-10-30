@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { botViewOf, decideHoldemMove, handKey, readHand, startingHandGroup, type HoldemBotView } from "./holdemBot.js";
-import { act, actionsFor, createTable, dealHand, handInProgress, joinTable, livePlayers, whoActs, type HoldemTable } from "./holdemTable.js";
+import { act, actionsFor, createTable, dealHand, handInProgress, joinTable, leaveTable, livePlayers, whoActs, type HoldemTable } from "./holdemTable.js";
 import type { Card, Suit } from "./holdemHand.js";
 import type { LegalAction } from "./holdemBetting.js";
 
@@ -154,6 +154,60 @@ describe("what the bot sees", () => {
 		const humanCards = JSON.stringify(table.holeCards.human);
 		expect(JSON.stringify({ ...seen, holeCards: [] })).not.toContain(humanCards.slice(1, -1));
 		expect(botViewOf(table, "human")).toBeNull();
+	});
+});
+
+describe("where the bot sits", () => {
+	function seatedTable(count: number): HoldemTable {
+		const table = createTable();
+		for (let index = 0; index < count; index++) joinTable(table, `p${index}`, `Player ${index}`);
+		table.status = "playing";
+		return table;
+	}
+	const positionAtTurn = (table: HoldemTable) => botViewOf(table, whoActs(table)!)?.position;
+
+	it("reads the blinds from the dealt hand, so a dead small blind leaves the first actor early", () => {
+		const table = seatedTable(5);
+		dealHand(table, seededRng(5));
+		for (let turn = 0; turn < 10 && handInProgress(table); turn++) act(table, whoActs(table)!, "fold");
+		// Last hand p1 posted the small blind and p2 the big blind; p2 leaving makes the
+		// next small blind dead, so p3 posts the big blind right after the button on p1.
+		leaveTable(table, "p2");
+		dealHand(table, seededRng(6));
+		expect(table.bigBlindUserId).toBe("p3");
+		expect(whoActs(table)).toBe("p4");
+		expect(positionAtTurn(table)).toBe("early");
+		act(table, "p4", "call");
+		expect(whoActs(table)).toBe("p0");
+		expect(positionAtTurn(table)).toBe("late");
+		act(table, "p0", "call");
+		expect(whoActs(table)).toBe("p1");
+		expect(positionAtTurn(table)).toBe("late");
+		act(table, "p1", "call");
+		expect(whoActs(table)).toBe("p3");
+		expect(positionAtTurn(table)).toBe("blind");
+	});
+
+	it("still reads both blinds on a hand with a small blind", () => {
+		const table = seatedTable(5);
+		dealHand(table, seededRng(5));
+		// Button p0, small blind p1, big blind p2: p3 opens.
+		expect(whoActs(table)).toBe("p3");
+		expect(positionAtTurn(table)).toBe("early");
+		for (const userId of ["p3", "p4", "p0"]) act(table, userId, "call");
+		expect(whoActs(table)).toBe("p1");
+		expect(positionAtTurn(table)).toBe("blind");
+		act(table, "p1", "call");
+		expect(positionAtTurn(table)).toBe("blind");
+	});
+
+	it("keeps heads up: the button is late and the other seat is the blind", () => {
+		const table = seatedTable(2);
+		dealHand(table, seededRng(5));
+		const buttonId = whoActs(table)!;
+		expect(positionAtTurn(table)).toBe("late");
+		act(table, buttonId, "call");
+		expect(positionAtTurn(table)).toBe("blind");
 	});
 });
 

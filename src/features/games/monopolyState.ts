@@ -111,6 +111,11 @@ export interface MonopolyState {
 	// Not in the plan's Section 5 block; added on the owner's ruling so a finished
 	// match records who won without re-deriving it from the seats.
 	winnerId: string | null;
+	// "timeout" when the idle forfeit is the move that finished the match (2026-10 item 280),
+	// so a finish that crashed and is settled later (roomMonopolyHandlers.finishSettledMonopolyMatch)
+	// words the result as the timeout it was. Written by the room layer with that move, never
+	// by an action here; ABSENT on every other ending, which reads as played.
+	finishCause?: "timeout";
 	// How the match is going, for the closed challenge card's flavor line (post-launch
 	// plan item 21). ABSENT on every state stored before it existed and on a fresh
 	// match; ensureStats in monopolySeats creates it on the first action that counts.

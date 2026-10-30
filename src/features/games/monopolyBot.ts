@@ -26,6 +26,7 @@ import {
 	type MonopolyState,
 	type MortgageOption,
 	type PendingDebt,
+	type SellOption,
 	type TradeProposal,
 	unmortgageCost,
 } from "./monopolyState.js";
@@ -245,7 +246,7 @@ function decidePostRoll(state: MonopolyState, seat: MonopolySeat): MonopolyBotAc
 		if (mortgage) return { kind: "mortgage", tileId: mortgage.tileId };
 	}
 	if (seat.chips < LOW_CASH_SELL_LINE && ownsAHotel(state, seat.userId)) {
-		const sale = listSellOptions(state, seat.userId)[0];
+		const sale = firstSaleKeepingGroups(state, seat.userId);
 		if (sale) return { kind: "sellBuilding", tileId: sale.tileId };
 	}
 	return { kind: "endTurn" };
@@ -282,17 +283,31 @@ function decideDebt(state: MonopolyState, seat: MonopolySeat, debt: PendingDebt)
 }
 
 // Lots off a monopoly go first (lowest mortgage value first, so the least rent is
-// lost), then buildings, and only then a monopoly lot whose buildings are gone.
-// That last rung matters: a group with buildings cannot be mortgaged at all, so
-// a bot that has sold its houses still needs it to reach the cash its
-// liquidation value promised.
+// lost), then buildings that come down one rung, then a monopoly lot whose buildings
+// are gone, and a house shortage hotel sale that tears its whole group down only when
+// nothing else is left (2026-10 item 280). The bare monopoly rung matters: a group with
+// buildings cannot be mortgaged at all, so a bot that has sold its houses still needs
+// it to reach the cash its liquidation value promised. The teardown stays the last rung
+// rather than leaving the ladder, because liquidationValue counts its payout and a bot
+// whose debt needs it must still find a legal step instead of defaulting.
 function chooseCashRaise(state: MonopolyState, botId: string): MonopolyBotAction | null {
 	const offMonopoly = cheapestOffMonopolyMortgage(state, botId);
 	if (offMonopoly) return { kind: "mortgage", tileId: offMonopoly.tileId };
-	const sale = listSellOptions(state, botId)[0];
+	const sale = firstSaleKeepingGroups(state, botId);
 	if (sale) return { kind: "sellBuilding", tileId: sale.tileId };
 	const anyMortgage = sortByMortgageValue(listMortgageOptions(state, botId))[0];
-	return anyMortgage ? { kind: "mortgage", tileId: anyMortgage.tileId } : null;
+	if (anyMortgage) return { kind: "mortgage", tileId: anyMortgage.tileId };
+	const teardown = listSellOptions(state, botId)[0];
+	return teardown ? { kind: "sellBuilding", tileId: teardown.tileId } : null;
+}
+
+// The first sale (board order) that takes one rung off one lot. A house shortage hotel
+// sale brings its whole color group down evenly (monopolyBuildings.isHouseShortageSale),
+// which costs the bot that group's rents, so it is never a sale the bot picks while
+// another one is on offer. Selling houses elsewhere also refills the bank's stock, which
+// can end the shortage before the hotel ever has to go.
+function firstSaleKeepingGroups(state: MonopolyState, botId: string): SellOption | undefined {
+	return listSellOptions(state, botId).find((option) => !option.tearsDownGroup);
 }
 
 // One sealed bid of half the lot's fair value (capped at the bot's chips), and

@@ -122,9 +122,19 @@ describe("sweepMonopolyIdle", () => {
 
 		expect(summary).toEqual({ seatsForfeited: 1, matchesFinished: 1 });
 		expect(persisted()).toMatchObject({ phase: "finished", winnerId: B });
+		// The cause rides the saved ending, so a finish that crashes after it still settles as a timeout.
+		expect(persisted().finishCause).toBe("timeout");
 		// objectContaining because the winner card (2026-10 item 243) rides along as `art` when it draws.
 		expect(finishMock).toHaveBeenCalledWith(client, room, expect.objectContaining({ winnerId: B }));
 		expect(awardMock).toHaveBeenCalledWith(expect.objectContaining({ game: "monopoly", winnerId: B, nonWinnerOutcome: "lost" }));
+	});
+
+	it("saves no finish cause on a forfeit the match plays on after", async () => {
+		storeMock.findPlayingByGame.mockResolvedValue([makeRoom([A, B, C], PAST_IDLE_HOURS)]);
+
+		await sweepMonopolyIdle(client, NOW);
+
+		expect(persisted().finishCause).toBeUndefined();
 	});
 
 	it("leaves a seat alone inside its 72 hours", async () => {
@@ -236,6 +246,26 @@ describe("sweepMonopolyIdle with a match the engine ended but the room never fin
 
 		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
 		expect(awardMock).not.toHaveBeenCalled();
+	});
+
+	it("settles a match an idle forfeit ended as a timeout, not a played win (2026-10 item 280)", async () => {
+		const room = settledRoom(10 * 60_000);
+		(room.secret as unknown as MonopolyState).finishCause = "timeout";
+		storeMock.findPlayingByGame.mockResolvedValue([room]);
+
+		await sweepMonopolyIdle(client, NOW);
+
+		expect(finishMock).toHaveBeenCalledWith(client, room, expect.objectContaining({ winnerId: B, outcome: { bucket: "timeout" } }));
+	});
+
+	it("waits out exactly the grace window before it settles", async () => {
+		const grace = BOT_CONSTANTS.GAME_ROOM_SETTLED_MATCH_GRACE_MS;
+		expect(grace).toBe(2 * 60_000);
+		storeMock.findPlayingByGame.mockResolvedValue([settledRoom(grace - 1_000)]);
+		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
+
+		storeMock.findPlayingByGame.mockResolvedValue([settledRoom(grace + 1_000)]);
+		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 1 });
 	});
 
 	it("leaves a match saved seconds ago to the move that is still finishing it", async () => {

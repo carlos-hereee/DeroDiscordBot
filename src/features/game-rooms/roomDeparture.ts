@@ -6,7 +6,7 @@ import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { surrenderMonopolySeat } from "./roomMonopolySurrender.js";
 import { removeFromTable } from "./roomHoldemHandlers.js";
-import { forfeitBattleship } from "./roomBattleshipHandlers.js";
+import { forfeitBattleship, isSettledBattleshipMatch } from "./roomBattleshipHandlers.js";
 import { giveUpHangmanRound, isHangmanRoom, leaveHangmanRound } from "./roomHangman.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { refundJoiners } from "./holdemDraftBuyIn.js";
@@ -62,7 +62,10 @@ export async function departMatch(client: Client, room: IGameRoom, userId: strin
 			await handOnIfHost(client, room, userId);
 			return;
 		case "battleship":
-			await roomTrail.postMove(client, room, reason);
+			// A match the winning shot already decided (its secret says finished while its finish
+			// still draws) is settled as that win, so a line saying the leaver forfeited would
+			// contradict the result card that follows (2026-10 item 280).
+			if (!isSettledBattleshipMatch(room)) await roomTrail.postMove(client, room, reason);
 			await forfeitBattleship(client, room, userId);
 			return;
 		default:

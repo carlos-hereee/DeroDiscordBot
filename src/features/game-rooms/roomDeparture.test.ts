@@ -6,7 +6,7 @@ vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("./roomMonopolySurrender.js", () => ({ surrenderMonopolySeat: vi.fn() }));
 vi.mock("./roomHoldemHandlers.js", () => ({ removeFromTable: vi.fn() }));
-vi.mock("./roomBattleshipHandlers.js", () => ({ forfeitBattleship: vi.fn() }));
+vi.mock("./roomBattleshipHandlers.js", () => ({ forfeitBattleship: vi.fn(), isSettledBattleshipMatch: vi.fn(() => false) }));
 // A draft a joiner left (2026-10 item 276): the store's pull, the ledger's refund, the card's redraw.
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { leaveDraftPool: vi.fn(), findByRoomId: vi.fn() } }));
 vi.mock("./hostHandoff.js", () => ({ handHostingOn: vi.fn() }));
@@ -27,7 +27,7 @@ import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { surrenderMonopolySeat } from "./roomMonopolySurrender.js";
 import { removeFromTable } from "./roomHoldemHandlers.js";
-import { forfeitBattleship } from "./roomBattleshipHandlers.js";
+import { forfeitBattleship, isSettledBattleshipMatch } from "./roomBattleshipHandlers.js";
 import { giveUpHangmanRound, leaveHangmanRound } from "./roomHangman.js";
 import { handHostingOn } from "./hostHandoff.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -108,6 +108,16 @@ describe("departMatch (2026-10 item 276, audit P1-4)", () => {
 		expect(finish).not.toHaveBeenCalled();
 		const expectedLine = cause === "forfeit" ? gameRoomsCopy.trail.forfeited("leaver-1") : LEFT_LINE;
 		expect(postMove).toHaveBeenCalledWith(client, room, expect.objectContaining({ text: expectedLine }));
+	});
+
+	it.each(["forfeit", "leftServer"] as const)("posts no leave line on a %s once the winning shot settled the match (2026-10 item 280)", async (cause) => {
+		const room = makeRoom("battleship", { playerIds: ["host-1", "leaver-1"] });
+		mocked(isSettledBattleshipMatch).mockReturnValueOnce(true);
+
+		await departMatch(client, room, "leaver-1", cause);
+
+		expect(forfeitBattleship).toHaveBeenCalledWith(client, room, "leaver-1");
+		expect(postMove).not.toHaveBeenCalled();
 	});
 
 	it("gives a Hangman round up on the host's forfeit, with no forfeit line of its own", async () => {

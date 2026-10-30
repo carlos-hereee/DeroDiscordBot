@@ -214,6 +214,17 @@ describe("post-roll", () => {
 		expect(applyMonopolyBotAction(state, RED, decision, createSeededRng(1), NOW).ok).toBe(true);
 	});
 
+	it("ends the turn rather than sell a hotel that would tear its group down in a house shortage (2026-10 item 280)", () => {
+		const state = afterRoll((draft) => {
+			giveLots(draft, RED, BROWN_LOTS);
+			for (const tileId of BROWN_LOTS) draft.properties[tileId].hotel = true;
+			draft.bank.hotels -= 2;
+			draft.bank.houses = 0;
+			setChips(draft, RED, 50);
+		});
+		expect(decideMonopolyMove(state, RED)).toEqual({ kind: "endTurn" });
+	});
+
 	it("does not sell houses when it holds no hotel", () => {
 		const state = afterRoll((draft) => {
 			giveLots(draft, RED, BROWN_LOTS);
@@ -330,6 +341,56 @@ describe("debt", () => {
 			{ kind: "mortgage", tileId: "burnt-umber-row" },
 			{ kind: "payDebt" },
 		]);
+		expect(seatOf(state, RED).bankrupt).toBe(false);
+	});
+
+	// ── a house shortage (2026-10 item 280) ──
+	// A brown hotel sold with an empty bank tears the brown group down, so the bot sells
+	// the dark blue houses and mortgages the bare dark blue pair first:
+	// 10 + 100 + 100 + 175 + 200 = 585 covers 400 without the brown hotels.
+	const DARK_BLUE_LOTS: TileId[] = ["jade-reach", "postern-lane"];
+	const shortageDebt = (amount: number, withDarkBlue: boolean): MonopolyState =>
+		arrange(newMatch(), (draft) => {
+			draft.activeSeatIndex = 1;
+			giveLots(draft, RED, BROWN_LOTS);
+			for (const tileId of BROWN_LOTS) draft.properties[tileId].hotel = true;
+			draft.bank.hotels -= 2;
+			if (withDarkBlue) {
+				giveLots(draft, RED, DARK_BLUE_LOTS);
+				for (const tileId of DARK_BLUE_LOTS) draft.properties[tileId].houses = 1;
+			}
+			draft.bank.houses = 0;
+			setChips(draft, RED, 10);
+			holdDebt(draft, RED, amount);
+		});
+	const raiseAndPay = (start: MonopolyState): { decisions: MonopolyBotAction[]; state: MonopolyState } => {
+		let state = start;
+		const decisions: MonopolyBotAction[] = [];
+		for (let step = 0; step < 10 && state.phase === "awaiting-debt"; step++) {
+			const decision = decideMonopolyMove(state, RED);
+			decisions.push(decision);
+			state = expectOk(applyMonopolyBotAction(state, RED, decision, createSeededRng(1), NOW));
+		}
+		return { decisions, state };
+	};
+
+	it("sells houses and mortgages a bare monopoly before a hotel sale that tears its group down", () => {
+		const { decisions, state } = raiseAndPay(shortageDebt(400, true));
+		expect(decisions).toEqual([
+			{ kind: "sellBuilding", tileId: "jade-reach" },
+			{ kind: "sellBuilding", tileId: "postern-lane" },
+			{ kind: "mortgage", tileId: "jade-reach" },
+			{ kind: "mortgage", tileId: "postern-lane" },
+			{ kind: "payDebt" },
+		]);
+		for (const tileId of BROWN_LOTS) expect(state.properties[tileId].hotel).toBe(true);
+		expect(seatOf(state, RED).bankrupt).toBe(false);
+	});
+
+	it("still takes the teardown sale when nothing else raises the cash", () => {
+		const { decisions, state } = raiseAndPay(shortageDebt(200, false));
+		expect(decisions[0]).toEqual({ kind: "sellBuilding", tileId: "vermillion-alley" });
+		expect(decisions.at(-1)).toEqual({ kind: "payDebt" });
 		expect(seatOf(state, RED).bankrupt).toBe(false);
 	});
 

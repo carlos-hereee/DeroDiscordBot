@@ -119,6 +119,9 @@ const RAISE_STRENGTH = 0.75;
 const CALL_MARGIN = 0.03;
 // A good kicker for top pair: a queen or better.
 const GOOD_KICKER_RANK = 12;
+// Where the moving button put the big blind in the button first order (button 0, small
+// blind 1, big blind 2): positionOf's fallback when this hand's big blind cannot be found.
+const MOVING_BUTTON_BIG_BLIND_AT = 2;
 
 // ── the view ──────────────────────────────────────────────────────────
 /**
@@ -149,8 +152,8 @@ export function botViewOf(table: HoldemTable, botId: string): HoldemBotView | nu
 }
 
 // The seat's place relative to the button: the button and the seat before it are late,
-// the two blinds are the blinds, and the rest split early and middle. Heads up the
-// button posts the small blind and acts first preflop, so it counts as late.
+// whoever posted a blind this hand is a blind, and the rest split early and middle. Heads
+// up the button posts the small blind and acts first preflop, so it counts as late.
 function positionOf(table: HoldemTable, botId: string): PositionClass {
 	const live = livePlayers(table);
 	const count = live.length;
@@ -159,11 +162,24 @@ function positionOf(table: HoldemTable, botId: string): PositionClass {
 	const index = order.findIndex((seat) => seat.userId === botId);
 	if (count <= 2) return index === 0 ? "late" : "blind";
 	// The blinds first: three handed, the big blind is also the seat before the button.
-	if (index === 1 || index === 2) return "blind";
+	const bigBlindAt = bigBlindIndexOf(table, order);
+	if (index >= 1 && index <= bigBlindAt) return "blind";
 	if (index === 0 || index === count - 1) return "late";
-	const firstAfterBlinds = 3;
+	const firstAfterBlinds = bigBlindAt + 1;
 	const share = (index - firstAfterBlinds) / Math.max(count - 1 - firstAfterBlinds, 1);
 	return share < 0.5 ? "early" : "middle";
+}
+
+// The big blind's place in the button first order. Under the dead button rule (2026-10
+// item 280) a dead small blind leaves the big blind right after the button and the seat
+// after it first to act, so reading "seats 1 and 2 are the blinds" would call that first
+// actor a blind. Every seat between the button and the big blind posted a blind: the small
+// blind when there is one, nobody when it is dead. The fallback is the moving button's
+// place (small blind 1, big blind 2), for a hand dealt before bigBlindUserId existed or a
+// big blind that left mid hand and is no longer live.
+function bigBlindIndexOf(table: HoldemTable, order: HoldemTable["seats"]): number {
+	const bigBlindAt = order.findIndex((seat) => seat.userId === table.bigBlindUserId);
+	return bigBlindAt >= 1 ? bigBlindAt : MOVING_BUTTON_BIG_BLIND_AT;
 }
 
 // ── the decision ──────────────────────────────────────────────────────
