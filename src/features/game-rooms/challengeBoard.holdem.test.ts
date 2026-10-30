@@ -5,14 +5,17 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: {
 		findByRoomId: vi.fn(),
 		update: vi.fn(),
-		addBuyInPaid: vi.fn(),
+		holdBuyInCharge: vi.fn(),
+		recordBuyInCharge: vi.fn(),
+		dropBuyInCharge: vi.fn(),
+		releaseBuyInCharges: vi.fn(),
 		takeBuyInPaid: vi.fn(),
 		markArchived: vi.fn(),
 		archiveDraft: vi.fn(),
 	},
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
-vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { debit: vi.fn(), credit: vi.fn() } }));
+vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { debitWithReceipt: vi.fn(), refundReceipt: vi.fn(), closeReceipt: vi.fn(), credit: vi.fn() } }));
 vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, describeRoomOpenFailure: () => "nope" }));
 vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedValue(null), describeSoloOpenFailure: () => "nope", startBlackjackRoomBoard: vi.fn() }));
 vi.mock("./challengeCardRenderer.js", () => ({ renderChallengeCard: vi.fn().mockResolvedValue(null), challengeCardView: vi.fn() }));
@@ -30,9 +33,9 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 // table that could not deal a hand, and an Invite only card's invited members pay through
 // Accept and buy in, on the same ledger Join uses, charged once and refunded once (risk R7).
 
-const storeMock = gameRoomStore as unknown as Record<"findByRoomId" | "update" | "addBuyInPaid" | "takeBuyInPaid" | "archiveDraft", ReturnType<typeof vi.fn>>;
+const storeMock = gameRoomStore as unknown as Record<"findByRoomId" | "update" | "holdBuyInCharge" | "recordBuyInCharge" | "releaseBuyInCharges" | "takeBuyInPaid" | "archiveDraft", ReturnType<typeof vi.fn>>;
 const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
-const walletMock = chipWalletStore as unknown as Record<"debit" | "credit", ReturnType<typeof vi.fn>>;
+const walletMock = chipWalletStore as unknown as Record<"debitWithReceipt" | "credit", ReturnType<typeof vi.fn>>;
 
 const HOST = "host-1";
 const INVITED = "invited-1";
@@ -78,9 +81,11 @@ const paidBack = (): string[] => walletMock.credit.mock.calls.map((call) => (cal
 beforeEach(() => {
 	vi.clearAllMocks();
 	configMock.findByGuildId.mockResolvedValue({ chipEconomyEnabled: true });
-	walletMock.debit.mockResolvedValue({ balance: 0 });
+	walletMock.debitWithReceipt.mockResolvedValue({ balance: 0 });
 	walletMock.credit.mockResolvedValue({ balance: 0 });
-	storeMock.addBuyInPaid.mockResolvedValue({});
+	storeMock.holdBuyInCharge.mockResolvedValue({});
+	storeMock.recordBuyInCharge.mockResolvedValue({});
+	storeMock.releaseBuyInCharges.mockResolvedValue(null);
 	storeMock.takeBuyInPaid.mockResolvedValue({});
 	storeMock.update.mockResolvedValue(undefined);
 	storeMock.findByRoomId.mockResolvedValue(holdemDraft({ buyInPaidBy: [INVITED] }));
@@ -161,9 +166,9 @@ describe("Accept and buy in", () => {
 		const interaction = press(INVITED);
 		await acceptBuyIn(interaction, holdemDraft());
 
-		expect(walletMock.debit).toHaveBeenCalledOnce();
-		expect(walletMock.debit).toHaveBeenCalledWith({ userId: INVITED }, 2_500);
-		expect(storeMock.addBuyInPaid).toHaveBeenCalledWith("guild-1", "room-1", INVITED, 2_500);
+		expect(walletMock.debitWithReceipt).toHaveBeenCalledOnce();
+		expect(walletMock.debitWithReceipt).toHaveBeenCalledWith({ userId: INVITED }, 2_500, expect.any(String));
+		expect(storeMock.recordBuyInCharge).toHaveBeenCalledWith("guild-1", "room-1", { userId: INVITED, buyIn: 2_500, chargeId: expect.any(String) }, 2_500);
 		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
 		expect(walletMock.credit).not.toHaveBeenCalled();
 	});
@@ -179,7 +184,7 @@ describe("Accept and buy in", () => {
 			await acceptBuyIn(interaction, room);
 			expect(said(interaction)).toContain(gameRoomsCopy.holdem.acceptOnlyInvited);
 		}
-		expect(walletMock.debit).not.toHaveBeenCalled();
+		expect(walletMock.debitWithReceipt).not.toHaveBeenCalled();
 	});
 
 	it("charges nothing a second time once the member paid", async () => {
@@ -187,7 +192,7 @@ describe("Accept and buy in", () => {
 		await acceptBuyIn(interaction, holdemDraft({ buyInPaidBy: [INVITED] }));
 
 		expect(said(interaction)).toContain(gameRoomsCopy.holdem.buyInAlreadyPaid);
-		expect(walletMock.debit).not.toHaveBeenCalled();
+		expect(walletMock.debitWithReceipt).not.toHaveBeenCalled();
 	});
 
 	it("seats the member free on a table that plays free, charging nothing", async () => {
@@ -196,7 +201,7 @@ describe("Accept and buy in", () => {
 		await acceptBuyIn(interaction, holdemDraft());
 
 		expect(said(interaction)).toContain(gameRoomsCopy.holdem.acceptFreeTable);
-		expect(walletMock.debit).not.toHaveBeenCalled();
+		expect(walletMock.debitWithReceipt).not.toHaveBeenCalled();
 	});
 
 	it("refunds once when the host removed the member while the charge ran", async () => {

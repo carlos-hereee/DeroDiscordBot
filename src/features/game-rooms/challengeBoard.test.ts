@@ -15,8 +15,12 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		create: vi.fn(),
 		findOpenByHost: vi.fn(),
 		setHoldemBuyIn: vi.fn(),
-		// The host's own seat goes on the draft ledger at Start (2026-10 item 276, audit P3).
-		addBuyInPaid: vi.fn(async () => ({})),
+		// The host's own seat goes on the draft ledger at Start (2026-10 item 276, audit P3), held
+		// on the row before the wallet is charged (2026-10 item 278, gap G3).
+		holdBuyInCharge: vi.fn(async () => ({})),
+		recordBuyInCharge: vi.fn(async () => ({})),
+		dropBuyInCharge: vi.fn(),
+		releaseBuyInCharges: vi.fn(async () => null),
 	},
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
@@ -25,6 +29,7 @@ vi.mock("./soloRooms.js", () => ({ readPrivateQuotaStatus: vi.fn().mockResolvedV
 // Every member's chip wallet, in memory: a Blackjack card charges its buy in like Hold'em's
 // (2026-10 item 267), and a server with no chips switch stored plays for chips.
 const wallets = vi.hoisted(() => new Map<string, number>());
+const receipts = vi.hoisted(() => new Set<string>());
 vi.mock("@features/economy/chipWallet.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@features/economy/chipWallet.js")>()),
 	takeChips: vi.fn(async (key: { userId: string }, amount: number) => {
@@ -35,6 +40,22 @@ vi.mock("@features/economy/chipWallet.js", async (importOriginal) => ({
 	}),
 	returnChips: vi.fn(async (key: { userId: string }, amount: number) => {
 		wallets.set(key.userId, (wallets.get(key.userId) ?? 0) + amount);
+	}),
+	// A charge onto the draft ledger rides a wallet receipt (2026-10 item 278, gap G3).
+	takeChipsWithReceipt: vi.fn(async (key: { userId: string }, amount: number, receiptId: string) => {
+		const balance = wallets.get(key.userId) ?? 0;
+		if (balance < amount) return false;
+		wallets.set(key.userId, balance - amount);
+		receipts.add(receiptId);
+		return true;
+	}),
+	refundChipReceipt: vi.fn(async (key: { userId: string }, amount: number, receiptId: string) => {
+		if (!receipts.delete(receiptId)) return false;
+		wallets.set(key.userId, (wallets.get(key.userId) ?? 0) + amount);
+		return true;
+	}),
+	closeChipReceipt: vi.fn(async (_key: { userId: string }, receiptId: string) => {
+		receipts.delete(receiptId);
 	}),
 }));
 // The opener card's picture (2026-10 item 243 Phase 4). The renderer answers null
@@ -410,14 +431,14 @@ describe("starting a Blackjack table", () => {
 		expect(wallets.get(HOST)).toBe(2500);
 		// The host's charge is on the draft ledger before the room is built, so a crash or Call it
 		// off in those seconds still refunds it (2026-10 item 276, audit P3).
-		expect(gameRoomStore.addBuyInPaid).toHaveBeenCalledWith("guild-1", "room-1", HOST, 2500);
+		expect(gameRoomStore.recordBuyInCharge).toHaveBeenCalledWith("guild-1", "room-1", { userId: HOST, buyIn: 2500, chargeId: expect.any(String) }, 2500);
 		expect(boardMock).toHaveBeenCalledWith(interaction.guild, room, channel, { buyIn: 2500, userIds: [HOST, "a"], charged: true });
 	});
 
 	it("gives the host's charge straight back when the draft closed before it reached the ledger", async () => {
 		wallets.clear();
 		wallets.set(HOST, 5000);
-		(gameRoomStore.addBuyInPaid as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+		(gameRoomStore.recordBuyInCharge as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
 		const interaction = arcadeButton();
 		const draft = makeRoom({ game: "blackjack", spectatorIds: ["a"], holdemBuyIn: 2500, buyInPaidBy: ["a"] });
 

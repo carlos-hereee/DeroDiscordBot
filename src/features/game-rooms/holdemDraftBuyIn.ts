@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { LabelBuilder, ModalBuilder, StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, type ModalSubmitInteraction } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
-import { parseChipAmount, returnChips, takeChips } from "@features/economy/chipWallet.js";
+import { closeChipReceipt, parseChipAmount, refundChipReceipt, returnChips, takeChips, takeChipsWithReceipt } from "@features/economy/chipWallet.js";
 import { chipTableFor } from "./holdemChips.js";
 import { stakeOf } from "./chipMatch.js";
 import { GAME_ROOM_MODAL_PREFIX } from "./gameRoomActions.js";
@@ -28,12 +29,13 @@ import { isBuyInGame } from "./roomTypes.js";
 //
 // ⚠️ THE ROW IS THE LEDGER. `buyInPaidBy` lists the members whose wallet was charged and
 // has not been given back, and every refund CLAIMS its entry first (takeBuyInPaid, one
-// conditional $pull) and pays second, so a decline racing a cancel pays once. The order for
-// a charge is the reverse of a refund and for the same reason: take the chips, record the
-// payment against the buy in that was charged (a host who changed the amount meanwhile makes
-// the record refuse), and give the chips back if it did. Network tables and tables with a
-// Dero bot play free, and so does a casual match (2026-10 item 276, owner decision D1: chips
-// move only in ranked matches), so nobody pays on a draft that chipTableFor refuses.
+// conditional $pull) and pays second, so a decline racing a cancel pays once. A charge is
+// RECORDED BEFORE IT IS TAKEN (2026-10 item 278, gap G3): the row holds it in `buyInCharges`,
+// the wallet pays it with a receipt, and one write moves it onto `buyInPaidBy` (chargeOntoLedger
+// has the steps). Before this the chips left the wallet first, and a crash before the record lost
+// them. Network tables and tables with a Dero bot play free, and so does a casual match (2026-10
+// item 276, owner decision D1: chips move only in ranked matches), so nobody pays on a draft that
+// chipTableFor refuses.
 
 /** The two fields of the buy in modal: the preset select and the typed amount. */
 export const BUY_IN_FIELDS = { preset: "preset", custom: "custom" } as const;
@@ -113,6 +115,69 @@ export function submittedBuyIn(interaction: ModalSubmitInteraction): number | nu
 }
 
 // ── paying and getting it back ────────────────────────────────────────
+// The charges this process is making right now, by draft and member. A charge on the row that is
+// not in here was left by a press that died (a restart empties this set), so the member's next
+// press may settle it; one that is in here is a double press, refused before anything is written.
+const chargesInFlight = new Set<string>();
+
+/** How a charge onto the draft ledger ended: paid, the wallet short, already paid, or refused by the row. */
+type LedgerCharge = "paid" | "short" | "alreadyPaid" | "refused";
+
+/**
+ * Charge `userId` the draft's buy in onto its ledger, so a crash at any step leaves a record a
+ * refund can settle once (2026-10 item 278, gap G3). ① Any charge a dead press left for this member
+ * is settled first, so a crash never locks them out of the card; ② the row holds the charge,
+ * refused for a member already paid or holding one; ③ the wallet pays it with a receipt in one
+ * write, a short wallet letting the hold go; ④ one write moves the charge onto `buyInPaidBy`, only
+ * while the draft is open at the same buy in and no refund released the charge, and a refusal
+ * gives the chips back through the receipt; ⑤ the receipt is closed. A crash before ④ leaves the
+ * held charge for every refund path (refundBuyInCharges), and the receipt pays only a charge taken.
+ */
+async function chargeOntoLedger(room: IGameRoom, userId: string, buyIn: number): Promise<LedgerCharge> {
+	const pressKey = `${room.guildId}:${room.roomId}:${userId}`;
+	if (chargesInFlight.has(pressKey)) return "alreadyPaid";
+	chargesInFlight.add(pressKey);
+	try {
+		await settleStaleCharges(room, userId);
+		const charge = { userId, buyIn, chargeId: randomUUID() };
+		const expectedBuyIn = room.holdemBuyIn ?? null;
+		if (!(await gameRoomStore.holdBuyInCharge(room.guildId, room.roomId, charge, expectedBuyIn))) return chargeRefusalFor(room, userId);
+		if (!(await takeChipsWithReceipt({ userId }, buyIn, charge.chargeId))) {
+			await gameRoomStore.dropBuyInCharge(room.guildId, room.roomId, charge.chargeId);
+			return "short";
+		}
+		if (!(await gameRoomStore.recordBuyInCharge(room.guildId, room.roomId, charge, expectedBuyIn))) {
+			// A refund that released the charge meanwhile has paid it or will: the receipt pays once.
+			await refundChipReceipt({ userId }, buyIn, charge.chargeId);
+			await gameRoomStore.dropBuyInCharge(room.guildId, room.roomId, charge.chargeId);
+			return chargeRefusalFor(room, userId);
+		}
+		await closeChipReceipt({ userId }, charge.chargeId);
+		return "paid";
+	} finally {
+		chargesInFlight.delete(pressKey);
+	}
+}
+
+// ① A charge on the row for this member that no press in this process is making died with the
+// process that held it. Read fresh, since a charge the room snapshot shows may since have been
+// recorded, its receipt still open. Each is given back through its receipt, which pays only a
+// charge really taken, and only then let go, so a crash in between leaves it for the next refund.
+async function settleStaleCharges(room: IGameRoom, userId: string): Promise<void> {
+	const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId);
+	for (const stale of (fresh?.buyInCharges ?? []).filter((charge) => charge.userId === userId)) {
+		await refundChipReceipt({ userId }, stale.buyIn, stale.chargeId);
+		await gameRoomStore.dropBuyInCharge(room.guildId, room.roomId, stale.chargeId);
+	}
+}
+
+// Why the row would not hold or record a charge: the member is on the ledger already (a double
+// press whose first charge stands), or the draft closed or its buy in changed.
+async function chargeRefusalFor(room: IGameRoom, userId: string): Promise<LedgerCharge> {
+	const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId);
+	return (fresh?.buyInPaidBy ?? []).includes(userId) ? "alreadyPaid" : "refused";
+}
+
 /**
  * Charge a joiner the draft's buy in. Answers the refusal worded for them, or null when they
  * paid (or the draft is free play, where there is nothing to pay).
@@ -120,31 +185,52 @@ export function submittedBuyIn(interaction: ModalSubmitInteraction): number | nu
 export async function chargeJoiner(room: IGameRoom, userId: string): Promise<string | null> {
 	if (!(await isChipDraft(room))) return null;
 	const buyIn = draftBuyInOf(room);
-	if (!(await takeChips({ userId }, buyIn))) return gameRoomsCopy.holdem.notEnoughChips(buyIn);
-
-	const recorded = await gameRoomStore.addBuyInPaid(room.guildId, room.roomId, userId, room.holdemBuyIn ?? null);
-	if (recorded) return null;
-	// The record refused: this member was already on the ledger (a double press, whose first
-	// charge stands), or the host changed the amount or the draft closed since the charge.
-	await returnChips({ userId }, buyIn);
-	const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId);
-	return (fresh?.buyInPaidBy ?? []).includes(userId) ? gameRoomsCopy.holdem.buyInAlreadyPaid : gameRoomsCopy.board.buyInChangedJoining;
+	const charged = await chargeOntoLedger(room, userId, buyIn);
+	if (charged === "paid") return null;
+	if (charged === "short") return gameRoomsCopy.holdem.notEnoughChips(buyIn);
+	return charged === "alreadyPaid" ? gameRoomsCopy.holdem.buyInAlreadyPaid : gameRoomsCopy.board.buyInChangedJoining;
 }
 
 /**
- * Give the buy in back to each of `userIds` who paid it. Each refund claims its entry on the
- * row first, so a member listed twice, or a decline racing a cancel, is paid once. Never
- * throws: a refund is a side effect of the decision that triggered it.
+ * Give the buy in back to each of `userIds` who paid it, or whose charge is still held. Each refund
+ * claims its entry on the row first, so a member listed twice, or a decline racing a cancel, is
+ * paid once. Never throws: a refund is a side effect of the decision that triggered it.
  */
 export async function refundJoiners(room: Pick<IGameRoom, "guildId" | "roomId" | "game" | "holdemBuyIn">, userIds: readonly string[]): Promise<void> {
 	const buyIn = draftBuyInOf(room);
-	for (const userId of new Set(userIds)) {
+	const members = [...new Set(userIds)];
+	for (const userId of members) {
 		try {
 			const claimed = await gameRoomStore.takeBuyInPaid(room.guildId, room.roomId, userId);
 			if (claimed) await returnChips({ userId }, buyIn);
 		} catch (error) {
 			console.error("[game-rooms] a table buy in could not be refunded", { guildId: room.guildId, roomId: room.roomId, userId, error });
 		}
+	}
+	if (members.length > 0) await refundBuyInCharges(room, members);
+}
+
+/**
+ * Give back every charge still held on the row for `userIds` (every member's when null): a press
+ * that a crash, a removal or the end of its draft caught between its hold and its record (2026-10
+ * item 278, gap G3). The charges are released in one write first, so no press records them
+ * afterwards, then each is paid back through its wallet receipt, which pays only a charge really
+ * taken and only once, so a press refunding its own charge and this one never both pay. The
+ * charges stay on the row, released: a press that dies after taking its chips is then refunded by
+ * the next path that ends the room. Called by refundJoiners, refundAllJoiners (and through it by
+ * finish) and the start claim (RoomProvisioner.seedRoom). Never throws.
+ */
+export async function refundBuyInCharges(room: Pick<IGameRoom, "guildId" | "roomId">, userIds: readonly string[] | null = null): Promise<void> {
+	try {
+		const released = await gameRoomStore.releaseBuyInCharges(room.guildId, room.roomId, userIds);
+		for (const charge of released?.buyInCharges ?? []) {
+			if (userIds && !userIds.includes(charge.userId)) continue;
+			if (await refundChipReceipt({ userId: charge.userId }, charge.buyIn, charge.chargeId)) {
+				console.warn(`[game-rooms] a held buy in of ${charge.buyIn} went back to ${charge.userId} in room ${room.roomId}`);
+			}
+		}
+	} catch (error) {
+		console.error("[game-rooms] a held buy in could not be given back", { guildId: room.guildId, roomId: room.roomId, userIds, error });
 	}
 }
 
@@ -181,9 +267,10 @@ export async function refundHeldBuyIns(room: Pick<IGameRoom, "guildId" | "roomId
 	await refundClaimedPayers(room, "heldBuyIns", held.buyIn, held.userIds);
 }
 
-/** Refund everybody the draft still holds a buy in for: a cancelled or replaced draft. */
+/** Refund everybody the draft still holds a buy in for, paid or held: a cancelled or replaced draft, or a finish. */
 export async function refundAllJoiners(room: Pick<IGameRoom, "guildId" | "roomId" | "game" | "holdemBuyIn" | "buyInPaidBy">): Promise<void> {
 	await refundJoiners(room, room.buyInPaidBy ?? []);
+	await refundBuyInCharges(room);
 }
 
 // ── opening the table ─────────────────────────────────────────────────
@@ -251,15 +338,14 @@ export async function settleDraftBuyIns(
 		const unpaid = pool.find((userId) => userId !== room.hostId && !paid.has(userId));
 		if (unpaid) return { ok: false, reason: gameRoomsCopy.holdem.opponentNotPaid(unpaid, buyIn) };
 	}
-	if (!(await takeChips({ userId: room.hostId }, buyIn))) return { ok: false, reason: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
-	// ⚠️ THE HOST'S SEAT GOES ON THE LEDGER LIKE A JOINER'S (2026-10 item 276, audit P3). Start's
-	// charge used to sit outside every ledger while the room was built, seconds in which a crash lost
-	// it and Call it off could not reach it. On the ledger, every refund a draft has pays it once,
-	// and the start claim carries it on with the joiners' (a Blackjack table's stacks among them).
-	if (!(await gameRoomStore.addBuyInPaid(room.guildId, room.roomId, room.hostId, room.holdemBuyIn ?? null))) {
-		await returnChips({ userId: room.hostId }, buyIn);
-		return { ok: false, reason: gameRoomsCopy.board.draftGone };
-	}
+	// ⚠️ THE HOST'S SEAT GOES ON THE LEDGER LIKE A JOINER'S (2026-10 item 276, audit P3), through the
+	// same held charge (2026-10 item 278, gap G3). Start's charge used to sit outside every ledger
+	// while the room was built, seconds in which a crash lost it and Call it off could not reach it.
+	// On the ledger, every refund a draft has pays it once, and the start claim carries it on with
+	// the joiners' (a Blackjack table's stacks among them).
+	const hostCharge = await chargeOntoLedger(room, room.hostId, buyIn);
+	if (hostCharge === "short") return { ok: false, reason: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
+	if (hostCharge !== "paid") return { ok: false, reason: gameRoomsCopy.board.draftGone };
 
 	// A payer who is no longer in the pool would otherwise lose the buy in for good, since the
 	// ledger is cleared once the room opens. Refunded only after the host's charge landed, so a

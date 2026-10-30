@@ -14,7 +14,7 @@ import {
 	battleshipBoardMessage,
 } from "./roomBattleship.js";
 import { createTable as createHoldemTable, joinTable as joinHoldemTable, setBuyIn as setHoldemBuyIn, type HoldemTable, type HoldemTerms } from "@features/games/holdemTable.js";
-import { refundClaimedPayers, refundSeatsDirectly, seatsAtClaim, type PaidSeats } from "./holdemDraftBuyIn.js";
+import { refundBuyInCharges, refundClaimedPayers, refundSeatsDirectly, seatsAtClaim, type PaidSeats } from "./holdemDraftBuyIn.js";
 import { isPotGame } from "./chipPot.js";
 import type { HangmanCategory } from "@features/games/hangmanWords.js";
 import { tableEmbed as holdemTableEmbed, joiningRows as holdemJoiningRows } from "./roomHoldem.js";
@@ -536,6 +536,10 @@ export async function seedRoom(input: RoomSeedInput): Promise<SeededRoom | null>
 		void revokeRoomInvite(guild.client, { roomId: room.roomId, guildId: guild.id, inviteCode });
 		return null;
 	}
+	// A joiner's charge still held on the card is no seat (2026-10 item 278, gap G3): the claim reads
+	// only the paid ledger, so that buy in goes back now, through its wallet receipt, and stays on the
+	// row released, where finish refunds it again only if a press that died took it afterwards.
+	await refundBuyInCharges(room);
 	const started = await gameRoomStore.findByRoomId(guild.id, room.roomId);
 
 	// The players are the ones the claimed row still lists (2026-10 item 276, found in Phase 1): a

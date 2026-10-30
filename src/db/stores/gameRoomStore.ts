@@ -1,4 +1,4 @@
-import { GameRoom, type BlackjackLateCharge, type BlackjackStackEntry, type IGameRoom, type TurnPromptRecord } from "@db/models/GameRoom.js";
+import { GameRoom, type BlackjackLateCharge, type BlackjackStackEntry, type HeldChipCharge, type IGameRoom, type TurnPromptRecord } from "@db/models/GameRoom.js";
 import {
 	NON_TERMINAL_ROOM_STATUSES,
 	ROOMS_AWAITING_PLAY,
@@ -370,12 +370,53 @@ export const gameRoomStore = {
 		);
 	},
 
-	// Record that a joiner's wallet was charged, but only against the buy in they were charged
-	// (`expectedBuyIn`, null for the standard one): a host who changed the amount meanwhile makes
-	// this refuse and the caller gives the chips back.
-	// Null when the member is already on the ledger, so a double press is charged once (2026-10 item 263 risk R7).
-	async addBuyInPaid(guildId: string, roomId: string, userId: string, expectedBuyIn: number | null) {
-		return GameRoom.findOneAndUpdate({ guildId, roomId, status: "draft", holdemBuyIn: expectedBuyIn, buyInPaidBy: { $ne: userId } }, { $addToSet: { buyInPaidBy: userId } }, { new: true });
+	// ── A buy in on its way from a wallet to the draft ledger (2026-10 item 278, gap G3) ──
+	// Hold the charge on the draft BEFORE the wallet is touched, against the buy in about to be
+	// charged (`expectedBuyIn`, null for the standard one). Null when the draft closed, the host
+	// changed the amount, or the member already paid or holds a charge, so a double press holds once
+	// (2026-10 item 263 risk R7). An older row with no buyInCharges field matches the $ne.
+	async holdBuyInCharge(guildId: string, roomId: string, charge: HeldChipCharge, expectedBuyIn: number | null) {
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, status: "draft", holdemBuyIn: expectedBuyIn, buyInPaidBy: { $ne: charge.userId }, "buyInCharges.userId": { $ne: charge.userId } },
+			{ $push: { buyInCharges: { ...charge, released: false } } },
+			{ new: true }
+		);
+	},
+
+	// Move a held charge onto the draft ledger in ONE write, once its chips were taken: matches only
+	// while the draft is open at the same buy in and the charge is still held and was not released by
+	// a refund, so the charge is on the row exactly once, as held or as paid. Null when refused.
+	async recordBuyInCharge(guildId: string, roomId: string, charge: HeldChipCharge, expectedBuyIn: number | null) {
+		return GameRoom.findOneAndUpdate(
+			{
+				guildId,
+				roomId,
+				status: "draft",
+				holdemBuyIn: expectedBuyIn,
+				buyInPaidBy: { $ne: charge.userId },
+				buyInCharges: { $elemMatch: { chargeId: charge.chargeId, released: { $ne: true } } },
+			},
+			{ $pull: { buyInCharges: { chargeId: charge.chargeId } }, $addToSet: { buyInPaidBy: charge.userId } },
+			{ new: true }
+		);
+	},
+
+	// Let a held charge go, once its chips were given back or never taken.
+	async dropBuyInCharge(guildId: string, roomId: string, chargeId: string) {
+		await GameRoom.updateOne({ guildId, roomId }, { $pull: { buyInCharges: { chargeId } } });
+	},
+
+	// Claim the held charges of `userIds` (every member's when null) for a refund: each is marked
+	// released in ONE write, so no press can record it afterwards, and the row AFTER the mark is
+	// returned for the caller to pay each charge through its receipt. Any status, since a finish or a
+	// cancel refunds them too. Null when no such charge is held, older rows with no field included.
+	async releaseBuyInCharges(guildId: string, roomId: string, userIds: readonly string[] | null) {
+		if (!userIds) return GameRoom.findOneAndUpdate({ guildId, roomId, "buyInCharges.0": { $exists: true } }, { $set: { "buyInCharges.$[].released": true } }, { new: true });
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, "buyInCharges.userId": { $in: [...userIds] } },
+			{ $set: { "buyInCharges.$[charge].released": true } },
+			{ new: true, arrayFilters: [{ "charge.userId": { $in: [...userIds] } }] }
+		);
 	},
 
 	// Claim one member's refund: the row BEFORE the pull, or null when they were not on the ledger.

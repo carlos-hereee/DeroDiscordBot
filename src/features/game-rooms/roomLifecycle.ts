@@ -145,8 +145,9 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	// P1-3), and once the row is finished Call it off can no longer reach them. Refunded from the
 	// CLAIMED row, claim first and pay second: each refund claims its own ledger entry
 	// (refundJoiners), so nothing pays twice. A room that started has an empty ledger, because
-	// the start claim emptied it.
-	if ((claimed.buyInPaidBy ?? []).length > 0) await refundAllJoiners(claimed);
+	// the start claim emptied it, but a joiner's charge a press held and never recorded stays on
+	// any row (2026-10 item 278, gap G3), and its wallet receipt decides whether it is paid back.
+	if ((claimed.buyInPaidBy ?? []).length > 0 || (claimed.buyInCharges ?? []).length > 0) await refundAllJoiners(claimed);
 	// ①ᶠ A ranked Monopoly or Battleship match's pot (2026-10 item 276, owner decisions D3, D4 and
 	// D10), paid from the CLAIMED row the same way, so it pays once whatever ended the match: the
 	// winner takes it all, and a match with no winner shares it among the payers still in. A

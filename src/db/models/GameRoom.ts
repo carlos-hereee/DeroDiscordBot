@@ -39,12 +39,21 @@ export interface BlackjackStackEntry {
 	stack: number;
 }
 
-/** A late Blackjack seat's buy in on its way to the stacks ledger; see IGameRoom.blackjackLateCharges. */
-export interface BlackjackLateCharge {
+/** A buy in held on the row before the wallet is charged, on its way to a game's ledger. */
+export interface HeldChipCharge {
 	userId: string;
 	buyIn: number;
 	// The wallet receipt the charge was taken with (chipWallet.takeChipsWithReceipt).
 	chargeId: string;
+}
+
+/** A late Blackjack seat's buy in on its way to the stacks ledger; see IGameRoom.blackjackLateCharges. */
+export type BlackjackLateCharge = HeldChipCharge;
+
+/** A joiner's buy in on its way to the draft ledger; see IGameRoom.buyInCharges. */
+export interface DraftBuyInCharge extends HeldChipCharge {
+	// Set by a refund that claimed this charge, so the press can no longer record it as paid.
+	released: boolean;
 }
 
 /** The prompt line a turn posts for the member on the clock; see IGameRoom.turnPrompt. */
@@ -151,6 +160,13 @@ export interface IGameRoom {
 	// members whose wallet was charged, the ledger the refunds on decline, removal and cancel read.
 	holdemBuyIn: number | null;
 	buyInPaidBy: string[];
+	// A joiner's buy in between the press and the draft ledger (2026-10 item 278, gap G3): written
+	// BEFORE the wallet is charged, then moved onto buyInPaidBy in one write. Every refund marks the
+	// charges it settles `released` before it pays them through the wallet's receipt, so a press can
+	// never record a charge that was given back, and the receipt pays only a charge really taken.
+	// The start claim never reads this field, so a charge still here seats nobody; finish refunds
+	// whatever is left. Empty on every row written before it (owner decision D2).
+	buyInCharges: DraftBuyInCharge[];
 	// A Blackjack chip table's stacks (2026-10 item 267, risk R5): one entry per seat still owed
 	// chips, written when the table opens and after every settle. The table itself lives in
 	// blackjackHandler's process Map, so this is what a restart, the idle sweep or any other
@@ -344,6 +360,18 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		},
 		holdemBuyIn: { type: Number, default: null },
 		buyInPaidBy: { type: [String], default: [] },
+		buyInCharges: {
+			type: [
+				{
+					_id: false,
+					userId: { type: String, required: true },
+					buyIn: { type: Number, required: true },
+					chargeId: { type: String, required: true },
+					released: { type: Boolean, default: false },
+				},
+			],
+			default: [],
+		},
 		blackjackStacks: {
 			type: [{ _id: false, userId: { type: String, required: true }, buyIn: { type: Number, required: true }, stack: { type: Number, required: true } }],
 			default: [],
