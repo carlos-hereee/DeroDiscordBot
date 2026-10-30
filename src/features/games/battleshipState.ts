@@ -151,6 +151,9 @@ export function createMatch(
 			{ ...players[0], ships: placeFleet(rng), shots: new Set<string>() },
 			{ ...players[1], ships: placeFleet(rng), shots: new Set<string>() },
 		],
+		// House rule: the first captain (the host, who issued the challenge) always fires
+		// first, rather than a coin toss for it. The opponent accepted the challenge on
+		// those terms, and a toss would be one more step before the first shot.
 		turn: 0,
 		status: "setup",
 		winnerId: null,

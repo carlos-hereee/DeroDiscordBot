@@ -206,6 +206,24 @@ export function liquidationValue(state: MonopolyState, userId: string): number {
 	return value;
 }
 
+/**
+ * What the seat is worth on the standings: chips, every lot at its printed price
+ * (a mortgaged lot at that less its mortgage, which lifting it would repay) and
+ * every building at what it cost (a hotel as the five rungs it took). The
+ * standard rules' count for a match ended before one seat stands alone, read by
+ * the room's finish on standings and the bots alone driver.
+ */
+export function netWorth(state: MonopolyState, userId: string): number {
+	const seat = findSeat(state, userId);
+	let worth = seat?.chips ?? 0;
+	for (const tile of ownedLots(state, userId)) {
+		const property = state.properties[tile.id];
+		worth += property.mortgaged ? tile.price - tile.mortgage : tile.price;
+		if (tile.kind === "property") worth += buildingLevel(property) * tile.houseCost;
+	}
+	return worth;
+}
+
 // The tallest lot with buildings the seat owns (the first in board order on a
 // tie), which keeps the even building rule in reverse while a bankruptcy sells
 // everything down. Null once nothing is left standing.
@@ -235,6 +253,10 @@ export function declareBankruptcy(state: MonopolyState, debtor: MonopolySeat, cr
 
 /** Everything `debtor` holds goes to `creditor`, or to the bank when there is none, and the seat leaves the match. */
 export function handOverHoldings(state: MonopolyState, debtor: MonopolySeat, creditor: MonopolySeat | undefined, now: number): string[] {
+	// House rule: a bankruptcy to the bank returns every lot unowned, where the standard
+	// rules auction each one at once. A run of auctions inside one roll's settlement would
+	// hold every seat through a bid round per lot; the lots go back on sale instead, for
+	// whoever lands on them next.
 	if (!creditor) return forfeitSeat(state, debtor, now);
 
 	// One rung per pass until none is left. The per rung lines are dropped for the

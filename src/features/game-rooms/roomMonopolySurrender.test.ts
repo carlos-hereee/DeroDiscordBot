@@ -124,6 +124,23 @@ describe("surrenderMove", () => {
 		// A at 900 goes first; B and C tie at the start's chips, so the later seat, C, goes next.
 		expect(ended.state.seats.map((seat) => seat.bankruptedAt)).toEqual([1, null, 2]);
 	});
+
+	it("finishOnStandings ranks by net worth, so lots and buildings count beside chips", () => {
+		const state = createInitialState([A, B, C], { auctionsEnabled: false }, 1_000, 1);
+		// A spent cash on a hotel set worth far more than the $600 it is down; C bought
+		// a mortgaged lot that leaves it worth less than B.
+		state.seats[0].chips = 900;
+		for (const lot of ["reader-dock", "vermillion-alley"]) state.properties[lot].ownerId = A;
+		state.properties["reader-dock"].hotel = true;
+		state.properties["vermillion-alley"].hotel = true;
+		state.properties["rail-one"].ownerId = C;
+		state.properties["rail-one"].mortgaged = true;
+		state.seats[2].chips -= 200;
+		const ended = finishOnStandings(state);
+		expect(ended.state.winnerId).toBe(A);
+		// C (1300 plus the 100 a mortgaged rail is still worth) goes before B on 1500.
+		expect(ended.state.seats.map((seat) => seat.bankruptedAt)).toEqual([null, 2, 1]);
+	});
 });
 
 describe("surrenderMonopolySeat", () => {

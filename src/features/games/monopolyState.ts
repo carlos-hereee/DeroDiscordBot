@@ -189,7 +189,6 @@ export interface AuctionState {
 export type MonopolyResult = { ok: true; state: MonopolyState; trailLines: string[] } | { ok: false; reason: string };
 
 export { applyJailChoice } from "./monopolyJail.js";
-export { applyForfeit } from "./monopolyForfeit.js";
 export { calculateRent } from "./monopolyLanding.js";
 export {
 	applyBuild,
@@ -207,10 +206,10 @@ export {
 	type MortgageOption,
 	type SellOption,
 } from "./monopolyBuildings.js";
-export { applyDebtDefault, applyPayDebt, waitingDebt } from "./monopolyDebts.js";
+export { applyDebtDefault, applyForfeit, applyPayDebt, waitingDebt } from "./monopolyDebts.js";
 export { acceptTrade, describeTradeSide, openTrade, rejectTrade, tradableLots } from "./monopolyTrade.js";
 export { closeAuction, openAuction, placeBid } from "./monopolyAuction.js";
-export { BANK_CREDITOR, resolveDebt } from "./monopolyBankruptcy.js";
+export { BANK_CREDITOR, netWorth, resolveDebt } from "./monopolyBankruptcy.js";
 
 // ── initial state ───────────────────────────────────────────────────────────
 
@@ -240,6 +239,10 @@ export function createInitialState(
 		version: 1,
 		revision: 0,
 		seats: playerIds.map(createSeat),
+		// House rule: the first seat (the host, who opened the match) always rolls first,
+		// rather than a roll off for the highest total as the standard rules ask. The match
+		// already ran its start countdown, and a roll off is a round of dice that decides
+		// nothing else.
 		activeSeatIndex: 0,
 		diceRoll: null,
 		doublesStreak: 0,

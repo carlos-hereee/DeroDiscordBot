@@ -22,8 +22,10 @@ import {
 	resolveHand,
 	settle,
 	BLACKJACK_TARGET,
+	CUT_CARD_PENETRATION,
 	DEFAULT_DECK_COUNT,
 	MAX_HANDS_PER_SEAT,
+	endedOnPeek,
 	RANKS,
 	SUITS,
 	type BlackjackTable,
@@ -49,7 +51,7 @@ function seat(userId: string, hands: Hand[], activeHand = 0, over: Partial<Seat>
 }
 
 function table(over: Partial<BlackjackTable> & { seats: Seat[] }): BlackjackTable {
-	return { dealer: hand([]), shoe: [], phase: "playing", turn: 0, hitsSoft17: false, buyIn: 0, handNumber: 1, paid: false, ...over };
+	return { dealer: hand([]), shoe: [], phase: "playing", turn: 0, hitsSoft17: false, deckCount: DEFAULT_DECK_COUNT, reshuffleDue: false, buyIn: 0, handNumber: 1, paid: false, ...over };
 }
 
 // ── hand values, where the aces live ────────────────────────────────────────
@@ -156,6 +158,81 @@ describe("createTable", () => {
 	});
 });
 
+describe("the dealer's peek (2026-10 item 276, D5)", () => {
+	// One card to each seat, one to the dealer, then again: with seats a and b the deal
+	// order is a, b, dealer, a, b, dealer.
+	function dealtFrom(shoe: Rank[]): BlackjackTable {
+		const t = createBankrollTable({ players: [{ userId: "a", username: "a" }, { userId: "b", username: "b" }], buyIn: 1000 });
+		t.shoe = stack(shoe);
+		placeBet(t, "a", 50);
+		placeBet(t, "b", 100);
+		return t;
+	}
+
+	it("ends the hand at the deal when the dealer holds a natural, before any seat acts", () => {
+		const t = dealtFrom(["9", "A", "A", "7", "K", "K"]);
+		expect(t.phase).toBe("dealer");
+		expect(legalActions(t, "a")).toEqual([]);
+		expect(endedOnPeek(t)).toBe(true);
+	});
+
+	it("takes only the first bet from every hand, and pushes a seat's own natural", () => {
+		const t = dealtFrom(["9", "A", "A", "7", "K", "K"]);
+		playDealer(t);
+		const results = collectPayouts(t);
+		expect(results?.map((r) => r.hands)).toEqual([["lose"], ["push"]]);
+		expect(t.seats.map((s) => s.stack)).toEqual([950, 1000]);
+	});
+
+	it("plays on as usual when the dealer has no natural", () => {
+		const t = dealtFrom(["9", "A", "A", "7", "K", "9"]);
+		expect(t.phase).toBe("playing");
+		expect(endedOnPeek(t)).toBe(false);
+	});
+});
+
+describe("the cut card (2026-10 item 276, D5)", () => {
+	const fullShoe = DEFAULT_DECK_COUNT * 52;
+	const leftAtCut = Math.round(fullShoe * (1 - CUT_CARD_PENETRATION));
+
+	it("comes out once about three quarters of the shoe is dealt, and the next hand opens on a fresh shoe", () => {
+		const t = table({
+			seats: [seat("a", [hand(["10", "6"], { bet: 100 })], 0, { stack: 900 })],
+			shoe: stack(Array.from({ length: leftAtCut + 1 }, () => "2" as Rank)),
+			buyIn: 1000,
+		});
+		applyAction(t, "a", "hit");
+		expect(t.reshuffleDue).toBe(true);
+
+		t.phase = "settled";
+		t.dealer = hand(["10", "8"], { status: "stood" });
+		collectPayouts(t);
+		expect(startNextHand(t)).toBe(true);
+		expect(t.shoe).toHaveLength(fullShoe);
+		expect(t.reshuffleDue).toBe(false);
+	});
+
+	it("keeps dealing the same shoe before the cut card", () => {
+		const t = table({
+			seats: [seat("a", [hand(["10", "6"], { bet: 100 })], 0, { stack: 900 })],
+			shoe: stack(Array.from({ length: leftAtCut + 2 }, () => "2" as Rank)),
+			buyIn: 1000,
+			phase: "playing",
+		});
+		applyAction(t, "a", "hit");
+		expect(t.reshuffleDue).toBe(false);
+		t.phase = "settled";
+		t.dealer = hand(["10", "8"], { status: "stood" });
+		collectPayouts(t);
+		startNextHand(t);
+		expect(t.shoe).toHaveLength(leftAtCut + 1);
+	});
+
+	it("is a named three quarters of the shoe", () => {
+		expect(CUT_CARD_PENETRATION).toBe(0.75);
+	});
+});
+
 // ── legality ────────────────────────────────────────────────────────────────
 
 describe("legalActions", () => {
@@ -210,6 +287,21 @@ describe("applyAction", () => {
 		expect(t.seats[0].hands[0].cards).toHaveLength(3);
 		expect(t.seats[0].hands[0].status).toBe("bust");
 		expect(t.phase).toBe("dealer");
+	});
+
+	it("stands a hand that reaches 21 on a hit, so a seat on 21 never holds the table", () => {
+		const t = table({ seats: [seat("a", [hand(["K", "6"])]), seat("b", [hand(["9", "5"])])], shoe: stack(["5"]) });
+		const outcome = applyAction(t, "a", "hit");
+		expect(outcome).toMatchObject({ status: "ok", handFinished: true });
+		expect(t.seats[0].hands[0].status).toBe("stood");
+		expect(t.turn).toBe(1);
+	});
+
+	it("stands a split hand drawn up to 21, and plays on the half that is not", () => {
+		const t = table({ seats: [seat("a", [hand(["K", "K"])])], shoe: stack(["A", "4"]) });
+		applyAction(t, "a", "split");
+		expect(t.seats[0].hands.map((h) => h.status)).toEqual(["stood", "playing"]);
+		expect(t.seats[0].activeHand).toBe(1);
 	});
 
 	it("takes exactly one card on a double, then stands", () => {

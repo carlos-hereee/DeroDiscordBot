@@ -25,6 +25,14 @@
 // seat is broke or gone. A free table plays the same way with a pretend stack. The one hand
 // table createTable builds (the inline slash forms) still bets nothing: every stake is zero.
 //
+// ⚠️ US RULES: THE DEALER PEEKS, AND A CUT CARD ENDS THE SHOE (2026-10 item 276, owner decision
+// D5). A dealer dealt a natural ends the hand at once, before any seat acts (dealRound), so a
+// seat never doubles or splits into a hand already lost and loses only its first bet; a seat
+// dealt a natural too pushes. And the shoe is never dealt to its last card: once
+// CUT_CARD_PENETRATION of it is dealt the cut card is out, the hand in play finishes, and the
+// shoe is shuffled whole before the next one (startNextHand), because every card is public and
+// a shoe dealt to the end let a player count it into a profit.
+//
 // ⚠️ NO INSURANCE, and it is still not an oversight. Insurance is a SIDE BET on the dealer's
 // hole card, a second wager inside a hand the owner's bankroll decision never asked for, and
 // one more turn every seat would sit through on every dealer ace.
@@ -45,6 +53,10 @@ export const DEFAULT_DECK_COUNT = 6;
 // Without a cap a seat dealt repeated pairs could split without bound, and every
 // extra hand is another turn the rest of the table waits through.
 export const MAX_HANDS_PER_SEAT = 4;
+// How much of the shoe is dealt before the cut card comes out: about three quarters, the
+// usual casino placement. Deeper lets a counter play the last quarter at an edge; much
+// shallower reshuffles so often a shoe is barely played.
+export const CUT_CARD_PENETRATION = 0.75;
 
 export const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"] as const;
 export type Rank = (typeof RANKS)[number];
@@ -173,6 +185,11 @@ export interface BlackjackTable {
 	// The one genuine rules variant worth exposing: stand on soft 17 (player
 	// friendly, the default) versus hit it (the house edge version).
 	hitsSoft17: boolean;
+	// The decks in the shoe, so a reshuffle rebuilds the same shoe the table opened with.
+	deckCount: number;
+	// Set by draw once the cut card is out; startNextHand shuffles a fresh shoe and clears it,
+	// and the hand's result says the shoe is being shuffled.
+	reshuffleDue: boolean;
 	// What every seat bought in for; the bet choices are percents of it. Zero at a one hand table.
 	buyIn: number;
 	// Counts from 1, so a turn of hand 2 never reads like the same turn of hand 1.
@@ -202,16 +219,19 @@ export function isNatural(hand: Hand): boolean {
 // state and copying a 312 card array on every card would be the only allocation
 // in a hot path that has no other.
 function draw(table: BlackjackTable): Card {
-	const card = table.shoe.shift();
-	// A six deck shoe cannot be exhausted by any realistic table, but an empty
-	// shoe would otherwise surface as `undefined` cards and a NaN total several
-	// layers away from the cause. Rebuild rather than throw: a reshuffle is what a
-	// real table does, and a thrown error here would kill a live game.
-	if (!card) {
-		table.shoe = buildShoe();
-		return table.shoe.shift() as Card;
-	}
+	// The cut card reshuffles between hands, so a quarter of the shoe is always left and
+	// this can only empty for a hand built by hand. An empty shoe would otherwise surface
+	// as `undefined` cards and a NaN total several layers away from the cause, so it is
+	// rebuilt rather than thrown: a thrown error here would kill a live game.
+	if (table.shoe.length === 0) table.shoe = buildShoe(table.deckCount);
+	const card = table.shoe.shift() as Card;
+	if (table.shoe.length <= cardsLeftAtCutCard(table)) table.reshuffleDue = true;
 	return card;
+}
+
+// How many cards are still in the shoe when the cut card comes out.
+function cardsLeftAtCutCard(table: BlackjackTable): number {
+	return Math.round(table.deckCount * SUITS.length * RANKS.length * (1 - CUT_CARD_PENETRATION));
 }
 
 interface CreateTableInput {
@@ -222,13 +242,16 @@ interface CreateTableInput {
 }
 
 function buildTable(input: CreateTableInput, buyIn: number): BlackjackTable {
+	const deckCount = input.deckCount ?? DEFAULT_DECK_COUNT;
 	return {
 		seats: input.players.map((player) => ({ userId: player.userId, username: player.username, hands: [], activeHand: 0, stack: buyIn, bet: 0, out: null })),
 		dealer: emptyHand(),
-		shoe: buildShoe(input.deckCount ?? DEFAULT_DECK_COUNT, input.rng ?? Math.random),
+		shoe: buildShoe(deckCount, input.rng ?? Math.random),
 		phase: "betting",
 		turn: 0,
 		hitsSoft17: input.hitsSoft17 ?? false,
+		deckCount,
+		reshuffleDue: false,
 		buyIn,
 		handNumber: 1,
 		paid: false,
@@ -276,14 +299,28 @@ function dealRound(table: BlackjackTable): void {
 		if (isNatural(seat.hands[0])) seat.hands[0].status = "blackjack";
 	}
 
+	table.paid = false;
+	table.turn = 0;
+	// The dealer peeks (D5): a dealer natural ends the hand before anyone acts. Every
+	// dealer natural shows an ace or a ten, so checking the two cards IS the US peek. The
+	// hands stay as dealt, so a natural pushes and every other hand loses only its bet.
+	if (isNatural(table.dealer)) {
+		table.phase = "dealer";
+		return;
+	}
+
 	// Everyone may already be done (a one seat table dealt a natural), so the turn
 	// pointer has to be settled through the same advance logic rather than assumed
 	// to be valid.
 	table.phase = "playing";
-	table.paid = false;
-	table.turn = 0;
 	settleTurn(table);
 }
+
+/**
+ * True when the hand ended on the dealer's peek, before any seat acted. With the peek a
+ * dealer natural never survives the deal, so holding one is the whole test.
+ */
+export const endedOnPeek = (table: BlackjackTable): boolean => isNatural(table.dealer);
 
 // ── Betting (2026-10 item 267) ──────────────────────────────────────────────
 
@@ -360,6 +397,12 @@ export function startNextHand(table: BlackjackTable): boolean {
 		seat.bet = 0;
 	}
 	table.dealer = emptyHand();
+	// The cut card came out during the hand just played, so the next one opens on a
+	// whole shoe, shuffled.
+	if (table.reshuffleDue) {
+		table.shoe = buildShoe(table.deckCount);
+		table.reshuffleDue = false;
+	}
 	table.handNumber += 1;
 	table.phase = "betting";
 	table.turn = 0;
@@ -441,7 +484,7 @@ export function applyAction(table: BlackjackTable, userId: string, action: Black
 	switch (action) {
 		case "hit": {
 			hand.cards.push(draw(table));
-			if (handValue(hand.cards).total > BLACKJACK_TARGET) hand.status = "bust";
+			hand.status = statusAfterCard(hand);
 			break;
 		}
 		case "stand": {
@@ -472,6 +515,8 @@ export function applyAction(table: BlackjackTable, userId: string, action: Black
 			// does and what keeps every later pass able to assume a two card minimum.
 			hand.cards.push(draw(table));
 			created.cards.push(draw(table));
+			hand.status = statusAfterCard(hand);
+			created.status = statusAfterCard(created);
 			seat.hands.splice(seat.activeHand + 1, 0, created);
 
 			// Split aces receive one card each and then stand, the standard rule. It
@@ -488,6 +533,16 @@ export function applyAction(table: BlackjackTable, userId: string, action: Black
 	const finished = hand.status !== "playing";
 	if (finished) settleTurn(table);
 	return { status: "ok", action, hand, busted: hand.status === "bust", handFinished: finished };
+}
+
+// A hand still being played after it takes a card: bust past 21, and stood ON 21, since no
+// card can improve it (2026-10 item 276). Without the stand a seat on 21 that walked away
+// held the whole table until its turn clock ran out.
+function statusAfterCard(hand: Hand): HandStatus {
+	const total = handValue(hand.cards).total;
+	if (total > BLACKJACK_TARGET) return "bust";
+	if (total === BLACKJACK_TARGET) return "stood";
+	return "playing";
 }
 
 // ── Leaving during a hand (2026-10 item 254, Arcade 12) ──────────────────────

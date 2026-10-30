@@ -106,14 +106,17 @@ describe("applyPayDebt", () => {
 	});
 
 	it("bankrupts a seat that traded away what would have covered it, since nothing can now", () => {
-		// Alice gives both lots to Cara while the debt is held, leaving $20 and nothing to raise.
+		// A giveaway is refused while the debt is held (P2-2), but a fair swap of both
+		// lots ($150 of mortgage) for three jail cards ($50 of bail each) still leaves
+		// Alice $20 and nothing to mortgage or sell.
 		const held = aliceHeld();
+		seatOf(held, CARA).gojfCards = 3;
 		const offered = expectOk(
 			openTrade(held, {
 				initiatorId: ALICE,
 				counterpartyId: CARA,
 				offer: { properties: ["rail-one", "reader-dock"], chips: 0, gojf: 0 },
-				request: { properties: [], chips: 0, gojf: 0 },
+				request: { properties: [], chips: 0, gojf: 3 },
 				openedAt: NOW,
 			})
 		).state;
@@ -175,10 +178,42 @@ describe("applyDebtDefault", () => {
 });
 
 describe("a seat leaving while a debt is held", () => {
-	it("writes off the waiting debtor's debt and waits on the next debtor in the batch", () => {
+	it("hands the waiting debtor's holdings to its creditor, not the bank, and waits on the next debtor", () => {
 		const { state, trailLines } = expectOk(applyForfeit(twoRivalsHeld(), BOB, NOW));
-		expect(trailLines).toContain("What <@bob> still owed is written off.");
+		expect(trailLines.slice(0, 2)).toEqual([
+			"<@bob> left owing $100 and is bankrupt.",
+			"<@alice> takes $0, 1 lot and 0 Get Out of Jail Free cards from <@bob>.",
+		]);
+		expect(state.properties["rail-one"].ownerId).toBe(ALICE);
+		expect(state.stats?.forfeits).toBe(1);
 		expect(waitingDebt(state)).toEqual({ debtorId: CARA, creditorId: ALICE, amount: 100 });
+	});
+
+	it("gives Alice what Bob held when he surrenders during the debt he owes her (P2-1)", () => {
+		const held = aliceHeld();
+		const { state } = expectOk(applyForfeit(held, ALICE, NOW));
+		expect(state.properties["rail-one"].ownerId).toBe(BOB);
+		expect(state.properties["reader-dock"].ownerId).toBe(BOB);
+		expect(seatOf(state, BOB).chips).toBe(STARTING_CHIPS + 20);
+		expect(state).toMatchObject({ phase: "pre-roll", pendingDebt: null, activeSeatIndex: 1 });
+	});
+
+	it("still returns a creditor's or a bystander's holdings to the bank", () => {
+		const state = twoRivalsHeld();
+		state.properties["reader-dock"].ownerId = ALICE;
+		const { state: next } = expectOk(applyForfeit(state, ALICE, NOW));
+		expect(next.properties["reader-dock"].ownerId).toBeNull();
+		expect(waitingDebt(next)?.debtorId).toBe(BOB);
+	});
+
+	it("returns a waiting bank debtor's holdings to the bank", () => {
+		const state = newMatch();
+		state.seats[0].chips = 0;
+		state.properties["rail-one"].ownerId = ALICE;
+		settleDebts(state, [debt(state, ALICE, BANK_CREDITOR, 50)], NOW);
+		const { state: next } = expectOk(applyForfeit(state, ALICE, NOW));
+		expect(next.properties["rail-one"].ownerId).toBeNull();
+		expect(next.pendingDebt).toBeNull();
 	});
 
 	it("puts the turn back where it paused once nothing is held", () => {

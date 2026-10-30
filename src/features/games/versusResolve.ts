@@ -21,7 +21,9 @@ export const DUEL_DIE_SIDES = 20;
 //     is possible and the numbers give the embed something to show.
 //   • coin, ONE flip decides it. Heads is the challenger, tails is the opponent.
 //     A single coin cannot tie, so this is the mode to pick when someone needs
-//     an answer rather than a story.
+//     an answer rather than a story. House rule: nobody calls a side in the air.
+//     A fair coin makes the call worthless (either call wins half the time), and
+//     fixing heads to the challenger saves a choice before every flip.
 export type VersusResult =
 	| { flip: "dice"; challengerRoll: number; opponentRoll: number; winner: VersusWinner }
 	| { flip: "coin"; face: CoinFace; winner: "challenger" | "opponent" };

@@ -88,6 +88,9 @@ export function applyGuess(state: HangmanState, raw: string): HangmanGuess {
 	// Trim then fold. A guess of "A" and a guess of " a " are the same guess, and
 	// treating them as different would let a player burn the same letter twice.
 	const letter = raw.trim().toLowerCase();
+	// House rule: single letters only, never a guess at the whole word. The round is
+	// cooperative with no turns, so a whole word guess would let the fastest typist end
+	// it for everyone, and a wrong one would have to cost a miss the room did not choose.
 	if (letter.length !== 1 || letter < "a" || letter > "z") return { status: "invalid" };
 
 	if (state.guessed.has(letter)) return { status: "repeat", letter };

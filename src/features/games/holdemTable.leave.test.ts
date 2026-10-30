@@ -13,6 +13,7 @@ import {
 	standings,
 	type HoldemTable,
 } from "./holdemTable.js";
+import type { Card, Suit } from "./holdemHand.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 // ── leaving and ending a table ─────────────────────────────────────────────
@@ -189,6 +190,65 @@ describe("leaving between hands", () => {
 
 		endTable(table);
 		expect(leaveTable(table, table.seats[1].userId)).toEqual({ ok: false, reason: "closed" });
+	});
+});
+
+describe("the button (2026-10 item 276, P2-7 and P2-8)", () => {
+	// A table of four with the button on `button`, dealt with every seat still in.
+	function fourDealtWithButtonOn(button: number): HoldemTable {
+		const table = createTable();
+		for (let index = 0; index < 4; index++) joinTable(table, `p${index}`, `Player ${index}`);
+		table.status = "playing";
+		table.buttonIndex = button;
+		dealHand(table, seededRng());
+		return table;
+	}
+
+	it("passes to the next seat after the old button's seat when a seat before it busts", () => {
+		// Button p2, small blind p3, big blind p0 all in for its 20. p1 calls with aces on a
+		// board that cannot save p0's seven two, the others fold, and p0 busts.
+		const table = createTable();
+		for (let index = 0; index < 4; index++) joinTable(table, `p${index}`, `Player ${index}`);
+		table.status = "playing";
+		table.buttonIndex = 2;
+		seatOf(table, "p0").stack = 20;
+		dealHand(table, seededRng());
+		const card = (rank: number, suit: Suit): Card => ({ rank, suit });
+		table.holeCards.p0 = [card(7, "c"), card(2, "d")];
+		table.holeCards.p1 = [card(14, "s"), card(14, "h")];
+		table.deck = [card(3, "h"), card(4, "c"), card(9, "d"), card(13, "h"), card(13, "s")];
+		act(table, "p1", "call");
+		act(table, "p2", "fold");
+		act(table, "p3", "fold");
+		playItOut(table);
+
+		expect(seatOf(table, "p0").out).toBe(true);
+		// p3, not p1: the old index plus one over the three seats left named p1, so p3
+		// never held the button.
+		expect(buttonHolder(table)).toBe("p3");
+	});
+
+	it("opens the flop left of a button that left mid hand, and passes the next button there", () => {
+		const table = fourDealtWithButtonOn(1);
+		// Button p1, blinds p2 and p3, p0 first to act preflop. The button leaves before acting.
+		leaveTable(table, "p1");
+		act(table, "p0", "call");
+		act(table, "p2", "call");
+		act(table, "p3", "check");
+
+		expect(table.street).toBe("flop");
+		expect(whoActs(table)).toBe("p2");
+		playItOut(table);
+		expect(buttonHolder(table)).toBe("p2");
+	});
+
+	it("passes the next button on as usual when the button leaves between hands", () => {
+		const table = fourDealtWithButtonOn(1);
+		while (handInProgress(table)) act(table, whoActs(table)!, "fold");
+		const seating = ["p0", "p1", "p2", "p3"];
+		const next = buttonHolder(table);
+		leaveTable(table, next);
+		expect(buttonHolder(table)).toBe(seating[(seating.indexOf(next) + 1) % seating.length]);
 	});
 });
 

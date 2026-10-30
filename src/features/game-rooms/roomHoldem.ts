@@ -255,7 +255,10 @@ export function holdemTurnView(table: HoldemTable, viewerId: string, potTotal: n
 	// The board's two raise presets ride the moves too, so the turn line offers every size a
 	// press used to (playHoldemMove clamps each into the legal band, like the board did).
 	if (raiseLegal) {
-		options.push({ label: copy.halfPotLabel(Math.floor(potTotal / 2)), value: "half" }, { label: copy.potLabelButton(potTotal), value: "pot" });
+		options.push(
+			{ label: copy.halfPotLabel(resolveRaiseAmount(table, viewerId, "half", potTotal)), value: "half" },
+			{ label: copy.potLabelButton(resolveRaiseAmount(table, viewerId, "pot", potTotal)), value: "pot" }
+		);
 	}
 
 	return {
@@ -417,8 +420,8 @@ export function bettingRows(table: HoldemTable, roomId: string, potTotal: number
 		// near-identical numbers is harder to read under a turn clock than two.
 		rows.push(
 			new ActionRowBuilder<ButtonBuilder>().addComponents(
-				action("half", gameRoomsCopy.holdem.halfPotLabel(Math.floor(potTotal / 2)), ButtonStyle.Secondary, true),
-				action("pot", gameRoomsCopy.holdem.potLabelButton(potTotal), ButtonStyle.Secondary, true)
+				action("half", gameRoomsCopy.holdem.halfPotLabel(resolveRaiseAmount(table, acting ?? "", "half", potTotal)), ButtonStyle.Secondary, true),
+				action("pot", gameRoomsCopy.holdem.potLabelButton(resolveRaiseAmount(table, acting ?? "", "pot", potTotal)), ButtonStyle.Secondary, true)
 			)
 		);
 	}
@@ -436,7 +439,13 @@ export function bettingRows(table: HoldemTable, roomId: string, potTotal: number
 }
 
 /**
- * Turn a preset key into the TOTAL commitment a raise means.
+ * Turn a preset key into the TOTAL commitment a raise means, which is also the number
+ * the preset's label shows, so a label and its press can never disagree.
+ *
+ * A pot raise is the standard one: call first, then raise by the whole pot that call
+ * makes, so the total is the bet faced plus the pot plus the call (2026-10 item 276).
+ * Raising TO the pot instead under sized every raise facing a bet, and against a big
+ * bet fell under the minimum raise. Half pot raises by half of the same pot.
  *
  * Clamped into the legal band rather than refused: a "pot" press when the pot is
  * larger than the stack should be an all in, not an error message about a number
@@ -444,13 +453,23 @@ export function bettingRows(table: HoldemTable, roomId: string, potTotal: number
  */
 export function resolveRaiseAmount(table: HoldemTable, userId: string, preset: string, potTotal: number): number {
 	const raise = aggressiveActionFor(table, userId);
-	if (!raise) return 0;
+	if (!raise || !table.betting) return 0;
 	const min = raise.min ?? 0;
 	const max = raise.max ?? 0;
 
-	const wanted =
-		preset === "half" ? Math.floor(potTotal / 2) : preset === "pot" ? potTotal : min;
+	const currentBet = table.betting.currentBet;
+	const committed = table.betting.seats.find((seat) => seat.userId === userId)?.committed ?? 0;
+	const potAfterCall = potTotal + Math.max(0, currentBet - committed);
+	const wanted = presetRaise(preset, currentBet, potAfterCall, min);
 	return Math.max(min, Math.min(max, wanted));
+}
+
+// The raise total each preset asks for before the clamp; a key with no preset is the
+// minimum raise.
+function presetRaise(preset: string, currentBet: number, potAfterCall: number, min: number): number {
+	if (preset === "half") return currentBet + Math.floor(potAfterCall / 2);
+	if (preset === "pot") return currentBet + potAfterCall;
+	return min;
 }
 
 export const seatedCount = (table: HoldemTable): number => livePlayers(table).length;

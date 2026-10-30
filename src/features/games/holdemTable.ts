@@ -712,6 +712,10 @@ function settleHand(table: HoldemTable, showdown: boolean, _rng: () => number = 
 		seat.totalCommitted = 0;
 	}
 
+	// The button's seat as the hand ends, read BEFORE the busts below shrink the live
+	// list its index counts (2026-10 item 276, P2-7).
+	const buttonSeat = seatOrderFrom(table, table.buttonIndex)[0];
+
 	// Bust anyone with nothing left, recording the order so placement is derivable.
 	const busted: string[] = [];
 	for (const seat of table.seats) {
@@ -723,7 +727,7 @@ function settleHand(table: HoldemTable, showdown: boolean, _rng: () => number = 
 	}
 
 	table.street = "showdown";
-	table.buttonIndex = (table.buttonIndex + 1) % Math.max(livePlayers(table).length, 1);
+	table.buttonIndex = nextButtonIndex(table, buttonSeat);
 
 	const tournamentOver = livePlayers(table).length <= 1;
 	if (tournamentOver) finishTournament(table);
@@ -737,6 +741,23 @@ function settleHand(table: HoldemTable, showdown: boolean, _rng: () => number = 
 		busted,
 		showdown: shown.length ? shown : undefined,
 	};
+}
+
+// The button passes to the next seat still in after the one that held it, walking the
+// seat array (the table's fixed seating order, out seats included) rather than adding
+// one to an index into the live seats. Busts shrink that live list under the index, so
+// "plus one" slid the button backwards or past a seat: A B C D with the button on C and
+// A busting gave it to B, and D never got it. Answers an index into the live seats,
+// which is what buttonIndex counts.
+function nextButtonIndex(table: HoldemTable, buttonSeat: TableSeat | undefined): number {
+	const live = livePlayers(table);
+	const from = buttonSeat ? table.seats.indexOf(buttonSeat) : -1;
+	if (live.length === 0 || from === -1) return 0;
+	for (let step = 1; step <= table.seats.length; step++) {
+		const seat = table.seats[(from + step) % table.seats.length];
+		if (!seat.out) return live.indexOf(seat);
+	}
+	return 0;
 }
 
 function finishTournament(table: HoldemTable): void {
@@ -874,13 +895,25 @@ export function leaveTable(table: HoldemTable, userId: string, rng: () => number
 }
 
 // buttonIndex counts LIVE seats, so a seat going out before the button would slide
-// the button one seat on. Moving the index back keeps it on the player who holds it;
-// when the leaver is the button, the same index now names the next seat, which is
-// where the button would pass anyway.
+// the button one seat on. Moving the index back keeps it on the player who holds it.
+// When the leaver IS the button there are two cases:
+//  ① Between hands the same index now names the next seat, which is where the button
+//    passes for the deal anyway.
+//  ② Mid hand the button must stay where it was for the rest of the hand (2026-10 item
+//    276, P2-8): the flop opens with the first seat LEFT of it, and settleHand passes
+//    it on from there. An out seat cannot hold a live index, so the index parks on the
+//    seat to the leaver's right, which plays the hand exactly as the button would have
+//    from that side: the seat left of the leaver opens each street, and the next button
+//    is the seat after the parked one, the leaver's left. Left on the next seat, the
+//    flop opened one seat late and the next hand's button skipped a seat.
 function keepButtonOnItsSeat(table: HoldemTable, leaving: TableSeat): void {
 	const live = livePlayers(table);
 	const buttonAt = table.buttonIndex % live.length;
 	const leavingAt = live.indexOf(leaving);
+	if (leavingAt === buttonAt && handInProgress(table) && live.length > 1) {
+		table.buttonIndex = leavingAt === 0 ? live.length - 2 : leavingAt - 1;
+		return;
+	}
 	table.buttonIndex = leavingAt < buttonAt ? buttonAt - 1 : buttonAt;
 }
 

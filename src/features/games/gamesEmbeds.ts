@@ -5,7 +5,7 @@ import { gamesCopy } from "./gamesCopy.js";
 import type { SoloLuckResult } from "./soloLuck.js";
 import type { VersusResult } from "./versusResolve.js";
 import type { RpsChoice, RpsOutcome } from "./rpsWinner.js";
-import { handValue, type BlackjackTable, type Card, type HandOutcome, type SeatResult, type Suit } from "./blackjackState.js";
+import { endedOnPeek, handValue, type BlackjackTable, type Card, type HandOutcome, type SeatResult, type Suit } from "./blackjackState.js";
 
 // ── /mini-game embeds ──────────────────────────────────────────────────────
 // Self-contained game embeds. They do NOT reuse embedBuilder.base() on purpose:
@@ -302,7 +302,12 @@ export function buildBlackjackResultEmbed(table: BlackjackTable, results: SeatRe
 	// Every seat's stack after the hand paid, out seats included, so the table reads its standings.
 	if (table.buyIn > 0) embed.addFields({ name: c.stacksAfterHand, value: table.seats.map(seatStanding).join("\n"), inline: false });
 
-	if (anyDoubledLoss) embed.setDescription(c.doubledLostAll);
+	const notes = [
+		endedOnPeek(table) ? c.dealerPeekedNatural : null,
+		anyDoubledLoss ? c.doubledLostAll : null,
+		table.reshuffleDue ? c.cutCardReshuffle : null,
+	].filter((note): note is string => note !== null);
+	if (notes.length > 0) embed.setDescription(notes.join("\n"));
 	return embed;
 }
 

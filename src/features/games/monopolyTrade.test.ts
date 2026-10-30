@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { STARTING_CHIPS } from "./monopolyBoard.js";
+import { settleDebts } from "./monopolyBankruptcy.js";
 import {
 	acceptTrade,
 	applyForfeit,
@@ -222,6 +223,59 @@ describe("rejectTrade", () => {
 });
 
 // ── a party leaving ─────────────────────────────────────────────────────────
+
+// Alice owes Bob $150 with $20, Rail One (mortgage $100) and Reader Dock ($50):
+// coverable, so the match waits on her to raise the cash.
+function aliceOwesBob(): MonopolyState {
+	const state = newMatch();
+	state.phase = "post-roll";
+	state.seats[0].chips = 20;
+	state.properties["rail-one"].ownerId = ALICE;
+	state.properties["reader-dock"].ownerId = ALICE;
+	settleDebts(state, [{ debtor: state.seats[0], creditorId: BOB, amount: 150 }], NOW);
+	return state;
+}
+
+const giveaway: TradeProposal = {
+	initiatorId: ALICE,
+	counterpartyId: CARA,
+	offer: { properties: ["rail-one"], chips: 10, gojf: 0 },
+	request: NOTHING,
+	openedAt: NOW,
+};
+
+describe("a debtor the match is waiting on (P2-2)", () => {
+	it("refuses a trade where the debtor gives more than it gets back, on open and on accept", () => {
+		const debtorLine = /<@alice> owes a debt the match is waiting on, so they cannot give more than they get back/;
+		expectRefusal(openTrade(aliceOwesBob(), giveaway), debtorLine);
+		const asked = withTerms(giveaway, { initiatorId: CARA, counterpartyId: ALICE, offer: NOTHING, request: giveaway.offer });
+		expectRefusal(openTrade(aliceOwesBob(), asked), debtorLine);
+
+		const offeredBeforeTheDebt = { ...aliceOwesBob(), pendingTrade: giveaway };
+		expectRefusal(acceptTrade(offeredBeforeTheDebt, CARA), debtorLine);
+	});
+
+	it("lets the debtor sell a lot for at least its mortgage, which is how it raises the cash", () => {
+		const sale = withTerms(giveaway, { offer: { properties: ["rail-one"], chips: 0, gojf: 0 }, request: { properties: [], chips: 100, gojf: 0 } });
+		const { state } = expectOk(acceptTrade(expectOk(openTrade(aliceOwesBob(), sale)).state, CARA));
+		expect(state.seats[0].chips).toBe(120);
+		expect(state.properties["rail-one"].ownerId).toBe(CARA);
+	});
+
+	it("counts a mortgaged lot at nothing more and a jail card at the bail", () => {
+		const state = aliceOwesBob();
+		state.properties["rail-one"].mortgaged = true;
+		state.seats[0].gojfCards = 1;
+		const swap = withTerms(giveaway, { offer: { properties: ["rail-one"], chips: 0, gojf: 1 }, request: { properties: [], chips: 50, gojf: 0 } });
+		expectOk(openTrade(state, swap));
+		expectRefusal(openTrade(state, withTerms(swap, { request: { properties: [], chips: 49, gojf: 0 } })), /cannot give more/);
+	});
+
+	it("leaves two seats who owe nothing free to trade as they like", () => {
+		const gift = withTerms(giveaway, { initiatorId: CARA, counterpartyId: BOB, offer: { properties: [], chips: 10, gojf: 0 } });
+		expectOk(openTrade(aliceOwesBob(), gift));
+	});
+});
 
 describe("a party leaving the match", () => {
 	it("calls the open trade off, and leaves one between two others alone", () => {

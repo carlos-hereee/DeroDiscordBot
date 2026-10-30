@@ -1,5 +1,6 @@
-import { OWNABLE_TILES, findOwnableTile, ownableTileName, type OwnableTile, type TileId } from "./monopolyBoard.js";
+import { JAIL_BAIL, OWNABLE_TILES, findOwnableTile, ownableTileName, type OwnableTile, type TileId } from "./monopolyBoard.js";
 import { groupHasBuildings } from "./monopolyBuildings.js";
+import { waitingDebt } from "./monopolyDebts.js";
 import type { MonopolyResult, MonopolySeat, MonopolyState, TradeProposal } from "./monopolyState.js";
 import { cloneState, completeAction, countNoun, mentionPlayer, rejectAction } from "./monopolySeats.js";
 
@@ -27,6 +28,11 @@ import { cloneState, completeAction, countNoun, mentionPlayer, rejectAction } fr
 // rules: they are sold back first. A mortgaged lot moves still mortgaged and
 // the receiver pays no interest on it, the same ruling as a bankruptcy transfer
 // (see monopolyBankruptcy); charging the 10 percent fee is a Phase 5 prompt.
+//
+// A seat the match is waiting on for a debt may still trade to raise the cash,
+// as the standard rules allow, but never give away more than it takes back
+// (refuseDebtorGiveaway), or it could empty itself and then Pay into a $0
+// bankruptcy that leaves its creditor nothing (2026-10 item 276, P2-2).
 
 type TradeSide = TradeProposal["offer"];
 
@@ -105,8 +111,36 @@ function validateTrade(state: MonopolyState, trade: TradeProposal): TradeCheck {
 	if (initiatorIndex === -1 || counterpartyIndex === -1) return refuse("Both players in a trade must still be playing.");
 	if (isEmptySide(trade.offer) && isEmptySide(trade.request)) return refuse("A trade has to move something.");
 	const sideRefusal =
-		validateSide(state, state.seats[initiatorIndex], trade.offer) ?? validateSide(state, state.seats[counterpartyIndex], trade.request);
+		validateSide(state, state.seats[initiatorIndex], trade.offer) ??
+		validateSide(state, state.seats[counterpartyIndex], trade.request) ??
+		refuseDebtorGiveaway(state, trade);
 	return sideRefusal ? refuse(sideRefusal) : { ok: true, initiatorIndex, counterpartyIndex };
+}
+
+// The waited debtor, on either side of the trade, must take back at least what it
+// gives, measured as cash toward the debt (debtValueOf). Checked on accept too,
+// since a debt can be held after the trade was offered.
+function refuseDebtorGiveaway(state: MonopolyState, trade: TradeProposal): string | null {
+	const debtorId = waitingDebt(state)?.debtorId;
+	if (debtorId !== trade.initiatorId && debtorId !== trade.counterpartyId) return null;
+	const gives = debtorId === trade.initiatorId ? trade.offer : trade.request;
+	const takes = debtorId === trade.initiatorId ? trade.request : trade.offer;
+	if (debtValueOf(state, gives) <= debtValueOf(state, takes)) return null;
+	return `${mentionPlayer(debtorId)} owes a debt the match is waiting on, so they cannot give more than they get back in a trade.`;
+}
+
+// One side of a trade as cash toward a debt, on the same rungs liquidationValue
+// counts a seat's holdings by: chips at face, an unmortgaged lot at its mortgage
+// (a traded lot never has buildings), a mortgaged lot at nothing more. A Get Out
+// of Jail Free card counts at the bail it saves, since a creditor takes it in a
+// default.
+function debtValueOf(state: MonopolyState, side: TradeSide): number {
+	let value = side.chips + side.gojf * JAIL_BAIL;
+	for (const tileId of side.properties) {
+		const tile = findOwnableTile(tileId);
+		if (tile && !state.properties[tile.id].mortgaged) value += tile.mortgage;
+	}
+	return value;
 }
 
 // The index of a seat still in the match, or -1 for an unknown or bankrupt one.

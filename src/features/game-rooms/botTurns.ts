@@ -3,7 +3,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { isDeroTalking } from "@features/voice/callAnnouncer.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { secureRandom } from "@utils/secureRng.js";
-import { applyForfeit, type MonopolyState } from "@features/games/monopolyState.js";
+import { applyForfeit, netWorth, type MonopolyState } from "@features/games/monopolyState.js";
 import { applyMonopolyBotAction, decideMonopolyMove, type MonopolyBotAction } from "@features/games/monopolyBot.js";
 import { decideBattleshipShot } from "@features/games/battleshipBot.js";
 import { markReady } from "@features/games/battleshipState.js";
@@ -128,10 +128,13 @@ function applyBotAction(state: MonopolyState, botId: string, action: MonopolyBot
 
 const hasSolventMember = (state: MonopolyState): boolean => state.seats.some((seat) => !seat.bankrupt && !isBotSeatId(seat.userId));
 
-// One forfeit per tick: the poorest bot leaves through the engine's own forfeit, so its
-// lots go back to the bank and the last seat standing wins as in any match.
+// One forfeit per tick: the poorest bot by net worth (the order finishOnStandings ends a
+// match by) leaves through the engine's own forfeit, so its lots go back to the bank and
+// the last seat standing wins as in any match.
 async function forfeitPoorestBot(client: Client, room: IGameRoom, state: MonopolyState): Promise<boolean> {
-	const bots = state.seats.filter((seat) => !seat.bankrupt && isBotSeatId(seat.userId)).sort((first, second) => first.chips - second.chips);
+	const bots = state.seats
+		.filter((seat) => !seat.bankrupt && isBotSeatId(seat.userId))
+		.sort((first, second) => netWorth(state, first.userId) - netWorth(state, second.userId));
 	const poorest = bots[0];
 	if (!poorest || bots.length < 2) return false;
 	const outcome = await commitMonopolyMove(client, room, poorest.userId, (current) => applyForfeit(current, poorest.userId), { onTurnOnly: false });

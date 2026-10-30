@@ -1,14 +1,19 @@
 import { debtsFromHold, findCreditorSeat, handOverHoldings, liquidationValue, settleDebts } from "./monopolyBankruptcy.js";
+import { forfeitSeat } from "./monopolyForfeit.js";
 import { releaseFromJail } from "./monopolyJail.js";
 import { moveAndLand } from "./monopolyLanding.js";
 import type { DebtHold, MonopolyResult, MonopolyState, PendingDebt } from "./monopolyState.js";
-import { cloneState, completeAction, findSeat, mentionPlayer, rejectAction } from "./monopolySeats.js";
+import { cloneState, completeAction, ensureStats, findSeat, mentionPlayer, rejectAction } from "./monopolySeats.js";
 
 // ── monopolyDebts ───────────────────────────────────────────────────────────
-// What:  the two ways a held debt ends: the debtor pays it once they have raised
-//        the cash, or never does and is declared bankrupt to whoever they owed.
-// Who:   the room's Pay button (applyPayDebt) and the idle sweep
-//        (applyDebtDefault), through the re-exports in monopolyState.
+// What:  the ways a held debt ends: the debtor pays it once they have raised the
+//        cash, never does and is declared bankrupt to whoever they owed, or
+//        leaves the match, which is the same default. Also applyForfeit, every
+//        seat's way out, since that third case is decided here.
+// Who:   the room's Pay button (applyPayDebt), the idle sweep (applyDebtDefault)
+//        and every leave (applyForfeit: Surrender, a server leave, the host's
+//        removal, an idle seat with no debt), through the re-exports in
+//        monopolyState.
 // When:  only in the "awaiting-debt" phase, which monopolyBankruptcy enters when
 //        a debtor is short of chips but could cover the debt by mortgaging and
 //        selling. While it lasts the debtor raises cash with applyMortgage and
@@ -63,19 +68,54 @@ export function applyDebtDefault(state: MonopolyState, now: number = Date.now())
 	if (!debt || !hold) return rejectAction("There is no debt waiting to be paid.");
 
 	const next = cloneState(state);
-	next.pendingDebt = null;
-	next.phase = hold.resumePhase;
+	const line = `${mentionPlayer(debt.debtorId)} never paid the $${debt.amount} they owed and is bankrupt.`;
+	return completeAction(next, debt.debtorId, defaultWaitingDebt(next, hold, line, now));
+}
+
+/**
+ * Takes a seat out of the match, whoever's turn it is. A seat the match is
+ * waiting on for a debt defaults on it, so its holdings go to that debt's
+ * creditor exactly as applyDebtDefault hands them over; any other seat's go back
+ * to the bank (forfeitSeat).
+ */
+export function applyForfeit(state: MonopolyState, seatId: string, now: number = Date.now()): MonopolyResult {
+	if (state.phase === "finished") return rejectAction("The match is already over.");
+	const seatIndex = state.seats.findIndex((seat) => seat.userId === seatId);
+	if (seatIndex === -1) return rejectAction("That player is not seated in this match.");
+	if (state.seats[seatIndex].bankrupt) return rejectAction("That player is already out of the match.");
+
+	const next = cloneState(state);
+	ensureStats(next).forfeits += 1;
+	const debt = waitingDebt(state);
+	const hold = state.pendingDebt;
+	// Without this a debtor short of chips could always leave rather than pay:
+	// writing the debt off and returning the lots to the bank cost it nothing more,
+	// and robbed the creditor of everything it was owed (2026-10 item 276, P2-1).
+	if (debt?.debtorId === seatId && hold) {
+		const line = `${mentionPlayer(seatId)} left owing $${debt.amount} and is bankrupt.`;
+		return completeAction(next, seatId, defaultWaitingDebt(next, hold, line, now));
+	}
+	return completeAction(next, seatId, forfeitSeat(next, next.seats[seatIndex], now));
+}
+
+// The shared default: `state` (a clone the caller owns) stops waiting, the waited
+// debtor's holdings go to its creditor (the bank for a bank debt), and the rest
+// of the batch settles. `line` says why the debtor is out.
+function defaultWaitingDebt(state: MonopolyState, hold: DebtHold, line: string, now: number): string[] {
+	const [debt] = hold.debts;
+	state.pendingDebt = null;
+	state.phase = hold.resumePhase;
 	const lines: string[] = [];
-	const debtor = findSeat(next, debt.debtorId);
+	const debtor = findSeat(state, debt.debtorId);
 	if (debtor && !debtor.bankrupt) {
-		lines.push(`${mentionPlayer(debtor.userId)} never paid the $${debt.amount} they owed and is bankrupt.`);
-		lines.push(...handOverHoldings(next, debtor, findCreditorSeat(next, debt.creditorId), now));
+		lines.push(line);
+		lines.push(...handOverHoldings(state, debtor, findCreditorSeat(state, debt.creditorId), now));
 	}
 	// What the defaulter owed elsewhere in the batch is written off with them
 	// (debtsFromHold drops a bankrupt debtor); everyone else's debts still settle.
 	// A forced bail's move belonged to the defaulter, so it is dropped too.
-	if (next.phase !== "finished") lines.push(...settleDebts(next, debtsFromHold(next, hold.debts.slice(1)), now));
-	return completeAction(next, debt.debtorId, lines);
+	if (state.phase !== "finished") lines.push(...settleDebts(state, debtsFromHold(state, hold.debts.slice(1)), now));
+	return lines;
 }
 
 // Ends the hold and settles its debts again from the top, then makes the forced

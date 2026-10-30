@@ -4,7 +4,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { answerInChannel } from "@utils/answerInChannel.js";
 import { acknowledgeConfirm, showConfirm, showNotice, type ConfirmInteraction } from "@utils/textModal.js";
-import { applyForfeit, type MonopolyResult, type MonopolyState } from "@features/games/monopolyState.js";
+import { applyForfeit, netWorth, type MonopolyResult, type MonopolyState } from "@features/games/monopolyState.js";
 import { confirmCustomId } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isBotSeatId } from "./botSeat.js";
@@ -171,17 +171,20 @@ export function surrenderMove(state: MonopolyState, userId: string, leadLines: r
 /**
  * End a match on its standings: the poorest seat still in forfeits, then the next, until
  * the richest stands alone and the engine names it the winner, the same order the bot
- * driver uses for a match of bots alone (botTurns). A tie on chips goes against the later
- * seat. The engine's turn handoffs in between are dropped, since no turn is played.
+ * driver uses for a match of bots alone (botTurns). Poorest is by net worth (chips, lots
+ * and buildings, the engine's netWorth), never chips alone, or a seat that spent its cash
+ * on a full set of hotels would lose to one that bought nothing. A tie goes against the
+ * later seat. The engine's turn handoffs in between are dropped, since no turn is played.
  */
 export function finishOnStandings(state: MonopolyState): { state: MonopolyState; lines: string[] } {
 	let current = state;
 	const lines: string[] = [];
 	while (current.phase !== "finished") {
-		const poorest = current.seats
-			.map((seat, index) => ({ seat, index }))
+		const standings = current;
+		const poorest = standings.seats
+			.map((seat, index) => ({ seat, index, worth: netWorth(standings, seat.userId) }))
 			.filter(({ seat }) => !seat.bankrupt)
-			.sort((first, second) => first.seat.chips - second.seat.chips || second.index - first.index)[0];
+			.sort((first, second) => first.worth - second.worth || second.index - first.index)[0];
 		const result = poorest ? applyForfeit(current, poorest.seat.userId) : null;
 		if (!result?.ok) break;
 		current = result.state;

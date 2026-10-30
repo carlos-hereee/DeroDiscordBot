@@ -302,6 +302,10 @@ export const gamesCopy = {
 		// Stated on the result card because doubling is the one action whose cost is
 		// invisible in the cards themselves.
 		doubledLostAll: "A doubled hand that loses pays nothing at all.",
+		// The US peek and the cut card (2026-10 item 276, owner decision D5), each said on the
+		// result of the hand it shaped.
+		dealerPeekedNatural: "The dealer peeked and holds blackjack, so the hand ended before anyone acted. Only the first bets were lost, and a blackjack pushes.",
+		cutCardReshuffle: "The cut card is out: the shoe is shuffled before the next hand.",
 		tableTimedOut: "The table sat idle too long. The dealer clears the felt.",
 
 		// ── the bankroll (2026-10 item 267): a room table plays for a buy in, hand after hand ──

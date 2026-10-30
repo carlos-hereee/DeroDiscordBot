@@ -1,43 +1,21 @@
 import { ownableTileName } from "./monopolyBoard.js";
 import { returnJailCards } from "./monopolyCards.js";
-import type { MonopolyResult, MonopolySeat, MonopolyState } from "./monopolyState.js";
-import {
-	activeSeatOf,
-	cloneState,
-	completeAction,
-	createBankProperty,
-	ensureStats,
-	mentionPlayer,
-	passTurn,
-	rejectAction,
-	solventSeats,
-} from "./monopolySeats.js";
+import type { MonopolySeat, MonopolyState } from "./monopolyState.js";
+import { activeSeatOf, createBankProperty, mentionPlayer, passTurn, solventSeats } from "./monopolySeats.js";
 
 // ── monopolyForfeit ─────────────────────────────────────────────────────────
 // What:  taking a seat out of the match. removeFromMatch is the shared tail
 //        every exit ends in (elimination order, open deals, the winner or the
 //        next turn); forfeitSeat is the bank version on top of it, where chips,
 //        lots, buildings and Get Out of Jail Free cards go back to the bank.
-// Who:   applyForfeit (the public action, used by an admin forfeit and the Phase
-//        4 idle sweep) and monopolyBankruptcy, which forfeits to the bank for a
-//        bank debt and calls removeFromMatch after handing a player creditor
-//        everything.
+// Who:   applyForfeit (the public action in monopolyDebts, since a seat the
+//        match waits on for a debt goes to its creditor instead of the bank) and
+//        monopolyBankruptcy, which forfeits to the bank for a bank debt and calls
+//        removeFromMatch after handing a player creditor everything.
 // When:  a seat leaves, idles out, or cannot cover a debt.
 // Where: split out of monopolyState (rule 18).
 // How:   both functions mutate a clone and return trail lines, so the debt path
 //        can fold them into the roll that caused the debt.
-
-/** Takes a seat out of the match, whoever's turn it is. */
-export function applyForfeit(state: MonopolyState, seatId: string, now: number = Date.now()): MonopolyResult {
-	if (state.phase === "finished") return rejectAction("The match is already over.");
-	const seatIndex = state.seats.findIndex((seat) => seat.userId === seatId);
-	if (seatIndex === -1) return rejectAction("That player is not seated in this match.");
-	if (state.seats[seatIndex].bankrupt) return rejectAction("That player is already out of the match.");
-
-	const next = cloneState(state);
-	ensureStats(next).forfeits += 1;
-	return completeAction(next, seatId, forfeitSeat(next, next.seats[seatIndex], now));
-}
 
 /**
  * Mutates `state` to hand everything `seat` (a seat OF `state`) holds back to
@@ -100,11 +78,13 @@ export function removeFromMatch(state: MonopolyState, seat: MonopolySeat, now: n
 	return lines;
 }
 
-// A seat that leaves while the match waits on a debt (an admin forfeit, say) owes
-// nothing from then on: its debts come off the hold, the same write off a bankrupt
-// debtor gets. With nothing left held, the turn goes back to where it paused. When
-// it was the debtor being waited on, a forced bail's move goes with it, and the
-// next debtor in the batch is waited on instead.
+// A seat that leaves while the match waits on a debt owes nothing more from then
+// on: its debts further down the held batch come off the hold, the same write off
+// a bankrupt debtor gets. With nothing left held, the turn goes back to where it
+// paused. The debtor being waited on never reaches here through applyForfeit,
+// which defaults it to its creditor first (2026-10 item 276, P2-1); the first
+// debt branch only keeps a forced bail's move from outliving its debtor if some
+// other exit ever does.
 function writeOffHeldDebtsOf(state: MonopolyState, userId: string): string[] {
 	const hold = state.pendingDebt;
 	if (!hold || !hold.debts.some((debt) => debt.debtorId === userId)) return [];
