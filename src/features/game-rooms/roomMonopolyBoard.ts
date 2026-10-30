@@ -151,10 +151,20 @@ export interface BoardPlacement {
  * places the board from it.
  */
 export async function placeMonopolyBoard(client: Client, room: IGameRoom, state: MonopolyState, placement: BoardPlacement): Promise<void> {
-	const { split, actorId, kind, promptSync } = placement;
+	const { split, actorId, kind } = placement;
 	const asMoves = (lines: readonly string[]): RoomMoveInput[] => lines.map((text) => ({ actorId, kind, text }));
 	let channel: TextChannel | null = null;
 	let boardId: string | null = null;
+	// The turn line is synced exactly once per placement, and ALWAYS (2026-10 item 276, audit P3): a
+	// board edit or post that throws used to skip it, so a Bid or Pay button the move just made
+	// live only appeared a move later. Where the board is placed it runs in its usual spot; a
+	// placement that failed runs it after the failure is logged.
+	let prompted = false;
+	const promptSync = async (): Promise<void> => {
+		if (prompted) return;
+		prompted = true;
+		await placement.promptSync?.();
+	};
 
 	await withDrawingPause({
 		gameKey: roomDrawingKey(room),
@@ -184,16 +194,16 @@ export async function placeMonopolyBoard(client: Client, room: IGameRoom, state:
 					await board.edit({ ...boardPayload(room, shown, picture), content: null, attachments: [] });
 					await roomTrail.recordCarriedMoves(room, added);
 					// Same turn, so the prompt only changes when its buttons do (an auction opening).
-					await promptSync?.();
+					await promptSync();
 					return;
 				}
 				// The board was deleted from under the match: post a fresh one rather than leave
 				// the room with no buttons, carrying the lines the deleted board took with it.
-				await promptSync?.();
+				await promptSync();
 				await postTurnBoard(channel, room, boardId, boardPayload(room, shown, picture), { carried: added });
 				return;
 			}
-			await promptSync?.();
+			await promptSync();
 			await postTurnBoard(channel, room, boardId, boardPayload(room, state, picture), {
 				carried: asMoves(split.currentNew),
 				// The finished turn's board keeps its block, now with the lines that ended the turn.
@@ -201,6 +211,7 @@ export async function placeMonopolyBoard(client: Client, room: IGameRoom, state:
 			});
 		},
 	}).catch((error) => console.warn("[game-rooms] failed to place the monopoly board", { roomId: room.roomId, error }));
+	await promptSync().catch((error: unknown) => console.warn("[game-rooms] the monopoly turn line could not be synced", { roomId: room.roomId, error }));
 }
 
 /**

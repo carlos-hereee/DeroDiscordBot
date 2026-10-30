@@ -318,6 +318,25 @@ export async function removeFromMonopolyMatch(client: Client, room: IGameRoom, u
 	return "busy";
 }
 
+/**
+ * Take out every seat the host removed that a busy board still holds (2026-10 item 276, audit P3):
+ * removeFromMonopolyMatch gives up after its retries, but the removal already took the member out
+ * of the room, so nobody can play that seat and it would hold the match up for its whole idle
+ * budget. The Monopoly idle sweep calls this every tick, so the removal lands on a later look.
+ * The removal's own line already posted, so the forfeit carries the engine's lines alone.
+ * Answers how many seats it took out.
+ */
+export async function forfeitRemovedMonopolySeats(client: Client, room: IGameRoom): Promise<number> {
+	const state = monopolyStateOf(room);
+	const removed = new Set(room.kickedIds ?? []);
+	if (room.status !== "playing" || !state || state.phase === "finished" || removed.size === 0) return 0;
+	let takenOut = 0;
+	for (const seat of state.seats.filter((candidate) => !candidate.bankrupt && removed.has(candidate.userId))) {
+		if ((await removeFromMonopolyMatch(client, room, seat.userId, room.hostId)) === "removed") takenOut++;
+	}
+	return takenOut;
+}
+
 // ── the button path ───────────────────────────────────────────────────
 async function refuse(interaction: ButtonInteraction, reason: string): Promise<void> {
 	// Every refusal below comes after the deferUpdate, which has spent the modal, and each is a
@@ -533,8 +552,8 @@ export const monopolyIdleTurnClock: TurnClockGame = {
 	kind: "monopoly-idle",
 	current(room, now) {
 		const state = monopolyStateOf(room);
-		const fingerprint = monopolyTurnAdapter.fingerprintOf(room);
-		if (!state || state.phase === "finished" || !fingerprint) return null;
+		if (!state || state.phase === "finished") return null;
+		const fingerprint = turnIdentityOf(state);
 		const debtorId = waitingDebt(state)?.debtorId;
 		return {
 			memberId: idleSeatOf(state),
@@ -632,20 +651,41 @@ function moveForChoice(choice: string): MonopolyMove | null {
 
 const activeSeatOf = (state: MonopolyState) => state.seats[state.activeSeatIndex];
 
+// The turn's identity: the count of turns taken and the seat on the clock, the same for the whole turn.
+const turnIdentityOf = (state: MonopolyState): string => `m${state.stats?.turnsTaken ?? 0}.${state.activeSeatIndex}`;
+
+// The seat the turn line belongs to: the debtor while the match waits on a rival's debt, since
+// only their Pay moves the match on (2026-10 item 276, audit P2-3), otherwise the seat on the clock.
+const promptedSeatOf = (state: MonopolyState) => {
+	const debtorId = waitingDebt(state)?.debtorId;
+	return state.seats.find((seat) => seat.userId === debtorId) ?? activeSeatOf(state);
+};
+
 export const monopolyTurnAdapter: TurnAdapter = {
 	game: "monopoly",
+	// ⚠️ THE DEBTOR, NOT THE SEAT ON THE CLOCK, while a rival's debt is waited on (audit P2-3): a
+	// card or a rent can charge a seat whose turn it is not, and the line used to ping the active
+	// seat with a Take your turn that could do nothing while the debtor, unpinged, held the match
+	// for up to its whole idle budget. The idle clock's warning follows the line, so it now moves the
+	// line's Pay button down to the debtor with it (turnPrompt.postTurnWarning).
 	whoseTurn(room) {
 		const state = monopolyStateOf(room);
-		return state && state.phase !== "finished" ? activeSeatOf(state).userId : null;
+		return state && state.phase !== "finished" ? promptedSeatOf(state).userId : null;
 	},
+	// A rival's debt is a turn line of its own, so it pings the debtor, and paying it posts a fresh
+	// line that pings the seat on the clock again; a debt on the active seat's own landing keeps the
+	// turn's line, whose buttons change in place.
 	fingerprintOf(room) {
 		const state = monopolyStateOf(room);
-		return state ? `m${state.stats?.turnsTaken ?? 0}.${state.activeSeatIndex}` : null;
+		if (!state) return null;
+		const prompted = promptedSeatOf(state);
+		const turn = turnIdentityOf(state);
+		return prompted === activeSeatOf(state) ? turn : `${turn}.d${prompted.userId}`;
 	},
 	view(room, userId): TurnView | null {
 		const state = monopolyStateOf(room);
 		if (!state || state.phase === "finished") return null;
-		const seat = activeSeatOf(state);
+		const seat = promptedSeatOf(state);
 		const options = turnMoveOptions(state, seat);
 		if (seat.userId !== userId || options.length === 0) return null;
 		const copy = gameRoomsCopy.monopoly;

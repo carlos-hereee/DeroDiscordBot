@@ -205,6 +205,30 @@ export const gameRoomStore = {
 		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $set: patch }, { new: true });
 	},
 
+	// A starting draft's players and leftover pool, as its host's Start chose them.
+	//
+	// ⚠️ ONLY MEMBERS STILL IN THE POOL ARE WRITTEN (2026-10 item 276, found in Phase 1). Start read
+	// the pool seconds before this write, and a member the host removed or who left the server in
+	// between was pulled from it (removeMember, leaveDraftPool); writing the stale lists back would
+	// seat them with a channel overwrite and, in Monopoly, a seat. So each list is filtered against
+	// the pool as stored, in the same write: the host always stays, everyone else must still be in
+	// spectatorIds. Matches a draft only; null when the draft already started or closed. An update
+	// pipeline rather than $set, because only a pipeline can read the stored pool in the write; the
+	// literal id lists are safe in it since a member id is digits and never starts with "$".
+	async seatDraft(guildId: string, roomId: string, hostId: string, playerIds: readonly string[], spectatorIds: readonly string[]) {
+		const stillPooled = (ids: readonly string[], keepHost: boolean) => ({
+			$filter: {
+				input: [...ids],
+				cond: { $or: [...(keepHost ? [{ $eq: ["$$this", hostId] }] : []), { $in: ["$$this", { $ifNull: ["$spectatorIds", []] }] }] },
+			},
+		});
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, status: "draft" },
+			[{ $set: { playerIds: stillPooled(playerIds, true), spectatorIds: stillPooled(spectatorIds, false) } }],
+			{ new: true }
+		);
+	},
+
 	// Compare and swap on the Mixed `secret` blob: write it only if the row still
 	// matches what the caller read.
 	//
@@ -538,6 +562,26 @@ export const gameRoomStore = {
 				$pull: { playerIds: userId, spectatorIds: userId, pendingJoinIds: userId, pendingNetworkJoins: { userId } },
 				$addToSet: { kickedIds: userId },
 			},
+			{ new: true }
+		);
+	},
+
+	// The drafts this member waits in as a joiner, an invitee or a join request, never as host.
+	// Backs the server leave watcher beside findOpenByPlayer, which cannot see them: a draft's
+	// joiners sit in spectatorIds until Start seats them. Rides the { guildId, status } index, and a
+	// guild holds a handful of drafts at most, so the per leave cost stays one small indexed read.
+	async findDraftsByPoolMember(guildId: string, userId: string) {
+		return GameRoom.find({ guildId, status: "draft", hostId: { $ne: userId }, $or: [{ spectatorIds: userId }, { pendingJoinIds: userId }] });
+	},
+
+	// A member left the server while waiting in a draft (2026-10 item 276, found in Phase 2): out of
+	// every list of it, playerIds included for a draft already being built, in one write. Unlike
+	// removeMember nothing goes on kickedIds, since leaving is not a removal and they may come back
+	// and join again. Null when the row is no longer a draft.
+	async leaveDraftPool(guildId: string, roomId: string, userId: string) {
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, status: "draft", hostId: { $ne: userId } },
+			{ $pull: { playerIds: userId, spectatorIds: userId, pendingJoinIds: userId, pendingNetworkJoins: { userId } } },
 			{ new: true }
 		);
 	},

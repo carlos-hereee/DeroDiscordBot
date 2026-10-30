@@ -29,6 +29,8 @@ vi.mock("@utils/textModal.js", () => ({ showNotice: vi.fn(), showConfirm: vi.fn(
 // The confirm's answer posts in 💬dero-commands (2026-10 item 257 Phase 5); where it lands has
 // its own suite (utils/answerInChannel.test.ts).
 vi.mock("@utils/answerInChannel.js", () => ({ answerInChannel: vi.fn() }));
+// The line saying who hosts when a race moved hosting to a member the board did not name.
+vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -38,6 +40,7 @@ import { createInitialState, type MonopolyState } from "@features/games/monopoly
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { commitMonopolyMove } from "./roomMonopolyHandlers.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { roomTrail } from "./roomTrail.js";
 import { finishOnStandings, handleMsurrender, handleMsurrenderConfirm, surrenderMonopolySeat, surrenderMove } from "./roomMonopolySurrender.js";
 
 const A = "player-a";
@@ -158,11 +161,22 @@ describe("surrenderMonopolySeat", () => {
 		expect(stored().phase).not.toBe("finished");
 	});
 
-	it("tries the next member when the index refuses one in a race", async () => {
+	it("tries the next member when the index refuses one in a race, and says who hosts now", async () => {
 		seed([A, B, C]);
 		storeMock.transferHost.mockResolvedValueOnce("taken").mockImplementationOnce(async () => row.current);
 		await surrenderMonopolySeat(client, row.current as unknown as IGameRoom, A);
 		expect(storeMock.transferHost.mock.calls.map((call) => call[3])).toEqual([B, C]);
+		// The board named B, who opened a room of their own in between, so a line names C.
+		expect(committedLines()).toContain(words.hostHandedOn(B));
+		expect(roomTrail.postMove).toHaveBeenCalledWith(client, expect.objectContaining({ roomId: "room-1" }), expect.objectContaining({ text: words.hostHandedOn(C) }));
+	});
+
+	// 2026-10 item 276, audit P3: hosting moved BEFORE the forfeit, so a surrender whose forfeit lost
+	// every retry left the old host seated in a match someone else now hosted.
+	it("hands hosting on only after the forfeit landed", async () => {
+		seed([A, B, C]);
+		await surrenderMonopolySeat(client, row.current as unknown as IGameRoom, A);
+		expect(commitMock.mock.invocationCallOrder[0]).toBeLessThan(storeMock.transferHost.mock.invocationCallOrder[0]);
 	});
 
 	it("ends the match on its standings when every member left already hosts another room", async () => {
@@ -180,11 +194,13 @@ describe("surrenderMonopolySeat", () => {
 		expect(stored().phase).toBe("finished");
 	});
 
-	it("retries a busy board, hands hosting on once, and says the seat is still in after every try", async () => {
+	it("retries a busy board, and after every try leaves the host seated AND hosting", async () => {
 		seed([A, B, C]);
 		for (let attempt = 0; attempt < BOT_CONSTANTS.GAME_ROOM_KICK_ATTEMPTS; attempt++) commitMock.mockResolvedValueOnce({ ok: false, reason: words.boardBusy });
 		expect(await surrenderMonopolySeat(client, row.current as unknown as IGameRoom, A)).toBe("busy");
-		expect(storeMock.transferHost).toHaveBeenCalledOnce();
+		expect(storeMock.transferHost).not.toHaveBeenCalled();
+		expect(row.current?.hostId).toBe(A);
+		expect(seatOf(A)?.bankrupt).toBe(false);
 		expect(commitMock).toHaveBeenCalledTimes(BOT_CONSTANTS.GAME_ROOM_KICK_ATTEMPTS);
 	});
 

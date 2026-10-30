@@ -8,6 +8,7 @@ import {
 	TextInputStyle,
 	type ButtonInteraction,
 	type Client,
+	type Guild,
 	type ModalSubmitInteraction,
 	type StringSelectMenuInteraction,
 } from "discord.js";
@@ -22,6 +23,7 @@ import {
 import {
 	createHangmanState,
 	applyGuess,
+	isSolved,
 	maskedWord,
 	wrongLetters,
 	remainingAttempts,
@@ -104,8 +106,11 @@ function rehydrate(room: Pick<IGameRoom, "secret">): HangmanState | null {
 	state.revealedHints = secret.revealedHints ?? 0;
 	// Status is derived, never stored: two sources for "is this round over" is two
 	// things to disagree, and the room's own status already answers it for everything
-	// outside this module.
+	// outside this module. A solved word counts as over too (2026-10 item 276, audit P3): a
+	// solving guess saved before a crash kept its finish from running, and the round read as
+	// playing, where the next letter could only be a miss and could even lose a solved word.
 	if (state.wrong >= 6) state.status = "lost";
+	else if (isSolved(state)) state.status = "won";
 	return state;
 }
 
@@ -124,9 +129,11 @@ const roundVersion = (room: Pick<IGameRoom, "secret">): Record<string, unknown> 
 	return { "secret.guessedLetters": { $size: (secret.guessedLetters ?? []).length }, "secret.wrong": secret.wrong ?? 0 };
 };
 
-// A guess the round took, on the row as written, or the answer for one it did not take.
+// A guess the round took, on the row as written; a round already won or lost on the row whose
+// finish never ran, to be ended now; or the answer for a guess it did not take.
 type GuessLanding =
 	| { landed: true; room: IGameRoom; state: HangmanState; outcome: Extract<HangmanGuess, { status: "hit" | "miss" }> }
+	| { landed: false; unfinished: { room: IGameRoom; state: HangmanState } }
 	| { landed: false; answer: string };
 
 // Reads beyond the first, when another guess landed between the read and the write: one re-read
@@ -145,8 +152,12 @@ async function landGuess(read: IGameRoom, letter: string, userId: string): Promi
 		if (!room || room.status !== "playing") return { landed: false, answer: gameRoomsCopy.hangman.closed };
 		const state = rehydrate(room);
 		if (!state) return { landed: false, answer: gameRoomsCopy.hangman.waitingForWord(room.hostId) };
-		// Re-gated: a modal submit is reachable without the button that opened it.
+		// Re-gated: a modal submit is reachable without the button that opened it, so a member who
+		// was never a player, or whom the host removed after the modal opened, is refused here too
+		// (2026-10 item 276, audit P3), with the words the room's own player gate uses.
+		if (!room.playerIds.includes(userId)) return { landed: false, answer: gameRoomsCopy.errors.notYours };
 		if (state.authoredBy && state.authoredBy === userId) return { landed: false, answer: gameRoomsCopy.hangman.hostCannotGuess };
+		if (state.status !== "playing") return { landed: false, unfinished: { room, state } };
 
 		const outcome = applyGuess(state, letter);
 		// The three no-cost outcomes stay OUT OF THE ROOM. A "that is not a letter" there per
@@ -521,6 +532,15 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 		return;
 	}
 	const landing = await landGuess(read, interaction.fields.getTextInputValue("letter"), interaction.user.id);
+	if (!landing.landed && "unfinished" in landing) {
+		// The round ended on the row but its finish never ran: end it now, crediting the solve to
+		// whoever the transcript says found the last letter, and tell this guesser it is over.
+		await acknowledgeTextModal(interaction);
+		const { room, state } = landing.unfinished;
+		const solverId = state.status === "won" ? lastSolverOf(room) : null;
+		await endHangmanRound(interaction.client, room, state, { guild: interaction.guild, actorId: interaction.user.id, solverId });
+		return;
+	}
 	if (!landing.landed) {
 		await answerInChannel(interaction, "here", { content: landing.answer });
 		return;
@@ -562,7 +582,32 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	// Give up left on it since the round is over.
 	await postGallowsCard(interaction.client, room, state, previousCardId, { moves, roundOver: won || lost });
 	if (!won && !lost) return;
+	await endHangmanRound(interaction.client, room, state, { guild: interaction.guild, actorId: interaction.user.id, solverId: won ? interaction.user.id : null });
+}
 
+// The member whose hit is the newest guess in the transcript: the solver of a round whose finish a
+// crash skipped. Null when the solving guess never reached the transcript, so nobody is credited.
+function lastSolverOf(room: IGameRoom): string | null {
+	const guesses = (room.moves ?? []).filter((move) => move.kind === "guess");
+	const last = guesses[guesses.length - 1];
+	return last && (last.meta as { hit?: boolean } | undefined)?.hit ? last.actorId : null;
+}
+
+// Who ended the round: the guild the guess came from (for display names), the guesser whose submit
+// ended it (the result line's actor), and who solved it, credited the win; null credits nobody.
+interface RoundEnding {
+	guild: Guild | null;
+	actorId: string;
+	solverId: string | null;
+}
+
+/**
+ * End a won or lost round: finish the room, then, only for the call that won finish's claim, show
+ * the word and pay the guessers. Shared by the guess that ends the round and by the next guess on a
+ * round whose ending a crash skipped (2026-10 item 276, audit P3).
+ */
+async function endHangmanRound(client: Client, room: IGameRoom, state: HangmanState, ending: RoundEnding): Promise<void> {
+	const won = state.status === "won";
 	// A hangman room has no single winner: the guessers win or lose together, and the
 	// host is not competing. winnerId stays null and the XP hook takes the whole
 	// participant list.
@@ -571,7 +616,7 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	// card takes revealedLetters, never the word, so this line adds no third read of it.
 	// A solved word closes the challenge card as the room's win (post-launch plan item
 	// 21), clean or one miss from the rope; a lost round closes it with no winner.
-	const claimed = await roomLifecycle.finish(interaction.client, room, {
+	const claimed = await roomLifecycle.finish(client, room, {
 		winnerId: null,
 		...(won ? { outcome: { bucket: hangmanOutcome(state.wrong), roomWon: true } } : {}),
 		art: await withRenderFallback(
@@ -587,8 +632,8 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 
 	// ⚠️ THE ONLY PLACE THE WORD IS EVER RENDERED, and it is after the round is over. A
 	// result, not a guess, so it posts as its own line under the last card.
-	await roomTrail.postMove(interaction.client, room, {
-		actorId: interaction.user.id,
+	await roomTrail.postMove(client, room, {
+		actorId: ending.actorId,
 		kind: "system",
 		text: won ? gameRoomsCopy.hangman.wonLine(state.word) : gameRoomsCopy.hangman.lostLine(state.word),
 	});
@@ -599,17 +644,17 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	const participants = room.playerIds
 		.filter((id) => id !== state.authoredBy)
 		.map((id) => {
-			const member = interaction.guild?.members.cache.get(id);
+			const member = ending.guild?.members.cache.get(id);
 			return { userId: id, username: member?.displayName ?? member?.user.username ?? id };
 		});
 
 	awardMultiPlayerResult({
-		client: interaction.client,
+		client,
 		guildId: room.guildId,
 		channelId: room.channelId,
 		game: "hangman",
 		participants,
-		winnerId: won ? interaction.user.id : null,
+		winnerId: won ? ending.solverId : null,
 		resultKey: room.roomId,
 		coinGame: room.game === "solo-hangman" ? "solo-hangman" : "hangman",
 	});

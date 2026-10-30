@@ -356,6 +356,19 @@ describe("one board per turn", () => {
 		expect(gameRoomStore.moveBoardMessage).not.toHaveBeenCalled();
 	});
 
+	// 2026-10 item 276, audit P3: a board edit that threw skipped the turn line's sync, so a button
+	// the move just made live (Bid, Pay) appeared only a move later.
+	it("still syncs the turn line, once, when the board edit fails", async () => {
+		const room = fakeRoom();
+		const seeded = await seedMatch(room);
+		vi.mocked(room.messages[0].edit).mockRejectedValue(new Error("Discord said no"));
+		vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+		await commitMonopolyMove(room.client, seeded, A, (state) => applyRoll(state, noDoubles()), { onTurnOnly: true });
+
+		expect(syncTurnPrompt).toHaveBeenCalledOnce();
+	});
+
 	it("posts a fresh board when the stored one was deleted from under the match", async () => {
 		const room = fakeRoom();
 		const seeded = await seedMatch(room);

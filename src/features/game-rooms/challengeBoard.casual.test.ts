@@ -2,7 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ChannelType, type ButtonInteraction, type Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findByRoomId: vi.fn(), update: vi.fn(), addPoolMember: vi.fn(), lowerBotSeats: vi.fn() },
+	gameRoomStore: {
+		findByRoomId: vi.fn(),
+		update: vi.fn(),
+		// Start's player and pool lists, written as given: the filter against the stored pool is the
+		// store's own (gameRoomStore.seatDraft), and stores are not unit tested (house rule 6).
+		seatDraft: vi.fn(async (_guildId: string, _roomId: string, _hostId: string, playerIds: string[], spectatorIds: string[]) => ({ playerIds, spectatorIds })),
+		addPoolMember: vi.fn(),
+		lowerBotSeats: vi.fn(),
+	},
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 vi.mock("./RoomProvisioner.js", () => ({ RoomProvisioner: { open: vi.fn() }, describeRoomOpenFailure: () => "nope" }));

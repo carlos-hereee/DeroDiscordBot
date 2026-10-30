@@ -8,7 +8,7 @@
 //        partial unique index) and the real rematch, sweep, lifecycle and watcher run on it.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ChannelType, Events, type APIEmbed, type ButtonInteraction, type Client, type Guild } from "discord.js";
+import { ChannelType, DiscordAPIError, Events, RESTJSONErrorCodes, type APIEmbed, type ButtonInteraction, type Client, type Guild } from "discord.js";
 
 type FakeRow = Record<string, unknown> & { roomId: string; guildId: string; status: string };
 
@@ -54,6 +54,8 @@ const fake = vi.hoisted(() => {
 				spectatorMode: input.spectatorMode ?? null,
 				// A Blackjack rematch's buy in and its stacks ledger (2026-10 item 267).
 				holdemBuyIn: input.holdemBuyIn ?? null,
+				// The Dero bots a rematch seats again (2026-10 item 250 Phase 5), as the real store writes them.
+				botSeats: input.botSeats ?? 0,
 				blackjackStacks: [],
 				secret: null,
 				moves: [],
@@ -613,6 +615,77 @@ describe("refusals write nothing", () => {
 
 		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.errors.notFound }));
 		expect(fake.snapshot()).toBe(before);
+	});
+});
+
+// ── the rematch's seats (2026-10 item 276) ───────────────────────────
+// A rematch seats the finished match's players again, the presser hosting. A player the host
+// removed is already off playerIds, and one who left the server during the match (which went on
+// without them) is left out here; a game the seats left outside its range is refused before any
+// write, since seeding it stranded the row (audit P1-5).
+describe("the rematch's seats", () => {
+	const P3 = "p3";
+	// Discord's own answer for a member who is not in the server, which is the one failure that
+	// proves a player left; the cache in makeWorld knows P1 and P2 only.
+	const unknownMember = (): DiscordAPIError => Object.assign(Object.create(DiscordAPIError.prototype) as DiscordAPIError, { code: RESTJSONErrorCodes.UnknownMember });
+
+	it("refuses a Monopoly rematch with one seat left, writing nothing", async () => {
+		const world = makeWorld();
+		// The host removed P2, which took them off playerIds, and the match ended with P1 alone.
+		insertFinishedRoom({ game: "monopoly", playerIds: [P1], spectatorIds: [] });
+		const before = fake.snapshot();
+		const interaction = pressRematch(world, P1);
+
+		await rematchFromRoom(interaction, await roomOf(FINISHED));
+
+		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.errors.rematchSeats(2, 6, 1) }));
+		expect(fake.snapshot()).toBe(before);
+	});
+
+	it("counts a Dero bot as a seat, so a host and a bot rematch", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({ game: "monopoly", playerIds: [P1], spectatorIds: [], botSeats: 1 });
+
+		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
+
+		expect(rematchRow()).toMatchObject({ status: "playing", playerIds: [P1] });
+	});
+
+	it("leaves out a player who left the server during the match", async () => {
+		const world = makeWorld();
+		(world.guild.members.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (userId: string) => {
+			if (userId === P3) throw unknownMember();
+			return null;
+		});
+		insertFinishedRoom({ game: "monopoly", playerIds: [P1, P2, P3], spectatorIds: [] });
+
+		await rematchFromRoom(pressRematch(world, P2), await roomOf(FINISHED));
+
+		expect(rematchRow()).toMatchObject({ status: "playing", hostId: P2 });
+		expect(rematchRow()?.playerIds).toEqual([P2, P1]);
+	});
+
+	it("refuses a head to head rematch whose opponent left the server", async () => {
+		const world = makeWorld();
+		(world.guild.members.fetch as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(unknownMember());
+		insertFinishedRoom({ game: "rps", playerIds: [P1, P3] });
+		const before = fake.snapshot();
+		const interaction = pressRematch(world, P1);
+
+		await rematchFromRoom(interaction, await roomOf(FINISHED));
+
+		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.errors.rematchSeats(2, 2, 1) }));
+		expect(fake.snapshot()).toBe(before);
+	});
+
+	it("keeps a player whose member fetch failed for any other reason than leaving", async () => {
+		const world = makeWorld();
+		(world.guild.members.fetch as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("gateway timeout"));
+		insertFinishedRoom({ game: "rps", playerIds: [P1, P3] });
+
+		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
+
+		expect(rematchRow()?.playerIds).toEqual([P1, P3]);
 	});
 });
 

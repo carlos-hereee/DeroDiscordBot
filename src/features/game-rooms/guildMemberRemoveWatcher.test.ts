@@ -2,20 +2,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Events, type Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { findOpenByPlayer: vi.fn() },
+	gameRoomStore: { findOpenByPlayer: vi.fn(), findDraftsByPoolMember: vi.fn() },
 }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
-vi.mock("./roomDeparture.js", () => ({ departMatch: vi.fn() }));
+vi.mock("./roomDeparture.js", () => ({ departMatch: vi.fn(), leaveDraft: vi.fn() }));
 
 import { handleGuildMemberRemove, registerGameRoomMemberRemoveWatcher } from "./guildMemberRemoveWatcher.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
-import { departMatch } from "./roomDeparture.js";
+import { departMatch, leaveDraft } from "./roomDeparture.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
-const storeMock = gameRoomStore as unknown as { findOpenByPlayer: ReturnType<typeof vi.fn> };
+const storeMock = gameRoomStore as unknown as { findOpenByPlayer: ReturnType<typeof vi.fn>; findDraftsByPoolMember: ReturnType<typeof vi.fn> };
+const leaveDraftMock = leaveDraft as unknown as ReturnType<typeof vi.fn>;
 const trailMock = roomTrail as unknown as { postMove: ReturnType<typeof vi.fn> };
 const lifecycleMock = roomLifecycle as unknown as { finish: ReturnType<typeof vi.fn> };
 const departMock = departMatch as unknown as ReturnType<typeof vi.fn>;
@@ -43,6 +44,8 @@ beforeEach(() => {
 	trailMock.postMove.mockResolvedValue(true);
 	lifecycleMock.finish.mockResolvedValue(true);
 	departMock.mockResolvedValue(undefined);
+	leaveDraftMock.mockResolvedValue(true);
+	storeMock.findDraftsByPoolMember.mockResolvedValue([]);
 });
 
 describe("handleGuildMemberRemove", () => {
@@ -96,12 +99,13 @@ describe("handleGuildMemberRemove", () => {
 	});
 
 	it("sweeps every affected room when the leaver was in more than one", async () => {
-		// The store answer drives the fan-out: one departure per match in play, one line and
-		// one abandoned finish per draft.
+		// The store answer drives the fan-out: one departure per match in play, one line and one
+		// abandoned finish per draft the leaver hosted, and the leaver out of a draft they joined.
 		storeMock.findOpenByPlayer.mockResolvedValue([
 			makeRoom({ roomId: "room-1" }),
 			makeRoom({ roomId: "room-2", playerIds: ["leaver-1", "p9"], hostId: "p9" }),
 			makeRoom({ roomId: "room-3", status: "draft" }),
+			makeRoom({ roomId: "room-4", status: "draft", channelId: null, playerIds: ["leaver-1"], hostId: "leaver-1" }),
 		]);
 
 		await handleGuildMemberRemove(client, departed);
@@ -109,6 +113,37 @@ describe("handleGuildMemberRemove", () => {
 		expect(departMock).toHaveBeenCalledTimes(2);
 		expect(trailMock.postMove).toHaveBeenCalledOnce();
 		expect(lifecycleMock.finish).toHaveBeenCalledOnce();
+		expect(leaveDraftMock).toHaveBeenCalledOnce();
+		expect(leaveDraftMock.mock.calls[0][1]).toMatchObject({ roomId: "room-3" });
+	});
+
+	// 2026-10 item 276, found in Phase 2: a joiner waits in the draft's POOL, which findOpenByPlayer
+	// cannot see, so the leave was missed and their buy in and their place stayed on the card. Only
+	// the host leaving closes a draft; a joiner leaving leaves it for everyone else to play.
+	it("takes a joiner who left out of a draft they waited in, and the draft goes on", async () => {
+		const draft = makeRoom({ roomId: "draft-1", status: "draft", channelId: null, playerIds: ["host-1"], spectatorIds: ["leaver-1", "p3"] });
+		storeMock.findOpenByPlayer.mockResolvedValue([]);
+		storeMock.findDraftsByPoolMember.mockResolvedValue([draft]);
+
+		await handleGuildMemberRemove(client, departed);
+
+		expect(storeMock.findDraftsByPoolMember).toHaveBeenCalledWith("guild-1", "leaver-1");
+		expect(leaveDraftMock).toHaveBeenCalledWith(client, draft, "leaver-1");
+		expect(lifecycleMock.finish).not.toHaveBeenCalled();
+	});
+
+	it("takes a player out of a draft being built, and leaves it once when both reads find it", async () => {
+		// Start writes the joiners onto playerIds while the room is built, so the draft is found by
+		// both reads: it is left through the first and skipped by the second.
+		const building = makeRoom({ roomId: "draft-2", status: "draft", channelId: null, playerIds: ["host-1", "leaver-1"], spectatorIds: ["leaver-1"] });
+		storeMock.findOpenByPlayer.mockResolvedValue([building]);
+		storeMock.findDraftsByPoolMember.mockResolvedValue([building]);
+
+		await handleGuildMemberRemove(client, departed);
+
+		expect(leaveDraftMock).toHaveBeenCalledOnce();
+		expect(lifecycleMock.finish).not.toHaveBeenCalled();
+		expect(trailMock.postMove).not.toHaveBeenCalled();
 	});
 
 	it("costs a non-participant departure zero writes", async () => {
@@ -116,8 +151,11 @@ describe("handleGuildMemberRemove", () => {
 
 		await handleGuildMemberRemove(client, departed);
 
-		// One indexed read, nothing else: this fires on EVERY departure in the guild.
+		// Two indexed reads (the matches, then the drafts' pools), nothing else: this fires on EVERY
+		// departure in the guild.
 		expect(storeMock.findOpenByPlayer).toHaveBeenCalledWith("guild-1", "leaver-1");
+		expect(storeMock.findDraftsByPoolMember).toHaveBeenCalledWith("guild-1", "leaver-1");
+		expect(leaveDraftMock).not.toHaveBeenCalled();
 		expect(trailMock.postMove).not.toHaveBeenCalled();
 		expect(lifecycleMock.finish).not.toHaveBeenCalled();
 		expect(departMock).not.toHaveBeenCalled();

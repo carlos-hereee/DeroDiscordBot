@@ -3,7 +3,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
-import { departMatch } from "./roomDeparture.js";
+import { departMatch, leaveDraft } from "./roomDeparture.js";
 
 // ── guildMemberRemoveWatcher ─────────────────────────────────────────
 // What:  takes a departing member out of every live room they were playing in, with a
@@ -24,11 +24,13 @@ import { departMatch } from "./roomDeparture.js";
 // How:   a departure is that player's own forfeit, NOT abandonment (owner decision D12 of
 //        2026-10 item 276): a Monopoly seat surrenders and the match goes on, a Hold'em or
 //        Blackjack seat leaves the table, a Battleship captain loses rated, so the survivors
-//        keep their match and their result. The two exceptions go abandoned instead: a SOLO
-//        room (the only player is gone, there is no top up to pay and nobody to win), and a
-//        room that never reached "playing" (a draft or open challenge has no match to score,
-//        and paying the top up for a match never played would be free xp for whoever
-//        remained); finish refunds a draft's buy ins itself.
+//        keep their match and their result. A member waiting in someone else's draft leaves
+//        it and the draft goes on (roomDeparture.leaveDraft, 2026-10 item 276): a draft's
+//        joiners sit in its pool, not its playerIds, so a second small read finds them. Two
+//        cases go abandoned instead: a SOLO room (the only player is gone, there is no top
+//        up to pay and nobody to win), and a draft its HOST left (a challenge nobody hosts
+//        has no match to score, and paying the top up for a match never played would be
+//        free xp for whoever remained); finish refunds a draft's buy ins itself.
 
 // The slice of GuildMemberRemove's payload this watcher reads. discord.js hands a
 // GuildMember or PartialGuildMember; both carry these, and typing the slice keeps
@@ -40,8 +42,16 @@ export interface DepartedMember {
 
 export async function handleGuildMemberRemove(client: Client, member: DepartedMember): Promise<void> {
 	const rooms = await gameRoomStore.findOpenByPlayer(member.guild.id, member.id);
+	// A draft holds a joiner in its pool, and a draft being built holds them in playerIds too, so
+	// one draft can answer both reads; it is left once.
+	const draftsLeft = new Set<string>();
 
 	for (const room of rooms) {
+		if (room.visibility !== "solo" && room.status !== "playing" && room.hostId !== member.id) {
+			draftsLeft.add(room.roomId);
+			await leaveDraft(client, room, member.id);
+			continue;
+		}
 		if (room.visibility === "solo" || room.status !== "playing") {
 			// The line first, then the ending, so the transcript reads in the order the room
 			// experienced it: the player left, therefore the room closes.
@@ -59,6 +69,13 @@ export async function handleGuildMemberRemove(client: Client, member: DepartedMe
 		// failure is logged and never keeps the member seated in their other rooms.
 		await departMatch(client, room, member.id, "leftServer").catch((error) =>
 			console.error("[game-rooms] a departing member could not leave their match", { roomId: room.roomId, userId: member.id, error })
+		);
+	}
+
+	const drafts = await gameRoomStore.findDraftsByPoolMember(member.guild.id, member.id);
+	for (const draft of drafts.filter((candidate) => !draftsLeft.has(candidate.roomId))) {
+		await leaveDraft(client, draft, member.id).catch((error) =>
+			console.error("[game-rooms] a departing member could not leave a draft", { roomId: draft.roomId, userId: member.id, error })
 		);
 	}
 }

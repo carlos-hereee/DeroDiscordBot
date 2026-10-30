@@ -4,7 +4,8 @@ import { mapWithConcurrency } from "@utils/mapWithConcurrency.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { expireBattleshipTurnIfDue } from "./roomBattleshipHandlers.js";
-import { forfeitIdleMonopolySeatIfDue } from "./roomMonopolyHandlers.js";
+import { forfeitIdleMonopolySeatIfDue, forfeitRemovedMonopolySeats } from "./roomMonopolyHandlers.js";
+import { monopolyStateOf } from "./roomMonopolyBoard.js";
 import { lastActivityAt } from "./roomActivity.js";
 import { isBlackjackRoomGame } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -91,6 +92,11 @@ export interface MonopolyIdleSummary {
  * inside applyForfeit, so a match is never emptied in a single sweep. The backstop of the
  * turn clock (2026-10 item 267), which forfeits at the deadline through the same
  * forfeitIdleMonopolySeatIfDue.
+ *
+ * First, a seat the host removed that a busy board kept (2026-10 item 276, audit P3) is taken out:
+ * the removal already took the member out of the room, so nobody can play that seat, and without
+ * this it held the match up until its idle budget ran out. A tick that takes one out stops there,
+ * since the room it read is now a move old.
  */
 export async function sweepMonopolyIdle(client: Client, now: Date = new Date()): Promise<MonopolyIdleSummary> {
 	const rooms = await gameRoomStore.findPlayingByGame("monopoly");
@@ -101,6 +107,9 @@ export async function sweepMonopolyIdle(client: Client, now: Date = new Date()):
 
 	await mapWithConcurrency(rooms, BOT_CONSTANTS.SCHEDULER_GUILD_CONCURRENCY, async (room) => {
 		try {
+			const removed = await forfeitRemovedMonopolySeats(client, room);
+			seatsForfeited += removed;
+			if (removed > 0) return;
 			const written = await forfeitIdleMonopolySeatIfDue(client, room, now);
 			if (!written) return;
 			seatsForfeited++;
@@ -145,6 +154,13 @@ function lastRoomActionAt(room: IGameRoom): number {
 	return stamp ? new Date(stamp).getTime() : 0;
 }
 
+// A Monopoly room the idle seat forfeit looks after: a match in play with its board. A playing row
+// with no board is a match whose seeding failed after the start claim (2026-10 item 276, audit
+// P1-5), which sweepMonopolyIdle cannot read, so the idle sweep below finishes it like any room.
+function isMonopolyMatchWithBoard(room: IGameRoom): boolean {
+	return room.game === "monopoly" && (room.status !== "playing" || monopolyStateOf(room) !== null);
+}
+
 // A hosted or solo hangman room past its draft, whether or not its word is set yet.
 // See the exemption note on sweepIdleRooms below.
 function isHangmanRoundInPlay(room: IGameRoom): boolean {
@@ -159,7 +175,8 @@ function isHangmanRoundInPlay(room: IGameRoom): boolean {
  *
  * ⚠️ MONOPOLY IS EXEMPT. Its opener tells players a seat has GAME_ROOM_MONOPOLY_IDLE_MS on the clock,
  * and sweepMonopolyIdle above already forfeits one idle seat per budget until one is left,
- * so a Monopoly room cannot strand its host's slot either.
+ * so a Monopoly room cannot strand its host's slot either. The one exception is a playing row
+ * with no board (isMonopolyMatchWithBoard), which has no seat to forfeit.
  *
  * ⚠️ A HANGMAN ROUND IN PLAY IS EXEMPT TOO, hosted or solo, by the owner's decision of
  * 2026-10-23: hangman is a relaxed game, not a race, so it has no clock. Its host
@@ -172,7 +189,7 @@ export async function sweepIdleRooms(client: Client, now: Date = new Date()): Pr
 
 	await mapWithConcurrency(rooms, BOT_CONSTANTS.SCHEDULER_GUILD_CONCURRENCY, async (room) => {
 		try {
-			if (room.game === "monopoly") return;
+			if (isMonopolyMatchWithBoard(room)) return;
 			if (isHangmanRoundInPlay(room)) return;
 			if (now.getTime() - lastRoomActionAt(room) < BOT_CONSTANTS.GAME_ROOM_IDLE_ABANDON_MS) return;
 			const ended = await roomLifecycle.finish(client, room, { abandoned: true, now });

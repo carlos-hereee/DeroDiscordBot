@@ -8,6 +8,7 @@ import { sweepIdleRooms } from "./roomTurnSweep.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { createTable } from "@features/games/holdemTable.js";
+import { createInitialState } from "@features/games/monopolyState.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -124,10 +125,28 @@ describe("sweepIdleRooms", () => {
 	});
 
 	it("leaves Monopoly to its own day long seat clock", async () => {
-		storeMock.findNonTerminal.mockResolvedValue([makeRoom({ game: "monopoly", updatedAt: ago(120) })]);
+		const board = createInitialState(["host", "guest"], { auctionsEnabled: false });
+		storeMock.findNonTerminal.mockResolvedValue([makeRoom({ game: "monopoly", secret: board as never, updatedAt: ago(120) })]);
 
 		expect(await sweepIdleRooms(client, NOW)).toEqual({ roomsAbandoned: 0 });
 		expect(finishMock).not.toHaveBeenCalled();
+	});
+
+	// 2026-10 item 276, audit P1-5: a row the start claim moved to playing whose board was never
+	// written (the engine threw on one seat) has no seat for the Monopoly sweep to forfeit, so it
+	// used to hold its host's one room slot for good.
+	it("finishes a playing Monopoly row with no board once it idles past the budget", async () => {
+		const stranded = makeRoom({ game: "monopoly", secret: null, updatedAt: ago(45) });
+		storeMock.findNonTerminal.mockResolvedValue([stranded]);
+
+		expect(await sweepIdleRooms(client, NOW)).toEqual({ roomsAbandoned: 1 });
+		expect(finishMock).toHaveBeenCalledWith(client, stranded, { abandoned: true, now: NOW });
+	});
+
+	it("leaves a Monopoly row with no board alone inside the budget, while its seed may still be writing it", async () => {
+		storeMock.findNonTerminal.mockResolvedValue([makeRoom({ game: "monopoly", secret: null, updatedAt: ago(5) })]);
+
+		expect(await sweepIdleRooms(client, NOW)).toEqual({ roomsAbandoned: 0 });
 	});
 
 	// The owner's decision of 2026-10-23: hangman has no clock, hosted or solo, so a

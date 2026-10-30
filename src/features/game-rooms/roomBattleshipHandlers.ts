@@ -68,12 +68,25 @@ export async function redrawBattleshipBoard(
 	sinking: BattleshipSinking | null = null,
 	turn: readonly RoomMoveInput[] = []
 ): Promise<void> {
-	if (!stored.boardMessageId || !room.channelId) return;
+	await drawBattleshipBoard(client, room, stored, sinking, turn);
+	// The line that pings the captain whose turn it now is, below the board that was just drawn,
+	// and that captain's turn clock (2026-10 item 267), counted from the move the board shows.
+	// ⚠️ EVEN WHEN NO BOARD COULD BE DRAWN (2026-10 item 276, audit P3): a match whose board post
+	// failed used to get no prompt and no clock, so nobody was pinged and the sweep could forfeit and
+	// rate a turn nobody was ever offered. The prompt's Take your turn plays a shot without a board.
+	await syncTurnPrompt(client, room, battleshipTurnAdapter);
+	await syncTurnClocks(client, room, [battleshipTurnClock]);
+}
+
+// The board half of redrawBattleshipBoard. A match whose board was never posted (its id null)
+// still posts the next running board, which is how a failed post recovers.
+async function drawBattleshipBoard(client: Client, room: IGameRoom, stored: StoredBattleship, sinking: BattleshipSinking | null, turn: readonly RoomMoveInput[]): Promise<void> {
+	if (!room.channelId) return;
 	const channel = await client.channels.fetch(room.channelId).catch(() => null);
 	if (!(channel instanceof TextChannel)) return;
-	// Null when an admin deleted it: a running battle still posts its next board, so the turn's
-	// moves are never lost with it; only setup, which edits in place, needs it.
-	const message = await channel.messages.fetch(stored.boardMessageId).catch(() => null);
+	// Null when an admin deleted it or it was never posted: a running battle still posts its next
+	// board, so the turn's moves are never lost with it; only setup, which edits in place, needs it.
+	const message = stored.boardMessageId ? await channel.messages.fetch(stored.boardMessageId).catch(() => null) : null;
 
 	const state = deserializeMatch(stored);
 	await withDrawingPause({
@@ -98,10 +111,6 @@ export async function redrawBattleshipBoard(
 			await message?.edit({ ...board, content: null, attachments: [] });
 		},
 	}).catch((error) => console.warn("[game-rooms] failed to redraw the battleship board", error));
-	// The line that pings the captain whose turn it now is, below the board that was just drawn,
-	// and that captain's turn clock (2026-10 item 267), counted from the move the board shows.
-	await syncTurnPrompt(client, room, battleshipTurnAdapter);
-	await syncTurnClocks(client, room, [battleshipTurnClock]);
 }
 
 // ── the turn's end (the sweep's and the turn clock's) ─────────────────

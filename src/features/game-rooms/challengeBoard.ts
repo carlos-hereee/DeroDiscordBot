@@ -2,6 +2,7 @@ import {
 	ActionRowBuilder,
 	ChannelType,
 	MessageFlags,
+	RESTJSONErrorCodes,
 	StringSelectMenuBuilder,
 	TextChannel,
 	type ButtonInteraction,
@@ -17,6 +18,7 @@ import {
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { errorEmbed } from "@utils/embedBuilder.js";
+import { isGone } from "@utils/discordGone.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { MAX_SEATS as MONOPOLY_MAX_SEATS } from "@features/games/monopolyBoard.js";
 import { MAX_SEATS as BLACKJACK_MAX_SEATS } from "@features/games/blackjackHandler.js";
@@ -57,6 +59,7 @@ import {
 } from "./challengeBoardEmbeds.js";
 import { isBlackjackRoomGame, isBuyInGame, isSoloLuckGame, isSoloRematchGame, refereeOn, type GameSlug, type RoomVisibility } from "./roomTypes.js";
 import { effectiveSpectatorMode } from "./roomPermissions.js";
+import { seatRangeOf, seatsFit } from "./seatRange.js";
 import { cardStateFor, challengeCardLink, editOpenerCard, readChallengeChannelIds, refreshCard, resolveChallengesChannel, type ChallengeChannelIds } from "./challengeCard.js";
 import { asChallengeReach, isWithinReach, readChallengeReach } from "./challengeReach.js";
 import { isKicked, judgeJoin } from "./joinGate.js";
@@ -1110,6 +1113,13 @@ export async function handleOpponentSelect(interaction: StringSelectMenuInteract
 		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.notYourChallenge] });
 		return;
 	}
+	// A picker outlives its card (2026-10 item 276, audit P3): a second picker submitted after the
+	// first started the match would otherwise redraw the live match's card as a draft and count in
+	// a start that can only fail, so a card no longer a draft is gone as far as this Submit goes.
+	if (room.status !== "draft") {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.challenge, sections: [gameRoomsCopy.board.draftGone] });
+		return;
+	}
 
 	// A member the host removed after this picker opened is out of the pool by now, so
 	// the pool check refuses them; isKicked says so outright rather than leaning on it.
@@ -1178,7 +1188,17 @@ async function provisionFromDraft(
 	}
 	const paidSeats = settled.seats;
 
-	await gameRoomStore.update(room.guildId, room.roomId, { playerIds, spectatorIds });
+	// Written against the pool as it is stored NOW, not as Start read it (gameRoomStore.seatDraft),
+	// so a member removed or gone from the server since then is neither seated nor let in. The
+	// channel's overwrites below come from what was written.
+	const seated = await gameRoomStore.seatDraft(room.guildId, room.roomId, room.hostId, playerIds, spectatorIds);
+	if (!seated) {
+		// Call it off, the idle sweep or the leave watcher closed the draft first: give the host's
+		// seat back the way a refused open does, and say the challenge is gone.
+		if (paidSeats) await refundOpenedSeats(room, paidSeats);
+		await answerOpenRefusal(interaction, answer, { ok: false, reason: "calledOff" });
+		return;
+	}
 
 	const host = guild.members.cache.get(room.hostId) ?? (await guild.members.fetch(room.hostId).catch(() => null));
 	const result = await RoomProvisioner.open({
@@ -1187,8 +1207,8 @@ async function provisionFromDraft(
 		game: room.game,
 		hostId: room.hostId,
 		hostDisplayName: host?.displayName ?? host?.user.username ?? "player",
-		playerIds,
-		spectatorIds,
+		playerIds: seated.playerIds,
+		spectatorIds: seated.spectatorIds,
 		visibility: room.visibility,
 		spectatorMode: room.spectatorMode ?? null,
 		adminRoleId: config?.adminRoleId ?? null,
@@ -1270,7 +1290,7 @@ export async function rematchFromRoom(interaction: ButtonInteraction, room: IGam
 	// them back from here; once the table opened, its ledger and finish do.
 	const charge: RematchCharge = { seats: check.hostSeats, ledgered: false };
 	try {
-		const failure = await playRematchInPlace(interaction, room, check.channel, charge);
+		const failure = await playRematchInPlace(interaction, room, check, charge);
 		if (failure) {
 			if (!charge.ledgered && charge.seats) await refundSeatsDirectly(charge.seats);
 			await answerInChannel(interaction, "here", { content: failure });
@@ -1291,9 +1311,16 @@ interface RematchCharge {
 	ledgered: boolean;
 }
 
-type RematchCheck =
-	| { ok: true; channel: TextChannel; hostSeats: PaidSeats | null }
-	| { ok: false; reply: { content: string } | { embeds: EmbedBuilder[] } };
+// What a rematch that may start carries on: the channel it plays in, the host's buy in, and the
+// players it seats (the finished match's, minus anyone who left the server, the presser hosting).
+interface RematchReady {
+	ok: true;
+	channel: TextChannel;
+	hostSeats: PaidSeats | null;
+	playerIds: string[];
+}
+
+type RematchCheck = RematchReady | { ok: false; reply: { content: string } | { embeds: EmbedBuilder[] } };
 
 // ① Every reason to refuse a rematch, checked before anything is written. On success it
 // hands back the channel the rematch will play in.
@@ -1328,6 +1355,17 @@ async function checkRematch(interaction: ButtonInteraction, room: IGameRoom): Pr
 	const channel = await resolveRoomChannel(interaction.client, room.channelId);
 	if (!channel) return { ok: false, reply: { content: gameRoomsCopy.errors.notFound } };
 
+	// ⚠️ THE SEAT COUNT IS CHECKED BEFORE ANY WRITE (2026-10 item 276, audit P1-5). A player the
+	// host removed is already off playerIds and one who left the server is left out here, so a
+	// Monopoly match whose second player was removed would rematch with one seat; its engine then
+	// threw after the row was playing, and nothing ever closed it, holding the host's slot.
+	const { playerIds } = resolveRoomSeats(room.visibility, interaction.user.id, await playersStillInServer(interaction.guild!, room.playerIds));
+	const seats = playerIds.length + botSeatIdsFor(room.game, playerIds.length, room.botSeats ?? 0).length;
+	if (!seatsFit(room.game, seats)) {
+		const range = seatRangeOf(room.game);
+		return { ok: false, reply: { content: gameRoomsCopy.errors.rematchSeats(range.min, range.max, seats) } };
+	}
+
 	const admission = await checkRoomAdmission({ guild: interaction.guild!, hostId: interaction.user.id, visibility: room.visibility });
 	// Every admission refusal (one room per host, a full server, the private ceiling, the
 	// reach) is a state, so it opens as a titled notice rather than an error embed (R3-12).
@@ -1338,7 +1376,20 @@ async function checkRematch(interaction: ButtonInteraction, room: IGameRoom): Pr
 	const hostSeats = isBlackjackRoomGame(room.game) ? await chargeRematchHost(room, interaction.user.id) : null;
 	if (hostSeats && "refusal" in hostSeats) return { ok: false, reply: { content: hostSeats.refusal } };
 
-	return { ok: true, channel, hostSeats };
+	return { ok: true, channel, hostSeats, playerIds };
+}
+
+// The finished match's players who are still in the server (2026-10 item 276, found in Phase 2):
+// a match goes on without a member who leaves it, so they stay on its playerIds, and a rematch
+// must not seat them again. Only Discord's own Unknown Member answer drops one (isGone), so a
+// fetch that failed for any other reason keeps the player rather than losing them on a blip.
+async function playersStillInServer(guild: Guild, playerIds: readonly string[]): Promise<string[]> {
+	const present: string[] = [];
+	for (const userId of playerIds) {
+		const known = guild.members.cache.has(userId);
+		if (known || !(await isGone(() => guild.members.fetch(userId), RESTJSONErrorCodes.UnknownMember))) present.push(userId);
+	}
+	return present;
 }
 
 // The rematch host's buy in: the finished table's, on a server where the table plays for chips.
@@ -1368,11 +1419,12 @@ async function seatRematchPlayers(client: Client, room: IGameRoom, hostSeats: Pa
 
 // ② to ⑤. Returns the sentence to tell the presser when the rematch could not start,
 // or null once the new match is playable.
-async function playRematchInPlace(interaction: ButtonInteraction, finished: IGameRoom, channel: TextChannel, charge: RematchCharge): Promise<string | null> {
+async function playRematchInPlace(interaction: ButtonInteraction, finished: IGameRoom, check: RematchReady, charge: RematchCharge): Promise<string | null> {
+	const { channel } = check;
 	const guild = interaction.guild!;
 	const hostId = interaction.user.id;
 
-	const takeover = await takeOverChannel(finished, hostId, channel.id);
+	const takeover = await takeOverChannel(finished, hostId, channel.id, check.playerIds);
 	if (!takeover.ok) {
 		return takeover.reason === "alreadyHosting" ? gameRoomsCopy.errors.alreadyHosting(null) : gameRoomsCopy.errors.rematchAlreadyOffered;
 	}
@@ -1447,8 +1499,8 @@ type ChannelTakeover = { ok: true; room: IGameRoom } | { ok: false; reason: "alr
 // ② The two row writes, in the order the header above explains: the new row is born on
 // the channel, then the finished row releases it. The new row is a "draft" until
 // seedRoom moves it to "playing", like every room before its match is seeded.
-async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: string): Promise<ChannelTakeover> {
-	const { playerIds, spectatorIds } = resolveRoomSeats(finished.visibility, hostId, finished.playerIds, finished.spectatorIds);
+async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: string, playerIds: string[]): Promise<ChannelTakeover> {
+	const { spectatorIds } = resolveRoomSeats(finished.visibility, hostId, playerIds, finished.spectatorIds);
 
 	let next: IGameRoom;
 	try {

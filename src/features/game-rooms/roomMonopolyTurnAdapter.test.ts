@@ -5,7 +5,7 @@ vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
 vi.mock("@features/ratings/recordMatchRatings.js", () => ({ recordMatchRatings: vi.fn(), monopolyFinishingOrder: vi.fn(() => []) }));
 
-import { monopolyTurnAdapter } from "./roomMonopolyHandlers.js";
+import { monopolyIdleTurnClock, monopolyTurnAdapter } from "./roomMonopolyHandlers.js";
 import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -40,6 +40,47 @@ describe("whose turn it is", () => {
 		expect(monopolyTurnAdapter.fingerprintOf(roomOf(sameTurn))).toBe(monopolyTurnAdapter.fingerprintOf(roomOf(state)));
 		expect(monopolyTurnAdapter.fingerprintOf(roomOf(nextTurn))).not.toBe(monopolyTurnAdapter.fingerprintOf(roomOf(state)));
 		expect(monopolyTurnAdapter.fingerprintOf(roomOf(state))).not.toContain(":");
+	});
+});
+
+// 2026-10 item 276, audit P2-3: a card or a rent can charge a seat whose turn it is not, and only the
+// debtor's Pay moves the match on. The line used to ping the seat on the clock with a dead Take your
+// turn while the debtor, unpinged, held the match for up to its whole idle budget.
+describe("while a rival's debt is waited on", () => {
+	// B owes the bank on A's turn: the debt a card drawn on A's roll can charge a rival.
+	const owing = (debtorId: string): MonopolyState => ({
+		...fresh(),
+		phase: "awaiting-debt",
+		pendingDebt: { debts: [{ debtorId, creditorId: A, amount: 200 }], resumePhase: "post-roll", moveAfter: null },
+	});
+
+	it("puts the debtor on the turn line, not the seat on the clock", () => {
+		expect(monopolyTurnAdapter.whoseTurn(roomOf(owing(B)))).toBe(B);
+	});
+
+	it("is a new line, pinging the debtor, and the turn's own line again once it is paid", () => {
+		const turn = monopolyTurnAdapter.fingerprintOf(roomOf(fresh()));
+		const debtLine = monopolyTurnAdapter.fingerprintOf(roomOf(owing(B)));
+		expect(debtLine).not.toBe(turn);
+		expect(debtLine).not.toContain(":");
+		expect(monopolyTurnAdapter.fingerprintOf(roomOf({ ...owing(B), phase: "post-roll", pendingDebt: null }))).toBe(turn);
+	});
+
+	it("offers the debtor Pay, and the seat on the clock nothing", () => {
+		expect(optionValues(roomOf(owing(B)), B)).toEqual(["paydebt"]);
+		expect(monopolyTurnAdapter.view(roomOf(owing(B)), A)).toBeNull();
+	});
+
+	// The idle clock's warning moves the turn line's buttons down to the member it warns only when
+	// that member owns the line (turnPrompt.postTurnWarning), so the two must name the same seat.
+	it("warns the same member the turn line pings, so the warning carries the Pay button", () => {
+		const room = roomOf(owing(B));
+		expect(monopolyIdleTurnClock.current(room, Date.now())?.memberId).toBe(monopolyTurnAdapter.whoseTurn(room));
+	});
+
+	it("keeps the turn's own line when the seat on the clock owes from its own landing", () => {
+		expect(monopolyTurnAdapter.whoseTurn(roomOf(owing(A)))).toBe(A);
+		expect(monopolyTurnAdapter.fingerprintOf(roomOf(owing(A)))).toBe(monopolyTurnAdapter.fingerprintOf(roomOf(fresh())));
 	});
 });
 

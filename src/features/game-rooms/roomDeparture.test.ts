@@ -7,13 +7,20 @@ vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("./roomMonopolySurrender.js", () => ({ surrenderMonopolySeat: vi.fn() }));
 vi.mock("./roomHoldemHandlers.js", () => ({ removeFromTable: vi.fn() }));
 vi.mock("./roomBattleshipHandlers.js", () => ({ forfeitBattleship: vi.fn() }));
+// A draft a joiner left (2026-10 item 276): the store's pull, the ledger's refund, the card's redraw.
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { leaveDraftPool: vi.fn() } }));
+vi.mock("./holdemDraftBuyIn.js", () => ({ refundJoiners: vi.fn() }));
+vi.mock("./challengeBoard.js", () => ({ refreshDraftCard: vi.fn() }));
 vi.mock("./roomHangman.js", () => ({
 	giveUpHangmanRound: vi.fn(),
 	leaveHangmanRound: vi.fn(),
 	isHangmanRoom: (room: { game: string }) => room.game === "hangman" || room.game === "solo-hangman",
 }));
 
-import { departMatch } from "./roomDeparture.js";
+import { departMatch, leaveDraft } from "./roomDeparture.js";
+import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { refundJoiners } from "./holdemDraftBuyIn.js";
+import { refreshDraftCard } from "./challengeBoard.js";
 import { leaveBlackjackRoomSeat } from "@features/games/blackjackHandler.js";
 import { roomTrail } from "./roomTrail.js";
 import { roomLifecycle } from "./roomLifecycle.js";
@@ -127,5 +134,35 @@ describe("departMatch (2026-10 item 276, audit P1-4)", () => {
 		await departMatch(client, room, "leaver-1", "forfeit");
 
 		expect(finish).toHaveBeenCalledWith(client, room, { winnerId: "host-1", outcome: { bucket: "forfeit" } });
+	});
+});
+
+// ── a joiner leaving a draft (2026-10 item 276, found in Phase 2) ──────
+// The draft goes on without them: out of its lists, their buy in back, the card redrawn. Closing
+// the whole draft turned every other joiner away over one leave.
+describe("leaveDraft", () => {
+	const guild = { id: "guild-1" };
+	const withGuild = { user: { id: "bot-1" }, guilds: { cache: new Map([["guild-1", guild]]) } } as unknown as Client;
+	const draft = (): IGameRoom => makeRoom("holdem", { status: "draft", channelId: null, playerIds: ["host-1"], spectatorIds: ["leaver-1", "p3"] });
+
+	it("takes the joiner out, gives their buy in back, and redraws the card", async () => {
+		const updated = { ...draft(), spectatorIds: ["p3"] };
+		mocked(gameRoomStore.leaveDraftPool).mockResolvedValue(updated);
+
+		expect(await leaveDraft(withGuild, draft(), "leaver-1")).toBe(true);
+
+		expect(gameRoomStore.leaveDraftPool).toHaveBeenCalledWith("guild-1", "room-1", "leaver-1");
+		expect(refundJoiners).toHaveBeenCalledWith(updated, ["leaver-1"]);
+		expect(refreshDraftCard).toHaveBeenCalledWith(guild, updated);
+		expect(finish).not.toHaveBeenCalled();
+	});
+
+	it("does nothing to a draft that started or closed meanwhile", async () => {
+		mocked(gameRoomStore.leaveDraftPool).mockResolvedValue(null);
+
+		expect(await leaveDraft(withGuild, draft(), "leaver-1")).toBe(false);
+
+		expect(refundJoiners).not.toHaveBeenCalled();
+		expect(refreshDraftCard).not.toHaveBeenCalled();
 	});
 });

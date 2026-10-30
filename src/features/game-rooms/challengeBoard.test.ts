@@ -6,6 +6,9 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: {
 		findByRoomId: vi.fn(),
 		update: vi.fn(),
+		// Start's player and pool lists, written as given: the filter against the stored pool is the
+		// store's own (gameRoomStore.seatDraft), and stores are not unit tested (house rule 6).
+		seatDraft: vi.fn(async (_guildId: string, _roomId: string, _hostId: string, playerIds: string[], spectatorIds: string[]) => ({ playerIds, spectatorIds })),
 		addPoolMember: vi.fn(),
 		markArchived: vi.fn(),
 		archiveDraft: vi.fn(async (guildId: string, roomId: string) => ({ guildId, roomId, status: "archived", buyInPaidBy: [] })),
@@ -424,6 +427,22 @@ describe("the spectator setting at start", () => {
 		await startWithAna(makeRoom({ visibility, spectatorMode, spectatorIds: ["a", "b"] }));
 
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ playerIds: [HOST, "a"], spectatorIds: [...spectators], spectatorMode }));
+	});
+
+	// 2026-10 item 276, audit P3: a picker outlives its card, so a second picker submitted after the
+	// first started the match counted in again and redrew the live match's card as a draft.
+	it("refuses a picker submitted after the match already started, and starts nothing", async () => {
+		const select = {
+			...makeSelect(HOST, ["a"], members),
+			customId: "gameroomSelect:opponent:room-1",
+		};
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "playing", spectatorIds: ["a", "b"] }));
+
+		await handleOpponentSelect(select as unknown as StringSelectMenuInteraction);
+		await _runStartCountdownsOut();
+
+		expect(openMock).not.toHaveBeenCalled();
+		expect(JSON.stringify((select.reply as ReturnType<typeof vi.fn>).mock.calls)).toContain(gameRoomsCopy.board.draftGone);
 	});
 });
 

@@ -8,6 +8,9 @@ import { surrenderMonopolySeat } from "./roomMonopolySurrender.js";
 import { removeFromTable } from "./roomHoldemHandlers.js";
 import { forfeitBattleship } from "./roomBattleshipHandlers.js";
 import { giveUpHangmanRound, isHangmanRoom, leaveHangmanRound } from "./roomHangman.js";
+import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { refundJoiners } from "./holdemDraftBuyIn.js";
+import { refreshDraftCard } from "./challengeBoard.js";
 
 // ── roomDeparture ────────────────────────────────────────────────────
 // What:  a player leaving a match in play, game by game (2026-10 item 276, audit P1-4, P2-4
@@ -20,8 +23,9 @@ import { giveUpHangmanRound, isHangmanRoom, leaveHangmanRound } from "./roomHang
 //        ended a Monopoly match or a Hold'em table for everyone over one leave, named the wrong
 //        winner and skipped the game's own rating and payout. A member who leaves the server
 //        forfeits exactly as if they had pressed Leave or Surrender (owner decision D12).
-// What it does NOT do: a draft or a solo room, which the watcher closes as abandoned, since
-//        neither has a match left to score.
+// What it does NOT do: a solo room, or a draft its HOST left, which the watcher closes as
+//        abandoned, since neither has a match left to score. A draft a joiner left goes on
+//        without them (leaveDraft below).
 
 /** Why the player is leaving: their own confirmed Forfeit, or leaving the server. */
 export type DepartureCause = "forfeit" | "leftServer";
@@ -77,6 +81,23 @@ export async function departMatch(client: Client, room: IGameRoom, userId: strin
 	await roomTrail.postMove(client, room, reason);
 	const remaining = room.playerIds.filter((id) => id !== userId);
 	await roomLifecycle.finish(client, room, { winnerId: remaining.length === 1 ? remaining[0] : null, outcome: { bucket: "forfeit" } });
+}
+
+/**
+ * A member who waited in a draft (a joiner, an invitee, a join request, or a player of a draft
+ * being built) left the server (2026-10 item 276, found in Phase 2): they leave the draft, their buy
+ * in comes back, and the card is redrawn, while everyone else keeps waiting. Closing the whole
+ * draft as abandoned refunded and turned away every other joiner over one leave. The refund claims
+ * the ledger entry first (refundJoiners), so it pays once whoever else refunds. Answers whether the
+ * member was taken out; a draft that started or closed meanwhile is left to its own paths.
+ */
+export async function leaveDraft(client: Client, room: IGameRoom, userId: string): Promise<boolean> {
+	const updated = await gameRoomStore.leaveDraftPool(room.guildId, room.roomId, userId);
+	if (!updated) return false;
+	await refundJoiners(updated, [userId]);
+	const guild = client.guilds.cache.get(room.guildId);
+	if (guild) await refreshDraftCard(guild, updated);
+	return true;
 }
 
 // The line that says why the seat left: a forfeit is a move the player made, a server leave is

@@ -19,6 +19,8 @@ vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGui
 // The board picture. Mocked so the first board is the text map unless a case hands
 // the renderer a picture, whatever art is on disk where the suite runs.
 vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn() }));
+// A seed the start claim left short closes its room (2026-10 item 276, audit P1-5).
+vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 
 import { RoomProvisioner, _clearInflightOpens, type RoomOpenInput } from "./RoomProvisioner.js";
 import { renderBoard } from "@features/games/monopolyRenderer.js";
@@ -26,6 +28,7 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { checkGameRoomAccess } from "@features/entitlements/gameRoomAccess.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { roomLifecycle } from "./roomLifecycle.js";
 import type { MonopolyState } from "@features/games/monopolyState.js";
 
 // ── a Monopoly room ──────────────────────────────────────────────────
@@ -45,14 +48,20 @@ type SentPayload = {
 function makeGuild() {
 	let messageCount = 0;
 	const send = vi.fn(async () => ({ id: `message-${++messageCount}`, pin: vi.fn().mockResolvedValue(undefined) }));
-	const created = { id: "room-channel-1", send, delete: vi.fn(), createInvite: vi.fn(async () => ({ code: "invite-1" })) };
+	const created = {
+		id: "room-channel-1",
+		send,
+		delete: vi.fn().mockResolvedValue(undefined),
+		createInvite: vi.fn(async () => ({ code: "invite-1" })),
+		permissionOverwrites: { delete: vi.fn().mockResolvedValue(undefined) },
+	};
 	const guild = {
 		id: "guild-1",
 		roles: { everyone: { id: "everyone" } },
 		client: { user: { id: "bot-1" }, channels: { fetch: vi.fn().mockResolvedValue(null) } },
 		channels: { create: vi.fn(async () => created) },
 	} as unknown as Guild;
-	return { guild, send };
+	return { guild, send, created };
 }
 
 const category = { id: "arcade-cat", children: { cache: { map: () => [] } } } as unknown as CategoryChannel;
@@ -219,5 +228,35 @@ describe("RoomProvisioner.open for monopoly", () => {
 		expect(board?.files).toEqual([]);
 		expect(board?.embeds[0].data.image).toBeUndefined();
 		expect(board?.embeds[0].data.description).toContain(gameRoomsCopy.monopoly.boardMapLabel);
+	});
+});
+
+// ── the players the start claim still holds (2026-10 item 276) ──────────
+// Start writes the players before the room is built, and a member the host removes or who leaves
+// the server while it is built comes off the row. The claim's row is the truth: the match seats only
+// the players it still lists, and a member it dropped loses the overwrite the build gave them.
+describe("seeding from the row the start claim read", () => {
+	it("seats only the players the claimed row still lists, and takes a dropped player's overwrite back", async () => {
+		const { guild, created } = makeGuild();
+		storeMock.claimForPlay.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", hostId: "host-1", status: "draft", buyInPaidBy: [], playerIds: ["host-1", "player-2"] });
+
+		const result = await RoomProvisioner.open(input(guild));
+
+		expect(result.ok).toBe(true);
+		expect(storedState().seats.map((seat) => seat.userId)).toEqual(["host-1", "player-2"]);
+		expect(created.permissionOverwrites.delete).toHaveBeenCalledExactlyOnceWith("player-3", expect.any(String));
+	});
+
+	// Audit P1-5: the engine threw on one seat AFTER the row was playing, and no sweep found a
+	// Monopoly row with no board, so the host's one room slot was held for good.
+	it("closes the room as abandoned rather than seeding a one seat match", async () => {
+		const { guild } = makeGuild();
+		storeMock.claimForPlay.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", hostId: "host-1", status: "draft", buyInPaidBy: [], playerIds: ["host-1"] });
+
+		const result = await RoomProvisioner.open(input(guild));
+
+		expect(result).toMatchObject({ ok: false });
+		expect(roomLifecycle.finish).toHaveBeenCalledWith(guild.client, expect.objectContaining({ roomId: "room-1" }), { abandoned: true });
+		expect(storeMock.update.mock.calls.some((call) => "secret" in (call[2] as object))).toBe(false);
 	});
 });

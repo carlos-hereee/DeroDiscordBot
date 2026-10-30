@@ -1,4 +1,5 @@
-import { DiscordAPIError, Events, RESTJSONErrorCodes, type Client, type Guild } from "discord.js";
+import { Events, RESTJSONErrorCodes, type Client, type Guild } from "discord.js";
+import { isGone } from "@utils/discordGone.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { roomTrail } from "./roomTrail.js";
@@ -364,16 +365,6 @@ async function reconcileSatellite(client: Client, room: IGameRoom, satellite: Sa
 	}
 	if (departed.length === 0) return 0;
 	return seatOutSatellitePlayers(client, room, satellite.guildId, departed, "leftServer", { endSatellite: false });
-}
-
-// True only when Discord answered that the thing does not exist.
-async function isGone(fetch: () => Promise<unknown>, unknownCode: number): Promise<boolean> {
-	try {
-		await fetch();
-		return false;
-	} catch (error) {
-		return error instanceof DiscordAPIError && error.code === unknownCode;
-	}
 }
 
 export const satelliteSeats = {

@@ -724,6 +724,63 @@ describe("handleGuessModal, the host gate", () => {
 	});
 });
 
+// ── a round that ended on the row but never finished (2026-10 item 276, audit P3) ──
+// A solving guess was saved and the process died before finish ran. The round used to read as
+// still playing, so the next letter could only be a miss, and six of them lost a solved word.
+describe("handleGuessModal, a round whose ending never ran", () => {
+	const LATE = "guesser-2";
+
+	function solvedRoom(): IGameRoom {
+		const room = { ...makeRoom(), playerIds: [HOST, GUESSER, LATE] } as IGameRoom;
+		(room.secret as { guessedLetters: string[] }).guessedLetters = ["p", "l", "a", "n", "e", "t"];
+		room.moves = [
+			{ actorId: GUESSER, at: new Date(), kind: "guess", text: "found t", meta: { letter: "t", hit: true, wrong: 0 } },
+		] as IGameRoom["moves"];
+		return room;
+	}
+
+	it("finishes a solved round on the next guess, credits the solver, and plays no letter", async () => {
+		storeMock.findByRoomId.mockResolvedValue(solvedRoom());
+
+		// LATE submits; the transcript says GUESSER found the last letter, so GUESSER is the solver.
+		await handleGuessModal(makeSubmit(LATE, "z"));
+
+		expect(storeMock.setSecretFieldsIf).not.toHaveBeenCalled();
+		expect(finishMock).toHaveBeenCalledOnce();
+		expect((trailMock.postMove.mock.calls[0][2] as { text: string }).text).toBe(gameRoomsCopy.hangman.wonLine(WORD));
+		expect(awardMock).toHaveBeenCalledWith(expect.objectContaining({ winnerId: GUESSER }));
+	});
+
+	it("finishes a lost round on the next guess with the word, and credits nobody", async () => {
+		const room = makeRoom();
+		(room.secret as { guessedLetters: string[]; wrong: number }).guessedLetters = ["q", "w", "x", "y", "z", "j"];
+		(room.secret as { guessedLetters: string[]; wrong: number }).wrong = 6;
+		storeMock.findByRoomId.mockResolvedValue(room);
+
+		await handleGuessModal(makeSubmit(GUESSER, "p"));
+
+		expect(storeMock.setSecretFieldsIf).not.toHaveBeenCalled();
+		expect((trailMock.postMove.mock.calls[0][2] as { text: string }).text).toBe(gameRoomsCopy.hangman.lostLine(WORD));
+		expect(awardMock).toHaveBeenCalledWith(expect.objectContaining({ winnerId: null }));
+	});
+});
+
+// ── the player gate (2026-10 item 276, audit P3) ─────────────────────
+// The Guess button is players only, but a modal's Submit is reachable without it: a member who
+// was never a player, or whom the host removed after their modal opened, must not land a letter.
+describe("handleGuessModal, the player gate", () => {
+	it("refuses a submitter who is not a player, and writes nothing", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+		const interaction = makeSubmit("passer-by", "z");
+
+		await handleGuessModal(interaction);
+
+		expect(answerOf(interaction).content).toBe(gameRoomsCopy.errors.notYours);
+		expect(storeMock.setSecretFieldsIf).not.toHaveBeenCalled();
+		expect(channelSend).not.toHaveBeenCalled();
+	});
+});
+
 // ── the refusal ───────────────────────────────────────────────────────
 // A public refusal would tell the room that the host just tried to guess, which is
 // a small thing that reads badly in a channel whose whole product is the scroll.

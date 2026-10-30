@@ -535,6 +535,15 @@ export const gameRoomsCopy = {
 		// One rematch per finished room, ever. Without this the still clickable button
 		// on a scrolled back result card would spawn a room per press.
 		rematchAlreadyOffered: "Someone already started a rematch from this room.",
+		// A rematch seats the finished match's players again (Dero bots counting) minus anyone who
+		// left the server or was removed, and a game outside its seat range cannot open (2026-10
+		// item 276, audit P1-5): a one seat Monopoly rematch used to strand the host's room slot.
+		rematchSeats: (min: number, max: number, seats: number): string => {
+			let needs = `${min} to ${max}`;
+			if (min === max) needs = `${min}`;
+			if (!Number.isFinite(max)) needs = `at least ${min}`;
+			return `This game needs ${needs} players, and a rematch here would seat ${seats}. Start a new challenge instead.`;
+		},
 	},
 
 	// ── the confirms (2026-10 item 257, owner items 12 and 15) ──

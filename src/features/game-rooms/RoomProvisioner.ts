@@ -33,6 +33,8 @@ import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isWithinReach, readChallengeReach } from "./challengeReach.js";
 import { mintRoomInvite, revokeRoomInvite } from "./roomInvite.js";
+import { roomLifecycle } from "./roomLifecycle.js";
+import { seatsFit } from "./seatRange.js";
 import type { GameSlug, RoomVisibility, SpectatorMode } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -487,7 +489,7 @@ export interface SeededRoom {
 //        plays once the room is up; a solo-rps room's throw prompt IS here, so a rematch in
 //        the same channel asks for the next throw exactly as the first room did.
 export async function seedRoom(input: RoomSeedInput): Promise<SeededRoom | null> {
-	const { guild, channel, room, game, hostId, playerIds, visibility } = input;
+	const { guild, channel, room, game, hostId, visibility } = input;
 	const botIds = input.botIds ?? [];
 
 	// ⑤ᵃ Mint the room's invite link before the opener composes so the URL can ride the
@@ -504,13 +506,13 @@ export async function seedRoom(input: RoomSeedInput): Promise<SeededRoom | null>
 	// command to take their turn. Pinned below, which is what keeps it reachable
 	// once the trail has scrolled past it.
 	const logo = roomOpenerLogo(game);
-	const memberPlayerIds = playerIds.filter((id) => !isBotSeatId(id));
+	const memberPlayerIds = input.playerIds.filter((id) => !isBotSeatId(id));
 	const opener = await channel
 		.send({
 			content: gameRoomsCopy.opener.playersCall(memberPlayerIds),
 			// Pings only the member players the first turn line will not ping (openerPingIds).
 			allowedMentions: { parse: [], users: openerPingIds(game, hostId, memberPlayerIds) },
-			embeds: [roomOpenerEmbed(game, hostId, [...playerIds, ...botIds], visibility, input.spectatorMode ?? null, inviteCode, logo?.ref)],
+			embeds: [roomOpenerEmbed(game, hostId, [...input.playerIds, ...botIds], visibility, input.spectatorMode ?? null, inviteCode, logo?.ref)],
 			...(logo ? { files: [logo.attachment] } : {}),
 			...openerComponents(game, room.roomId),
 		})
@@ -532,6 +534,17 @@ export async function seedRoom(input: RoomSeedInput): Promise<SeededRoom | null>
 	}
 	const started = await gameRoomStore.findByRoomId(guild.id, room.roomId);
 	const seats = input.draftSeats ? await seatsTheClaimLeft(input.draftSeats, beforeClaim) : undefined;
+
+	// The players are the ones the claimed row still lists (2026-10 item 276, found in Phase 1): a
+	// member the host removed or who left the server while the room was built was pulled off it,
+	// so they are seated nowhere and their channel overwrite goes. A room that leaves too few seats
+	// for its game closes at once, rather than throwing in the game's engine on a row already
+	// playing, which no sweep could find (audit P1-5).
+	const playerIds = await dropUnseatedPlayers(channel, input.playerIds, beforeClaim.playerIds ?? input.playerIds);
+	if (!seatsFit(game, playerIds.length + botIds.length)) {
+		await roomLifecycle.finish(guild.client, started ?? { ...beforeClaim, status: "playing" }, { abandoned: true });
+		return null;
+	}
 
 	// Battleship needs a MATCH, not just a room: two fleets laid out and a board
 	// message to edit every turn. Done here rather than lazily on the first click
@@ -669,6 +682,19 @@ export async function seedRoom(input: RoomSeedInput): Promise<SeededRoom | null>
 		.catch((error) => console.error("[game-rooms] botLog for room create failed", error));
 
 	return { room: started ?? room, ...(seats ? { seats } : {}) };
+}
+
+// The players of `listed` the claimed row still lists, in their order, and the channel overwrite of
+// every one it no longer does. The overwrite is taken back fire and forget: the row already keeps
+// them out of every move, and a Discord hiccup must not stop the room opening.
+async function dropUnseatedPlayers(channel: TextChannel, listed: readonly string[], onRow: readonly string[]): Promise<string[]> {
+	const seated = listed.filter((id) => onRow.includes(id));
+	for (const userId of listed.filter((id) => !onRow.includes(id))) {
+		await channel.permissionOverwrites
+			.delete(userId, "left the game room before it opened")
+			.catch((error: unknown) => console.warn("[game-rooms] an unseated player's overwrite could not be removed", { roomId: channel.id, userId, error }));
+	}
+	return seated;
 }
 
 // The card's seats as the start claim left them, and the buy in back to every payer the claim

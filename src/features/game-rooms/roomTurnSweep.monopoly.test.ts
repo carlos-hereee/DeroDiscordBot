@@ -178,4 +178,27 @@ describe("sweepMonopolyIdle", () => {
 		expect(trailTexts()[1]).toBe(`<@${B}> never paid the $100 they owed and is bankrupt.`);
 		expect(recorded()[0]).toMatchObject({ actorId: B, kind: "system" });
 	});
+
+	// 2026-10 item 276, audit P3: the host's removal gives up after its retries when moves keep
+	// landing first, and the member it already took out of the room left a seat nobody could play,
+	// holding the match up for the whole idle budget. The sweep finishes the job on its next tick.
+	it("takes out a seat the host removed that a busy board kept, inside the idle budget", async () => {
+		const room = { ...makeRoom([A, B, C], 1), kickedIds: [B] } as unknown as IGameRoom;
+		storeMock.findPlayingByGame.mockResolvedValue([room]);
+
+		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 1, matchesFinished: 0 });
+		expect(storeMock.updateSecretIf).toHaveBeenCalledOnce();
+		expect(persisted().seats[1].bankrupt).toBe(true);
+		// The seat on the clock, inside its budget, keeps its turn.
+		expect(persisted().seats[0].bankrupt).toBe(false);
+	});
+
+	it("leaves a removed member alone once their seat is already out", async () => {
+		const room = { ...makeRoom([A, B, C], 1), kickedIds: [B] } as unknown as IGameRoom;
+		(room.secret as unknown as MonopolyState).seats[1].bankrupt = true;
+		storeMock.findPlayingByGame.mockResolvedValue([room]);
+
+		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+	});
 });
