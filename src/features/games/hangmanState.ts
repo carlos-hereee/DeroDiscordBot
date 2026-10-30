@@ -138,10 +138,24 @@ export function isSolved(state: HangmanState): boolean {
 
 // The board's headline. Unrevealed letters become an underscore, and every
 // character is space separated so a run of blanks is countable at a glance
-// rather than an unreadable smear.
+// rather than an unreadable smear. Escaped for markdown, where a bare underscore
+// would start italics.
 export function maskedWord(state: HangmanState): string {
+	return maskWith(state, "\\_");
+}
+
+/**
+ * The mask for a code span (a room's This turn line). Discord shows a backslash inside a code
+ * span as it is written, so the escaped mask read "\_ A \_" there (2026-10 item 276, audit P3);
+ * a code span never starts italics, so its blank is a bare underscore.
+ */
+export function codeSpanMask(state: HangmanState): string {
+	return maskWith(state, "_");
+}
+
+function maskWith(state: HangmanState, blank: string): string {
 	return revealedLetters(state)
-		.map((letter) => (letter === null ? "\\_" : letter.toUpperCase()))
+		.map((letter) => (letter === null ? blank : letter.toUpperCase()))
 		.join(" ");
 }
 

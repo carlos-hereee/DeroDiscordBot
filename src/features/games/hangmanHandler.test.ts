@@ -18,12 +18,20 @@ vi.mock("./hangmanWords.js", () => ({
 // and the PNG encode finishes on the native thread pool, not in a microtask. The
 // renderer stays real; this only records each render in flight so flush() below
 // can wait for it instead of guessing a number of ticks.
-const renders = vi.hoisted(() => ({ inFlight: new Set<Promise<unknown>>(), fail: false }));
+// `holdNext` keeps the next render waiting on a gate the test opens, outside `inFlight` so flush()
+// does not wait on it; `held` is that render, for the test to await once it opens the gate.
+const renders = vi.hoisted(() => ({ inFlight: new Set<Promise<unknown>>(), fail: false, holdNext: null as Promise<void> | null, held: null as Promise<unknown> | null }));
 vi.mock("./hangmanRenderer.js", async (importOriginal) => {
 	const real = await importOriginal<typeof import("./hangmanRenderer.js")>();
 	return {
 		...real,
 		renderHangmanCard: (view: Parameters<typeof real.renderHangmanCard>[0]) => {
+			const gate = renders.holdNext;
+			if (gate) {
+				renders.holdNext = null;
+				renders.held = gate.then(() => real.renderHangmanCard(view));
+				return renders.held;
+			}
 			// `fail` stands in for a host where the card does not draw.
 			const render = renders.fail ? Promise.resolve(null) : real.renderHangmanCard(view);
 			renders.inFlight.add(render);
@@ -135,6 +143,8 @@ const flush = async (): Promise<void> => {
 beforeEach(() => {
 	_clearHangmanRounds();
 	renders.fail = false;
+	renders.holdNext = null;
+	renders.held = null;
 });
 
 afterEach(() => {
@@ -288,6 +298,33 @@ describe("ending a round", () => {
 		const last = c.board().edit.mock.calls.at(-1)?.[0] as { components: unknown[] };
 		expect(last.components).toEqual([]);
 		expect(_activeHangmanRoundCount()).toBe(0);
+	});
+
+	// 2026-10 item 276 Phase 7 (audit P3): a playing board is drawn after an await, so a guess whose
+	// render finished after the solving guess's end board used to edit its Guess button back on.
+	it("never puts a Guess button back on a board a later guess already finished", async () => {
+		const c = fakeChannel("chan-race");
+		await startHangmanRound(c.channel, "starter-1");
+		for (const letter of ["c", "a", "s", "t", "l"]) {
+			c.board().collect(fakeClick(letter));
+			await flush();
+		}
+
+		let openGate = (): void => undefined;
+		renders.holdNext = new Promise<void>((resolve) => (openGate = resolve));
+		c.board().collect(fakeClick("z", "slow-guesser"));
+		await flush();
+		c.board().collect(fakeClick("e", "solver"));
+		await flush();
+		const editsAtEnd = c.board().edit.mock.calls.length;
+
+		openGate();
+		await renders.held;
+		await flush();
+
+		expect(c.board().edit).toHaveBeenCalledTimes(editsAtEnd);
+		const last = c.board().edit.mock.calls.at(-1)?.[0] as { components: unknown[] };
+		expect(last.components).toEqual([]);
 	});
 
 	it("ends and cleans up after six misses", async () => {

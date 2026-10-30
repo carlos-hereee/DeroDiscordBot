@@ -9,8 +9,8 @@ import { confirmCustomId } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { isBotSeatId } from "./botSeat.js";
 import { isTurnHandoffLine } from "./roomMonopolyBoard.js";
-import { roomTrail } from "./roomTrail.js";
 import { commitMonopolyMove, monopolyStateOf } from "./roomMonopolyHandlers.js";
+import { handHostingOn, hostCandidatesOf, nextFreeHost } from "./hostHandoff.js";
 
 // ── roomMonopolySurrender ────────────────────────────────────────────
 // What:  Surrender, every seat's way out of a Monopoly match (2026-10 item 254, Arcade
@@ -92,7 +92,7 @@ export async function surrenderMonopolySeat(client: Client, room: IGameRoom, use
 		// forfeit itself ends the match and frees the slot. Read afresh every attempt and nothing
 		// written, so a busy board that wins every retry leaves the host hosting and seated.
 		const hosting = fresh.hostId === userId && seatsStillIn(state, userId).length > 1;
-		const successorId = hosting ? await nextFreeHost(fresh, state, userId) : null;
+		const successorId = hosting ? await nextFreeHost(fresh, hostCandidatesOf(fresh, userId)) : null;
 		const leadLines = [leadLine, ...(successorId ? [gameRoomsCopy.monopoly.hostHandedOn(successorId)] : [])];
 
 		// ② ③
@@ -105,7 +105,13 @@ export async function surrenderMonopolySeat(client: Client, room: IGameRoom, use
 		);
 		if (outcome.ok) {
 			// ④ The seat is out, so the room is handed on, unless the forfeit ended the match.
-			if (successorId && outcome.state.phase !== "finished") await handHostingOn(client, fresh, state, userId, successorId);
+			// To the member ① named, else the next in turn order, since the named one may have opened
+			// a room of their own meanwhile (the index refuses that move as "taken"). The surrender's
+			// board already said who hosts, so only a different member gets a line of their own.
+			if (successorId && outcome.state.phase !== "finished") {
+				const fallbacks = hostCandidatesOf(fresh, userId).filter((candidate) => candidate !== successorId);
+				await handHostingOn(client, fresh, userId, [successorId, ...fallbacks], successorId);
+			}
 			return "surrendered";
 		}
 		if (outcome.reason !== gameRoomsCopy.monopoly.boardBusy) return "notInMatch";
@@ -114,42 +120,6 @@ export async function surrenderMonopolySeat(client: Client, room: IGameRoom, use
 }
 
 const seatsStillIn = (state: MonopolyState, exceptId: string) => state.seats.filter((seat) => !seat.bankrupt && seat.userId !== exceptId);
-
-// The members still in the match after the host, in turn order from the host's seat. Dero bots
-// never host, since nobody could press a host control for one.
-function successorsInTurnOrder(state: MonopolyState, hostId: string): string[] {
-	const hostIndex = state.seats.findIndex((seat) => seat.userId === hostId);
-	const inTurnOrder = state.seats.map((_, step) => state.seats[(hostIndex + 1 + step) % state.seats.length]);
-	return inTurnOrder.filter((seat) => !seat.bankrupt && seat.userId !== hostId && !isBotSeatId(seat.userId)).map((seat) => seat.userId);
-}
-
-// ① The first member who could host, read and never written: one who already hosts an open room
-// cannot take a second (the one room per host index). Null when nobody can, which ends the match.
-async function nextFreeHost(room: IGameRoom, state: MonopolyState, hostId: string): Promise<string | null> {
-	for (const userId of successorsInTurnOrder(state, hostId)) {
-		if (!(await gameRoomStore.findOpenByHost(room.guildId, userId))) return userId;
-	}
-	return null;
-}
-
-// ④ Hand the room on once the forfeit landed: to the member ① named first, then each next in turn
-// order, since the named member may have opened a room of their own in between (the index refuses
-// that move as "taken"). A member other than the one the board named gets a line saying they host
-// now. A room no longer hosted by the surrendering member (someone else changed it) is left as it
-// is. Should every member have opened a room meanwhile, the room keeps its old host until the
-// match ends, which frees the slot; logged, since the match goes on with a host who no longer plays.
-async function handHostingOn(client: Client, room: IGameRoom, state: MonopolyState, hostId: string, named: string): Promise<void> {
-	const candidates = [named, ...successorsInTurnOrder(state, hostId).filter((userId) => userId !== named)];
-	for (const userId of candidates) {
-		const moved = await gameRoomStore.transferHost(room.guildId, room.roomId, hostId, userId);
-		if (moved === "taken") continue;
-		if (moved && userId !== named) {
-			await roomTrail.postMove(client, room, { actorId: hostId, kind: "system", text: gameRoomsCopy.monopoly.hostHandedOn(userId) });
-		}
-		return;
-	}
-	console.warn("[game-rooms] a surrendered Monopoly host could hand the room to nobody", { roomId: room.roomId, hostId });
-}
 
 /**
  * The surrender as one move against the stored match: the seat forfeits, and when that

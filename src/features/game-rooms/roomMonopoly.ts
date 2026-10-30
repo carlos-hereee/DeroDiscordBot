@@ -14,6 +14,7 @@ import { BOARD, BOARD_SIZE, describeTile, isOwnableTile, ownableTileName, type O
 import {
 	BANK_CREDITOR,
 	listBuildOptions,
+	liveTrade,
 	listMortgageOptions,
 	listSellOptions,
 	listUnmortgageOptions,
@@ -370,7 +371,7 @@ function buildButtons(state: MonopolyState, active: MonopolySeat, viewerId: stri
 // Trade, Inventory and Surrender, for any seat at any time. Surrender (2026-10 item 254, Arcade
 // 12) only opens a private confirm, so a slip costs nothing.
 function lineButtons(state: MonopolyState, roomId: string): ButtonBuilder[] {
-	const tradeLabel = state.pendingTrade ? gameRoomsCopy.monopoly.tradeOpenLabel : gameRoomsCopy.monopoly.tradeLabel;
+	const tradeLabel = liveTrade(state) ? gameRoomsCopy.monopoly.tradeOpenLabel : gameRoomsCopy.monopoly.tradeLabel;
 	return [
 		button(roomId, "mtrade", tradeLabel, ButtonStyle.Secondary, "🤝"),
 		button(roomId, "minventory", gameRoomsCopy.monopoly.inventoryLabel, ButtonStyle.Secondary, "🎒"),

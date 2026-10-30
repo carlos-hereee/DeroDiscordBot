@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
+import { MessageFlags, type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn(), setSecretFieldsIf: vi.fn(), moveBoardMessage: vi.fn() } }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), recordCarriedMoves: vi.fn() }, resolveRoomChannel: vi.fn() }));
@@ -193,6 +193,14 @@ const answerOf = (interaction: unknown) => {
 	return { audience: call[1] as string, content: (call[2] as { content: string }).content };
 };
 
+// A refusal of the word modal: the notice's private reply, since a modal Submit cannot open a modal
+// and a refusal posted in the room would hand the guessers a clue (2026-10 item 276, audit P3).
+const refusalOf = (interaction: { reply: unknown }) => {
+	const reply = replyOf(interaction);
+	expect(reply.flags).toBe(MessageFlags.Ephemeral);
+	return reply.content;
+};
+
 // What the store was asked to persist, which is the only place `authoredBy` is ever
 // written and therefore the root of the guess gate covered further down.
 const savedSecret = () => storeMock.update.mock.calls[0][2].secret as Record<string, unknown>;
@@ -283,7 +291,7 @@ describe("handleAuthoringModal, the write gate", () => {
 
 		await handleAuthoringModal(interaction);
 
-		expect(answerOf(interaction).content).toBe(gameRoomsCopy.errors.notYours);
+		expect(refusalOf(interaction)).toBe(gameRoomsCopy.errors.notYours);
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
@@ -295,7 +303,7 @@ describe("handleAuthoringModal, the write gate", () => {
 
 		await handleAuthoringModal(interaction);
 
-		expect(answerOf(interaction).content).toBe(gameRoomsCopy.errors.notYours);
+		expect(refusalOf(interaction)).toBe(gameRoomsCopy.errors.notYours);
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
@@ -305,7 +313,7 @@ describe("handleAuthoringModal, the write gate", () => {
 
 		await handleAuthoringModal(interaction);
 
-		expect(answerOf(interaction).content).toBe(gameRoomsCopy.errors.notFound);
+		expect(refusalOf(interaction)).toBe(gameRoomsCopy.errors.notFound);
 		expect(storeMock.update).not.toHaveBeenCalled();
 	});
 
@@ -370,7 +378,7 @@ describe("handleAuthoringModal, validation wiring", () => {
 		for (const [reason, fields] of cases) {
 			const interaction = makeAuthorSubmit(HOST, fields);
 			await handleAuthoringModal(interaction);
-			const message = answerOf(interaction).content;
+			const message = refusalOf(interaction);
 
 			expect(message, `${reason} produced no message`).toBeTruthy();
 			// Naming the collision beats a bare count: a failure here should say WHICH
@@ -448,6 +456,18 @@ describe("handleGuessModal, the gallows card", () => {
 		expect(channelSend).toHaveBeenCalledOnce();
 		const [state] = boardMock.mock.calls[0] as [{ wrong: number }];
 		expect(state.wrong).toBe(1);
+	});
+
+	// 2026-10 item 276 Phase 7 (audit P3): the This turn line carries the mask in a code span, where
+	// Discord prints a backslash as written, so the markdown escaped mask read "\_ A \_" there.
+	it("shows the guess's mask in the This turn line with no backslashes", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+
+		await handleGuessModal(makeSubmit(GUESSER, "z"));
+
+		const [, description] = boardMock.mock.calls[0] as [unknown, string];
+		expect(description).toContain("`_ _ _ _ _ _`");
+		expect(description).not.toContain("\\");
 	});
 
 	// A guess is a turn (2026-10 item 263 R3-29), the last one included: its card shows the guess

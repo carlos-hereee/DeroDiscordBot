@@ -157,8 +157,10 @@ function lastRoomActionAt(room: IGameRoom): number {
 // A Monopoly room the idle seat forfeit looks after: a match in play with its board. A playing row
 // with no board is a match whose seeding failed after the start claim (2026-10 item 276, audit
 // P1-5), which sweepMonopolyIdle cannot read, so the idle sweep below finishes it like any room.
+// A Monopoly DRAFT has no seat to forfeit either, so it is swept like every other draft (2026-10
+// item 276 Phase 7), or an abandoned card would hold its host's one room slot until Call it off.
 function isMonopolyMatchWithBoard(room: IGameRoom): boolean {
-	return room.game === "monopoly" && (room.status !== "playing" || monopolyStateOf(room) !== null);
+	return room.game === "monopoly" && room.status === "playing" && monopolyStateOf(room) !== null;
 }
 
 // A hosted or solo hangman room past its draft, whether or not its word is set yet.
@@ -173,10 +175,10 @@ function isHangmanRoundInPlay(room: IGameRoom): boolean {
  * another path finished in the same tick is skipped, and `abandoned` pays nobody,
  * which is also why an abandoned room is never rated.
  *
- * ⚠️ MONOPOLY IS EXEMPT. Its opener tells players a seat has GAME_ROOM_MONOPOLY_IDLE_MS on the clock,
- * and sweepMonopolyIdle above already forfeits one idle seat per budget until one is left,
- * so a Monopoly room cannot strand its host's slot either. The one exception is a playing row
- * with no board (isMonopolyMatchWithBoard), which has no seat to forfeit.
+ * ⚠️ A MONOPOLY MATCH IS EXEMPT. Its opener tells players a seat has GAME_ROOM_MONOPOLY_IDLE_MS on
+ * the clock, and sweepMonopolyIdle above already forfeits one idle seat per budget until one is
+ * left, so a Monopoly match cannot strand its host's slot either. A Monopoly draft, and a playing
+ * row with no board (isMonopolyMatchWithBoard), have no seat to forfeit and are swept here.
  *
  * ⚠️ A HANGMAN ROUND IN PLAY IS EXEMPT TOO, hosted or solo, by the owner's decision of
  * 2026-10-23: hangman is a relaxed game, not a race, so it has no clock. Its host

@@ -21,10 +21,17 @@ vi.mock("@features/games/blackjackHandler.js", () => ({
 	sharedTableSeatsOf: vi.fn(() => ({ userIds: ["host", "carol"], max: 5 })),
 }));
 const wallet = vi.hoisted(() => ({ covers: true }));
-vi.mock("@features/economy/chipWallet.js", () => ({ takeChips: vi.fn(async () => wallet.covers), returnChips: vi.fn(async () => undefined) }));
-const store = vi.hoisted(() => ({ seated: true as boolean, fresh: null as Record<string, unknown> | null }));
+// The wallet's receipted charge (2026-10 item 276, audit P3): the debit and its receipt are one write.
+vi.mock("@features/economy/chipWallet.js", () => ({
+	takeChipsWithReceipt: vi.fn(async () => wallet.covers),
+	refundChipReceipt: vi.fn(async () => true),
+	closeChipReceipt: vi.fn(async () => undefined),
+}));
+const store = vi.hoisted(() => ({ seated: true as boolean, held: true as boolean, fresh: null as Record<string, unknown> | null }));
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: {
+		holdLateSeatCharge: vi.fn(async () => (store.held ? { ...ROOM } : null)),
+		dropLateSeatCharge: vi.fn(async () => undefined),
 		addLateBlackjackSeat: vi.fn(async (_guildId: string, _roomId: string, userId: string) => (store.seated ? { ...ROOM, playerIds: [...ROOM.playerIds, userId] } : null)),
 		findByRoomId: vi.fn(async () => store.fresh),
 		addPendingJoin: vi.fn(async () => ({ ...ROOM, pendingJoinIds: ["carol"] })),
@@ -42,7 +49,7 @@ vi.mock("@utils/textModal.js", () => ({ showNotice: vi.fn(async () => undefined)
 import { TextChannel } from "discord.js";
 import { joinBlackjackTable, seatAcceptedBlackjackPlayer } from "./blackjackLateSeat.js";
 import { dropLateSeat, holdLateSeat, payLateSeat } from "@features/games/blackjackHandler.js";
-import { returnChips, takeChips } from "@features/economy/chipWallet.js";
+import { closeChipReceipt, refundChipReceipt, takeChipsWithReceipt } from "@features/economy/chipWallet.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { judgeJoin } from "./joinGate.js";
 import { roomLifecycle } from "./roomLifecycle.js";
@@ -85,6 +92,7 @@ beforeEach(() => {
 	table.paid = true;
 	wallet.covers = true;
 	store.seated = true;
+	store.held = true;
 	store.fresh = null;
 	gate.verdict = { kind: "admit" };
 });
@@ -95,20 +103,51 @@ describe("Join at a dealing ranked table", () => {
 		await joinBlackjackTable(interaction, roomOf());
 
 		expect(holdLateSeat).toHaveBeenCalledWith("room-ch", { userId: "carol", username: "carol" });
-		expect(takeChips).toHaveBeenCalledOnce();
-		expect(takeChips).toHaveBeenCalledWith({ userId: "carol" }, 1000);
-		expect(gameRoomStore.addLateBlackjackSeat).toHaveBeenCalledWith("g1", "room-1", "carol", { userId: "carol", buyIn: 1000, stack: 1000 });
+		// The row holds the charge before the wallet pays it, with one receipt for both.
+		const chargeId = vi.mocked(gameRoomStore.holdLateSeatCharge).mock.calls[0][2].chargeId;
+		expect(gameRoomStore.holdLateSeatCharge).toHaveBeenCalledWith("g1", "room-1", { userId: "carol", buyIn: 1000, chargeId });
+		expect(takeChipsWithReceipt).toHaveBeenCalledOnce();
+		expect(takeChipsWithReceipt).toHaveBeenCalledWith({ userId: "carol" }, 1000, chargeId);
+		expect(vi.mocked(gameRoomStore.holdLateSeatCharge).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(takeChipsWithReceipt).mock.invocationCallOrder[0]);
+		// The stacks entry takes the held charge off in the same write, then the receipt closes.
+		expect(gameRoomStore.addLateBlackjackSeat).toHaveBeenCalledWith("g1", "room-1", "carol", { userId: "carol", buyIn: 1000, stack: 1000 }, chargeId);
+		expect(closeChipReceipt).toHaveBeenCalledWith({ userId: "carol" }, chargeId);
 		expect(roomLifecycle.applyRoomPhase).toHaveBeenCalledWith(client, channel, expect.objectContaining({ playerIds: ["host", "carol"] }), "playing");
 		expect(payLateSeat).toHaveBeenCalledWith("room-ch", "carol", client);
 		expect(answerInChannel).toHaveBeenCalledWith(interaction, "here", { content: gameRoomsCopy.board.lateSeat.held(1000, true) });
-		expect(returnChips).not.toHaveBeenCalled();
+		expect(refundChipReceipt).not.toHaveBeenCalled();
+	});
+
+	// 2026-10 item 276, audit P3: a crash between the charge and the stacks entry lost the buy in. Now
+	// the held charge stays on the row, and a write that threw refunds nothing here: finish refunds the
+	// held charge through its receipt (blackjackChips.refundStrandedLateCharges), only if it was taken.
+	it("leaves a charge whose ledger write threw held on the row for finish, refunding nothing itself", async () => {
+		vi.mocked(gameRoomStore.addLateBlackjackSeat).mockRejectedValueOnce(new Error("connection reset"));
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+		await joinBlackjackTable(pressJoin(), roomOf());
+
+		expect(takeChipsWithReceipt).toHaveBeenCalledOnce();
+		expect(refundChipReceipt).not.toHaveBeenCalled();
+		expect(gameRoomStore.dropLateSeatCharge).not.toHaveBeenCalled();
+		expect(closeChipReceipt).not.toHaveBeenCalled();
+		expect(dropLateSeat).toHaveBeenCalledWith("room-ch", "carol");
+	});
+
+	it("charges nothing when the row will not hold the charge, the table having closed", async () => {
+		store.held = false;
+		await joinBlackjackTable(pressJoin(), roomOf());
+		expect(takeChipsWithReceipt).not.toHaveBeenCalled();
+		expect(dropLateSeat).toHaveBeenCalledWith("room-ch", "carol");
+		expect(noticeText()).toBe(gameRoomsCopy.board.lateSeat.tableClosed);
 	});
 
 	it("seats a free ranked table's joiner without touching a wallet or the ledger", async () => {
 		table.hold = { ok: true, buyIn: 1000, chips: false };
 		await joinBlackjackTable(pressJoin(), roomOf());
-		expect(takeChips).not.toHaveBeenCalled();
-		expect(gameRoomStore.addLateBlackjackSeat).toHaveBeenCalledWith("g1", "room-1", "carol", null);
+		expect(takeChipsWithReceipt).not.toHaveBeenCalled();
+		expect(gameRoomStore.holdLateSeatCharge).not.toHaveBeenCalled();
+		expect(gameRoomStore.addLateBlackjackSeat).toHaveBeenCalledWith("g1", "room-1", "carol", null, null);
 		expect(payLateSeat).toHaveBeenCalledOnce();
 	});
 
@@ -135,7 +174,7 @@ describe("Join at a dealing ranked table", () => {
 		}
 		expect(judgeJoin).not.toHaveBeenCalled();
 		expect(holdLateSeat).not.toHaveBeenCalled();
-		expect(takeChips).not.toHaveBeenCalled();
+		expect(takeChipsWithReceipt).not.toHaveBeenCalled();
 	});
 
 	it("refuses a removed member at the host's gate, and files a request where the host approves each joiner, charging nothing", async () => {
@@ -149,14 +188,14 @@ describe("Join at a dealing ranked table", () => {
 		expect(gameRoomStore.addPendingJoin).toHaveBeenCalledWith("g1", "room-1", "carol");
 		expect(answerInChannel).toHaveBeenCalledWith(asking, "here", { content: rokCommanderCopy.arcadeHostControls.approval.asked });
 		expect(refreshTableCard).toHaveBeenCalledOnce();
-		expect(takeChips).not.toHaveBeenCalled();
+		expect(takeChipsWithReceipt).not.toHaveBeenCalled();
 	});
 
 	it("charges a double press once: the second meets the hold", async () => {
 		await joinBlackjackTable(pressJoin(), roomOf());
 		table.hold = { ok: false, refusal: "alreadySeated" };
 		await joinBlackjackTable(pressJoin(), roomOf());
-		expect(takeChips).toHaveBeenCalledOnce();
+		expect(takeChipsWithReceipt).toHaveBeenCalledOnce();
 		expect(noticeText()).toBe(gameRoomsCopy.board.lateSeat.alreadySeated);
 	});
 
@@ -164,6 +203,7 @@ describe("Join at a dealing ranked table", () => {
 		wallet.covers = false;
 		await joinBlackjackTable(pressJoin(), roomOf());
 		expect(dropLateSeat).toHaveBeenCalledWith("room-ch", "carol");
+		expect(gameRoomStore.dropLateSeatCharge).toHaveBeenCalledOnce();
 		expect(gameRoomStore.addLateBlackjackSeat).not.toHaveBeenCalled();
 		expect(noticeText()).toBe(gameRoomsCopy.holdem.notEnoughChips(1000));
 	});
@@ -172,8 +212,10 @@ describe("Join at a dealing ranked table", () => {
 		store.seated = false;
 		store.fresh = { ...ROOM, kickedIds: ["carol"] };
 		await joinBlackjackTable(pressJoin(), roomOf());
-		expect(returnChips).toHaveBeenCalledOnce();
-		expect(returnChips).toHaveBeenCalledWith({ userId: "carol" }, 1000);
+		const chargeId = vi.mocked(gameRoomStore.holdLateSeatCharge).mock.calls[0][2].chargeId;
+		expect(refundChipReceipt).toHaveBeenCalledOnce();
+		expect(refundChipReceipt).toHaveBeenCalledWith({ userId: "carol" }, 1000, chargeId);
+		expect(gameRoomStore.dropLateSeatCharge).toHaveBeenCalledWith("g1", "room-1", chargeId);
 		expect(dropLateSeat).toHaveBeenCalledWith("room-ch", "carol");
 		expect(payLateSeat).not.toHaveBeenCalled();
 		expect(noticeText()).toBe(rokCommanderCopy.arcadeHostControls.kick.refusedRejoin);
@@ -184,7 +226,7 @@ describe("Join at a dealing ranked table", () => {
 		await joinBlackjackTable(pressJoin(), roomOf());
 		expect(cashOutBlackjackSeat).toHaveBeenCalledOnce();
 		expect(cashOutBlackjackSeat).toHaveBeenCalledWith(expect.objectContaining({ roomId: "room-1" }), "carol", 1000);
-		expect(returnChips).not.toHaveBeenCalled();
+		expect(refundChipReceipt).not.toHaveBeenCalled();
 		expect(noticeText()).toBe(gameRoomsCopy.board.lateSeat.tableClosed);
 	});
 });

@@ -11,6 +11,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		addSatellite: vi.fn(),
 		addSatellitePlayers: vi.fn(),
 		findByRoomId: vi.fn(),
+		findOtherRoomOnChannel: vi.fn(async () => null),
 	},
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
@@ -347,6 +348,8 @@ describe("finish and archive with satellites", () => {
 	});
 
 	it("deletes every satellite with the host room, before the row closes", async () => {
+		// The archive re-reads the row before any delete (2026-10 item 276): still finished on its channel.
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished" }));
 		const host = makeChannel("host-ch");
 		const [a, b] = [makeChannel("sat-a"), makeChannel("sat-b")];
 		const client = makeClient([host, a, b]);
@@ -357,6 +360,7 @@ describe("finish and archive with satellites", () => {
 	});
 
 	it("archives the host room even when a satellite's server removed the bot", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished" }));
 		const host = makeChannel("host-ch");
 		const b = makeChannel("sat-b");
 		const client = makeClient([host, b]);

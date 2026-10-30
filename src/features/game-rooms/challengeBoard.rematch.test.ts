@@ -59,6 +59,8 @@ const fake = vi.hoisted(() => {
 				// A Casual match's rematch stays casual (2026-10 item 254), as the real store writes it.
 				casual: input.casual ?? false,
 				blackjackStacks: [],
+				// A ranked rematch's stakes are born on the new row's draft ledger (2026-10 item 276).
+				buyInPaidBy: (input.buyInPaidBy as string[] | undefined) ?? [],
 				secret: null,
 				moves: [],
 				winnerId: null,
@@ -79,6 +81,9 @@ const fake = vi.hoisted(() => {
 		// channel would expose.
 		async findByChannelId(guildId: string, channelId: string) {
 			return copy(rows.find((row) => row.guildId === guildId && row.channelId === channelId));
+		},
+		async findOtherRoomOnChannel(guildId: string, channelId: string, roomId: string) {
+			return copy(rows.find((row) => row.guildId === guildId && row.channelId === channelId && row.roomId !== roomId));
 		},
 		async findOpenByHost(guildId: string, hostId: string) {
 			return copy(rows.find((row) => row.guildId === guildId && row.hostId === hostId && LIVE.includes(row.status)));
@@ -101,11 +106,16 @@ const fake = vi.hoisted(() => {
 		},
 		// The start claim (2026-10 item 276): only a row not yet playing moves, with its ledger
 		// emptied in the same write, answering the row as it was BEFORE.
-		async claimForPlay(guildId: string, roomId: string, patch: Record<string, unknown>) {
+		// A Blackjack table's claim also opens the stacks ledger from the seats on the draft ledger,
+		// in the same write, as the real pipeline update does.
+		async claimForPlay(guildId: string, roomId: string, patch: Record<string, unknown>, blackjackTable?: { buyIn: number; seatIds: string[]; actedAt: Date }) {
 			const row = find(guildId, roomId);
 			if (!row || !["draft", "open"].includes(row.status as string)) return null;
-			const before = copy(row);
-			Object.assign(row, patch, { status: "playing", buyInPaidBy: [] });
+			const before = { ...copy(row), buyInPaidBy: [...((row.buyInPaidBy as string[] | undefined) ?? [])] };
+			const stacks = blackjackTable
+				? blackjackTable.seatIds.filter((userId) => ((row.buyInPaidBy as string[] | undefined) ?? []).includes(userId)).map((userId) => ({ userId, buyIn: blackjackTable.buyIn, stack: blackjackTable.buyIn }))
+				: null;
+			Object.assign(row, patch, { status: "playing", buyInPaidBy: [] }, stacks ? { blackjackStacks: stacks, blackjackActedAt: blackjackTable?.actedAt } : {});
 			return before;
 		},
 		async archiveDraft(guildId: string, roomId: string) {
@@ -140,6 +150,13 @@ const fake = vi.hoisted(() => {
 		async markArchived(guildId: string, roomId: string) {
 			const row = find(guildId, roomId);
 			if (row) Object.assign(row, { status: "archived", channelId: null });
+			return copy(row);
+		},
+		// A ranked Monopoly or Battleship pot, opened on a playing row (2026-10 item 276).
+		async openChipPot(guildId: string, roomId: string, pot: unknown) {
+			const row = find(guildId, roomId);
+			if (!row || row.status !== "playing") return null;
+			Object.assign(row, { chipPot: pot });
 			return copy(row);
 		},
 		async openBlackjackStacks(guildId: string, roomId: string, entries: unknown[]) {
@@ -803,8 +820,10 @@ describe("solo rooms rematch in place", () => {
 	});
 
 	// 2026-10 item 276, owner decision D13: a ranked table is never solo, so a returning player who
-	// cannot pay again leaves a two seat rematch with nobody to share it, and nothing is dealt.
-	it("gives every buy in back and deals nothing when a ranked rematch is left with one seat it could charge", async () => {
+	// cannot pay again leaves a two seat rematch with nobody to share it, and nothing is dealt. The
+	// stakes are taken before any row is written now, so the refusal writes no row at all and gives
+	// the presser's stake straight back.
+	it("gives every buy in back and writes no row when a ranked rematch is left with one seat it could charge", async () => {
 		const world = makeWorld();
 		insertFinishedRoom({ game: "blackjack", visibility: "invite", playerIds: [P1, P2], spectatorIds: [], inviteCode: null, holdemBuyIn: 2500 });
 		wallets.set(P2, 100);
@@ -812,13 +831,63 @@ describe("solo rooms rematch in place", () => {
 
 		await rematchFromRoom(interaction, await roomOf(FINISHED));
 
-		const next = rematchRow();
 		expect(blackjackMock).not.toHaveBeenCalled();
 		expect(wallets.get(P1)).toBe(5000);
 		expect(wallets.get(P2)).toBe(100);
-		expect(next?.status).toBe("finished");
-		expect((next?.moves as { text: string }[]).map((move) => move.text)).toContain(gameRoomsCopy.trail.blackjackRematchShort(P2, 2500));
-		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.board.blackjackRankedTooFew(2, 1) }));
+		expect(rematchRow()).toBeUndefined();
+		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.board.blackjackRankedTooFew(2, 1) }));
+	});
+
+	// 2026-10 item 276, found in Phase 6b: a ranked Monopoly or Battleship rematch played for
+	// nothing, its Start's pot never charged again. Now each charges its stake as a Blackjack table does.
+	it("charges a ranked Monopoly rematch's fixed buy in again and opens its pot with both seats", async () => {
+		const world = makeWorld();
+		const buyIn = BOT_CONSTANTS.ECONOMY.MONOPOLY_RANKED_BUY_IN;
+		insertFinishedRoom({ game: "monopoly", visibility: "invite", playerIds: [P1, P2], spectatorIds: [], inviteCode: null });
+
+		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
+
+		expect(wallets.get(P1)).toBe(5000 - buyIn);
+		expect(wallets.get(P2)).toBe(5000 - buyIn);
+		expect(rematchRow()).toMatchObject({ status: "playing", playerIds: [P1, P2], chipPot: { buyIn, userIds: [P1, P2] } });
+	});
+
+	it("refuses a ranked Monopoly rematch left with one paying seat, giving the presser's buy in back", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({ game: "monopoly", visibility: "invite", playerIds: [P1, P2], spectatorIds: [], inviteCode: null });
+		wallets.set(P2, 0);
+		const interaction = pressRematch(world, P1);
+
+		await rematchFromRoom(interaction, await roomOf(FINISHED));
+
+		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.monopoly.tooFewPaid(2, 1) }));
+		expect(wallets.get(P1)).toBe(5000);
+		expect(rematchRow()).toBeUndefined();
+	});
+
+	it("charges a ranked Battleship rematch's wager to both captains again", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({ game: "battleship", visibility: "invite", playerIds: [P1, P2], spectatorIds: [], inviteCode: null, holdemBuyIn: 500 });
+
+		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
+
+		expect(wallets.get(P1)).toBe(4500);
+		expect(wallets.get(P2)).toBe(4500);
+		expect(rematchRow()).toMatchObject({ status: "playing", chipPot: { buyIn: 500, userIds: [P1, P2] } });
+	});
+
+	it("refuses a ranked Battleship rematch whose other captain cannot cover the wager, charging nobody", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({ game: "battleship", visibility: "invite", playerIds: [P1, P2], spectatorIds: [], inviteCode: null, holdemBuyIn: 500 });
+		wallets.set(P2, 100);
+		const interaction = pressRematch(world, P1);
+
+		await rematchFromRoom(interaction, await roomOf(FINISHED));
+
+		expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: gameRoomsCopy.holdem.opponentNotPaid(P2, 500) }));
+		expect(wallets.get(P1)).toBe(5000);
+		expect(wallets.get(P2)).toBe(100);
+		expect(rematchRow()).toBeUndefined();
 	});
 
 	it("plays a blackjack rematch free, charging nobody, on a server with chips off", async () => {

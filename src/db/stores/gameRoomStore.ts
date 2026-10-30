@@ -1,4 +1,4 @@
-import { GameRoom, type BlackjackStackEntry, type ChipPot, type IGameRoom, type TurnPromptRecord } from "@db/models/GameRoom.js";
+import { GameRoom, type BlackjackLateCharge, type BlackjackStackEntry, type ChipPot, type IGameRoom, type TurnPromptRecord } from "@db/models/GameRoom.js";
 import {
 	NON_TERMINAL_ROOM_STATUSES,
 	ROOMS_AWAITING_PLAY,
@@ -54,6 +54,9 @@ interface ICreateGameRoom {
 	// The host's Casual choice (2026-10 item 254, Arcade 6), carried by a rematch so it
 	// stays unrated like the match it follows.
 	casual?: boolean;
+	// A ranked rematch's buy ins (2026-10 item 276), charged before the row exists and born on its
+	// draft ledger, so every refund a draft has (the start's failure, the idle sweep) reaches them.
+	buyInPaidBy?: string[];
 	// Null (the default) reads as the game's own default in roomTypes.refereeOn: on for Hold'em
 	// (2026-10 item 263 R3-28), off for Monopoly. A rematch carries the finished room's choice.
 	referee?: boolean | null;
@@ -135,6 +138,7 @@ export const gameRoomStore = {
 			casual: input.casual ?? false,
 			spectatorMode: input.spectatorMode ?? null,
 			holdemBuyIn: input.holdemBuyIn ?? null,
+			buyInPaidBy: input.buyInPaidBy ?? [],
 			status: "draft",
 		});
 	},
@@ -156,6 +160,13 @@ export const gameRoomStore = {
 	// managed homebase slot it should rebuild.
 	async findByChannelId(guildId: string, channelId: string) {
 		return GameRoom.findOne({ guildId, channelId });
+	},
+
+	// Another row on the same channel: during a rematch's takeover the new row is born on the
+	// channel before the finished one releases it, so for that moment two rows point at it. The
+	// archive re-checks here before it deletes a channel (2026-10 item 276, audit P3).
+	async findOtherRoomOnChannel(guildId: string, channelId: string, roomId: string) {
+		return GameRoom.findOne({ guildId, channelId, roomId: { $ne: roomId } });
 	},
 
 	// The friendly half of the one-room-per-host rule: a hit means the host already has a room,
@@ -377,12 +388,43 @@ export const gameRoomStore = {
 	// the seat and the permission that follows it never disagree. It matches only a playing room
 	// the member was not removed from and holds no entry for yet, so a finish that claimed the row
 	// first, a removal, or a second write for the same member applies nothing (null).
-	async addLateBlackjackSeat(guildId: string, roomId: string, userId: string, entry: BlackjackStackEntry | null) {
+	//
+	// A chip seat names the `chargeId` its buy in was held under (holdLateSeatCharge): the write then
+	// matches only while that held charge is still on the row and takes it off as it adds the entry,
+	// so the charge is on the row exactly once, as held or as a stack (2026-10 item 276, audit P3).
+	async addLateBlackjackSeat(guildId: string, roomId: string, userId: string, entry: BlackjackStackEntry | null, chargeId: string | null = null) {
 		return GameRoom.findOneAndUpdate(
-			{ guildId, roomId, status: "playing", kickedIds: { $ne: userId }, "blackjackStacks.userId": { $ne: userId } },
-			{ $addToSet: { playerIds: userId }, ...(entry ? { $push: { blackjackStacks: entry } } : {}) },
+			{
+				guildId,
+				roomId,
+				status: "playing",
+				kickedIds: { $ne: userId },
+				"blackjackStacks.userId": { $ne: userId },
+				...(chargeId ? { "blackjackLateCharges.chargeId": chargeId } : {}),
+			},
+			{
+				$addToSet: { playerIds: userId },
+				...(entry ? { $push: { blackjackStacks: entry } } : {}),
+				...(chargeId ? { $pull: { blackjackLateCharges: { chargeId } } } : {}),
+			},
 			{ new: true }
 		);
+	},
+
+	// Hold a late seat's buy in on the row BEFORE the wallet is charged (2026-10 item 276, audit P3),
+	// so a crash between the charge and the stacks entry leaves a record finish can refund. Matches
+	// only a playing room the member was not removed from and holds no seat or held charge in.
+	async holdLateSeatCharge(guildId: string, roomId: string, charge: BlackjackLateCharge) {
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, status: "playing", kickedIds: { $ne: charge.userId }, "blackjackStacks.userId": { $ne: charge.userId }, "blackjackLateCharges.userId": { $ne: charge.userId } },
+			{ $push: { blackjackLateCharges: charge } },
+			{ new: true }
+		);
+	},
+
+	// Let a held late seat charge go, once its seat was refused and the charge given back or never taken.
+	async dropLateSeatCharge(guildId: string, roomId: string, chargeId: string) {
+		await GameRoom.updateOne({ guildId, roomId }, { $pull: { blackjackLateCharges: { chargeId } } });
 	},
 
 	// Claim one seat's cash out: the entry as it stood, or null when it was already claimed.
@@ -797,10 +839,23 @@ export const gameRoomStore = {
 	// the payers it held are the seats the table opens with, so a removal refunded a moment
 	// before this write is not on it and is never seated, and none refunded after it can claim
 	// an entry, because the entry is gone. Null when the claim was lost.
-	async claimForPlay(guildId: string, roomId: string, patch: Partial<IGameRoom>) {
+	//
+	// ⚠️ A BLACKJACK CHIP TABLE'S STACKS ARE WRITTEN IN THIS SAME WRITE (2026-10 item 276, audit P3).
+	// The ledger it empties held every buy in, and the table used to write its stacks ledger seconds
+	// later, after the room was built and the cards dealt; a crash in between had emptied one ledger
+	// and never written the other, so those chips were lost. `blackjackTable` names the seats Start
+	// read and their buy in: every one of them still on the ledger becomes a stacks entry here. An
+	// update pipeline, since only a pipeline can read the ledger in the write; the patch's values go
+	// in as literals so no id can be read as a field path.
+	async claimForPlay(guildId: string, roomId: string, patch: Partial<IGameRoom>, blackjackTable?: { buyIn: number; seatIds: readonly string[]; actedAt: Date }) {
+		const filter = { guildId, roomId, status: { $in: [...ROOMS_AWAITING_PLAY] } };
+		if (!blackjackTable) return GameRoom.findOneAndUpdate(filter, { $set: { status: "playing", ...patch, buyInPaidBy: [] } }, { new: false });
+		const literals = Object.fromEntries(Object.entries(patch).map(([field, value]) => [field, { $literal: value }]));
+		const stillPaidSeats = { $filter: { input: { $ifNull: ["$buyInPaidBy", []] }, cond: { $in: ["$$this", [...blackjackTable.seatIds]] } } };
+		const stacks = { $map: { input: stillPaidSeats, as: "seat", in: { userId: "$$seat", buyIn: blackjackTable.buyIn, stack: blackjackTable.buyIn } } };
 		return GameRoom.findOneAndUpdate(
-			{ guildId, roomId, status: { $in: [...ROOMS_AWAITING_PLAY] } },
-			{ $set: { status: "playing", ...patch, buyInPaidBy: [] } },
+			filter,
+			[{ $set: { ...literals, status: "playing", blackjackStacks: stacks, blackjackActedAt: { $literal: blackjackTable.actedAt }, buyInPaidBy: [] } }],
 			{ new: false }
 		);
 	},

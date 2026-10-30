@@ -1,3 +1,4 @@
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { JAIL_BAIL, OWNABLE_TILES, findOwnableTile, ownableTileName, type OwnableTile, type TileId } from "./monopolyBoard.js";
 import { groupHasBuildings } from "./monopolyBuildings.js";
 import { waitingDebt } from "./monopolyDebts.js";
@@ -29,6 +30,10 @@ import { cloneState, completeAction, countNoun, mentionPlayer, rejectAction } fr
 // the receiver pays no interest on it, the same ruling as a bankruptcy transfer
 // (see monopolyBankruptcy); charging the 10 percent fee is a Phase 5 prompt.
 //
+// An open trade lapses after MONOPOLY_TRADE_EXPIRY_MS (2026-10 item 276, audit P3), or one seat
+// that never answers would block every other trade for the rest of the match: a lapsed offer
+// cannot be accepted, and the next offer replaces it.
+//
 // A seat the match is waiting on for a debt may still trade to raise the cash,
 // as the standard rules allow, but never give away more than it takes back
 // (refuseDebtorGiveaway), or it could empty itself and then Pay into a $0
@@ -42,16 +47,28 @@ type TradeCheck = { ok: true; initiatorIndex: number; counterpartyIndex: number 
 
 // ── public actions ──────────────────────────────────────────────────────────
 
-/** Opens a trade from `proposal.initiatorId` to `proposal.counterpartyId`. */
+/** The open trade while it still stands: null when none is open, or once it has lapsed. */
+export function liveTrade(state: MonopolyState, now: number = Date.now()): TradeProposal | null {
+	const trade = state.pendingTrade;
+	return trade && !hasLapsed(trade, now) ? trade : null;
+}
+
+const hasLapsed = (trade: TradeProposal, now: number): boolean => now - trade.openedAt >= BOT_CONSTANTS.MONOPOLY_TRADE_EXPIRY_MS;
+
+/** Opens a trade from `proposal.initiatorId` to `proposal.counterpartyId`, in place of one that lapsed. */
 export function openTrade(state: MonopolyState, proposal: TradeProposal): MonopolyResult {
-	if (state.pendingTrade) return rejectAction("A trade is already waiting for an answer.");
+	if (liveTrade(state, proposal.openedAt)) return rejectAction("A trade is already waiting for an answer.");
 	const check = validateTrade(state, proposal);
 	if (!check.ok) return rejectAction(check.reason);
 
 	const next = cloneState(state);
+	const lapsed = state.pendingTrade;
 	next.pendingTrade = structuredClone(proposal);
-	const line = `${mentionPlayer(proposal.initiatorId)} offered ${mentionPlayer(proposal.counterpartyId)} a trade.`;
-	return completeAction(next, proposal.initiatorId, [line]);
+	const lines = [
+		...(lapsed ? [`The trade ${mentionPlayer(lapsed.initiatorId)} offered ${mentionPlayer(lapsed.counterpartyId)} lapsed unanswered.`] : []),
+		`${mentionPlayer(proposal.initiatorId)} offered ${mentionPlayer(proposal.counterpartyId)} a trade.`,
+	];
+	return completeAction(next, proposal.initiatorId, lines);
 }
 
 /**
@@ -59,9 +76,10 @@ export function openTrade(state: MonopolyState, proposal: TradeProposal): Monopo
  * `accepterId` is given it must be the counterparty, since only the side that
  * was asked can say yes.
  */
-export function acceptTrade(state: MonopolyState, accepterId?: string): MonopolyResult {
+export function acceptTrade(state: MonopolyState, accepterId?: string, now: number = Date.now()): MonopolyResult {
 	const trade = state.pendingTrade;
 	if (!trade) return rejectAction("There is no trade waiting for an answer.");
+	if (hasLapsed(trade, now)) return rejectAction("That trade lapsed unanswered, so nothing moved. Any player may offer a new one.");
 	if (accepterId !== undefined && accepterId !== trade.counterpartyId) return rejectAction("Only the player this trade was offered to can accept it.");
 	const check = validateTrade(state, trade);
 	if (!check.ok) return rejectAction(`This trade can no longer go through. ${check.reason}`);

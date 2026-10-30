@@ -164,7 +164,9 @@ describe("cashing out", () => {
 
 	// ⚠️ A ranked leave once play began is a forfeit (2026-10 item 276, owner decisions D3 and D12):
 	// the stack stays on the table as forfeitedChips for the winner, whether the seat left by
-	// Leave table, a removal or leaving the server, and no wallet is credited on the leave.
+	// Leave table or by leaving the server, and no wallet is credited on the leave. The host's
+	// removal no longer reaches a ranked table in play (D17), so a kick or ban by the server's
+	// admins, which is a server leave, is the one way a seat is taken out of one.
 	const forfeitedOn = (call = 0): number => (storeMock.updateSecretIf.mock.calls[call][3] as HoldemTable).forfeitedChips ?? 0;
 	const creditedTo = (userId: string): boolean => walletMock.credit.mock.calls.some((call) => (call[0] as { userId: string }).userId === userId);
 
@@ -198,13 +200,13 @@ describe("cashing out", () => {
 		expect(trailMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ text: words.stackForfeited("c", forfeitedOn()) }));
 	});
 
-	it("forfeits the stack of a player the host removes mid tournament, at most what they held", async () => {
+	it("forfeits at most what a seat held when the server's admins remove it mid tournament", async () => {
 		const table = chipTable(["a", "b", "c"]);
 		table.status = "playing";
 		dealHand(table, () => 0.5);
 		const stackBefore = table.seats.find((seat) => seat.userId === "c")!.stack;
 
-		await expect(removeFromTable(makeInteraction(HOST).client, makeRoom(table), "c", HOST)).resolves.toBe("removed");
+		await expect(removeFromTable(makeInteraction("c").client, makeRoom(table), "c", "c")).resolves.toBe("removed");
 
 		expect(creditedTo("c")).toBe(false);
 		// Folded out of a hand they never had to put more into: their stack, less any blind they had posted.

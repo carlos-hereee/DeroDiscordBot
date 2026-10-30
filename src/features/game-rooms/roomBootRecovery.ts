@@ -58,8 +58,9 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 		await mapWithConcurrency(live, BOT_CONSTANTS.SCHEDULER_GUILD_CONCURRENCY, async (room) => {
 			try {
 				// A draft has no channel yet by definition, so "no channel" says nothing
-				// about it and it must not be reaped here. Drafts are reaped on their own
-				// GAME_ROOM_DRAFT_TIMEOUT_MS clock, which is a separate concern.
+				// about it and it must not be reaped here. The idle sweep closes a draft
+				// nobody touched for GAME_ROOM_IDLE_ABANDON_MS (roomTurnSweep.sweepIdleRooms),
+				// which refunds its buy ins through finish.
 				if (!room.channelId) return;
 
 				const channel = await client.channels.fetch(room.channelId).catch(() => null);

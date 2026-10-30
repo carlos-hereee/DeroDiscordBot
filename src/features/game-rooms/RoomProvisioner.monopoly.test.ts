@@ -180,17 +180,27 @@ describe("RoomProvisioner.open for monopoly", () => {
 		expect(storedState().boardMessageId).toBe("message-2");
 	});
 
-	it("takes the self boarded path: the pinned opener carries the rules and only the host's Remove a player", async () => {
+	it("takes the self boarded path: the pinned opener carries the rules and only the host's controls", async () => {
 		const { guild, send } = makeGuild();
+		storeMock.create.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", casual: true });
 		await RoomProvisioner.open(input(guild));
 
 		const opener = sentPayloads(send)[0];
 		expect(opener.embeds[0].data.title).toBe(gameRoomsCopy.opener.title("monopoly"));
 		expect(opener.embeds[0].data.description).toContain(gameRoomsCopy.monopoly.openerRules());
-		// The game's own controls stay on its board; the opener carries the one host
-		// control that belongs to the room rather than the turn (2026-10 item 244 Phase 4).
+		// The game's own controls stay on its board; the opener carries the host controls that
+		// belong to the room rather than the turn (2026-10 item 244 Phase 4, item 276 D17).
 		const ids = (opener.components ?? []).flatMap((row) => row.toJSON().components.map((button) => button.custom_id));
-		expect(ids).toEqual(["gameroom:kick:room-1"]);
+		expect(ids).toEqual(["gameroom:kick:room-1", "gameroom:passhost:room-1"]);
+	});
+
+	// 2026-10 item 276, owner decision D17: a ranked match in play offers no Remove, only Pass host.
+	it("gives a ranked match's opener Pass host and no Remove", async () => {
+		const { guild, send } = makeGuild();
+		await RoomProvisioner.open(input(guild));
+
+		const ids = (sentPayloads(send)[0].components ?? []).flatMap((row) => row.toJSON().components.map((button) => button.custom_id));
+		expect(ids).toEqual(["gameroom:passhost:room-1"]);
 	});
 
 	it("still stores the match when the board post fails, with no message id to edit", async () => {

@@ -8,12 +8,12 @@ import type { Client } from "discord.js";
 // stored stack once and says so in the room. Driven over a mocked store and wallet.
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { openBlackjackStacks: vi.fn(), saveBlackjackStacks: vi.fn(), takeBlackjackStack: vi.fn() } }));
-vi.mock("@features/economy/chipWallet.js", () => ({ returnChips: vi.fn(async () => ({ balance: 0 })) }));
+vi.mock("@features/economy/chipWallet.js", () => ({ returnChips: vi.fn(async () => ({ balance: 0 })), refundChipReceipt: vi.fn(async () => true) }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(async () => true) } }));
 
-import { cashOutBlackjackSeat, openBlackjackLedger, settleBlackjackStacks } from "./blackjackChips.js";
+import { cashOutBlackjackSeat, openBlackjackLedger, refundStrandedLateCharges, settleBlackjackStacks } from "./blackjackChips.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
-import { returnChips } from "@features/economy/chipWallet.js";
+import { refundChipReceipt, returnChips } from "@features/economy/chipWallet.js";
 import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -92,5 +92,32 @@ describe("the end of a table", () => {
 		const room = { ...ROOM, game: "holdem", blackjackStacks: [{ userId: "a", buyIn: 1000, stack: 1 }] } as unknown as IGameRoom;
 		expect(await settleBlackjackStacks({} as Client, room)).toEqual([]);
 		expect(store.takeBlackjackStack).not.toHaveBeenCalled();
+	});
+});
+
+// ── a late seat's charge a crash stranded (2026-10 item 276, audit P3) ──
+describe("refundStrandedLateCharges", () => {
+	it("gives every held late charge back through its receipt, which pays only a charge really taken", async () => {
+		const room = { game: "blackjack", guildId: "g1", roomId: "room-1", blackjackLateCharges: [{ userId: "carol", buyIn: 1000, chargeId: "c-1" }] } as unknown as IGameRoom;
+
+		await refundStrandedLateCharges(room);
+
+		expect(refundChipReceipt).toHaveBeenCalledWith({ userId: "carol" }, 1000, "c-1");
+		expect(credit).not.toHaveBeenCalled();
+	});
+
+	it("touches no wallet for another game, or a table with nothing held", async () => {
+		await refundStrandedLateCharges({ game: "holdem", guildId: "g1", roomId: "room-1", blackjackLateCharges: [{ userId: "carol", buyIn: 1000, chargeId: "c-1" }] } as unknown as IGameRoom);
+		await refundStrandedLateCharges({ game: "blackjack", guildId: "g1", roomId: "room-1", blackjackLateCharges: [] } as unknown as IGameRoom);
+
+		expect(refundChipReceipt).not.toHaveBeenCalled();
+	});
+});
+
+// 2026-10 item 276, audit P3: the start claim writes a card's or a rematch's stacks itself.
+describe("openBlackjackLedger after the start claim", () => {
+	it("writes nothing for seats the claim already put on the stacks ledger", async () => {
+		expect(await openBlackjackLedger({ guildId: "g1", roomId: "room-1" }, { buyIn: 1000, userIds: ["host", "a"], charged: true, ledgered: true })).toBe(true);
+		expect(gameRoomStore.openBlackjackStacks).not.toHaveBeenCalled();
 	});
 });

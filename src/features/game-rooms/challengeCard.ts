@@ -274,6 +274,8 @@ export interface ChallengeResult {
 	bucket?: OutcomeBucket;
 	// Hangman's guessers won together, so the room is named rather than a member.
 	roomWon?: boolean;
+	// A solo round Dero won, so Dero is named (2026-10 item 276, audit P3).
+	houseWon?: boolean;
 }
 
 /**
@@ -288,6 +290,7 @@ export function challengeResultLine(result: ChallengeResult, rng: () => number =
 	// A Dero bot can win (2026-10 item 250 Phase 5), and its mention resolves to nobody, so it is named.
 	if (result.winnerId) return labelBotMentions(words.winnerLine(result.winnerId, flavorFor(result.bucket ?? "narrow")).trimEnd());
 	if (result.roomWon) return words.roomWonLine(flavorFor(result.bucket ?? "narrow")).trimEnd();
+	if (result.houseWon) return words.houseWonLine;
 	if (result.bucket === "draw") return words.drawLine(flavorFor("draw")).trimEnd();
 	return words.noWinnerLine;
 }

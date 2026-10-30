@@ -41,7 +41,11 @@ export async function playSoloLuckRoom(client: Client, room: IGameRoom, channel:
 		await roomLifecycle.finish(client, room, { abandoned: true, archiveDelayMs: SOLO_LUCK_ARCHIVE_DELAY_MS });
 		return;
 	}
-	await roomLifecycle.finish(client, room, { winnerId: result.outcome === "won" ? host.userId : null, archiveDelayMs: SOLO_LUCK_ARCHIVE_DELAY_MS });
+	await roomLifecycle.finish(client, room, {
+		winnerId: result.outcome === "won" ? host.userId : null,
+		houseWon: result.outcome === "lost",
+		archiveDelayMs: SOLO_LUCK_ARCHIVE_DELAY_MS,
+	});
 }
 
 // ── the throw, asked in the room ──────────────────────────────────────

@@ -36,6 +36,14 @@ export interface BlackjackStackEntry {
 	stack: number;
 }
 
+/** A late Blackjack seat's buy in on its way to the stacks ledger; see IGameRoom.blackjackLateCharges. */
+export interface BlackjackLateCharge {
+	userId: string;
+	buyIn: number;
+	// The wallet receipt the charge was taken with (chipWallet.takeChipsWithReceipt).
+	chargeId: string;
+}
+
 /** The prompt line a turn posts for the member on the clock; see IGameRoom.turnPrompt. */
 export interface TurnPromptRecord {
 	fingerprint: string | null;
@@ -146,6 +154,11 @@ export interface IGameRoom {
 	// finish pays back. Each cash out CLAIMS its entry first (gameRoomStore.takeBlackjackStack),
 	// so a seat is paid once. Empty on a free table and on every other game.
 	blackjackStacks: BlackjackStackEntry[];
+	// A late seat's buy in between its charge and its stacks entry (2026-10 item 276, audit P3): written
+	// BEFORE the wallet is charged, and taken off in the same write that adds the stacks entry. One
+	// still here when the room finishes is a charge a crash stranded, which finish refunds through the
+	// wallet's receipt, and only when the charge was really taken. Empty on every other row.
+	blackjackLateCharges: BlackjackLateCharge[];
 	// When a member last chose a Blackjack bet or action themselves, written with the stacks.
 	// The idle sweep reads it instead of updatedAt, because a timed out turn plays itself and
 	// writes the row, and a table nobody touches must still end on the idle clock.
@@ -318,6 +331,10 @@ const gameRoomSchema = new mongoose.Schema<IGameRoom>(
 		buyInPaidBy: { type: [String], default: [] },
 		blackjackStacks: {
 			type: [{ _id: false, userId: { type: String, required: true }, buyIn: { type: Number, required: true }, stack: { type: Number, required: true } }],
+			default: [],
+		},
+		blackjackLateCharges: {
+			type: [{ _id: false, userId: { type: String, required: true }, buyIn: { type: Number, required: true }, chargeId: { type: String, required: true } }],
 			default: [],
 		},
 		blackjackActedAt: { type: Date, default: null },

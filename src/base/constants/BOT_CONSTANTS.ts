@@ -223,12 +223,6 @@ export const BOT_CONSTANTS = {
 	// that a slow channel-delete fan-out would blow.
 	GAME_ROOM_SWEEP_CRON: "*/5 * * * *", // every 5 minutes
 
-	// How long a draft room (host picked a game but never pressed Start) may
-	// hold that host's one room slot before it is reaped. Without this, an
-	// abandoned draft locks the host out of the board forever, since the
-	// partial unique index counts "draft" as live.
-	GAME_ROOM_DRAFT_TIMEOUT_MS: 10 * 60_000, // 10 minutes
-
 	// How long a battleship player has to take their turn before it is forfeited.
 	// TWO consecutive expiries forfeit the MATCH, so an abandoned game dies about 20
 	// minutes after the last shot rather than sitting open until the archive window.
@@ -282,9 +276,10 @@ export const BOT_CONSTANTS = {
 	// than this one (the row's last write is never earlier than its last move), and the
 	// forfeit writes the row, which resets the idle stamp. On the sweep backstop the
 	// battleship sweep runs before this one in the same tick for the same reason. Only a
-	// turn clock held by a long board draw could lose that race. Monopoly is exempt:
-	// its seats get the clock above, which its opener promises, and that sweep already
-	// ends every match.
+	// turn clock held by a long board draw could lose that race. A Monopoly match is
+	// exempt: its seats get the clock above, which its opener promises, and that sweep
+	// already ends every match. A Monopoly draft is swept like any other draft, and this
+	// is also the clock that closes every abandoned draft (a draft has no other).
 	// A hangman room in play is exempt too (owner decision, 2026-10-23): hangman has no
 	// clock, and its host frees the slot with Give up. A hangman draft is still swept.
 	// Checked on the same 5 minute room sweep, so the close lands up to 5 minutes later.
@@ -300,6 +295,12 @@ export const BOT_CONSTANTS = {
 	// close anywhere inside five minutes. The turn clock closes a round at its deadline,
 	// so this tick is the backstop after a restart, when a round runs 180 to 190 seconds.
 	MONOPOLY_AUCTION_TICK_MS: 10_000,
+	// How long an open Monopoly trade waits for its answer before it lapses (2026-10 item 276,
+	// audit P3). One trade may be open at a time, so an offer to a seat that walked away used to
+	// block every other trade in the match until that seat came back. An hour leaves a member who
+	// checks in between turns time to answer; a lapsed offer moves nothing and any seat may open
+	// the next one. Read by the trade engine (monopolyTrade.liveTrade) and nothing else.
+	MONOPOLY_TRADE_EXPIRY_MS: 60 * 60_000, // 1 hour
 	// The smallest rent the voice referee says out loud (Session 5c, key moments only).
 	// $200 is GO's salary and the rent of all four rails, so a rent this big costs a
 	// player at least a full lap's pay. Unbuilt lots charge $2 to $100 and utilities at
@@ -1017,6 +1018,12 @@ export const BOT_CONSTANTS = {
 		// own 1,500 dollar opening cash only by the rules' tradition; Monopoly dollars are never
 		// chips (D7), so changing one never changes the other.
 		MONOPOLY_RANKED_BUY_IN: 1_500,
+		// How many charge receipts a wallet keeps open (2026-10 item 276, audit P3). A late Blackjack
+		// seat's buy in is taken with a receipt and the receipt closed once the table's ledger holds
+		// the seat; only a crash between the two leaves one open, for finish to refund. A member with
+		// more open at once than this is a run of crashes, and the oldest receipt then drops, which
+		// can lose that one buy in but never pays it twice.
+		CHIP_RECEIPT_CAP: 20,
 		// Owner decision D10: the host of a ranked Battleship card may set a wager both captains
 		// pay; blank means none, and the match is chip free. The presets are the amounts the
 		// creation modal suggests; the bounds are what it accepts, the floor keeping a wager worth

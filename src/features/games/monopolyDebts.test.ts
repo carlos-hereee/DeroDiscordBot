@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { STARTING_CHIPS } from "./monopolyBoard.js";
 import { settleDebts, type MonopolyDebt } from "./monopolyBankruptcy.js";
 import {
@@ -24,6 +24,15 @@ const ALICE = "alice";
 const BOB = "bob";
 const CARA = "cara";
 const NOW = 1_000;
+
+// An open trade lapses against the clock (BOT_CONSTANTS.MONOPOLY_TRADE_EXPIRY_MS, 2026-10 item 276),
+// so the engine's Date.now reads this file's fixed NOW; only Date is faked, never a timer.
+beforeEach(() => {
+	vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
+});
+afterEach(() => {
+	vi.useRealTimers();
+});
 const SEED = 241;
 
 const newMatch = (players: string[] = [ALICE, BOB, CARA]): MonopolyState =>

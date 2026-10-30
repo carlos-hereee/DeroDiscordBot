@@ -11,6 +11,7 @@ import {
 import { basename } from "node:path";
 import { gameAssetPath, type GameAssetKey } from "@features/games/gamesAssets.js";
 import { infoEmbed } from "@utils/embedBuilder.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { COLORS } from "@base/copy/brand.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -96,13 +97,9 @@ export function roomOpenerLogo(game: GameSlug): { attachment: AttachmentBuilder;
 // move is bandwidth and a rate limit for no gain. This is the payoff moment and is
 // posted once, so it earns the weight.
 // archiveDelayMs is the window finish stamped, so the notice names it; absent is the
-// ordinary room's window.
-export function roomResultEmbed(winnerId: string | null, abandoned = false, imageRef?: string, archiveDelayMs?: number, prizeLine?: string | null): EmbedBuilder {
-	const outcome = abandoned
-		? gameRoomsCopy.result.abandonedLine
-		: winnerId
-		  ? gameRoomsCopy.result.winnerLine(winnerId)
-		  : gameRoomsCopy.result.noWinnerLine;
+// ordinary room's window. `houseWon` is a solo round Dero won, which no member did.
+export function roomResultEmbed(winnerId: string | null, abandoned = false, imageRef?: string, archiveDelayMs?: number, prizeLine?: string | null, houseWon = false): EmbedBuilder {
+	const outcome = resultOutcomeLine(winnerId, abandoned, houseWon);
 
 	// A ranked Monopoly or Battleship match says what its pot paid under the outcome (2026-10 item 276, D4).
 	const embed = infoEmbed(
@@ -114,6 +111,17 @@ export function roomResultEmbed(winnerId: string | null, abandoned = false, imag
 	if (imageRef) embed.setImage(imageRef);
 	return embed;
 }
+
+function resultOutcomeLine(winnerId: string | null, abandoned: boolean, houseWon: boolean): string {
+	const words = gameRoomsCopy.result;
+	if (abandoned) return words.abandonedLine;
+	if (winnerId) return words.winnerLine(winnerId);
+	return houseWon ? words.houseWinnerLine : words.noWinnerLine;
+}
+
+// Every archive window a result card can name: an ordinary room's, and a solo luck round's
+// shorter one. A rematched card drops whichever its finish stamped (2026-10 item 276, audit P3).
+const ARCHIVE_WINDOWS_MS: readonly number[] = [BOT_CONSTANTS.GAME_ROOM_ARCHIVE_DELAY_MS, BOT_CONSTANTS.GAME_ROOM_SOLO_LUCK_ARCHIVE_DELAY_MS];
 
 /**
  * The finished room's result card once a rematch has taken its channel over: the same
@@ -127,8 +135,8 @@ export function roomResultEmbed(winnerId: string | null, abandoned = false, imag
  */
 export function rematchedResultEmbed(posted: JSONEncodable<APIEmbed> | APIEmbed, presserId: string): EmbedBuilder {
 	const embed = EmbedBuilder.from(posted);
-	const notice = gameRoomsCopy.result.archiveNotice();
-	const kept = (embed.data.description ?? "").split("\n").filter((line) => line !== notice);
+	const notices = new Set(ARCHIVE_WINDOWS_MS.map((delayMs) => gameRoomsCopy.result.archiveNotice(delayMs)));
+	const kept = (embed.data.description ?? "").split("\n").filter((line) => !notices.has(line));
 	while (kept.length > 0 && kept[kept.length - 1] === "") kept.pop();
 	return embed.setDescription([...kept, "", gameRoomsCopy.result.rematchStarted(presserId)].join("\n"));
 }
@@ -169,17 +177,38 @@ export function roomArchiveRow(roomId: string, options: { rematch?: boolean } = 
 export const REMOVABLE_IN_PLAY_GAMES: readonly GameSlug[] = ["holdem", "battleship", "monopoly"];
 
 /**
- * The host's Remove a player button for a room's pinned opener, or null for a game with
- * no removal in play. Rendered for everyone like Archive now and gated in the handler,
- * for the reason the result card's row explains; it opens the host's private picker.
+ * The games whose host keeps controls while the match plays, and so may pass hosting to another
+ * player (2026-10 item 276, owner decision D17): the multi seat self boarded games. A one press
+ * game or a hangman round ends before a host could need to hand it on.
  */
-export function roomHostRow(game: GameSlug, roomId: string): ActionRowBuilder<ButtonBuilder> | null {
-	if (!REMOVABLE_IN_PLAY_GAMES.includes(game)) return null;
-	return new ActionRowBuilder<ButtonBuilder>().addComponents(
-		new ButtonBuilder()
-			.setCustomId(`${GAME_ROOM_PREFIX}:kick:${roomId}`)
-			.setLabel(rokCommanderCopy.arcadeHostControls.kick.buttonLabel)
-			.setEmoji("🚫")
-			.setStyle(ButtonStyle.Secondary)
-	);
+export const PASS_HOST_GAMES: readonly GameSlug[] = ["holdem", "blackjack", "battleship", "monopoly"];
+
+/**
+ * The host's row on a room's pinned opener, or null for a game with neither control: Remove a
+ * player where the game allows a removal in play and the match is casual, and Pass host. A ranked
+ * match offers no Remove once it starts (D17): kicks belong to the lobby and to casual play, and
+ * misconduct is the server's admins' call. Rendered for everyone like Archive now and gated in the
+ * handler, for the reason the result card's row explains; each opens the host's private picker.
+ */
+export function roomHostRow(game: GameSlug, roomId: string, options: { ranked: boolean }): ActionRowBuilder<ButtonBuilder> | null {
+	const buttons: ButtonBuilder[] = [];
+	if (REMOVABLE_IN_PLAY_GAMES.includes(game) && !options.ranked) {
+		buttons.push(
+			new ButtonBuilder()
+				.setCustomId(`${GAME_ROOM_PREFIX}:kick:${roomId}`)
+				.setLabel(rokCommanderCopy.arcadeHostControls.kick.buttonLabel)
+				.setEmoji("🚫")
+				.setStyle(ButtonStyle.Secondary)
+		);
+	}
+	if (PASS_HOST_GAMES.includes(game)) {
+		buttons.push(
+			new ButtonBuilder()
+				.setCustomId(`${GAME_ROOM_PREFIX}:passhost:${roomId}`)
+				.setLabel(gameRoomsCopy.hostPass.buttonLabel)
+				.setEmoji("👑")
+				.setStyle(ButtonStyle.Secondary)
+		);
+	}
+	return buttons.length > 0 ? new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons) : null;
 }

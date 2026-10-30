@@ -4,6 +4,7 @@ import {
 	applyGuess,
 	isSolved,
 	maskedWord,
+	codeSpanMask,
 	wrongLetters,
 	remainingAttempts,
 	HANGMAN_MAX_WRONG,
@@ -119,6 +120,15 @@ describe("board rendering", () => {
 		applyGuess(state, "a");
 		applyGuess(state, "e");
 		expect(maskedWord(state)).toBe("\\_ A \\_ \\_ \\_ E");
+	});
+
+	// 2026-10 item 276 Phase 7 (audit P3): a room's This turn line shows the mask in a code span,
+	// where Discord prints a backslash as written, so the escaped mask read "\_ A \_" there.
+	it("gives a code span a mask with no backslashes", () => {
+		const state = createHangmanState("castle");
+		applyGuess(state, "a");
+		expect(codeSpanMask(state)).toBe("_ A _ _ _ _");
+		expect(codeSpanMask(state)).not.toContain("\\");
 	});
 
 	it("lists misses only, since hits are already visible in the mask", () => {

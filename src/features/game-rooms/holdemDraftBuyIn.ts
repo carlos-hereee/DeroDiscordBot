@@ -161,6 +161,9 @@ export interface PaidSeats {
 	// True on a chip table, where the host and every one of userIds paid `buyIn` from their
 	// wallet; false on a table that plays free, where nobody paid and every seat is free.
 	charged: boolean;
+	// True once the start claim wrote these seats to a Blackjack table's stacks ledger in its own
+	// write (gameRoomStore.claimForPlay, 2026-10 item 276), so the table must not write them again.
+	ledgered?: boolean;
 }
 
 // The pool members a chip table seats: the ones who paid on the card (Join, or an invited
@@ -216,6 +219,14 @@ export async function settleDraftBuyIns(
 		if (unpaid) return { ok: false, reason: gameRoomsCopy.holdem.opponentNotPaid(unpaid, buyIn) };
 	}
 	if (!(await takeChips({ userId: room.hostId }, buyIn))) return { ok: false, reason: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
+	// ⚠️ THE HOST'S SEAT GOES ON THE LEDGER LIKE A JOINER'S (2026-10 item 276, audit P3). Start's
+	// charge used to sit outside every ledger while the room was built, seconds in which a crash lost
+	// it and Call it off could not reach it. On the ledger, every refund a draft has pays it once,
+	// and the start claim carries it on with the joiners' (a Blackjack table's stacks among them).
+	if (!(await gameRoomStore.addBuyInPaid(room.guildId, room.roomId, room.hostId, room.holdemBuyIn ?? null))) {
+		await returnChips({ userId: room.hostId }, buyIn);
+		return { ok: false, reason: gameRoomsCopy.board.draftGone };
+	}
 
 	// A payer who is no longer in the pool would otherwise lose the buy in for good, since the
 	// ledger is cleared once the room opens. Refunded only after the host's charge landed, so a
@@ -232,8 +243,9 @@ export async function settleDraftBuyIns(
  * room takes seconds to build: a joiner the host removed meanwhile was refunded and is off the
  * ledger, so they do not sit, and a joiner who paid after Start's read is on the ledger but not
  * in the seats, so they are owed their buy in back (`unseatedPayers`), since the claim emptied
- * the ledger. The host paid at Start and is never on the ledger, so the host always sits. A free
- * table seats everyone it named, and any payer still on its ledger is owed their buy in back.
+ * the ledger. The host always sits: their seat went on the ledger at Start, and a claim that found
+ * it gone (Call it off refunded it) never landed. A free table seats everyone it named, and any
+ * payer still on its ledger is owed their buy in back.
  */
 export function seatsAtClaim(seats: PaidSeats, hostId: string, ledgerAtClaim: readonly string[]): { seats: PaidSeats; unseatedPayers: string[] } {
 	if (!seats.charged) return { seats, unseatedPayers: [...new Set(ledgerAtClaim)] };
@@ -243,11 +255,14 @@ export function seatsAtClaim(seats: PaidSeats, hostId: string, ledgerAtClaim: re
 	return { seats: { ...seats, userIds: seated }, unseatedPayers };
 }
 
-/** The room did not open: give the host and every paid seat their buy in back. A free table owes nobody. */
+/**
+ * The room did not open: give the host and every paid seat their buy in back, each by claiming its
+ * ledger entry first (the host's is there since Start, 2026-10 item 276), so a cancel that already
+ * refunded someone pays them nothing twice. A free table owes nobody.
+ */
 export async function refundOpenedSeats(room: IGameRoom, seats: PaidSeats): Promise<void> {
 	if (!seats.charged) return;
-	await returnChips({ userId: room.hostId }, seats.buyIn);
-	await refundJoiners(room, seats.userIds.filter((userId) => userId !== room.hostId));
+	await refundJoiners(room, seats.userIds);
 }
 
 /**

@@ -24,7 +24,7 @@ import {
 	createHangmanState,
 	applyGuess,
 	isSolved,
-	maskedWord,
+	codeSpanMask,
 	wrongLetters,
 	remainingAttempts,
 	type HangmanGuess,
@@ -271,8 +271,10 @@ const REJECTION_COPY: Record<HangmanAuthoringRejection, string> = {
 	extraHintTooLong: `Keep each extra hint under ${HANGMAN_HINT_MAX} characters.`,
 };
 
-// The word modal's answers post where it was pressed (2026-10 item 257 Phase 5): a modal Submit
-// cannot open a notice. None of them carries the word, only a refusal or the hint.
+// The word modal's answer (the hint, once the word is set) posts where it was pressed (2026-10 item
+// 257 Phase 5). Its refusals are private notices (2026-10 item 276, audit P3): "that word is too
+// long" or "pick a different word" posted in the room hands the guessers a clue to the word, and a
+// modal Submit cannot open a modal, so each is the notice's private reply. None carries the word.
 export async function handleAuthoringModal(interaction: ModalSubmitInteraction): Promise<void> {
 	const [prefix, action, roomId] = interaction.customId.split(":");
 	if (prefix !== GAME_ROOM_MODAL_PREFIX || action !== "word" || !roomId) return;
@@ -282,13 +284,13 @@ export async function handleAuthoringModal(interaction: ModalSubmitInteraction):
 
 	const room = await gameRoomStore.findByRoomId(guildId, roomId);
 	if (!room || room.status !== "playing") {
-		await answerInChannel(interaction, "here", { content: gameRoomsCopy.errors.notFound });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.hangman, sections: [gameRoomsCopy.errors.notFound] });
 		return;
 	}
 	// Only the host sets the word, and only once. A second submit would replace a
 	// word the room has already been guessing at.
 	if (room.hostId !== interaction.user.id || (room.secret as HangmanSecret | null)?.word) {
-		await answerInChannel(interaction, "here", { content: gameRoomsCopy.errors.notYours });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.hangman, sections: [gameRoomsCopy.errors.notYours] });
 		return;
 	}
 
@@ -299,7 +301,7 @@ export async function handleAuthoringModal(interaction: ModalSubmitInteraction):
 	);
 
 	if (!result.ok) {
-		await answerInChannel(interaction, "here", { content: REJECTION_COPY[result.reason] });
+		await showNotice(interaction, { title: gameRoomsCopy.notices.hangman, sections: [REJECTION_COPY[result.reason]] });
 		return;
 	}
 
@@ -551,7 +553,7 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	// (2026-10 item 257 Phase 5, replacing a private "You played" line).
 	await acknowledgeTextModal(interaction);
 
-	const mask = maskedWord(state);
+	const mask = codeSpanMask(state);
 	const remaining = remainingAttempts(state);
 
 	// ⚠️ A NEW MESSAGE PER GUESS, never an edit of an older one, and a move never carries a

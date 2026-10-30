@@ -24,6 +24,7 @@ import type { OwnableTile } from "@features/games/monopolyBoard.js";
 import {
 	acceptTrade,
 	describeTradeSide,
+	liveTrade,
 	openTrade,
 	rejectTrade,
 	tradableLots,
@@ -100,8 +101,10 @@ export async function handleMtrade(interaction: ButtonInteraction, room: IGameRo
 		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.inventoryOut] });
 		return;
 	}
-	if (state.pendingTrade) {
-		await interaction.reply({ ...(await openOfferReply(room.roomId, state.pendingTrade, actorId)), ...PRIVATE });
+	// A lapsed offer blocks nothing (2026-10 item 276, audit P3): the press opens a new one over it.
+	const openOffer = liveTrade(state);
+	if (openOffer) {
+		await interaction.reply({ ...(await openOfferReply(room.roomId, openOffer, actorId)), ...PRIVATE });
 		return;
 	}
 
@@ -136,8 +139,9 @@ export async function handleTradePartnerSelect(interaction: StringSelectMenuInte
 		await showNotice(interaction, { title: gameRoomsCopy.notices.monopoly, sections: [gameRoomsCopy.monopoly.matchOver] });
 		return;
 	}
-	if (state.pendingTrade) {
-		await interaction.reply({ ...(await openOfferReply(room.roomId, state.pendingTrade, initiatorId)), ...PRIVATE });
+	const openOffer = liveTrade(state);
+	if (openOffer) {
+		await interaction.reply({ ...(await openOfferReply(room.roomId, openOffer, initiatorId)), ...PRIVATE });
 		return;
 	}
 	if (!isStillPlaying(state, initiatorId) || !isStillPlaying(state, partnerId) || partnerId === initiatorId) {

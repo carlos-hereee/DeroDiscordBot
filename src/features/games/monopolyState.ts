@@ -207,7 +207,7 @@ export {
 	type SellOption,
 } from "./monopolyBuildings.js";
 export { applyDebtDefault, applyForfeit, applyPayDebt, waitingDebt } from "./monopolyDebts.js";
-export { acceptTrade, describeTradeSide, openTrade, rejectTrade, tradableLots } from "./monopolyTrade.js";
+export { acceptTrade, describeTradeSide, liveTrade, openTrade, rejectTrade, tradableLots } from "./monopolyTrade.js";
 export { closeAuction, openAuction, placeBid } from "./monopolyAuction.js";
 export { BANK_CREDITOR, netWorth, resolveDebt } from "./monopolyBankruptcy.js";
 

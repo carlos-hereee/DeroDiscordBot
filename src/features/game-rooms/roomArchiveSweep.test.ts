@@ -18,7 +18,7 @@ const makeRoom = (roomId: string, guildId = "guild-1") => ({ roomId, guildId, ch
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	archiveMock.mockResolvedValue(undefined);
+	archiveMock.mockResolvedValue("archived");
 });
 
 describe("sweepExpiredRooms", () => {
@@ -51,6 +51,7 @@ describe("sweepExpiredRooms", () => {
 		storeMock.findExpiredArchives.mockResolvedValue([makeRoom("a"), makeRoom("bad"), makeRoom("c")]);
 		archiveMock.mockImplementation(async (_client: unknown, room: { roomId: string }) => {
 			if (room.roomId === "bad") throw new Error("unknown guild");
+			return "archived";
 		});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -58,6 +59,16 @@ describe("sweepExpiredRooms", () => {
 		expect(await sweepExpiredRooms(client)).toEqual({ archived: 2, failed: 1 });
 		expect(archiveMock).toHaveBeenCalledTimes(3);
 		errorSpy.mockRestore();
+		logSpy.mockRestore();
+	});
+
+	// 2026-10 item 276, audit P3: a refused delete or a channel a rematch took over is not archived.
+	it("counts a room left for the next tick, or left to its rematch, as not archived", async () => {
+		storeMock.findExpiredArchives.mockResolvedValue([makeRoom("a"), makeRoom("refused"), makeRoom("rematched")]);
+		archiveMock.mockImplementation(async (_client: unknown, room: { roomId: string }) => ({ a: "archived", refused: "retry", rematched: "kept" })[room.roomId]);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+		expect(await sweepExpiredRooms(client)).toEqual({ archived: 1, failed: 2 });
 		logSpy.mockRestore();
 	});
 

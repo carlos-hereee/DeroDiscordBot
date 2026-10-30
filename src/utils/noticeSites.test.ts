@@ -152,6 +152,14 @@ const INVENTORY: readonly NoticeEntry[] = [
 
 	// ── game-rooms/hostControls.ts ──
 	{ file: "features/game-rooms/hostControls.ts", within: "loadRoomForHost", anchor: "gameRoomsCopy.errors.controlRetired", kind: "state" },
+	// No Remove in a ranked match in play, and Pass host (2026-10 item 276, owner decision D17).
+	{ file: "features/game-rooms/hostControls.ts", within: "openRemovePicker", anchor: "gameRoomsCopy.hostPass.noRemoveRanked", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "handleRemoveSelect", anchor: "gameRoomsCopy.hostPass.noRemoveRanked", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "openPassHostPicker", anchor: "gameRoomsCopy.hostPass.notPlaying", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "openPassHostPicker", anchor: "gameRoomsCopy.hostPass.empty", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "handlePassHostSelect", anchor: "passWords.hostOnly", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "handlePassHostSelect", anchor: "passWords.notPlaying", kind: "state" },
+	{ file: "features/game-rooms/hostControls.ts", within: "handlePassHostSelect", anchor: "passWords.gone", kind: "state" },
 	{ file: "features/game-rooms/hostControls.ts", within: "loadRoomForHost", anchor: "gameRoomsCopy.errors.notFound", kind: "state" },
 	{ file: "features/game-rooms/hostControls.ts", within: "loadRoomForHost", anchor: "gameRoomsCopy.errors.notYours", kind: "state" },
 	{ file: "features/game-rooms/hostControls.ts", within: "handleBandSelect", anchor: "gameRoomsCopy.board.draftGone", kind: "state" },
@@ -205,6 +213,11 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/game-rooms/roomGames.ts", within: "handleRpsSelect", anchor: "gameRoomsCopy.games.rpsLocked(choice)", kind: "private", why: "names the member's own throw before the reveal; from the picker's Submit it is the private fallback, and the room's public line names nobody's choice" },
 
 	// ── game-rooms/roomHangman.ts ──
+	// The word modal's refusals (2026-10 item 276, audit P3): a modal Submit, so the private fallback,
+	// and kept private because "too long" or "pick a different word" in the room is a clue to the word.
+	{ file: "features/game-rooms/roomHangman.ts", within: "handleAuthoringModal", anchor: "gameRoomsCopy.errors.notFound", kind: "race", why: "a word Submit for a room that closed while the host typed" },
+	{ file: "features/game-rooms/roomHangman.ts", within: "handleAuthoringModal", anchor: "gameRoomsCopy.errors.notYours", kind: "race", why: "a word Submit from a member who is not the host, or after the word was set" },
+	{ file: "features/game-rooms/roomHangman.ts", within: "handleAuthoringModal", anchor: "REJECTION_COPY[result.reason]", kind: "private", why: "a refusal of the host's word says something about it, so the guessers never see it" },
 	{ file: "features/game-rooms/roomHangman.ts", within: "handleCategorySelect", anchor: "gameRoomsCopy.errors.notFound", count: 2, kind: "state" },
 	{ file: "features/game-rooms/roomHangman.ts", within: "handleCategorySelect", anchor: "gameRoomsCopy.errors.notYours", kind: "state" },
 	{ file: "features/game-rooms/roomHangman.ts", within: "handleCategorySelect", anchor: "gameRoomsCopy.hangman.wordAlreadySet", kind: "state" },

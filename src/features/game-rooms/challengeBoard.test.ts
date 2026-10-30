@@ -15,6 +15,8 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		create: vi.fn(),
 		findOpenByHost: vi.fn(),
 		setHoldemBuyIn: vi.fn(),
+		// The host's own seat goes on the draft ledger at Start (2026-10 item 276, audit P3).
+		addBuyInPaid: vi.fn(async () => ({})),
 	},
 }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
@@ -406,7 +408,24 @@ describe("starting a Blackjack table", () => {
 		await countIn(draft);
 
 		expect(wallets.get(HOST)).toBe(2500);
+		// The host's charge is on the draft ledger before the room is built, so a crash or Call it
+		// off in those seconds still refunds it (2026-10 item 276, audit P3).
+		expect(gameRoomStore.addBuyInPaid).toHaveBeenCalledWith("guild-1", "room-1", HOST, 2500);
 		expect(boardMock).toHaveBeenCalledWith(interaction.guild, room, channel, { buyIn: 2500, userIds: [HOST, "a"], charged: true });
+	});
+
+	it("gives the host's charge straight back when the draft closed before it reached the ledger", async () => {
+		wallets.clear();
+		wallets.set(HOST, 5000);
+		(gameRoomStore.addBuyInPaid as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+		const interaction = arcadeButton();
+		const draft = makeRoom({ game: "blackjack", spectatorIds: ["a"], holdemBuyIn: 2500, buyInPaidBy: ["a"] });
+
+		await confirmStartMatch(interaction, draft);
+		await countIn(draft);
+
+		expect(wallets.get(HOST)).toBe(5000);
+		expect(openMock).not.toHaveBeenCalled();
 	});
 
 	it("refuses the start when the host cannot cover the buy in, before any channel exists", async () => {

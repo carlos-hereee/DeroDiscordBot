@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import type { ButtonInteraction, Client, ModalSubmitInteraction, StringSelectMenuInteraction } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { findByRoomId: vi.fn(), updateSecretIf: vi.fn(), moveBoardMessage: vi.fn(async () => ({})) } }));
@@ -17,6 +17,7 @@ vi.mock("@features/games/monopolyRenderer.js", () => ({
 
 import { handleMtrade, handleTradePartnerSelect, handleTradeModal, handleMtradeAccept, handleMtradeReject } from "./roomMonopolyTrade.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { roomTrail } from "./roomTrail.js";
 import { createInitialState, type MonopolyState, type TradeProposal } from "@features/games/monopolyState.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -41,6 +42,15 @@ const A = "player-a";
 const B = "player-b";
 const C = "player-c";
 const OPENED_AT = 5_000;
+
+// An open trade lapses against the clock (BOT_CONSTANTS.MONOPOLY_TRADE_EXPIRY_MS, 2026-10 item 276),
+// so the engine's Date.now reads this file's fixed OPENED_AT; only Date is faked, never a timer.
+beforeEach(() => {
+	vi.useFakeTimers({ now: OPENED_AT, toFake: ["Date"] });
+});
+afterEach(() => {
+	vi.useRealTimers();
+});
 // The board message and the members are not reachable here, so the redraw is a no-op
 // and the partner picker falls back to seat numbers.
 // The room's channel, holding a board to edit or replace.
@@ -346,6 +356,18 @@ describe("the Trade button with an offer open", () => {
 		expect(review.content).toBe(gameRoomsCopy.monopoly.tradeBetweenOthers(A, B));
 		expect(review.embeds).toBeUndefined();
 		expect(review.components).toBeUndefined();
+	});
+
+	// 2026-10 item 276, audit P3: an offer to a seat that walked away blocked every other trade.
+	it("opens a new offer over one that lapsed unanswered", async () => {
+		const room = withOffer();
+		vi.setSystemTime(OPENED_AT + BOT_CONSTANTS.MONOPOLY_TRADE_EXPIRY_MS);
+		const interaction = makeButton(C);
+
+		await handleMtrade(interaction, room);
+
+		expect(interaction.reply).not.toHaveBeenCalled();
+		expect(interaction.showModal).toHaveBeenCalledOnce();
 	});
 });
 

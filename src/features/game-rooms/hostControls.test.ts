@@ -25,6 +25,11 @@ vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn(), awardTwoPlayerResult: vi.fn() }));
 vi.mock("@features/games/monopolyRenderer.js", () => ({ renderBoard: vi.fn(), renderWinnerCard: vi.fn(), monopolyWinnerView: vi.fn() }));
 vi.mock("./roomMonopolyReferee.js", () => ({ announceReferee: vi.fn() }));
+// The move itself is hostHandoff's, tested there; who may host is read through the real rule.
+vi.mock("./hostHandoff.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("./hostHandoff.js")>()),
+	passHosting: vi.fn(),
+}));
 vi.mock("@features/ratings/recordMatchRatings.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@features/ratings/recordMatchRatings.js")>()),
 	recordMatchRatings: vi.fn(),
@@ -43,6 +48,7 @@ import { createTable, dealHand, joinTable, type HoldemTable } from "@features/ga
 import { createInitialState, type MonopolyState } from "@features/games/monopolyState.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { passHosting } from "./hostHandoff.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 // ── the host controls (2026-10 item 244 Phase 4) ───────────────────────────
@@ -404,7 +410,38 @@ describe("who can be removed", () => {
 
 	it("offers a Monopoly seat still in after its player left playerIds, so a busy board's removal can be pressed again", () => {
 		const state = createInitialState([HOST, OTHER, THIRD], { auctionsEnabled: false }, 1_000, 1);
-		expect(removableMembers(makeRoom({ status: "playing", game: "monopoly", playerIds: [HOST, OTHER], kickedIds: [THIRD], secret: state as never }))).toEqual([OTHER, THIRD]);
+		expect(removableMembers(makeRoom({ status: "playing", game: "monopoly", casual: true, playerIds: [HOST, OTHER], kickedIds: [THIRD], secret: state as never }))).toEqual([OTHER, THIRD]);
+	});
+
+	// 2026-10 item 276, owner decision D17: once a ranked match starts the host removes nobody. A
+	// ranked draft still lets the host remove a joiner (refunded), and a casual match keeps Remove.
+	it("offers nobody in a ranked match in play, while its draft and a casual match still do", () => {
+		const state = createInitialState([HOST, OTHER], { auctionsEnabled: false }, 1_000, 1);
+		expect(removableMembers(makeRoom({ status: "playing", game: "monopoly", playerIds: [HOST, OTHER], secret: state as never }))).toBeNull();
+		expect(removableMembers(makeRoom({ game: "monopoly", spectatorIds: [OTHER] }))).toEqual([OTHER]);
+		expect(removableMembers(makeRoom({ status: "playing", game: "monopoly", casual: true, playerIds: [HOST, OTHER], secret: state as never }))).toEqual([OTHER]);
+	});
+});
+
+describe("Remove in a ranked match in play (2026-10 item 276, D17)", () => {
+	const rankedRoom = (): IGameRoom => makeRoom({ status: "playing", game: "holdem", playerIds: [HOST, OTHER] });
+
+	it("refuses the button from an older opener, opening no picker", async () => {
+		const interaction = makeButton("gameroom:kick:room-1", HOST);
+
+		await hostControls.openRemovePicker(interaction, rankedRoom());
+
+		expect(replyText(interaction)).toBe(gameRoomsCopy.hostPass.noRemoveRanked);
+	});
+
+	it("refuses a picker submitted from before the start, and writes nothing", async () => {
+		storeMock.findByRoomId.mockResolvedValue(rankedRoom());
+		const interaction = makeSelect("kick", [OTHER]);
+
+		await hostControls.handleRemoveSelect(interaction);
+
+		expect(replyText(interaction)).toBe(gameRoomsCopy.hostPass.noRemoveRanked);
+		expectNoWrites();
 	});
 });
 
@@ -420,8 +457,11 @@ describe("removing a player during the match", () => {
 		return table;
 	}
 
+	// A casual match: a ranked one in play removes nobody (2026-10 item 276, D17), so the Phase 6b
+	// ranked removal forfeit is unreachable and a ranked leaver forfeits by a server leave instead
+	// (roomDeparture, and roomHoldemHandlers.chips for the forfeited stack).
 	function playingRoom(game: IGameRoom["game"], secret: unknown, overrides: Partial<IGameRoom> = {}): IGameRoom {
-		return makeRoom({ status: "playing", game, playerIds: [HOST, OTHER], secret: secret as never, ...overrides });
+		return makeRoom({ status: "playing", game, casual: true, playerIds: [HOST, OTHER], secret: secret as never, ...overrides });
 	}
 
 	// Every read hands back a FRESH copy of the stored row, the way the database does:
@@ -491,6 +531,79 @@ describe("removing a player during the match", () => {
 		await hostControls.handleRemoveSelect(interaction);
 
 		expect(editedText(interaction)).toBe(words.kick.seatStillHeld(OTHER));
+	});
+});
+
+// ── Pass host (2026-10 item 276, owner decision D17) ──────────────────
+describe("Pass host", () => {
+	const passMock = passHosting as unknown as Mock;
+	const passWords = gameRoomsCopy.hostPass;
+	// A Hold'em table with the host, another member, a Dero bot and a seat from another server.
+	function tableRoom(overrides: Partial<IGameRoom> = {}): IGameRoom {
+		const table = createTable();
+		for (const [id, name] of [[HOST, "Host"], [OTHER, "Other"], ["dero-bot-red", "Dero Red"], ["remote-9", "Remote"]]) joinTable(table, id, name);
+		return makeRoom({ status: "playing", playerIds: [HOST, OTHER], secret: table as never, ...overrides });
+	}
+
+	it("refuses a pick that is a Dero bot or a seat from another server, and moves nothing", async () => {
+		for (const pick of ["dero-bot-red", "remote-9"]) {
+			storeMock.findByRoomId.mockResolvedValue(tableRoom());
+			const interaction = makeSelect("passhost", [pick]);
+
+			await hostControls.handlePassHostSelect(interaction);
+
+			expect(replyText(interaction)).toBe(passWords.gone);
+		}
+		expect(passMock).not.toHaveBeenCalled();
+	});
+
+	it("is the host's alone, even for an admin", async () => {
+		gateMock.mockResolvedValue(true);
+		storeMock.findByRoomId.mockResolvedValue(tableRoom());
+		const interaction = makeSelect("passhost", [OTHER], "admin-9");
+
+		await hostControls.handlePassHostSelect(interaction);
+
+		expect(replyText(interaction)).toBe(passWords.hostOnly);
+		expect(passMock).not.toHaveBeenCalled();
+	});
+
+	it("passes hosting to a member still seated, casual or ranked, and says so to the host", async () => {
+		const room = tableRoom();
+		storeMock.findByRoomId.mockResolvedValue(room);
+		passMock.mockResolvedValue({ kind: "passed", room: { ...room, hostId: OTHER } });
+		const interaction = makeSelect("passhost", [OTHER]);
+
+		await hostControls.handlePassHostSelect(interaction);
+
+		expect(passMock).toHaveBeenCalledWith(interaction.client, room, OTHER);
+		expect(editedText(interaction)).toBe(passWords.passed(OTHER));
+	});
+
+	it("tells the host when the pick already hosts another open room, and nothing changed", async () => {
+		storeMock.findByRoomId.mockResolvedValue(tableRoom());
+		passMock.mockResolvedValue({ kind: "taken" });
+		const interaction = makeSelect("passhost", [OTHER]);
+
+		await hostControls.handlePassHostSelect(interaction);
+
+		expect(editedText(interaction)).toBe(passWords.taken(OTHER));
+	});
+
+	it("offers nobody when only bots and other servers' seats are left", async () => {
+		const interaction = makeButton("gameroom:passhost:room-1", HOST);
+
+		await hostControls.openPassHostPicker(interaction, tableRoom({ playerIds: [HOST] }));
+
+		expect(replyText(interaction)).toBe(passWords.empty);
+	});
+
+	it("refuses a match that is not in play", async () => {
+		const interaction = makeButton("gameroom:passhost:room-1", HOST);
+
+		await hostControls.openPassHostPicker(interaction, tableRoom({ status: "finished" }));
+
+		expect(replyText(interaction)).toBe(passWords.notPlaying);
 	});
 });
 

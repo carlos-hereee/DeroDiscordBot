@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { PermissionFlagsBits } from "discord.js";
+import { DiscordAPIError, PermissionFlagsBits, RESTJSONErrorCodes } from "discord.js";
 import type { Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { finish: vi.fn(), markArchived: vi.fn(), appendMove: vi.fn(), closeHoldemTable: vi.fn(), takeBuyInPaid: vi.fn() },
+	gameRoomStore: { finish: vi.fn(), markArchived: vi.fn(), appendMove: vi.fn(), closeHoldemTable: vi.fn(), takeBuyInPaid: vi.fn(), findByRoomId: vi.fn(), findOtherRoomOnChannel: vi.fn() },
 }));
 vi.mock("@db/stores/chipWalletStore.js", () => ({ chipWalletStore: { credit: vi.fn(), debit: vi.fn() } }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({
@@ -29,6 +29,8 @@ const storeMock = gameRoomStore as unknown as {
 	appendMove: ReturnType<typeof vi.fn>;
 	closeHoldemTable: ReturnType<typeof vi.fn>;
 	takeBuyInPaid: ReturnType<typeof vi.fn>;
+	findByRoomId: ReturnType<typeof vi.fn>;
+	findOtherRoomOnChannel: ReturnType<typeof vi.fn>;
 };
 const creditMock = chipWalletStore.credit as unknown as ReturnType<typeof vi.fn>;
 const configMock = guildConfigStore as unknown as { findByGuildId: ReturnType<typeof vi.fn> };
@@ -490,6 +492,13 @@ describe("roomLifecycle.finish, what a room ended from outside still holds", () 
 });
 
 describe("roomLifecycle.archiveRoom", () => {
+	// The archive re-reads the row before any delete (2026-10 item 276, audit P3): by default the row
+	// is still finished on its channel and no rematch row shares it.
+	beforeEach(() => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished" }));
+		storeMock.findOtherRoomOnChannel.mockResolvedValue(null);
+	});
+
 	it("deletes the channel, closes the row and logs it", async () => {
 		const channel = makeChannel();
 		await archiveRoom(makeClient(channel), makeRoom());
@@ -507,19 +516,56 @@ describe("roomLifecycle.archiveRoom", () => {
 		expect(storeMock.markArchived).toHaveBeenCalledWith("guild-1", "room-1");
 	});
 
-	it("closes the row even when the delete itself fails", async () => {
+	// ⚠️ 2026-10 item 276, audit P3: archiving the row after a refused delete cleared its channel and
+	// status, so no sweep ever found that channel again and it stayed in the arcade for good.
+	it("leaves the row finished for the next sweep when Discord refuses the delete", async () => {
 		const channel = makeChannel();
 		channel.delete.mockRejectedValue(new Error("50013"));
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-		await archiveRoom(makeClient(channel), makeRoom());
+		expect(await archiveRoom(makeClient(channel), makeRoom())).toBe("retry");
 
-		expect(storeMock.markArchived).toHaveBeenCalledOnce();
+		expect(storeMock.markArchived).not.toHaveBeenCalled();
 		errorSpy.mockRestore();
+	});
+
+	it("closes the row when Discord says the channel is already gone", async () => {
+		const channel = makeChannel();
+		channel.delete.mockRejectedValue(new DiscordAPIError({ code: RESTJSONErrorCodes.UnknownChannel, message: "Unknown Channel" }, RESTJSONErrorCodes.UnknownChannel, 404, "DELETE", "/channels/1", {}));
+
+		expect(await archiveRoom(makeClient(channel), makeRoom())).toBe("archived");
+		expect(storeMock.markArchived).toHaveBeenCalledWith("guild-1", "room-1");
+	});
+
+	// 2026-10 item 276, audit P3: a rematch is born on the channel before the finished row lets it
+	// go, so a sweep that read the finished row a moment earlier must not delete the channel.
+	it("deletes nothing while a rematch row shares the channel", async () => {
+		const channel = makeChannel();
+		storeMock.findOtherRoomOnChannel.mockResolvedValue(makeRoom({ roomId: "rematch-1", status: "draft" }));
+
+		expect(await archiveRoom(makeClient(channel), makeRoom())).toBe("kept");
+
+		expect(channel.delete).not.toHaveBeenCalled();
+		expect(storeMock.markArchived).not.toHaveBeenCalled();
+	});
+
+	it("deletes nothing once the row has released the channel to a rematch", async () => {
+		const channel = makeChannel();
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished", channelId: null }));
+
+		expect(await archiveRoom(makeClient(channel), makeRoom())).toBe("kept");
+
+		expect(channel.delete).not.toHaveBeenCalled();
+		expect(storeMock.markArchived).not.toHaveBeenCalled();
 	});
 });
 
 describe("roomLifecycle.archiveNow", () => {
+	beforeEach(() => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ status: "finished" }));
+		storeMock.findOtherRoomOnChannel.mockResolvedValue(null);
+	});
+
 	it("lets the host archive their own room", async () => {
 		const channel = makeChannel();
 		const result = await archiveNow(makeClient(channel), makeRoom(), "host-1", false);

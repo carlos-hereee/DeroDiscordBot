@@ -18,7 +18,8 @@ import type { HoldemTable } from "@features/games/holdemTable.js";
 import { GAME_ROOM_SELECT_PREFIX } from "./gameRoomActions.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import { answerPick, deferPick, pickedValues, showPicker } from "./pickerModal.js";
-import { REMOVABLE_IN_PLAY_GAMES } from "./gameRoomsEmbeds.js";
+import { PASS_HOST_GAMES, REMOVABLE_IN_PLAY_GAMES } from "./gameRoomsEmbeds.js";
+import { hostCandidatesOf, isRankedRoom, passHosting } from "./hostHandoff.js";
 import { refreshDraftCard, yieldBotSeatsTo, type DraftChoice } from "./challengeBoard.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { roomTrail } from "./roomTrail.js";
@@ -368,9 +369,15 @@ async function refreshRoomControls(interaction: StringSelectMenuInteraction, roo
 }
 
 // ── removing a member ─────────────────────────────────────────────────
+// A ranked match that started takes no removal (2026-10 item 276, owner decision D17): the opener
+// never offers Remove, and a press from a message posted before that refuses with this, writing
+// nothing. A draft's removal (refunded) and a casual match's are unchanged.
+const isRankedInPlay = (room: IGameRoom): boolean => room.status === "playing" && isRankedRoom(room);
+
 /**
  * Who the host may remove from this room right now, never the host; null when the room
- * allows no removal (a finished room, or a game outside REMOVABLE_IN_PLAY_GAMES in play).
+ * allows no removal (a finished room, a ranked match in play, or a game outside
+ * REMOVABLE_IN_PLAY_GAMES in play).
  * A draft offers its pool and its waiting list. In play it is every player plus anyone
  * the game itself still seats: a Hold'em seat still in or waiting for the deal, and a
  * Monopoly seat not yet out, which is also how a removal whose seat a busy board kept can
@@ -379,7 +386,7 @@ async function refreshRoomControls(interaction: StringSelectMenuInteraction, roo
 export function removableMembers(room: IGameRoom): string[] | null {
 	const othersIn = (userIds: readonly string[]): string[] => [...new Set(userIds)].filter((userId) => userId !== room.hostId);
 	if (room.status === "draft") return othersIn([...(room.spectatorIds ?? []), ...(room.pendingJoinIds ?? [])]);
-	if (room.status !== "playing" || !REMOVABLE_IN_PLAY_GAMES.includes(room.game)) return null;
+	if (room.status !== "playing" || !REMOVABLE_IN_PLAY_GAMES.includes(room.game) || isRankedRoom(room)) return null;
 
 	const players = room.playerIds ?? [];
 	if (room.game === "holdem") {
@@ -399,6 +406,10 @@ export function removableMembers(room: IGameRoom): string[] | null {
 
 /** Remove a player: a private picker over removableMembers, one member per press. */
 export async function openRemovePicker(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	if (isRankedInPlay(room)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.hostPass.noRemoveRanked] });
+		return;
+	}
 	const candidates = removableMembers(room);
 	if (candidates === null) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.errors.controlRetired] });
@@ -421,6 +432,10 @@ export async function openRemovePicker(interaction: ButtonInteraction, room: IGa
 export async function handleRemoveSelect(interaction: StringSelectMenuInteraction | ModalSubmitInteraction): Promise<void> {
 	const room = await loadRoomForHost(interaction);
 	if (!room) return;
+	if (isRankedInPlay(room)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.hostPass.noRemoveRanked] });
+		return;
+	}
 	const target = pickedValues(interaction)[0];
 	if (!target || !(removableMembers(room) ?? []).includes(target)) {
 		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [words.kick.gone] });
@@ -483,6 +498,55 @@ async function removeFromMatch(client: Client, room: IGameRoom, userId: string, 
 	return removal === "busy" ? words.kick.seatStillHeld(userId) : words.kick.removed(userId);
 }
 
+// ── passing hosting on (2026-10 item 276, owner decision D17) ─────────
+/** Pass host: a private picker over the players who could host this match from here. */
+export async function openPassHostPicker(interaction: ButtonInteraction, room: IGameRoom): Promise<void> {
+	if (room.status !== "playing" || !PASS_HOST_GAMES.includes(room.game)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.hostPass.notPlaying] });
+		return;
+	}
+	const candidates = hostCandidatesOf(room);
+	if (candidates.length === 0) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [gameRoomsCopy.hostPass.empty] });
+		return;
+	}
+	const passWords = gameRoomsCopy.hostPass;
+	const select = pickerSelect("passhost", room.roomId, passWords.placeholder, await memberOptions(interaction.guild!, candidates), 1);
+	await showPicker(interaction, { action: "passhost", roomId: room.roomId, title: gameRoomsCopy.notices.host, prompt: passWords.prompt, label: passWords.placeholder, select });
+}
+
+/**
+ * The Pass host picker's submission, from its modal or its select message. The host's alone, like
+ * the button (HOST_STRICT_ACTIONS): read fresh, and the pick must still be a player who could host
+ * by the fresh row, so a pick that left meanwhile, a Dero bot or a seat from another server is
+ * refused whatever the select sent. "Taken" (the pick already hosts an open room) changes nothing.
+ */
+export async function handlePassHostSelect(interaction: StringSelectMenuInteraction | ModalSubmitInteraction): Promise<void> {
+	const passWords = gameRoomsCopy.hostPass;
+	const room = await loadRoomForHost(interaction);
+	if (!room) return;
+	if (interaction.user.id !== room.hostId) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [passWords.hostOnly] });
+		return;
+	}
+	if (room.status !== "playing" || !PASS_HOST_GAMES.includes(room.game)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [passWords.notPlaying] });
+		return;
+	}
+	const target = pickedValues(interaction)[0];
+	if (!target || !hostCandidatesOf(room).includes(target)) {
+		await showNotice(interaction, { title: gameRoomsCopy.notices.host, sections: [passWords.gone] });
+		return;
+	}
+
+	// The move redraws the opener and the card, so the picker is acknowledged first.
+	await deferPick(interaction);
+	const pass = await passHosting(interaction.client, room, target);
+	if (pass.kind === "taken") return answerPick(interaction, passWords.taken(target));
+	if (pass.kind === "gone") return answerPick(interaction, passWords.notPlaying);
+	await answerPick(interaction, passWords.passed(target));
+}
+
 function logBotRemoved(client: Client, room: IGameRoom, botId: string, actorId: string): void {
 	adminLog.emit({
 		guild: { id: room.guildId, client },
@@ -519,4 +583,6 @@ export const hostControls = {
 	handleJoinRequestSelect,
 	openRemovePicker,
 	handleRemoveSelect,
+	openPassHostPicker,
+	handlePassHostSelect,
 };

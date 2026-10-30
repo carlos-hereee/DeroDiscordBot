@@ -39,9 +39,10 @@ export async function sweepExpiredRooms(client: Client, now: Date = new Date()):
 	const outcomes = await mapWithConcurrency(expired, BOT_CONSTANTS.SCHEDULER_GUILD_CONCURRENCY, async (room) => {
 		try {
 			// archiveRoom already treats a missing channel as success, which is the 404
-			// case: an admin who deleted the channel by hand did half this job already.
-			await archiveRoom(client, room);
-			return true;
+			// case: an admin who deleted the channel by hand did half this job already. A
+			// room a rematch took over is left alone, and one whose delete Discord refused
+			// stays finished for the next tick; neither counts as archived.
+			return (await archiveRoom(client, room)) === "archived";
 		} catch (error) {
 			// Isolated per ROOM, not per guild. One room whose guild the bot was kicked
 			// from must not stop the other nineteen from being cleaned up, and this

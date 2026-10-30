@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { TextChannel, type ButtonInteraction, type Client } from "discord.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
-import { returnChips, takeChips } from "@features/economy/chipWallet.js";
+import { closeChipReceipt, refundChipReceipt, takeChipsWithReceipt } from "@features/economy/chipWallet.js";
 import { dropLateSeat, holdLateSeat, lateSeatRefusalOf, payLateSeat, sharedTableSeatsOf, type LateSeatRefusal } from "@features/games/blackjackHandler.js";
 import { gamesCopy } from "@features/games/gamesCopy.js";
 import { answerInChannel } from "@utils/answerInChannel.js";
@@ -26,16 +27,19 @@ import { roomTrail } from "./roomTrail.js";
 // Does NOT: deal anybody in (blackjackHandler deals a paid late seat in at the next hand's bets),
 //        or cash a seat out (Leave, at the table, is a cash out, D9).
 //
-// ⚠️ THE SEAT IS HELD BEFORE ANY CHIP MOVES, AND THE CHIPS LEAVE BEFORE THE LEDGER HOLDS THEM.
+// ⚠️ THE SEAT IS HELD BEFORE ANY CHIP MOVES, AND NO MOMENT LEAVES A BUY IN NOBODY OWES BACK.
 // ① holdLateSeat holds the seat in the table's process synchronously, so a double press or two
-// members racing for the last seat are refused before anything is charged; ② the buy in leaves
-// the wallet (a chip table only); ③ one conditional write puts the seat's ledger entry and its
-// playerIds place on the row, only while the room plays and the member is not removed, and a
-// write that applies nothing gives the chips straight back; ④ the room's overwrites are set
-// again from that row, so the member can see and play the room; ⑤ the seat is marked paid, and
-// a table that ended meanwhile pays the entry back through the ledger claim, once. A crash
-// between ② and ③ loses the buy in and never mints one: the same window as the table's own open
-// (blackjackChips, the Phase 7 box on Blackjack's charge to ledger crash windows).
+// members racing for the last seat are refused before anything is charged; ② on a chip table the
+// row holds the charge (gameRoomStore.holdLateSeatCharge) BEFORE the wallet is touched, and ③ the
+// buy in leaves the wallet with a receipt in the same write; ④ one conditional write puts the
+// seat's ledger entry and its playerIds place on the row and takes the held charge off, only
+// while the room plays and the member is not removed; a write that applies nothing gives the
+// chips back through the receipt; ⑤ the receipt is closed, ⑥ the room's overwrites are set again
+// from that row, so the member can see and play the room, and ⑦ the seat is marked paid, and a
+// table that ended meanwhile pays the entry back through the ledger claim, once. A crash between
+// ③ and ④ leaves the held charge on the row, which finish refunds through the receipt, so the buy
+// in comes back once and only if it was taken (2026-10 item 276, audit P3; before this the window
+// lost the buy in).
 
 const hostWords = rokCommanderCopy.arcadeHostControls;
 
@@ -95,26 +99,30 @@ export async function redrawTableCard(client: Client, room: IGameRoom): Promise<
 	if (seats) await refreshTableCard(client, room, seats);
 }
 
-// ①② to ⑤, see the header.
+// ① to ⑦, see the header.
 async function claimLateSeat(client: Client, room: IGameRoom, userId: string, username: string): Promise<LateSeatClaim> {
 	const channelId = room.channelId;
 	if (!channelId) return { ok: false, refusal: gameRoomsCopy.board.lateSeat.tableClosed };
 	const hold = holdLateSeat(channelId, { userId, username });
 	if (!hold.ok) return { ok: false, refusal: LATE_SEAT_REFUSALS[hold.refusal] };
+	const chargeId = hold.chips ? randomUUID() : null;
 
 	try {
-		if (hold.chips && !(await takeChips({ userId }, hold.buyIn))) {
-			dropLateSeat(channelId, userId);
-			return { ok: false, refusal: gameRoomsCopy.holdem.notEnoughChips(hold.buyIn) };
+		if (chargeId) {
+			const charge = await chargeLateSeat(room, userId, hold.buyIn, chargeId);
+			if (charge !== "charged") {
+				dropLateSeat(channelId, userId);
+				return { ok: false, refusal: charge === "short" ? gameRoomsCopy.holdem.notEnoughChips(hold.buyIn) : await seatRefusalFor(room, userId) };
+			}
 		}
-		const entry = hold.chips ? { userId, buyIn: hold.buyIn, stack: hold.buyIn } : null;
-		const seated = await gameRoomStore.addLateBlackjackSeat(room.guildId, room.roomId, userId, entry);
+		const entry = chargeId ? { userId, buyIn: hold.buyIn, stack: hold.buyIn } : null;
+		const seated = await gameRoomStore.addLateBlackjackSeat(room.guildId, room.roomId, userId, entry, chargeId);
 		if (!seated) {
 			dropLateSeat(channelId, userId);
-			if (hold.chips) await returnChips({ userId }, hold.buyIn);
-			const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId);
-			return { ok: false, refusal: fresh && (fresh.kickedIds ?? []).includes(userId) ? hostWords.kick.refusedRejoin : gameRoomsCopy.board.lateSeat.tableClosed };
+			if (chargeId) await giveLateChargeBack(room, userId, hold.buyIn, chargeId);
+			return { ok: false, refusal: await seatRefusalFor(room, userId) };
 		}
+		if (chargeId) void closeChipReceipt({ userId }, chargeId).catch((error: unknown) => console.warn("[game-rooms] a late seat's receipt could not be closed", { roomId: room.roomId, userId, error }));
 		await grantRoomAccess(client, seated);
 		if (!payLateSeat(channelId, userId, client)) {
 			// The table ended between the ledger write and now; whichever of this and finish claims
@@ -124,7 +132,8 @@ async function claimLateSeat(client: Client, room: IGameRoom, userId: string, us
 		}
 	} catch (error) {
 		// A write that threw may or may not have landed, so nothing is refunded here: an entry that
-		// landed is paid by the table's end, and one that did not loses the buy in, never mints it.
+		// landed is paid by the table's end, and a charge still held is refunded by finish through its
+		// receipt, only if it was taken.
 		dropLateSeat(channelId, userId);
 		console.error(`[game-rooms] a late Blackjack seat for ${userId} in room ${room.roomId} failed`, error);
 		return { ok: false, refusal: gameRoomsCopy.board.lateSeat.tableClosed };
@@ -134,6 +143,29 @@ async function claimLateSeat(client: Client, room: IGameRoom, userId: string, us
 		.postMove(client, room, { actorId: userId, kind: "join", text: gamesCopy.blackjack.lateSeatHeldTrail(userId, hold.buyIn, hold.chips) })
 		.catch((error) => console.warn("[game-rooms] the late seat line could not be posted", { roomId: room.roomId, error }));
 	return { ok: true, buyIn: hold.buyIn, chips: hold.chips };
+}
+
+// ②③ The row holds the charge, then the wallet pays it with a receipt. "refused" when the row would
+// not hold it (the room ended, or the member was removed), "short" when the wallet did not cover it;
+// either way nothing is left charged or held.
+async function chargeLateSeat(room: IGameRoom, userId: string, buyIn: number, chargeId: string): Promise<"charged" | "short" | "refused"> {
+	if (!(await gameRoomStore.holdLateSeatCharge(room.guildId, room.roomId, { userId, buyIn, chargeId }))) return "refused";
+	if (await takeChipsWithReceipt({ userId }, buyIn, chargeId)) return "charged";
+	await gameRoomStore.dropLateSeatCharge(room.guildId, room.roomId, chargeId);
+	return "short";
+}
+
+// A seat the row refused after its charge: the buy in back through the receipt (a finish that got
+// there first already did, and then this pays nothing), then the held charge off the row.
+async function giveLateChargeBack(room: IGameRoom, userId: string, buyIn: number, chargeId: string): Promise<void> {
+	await refundChipReceipt({ userId }, buyIn, chargeId);
+	await gameRoomStore.dropLateSeatCharge(room.guildId, room.roomId, chargeId);
+}
+
+// Why the row would not take the seat: the host removed the member, or the table closed.
+async function seatRefusalFor(room: IGameRoom, userId: string): Promise<string> {
+	const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId);
+	return fresh && (fresh.kickedIds ?? []).includes(userId) ? hostWords.kick.refusedRejoin : gameRoomsCopy.board.lateSeat.tableClosed;
 }
 
 // The room's overwrites set again from the row the seat was written to, so the new player can

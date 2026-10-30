@@ -1062,6 +1062,16 @@ export interface TableSeats {
 	max: number;
 }
 
+/**
+ * Who holds a seat at the room table in this channel, in seat order, then the late seats waiting
+ * for the next hand: the members a host's hosting may pass to (2026-10 item 276, D17). Empty when
+ * the channel has no live table, which is also every table a restart lost.
+ */
+export function blackjackSeatHoldersOf(channelId: string): string[] {
+	const game = games.get(channelId);
+	return game && !game.ended ? seatHoldersOf(game) : [];
+}
+
 export function sharedTableSeatsOf(channelId: string): TableSeats | null {
 	const game = games.get(channelId);
 	if (!game?.sharedTable || game.ended) return null;

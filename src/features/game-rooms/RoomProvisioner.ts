@@ -22,6 +22,7 @@ import { dealOpeningHand } from "./roomHoldemHandlers.js";
 import { createInitialState as createMonopolyState } from "@features/games/monopolyState.js";
 import { chipTableFor, tableChipsOf } from "./holdemChips.js";
 import { botSeatName, isBotSeatId, labelBotMentions } from "./botSeat.js";
+import { isRankedMatch } from "@features/ratings/ratingEngine.js";
 import { monopolyBoardEmbed, monopolyControlsRow } from "./roomMonopoly.js";
 import { seatNamesForBoard } from "./roomMonopolyBoard.js";
 import { MONOPOLY_TURN_CLOCKS, monopolyTurnAdapter } from "./roomMonopolyHandlers.js";
@@ -135,13 +136,14 @@ function openerControls(game: GameSlug, roomId: string) {
 }
 
 // The pinned opener's components. A self boarded game keeps its controls on its own
-// board, so its opener carries only the host's Remove a player row (2026-10 item 244
-// Phase 4) when the game allows a removal in play, and nothing otherwise. The opener
-// is pinned, which is why the host's control lives there: it stays one click away
-// however far the trail has scrolled, and it is the same place in every game.
-function openerComponents(game: GameSlug, roomId: string) {
+// board, so its opener carries only the host's row (2026-10 item 244 Phase 4): Remove a
+// player when the game allows a removal in play and the match is casual, and Pass host
+// (2026-10 item 276, D17), or nothing. The opener is pinned, which is why the host's
+// controls live there: one click away however far the trail has scrolled, the same place
+// in every game.
+function openerComponents(game: GameSlug, roomId: string, ranked: boolean) {
 	if (!SELF_BOARDED_GAMES.includes(game)) return { components: openerControls(game, roomId) };
-	const hostRow = roomHostRow(game, roomId);
+	const hostRow = roomHostRow(game, roomId, { ranked });
 	return hostRow ? { components: [hostRow] } : {};
 }
 
@@ -516,26 +518,28 @@ export async function seedRoom(input: RoomSeedInput): Promise<SeededRoom | null>
 			allowedMentions: { parse: [], users: openerPingIds(game, hostId, memberPlayerIds) },
 			embeds: [roomOpenerEmbed(game, hostId, [...input.playerIds, ...botIds], visibility, input.spectatorMode ?? null, inviteCode, logo?.ref)],
 			...(logo ? { files: [logo.attachment] } : {}),
-			...openerComponents(game, room.roomId),
+			...openerComponents(game, room.roomId, isRankedMatch(game, botIds.length, room.casual ?? false)),
 		})
 		.catch(() => null);
 	await opener?.pin().catch(() => undefined);
 
 	// The start claim: only a row still waiting to start moves to playing, and its buy in
-	// ledger is emptied in the same write (gameRoomStore.claimForPlay explains both).
-	const beforeClaim = await gameRoomStore.claimForPlay(guild.id, room.roomId, {
-		channelId: channel.id,
-		openerMessageId: opener?.id ?? null,
-		inviteCode,
-		startedAt: new Date(),
-	});
+	// ledger is emptied in the same write (gameRoomStore.claimForPlay explains both). A Blackjack
+	// chip table's stacks ledger is written by that same write (2026-10 item 276, audit P3), so no
+	// moment holds a buy in that neither ledger has.
+	const blackjackTable = game === "blackjack" && input.draftSeats?.charged ? { buyIn: input.draftSeats.buyIn, seatIds: input.draftSeats.userIds, actedAt: new Date() } : undefined;
+	const claimPatch = { channelId: channel.id, openerMessageId: opener?.id ?? null, inviteCode, startedAt: new Date() };
+	const beforeClaim = blackjackTable
+		? await gameRoomStore.claimForPlay(guild.id, room.roomId, claimPatch, blackjackTable)
+		: await gameRoomStore.claimForPlay(guild.id, room.roomId, claimPatch);
 	if (!beforeClaim) {
 		await opener?.delete().catch(() => undefined);
 		void revokeRoomInvite(guild.client, { roomId: room.roomId, guildId: guild.id, inviteCode });
 		return null;
 	}
 	const started = await gameRoomStore.findByRoomId(guild.id, room.roomId);
-	const seats = input.draftSeats ? await seatsTheClaimLeft(input.draftSeats, beforeClaim) : undefined;
+	const claimedSeats = input.draftSeats ? await seatsTheClaimLeft(input.draftSeats, beforeClaim) : undefined;
+	const seats = claimedSeats && blackjackTable ? { ...claimedSeats, ledgered: true } : claimedSeats;
 
 	// The players are the ones the claimed row still lists (2026-10 item 276, found in Phase 1): a
 	// member the host removed or who left the server while the room was built was pulled off it,

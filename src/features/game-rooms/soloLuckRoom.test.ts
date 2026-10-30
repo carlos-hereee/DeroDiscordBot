@@ -83,10 +83,24 @@ describe("the rock paper scissors room's turn", () => {
 		expect(claimMock).toHaveBeenCalledWith("guild-1", "room-1", "throw", "paper");
 		expect(acknowledge).toHaveBeenCalledOnce();
 		expect(playMock).toHaveBeenCalledWith(CHANNEL, { user: MEMBER.user, displayName: "Host" }, { game: "rps", memberThrow: "paper" }, secureRandom);
-		expect(finishMock).toHaveBeenCalledWith(client, claimed, { winnerId: HOST, archiveDelayMs: SHORT });
+		expect(finishMock).toHaveBeenCalledWith(client, claimed, { winnerId: HOST, houseWon: false, archiveDelayMs: SHORT });
 		expect(syncMock).toHaveBeenCalledWith(client, claimed, soloRpsTurnAdapter);
 		// The claim lands before the round is played, so a racing Submit cannot play a second one.
 		expect(claimMock.mock.invocationCallOrder[0]).toBeLessThan(playMock.mock.invocationCallOrder[0]);
+	});
+
+	// 2026-10 item 276 Phase 7 (audit P3): a loss to Dero read "Nobody takes it", the same as a tie.
+	it.each([
+		["lost", true],
+		["tie", false],
+	] as const)("finishes a %s round with houseWon %s, so only Dero's win names Dero", async (outcome, houseWon) => {
+		const claimed = makeRoom({ secret: { throw: "rock" } as never });
+		claimMock.mockResolvedValue(claimed);
+		playMock.mockResolvedValue({ game: "rps", memberThrow: "rock", deroThrow: "paper", outcome });
+
+		await soloRpsTurnAdapter.apply(client, makeRoom(), HOST, { throw: "rock" }, vi.fn().mockResolvedValue(undefined));
+
+		expect(finishMock).toHaveBeenCalledWith(client, claimed, { winnerId: null, houseWon, archiveDelayMs: SHORT });
 	});
 
 	it("plays nothing for a second Submit whose claim was lost, and says the turn has passed", async () => {

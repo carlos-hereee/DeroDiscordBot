@@ -108,7 +108,6 @@ import { bringDeroToCard, releaseCard } from "./cardVoice.js";
 import { announceChallengers } from "./roomAnnouncer.js";
 import { beginStartCountdown, isCountingDown } from "./startCountdown.js";
 import { parseChipAmount, takeChips } from "@features/economy/chipWallet.js";
-import { chipTableFor } from "./holdemChips.js";
 import { isRatedGame } from "@features/ratings/ratingEngine.js";
 import type { SoloLuckGame } from "@features/games/soloLuck.js";
 import { consentPrompt, isGuildBanned, isUserBanned, readNetworkGuild } from "./networkRules.js";
@@ -1326,9 +1325,9 @@ export async function rematchFromRoom(interaction: ButtonInteraction, room: IGam
 	// run past the three second interaction window. Deferring the UPDATE (rather than a
 	// reply) is what lets ③ edit the result card the button lives on.
 	await interaction.deferUpdate();
-	// A Blackjack rematch's buy ins (2026-10 item 267): the host's was taken in checkRematch, the
-	// others' are taken just before the deal. Until the table's ledger holds them, a failure gives
-	// them back from here; once the table opened, its ledger and finish do.
+	// A rematch's stakes (2026-10 items 267 and 276), every one taken in checkRematch. Until the
+	// rematch row is born holding them on its draft ledger, a failure gives them back from here;
+	// from then on the row's own refunds and its start claim carry them.
 	const charge: RematchCharge = { seats: check.hostSeats, ledgered: false };
 	try {
 		const failure = await playRematchInPlace(interaction, room, check, charge);
@@ -1346,7 +1345,7 @@ export async function rematchFromRoom(interaction: ButtonInteraction, room: IGam
 	}
 }
 
-// The chips a Blackjack rematch has taken so far, and whether its table's ledger holds them yet.
+// The stakes a rematch has taken, and whether the rematch row's draft ledger holds them yet.
 interface RematchCharge {
 	seats: PaidSeats | null;
 	ledgered: boolean;
@@ -1416,12 +1415,16 @@ async function checkRematch(interaction: ButtonInteraction, room: IGameRoom): Pr
 	// reach) is a state, so it opens as a titled notice rather than an error embed (R3-12).
 	if (admission) return { ok: false, reply: { content: describeRoomOpenFailure(admission) } };
 
-	// A Blackjack rematch takes a fresh buy in (2026-10 item 267, decision 8), the presser's at the
-	// press, LAST, so no refusal above has to give it back. A short wallet is a state, refused here.
-	const hostSeats = isBlackjackRoomGame(room.game) ? await chargeRematchHost(room, interaction.user.id) : null;
-	if (hostSeats && "refusal" in hostSeats) return { ok: false, reply: { content: hostSeats.refusal } };
+	// A chip table's or a ranked pot's rematch takes a fresh stake from every returning player (2026-10
+	// item 267 decision 8, item 276 for Monopoly and Battleship), LAST, so no refusal above has to
+	// give it back. A short host, or too few payers for the game, is a state refused here with every
+	// stake already taken given back.
+	const charge = chargesRematchStake(room.game) ? await chargeRematchSeats(interaction.client, room, interaction.user.id, playerIds) : null;
+	if (charge && "refusal" in charge) return { ok: false, reply: { content: charge.refusal } };
+	// A ranked Monopoly match seats only those who paid its buy in (D4), the way its Start does.
+	const seated = charge?.charged && isPotGame(room.game) ? charge.userIds : playerIds;
 
-	return { ok: true, channel, hostSeats, playerIds };
+	return { ok: true, channel, hostSeats: charge, playerIds: seated };
 }
 
 // The finished match's players who are still in the server (2026-10 item 276, found in Phase 2):
@@ -1437,29 +1440,49 @@ async function playersStillInServer(guild: Guild, playerIds: readonly string[]):
 	return present;
 }
 
-// The rematch host's buy in: the finished table's, on a server where the table plays for chips.
-// A free table charges nobody and still answers its seats, so the deal knows what it plays for.
-async function chargeRematchHost(room: IGameRoom, hostId: string): Promise<PaidSeats | { refusal: string }> {
-	const buyIn = draftBuyInOf(room);
-	const chips = await chipTableFor(room, room.botSeats ?? 0);
-	if (!chips) return { buyIn, userIds: [hostId], charged: false };
-	if (!(await takeChips({ userId: hostId }, buyIn))) return { refusal: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
-	return { buyIn, userIds: [hostId], charged: true };
-}
+// The games whose rematch charges its stake again: a Blackjack table (2026-10 item 267) and a
+// ranked Monopoly or Battleship pot (2026-10 item 276, found in Phase 6b: they used to play free).
+const chargesRematchStake = (game: GameSlug): boolean => isBlackjackRoomGame(game) || isPotGame(game);
 
-// The rest of a Blackjack rematch's seats, after the host's: on a chip table every returning
-// player is charged the same buy in again, and one who cannot pay is left out with a line in the
-// room saying so; on a free table everyone sits.
-async function seatRematchPlayers(client: Client, room: IGameRoom, hostSeats: PaidSeats): Promise<PaidSeats> {
-	const others = room.playerIds.filter((userId) => userId !== room.hostId);
-	if (!hostSeats.charged) return { ...hostSeats, userIds: [room.hostId, ...others] };
-	const { paid, short } = await chargeSeats(others, hostSeats.buyIn);
+/**
+ * Every seat of a rematch that stakes chips, charged again by the one chip rule the draft reads
+ * (isChipDraft: ranked, no bots, the server's chips on, and a stake set): the presser first, then
+ * each returning player, one who cannot pay left out with a line in the room. A free match charges
+ * nobody and still answers its seats, so the deal knows what it plays for. Refused, with every
+ * stake taken given back, when the presser cannot pay or the game is left short of what its Start
+ * would need: a ranked Blackjack table under two seats (D13), ranked Monopoly under its fewest
+ * seats (D4), or a Battleship wager the other captain cannot cover (D10). The charges go on the
+ * rematch row's draft ledger as it is created (takeOverChannel), never a second ledger.
+ */
+async function chargeRematchSeats(client: Client, room: IGameRoom, hostId: string, playerIds: readonly string[]): Promise<PaidSeats | { refusal: string }> {
+	const buyIn = draftBuyInOf(room);
+	const others = playerIds.filter((userId) => userId !== hostId);
+	if (!(await isChipDraft(room))) return { buyIn, userIds: [hostId, ...others], charged: false };
+	if (!(await takeChips({ userId: hostId }, buyIn))) return { refusal: gameRoomsCopy.holdem.notEnoughChips(buyIn) };
+
+	const { paid, short } = await chargeSeats(others, buyIn);
+	const seats: PaidSeats = { buyIn, userIds: [hostId, ...paid], charged: true };
+	const refusal = rematchSeatRefusal(room, seats, short);
+	if (refusal) {
+		await refundSeatsDirectly(seats);
+		return { refusal };
+	}
 	for (const userId of short) {
+		const text = isBlackjackRoomGame(room.game) ? gameRoomsCopy.trail.blackjackRematchShort(userId, buyIn) : gameRoomsCopy.trail.rematchStakeShort(userId, buyIn);
 		await roomTrail
-			.postMove(client, room, { actorId: userId, kind: "system", text: gameRoomsCopy.trail.blackjackRematchShort(userId, hostSeats.buyIn) })
+			.postMove(client, room, { actorId: userId, kind: "system", text })
 			.catch((error) => console.warn("[game-rooms] the rematch buy in line could not be posted", { roomId: room.roomId, error }));
 	}
-	return { ...hostSeats, userIds: [room.hostId, ...paid] };
+	return seats;
+}
+
+// Why a charged rematch cannot start with the seats that paid, by the rule its game's Start keeps.
+function rematchSeatRefusal(room: IGameRoom, seats: PaidSeats, short: readonly string[]): string | null {
+	const paidSeats = seats.userIds.length;
+	if (isSharedBlackjackTable(room) && paidSeats < BOT_CONSTANTS.BLACKJACK_RANKED_MIN_SEATS) return gameRoomsCopy.board.blackjackRankedTooFew(BOT_CONSTANTS.BLACKJACK_RANKED_MIN_SEATS, paidSeats);
+	if (room.game === "monopoly" && paidSeats < seatRangeOf("monopoly").min) return gameRoomsCopy.monopoly.tooFewPaid(seatRangeOf("monopoly").min, paidSeats);
+	if (room.game === "battleship" && short.length > 0) return gameRoomsCopy.holdem.opponentNotPaid(short[0], seats.buyIn);
+	return null;
 }
 
 // ② to ⑤. Returns the sentence to tell the presser when the rematch could not start,
@@ -1469,11 +1492,15 @@ async function playRematchInPlace(interaction: ButtonInteraction, finished: IGam
 	const guild = interaction.guild!;
 	const hostId = interaction.user.id;
 
-	const takeover = await takeOverChannel(finished, hostId, channel.id, check.playerIds);
+	const ledger = charge.seats?.charged ? charge.seats.userIds : [];
+	const takeover = await takeOverChannel(finished, hostId, channel.id, check.playerIds, ledger);
 	if (!takeover.ok) {
 		return takeover.reason === "alreadyHosting" ? gameRoomsCopy.errors.alreadyHosting(null) : gameRoomsCopy.errors.rematchAlreadyOffered;
 	}
 	const next = takeover.room;
+	// The row holds the stakes now: a row that never starts is a draft, whose finish (the idle
+	// sweep) refunds its ledger, and its start claim carries them to the table or the pot.
+	charge.ledgered = true;
 
 	// ③ The finished room's result card now says who started the rematch, in place of
 	// the archive notice that is no longer true, and drops its buttons: the finished
@@ -1503,6 +1530,9 @@ async function playRematchInPlace(interaction: ButtonInteraction, finished: IGam
 		spectatorMode: next.spectatorMode ?? null,
 		monopolyAuctions: next.monopolyAuctions,
 		botIds: botSeatIdsFor(next.game, next.playerIds.length, next.botSeats ?? 0),
+		// The stakes on the row's ledger, so the start claim seats exactly who paid, opens a ranked
+		// pot (D4, D10) and writes a Blackjack table's stacks in the claim's own write (2026-10 item 276).
+		...(charge.seats ? { draftSeats: charge.seats } : {}),
 	});
 	// The rematch row closed before it could start (the idle sweep or the leave watcher finished
 	// it first), so it seats nothing; its finish already locked the channel and started its clock.
@@ -1510,27 +1540,16 @@ async function playRematchInPlace(interaction: ButtonInteraction, finished: IGam
 	const started = seeded.room;
 
 	// A Blackjack rematch opens its table the way its first match did, every seat paid again
-	// (2026-10 item 267). From the deal on, the table's ledger owns the buy ins: a table that
-	// cannot start closes its room, and finish gives the stacks back.
-	if (next.game === "solo-blackjack" && charge.seats) {
-		charge.ledgered = true;
-		if (!(await startSoloBlackjackBoard(guild, started, channel, rematchHostOf(interaction), charge.seats))) {
+	// (2026-10 item 267), with the seats the start claim left; on a chip table that claim already
+	// wrote the stacks ledger. A table that cannot start closes its room, and finish pays it back.
+	const tableSeats = seeded.seats ?? charge.seats;
+	if (next.game === "solo-blackjack" && tableSeats) {
+		if (!(await startSoloBlackjackBoard(guild, started, channel, rematchHostOf(interaction), tableSeats))) {
 			return gameRoomsCopy.errors.createFailed;
 		}
 	}
-	if (next.game === "blackjack" && charge.seats) {
-		charge.seats = await seatRematchPlayers(interaction.client, started, charge.seats);
-		// A returning player who could not pay leaves a ranked table short of a shared one (D13): every
-		// buy in goes back and the new row closes as abandoned, so no seat plays a ranked table alone.
-		const fewest = BOT_CONSTANTS.BLACKJACK_RANKED_MIN_SEATS;
-		if (isSharedBlackjackTable(started) && charge.seats.userIds.length < fewest) {
-			await refundSeatsDirectly(charge.seats);
-			charge.ledgered = true;
-			await roomLifecycle.finish(interaction.client, started, { abandoned: true });
-			return gameRoomsCopy.board.blackjackRankedTooFew(fewest, charge.seats.userIds.length);
-		}
-		charge.ledgered = true;
-		if (!(await startBlackjackRoomBoard(guild, started, channel, charge.seats))) return gameRoomsCopy.errors.createFailed;
+	if (next.game === "blackjack" && tableSeats) {
+		if (!(await startBlackjackRoomBoard(guild, started, channel, tableSeats))) return gameRoomsCopy.errors.createFailed;
 	}
 	// A coin flip or dice rematch plays its round now, the way its room's open did (2026-10 item
 	// 267, decision 8), and finishes the new row, whose result card offers the next Rematch. A
@@ -1553,7 +1572,7 @@ type ChannelTakeover = { ok: true; room: IGameRoom } | { ok: false; reason: "alr
 // ② The two row writes, in the order the header above explains: the new row is born on
 // the channel, then the finished row releases it. The new row is a "draft" until
 // seedRoom moves it to "playing", like every room before its match is seeded.
-async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: string, playerIds: string[]): Promise<ChannelTakeover> {
+async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: string, playerIds: string[], buyInPaidBy: readonly string[]): Promise<ChannelTakeover> {
 	const { spectatorIds } = resolveRoomSeats(finished.visibility, hostId, playerIds, finished.spectatorIds);
 
 	let next: IGameRoom;
@@ -1586,6 +1605,9 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 			spectatorMode: finished.spectatorMode ?? null,
 			// A Blackjack rematch charges the same buy in again (2026-10 item 267, decision 8).
 			holdemBuyIn: finished.holdemBuyIn ?? null,
+			// Every stake checkRematch took, born on the row's draft ledger (2026-10 item 276), so no
+			// moment after this write holds a stake that no refund reaches.
+			buyInPaidBy: [...buyInPaidBy],
 		});
 	} catch (error) {
 		// Almost certainly the partial unique index catching a room the presser opened

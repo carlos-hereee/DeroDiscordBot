@@ -185,7 +185,8 @@ describe("surrenderMonopolySeat", () => {
 		expect(storeMock.transferHost.mock.calls.map((call) => call[3])).toEqual([B, C]);
 		// The board named B, who opened a room of their own in between, so a line names C.
 		expect(committedLines()).toContain(words.hostHandedOn(B));
-		expect(roomTrail.postMove).toHaveBeenCalledWith(client, expect.objectContaining({ roomId: "room-1" }), expect.objectContaining({ text: words.hostHandedOn(C) }));
+		// The shared handoff (2026-10 item 276, D17) says it, the same line every game's departed host gets.
+		expect(roomTrail.postMove).toHaveBeenCalledWith(client, expect.objectContaining({ roomId: "room-1" }), expect.objectContaining({ text: gameRoomsCopy.hostPass.handedOn(C) }));
 	});
 
 	// 2026-10 item 276, audit P3: hosting moved BEFORE the forfeit, so a surrender whose forfeit lost

@@ -33,6 +33,10 @@ export interface IChipWallet {
 	// and how many. A grant on a new day starts the count again.
 	vaultDayKey?: string;
 	vaultReceivedToday?: number;
+	// The global row only (2026-10 item 276, audit P3): ids of charges taken but not yet held by
+	// the game's own ledger, written in the same write as the debit. A refund claims its receipt
+	// in the same write as the credit, so a buy in a crash stranded is given back exactly once.
+	openReceipts?: string[];
 }
 
 const chipWalletSchema = new mongoose.Schema<IChipWallet>(
@@ -46,6 +50,7 @@ const chipWalletSchema = new mongoose.Schema<IChipWallet>(
 		migratedAmount: { type: Number, required: false },
 		vaultDayKey: { type: String, required: false },
 		vaultReceivedToday: { type: Number, required: false },
+		openReceipts: { type: [String], required: false },
 	},
 	{ timestamps: true }
 );

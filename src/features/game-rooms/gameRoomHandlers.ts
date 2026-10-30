@@ -265,6 +265,9 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 		case "kick":
 			await hostControls.openRemovePicker(interaction, room);
 			return;
+		case "passhost":
+			await hostControls.openPassHostPicker(interaction, room);
+			return;
 		case "hseats":
 			await roomHoldemHandlers.handleSeatsToggle(interaction, room, parsed.arg ?? "");
 			return;
@@ -576,6 +579,7 @@ export function registerGameRoomHandlers(): void {
 		if (action === "spectators") return hostControls.handleSpectatorSelect(interaction);
 		if (action === "accept" || action === "decline") return hostControls.handleJoinRequestSelect(interaction);
 		if (action === "kick") return hostControls.handleRemoveSelect(interaction);
+		if (action === "passhost") return hostControls.handlePassHostSelect(interaction);
 		if (action === "rps") return handleRpsSelect(interaction);
 		// Hangman: the host lets Dero draw the word from a category.
 		if (action === "hcategory") return handleCategorySelect(interaction);
@@ -602,6 +606,7 @@ export function registerGameRoomHandlers(): void {
 		if (action === "opponent") return challengeBoard.handleOpponentSelect(interaction);
 		if (action === "bots") return challengeBoard.handleBotSelect(interaction);
 		if (action === "kick") return hostControls.handleRemoveSelect(interaction);
+		if (action === "passhost") return hostControls.handlePassHostSelect(interaction);
 		if (action === "rps") return handleRpsSelect(interaction);
 		// A chip table's buy in (2026-10 item 250 Phase 5).
 		if (action === "hbuyin") return challengeBoard.handleBuyInModal(interaction);

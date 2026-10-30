@@ -81,6 +81,11 @@ interface HangmanRound {
 	// Stops the collector, whose end handler is the one cleanup path. Assigned
 	// once the collector exists.
 	stop: () => void;
+	// The newest board edit begun, counted up by renderBoard. A playing board is drawn after an
+	// await (the card render), so an older guess's render can finish after a newer one, or after
+	// the guess that ended the round; its edit would then put back an older board, or a Guess button
+	// on a finished one (2026-10 item 276, audit P3). An edit that is no longer the newest is dropped.
+	boardVersion: number;
 }
 
 // ── in-memory round state ──
@@ -114,6 +119,7 @@ export async function startHangmanRound(channel: TextChannel, starterId: string)
 		// round, which is participation even if they never guess a letter.
 		participants: new Set<string>([starterId]),
 		stop: () => undefined,
+		boardVersion: 0,
 	};
 	hangmanRounds.set(channel.id, round);
 
@@ -347,6 +353,7 @@ function guessRefusal(result: Exclude<HangmanGuess, { status: "hit" | "miss" }>)
 
 async function renderBoard(board: Message, round: HangmanRound, channelId: string, actorId: string): Promise<void> {
 	const c = gamesCopy.hangman;
+	const version = ++round.boardVersion;
 
 	if (round.state.status === "playing") {
 		// The gallows frame IS the miss count, so the picture follows the state with no
@@ -356,6 +363,9 @@ async function renderBoard(board: Message, round: HangmanRound, channelId: strin
 		// `attachments: []` drops the previous frame, which an edit otherwise keeps,
 		// so the board never stacks one picture per guess under its embed.
 		const picture = await roundBoardPicture(round);
+		// The round ended, or a later guess began its own edit, while this one drew: that edit
+		// shows the newer board, so this one would only put an older board back over it.
+		if (round.boardVersion !== version || round.state.status !== "playing") return;
 		await board
 			.edit({ ...picture, components: [guessRow(channelId)], attachments: [] })
 			.catch(swallow("hangman board update"));

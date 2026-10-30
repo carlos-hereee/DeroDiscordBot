@@ -70,6 +70,28 @@ export async function takeChips(key: WalletKey, amount: number): Promise<boolean
 	return (await chipWalletStore.debit(key, amount)) !== null;
 }
 
+/**
+ * Take chips for a buy in the game records in a second write (2026-10 item 276, audit P3): the
+ * wallet keeps `receiptId` open until closeChipReceipt, so a crash between the charge and the
+ * game's ledger leaves a receipt refundChipReceipt can give back once. False when the balance does
+ * not cover the chips, and then nothing was taken.
+ */
+export async function takeChipsWithReceipt(key: WalletKey, amount: number, receiptId: string): Promise<boolean> {
+	if (!isWholeChipAmount(amount)) return false;
+	return (await chipWalletStore.debitWithReceipt(key, amount, receiptId)) !== null;
+}
+
+/** Give a receipted charge back, once: true when this call refunded it, false when it was never taken or already closed. */
+export async function refundChipReceipt(key: WalletKey, amount: number, receiptId: string): Promise<boolean> {
+	if (!isWholeChipAmount(amount)) return false;
+	return (await chipWalletStore.refundReceipt(key, amount, receiptId)) !== null;
+}
+
+/** The game's ledger holds the charge now: close its receipt, so no refund reaches it. */
+export async function closeChipReceipt(key: WalletKey, receiptId: string): Promise<void> {
+	await chipWalletStore.closeReceipt(key, receiptId);
+}
+
 /** Give chips back, a cash out or a refund. Nothing to give is a no op rather than a write. */
 export async function returnChips(key: WalletKey, amount: number): Promise<void> {
 	if (!isWholeChipAmount(amount)) return;

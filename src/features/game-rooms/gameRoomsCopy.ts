@@ -363,6 +363,9 @@ export const gameRoomsCopy = {
 	result: {
 		title: "The match is over",
 		winnerLine: (winnerId: string): string => `👑 <@${winnerId}> takes it.`,
+		// A solo round against Dero that Dero won (2026-10 item 276, audit P3): Dero is no member, so
+		// no winnerId names him, and "Nobody takes it" read the same as a tie.
+		houseWinnerLine: "👑 Dero takes it.",
 		// Every game that can end without a winner routes here: a drawn round, a
 		// forfeit by the only remaining player, an abandoned room reaped at boot.
 		noWinnerLine: "Nobody takes it.",
@@ -477,6 +480,27 @@ export const gameRoomsCopy = {
 		declined: (game: string, server: string): string => `The host declined your request to join **${game}**${server ? ` in **${server}**` : ""}.`,
 	},
 
+	// ── hosting a match in play (2026-10 item 276, owner decision D17) ──
+	// Pass host on the pinned opener moves every host control to a player still in the match; a
+	// host who leaves hands it on the same way. Remove is gone from a ranked match once it starts.
+	hostPass: {
+		buttonLabel: "Pass host",
+		placeholder: "Choose who hosts now",
+		prompt: "Choose a player still in the match to host it from here. They get every host control, and you keep your seat.",
+		empty: "Nobody else here can host this match. A Dero bot cannot host, and neither can a player from another server.",
+		gone: "That player is no longer in the match, so hosting stays with you.",
+		taken: (userId: string): string => `<@${userId}> already hosts another open room, and a member hosts one room at a time. Choose someone else.`,
+		notPlaying: "This match is not in play, so there is no hosting to pass.",
+		hostOnly: "Only the host can pass hosting on.",
+		passed: (userId: string): string => `👑 <@${userId}> hosts this match now.`,
+		trailLine: (fromId: string, toId: string): string => `👑 <@${fromId}> passed hosting to <@${toId}>.`,
+		// The host left (the server, or the table by forfeit) and the match goes on.
+		handedOn: (userId: string): string => `👑 The host left, so <@${userId}> hosts this match now.`,
+		noHostLeft: "The host left and nobody still playing here can host, so the match plays on with no host until it ends.",
+		// A press of Remove from an older opener or card, once a ranked match started.
+		noRemoveRanked: "A ranked match in play has no Remove. Misconduct is for the server's admins, and a member removed from the server forfeits their seat.",
+	},
+
 	// ── the closed challenge card (post-launch plan item 21) ──
 	// The card's last line once its match ends: who won and how, in one line. Mentions in
 	// an embed render as names without pinging, which is what a closed card wants.
@@ -486,6 +510,7 @@ export const gameRoomsCopy = {
 		// Hangman's guessers win together, so the room is the winner.
 		roomWonLine: (flavor: string): string => `👑 **The room** won. ${flavor}`,
 		drawLine: (flavor: string): string => `🤝 **A draw.** ${flavor}`,
+		houseWonLine: "👑 **Dero** won.",
 		noWinnerLine: "The match is over. Nobody took it.",
 		abandonedLine: "The match was abandoned, so Dero closed it.",
 	},
@@ -1609,5 +1634,7 @@ export const gameRoomsCopy = {
 			[`🪙 The table closed and its stacks went back to the wallets:`, ...payouts.map((payout) => `<@${payout.userId}> ${chipAmount(payout.amount)}`)].join("\n"),
 		// A returning player a Blackjack rematch could not charge the buy in again.
 		blackjackRematchShort: (userId: string, buyIn: number): string => `<@${userId}> could not cover the ${chipAmount(buyIn)} buy in, so this rematch deals on without them.`,
+		// A returning player a ranked Monopoly rematch could not charge its buy in again (2026-10 item 276).
+		rematchStakeShort: (userId: string, stake: number): string => `<@${userId}> could not cover the ${chipAmount(stake)} buy in, so this rematch plays on without them.`,
 	},
 } as const;

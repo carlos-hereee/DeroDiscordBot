@@ -143,6 +143,16 @@ describe("sweepIdleRooms", () => {
 		expect(finishMock).toHaveBeenCalledWith(client, stranded, { abandoned: true, now: NOW });
 	});
 
+	// 2026-10 item 276 Phase 7 (found in Phase 4): a Monopoly DRAFT has no seat to forfeit, so an
+	// abandoned card used to hold its host's one room slot until somebody pressed Call it off.
+	it("finishes an abandoned Monopoly draft like any other draft", async () => {
+		const draft = makeRoom({ game: "monopoly", status: "draft", channelId: null, secret: null, updatedAt: ago(45) });
+		storeMock.findNonTerminal.mockResolvedValue([draft]);
+
+		expect(await sweepIdleRooms(client, NOW)).toEqual({ roomsAbandoned: 1 });
+		expect(finishMock).toHaveBeenCalledWith(client, draft, { abandoned: true, now: NOW });
+	});
+
 	it("leaves a Monopoly row with no board alone inside the budget, while its seed may still be writing it", async () => {
 		storeMock.findNonTerminal.mockResolvedValue([makeRoom({ game: "monopoly", secret: null, updatedAt: ago(5) })]);
 

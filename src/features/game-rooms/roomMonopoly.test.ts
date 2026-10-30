@@ -227,7 +227,7 @@ describe("monopolyControlsRow", () => {
 			counterpartyId: BOT,
 			offer: { properties: [], chips: 10, gojf: 0 },
 			request: { properties: [], chips: 0, gojf: 0 },
-			openedAt: 5,
+			openedAt: Date.now(),
 		};
 		expect(promptJson(state)[0]).toMatchObject({ custom_id: `gameroom:mtrade:${ROOM}`, label: gameRoomsCopy.monopoly.tradeOpenLabel });
 	});

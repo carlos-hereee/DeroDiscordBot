@@ -8,7 +8,8 @@ vi.mock("./roomMonopolySurrender.js", () => ({ surrenderMonopolySeat: vi.fn() })
 vi.mock("./roomHoldemHandlers.js", () => ({ removeFromTable: vi.fn() }));
 vi.mock("./roomBattleshipHandlers.js", () => ({ forfeitBattleship: vi.fn() }));
 // A draft a joiner left (2026-10 item 276): the store's pull, the ledger's refund, the card's redraw.
-vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { leaveDraftPool: vi.fn() } }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { leaveDraftPool: vi.fn(), findByRoomId: vi.fn() } }));
+vi.mock("./hostHandoff.js", () => ({ handHostingOn: vi.fn() }));
 vi.mock("./holdemDraftBuyIn.js", () => ({ refundJoiners: vi.fn() }));
 vi.mock("./challengeBoard.js", () => ({ refreshDraftCard: vi.fn() }));
 vi.mock("./roomHangman.js", () => ({
@@ -28,6 +29,7 @@ import { surrenderMonopolySeat } from "./roomMonopolySurrender.js";
 import { removeFromTable } from "./roomHoldemHandlers.js";
 import { forfeitBattleship } from "./roomBattleshipHandlers.js";
 import { giveUpHangmanRound, leaveHangmanRound } from "./roomHangman.js";
+import { handHostingOn } from "./hostHandoff.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
@@ -126,6 +128,26 @@ describe("departMatch (2026-10 item 276, audit P1-4)", () => {
 		expect(postMove).toHaveBeenCalledWith(client, room, expect.objectContaining({ text: LEFT_LINE }));
 		expect(leaveHangmanRound).toHaveBeenCalledWith(client, room, "leaver-1");
 		expect(giveUpHangmanRound).not.toHaveBeenCalled();
+	});
+
+	// 2026-10 item 276 (found in Phase 2, D17's handoff): a Hold'em or Blackjack host who left played
+	// on as host, so nobody could End the table or answer a join request until the idle sweep.
+	it.each(["holdem", "blackjack"] as const)("hands hosting on when the %s host leaves a table that plays on", async (game) => {
+		const room = makeRoom(game, { hostId: "leaver-1" });
+		const fresh = { ...room, status: "playing" } as IGameRoom;
+		mocked(gameRoomStore.findByRoomId).mockResolvedValue(fresh);
+
+		await departMatch(client, room, "leaver-1", "leftServer");
+
+		expect(handHostingOn).toHaveBeenCalledWith(client, fresh, "leaver-1");
+	});
+
+	it("hands nothing on when a seat that does not host leaves, or the host's leave ended the table", async () => {
+		await departMatch(client, makeRoom("holdem"), "leaver-1", "leftServer");
+		mocked(gameRoomStore.findByRoomId).mockResolvedValue({ ...makeRoom("holdem"), hostId: "leaver-1", status: "finished" });
+		await departMatch(client, makeRoom("holdem", { hostId: "leaver-1" }), "leaver-1", "leftServer");
+
+		expect(handHostingOn).not.toHaveBeenCalled();
 	});
 
 	it("hands a one press game to the one player left", async () => {

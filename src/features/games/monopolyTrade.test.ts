@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { STARTING_CHIPS } from "./monopolyBoard.js";
 import { settleDebts } from "./monopolyBankruptcy.js";
 import {
@@ -6,6 +7,7 @@ import {
 	applyForfeit,
 	createInitialState,
 	describeTradeSide,
+	liveTrade,
 	openTrade,
 	rejectTrade,
 	tradableLots,
@@ -20,6 +22,15 @@ const ALICE = "alice";
 const BOB = "bob";
 const CARA = "cara";
 const NOW = 1_000;
+
+// An open trade lapses against the clock (BOT_CONSTANTS.MONOPOLY_TRADE_EXPIRY_MS, 2026-10 item 276),
+// so the engine's Date.now reads this file's fixed NOW; only Date is faked, never a timer.
+beforeEach(() => {
+	vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
+});
+afterEach(() => {
+	vi.useRealTimers();
+});
 const SEED = 241;
 
 const newMatch = (players: string[] = [ALICE, BOB, CARA]): MonopolyState =>
@@ -193,6 +204,41 @@ describe("acceptTrade", () => {
 });
 
 // ── reject ──────────────────────────────────────────────────────────────────
+
+// ── a lapsed offer (2026-10 item 276, audit P3) ─────────────────────────────
+// One trade may be open at a time, so an offer to a seat that walked away used to block every
+// other trade in the match until that seat came back.
+describe("an open trade that lapses", () => {
+	const EXPIRY = BOT_CONSTANTS.MONOPOLY_TRADE_EXPIRY_MS;
+	const openAliceAndBob = (): MonopolyState => {
+		const { state, proposal } = aliceAndBob();
+		return expectOk(openTrade(state, proposal)).state;
+	};
+
+	it("stands until the expiry and lapses at it", () => {
+		const open = openAliceAndBob();
+		expect(liveTrade(open, NOW + EXPIRY - 1)).not.toBeNull();
+		expect(liveTrade(open, NOW + EXPIRY)).toBeNull();
+	});
+
+	it("cannot be accepted once it lapsed, and moves nothing", () => {
+		const open = openAliceAndBob();
+		expectRefusal(acceptTrade(open, BOB, NOW + EXPIRY), /lapsed/);
+		expect(acceptTrade(open, BOB, NOW + EXPIRY - 1).ok).toBe(true);
+	});
+
+	it("gives way to a new offer from any seat, and the trail says the old one lapsed", () => {
+		const open = openAliceAndBob();
+		open.properties["rail-one"].ownerId = BOB;
+		const next = { initiatorId: CARA, counterpartyId: BOB, offer: { ...NOTHING, chips: 300 }, request: { ...NOTHING, properties: ["rail-one"] }, openedAt: NOW + EXPIRY };
+
+		expectRefusal(openTrade(open, { ...next, openedAt: NOW + EXPIRY - 1 }), /already waiting/);
+		const { state, trailLines } = expectOk(openTrade(open, next));
+
+		expect(state.pendingTrade).toEqual(next);
+		expect(trailLines[0]).toBe("The trade <@alice> offered <@bob> lapsed unanswered.");
+	});
+});
 
 describe("rejectTrade", () => {
 	const openAliceAndBob = (): MonopolyState => {

@@ -11,6 +11,7 @@ import { giveUpHangmanRound, isHangmanRoom, leaveHangmanRound } from "./roomHang
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { refundJoiners } from "./holdemDraftBuyIn.js";
 import { refreshDraftCard } from "./challengeBoard.js";
+import { handHostingOn } from "./hostHandoff.js";
 
 // ── roomDeparture ────────────────────────────────────────────────────
 // What:  a player leaving a match in play, game by game (2026-10 item 276, audit P1-4, P2-4
@@ -50,6 +51,7 @@ export async function departMatch(client: Client, room: IGameRoom, userId: strin
 			await roomTrail.postMove(client, room, reason);
 			const removal = await removeFromTable(client, room, userId, userId);
 			if (removal === "busy") console.warn("[game-rooms] a departing seat stayed at its Hold'em table after every retry", { roomId: room.roomId, userId });
+			await handOnIfHost(client, room, userId);
 			return;
 		}
 		case "blackjack":
@@ -57,6 +59,7 @@ export async function departMatch(client: Client, room: IGameRoom, userId: strin
 			// No live table in this process means a restart lost it, and boot recovery closes the
 			// room and pays its stored stacks; nothing is left here to leave.
 			if (room.channelId) await leaveBlackjackRoomSeat(room.channelId, userId);
+			await handOnIfHost(client, room, userId);
 			return;
 		case "battleship":
 			await roomTrail.postMove(client, room, reason);
@@ -98,6 +101,18 @@ export async function leaveDraft(client: Client, room: IGameRoom, userId: string
 	const guild = client.guilds.cache.get(room.guildId);
 	if (guild) await refreshDraftCard(guild, updated);
 	return true;
+}
+
+// A Hold'em or Blackjack host who left a table that plays on hands hosting to the next seat still
+// in (2026-10 item 276, found in Phase 2, through D17's handoff): before this the table played on
+// with nobody able to End it or answer a join request until the idle sweep. Monopoly's surrender
+// hands it on itself, and a Battleship or one press match ends with its leaver. Read fresh, since
+// the leave may have ended the table, which frees the slot on its own.
+async function handOnIfHost(client: Client, room: IGameRoom, userId: string): Promise<void> {
+	if (room.hostId !== userId) return;
+	const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId);
+	if (fresh?.status !== "playing" || fresh.hostId !== userId) return;
+	await handHostingOn(client, fresh, userId);
 }
 
 // The line that says why the seat left: a forfeit is a move the player made, a server leave is

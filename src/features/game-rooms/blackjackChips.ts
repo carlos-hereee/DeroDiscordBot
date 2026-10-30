@@ -1,7 +1,7 @@
 import type { Client } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
-import { returnChips } from "@features/economy/chipWallet.js";
+import { refundChipReceipt, returnChips } from "@features/economy/chipWallet.js";
 import { isBlackjackRoomGame } from "./roomTypes.js";
 import { roomTrail } from "./roomTrail.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -36,7 +36,8 @@ import type { PaidSeats } from "./holdemDraftBuyIn.js";
  * would. A free table owes nobody and writes nothing.
  */
 export async function openBlackjackLedger(room: Pick<IGameRoom, "guildId" | "roomId">, seats: PaidSeats): Promise<boolean> {
-	if (!seats.charged) return true;
+	// A card's or a rematch's table had its stacks written by the start claim (2026-10 item 276).
+	if (!seats.charged || seats.ledgered) return true;
 	try {
 		const entries = seats.userIds.map((userId) => ({ userId, buyIn: seats.buyIn, stack: seats.buyIn }));
 		return (await gameRoomStore.openBlackjackStacks(room.guildId, room.roomId, entries, new Date())) !== null;
@@ -72,6 +73,26 @@ export async function cashOutBlackjackSeat(room: Pick<IGameRoom, "guildId" | "ro
 	} catch (error) {
 		console.error(`[game-rooms] a Blackjack cash out of ${amount} chips to ${userId} in room ${room.roomId} failed`, error);
 		return false;
+	}
+}
+
+/**
+ * Give back every late seat's buy in a crash stranded between its charge and its stacks entry
+ * (2026-10 item 276, audit P3): a held charge still on the finished row. The wallet's receipt
+ * decides, in the same write as the credit, so a buy in that was never taken pays nothing and one
+ * that was pays once, whether this or the seat's own failure path gets there first. Called by
+ * roomLifecycle.finish with the row its claim returned. Never throws: a failure is logged by name.
+ */
+export async function refundStrandedLateCharges(room: Pick<IGameRoom, "game" | "guildId" | "roomId" | "blackjackLateCharges">): Promise<void> {
+	if (!isBlackjackRoomGame(room.game)) return;
+	for (const charge of room.blackjackLateCharges ?? []) {
+		try {
+			if (await refundChipReceipt({ userId: charge.userId }, charge.buyIn, charge.chargeId)) {
+				console.warn(`[game-rooms] a late Blackjack seat's stranded buy in of ${charge.buyIn} went back to ${charge.userId} in room ${room.roomId}`);
+			}
+		} catch (error) {
+			console.error(`[game-rooms] a late Blackjack seat's stranded buy in to ${charge.userId} in room ${room.roomId} could not be given back`, error);
+		}
 	}
 }
 

@@ -89,7 +89,7 @@ describe("recoverGameRoomsOnBoot", () => {
 
 	// ⚠️ A DRAFT HAS NO CHANNEL BY DEFINITION, so "no channel" says nothing about it.
 	// Reaping drafts here would finish every room a host was still configuring at the
-	// moment of a deploy. They expire on their own GAME_ROOM_DRAFT_TIMEOUT_MS clock.
+	// moment of a deploy. The idle sweep closes one nobody touches (GAME_ROOM_IDLE_ABANDON_MS).
 	it("never reaps a draft, which legitimately has no channel yet", async () => {
 		storeMock.findNonTerminal.mockResolvedValue([makeRoom("draft", null)]);
 

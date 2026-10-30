@@ -74,6 +74,29 @@ export const chipWalletStore = {
 		return wallet as IChipWallet;
 	},
 
+	/**
+	 * Take chips with a receipt (2026-10 item 276): the debit and the receipt in ONE write, so a
+	 * receipt exists exactly when the chips were taken. Null when the balance does not cover them,
+	 * or this receipt is already open. The receipt list keeps the newest CHIP_RECEIPT_CAP.
+	 */
+	async debitWithReceipt(key: WalletKey, amount: number, receiptId: string): Promise<IChipWallet | null> {
+		return ChipWallet.findOneAndUpdate(
+			{ ...globalRow(key), balance: { $gte: amount }, openReceipts: { $ne: receiptId } },
+			{ $inc: { balance: -amount }, $push: { openReceipts: { $each: [receiptId], $slice: -BOT_CONSTANTS.ECONOMY.CHIP_RECEIPT_CAP } } },
+			{ new: true }
+		).lean<IChipWallet>();
+	},
+
+	/** Give a receipted charge back: the credit and the receipt's removal in ONE write. Null when the receipt is not open. */
+	async refundReceipt(key: WalletKey, amount: number, receiptId: string): Promise<IChipWallet | null> {
+		return ChipWallet.findOneAndUpdate({ ...globalRow(key), openReceipts: receiptId }, { $inc: { balance: amount }, $pull: { openReceipts: receiptId } }, { new: true }).lean<IChipWallet>();
+	},
+
+	/** Close a receipt once the game's ledger holds the charge, so no refund can reach it. */
+	async closeReceipt(key: WalletKey, receiptId: string): Promise<void> {
+		await ChipWallet.updateOne(globalRow(key), { $pull: { openReceipts: receiptId } });
+	},
+
 	/** Take chips only while the balance covers them. Null when it does not, or the member has no wallet. */
 	async debit(key: WalletKey, amount: number): Promise<IChipWallet | null> {
 		return ChipWallet.findOneAndUpdate({ ...globalRow(key), balance: { $gte: amount } }, { $inc: { balance: -amount } }, { new: true }).lean<IChipWallet>();

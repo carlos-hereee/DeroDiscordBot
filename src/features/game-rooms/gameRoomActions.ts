@@ -87,6 +87,9 @@ export const GAME_ROOM_ACTIONS = {
 	// Open the private picker to remove a member: from the draft's pool before the
 	// start, from a Hold'em, Battleship or Monopoly room during play.
 	kick: { hostOnly: true, playersOnly: false },
+	// Open the private picker to pass hosting to a player still in the match (2026-10 item 276,
+	// D17), from the pinned opener of a Hold'em, Blackjack, Battleship or Monopoly room in play.
+	passhost: { hostOnly: true, playersOnly: false },
 
 	// ── in the room (Phase 3, plus the game controls Phase 4 adds) ──
 	// Delete the room's channel now rather than waiting out the archive window.
@@ -249,7 +252,9 @@ export type GameRoomAction = keyof typeof GAME_ROOM_ACTIONS;
 // The table's buy in (2026-10 item 250 Phase 5) is strict for the same reason: it is what
 // every player pays from their own wallet, the host's call and nobody else's.
 // Queue Dero (2026-10 item 267) is strict too: it decides where the server's voice queue sends Dero.
-export const HOST_STRICT_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["start", "startok", "dero", "hbuyin", "bots", "casual", "edit", "editok", "dqueue", "dqueueok"]);
+// Pass host (2026-10 item 276, D17) is strict: who hosts the host's match is the host's choice, and
+// an admin who must act on a match uses the server's own tools, whose leave hands hosting on.
+export const HOST_STRICT_ACTIONS: ReadonlySet<GameRoomAction> = new Set<GameRoomAction>(["start", "startok", "dero", "hbuyin", "bots", "casual", "edit", "editok", "dqueue", "dqueueok", "passhost"]);
 
 // ── the controls a satellite may press (2026-10 item 244 Phase 5a) ──
 // What:  the actions a member seated through a satellite channel may take there: their

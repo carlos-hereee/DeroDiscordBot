@@ -76,7 +76,7 @@ describe("a round against Dero in its own room", () => {
 		expect(result.ok).toBe(true);
 		expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ game: "solo-coinflip", visibility: "solo", playerIds: ["host-1"], spectatorIds: [] }));
 		expect(playMock).toHaveBeenCalledWith(CHANNEL, { user: HOST.user, displayName: "Host" }, { game: "coinflip" }, secureRandom);
-		expect(finishMock).toHaveBeenCalledWith(guild.client, ROOM, { winnerId: "host-1", archiveDelayMs: SHORT });
+		expect(finishMock).toHaveBeenCalledWith(guild.client, ROOM, { winnerId: "host-1", houseWon: false, archiveDelayMs: SHORT });
 	});
 
 	it("finishes with no winner on a loss or a tie", async () => {
@@ -85,7 +85,7 @@ describe("a round against Dero in its own room", () => {
 		await openSoloRoom(makeGuild(), "solo-diceroll", HOST);
 
 		expect(playMock).toHaveBeenCalledWith(CHANNEL, expect.anything(), { game: "diceroll" }, secureRandom);
-		expect(finishMock).toHaveBeenCalledWith(expect.anything(), ROOM, { winnerId: null, archiveDelayMs: SHORT });
+		expect(finishMock).toHaveBeenCalledWith(expect.anything(), ROOM, { winnerId: null, houseWon: false, archiveDelayMs: SHORT });
 	});
 
 	it("opens a rock paper scissors room and plays nothing yet: the throw is asked in the room", async () => {

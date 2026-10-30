@@ -1,4 +1,4 @@
-import { type AttachmentBuilder, type Client, type TextChannel } from "discord.js";
+import { DiscordAPIError, RESTJSONErrorCodes, type AttachmentBuilder, type Client, type TextChannel } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
@@ -13,7 +13,7 @@ import { challengeResultLine, closeChallengeCard } from "./challengeCard.js";
 import { announceMatchResult } from "./roomAnnouncer.js";
 import type { OutcomeBucket } from "./matchOutcome.js";
 import { settleTableChips } from "./holdemChips.js";
-import { settleBlackjackStacks } from "./blackjackChips.js";
+import { refundStrandedLateCharges, settleBlackjackStacks } from "./blackjackChips.js";
 import { refundAllJoiners } from "./holdemDraftBuyIn.js";
 import { settleChipPot } from "./chipPot.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
@@ -68,6 +68,9 @@ export interface FinishRoomInput {
 	// the shorter GAME_ROOM_SOLO_LUCK_ARCHIVE_DELAY_MS (soloRooms). finish still stamps
 	// the date itself, so it stays the one writer of a date into archiveAt.
 	archiveDelayMs?: number;
+	// A solo round against Dero that Dero won (2026-10 item 276, audit P3). Dero is no member, so
+	// no winnerId can name him; this only words the result card, and nobody is paid or rated for it.
+	houseWon?: boolean;
 	now?: Date;
 }
 
@@ -131,6 +134,8 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	// A Blackjack chip table's stacks the same way (2026-10 item 267, risk R5), from the ledger
 	// the last settle wrote, so a restart, the idle sweep or a deleted channel pays them too.
 	await settleBlackjackStacks(client, claimed);
+	// A late seat's buy in a crash left between its charge and its stacks entry (2026-10 item 276).
+	await refundStrandedLateCharges(claimed);
 	// ①ᵉ A challenge that ended before it started (the idle sweep, the leave watcher, a deleted
 	// channel) still holds the buy ins its joiners paid on the card (2026-10 item 276, audit
 	// P1-3), and once the row is finished Call it off can no longer reach them. Refunded from the
@@ -146,7 +151,7 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 	const prizeLine = pot ? gameRoomsCopy.chipPot.prizeLine(pot.total, pot.payouts.length === 1 && pot.payouts[0].userId === winnerId) : null;
 
 	// A network table names its winner rather than mentioning them (satelliteRooms).
-	const resultEmbed = await labelEmbedForRoom(client, room, roomResultEmbed(winnerId, input.abandoned ?? false, input.art?.ref, archiveDelayMs, prizeLine));
+	const resultEmbed = await labelEmbedForRoom(client, room, roomResultEmbed(winnerId, input.abandoned ?? false, input.art?.ref, archiveDelayMs, prizeLine, input.houseWon ?? false));
 
 	const channel = await resolveRoomChannel(client, room.channelId);
 	// An already-deleted channel is the ordinary abandonment case, not an error. The
@@ -202,6 +207,7 @@ export async function finish(client: Client, room: IGameRoom, input: FinishRoomI
 		abandoned: input.abandoned ?? false,
 		bucket: input.outcome?.bucket,
 		roomWon: input.outcome?.roomWon,
+		houseWon: input.houseWon,
 	});
 	// The closed card says the prize under the result (D4); Dero reads only the result aloud.
 	void closeChallengeCard(client, room, prizeLine ? `${resultLine}\n${prizeLine}` : resultLine);
@@ -356,10 +362,22 @@ function payRoomRateTopUp(client: Client, room: IGameRoom, winnerId: string | nu
 // Shared by the Archive now button and the cron sweep on purpose: two delete paths
 // would be two places to forget the botLog, two places to get the 404 handling wrong,
 // and two definitions of what "archived" means.
+//
+// What archiving one room came to: done, left alone because the channel is no longer this row's
+// (a rematch took it over since the row was read), or left finished for the sweep's next tick
+// because Discord refused the delete.
+export type ArchiveOutcome = "archived" | "kept" | "retry";
+
 export async function archiveRoom(
 	client: Client,
 	room: Pick<IGameRoom, "guildId" | "roomId" | "channelId"> & Partial<Pick<IGameRoom, "satellites">>
-): Promise<void> {
+): Promise<ArchiveOutcome> {
+	// ⚠️ RE-CHECKED BEFORE ANY DELETE (2026-10 item 276, audit P3). The sweep read this row up to a
+	// tick ago, and a rematch takes a finished room's channel by creating its own row on it FIRST and
+	// releasing this one second, so in between both rows point at the channel and this row still
+	// reads finished. Deleting then would take a live match's channel from under it.
+	if (room.channelId && (await channelNoLongerThisRows(room.guildId, room.roomId, room.channelId))) return "kept";
+
 	// A network table's satellites go with it, and BEFORE the row closes: the sweep only
 	// ever finds a "finished" row, so a row archived first would leave its satellites in
 	// other servers with nothing that would ever delete them. Each satellite is isolated
@@ -372,17 +390,38 @@ export async function archiveRoom(
 	// It is a SUCCESS: the desired end state (no channel, row archived) is already half
 	// true, and treating it as an error would leave the row un-archived forever and the
 	// sweep retrying it every five minutes until the end of time.
-	if (channel) {
-		await channel.delete("game room archived").catch((error) => {
-			console.error("[game-rooms] room channel delete failed", { roomId: room.roomId, error });
-		});
-	}
+	//
+	// ⚠️ A DELETE DISCORD REFUSED IS NOT ONE (2026-10 item 276, audit P3). Archiving the row anyway
+	// cleared its channelId and status, so no sweep ever looked at that channel again and it stayed
+	// in the arcade for good. The row stays finished with its clock, and the next tick tries again.
+	if (channel && !(await deleteRoomChannel(channel, room.roomId))) return "retry";
 
 	await gameRoomStore.markArchived(room.guildId, room.roomId);
 
 	botLogStore
 		.log(room.guildId, gameRoomArchivedEvent(room.roomId), { channelId: room.channelId })
 		.catch((error) => console.error("[game-rooms] botLog for room archive failed", error));
+	return "archived";
+}
+
+// Whether the channel stopped being this row's since it was read: the row was released or closed,
+// or another row (a rematch being born on it) points at the channel too.
+async function channelNoLongerThisRows(guildId: string, roomId: string, channelId: string): Promise<boolean> {
+	const current = await gameRoomStore.findByRoomId(guildId, roomId);
+	if (!current || current.status !== "finished" || current.channelId !== channelId) return true;
+	return (await gameRoomStore.findOtherRoomOnChannel(guildId, channelId, roomId)) !== null;
+}
+
+// Delete a room's channel. True once it is gone, including Discord saying it was already gone.
+async function deleteRoomChannel(channel: TextChannel, roomId: string): Promise<boolean> {
+	try {
+		await channel.delete("game room archived");
+		return true;
+	} catch (error) {
+		if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return true;
+		console.error("[game-rooms] room channel delete failed, the room stays finished for the next sweep", { roomId, error });
+		return false;
+	}
 }
 
 export type ArchiveNowResult = { ok: true } | { ok: false; reason: "notYours" };
@@ -402,6 +441,7 @@ export async function archiveNow(
 	// moderation, and an admin is not one of the room's players.
 	if (actorId !== room.hostId && !isAdmin) return { ok: false, reason: "notYours" };
 
+	// A refused delete leaves the room finished, so the sweep deletes it on a later tick.
 	await archiveRoom(client, room);
 	return { ok: true };
 }

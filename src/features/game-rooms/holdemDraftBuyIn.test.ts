@@ -155,6 +155,18 @@ describe("opening the table", () => {
 		expect(walletMock.debit).toHaveBeenCalledWith(key(HOST), 2_500);
 	});
 
+	// 2026-10 item 276, audit P3: the host's Start charge sat outside every ledger while the room was
+	// built, so a crash in those seconds lost it and Call it off could not refund it.
+	it("puts the host's charge on the draft ledger, and gives it straight back when the draft closed first", async () => {
+		await settleDraftBuyIns(draft({ buyInPaidBy: ["a"] }), ["a"]);
+		expect(storeMock.addBuyInPaid).toHaveBeenCalledWith("guild-1", "room-1", HOST, 2_500);
+
+		walletMock.credit.mockClear();
+		storeMock.addBuyInPaid.mockResolvedValueOnce(null);
+		expect(await settleDraftBuyIns(draft({ buyInPaidBy: ["a"] }), ["a"])).toEqual({ ok: false, reason: gameRoomsCopy.board.draftGone });
+		expect(walletMock.credit).toHaveBeenCalledWith(key(HOST), 2_500);
+	});
+
 	// The ledger is cleared once the room opens, so a payer who left the pool is paid back here.
 	it("gives the buy in back to a payer who is no longer in the pool", async () => {
 		await settleDraftBuyIns(draft({ buyInPaidBy: ["a", "gone"] }), ["a"]);
