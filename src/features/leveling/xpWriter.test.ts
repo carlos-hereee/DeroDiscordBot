@@ -181,6 +181,29 @@ describe("② the write buffer", () => {
 		expect(_pendingSize()).toBe(1);
 	});
 
+	it("never runs two flushes at once, so an achievement pass cannot pay twice (2026-10 item 280)", async () => {
+		let releaseFirstPass: () => void = () => undefined;
+		mocks.findManyInGuild.mockResolvedValue([{ userId: "u1", totalXp: 50 }]);
+		mocks.runAchievementPass.mockImplementationOnce(() => new Promise<void>((resolve) => (releaseFirstPass = resolve)));
+		startXpWriter({} as Client, { flushIntervalMs: 60_000, sweepIntervalMs: 60_000 });
+
+		stage(award({ userId: "u1" }));
+		const first = flushNow();
+		await vi.waitFor(() => expect(mocks.runAchievementPass).toHaveBeenCalledTimes(1));
+		stage(award({ userId: "u1" }));
+		const second = flushNow();
+		await Promise.resolve();
+
+		// The second flush waits for the first's achievement pass instead of racing it.
+		expect(mocks.memberBulkWrite).toHaveBeenCalledTimes(1);
+
+		releaseFirstPass();
+		await Promise.all([first, second]);
+		expect(mocks.memberBulkWrite).toHaveBeenCalledTimes(2);
+		expect(mocks.runAchievementPass).toHaveBeenCalledTimes(2);
+		stopXpWriter();
+	});
+
 	it("drains to empty and is a no op when nothing is staged", async () => {
 		await flushNow();
 		expect(mocks.memberBulkWrite).not.toHaveBeenCalled();

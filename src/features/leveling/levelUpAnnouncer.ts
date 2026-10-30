@@ -7,7 +7,7 @@ import { getCopyOverride } from "@base/copy/getCopy.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { memberLevelStore } from "@db/stores/memberLevelStore.js";
 import { levelFromTotalXp, xpIntoLevel } from "./levelCurve.js";
-import { isMilestone } from "./primeLevels.js";
+import { milestoneLevelsUpTo } from "./primeLevels.js";
 import { levelingCopy } from "./levelingCopy.js";
 import { buildCombinedLevelUpEmbed, buildLevelUpEmbed, type AchievementUnlockEntry, type AchievementUnlockView, type LevelUpView } from "./levelingEmbeds.js";
 import { getLevelingConfig, type GuildLevelingContext } from "./levelingConfig.js";
@@ -106,7 +106,7 @@ export async function handleLevelCrossing(input: LevelCrossingInput): Promise<vo
 		// nothing beyond the arithmetic above.
 		if (newLevel <= oldLevel) return;
 
-		const milestone = isLoudLevel(newLevel, settings.milestoneMode, settings.milestoneEveryN);
+		const milestone = crossesLoudLevel(oldLevel, newLevel, settings.milestoneMode, settings.milestoneEveryN);
 
 		// ⚠️ Decide whether this level is announceable BEFORE claiming it. The
 		// claim is a high water mark, so claiming a level the guild does not want
@@ -114,8 +114,14 @@ export async function handleLevelCrossing(input: LevelCrossingInput): Promise<vo
 		// announcements on, that level could never be announced again. Checking
 		// first also keeps an "off" guild from writing to the database on every
 		// single level up.
-		if (settings.announceMode === "off") return;
-		if (settings.announceMode === "milestone" && !milestone) return;
+		const announced = settings.announceMode !== "off" && (settings.announceMode !== "milestone" || milestone);
+		if (!announced) {
+			// A role reward is earned by the level, not by the announcement, so a guild that
+			// silences level ups still grants it (2026-10 item 280). reconcileRewards applies
+			// the full desired role set in one roles.set, so a racing call cannot grant twice.
+			await reconcileRewards(input.client, input.guildId, input.userId, newLevel);
+			return;
+		}
 
 		// ⚠️ THE CLAIM. updateOne on { announcedLevel: { $lt: newLevel } }: whoever
 		// raises the high water mark first is the one caller that announces, and
@@ -160,10 +166,16 @@ export async function handleLevelCrossing(input: LevelCrossingInput): Promise<vo
 
 // Prime levels are the milestone levels. "everyN" survives only as an opt out
 // for a guild that wants the ordinary thing, and level 1 is never loud under
-// either mode because a member starts there.
-function isLoudLevel(level: number, mode: "prime" | "everyN", everyN: number): boolean {
-	if (level <= 1) return false;
-	return mode === "everyN" ? level % Math.max(1, everyN) === 0 : isMilestone(level);
+// either mode because a member starts there. A jump counts as loud when ANY level
+// in (oldLevel, newLevel] is, so a member leaping from 1 to 4 past 2 and 3 is not
+// skipped under "milestone" mode (2026-10 item 280).
+function crossesLoudLevel(oldLevel: number, newLevel: number, mode: "prime" | "everyN", everyN: number): boolean {
+	if (newLevel <= 1) return false;
+	if (mode === "everyN") {
+		const step = Math.max(1, everyN);
+		return Math.floor(newLevel / step) > Math.floor(Math.max(1, oldLevel) / step);
+	}
+	return milestoneLevelsUpTo(newLevel) > milestoneLevelsUpTo(oldLevel);
 }
 
 // ── the coalescing queue ───────────────────────────────────────────────────

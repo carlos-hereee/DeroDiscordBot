@@ -24,6 +24,7 @@ import {
 	fleetFingerprint,
 	SETUP_PRESS_FINGERPRINT,
 	PRIVATE,
+	type BattleshipForfeit,
 	type BattleshipSinking,
 	type FireOutcome,
 	type StoredBattleship,
@@ -37,6 +38,7 @@ import { handleTurnPress, showTurnModal, syncTurnPrompt, type TurnAdapter, type 
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import { pickLine } from "@utils/pickLine.js";
 import { announceToMatch } from "./roomAnnouncer.js";
+import { isBotSeatId } from "./botSeat.js";
 
 // ── roomBattleshipHandlers ───────────────────────────────────────────
 // What:  the interaction half of battleship: aiming, firing, looking at your own
@@ -172,8 +174,13 @@ export async function expireBattleshipTurnIfDue(client: Client, room: IGameRoom,
 	// Whose turn is being forfeited, captured BEFORE expireTurn mutates the
 	// state, because it passes the turn to the other player.
 	const loserId = state.players[state.turn].userId;
+	// A Dero bot captain is never timed out (2026-10 item 280): its turn clock is never armed, since
+	// its own tick plays it, so a bot driver that stalled would otherwise forfeit the bot here and
+	// hand the human a win and its XP for a match nobody played out.
+	if (isBotSeatId(loserId)) return null;
 	const result = expireTurn(state);
-	const next = serializeMatch(state, { boardMessageId: stored.boardMessageId });
+	const forfeit: BattleshipForfeit | null = result.forfeited ? { loserId, bucket: "timeout" } : null;
+	const next = serializeMatch(state, { boardMessageId: stored.boardMessageId, forfeit });
 	const written = await gameRoomStore.updateSecretIf(room.guildId, room.roomId, sameTurnFilter(stored), next);
 	if (!written) return null;
 
@@ -235,9 +242,43 @@ async function finishOnForfeit(client: Client, room: IGameRoom, captains: readon
  */
 export async function forfeitBattleship(client: Client, room: IGameRoom, loserId: string): Promise<boolean> {
 	const stored = storedMatch(room);
-	if (stored?.players) return finishOnForfeit(client, room, stored.players, loserId, "forfeit");
+	if (stored?.players) {
+		// ⚠️ THE FORFEIT CLAIMS THE MATCH ON THE SECRET FIRST (2026-10 item 280). The winning shot
+		// marks the secret finished, then draws for seconds before its finish, and the room still
+		// says playing all that time, so a Surrender or a server leave by the beaten captain used to
+		// win finish's claim and take the match, the rating and the pot. Marking the secret finished
+		// here makes the shot and the forfeit one claim: a shot after this lands nothing, and a
+		// forfeit after the shot finishes the match as the win the shot already decided.
+		const winnerId = stored.players.find((captain) => captain.userId !== loserId)?.userId ?? null;
+		const forfeit: BattleshipForfeit = { loserId, bucket: "forfeit" };
+		const claimed = await gameRoomStore.setSecretFieldsIf(room.guildId, room.roomId, { "secret.status": { $in: ["setup", "playing"] } }, { status: "finished", winnerId, forfeit });
+		if (claimed) return finishOnForfeit(client, room, stored.players, loserId, "forfeit");
+		const fresh = await gameRoomStore.findByRoomId(room.guildId, room.roomId);
+		return fresh ? finishSettledBattleshipMatch(client, fresh) : false;
+	}
 	const remaining = room.playerIds.filter((id) => id !== loserId);
 	return roomLifecycle.finish(client, room, { winnerId: remaining.length === 1 ? remaining[0] : null, outcome: { bucket: "forfeit" } });
+}
+
+/** True when the stored match is over with a winner while the room still says it is playing. */
+export function isSettledBattleshipMatch(room: IGameRoom): boolean {
+	const stored = storedMatch(room);
+	return room.game === "battleship" && room.status === "playing" && stored?.status === "finished" && Boolean(stored.winnerId);
+}
+
+/**
+ * Finish a match the stored secret already ended but the room never did (2026-10 item 280): the
+ * winning shot or a forfeit was saved, then the process stopped (or is still drawing) before its
+ * finish ran. Without this the idle sweep later abandoned the room, splitting the wager and
+ * rating nobody. Finished the way the saved ending would have finished it: a recorded forfeit as
+ * that forfeit, otherwise the winning shot's played win. finish's claim pays and rates it once.
+ * The sweep, boot recovery and a forfeit that lost its claim to the shot call this.
+ */
+export async function finishSettledBattleshipMatch(client: Client, room: IGameRoom): Promise<boolean> {
+	const stored = storedMatch(room);
+	if (!isSettledBattleshipMatch(room) || !stored?.winnerId) return false;
+	if (stored.forfeit) return finishOnForfeit(client, room, stored.players, stored.forfeit.loserId, stored.forfeit.bucket);
+	return finishOnWin(client, room, deserializeMatch(stored), stored.winnerId, null);
 }
 
 /**
@@ -360,25 +401,33 @@ export async function commitShot(
 		});
 	}
 
-	if (!outcome.won) return true;
+	if (outcome.won) await finishOnWin(client, room, outcome.state, shooter.userId, sinking);
+	return true;
+}
 
+/**
+ * The played win's result, ONE function for the winning shot and for a match the sweep or a
+ * forfeit finishes after that shot was saved (2026-10 item 280), so both rate and pay alike.
+ * Answers whether this call won finish's claim.
+ */
+async function finishOnWin(client: Client, room: IGameRoom, state: BattleshipState, winnerId: string, sinking: BattleshipSinking | null): Promise<boolean> {
 	// The captains off the match, not the row: against a Dero bot the row holds the host
 	// alone (2026-10 item 250 Phase 5). recordMatchRatings leaves a bot match unrated, and
 	// awardXp pays a bot nothing.
-	const captains = outcome.state.players.map((player) => player.userId);
+	const captains = state.players.map((player) => player.userId);
 
 	// The result card shows the final board with the last sinking on it, when it draws.
-	const finalBoard = await battleshipBoardCard(outcome.state, sinking);
+	const finalBoard = await battleshipBoardCard(state, sinking);
 	const claimed = await roomLifecycle.finish(client, room, {
-		winnerId: shooter.userId,
+		winnerId,
 		...(finalBoard ? { art: finalBoard } : {}),
-		outcome: { bucket: battleshipWinOutcome(captains, room, outcome.state, shooter.userId) },
+		outcome: { bucket: battleshipWinOutcome(captains, room, state, winnerId) },
 	});
-	// Rated and paid once, by the shot that won finish's claim (2026-10 item 276, audit P2-5, the
+	// Rated and paid once, by the call that won finish's claim (2026-10 item 276, audit P2-5, the
 	// shape finishOnForfeit has): a surrender or the turn clock that finished the match first has
-	// already rated and paid it. The shooter first, the other player second (2026-10 item 244).
-	if (!claimed) return true;
-	void recordMatchRatings(room, twoPlayerFinishingOrder(captains, shooter.userId));
+	// already rated and paid it. The winner first, the other player second (2026-10 item 244).
+	if (!claimed) return false;
+	void recordMatchRatings(room, twoPlayerFinishingOrder(captains, winnerId));
 
 	const [a, b] = captains;
 	awardTwoPlayerResult({
@@ -388,7 +437,7 @@ export async function commitShot(
 		game: "battleship",
 		challenger: { id: a } as never,
 		opponent: { id: b } as never,
-		winner: shooter.userId === a ? "challenger" : "opponent",
+		winner: winnerId === a ? "challenger" : "opponent",
 		resultKey: room.roomId,
 	});
 	return true;
@@ -504,14 +553,16 @@ async function lockFleetIn(client: Client, room: IGameRoom, userId: string, ackn
 
 	const result = markReady(deserializeMatch(stored), userId);
 	if (!result.ok) return SETUP_REFUSALS[result.reason];
-	await commitReady(client, room, userId, result.index, acknowledge);
-	return null;
+	const locked = await commitReady(client, room, userId, result.index, acknowledge);
+	return locked ? null : gameRoomsCopy.turnPrompt.turnPassed;
 }
 
 /**
  * Lock one captain's fleet in, after markReady accepted it, and start the battle on the
  * second Ready. The Ready button and a Dero bot captain (botTurns, 2026-10 item 250 Phase
- * 5) both land here. `acknowledge` runs where the button's deferUpdate always ran.
+ * 5) both land here. `acknowledge` runs where the button's deferUpdate always ran, and only
+ * once the fleet is locked. Answers false, having written and acknowledged nothing, when the
+ * fleet `room` holds is no longer the one stored or setup is over.
  */
 export async function commitReady(
 	client: Client,
@@ -519,13 +570,20 @@ export async function commitReady(
 	userId: string,
 	index: 0 | 1,
 	acknowledge: () => Promise<unknown> = async () => undefined
-): Promise<void> {
+): Promise<boolean> {
 	// ① This player's own slot only, so a Ready landing beside the opponent's cannot
 	// write theirs back to false. ② The start is a compare and swap on the status, so
 	// when both Readies land together and each sees both flags, one of them starts it.
 	// Writing the whole blob there is safe: with both captains ready nothing else in
 	// setup writes the secret (no aim exists yet and Randomize refuses a ready player).
-	const afterReady = await gameRoomStore.setSecretField(room.guildId, room.roomId, `ready.${index}`, true);
+	// ⚠️ ① IS CONDITIONAL ON SETUP AND THE FLEET THE CAPTAIN WAS SHOWN (2026-10 item 280). The setup
+	// Submit checks its fleet's fingerprint against a read, and a Randomize from another press can
+	// land between that read and this write; an unconditional write locked a fleet the captain
+	// never saw, and after the setup clock started the battle it posted a stale ready line and an
+	// extra board. The ships are matched as the row stored them, so the read's own copy matches.
+	const shownShips = storedMatch(room)?.players[index]?.ships;
+	const afterReady = await gameRoomStore.setSecretFieldsIf(room.guildId, room.roomId, { "secret.status": "setup", [`secret.players.${index}.ships`]: shownShips }, { [`ready.${index}`]: true });
+	if (!afterReady) return false;
 	const readied = (afterReady?.secret as StoredBattleship | null) ?? null;
 	const bothReady = readied?.ready?.[0] === true && readied?.ready?.[1] === true;
 	const started =
@@ -537,7 +595,7 @@ export async function commitReady(
 	await roomTrail.postMove(client, room, { actorId: userId, kind: "system", text: gameRoomsCopy.battleship.readyLine(userId) });
 
 	const latest = (started ?? afterReady)?.secret as StoredBattleship | null;
-	if (!latest) return;
+	if (!latest) return true;
 	if (started) {
 		await roomTrail.postMove(client, room, {
 			actorId: userId,
@@ -546,6 +604,7 @@ export async function commitReady(
 		});
 	}
 	await redrawBattleshipBoard(client, room, latest);
+	return true;
 }
 
 // ── the turn prompt (turnPrompt.ts, 2026-10 item 257 Phase 4a) ────────

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { getUpcomingOccurrences, isEventWindowOpen, previousOccurrence } from "./occurrenceCalculator.js";
+import { getUpcomingOccurrences, isEventWindowOpen, openWindowStart, previousOccurrence } from "./occurrenceCalculator.js";
 import { IGameEvent } from "./event.types.js";
 import rokEvents from "../../base/constants/rok-events.json" with { type: "json" };
 
@@ -303,5 +303,69 @@ describe("getUpcomingOccurrences for a weekly event with a zone", () => {
 		vi.setSystemTime(new Date("2026-11-07T00:30:00Z"));
 
 		expect(isEventWindowOpen(fridayStream, new Date("2026-11-07T00:30:00Z"))).toBe(true);
+	});
+});
+
+// ── an interval the walk cannot step through (2026-10 item 280) ──
+// A negative, NaN or infinite interval, or an anchor that is no date, used to spin the
+// forward walk forever and freeze the whole bot inside one reminder tick.
+describe("getUpcomingOccurrences with an interval it cannot walk", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-04-17T00:00:00Z"));
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it.each([
+		["a negative interval", -36],
+		["NaN", Number.NaN],
+		["Infinity", Number.POSITIVE_INFINITY],
+		["an interval too small to move an epoch time", 1e-15],
+	])("returns no occurrences for %s", (_label, intervalHours) => {
+		expect(getUpcomingOccurrences(makeEvent({ intervalHours }), 3)).toEqual([]);
+	});
+
+	it("returns no occurrences for a recurring event whose anchor is no date", () => {
+		expect(getUpcomingOccurrences(makeEvent({ firstOccurrence: new Date("not a date") }), 3)).toEqual([]);
+		expect(getUpcomingOccurrences(makeEvent({ intervalHours: 168, timezone: "America/Chicago", firstOccurrence: new Date("not a date") }), 3)).toEqual([]);
+	});
+
+	it("keeps a one time event (intervalHours 0) returning its single future start", () => {
+		const start = new Date("2026-04-20T00:00:00Z");
+		expect(getUpcomingOccurrences(makeEvent({ type: "one-time", intervalHours: 0, firstOccurrence: start }), 3)).toEqual([start]);
+	});
+
+	it("reads an event window as closed instead of hanging", () => {
+		expect(isEventWindowOpen(makeEvent({ intervalHours: -1 }))).toBe(false);
+	});
+});
+
+// ── the start of the window that is open now (2026-10 item 280) ──
+// ActivityTracker keys attendance by this start. A one time event inside its window has
+// no upcoming occurrence, and stepping back from none once threw and broke voice and
+// presence tracking for the whole guild.
+describe("openWindowStart", () => {
+	it("answers a one time event's own start while its window is open", () => {
+		const start = new Date("2026-04-17T00:00:00Z");
+		const event = makeEvent({ type: "one-time", intervalHours: 0, firstOccurrence: start });
+
+		expect(openWindowStart(event, new Date("2026-04-17T00:20:00Z"), 60)).toEqual(start);
+		expect(openWindowStart(event, new Date("2026-04-17T02:00:00Z"), 60)).toBeNull();
+	});
+
+	it("answers a recurring event's most recent start while its window is open", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-04-02T12:30:00Z"));
+		const event = makeEvent({ intervalHours: 24, firstOccurrence: new Date("2026-04-01T12:00:00Z") });
+
+		expect(openWindowStart(event, new Date(), 60)).toEqual(new Date("2026-04-02T12:00:00Z"));
+		vi.useRealTimers();
+	});
+
+	it("answers null for an event it cannot walk", () => {
+		expect(openWindowStart(makeEvent({ intervalHours: -1 }), new Date(), 60)).toBeNull();
 	});
 });

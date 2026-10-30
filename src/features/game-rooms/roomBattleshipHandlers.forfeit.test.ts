@@ -2,16 +2,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
-	gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn(), updateSecretIf: vi.fn() },
+	gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn(), updateSecretIf: vi.fn(), setSecretFieldsIf: vi.fn() },
 }));
+vi.mock("./roomBattleship.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./roomBattleship.js")>()), battleshipBoardCard: vi.fn(async () => null) }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardTwoPlayerResult: vi.fn() }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
-vi.mock("@features/ratings/recordMatchRatings.js", () => ({ recordMatchRatings: vi.fn(), twoPlayerFinishingOrder: vi.fn() }));
+vi.mock("@features/ratings/recordMatchRatings.js", () => ({ recordMatchRatings: vi.fn(), twoPlayerFinishingOrder: vi.fn((captains: string[], winnerId: string) => [winnerId, ...captains.filter((id) => id !== winnerId)]) }));
 
 import { forfeitBattleship } from "./roomBattleshipHandlers.js";
 import { roomLifecycle } from "./roomLifecycle.js";
+import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { awardTwoPlayerResult } from "@features/games/gameXp.js";
 import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
 import { startMatch, type StoredBattleship } from "./roomBattleship.js";
@@ -26,6 +28,8 @@ import type { IGameRoom } from "@db/models/GameRoom.js";
 const finish = roomLifecycle.finish as unknown as ReturnType<typeof vi.fn>;
 const award = awardTwoPlayerResult as unknown as ReturnType<typeof vi.fn>;
 const ratings = recordMatchRatings as unknown as ReturnType<typeof vi.fn>;
+const claimSecret = gameRoomStore.setSecretFieldsIf as unknown as ReturnType<typeof vi.fn>;
+const findRoom = gameRoomStore.findByRoomId as unknown as ReturnType<typeof vi.fn>;
 
 const A = "player-a";
 const B = "player-b";
@@ -52,6 +56,8 @@ function makeRoom(secret: StoredBattleship | null, playerIds: string[] = [A, B])
 beforeEach(() => {
 	vi.clearAllMocks();
 	finish.mockResolvedValue(true);
+	// The forfeit's claim on the secret (2026-10 item 280) lands unless a test says otherwise.
+	claimSecret.mockResolvedValue({});
 });
 
 describe("forfeitBattleship", () => {
@@ -97,5 +103,39 @@ describe("forfeitBattleship", () => {
 
 		expect(finish.mock.calls[0][2]).toEqual({ winnerId: B, outcome: { bucket: "forfeit" } });
 		expect(ratings).not.toHaveBeenCalled();
+	});
+});
+
+// ── the forfeit against the winning shot (2026-10 item 280) ───────────
+// The winning shot marks the secret finished, then draws for seconds before its finish, while the
+// room still says playing. A Surrender or a server leave by the beaten captain in that window used
+// to win finish's claim and take the match, the rating and the pot.
+describe("forfeitBattleship against a winning shot", () => {
+	it("claims the match on the secret, recording the forfeit, before it finishes", async () => {
+		await forfeitBattleship(client, makeRoom(matchOf([A, B])), A);
+
+		expect(claimSecret).toHaveBeenCalledWith("guild-1", "room-1", { "secret.status": { $in: ["setup", "playing"] } }, { status: "finished", winnerId: B, forfeit: { loserId: A, bucket: "forfeit" } });
+		expect(claimSecret.mock.invocationCallOrder[0]).toBeLessThan(finish.mock.invocationCallOrder[0]);
+	});
+
+	it("finishes as the shooter's played win when the shot was saved first", async () => {
+		claimSecret.mockResolvedValue(null);
+		findRoom.mockResolvedValue(makeRoom({ ...matchOf([A, B]), status: "finished", winnerId: A }));
+
+		expect(await forfeitBattleship(client, makeRoom(matchOf([A, B])), B)).toBe(true);
+
+		const input = finish.mock.calls[0][2] as { winnerId: string; outcome: { bucket: string } };
+		expect(input.winnerId).toBe(A);
+		expect(["forfeit", "timeout"]).not.toContain(input.outcome.bucket);
+		expect(ratings).toHaveBeenCalledWith(expect.anything(), [A, B]);
+		expect(award.mock.calls[0][0]).toMatchObject({ winner: "challenger" });
+	});
+
+	it("does nothing more when the room finished before the forfeit's claim", async () => {
+		claimSecret.mockResolvedValue(null);
+		findRoom.mockResolvedValue({ ...makeRoom({ ...matchOf([A, B]), status: "finished", winnerId: A }), status: "finished" });
+
+		expect(await forfeitBattleship(client, makeRoom(matchOf([A, B])), B)).toBe(false);
+		expect(finish).not.toHaveBeenCalled();
 	});
 });

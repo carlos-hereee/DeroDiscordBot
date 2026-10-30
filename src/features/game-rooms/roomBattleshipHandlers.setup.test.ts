@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { isDeepStrictEqual } from "node:util";
 import type { ButtonInteraction, Client, ModalSubmitInteraction } from "discord.js";
 
 // ── Battleship setup: Randomize, and a Submit that means I am ready (2026-10 item 263 R3-1) ──
@@ -26,13 +27,15 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 			return structuredClone(row.current);
 		}),
 		// The conditional sibling (2026-10 item 276): Randomize writes its fleet only while setup
-		// runs and the captain is not ready, `$ne` or a plain value, as Mongo matches them.
+		// runs and the captain is not ready, `$ne` or a plain value, as Mongo matches them. A plain
+		// value is compared whole, as Mongo compares an embedded array (Ready matches the fleet
+		// it showed, 2026-10 item 280).
 		setSecretFieldsIf: vi.fn(async (_guildId: string, _roomId: string, expected: Record<string, unknown>, fields: Record<string, unknown>) => {
 			if (!row.current || row.current.status !== "playing") return null;
 			const holds = Object.entries(expected).every(([path, wanted]) => {
 				const value = path.split(".").reduce<unknown>((at, key) => (at === null || at === undefined ? undefined : (at as Record<string, unknown>)[key]), row.current);
 				const notEqual = (wanted as { $ne?: unknown } | null)?.$ne;
-				return notEqual === undefined ? value === wanted : value !== notEqual;
+				return notEqual === undefined ? isDeepStrictEqual(value, wanted) : value !== notEqual;
 			});
 			if (!holds) return null;
 			for (const [path, value] of Object.entries(fields)) setPath(row.current, `secret.${path}`, value);
@@ -50,6 +53,7 @@ import { battleshipTurnAdapter, handleFire, handleRandomize, handleReady } from 
 import { fleetFingerprint, startMatch, type StoredBattleship } from "./roomBattleship.js";
 import { handleTurnSubmit } from "./turnPrompt.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
+import { roomTrail } from "./roomTrail.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 
 const A = "captain-a";
@@ -174,6 +178,34 @@ describe("Randomize, then Submit", () => {
 
 		expect(stored().ready?.[0]).toBe(true);
 		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+	});
+});
+
+// ── Ready is tied to the fleet it showed (2026-10 item 280) ──
+// The Submit checks its modal's fingerprint against a read, then locks in. A Randomize from another
+// press landing between the two used to be locked in anyway, a fleet the captain never saw, and
+// after the setup clock started the battle the Ready posted a stale line and an extra board.
+describe("Ready racing a Randomize or the battle's start", () => {
+	it("locks nothing when a Randomize re-laid the fleet after the Submit read it", async () => {
+		const read = snapshot();
+		await handleRandomize(press(A), snapshot());
+		const acknowledge = vi.fn().mockResolvedValue(undefined);
+
+		const result = await battleshipTurnAdapter.apply(client, read, A, {}, acknowledge);
+
+		expect(result).toEqual({ ok: false, reason: gameRoomsCopy.turnPrompt.turnPassed });
+		expect(stored().ready?.[0]).toBe(false);
+		expect(acknowledge).not.toHaveBeenCalled();
+	});
+
+	it("posts no ready line when the setup clock started the battle after the Submit read setup", async () => {
+		const read = snapshot();
+		(row.current!.secret as StoredBattleship).status = "playing";
+
+		const result = await battleshipTurnAdapter.apply(client, read, A, {}, async () => undefined);
+
+		expect(result).toEqual({ ok: false, reason: gameRoomsCopy.turnPrompt.turnPassed });
+		expect(roomTrail.postMove).not.toHaveBeenCalled();
 	});
 });
 

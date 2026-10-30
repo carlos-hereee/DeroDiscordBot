@@ -95,6 +95,14 @@ export function applyForfeit(state: MonopolyState, seatId: string, now: number =
 		const line = `${mentionPlayer(seatId)} left owing $${debt.amount} and is bankrupt.`;
 		return completeAction(next, seatId, defaultWaitingDebt(next, hold, line, now));
 	}
+	// A debtor further down the held batch has not been asked to pay yet, but
+	// leaving must not write its debt off for free either: it goes to the creditor
+	// of its first held debt, the same default the waited debtor gets.
+	const laterDebt = debt ? hold?.debts.slice(1).find((held) => held.debtorId === seatId) : undefined;
+	if (laterDebt) {
+		const line = `${mentionPlayer(seatId)} left owing $${laterDebt.amount} and is bankrupt.`;
+		return completeAction(next, seatId, [line, ...handOverHoldings(next, next.seats[seatIndex], findCreditorSeat(next, laterDebt.creditorId), now)]);
+	}
 	return completeAction(next, seatId, forfeitSeat(next, next.seats[seatIndex], now));
 }
 

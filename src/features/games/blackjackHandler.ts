@@ -868,7 +868,13 @@ async function leaveDuringHand(click: ButtonInteraction, game: BlackjackGame, ch
 	if (game.bankroll) {
 		// The member chose to leave, so the idle sweep's clock starts again; a server leave does not.
 		noteMemberAction(game);
-		await leaveBankrollTable(game, channelId, click.user.id, outcome.cashOut, click.client, clickSurface(click));
+		// At a room table Leave sits on the turn line, so the pressed message is that line, not
+		// the board: drawing through the click would turn the acting seat's line into a board
+		// with no moves. The board is edited directly, as the chip table's confirm does
+		// (2026-10 item 280).
+		const surface = game.board ? boardSurface(game.board) : clickSurface(click);
+		if (game.board) await click.deferUpdate().catch(() => undefined);
+		await leaveBankrollTable(game, channelId, click.user.id, outcome.cashOut, click.client, surface);
 		await answerInChannel(click, "here", { content: game.bankroll.chips ? c.leftWithChips(outcome.cashOut) : c.leftFreeTable });
 		return;
 	}

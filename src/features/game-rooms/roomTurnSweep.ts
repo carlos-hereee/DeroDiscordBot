@@ -3,10 +3,11 @@ import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { mapWithConcurrency } from "@utils/mapWithConcurrency.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { roomLifecycle } from "./roomLifecycle.js";
-import { expireBattleshipTurnIfDue } from "./roomBattleshipHandlers.js";
-import { forfeitIdleMonopolySeatIfDue, forfeitRemovedMonopolySeats } from "./roomMonopolyHandlers.js";
+import { expireBattleshipTurnIfDue, finishSettledBattleshipMatch, isSettledBattleshipMatch } from "./roomBattleshipHandlers.js";
+import { finishSettledMonopolyMatch, forfeitIdleMonopolySeatIfDue, forfeitRemovedMonopolySeats, isSettledMonopolyMatch } from "./roomMonopolyHandlers.js";
 import { monopolyStateOf } from "./roomMonopolyBoard.js";
 import { lastActivityAt } from "./roomActivity.js";
+import { isClockExpired, roomDrawingKey } from "./drawingPause.js";
 import { isBlackjackRoomGame } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import type { HoldemTable } from "@features/games/holdemTable.js";
@@ -40,6 +41,41 @@ export interface TurnSweepSummary {
 	matchesForfeited: number;
 	// Matches whose setup clock ran out and sailed as laid (post-launch plan item 17).
 	setupsTimedOut: number;
+	// Matches whose ending was saved but never finished, finished here (2026-10 item 280).
+	matchesSettled: number;
+}
+
+// ── a match ended but never finished (2026-10 item 280) ───────────────
+// How long a match whose own state says it is over is left to the move that ended it. That move
+// saves the ending, then draws the board and a result card before its finish, which takes seconds;
+// past this window (counted from the row's last write, and held while a board draws) the process
+// that saved it is taken to have stopped, and the sweep finishes the match itself. Two minutes is
+// far beyond any draw and far inside the idle window that would otherwise abandon the room.
+const SETTLED_MATCH_GRACE_MS = 2 * 60_000;
+
+/** True when a game's own state says the match is over while the room still says it is playing. */
+export function hasSettledMatch(room: IGameRoom): boolean {
+	return isSettledMonopolyMatch(room) || isSettledBattleshipMatch(room);
+}
+
+/**
+ * Finish a match whose ending was saved but whose finish never ran, through the finish its own
+ * ending uses, so the pot is paid, the seats rated and the host's slot freed. finish's claim means
+ * a live move still finishing, or a second caller, pays nothing twice. Boot recovery calls this
+ * at once (no move survives a restart); the sweeps wait SETTLED_MATCH_GRACE_MS first.
+ */
+export async function finishSettledMatch(client: Client, room: IGameRoom): Promise<boolean> {
+	if (isSettledMonopolyMatch(room)) return finishSettledMonopolyMatch(client, room);
+	if (isSettledBattleshipMatch(room)) return finishSettledBattleshipMatch(client, room);
+	return false;
+}
+
+// The sweeps' settle: a match left past the grace window. Answers whether this call finished it.
+async function finishSettledMatchIfStranded(client: Client, room: IGameRoom, now: Date): Promise<boolean> {
+	const stamp = room.updatedAt ?? room.createdAt;
+	const lastWriteAt = stamp ? new Date(stamp).getTime() : 0;
+	if (!isClockExpired(roomDrawingKey(room), lastWriteAt, SETTLED_MATCH_GRACE_MS, now.getTime())) return false;
+	return finishSettledMatch(client, room);
 }
 
 /**
@@ -49,14 +85,21 @@ export interface TurnSweepSummary {
  */
 export async function sweepBattleshipTurns(client: Client, now: Date = new Date()): Promise<TurnSweepSummary> {
 	const rooms = await gameRoomStore.findPlayingByGame("battleship");
-	if (rooms.length === 0) return { turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 };
+	if (rooms.length === 0) return { turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 };
 
 	let turnsExpired = 0;
 	let matchesForfeited = 0;
 	let setupsTimedOut = 0;
+	let matchesSettled = 0;
 
 	await mapWithConcurrency(rooms, BOT_CONSTANTS.SCHEDULER_GUILD_CONCURRENCY, async (room) => {
 		try {
+			// A winning shot or a forfeit saved with no finish after it (2026-10 item 280) has no turn
+			// left to expire, so it is finished here rather than left for the idle sweep to abandon.
+			if (hasSettledMatch(room)) {
+				if (await finishSettledMatchIfStranded(client, room, now)) matchesSettled++;
+				return;
+			}
 			const ended = await expireBattleshipTurnIfDue(client, room, now);
 			if (ended === "expired") turnsExpired++;
 			if (ended === "forfeited") matchesForfeited++;
@@ -76,7 +119,7 @@ export async function sweepBattleshipTurns(client: Client, now: Date = new Date(
 	if (turnsExpired > 0 || matchesForfeited > 0) {
 		console.log(`[game-rooms] turn sweep: ${turnsExpired} turn(s) expired, ${matchesForfeited} match(es) forfeited`);
 	}
-	return { turnsExpired, matchesForfeited, setupsTimedOut };
+	return { turnsExpired, matchesForfeited, setupsTimedOut, matchesSettled };
 }
 
 // ── monopoly ──────────────────────────────────────────────────────────
@@ -107,6 +150,12 @@ export async function sweepMonopolyIdle(client: Client, now: Date = new Date()):
 
 	await mapWithConcurrency(rooms, BOT_CONSTANTS.SCHEDULER_GUILD_CONCURRENCY, async (room) => {
 		try {
+			// A final move saved with no finish after it (2026-10 item 280): no seat is left to forfeit,
+			// so without this the match stayed playing forever with its pot unpaid.
+			if (hasSettledMatch(room)) {
+				if (await finishSettledMatchIfStranded(client, room, now)) matchesFinished++;
+				return;
+			}
 			const removed = await forfeitRemovedMonopolySeats(client, room);
 			seatsForfeited += removed;
 			if (removed > 0) return;
@@ -191,6 +240,9 @@ export async function sweepIdleRooms(client: Client, now: Date = new Date()): Pr
 
 	await mapWithConcurrency(rooms, BOT_CONSTANTS.SCHEDULER_GUILD_CONCURRENCY, async (room) => {
 		try {
+			// A match whose ending was saved is the game sweeps' to finish as played or forfeited
+			// (2026-10 item 280), never this sweep's to abandon, which would split the pot and rate nobody.
+			if (hasSettledMatch(room)) return;
 			if (isMonopolyMatchWithBoard(room)) return;
 			if (isHangmanRoundInPlay(room)) return;
 			if (now.getTime() - lastRoomActionAt(room) < BOT_CONSTANTS.GAME_ROOM_IDLE_ABANDON_MS) return;

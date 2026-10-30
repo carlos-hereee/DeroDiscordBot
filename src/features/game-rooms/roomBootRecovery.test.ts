@@ -141,7 +141,7 @@ describe("recoverGameRoomsOnBoot", () => {
 		// This runs inside main.ts's ready handler. A rejection here would surface as a
 		// startup failure in a feature that is not on the critical path.
 		sweepMock.mockRejectedValue(new Error("discord down"));
-		await expect(recoverGameRoomsOnBoot(makeClient([]))).resolves.toEqual({ abandoned: 0, lostTables: 0, dealersRestored: 0, clocksRebuilt: 0, archived: 0 });
+		await expect(recoverGameRoomsOnBoot(makeClient([]))).resolves.toEqual({ abandoned: 0, lostTables: 0, dealersRestored: 0, clocksRebuilt: 0, settled: 0, archived: 0 });
 	});
 
 	// ── ①ᶜ the Hold'em dealer a restart silenced (2026-10 item 263 R3-28) ──

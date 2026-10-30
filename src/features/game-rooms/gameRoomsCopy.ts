@@ -1147,7 +1147,7 @@ export const gameRoomsCopy = {
 		cardSetup: "Laying the fleets",
 		// The private view's modal (item 16). Discord caps a modal title at 45 characters.
 		privateModalTitle: "Your own waters",
-		privateSetupHint: "Not happy with it? Close this and press Set up your fleet, then choose Randomize again. Happy? Choose I am ready.",
+		privateSetupHint: "Not happy with it? Close this and press Randomize on the board for a new fleet. Happy? Close this, press Set up your fleet and Submit the fleet you keep.",
 
 		// The public narration. None of these names an UNFIRED position, which is the
 		// property the whole feature turns on.
@@ -1377,7 +1377,7 @@ export const gameRoomsCopy = {
 		buyPrompt: (tileName: string, price: number): string => `Buy ${tileName} for $${price}, or skip it.`,
 		endTurnPrompt: "End your turn when you are ready.",
 		auctionPrompt: (tileName: string, closesAt: number): string =>
-			`${tileName} is up for auction. Everyone still playing may place one sealed bid; it closes ${discordRelativeTime(closesAt)}.`,
+			`${tileName} is up for auction. Everyone still playing may place a sealed bid, and a second bid replaces the first. It closes ${discordRelativeTime(closesAt)}.`,
 		// "in-trade", the one phase nothing enters (a trade never moves the phase).
 		// Said plainly rather than left blank, so a board that ever shows it reads as
 		// waiting rather than broken.

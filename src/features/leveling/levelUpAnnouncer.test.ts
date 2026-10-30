@@ -18,7 +18,12 @@ const mocks = vi.hoisted(() => ({
 	renderLevelUpCard: vi.fn(),
 	renderAchievementUnlockCard: vi.fn(),
 	renderRoleUnlockCard: vi.fn(),
+	reconcileRewards: vi.fn(),
 }));
+
+// Role rewards are their own module with their own suite; here they only need to say
+// whether the announcer asked for them, and with which level.
+vi.mock("./roleRewards.js", () => ({ reconcileRewards: mocks.reconcileRewards }));
 
 vi.mock("./levelingConfig.js", () => ({ getLevelingConfig: mocks.getLevelingConfig }));
 vi.mock("@db/stores/memberLevelStore.js", () => ({
@@ -141,6 +146,7 @@ beforeEach(() => {
 	mocks.renderLevelUpCard.mockReset().mockResolvedValue(null);
 	mocks.renderAchievementUnlockCard.mockReset().mockResolvedValue(null);
 	mocks.renderRoleUnlockCard.mockReset().mockResolvedValue(null);
+	mocks.reconcileRewards.mockReset().mockResolvedValue(null);
 });
 
 describe("⚠️ THE NEVER PING INVARIANT", () => {
@@ -353,6 +359,54 @@ describe("the announcement claim", () => {
 
 		await cross(client, TO_LEVEL_2, TO_LEVEL_3, "u2"); // 3, prime
 		await _drainAnnouncerNow(CHANNEL_ID);
+		expect(send).toHaveBeenCalledTimes(1);
+	});
+});
+
+// ── 2026-10 item 280 ──
+describe("a level up the guild does not announce", () => {
+	it("still grants the role rewards under announceMode off, without claiming", async () => {
+		mocks.getLevelingConfig.mockResolvedValue(context({ announceMode: "off" }));
+		const { client, send } = harness();
+
+		await cross(client, TO_LEVEL_3, TO_LEVEL_4);
+
+		expect(mocks.reconcileRewards).toHaveBeenCalledWith(client, "g1", "u1", 4);
+		expect(mocks.claimAnnouncement).not.toHaveBeenCalled();
+		expect(send).not.toHaveBeenCalled();
+	});
+
+	it("still grants the role rewards on an ordinary level under milestone mode", async () => {
+		mocks.getLevelingConfig.mockResolvedValue(context({ announceMode: "milestone" }));
+		const { client } = harness();
+
+		await cross(client, TO_LEVEL_3, TO_LEVEL_4);
+
+		expect(mocks.reconcileRewards).toHaveBeenCalledWith(client, "g1", "u1", 4);
+	});
+
+	it("reconciles once, not twice, on an announced level up", async () => {
+		const { client } = harness();
+
+		await cross(client, TO_LEVEL_2, TO_LEVEL_3);
+
+		expect(mocks.reconcileRewards).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not reconcile when no level was crossed", async () => {
+		const { client } = harness();
+		await cross(client, 100, 140);
+		expect(mocks.reconcileRewards).not.toHaveBeenCalled();
+	});
+
+	it("under milestone mode announces a jump OVER a prime level (1 to 4 passes 2 and 3)", async () => {
+		mocks.getLevelingConfig.mockResolvedValue(context({ announceMode: "milestone" }));
+		const { client, send } = harness();
+
+		await cross(client, 0, TO_LEVEL_4);
+		await _drainAnnouncerNow(CHANNEL_ID);
+
+		expect(mocks.claimAnnouncement).toHaveBeenCalledWith("g1", "u1", 4);
 		expect(send).toHaveBeenCalledTimes(1);
 	});
 });

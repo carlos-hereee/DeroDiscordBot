@@ -376,6 +376,28 @@ describe("a free table", () => {
 	});
 });
 
+// At a room table Leave sits on the turn line, so a press that drew through the click would turn
+// the acting seat's line into a board with no moves (2026-10 item 280).
+describe("a free table seat leaving on another seat's turn", () => {
+	it("redraws the board itself and leaves the pressed turn line alone", async () => {
+		const room = fakeRoom();
+		await startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", [BOB], FREE_TABLE);
+		table().shoe = cards(["10", "10", "10", "6", "7", "8"]);
+		await bet(ALICE.userId, 100);
+		await bet(BOB.userId, 100);
+		expect(table().turn).toBe(0);
+
+		const leave = press("leave", BOB.userId, room.client);
+		room.click(leave);
+		await vi.waitFor(() => expect(leave.deferUpdate).toHaveBeenCalled());
+		await flush();
+		expect(table().seats[1].out).toBe("left");
+		expect(leave.update).not.toHaveBeenCalled();
+		expect(leave.editReply).not.toHaveBeenCalled();
+		expect(leave.showModal).not.toHaveBeenCalled();
+	});
+});
+
 describe("the turn clock", () => {
 	const CLOCK = BOT_CONSTANTS.BLACKJACK_TURN_TIMEOUT_MS;
 

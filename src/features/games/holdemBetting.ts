@@ -231,11 +231,12 @@ function advance(state: BettingState): void {
 		return;
 	}
 
-	const stillToAct = contesting(state);
-	if (stillToAct.length === 0) {
+	if (nobodyLeftToBetAgainst(state)) {
 		state.closed = true;
 		return;
 	}
+
+	const stillToAct = contesting(state);
 
 	// ⚠️ THE CLOSING CONDITION, and the one that is always written wrong. Everyone
 	// still contesting must have acted since the last aggression AND be square with
@@ -244,13 +245,6 @@ function advance(state: BettingState): void {
 	const everyoneSquare = stillToAct.every((seat) => seat.committed === state.currentBet);
 	const everyoneActed = stillToAct.every((seat) => state.actedSince.includes(seat.userId));
 	if (everyoneSquare && everyoneActed) {
-		state.closed = true;
-		return;
-	}
-
-	// A single contesting player against one or more all-in opponents has nobody to
-	// bet against once they are square: there is no more betting to do.
-	if (stillToAct.length === 1 && stillToAct[0].committed >= state.currentBet && everyoneActed) {
 		state.closed = true;
 		return;
 	}
@@ -282,8 +276,9 @@ export function openRound(seats: Seat[], firstToAct: number, currentBet = 0, las
 		actedSince: [],
 		closed: false,
 	};
-	// A round can be closed before anybody acts, when everyone is already all in.
-	if (contesting(state).length === 0) {
+	// A round can be closed before anybody acts: everyone is already all in, or the
+	// blinds left one player with chips already covering every all in opponent.
+	if (nobodyLeftToBetAgainst(state)) {
 		state.closed = true;
 		return state;
 	}
@@ -298,6 +293,23 @@ export function openRound(seats: Seat[], firstToAct: number, currentBet = 0, las
 	// non-empty above, an actable seat is guaranteed to exist; find it.
 	if (!canAct(state.seats[state.toAct])) state.toAct = nextActableIndex(state, state.toAct);
 	return state;
+}
+
+// ⚠️ ONE PLAYER WITH CHIPS WHO ALREADY COVERS EVERY ALL IN OPPONENT HAS NO DECISION
+// (2026-10 item 280). Comparing against `currentBet` instead is wrong exactly when a
+// big blind is short: the round opens at the full big blind while the most anyone
+// can be called for is the short stack, so the button was offered fold, call or
+// raise against nobody, and the turn clock folded chips that were never at risk.
+// Their excess over the largest opposing commitment comes back uncalled at
+// settlement. With two or more players holding chips, the normal rules (including
+// the big blind's option) still run, because then someone does have a decision.
+function nobodyLeftToBetAgainst(state: BettingState): boolean {
+	const withChips = contesting(state);
+	if (withChips.length === 0) return true;
+	if (withChips.length > 1) return false;
+	const lone = withChips[0];
+	const largestOpposing = Math.max(0, ...active(state).filter((seat) => seat !== lone).map((seat) => seat.committed));
+	return lone.committed >= largestOpposing;
 }
 
 const canAct = (seat: Seat | undefined): boolean => Boolean(seat) && !seat!.folded && !seat!.allIn;

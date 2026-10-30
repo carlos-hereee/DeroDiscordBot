@@ -23,6 +23,62 @@ function kickScheduleRefresh(client: Client, guildId: string, trigger: string): 
 // lives at module scope so the limiter is shared across all requests.
 const testReminderLastFiredAt = new Map<string, number>();
 
+// ── the schedule a write may store (2026-10 item 280) ──
+// getUpcomingOccurrences walks forward one interval at a time, so a negative, NaN or
+// infinite interval, or an anchor that is no date, once froze the whole bot inside a
+// reminder tick. The calculator now reads such a row as having no start; these routes
+// refuse to write one at all, so the dashboard hears a 400 instead of a silent event.
+
+// The fields PATCH may write: the ones the dashboard's edit form and pause buttons send,
+// matching the platform server's own PATCH body (updateEvent.ts), plus imageUrl for the
+// upload flow. Anything else (active, guildId, eventId, _id) is dropped, so a PATCH can
+// neither undelete an event nor rewrite its identity.
+const PATCHABLE_EVENT_FIELDS = [
+	"name",
+	"description",
+	"type",
+	"intervalHours",
+	"firstOccurrence",
+	"seasonEnd",
+	"reminderOffsets",
+	"prepSteps",
+	"mentionRoleId",
+	"paused",
+	"pausedUntil",
+	"imageUrl",
+] as const;
+
+/** Keep only the fields PATCH may write, so a body cannot reach any other column. */
+function pickPatchableFields(body: Record<string, unknown>): Record<string, unknown> {
+	const picked: Record<string, unknown> = {};
+	for (const field of PATCHABLE_EVENT_FIELDS) {
+		if (body[field] !== undefined) picked[field] = body[field];
+	}
+	return picked;
+}
+
+/**
+ * Why a write's schedule cannot be stored, or null when it can. `stored` is the event as
+ * it stands for a PATCH, so a body naming only `type` is checked against the stored
+ * interval. The recurring floor is checked only when the write touches type or interval,
+ * so pausing an older event never fails on a value it was created with.
+ */
+function scheduleProblem(body: Record<string, unknown>, stored?: { type?: unknown; intervalHours?: unknown }): string | null {
+	if (body.intervalHours !== undefined && (typeof body.intervalHours !== "number" || !Number.isFinite(body.intervalHours) || body.intervalHours < 0)) {
+		return "intervalHours must be a finite number of hours, 0 or more";
+	}
+	if (body.firstOccurrence !== undefined && Number.isNaN(new Date(body.firstOccurrence as string | number | Date).getTime())) {
+		return "firstOccurrence is not a valid date";
+	}
+	if (body.type === undefined && body.intervalHours === undefined) return null;
+	const type = body.type ?? stored?.type;
+	const intervalHours = body.intervalHours ?? stored?.intervalHours;
+	if (type === "recurring" && !(typeof intervalHours === "number" && intervalHours >= BOT_CONSTANTS.MIN_RECURRING_INTERVAL_HOURS)) {
+		return `a recurring event repeats every ${BOT_CONSTANTS.MIN_RECURRING_INTERVAL_HOURS} hour or more`;
+	}
+	return null;
+}
+
 type EventsRequest = Request<
 	{ eventId: string }, // ← Params:      req.params.eventId
 	any, // ← ResBody:      what res.json() sends back
@@ -84,6 +140,11 @@ export function createEventsRouter(client: Client): Router {
 				return;
 			}
 			body.guildId = guildId;
+			const problem = scheduleProblem(body);
+			if (problem) {
+				res.status(400).json({ error: "Invalid event schedule", detail: problem });
+				return;
+			}
 			// defensive strip: the Event schema has no channelId field and
 			// mongoose strict mode would silently drop it anyway, but we
 			// remove it here too so an older dashboard build sending the old
@@ -151,14 +212,19 @@ export function createEventsRouter(client: Client): Router {
 				return;
 			}
 			// disallow moving an event between guilds via PATCH. if the body
-			// contains guildId it must match, otherwise we strip it out.
+			// contains guildId it must match, otherwise the allowlist below drops it.
 			const body = { ...(req.body ?? {}) };
 			if (body.guildId && body.guildId !== guildId) {
 				res.status(400).json({ error: "Cannot change guildId via PATCH" });
 				return;
 			}
-			delete body.guildId;
-			const updated = await eventStore.updateInGuild(req.params.eventId, guildId, body);
+			const patch = pickPatchableFields(body);
+			const problem = scheduleProblem(patch, existing);
+			if (problem) {
+				res.status(400).json({ error: "Invalid event schedule", detail: problem });
+				return;
+			}
+			const updated = await eventStore.updateInGuild(req.params.eventId, guildId, patch);
 			res.json({ data: updated });
 			adminLog.emit({ guild: { id: guildId, client }, kind: "event.update", actor: { source: "dashboard" }, payload: { subject: existing.name, detail: setupCopy.adminLog.updated } });
 			kickScheduleRefresh(client, guildId, "PATCH /api/events/:eventId");

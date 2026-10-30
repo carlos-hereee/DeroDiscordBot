@@ -87,6 +87,17 @@ export interface StoredBattleship {
 	// board with that shot in its This turn block, and the one before stays in the room with
 	// its buttons off (2026-10 item 263 R3-29); setup edits its one board in place.
 	boardMessageId?: string | null;
+	// Set when a forfeit (two lapsed turns, Surrender or a server leave) is what finished the match,
+	// in the same write that marks it finished (2026-10 item 280). A process that stops before the
+	// room's finish leaves the secret as the only record of how it ended, and the sweep finishing it
+	// later reads this to rate and word it as the forfeit it was, never as a played win.
+	forfeit?: BattleshipForfeit | null;
+}
+
+/** Who gave a Battleship match up, and how: their turns lapsed, or they surrendered or left. */
+export interface BattleshipForfeit {
+	loserId: string;
+	bucket: "timeout" | "forfeit";
 }
 
 /** How many hex characters of the fleet's hash a layout fingerprint keeps: plenty to tell two random layouts apart. */

@@ -422,8 +422,20 @@ describe("playDealer", () => {
 		expect(t.phase).toBe("settled");
 	});
 
-	it("still plays out against a natural, because a dealer natural pushes it", () => {
+	it("does not draw for a player natural alone, which the peek already decided (2026-10 item 280)", () => {
 		const t = table({ seats: [seat("a", [hand(["A", "K"], { status: "blackjack" })])], dealer: hand(["6", "5"]), phase: "dealer", shoe: stack(["9"]) });
+		playDealer(t);
+		expect(t.dealer.cards).toHaveLength(2);
+		expect(t.phase).toBe("settled");
+	});
+
+	it("still draws when a natural shares the table with a hand that stood", () => {
+		const t = table({
+			seats: [seat("a", [hand(["A", "K"], { status: "blackjack" })]), seat("b", [hand(["10", "8"], { status: "stood" })])],
+			dealer: hand(["6", "5"]),
+			phase: "dealer",
+			shoe: stack(["9"]),
+		});
 		playDealer(t);
 		expect(t.dealer.cards).toHaveLength(3);
 	});
@@ -524,7 +536,14 @@ describe("applyLeave", () => {
 		expect(applyLeave(live, "z")).toEqual({ status: "not-seated" });
 		applyLeave(live, "b");
 		expect(applyLeave(live, "b")).toEqual({ status: "already-left" });
-		expect(applyLeave(table({ seats: [seat("a", [hand(["10", "6"])])], phase: "dealer" }), "a")).toEqual({ status: "not-seated" });
+		expect(applyLeave(table({ seats: [seat("a", [hand(["10", "6"])])], phase: "settled" }), "a")).toEqual({ status: "not-seated" });
+	});
+
+	it("lets a seat leave while the dealer is still to draw, giving its hand up (2026-10 item 280)", () => {
+		const waiting = table({ seats: [seat("a", [hand(["10", "8"], { status: "stood" })], 0, { stack: 400 }), seat("b", [hand(["10", "9"], { status: "stood" })])], phase: "dealer" });
+		expect(applyLeave(waiting, "a")).toEqual({ status: "left", cashOut: 400 });
+		expect(waiting.seats[0].hands[0].status).toBe("left");
+		expect(waiting.phase).toBe("dealer");
 	});
 });
 

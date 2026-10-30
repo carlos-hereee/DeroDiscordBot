@@ -283,6 +283,18 @@ describe("trade offered to the bot", () => {
 		expect(decideMonopolyMove(state, RED)).toEqual({ kind: "acceptTrade" });
 	});
 
+	it("takes a mortgaged lot at its price less the cost of lifting it, since a bot never lifts one (2026-10 item 280)", () => {
+		const offerMortgagedRail = (chips: number): MonopolyState =>
+			arrange(newMatch(), (draft) => {
+				giveLots(draft, BLUE, [RAIL_ONE]);
+				draft.properties[RAIL_ONE].mortgaged = true;
+				openTradeTo(draft, { offer: { properties: [RAIL_ONE], chips: 0, gojf: 0 }, request: { properties: [], chips, gojf: 0 } });
+			});
+		// Rail One lists at $200 and costs $110 to lift: worth $90 to a bot.
+		expect(decideMonopolyMove(offerMortgagedRail(150), RED)).toEqual({ kind: "rejectTrade" });
+		expect(decideMonopolyMove(offerMortgagedRail(80), RED)).toEqual({ kind: "acceptTrade" });
+	});
+
 	it("rejects a winning trade the engine would no longer let through", () => {
 		const state = arrange(newMatch(), (draft) => {
 			// Blue offered chips it has since spent.

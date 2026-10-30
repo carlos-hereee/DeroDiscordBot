@@ -4,7 +4,12 @@ import type { Client } from "discord.js";
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: { findNonTerminal: vi.fn() },
 }));
-vi.mock("./roomLifecycle.js", () => ({ finish: vi.fn() }));
+// Recovery calls the bare `finish`, and a saved ending finishes through the Monopoly handlers'
+// `roomLifecycle.finish` (2026-10 item 280); one mock serves both, so a test sees every finish.
+const lifecycle = vi.hoisted(() => ({ finish: vi.fn() }));
+vi.mock("./roomLifecycle.js", () => ({ finish: lifecycle.finish, roomLifecycle: lifecycle }));
+vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn(), awardTwoPlayerResult: vi.fn() }));
+vi.mock("@features/ratings/recordMatchRatings.js", () => ({ recordMatchRatings: vi.fn(), monopolyFinishingOrder: vi.fn(() => []) }));
 vi.mock("./roomArchiveSweep.js", () => ({ sweepExpiredRooms: vi.fn() }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("@features/games/blackjackHandler.js", () => ({
@@ -18,6 +23,7 @@ import { finish } from "./roomLifecycle.js";
 import { sweepExpiredRooms } from "./roomArchiveSweep.js";
 import { roomTrail } from "./roomTrail.js";
 import { createInitialState } from "@features/games/monopolyState.js";
+import { awardMultiPlayerResult } from "@features/games/gameXp.js";
 
 // ── boot recovery for a Monopoly room ────────────────────────────────
 // ⚠️ PINS THAT A DEPLOY MID MATCH IS A NO-OP (the plan's Definition of Done 2).
@@ -44,6 +50,7 @@ const makeClient = (liveChannelIds: string[]): Client =>
 	({
 		user: { id: "bot-1" },
 		channels: { fetch: vi.fn(async (id: string) => (liveChannelIds.includes(id) ? { id } : null)) },
+		guilds: { fetch: vi.fn(async () => null) },
 	}) as unknown as Client;
 
 beforeEach(() => {
@@ -72,6 +79,32 @@ describe("recoverGameRoomsOnBoot with a Monopoly room", () => {
 
 		expect(summary.abandoned).toBe(1);
 		expect(finishMock.mock.calls[0][2]).toEqual({ abandoned: true });
+		logSpy.mockRestore();
+	});
+});
+
+// ── a final move saved with no finish after it (2026-10 item 280) ─────
+// A restart between the final move's save and its finish left the engine finished and the room
+// playing, which nothing ever finished. Boot recovery finishes it at once as played, even when
+// its channel is gone too, so the pot is paid and the seats rated rather than abandoned.
+describe("recoverGameRoomsOnBoot with a Monopoly match the engine ended", () => {
+	const settledRoom = (channelId: string) => {
+		const room = monopolyRoom(channelId);
+		return { ...room, secret: { ...room.secret, phase: "finished", winnerId: "player-b" } };
+	};
+
+	it.each([["ch-live"], ["ch-gone"]])("finishes it as played with its winner (channel %s)", async (channelId) => {
+		finishMock.mockResolvedValue(true);
+		storeMock.findNonTerminal.mockResolvedValue([settledRoom(channelId)]);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+		const summary = await recoverGameRoomsOnBoot(makeClient(["ch-live"]));
+
+		expect(summary).toMatchObject({ abandoned: 0, settled: 1 });
+		expect(finishMock).toHaveBeenCalledOnce();
+		expect(finishMock.mock.calls[0][2]).toMatchObject({ winnerId: "player-b" });
+		expect(finishMock.mock.calls[0][2]).not.toHaveProperty("abandoned");
+		expect(awardMultiPlayerResult).toHaveBeenCalledWith(expect.objectContaining({ game: "monopoly", winnerId: "player-b" }));
 		logSpy.mockRestore();
 	});
 });

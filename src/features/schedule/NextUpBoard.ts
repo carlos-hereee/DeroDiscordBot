@@ -54,6 +54,19 @@ export function _resetNextUpDedupForTest(): void {
 	seededGuilds.clear();
 }
 
+// Exported for testing, the number of keys the dedup cache holds.
+export const _postedDecreeCountForTest = (): number => postedDecrees.size;
+
+// Drops every key whose occurrence has passed. The refresh loop skips a past occurrence
+// before it reads the cache, so such a key can never stop a post again, and without the
+// prune the cache grew with every decree for the life of the process (2026-10 item 280).
+function prunePastDecrees(now: number): void {
+	for (const key of postedDecrees) {
+		const occurrenceMs = Number(key.slice(key.lastIndexOf(":") + 1));
+		if (occurrenceMs <= now) postedDecrees.delete(key);
+	}
+}
+
 // ── public entry points ─────────────────────────────────────────────
 
 export async function refreshAllNextUp(client: Client): Promise<void> {
@@ -98,6 +111,7 @@ export async function refreshNextUp(client: Client, guildId: string): Promise<vo
 	const events = await eventStore.findByGuildId(guildId);
 	const now = Date.now();
 	const horizonEnd = now + HORIZON_MS;
+	prunePastDecrees(now);
 
 	for (const eventLike of events) {
 		const event = eventLike as unknown as IGameEvent;
@@ -120,10 +134,15 @@ export async function refreshNextUp(client: Client, guildId: string): Promise<vo
 			const key = postedDecreeKey(guildId, event.eventId, occurrenceMs);
 			if (postedDecrees.has(key)) continue;
 
+			// Claim the key BEFORE awaiting the post, so a second refresh racing this one
+			// (a reminder fire and an event write landing together) sees it and skips
+			// rather than posting the same decree again. A failed post releases the claim
+			// so the next refresh retries (2026-10 item 280).
+			postedDecrees.add(key);
 			try {
 				await tryPostDecree(channel, event, occurrence, config.defaultEventImageUrl ?? null);
-				postedDecrees.add(key);
 			} catch (error) {
+				postedDecrees.delete(key);
 				console.error("[nextUp] post failed", { guildId, eventId: event.eventId, occurrenceMs }, error);
 			}
 		}

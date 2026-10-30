@@ -84,8 +84,11 @@ export async function buyCoins(trade: { userId: string; guildId: string; coins: 
 	const price = buyPriceOf(coins);
 
 	// ① The reservation is the cap's claim: a second buy racing this one meets the count
-	// this one already wrote and is refused there, before any chip moves.
-	const reserved = await deroCoinStore.reserveMarketBuy(userId, coins, dayKey, MARKET.DAILY_COIN_BUY_CAP);
+	// this one already wrote and is refused there, before any chip moves. A buy larger than
+	// the whole cap could still pass the store's filter on a fresh day (the filter only
+	// guards a day already counted), so it is refused here first, as serverVault.ts refuses
+	// an oversized grant (2026-10 item 280).
+	const reserved = coins <= MARKET.DAILY_COIN_BUY_CAP && (await deroCoinStore.reserveMarketBuy(userId, coins, dayKey, MARKET.DAILY_COIN_BUY_CAP));
 	if (!reserved) return { kind: "cap", leftToday: await buyLeftToday(userId, now) };
 
 	// ② The chips. Short of them, the reservation goes back, so a refused buy costs none of

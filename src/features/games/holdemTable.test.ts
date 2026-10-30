@@ -11,6 +11,7 @@ import {
 	livePlayers,
 	type HoldemTable,
 } from "./holdemTable.js";
+import type { Card, Suit } from "./holdemHand.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 
 // Deterministic but VARYING. A constant rng would deal every player the same card.
@@ -341,7 +342,9 @@ describe("a blind bigger than a stack", () => {
 	// stack was smaller than the blind is all in the moment it is posted, and pointing
 	// toAct at them wedged the table for good: legalActions answered nothing, the
 	// opponent was told it was not their turn, and forceFold found no action to force,
-	// so the clock skipped it every ten seconds forever.
+	// so the clock skipped it every ten seconds forever. The deep big blind already
+	// covers that all in, so nobody has a decision at all and the deal runs the hand
+	// out (2026-10 item 280).
 	it("never leaves an all-in blind poster as the player to act", () => {
 		const table = createTable();
 		joinTable(table, "short", "Short");
@@ -349,26 +352,151 @@ describe("a blind bigger than a stack", () => {
 		table.status = "playing";
 		// Heads up posts the small blind ON the button, which is seat 0.
 		table.seats[0].stack = 5;
-		dealHand(table, seededRng(11));
+		const outcome = dealHand(table, seededRng(11));
 
-		const acting = whoActs(table);
-		expect(acting).not.toBeNull();
-		expect(acting).not.toBe("short");
-		// And the table can actually be driven to a conclusion from here.
-		expect(actionsFor(table, acting!).length).toBeGreaterThan(0);
+		expect(whoActs(table)).toBeNull();
+		expect(outcome.handOver).toBe(true);
 	});
 
-	it("resolves the hand instead of stalling on the short stack", () => {
+	it("resolves the hand at the deal, handing the deep stack its uncalled blind back", () => {
 		const table = createTable();
 		joinTable(table, "short", "Short");
 		joinTable(table, "deep", "Deep");
 		table.status = "playing";
 		table.seats[0].stack = 5;
-		dealHand(table, seededRng(11));
+		const outcome = dealHand(table, seededRng(11));
 
-		const outcome = act(table, whoActs(table)!, "check", 0, seededRng(3));
-		expect(outcome.ok).toBe(true);
+		expect(outcome.returned).toEqual({ userId: "deep", amount: 15 });
+		expect(table.board).toHaveLength(5);
+		expect(chipsInPlay(table)).toBe(START + 5);
+	});
+
+	// ⚠️ THE SHORT BIG BLIND (2026-10 item 280). The round opens at the full big blind,
+	// but the button's small blind already covers the 5 the big blind could put in, so
+	// offering fold, call or raise asked a question with no stake: the clock folded and
+	// the short stack doubled without a showdown.
+	it("runs a short big blind's hand out instead of asking the covering small blind to act", () => {
+		const table = createTable();
+		joinTable(table, "deep", "Deep");
+		joinTable(table, "short", "Short");
+		table.status = "playing";
+		table.seats[0].stack = 1000;
+		table.seats[1].stack = 5;
+		const outcome = dealHand(table, seededRng(11));
+
+		expect(whoActs(table)).toBeNull();
 		expect(outcome.handOver).toBe(true);
+		expect(outcome.returned).toEqual({ userId: "deep", amount: 5 });
+		// A 5 against 5 showdown, so the pot is 10 and nothing else moved.
+		expect(outcome.awards?.reduce((sum, award) => sum + award.amount, 0)).toBe(10);
+		expect(chipsInPlay(table)).toBe(1005);
+	});
+});
+
+// Rig the cards still to come: each player's hole cards, and a board of nothing so the
+// pocket pairs decide it. The deck pops from the end, so these five are the whole board.
+const card = (rank: number, suit: Suit): Card => ({ rank, suit });
+function rigCards(table: HoldemTable, hands: Record<string, Card[]>): void {
+	Object.assign(table.holeCards, hands);
+	table.deck = [card(3, "h"), card(4, "c"), card(9, "d"), card(11, "h"), card(12, "s")];
+}
+const ACES = [card(14, "s"), card(14, "h")];
+const KINGS = [card(13, "s"), card(13, "d")];
+const SEVEN_TWO = [card(7, "c"), card(2, "d")];
+const EIGHT_FIVE = [card(8, "c"), card(5, "d")];
+
+// Call or check until the hand in progress ends.
+function playOut(table: HoldemTable): void {
+	const hand = table.handNumber;
+	let guard = 0;
+	while (table.handNumber === hand && table.street !== "showdown" && whoActs(table) && guard++ < 60) {
+		const actor = whoActs(table)!;
+		const legal = actionsFor(table, actor).map((entry) => entry.action);
+		act(table, actor, legal.includes("check") ? "check" : "call");
+	}
+}
+
+function threeHanded(stacks: [number, number, number]): HoldemTable {
+	const table = createTable();
+	for (let index = 0; index < 3; index++) joinTable(table, `p${index}`, `P${index}`);
+	stacks.forEach((stack, index) => (table.seats[index].stack = stack));
+	table.status = "playing";
+	// Button p0, small blind p1, big blind p2, and p0 acts first preflop.
+	dealHand(table, seededRng(11));
+	return table;
+}
+
+describe("two busts on one hand", () => {
+	// ⚠️ THE BIGGER STARTING STACK FINISHES HIGHER (2026-10 item 280). Busts used to be
+	// recorded in seat order, which placed p2 (100) above p1 (300).
+	it("places the player who started the hand with more chips higher", () => {
+		const table = threeHanded([5000, 300, 100]);
+		rigCards(table, { p0: ACES, p1: SEVEN_TWO, p2: EIGHT_FIVE });
+		act(table, "p0", "call");
+		act(table, "p1", "allIn");
+		act(table, "p2", "allIn");
+		const outcome = act(table, "p0", "call");
+
+		expect(outcome.busted).toEqual(["p2", "p1"]);
+		expect(placements(table)).toEqual(["p0", "p1", "p2"]);
+		expect(chipsInPlay(table)).toBe(5400);
+	});
+
+	it("keeps seat order when both started the hand with the same chips", () => {
+		const table = threeHanded([5000, 200, 200]);
+		rigCards(table, { p0: ACES, p1: SEVEN_TWO, p2: EIGHT_FIVE });
+		act(table, "p0", "call");
+		act(table, "p1", "allIn");
+		act(table, "p2", "allIn");
+		const outcome = act(table, "p0", "call");
+
+		expect(outcome.busted).toEqual(["p1", "p2"]);
+	});
+});
+
+describe("the button going heads up", () => {
+	const blindsOf = (table: HoldemTable) => ({
+		small: table.seats.find((seat) => !seat.out && seat.committed === table.smallBlind)?.userId,
+		big: table.seats.find((seat) => !seat.out && seat.committed === table.bigBlind)?.userId,
+	});
+
+	// ⚠️ NOBODY POSTS THE BIG BLIND TWICE IN A ROW (2026-10 item 280). Passing the button
+	// on as usual put p1 on it, and heads up the button posts the small blind, so p2
+	// paid the big blind again.
+	it("moves the button to last hand's big blind when the button busts", () => {
+		const table = threeHanded([100, 5000, 5000]);
+		rigCards(table, { p0: SEVEN_TWO, p1: ACES, p2: KINGS });
+		act(table, "p0", "allIn");
+		playOut(table);
+		expect(table.seats[0].out).toBe(true);
+
+		dealHand(table, seededRng(12));
+		expect(blindsOf(table)).toEqual({ small: "p2", big: "p1" });
+	});
+
+	it("gives the big blind to the button when the small blind busts", () => {
+		const table = threeHanded([5000, 100, 5000]);
+		rigCards(table, { p0: KINGS, p1: SEVEN_TWO, p2: ACES });
+		act(table, "p0", "call");
+		act(table, "p1", "allIn");
+		playOut(table);
+		expect(table.seats[1].out).toBe(true);
+
+		dealHand(table, seededRng(12));
+		expect(blindsOf(table)).toEqual({ small: "p2", big: "p0" });
+	});
+
+	it("passes the button on as usual when the big blind busts", () => {
+		const table = threeHanded([5000, 5000, 100]);
+		rigCards(table, { p0: KINGS, p1: ACES, p2: SEVEN_TWO });
+		act(table, "p0", "call");
+		act(table, "p1", "call");
+		act(table, "p2", "allIn");
+		playOut(table);
+		expect(table.seats[2].out).toBe(true);
+
+		dealHand(table, seededRng(12));
+		expect(blindsOf(table)).toEqual({ small: "p1", big: "p0" });
 	});
 });
 

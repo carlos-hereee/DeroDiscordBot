@@ -69,9 +69,9 @@ interface HangmanRound {
 	//        ONLY record of participation that exists: the state carries the
 	//        letters guessed but not who guessed them.
 	// When:  seeded with the starter at round creation, and added to on every
-	//        modal submit that reaches the round, including repeats and invalid
-	//        characters, because taking part is what is being rewarded rather
-	//        than guessing well.
+	//        guess the round took, a hit or a miss alike, because taking part is
+	//        what is being rewarded rather than guessing well. A submit the round
+	//        refused is no turn, so it is not added (2026-10 item 280).
 	// Where: this is what makes the ASSIST outcome possible at all. Hangman is
 	//        the only current game with a genuine assist, because a public round
 	//        is solved by one member on top of letters several others revealed.
@@ -313,15 +313,16 @@ async function onGuessClick(click: ButtonInteraction, channelId: string, board: 
 		return;
 	}
 
-	// Recorded BEFORE the guess is scored, and for every submit including repeats
-	// and invalid characters: the set answers "who played this round", not "who
-	// played it well". A member whose only guess was a repeat still took part.
-	live.participants.add(submit.user.id);
-
 	// ⚠️ SYNCHRONOUS. The board is public, so several members can submit in the
 	// same tick. applyGuess does its whole check-then-write without yielding, so
 	// two simultaneous guesses cannot both spend the last attempt or both win.
 	const result = applyGuess(live.state, submit.fields.getTextInputValue(MODAL_FIELD));
+
+	// Recorded only for a guess the round took, a hit or a miss (2026-10 item 280). The round stays
+	// in the map while its end board is edited, so a submit landing then reads as closed, and adding
+	// it before scoring paid a member who played nothing. Added in the same tick as the guess, before
+	// any await, so the solving guess's own award always sees it.
+	if (result.status === "hit" || result.status === "miss") live.participants.add(submit.user.id);
 
 	// A hit or a miss is an answer, and the BOARD redrawn below is it (owner rule 1, 2026-10
 	// item 263 R3-11), so the Submit only closes. A repeat, a character that is no letter, or a
@@ -429,9 +430,11 @@ async function finishRound(channelId: string, board: Message): Promise<void> {
 
 // Resolve every participant to a display name and hand the round to the shared
 // games award helper. Display names come from the member cache rather than a
-// fetch: this runs after the round is over, and a cache miss degrades to the raw
-// id in the standings rather than costing a round of Discord calls at the exact
-// moment the channel is busiest.
+// fetch: this runs after the round is over, and a cache miss leaves the name
+// undefined rather than costing a round of Discord calls at the exact moment the
+// channel is busiest. Undefined, never the id, as MultiPlayerResult asks: the
+// award then skips the name write instead of storing the snowflake as the
+// member's name (2026-10 item 280).
 function awardHangmanRound(board: Message, round: HangmanRound, winnerId: string | null): void {
 	const guild = board.guild;
 	awardMultiPlayerResult({
@@ -441,7 +444,7 @@ function awardHangmanRound(board: Message, round: HangmanRound, winnerId: string
 		game: "hangman",
 		participants: [...round.participants].map((userId) => ({
 			userId,
-			username: guild?.members.cache.get(userId)?.displayName ?? userId,
+			username: guild?.members.cache.get(userId)?.displayName,
 		})),
 		winnerId,
 		// A channel round owns no room, so its board message is the coin award's key: one

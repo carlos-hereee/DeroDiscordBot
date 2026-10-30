@@ -10,6 +10,9 @@ export const BOT_CONSTANTS = {
 	DEFAULT_REMINDER_OFFSETS: [30, 15], // minutes before event to send reminders
 	EVENT_WINDOW_MINUTES: 60, // how long after start time the event is considered "active"
 	// used by ActivityTracker to know when to track voice
+	// The shortest repeat a recurring event may be written with through the events routes,
+	// the same floor the dashboard's interval field sets (min 1). 2026-10 item 280.
+	MIN_RECURRING_INTERVAL_HOURS: 1,
 
 	// participation scoring weights
 	SCORE_WEIGHTS: {

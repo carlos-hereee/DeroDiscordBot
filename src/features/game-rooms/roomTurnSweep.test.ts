@@ -7,6 +7,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardTwoPlayerResult: vi.fn() }));
+vi.mock("@features/ratings/recordMatchRatings.js", () => ({ recordMatchRatings: vi.fn(), twoPlayerFinishingOrder: vi.fn((captains: string[], winnerId: string) => [winnerId, ...captains.filter((id) => id !== winnerId)]) }));
 // The battle's board is drawn by the handlers' own suites; here only what the expiry hands the
 // shared turn board. The expiry lives beside the redraw since 2026-10 item 267 (the turn clock calls
 // it too), so the board is watched where the redraw posts it, with no picture drawn.
@@ -95,14 +96,14 @@ beforeEach(() => {
 describe("sweepBattleshipTurns", () => {
 	it("does nothing when no battleship match is live", async () => {
 		storeMock.findPlayingByGame.mockResolvedValue([]);
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 });
 		expect(trailMock.postMove).not.toHaveBeenCalled();
 	});
 
 	it("leaves a match alone while the player is still inside the turn budget", async () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT - 1000)]);
 
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 });
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
@@ -111,7 +112,7 @@ describe("sweepBattleshipTurns", () => {
 
 		const summary = await sweepBattleshipTurns(client, NOW);
 
-		expect(summary).toEqual({ turnsExpired: 1, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(summary).toEqual({ turnsExpired: 1, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 });
 		// The turn moved, and the match is NOT over on a single expiry.
 		const saved = storeMock.updateSecretIf.mock.calls[0][3] as StoredBattleship;
 		expect(saved.turn).toBe(1);
@@ -126,7 +127,7 @@ describe("sweepBattleshipTurns", () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000, match)]);
 		storeMock.updateSecretIf.mockResolvedValueOnce(null);
 
-		expect(await sweepBattleshipTurns(boardClient(), NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(await sweepBattleshipTurns(boardClient(), NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 });
 		expect(storeMock.updateSecretIf.mock.calls[0][2]).toEqual({
 			"secret.status": "playing",
 			"secret.turn": match.turn,
@@ -146,7 +147,7 @@ describe("sweepBattleshipTurns", () => {
 
 		const summary = await sweepBattleshipTurns(client, NOW);
 
-		expect(summary).toEqual({ turnsExpired: 0, matchesForfeited: 1, setupsTimedOut: 0 });
+		expect(summary).toEqual({ turnsExpired: 0, matchesForfeited: 1, setupsTimedOut: 0, matchesSettled: 0 });
 		expect(lifecycleMock.finish).toHaveBeenCalledOnce();
 		// The player who did NOT walk away wins.
 		expect(lifecycleMock.finish.mock.calls[0][2]).toMatchObject({ winnerId: B });
@@ -193,7 +194,7 @@ describe("sweepBattleshipTurns", () => {
 	// player a full budget rather than an instant expiry on the next tick.
 	it("gives an unplayed match its full first turn", async () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT - 1000, makeMatch(), false)]);
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 });
 	});
 
 	it("ignores a room whose secret is not a battleship match", async () => {
@@ -201,7 +202,7 @@ describe("sweepBattleshipTurns", () => {
 		(room as { secret: unknown }).secret = { word: "planet" };
 		storeMock.findPlayingByGame.mockResolvedValue([room]);
 
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 });
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
@@ -213,18 +214,21 @@ describe("sweepBattleshipTurns", () => {
 
 		// One fails, the other still expires. A throw here would be swallowed by the
 		// cron wrapper while every other stalled match stayed stalled.
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 1, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 1, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 });
 		errorSpy.mockRestore();
 		logSpy.mockRestore();
 	});
 
-	it("never touches a match that already finished", async () => {
+	// No turn of a finished match is expired; since 2026-10 item 280 a playing row whose match
+	// finished is finished as the shot's win (the cases below), where it used to be left for good.
+	it("expires no turn in a match that already finished", async () => {
 		storeMock.findPlayingByGame.mockResolvedValue([
 			makeRoom(TIMEOUT + 1000, makeMatch({ status: "finished", winnerId: A })),
 		]);
 
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
-		expect(lifecycleMock.finish).not.toHaveBeenCalled();
+		expect(await sweepBattleshipTurns(client, NOW)).toMatchObject({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+		expect(lifecycleMock.finish.mock.calls[0][2]).toMatchObject({ winnerId: A });
 	});
 });
 
@@ -246,12 +250,12 @@ describe("a board that is drawing", () => {
 			swapIn: async () => undefined,
 		});
 
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 });
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 
 		finish(null);
 		await drawing;
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 1, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 1, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 });
 	});
 });
 
@@ -262,7 +266,7 @@ describe("sweepBattleshipTurns, setup", () => {
 	it("leaves setup alone inside the budget", async () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT - 1000, inSetup())]);
 
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 });
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
@@ -270,7 +274,7 @@ describe("sweepBattleshipTurns, setup", () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000, inSetup())]);
 		storeMock.setSecretFieldsIf.mockResolvedValue({ secret: { ...inSetup(), status: "playing", ready: [true, true] } });
 
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 1 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 1, matchesSettled: 0 });
 		const [, , expected, saved] = storeMock.setSecretFieldsIf.mock.calls[0] as [string, string, Record<string, unknown>, Partial<StoredBattleship>];
 		expect(expected).toEqual({ "secret.status": "setup" });
 		// ⚠️ THE STATUS AND THE READY FLAGS ONLY, never the fleets (2026-10 item 276): the fleets this
@@ -286,7 +290,72 @@ describe("sweepBattleshipTurns, setup", () => {
 		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1000, inSetup())]);
 		storeMock.setSecretFieldsIf.mockResolvedValue(null);
 
-		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0 });
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 });
 		expect(trailMock.postMove).not.toHaveBeenCalled();
+	});
+});
+
+// ── a winning shot saved with no finish after it (2026-10 item 280) ───
+// The shot marks the match finished, then draws for seconds before its finish. A restart in that
+// window used to leave the room playing: the turn sweep found no turn to expire, and 30 minutes
+// later the idle sweep abandoned it, splitting the wager and rating nobody.
+describe("sweepBattleshipTurns with a match the secret ended but the room never finished", () => {
+	const settledRoom = (match: StoredBattleship, lastWriteMsAgo: number): IGameRoom =>
+		({ ...makeRoom(lastWriteMsAgo, match), updatedAt: new Date(NOW.getTime() - lastWriteMsAgo) }) as unknown as IGameRoom;
+
+	it("finishes a saved winning shot as the shooter's played win, rated and paid", async () => {
+		lifecycleMock.finish.mockResolvedValue(true);
+		const room = settledRoom(makeMatch({ status: "finished", winnerId: A }), 10 * 60_000);
+		storeMock.findPlayingByGame.mockResolvedValue([room]);
+
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 1 });
+
+		expect(lifecycleMock.finish).toHaveBeenCalledOnce();
+		const input = lifecycleMock.finish.mock.calls[0][2] as { winnerId: string; outcome: { bucket: string } };
+		expect(input.winnerId).toBe(A);
+		expect(["forfeit", "timeout"]).not.toContain(input.outcome.bucket);
+		expect(awardMock).toHaveBeenCalledWith(expect.objectContaining({ game: "battleship", winner: "challenger" }));
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+	});
+
+	it("finishes a saved timeout forfeit as that forfeit", async () => {
+		lifecycleMock.finish.mockResolvedValue(true);
+		const match = makeMatch({ status: "finished", winnerId: B, forfeit: { loserId: A, bucket: "timeout" } });
+		storeMock.findPlayingByGame.mockResolvedValue([settledRoom(match, 10 * 60_000)]);
+
+		await sweepBattleshipTurns(client, NOW);
+
+		expect(lifecycleMock.finish.mock.calls[0][2]).toEqual({ winnerId: B, outcome: { bucket: "timeout" } });
+	});
+
+	it("leaves a shot saved seconds ago to the shot that is still finishing it", async () => {
+		storeMock.findPlayingByGame.mockResolvedValue([settledRoom(makeMatch({ status: "finished", winnerId: A }), 30_000)]);
+
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 });
+		expect(lifecycleMock.finish).not.toHaveBeenCalled();
+	});
+
+	it("records the forfeit on the secret when two lapsed turns end the match", async () => {
+		const room = makeRoom(TIMEOUT + 1, makeMatch({ missedTurns: [1, 0] }));
+		storeMock.findPlayingByGame.mockResolvedValue([room]);
+
+		await sweepBattleshipTurns(client, NOW);
+
+		expect(storeMock.updateSecretIf.mock.calls[0][3]).toMatchObject({ status: "finished", winnerId: B, forfeit: { loserId: A, bucket: "timeout" } });
+	});
+});
+
+// ── a Dero bot captain on the clock (2026-10 item 280) ────────────────
+// A bot's turn clock is never armed, since its own tick plays it; a stalled bot driver must not
+// let the sweep forfeit the bot and hand the human a win and its XP.
+describe("sweepBattleshipTurns with a Dero bot captain on the clock", () => {
+	it("never expires the bot's turn", async () => {
+		const BOT = "dero-bot-blue";
+		const match = { ...startMatch({ playerIds: [A, BOT] } as IGameRoom, { [A]: "A", [BOT]: "Dero" }, seededRng()), status: "playing" as const, ready: [true, true] as [boolean, boolean], turn: 1 as const, missedTurns: [0, 1] as [number, number] };
+		storeMock.findPlayingByGame.mockResolvedValue([makeRoom(TIMEOUT + 1, match)]);
+
+		expect(await sweepBattleshipTurns(client, NOW)).toEqual({ turnsExpired: 0, matchesForfeited: 0, setupsTimedOut: 0, matchesSettled: 0 });
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+		expect(lifecycleMock.finish).not.toHaveBeenCalled();
 	});
 });

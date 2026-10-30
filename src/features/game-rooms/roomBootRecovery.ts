@@ -11,6 +11,7 @@ import { isBlackjackRoomGame, refereeOn } from "./roomTypes.js";
 import { registerDealerTable } from "@features/dero-brain/dealerNarration.js";
 import { rebuildTurnClocks } from "./turnClock.js";
 import { turnClocksFor } from "./turnClocks.js";
+import { finishSettledMatch, hasSettledMatch } from "./roomTurnSweep.js";
 
 // ── roomBootRecovery ─────────────────────────────────────────────────
 // What:  reconciles what the GameRoom rows CLAIM with what Discord actually has, once
@@ -29,6 +30,8 @@ import { turnClocksFor } from "./turnClocks.js";
 //        ①ᶜ a playing Hold'em room whose referee is on gets its dealer back,
 //        ①ᵈ every playing room's turn clocks are armed again from the row (2026-10 item 267,
 //        risk R7): the clocks are memory only, and a deadline already past is the sweep's,
+//        ①ᵉ a Monopoly or Battleship match whose ending was saved but never finished, because
+//        the restart landed between the two, is finished as its ending decided (2026-10 item 280),
 //        ② then the ordinary expiry sweep runs immediately rather than waiting up to
 //        five minutes for its first cron tick.
 
@@ -41,6 +44,8 @@ export interface BootRecoverySummary {
 	dealersRestored: number;
 	// Turn clocks armed again from the stored deadlines (2026-10 item 267, risk R7).
 	clocksRebuilt: number;
+	// Matches whose ending was saved but never finished, finished now (2026-10 item 280).
+	settled: number;
 	archived: number;
 }
 
@@ -49,6 +54,7 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 	let lostTables = 0;
 	let dealersRestored = 0;
 	let clocksRebuilt = 0;
+	let settled = 0;
 
 	try {
 		const live = await gameRoomStore.findNonTerminal();
@@ -62,6 +68,14 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 				// nobody touched for GAME_ROOM_IDLE_ABANDON_MS (roomTurnSweep.sweepIdleRooms),
 				// which refunds its buy ins through finish.
 				if (!room.channelId) return;
+
+				// ①ᵉ Before the channel check, so a match whose channel is also gone is still paid and
+				// rated as the ending it saved rather than abandoned. At once rather than after the
+				// sweep's grace window: the move that saved the ending died with the old process.
+				if (hasSettledMatch(room)) {
+					if (await finishSettledMatch(client, room)) settled++;
+					return;
+				}
 
 				const channel = await client.channels.fetch(room.channelId).catch(() => null);
 				if (channel) {
@@ -141,5 +155,6 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 	if (lostTables > 0) console.log(`[game-rooms] boot recovery: ${lostTables} solo blackjack table(s) lost to the restart, room(s) closed`);
 	if (dealersRestored > 0) console.log(`[game-rooms] boot recovery: ${dealersRestored} hold em dealer(s) registered again`);
 	if (clocksRebuilt > 0) console.log(`[game-rooms] boot recovery: ${clocksRebuilt} turn clock(s) armed again`);
-	return { abandoned, lostTables, dealersRestored, clocksRebuilt, archived };
+	if (settled > 0) console.log(`[game-rooms] boot recovery: ${settled} saved match ending(s) finished`);
+	return { abandoned, lostTables, dealersRestored, clocksRebuilt, settled, archived };
 }

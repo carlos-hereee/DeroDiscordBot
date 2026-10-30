@@ -150,13 +150,15 @@ describe("sweepMonopolyIdle", () => {
 		expect(finishMock).not.toHaveBeenCalled();
 	});
 
-	it("skips a row with no board and a match that already finished", async () => {
+	// A finished match forfeits no seat; since 2026-10 item 280 a playing row whose match finished is
+	// finished as played (the cases at the end of this file), where it used to be skipped for good.
+	it("skips a row with no board, and forfeits no seat in a match that already finished", async () => {
 		const unseeded = { ...makeRoom([A, B], PAST_IDLE_HOURS), secret: null } as unknown as IGameRoom;
 		const finished = makeRoom([A, B], PAST_IDLE_HOURS);
 		(finished.secret as unknown as MonopolyState).phase = "finished";
 		storeMock.findPlayingByGame.mockResolvedValue([unseeded, finished]);
 
-		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
+		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 1 });
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 	it("declares a debtor who left a held debt past the idle budget bankrupt to whoever they owed, rather than forfeiting the seat on the clock", async () => {
@@ -200,5 +202,46 @@ describe("sweepMonopolyIdle", () => {
 
 		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+	});
+});
+
+// ── a final move saved with no finish after it (2026-10 item 280) ─────
+// The engine says the match is over but the room still says playing: the process stopped between
+// the move's save and its finish. Every other path reads a finished phase as nothing to do, so
+// without this the pot was never paid, nobody rated and the host's slot stayed held.
+describe("sweepMonopolyIdle with a match the engine ended but the room never finished", () => {
+	function settledRoom(lastWriteMsAgo: number): IGameRoom {
+		const room = makeRoom([A, B], 1);
+		const state = room.secret as unknown as MonopolyState;
+		state.seats[0].bankrupt = true;
+		return { ...room, secret: { ...state, phase: "finished", winnerId: B }, updatedAt: new Date(NOW.getTime() - lastWriteMsAgo) } as unknown as IGameRoom;
+	}
+
+	it("finishes it as played through the live move's own finish, and pays the winner once", async () => {
+		const room = settledRoom(10 * 60_000);
+		storeMock.findPlayingByGame.mockResolvedValue([room]);
+
+		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 1 });
+
+		expect(finishMock).toHaveBeenCalledOnce();
+		expect(finishMock).toHaveBeenCalledWith(client, room, expect.objectContaining({ winnerId: B }));
+		expect(awardMock).toHaveBeenCalledOnce();
+		expect(awardMock).toHaveBeenCalledWith(expect.objectContaining({ game: "monopoly", winnerId: B }));
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
+	});
+
+	it("pays nothing when the live move already won finish's claim", async () => {
+		finishMock.mockResolvedValue(false);
+		storeMock.findPlayingByGame.mockResolvedValue([settledRoom(10 * 60_000)]);
+
+		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
+		expect(awardMock).not.toHaveBeenCalled();
+	});
+
+	it("leaves a match saved seconds ago to the move that is still finishing it", async () => {
+		storeMock.findPlayingByGame.mockResolvedValue([settledRoom(30_000)]);
+
+		expect(await sweepMonopolyIdle(client, NOW)).toEqual({ seatsForfeited: 0, matchesFinished: 0 });
+		expect(finishMock).not.toHaveBeenCalled();
 	});
 });

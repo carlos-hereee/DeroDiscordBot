@@ -3,8 +3,7 @@ import { reminderStore } from "@db/stores/reminderStore.js";
 import { activityStore } from "@db/stores/activityStore.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { isEventWindowOpen } from "@features/events/occurrenceCalculator.js";
-import { getUpcomingOccurrences, previousOccurrence } from "@features/events/occurrenceCalculator.js";
+import { openWindowStart } from "@features/events/occurrenceCalculator.js";
 import { IVoiceSession } from "./activity.types.js";
 import { computeScore } from "./ParticipationStore.js";
 import { scheduleLeaderboardRefresh } from "@features/leaderboard/LeaderboardBoard.js";
@@ -282,16 +281,13 @@ async function getActiveEvent(guildId: string, windowMinutes = 60) {
 	const events = await eventStore.findByGuildId(guildId);
 
 	for (const event of events) {
-		if (!isEventWindowOpen(event, new Date(), windowMinutes)) continue;
+		// The occurrence that just started: a one time event's own start, or the
+		// recurring occurrence before the next one (one local week for a weekly event
+		// with a zone, one interval otherwise). 2026-10 item 280.
+		const occurrence = openWindowStart(event, new Date(), windowMinutes);
+		if (!occurrence) continue;
 
-		const [occurrence] = getUpcomingOccurrences(event, 1);
-
-		// getUpcomingOccurrences returns the NEXT future occurrence
-		// but we want the one that just started, so look back one occurrence
-		// (one local week for a weekly event with a zone, one interval otherwise)
-		const lastOccurrence = previousOccurrence(event, occurrence);
-
-		return { ...event, occurrence: lastOccurrence };
+		return { ...event, occurrence };
 	}
 
 	return null;

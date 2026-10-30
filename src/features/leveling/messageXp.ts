@@ -4,7 +4,7 @@ import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 import { awardXp } from "./awardXp.js";
 import { getLevelingConfig, peekLevelingConfig, type GuildLevelingContext } from "./levelingConfig.js";
 import { isRestricted, resolveMultiplier, rollXp } from "./xpRules.js";
-import { claimCooldown } from "./xpWriter.js";
+import { claimCooldown, releaseCooldown } from "./xpWriter.js";
 
 // ── messageXp ──────────────────────────────────────────────────────────────
 // THE BOT'S FIRST EVER messageCreate LISTENER. Every ordering decision below is
@@ -86,12 +86,19 @@ export async function handleMessage(message: Message): Promise<void> {
 	const parentId = (message.channel as { parentId?: string | null } | null)?.parentId ?? null;
 	if (parentId && !channelIds.includes(parentId)) channelIds.push(parentId);
 
-	if (isRestricted(settings.restrictionMode, settings.restrictedChannels, channelIds)) return;
+	// A restricted message earned nothing, so it gives the claim back, the way
+	// reactionXp does: otherwise one message in an excluded channel would cost the
+	// member a whole window of paying messages elsewhere (2026-10 item 280).
+	if (isRestricted(settings.restrictionMode, settings.restrictedChannels, channelIds)) {
+		releaseCooldown(cooldownKey);
+		return;
+	}
 
 	const roleIds = message.member ? [...message.member.roles.cache.keys()] : [];
 	// A guild with no role restrictions configured must never reject on this,
 	// including when the member cache is cold and roleIds is empty.
 	if (settings.restrictedRoles.length > 0 && isRestricted(settings.restrictionMode, settings.restrictedRoles, roleIds)) {
+		releaseCooldown(cooldownKey);
 		return;
 	}
 

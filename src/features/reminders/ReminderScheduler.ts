@@ -2,7 +2,7 @@ import cron from "node-cron";
 import { Client, TextChannel } from "discord.js";
 import { eventStore } from "@db/stores/eventStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
-import { getUpcomingOccurrences } from "@features/events/occurrenceCalculator.js";
+import { getUpcomingOccurrences, previousOccurrence } from "@features/events/occurrenceCalculator.js";
 import { fireReminder } from "./ReminderJob.js";
 import { reminderStore } from "@db/stores/reminderStore.js";
 import { eventOverrideStore } from "@db/stores/eventOverrideStore.js";
@@ -60,6 +60,35 @@ async function resolveOverride(
 	};
 	const fireMoment = override.overrideTime ?? originalOccurrence;
 	return { mergedEvent, fireMoment };
+}
+
+/** One occurrence the tick checks for due reminders: its original start (the dedup key) and the override's view of it. */
+export interface RecurringFireCandidate {
+	originalOccurrence: Date;
+	mergedEvent: IGameEvent;
+	fireMoment: Date;
+}
+
+// ── recurringFireCandidates (2026-10 item 280) ──
+// The occurrences of a recurring event whose reminders may be due this tick: always the
+// next computed one, and the previous one only while an "apply once" override has moved
+// it to a moment still ahead. Without the second, an override that moves a start later
+// lost its reminders the minute the original start passed, because the next computed
+// occurrence is then the following one. Each candidate keeps its ORIGINAL start as the
+// ReminderLog key, the same key it had while it was the next occurrence, so the compound
+// unique index (eventId, eventOccurrence, offsetMinutes) still lets each reminder of one
+// occurrence fire once. Costs one extra override read per recurring event per tick.
+export async function recurringFireCandidates(event: IGameEvent, now: Date): Promise<RecurringFireCandidate[]> {
+	const [nextOccurrence] = getUpcomingOccurrences(event, 1);
+	if (!nextOccurrence) return [];
+
+	const candidates: RecurringFireCandidate[] = [];
+	const previous = previousOccurrence(event, nextOccurrence);
+	const previousResolved = await resolveOverride(event, previous);
+	if (previousResolved.fireMoment.getTime() > now.getTime()) candidates.push({ originalOccurrence: previous, ...previousResolved });
+
+	candidates.push({ originalOccurrence: nextOccurrence, ...(await resolveOverride(event, nextOccurrence)) });
+	return candidates;
 }
 
 // ── F5 observability: fire-rate counters ──
@@ -481,7 +510,7 @@ export function startScheduler(client: Client): void {
 						// throws on truly unexpected failures, but counting both branches
 						// gives operators a real signal in the hourly metric log.
 						try {
-							await fireReminder(client, mergedEvent, fireMoment, offsetMinutes);
+							await fireReminder(client, mergedEvent, fireMoment, offsetMinutes, event.firstOccurrence);
 							recordFireSuccess();
 						} catch (err) {
 							recordFireFailure();
@@ -499,33 +528,30 @@ export function startScheduler(client: Client): void {
 					}
 				} else {
 					// ── recurring events (ruins, altar) ────────────────────
-					const [nextOccurrence] = getUpcomingOccurrences(event, 1);
-					if (!nextOccurrence) continue;
+					for (const { originalOccurrence, mergedEvent, fireMoment } of await recurringFireCandidates(event, now)) {
+						for (const offsetMinutes of event.reminderOffsets) {
+							const reminderTime = new Date(fireMoment.getTime() - offsetMinutes * 60 * 1000);
+							const diff = reminderTime.getTime() - now.getTime();
 
-					const { mergedEvent, fireMoment } = await resolveOverride(event, nextOccurrence);
+							if (diff < 0 || diff > BOT_CONSTANTS.REMINDER_FIRE_WINDOW_MS) continue;
 
-					for (const offsetMinutes of event.reminderOffsets) {
-						const reminderTime = new Date(fireMoment.getTime() - offsetMinutes * 60 * 1000);
-						const diff = reminderTime.getTime() - now.getTime();
+							// Same rationale as the one-time branch: dedup keys on
+							// the original computed occurrence, not on the override
+							// moment. See resolveOverride above.
+							const alreadyFired = await reminderStore.exists({
+								eventId: event.eventId,
+								eventOccurrence: originalOccurrence,
+								offsetMinutes,
+							});
+							if (alreadyFired) continue;
 
-						if (diff < 0 || diff > BOT_CONSTANTS.REMINDER_FIRE_WINDOW_MS) continue;
-
-						// Same rationale as the one-time branch: dedup keys on
-						// the original computed occurrence, not on the override
-						// moment. See resolveOverride above.
-						const alreadyFired = await reminderStore.exists({
-							eventId: event.eventId,
-							eventOccurrence: nextOccurrence,
-							offsetMinutes,
-						});
-						if (alreadyFired) continue;
-
-						try {
-							await fireReminder(client, mergedEvent, fireMoment, offsetMinutes);
-							recordFireSuccess();
-						} catch (err) {
-							recordFireFailure();
-							console.error(LOG_MESSAGES.api.errorTestReminder ?? "fireReminder failed", err);
+							try {
+								await fireReminder(client, mergedEvent, fireMoment, offsetMinutes, originalOccurrence);
+								recordFireSuccess();
+							} catch (err) {
+								recordFireFailure();
+								console.error(LOG_MESSAGES.api.errorTestReminder ?? "fireReminder failed", err);
+							}
 						}
 					}
 				}

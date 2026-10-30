@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MessageFlags, type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
 
-vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { update: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn(), setSecretFieldsIf: vi.fn(), moveBoardMessage: vi.fn() } }));
+vi.mock("@db/stores/gameRoomStore.js", () => ({ gameRoomStore: { update: vi.fn(), updateSecretIf: vi.fn(), findByRoomId: vi.fn(), setSecretField: vi.fn(), setSecretFieldsIf: vi.fn(), moveBoardMessage: vi.fn() } }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn(), recordCarriedMoves: vi.fn() }, resolveRoomChannel: vi.fn() }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
@@ -69,6 +69,7 @@ const HINT = "it goes around a star";
 
 const storeMock = gameRoomStore as unknown as {
 	update: ReturnType<typeof vi.fn>;
+	updateSecretIf: ReturnType<typeof vi.fn>;
 	findByRoomId: ReturnType<typeof vi.fn>;
 	setSecretField: ReturnType<typeof vi.fn>;
 	setSecretFieldsIf: ReturnType<typeof vi.fn>;
@@ -201,9 +202,9 @@ const refusalOf = (interaction: { reply: unknown }) => {
 	return reply.content;
 };
 
-// What the store was asked to persist, which is the only place `authoredBy` is ever
+// What the word claim was asked to persist, which is the only place `authoredBy` is ever
 // written and therefore the root of the guess gate covered further down.
-const savedSecret = () => storeMock.update.mock.calls[0][2].secret as Record<string, unknown>;
+const savedSecret = () => storeMock.updateSecretIf.mock.calls[0][3] as Record<string, unknown>;
 
 // The modals a press opened, and the text of its notice: a refusal or a short answer now
 // opens a notice modal instead of a private reply (2026-10 item 254 Phase 5b).
@@ -220,6 +221,8 @@ const onlyNoticesShown = (interaction: { showModal: unknown }): boolean => shown
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeMock.update.mockResolvedValue(undefined);
+	// The word claim lands by default; a test that races it says so (2026-10 item 280).
+	storeMock.updateSecretIf.mockResolvedValue({});
 	// A guess's compare and swap lands by default, answering the row the test's last read gave
 	// with the guess's fields written on it, as the store's dotted write would.
 	storeMock.setSecretFieldsIf.mockImplementation(async (_guildId: string, _roomId: string, _expected: unknown, fields: Record<string, unknown>) => {
@@ -292,7 +295,7 @@ describe("handleAuthoringModal, the write gate", () => {
 		await handleAuthoringModal(interaction);
 
 		expect(refusalOf(interaction)).toBe(gameRoomsCopy.errors.notYours);
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	// The room is already guessing at a word. Replacing it mid-round would invalidate
@@ -304,7 +307,7 @@ describe("handleAuthoringModal, the write gate", () => {
 		await handleAuthoringModal(interaction);
 
 		expect(refusalOf(interaction)).toBe(gameRoomsCopy.errors.notYours);
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	it("refuses a room that is no longer playing", async () => {
@@ -314,14 +317,14 @@ describe("handleAuthoringModal, the write gate", () => {
 		await handleAuthoringModal(interaction);
 
 		expect(refusalOf(interaction)).toBe(gameRoomsCopy.errors.notFound);
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	it("ignores a submit that is not its own, without even reading the room", async () => {
 		await handleAuthoringModal(makeAuthorSubmit(HOST, {}, `${GAME_ROOM_MODAL_PREFIX}:guess:room-1`));
 
 		expect(storeMock.findByRoomId).not.toHaveBeenCalled();
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	it("lets the host through, so the refusals above are not refusing everyone", async () => {
@@ -329,7 +332,7 @@ describe("handleAuthoringModal, the write gate", () => {
 
 		await handleAuthoringModal(makeAuthorSubmit(HOST));
 
-		expect(storeMock.update).toHaveBeenCalledOnce();
+		expect(storeMock.updateSecretIf).toHaveBeenCalledOnce();
 	});
 });
 
@@ -342,7 +345,7 @@ describe("handleAuthoringModal, validation wiring", () => {
 	it("writes nothing and posts nothing when the word is refused", async () => {
 		await handleAuthoringModal(makeAuthorSubmit(HOST, { word: "ice cream" }));
 
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 		expect(trailMock.postMove).not.toHaveBeenCalled();
 	});
 
@@ -398,7 +401,7 @@ describe("handleAuthoringModal, validation wiring", () => {
 	])("accepts a hint when %s", async (_label, hint) => {
 		await handleAuthoringModal(makeAuthorSubmit(HOST, { hint }));
 
-		expect(storeMock.update).toHaveBeenCalledOnce();
+		expect(storeMock.updateSecretIf).toHaveBeenCalledOnce();
 		expect(savedSecret().hint).toBe(hint);
 	});
 });
@@ -859,7 +862,7 @@ describe("handleCategorySelect, the gate", () => {
 		await handleCategorySelect(interaction);
 
 		expect(replyOf(interaction).content).toBe(gameRoomsCopy.errors.notYours);
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	it("refuses a room that already has its word", async () => {
@@ -869,7 +872,7 @@ describe("handleCategorySelect, the gate", () => {
 		await handleCategorySelect(interaction);
 
 		expect(replyOf(interaction).content).toBe(gameRoomsCopy.hangman.wordAlreadySet);
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	it("refuses a category the bank does not have", async () => {
@@ -877,7 +880,7 @@ describe("handleCategorySelect, the gate", () => {
 
 		await handleCategorySelect(makeCategorySelect(HOST, "weapons"));
 
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 
 	it("refuses a solo room, which seeds its own word", async () => {
@@ -885,7 +888,7 @@ describe("handleCategorySelect, the gate", () => {
 
 		await handleCategorySelect(makeCategorySelect(HOST));
 
-		expect(storeMock.update).not.toHaveBeenCalled();
+		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 	});
 });
 
@@ -971,5 +974,106 @@ describe("startSoloHangmanRound", () => {
 		const opener = (trailMock.postMove.mock.calls[0][2] as { text: string }).text;
 		expect(opener).toBe(gameRoomsCopy.hangman.soloCategoryOpener(gameRoomsCopy.hangman.categoryLabels.animals, secret.hint));
 		expect(opener.toLowerCase()).not.toContain(secret.word);
+	});
+});
+
+// ── the 2026-10 item 280 fixes ────────────────────────────────────────
+describe("the solver is stored with the solving letter (2026-10 item 280)", () => {
+	const LATE = "guesser-2";
+	const EARLIER_HITTER = "guesser-3";
+
+	it("writes the solver in the same compare and swap that saves the solving letter", async () => {
+		const room = makeRoom();
+		(room.secret as { guessedLetters: string[] }).guessedLetters = ["p", "l", "a", "n", "e"];
+		storeMock.findByRoomId.mockResolvedValue(room);
+
+		await handleGuessModal(makeSubmit(GUESSER, "t"));
+
+		const fields = storeMock.setSecretFieldsIf.mock.calls[0][3] as Record<string, unknown>;
+		expect(fields.solvedBy).toBe(GUESSER);
+	});
+
+	it("writes no solver for a guess that does not solve the word", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom());
+
+		await handleGuessModal(makeSubmit(GUESSER, "p"));
+
+		expect(storeMock.setSecretFieldsIf.mock.calls[0][3]).not.toHaveProperty("solvedBy");
+	});
+
+	// The race: the solver's letter is saved, but their finish is still drawing its card, so the
+	// transcript's newest guess is an earlier hit. A guess arriving then must credit the solver.
+	it("credits the stored solver, not the transcript's last hitter, when another guess ends the round first", async () => {
+		const room = { ...makeRoom(), playerIds: [HOST, GUESSER, LATE, EARLIER_HITTER] } as IGameRoom;
+		Object.assign(room.secret as object, { guessedLetters: ["p", "l", "a", "n", "e", "t"], solvedBy: GUESSER });
+		room.moves = [
+			{ actorId: EARLIER_HITTER, at: new Date(), kind: "guess", text: "found e", meta: { letter: "e", hit: true, wrong: 0 } },
+		] as IGameRoom["moves"];
+		storeMock.findByRoomId.mockResolvedValue(room);
+
+		await handleGuessModal(makeSubmit(LATE, "z"));
+
+		expect(storeMock.setSecretFieldsIf).not.toHaveBeenCalled();
+		expect(awardMock).toHaveBeenCalledWith(expect.objectContaining({ winnerId: GUESSER }));
+	});
+});
+
+describe("an unresolved name stays undefined (2026-10 item 280)", () => {
+	it("pays a guesser the guild cache cannot name with no name, never the snowflake", async () => {
+		const room = makeRoom();
+		(room.secret as { guessedLetters: string[] }).guessedLetters = ["p", "l", "a", "n", "e"];
+		storeMock.findByRoomId.mockResolvedValue(room);
+
+		await handleGuessModal(makeSubmit(GUESSER, "t"));
+
+		const { participants } = awardMock.mock.calls[0][0] as { participants: { userId: string; username?: string }[] };
+		expect(participants).toEqual([{ userId: GUESSER, username: undefined }]);
+	});
+});
+
+describe("the word is claimed once (2026-10 item 280)", () => {
+	beforeEach(() => storeMock.findByRoomId.mockResolvedValue(makeUnwordedRoom()));
+
+	it("writes the word only while the room has none", async () => {
+		await handleAuthoringModal(makeAuthorSubmit(HOST));
+
+		expect(storeMock.updateSecretIf).toHaveBeenCalledWith("guild-1", "room-1", { "secret.word": null }, expect.objectContaining({ word: WORD }));
+		expect(storeMock.update).not.toHaveBeenCalled();
+	});
+
+	it("posts nothing for a word submit that lost the claim, and only closes its modal", async () => {
+		storeMock.updateSecretIf.mockResolvedValue(null);
+		const interaction = Object.assign(makeAuthorSubmit(HOST), { isFromMessage: () => true, deferUpdate: vi.fn().mockResolvedValue(undefined) });
+
+		await handleAuthoringModal(interaction);
+
+		expect(trailMock.postMove).not.toHaveBeenCalled();
+		expect(answerMock).not.toHaveBeenCalled();
+		expect(openerEdit).not.toHaveBeenCalled();
+		expect(channelSend).not.toHaveBeenCalled();
+		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+	});
+
+	it("posts nothing for a category pick that lost the claim", async () => {
+		storeMock.updateSecretIf.mockResolvedValue(null);
+		const interaction = Object.assign(makeCategorySelect(HOST), { deferUpdate: vi.fn().mockResolvedValue(undefined) });
+
+		await handleCategorySelect(interaction);
+
+		expect(trailMock.postMove).not.toHaveBeenCalled();
+		expect(answerMock).not.toHaveBeenCalled();
+		expect(channelSend).not.toHaveBeenCalled();
+		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+	});
+
+	it("posts nothing for a solo seed that lost the claim", async () => {
+		storeMock.updateSecretIf.mockResolvedValue(null);
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+		await startSoloHangmanRound({} as never, { guildId: "guild-1", roomId: "room-1", channelId: "ch-1", openerMessageId: "opener-1", hostId: HOST });
+
+		expect(trailMock.postMove).not.toHaveBeenCalled();
+		expect(channelSend).not.toHaveBeenCalled();
+		warn.mockRestore();
 	});
 });

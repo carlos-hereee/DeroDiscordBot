@@ -10,6 +10,7 @@ vi.mock("@db/stores/gameRoomStore.js", () => ({
 		create: vi.fn(),
 		claimForPlay: vi.fn(),
 		update: vi.fn(),
+		updateSecretIf: vi.fn(),
 		findByRoomId: vi.fn(),
 	},
 }));
@@ -45,6 +46,7 @@ const storeMock = gameRoomStore as unknown as {
 	claimForPlay: ReturnType<typeof vi.fn>;
 	findByRoomId: ReturnType<typeof vi.fn>;
 	update: ReturnType<typeof vi.fn>;
+	updateSecretIf: ReturnType<typeof vi.fn>;
 };
 const logMock = botLogStore as unknown as { log: ReturnType<typeof vi.fn> };
 const accessMock = checkGameRoomAccess as unknown as ReturnType<typeof vi.fn>;
@@ -112,6 +114,8 @@ beforeEach(() => {
 	// The start claim answers the row BEFORE it (a draft), and the re-read the row after it.
 	storeMock.claimForPlay.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", hostId: "host-1", status: "draft", buyInPaidBy: [] });
 	storeMock.findByRoomId.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", status: "playing" });
+	// A hangman seed claims its word through a conditional write (2026-10 item 280).
+	storeMock.updateSecretIf.mockResolvedValue({ roomId: "room-1", guildId: "guild-1", status: "playing" });
 	logMock.log.mockResolvedValue(undefined);
 	// Production default: not enforcing, infinite quota, zero cost.
 	accessMock.mockResolvedValue({ allowed: true, privateQuota: Number.POSITIVE_INFINITY });
@@ -301,12 +305,10 @@ describe("RoomProvisioner.open, solo rooms", () => {
 
 		// The bank seed: a real word, authoredBy null so the host may guess it, and the
 		// hint the bank carries beside it (the 1.7.0 test fixes, item 12).
-		const seed = storeMock.update.mock.calls.find(
-			(call) => (call[2] as { secret?: { word?: string } })?.secret?.word
-		)?.[2] as { secret: { word: string; authoredBy: string | null; hint: string } };
-		expect(seed.secret.word).toMatch(/^[a-z]+$/);
-		expect(seed.secret.authoredBy).toBeNull();
-		expect(seed.secret.hint.length).toBeGreaterThan(0);
+		const seed = storeMock.updateSecretIf.mock.calls.find((call) => (call[3] as { word?: string })?.word)?.[3] as { word: string; authoredBy: string | null; hint: string };
+		expect(seed.word).toMatch(/^[a-z]+$/);
+		expect(seed.authoredBy).toBeNull();
+		expect(seed.hint.length).toBeGreaterThan(0);
 
 		// No invite for a room only one member can ever see.
 		const channel = await createdChannelOf(input.guild);
@@ -324,10 +326,8 @@ describe("RoomProvisioner.open, solo rooms", () => {
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 		await RoomProvisioner.open(makeInput({ game: "solo-hangman", visibility: "solo", playerIds: [], hangmanCategory: "space" }));
 
-		const seed = storeMock.update.mock.calls.find(
-			(call) => (call[2] as { secret?: { word?: string } })?.secret?.word
-		)?.[2] as { secret: { word: string; hint: string } };
-		expect(HANGMAN_WORD_BANK.space).toContainEqual({ word: seed.secret.word, hint: seed.secret.hint });
+		const seed = storeMock.updateSecretIf.mock.calls.find((call) => (call[3] as { word?: string })?.word)?.[3] as { word: string; hint: string };
+		expect(HANGMAN_WORD_BANK.space).toContainEqual({ word: seed.word, hint: seed.hint });
 		warnSpy.mockRestore();
 	});
 

@@ -1,4 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+
+// The secure source, pinned so a test can tell its draw from Math.random's (2026-10 item 280).
+const secure = vi.hoisted(() => ({ value: 0 }));
+vi.mock("@utils/secureRng.js", () => ({ secureRandom: () => secure.value }));
 import { validateHangmanAuthoring } from "./hangmanAuthoring.js";
 import {
 	HANGMAN_CATEGORIES,
@@ -71,6 +75,19 @@ describe("picking a word", () => {
 			expect(pickWordFromCategory(category, () => 0)).toEqual({ ...shelf[0], category });
 			expect(pickWordFromCategory(category, () => 0.9999999)).toEqual({ ...shelf[shelf.length - 1], category });
 		}
+	});
+
+	// A solved round pays XP and coins, so with no rng handed in a pick draws from the secure source,
+	// never Math.random (2026-10 item 280).
+	describe("with no rng handed in", () => {
+		afterEach(() => vi.restoreAllMocks());
+
+		it("draws from the secure source, not Math.random", () => {
+			secure.value = 0;
+			vi.spyOn(Math, "random").mockReturnValue(0.9999999);
+			expect(pickWord()).toEqual(HANGMAN_ENTRIES[0]);
+			expect(pickWordFromCategory("space")).toEqual({ ...HANGMAN_WORD_BANK.space[0], category: "space" });
+		});
 	});
 
 	it("recognises a category id and refuses anything else", () => {

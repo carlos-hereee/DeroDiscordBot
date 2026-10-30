@@ -262,13 +262,13 @@ describe("the setup modal", () => {
 	});
 
 	it("locks the captain in on Submit", async () => {
-		storeMock.setSecretField.mockResolvedValue({ secret: { ...setupMatch(), ready: [true, false] } });
+		storeMock.setSecretFieldsIf.mockResolvedValue({ secret: { ...setupMatch(), ready: [true, false] } });
 		const acknowledge = vi.fn().mockResolvedValue(undefined);
 
 		const result = await battleshipTurnAdapter.apply(modalClient, makeRoom(setupMatch()), A, {}, acknowledge);
 
 		expect(result).toEqual({ ok: true });
-		expect(storeMock.setSecretField).toHaveBeenCalledWith("guild-1", "room-1", "ready.0", true);
+		expect(storeMock.setSecretFieldsIf).toHaveBeenCalledWith("guild-1", "room-1", { "secret.status": "setup", "secret.players.0.ships": setupMatch().players[0].ships }, { "ready.0": true });
 		expect(acknowledge).toHaveBeenCalledOnce();
 	});
 
@@ -365,12 +365,13 @@ describe("Randomize", () => {
 describe("ready (post-launch plan item 17)", () => {
 	it("locks only this captain's slot, and does not start the battle on the first Ready", async () => {
 		const room = makeRoom(setupMatch());
-		storeMock.setSecretField.mockResolvedValue({ secret: { ...setupMatch(), ready: [true, false] } });
+		storeMock.setSecretFieldsIf.mockResolvedValue({ secret: { ...setupMatch(), ready: [true, false] } });
 		const interaction = makeInteraction(A);
 
 		await handleReady(interaction, room);
 
-		expect(storeMock.setSecretField).toHaveBeenCalledWith("guild-1", "room-1", "ready.0", true);
+		// Conditional on setup and the fleet the captain was shown (2026-10 item 280).
+		expect(storeMock.setSecretFieldsIf).toHaveBeenCalledWith("guild-1", "room-1", { "secret.status": "setup", "secret.players.0.ships": setupMatch().players[0].ships }, { "ready.0": true });
 		expect(storeMock.updateSecretIf).not.toHaveBeenCalled();
 		expect(interaction.deferUpdate).toHaveBeenCalledOnce();
 	});
@@ -378,7 +379,7 @@ describe("ready (post-launch plan item 17)", () => {
 	it("starts the battle on the second Ready, through a compare and swap on setup", async () => {
 		const room = makeRoom({ ...setupMatch(), ready: [true, false] });
 		const both = { ...setupMatch(), ready: [true, true] };
-		storeMock.setSecretField.mockResolvedValue({ secret: both });
+		storeMock.setSecretFieldsIf.mockResolvedValue({ secret: both });
 		storeMock.updateSecretIf.mockResolvedValue({ secret: { ...both, status: "playing" } });
 
 		await handleReady(makeInteraction(B), room);
@@ -392,7 +393,7 @@ describe("ready (post-launch plan item 17)", () => {
 
 	it("does not announce a battle another press already started", async () => {
 		const room = makeRoom({ ...setupMatch(), ready: [true, false] });
-		storeMock.setSecretField.mockResolvedValue({ secret: { ...setupMatch(), ready: [true, true] } });
+		storeMock.setSecretFieldsIf.mockResolvedValue({ secret: { ...setupMatch(), ready: [true, true] } });
 		storeMock.updateSecretIf.mockResolvedValue(null);
 
 		await handleReady(makeInteraction(B), room);
@@ -405,7 +406,7 @@ describe("ready (post-launch plan item 17)", () => {
 		const interaction = makeInteraction(A);
 		await handleReady(interaction, makeRoom({ ...setupMatch(), ready: [true, false] }));
 
-		expect(storeMock.setSecretField).not.toHaveBeenCalled();
+		expect(storeMock.setSecretFieldsIf).not.toHaveBeenCalled();
 		expect(noticeText(interaction)).toBe(gameRoomsCopy.battleship.alreadyReady);
 	});
 

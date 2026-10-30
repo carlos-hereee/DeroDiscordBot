@@ -19,6 +19,8 @@
 // hangmanState lowercases on the way in, so casing here is cosmetic; kept lower so a
 // stray capital cannot look meaningful.
 
+import { secureRandom } from "@utils/secureRng.js";
+
 export const HANGMAN_CATEGORIES = [
 	"animals",
 	"food",
@@ -382,14 +384,16 @@ export function isHangmanCategory(value: string): value is HangmanCategory {
 
 /**
  * Pull a word and its hint at random from the whole bank. rng is injectable so a
- * test can pin the choice without stubbing Math.random, matching versusResolve.
+ * test can pin the choice, matching versusResolve. The default is the secure source
+ * (2026-10 item 280): a solved round pays XP and coins, and Math.random's state can
+ * be recovered from its output, the reason blackjack and the solo rounds use it too.
  */
-export function pickWord(rng: () => number = Math.random): PickedHangmanWord {
+export function pickWord(rng: () => number = secureRandom): PickedHangmanWord {
 	return HANGMAN_ENTRIES[Math.floor(rng() * HANGMAN_ENTRIES.length)];
 }
 
 /** Pull a word and its hint at random from one category. */
-export function pickWordFromCategory(category: HangmanCategory, rng: () => number = Math.random): PickedHangmanWord {
+export function pickWordFromCategory(category: HangmanCategory, rng: () => number = secureRandom): PickedHangmanWord {
 	const shelf = HANGMAN_WORD_BANK[category];
 	return { ...shelf[Math.floor(rng() * shelf.length)], category };
 }

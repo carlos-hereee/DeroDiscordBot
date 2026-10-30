@@ -32,6 +32,7 @@ import {
 	isHangmanRoom,
 } from "./roomHangman.js";
 import { departMatch } from "./roomDeparture.js";
+import { hasSettledMatch } from "./roomTurnSweep.js";
 import { confirmBlackjackLeave } from "@features/games/blackjackHandler.js";
 import { roomBattleshipHandlers } from "./roomBattleshipHandlers.js";
 import { roomHoldemHandlers } from "./roomHoldemHandlers.js";
@@ -498,7 +499,10 @@ function forfeitPrompt(room: IGameRoom): string {
 }
 
 function forfeitRefusal(room: IGameRoom, userId: string): string | null {
-	if (isMatchOver(room)) return gameRoomsCopy.confirms.matchOver;
+	// A match whose own state already ended it (a winning shot still drawing its board, or one a
+	// restart cut off before its finish) is over too, though the room still says playing (2026-10
+	// item 280): forfeiting it would hand the beaten player the match. The sweep finishes it.
+	if (isMatchOver(room) || hasSettledMatch(room)) return gameRoomsCopy.confirms.matchOver;
 	return isHangmanRoom(room) && userId !== room.hostId ? gameRoomsCopy.confirms.giveUpHostOnly : null;
 }
 

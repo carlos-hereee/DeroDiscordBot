@@ -317,6 +317,25 @@ describe("a debtor the match is waiting on (P2-2)", () => {
 		expectRefusal(openTrade(state, withTerms(swap, { request: { properties: [], chips: 49, gojf: 0 } })), /cannot give more/);
 	});
 
+	it("holds every debtor in the batch to it, not only the one the match waits on first (2026-10 item 280)", () => {
+		const state = newMatch();
+		state.phase = "post-roll";
+		state.seats[1].chips = 0;
+		state.seats[2].chips = 0;
+		state.properties["rail-one"].ownerId = BOB;
+		state.properties["rail-two"].ownerId = CARA;
+		settleDebts(state, [{ debtor: state.seats[1], creditorId: ALICE, amount: 100 }, { debtor: state.seats[2], creditorId: ALICE, amount: 100 }], NOW);
+		const caraGivesAway = withTerms(giveaway, { initiatorId: CARA, counterpartyId: BOB, offer: { properties: ["rail-two"], chips: 0, gojf: 0 } });
+		expectRefusal(openTrade(state, caraGivesAway), /<@cara> owes a debt the match is waiting on/);
+	});
+
+	it("counts a jail card the debtor takes at nothing, since no sale turns it into cash (2026-10 item 280)", () => {
+		const state = aliceOwesBob();
+		state.seats[2].gojfCards = 1;
+		const cashForACard = withTerms(giveaway, { offer: { properties: [], chips: 20, gojf: 0 }, request: { properties: [], chips: 0, gojf: 1 } });
+		expectRefusal(openTrade(state, cashForACard), /cannot give more/);
+	});
+
 	it("leaves two seats who owe nothing free to trade as they like", () => {
 		const gift = withTerms(giveaway, { initiatorId: CARA, counterpartyId: BOB, offer: { properties: [], chips: 10, gojf: 0 } });
 		expectOk(openTrade(aliceOwesBob(), gift));

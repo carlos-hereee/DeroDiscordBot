@@ -415,6 +415,21 @@ describe("gameRoomHandlers forfeit", () => {
 		expect((late.reply.mock.calls[0][0] as { content?: string }).content).toBe(gameRoomsCopy.confirms.matchOver);
 	});
 
+	// 2026-10 item 280: the winning shot marks the secret finished and draws for seconds before its
+	// finish, with the room still playing. A Surrender in that window handed the beaten captain the
+	// match, so a match whose own state ended it is refused like one the room says is over.
+	it("refuses a Battleship forfeit once the stored match already has its winner", async () => {
+		const secret = { status: "finished", winnerId: "host-1", players: [], turn: 0, missedTurns: [0, 0] };
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ game: "battleship", status: "playing", secret }));
+		const late = submit("gameroom:forfeitok:room-1", "player-2");
+
+		await _handleGameRoomConfirm(late);
+
+		expect(trailMock.postMove).not.toHaveBeenCalled();
+		expect(lifecycleMock.finish).not.toHaveBeenCalled();
+		expect((late.reply.mock.calls[0][0] as { content?: string }).content).toBe(gameRoomsCopy.confirms.matchOver);
+	});
+
 	// Hangman's Give up (2026-10 item 276, audit P2-6): the round is cooperative, so only the host
 	// may give it up, nobody wins it, and no guesser can farm a win off a partner's give up.
 	describe("Hangman's Give up", () => {

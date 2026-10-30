@@ -119,6 +119,10 @@ export function stage(award: StagedAward): void {
 let flushTimer: ReturnType<typeof setInterval> | null = null;
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 let boundClient: Client | null = null;
+// The flush that is running, or null. Two flushes running at once could each run the
+// achievement pass for one member against the same unlock state and pay its xp bonus
+// twice, so flushes run one at a time (2026-10 item 280).
+let flushInFlight: Promise<void> | null = null;
 
 export function startXpWriter(
 	client: Client,
@@ -132,7 +136,11 @@ export function startXpWriter(
 	const flushInterval = options.flushIntervalMs ?? BOT_CONSTANTS.LEVELING.FLUSH_INTERVAL_MS;
 	const sweepInterval = options.sweepIntervalMs ?? BOT_CONSTANTS.LEVELING.MAP_SWEEP_INTERVAL_MS;
 
-	flushTimer = setInterval(() => void flushNow(), flushInterval);
+	// A tick that lands while a slow flush still runs is skipped rather than queued, so a
+	// stalled database cannot pile up waiting flushes; the next tick takes the window.
+	flushTimer = setInterval(() => {
+		if (!flushInFlight) void flushNow();
+	}, flushInterval);
 	sweepTimer = setInterval(() => sweepCooldowns(), sweepInterval);
 
 	// Neither timer should hold the process open on its own. The bot exits through
@@ -155,6 +163,11 @@ export function stopXpWriter(): void {
 // shutdown: the flush could be cut off mid bulkWrite, or fire after
 // disconnectMongoose() had already closed the socket it needs.
 export async function flushNow(): Promise<void> {
+	// A caller arriving mid flush (gracefulShutdown, or a test) waits for it and then
+	// flushes what was staged since, so nothing is lost and nothing overlaps. The check
+	// and the claim below share one synchronous run, so two waiters cannot both start.
+	while (flushInFlight) await flushInFlight;
+
 	// ⚠️ SWAP FIRST, before any await. Everything staged from this line onward
 	// accumulates into a clean map instead of into one that is being drained, so
 	// no award can be counted twice and none can be silently dropped between the
@@ -163,6 +176,14 @@ export async function flushNow(): Promise<void> {
 	const batch = pending;
 	pending = new Map<string, StagedAward>();
 
+	flushInFlight = writeBatch(batch).finally(() => {
+		flushInFlight = null;
+	});
+	await flushInFlight;
+}
+
+// Write one swapped batch and dispatch its level crossings. Never throws.
+async function writeBatch(batch: Map<string, StagedAward>): Promise<void> {
 	try {
 		const memberOps: AnyBulkWriteOperation<IMemberLevel>[] = [];
 		const periodOps: AnyBulkWriteOperation<IXpPeriod>[] = [];
@@ -313,6 +334,7 @@ export function sweepCooldowns(now: number = Date.now()): number {
 // Matching the `_clearEarlyAccessCache` / `_clearHangmanRounds` convention.
 export const _clearXpWriter = (): void => {
 	lastAwardAt.clear();
+	flushInFlight = null;
 	pending = new Map<string, StagedAward>();
 };
 export const _pendingSize = (): number => pending.size;

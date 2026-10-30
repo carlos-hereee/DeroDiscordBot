@@ -27,6 +27,7 @@ import {
 	type MortgageOption,
 	type PendingDebt,
 	type TradeProposal,
+	unmortgageCost,
 } from "./monopolyState.js";
 
 // ── monopolyBot ─────────────────────────────────────────────────────────────
@@ -343,8 +344,19 @@ function isHeldWholeByOneRival(otherOwners: (string | null)[], botId: string): b
 }
 
 function tradeSideValue(state: MonopolyState, botId: string, side: TradeProposal["offer"]): number {
-	const lotValue = side.properties.reduce((sum, tileId) => sum + fairValue(state, botId, tileId), 0);
+	const lotValue = side.properties.reduce((sum, tileId) => sum + tradedLotValue(state, botId, tileId), 0);
 	return lotValue + side.chips + side.gojf * JAIL_CARD_TRADE_VALUE;
+}
+
+// A lot as a trade moves it: its fair value, less what lifting its mortgage would
+// cost when it is mortgaged. A bot never lifts a mortgage, so without the discount
+// it would take a mortgaged lot at full price and hold dead rent for the rest of
+// the match (2026-10 item 280).
+function tradedLotValue(state: MonopolyState, botId: string, tileId: TileId): number {
+	const value = fairValue(state, botId, tileId);
+	const tile = findOwnableTile(tileId);
+	if (!tile || !state.properties[tile.id].mortgaged) return value;
+	return Math.max(0, value - unmortgageCost(tile));
 }
 
 // The ownable lot the seat stands on. Only an ownable lot ever puts the match in

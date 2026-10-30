@@ -147,6 +147,25 @@ describe("the enabled gates", () => {
 });
 
 describe("restrictions", () => {
+	it("gives the cooldown back after a restricted message, so the member's next message still pays (2026-10 item 280)", async () => {
+		mocks.getLevelingConfig.mockResolvedValue(context({ restrictedChannels: ["c-bots"], restrictedRoles: [] }));
+
+		await handleMessage(buildMessage({ userId: "u1", channelId: "c-bots" }));
+		await handleMessage(buildMessage({ userId: "u1", channelId: "c-general" }));
+
+		expect(mocks.awardXp).toHaveBeenCalledTimes(1);
+	});
+
+	it("gives the cooldown back after a restricted role is refused", async () => {
+		mocks.getLevelingConfig.mockResolvedValue(context({ restrictedRoles: ["r-muted"] }));
+
+		await handleMessage(buildMessage({ userId: "u1", roleIds: ["r-muted"] }));
+		mocks.getLevelingConfig.mockResolvedValue(context());
+		await handleMessage(buildMessage({ userId: "u1" }));
+
+		expect(mocks.awardXp).toHaveBeenCalledTimes(1);
+	});
+
 	it("exclude mode blocks the listed channel and pays everywhere else", async () => {
 		mocks.getLevelingConfig.mockResolvedValue(context({ restrictedChannels: ["c-bots"] }));
 

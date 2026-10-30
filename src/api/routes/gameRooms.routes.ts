@@ -8,7 +8,7 @@ import { requireGuildId } from "../middleware/requireGuildId.js";
 //        verifySignature in server.ts like every other /api route.
 // When:  on demand, when a member opens their Discord game history.
 // Where: guild scoping is a SECURITY BOUNDARY (invariant 2). Every query below
-//        filters on the guildId the middleware resolved, so a roomId belonging to
+//        filters on the guildId requireGuildId resolved, so a roomId belonging to
 //        another guild simply is not in the result set. There is no by-id route
 //        here precisely so there is nothing that could 403 and thereby confirm a
 //        room exists somewhere else.
@@ -48,9 +48,13 @@ type GameRoomsRequest = Request<
 export function createGameRoomsRouter(): Router {
 	const router = Router();
 
-	router.get("/", requireGuildId, async (req: GameRoomsRequest, res: Response) => {
+	router.get("/", async (req: GameRoomsRequest, res: Response) => {
+		// Called inside the handler like every other route: requireGuildId writes its own 400
+		// and returns the id, and never calls next(), so as Express middleware it left every
+		// request hanging (2026-10 item 280).
+		const guildId = requireGuildId(req, res);
+		if (guildId === null) return;
 		try {
-			const guildId = req.query.guildId as string;
 
 			// Clamped rather than trusted. A caller asking for 10000 would otherwise
 			// pull a guild's entire history into memory to serialise it.

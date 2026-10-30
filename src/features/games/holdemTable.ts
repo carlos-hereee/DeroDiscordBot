@@ -119,6 +119,11 @@ export interface HoldemTable {
 	// only code that turns one into a seat is seatLatePlayers at the top of dealHand,
 	// before the next hand exists. Absent on every table stored before it existed.
 	pendingSeats?: PendingSeat[];
+	// Who posted the big blind on the hand dealt last, written by dealHand. Read once, when a
+	// hand ends with two players left, so the button can be set so nobody posts the big blind
+	// twice in a row (2026-10 item 280). Absent on a row stored before it existed, which
+	// passes the button the ordinary way.
+	bigBlindUserId?: string;
 }
 
 /**
@@ -373,9 +378,18 @@ export function dealHand(table: HoldemTable, rng: () => number = Math.random): A
 	// Heads up posts the small blind ON the button. With three or more it is the
 	// seat after it. Getting this wrong is invisible until somebody counts.
 	const smallBlindSeat = order.length === 2 ? 0 : 1;
+	table.bigBlindUserId = order[(smallBlindSeat + 1) % order.length]?.userId;
 	table.betting = postBlinds(toBettingSeats(order), smallBlindSeat, table.smallBlind, table.bigBlind);
 	writeBack(table);
 	table.lastActionAt = Date.now();
+	// ⚠️ THE BLINDS CAN END THE BETTING BEFORE ANYBODY ACTS (2026-10 item 280): every
+	// player all in on a blind, or one player with chips whose blind already covers every
+	// all in opponent. Nobody has a decision, so nothing would ever call advanceStreet and
+	// the table would wait forever on a turn nobody holds; run the board out here instead.
+	if (table.betting.closed) {
+		const settled = runOutAndSettle(table, rng);
+		return lateSeated.length > 0 ? { ...settled, lateSeated } : settled;
+	}
 	// Attached AFTER the sit out folds, whose merge rebuilds the outcome from each fold
 	// and would otherwise drop the late seats a deal made.
 	const outcome = foldSeatsSittingOut(table, rng, { ok: true });
@@ -640,6 +654,8 @@ function runOutAndSettle(table: HoldemTable, rng: () => number): ActionOutcome {
 // ── the showdown ──────────────────────────────────────────────────────
 function settleHand(table: HoldemTable, showdown: boolean, _rng: () => number = Math.random): ActionOutcome {
 	const contenders = inHand(table);
+	// Read before any chip moves, for ordering the busts below.
+	const chipsAtHandStart = new Map(table.seats.map((seat) => [seat.userId, seat.stack + seat.totalCommitted]));
 
 	const commitments: PlayerCommitment[] = table.seats
 		.filter((seat) => seat.totalCommitted > 0)
@@ -721,14 +737,19 @@ function settleHand(table: HoldemTable, showdown: boolean, _rng: () => number = 
 	const buttonSeat = seatOrderFrom(table, table.buttonIndex)[0];
 
 	// Bust anyone with nothing left, recording the order so placement is derivable.
-	const busted: string[] = [];
-	for (const seat of table.seats) {
-		if (!seat.out && seat.stack <= 0) {
+	//
+	// ⚠️ SEVERAL BUSTS ON ONE HAND ARE ORDERED BY THE CHIPS EACH STARTED IT WITH, NOT BY
+	// SEAT (2026-10 item 280). The tournament rule is that the bigger starting stack
+	// finishes higher, so the smaller one busts first, worst first being the order
+	// bustOrder keeps. A true tie keeps seat order, since sort is stable.
+	const busted = table.seats
+		.filter((seat) => !seat.out && seat.stack <= 0)
+		.sort((first, second) => (chipsAtHandStart.get(first.userId) ?? 0) - (chipsAtHandStart.get(second.userId) ?? 0))
+		.map((seat) => {
 			seat.out = true;
-			busted.push(seat.userId);
 			table.bustOrder.push(seat.userId);
-		}
-	}
+			return seat.userId;
+		});
 
 	table.street = "showdown";
 	table.buttonIndex = nextButtonIndex(table, buttonSeat);
@@ -753,8 +774,19 @@ function settleHand(table: HoldemTable, showdown: boolean, _rng: () => number = 
 // "plus one" slid the button backwards or past a seat: A B C D with the button on C and
 // A busting gave it to B, and D never got it. Answers an index into the live seats,
 // which is what buttonIndex counts.
+//
+// ⚠️ TWO PLAYERS LEFT IS THE EXCEPTION (2026-10 item 280). Heads up the button posts the
+// small blind, so passing it on as usual when a table drops to two can hand the big
+// blind straight back to whoever just posted it: A button, B small, C big, A busts, and
+// the button passing to B leaves C on the big blind again. The tournament rule is that
+// nobody posts the big blind twice in a row going heads up, so when last hand's big
+// blind is still in, the button goes to them and the other player takes the big blind.
+// When that player busted, the ordinary pass already gives each survivor a blind they
+// did not just post. Heads up to heads up this lands where the ordinary pass does.
 function nextButtonIndex(table: HoldemTable, buttonSeat: TableSeat | undefined): number {
 	const live = livePlayers(table);
+	const lastBigBlind = live.length === 2 && table.bigBlindUserId ? live.findIndex((seat) => seat.userId === table.bigBlindUserId) : -1;
+	if (lastBigBlind !== -1) return lastBigBlind;
 	const from = buttonSeat ? table.seats.indexOf(buttonSeat) : -1;
 	if (live.length === 0 || from === -1) return 0;
 	for (let step = 1; step <= table.seats.length; step++) {

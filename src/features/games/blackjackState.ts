@@ -102,7 +102,7 @@ export interface HandValue {
 
 // Count every ace as 11, then demote one ace at a time while the hand is over
 // 21. Demoting one at a time (rather than deciding up front) is what handles
-// A + A + 9 correctly: 31 soft, demote once to 21 hard, stop. Deciding up front
+// A + A + 9 correctly: 31 with both aces at 11, demote one to 21 soft, stop. Deciding up front
 // that "the second ace is a 1" would get A + A right and A + A + 9 wrong.
 export function handValue(cards: Card[]): HandValue {
 	let total = 0;
@@ -612,7 +612,12 @@ export type LeaveOutcome = { status: "left"; cashOut: number } | { status: "not-
  */
 export function applyLeave(table: BlackjackTable, userId: string): LeaveOutcome {
 	const settledAndPaid = table.phase === "settled" && table.paid && table.buyIn > 0;
-	if (table.phase !== "playing" && table.phase !== "betting" && !settledAndPaid) return { status: "not-seated" };
+	// "dealer" is the moment every hand has acted and the dealer has not drawn yet. A room
+	// table holds it across awaits (a confirm's acknowledgement, a cash out), so a second
+	// leave in that window must still land, or a member who left the server stays seated
+	// and is timed out hand after hand (2026-10 item 280).
+	const handInPlay = table.phase === "playing" || table.phase === "dealer";
+	if (!handInPlay && table.phase !== "betting" && !settledAndPaid) return { status: "not-seated" };
 	const seat = table.seats.find((candidate) => candidate.userId === userId);
 	if (!seat || seat.out === "broke") return { status: "not-seated" };
 	if (seat.out === "left") return { status: "already-left" };
@@ -621,7 +626,7 @@ export function applyLeave(table: BlackjackTable, userId: string): LeaveOutcome 
 		seat.bet = 0;
 	}
 	// A settled hand's cards stay as they were dealt: the result already on the board reads them.
-	if (table.phase === "playing") for (const hand of seat.hands) hand.status = "left";
+	if (handInPlay) for (const hand of seat.hands) hand.status = "left";
 	seat.out = "left";
 	const cashOut = seat.stack;
 	seat.stack = 0;
@@ -656,11 +661,13 @@ function settleTurn(table: BlackjackTable): void {
 export function playDealer(table: BlackjackTable): void {
 	if (table.phase !== "dealer") return;
 
-	// A table where every hand busted needs no dealer draw: the house has already
-	// won every hand and drawing would only leak information about the shoe. A
-	// natural still needs the dealer played out, because a dealer natural pushes it.
-	// A hand given up by a seat that left is as lost as a bust one.
-	const anyLive = table.seats.some((seat) => seat.hands.some((hand) => hand.status !== "bust" && hand.status !== "left"));
+	// The dealer draws only while some hand still waits on its total. A bust hand
+	// and a hand given up by a seat that left are already lost, and a player natural
+	// is already won 3 to 2: the peek ended the hand at the deal when the dealer had
+	// one too. Drawing for none of them would only burn cards toward the cut card and
+	// leak the shoe (2026-10 item 280).
+	const decided: ReadonlySet<HandStatus> = new Set(["bust", "left", "blackjack"]);
+	const anyLive = table.seats.some((seat) => seat.hands.some((hand) => !decided.has(hand.status)));
 
 	if (anyLive) {
 		for (;;) {

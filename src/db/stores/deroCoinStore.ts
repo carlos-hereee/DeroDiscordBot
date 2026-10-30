@@ -92,6 +92,9 @@ export const deroCoinStore = {
 	 * unique userId index rather than as a second row.
 	 */
 	async reserveMarketBuy(userId: string, amount: number, dayKey: string, cap: number): Promise<IDeroCoinWallet | null> {
+		// The fresh day branch of the filter below matches any amount, so an amount past the
+		// whole cap is refused before the update can start a day above it (2026-10 item 280).
+		if (amount > cap) return null;
 		const sameDay = { $eq: ["$marketDayKey", dayKey] };
 		try {
 			return await DeroCoinWallet.findOneAndUpdate(

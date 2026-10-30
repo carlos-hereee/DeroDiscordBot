@@ -140,6 +140,20 @@ describe("buyCoins", () => {
 		expect(await buyLeftToday("u1", NOW)).toBe(3);
 	});
 
+	it("refuses a first buy of the day larger than the whole cap before reserving anything (2026-10 item 280)", async () => {
+		const { deroCoinStore } = await import("@db/stores/deroCoinStore.js");
+		vi.mocked(deroCoinStore.reserveMarketBuy).mockClear();
+		state.chips.set("u1", 1_000_000);
+
+		const result = await buyCoins(trade(50));
+
+		expect(result).toEqual({ kind: "cap", leftToday: 3 });
+		// The real store's filter matches any amount on a fresh day, so the refusal must not reach it.
+		expect(deroCoinStore.reserveMarketBuy).not.toHaveBeenCalled();
+		expect(state.chips.get("u1")).toBe(1_000_000);
+		expect(state.coins.get("u1")?.balance ?? 0).toBe(0);
+	});
+
 	it("opens the whole cap again on the next UTC day", async () => {
 		state.chips.set("u1", 20_000);
 		await buyCoins(trade(3));

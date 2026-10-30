@@ -41,7 +41,12 @@ vi.mock("./hangmanRenderer.js", async (importOriginal) => {
 	};
 });
 
+// The award is the leveling module's own business; here only WHO a round pays, and under what name,
+// is under test (2026-10 item 280).
+vi.mock("./gameXp.js", () => ({ awardMultiPlayerResult: vi.fn() }));
+
 import { startHangmanRound, runHangman, _clearHangmanRounds, _activeHangmanRoundCount } from "./hangmanHandler.js";
+import { awardMultiPlayerResult } from "./gameXp.js";
 import { gamesCopy } from "./gamesCopy.js";
 
 interface Board {
@@ -377,6 +382,49 @@ describe("ending a round", () => {
 		expect(options).toBeDefined();
 		expect(options).not.toHaveProperty("time");
 		expect(options).not.toHaveProperty("idle");
+	});
+
+	// 2026-10 item 280: the round stays in the map while the solving guess edits its end board, so a
+	// submit landing then is refused as closed. It played nothing, so the award must not pay it.
+	it("pays only the members whose guess the round took, never a submit refused as closed", async () => {
+		const awardMock = vi.mocked(awardMultiPlayerResult);
+		awardMock.mockClear();
+		const c = fakeChannel("chan-late");
+		await startHangmanRound(c.channel, "starter-1");
+		for (const letter of ["c", "a", "s", "t", "l"]) {
+			c.board().collect(fakeClick(letter));
+			await flush();
+		}
+
+		let openEndBoard = (): void => undefined;
+		c.board().edit.mockImplementationOnce(() => new Promise<undefined>((resolve) => (openEndBoard = () => resolve(undefined))));
+		c.board().collect(fakeClick("e", "solver"));
+		await flush();
+		const late = fakeClick("z", "late-guesser");
+		c.board().collect(late);
+		await flush();
+		openEndBoard();
+		await flush();
+
+		expect(late.submit.reply).toHaveBeenCalledOnce();
+		expect(awardMock).toHaveBeenCalledOnce();
+		const { participants, winnerId } = awardMock.mock.calls[0][0];
+		expect(winnerId).toBe("solver");
+		expect(participants.map((participant) => participant.userId).sort()).toEqual(["guesser-1", "solver", "starter-1"]);
+	});
+
+	// A cache miss leaves the name undefined, as MultiPlayerResult asks, so the award never stores a
+	// snowflake as a member's name (2026-10 item 280).
+	it("names nobody it cannot resolve, rather than naming them by id", async () => {
+		const awardMock = vi.mocked(awardMultiPlayerResult);
+		awardMock.mockClear();
+		const c = fakeChannel("chan-names");
+		await startHangmanRound(c.channel, "starter-1");
+		c.board().end();
+		await flush();
+
+		const { participants } = awardMock.mock.calls[0][0];
+		expect(participants).toEqual([{ userId: "starter-1", username: undefined }]);
 	});
 });
 

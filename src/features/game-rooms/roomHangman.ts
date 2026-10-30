@@ -91,6 +91,11 @@ interface HangmanSecret extends RoomSecret {
 	// The newest gallows card, the one carrying the guess controls (post-launch plan
 	// item 3). Kept so the next card can take the controls off it.
 	gallowsMessageId?: string | null;
+	// Who played the solving letter, written in the same compare and swap that saves it (2026-10
+	// item 280). A guess that rehydrates the round as won before the solver's own finish ran reads
+	// the solver here; the transcript cannot answer it yet, since a guess's moves are recorded only
+	// after its card posts. Absent on rows saved before the field existed.
+	solvedBy?: string;
 }
 
 function rehydrate(room: Pick<IGameRoom, "secret">): HangmanState | null {
@@ -171,6 +176,7 @@ async function landGuess(read: IGameRoom, letter: string, userId: string): Promi
 			guessedLetters: [...state.guessed],
 			wrong: state.wrong,
 			revealedHints: state.revealedHints,
+			...(outcome.status === "hit" && outcome.solved ? { solvedBy: userId } : {}),
 		});
 		if (written) return { landed: true, room: written, state, outcome };
 	}
@@ -315,7 +321,7 @@ export async function handleAuthoringModal(interaction: ModalSubmitInteraction):
 		wrong: 0,
 	};
 
-	await startRoomHangmanRound(
+	const started = await startRoomHangmanRound(
 		interaction.client,
 		room,
 		secret,
@@ -324,6 +330,9 @@ export async function handleAuthoringModal(interaction: ModalSubmitInteraction):
 		// nothing and puts it one mis-click from a public channel.
 		() => answerInChannel(interaction, "here", { content: gameRoomsCopy.hangman.authored(result.hint, result.extraHints.length) })
 	);
+	// Only the host reaches the claim, so a lost one is the host racing their own other submit,
+	// whose answer and opener already say the round began: this one only closes (2026-10 item 280).
+	if (!started) await acknowledgeTextModal(interaction);
 }
 
 // ── letting Dero pick ─────────────────────────────────────────────────
@@ -364,7 +373,7 @@ export async function handleCategorySelect(interaction: StringSelectMenuInteract
 
 	const pick = pickWordFromCategory(category);
 	const label = gameRoomsCopy.hangman.categoryLabels[category];
-	await startRoomHangmanRound(
+	const started = await startRoomHangmanRound(
 		interaction.client,
 		room,
 		bankSecret(pick),
@@ -373,6 +382,10 @@ export async function handleCategorySelect(interaction: StringSelectMenuInteract
 		// posts where it was pressed like the authoring modal's own answer, and names no word.
 		() => answerInChannel(interaction, "here", { content: gameRoomsCopy.hangman.categoryPicked(label) })
 	);
+	// A lost claim is the host's own other submit, which already answered, so this only closes; the
+	// failure is swallowed as in acknowledgeTextModal, since it costs only Discord's own note (2026-10
+	// item 280).
+	if (!started) await interaction.deferUpdate().catch(() => undefined);
 }
 
 /**
@@ -383,12 +396,13 @@ export async function handleCategorySelect(interaction: StringSelectMenuInteract
  */
 export async function startSoloHangmanRound(client: Client, room: HangmanRoomRef, category?: HangmanCategory): Promise<void> {
 	const pick = category ? pickWordFromCategory(category) : pickWord();
-	await startRoomHangmanRound(client, room, bankSecret(pick), {
+	const started = await startRoomHangmanRound(client, room, bankSecret(pick), {
 		actorId: room.hostId,
 		text: category
 			? gameRoomsCopy.hangman.soloCategoryOpener(gameRoomsCopy.hangman.categoryLabels[category], pick.hint)
 			: gameRoomsCopy.hangman.soloOpener(pick.hint),
 	});
+	if (!started) console.warn("[game-rooms] solo hangman seed found the room closed or already worded", { roomId: room.roomId });
 }
 
 // A secret for a word Dero drew from the bank: its hint, no extra hints, and no
@@ -412,10 +426,13 @@ function bankSecret(pick: PickedHangmanWord): HangmanSecret {
  * seed all call it, so none of them can forget a step and leave guessers without a
  * control again.
  *
- * ① write the secret (the only write of a word), ② acknowledge the person who
+ * ① claim the secret (the only write of a word), ② acknowledge the person who
  * started it, if anyone did, ③ post the public line with the hint, ④ swap the
  * pinned opener to the guess button, ⑤ post the first gallows card. Steps ④ and ⑤
  * are cosmetic and swallow their own failures, because the word is already stored.
+ *
+ * Answers false, having posted nothing, when the claim lost: another submit set the
+ * word first, or the room stopped playing.
  */
 async function startRoomHangmanRound(
 	client: Client,
@@ -423,8 +440,13 @@ async function startRoomHangmanRound(
 	secret: HangmanSecret,
 	announcement: { actorId: string; text: string },
 	acknowledge?: () => Promise<unknown>
-): Promise<void> {
-	await gameRoomStore.update(room.guildId, room.roomId, { secret: secret as never });
+): Promise<boolean> {
+	// A claim, not a plain write (2026-10 item 280): the callers' "no word yet" check is a read, so
+	// two submits can both pass it, and an unconditional write let the second replace the word under
+	// the hint the first had already posted. `secret.word: null` also matches the null secret a new
+	// room opens with, and the store only writes a room still playing.
+	const claimed = await gameRoomStore.updateSecretIf(room.guildId, room.roomId, { "secret.word": null }, secret);
+	if (!claimed) return false;
 	if (acknowledge) await acknowledge();
 
 	// Text only; the two steps after it are what actually let anyone play.
@@ -433,6 +455,7 @@ async function startRoomHangmanRound(
 	await swapOpenerToGuessing(client, room);
 	const state = rehydrate({ secret });
 	if (state) await postGallowsCard(client, room, state, null);
+	return true;
 }
 
 // The pinned opener the provisioner posted still carries the host's authoring
@@ -535,11 +558,12 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	}
 	const landing = await landGuess(read, interaction.fields.getTextInputValue("letter"), interaction.user.id);
 	if (!landing.landed && "unfinished" in landing) {
-		// The round ended on the row but its finish never ran: end it now, crediting the solve to
-		// whoever the transcript says found the last letter, and tell this guesser it is over.
+		// The round ended on the row but its finish has not run (a crash, or the solver's own finish
+		// still drawing its card): end it now, crediting the solve to whoever played the solving
+		// letter, and tell this guesser it is over.
 		await acknowledgeTextModal(interaction);
 		const { room, state } = landing.unfinished;
-		const solverId = state.status === "won" ? lastSolverOf(room) : null;
+		const solverId = state.status === "won" ? solverOf(room) : null;
 		await endHangmanRound(interaction.client, room, state, { guild: interaction.guild, actorId: interaction.user.id, solverId });
 		return;
 	}
@@ -587,8 +611,16 @@ export async function handleGuessModal(interaction: ModalSubmitInteraction): Pro
 	await endHangmanRound(interaction.client, room, state, { guild: interaction.guild, actorId: interaction.user.id, solverId: won ? interaction.user.id : null });
 }
 
-// The member whose hit is the newest guess in the transcript: the solver of a round whose finish a
-// crash skipped. Null when the solving guess never reached the transcript, so nobody is credited.
+// The solver of a round whose finish has not run: the member the solving write stored (2026-10 item
+// 280). The transcript is only the fallback for a row saved before `solvedBy` existed, because while
+// the solver's finish is still in flight their guess is not in the transcript yet, and reading it
+// there credited the previous hitter, or nobody.
+function solverOf(room: IGameRoom): string | null {
+	return (room.secret as HangmanSecret | null)?.solvedBy ?? lastSolverOf(room);
+}
+
+// The member whose hit is the newest guess in the transcript. Null when the solving guess never
+// reached the transcript, so nobody is credited.
 function lastSolverOf(room: IGameRoom): string | null {
 	const guesses = (room.moves ?? []).filter((move) => move.kind === "guess");
 	const last = guesses[guesses.length - 1];
@@ -641,13 +673,14 @@ async function endHangmanRound(client: Client, room: IGameRoom, state: HangmanSt
 	});
 
 	// The host is excluded from the award list: they set the word, so they were never
-	// playing. Display names come from the guild cache with the id as a last resort,
-	// which is the same fallback every other award site uses.
+	// playing. Display names come from the guild cache; a miss stays undefined, as
+	// MultiPlayerResult asks, so the award skips the name write rather than storing the
+	// snowflake as the member's name (2026-10 item 280).
 	const participants = room.playerIds
 		.filter((id) => id !== state.authoredBy)
 		.map((id) => {
 			const member = ending.guild?.members.cache.get(id);
-			return { userId: id, username: member?.displayName ?? member?.user.username ?? id };
+			return { userId: id, username: member?.displayName ?? member?.user.username };
 		});
 
 	awardMultiPlayerResult({

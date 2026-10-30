@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TextChannel } from "discord.js";
 import type { Client } from "discord.js";
 
@@ -56,13 +56,15 @@ vi.mock("@features/schedule/NextUpBoard.js", () => ({
 	_resetNextUpDedupForTest: vi.fn(),
 }));
 
-import { announceSeasonEnd } from "./ReminderScheduler.js";
+import { announceSeasonEnd, recurringFireCandidates } from "./ReminderScheduler.js";
+import { eventOverrideStore } from "@db/stores/eventOverrideStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { reminderStore } from "@db/stores/reminderStore.js";
 import type { IGameEvent } from "@features/events/event.types.js";
 
-// ── parked scaffolding, deliberately unused today ──────────────────────────
-// The five helpers below were written for the deeper integration tests
+// ── parked scaffolding, mostly unused today ────────────────────────────────
+// makeEvent is used by the recurringFireCandidates cases at the bottom. The other
+// helpers below were written for the deeper integration tests
 // described in the describe block at the bottom of this file, which were
 // attempted and blocked. They are kept rather than deleted so whoever unblocks
 // that work does not rebuild them from scratch.
@@ -81,7 +83,7 @@ const _reminderStoreMock = reminderStore as unknown as {
 	create: ReturnType<typeof vi.fn>;
 };
 
-function _makeEvent(overrides: Partial<IGameEvent> = {}): IGameEvent {
+function makeEvent(overrides: Partial<IGameEvent> = {}): IGameEvent {
 	// firstOccurrence and seasonEnd are deliberately in the far future so
 	// the test never depends on the machine clock. announceSeasonEnd does
 	// not consult Date.now(), the cron tick gates on now > seasonEnd
@@ -157,5 +159,45 @@ describe("announceSeasonEnd guild-scoped dedup", () => {
 	// production behavior end-to-end against a real Discord channel.
 	it("smoke: announceSeasonEnd is defined and exported", () => {
 		expect(typeof announceSeasonEnd).toBe("function");
+	});
+});
+
+// ── an "apply once" override that moves an occurrence later (2026-10 item 280) ──
+// Once the original start passes, the next computed occurrence is the following one, so
+// looking up overrides only for that one lost every reminder of the moved occurrence.
+describe("recurringFireCandidates", () => {
+	const ANCHOR = new Date("2030-01-01T12:00:00Z");
+	const MOVED_TO = new Date("2030-01-01T20:00:00Z");
+	const NOW = new Date("2030-01-01T19:40:00Z"); // original start passed, the moved one still ahead
+	const NEXT = new Date("2030-01-03T04:00:00Z"); // anchor plus 40 hours
+	const overrideMock = eventOverrideStore as unknown as { findOne: ReturnType<typeof vi.fn> };
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(NOW);
+		overrideMock.findOne.mockReset().mockResolvedValue(null);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("keeps the previous occurrence while its override still lies ahead, keyed on its ORIGINAL start", async () => {
+		overrideMock.findOne.mockImplementation(async ({ originalOccurrence }: { originalOccurrence: Date }) =>
+			originalOccurrence.getTime() === ANCHOR.getTime() ? { overrideTime: MOVED_TO, overrideTitle: null, overrideDescription: null } : null
+		);
+
+		const candidates = await recurringFireCandidates(makeEvent({ firstOccurrence: ANCHOR }), NOW);
+
+		expect(candidates.map((candidate) => [candidate.originalOccurrence.toISOString(), candidate.fireMoment.toISOString()])).toEqual([
+			[ANCHOR.toISOString(), MOVED_TO.toISOString()],
+			[NEXT.toISOString(), NEXT.toISOString()],
+		]);
+	});
+
+	it("drops the previous occurrence when it has no override, so only the next one is checked", async () => {
+		const candidates = await recurringFireCandidates(makeEvent({ firstOccurrence: ANCHOR }), NOW);
+
+		expect(candidates.map((candidate) => candidate.originalOccurrence.toISOString())).toEqual([NEXT.toISOString()]);
 	});
 });

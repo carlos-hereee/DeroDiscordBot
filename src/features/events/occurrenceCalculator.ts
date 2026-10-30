@@ -8,6 +8,21 @@ const HOUR_MS = 60 * 60 * 1000;
 // A weekly event repeats every 168 hours: what /events stream weekly writes.
 const WEEK_HOURS = 168;
 const DAYS_PER_WEEK = 7;
+// The smallest step the forward walk can take. A step under one millisecond can round to
+// no change when added to an epoch time (about 1.7e12 ms, whose spacing is a fraction of
+// a millisecond), and a walk that cannot move never ends (2026-10 item 280).
+const MIN_WALK_STEP_MS = 1;
+
+// ── an event the walk can step through (2026-10 item 280) ──
+// Every recurring walk below loops until it has collected `count` future starts, so a
+// negative, NaN, infinite or vanishing interval, or an anchor that is no date, used to
+// spin forever inside one reminder tick and freeze the whole bot. Such a row has no
+// upcoming start; the events routes refuse to write one, and this guard covers rows
+// already stored or written by another path.
+function isWalkable(event: IGameEvent): boolean {
+	const anchorMs = new Date(event.firstOccurrence).getTime();
+	return Number.isFinite(anchorMs) && Number.isFinite(event.intervalHours) && event.intervalHours * HOUR_MS >= MIN_WALK_STEP_MS;
+}
 
 // ── a weekly event that holds its local time (2026-10 item 263 Phase 4c, R3-30) ──
 // An event that stores a zone and repeats weekly fires on the same local weekday and
@@ -56,6 +71,8 @@ export function getUpcomingOccurrences(event: IGameEvent, count: number): Date[]
 		return t > Date.now() ? [new Date(t)] : [];
 	}
 
+	if (!isWalkable(event)) return [];
+
 	const zone = weeklyZoneOf(event);
 	if (zone) return zonedWeeklyOccurrences(event, zone, count, Date.now());
 
@@ -99,23 +116,30 @@ export function previousOccurrence(event: IGameEvent, next: Date): Date {
 // separate helper used by ActivityTracker to know if an
 // event window is currently open (for voice/presence tracking)
 export function isEventWindowOpen(event: IGameEvent, now = new Date(), windowMinutes = 60): boolean {
-	// one-time event: the window is open if we're between firstOccurrence and firstOccurrence + windowMinutes
+	return openWindowStart(event, now, windowMinutes) !== null;
+}
+
+/**
+ * The start of the event window open at `now`, or null when none is. A one time event's
+ * window opens at its own start; a recurring event's at the occurrence before the next
+ * one. ActivityTracker keys attendance by this start, so a one time event answers its
+ * firstOccurrence directly: it has no upcoming occurrence to step back from once it has
+ * begun, and stepping back from none threw and broke tracking for the guild (2026-10
+ * item 280).
+ */
+export function openWindowStart(event: IGameEvent, now = new Date(), windowMinutes = 60): Date | null {
+	const windowMs = windowMinutes * 60 * 1000;
+
+	// one-time event: the window is open between firstOccurrence and firstOccurrence + windowMinutes
 	if (event.intervalHours === 0) {
 		const start = new Date(event.firstOccurrence);
-		const windowEnd = new Date(start.getTime() + windowMinutes * 60 * 1000);
-		return now >= start && now <= windowEnd;
+		return now >= start && now.getTime() <= start.getTime() + windowMs ? start : null;
 	}
 
-	const occurrences = getUpcomingOccurrences(event, 1);
-	if (!occurrences.length) return false;
+	const [nextOccurrence] = getUpcomingOccurrences(event, 1);
+	if (!nextOccurrence) return null;
 
-	const nextOccurrence = occurrences[0];
-
-	// look backwards, was the most recent occurrence within the last EVENT_WINDOW_MINUTES?
+	// look backwards, was the most recent occurrence within the last windowMinutes?
 	const lastOccurrence = previousOccurrence(event, nextOccurrence);
-	const windowEnd = new Date(
-		lastOccurrence.getTime() + windowMinutes * 60 * 1000 // windowMinutes window after start
-	);
-
-	return now >= lastOccurrence && now <= windowEnd;
+	return now >= lastOccurrence && now.getTime() <= lastOccurrence.getTime() + windowMs ? lastOccurrence : null;
 }

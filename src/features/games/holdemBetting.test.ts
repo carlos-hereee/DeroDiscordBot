@@ -270,3 +270,46 @@ describe("chips are conserved", () => {
 		expect(inPlay).toBe(startingTotal);
 	});
 });
+
+// ⚠️ A SHORT BIG BLIND LEAVES NOBODY A DECISION (2026-10 item 280). The round opens at
+// the full big blind, but a player whose chips already cover every all in opponent has
+// nothing to bet against, so the round must be over and the excess comes back uncalled.
+describe("a short blind already covered", () => {
+	it("opens closed when the big blind is all in for less than the small blind", () => {
+		// Heads up the small blind is seat 0: 10 in against the big blind's 5.
+		const state = postBlinds([seat("sb", 1000), seat("bb", 5)], 0, 10, 20);
+		expect(seatOf(state, "bb")).toMatchObject({ committed: 5, allIn: true });
+		expect(state.closed).toBe(true);
+		expect(legalActions(state, "sb")).toEqual([]);
+	});
+
+	it("opens closed when the small blind is all in on its blind", () => {
+		const state = postBlinds([seat("sb", 10), seat("bb", 1000)], 0, 10, 20);
+		expect(state.closed).toBe(true);
+		expect(legalActions(state, "bb")).toEqual([]);
+	});
+
+	it("still asks a player whose blind does NOT cover the all in", () => {
+		// The big blind is all in for 15, more than the small blind's 10.
+		const state = postBlinds([seat("sb", 1000), seat("bb", 15)], 0, 10, 20);
+		expect(state.closed).toBe(false);
+		expect(toActId(state)).toBe("sb");
+		expect(actionsFor(state, "sb")).toContain("call");
+	});
+
+	it("closes once the others fold to a big blind that covers the all in small blind", () => {
+		// Button c, small blind a all in for 5, big blind b with chips.
+		let state = postBlinds([seat("a", 5), seat("b", 100), seat("c", 100)], 0, 10, 20);
+		expect(toActId(state)).toBe("c");
+		state = act(state, "c", "fold");
+		expect(state.closed).toBe(true);
+	});
+
+	it("keeps the full big blind's option when a player with chips only limps", () => {
+		let state = postBlinds([seat("a", 5), seat("b", 100), seat("c", 100)], 0, 10, 20);
+		state = act(state, "c", "call");
+		expect(state.closed).toBe(false);
+		expect(toActId(state)).toBe("b");
+		expect(actionsFor(state, "b")).toContain("check");
+	});
+});

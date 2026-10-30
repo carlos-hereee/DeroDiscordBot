@@ -3,13 +3,11 @@ import { STARTING_CHIPS } from "./monopolyBoard.js";
 import { settleDebts, type MonopolyDebt } from "./monopolyBankruptcy.js";
 import {
 	BANK_CREDITOR,
-	acceptTrade,
 	applyDebtDefault,
 	applyForfeit,
 	applyMortgage,
 	applyPayDebt,
 	createInitialState,
-	openTrade,
 	waitingDebt,
 	type MonopolyResult,
 	type MonopolyState,
@@ -115,21 +113,12 @@ describe("applyPayDebt", () => {
 	});
 
 	it("bankrupts a seat that traded away what would have covered it, since nothing can now", () => {
-		// A giveaway is refused while the debt is held (P2-2), but a fair swap of both
-		// lots ($150 of mortgage) for three jail cards ($50 of bail each) still leaves
-		// Alice $20 and nothing to mortgage or sell.
-		const held = aliceHeld();
-		seatOf(held, CARA).gojfCards = 3;
-		const offered = expectOk(
-			openTrade(held, {
-				initiatorId: ALICE,
-				counterpartyId: CARA,
-				offer: { properties: ["rail-one", "reader-dock"], chips: 0, gojf: 0 },
-				request: { properties: [], chips: 0, gojf: 3 },
-				openedAt: NOW,
-			})
-		).state;
-		const traded = expectOk(acceptTrade(offered, CARA)).state;
+		// No trade can strip a held debtor any more (P2-2, and the jail card swap closed
+		// by 2026-10 item 280), so the lots leave Alice by hand: a state an older offer,
+		// accepted before the hold, could still leave behind.
+		const traded = aliceHeld();
+		traded.properties["rail-one"].ownerId = CARA;
+		traded.properties["reader-dock"].ownerId = CARA;
 
 		const { state, trailLines } = expectOk(applyPayDebt(traded, ALICE, NOW));
 		expect(seatOf(state, ALICE).bankrupt).toBe(true);
@@ -205,6 +194,15 @@ describe("a seat leaving while a debt is held", () => {
 		expect(state.properties["reader-dock"].ownerId).toBe(BOB);
 		expect(seatOf(state, BOB).chips).toBe(STARTING_CHIPS + 20);
 		expect(state).toMatchObject({ phase: "pre-roll", pendingDebt: null, activeSeatIndex: 1 });
+	});
+
+	it("hands a later debtor's holdings to its creditor too, and keeps waiting on the first (2026-10 item 280)", () => {
+		const { state, trailLines } = expectOk(applyForfeit(twoRivalsHeld(), CARA, NOW));
+		expect(trailLines[0]).toBe("<@cara> left owing $100 and is bankrupt.");
+		expect(state.properties["rail-two"].ownerId).toBe(ALICE);
+		expect(seatOf(state, CARA).bankrupt).toBe(true);
+		expect(waitingDebt(state)).toEqual({ debtorId: BOB, creditorId: ALICE, amount: 100 });
+		expect(state.pendingDebt?.debts).toHaveLength(1);
 	});
 
 	it("still returns a creditor's or a bystander's holdings to the bank", () => {

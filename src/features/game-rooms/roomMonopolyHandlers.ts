@@ -179,7 +179,7 @@ function monopolyEndingBucket(state: MonopolyState, cause: FinishCause): Outcome
 // (2026-10 item 243 Phase 3) needs them and finish posts the result. A press that
 // loses the claim spends one member fetch for nothing, which is cheaper than a
 // second result card. No card means the result posts without art, as it did.
-async function finishMonopolyMatch(client: Client, room: IGameRoom, state: MonopolyState, cause: FinishCause): Promise<void> {
+async function finishMonopolyMatch(client: Client, room: IGameRoom, state: MonopolyState, cause: FinishCause): Promise<boolean> {
 	const participants = await resolveParticipants(client, room.guildId, state.seats.map((seat) => seat.userId));
 	const names = new Map(participants.flatMap(({ userId, username }) => (username ? [[userId, username] as const] : [])));
 	const winnerCard = await withRenderFallback(
@@ -191,7 +191,7 @@ async function finishMonopolyMatch(client: Client, room: IGameRoom, state: Monop
 		...(winnerCard ? { art: winnerCard } : {}),
 		outcome: { bucket: monopolyEndingBucket(state, cause) },
 	});
-	if (!claimed) return;
+	if (!claimed) return false;
 
 	// The winner first, then the seats in reverse elimination order; a seat forfeited
 	// for a day's inactivity counts as a bankruptcy (2026-10 item 244). A seat the host
@@ -209,6 +209,26 @@ async function finishMonopolyMatch(client: Client, room: IGameRoom, state: Monop
 		nonWinnerOutcome: "lost",
 		resultKey: room.roomId,
 	});
+	return true;
+}
+
+/** True when the engine says the match is over while the room still says it is playing. */
+export function isSettledMonopolyMatch(room: IGameRoom): boolean {
+	return room.game === "monopoly" && room.status === "playing" && monopolyStateOf(room)?.phase === "finished";
+}
+
+/**
+ * Finish a match the engine already ended but the room never did (2026-10 item 280): the move
+ * that ended it was saved, then the process stopped before that move's finish ran, which left
+ * the pot unpaid, nobody rated and the host's slot held, since every other path reads the
+ * finished phase as nothing to do. The sweep and boot recovery call this; it is the live move's
+ * own finish, and finish's claim means a live move still finishing pays nothing twice.
+ * Answers whether this call finished it.
+ */
+export async function finishSettledMonopolyMatch(client: Client, room: IGameRoom): Promise<boolean> {
+	const state = monopolyStateOf(room);
+	if (!isSettledMonopolyMatch(room) || !state) return false;
+	return finishMonopolyMatch(client, room, state, "played");
 }
 
 /**

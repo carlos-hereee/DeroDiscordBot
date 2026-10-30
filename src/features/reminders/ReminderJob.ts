@@ -9,7 +9,12 @@ import { refreshNextUp } from "@features/schedule/NextUpBoard.js";
 import { refreshLeaderboard } from "@features/leaderboard/LeaderboardBoard.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
 
-export async function fireReminder(client: Client, event: IGameEvent, occurrence: Date, offsetMinutes: number): Promise<void> {
+/**
+ * Post one reminder for `occurrence` (the moment the embed shows) and log it. `logOccurrence`
+ * is the ReminderLog key, the scheduler's ORIGINAL occurrence when an override moved the
+ * fire, so the row matches the key the scheduler dedups on (2026-10 item 280).
+ */
+export async function fireReminder(client: Client, event: IGameEvent, occurrence: Date, offsetMinutes: number, logOccurrence: Date = occurrence): Promise<void> {
 	// ① resolve the destination channel. the single source of truth is the
 	// guild's configured announcements channel. there is no per-event override
 	// and never will be, the home base's announcement channel is the one place
@@ -57,19 +62,22 @@ export async function fireReminder(client: Client, event: IGameEvent, occurrence
 		allowedMentions,
 	});
 
-	// ⑤ add the acknowledgement reaction
-	await message.react("✅");
-
-	// ⑥ log to DB, this is what prevents duplicate fires
-	// and what the ActivityTracker uses to link reactions back to events
+	// ⑤ log to DB right after the post, this is what prevents duplicate fires
+	// and what the ActivityTracker uses to link reactions back to events. It comes
+	// before the reaction so a failed react cannot leave a posted reminder unlogged
+	// and due to post again (2026-10 item 280).
 	await reminderStore.create({
 		eventId: event.eventId,
-		eventOccurrence: occurrence,
+		eventOccurrence: logOccurrence,
 		offsetMinutes,
 		messageId: message.id,
 		channelId: channel.id,
 		firedAt: new Date(),
 	});
+
+	// ⑥ add the acknowledgement reaction. A missing AddReactions permission or a 429
+	// costs only the reaction, so it is logged and swallowed.
+	await message.react("✅").catch((error: unknown) => console.warn(`[reminder] adding the acknowledgement reaction to message ${message.id} for event ${event.eventId} failed`, error));
 
 	// ⑦ refresh the pinned schedule board so the "next occurrence" for this
 	// event advances visibly. fire and forget so a Discord hiccup here
@@ -91,7 +99,7 @@ export async function fireReminder(client: Client, event: IGameEvent, occurrence
 
 /*
 
-**Why the DB write happens last:**
+**Why the DB write follows the post:**
 
 The order here is intentional, post to Discord first, then write to DB.
 If you did it in reverse and the Discord post failed, you'd have a DB record
@@ -135,7 +143,8 @@ reminderStore.exists()        ← did we already fire this one?
 fireReminder()
       ├── resolve channel from GuildConfig.announcementsChannelId
       ├── build embed
-      ├── post message with role ping + react ✅
-      └── reminderStore.create() ← write LAST, so failures are retryable
+      ├── post message with role ping
+      ├── reminderStore.create() ← right after the post, so a failed post stays retryable
+      └── react ✅ (a failure here is logged, never blocks the log row)
 
       */

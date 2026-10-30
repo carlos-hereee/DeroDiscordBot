@@ -135,25 +135,35 @@ function validateTrade(state: MonopolyState, trade: TradeProposal): TradeCheck {
 	return sideRefusal ? refuse(sideRefusal) : { ok: true, initiatorIndex, counterpartyIndex };
 }
 
-// The waited debtor, on either side of the trade, must take back at least what it
-// gives, measured as cash toward the debt (debtValueOf). Checked on accept too,
-// since a debt can be held after the trade was offered.
+// Every debtor in a held batch, on either side of the trade, must take back at
+// least what it gives, measured as cash toward the debt (debtValueOf). The whole
+// batch is checked, not only the debt the match is waiting on first, or the
+// second debtor of a "collect from every player" card could empty itself before
+// its turn to pay comes. Checked on accept too, since a debt can be held after
+// the trade was offered.
 function refuseDebtorGiveaway(state: MonopolyState, trade: TradeProposal): string | null {
-	const debtorId = waitingDebt(state)?.debtorId;
-	if (debtorId !== trade.initiatorId && debtorId !== trade.counterpartyId) return null;
-	const gives = debtorId === trade.initiatorId ? trade.offer : trade.request;
-	const takes = debtorId === trade.initiatorId ? trade.request : trade.offer;
-	if (debtValueOf(state, gives) <= debtValueOf(state, takes)) return null;
-	return `${mentionPlayer(debtorId)} owes a debt the match is waiting on, so they cannot give more than they get back in a trade.`;
+	if (!waitingDebt(state)) return null;
+	const heldDebtorIds = new Set(state.pendingDebt?.debts.map((debt) => debt.debtorId));
+	for (const debtorId of [trade.initiatorId, trade.counterpartyId]) {
+		if (!heldDebtorIds.has(debtorId)) continue;
+		const gives = debtorId === trade.initiatorId ? trade.offer : trade.request;
+		const takes = debtorId === trade.initiatorId ? trade.request : trade.offer;
+		if (debtValueOf(state, gives, JAIL_BAIL) > debtValueOf(state, takes, 0)) {
+			return `${mentionPlayer(debtorId)} owes a debt the match is waiting on, so they cannot give more than they get back in a trade.`;
+		}
+	}
+	return null;
 }
 
 // One side of a trade as cash toward a debt, on the same rungs liquidationValue
 // counts a seat's holdings by: chips at face, an unmortgaged lot at its mortgage
 // (a traded lot never has buildings), a mortgaged lot at nothing more. A Get Out
-// of Jail Free card counts at the bail it saves, since a creditor takes it in a
-// default.
-function debtValueOf(state: MonopolyState, side: TradeSide): number {
-	let value = side.chips + side.gojf * JAIL_BAIL;
+// of Jail Free card counts at `jailCardValue`: the bail on the side the debtor
+// gives, since a creditor takes the card in a default, and nothing on the side it
+// takes, since liquidationValue cannot sell a card for cash (or a debtor could swap
+// its cash for a card and Pay into a bankruptcy that hands its creditor the card).
+function debtValueOf(state: MonopolyState, side: TradeSide, jailCardValue: number): number {
+	let value = side.chips + side.gojf * jailCardValue;
 	for (const tileId of side.properties) {
 		const tile = findOwnableTile(tileId);
 		if (tile && !state.properties[tile.id].mortgaged) value += tile.mortgage;

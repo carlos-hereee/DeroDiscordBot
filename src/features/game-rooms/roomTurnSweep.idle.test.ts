@@ -197,3 +197,16 @@ describe("sweepIdleRooms", () => {
 		quiet.mockRestore();
 	});
 });
+
+// ── a match whose ending was saved (2026-10 item 280) ─────────────────
+// A Battleship match whose winning shot was saved but never finished is the turn sweep's to finish
+// as the shot's win. Abandoning it here split the wager 50/50 and rated nobody.
+describe("sweepIdleRooms with a match whose ending was saved", () => {
+	it("never abandons a Battleship match the secret already ended", async () => {
+		const secret = { status: "finished", winnerId: "host", players: [], turn: 0, missedTurns: [0, 0] };
+		storeMock.findNonTerminal.mockResolvedValue([makeRoom({ game: "battleship", secret: secret as never, updatedAt: ago(45) })]);
+
+		expect(await sweepIdleRooms(client, NOW)).toEqual({ roomsAbandoned: 0 });
+		expect(finishMock).not.toHaveBeenCalled();
+	});
+});
