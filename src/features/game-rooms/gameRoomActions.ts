@@ -163,6 +163,12 @@ export const GAME_ROOM_ACTIONS = {
 	// takes a seat through `hjoin`, the same door as Buy in.
 	hseats: { hostOnly: true, playersOnly: false },
 
+	// ── blackjack ──
+	// Join a ranked Blackjack table while it deals (2026-10 item 276, owner decision D14), from its
+	// open challenge card. Like `hjoin`, it is how you BECOME a player, so it cannot be
+	// playersOnly; and it is no draft action, since the card it rides is open after Start.
+	bjoin: { hostOnly: false, playersOnly: false },
+
 	// ── monopoly (2026-10 item 241) ──
 	// Every one is playersOnly and none is hostOnly: the host is just another seat,
 	// and the handler still checks the clicker is the seat on the clock, because

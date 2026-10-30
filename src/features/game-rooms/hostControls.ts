@@ -26,6 +26,8 @@ import { redrawTable, removeFromTable, seatAcceptedPlayer } from "./roomHoldemHa
 import { refundJoiners } from "./holdemDraftBuyIn.js";
 import { monopolyStateOf, removeFromMonopolyMatch } from "./roomMonopolyHandlers.js";
 import { seatAcceptedRemotePlayer } from "./networkJoin.js";
+import { redrawTableCard, seatAcceptedBlackjackPlayer } from "./blackjackLateSeat.js";
+import { isSharedBlackjackTable } from "./chipMatch.js";
 import { RATING_BANDS, SPECTATOR_MODES, type RatingBand, type SpectatorMode } from "./roomTypes.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
 import { botSeatName, isBotSeatId } from "./botSeat.js";
@@ -210,9 +212,9 @@ export async function applyApproval(room: IGameRoom, choice: string): Promise<Dr
 	return { ok: true, room: (await gameRoomStore.update(room.guildId, room.roomId, { requireApproval: choice === "on" })) ?? room };
 }
 
-// Requests can be answered while a draft gathers, and at a Hold'em table, the one room
-// a member can still ask to join once it is open.
-const canAnswerRequests = (room: IGameRoom): boolean => room.status === "draft" || (room.game === "holdem" && room.status === "playing");
+// Requests can be answered while a draft gathers, and at the two tables a member can still ask
+// to join once they deal: Hold'em, and a ranked Blackjack table (2026-10 item 276, D14).
+const canAnswerRequests = (room: IGameRoom): boolean => room.status === "draft" || (room.status === "playing" && (room.game === "holdem" || isSharedBlackjackTable(room)));
 
 /**
  * The Requests button: a panel with an Accept and a Decline select over everyone waiting,
@@ -291,15 +293,24 @@ async function acceptRequests(interaction: StringSelectMenuInteraction, room: IG
 		if (!admitted) continue;
 		accepted.push(userId);
 		latest = admitted;
+		const username = (await memberOptions(interaction.guild!, [userId]))[0]?.label ?? userId;
 		const refusal = origin
 			? await seatAcceptedRemotePlayer(interaction.client, admitted, userId, origin.guildId)
-			: await seatAcceptedPlayer(interaction.client, admitted, userId, (await memberOptions(interaction.guild!, [userId]))[0]?.label ?? userId);
+			: await seatAcceptedAtTable(interaction.client, admitted, userId, username);
 		if (refusal) lines.push(words.approval.acceptedNotSeated(userId, refusal));
 	}
 	// A seat that landed redrew the table already; this catches the Requests count when none did.
-	await redrawTable(interaction.client, (await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? latest);
+	// A Blackjack table's Requests button is on its open card, so that is what redraws.
+	const fresh = (await gameRoomStore.findByRoomId(room.guildId, room.roomId)) ?? latest;
+	if (fresh.game === "blackjack") await redrawTableCard(interaction.client, fresh);
+	else await redrawTable(interaction.client, fresh);
 	await tellJoiners(interaction, room, accepted, "accepted");
 	return [words.approval.accepted(accepted.length), ...lines].join("\n");
+}
+
+// An accepted member takes their seat through their game's own late seat door, as their press would.
+function seatAcceptedAtTable(client: Client, room: IGameRoom, userId: string, username: string): Promise<string | null> {
+	return room.game === "blackjack" ? seatAcceptedBlackjackPlayer(client, room, userId, username) : seatAcceptedPlayer(client, room, userId, username);
 }
 
 async function acceptIntoPool(interaction: StringSelectMenuInteraction, room: IGameRoom, userIds: string[]): Promise<string> {
@@ -352,6 +363,7 @@ async function tellJoiners(interaction: StringSelectMenuInteraction, room: IGame
 // After a request is answered: the draft's card, or the Hold'em table, shows the new count.
 async function refreshRoomControls(interaction: StringSelectMenuInteraction, room: IGameRoom): Promise<void> {
 	if (room.status === "draft") await refreshDraftCard(interaction.guild!, room);
+	else if (room.game === "blackjack") await redrawTableCard(interaction.client, room);
 	else await redrawTable(interaction.client, room);
 }
 

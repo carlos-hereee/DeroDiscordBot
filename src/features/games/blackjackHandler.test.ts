@@ -12,6 +12,9 @@ import { TextChannel as TextChannelClass, type ButtonInteraction, type ChatInput
 const mocks = vi.hoisted(() => ({ awardBlackjackResult: vi.fn() }));
 // The slash command's answer reads the server's config for 💬dero-commands; none stored keeps
 // these tests on the private fallback with no database.
+// The shoe shuffles with secureRandom (2026-10 item 276, D15); routed through Math.random here so
+// the Math.random spies below still stack the deal.
+vi.mock("@utils/secureRng.js", () => ({ secureRandom: () => Math.random() }));
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn(async () => null) } }));
 vi.mock("./gameXp.js", () => ({ awardBlackjackResult: mocks.awardBlackjackResult }));
 

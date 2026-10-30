@@ -116,7 +116,9 @@ describe("the options", () => {
 		const options = (fieldOf(modalJson("blackjack"), "match")?.options ?? []) as Array<{ value: string; description?: string }>;
 		expect(options.map((option) => option.value)).toEqual(["rated-any", "rated-close", "rated-tight", "casual"]);
 		const described = (value: string): string => options.find((option) => option.value === value)?.description ?? "";
-		expect(described("rated-any")).toContain("plays for the chip buy in");
+		// A ranked table is shared (2026-10 item 276, D13 and D14): two players or more, others sit down mid game.
+		expect(described("rated-any")).toContain("For the chip buy in: two players or more");
+		expect(described("rated-any")).toContain("sit down mid game");
 		expect(described("casual")).toContain("free");
 		// Monopoly's fixed pot and Battleship's wager (2026-10 item 276, D4 and D10) say so on Rated
 		// alone; every description fits Discord's 100 characters.

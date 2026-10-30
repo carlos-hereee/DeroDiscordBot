@@ -13,6 +13,7 @@ import type { GameSlug, SoloLuckSlug } from "./roomTypes.js";
 import { playSoloLuckRoom } from "./soloLuckRoom.js";
 import { draftBuyInOf, refundSeatsDirectly, type PaidSeats } from "./holdemDraftBuyIn.js";
 import { openBlackjackLedger } from "./blackjackChips.js";
+import { isSharedBlackjackTable } from "./chipMatch.js";
 
 // ── soloRooms ────────────────────────────────────────────────────────
 // What:  the one-player path into a room: "Host Hangman", "Play Blackjack" and the
@@ -187,7 +188,8 @@ async function dealRoomTable(
 		await roomLifecycle.finish(guild.client, room, { abandoned: true });
 		return false;
 	}
-	const started = await startBlackjackTable(channel, guild.id, host, true, room.roomId, others, { buyIn: seats.buyIn, chips: seats.charged }, room.network ?? false);
+	// A ranked table is shared (2026-10 item 276, D14): its card stays open and it takes late seats.
+	const started = await startBlackjackTable(channel, guild.id, host, true, room.roomId, others, { buyIn: seats.buyIn, chips: seats.charged }, room.network ?? false, isSharedBlackjackTable(room));
 	if (started === "started") return true;
 
 	// The room exists and its board does not, so the host would hold their one room

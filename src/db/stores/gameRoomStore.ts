@@ -372,6 +372,19 @@ export const gameRoomStore = {
 		return GameRoom.findOneAndUpdate({ guildId, roomId }, { $set: set }, { new: true, arrayFilters });
 	},
 
+	// A member sits down at a ranked Blackjack table while it plays (2026-10 item 276, D14): their
+	// ledger entry (a chip table's; null at a free one) and their playerIds place in ONE write, so
+	// the seat and the permission that follows it never disagree. It matches only a playing room
+	// the member was not removed from and holds no entry for yet, so a finish that claimed the row
+	// first, a removal, or a second write for the same member applies nothing (null).
+	async addLateBlackjackSeat(guildId: string, roomId: string, userId: string, entry: BlackjackStackEntry | null) {
+		return GameRoom.findOneAndUpdate(
+			{ guildId, roomId, status: "playing", kickedIds: { $ne: userId }, "blackjackStacks.userId": { $ne: userId } },
+			{ $addToSet: { playerIds: userId }, ...(entry ? { $push: { blackjackStacks: entry } } : {}) },
+			{ new: true }
+		);
+	},
+
 	// Claim one seat's cash out: the entry as it stood, or null when it was already claimed.
 	// Whoever gets the entry pays the chips, so a leave racing a finish pays once.
 	async takeBlackjackStack(guildId: string, roomId: string, userId: string): Promise<BlackjackStackEntry | null> {

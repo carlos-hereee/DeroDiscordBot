@@ -344,6 +344,9 @@ export const BOT_CONSTANTS = {
 	// All in (owner decision 6 of 2026-10 item 267). Rounded down to whole chips, at least
 	// one chip, never above the seat's stack.
 	BLACKJACK_BET_PERCENTS: [5, 10, 25] as readonly number[],
+	// The fewest human seats a ranked Blackjack card may Start with (2026-10 item 276, owner
+	// decision D13): a ranked table is a shared table, and a table against Dero alone is casual.
+	BLACKJACK_RANKED_MIN_SEATS: 2,
 	// How long a settled hand stays on the board before the next one deals itself, stays on the board before the next one deals itself,
 	// counted the same way. The host's Next hand button deals at once instead. Also
 	// the owner's number (item 13). Checked on the clock tick below, so the deal lands

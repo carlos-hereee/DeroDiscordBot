@@ -207,6 +207,10 @@ export interface OpenerCardState {
 	// True while the host's Start counts the match in (2026-10 item 267 decision 13,
 	// startCountdown.ts), which the card says above everything else it gathers.
 	countingDown?: boolean;
+	// A ranked Blackjack table playing with its card still open (2026-10 item 276, D14): the
+	// seats held out of the most it holds. Set only beside startedChannelId, and only by
+	// challengeCard.tableCardState; the pool then names the players at the table.
+	tableSeats?: { taken: number; max: number } | null;
 }
 
 /** The draft's host controls the card shows: the band, approval, and how many wait for an answer. */
@@ -239,6 +243,9 @@ export function openerCardEmbed(state: OpenerCardState, imageRef?: string, logoR
 		lines.push(state.resultLine);
 	} else if (state.cancelled) {
 		lines.push(gameRoomsCopy.board.cardCancelled(state.hostId));
+	} else if (state.startedChannelId && state.tableSeats) {
+		lines.push(gameRoomsCopy.board.cardTablePlaying(state.startedChannelId), gameRoomsCopy.board.cardTableSeats(state.tableSeats.taken, state.tableSeats.max));
+		lines.push("", gameRoomsCopy.board.cardPool(state.pool, POOL_NAMES_SHOWN), ...stakeLines(state));
 	} else if (state.startedChannelId) {
 		lines.push(gameRoomsCopy.board.cardStarted(state.startedChannelId));
 	} else if (!state.visibility) {
@@ -418,7 +425,8 @@ function editSettingsButton(roomId: string): ButtonBuilder {
 // Edit settings. Their routes stay registered in gameRoomHandlers, so a card posted before the
 // change still works until its next redraw, which shows these rows.
 export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[] {
-	if (state.cancelled || state.startedChannelId || state.resultLine) return [];
+	if (state.cancelled || state.resultLine) return [];
+	if (state.startedChannelId) return state.tableSeats ? openTableRows(roomId, state, state.tableSeats) : [];
 
 	const cancel = new ButtonBuilder()
 		.setCustomId(`${GAME_ROOM_PREFIX}:cancel:${roomId}`)
@@ -474,6 +482,35 @@ export function openerCardRows(roomId: string, state: OpenerCardState): CardRow[
 	const controls = state.hostControls;
 	if (!controls) return [gatherRow];
 	return [gatherRow, hostControlRow(roomId, state, controls)];
+}
+
+// A ranked Blackjack table's card while it plays (2026-10 item 276, D14): Join takes an empty
+// seat (action `bjoin`, blackjackLateSeat), disabled as a hint once every seat is held, and the
+// host's Requests while they approve each joiner or somebody still waits. An Invite only table
+// takes no stranger, so its open card shows the seats and offers no Join.
+function openTableRows(roomId: string, state: OpenerCardState, seats: { taken: number; max: number }): CardRow[] {
+	const buttons: ButtonBuilder[] = [];
+	if (state.visibility === "public") {
+		buttons.push(
+			new ButtonBuilder()
+				.setCustomId(`${GAME_ROOM_PREFIX}:bjoin:${roomId}`)
+				.setLabel(gameRoomsCopy.board.tableJoinLabel)
+				.setEmoji("🙋")
+				.setStyle(ButtonStyle.Success)
+				.setDisabled(seats.taken >= seats.max)
+		);
+	}
+	const controls = state.hostControls;
+	if (controls && showsJoinControls(state) && (controls.requireApproval || controls.pendingJoinCount > 0)) {
+		buttons.push(
+			new ButtonBuilder()
+				.setCustomId(`${GAME_ROOM_PREFIX}:requests:${roomId}`)
+				.setLabel(hostWords.approval.requestsLabel(controls.pendingJoinCount))
+				.setEmoji("📨")
+				.setStyle(ButtonStyle.Secondary)
+		);
+	}
+	return buttons.length > 0 ? [new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(...buttons)] : [];
 }
 
 /** The card actions that switch an on or off draft setting; challengeBoard maps each to its row field. */

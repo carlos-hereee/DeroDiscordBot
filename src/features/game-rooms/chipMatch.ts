@@ -26,6 +26,16 @@ export function movesChips(match: ChipMatch, botCount: number): boolean {
 	return isRankedMatch(match.game, botCount, match.casual ?? false) && !match.network;
 }
 
+/**
+ * Whether a Blackjack match is a shared table (2026-10 item 276, owner decisions D13 and D14): a
+ * ranked match, so it needs BLACKJACK_RANKED_MIN_SEATS human seats to Start and its card stays
+ * open while it plays, taking late seats. Beside movesChips because both read the one ranked rule;
+ * a shared table on a server with chips off still shares, on a pretend stack.
+ */
+export function isSharedBlackjackTable(match: ChipMatch): boolean {
+	return match.game === "blackjack" && isRankedMatch(match.game, 0, match.casual ?? false) && !match.network;
+}
+
 /** How a buy in game's stake reads: a table's buy in, Monopoly's winner takes all buy in, or Battleship's wager. */
 export type StakeKind = "buyIn" | "pot" | "wager";
 

@@ -261,3 +261,37 @@ describe("the opener card's badge line", () => {
 		expect(firstLine({ ...base, resultLine: "done" })).toBe(gameRoomsCopy.board.badgeLine("rated", "battleship"));
 	});
 });
+
+// ── a dealing ranked Blackjack table keeps its card open (2026-10 item 276, D14) ────────────
+describe("an open table's card", () => {
+	const open: OpenerCardState = { game: "blackjack", hostId: "host-1", visibility: "public", pool: ["p2"], startedChannelId: "room-ch", tableSeats: { taken: 2, max: 5 }, holdemBuyIn: 2500 };
+	const customIdsOf = (state: OpenerCardState): string[] =>
+		openerCardRows("room-1", state).flatMap((row) => row.toJSON().components.map((component) => ("custom_id" in component ? component.custom_id : "")));
+	const joinOf = (state: OpenerCardState) => openerCardRows("room-1", state)[0]?.toJSON().components[0] as { custom_id: string; disabled?: boolean } | undefined;
+
+	it("says the table is dealing, its seats taken, who sits and what a seat costs", () => {
+		const description = openerCardEmbed(open).data.description ?? "";
+		expect(description).toContain(gameRoomsCopy.board.cardTablePlaying("room-ch"));
+		expect(description).toContain(gameRoomsCopy.board.cardTableSeats(2, 5));
+		expect(description).toContain("<@p2>");
+		expect(description).toContain(gameRoomsCopy.board.cardBuyIn(2500));
+	});
+
+	it("offers Join while a seat is free, disabled once every seat is held", () => {
+		expect(customIdsOf(open)).toEqual([`${GAME_ROOM_PREFIX}:bjoin:room-1`]);
+		expect(joinOf(open)?.disabled).toBe(false);
+		expect(joinOf({ ...open, tableSeats: { taken: 5, max: 5 } })?.disabled).toBe(true);
+	});
+
+	it("offers the host's Requests while they approve joiners, and no Join on an Invite only table", () => {
+		const approving = { ...open, hostControls: { ratingBand: "any" as const, requireApproval: true, pendingJoinCount: 1, spectatorMode: "open" as const } };
+		expect(customIdsOf(approving)).toEqual([`${GAME_ROOM_PREFIX}:bjoin:room-1`, `${GAME_ROOM_PREFIX}:requests:room-1`]);
+		expect(customIdsOf({ ...open, visibility: "invite" })).toEqual([]);
+	});
+
+	it("closes like every card once it has a result, and a started card without seats offers nothing", () => {
+		expect(openerCardRows("room-1", { ...open, resultLine: "over" })).toEqual([]);
+		expect(openerCardRows("room-1", { ...open, tableSeats: null })).toEqual([]);
+		expect(openerCardEmbed({ ...open, resultLine: "over" }).data.description).not.toContain(gameRoomsCopy.board.cardTableSeats(2, 5));
+	});
+});

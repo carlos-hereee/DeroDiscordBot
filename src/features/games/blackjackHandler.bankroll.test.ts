@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Dero's variant lines always pick the first, so these tests read exact words.
+// The shoe shuffles with secureRandom (2026-10 item 276, D15); routed through Math.random here so
+// the Math.random spies below still stack the deal.
+vi.mock("@utils/secureRng.js", () => ({ secureRandom: () => Math.random() }));
 vi.mock("@utils/pickLine.js", () => ({ pickLine: <Line>(lines: readonly Line[]): Line => lines[0] as Line }));
 import type { ButtonInteraction, Client, TextChannel } from "discord.js";
 
@@ -37,13 +40,28 @@ vi.mock("@utils/answerInChannel.js", () => ({ answerInChannel: vi.fn(async () =>
 vi.mock("./gameXp.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./gameXp.js")>()), awardBlackjackResult: vi.fn(), awardBlackjackTableCoins: vi.fn() }));
 // The rating write has its own suite (recordMatchRatings.test.ts); here it is what the end asks for.
 vi.mock("@features/ratings/recordMatchRatings.js", () => ({ recordHouseTableRatings: vi.fn(async () => undefined) }));
+// A shared table's open card (2026-10 item 276, D14) has its own suite (challengeCard); here it is what the table asks for.
+vi.mock("@features/game-rooms/challengeCard.js", () => ({ refreshTableCard: vi.fn(async () => undefined) }));
 vi.mock("./blackjackRenderer.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("./blackjackRenderer.js")>()),
 	renderBlackjackTableCard: vi.fn(async () => null),
 	renderBlackjackResultCard: vi.fn(async () => null),
 }));
 
-import { _activeBlackjackGameCount, _blackjackTableOf, _clearBlackjackGames, blackjackTurnAdapter, confirmBlackjackLeave, leaveBlackjackRoomSeat, startBlackjackTable } from "./blackjackHandler.js";
+import {
+	_activeBlackjackGameCount,
+	_blackjackTableOf,
+	_clearBlackjackGames,
+	blackjackTurnAdapter,
+	confirmBlackjackLeave,
+	holdLateSeat,
+	lateSeatRefusalOf,
+	leaveBlackjackRoomSeat,
+	payLateSeat,
+	sharedTableSeatsOf,
+	startBlackjackTable,
+} from "./blackjackHandler.js";
+import { refreshTableCard } from "@features/game-rooms/challengeCard.js";
 import type { Card, Rank } from "./blackjackState.js";
 import { gamesCopy } from "./gamesCopy.js";
 import { awardBlackjackResult, awardBlackjackTableCoins } from "./gameXp.js";
@@ -505,4 +523,107 @@ it("answers a Leave from somebody with no seat with a notice, and moves nothing"
 	await flush();
 	expect(stranger.showModal.mock.calls.length + stranger.reply.mock.calls.length).toBe(1);
 	expect(cashOutMock).not.toHaveBeenCalled();
+});
+
+// ── a ranked table is shared (2026-10 item 276, owner decisions D14 and D16) ──────────────────
+// A member who presses Join on the open card holds a seat here, synchronously, before any chip
+// moves (blackjackLateSeat charges and writes the ledger between the hold and payLateSeat); a
+// paid seat is dealt in at the next hand's bets, never mid hand, and a table whose last seat
+// leaves deals on for a seat that waited.
+describe("late seats at a shared table", () => {
+	const CAROL = { userId: "carol", username: "Carol" };
+	const DAVE = { userId: "dave", username: "Dave" };
+	const ERIN = { userId: "erin", username: "Erin" };
+	const FRANK = { userId: "frank", username: "Frank" };
+	const cardMock = refreshTableCard as unknown as ReturnType<typeof vi.fn>;
+	const shared = (room: ReturnType<typeof fakeRoom>, others = [BOB]) => startBlackjackTable(room.channel, "g1", ALICE, true, "room-1", others, CHIP_TABLE, false, true);
+	const seatIds = () => table().seats.map((seat) => seat.userId);
+
+	it("deals a paid late seat in at the next hand's bets, never the hand in play, and rates it on its own hands", async () => {
+		const room = fakeRoom();
+		await shared(room);
+		expect(holdLateSeat("ch-1", CAROL)).toEqual({ ok: true, buyIn: 1000, chips: true });
+		expect(payLateSeat("ch-1", CAROL.userId, room.client)).toBe(true);
+		await flush();
+		// The open card shows the seat at once, three of five.
+		expect(cardMock).toHaveBeenLastCalledWith(room.client, roomRow.current, { userIds: [ALICE.userId, BOB.userId, CAROL.userId], max: 5 });
+
+		table().shoe = cards(["10", "10", "10", "9", "7", "8"]);
+		await bet(ALICE.userId, 100);
+		await bet(BOB.userId, 100);
+		// Hand 1 is in play without Carol.
+		expect(seatIds()).toEqual([ALICE.userId, BOB.userId]);
+		await act(ALICE.userId, "stand");
+		await act(BOB.userId, "stand");
+
+		// Hand 2 opens on its bets with Carol seated last, at the buy in.
+		expect(seatIds()).toEqual([ALICE.userId, BOB.userId, CAROL.userId]);
+		expect(table().seats[2]).toMatchObject({ stack: 1000, out: null });
+		expect(moves.recorded.map((move) => move.text)).toContain(gamesCopy.blackjack.lateSeatDealtTrail(CAROL.userId));
+
+		// Everyone leaves before Carol plays a hand: she is rated on her own hands, so she is left out.
+		await leaveBlackjackRoomSeat("ch-1", ALICE.userId);
+		await leaveBlackjackRoomSeat("ch-1", BOB.userId);
+		await leaveBlackjackRoomSeat("ch-1", CAROL.userId);
+		await vi.waitFor(() => expect(rateMock).toHaveBeenCalledOnce());
+		expect(rateMock.mock.calls[0][2]).toEqual([CAROL.userId]);
+		expect(rateMock.mock.calls[0][3]).toEqual({ rated: true });
+	});
+
+	it("refuses a second hold, a full table, a member who played here before and a table that takes no late seats", async () => {
+		const room = fakeRoom();
+		await shared(room, [BOB, CAROL, DAVE]);
+		expect(holdLateSeat("ch-1", ERIN).ok).toBe(true);
+		// A double press meets the hold before any chip moves.
+		expect(holdLateSeat("ch-1", ERIN)).toEqual({ ok: false, refusal: "alreadySeated" });
+		expect(holdLateSeat("ch-1", FRANK)).toEqual({ ok: false, refusal: "full" });
+		expect(lateSeatRefusalOf("ch-1", ALICE.userId)).toBe("alreadySeated");
+		await leaveBlackjackRoomSeat("ch-1", DAVE.userId);
+		expect(lateSeatRefusalOf("ch-1", DAVE.userId)).toBe("alreadyPlayed");
+		expect(sharedTableSeatsOf("ch-1")).toEqual({ userIds: [ALICE.userId, BOB.userId, CAROL.userId, ERIN.userId], max: 5 });
+
+		_clearBlackjackGames();
+		const casual = fakeRoom();
+		await startBlackjackTable(casual.channel, "g1", ALICE, true, "room-1", [BOB], CHIP_TABLE);
+		expect(holdLateSeat("ch-1", ERIN)).toEqual({ ok: false, refusal: "noTable" });
+		expect(sharedTableSeatsOf("ch-1")).toBeNull();
+	});
+
+	it("gives a late seat that leaves before its first hand its whole buy in back, with no confirm", async () => {
+		const room = fakeRoom();
+		await shared(room);
+		holdLateSeat("ch-1", CAROL);
+		payLateSeat("ch-1", CAROL.userId, room.client);
+
+		const leave = press("leave", CAROL.userId, room.client);
+		room.click(leave);
+		await vi.waitFor(() => expect(cashOutMock).toHaveBeenCalledOnce());
+		expect(cashOutMock).toHaveBeenCalledWith(ROOM, CAROL.userId, 1000);
+		expect(leave.showModal).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(answerInChannel).toHaveBeenCalledWith(leave, "here", { content: gamesCopy.blackjack.leftWithChips(1000) }));
+		expect(sharedTableSeatsOf("ch-1")?.userIds).toEqual([ALICE.userId, BOB.userId]);
+	});
+
+	it("deals on for a late seat that waited when every seat leaves during the bets (D16)", async () => {
+		const room = fakeRoom();
+		await shared(room);
+		holdLateSeat("ch-1", CAROL);
+		payLateSeat("ch-1", CAROL.userId, room.client);
+
+		await leaveBlackjackRoomSeat("ch-1", ALICE.userId);
+		await leaveBlackjackRoomSeat("ch-1", BOB.userId);
+
+		expect(finishMock).not.toHaveBeenCalled();
+		expect(table().phase).toBe("betting");
+		expect(blackjackTurnAdapter.whoseTurn(roomOf)).toBe(CAROL.userId);
+	});
+
+	it("ends the table when its last seat leaves and only an unpaid hold waits, and refuses to pay that hold after", async () => {
+		const room = fakeRoom();
+		await shared(room, []);
+		holdLateSeat("ch-1", CAROL);
+		await leaveBlackjackRoomSeat("ch-1", ALICE.userId);
+		await vi.waitFor(() => expect(finishMock).toHaveBeenCalledOnce());
+		expect(payLateSeat("ch-1", CAROL.userId, room.client)).toBe(false);
+	});
 });

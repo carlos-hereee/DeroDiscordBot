@@ -126,7 +126,8 @@ describe("a multi seat blackjack room's table", () => {
 
 	it("seats every seat the card filled, the host first, and opens at once for what they paid", async () => {
 		tableMock.mockResolvedValue("started");
-		const room = { ...ROOM, playerIds: ["host-1", "p2", "p3", "p4"] } as unknown as IGameRoom;
+		// A ranked card's table (no casual flag), so it is the shared table that takes late seats (2026-10 item 276, D14).
+		const room = { ...ROOM, game: "blackjack", playerIds: ["host-1", "p2", "p3", "p4"] } as unknown as IGameRoom;
 		const guild = makeGuild();
 		(guild.members.cache as Map<string, unknown>).set("host-1", { displayName: "Host" });
 		// p4 is a player who never paid on the card (an invited member who did not accept), so no seat.
@@ -148,7 +149,8 @@ describe("a multi seat blackjack room's table", () => {
 				{ userId: "p3", username: "p3" },
 			],
 			{ buyIn: 2500, chips: true },
-			false
+			false,
+			true
 		);
 	});
 

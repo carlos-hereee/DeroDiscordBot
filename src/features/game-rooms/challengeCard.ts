@@ -20,8 +20,10 @@ import { startCountdownState } from "./startCountdownState.js";
 //        2026-10 item 263 Phase 2a only when the match is not casual), building its
 //        state from the room row, and editing it in place with its picture. It decides
 //        nothing about the challenge itself.
-// Who:   challengeBoard, at every step of a draft, and roomLifecycle.finish, which
-//        closes the card with the match's result (post-launch plan item 21).
+// Who:   challengeBoard, at every step of a draft, roomLifecycle.finish, which
+//        closes the card with the match's result (post-launch plan item 21), and
+//        blackjackHandler, whose ranked table keeps its card open while it plays (2026-10
+//        item 276, D14) and redraws its seats here (refreshTableCard).
 // Where: its own module because finish needs it and challengeBoard imports
 //        roomLifecycle, so leaving these in challengeBoard would make finish import
 //        its own importer.
@@ -174,6 +176,16 @@ export async function refreshCard(guild: Guild, room: IGameRoom, state: OpenerCa
 // dropped: the newer one carries the newer state.
 const cardGenerations = new Map<string, number>();
 
+// ⚠️ A CLOSED CARD STAYS CLOSED. A ranked Blackjack table keeps its card open while it plays
+// (D14), so its seat redraws can still be rendering when finish closes the card; a redraw begun
+// after the close would otherwise draw the table open again, with a live Join, under a finished
+// match. Every card that reached a final state is remembered here, memory only like the
+// generations, and an open state is never drawn over it.
+const closedCards = new Set<string>();
+
+/** Whether a card state is final: called off, started with no table that takes late seats, or finished. */
+const isFinalCardState = (state: OpenerCardState): boolean => Boolean(state.cancelled || state.resultLine || (state.startedChannelId && !state.tableSeats));
+
 export type EditableCard = { edit(options: MessageEditOptions): Promise<unknown> };
 
 export async function editOpenerCard(guild: Guild, roomId: string, message: EditableCard, state: OpenerCardState): Promise<void> {
@@ -184,8 +196,13 @@ export async function editOpenerCard(guild: Guild, roomId: string, message: Edit
 		() => null
 	);
 	if (cardGenerations.get(roomId) !== generation) return;
-	// A cancelled or started card is never edited again, so its counter can go.
-	if (state.cancelled || state.startedChannelId || state.resultLine) cardGenerations.delete(roomId);
+	const final = isFinalCardState(state);
+	if (!final && closedCards.has(roomId)) return;
+	// A final card is never edited again, so its counter can go.
+	if (final) {
+		cardGenerations.delete(roomId);
+		closedCards.add(roomId);
+	}
 	const card = isRenderPayload(picture) ? picture : null;
 	// The picture leads with the game's logo; without it the text card carries the
 	// logo as its thumbnail instead (openerCardEmbed).
@@ -222,6 +239,29 @@ export async function closeChallengeCard(client: Client, room: IGameRoom, result
 	} catch (error) {
 		console.warn("[game-rooms] could not close the challenge card", { roomId: room.roomId, error });
 	}
+}
+
+/**
+ * Redraw a ranked Blackjack table's open card with the seats it holds now (2026-10 item 276,
+ * D14): the table playing, the seats taken out of the most it holds, its players as faces and
+ * Join while a seat is free. Refuses a room that is no longer playing, so only finish closes the
+ * card. Cosmetic and logged on failure, like every card edit.
+ */
+export async function refreshTableCard(client: Client, room: IGameRoom, seats: { userIds: readonly string[]; max: number }): Promise<void> {
+	if (!room.boardMessageId || room.status !== "playing" || !room.channelId) return;
+	try {
+		const guild = client.guilds.cache.get(room.guildId) ?? (await client.guilds.fetch(room.guildId).catch(() => null));
+		if (!guild) return;
+		await refreshCard(guild, room, tableCardState(room, room.channelId, seats));
+	} catch (error) {
+		console.warn("[game-rooms] could not redraw the open table card", { roomId: room.roomId, error });
+	}
+}
+
+/** The open card of a table playing in `channelId` with `seats` held: the one shape its first draw at Start and every redraw use. */
+export function tableCardState(room: IGameRoom, channelId: string, seats: { userIds: readonly string[]; max: number }): OpenerCardState {
+	const pool = seats.userIds.filter((userId) => userId !== room.hostId);
+	return cardStateFor(room, { visibility: room.visibility, pool, startedChannelId: channelId, tableSeats: { taken: seats.userIds.length, max: seats.max } });
 }
 
 /** What the closed card says about how the match ended, as finish knows it. */

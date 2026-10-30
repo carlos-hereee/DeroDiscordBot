@@ -21,7 +21,7 @@ import { errorEmbed } from "@utils/embedBuilder.js";
 import { isGone } from "@utils/discordGone.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { MAX_SEATS as MONOPOLY_MAX_SEATS } from "@features/games/monopolyBoard.js";
-import { MAX_SEATS as BLACKJACK_MAX_SEATS } from "@features/games/blackjackHandler.js";
+import { MAX_SEATS as BLACKJACK_MAX_SEATS, sharedTableSeatsOf } from "@features/games/blackjackHandler.js";
 import { checkGameRoomAccess, gameRoomUpgradeEmbed } from "@features/entitlements/gameRoomAccess.js";
 import {
 	RoomProvisioner,
@@ -60,7 +60,8 @@ import {
 import { isBlackjackRoomGame, isBuyInGame, isSoloLuckGame, isSoloRematchGame, refereeOn, type GameSlug, type RoomVisibility } from "./roomTypes.js";
 import { effectiveSpectatorMode } from "./roomPermissions.js";
 import { seatRangeOf, seatsFit } from "./seatRange.js";
-import { cardStateFor, challengeCardLink, editOpenerCard, readChallengeChannelIds, refreshCard, resolveChallengesChannel, type ChallengeChannelIds } from "./challengeCard.js";
+import { cardStateFor, challengeCardLink, editOpenerCard, readChallengeChannelIds, refreshCard, resolveChallengesChannel, tableCardState, type ChallengeChannelIds } from "./challengeCard.js";
+import { isSharedBlackjackTable } from "./chipMatch.js";
 import { asChallengeReach, isWithinReach, readChallengeReach } from "./challengeReach.js";
 import { isKicked, judgeJoin } from "./joinGate.js";
 import {
@@ -1059,6 +1060,7 @@ function startRefusal(room: IGameRoom): string | null {
 // seats only its payers (2026-10 item 276, D4), so it is refused the same way when too few paid.
 async function startSeatRefusal(room: IGameRoom): Promise<string | null> {
 	if (room.game === "monopoly") return monopolyPaidSeatRefusal(room);
+	if (room.game === "blackjack") return blackjackRankedSeatRefusal(room);
 	if (room.game !== "holdem") return null;
 	const seats = await seatsAtStart(room, room.spectatorIds ?? []);
 	if (seats > BOT_CONSTANTS.HOLDEM_MAX_SEATS) return gameRoomsCopy.holdem.startTooManySeats(BOT_CONSTANTS.HOLDEM_MAX_SEATS, seats);
@@ -1072,6 +1074,17 @@ async function monopolyPaidSeatRefusal(room: IGameRoom): Promise<string | null> 
 	const seats = await seatsAtStart(room, room.spectatorIds ?? []);
 	const fewest = seatRangeOf("monopoly").min;
 	return seats < fewest ? gameRoomsCopy.monopoly.tooFewPaid(fewest, seats) : null;
+}
+
+// A ranked Blackjack table is shared, never solo (2026-10 item 276, owner decision D13): its Start
+// needs BLACKJACK_RANKED_MIN_SEATS human seats, counted the way the table seats them (seatsAtStart:
+// the host and the payers on a chip table, the host and the pool on a free one). A casual table
+// starts with anyone, and a table against Dero alone is the 🕹️games intro's free solo table.
+async function blackjackRankedSeatRefusal(room: IGameRoom): Promise<string | null> {
+	if (!isSharedBlackjackTable(room)) return null;
+	const seats = await seatsAtStart(room, room.spectatorIds ?? []);
+	const fewest = BOT_CONSTANTS.BLACKJACK_RANKED_MIN_SEATS;
+	return seats < fewest ? gameRoomsCopy.board.blackjackRankedTooFew(fewest, seats) : null;
 }
 
 // Whether the host must choose who plays: more than one candidate in a head to head game.
@@ -1271,10 +1284,13 @@ async function provisionFromDraft(
 	if (answer.channelId === null) await answer.send({ content: gameRoomsCopy.board.cardStarted(result.channel.id) });
 	// A network table is now playing and taking players, which is what the board lists.
 	if (room.network) scheduleNetworkBoardRefresh();
+	// A ranked Blackjack table keeps its card open while it deals (2026-10 item 276, D14), showing
+	// its seats with Join; every other card says the match is under way and offers nothing more.
+	const tableSeats = room.game === "blackjack" ? sharedTableSeatsOf(result.channel.id) : null;
 	await refreshCard(
 		guild,
 		result.room,
-		cardStateFor(result.room, { visibility: room.visibility, pool: [], startedChannelId: result.channel.id })
+		tableSeats ? tableCardState(result.room, result.channel.id, tableSeats) : cardStateFor(result.room, { visibility: room.visibility, pool: [], startedChannelId: result.channel.id })
 	);
 }
 
@@ -1390,6 +1406,10 @@ async function checkRematch(interaction: ButtonInteraction, room: IGameRoom): Pr
 		const range = seatRangeOf(room.game);
 		return { ok: false, reply: { content: gameRoomsCopy.errors.rematchSeats(range.min, range.max, seats) } };
 	}
+	// A ranked Blackjack table is shared, never solo (2026-10 item 276, D13), so its rematch needs
+	// as many players as its Start did.
+	const fewest = BOT_CONSTANTS.BLACKJACK_RANKED_MIN_SEATS;
+	if (isSharedBlackjackTable(room) && seats < fewest) return { ok: false, reply: { content: gameRoomsCopy.board.blackjackRankedTooFew(fewest, seats) } };
 
 	const admission = await checkRoomAdmission({ guild: interaction.guild!, hostId: interaction.user.id, visibility: room.visibility });
 	// Every admission refusal (one room per host, a full server, the private ceiling, the
@@ -1500,6 +1520,15 @@ async function playRematchInPlace(interaction: ButtonInteraction, finished: IGam
 	}
 	if (next.game === "blackjack" && charge.seats) {
 		charge.seats = await seatRematchPlayers(interaction.client, started, charge.seats);
+		// A returning player who could not pay leaves a ranked table short of a shared one (D13): every
+		// buy in goes back and the new row closes as abandoned, so no seat plays a ranked table alone.
+		const fewest = BOT_CONSTANTS.BLACKJACK_RANKED_MIN_SEATS;
+		if (isSharedBlackjackTable(started) && charge.seats.userIds.length < fewest) {
+			await refundSeatsDirectly(charge.seats);
+			charge.ledgered = true;
+			await roomLifecycle.finish(interaction.client, started, { abandoned: true });
+			return gameRoomsCopy.board.blackjackRankedTooFew(fewest, charge.seats.userIds.length);
+		}
 		charge.ledgered = true;
 		if (!(await startBlackjackRoomBoard(guild, started, channel, charge.seats))) return gameRoomsCopy.errors.createFailed;
 	}

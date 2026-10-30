@@ -595,7 +595,9 @@ export const generalEventsCopy: IPluginCopy = {
 				"**Battleship:** the host fires first. " +
 				"**Hangman:** guess single letters only, never the whole word. " +
 				"**Coin flip:** nobody calls it; heads is the challenger. " +
-				`**Blackjack:** US rules. The dealer peeks for blackjack before anyone acts, and a cut card reshuffles the shoe once about ${cutCardPercent} percent of it is dealt.`,
+				`**Blackjack:** US rules from a six deck shoe. The dealer peeks for blackjack before anyone acts, and a cut card reshuffles the shoe once about ${cutCardPercent} percent of it is dealt. ` +
+				// A ranked table is shared (2026-10 item 276, owner decisions D13 to D16).
+				"A **Rated** table needs two players to start, and anyone can take an empty seat while it deals, joining at the next hand; a table against Dero alone is just for fun, free and unrated.",
 
 			voteButtonLabel: "Don't see your favorite game?",
 		},
@@ -623,7 +625,7 @@ export const generalEventsCopy: IPluginCopy = {
 				{ name: "🎲 Dice Roll", how: "Both roll a d20 and the highest wins. Against Dero here, or a member from the board." },
 				{ name: "✊ Rock Paper Scissors", how: "Throw against Dero here, or face a member who picks in secret." },
 				{ name: "🪢 Hangman", how: "Guess a word alone, from a category you pick, or open a room where the host writes the word." },
-				{ name: "🃏 Blackjack", how: "Beat the dealer alone, or open a table of up to five seats." },
+				{ name: "🃏 Blackjack", how: "Beat the dealer alone for fun, or open a table of up to five that others can join mid game." },
 				{ name: "🚢 Battleship", how: "Fleets are placed for you, one shot a turn. Head to head, from the board." },
 				{ name: "🃏 Texas hold em", how: "Up to six buy in with equal stacks, and the last player with chips wins. From the board." },
 				{ name: "🏠 Monopoly", how: "Two to six players on one board, and a good match runs for days. From the board." },

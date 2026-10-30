@@ -18,6 +18,8 @@ vi.mock("@utils/permissions.js", () => ({ gateOwnerOrAdmin: vi.fn() }));
 // flag reads exactly as it did before 2026-10 item 254 Arcade 6.
 vi.mock("./challengeBoard.js", () => ({ refreshDraftCard: vi.fn(), yieldBotSeatsTo: vi.fn(async (_client: unknown, _before: unknown, after: unknown) => after), challengeBoard: {} }));
 vi.mock("./roomTrail.js", () => ({ roomTrail: { postMove: vi.fn() } }));
+// A dealing ranked Blackjack table's door (2026-10 item 276, D14) has its own suite; here it is what an accept asks for.
+vi.mock("./blackjackLateSeat.js", () => ({ seatAcceptedBlackjackPlayer: vi.fn(async () => null), redrawTableCard: vi.fn(async () => undefined) }));
 vi.mock("./roomLifecycle.js", () => ({ roomLifecycle: { finish: vi.fn() } }));
 vi.mock("@features/leveling/awardXp.js", () => ({ awardXp: vi.fn() }));
 vi.mock("@features/games/gameXp.js", () => ({ awardMultiPlayerResult: vi.fn(), awardTwoPlayerResult: vi.fn() }));
@@ -34,6 +36,7 @@ import { buildRoomOverwrites } from "./roomPermissions.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { refreshDraftCard } from "./challengeBoard.js";
+import { redrawTableCard, seatAcceptedBlackjackPlayer } from "./blackjackLateSeat.js";
 import { roomLifecycle } from "./roomLifecycle.js";
 import { recordMatchRatings } from "@features/ratings/recordMatchRatings.js";
 import { createTable, dealHand, joinTable, type HoldemTable } from "@features/games/holdemTable.js";
@@ -232,6 +235,34 @@ describe("the spectator select", () => {
 		await hostControls.handleSpectatorSelect(late);
 		expect(replyText(late)).toBe(gameRoomsCopy.board.draftGone);
 		expectNoWrites();
+	});
+});
+
+// 2026-10 item 276, owner decision D14: a ranked Blackjack table takes late seats, so its host
+// answers requests while it deals, and an accepted member sits down through the table's own door.
+describe("answering join requests at a dealing ranked Blackjack table", () => {
+	it("seats an accepted member through the table's late seat door and redraws its open card", async () => {
+		const dealing = { game: "blackjack", status: "playing", pendingJoinIds: [THIRD] } as Partial<IGameRoom>;
+		storeMock.findByRoomId.mockResolvedValue(makeRoom(dealing));
+		storeMock.admitPendingJoin.mockResolvedValue(makeRoom({ ...dealing, pendingJoinIds: [], playerIds: [HOST, THIRD] }));
+		const interaction = makeSelect("accept", [THIRD]);
+
+		await hostControls.handleJoinRequestSelect(interaction);
+
+		expect(storeMock.admitPendingJoin).toHaveBeenCalledWith("guild-1", "room-1", THIRD, "playerIds");
+		expect(seatAcceptedBlackjackPlayer).toHaveBeenCalledWith(interaction.client, expect.objectContaining({ game: "blackjack" }), THIRD, expect.any(String));
+		expect(redrawTableCard).toHaveBeenCalled();
+		expect(editedText(interaction)).toBe(words.approval.accepted(1));
+	});
+
+	it("refuses requests at a casual Blackjack table that deals, which takes no late seat", async () => {
+		storeMock.findByRoomId.mockResolvedValue(makeRoom({ game: "blackjack", status: "playing", casual: true, pendingJoinIds: [THIRD] }));
+		const interaction = makeSelect("accept", [THIRD]);
+
+		await hostControls.handleJoinRequestSelect(interaction);
+
+		expect(storeMock.admitPendingJoin).not.toHaveBeenCalled();
+		expect(seatAcceptedBlackjackPlayer).not.toHaveBeenCalled();
 	});
 });
 

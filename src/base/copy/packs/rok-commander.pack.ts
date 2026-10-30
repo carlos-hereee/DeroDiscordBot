@@ -809,7 +809,9 @@ export const rokCommanderCopy = {
 				"**Battleship:** the host fires first. " +
 				"**Hangman:** guess single letters only, never the whole word. " +
 				"**Coin flip:** nobody calls it in the air; heads is the challenger. " +
-				`**Blackjack:** played by US rules. My dealer peeks for blackjack before anyone acts, and a cut card reshuffles the shoe once about ${cutCardPercent} percent of it is dealt.`,
+				`**Blackjack:** played by US rules from a six deck shoe. My dealer peeks for blackjack before anyone acts, and a cut card reshuffles the shoe once about ${cutCardPercent} percent of it is dealt. ` +
+				// A ranked table is shared (2026-10 item 276, owner decisions D13 to D16).
+				"A **Rated** table needs two warriors to start, and anyone may take an empty seat while it deals, sitting down at the next hand; a table against me alone is for sport, free and unrated.",
 
 			// The one button this card carries: it opens the game request ballot
 			// privately. Read by GuildSetupManager.resolveIntroComponents.
@@ -850,7 +852,7 @@ export const rokCommanderCopy = {
 				{ name: "🎲 Dice Roll", how: "Both roll a d20 and the highest takes it. Against me here, or a warrior from the board." },
 				{ name: "✊ Rock Paper Scissors", how: "Throw against me here, or face a warrior who chooses in secret." },
 				{ name: "🪢 Hangman", how: "Guess my word alone, from a shelf of your choosing, or open a room where the host writes the word." },
-				{ name: "🃏 Blackjack", how: "Beat my dealer alone, or open a table of up to five seats." },
+				{ name: "🃏 Blackjack", how: "Beat my dealer alone for sport, or open a table of up to five that others may join mid game." },
 				{ name: "🚢 Battleship", how: "I place the fleets, you fire one shot a turn. Head to head, from the board." },
 				{ name: "🃏 Texas hold em", how: "Up to six buy in with equal stacks, and the last one holding chips takes the table. From the board." },
 				{ name: "🏠 Monopoly", how: "Two to six on a board of my own, and a good match runs for days. From the board." },

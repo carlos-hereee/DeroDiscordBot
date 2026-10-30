@@ -35,6 +35,7 @@ import { departMatch } from "./roomDeparture.js";
 import { confirmBlackjackLeave } from "@features/games/blackjackHandler.js";
 import { roomBattleshipHandlers } from "./roomBattleshipHandlers.js";
 import { roomHoldemHandlers } from "./roomHoldemHandlers.js";
+import { joinBlackjackTable } from "./blackjackLateSeat.js";
 import { roomMonopolyHandlers } from "./roomMonopolyHandlers.js";
 import { roomMonopolyBuild } from "./roomMonopolyBuild.js";
 import { roomMonopolyMortgage } from "./roomMonopolyMortgage.js";
@@ -282,6 +283,9 @@ async function handleGameRoomButton(interaction: ButtonInteraction): Promise<voi
 			return;
 		case "hjoin":
 			await roomHoldemHandlers.handleBuyIn(interaction, room);
+			return;
+		case "bjoin":
+			await joinBlackjackTable(interaction, room);
 			return;
 		// The host's Set the buy in is on the challenge card now (item 257 Phase 4a).
 		case "hbuyin":

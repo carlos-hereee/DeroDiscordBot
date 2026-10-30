@@ -332,6 +332,31 @@ describe("starting a Blackjack table", () => {
 		expect(openMock).not.toHaveBeenCalled();
 	});
 
+	// 2026-10 item 276, owner decision D13: a ranked table is shared, never solo, so its Start needs
+	// two human seats counted the way the table seats them (on a chip table, the payers).
+	it("refuses a ranked chip table's Start when nobody beside the host paid, before anything is built", async () => {
+		const interaction = arcadeButton();
+		const draft = makeRoom({ game: "blackjack", spectatorIds: ["a"], buyInPaidBy: [] });
+
+		await startMatch(interaction, draft);
+
+		const reply = (interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { content: string };
+		expect(reply.content).toBe(gameRoomsCopy.board.blackjackRankedTooFew(BOT_CONSTANTS.BLACKJACK_RANKED_MIN_SEATS, 1));
+		expect(openMock).not.toHaveBeenCalled();
+	});
+
+	it("lets a casual table, and a ranked one with a second payer, ask to start", async () => {
+		// The Start confirm, as its fallback reply (this press opens no modal): its Submit is `startok`.
+		const askedToStart = (interaction: ButtonInteraction): string => JSON.stringify((interaction.reply as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]);
+		const casual = arcadeButton();
+		await startMatch(casual, makeRoom({ game: "blackjack", spectatorIds: ["a"], buyInPaidBy: [], casual: true }));
+		expect(askedToStart(casual)).toContain("gameroom:startok:room-1");
+
+		const ranked = arcadeButton();
+		await startMatch(ranked, makeRoom({ game: "blackjack", spectatorIds: ["a"], buyInPaidBy: ["a"] }));
+		expect(askedToStart(ranked)).toContain("gameroom:startok:room-1");
+	});
+
 	it("seats every joiner in a room of its own, then deals the table there", async () => {
 		const room = { roomId: "room-1" };
 		const channel = { id: "bj-room-1" };

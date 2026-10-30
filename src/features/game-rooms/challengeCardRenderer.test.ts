@@ -141,3 +141,25 @@ describe("challengeCardView with Dero bots", () => {
 		expect(Buffer.isBuffer(bytes) && bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)).toBe(true);
 	});
 });
+
+// ── a dealing ranked Blackjack table's open card (2026-10 item 276, D14) ──────────────────
+describe("an open table's picture", () => {
+	const member = (id: string) => ({ displayName: `Member ${id}`, user: { id, avatar: null, displayAvatarURL: () => `https://cdn.example/${id}.png` } });
+	const guild = { members: { cache: { get: (id: string) => member(id) }, fetch: async (id: string) => member(id) } } as unknown as Guild;
+	const open: OpenerCardState = { game: "blackjack", hostId: "host-1", visibility: "public", pool: ["p2"], startedChannelId: "room-ch", tableSeats: { taken: 2, max: 5 } };
+
+	it("reads as dealing with its seats taken, and a started card without seats as under way", async () => {
+		const playing = await challengeCardView(guild, open);
+		expect(playing.status).toBe("playing");
+		expect(playing.tableSeats).toEqual({ taken: 2, max: 5 });
+		expect(playing.challengers.map((face) => face.name)).toEqual(["Member p2"]);
+		const started = await challengeCardView(guild, { ...open, tableSeats: null });
+		expect(started.status).toBe("started");
+		expect(started.tableSeats).toBeNull();
+	});
+
+	it("renders a PNG with the seats under the stake", async () => {
+		const card = await renderChallengeCard({ ...view("playing"), game: "blackjack", stake: { kind: "buyIn", amount: 1000 }, tableSeats: { taken: 3, max: 5 } });
+		expect(card).not.toBeNull();
+	});
+});

@@ -3,7 +3,8 @@ import { TextChannel, type Client, type Guild } from "discord.js";
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: vi.fn() } }));
 
-import { challengeCardLink, challengeResultLine, closeChallengeCard, isChallengeChannel, resolveChallengesChannel } from "./challengeCard.js";
+import { challengeCardLink, challengeResultLine, closeChallengeCard, editOpenerCard, isChallengeChannel, refreshTableCard, resolveChallengesChannel } from "./challengeCard.js";
+import type { OpenerCardState } from "./challengeBoardEmbeds.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { gameRoomsCopy } from "./gameRoomsCopy.js";
 import type { IGameRoom } from "@db/models/GameRoom.js";
@@ -42,6 +43,30 @@ describe("challengeResultLine", () => {
 	it("adds no flavor when nobody won, and says so for an abandoned room", () => {
 		expect(challengeResultLine({ game: "hangman", winnerId: null, abandoned: false })).toBe(gameRoomsCopy.postMatch.noWinnerLine);
 		expect(challengeResultLine({ game: "holdem", winnerId: "p1", abandoned: true })).toBe(gameRoomsCopy.postMatch.abandonedLine);
+	});
+});
+
+// ── a dealing table's open card (2026-10 item 276, D14) ──────────────
+// A ranked Blackjack table's card stays open while it deals and redraws its seats, so a redraw
+// still rendering when finish closes the card must never draw it open again.
+describe("an open table's card", () => {
+	const guild = { members: { cache: { get: () => undefined }, fetch: async () => null } } as unknown as Guild;
+	const open: OpenerCardState = { game: "blackjack", hostId: "host-1", visibility: "public", pool: [], startedChannelId: "room-ch", tableSeats: { taken: 2, max: 5 } };
+
+	it("never draws an open table over a card that closed", async () => {
+		const message = { edit: vi.fn(async () => undefined) };
+		await editOpenerCard(guild, "room-open-1", message, open);
+		await editOpenerCard(guild, "room-open-1", message, { ...open, resultLine: "over" });
+		await editOpenerCard(guild, "room-open-1", message, open);
+		expect(message.edit).toHaveBeenCalledTimes(2);
+	});
+
+	it("redraws no card for a room that is no longer playing", async () => {
+		const fetch = vi.fn();
+		const client = { guilds: { cache: { get: vi.fn() }, fetch } } as unknown as Client;
+		const room = { roomId: "room-1", guildId: "guild-1", boardMessageId: "card-1", status: "finished", channelId: "room-ch" } as unknown as IGameRoom;
+		await refreshTableCard(client, room, { userIds: ["host-1"], max: 5 });
+		expect((client.guilds.cache.get as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
 	});
 });
 

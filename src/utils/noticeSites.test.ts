@@ -214,6 +214,12 @@ const INVENTORY: readonly NoticeEntry[] = [
 	// ── game-rooms/roomHoldemHandlers.ts ──
 	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleBuyIn", anchor: "joinRefusalText(room, verdict.reason)", kind: "state" },
 	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleBuyIn", anchor: "claim.refusal", kind: "state" },
+	// ── game-rooms/blackjackLateSeat.ts (2026-10 item 276, D14) ──
+	// One local wrapper for every refusal of a Join at a dealing table: closed, invite only, seated,
+	// played, full, removed, out of band, short wallet. A seat held is answered where it was pressed.
+	{ file: "features/game-rooms/blackjackLateSeat.ts", within: "joinBlackjackTable", anchor: "const notice = (text: string) => showNotice(", kind: "state" },
+	{ file: "features/game-rooms/blackjackLateSeat.ts", within: "askHostForTableSeat", anchor: "hostWords.approval.alreadyAsked", kind: "state" },
+	{ file: "features/game-rooms/blackjackLateSeat.ts", within: "askHostForTableSeat", anchor: "hostWords.kick.refusedRejoin", kind: "state" },
 	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "askHostForSeat", anchor: "hostWords.approval.alreadyAsked", kind: "state" },
 	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "askHostForSeat", anchor: "hostWords.kick.refusedRejoin", kind: "state" },
 	{ file: "features/game-rooms/roomHoldemHandlers.ts", within: "handleDeal", anchor: "gameRoomsCopy.holdem.handInProgress", count: 2, kind: "state" },

@@ -134,7 +134,7 @@ function matchOptions(context: SettingsContext): FieldOption[] {
 	// A buy in game says what each choice does with chips: only a Rated match charges one (D1).
 	const stake = isBuyInGame(context.game) ? stakeKindOf(context.game) : null;
 	const options: FieldOption[] = [
-		{ value: "rated-any", label: match.ratedAny.label, description: match.ratedAny.description(channelNameFor(context, false), stake) },
+		{ value: "rated-any", label: match.ratedAny.label, description: match.ratedAny.description(channelNameFor(context, false), stake, context.game) },
 		{ value: "rated-close", label: match.ratedClose.label, description: match.ratedClose.description(bandWidth("close") ?? 0) },
 		{ value: "rated-tight", label: match.ratedTight.label, description: match.ratedTight.description(bandWidth("tight") ?? 0) },
 		{ value: "casual", label: match.casual.label, description: match.casual.description(channelNameFor(context, true), stake) },

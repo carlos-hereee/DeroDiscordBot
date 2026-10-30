@@ -36,8 +36,18 @@
 // ⚠️ NO INSURANCE, and it is still not an oversight. Insurance is a SIDE BET on the dealer's
 // hole card, a second wager inside a hand the owner's bankroll decision never asked for, and
 // one more turn every seat would sit through on every dealer ace.
+//
+// ⚠️ SIX DECKS, SHUFFLED FROM THE SECURE SOURCE (2026-10 item 276, owner decision D15). Every
+// card is public and a ranked table moves wallet chips, so the shuffle draws from secureRandom
+// (utils/secureRng), never Math.random, whose state can be recovered from its output. A test still
+// hands buildShoe or createBankrollTable a seeded rng for a known deal; a reshuffle always draws
+// from the secure source.
+//
+// ⚠️ A RANKED TABLE TAKES LATE SEATS (2026-10 item 276, D14): seatLatePlayers sits a member who
+// joined while the table played, only between hands, so nobody is ever dealt in mid hand.
 
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { secureRandom } from "@utils/secureRng.js";
 
 // ── Table rules, named rather than inlined ──
 // Every one of these is a rule a reader would otherwise have to infer from a
@@ -113,8 +123,8 @@ export function handValue(cards: Card[]): HandValue {
 
 // Fisher-Yates, with the rng injected exactly as versusResolve injects it, so a
 // test can hand in a scripted sequence and get a known deal. Production passes
-// nothing and takes Math.random.
-export function buildShoe(deckCount: number = DEFAULT_DECK_COUNT, rng: () => number = Math.random): Card[] {
+// nothing and takes secureRandom (D15, see the header).
+export function buildShoe(deckCount: number = DEFAULT_DECK_COUNT, rng: () => number = secureRandom): Card[] {
 	const cards: Card[] = [];
 	for (let deck = 0; deck < deckCount; deck += 1) {
 		for (const suit of SUITS) {
@@ -169,6 +179,9 @@ export interface Seat {
 	bet: number;
 	// Null while the seat is dealt in.
 	out: SeatOut | null;
+	// The hands this seat has had settled at this table, so a late seat is rated on its own hands
+	// (2026-10 item 276, D16), never the table's.
+	handsSettled: number;
 }
 
 // "betting" opens every hand of a bankroll table: each seat in turn picks its bet, and the
@@ -244,9 +257,9 @@ interface CreateTableInput {
 function buildTable(input: CreateTableInput, buyIn: number): BlackjackTable {
 	const deckCount = input.deckCount ?? DEFAULT_DECK_COUNT;
 	return {
-		seats: input.players.map((player) => ({ userId: player.userId, username: player.username, hands: [], activeHand: 0, stack: buyIn, bet: 0, out: null })),
+		seats: input.players.map((player) => newSeat(player, buyIn)),
 		dealer: emptyHand(),
-		shoe: buildShoe(deckCount, input.rng ?? Math.random),
+		shoe: buildShoe(deckCount, input.rng ?? secureRandom),
 		phase: "betting",
 		turn: 0,
 		hitsSoft17: input.hitsSoft17 ?? false,
@@ -256,6 +269,10 @@ function buildTable(input: CreateTableInput, buyIn: number): BlackjackTable {
 		handNumber: 1,
 		paid: false,
 	};
+}
+
+function newSeat(player: { userId: string; username: string }, stack: number): Seat {
+	return { userId: player.userId, username: player.username, hands: [], activeHand: 0, stack, bet: 0, out: null, handsSettled: 0 };
 }
 
 // Builds a one hand table AND deals it, because a table that exists but is not dealt is a
@@ -408,6 +425,31 @@ export function startNextHand(table: BlackjackTable): boolean {
 	table.turn = 0;
 	advanceBetting(table);
 	return true;
+}
+
+/**
+ * Sit members who joined while the table played (2026-10 item 276, D14), each with a stack of the
+ * table's buy in. Only while no hand is in play, so nobody is ever dealt in mid hand: after a hand
+ * has paid (the next startNextHand deals them in), or on a betting turn every seat has left, which
+ * then opens on the first new seat's bet. Answers how many sat; zero, with nothing changed, at any
+ * other moment, or for a member already at the table.
+ */
+export function seatLatePlayers(table: BlackjackTable, players: ReadonlyArray<{ userId: string; username: string }>): number {
+	const betweenHands = table.phase === "settled" && table.paid;
+	const emptyBetting = table.phase === "betting" && isTableOver(table);
+	if (!betweenHands && !emptyBetting) return 0;
+	let seated = 0;
+	for (const player of players) {
+		if (table.seats.some((seat) => seat.userId === player.userId)) continue;
+		table.seats.push(newSeat(player, table.buyIn));
+		seated += 1;
+	}
+	// Every earlier seat left during these bets, so the turn walks from the top to the new seats.
+	if (emptyBetting && seated > 0) {
+		table.turn = 0;
+		advanceBetting(table);
+	}
+	return seated;
 }
 
 /**
@@ -724,7 +766,9 @@ export function collectPayouts(table: BlackjackTable): SeatResult[] | null {
 	const results = settle(table);
 	for (const result of results) {
 		const seat = table.seats.find((candidate) => candidate.userId === result.userId);
-		if (!seat || seat.out === "left") continue;
+		if (!seat) continue;
+		seat.handsSettled += 1;
+		if (seat.out === "left") continue;
 		seat.stack += result.payouts.reduce((sum, payout) => sum + payout, 0);
 		if (table.buyIn > 0 && seat.stack <= 0) seat.out = "broke";
 	}

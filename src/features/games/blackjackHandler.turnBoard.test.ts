@@ -13,6 +13,9 @@ const moves = vi.hoisted(() => ({ recorded: [] as { actorId: string; kind: strin
 // The row the table's room reads back. Null by default: the prompt line and the room's finish have
 // their own suites; the finished table case below hands one over to see the finish happen.
 const roomRow = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
+// The shoe shuffles with secureRandom (2026-10 item 276, D15); routed through Math.random here so
+// the Math.random spies below still stack the deal.
+vi.mock("@utils/secureRng.js", () => ({ secureRandom: () => Math.random() }));
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: {
 		findByRoomId: vi.fn(async () => roomRow.current),

@@ -61,6 +61,8 @@ export interface ChallengeCardView {
 	badge: ChallengeBadge;
 	/** What a seat stakes, from cardStakeOf, the helper the embed's settings line reads too; null for a free card. */
 	stake: Stake | null;
+	/** A ranked Blackjack table playing with its card open (2026-10 item 276, D14): its seats held out of the most it holds. */
+	tableSeats: { taken: number; max: number } | null;
 	host: ChallengeFace;
 	/** At most MAX_CHALLENGER_FACES joiners, in the order they joined. */
 	challengers: ChallengeFace[];
@@ -78,8 +80,8 @@ const CHALLENGERS_PER_ROW = 3;
 // Bump whenever the drawing changes, or members keep seeing cached cards. 3 added the
 // RATED or CASUAL badge pill (2026-10 item 254, Arcade 5); 4 the status watermark (Arcade 6);
 // 5 the rock paper scissors logo (Arcade 3); 6 the Dero bots the host seats, drawn after the joiners;
-// 7 the stake under the kicker (2026-10 item 276, D10).
-const CHALLENGE_CARD_VERSION = 7;
+// 7 the stake under the kicker (2026-10 item 276, D10); 8 an open table's seats (D14).
+const CHALLENGE_CARD_VERSION = 8;
 const CARD_WIDTH = 960;
 const CARD_HEIGHT = 380;
 const PADDING = 32;
@@ -143,6 +145,7 @@ const STATUS_ACCENT: Record<ChallengeCardStatus, ColorResolvable> = {
 	invite: COLORS.ARCADE,
 	open: COLORS.ARCADE,
 	started: COLORS.CARD_OUTCOME_WIN,
+	playing: COLORS.CARD_OUTCOME_WIN,
 	cancelled: COLORS.CARD_TEXT_MUTED,
 	finished: COLORS.CARD_OUTCOME_WIN,
 };
@@ -151,7 +154,7 @@ const STATUS_ACCENT: Record<ChallengeCardStatus, ColorResolvable> = {
 export function challengeCardStatus(state: OpenerCardState): ChallengeCardStatus {
 	if (state.resultLine) return "finished";
 	if (state.cancelled) return "cancelled";
-	if (state.startedChannelId) return "started";
+	if (state.startedChannelId) return state.tableSeats ? "playing" : "started";
 	if (!state.visibility) return "choosing";
 	return state.visibility === "invite" ? "invite" : "open";
 }
@@ -176,6 +179,7 @@ export async function challengeCardView(guild: Guild, state: OpenerCardState): P
 		status: challengeCardStatus(state),
 		badge: badgeOfCard(state),
 		stake: cardStakeOf(state),
+		tableSeats: state.startedChannelId ? (state.tableSeats ?? null) : null,
 		host,
 		challengers,
 		hiddenCount: Math.max(0, state.pool.length + bots.length - challengers.length),
@@ -322,6 +326,19 @@ function drawHeader(context: SKRSContext2D, view: ChallengeCardView, accent: Col
 			size: 22,
 			weight: "bold",
 			color: canvasColor(accent),
+			baseline: "middle",
+			maxWidth: GRID_LEFT - PADDING * 2,
+		});
+	}
+	// An open table's seats under the stake, the same column, so a member sees at a glance
+	// whether there is room to sit down.
+	if (view.tableSeats) {
+		drawText(context, copy.tableSeats(view.tableSeats.taken, view.tableSeats.max), {
+			x: PADDING,
+			y: PADDING + (view.stake ? 96 : 64),
+			size: 20,
+			weight: "bold",
+			color: canvasColor(COLORS.CARD_TEXT_SECONDARY),
 			baseline: "middle",
 			maxWidth: GRID_LEFT - PADDING * 2,
 		});

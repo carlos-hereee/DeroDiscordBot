@@ -336,6 +336,13 @@ export const gamesCopy = {
 		leftFreeTable: "You left the table.",
 		leftTableTrail: (userId: string, amount: number, chipTable: boolean): string =>
 			chipTable ? `🚪 <@${userId}> left the table, and ${chipAmount(amount)} went back to their wallet.` : `🚪 <@${userId}> left the table.`,
+		// A late seat at a ranked table (2026-10 item 276, D14): held from the card's Join, dealt in
+		// at the next hand's bets, and given its whole buy in back if it leaves before that.
+		lateSeatHeldTrail: (userId: string, buyIn: number, chipTable: boolean): string =>
+			chipTable ? `🪑 <@${userId}> buys in for ${chipAmount(buyIn)} and sits down for the next hand.` : `🪑 <@${userId}> sits down for the next hand.`,
+		lateSeatDealtTrail: (userId: string): string => `🃏 <@${userId}> is dealt in from this hand.`,
+		leftWaitingTrail: (userId: string, buyIn: number, chipTable: boolean): string =>
+			chipTable ? `🚪 <@${userId}> left before the deal, and their ${chipAmount(buyIn)} buy in went back to their wallet.` : `🚪 <@${userId}> left before the deal.`,
 	},
 
 	// ── the challenge and accept engine copy: RETIRED (game rooms Phase 4) ──

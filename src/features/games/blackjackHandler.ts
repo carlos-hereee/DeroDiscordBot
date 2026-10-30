@@ -36,8 +36,8 @@ import {
 	legalActions,
 	placeBet,
 	playDealer,
+	seatLatePlayers,
 	settle,
-	settledHandsOf,
 	startNextHand,
 	type BlackjackAction,
 	type BlackjackTable,
@@ -58,6 +58,7 @@ import { postTurnBoard } from "@features/game-rooms/turnBoard.js";
 import { setTurnBlock, turnBlockLines } from "@features/game-rooms/turnLog.js";
 import { drawingSettled, isClockExpired, pausedDeadline, withDrawingPause } from "@features/game-rooms/drawingPause.js";
 import { cashOutBlackjackSeat, saveBlackjackStacks } from "@features/game-rooms/blackjackChips.js";
+import { refreshTableCard } from "@features/game-rooms/challengeCard.js";
 import { answerInChannel, beginChannelAnswer } from "@utils/answerInChannel.js";
 import { acknowledgeConfirm, showConfirm, showCooldownNotice, showNotice, showPendingNotice, type ConfirmInteraction } from "@utils/textModal.js";
 import { confirmCustomId } from "@features/game-rooms/gameRoomActions.js";
@@ -188,7 +189,23 @@ interface BlackjackGame {
 	// ⚠️ A room table's end claim, set synchronously before its finish, so a last settle and a
 	// last leave in the same moment end the room once.
 	ended: boolean;
+	// A ranked table, whose challenge card stays open while it plays and takes late seats
+	// (2026-10 item 276, owner decisions D13 and D14). False at every other table.
+	sharedTable: boolean;
+	// Members who sat down at a shared table while it played, until the next hand deals them in.
+	waiting: WaitingSeat[];
+	// The seats the open card last showed, so a hand that changed nobody's seat redraws no card.
+	cardSeatsKey: string;
 	stop: () => void;
+}
+
+// A late seat at a shared table (D14), held from the Join press. `paid` stays false while the buy
+// in is charged and written to the ledger: the seat counts toward a full table and refuses a
+// second press at once, in this process, but is never dealt in until it is paid.
+interface WaitingSeat {
+	userId: string;
+	username: string;
+	paid: boolean;
 }
 
 // One game per CHANNEL, matching hangman: the board is public and the channel
@@ -384,7 +401,9 @@ export async function startBlackjackTable(
 	// free on the standard stack; an inline table never has one.
 	bankroll: TableBankroll | null = null,
 	// A network table posts no turn line (turnPrompt skips it), so its board keeps every button.
-	network = false
+	network = false,
+	// A ranked table, which takes late seats from its open card (chipMatch.isSharedBlackjackTable).
+	sharedTable = false
 ): Promise<BlackjackStartResult> {
 	// ① Claim the channel slot SYNCHRONOUSLY, the same discipline hangman uses:
 	// the check and the write sit adjacent with no await between them, so two
@@ -412,6 +431,9 @@ export async function startBlackjackTable(
 		cashedOut: new Map(),
 		actedAt: null,
 		ended: false,
+		sharedTable: roomId !== null && sharedTable,
+		waiting: [],
+		cardSeatsKey: "",
 		stop: () => undefined,
 		turnLog: [],
 	};
@@ -654,6 +676,13 @@ async function onClick(click: ButtonInteraction, channelId: string): Promise<voi
 
 	// ── playing phase ──
 	if (action === "leave") {
+		// A late seat still waiting for its first hand has nothing in play to lose, so it leaves at
+		// once with its whole buy in (2026-10 item 276, D14), and no confirm warns of a lost hand.
+		if (waitingSeatOf(game, click.user.id)?.paid) {
+			const refund = await leaveWaitingList(game, channelId, click.user.id, click.client);
+			await answerInChannel(click, "here", { content: refund === null ? c.leftFreeTable : c.leftWithChips(refund) });
+			return;
+		}
 		// A chip table asks first, saying the stack is cashed out and the hand in play lost
 		// (2026-10 item 276, owner decisions D6 and D9); its Submit is confirmBlackjackLeave.
 		const cashOut = game.roomId && game.bankroll?.chips && game.table ? cashOutIfLeaving(game.table, click.user.id) : null;
@@ -891,6 +920,11 @@ export async function confirmBlackjackLeave(interaction: ConfirmInteraction, cha
 export async function leaveBlackjackRoomSeat(channelId: string, userId: string): Promise<boolean> {
 	const game = games.get(channelId);
 	if (!game?.table || !game.bankroll || !game.board || game.ended) return false;
+	// A late seat still waiting for its first hand is given its buy in back in full (D14).
+	if (waitingSeatOf(game, userId)?.paid) {
+		await leaveWaitingList(game, channelId, userId, game.board.client);
+		return true;
+	}
 	const outcome = applyLeave(game.table, userId);
 	if (outcome.status !== "left") return false;
 	// The board message was fetched by this very process, so its client is the ready one.
@@ -934,18 +968,155 @@ async function leaveBankrollTable(game: BlackjackGame, channelId: string, userId
 		.postMove(client, room, { actorId: userId, kind: "forfeit", text: c.leftTableTrail(userId, cashOut, bankroll.chips) })
 		.catch((error) => console.warn("[mini-game] the left the table line could not be posted", { roomId: room.roomId, error }));
 
+	refreshSharedCard(game, client);
 	if (table.phase === "dealer") await finishHand(game, channelId, client, surface.writer);
 	// A hand that just paid is still posting its result and the next board, which leave this
 	// seat out (or end the table) on their own, so there is nothing to redraw here.
 	else if (table.phase === "settled") await surface.acknowledge().catch(() => undefined);
-	else if (isTableOver(table)) {
-		// Nobody is left to bet or act, so the board loses its buttons and the room ends.
+	else if (isTableOver(table) && (await seatWaitingPlayers(game, client)) === 0) {
+		// Nobody is left to bet or act, and nobody waits to sit down, so the board loses its
+		// buttons and the room ends. A late seat that waited is dealt this hand's bets instead
+		// (D16: a table ends only when its last seat leaves or busts).
 		await surface.clearButtons().catch(() => undefined);
 		await endTable(game, client);
 	} else {
 		await redrawCurrent(game, channelId, surface.writer);
 		await promptTurn(game, client);
 	}
+}
+
+// ── late seats at a shared table (2026-10 item 276, owner decision D14) ─────
+// What:  a member who presses Join on a ranked table's open card sits down while it plays.
+//        blackjackLateSeat (game-rooms) holds the seat here first (holdLateSeat), then charges
+//        the buy in and writes the ledger entry, then marks the seat paid (payLateSeat); the next
+//        hand's betting turn deals the paid seats in (seatWaitingPlayers), never a hand in play.
+// Why the hold comes first: the table lives in this process, so a synchronous hold IS the claim
+//        on a seat. A double press, or two members racing for the last seat, meet the hold before
+//        any chip moves, and a hold whose charge failed is dropped (dropLateSeat).
+
+/** Why a late seat was refused, before anything was charged. */
+export type LateSeatRefusal = "noTable" | "alreadySeated" | "alreadyPlayed" | "full";
+
+/** A held late seat: what it costs, and whether the table plays for wallet chips. */
+export type LateSeatHold = { ok: true; buyIn: number; chips: boolean } | { ok: false; refusal: LateSeatRefusal };
+
+const waitingSeatOf = (game: BlackjackGame, userId: string): WaitingSeat | undefined => game.waiting.find((entry) => entry.userId === userId);
+
+// Who holds a seat at a shared table: every seat still dealt in, then every late seat waiting.
+function seatHoldersOf(game: BlackjackGame): string[] {
+	const dealtIn = (game.table?.seats ?? []).filter((seat) => !seat.out).map((seat) => seat.userId);
+	return [...dealtIn, ...game.waiting.map((entry) => entry.userId)];
+}
+
+/**
+ * Why this member could not take a late seat at the shared table in this channel, or null when a
+ * seat is free for them. Refused when the channel holds no live shared table, the member is at
+ * the table or waiting already, played at it earlier (left or went broke, so one seat is one buy
+ * in, which is what their rating reads against), or every one of MAX_SEATS is held. Reads only,
+ * so the Join press asks it before the host's gate, and holdLateSeat asks it again as it holds.
+ */
+export function lateSeatRefusalOf(channelId: string, userId: string): LateSeatRefusal | null {
+	const game = games.get(channelId);
+	if (!game?.table || !game.bankroll || !game.sharedTable || game.ended) return "noTable";
+	const earlier = game.table.seats.find((seat) => seat.userId === userId);
+	if (earlier?.out) return "alreadyPlayed";
+	if (earlier || waitingSeatOf(game, userId)) return "alreadySeated";
+	return seatHoldersOf(game).length >= MAX_SEATS ? "full" : null;
+}
+
+/** Hold a late seat at the shared table in this channel, synchronously, before any chip moves (see lateSeatRefusalOf). */
+export function holdLateSeat(channelId: string, member: { userId: string; username: string }): LateSeatHold {
+	const refusal = lateSeatRefusalOf(channelId, member.userId);
+	const game = games.get(channelId);
+	if (refusal || !game?.bankroll) return { ok: false, refusal: refusal ?? "noTable" };
+	game.waiting.push({ ...member, paid: false });
+	return { ok: true, buyIn: game.bankroll.buyIn, chips: game.bankroll.chips };
+}
+
+/** Let a held late seat go: its charge or its ledger write failed, so it never sat down. */
+export function dropLateSeat(channelId: string, userId: string): void {
+	const game = games.get(channelId);
+	if (game) game.waiting = game.waiting.filter((entry) => entry.userId !== userId || entry.paid);
+}
+
+/**
+ * A held late seat is paid and on the ledger: it is dealt in at the next hand's betting turn, and
+ * the open card shows it. Answers false when the table ended since the hold, and the caller then
+ * cashes the entry out (finish may already have paid it; the ledger claim pays once).
+ */
+export function payLateSeat(channelId: string, userId: string, client: Client): boolean {
+	const game = games.get(channelId);
+	const waiting = game ? waitingSeatOf(game, userId) : undefined;
+	if (!game || game.ended || !waiting) {
+		dropLateSeat(channelId, userId);
+		return false;
+	}
+	waiting.paid = true;
+	refreshSharedCard(game, client);
+	return true;
+}
+
+/** The seats a shared table's open card shows: who holds one, and of how many. Null at any other table. */
+export interface TableSeats {
+	userIds: string[];
+	max: number;
+}
+
+export function sharedTableSeatsOf(channelId: string): TableSeats | null {
+	const game = games.get(channelId);
+	if (!game?.sharedTable || game.ended) return null;
+	return { userIds: seatHoldersOf(game), max: MAX_SEATS };
+}
+
+// Deal every paid late seat into the table, where the engine allows it (between hands, or bets
+// every seat has left), each with a line in the room. Answers how many sat.
+async function seatWaitingPlayers(game: BlackjackGame, client: Message["client"]): Promise<number> {
+	const table = game.table;
+	const ready = game.waiting.filter((entry) => entry.paid);
+	if (!table || !game.roomId || ready.length === 0) return 0;
+	if (seatLatePlayers(table, ready) === 0) return 0;
+	const seated = new Set(ready.map((entry) => entry.userId));
+	game.waiting = game.waiting.filter((entry) => !seated.has(entry.userId));
+	const room = { guildId: game.guildId, roomId: game.roomId, channelId: game.board?.channelId ?? null };
+	for (const userId of seated) {
+		await roomTrail
+			.postMove(client, room, { actorId: userId, kind: "join", text: gamesCopy.blackjack.lateSeatDealtTrail(userId) })
+			.catch((error) => console.warn("[mini-game] the dealt in line could not be posted", { roomId: room.roomId, error }));
+	}
+	return seated.size;
+}
+
+// A paid late seat leaves before its first hand: its whole buy in back (a chip table claims its
+// ledger entry first, so a leave racing the table's end pays once). Answers the chips given back,
+// or null at a free table.
+async function leaveWaitingList(game: BlackjackGame, channelId: string, userId: string, client: Message["client"]): Promise<number | null> {
+	const bankroll = game.bankroll;
+	game.waiting = game.waiting.filter((entry) => entry.userId !== userId);
+	if (!bankroll || !game.roomId) return null;
+	const room = { guildId: game.guildId, roomId: game.roomId, channelId };
+	if (bankroll.chips) await cashOutBlackjackSeat(room, userId, bankroll.buyIn);
+	void roomTrail
+		.postMove(client, room, { actorId: userId, kind: "forfeit", text: gamesCopy.blackjack.leftWaitingTrail(userId, bankroll.buyIn, bankroll.chips) })
+		.catch((error) => console.warn("[mini-game] the left before the deal line could not be posted", { roomId: room.roomId, error }));
+	refreshSharedCard(game, client);
+	return bankroll.chips ? bankroll.buyIn : null;
+}
+
+// Redraw a shared table's open card when the seats it shows changed. Fire and forget: the card
+// is cosmetic, and refreshTableCard refuses a room that is no longer playing, so a late redraw
+// never reopens a card finish closed.
+function refreshSharedCard(game: BlackjackGame, client: Client): void {
+	const roomId = game.roomId;
+	const channelId = game.board?.channelId;
+	if (!game.sharedTable || game.ended || !roomId || !channelId) return;
+	const seats = sharedTableSeatsOf(channelId);
+	const key = seats?.userIds.join(",") ?? "";
+	if (!seats || key === game.cardSeatsKey) return;
+	game.cardSeatsKey = key;
+	void gameRoomStore
+		.findByRoomId(game.guildId, roomId)
+		.then((room) => (room ? refreshTableCard(client, room, seats) : undefined))
+		.catch((error: unknown) => console.warn("[mini-game] the open table card could not be redrawn", { roomId, error }));
 }
 
 // ── phase transitions ───────────────────────────────────────────────────────
@@ -1197,6 +1368,10 @@ async function finishHand(game: BlackjackGame, channelId: string, client: Messag
 	await redrawResult(channelId, settledTableOf(table, results), resultWriter(game, writer, closing));
 	callHandResults(game, client, table, results);
 	await announceBroke(game, client, results);
+	// A late seat sits down between hands (D14), before the next deal reads who is in, so a table
+	// whose last seat just went broke deals on for the member who joined while it played (D16).
+	await seatWaitingPlayers(game, client);
+	refreshSharedCard(game, client);
 
 	if (!startNextHand(table)) {
 		await endTable(game, client);
@@ -1300,13 +1475,21 @@ async function endTable(game: BlackjackGame, client: Message["client"]): Promise
  * it cashed out (finalStacks reads cashedOut first), with the house as a fixed entrant. Called
  * only by the call that won finish's claim, so a table is rated once. recordHouseTableRatings
  * refuses what is not rated: a casual table, and a solo table against Dero (solo-blackjack is no
- * rated game). A table that settled fewer than BLACKJACK_MIN_RATED_HANDS hands writes its result
- * unrated, so opening a ranked table and leaving it at once moves no rating.
+ * rated game). A seat that had fewer than BLACKJACK_MIN_RATED_HANDS hands settled is left out of
+ * the update, so opening a ranked table and leaving it at once moves no rating; counted per seat
+ * (D16), so a late seat is rated on its own hands, never the table's, and a table where no seat
+ * qualifies writes its result unrated.
  */
 function rateBlackjackTable(room: IGameRoom, table: BlackjackTable, finalStacks: readonly FinalStack[]): void {
 	const results = finalStacks.map((entry) => ({ userId: entry.userId, net: entry.stack - entry.buyIn }));
-	const rated = settledHandsOf(table) >= BOT_CONSTANTS.RATINGS.BLACKJACK_MIN_RATED_HANDS;
-	void recordHouseTableRatings(room, results, room.kickedIds ?? [], { rated });
+	const tooFewHands = table.seats.filter((seat) => seat.handsSettled < BOT_CONSTANTS.RATINGS.BLACKJACK_MIN_RATED_HANDS).map((seat) => seat.userId);
+	const kicked = room.kickedIds ?? [];
+	// Nobody qualifies: the result still names every seat, written unrated.
+	if (tooFewHands.length === table.seats.length) {
+		void recordHouseTableRatings(room, results, kicked, { rated: false });
+		return;
+	}
+	void recordHouseTableRatings(room, results, [...kicked, ...tooFewHands], { rated: true });
 }
 
 // The stacks after a settle (chip tables only) and when a member last acted, on the row.

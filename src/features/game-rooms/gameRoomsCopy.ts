@@ -623,8 +623,11 @@ export const gameRoomsCopy = {
 				// all buy in, or Battleship's wager when the host sets one.
 				ratedAny: {
 					label: "Rated, any rating",
-					description: (channelName: string, stake: StakeKind | null): string => {
+					description: (channelName: string, stake: StakeKind | null, game?: GameSlug): string => {
 						// A select option's description stops at Discord's 100 characters, channel name included.
+						// A ranked Blackjack table is shared (2026-10 item 276, D13 and D14): two players to start, and
+						// others sit down while it deals.
+						if (game === "blackjack") return `For the chip buy in: two players or more, and others sit down mid game. Posts in ${channelName}.`;
 						if (stake === "wager") return `Counts toward /rating, and for any chip wager you set. Posts in ${channelName}.`;
 						if (stake === "pot") return `Counts toward /rating, and the winner takes every chip buy in. Posts in ${channelName}.`;
 						return stake ? `Counts toward /rating and plays for the chip buy in. Posts in ${channelName}.` : `Counts toward /rating. Posts in ${channelName}.`;
@@ -790,6 +793,27 @@ export const gameRoomsCopy = {
 		// seats, counted like Monopoly's, the host included.
 		blackjackTooManyPlayers: (maxSeats: number, joined: number): string =>
 			`A Blackjack table seats at most ${maxSeats} players, counting you, and ${joined} have joined. Call this one off and start a new table with fewer.`,
+		// A ranked Blackjack table is shared (2026-10 item 276, D13): it starts with at least two
+		// players, and a table against Dero alone is a casual one from the 🕹️games intro.
+		blackjackRankedTooFew: (fewest: number, seats: number): string =>
+			`A ranked Blackjack table needs at least ${fewest} players to start, counting you, and ${seats === 1 ? "only you are" : `${seats} are`} in so far. Wait for another player, or play Dero for fun from 🕹️games.`,
+		// A ranked Blackjack table's card while it plays (D14): it stays open, and Join takes an empty seat.
+		cardTablePlaying: (channelId: string): string => `🃏 The table is dealing in <#${channelId}>. Join to sit down at the next hand.`,
+		cardTableSeats: (taken: number, max: number): string => `🪑 ${taken} of ${max} seats taken.`,
+		tableJoinLabel: "Join the table",
+		// The open table's Join (blackjackLateSeat), each a state answered as a notice.
+		lateSeat: {
+			tableClosed: "That table is no longer dealing, so there is no seat to take.",
+			inviteOnly: "This table seats only the members its host invited.",
+			alreadySeated: "You already have a seat at this table.",
+			alreadyPlayed: "You already played at this table. A seat is one buy in, so wait for the next table.",
+			full: "Every seat at this table is taken. Try again when somebody leaves.",
+			// A held seat is work done, so it is an answer where it was pressed (owner rule 1).
+			held: (buyIn: number, chipTable: boolean): string =>
+				chipTable
+					? `Your seat is held, and ${chipAmount(buyIn)} left your wallet for it. You are dealt in at the next hand.`
+					: "Your seat is held. You are dealt in at the next hand.",
+		},
 		// ── Play Dero instead (post-launch plan item 13) ──
 		// Coin flip, dice roll and rps only: the challenge closes and the host plays one
 		// round against Dero in a solo room of their own (2026-10 item 254, Arcade 1), so
@@ -865,11 +889,15 @@ export const gameRoomsCopy = {
 				if (stake.kind === "pot") return `BUY IN ${chipAmount(stake.amount).toUpperCase()}, WINNER TAKES ALL`;
 				return `BUY IN ${chipAmount(stake.amount).toUpperCase()}`;
 			},
+			// An open table's seats (2026-10 item 276, D14), drawn under the stake.
+			tableSeats: (taken: number, max: number): string => `${taken} OF ${max} SEATS TAKEN`,
 			status: {
 				choosing: "SETTING UP",
 				invite: "INVITE ONLY",
 				open: "OPEN TO ALL",
 				started: "UNDER WAY",
+				// A ranked Blackjack table dealing with its card still open (D14).
+				playing: "DEALING",
 				cancelled: "CALLED OFF",
 				// The card after the match (item 21), or after a round against Dero (item 13).
 				finished: "FINISHED",
