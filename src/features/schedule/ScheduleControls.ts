@@ -137,6 +137,13 @@ async function runGoLiveNow(interaction: ButtonInteraction, guildId: string): Pr
 	// Fire the equivalent of /events stream soon when:now via the shared helper. Note +
 	// role override are null, the button is the one-tap shortcut; the slash
 	// command remains the path for richer inputs.
+	//
+	// Acknowledged BEFORE the announcement posts (bot audit 2026-10-30): the post reads the
+	// config, mentions the audience and may upload an image, which can run past Discord's three
+	// seconds. Posted first, a press that timed out showed "interaction failed" after its @here
+	// had already gone out, and the admin pressed again for a second ping. A press too late to
+	// acknowledge now throws here and posts nothing. Every answer below works on a deferred press.
+	await interaction.deferUpdate();
 	const result = await postGoLiveAnnouncement(interaction.client, guildId, "now", null, null);
 	const c = rokCommanderCopy.goLiveSoon;
 	if (result.ok) {

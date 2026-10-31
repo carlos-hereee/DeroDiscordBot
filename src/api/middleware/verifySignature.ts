@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { Request, Response, NextFunction } from "express";
-import { apiKeyAuth } from "./auth.js";
-import { dashboardApiKey, dashboardSigningSecret, requireSignedRequests } from "@utils/config.js";
+import { apiKeyAuth, isDashboardApiKey } from "./auth.js";
+import { dashboardSigningSecret, requireSignedRequests } from "@utils/config.js";
 import { buildCanonicalString, hashBody } from "@utils/canonicalRequest.js";
 
 // ── verifySignature ──
@@ -145,8 +145,7 @@ export function verifySignature(req: Request, res: Response, next: NextFunction)
 	// during the rollout: even if an attacker somehow forges a signature against a leaked
 	// secret, they still need the separate API key. Once we trust HMAC fully we can drop
 	// this check, but rotating both secrets independently is cheap insurance.
-	const apiKey = req.headers["x-api-key"];
-	if (!apiKey || apiKey !== dashboardApiKey) {
+	if (!isDashboardApiKey(req.headers["x-api-key"])) {
 		res.status(401).json({ error: "Unauthorized" });
 		return;
 	}

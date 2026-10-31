@@ -3,6 +3,7 @@ import type { Server } from "http";
 import cors from "cors";
 import { Client } from "discord.js";
 import { verifySignature } from "./middleware/verifySignature.js";
+import { apiErrorHandler } from "./middleware/apiErrorHandler.js";
 import { createEventsRouter } from "./routes/events.routes.js";
 import { createAnnounceRouter, createStandaloneGoLiveRouter } from "./routes/announce.routes.js";
 import { healthRouter } from "./routes/health.routes.js";
@@ -139,6 +140,10 @@ export function startApiServer(client: Client): Server {
 	// ROK_BOT_PATH_PREFIXES allowlist. The client rides in for its ratings block,
 	// whose server boards read the server tag each rated player wears.
 	app.use("/api/platform/render-analytics", createPlatformAnalyticsRouter(client));
+
+	// Last, so every error above it (a malformed body included) answers a bare JSON status
+	// instead of Express's default page, which shows a stack trace outside production.
+	app.use(apiErrorHandler);
 
 	// Return the Server handle so main.ts can close it during graceful shutdown
 	// (stop accepting new requests before the Discord client and Mongo connection

@@ -157,6 +157,19 @@ const fake = vi.hoisted(() => {
 			if (row) Object.assign(row, { status: "archived", channelId: null });
 			return copy(row);
 		},
+		// One member's draft refund claim, as the real store pulls it: the row before, or null (bot audit 2026-10-30).
+		async takeBuyInPaid(guildId: string, roomId: string, userId: string) {
+			const row = find(guildId, roomId);
+			const paid = (row?.buyInPaidBy as string[] | undefined) ?? [];
+			if (!row || !paid.includes(userId)) return null;
+			const before = copy(row);
+			row.buyInPaidBy = paid.filter((id) => id !== userId);
+			return before;
+		},
+		// No rematch holds a charge mid press, so there is never one to release.
+		async releaseBuyInCharges() {
+			return null;
+		},
 		// A payer the room seated nowhere comes off a playing row's pot (2026-10 item 278).
 		async takePotPayer(guildId: string, roomId: string, userId: string) {
 			const row = find(guildId, roomId);
@@ -259,6 +272,7 @@ vi.mock("@utils/secureRng.js", async (importOriginal) => {
 });
 
 import { rematchFromRoom } from "./challengeBoard.js";
+import { refundAllJoiners } from "./holdemDraftBuyIn.js";
 import { syncTurnPrompt } from "./turnPrompt.js";
 import { startRoomReferee } from "./roomReferee.js";
 import { resolveSoloLuck } from "@features/games/soloLuck.js";
@@ -980,5 +994,60 @@ describe("solo rooms rematch in place", () => {
 			expect.objectContaining({ guildId: GUILD, roomId: next?.roomId, channelId: CHANNEL, hostId: P1 }),
 			undefined
 		);
+	});
+});
+
+// ── a rematch's stakes are given back exactly once (bot audit 2026-10-30) ──
+describe("a rematch that fails after taking its stakes", () => {
+	const blackjackTable = { game: "blackjack", visibility: "invite", playerIds: [P1, P2], spectatorIds: [], inviteCode: null, holdemBuyIn: 2500 } as const;
+
+	it("gives every stake back when the press can no longer be acknowledged", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const world = makeWorld();
+		insertFinishedRoom({ ...blackjackTable });
+		const press = pressRematch(world, P1);
+		// The checks ran past Discord's three seconds, so the interaction expired (10062).
+		(press.deferUpdate as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Unknown interaction"));
+
+		await rematchFromRoom(press, await roomOf(FINISHED));
+
+		expect(wallets.get(P1)).toBe(5000);
+		expect(wallets.get(P2)).toBe(5000);
+		expect(rematchRow()).toBeUndefined();
+	});
+
+	it("leaves the stakes on the new row when the channel release fails, so only the row's own refund pays them", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const world = makeWorld();
+		insertFinishedRoom({ ...blackjackTable });
+		const release = vi.spyOn(fake.store, "releaseChannel").mockRejectedValueOnce(new Error("Mongo blip"));
+
+		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
+		release.mockRestore();
+
+		// Nothing was given back directly: the draft holds both stakes on its ledger.
+		expect(wallets.get(P1)).toBe(2500);
+		expect(wallets.get(P2)).toBe(2500);
+		const next = rematchRow();
+		expect(next).toMatchObject({ status: "draft", buyInPaidBy: [P1, P2] });
+
+		// The idle sweep's finish refunds that ledger, and a second pass pays nothing more.
+		await refundAllJoiners(next as unknown as Parameters<typeof refundAllJoiners>[0]);
+		await refundAllJoiners((await roomOf(next!.roomId as string)) as unknown as Parameters<typeof refundAllJoiners>[0]);
+		expect(wallets.get(P1)).toBe(5000);
+		expect(wallets.get(P2)).toBe(5000);
+	});
+
+	it("refunds a lost channel claim through the row's own ledger, once", async () => {
+		const world = makeWorld();
+		insertFinishedRoom({ ...blackjackTable });
+		// Another press took the channel a moment earlier, so this press's release claim is lost.
+		vi.spyOn(fake.store, "releaseChannel").mockResolvedValueOnce(null);
+
+		await rematchFromRoom(pressRematch(world, P1), await roomOf(FINISHED));
+
+		expect(wallets.get(P1)).toBe(5000);
+		expect(wallets.get(P2)).toBe(5000);
+		expect(rematchRow()).toMatchObject({ status: "archived", channelId: null, buyInPaidBy: [] });
 	});
 });

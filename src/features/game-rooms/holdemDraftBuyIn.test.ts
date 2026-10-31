@@ -433,6 +433,16 @@ describe("a Blackjack table's buy in", () => {
 		expect(await chargeSeats(["a", "short", "b"], 1_000)).toEqual({ paid: ["a", "b"], short: ["short"] });
 	});
 
+	// Bot audit 2026-10-30: a throw out of chargeSeats lost the caller the members already charged.
+	it("counts a member whose debit throws as short, and keeps charging the rest", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		walletMock.debit.mockImplementation(async (wallet: { userId: string }) => {
+			if (wallet.userId === "broken") throw new Error("Mongo blip");
+			return { balance: 0 };
+		});
+		expect(await chargeSeats(["a", "broken", "b"], 1_000)).toEqual({ paid: ["a", "b"], short: ["broken"] });
+	});
+
 	it("gives seats no ledger holds straight back, and owes a free table nothing", async () => {
 		await refundSeatsDirectly({ buyIn: 1_000, userIds: [HOST, "a"], charged: true });
 		expect(walletMock.credit).toHaveBeenCalledWith(key(HOST), 1_000);

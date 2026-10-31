@@ -258,6 +258,11 @@ export const setupCopy = {
 		auditDeleteFailed: "server data delete failed",
 	},
 
+	// The member Fire a greeting power up, refused while its cooldown runs (bot audit 2026-10-30).
+	fireGreeting: {
+		cooldown: (seconds: number): string => `Dero greeted you a moment ago. Try again in ${seconds} seconds.`,
+	},
+
 	// Refresh standings on the admin guide (2026-10 item 254): one line per board of
 	// the leaderboard channel, saying it refreshed or why not.
 	refreshStandings: {

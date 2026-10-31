@@ -1,6 +1,8 @@
 import { GatewayIntentBits, Collection, Events, Client, Partials } from "discord.js";
 import { arcadeMonthlyPostRunOnBoot, deroVoiceSamplerEnabled, discordToken, weeklyDigestRunOnBoot } from "@utils/config.js";
 import clientReady from "@handlers/clientReady.js";
+import { registerClientErrorListeners } from "@handlers/clientErrorListeners.js";
+import { answerInteractionFailure } from "@handlers/interactionFailure.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -75,7 +77,7 @@ import { runWeeklyDigest, startWeeklyDigest } from "@features/leveling/weeklyDig
 import { runMonthlyArcadePost } from "@features/ratings/monthlyArcadePost.js";
 import { checkEarlyAccess, earlyAccessEmbed } from "@features/early-access/earlyAccess.js";
 import { isAdminCommand } from "@utils/permissions.js";
-import { registerNoticeModal, showEmbedNotice, showErrorNotice, showNotice } from "@utils/textModal.js";
+import { registerNoticeModal, showEmbedNotice, showNotice } from "@utils/textModal.js";
 import { flushNow, startXpWriter } from "@features/leveling/xpWriter.js";
 import { registerMessageXp } from "@features/leveling/messageXp.js";
 import { registerReactionXp } from "@features/leveling/reactionXp.js";
@@ -139,6 +141,7 @@ const client = new Client({
 });
 
 clientReady(client);
+registerClientErrorListeners(client);
 
 // ── process lifecycle: graceful shutdown + global error nets ──────────
 // Railway sends SIGTERM on every deploy. Without a handler the cron keeps
@@ -157,6 +160,14 @@ async function gracefulShutdown(signal: string, exitCode = 0): Promise<void> {
 	if (isShuttingDown) return; // a second signal during teardown is a no-op
 	isShuttingDown = true;
 	console.log(`[shutdown] received ${signal}, shutting down gracefully`);
+	// A hard deadline for the whole sequence below: a flush, a gateway destroy or a Mongo close
+	// that hangs (Atlas down is the likely one) would otherwise leave a process that has already
+	// stopped its crons sitting there forever, never restarted. unref so it never holds a clean
+	// exit open.
+	setTimeout(() => {
+		console.error(`[shutdown] still running after ${BOT_CONSTANTS.SHUTDOWN_DEADLINE_MS}ms, exiting`);
+		process.exit(exitCode);
+	}, BOT_CONSTANTS.SHUTDOWN_DEADLINE_MS).unref();
 	// ⓪ flush buffered leveling xp FIRST, while the Mongo connection is still up.
 	// Message xp is staged in memory and written on an interval, so a redeploy
 	// lands somewhere inside a flush window and would otherwise drop it.
@@ -416,7 +427,8 @@ process.on("uncaughtException", (err) => {
 		// handle autocomplete interactions first, before command checks
 		if (interaction.isAutocomplete()) {
 			const command = client.commands.get(interaction.commandName);
-			if (command?.autocomplete) await command.autocomplete(interaction);
+			// An autocomplete cannot be answered with an error, so a failure is only logged.
+			if (command?.autocomplete) await command.autocomplete(interaction).catch((error: unknown) => console.error(`[interactions] autocomplete for /${interaction.commandName} threw`, error));
 			return;
 		}
 
@@ -438,10 +450,7 @@ process.on("uncaughtException", (err) => {
 			try {
 				await dispatchButton(interaction);
 			} catch (error) {
-				console.error(`[interactions] button handler threw for customId='${interaction.customId}'`, error);
-				if (!interaction.replied && !interaction.deferred) {
-					await showErrorNotice(interaction, rokCommanderCopy.responses.commandExecuteFailure);
-				}
+				await answerInteractionFailure(interaction, `button handler for customId='${interaction.customId}'`, error);
 			}
 			return;
 		}
@@ -461,10 +470,7 @@ process.on("uncaughtException", (err) => {
 			try {
 				await dispatchSelectMenu(interaction);
 			} catch (error) {
-				console.error(`[interactions] select handler threw for customId='${interaction.customId}'`, error);
-				if (!interaction.replied && !interaction.deferred) {
-					await showErrorNotice(interaction, rokCommanderCopy.responses.commandExecuteFailure);
-				}
+				await answerInteractionFailure(interaction, `select handler for customId='${interaction.customId}'`, error);
 			}
 			return;
 		}
@@ -478,10 +484,7 @@ process.on("uncaughtException", (err) => {
 			try {
 				await dispatchModal(interaction);
 			} catch (error) {
-				console.error(`[interactions] modal handler threw for customId='${interaction.customId}'`, error);
-				if (!interaction.replied && !interaction.deferred) {
-					await showErrorNotice(interaction, rokCommanderCopy.responses.commandExecuteFailure);
-				}
+				await answerInteractionFailure(interaction, `modal handler for customId='${interaction.customId}'`, error);
 			}
 			return;
 		}
@@ -494,65 +497,67 @@ process.on("uncaughtException", (err) => {
 			return;
 		}
 
-		// ── admin role guard ───────────────────────────────────────────
-		// skip for /setup, it has its own owner-only check
-		if (interaction.commandName !== "setup") {
-			const config = await guildConfigStore.findByGuildId(interaction.guildId!);
-
-			// A command in BOT_CONSTANTS.ADMIN_COMMANDS, unless the leaf is a member one
-			// (MEMBER_SUBCOMMANDS): /events list is a member view, the rest of /events is
-			// not. The group is passed too, so a leaf inside a group is matched whole.
-			const subcommand = interaction.options.getSubcommand(false);
-			const group = interaction.options.getSubcommandGroup(false);
-			if (isAdminCommand(interaction.commandName, subcommand, group)) {
-				// guild hasn't run /setup yet, no config means no admin role is defined
-				if (!config) {
-					await showNotice(interaction, { title: getPluginCopy(null).notice.commands, sections: [rokCommanderCopy.responses.setupRequired] });
-					return;
-				}
-
-				const isOwner = interaction.user.id === interaction.guild?.ownerId;
-				// Resolve the invoking member cache-first, then fall back to a fetch.
-				// The members cache can be cold (large guild, fresh restart, gateway
-				// gap), and a cache miss previously denied a legitimate admin with
-				// "no wizard powers." Only pay the fetch when there is an adminRoleId
-				// to check and the actor is not already the owner, so the hot paths
-				// (owner, or guild with no admin role) stay cache-only.
-				let member = interaction.guild?.members.cache.get(interaction.user.id) ?? null;
-				if (!member && !isOwner && config.adminRoleId) {
-					member = (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null)) ?? null;
-				}
-				const hasAdminRole = (config.adminRoleId && member?.roles.cache.has(config.adminRoleId)) ?? false;
-
-				if (!isOwner && !hasAdminRole) {
-					await showNotice(interaction, { title: getPluginCopy(null).notice.commands, sections: [rokCommanderCopy.responses.noWizardPowers] });
-					return;
-				}
-			}
-		}
-
-		// ── Studio early-access gate ("Dero's new powers first") ──
-		// A command listed in EARLY_ACCESS_FEATURES stays exclusive to Studio-owned guilds
-		// until its release date, then opens to all. Runs AFTER the admin guard so a
-		// permission failure takes precedence over the upsell. Skips DMs (no guildId), and
-		// for the un-listed common case returns instantly with no network call.
-		if (interaction.guildId) {
-			const access = await checkEarlyAccess(interaction.commandName, interaction.guildId);
-			if (!access.allowed && access.generalReleaseAt) {
-				await showEmbedNotice(interaction, earlyAccessEmbed(access.generalReleaseAt));
-				return;
-			}
-		}
-
+		// One try around the guards AND the command: the admin guard reads the config and may
+		// fetch the member, and the early access gate may call the platform, so a Mongo or
+		// network failure there used to escape as an unhandled rejection and leave the member
+		// with "The application did not respond".
 		try {
+			// ── admin role guard ───────────────────────────────────────────
+			// skip for /setup, it has its own owner-only check
+			if (interaction.commandName !== "setup") {
+				const config = await guildConfigStore.findByGuildId(interaction.guildId!);
+
+				// A command in BOT_CONSTANTS.ADMIN_COMMANDS, unless the leaf is a member one
+				// (MEMBER_SUBCOMMANDS): /events list is a member view, the rest of /events is
+				// not. The group is passed too, so a leaf inside a group is matched whole.
+				const subcommand = interaction.options.getSubcommand(false);
+				const group = interaction.options.getSubcommandGroup(false);
+				if (isAdminCommand(interaction.commandName, subcommand, group)) {
+					// guild hasn't run /setup yet, no config means no admin role is defined
+					if (!config) {
+						await showNotice(interaction, { title: getPluginCopy(null).notice.commands, sections: [rokCommanderCopy.responses.setupRequired] });
+						return;
+					}
+
+					const isOwner = interaction.user.id === interaction.guild?.ownerId;
+					// Resolve the invoking member cache-first, then fall back to a fetch.
+					// The members cache can be cold (large guild, fresh restart, gateway
+					// gap), and a cache miss previously denied a legitimate admin with
+					// "no wizard powers." Only pay the fetch when there is an adminRoleId
+					// to check and the actor is not already the owner, so the hot paths
+					// (owner, or guild with no admin role) stay cache-only.
+					let member = interaction.guild?.members.cache.get(interaction.user.id) ?? null;
+					if (!member && !isOwner && config.adminRoleId) {
+						member = (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null)) ?? null;
+					}
+					const hasAdminRole = (config.adminRoleId && member?.roles.cache.has(config.adminRoleId)) ?? false;
+
+					if (!isOwner && !hasAdminRole) {
+						await showNotice(interaction, { title: getPluginCopy(null).notice.commands, sections: [rokCommanderCopy.responses.noWizardPowers] });
+						return;
+					}
+				}
+			}
+
+			// ── Studio early-access gate ("Dero's new powers first") ──
+			// A command listed in EARLY_ACCESS_FEATURES stays exclusive to Studio-owned guilds
+			// until its release date, then opens to all. Runs AFTER the admin guard so a
+			// permission failure takes precedence over the upsell. Skips DMs (no guildId), and
+			// for the un-listed common case returns instantly with no network call.
+			if (interaction.guildId) {
+				const access = await checkEarlyAccess(interaction.commandName, interaction.guildId);
+				if (!access.allowed && access.generalReleaseAt) {
+					await showEmbedNotice(interaction, earlyAccessEmbed(access.generalReleaseAt));
+					return;
+				}
+			}
+
 			await command.execute(interaction);
 		} catch (error) {
-			console.error(LOG_MESSAGES.main.commandExecuteError(interaction.commandName), error);
-
 			// A real failure, so it keeps the error title, but it is still the member's alone: a
 			// notice, or its private error embed once the command already acknowledged, never a
 			// post pinging them in 💬dero-commands (owner rule 1 of the Round 3 list, 2026-10 item 263).
-			await showErrorNotice(interaction, rokCommanderCopy.responses.commandExecuteFailure);
+			await answerInteractionFailure(interaction, `/${interaction.commandName}`, error);
 		}
 	}); // start the scheduler after commands are loaded
 	// && after client is ready (since it relies on the client to send messages)
@@ -977,4 +982,10 @@ process.on("uncaughtException", (err) => {
 
 	// login the bot after everything is set up
 	await client.login(discordToken);
-})();
+})().catch((error: unknown) => {
+	// A boot that fails (Mongo unreachable, a bad token) must END the process with a failure code,
+	// so Railway restarts it. Left to the unhandledRejection net it was only logged, leaving a
+	// process that never logged in and that nothing restarts.
+	console.error("[boot] the bot could not start", error);
+	process.exit(1);
+});

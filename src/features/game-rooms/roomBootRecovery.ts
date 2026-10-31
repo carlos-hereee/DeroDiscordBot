@@ -1,4 +1,4 @@
-import { type Client } from "discord.js";
+import { DiscordAPIError, RESTJSONErrorCodes, type Client } from "discord.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { mapWithConcurrency } from "@utils/mapWithConcurrency.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
@@ -77,7 +77,11 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 					return;
 				}
 
-				const channel = await client.channels.fetch(room.channelId).catch(() => null);
+				let fetchError: unknown = null;
+				const channel = await client.channels.fetch(room.channelId).catch((error: unknown) => {
+					fetchError = error;
+					return null;
+				});
 				if (channel) {
 					// ①ᵈ The turn clocks are memory only (turnClock), so a restart dropped every warning
 					// and every on time end. Each is armed again from the deadline its game stores (a
@@ -120,6 +124,21 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 					return;
 				}
 
+				// ⚠️ Only a channel Discord SAYS is gone is gone (bot audit 2026-10-30). A fetch that failed
+				// for any other reason (a 5xx or a timeout while Discord is having a bad day, which is
+				// exactly when deploys restart the bot) used to finish every live room in reach as
+				// abandoned: buy ins refunded, nobody rated, a three day Monopoly match wiped. Such a room
+				// is left alone and looked at again on the next boot; the idle sweep still closes one
+				// nobody plays.
+				if (!isRoomChannelGone(client, room.guildId, fetchError)) {
+					console.warn("[game-rooms] boot recovery could not reach a room's channel; leaving it for the next boot", {
+						guildId: room.guildId,
+						roomId: room.roomId,
+						error: fetchError,
+					});
+					return;
+				}
+
 				// The channel is gone and the row still says the match is live. Nothing
 				// will ever finish it, so it would hold its host's one room slot (the
 				// partial unique index counts non-terminal statuses) forever: that host
@@ -157,4 +176,18 @@ export async function recoverGameRoomsOnBoot(client: Client): Promise<BootRecove
 	if (clocksRebuilt > 0) console.log(`[game-rooms] boot recovery: ${clocksRebuilt} turn clock(s) armed again`);
 	if (settled > 0) console.log(`[game-rooms] boot recovery: ${settled} saved match ending(s) finished`);
 	return { abandoned, lostTables, dealersRestored, clocksRebuilt, settled, archived };
+}
+
+/**
+ * Whether a room's channel fetch failure means the channel is really gone: Discord answered
+ * Unknown Channel, or the bot is no longer in the room's server at all (kicked, so every fetch
+ * there answers Missing Access and the match can never be played again). Anything else, a
+ * transient failure or an unavailable guild, says nothing about the channel. A fetch that
+ * resolved with no channel and no error keeps the old answer, gone: it threw nothing to doubt.
+ */
+export function isRoomChannelGone(client: Pick<Client, "guilds">, guildId: string, fetchError: unknown): boolean {
+	if (fetchError === null) return true;
+	if (!(fetchError instanceof DiscordAPIError)) return false;
+	if (fetchError.code === RESTJSONErrorCodes.UnknownChannel) return true;
+	return fetchError.code === RESTJSONErrorCodes.MissingAccess && !client.guilds.cache.has(guildId);
 }

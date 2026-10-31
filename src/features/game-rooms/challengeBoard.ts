@@ -1321,15 +1321,19 @@ export async function rematchFromRoom(interaction: ButtonInteraction, room: IGam
 		return;
 	}
 
-	// Everything below writes rows and talks to Discord several times over, which can
-	// run past the three second interaction window. Deferring the UPDATE (rather than a
-	// reply) is what lets ③ edit the result card the button lives on.
-	await interaction.deferUpdate();
 	// A rematch's stakes (2026-10 items 267 and 276), every one taken in checkRematch. Until the
 	// rematch row is born holding them on its draft ledger, a failure gives them back from here;
 	// from then on the row's own refunds and its start claim carry them.
 	const charge: RematchCharge = { seats: check.hostSeats, ledgered: false };
 	try {
+		// Everything below writes rows and talks to Discord several times over, which can
+		// run past the three second interaction window. Deferring the UPDATE (rather than a
+		// reply) is what lets ③ edit the result card the button lives on.
+		//
+		// ⚠️ INSIDE THE TRY, because checkRematch has already taken the stakes. A press whose
+		// checks ran past Discord's window fails this defer (10062), and outside the try that
+		// lost every stake with nothing ever giving it back (bot audit 2026-10-30).
+		await interaction.deferUpdate();
 		const failure = await playRematchInPlace(interaction, room, check, charge);
 		if (failure) {
 			if (!charge.ledgered && charge.seats) await refundSeatsDirectly(charge.seats);
@@ -1493,14 +1497,17 @@ async function playRematchInPlace(interaction: ButtonInteraction, finished: IGam
 	const hostId = interaction.user.id;
 
 	const ledger = charge.seats?.charged ? charge.seats.userIds : [];
-	const takeover = await takeOverChannel(finished, hostId, channel.id, check.playerIds, ledger);
+	// The row holds the stakes from the moment it is created: a row that never starts is a draft,
+	// whose finish (the idle sweep) refunds its ledger, and its start claim carries them to the
+	// table or the pot. takeOverChannel says so through onLedgered BEFORE its next write, so a
+	// failure after the create can no longer refund them directly as well (bot audit 2026-10-30).
+	const takeover = await takeOverChannel(finished, hostId, channel.id, check.playerIds, ledger, () => {
+		charge.ledgered = true;
+	});
 	if (!takeover.ok) {
 		return takeover.reason === "alreadyHosting" ? gameRoomsCopy.errors.alreadyHosting(null) : gameRoomsCopy.errors.rematchAlreadyOffered;
 	}
 	const next = takeover.room;
-	// The row holds the stakes now: a row that never starts is a draft, whose finish (the idle
-	// sweep) refunds its ledger, and its start claim carries them to the table or the pot.
-	charge.ledgered = true;
 
 	// ③ The finished room's result card now says who started the rematch, in place of
 	// the archive notice that is no longer true, and drops its buttons: the finished
@@ -1572,7 +1579,14 @@ type ChannelTakeover = { ok: true; room: IGameRoom } | { ok: false; reason: "alr
 // ② The two row writes, in the order the header above explains: the new row is born on
 // the channel, then the finished row releases it. The new row is a "draft" until
 // seedRoom moves it to "playing", like every room before its match is seeded.
-async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: string, playerIds: string[], buyInPaidBy: readonly string[]): Promise<ChannelTakeover> {
+async function takeOverChannel(
+	finished: IGameRoom,
+	hostId: string,
+	channelId: string,
+	playerIds: string[],
+	buyInPaidBy: readonly string[],
+	onLedgered: () => void
+): Promise<ChannelTakeover> {
 	const { spectatorIds } = resolveRoomSeats(finished.visibility, hostId, playerIds, finished.spectatorIds);
 
 	let next: IGameRoom;
@@ -1615,11 +1629,17 @@ async function takeOverChannel(finished: IGameRoom, hostId: string, channelId: s
 		console.error("[game-rooms] rematch row create failed", { guildId: finished.guildId, hostId, error });
 		return { ok: false, reason: "alreadyHosting" };
 	}
+	// From here the stakes live on the new row's ledger, and only a claim on that ledger pays them.
+	onLedgered();
 
 	if (!(await roomLifecycle.releaseChannel(finished))) {
 		// The claim was lost: another player's rematch took the channel first, or the
 		// sweep archived the room a moment ago. This row must not stay on the channel, so
 		// it is archived, which frees the presser's host slot and clears its channelId.
+		// Its stakes go back FIRST and by claiming the row's own entries, so a crash or a
+		// Mongo error before the archive leaves a draft the idle sweep finds already empty
+		// rather than one it would refund a second time.
+		await refundAllJoiners(next);
 		await gameRoomStore.markArchived(next.guildId, next.roomId);
 		return { ok: false, reason: "rematchTaken" };
 	}

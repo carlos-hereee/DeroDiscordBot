@@ -56,7 +56,9 @@ vi.mock("@features/schedule/NextUpBoard.js", () => ({
 	_resetNextUpDedupForTest: vi.fn(),
 }));
 
-import { announceSeasonEnd, recurringFireCandidates } from "./ReminderScheduler.js";
+import { announceSeasonEnd, isReminderDue, recurringFireCandidates, runEventsForTick } from "./ReminderScheduler.js";
+import { eventStore } from "@db/stores/eventStore.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { eventOverrideStore } from "@db/stores/eventOverrideStore.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { reminderStore } from "@db/stores/reminderStore.js";
@@ -199,5 +201,73 @@ describe("recurringFireCandidates", () => {
 		const candidates = await recurringFireCandidates(makeEvent({ firstOccurrence: ANCHOR }), NOW);
 
 		expect(candidates.map((candidate) => candidate.originalOccurrence.toISOString())).toEqual([NEXT.toISOString()]);
+	});
+});
+
+// ── a late tick still fires, once (bot audit 2026-10-30) ──────────────────
+// Each reminder used to qualify on exactly one tick, the minute before it was due, so a
+// skipped or slow tick, or a redeploy in that minute, dropped it for good.
+describe("isReminderDue", () => {
+	const DUE = new Date("2030-01-01T12:00:00Z");
+	const at = (offsetMs: number) => new Date(DUE.getTime() + offsetMs);
+
+	it("fires from one window before the reminder until the grace runs out after it", () => {
+		expect(isReminderDue(DUE, at(-BOT_CONSTANTS.REMINDER_FIRE_WINDOW_MS))).toBe(true);
+		expect(isReminderDue(DUE, at(0))).toBe(true);
+		expect(isReminderDue(DUE, at(2 * 60_000))).toBe(true);
+		expect(isReminderDue(DUE, at(BOT_CONSTANTS.REMINDER_LATE_GRACE_MS))).toBe(true);
+	});
+
+	it("does not fire too early or once the grace has passed", () => {
+		expect(isReminderDue(DUE, at(-BOT_CONSTANTS.REMINDER_FIRE_WINDOW_MS - 1))).toBe(false);
+		expect(isReminderDue(DUE, at(BOT_CONSTANTS.REMINDER_LATE_GRACE_MS + 1))).toBe(false);
+	});
+});
+
+describe("recurringFireCandidates inside the late grace", () => {
+	const ANCHOR = new Date("2030-01-01T12:00:00Z");
+	const overrideMock = eventOverrideStore as unknown as { findOne: ReturnType<typeof vi.fn> };
+
+	beforeEach(() => {
+		overrideMock.findOne.mockReset().mockResolvedValue(null);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("keeps an occurrence that started moments ago, so its on time reminder can still fire late", async () => {
+		const now = new Date(ANCHOR.getTime() + 2 * 60_000);
+		vi.useFakeTimers();
+		vi.setSystemTime(now);
+
+		const candidates = await recurringFireCandidates(makeEvent({ firstOccurrence: ANCHOR }), now);
+
+		expect(candidates[0]?.originalOccurrence.toISOString()).toBe(ANCHOR.toISOString());
+	});
+});
+
+// ── one event's failure no longer costs every other event its tick ──────
+describe("runEventsForTick", () => {
+	const eventStoreMock = eventStore as unknown as { deleteInGuild: ReturnType<typeof vi.fn> };
+
+	afterEach(() => {
+		eventStoreMock.deleteInGuild.mockReset().mockResolvedValue(null);
+		vi.restoreAllMocks();
+	});
+
+	it("carries on to the next event when one throws", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		// Both seasons have ended, so each event's first write is its soft delete; the first one fails.
+		const ended = { seasonEnd: new Date("2020-01-01T00:00:00Z") };
+		eventStoreMock.deleteInGuild.mockRejectedValueOnce(new Error("Mongo blip")).mockResolvedValue(null);
+		const client = { channels: { fetch: vi.fn().mockResolvedValue(null) } } as unknown as Client;
+
+		await expect(
+			runEventsForTick(client, [makeEvent({ eventId: "evt-broken", ...ended }), makeEvent({ eventId: "evt-next", guildId: "guild-2", ...ended })])
+		).resolves.toBeUndefined();
+
+		expect(eventStoreMock.deleteInGuild).toHaveBeenCalledWith("evt-broken", "guild-1");
+		expect(eventStoreMock.deleteInGuild).toHaveBeenCalledWith("evt-next", "guild-2");
 	});
 });

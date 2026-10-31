@@ -526,6 +526,7 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "You're off the announcement ping list", kind: "state" },
 	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "You're on the announcement ping list", kind: "state" },
 	{ file: "features/power-ups/PowerUps.ts", within: "runToggleNotificationRole", anchor: "Could not update your notifications", kind: "failure" },
+	{ file: "features/power-ups/PowerUps.ts", within: "runFireGreeting", anchor: "setupCopy.fireGreeting.cooldown", kind: "state" },
 
 	// ── renderer/renderAnalyticsSubcommand.ts ──
 	{ file: "features/renderer/renderAnalyticsSubcommand.ts", within: "runRenderAnalyticsSubcommand", kind: "state" },
@@ -654,7 +655,8 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/voice/voiceQueueLog.ts", within: "refuse", kind: "state" },
 
 	// ── main.ts ──
-	{ file: "main.ts", within: "gracefulShutdown", anchor: "commandExecuteFailure", count: 4, kind: "failure" },
+	// The dispatcher's one catch for every interaction kind (bot audit 2026-10-30) lives in its own helper.
+	{ file: "handlers/interactionFailure.ts", within: "answerInteractionFailure", anchor: "commandExecuteFailure", kind: "failure" },
 	{ file: "main.ts", within: "gracefulShutdown", anchor: "sections: [rokCommanderCopy.responses.setupRequired", kind: "state" },
 	{ file: "main.ts", within: "gracefulShutdown", anchor: "sections: [rokCommanderCopy.responses.noWizardPowers", kind: "state" },
 	{ file: "main.ts", within: "gracefulShutdown", anchor: "earlyAccessEmbed(access.generalReleaseAt", kind: "state" },

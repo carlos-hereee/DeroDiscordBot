@@ -104,9 +104,22 @@ export const BOT_CONSTANTS = {
 		// One reply carries at most 10 embeds (a settings panel's saved answer, post-launch plan item 9).
 		MAX_REPLY_EMBEDS: 10,
 	},
+	// How long a member waits between presses of the Fire a greeting power up. Every press posts a
+	// drawn welcome card in the introductions channel, so without it one member could flood that
+	// channel and the canvas renderer (bot audit 2026-10-30). The guild's own burst cap still
+	// applies on top through the greeter's throttle.
+	GREETING_BUTTON_COOLDOWN_MS: 60_000,
+	// How long gracefulShutdown may run before the process exits anyway. Railway sends SIGTERM on
+	// every deploy and kills a container that lingers; a hung Mongo close must not outlive it.
+	SHUTDOWN_DEADLINE_MS: 15_000,
 	// scheduler
 	SCHEDULER_CRON: "* * * * *", // every minute
 	REMINDER_FIRE_WINDOW_MS: 60_000, // how close to reminder time before we fire it
+	// How long past its time a reminder may still fire. The cron gives each reminder exactly one
+	// qualifying tick (the minute before it is due), so a skipped tick, a slow one or a redeploy
+	// in that minute used to drop it for good. Five minutes covers a Railway restart; the
+	// ReminderLog dedup row keeps a late tick from firing one twice.
+	REMINDER_LATE_GRACE_MS: 5 * 60_000,
 	// Max number of guilds the per-minute tick reads in parallel. The tick fans
 	// out one events+config read per guild; without a ceiling, thousands of
 	// guilds means thousands of simultaneous DB/HTTP calls in one tick, which

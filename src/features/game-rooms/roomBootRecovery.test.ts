@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Client } from "discord.js";
+import { DiscordAPIError, type Client } from "discord.js";
 
 vi.mock("@db/stores/gameRoomStore.js", () => ({
 	gameRoomStore: { findNonTerminal: vi.fn() },
@@ -13,7 +13,7 @@ vi.mock("@features/games/blackjackHandler.js", () => ({
 	disarmStaleBlackjackBoard: vi.fn(),
 }));
 
-import { recoverGameRoomsOnBoot } from "./roomBootRecovery.js";
+import { isRoomChannelGone, recoverGameRoomsOnBoot } from "./roomBootRecovery.js";
 import { gameRoomStore } from "@db/stores/gameRoomStore.js";
 import { finish } from "./roomLifecycle.js";
 import { sweepExpiredRooms } from "./roomArchiveSweep.js";
@@ -248,5 +248,59 @@ describe("recoverGameRoomsOnBoot", () => {
 			expect(disarmMock).not.toHaveBeenCalled();
 			logSpy.mockRestore();
 		});
+	});
+});
+
+// ── a channel fetch that failed is not a deleted channel (bot audit 2026-10-30) ──
+const apiError = (code: number, status: number) => new DiscordAPIError({ code, message: "refused" }, code, status, "GET", "url", {});
+
+describe("a room whose channel Discord could not be asked about", () => {
+	function failingClient(error: unknown, guildIds: string[] = ["guild-1"]): Client {
+		return {
+			user: { id: "bot-1" },
+			guilds: { cache: new Map(guildIds.map((id) => [id, { id }])) },
+			channels: { fetch: vi.fn().mockRejectedValue(error) },
+		} as unknown as Client;
+	}
+
+	it("leaves a live room alone when the fetch failed with a server error, so the next boot looks again", async () => {
+		storeMock.findNonTerminal.mockResolvedValue([makeRoom("monopoly-day-3", "ch-live", "monopoly")]);
+		vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+		const summary = await recoverGameRoomsOnBoot(failingClient(apiError(0, 503)));
+
+		expect(summary.abandoned).toBe(0);
+		expect(finishMock).not.toHaveBeenCalled();
+	});
+
+	it("still closes a room whose channel Discord says is unknown", async () => {
+		storeMock.findNonTerminal.mockResolvedValue([makeRoom("ghost", "ch-gone")]);
+		vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+		const summary = await recoverGameRoomsOnBoot(failingClient(apiError(10003, 404)));
+
+		expect(summary.abandoned).toBe(1);
+		expect(finishMock.mock.calls[0][2]).toEqual({ abandoned: true });
+	});
+});
+
+describe("isRoomChannelGone", () => {
+	const inGuild = { guilds: { cache: new Map([["guild-1", {}]]) } } as unknown as Pick<Client, "guilds">;
+	const kicked = { guilds: { cache: new Map() } } as unknown as Pick<Client, "guilds">;
+
+	it("is gone on Unknown Channel, and on Missing Access only once the bot has left the server", () => {
+		expect(isRoomChannelGone(inGuild, "guild-1", apiError(10003, 404))).toBe(true);
+		expect(isRoomChannelGone(kicked, "guild-1", apiError(50001, 403))).toBe(true);
+		expect(isRoomChannelGone(inGuild, "guild-1", apiError(50001, 403))).toBe(false);
+	});
+
+	it("is not gone on a transient failure", () => {
+		expect(isRoomChannelGone(inGuild, "guild-1", apiError(0, 500))).toBe(false);
+		expect(isRoomChannelGone(inGuild, "guild-1", new Error("socket hang up"))).toBe(false);
+	});
+
+	it("keeps the old answer for a fetch that resolved with no channel", () => {
+		expect(isRoomChannelGone(inGuild, "guild-1", null)).toBe(true);
 	});
 });

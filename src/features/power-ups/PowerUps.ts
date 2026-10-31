@@ -5,7 +5,9 @@ import { gateOwnerOrAdmin } from "@utils/permissions.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { refreshLeaderboard } from "@features/leaderboard/LeaderboardBoard.js";
 import { refreshLevelsBoard } from "@features/leveling/LevelsBoard.js";
-import { welcomeNewMember } from "@features/greeter/welcomeNewMember.js";
+import { greetAllowed, welcomeNewMember } from "@features/greeter/welcomeNewMember.js";
+import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
+import { CooldownManager } from "@utils/cooldownManager.js";
 import { respondWithFortune } from "@features/fortune/respondWithFortune.js";
 import { runChipClaim } from "@features/economy/chipClaim.js";
 import { levelingCopy } from "@features/leveling/levelingCopy.js";
@@ -221,6 +223,12 @@ async function runLeaderboardRefresh(interaction: ButtonInteraction, guildId: st
 	await answer.send({ content: lines.join("\n") });
 }
 
+// Per member, keyed by guild and member. Memory only, so a restart forgets it, which is harmless.
+const greetingCooldown = new CooldownManager(BOT_CONSTANTS.GREETING_BUTTON_COOLDOWN_MS);
+// The greeter's per guild burst throttle, in a bucket of its own so a press never spends a
+// newcomer's welcome.
+const GREETING_BUTTON_THROTTLE_BUCKET = "greetButton";
+
 async function runFireGreeting(interaction: ButtonInteraction): Promise<void> {
 	// Fire the real new-member greeting flow for the clicking member: the same
 	// path a join takes (a pack-voiced welcome framing + a random icebreaker,
@@ -232,6 +240,19 @@ async function runFireGreeting(interaction: ButtonInteraction): Promise<void> {
 	// click without a "thinking" state and buys time for welcomeNewMember's
 	// channel I/O; we only speak up (in 💬dero-commands, 2026-10 item 257 Phase 5)
 	// when nothing got posted so a dud click is not left silent.
+	//
+	// Throttled first (bot audit 2026-10-30): the button is open to every member and bypassed the
+	// greeter's flood throttle, so one member pressing over and over posted a welcome card each
+	// time. The refusal is a notice, so it is read before the acknowledgement.
+	const cooldownKey = `${interaction.guildId}:${interaction.user.id}`;
+	const gate = greetingCooldown.check(cooldownKey);
+	const throttled = gate.onCooldown || !greetAllowed(interaction.guildId ?? "", GREETING_BUTTON_THROTTLE_BUCKET);
+	if (throttled) {
+		const remainingMs = gate.onCooldown ? gate.remainingMs : BOT_CONSTANTS.GREETING_BUTTON_COOLDOWN_MS;
+		await showNotice(interaction, { title: getPluginCopy(null).notice.powerUps, sections: [setupCopy.fireGreeting.cooldown(Math.ceil(remainingMs / 1000))] });
+		return;
+	}
+	greetingCooldown.record(cooldownKey);
 	await interaction.deferUpdate();
 	let member = interaction.guild?.members.cache.get(interaction.user.id) ?? null;
 	if (!member) member = (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null)) ?? null;

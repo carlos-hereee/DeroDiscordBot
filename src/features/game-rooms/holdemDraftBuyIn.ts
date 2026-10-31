@@ -421,12 +421,18 @@ export async function chargeSoloTable(guildId: string, userId: string): Promise<
 /**
  * Charge each of `userIds` the buy in, in order: the ones whose wallet covered it, and the ones
  * it did not, who were charged nothing. A Blackjack rematch charges its returning players here.
+ * Never throws: a debit that fails counts that member as short, because a throw out of here would
+ * lose the caller the list of members already charged, and with it every refund it owes them.
  */
 export async function chargeSeats(userIds: readonly string[], buyIn: number): Promise<{ paid: string[]; short: string[] }> {
 	const paid: string[] = [];
 	const short: string[] = [];
 	for (const userId of userIds) {
-		if (await takeChips({ userId }, buyIn)) paid.push(userId);
+		const charged = await takeChips({ userId }, buyIn).catch((error: unknown) => {
+			console.error(`[game-rooms] a buy in of ${buyIn} chips could not be taken from ${userId}`, error);
+			return false;
+		});
+		if (charged) paid.push(userId);
 		else short.push(userId);
 	}
 	return { paid, short };
