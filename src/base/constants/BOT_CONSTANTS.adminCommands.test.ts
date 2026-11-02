@@ -49,6 +49,8 @@ const FINAL_COMMANDS = [
 	"secret-code",
 	"dero",
 	"suggestion-box",
+	// Dero: Creator Lab (2026-11 item 283 Phase 4): a member's own account link, open to anyone.
+	"creator-lab-connect",
 ];
 
 // The names the merges and removals retired. None may come back as a command.
@@ -276,7 +278,7 @@ describe("the admin command gate", () => {
 	});
 
 	it("leaves the member commands and the three owner commands to their own checks", () => {
-		for (const name of ["leaderboard", "account", "claim", "mini-game", "rating", "secret-code", "dero", "suggestion-box", ...OWNER_ONLY, PLATFORM_OWNER_ONLY]) {
+		for (const name of ["leaderboard", "account", "claim", "mini-game", "rating", "secret-code", "dero", "suggestion-box", "creator-lab-connect", ...OWNER_ONLY, PLATFORM_OWNER_ONLY]) {
 			expect(BOT_CONSTANTS.ADMIN_COMMANDS.has(name), name).toBe(false);
 		}
 	});

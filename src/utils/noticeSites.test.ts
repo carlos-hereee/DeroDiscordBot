@@ -359,6 +359,9 @@ const INVENTORY: readonly NoticeEntry[] = [
 	// ── commands/fun/secret-code.ts ──
 	{ file: "commands/fun/secret-code.ts", within: "execute", kind: "private", why: "what a secret code did is the member's own secret: posted in a channel it would give the code away to everyone who saw it work" },
 
+	// ── commands/utility/creator-lab-connect.ts ──
+	{ file: "commands/utility/creator-lab-connect.ts", within: "execute", kind: "state" },
+
 	// ── commands/utility/dero.ts ──
 	{ file: "commands/utility/dero.ts", within: "refuse", kind: "state" },
 	{ file: "commands/utility/dero.ts", within: "tell", count: 8, kind: "state" },

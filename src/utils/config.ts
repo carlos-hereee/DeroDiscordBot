@@ -277,6 +277,19 @@ const renderAnalyticsEnabled = (() => {
 	const raw = (process.env.RENDER_ANALYTICS_ENABLED ?? "").toLowerCase().trim();
 	return raw !== "false" && raw !== "0" && raw !== "no";
 })();
+// ── Dero: Creator Lab DMs (2026-11 item 283 Phase 4) ──
+// What: when true, /creator-lab-connect issues link codes and the two signed Creator Lab routes
+//   (/api/creator-lab/link/redeem and /api/creator-lab/dm) answer. When false (the default) the
+//   command says it is not available yet and both routes answer 503, so a release carries it dark.
+// Who: read by commands/utility/creator-lab-connect.ts and api/routes/creatorLab.routes.ts.
+// Where: pairs with the server's own CREATOR_LAB_DM_ENABLED on Heroku; both must be on for a DM to
+//   go out, and either one off stops them (Risk R6 in the Creator Lab plan).
+// How: same explicit string comparison as the flags above, so a stray "false" cannot read as on.
+const creatorLabDmEnabled = (() => {
+	const raw = (process.env.CREATOR_LAB_DM_ENABLED ?? "").toLowerCase().trim();
+	return raw === "1" || raw === "true" || raw === "yes";
+})();
+
 // CORS allow-list for the dashboard.
 // What: the Express `cors({ origin })` middleware accepts a string (single
 //   origin), an array (multiple origins), or a function. We want multiple
@@ -328,6 +341,7 @@ export {
 	playerActivityRetentionDays,
 	enforceGameRoomTier,
 	enforceLevelingTier,
+	creatorLabDmEnabled,
 	elevenLabsApiKey,
 	deroBrainKey,
 	deroVoiceSamplerEnabled,

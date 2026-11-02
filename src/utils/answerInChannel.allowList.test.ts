@@ -71,6 +71,7 @@ const ALLOWED: readonly AllowedLine[] = [
 	{ file: "features/platform/verseSubcommand.ts", contains: "await interaction.deferReply({ flags: MessageFlags.Ephemeral });", reason: "private data", why: "the platform owner's cross server Verse counts; no Verse metric is ever shown in a server (owner decision 2)" },
 	{ file: "features/renderer/renderAnalyticsSubcommand.ts", contains: "await interaction.deferReply({ flags: MessageFlags.Ephemeral });", reason: "private data", why: "the platform owner's cross server render analytics, which no server's admins may read" },
 	{ file: "commands/utility/dero.ts", contains: "await interaction.deferReply({ flags: MessageFlags.Ephemeral });", exact: true, reason: "private data", why: "/dero plan hands the server owner a one time claim code; in a channel anyone could redeem it first (2026-10 item 262)" },
+	{ file: "commands/utility/creator-lab-connect.ts", contains: "await interaction.deferReply({ flags: MessageFlags.Ephemeral });", reason: "private data", why: "/creator-lab-connect hands the member a one time code that links their Discord to a Company Uno account; in a channel anyone could redeem it first (2026-11 item 283 Phase 4)" },
 	{ file: "features/voice/listenHandler.ts", contains: "await interaction.deferReply({ flags: MessageFlags.Ephemeral });", reason: "private data", why: "Listen reads a post aloud to the presser alone, as the 2.0.0 announcement promises; a clip in a channel would play for everyone" },
 
 	// ── no channel: the answers self destruct gives while it deletes every channel ──

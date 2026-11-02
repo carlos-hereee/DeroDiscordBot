@@ -17,6 +17,7 @@ import { createPairingRouter } from "./routes/pairing.routes.js";
 import { createPlatformAnalyticsRouter } from "./routes/platformAnalytics.routes.js";
 import { createGameRoomsRouter } from "./routes/gameRooms.routes.js";
 import { createStreamerRouter } from "./routes/streamer.routes.js";
+import { createCreatorLabRouter } from "./routes/creatorLab.routes.js";
 import { brainBodyErrorHandler, createBrainRouter } from "./routes/brain.routes.js";
 import { dashboardOrigin, port } from "@utils/config.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
@@ -140,6 +141,11 @@ export function startApiServer(client: Client): Server {
 	// ROK_BOT_PATH_PREFIXES allowlist. The client rides in for its ratings block,
 	// whose server boards read the server tag each rated player wears.
 	app.use("/api/platform/render-analytics", createPlatformAnalyticsRouter(client));
+	// /api/creator-lab, Dero: Creator Lab's link code redeem and analysis DM (2026-11 item 283
+	// Phase 4). Server initiated like render analytics, with no ?guildId= because a Creator Lab link
+	// belongs to a person, and "creator-lab" stays off the server's ROK_BOT_PATH_PREFIXES so the
+	// platform proxy can never reach it. The client rides in to send the DM.
+	app.use("/api/creator-lab", createCreatorLabRouter(client));
 
 	// Last, so every error above it (a malformed body included) answers a bare JSON status
 	// instead of Express's default page, which shows a stack trace outside production.
