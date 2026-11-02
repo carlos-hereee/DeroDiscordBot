@@ -3,7 +3,7 @@ import request from "supertest";
 import express from "express";
 import type { Client } from "discord.js";
 
-// ── /api/creator-lab route tests (Dero: Creator Lab, 2026-11 item 283 Phase 4) ──
+// ── /api/creator-lab route tests (Dero: Creator Lab, 2026-11 item 283 Phases 4 and 5) ──
 // The mock first style of pairing.routes.test.ts: the store, the DM dispatcher and the config flag
 // are mocked before the router loads, and the router is mounted without verifySignature (covered
 // in verifySignature.test.ts). The flag is a getter over hoisted state so one file can test the
@@ -41,6 +41,12 @@ const summary = {
 	],
 };
 
+// The server's buildTipsDmBody shape (weeklyTipsNotice.ts): the niche and one to three English lines.
+const tips = {
+	niche: "gaming",
+	items: ["Say what you are trying to do in the first minute.", "Keep your game audio below your voice."],
+};
+
 function buildApp() {
 	const app = express();
 	app.use(express.json());
@@ -54,12 +60,14 @@ describe("/api/creator-lab", () => {
 		state.dmEnabled = true;
 	});
 
-	it("answers 503 on both routes while CREATOR_LAB_DM_ENABLED is off", async () => {
+	it("answers 503 on every route while CREATOR_LAB_DM_ENABLED is off", async () => {
 		state.dmEnabled = false;
 		const redeem = await request(buildApp()).post("/api/creator-lab/link/redeem").send({ code: "ABC234" });
 		const dm = await request(buildApp()).post("/api/creator-lab/dm").send({ discordUserId: DISCORD_ID, summary });
+		const tipsDm = await request(buildApp()).post("/api/creator-lab/tips-dm").send({ discordUserId: DISCORD_ID, tips });
 		expect(redeem.status).toBe(503);
 		expect(dm.status).toBe(503);
+		expect(tipsDm.status).toBe(503);
 		expect(redeemMock).not.toHaveBeenCalled();
 		expect(dmMock).not.toHaveBeenCalled();
 	});
@@ -103,6 +111,36 @@ describe("/api/creator-lab", () => {
 		const badId = await request(buildApp()).post("/api/creator-lab/dm").send({ discordUserId: "everyone", summary });
 		expect(noThemes.status).toBe(400);
 		expect(badId.status).toBe(400);
+		expect(dmMock).not.toHaveBeenCalled();
+	});
+
+	it("DMs the weekly tips as one embed, one numbered field per tip", async () => {
+		dmMock.mockResolvedValue("sent");
+		const res = await request(buildApp()).post("/api/creator-lab/tips-dm").send({ discordUserId: DISCORD_ID, tips });
+		expect(res.status).toBe(200);
+		expect(res.body).toEqual({ data: { delivered: true } });
+		const [, userId, message] = dmMock.mock.calls[0] as [unknown, string, { embeds: Array<{ data: { title?: string; fields?: Array<{ name: string; value: string }> } }> }];
+		expect(userId).toBe(DISCORD_ID);
+		expect(message.embeds[0]?.data.title).toBe("💡 Your Creator Lab tips this week");
+		expect(message.embeds[0]?.data.fields).toEqual([
+			{ name: "Tip 1", value: tips.items[0], inline: false },
+			{ name: "Tip 2", value: tips.items[1], inline: false },
+		]);
+	});
+
+	it("answers the tips DM's delivery like the analysis DM's (422 closed, 502 failed)", async () => {
+		dmMock.mockResolvedValueOnce("closed");
+		expect((await request(buildApp()).post("/api/creator-lab/tips-dm").send({ discordUserId: DISCORD_ID, tips })).status).toBe(422);
+		dmMock.mockResolvedValueOnce("failed");
+		expect((await request(buildApp()).post("/api/creator-lab/tips-dm").send({ discordUserId: DISCORD_ID, tips })).status).toBe(502);
+	});
+
+	it("refuses a drifted tips body without trying Discord", async () => {
+		const send = (body: unknown) => request(buildApp()).post("/api/creator-lab/tips-dm").send(body as object);
+		expect((await send({ discordUserId: DISCORD_ID, tips: { ...tips, items: [] } })).status).toBe(400);
+		expect((await send({ discordUserId: DISCORD_ID, tips: { ...tips, items: ["a", "b", "c", "d"] } })).status).toBe(400);
+		expect((await send({ discordUserId: DISCORD_ID, tips: { ...tips, niche: "" } })).status).toBe(400);
+		expect((await send({ discordUserId: "everyone", tips })).status).toBe(400);
 		expect(dmMock).not.toHaveBeenCalled();
 	});
 });
