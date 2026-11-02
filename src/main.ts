@@ -19,6 +19,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { GuildSetupManager } from "@features/setup/GuildSetupManager.js";
 import { registerChannelDeleteWatcher } from "@features/setup/ChannelDeleteWatcher.js";
 import { checkOnboardingAndNotifyOwner } from "@features/setup/OnboardingCheck.js";
+import { backfillSetupInvitations, sendSetupInvitation } from "@features/setup/setupInvitation.js";
 import { migrateArcadeChannelFields } from "@features/setup/migrateArcadeChannelFields.js";
 import { botLogStore } from "@db/stores/botLogStore.js";
 import { pendingPairingStore } from "@db/stores/pendingPairingStore.js";
@@ -326,6 +327,10 @@ process.on("uncaughtException", (err) => {
 				} catch (pairingError) {
 					console.warn(`[main] pairing code DM failed for guild ${guild.id}`, pairingError);
 				}
+				// The clickable /setup invitation (2026-11 item 285 Phase 1), after the
+				// pairing code. Once per guild ever, so a re-invite of a guild already
+				// invited sends nothing; never throws, so nothing here awaits it.
+				void sendSetupInvitation(guild, client);
 				return;
 			}
 
@@ -347,6 +352,9 @@ process.on("uncaughtException", (err) => {
 			} catch (pairingError) {
 				console.warn(`[main] pairing code DM failed for guild ${guild.id}`, pairingError);
 			}
+			// The clickable /setup invitation (2026-11 item 285 Phase 1), right after the
+			// pairing code. Fire and forget: it never throws and logs its own outcome.
+			void sendSetupInvitation(guild, client);
 			// Onboarding compat heads-up. Fires AFTER the arrival DM so the
 			// owner gets the welcome before the operational notice. The
 			// helper bails silently when Onboarding is off or our category
@@ -840,6 +848,14 @@ process.on("uncaughtException", (err) => {
 				}
 			}
 		}
+
+		// ── setup invitation backfill (2026-11 item 285 Phase 1) ──
+		// Invites the owner of every guild still missing SETUP_INVITATION_SENT: guilds
+		// joined while Dero was offline, and on the first boot after this ships, every
+		// guild (risk R8). After the homebase sweep so a guild built this boot has its
+		// row and pack. Fire and forget, paced inside, so the boards below never wait on
+		// a sweep of DMs; removing this one call disables the backfill.
+		void backfillSetupInvitations(client);
 
 		// ── startup rehydration of the schedule board ──
 		// What: refresh every guild's pinned schedule message so it reflects

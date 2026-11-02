@@ -470,6 +470,20 @@ export const rokCommanderCopy = {
 			meetingVoice: "🏛️ Meeting Hall",
 			arcadeVoice: "🎮 Arcade Lounge",
 		},
+		// ── the setup invitation DM (2026-11 item 285 Phase 1) ──
+		// Sent to the owner on GuildCreate and by the boot backfill, after the pairing
+		// code DM. setupInvitation.ts swaps {{mention}} for the clickable /setup chip
+		// (or a plain `/setup` when the command id cannot be resolved) and {{server}}
+		// for the guild's name, since an owner of several servers needs to know which.
+		// The body promises only what /setup does both before and after this plan's
+		// Phase 2 (it builds Headquarters either way), so it never needs a rewrite.
+		invitationDm: {
+			title: "🏰 Your Throne Awaits",
+			body:
+				"I have taken my place in **{{server}}**, and one command stands between us and a proper headquarters.\n\n" +
+				"Press {{mention}} and run it in that server. I shall raise 🏰 DERO HEADQUARTERS and walk you through the rest from there.\n\n" +
+				"*Only you, the realm's owner, may wield it.*",
+		},
 	},
 
 	channelContent: {

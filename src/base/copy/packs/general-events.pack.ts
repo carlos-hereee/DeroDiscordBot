@@ -348,6 +348,15 @@ export const generalEventsCopy: IPluginCopy = {
 			meetingVoice: "🏛️ Meeting Hall",
 			arcadeVoice: "🎮 Arcade Lounge",
 		},
+		// The setup invitation DM, in plain streamer voice (mirrors rok-commander,
+		// 2026-11 item 285 Phase 1). Same {{mention}} and {{server}} tokens.
+		invitationDm: {
+			title: "🏰 One step to set me up",
+			body:
+				"I have joined **{{server}}**. One command gets me ready there.\n\n" +
+				"Press {{mention}} and run it in that server. I will build 🏰 DERO HEADQUARTERS and walk you through the rest from there.\n\n" +
+				"Only you, the server's owner, can run it.",
+		},
 	},
 
 	channelContent: {

@@ -149,6 +149,13 @@ export const BOT_CONSTANTS = {
 	// hammering Discord with dozens of edits. Read by scheduleLeaderboardRefresh.
 	LEADERBOARD_REFRESH_DEBOUNCE_MS: 60_000, // at most one activity-driven refresh per guild per 60s
 
+	// ── setup invitation backfill pacing (2026-11 item 285 Phase 1) ──
+	// The pause between two owner DMs in the boot backfill sweep. The first boot
+	// after the invitation ships DMs the owner of every guild at once (risk R8),
+	// and Discord rate limits opening DM channels, so the sweep spaces them out.
+	// The plan's owner picked 200ms; a larger value only makes the sweep slower.
+	SETUP_INVITATION_DM_SPACING_MS: 200,
+
 	// The fortune's cooldown, per member per server, shared by the 🕹️games Fortune
 	// button and /mini-game fortune, persisted so a deploy cannot reset it (2026-10
 	// item 254, the owner's call). A daily reading with two hours of slack: a member

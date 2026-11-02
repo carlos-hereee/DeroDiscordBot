@@ -231,6 +231,22 @@ export const BOT_LOG_EVENTS = {
 	// ids and which managed channels were renamed, kept or refused, so an operator
 	// can tell why a channel kept its old name. Written by switchTemplate.
 	TEMPLATE_SWITCHED: "template_switched",
+	// ── the setup invitation DM (2026-11 item 285 Phase 1) ─────────
+	// What:  SENT is the per-guild idempotency key for the owner DM carrying the
+	//        clickable /setup mention. FAILED is one row per attempt Discord
+	//        refused (DMs closed, owner unreachable), its own key so a failure
+	//        can never read as delivered.
+	// Who:   setupInvitation.sendSetupInvitation reads SENT before sending and
+	//        writes SENT or FAILED after; nothing else touches either.
+	// When:  on GuildCreate, and once per boot through the backfill sweep for any
+	//        guild still missing SENT. SENT is written only after the DM lands, so
+	//        an owner who opens their DMs later is invited on the next boot.
+	// Where: a plain per-guild key like LEVELING_INTRO_SENT: the invitation goes
+	//        out once per guild for the life of the feature.
+	// How:   metadata carries the owner id, an outcome code and whether the
+	//        clickable mention resolved, and NEVER the DM body or a username.
+	SETUP_INVITATION_SENT: "setup_invitation_sent",
+	SETUP_INVITATION_FAILED: "setup_invitation_failed",
 	// add more here as needed
 } as const;
 
