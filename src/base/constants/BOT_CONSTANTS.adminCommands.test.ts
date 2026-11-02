@@ -23,6 +23,9 @@ import { isAdminCommand } from "@utils/permissions.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMMANDS = join(HERE, "..", "..", "commands");
 const OWNER_ONLY = new Set(["setup", "self-destruct"]);
+// Hidden by Manage Server and re-checked in its own handler, never by ADMIN_COMMANDS: live capture
+// belongs to an app, so it must work in a server that never ran /setup (2026-11 item 284 Phase 3).
+const MANAGE_SERVER_ONLY = new Set(["creator-lab-live-link"]);
 // Checked by isPlatformOwner inside its own handlers, never by ADMIN_COMMANDS.
 const PLATFORM_OWNER_ONLY = "platform";
 // Importing every command pulls in most of the bot, which outlasts the default hook timeout.
@@ -51,6 +54,11 @@ const FINAL_COMMANDS = [
 	"suggestion-box",
 	// Dero: Creator Lab (2026-11 item 283 Phase 4): a member's own account link, open to anyone.
 	"creator-lab-connect",
+	// Creator Lab live capture (2026-11 item 284 Phase 3): the channel link for Manage Server
+	// members, and the two marks any member makes during a linked stream.
+	"creator-lab-live-link",
+	"highlight",
+	"count",
 ];
 
 // The names the merges and removals retired. None may come back as a command.
@@ -278,16 +286,16 @@ describe("the admin command gate", () => {
 	});
 
 	it("leaves the member commands and the three owner commands to their own checks", () => {
-		for (const name of ["leaderboard", "account", "claim", "mini-game", "rating", "secret-code", "dero", "suggestion-box", "creator-lab-connect", ...OWNER_ONLY, PLATFORM_OWNER_ONLY]) {
+		for (const name of ["leaderboard", "account", "claim", "mini-game", "rating", "secret-code", "dero", "suggestion-box", "creator-lab-connect", "highlight", "count", ...OWNER_ONLY, ...MANAGE_SERVER_ONLY, PLATFORM_OWNER_ONLY]) {
 			expect(BOT_CONSTANTS.ADMIN_COMMANDS.has(name), name).toBe(false);
 		}
 	});
 
 	// Without this the two guards below would pass just as happily if reading the
 	// default broke and every command looked like it had none.
-	it("sees a default where one is set: /setup and /self-destruct keep theirs, and /platform has none", () => {
+	it("sees a default where one is set: /setup, /self-destruct and /creator-lab-live-link keep theirs, and /platform has none", () => {
 		const withDefault = commands.filter((command) => command.hasDefault).map((command) => command.name);
-		expect(withDefault.sort()).toEqual([...OWNER_ONLY].sort());
+		expect(withDefault.sort()).toEqual([...OWNER_ONLY, ...MANAGE_SERVER_ONLY].sort());
 	});
 
 	it("hides no admin command behind a default, so the /setup admin role can see every one", () => {

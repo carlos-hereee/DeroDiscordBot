@@ -1,21 +1,27 @@
-import { Router, type Request, type Response } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import type { Client } from "discord.js";
-import { creatorLabDmEnabled } from "@utils/config.js";
+import { creatorLabDmEnabled, creatorLabLiveEnabled } from "@utils/config.js";
 import { sendDirectMessage, type DirectMessageOutcome } from "@utils/directMessage.js";
 import { creatorLabLinkStore } from "@db/stores/creatorLabLinkStore.js";
+import { creatorLabChannelCodeStore } from "@db/stores/creatorLabChannelCodeStore.js";
 import { buildAnalysisDmEmbed, parseAnalysisSummary } from "@features/creator-lab/analysisDm.js";
 import { buildTipsDmEmbed, parseTipsDm } from "@features/creator-lab/tipsDm.js";
 
-// ── /api/creator-lab (Dero: Creator Lab, 2026-11 item 283 Phases 4 and 5) ─────
-// Three server initiated signed POSTs, all from nexious-server's postBotData (botApiClient.ts):
+// ── /api/creator-lab (Dero: Creator Lab, 2026-11 item 283 Phases 4 and 5, item 284 Phase 3) ─────
+// Four server initiated signed POSTs, all from nexious-server's postBotData (botApiClient.ts):
 //   POST /link/redeem { code }               → { data: { discordUserId, discordUsername } }, 410 on a miss
 //   POST /dm { discordUserId, summary }      → { data: { delivered: true } }, 422 when Discord refuses
 //   POST /tips-dm { discordUserId, tips }    → the same answers as /dm (Phase 5, the weekly tips)
+//   POST /live-link/redeem { code }          → { data: { guildId, channelId, discordUserId, guildName,
+//                                              channelName } }, 410 on a miss (item 284 Phase 3, the VOD
+//                                              logger's live capture: a channel code from /creator-lab-live-link)
 // The platform proxy (forwardToBot) never reaches either, because "creator-lab" is not on the
 // server's ROK_BOT_PATH_PREFIXES and must never be: these carry one person's Discord id and their
 // analysis, not an app's guild data. Mounted after verifySignature and, like /api/pairing, without
 // ?guildId=: a Creator Lab link belongs to a person, not a guild, so the signature is the whole gate.
-// All answer 503 while CREATOR_LAB_DM_ENABLED is off (Risk R6). None logs a code, an id, a summary or a tip.
+// The first three answer 503 while CREATOR_LAB_DM_ENABLED is off, the live redeem while
+// CREATOR_LAB_LIVE_ENABLED is off (Risk R6); each switch gates only its own routes. None logs a code,
+// an id, a summary or a tip.
 
 const DISCORD_ID_PATTERN = /^\d{5,25}$/;
 
@@ -39,15 +45,22 @@ function answerDelivery(res: Response, outcome: DirectMessageOutcome): void {
 export function createCreatorLabRouter(client: Client): Router {
 	const router = Router();
 
-	router.use((_req: Request, res: Response, next) => {
+	const requireDmEnabled = (_req: Request, res: Response, next: NextFunction): void => {
 		if (creatorLabDmEnabled) {
 			next();
 			return;
 		}
 		res.status(503).json({ error: "Creator Lab DMs are switched off" });
-	});
+	};
+	const requireLiveEnabled = (_req: Request, res: Response, next: NextFunction): void => {
+		if (creatorLabLiveEnabled) {
+			next();
+			return;
+		}
+		res.status(503).json({ error: "Creator Lab live capture is switched off" });
+	};
 
-	router.post("/link/redeem", async (req: Request, res: Response) => {
+	router.post("/link/redeem", requireDmEnabled, async (req: Request, res: Response) => {
 		const code: unknown = (req.body as { code?: unknown } | undefined)?.code;
 		if (typeof code !== "string" || code.trim() === "") {
 			res.status(400).json({ error: "Invalid body", detail: "code must be a non-empty string" });
@@ -69,7 +82,7 @@ export function createCreatorLabRouter(client: Client): Router {
 		}
 	});
 
-	router.post("/dm", async (req: Request, res: Response) => {
+	router.post("/dm", requireDmEnabled, async (req: Request, res: Response) => {
 		const body = (req.body ?? {}) as { discordUserId?: unknown; summary?: unknown };
 		const summary = parseAnalysisSummary(body.summary);
 		if (!isDiscordId(body.discordUserId) || !summary) {
@@ -79,7 +92,7 @@ export function createCreatorLabRouter(client: Client): Router {
 		answerDelivery(res, await sendDirectMessage(client, body.discordUserId, { embeds: [buildAnalysisDmEmbed(summary)] }));
 	});
 
-	router.post("/tips-dm", async (req: Request, res: Response) => {
+	router.post("/tips-dm", requireDmEnabled, async (req: Request, res: Response) => {
 		const body = (req.body ?? {}) as { discordUserId?: unknown; tips?: unknown };
 		const tips = parseTipsDm(body.tips);
 		if (!isDiscordId(body.discordUserId) || !tips) {
@@ -87,6 +100,38 @@ export function createCreatorLabRouter(client: Client): Router {
 			return;
 		}
 		answerDelivery(res, await sendDirectMessage(client, body.discordUserId, { embeds: [buildTipsDmEmbed(tips)] }));
+	});
+
+	// The channel code the app admin pasted. The server stores where it was issued as the app's live
+	// capture channel, so the answer is the channel and guild, plus their names for the settings panel.
+	router.post("/live-link/redeem", requireLiveEnabled, async (req: Request, res: Response) => {
+		const code: unknown = (req.body as { code?: unknown } | undefined)?.code;
+		if (typeof code !== "string" || code.trim() === "") {
+			res.status(400).json({ error: "Invalid body", detail: "code must be a non-empty string" });
+			return;
+		}
+		try {
+			const doc = await creatorLabChannelCodeStore.redeem(code);
+			// One answer for invalid, expired and used, so the route is no oracle for live codes.
+			if (!doc) {
+				res.status(410).json({ error: "Channel code is invalid or expired" });
+				return;
+			}
+			res.status(200).json({
+				data: {
+					guildId: doc.guildId,
+					channelId: doc.channelId,
+					discordUserId: doc.discordUserId,
+					guildName: doc.guildName,
+					channelName: doc.channelName,
+				},
+			});
+		}
+		catch (error) {
+			// Safe for the server to retry: the redeem is atomic, so a code is either still live or spent.
+			console.error("[creator lab route] live link redeem failed", error instanceof Error ? error.name : "unknown");
+			res.status(500).json({ error: "Failed to redeem channel code" });
+		}
 	});
 
 	return router;

@@ -359,8 +359,17 @@ const INVENTORY: readonly NoticeEntry[] = [
 	// ── commands/fun/secret-code.ts ──
 	{ file: "commands/fun/secret-code.ts", within: "execute", kind: "private", why: "what a secret code did is the member's own secret: posted in a channel it would give the code away to everyone who saw it work" },
 
+	// ── commands/admin/creator-lab-live-link.ts ──
+	{ file: "commands/admin/creator-lab-live-link.ts", within: "execute", kind: "state", count: 3 },
+
 	// ── commands/utility/creator-lab-connect.ts ──
 	{ file: "commands/utility/creator-lab-connect.ts", within: "execute", kind: "state" },
+
+	// ── commands/utility/count.ts and highlight.ts (Creator Lab live capture, 2026-11 item 284 Phase 3) ──
+	// Both refuse with a state (capture switched off, not in a server); every other answer is the
+	// private confirmation listed in answerInChannel.allowList.test.ts.
+	{ file: "commands/utility/count.ts", within: "execute", kind: "state", count: 2 },
+	{ file: "commands/utility/highlight.ts", within: "execute", kind: "state", count: 2 },
 
 	// ── commands/utility/dero.ts ──
 	{ file: "commands/utility/dero.ts", within: "refuse", kind: "state" },

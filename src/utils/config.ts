@@ -290,6 +290,19 @@ const creatorLabDmEnabled = (() => {
 	return raw === "1" || raw === "true" || raw === "yes";
 })();
 
+// ── Creator Lab live capture (2026-11 item 284 Phase 3) ──
+// What: when true, /creator-lab-live-link issues channel codes, /highlight and /count call the
+//   server, and the signed /api/creator-lab/live-link/redeem answers. When false (the default) the
+//   three commands say live capture is not on yet and the route answers 503, so a release carries it
+//   dark and every existing flow is untouched (Risk R6).
+// Who: read by the three commands and api/routes/creatorLab.routes.ts.
+// Where: pairs with the server's own CREATOR_LAB_LIVE_ENABLED on Heroku; either one off stops capture.
+// How: the same explicit string comparison as the flags above, so a stray "false" cannot read as on.
+const creatorLabLiveEnabled = (() => {
+	const raw = (process.env.CREATOR_LAB_LIVE_ENABLED ?? "").toLowerCase().trim();
+	return raw === "1" || raw === "true" || raw === "yes";
+})();
+
 // CORS allow-list for the dashboard.
 // What: the Express `cors({ origin })` middleware accepts a string (single
 //   origin), an array (multiple origins), or a function. We want multiple
@@ -342,6 +355,7 @@ export {
 	enforceGameRoomTier,
 	enforceLevelingTier,
 	creatorLabDmEnabled,
+	creatorLabLiveEnabled,
 	elevenLabsApiKey,
 	deroBrainKey,
 	deroVoiceSamplerEnabled,

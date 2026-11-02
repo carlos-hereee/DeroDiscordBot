@@ -9,24 +9,33 @@ import type { Client } from "discord.js";
 // in verifySignature.test.ts). The flag is a getter over hoisted state so one file can test the
 // router dark and lit.
 
-const state = vi.hoisted(() => ({ dmEnabled: true }));
+const state = vi.hoisted(() => ({ dmEnabled: true, liveEnabled: true }));
 
 vi.mock("@utils/config.js", () => ({
 	get creatorLabDmEnabled() {
 		return state.dmEnabled;
+	},
+	get creatorLabLiveEnabled() {
+		return state.liveEnabled;
 	},
 }));
 vi.mock("@db/stores/creatorLabLinkStore.js", () => ({
 	creatorLabLinkStore: { redeem: vi.fn(), issue: vi.fn() },
 	CREATOR_LAB_LINK_CODE_TTL_MS: 900_000,
 }));
+vi.mock("@db/stores/creatorLabChannelCodeStore.js", () => ({
+	creatorLabChannelCodeStore: { redeem: vi.fn(), issue: vi.fn() },
+	CREATOR_LAB_CHANNEL_CODE_TTL_MS: 900_000,
+}));
 vi.mock("@utils/directMessage.js", () => ({ sendDirectMessage: vi.fn() }));
 
 import { createCreatorLabRouter } from "./creatorLab.routes.js";
 import { creatorLabLinkStore } from "@db/stores/creatorLabLinkStore.js";
+import { creatorLabChannelCodeStore } from "@db/stores/creatorLabChannelCodeStore.js";
 import { sendDirectMessage } from "@utils/directMessage.js";
 
 const redeemMock = creatorLabLinkStore.redeem as unknown as ReturnType<typeof vi.fn>;
+const channelRedeemMock = creatorLabChannelCodeStore.redeem as unknown as ReturnType<typeof vi.fn>;
 const dmMock = sendDirectMessage as unknown as ReturnType<typeof vi.fn>;
 const DISCORD_ID = "123456789012345678";
 
@@ -58,6 +67,7 @@ describe("/api/creator-lab", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		state.dmEnabled = true;
+		state.liveEnabled = true;
 	});
 
 	it("answers 503 on every route while CREATOR_LAB_DM_ENABLED is off", async () => {
@@ -142,5 +152,46 @@ describe("/api/creator-lab", () => {
 		expect((await send({ discordUserId: DISCORD_ID, tips: { ...tips, niche: "" } })).status).toBe(400);
 		expect((await send({ discordUserId: "everyone", tips })).status).toBe(400);
 		expect(dmMock).not.toHaveBeenCalled();
+	});
+
+	// ── Live capture's channel code (2026-11 item 284 Phase 3) ──
+	describe("POST /live-link/redeem", () => {
+		const redeemLive = (body: Record<string, unknown>) => request(buildApp()).post("/api/creator-lab/live-link/redeem").send(body);
+
+		it("answers where the code was issued, for the server to bind the app's live capture", async () => {
+			channelRedeemMock.mockResolvedValue({
+				code: "ABC234",
+				guildId: "700000000000000001",
+				channelId: "700000000000000002",
+				guildName: "Harbor Discord",
+				channelName: "stream-chat",
+				discordUserId: DISCORD_ID,
+				consumedAt: new Date(),
+			});
+			const res = await redeemLive({ code: "abc234" });
+			expect(res.status).toBe(200);
+			expect(res.body).toEqual({
+				data: { guildId: "700000000000000001", channelId: "700000000000000002", discordUserId: DISCORD_ID, guildName: "Harbor Discord", channelName: "stream-chat" },
+			});
+			expect(channelRedeemMock).toHaveBeenCalledWith("abc234");
+		});
+
+		it("answers one 410 for any dead code and 400 for no code", async () => {
+			channelRedeemMock.mockResolvedValue(null);
+			expect((await redeemLive({ code: "ZZZ999" })).status).toBe(410);
+			expect((await redeemLive({})).status).toBe(400);
+		});
+
+		it("follows its own switch, not the DM one, in both directions", async () => {
+			state.liveEnabled = false;
+			expect((await redeemLive({ code: "ABC234" })).status).toBe(503);
+			expect(channelRedeemMock).not.toHaveBeenCalled();
+
+			state.liveEnabled = true;
+			state.dmEnabled = false;
+			channelRedeemMock.mockResolvedValue(null);
+			expect((await redeemLive({ code: "ABC234" })).status).toBe(410);
+			expect((await request(buildApp()).post("/api/creator-lab/link/redeem").send({ code: "ABC234" })).status).toBe(503);
+		});
 	});
 });
