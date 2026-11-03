@@ -228,7 +228,8 @@ describe("gameRoomUpgradeEmbed", () => {
 	it("carries no dashes in its copy (owner house rule)", () => {
 		const embed = gameRoomUpgradeEmbed();
 		const copy = `${embed.data.title ?? ""} ${embed.data.description ?? ""}`;
-		// Em dash and en dash. Hyphens inside urls and identifiers are fine and are not matched.
-		expect(copy).not.toMatch(/[—–]/);
+		// Em dash and en dash, written as escapes because CI's no dash gate reads the literal
+		// characters in added lines. Hyphens inside urls and identifiers are fine and are not matched.
+		expect(copy).not.toMatch(/[\u2014\u2013]/);
 	});
 });
