@@ -38,6 +38,7 @@ import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
 import { rokCommanderCopy } from "@base/copy/packs/rok-commander.pack.js";
 import { LAUNCHABLE_COMMANDS, formCustomId, offerSwitchFix, registerAdminCommandLauncher, resolveLaunchTarget } from "./adminCommandLauncher.js";
 import { buildForm, listLeaves } from "./commandForm.js";
+import { GuildSetupManager } from "@features/setup/GuildSetupManager.js";
 import { commandButtonsCopy } from "./commandButtonsCopy.js";
 
 const LIMITS = BOT_CONSTANTS.DISCORD_LIMITS;
@@ -92,14 +93,15 @@ const pick = (prefix: string, customId: string, values: string[], userId: string
 	return { ...fake, run: () => mocks.selects.get(prefix)!(fake.interaction as unknown as StringSelectMenuInteraction) };
 };
 
-// A modal's fields, answered by name: a string is a text answer, an array a select's picks.
-function submit(customId: string, answers: Record<string, string | string[]>, userId: string) {
+// A modal's fields, answered by name: a string is a text answer, an array a select's picks,
+// and `roles` names the role a role select picked, by field.
+function submit(customId: string, answers: Record<string, string | string[]>, userId: string, roles: Record<string, string> = {}) {
 	const fields = {
-		fields: new Map(Object.keys(answers).map((name) => [name, {}])),
+		fields: new Map([...Object.keys(answers), ...Object.keys(roles)].map((name) => [name, {}])),
 		getTextInputValue: (name: string) => String(answers[name] ?? ""),
 		getStringSelectValues: (name: string) => (Array.isArray(answers[name]) ? (answers[name] as string[]) : []),
 		getSelectedUsers: () => null,
-		getSelectedRoles: () => null,
+		getSelectedRoles: (name: string) => (roles[name] ? { first: () => ({ id: roles[name] }) } : null),
 		getSelectedChannels: () => null,
 	};
 	const fake = fakeInteraction(userId, { customId, fields });
@@ -157,7 +159,9 @@ describe("the admin guide's launch ids", () => {
 			expect(target?.path, button.id).toBe(button.path);
 			if (target) opened.add(target.command.data.name);
 		}
-		expect([...opened].sort()).toEqual([...LAUNCHABLE_COMMANDS.keys()].sort());
+		// /setup is the one launchable command no guide button opens: 🔒inner-sanctum's Set up
+		// Dero does (2026-11 item 285 debug pass), pinned in its own block below.
+		expect([...opened].sort()).toEqual([...LAUNCHABLE_COMMANDS.keys()].filter((name) => name !== "setup").sort());
 		for (const commandName of BOT_CONSTANTS.ADMIN_COMMANDS) expect(LAUNCHABLE_COMMANDS.has(commandName), `${commandName} has no launch id`).toBe(true);
 	});
 
@@ -450,5 +454,61 @@ describe("offerSwitchFix", () => {
 		await offerSwitchFix(fake.interaction as unknown as ButtonInteraction, fix, CONFIG);
 		expect(fake.showModal).not.toHaveBeenCalled();
 		expect((fake.interaction.followUp as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toMatchObject({ content: fix.memberSections.join("\n\n") });
+	});
+});
+
+// ── Set up Dero on 🔒inner-sanctum (2026-11 item 285 debug pass) ──────────────
+// The pending intro's button is `admincmd:setup`: the launcher builds /setup's own form
+// from its two required role options and runs setup's own run, so the button and the
+// slash command are one setup path. No admin role exists yet, so only the owner passes.
+describe("Set up Dero", () => {
+	const PENDING = { guildId: GUILD_ID, adminRoleId: null, categoryId: "category", setupComplete: false };
+
+	it("opens /setup with its two required role options and nothing else", () => {
+		const target = resolveLaunchTarget("setup");
+		expect(target?.path).toBe("setup");
+		const leaves = listLeaves(target!.command.data.toJSON());
+		expect(leaves.map((leaf) => leaf.fields.map((field) => [field.name, field.type, field.required]))).toEqual([
+			[
+				["admin-role", "role", true],
+				["member-role", "role", true],
+			],
+		]);
+	});
+
+	it("shows the owner the form of two role pickers", async () => {
+		mocks.findByGuildId.mockResolvedValue(PENDING);
+		const owner = press("admincmd", "admincmd:setup", OWNER_ID);
+		await owner.run();
+		const [form] = formModals(owner.showModal);
+		expect(form?.custom_id).toBe("admincmd_form:setup::0.1");
+		expect(noticeText(owner.showModal)).toBeUndefined();
+	});
+
+	it("refuses anyone but the owner and opens no form", async () => {
+		mocks.findByGuildId.mockResolvedValue(PENDING);
+		const member = press("admincmd", "admincmd:setup", MEMBER_ID);
+		await member.run();
+		expect(formModals(member.showModal)).toEqual([]);
+		expect(noticeText(member.showModal)).toBe(refusal);
+	});
+
+	it("runs setup with exactly the roles the owner picked", async () => {
+		mocks.findByGuildId.mockResolvedValue(PENDING);
+		const applyAdminRole = vi.spyOn(GuildSetupManager, "applyAdminRole").mockResolvedValue(undefined);
+		const form = submit("admincmd_form:setup::0.1", {}, OWNER_ID, { "admin-role": "role-picked-admin", "member-role": "role-picked-member" });
+		await form.run();
+		expect(applyAdminRole).toHaveBeenCalledTimes(1);
+		expect(applyAdminRole.mock.calls[0]?.[1]).toEqual({ guildId: GUILD_ID, ownerId: OWNER_ID, adminRoleId: "role-picked-admin", memberRoleId: "role-picked-member" });
+		applyAdminRole.mockRestore();
+	});
+
+	it("runs nothing for a member's submit", async () => {
+		mocks.findByGuildId.mockResolvedValue(PENDING);
+		const applyAdminRole = vi.spyOn(GuildSetupManager, "applyAdminRole").mockResolvedValue(undefined);
+		const form = submit("admincmd_form:setup::0.1", {}, MEMBER_ID, { "admin-role": "role-picked-admin", "member-role": "role-picked-member" });
+		await form.run();
+		expect(applyAdminRole).not.toHaveBeenCalled();
+		applyAdminRole.mockRestore();
 	});
 });

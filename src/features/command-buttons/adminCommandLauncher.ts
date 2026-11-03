@@ -28,6 +28,7 @@ import * as deroConfigCommand from "@commands/admin/dero-config.js";
 import * as eventsCommand from "@commands/admin/events.js";
 import * as levelingCommand from "@commands/admin/leveling.js";
 import * as serverCommand from "@commands/admin/server.js";
+import * as setupCommand from "@commands/admin/setup.js";
 import { ADMIN_COMMAND_BUTTON_PREFIX } from "./adminGuideButtons.js";
 import { buildForm, findLeaf, listLeaves, readForm, type CommandLeaf, type FormField } from "./commandForm.js";
 import { FormOptionReader } from "./formOptionReader.js";
@@ -78,7 +79,9 @@ const PANEL_PREFIX = `${ADMIN_COMMAND_BUTTON_PREFIX}_panel`;
 const PATH_SEPARATOR_IN_ID = "/";
 const MASK_SEPARATOR = ".";
 
-const COMMAND_MODULES: readonly LaunchableCommand[] = [eventsCommand, serverCommand, levelingCommand, deroConfigCommand, arcadeCommand];
+// /setup is no guide command: 🔒inner-sanctum's Set up Dero button opens it (2026-11 item 285 debug
+// pass), and it answers in 🛠️server-config like every command with no channel of its own.
+const COMMAND_MODULES: readonly LaunchableCommand[] = [eventsCommand, serverCommand, levelingCommand, deroConfigCommand, arcadeCommand, setupCommand];
 
 /** Every command the launcher can open, by name. adminCommandLauncher.test.ts pins it against the guide. */
 export const LAUNCHABLE_COMMANDS: ReadonlyMap<string, LaunchableCommand> = new Map(COMMAND_MODULES.map((command) => [command.data.name, command]));

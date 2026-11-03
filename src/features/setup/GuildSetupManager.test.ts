@@ -1764,6 +1764,29 @@ describe("GuildSetupManager.applyAdminRole", () => {
 		expect(created["ch-admin"].ReadMessageHistory).toBe(true);
 		expect(created["ch-arcaderules"].ReadMessageHistory).toBeUndefined();
 	});
+
+	// 2026-11 item 285 debug pass: the welcome posts once the role is known, so it carries
+	// Self destruct alone and never the Set up Dero button the pending card had.
+	it("posts the welcome in the inner sanctum with Self destruct and no Set up Dero", async () => {
+		const send = vi.fn(async () => undefined);
+		const { guild } = grantHarness();
+		const fetchChannel = (guild.channels as unknown as { fetch: ReturnType<typeof vi.fn> }).fetch;
+		fetchChannel.mockImplementation(async (id: string) => ({
+			id,
+			permissionOverwrites: { create: vi.fn(async () => undefined) },
+			isTextBased: () => id === "ch-admin",
+			send,
+		}));
+		await GuildSetupManager.applyAdminRole(guild, {
+			guildId: "guild-1",
+			adminRoleId: "role-admin",
+			memberRoleId: "role-member",
+			ownerId: "owner-1",
+		} as never);
+
+		const [sent] = send.mock.calls[0] as unknown as [{ components: Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }> }];
+		expect(sent.components.flatMap((row) => row.toJSON().components.map((component) => component.custom_id))).toEqual(["self_destruct:prompt"]);
+	});
 });
 
 // ── where the host buttons live (2026-10 item 245 Phase 4a) ────────────────────
@@ -2027,6 +2050,13 @@ describe("GuildSetupManager voice rooms", () => {
 		return sent.embeds[0]?.data.description;
 	}
 
+	// The inner sanctum card's button ids, which follow its embed (2026-11 item 285 debug pass).
+	function adminCardButtonIds(created: Array<{ id: string; send: ReturnType<typeof vi.fn> }>): Array<string | undefined> {
+		const adminChannel = created.find((channel) => channel.id === `new-${packChannels.admin}`);
+		const [sent] = adminChannel?.send.mock.calls[0] as [{ components: Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }> }];
+		return sent.components.flatMap((row) => row.toJSON().components.map((component) => component.custom_id));
+	}
+
 	it("gives every rebuilt text channel buildSingleChannel's posture with the stored roles", async () => {
 		const roles = { memberRoleId: "role-member", adminRoleId: "role-admin" };
 		const { guild, calls } = await runAutoSetup(makeStoredConfig({ ...roles, setupComplete: true }), { force: true });
@@ -2044,6 +2074,7 @@ describe("GuildSetupManager voice rooms", () => {
 		const { created } = await runAutoSetup(makeStoredConfig({ adminRoleId: "role-admin", setupComplete: true }), { force: true });
 
 		expect(adminCardDescription(created)).toBe(ChannelContent.adminWelcome(OWNER_ID, "role-admin").data.description);
+		expect(adminCardButtonIds(created)).toEqual(["self_destruct:prompt"]);
 	});
 
 	it("still posts the pending card and grants no admin role on a fresh install", async () => {
@@ -2060,6 +2091,7 @@ describe("GuildSetupManager voice rooms", () => {
 			);
 		}
 		expect(adminCardDescription(created)).toBe(ChannelContent.adminPending().data.description);
+		expect(adminCardButtonIds(created)).toEqual(["admincmd:setup", "self_destruct:prompt"]);
 	});
 
 	it("trusts no stored admin role on a self destructed row, so /setup grants the new one", async () => {

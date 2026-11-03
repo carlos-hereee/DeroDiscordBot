@@ -354,7 +354,7 @@ export const generalEventsCopy: IPluginCopy = {
 			title: "🏰 One step to set me up",
 			body:
 				"I have joined **{{server}}**. One command gets me ready there.\n\n" +
-				"Press {{mention}} and run it in that server. I will build 🏰 DERO HEADQUARTERS and walk you through the rest from there.\n\n" +
+				"Open 🔒admin in that server and press **Set up Dero**, or press {{mention}} and run it there. I will build 🏰 DERO HEADQUARTERS and walk you through the rest from there.\n\n" +
 				"Only you, the server's owner, can run it.",
 		},
 	},
@@ -705,6 +705,7 @@ export const generalEventsCopy: IPluginCopy = {
 				`Members with <@&${adminRoleId}> can also use this channel to operate the bot.\n\n` +
 				"From here you can configure events, manage reminders, and check the dashboard.\n\n" +
 				"*Members of the server cannot see this channel.*",
+			setupButtonLabel: "Set up Dero",
 		},
 
 		channelRepairNotice: {
@@ -844,7 +845,8 @@ export const generalEventsCopy: IPluginCopy = {
 
 	responses: {
 		adminRolePending:
-			"⚠️ **No admin role has been designated yet.**\n\n" + "Run `/setup` to assign a role that can configure this bot.",
+			"⚠️ **No admin role has been designated yet.**\n\n" +
+			"Press **Set up Dero** below and choose the role that can configure the bot and the role your members have.",
 		noWizardPowers:
 			"⚠️ **Oops. You don't have wizard powers.**\n\n" +
 			"This action is reserved for the server owner and admin roles.\n" +

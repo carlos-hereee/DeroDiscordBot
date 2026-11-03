@@ -481,7 +481,7 @@ export const rokCommanderCopy = {
 			title: "🏰 Your Throne Awaits",
 			body:
 				"I have taken my place in **{{server}}**, and one command stands between us and a proper headquarters.\n\n" +
-				"Press {{mention}} and run it in that server. I shall raise 🏰 DERO HEADQUARTERS and walk you through the rest from there.\n\n" +
+				"Open 🔒inner-sanctum in that server and press **Set up Dero**, or press {{mention}} and run it there. I shall raise 🏰 DERO HEADQUARTERS and walk you through the rest from there.\n\n" +
 				"*Only you, the realm's owner, may wield it.*",
 		},
 	},
@@ -951,6 +951,8 @@ export const rokCommanderCopy = {
 				"From here you may configure events, manage reminders, " +
 				"and oversee your alliance.\n\n" +
 				"*The noobs need not know this place exists.*",
+			// The button on the intro while no admin role is set, which opens /setup's own form.
+			setupButtonLabel: "Set up Dero",
 		},
 
 		// ── self heal notices ──────────────────────────────────────────
@@ -1117,8 +1119,12 @@ export const rokCommanderCopy = {
 	},
 
 	responses: {
+		// 🔒inner-sanctum's intro until setup runs, the first step of the setup tutorial: it
+		// names the Set up Dero button beneath it (adminWelcome.setupButtonLabel), never a
+		// typed command, so an owner who just added Dero knows what to press.
 		adminRolePending:
-			"⚠️ **No admin role has been designated yet.**\n\n" + "Run `/setup` to assign a role that can configure this bot.",
+			"⚠️ **No admin role has been designated yet.**\n\n" +
+			"Press **Set up Dero** below and choose the role that may configure me and the role your members wear.",
 		noWizardPowers:
 			"⚠️ **Oops. You don't have wizard powers.**\n\n" +
 			"This action is reserved for the server owner and admin roles.\n" +

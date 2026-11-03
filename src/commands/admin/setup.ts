@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from "discord.js";
+import { SlashCommandBuilder, PermissionFlagsBits, type ChatInputCommandInteraction, type RepliableInteraction } from "discord.js";
 import { GuildSetupManager, isHeadquartersOnly } from "@features/setup/GuildSetupManager.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
@@ -7,6 +7,7 @@ import { errorEmbed, infoEmbed } from "@utils/embedBuilder.js";
 import { creatorId } from "@utils/config.js";
 import { beginChannelAnswer } from "@utils/answerInChannel.js";
 import { showNotice } from "@utils/textModal.js";
+import type { CommandOptionReader } from "@handlers/commandOptions.js";
 
 export const data = new SlashCommandBuilder()
 	.setName("setup")
@@ -22,7 +23,17 @@ export const data = new SlashCommandBuilder()
 			.setRequired(true)
 	);
 
-export async function execute(interaction: ChatInputCommandInteraction) {
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+	await run(interaction, interaction.options);
+}
+
+/**
+ * The one setup handler. The /setup slash command and 🔒inner-sanctum's Set up Dero
+ * button both reach it: the button through the admin command launcher, whose form is
+ * built from this command's own two role options (2026-11 item 285 debug pass), so the
+ * button can never ask for a role the command lacks or run a second setup path.
+ */
+export async function run(interaction: RepliableInteraction, options: CommandOptionReader): Promise<void> {
 	// Load config first so every response below speaks in the guild's copy
 	// pack. A null config (a guild that never finished setup) resolves to the
 	// rok-commander default inside getPluginCopy, the documented fallback.
@@ -45,8 +56,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 	// clear the flag, then assign roles in the same run. Handled before the
 	// normal categoryId/setupComplete checks because those assume a live homebase.
 	if (config?.homebaseDestroyed) {
-		const adminRole = interaction.options.getRole("admin-role", true);
-		const memberRole = interaction.options.getRole("member-role", true);
+		const adminRole = options.getRole("admin-role", true);
+		const memberRole = options.getRole("member-role", true);
 		// A demolished homebase has no Headquarters channel left to name, so this answer
 		// takes answerInChannel's private fallback (its stored ids point at deleted channels).
 		const answer = await beginChannelAnswer(interaction, "admin", { config });
@@ -114,8 +125,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 		return;
 	}
 
-	const adminRole = interaction.options.getRole("admin-role", true);
-	const memberRole = interaction.options.getRole("member-role", true);
+	const adminRole = options.getRole("admin-role", true);
+	const memberRole = options.getRole("member-role", true);
 
 	// The result posts in 🛠️server-config (2026-10 item 257 Phase 5), pinging the admin
 	// who ran setup; the command itself is acknowledged quietly (2026-10 item 263 R3-10).

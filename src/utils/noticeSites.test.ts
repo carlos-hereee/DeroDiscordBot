@@ -348,7 +348,7 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "commands/admin/self-destruct.ts", within: "execute", kind: "state" },
 
 	// ── commands/admin/setup.ts ──
-	{ file: "commands/admin/setup.ts", within: "execute", count: 3, kind: "state" },
+	{ file: "commands/admin/setup.ts", within: "run", count: 3, kind: "state" },
 
 	// ── commands/fun/mini-game.ts ──
 	{ file: "commands/fun/mini-game.ts", within: "execute", kind: "failure" },
@@ -689,7 +689,7 @@ const INVENTORY: readonly NoticeEntry[] = [
 // rule 1 allows that to a real failure alone, so every entry here is a failure; a state goes
 // through a notice helper instead (showPendingNotice once the answer was begun).
 const CHANNEL_ERROR_INVENTORY: readonly NoticeEntry[] = [
-	{ file: "commands/admin/setup.ts", within: "execute", anchor: "responses.setupFailed", count: 3, kind: "failure" },
+	{ file: "commands/admin/setup.ts", within: "run", anchor: "responses.setupFailed", count: 3, kind: "failure" },
 	{ file: "commands/utility/dero.ts", within: "tell", anchor: "tellCopy.failed", kind: "failure" },
 	{ file: "commands/utility/dero.ts", within: "bringDeroIntoCall", anchor: "callCopy.connectFailed", kind: "failure" },
 	{ file: "commands/utility/dero.ts", within: "bringDeroIntoCall", anchor: "tellCopy.failed", kind: "failure" },

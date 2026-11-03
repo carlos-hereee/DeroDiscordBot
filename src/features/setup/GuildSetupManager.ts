@@ -11,6 +11,7 @@ import {
 	RESTJSONErrorCodes,
 	ActionRowBuilder,
 	ButtonBuilder,
+	ButtonStyle,
 	EmbedBuilder,
 	Embed,
 	Message,
@@ -36,6 +37,7 @@ import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import type { IPluginCopy } from "@base/copy/types.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
 import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
+import { ADMIN_COMMAND_BUTTON_PREFIX } from "@features/command-buttons/adminGuideButtons.js";
 import { buildArcadeHostRow, buildHangmanCategoryStartRow } from "@features/games/arcadeHost.js";
 import { buildPartyGamesRow } from "@features/game-rooms/partyGames.js";
 import { buildMarketRow } from "@features/economy/coinMarketPanel.js";
@@ -83,6 +85,31 @@ import { BOT_LOG_EVENTS } from "@base/constants/BOT_LOG_EVENTS.js";
 // can override it via dependency injection if needed.
 const AUTO_LEAVE_GRACE_DAYS = 7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// The admin command launcher's launch id for /setup: a press on it opens /setup's own
+// form (its two role selects) and runs the command's own handler, so the button is no
+// second setup path (2026-11 item 285 debug pass).
+const SETUP_LAUNCH_ID = "setup";
+
+/**
+ * Whether 🔒inner-sanctum is still waiting for /setup: no admin role is stored yet. The
+ * ONE test its intro embed and its buttons both read, so the pending card always carries
+ * Set up Dero and the welcome never does.
+ */
+export function isAdminRolePending(adminRoleId: string | null | undefined): adminRoleId is null | undefined {
+	return !adminRoleId;
+}
+
+// 🔒inner-sanctum's Set up Dero button. Its customId is an admin command launcher id,
+// so adminCommandLauncher answers the press (gated to the owner, since no admin role
+// exists yet) and setup's own run re-checks the owner.
+function buildSetupButton(guildConfig?: ICopyConfig | null): ButtonBuilder {
+	return new ButtonBuilder()
+		.setCustomId(`${ADMIN_COMMAND_BUTTON_PREFIX}:${SETUP_LAUNCH_ID}`)
+		.setLabel(getPluginCopy(guildConfig).channelContent.adminWelcome.setupButtonLabel)
+		.setEmoji("🏰")
+		.setStyle(ButtonStyle.Primary);
+}
 
 /** A managed channel's key in a pack's setup.channels, where every channel name lives. */
 type ChannelNameKey = keyof IPluginCopy["setup"]["channels"];
@@ -1306,9 +1333,9 @@ export class GuildSetupManager {
 				// after Phase 2 the admin channel's intro is the populated
 				// adminWelcome with the real adminRoleId. before Phase 2 it is
 				// the "role pending" placeholder.
-				return adminRoleId
-					? ChannelContent.adminWelcome(guild.ownerId, adminRoleId, guildConfig)
-					: ChannelContent.adminPending(guildConfig);
+				return isAdminRolePending(adminRoleId)
+					? ChannelContent.adminPending(guildConfig)
+					: ChannelContent.adminWelcome(guild.ownerId, adminRoleId, guildConfig);
 			case "nextDecreeChannelId":
 				// pinned header above the NextUpBoard audit trail posts.
 				// Does not depend on adminRoleId because this is a public
@@ -1391,7 +1418,10 @@ export class GuildSetupManager {
 		// card's ballot button and 🕹️games' play now rows), read exactly the way
 		// resolveIntroEmbed reads it: undefined is the rok-commander default, which is
 		// correct on a first build.
-		guildConfig?: ICopyConfig | null
+		guildConfig?: ICopyConfig | null,
+		// 🔒inner-sanctum's buttons follow its embed, so every caller that passes the role
+		// to resolveIntroEmbed passes the same value here. Unset means setup is pending.
+		adminRoleId?: string | null
 	): ActionRowBuilder<MessageActionRowComponentBuilder>[] | null {
 		switch (field) {
 			case "commandsChannelId":
@@ -1408,8 +1438,13 @@ export class GuildSetupManager {
 				// 🔒inner-sanctum, the owner's channel, carries the owner only Self destruct
 				// (2026-10 item 263 Phase 4a, owner decision 14), its gate unchanged in
 				// selfDestruct.ts. An existing intro takes it in place on the next boot
-				// (componentsAreEquivalent in refreshIntroEmbeds).
-				return [new ActionRowBuilder<ButtonBuilder>().addComponents(buildSelfDestructButton())];
+				// (componentsAreEquivalent in refreshIntroEmbeds). While no admin role is set the
+				// intro is step one of setup and carries Set up Dero first (2026-11 item 285 debug
+				// pass), decided by the same isAdminRolePending the embed reads, so the pending
+				// card and its button can never disagree and the welcome never carries it.
+				return isAdminRolePending(adminRoleId)
+					? [new ActionRowBuilder<ButtonBuilder>().addComponents(buildSetupButton(guildConfig), buildSelfDestructButton())]
+					: [new ActionRowBuilder<ButtonBuilder>().addComponents(buildSelfDestructButton())];
 			case "meetingVoiceChannelId":
 			case "arcadeVoiceChannelId":
 				return [buildVoiceRoomControlRow(getPluginCopy(guildConfig).channelContent.voiceRoom)];
@@ -2012,7 +2047,8 @@ export class GuildSetupManager {
 						spec,
 						introEmbed,
 						Boolean(existingByName || adopted),
-						stored as unknown as ICopyConfig
+						stored as unknown as ICopyConfig,
+						adminRoleId
 					)
 				: { id: null, posted: false };
 		const introMessageId = intro.id;
@@ -2101,9 +2137,10 @@ export class GuildSetupManager {
 		spec: (typeof GuildSetupManager.CHANNEL_SPECS)[number],
 		introEmbed: EmbedBuilder,
 		adoptedExisting: boolean,
-		guildConfig: ICopyConfig | null
+		guildConfig: ICopyConfig | null,
+		adminRoleId: string | null
 	): Promise<{ id: string | null; posted: boolean }> {
-		const introComponents = GuildSetupManager.resolveIntroComponents(spec.configField, guildConfig);
+		const introComponents = GuildSetupManager.resolveIntroComponents(spec.configField, guildConfig, adminRoleId);
 		let introMessageId: string | null = null;
 		let posted = false;
 
@@ -2760,7 +2797,7 @@ export class GuildSetupManager {
 		if (adminChannel?.isTextBased()) {
 			await adminChannel.send({
 				embeds: [ChannelContent.adminWelcome(config.ownerId, config.adminRoleId, stored)],
-				components: GuildSetupManager.resolveIntroComponents("adminChannelId") ?? [],
+				components: GuildSetupManager.resolveIntroComponents("adminChannelId", stored, config.adminRoleId) ?? [],
 			});
 		}
 
@@ -3469,7 +3506,7 @@ export class GuildSetupManager {
 			// (2026-10 item 272).
 			adminChannel.send({
 				embeds: [GuildSetupManager.resolveIntroEmbed("adminChannelId", guild, adminRoleId, copyConfig) ?? ChannelContent.adminPending(copyConfig)],
-				components: GuildSetupManager.resolveIntroComponents("adminChannelId", copyConfig) ?? [],
+				components: GuildSetupManager.resolveIntroComponents("adminChannelId", copyConfig, adminRoleId) ?? [],
 			}),
 			// 🗒️admin-log's header, edited in place on later boots like every intro.
 			adminLogChannel.send({ embeds: [ChannelContent.adminLogIntro(copyConfig)] }),
@@ -3611,7 +3648,7 @@ export class GuildSetupManager {
 			// resolveIntroComponents returns null for the channels that
 			// have no component surface; we pass `[]` in that case so
 			// the send call is explicit about "no components."
-			const componentRows = GuildSetupManager.resolveIntroComponents(spec.configField, stored as unknown as ICopyConfig);
+			const componentRows = GuildSetupManager.resolveIntroComponents(spec.configField, stored as unknown as ICopyConfig, stored.adminRoleId ?? null);
 			const storedMessageId = nextIntroIds[spec.configField];
 
 			// ── schedule channel exception: edit-in-place ──────────

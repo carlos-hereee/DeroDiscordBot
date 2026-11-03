@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { ButtonBuilder } from "discord.js";
 import { BOT_CONSTANTS } from "@base/constants/BOT_CONSTANTS.js";
-import { GuildSetupManager } from "./GuildSetupManager.js";
+import { GuildSetupManager, isAdminRolePending } from "./GuildSetupManager.js";
 import { buildSuggestionBoxButton } from "@features/suggestion-box/SuggestionBox.js";
 import { buildSelfDestructButton } from "@features/setup/selfDestruct.js";
 import { buildAdminControlButtons, buildMemberControlButtons, buildProfileButtons } from "@features/power-ups/PowerUps.js";
@@ -17,13 +17,15 @@ import { buildAdminControlButtons, buildMemberControlButtons, buildProfileButton
 const LIMITS = BOT_CONSTANTS.DISCORD_LIMITS;
 
 const internals = GuildSetupManager as unknown as {
-	resolveIntroComponents(field: string): Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }> | null;
+	resolveIntroComponents(field: string, guildConfig?: null, adminRoleId?: string | null): Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }> | null;
 	inviteCardComponents(): Array<{ toJSON(): { components: Array<{ custom_id?: string }> } }>;
 };
 
 const idsOf = (buttons: ButtonBuilder[]): Array<string | undefined> => buttons.map((button) => (button.toJSON() as { custom_id?: string }).custom_id);
-const rowIds = (field: string): Array<Array<string | undefined>> =>
-	(internals.resolveIntroComponents(field) ?? []).map((row) => row.toJSON().components.map((component) => component.custom_id));
+// A set admin role unless a test asks otherwise, so every channel is read as it stands after setup.
+const SET_ADMIN_ROLE = "role-admin";
+const rowIds = (field: string, adminRoleId: string | null = SET_ADMIN_ROLE): Array<Array<string | undefined>> =>
+	(internals.resolveIntroComponents(field, null, adminRoleId) ?? []).map((row) => row.toJSON().components.map((component) => component.custom_id));
 
 describe("the guides' buttons", () => {
 	it("give #command-center the member buttons: Account, Levels, Achievements, Suggestion Box and Toggle pings, and no Fortune", () => {
@@ -39,18 +41,34 @@ describe("the guides' buttons", () => {
 	});
 
 	// 🎛️admin-controls and its guide retired (2026-10 item 263 Phase 4a): Self destruct is
-	// the one control on 🔒inner-sanctum's intro, and no intro carries an admin command
-	// button or Refresh standings, which rides 🛠️server-config's switches message.
-	it("give 🔒inner-sanctum the owner only Self destruct and nothing else", () => {
+	// the one control on 🔒inner-sanctum's intro once setup has run, and no intro carries an
+	// admin command button or Refresh standings, which rides 🛠️server-config's switches message.
+	it("give a set 🔒inner-sanctum the owner only Self destruct and nothing else", () => {
 		expect(rowIds("adminChannelId")).toEqual([idsOf([buildSelfDestructButton()])]);
 	});
 
-	it("put no admin command button and no Refresh standings on any intro", () => {
+	// 2026-11 item 285 debug pass: while no admin role is set the intro is step one of
+	// setup, and Set up Dero opens /setup through the admin command launcher.
+	it("give a pending 🔒inner-sanctum Set up Dero first, then Self destruct", () => {
+		expect(rowIds("adminChannelId", null)).toEqual([["admincmd:setup", ...idsOf([buildSelfDestructButton()])]]);
+	});
+
+	it("decide the pending buttons by the same test as the pending embed", () => {
+		expect(isAdminRolePending(null)).toBe(true);
+		expect(isAdminRolePending(undefined)).toBe(true);
+		expect(isAdminRolePending("")).toBe(true);
+		expect(isAdminRolePending(SET_ADMIN_ROLE)).toBe(false);
+	});
+
+	it("put no admin command button and no Refresh standings on any intro, Set up Dero on a pending inner sanctum aside", () => {
 		const refresh = idsOf(buildAdminControlButtons());
 		for (const field of GuildSetupManager.CHANNEL_FIELDS) {
-			const ids = rowIds(field).flat();
-			expect(ids.filter((id) => id?.startsWith("admincmd:")), field).toEqual([]);
-			for (const id of refresh) expect(ids, field).not.toContain(id);
+			for (const adminRoleId of [SET_ADMIN_ROLE, null]) {
+				const ids = rowIds(field, adminRoleId).flat();
+				const allowed = field === "adminChannelId" && adminRoleId === null ? ["admincmd:setup"] : [];
+				expect(ids.filter((id) => id?.startsWith("admincmd:")), field).toEqual(allowed);
+				for (const id of refresh) expect(ids, field).not.toContain(id);
+			}
 		}
 	});
 
