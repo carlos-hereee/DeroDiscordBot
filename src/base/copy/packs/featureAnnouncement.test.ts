@@ -235,7 +235,7 @@ describe("the release announcement", () => {
 	// 2026-10 item 257 Phase 3b, owner decision 4: the Verse is teased, never counted. The
 	// line promises no number, no date and nothing unbuilt, so a digit in it is a regression.
 	it("teases the Verse in the public embed with no number in the teaser (2026-10 item 257)", () => {
-		const teaser = "Every game now pays Dero coins, the first currency of something larger. Gather them now, spend them later.";
+		const teaser = "Every game now pays Dero coins, the first currency of something larger. Trade them for chips in 🏪dero-market.";
 		expect(teaser).not.toMatch(/\d/);
 		for (const pack of [rokCommanderCopy, generalEventsCopy]) {
 			expect(pack.featureAnnouncement.public.description).toContain(teaser);
