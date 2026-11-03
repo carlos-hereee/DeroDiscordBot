@@ -417,3 +417,56 @@ describe("syncHeadquartersChannel", () => {
 		await expect(syncHeadquartersChannel(guild, "arcadeControl")).resolves.toBeUndefined();
 	});
 });
+
+// ── 🧭onboarding's notice board tutorial cards (2026-11 item 285 Phase 3) ──
+// Kept beneath the chart like the other messages: posted once, stored by slot, and edited
+// only when a card's own slot changes.
+describe("syncHeadquartersChannel in 🧭onboarding", () => {
+	// The rig's channel serves as 🧭onboarding here, on a guild that is not Community.
+	function onboardingRig(row: Partial<HeadquartersRow> = {}) {
+		const rigged = rig({ arcadeControlChannelId: null, onboardingConfigChannelId: "ch-arcade", ...row });
+		Object.assign(rigged.guild, { features: [], roles: { cache: new Map() } });
+		Object.assign(rigged.guild.channels, { cache: new Map() });
+		return rigged;
+	}
+
+	it("posts the seven tutorial cards after the steps card and the chart, and stores each by slot", async () => {
+		const { guild, send, messages, stored } = onboardingRig();
+		await syncHeadquartersChannel(guild, "onboarding");
+
+		expect(send).toHaveBeenCalledTimes(9);
+		const titles = [...messages.values()].map((message) => message.embeds[0]!.title);
+		expect(titles.slice(0, 2)).toEqual([copy.onboarding.title, copy.onboarding.chartTitle]);
+		expect(titles.slice(2)).toEqual(["📜 Introductions", "📢 Announcements", "📅 Event Schedule", "👋 Welcome", "📘 Rules", "📖 Command Center", "🏛️ Meeting Hall"]);
+		expect(Object.keys(stored.tutorialCardMessageIds ?? {})).toEqual([
+			"introChannelId",
+			"announcementsChannelId",
+			"scheduleChannelId",
+			"welcomeChannelId",
+			"rulesChannelId",
+			"commandsChannelId",
+			"meetingVoiceChannelId",
+		]);
+	});
+
+	it("edits only the card whose channel was built, and posts nothing new", async () => {
+		const { guild, send, messages, stored } = onboardingRig();
+		await syncHeadquartersChannel(guild, "onboarding");
+		const introCard = messages.get(stored.tutorialCardMessageIds!.introChannelId!)!;
+		const welcomeCard = messages.get(stored.tutorialCardMessageIds!.welcomeChannelId!)!;
+
+		stored.introChannelId = "c-intro";
+		await syncHeadquartersChannel(guild, "onboarding");
+
+		expect(send).toHaveBeenCalledTimes(9);
+		expect(introCard.edit).toHaveBeenCalledOnce();
+		expect(introCard.embeds[0]!.data.description).toContain("<#c-intro>");
+		expect(welcomeCard.edit).not.toHaveBeenCalled();
+	});
+
+	it("keeps no tutorial card in any other config channel", async () => {
+		const { guild, send } = rig({});
+		await syncHeadquartersChannel(guild, "arcadeControl");
+		expect(send).toHaveBeenCalledTimes(2);
+	});
+});

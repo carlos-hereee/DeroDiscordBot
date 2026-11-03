@@ -140,6 +140,13 @@ export async function handleLevelCrossing(input: LevelCrossingInput): Promise<vo
 		// level ups, so this costs nothing on the common path.
 		const earnedRoleId = await reconcileRewards(input.client, input.guildId, input.userId, newLevel);
 
+		// The standings moved, so nudge the pinned board. Coalesced per guild, so a
+		// busy evening produces one edit per window rather than one per level up.
+		// Before the announce channel bail, because the standings moved whether or not
+		// the level up can post: a Headquarters only server has no announcements channel
+		// yet, and this nudge is what builds its leaderboard (2026-11 item 285 Phase 3).
+		scheduleLevelsBoardRefresh(input.client, input.guildId);
+
 		const channel = await resolveAnnounceChannel(input.client, input.guildId, context, input.sourceChannelId ?? null);
 		if (!channel) return;
 
@@ -151,10 +158,6 @@ export async function handleLevelCrossing(input: LevelCrossingInput): Promise<vo
 			earnedRoleId,
 			username: input.username ?? null,
 		});
-
-		// The standings moved, so nudge the pinned board. Coalesced per guild, so a
-		// busy evening produces one edit per window rather than one per level up.
-		scheduleLevelsBoardRefresh(input.client, input.guildId);
 
 		// Fire and forget, and deliberately after the enqueue: the member's
 		// celebration must not wait on an admin notice.

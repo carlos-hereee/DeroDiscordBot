@@ -2519,3 +2519,58 @@ describe("GuildSetupManager on a Headquarters only install", () => {
 		expect(callsOf(guild).find((call) => call.name === packChannels.intro)?.parent).toBe("cat-1");
 	});
 });
+
+// ── a notice board built one channel at a time (2026-11 item 285 Phase 3) ──
+// Once onDemandChannel stores categoryId the row is a legacy row to ensureHomebase, so
+// the boot sweep runs its full notice board pass. The slots onDemandChannel listed in
+// onDemandChannels must stay unbuilt there, or the first restart undoes the tutorial.
+describe("GuildSetupManager boot sweep with notice board slots waiting for first use", () => {
+	const packChannels = rokCommanderCopy.setup.channels;
+	const NOTICE_BOARD_FIELDS = GuildSetupManager.specFieldsUnder("categoryId");
+	const WAITING = NOTICE_BOARD_FIELDS.filter((field) => field !== "introChannelId");
+	const category = { id: "cat-1", type: ChannelType.GuildCategory, name: rokCommanderCopy.setup.categoryName };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		guildConfigMock.update.mockResolvedValue(undefined);
+	});
+
+	// The tutorial built 📜introductions alone: every other notice board slot is null and waiting.
+	const rowWithIntroOnly = (overrides: Record<string, unknown> = {}) =>
+		makeStoredConfig({ ...Object.fromEntries(WAITING.map((field) => [field, null])), scheduleMessageId: null, onDemandChannels: WAITING, ...overrides });
+
+	const createCalls = (guild: Guild): Array<{ name: string }> => (guild.channels.create as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0] as { name: string });
+
+	it("builds none of the waiting slots", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(rowWithIntroOnly());
+		const guild = makeGuild({ categoryId: category, channelFetchMap: { "ch-admin": { id: "ch-admin" }, "ch-intro": { id: "ch-intro" } } });
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild);
+
+		expect(result.repairedChannels).toEqual([]);
+		expect(createCalls(guild)).toEqual([]);
+	});
+
+	it("still repairs the channel the tutorial built when it is deleted", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(rowWithIntroOnly());
+		const guild = makeGuild({ categoryId: category, channelFetchMap: { "ch-admin": { id: "ch-admin" }, "ch-intro": null } });
+		const adminChannel = makeAdminChannel();
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => (id === "ch-admin" ? adminChannel : null) });
+
+		const result = await GuildSetupManager.ensureHomebase(client, guild);
+
+		expect(createCalls(guild).map((call) => call.name)).toEqual([packChannels.intro]);
+		expect(result.repairedChannels).toEqual([packChannels.intro]);
+	});
+
+	it("repairs a waiting slot that holds an id, which a forced rebuild built", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(rowWithIntroOnly({ leaderboardChannelId: "ch-leaderboard" }));
+		const guild = makeGuild({ categoryId: category, channelFetchMap: { "ch-admin": { id: "ch-admin" }, "ch-intro": { id: "ch-intro" }, "ch-leaderboard": null } });
+		const adminChannel = makeAdminChannel();
+		const client = makeClient({ selfId: "bot-1", fetchChannel: async (id) => (id === "ch-admin" ? adminChannel : null) });
+
+		await GuildSetupManager.ensureHomebase(client, guild);
+
+		expect(createCalls(guild).map((call) => call.name)).toEqual([packChannels.leaderboard]);
+	});
+});

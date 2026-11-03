@@ -1042,6 +1042,48 @@ export const rokCommanderCopy = {
 			defaultMarkdown: DEFAULT_SERVER_RULES,
 			editButtonLabel: "Edit rules",
 		},
+
+		// ── the notice board tutorial cards (2026-11 item 285 Phase 3) ──
+		// One card per notice board channel an admin builds by hand, posted beneath the
+		// chart in 🧭onboarding (features/setup/tutorialCards.ts). Admins read them, so the
+		// voice stays light; each body teaches what the channel is for in one paragraph.
+		tutorial: {
+			intro: {
+				title: "📜 Introductions",
+				body:
+					"The hall where newcomers announce themselves. Unlike most of my channels, members may write here. When a warrior arrives I greet them here with a question to answer, and they introduce themselves by replying with a line or two about who they are and what brings them to the realm. My greeting stays pinned, so their chatter never buries it.",
+			},
+			announcements: {
+				title: "📢 Announcements",
+				body:
+					"Where my decrees reach the alliance. Every event reminder and season announcement posts here and pings the member role. Members only read; the owner and the admin role may post an announcement of their own by writing in the channel. Keep my role able to view and send here, or no reminder can reach your people.",
+			},
+			schedule: {
+				title: "📅 Event Schedule",
+				body:
+					"One pinned post that I keep true. You never edit it by hand: add, pause or delete an event with `/events` (or the 🛠️server-config steps) and the post rewrites itself. A recurring event, such as a weekly stream set with `/events stream weekly`, shows its next time, and that time moves forward each time its reminder fires.",
+			},
+			welcome: {
+				title: "👋 Welcome",
+				body:
+					"My gate ledger. I log every member who joins or leaves, by display name, and ping nobody. Members read it and only I write. If your server already keeps a welcome channel of its own, I use that one rather than raising a second.",
+			},
+			rules: {
+				title: "📘 Rules",
+				body:
+					"The realm's laws in one pinned post. Members read them; the owner and the admin role press its Edit rules button to rewrite them, and the post changes in place. Discord Community asks for a rules channel when you turn it on, so raise this one first. If your server already keeps a rules channel of its own, I use that one rather than raising a second.",
+			},
+			commands: {
+				title: "📖 Command Center",
+				body:
+					"The pinned guide to every member command, with buttons for Account, Levels, Achievements and more. Members only read here, so the guide is never buried; the commands themselves work in any channel.",
+			},
+			meetingVoice: {
+				title: "🏛️ Meeting Hall",
+				body:
+					"A voice room for your council. Until you switch my voice on in ⚙️dero-config it is an ordinary voice channel and nothing listens; once it is on, members on my task list can bring me in with its Join button.",
+			},
+		},
 	},
 
 	// ── the game request ballot (2026-10 item 245 Phase 4a) ─────────────

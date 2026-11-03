@@ -28,6 +28,7 @@ import {
 	type ServerSwitch,
 } from "./headquartersCards.js";
 import { setupCopy } from "./setupCopy.js";
+import { handleAddChannel, tutorialKeyOf, type TutorialChannelKey } from "./tutorialCards.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import { TIMEZONE_OPTIONS, resolveServerTimezone } from "@utils/tzParser.js";
@@ -45,7 +46,9 @@ import { TEMPLATE_PLUGIN_IDS, isTemplatePluginId, switchTemplate, type ISwitchTe
 //        a modal of one select that hands the pick to switchTemplate.
 // Who:   the buttons headquartersCards.ts puts on the steps cards, as
 //        `hqstep:<domain>:<step>`. The 🧭onboarding steps carry the Community and
-//        adoption customIds themselves and never come here.
+//        adoption customIds themselves and never come here; its notice board tutorial
+//        cards do, as `hqstep:onboarding:tutorial-<key>` (2026-11 item 285 Phase 3), and go
+//        on to tutorialCards.handleAddChannel.
 // How:   the launcher re-runs its owner or admin gate at every step, and the priority,
 //        timezone and template modals run gateOwnerOrAdmin on the press and again on the
 //        Submit, because a modal is reachable without the button that opened it.
@@ -56,7 +59,8 @@ type StepTarget =
 	| { kind: "leaf"; command: string; path: string }
 	| { kind: "priority" }
 	| { kind: "timezone" }
-	| { kind: "template" };
+	| { kind: "template" }
+	| { kind: "tutorial"; key: TutorialChannelKey };
 
 const panel = (launchId: string): StepTarget => ({ kind: "launch", launchId });
 const leaf = (command: string, path: string): StepTarget => ({ kind: "leaf", command, path });
@@ -104,6 +108,10 @@ export function stepTarget(customId: string): StepTarget | null {
 		const name = step.slice(SWITCH_STEP_TAIL.length);
 		return domain === "serverConfig" && Object.hasOwn(SWITCH_ROUTES, name) ? SWITCH_ROUTES[name as ServerSwitch] : null;
 	}
+	if (domain === "onboarding") {
+		const key = tutorialKeyOf(step);
+		return key ? { kind: "tutorial", key } : null;
+	}
 	return ROUTED_STEPS[domain as HeadquartersDomain]?.[Number(step) - 1] ?? null;
 }
 
@@ -128,6 +136,10 @@ async function handleStepButton(interaction: ButtonInteraction): Promise<void> {
 	}
 	if (target.kind === "template") {
 		await openTemplateModal(interaction);
+		return;
+	}
+	if (target.kind === "tutorial") {
+		await handleAddChannel(interaction, target.key);
 		return;
 	}
 	const launcher = await import("@features/command-buttons/adminCommandLauncher.js");

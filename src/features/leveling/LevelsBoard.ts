@@ -10,6 +10,7 @@ import { getLevelingConfig } from "./levelingConfig.js";
 import { LEVELS_BOARD_AVATAR_SIZE, renderLevelsBoardCard } from "./levelsBoardRenderer.js";
 import { avatarRequestFor, isRenderPayload, withRenderFallback, type AvatarRequest } from "@features/renderer/index.js";
 import { BOARD_POSTED, boardNotPosted, type BoardRefreshResult } from "@base/interfaces/IBoardRefreshResult.js";
+import { ensureOnDemandChannel } from "@features/setup/onDemandChannel.js";
 
 // ── LevelsBoard ────────────────────────────────────────────────────────────
 // A SECOND self-refreshing message in the guild's leaderboard channel, beside
@@ -50,30 +51,44 @@ import { BOARD_POSTED, boardNotPosted, type BoardRefreshResult } from "@base/int
 // and an xp total but no display name, so a weekly board would have to look up
 // every member on every refresh to say who they are.
 
+/** Options for one refresh. */
+export interface LevelsBoardRefreshOptions {
+	// Build the leaderboard channel when the slot is empty. Only a level up asks for it:
+	// the boot sweep and the hourly tick reach every guild, and building there would put
+	// the leaderboard on every Headquarters only server whether anyone levels or not.
+	ensureChannel?: boolean;
+}
+
 /**
  * Refresh one guild's levels board. Safe to call fire and forget: it swallows
  * every error and logs it, so a refresh failure can never block the level up,
  * boot sweep, or cron tick that triggered it. Says whether the board was posted
  * or edited, and why not when it was not; only Refresh standings reads that.
  */
-export async function refreshLevelsBoard(client: Client, guildId: string): Promise<BoardRefreshResult> {
+export async function refreshLevelsBoard(client: Client, guildId: string, options: LevelsBoardRefreshOptions = {}): Promise<BoardRefreshResult> {
 	try {
 		const context = await getLevelingConfig(guildId);
 		// Self destructed guild: the homebase channels are gone, nothing to refresh.
 		if (!context) return boardNotPosted("not-set-up");
 		if (context.homebaseDestroyed) return boardNotPosted("homebase-destroyed");
+		// On demand (2026-11 item 285 Phase 3): a Headquarters only server has no leaderboard
+		// until its first level up asks for one, so the level up path builds it here before
+		// the stored id is read; ensureOnDemandChannel is a no op once the channel exists.
+		let leaderboardChannelId = context.leaderboardChannelId;
+		const guild = options.ensureChannel ? client.guilds.cache.get(guildId) : undefined;
+		if (guild && !leaderboardChannelId) leaderboardChannelId = (await ensureOnDemandChannel(guild, "leaderboardChannelId"))?.id ?? null;
 		// A guild that turned leveling off keeps its board rather than having it
 		// wiped: the standings are history, and the toggle stops new writes, not
 		// old data. Same posture as leaderboardTrackingEnabled.
-		if (!context.leaderboardChannelId) {
+		if (!leaderboardChannelId) {
 			// Setup has not finished. Silent bail is correct, autoSetup and
 			// ensureHomebase reach their own terminal state eventually.
 			return boardNotPosted("not-set-up");
 		}
 
-		const channel = await client.channels.fetch(context.leaderboardChannelId).catch(() => null);
+		const channel = await client.channels.fetch(leaderboardChannelId).catch(() => null);
 		if (!channel || !(channel instanceof TextChannel)) {
-			console.error(LOG_MESSAGES.leveling.boardChannelMissing(context.leaderboardChannelId, guildId));
+			console.error(LOG_MESSAGES.leveling.boardChannelMissing(leaderboardChannelId, guildId));
 			return boardNotPosted("channel-missing");
 		}
 
@@ -154,7 +169,7 @@ export function scheduleLevelsBoardRefresh(client: Client, guildId: string): voi
 	if (refreshTimers.has(guildId)) return;
 	const timer = setTimeout(() => {
 		refreshTimers.delete(guildId);
-		refreshLevelsBoard(client, guildId).catch((error) =>
+		refreshLevelsBoard(client, guildId, { ensureChannel: true }).catch((error) =>
 			console.error(LOG_MESSAGES.leveling.boardPostFailed(guildId), error)
 		);
 	}, BOT_CONSTANTS.LEADERBOARD_REFRESH_DEBOUNCE_MS);

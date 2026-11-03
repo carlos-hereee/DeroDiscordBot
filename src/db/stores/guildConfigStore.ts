@@ -13,6 +13,19 @@ export const guildConfigStore = {
 		return GuildConfigModel.findOneAndUpdate({ guildId }, { $set: data }, { new: true });
 	},
 
+	// A conditional write that lands only while `field` is still null, so of two callers
+	// racing to fill one slot the first wins and the second gets null back (2026-11 item
+	// 285 Phase 3, features/setup/onDemandChannel.ts). `extra` rides the same write.
+	async claimEmptySlot(guildId: string, field: string, value: string, extra: object = {}) {
+		return GuildConfigModel.findOneAndUpdate({ guildId, [field]: null }, { $set: { ...extra, [field]: value } }, { new: true });
+	},
+
+	// Take one value out of each named array field, in one atomic write.
+	async pullFromLists(guildId: string, lists: string[], value: string) {
+		const pull = Object.fromEntries(lists.map((list) => [list, value]));
+		return GuildConfigModel.findOneAndUpdate({ guildId }, { $pull: pull }, { new: true });
+	},
+
 	// ── network tables (2026-10 item 244 Phase 5b) ──
 	// Every config the network board has business with: the servers on the network,
 	// and any server that still holds a board message from before it left, so the

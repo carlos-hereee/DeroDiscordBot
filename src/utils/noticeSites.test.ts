@@ -639,6 +639,9 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/setup/renameChannel.ts", within: "renameChannel", anchor: "await showEmbedNotice(interaction, infoEmbed(", kind: "state" },
 	{ file: "features/setup/renameChannel.ts", within: "renameChannel", anchor: "Could not rename the channel", kind: "failure" },
 
+	// ── setup/tutorialCards.ts ──
+	{ file: "features/setup/tutorialCards.ts", within: "handleAddChannel", kind: "state" },
+
 	// ── setup/rulesEdit.ts ──
 	{ file: "features/setup/rulesEdit.ts", within: "handleRulesEditButton", count: 2, kind: "state" },
 	{ file: "features/setup/rulesEdit.ts", within: "handleRulesEditSubmit", anchor: "rulesEdit.expired", kind: "race", why: "the rules editor's Submit after the config went: the press found it" },
@@ -693,6 +696,7 @@ const CHANNEL_ERROR_INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/games/hangmanHandler.ts", within: "runHangman", anchor: "gamesCopy.hangman.noChannel", kind: "failure", why: "the board could not post (startHangmanRound answered failed)" },
 	{ file: "features/setup/arcadeSettingsSubcommands.ts", within: "switchArcade", anchor: "arcadeCopy.offFailed : arcadeCopy.onFailed", kind: "failure" },
 	{ file: "features/setup/selfDestruct.ts", within: "runArcadeOnly", anchor: "arcadeCopy.offFailed", kind: "failure" },
+	{ file: "features/setup/tutorialCards.ts", within: "handleAddChannel", anchor: "copy.notBuilt", count: 2, kind: "failure", why: "a tutorial card's channel could not be built: Discord refused, or the build threw" },
 	{ file: "features/suggestion-box/SuggestionBox.ts", within: "handleModalSubmit", anchor: "Could not send your suggestion", kind: "failure" },
 ];
 

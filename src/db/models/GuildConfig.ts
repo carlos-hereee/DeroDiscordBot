@@ -555,6 +555,24 @@ const guildConfigSchema = new Schema(
 			required: false,
 			default: () => ({}),
 		},
+		// 🧭onboarding's notice board tutorial cards (2026-11 item 285 Phase 3), one message per
+		// channel an admin builds by hand, kept beneath the chart by headquartersCards.ts and
+		// keyed by the channel slot each card builds. Stored rather than found by title alone,
+		// because admin answers post in 🧭onboarding too and would push the cards out of the
+		// recent message scan. Declared key by key for the same reason as its siblings.
+		tutorialCardMessageIds: {
+			type: {
+				introChannelId: { type: String, required: false, default: null },
+				announcementsChannelId: { type: String, required: false, default: null },
+				scheduleChannelId: { type: String, required: false, default: null },
+				welcomeChannelId: { type: String, required: false, default: null },
+				rulesChannelId: { type: String, required: false, default: null },
+				commandsChannelId: { type: String, required: false, default: null },
+				meetingVoiceChannelId: { type: String, required: false, default: null },
+			},
+			required: false,
+			default: () => ({}),
+		},
 
 		setupComplete: { type: Boolean, default: false },
 
@@ -688,6 +706,16 @@ const guildConfigSchema = new Schema(
 		//        repair sweep treats absence-from-array as "not removed"
 		//        which is the same as the pre-flag behavior.
 		userRemovedChannels: { type: [String], required: false, default: () => [] as string[] },
+
+		// ── notice board slots waiting for their first use (2026-11 item 285 Phase 3) ──
+		// The 🪧 NOTICE BOARD slots of a Headquarters only install that nothing has asked
+		// for yet. features/setup/onDemandChannel.ts writes every still null notice board
+		// slot here in the same write that first stores categoryId, and takes a slot off
+		// when it builds that channel; repairMissingChannels skips every slot listed, the
+		// way it skips userRemovedChannels. It is NOT userRemovedChannels: that list means
+		// an admin removed the channel on purpose, which an on demand build must respect,
+		// while this one means nobody has needed it yet. A legacy row never gets an entry.
+		onDemandChannels: { type: [String], required: false, default: () => [] as string[] },
 
 		// ── leaderboard tracking toggle (streamer feedback 2026-05-11) ────
 		// What:  master switch for participation tracking. When true (default),

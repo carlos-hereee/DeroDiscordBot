@@ -160,16 +160,24 @@ export interface IAutoSetupOptions {
 // Every overwrite shape a first build hands out, one per posture (channelPostures).
 type IChannelPostures = Record<"public" | "intro" | "admin" | "adminLog" | "commandOutput" | "voice", IOverwriteEntry[]>;
 
-// How each secondary category is logged and overwritten (its name is resolveCategoryName's,
-// from the guild's pack). One table, so the arcade and Headquarters are found, adopted by
-// name and built by the same code.
+// How each managed category is logged and overwritten (its name is resolveCategoryName's,
+// from the guild's pack). One table, so every category is found, adopted by name and built
+// by the same code. The notice board joined it for its on demand build (2026-11 item 285
+// Phase 3, owner ruling): runAutoSetup still creates it inline on a full build with this
+// same owner allow, and onDemandChannel builds it through createManagedCategory.
 // The arcade's shape mirrors the notice board's, owner allow and nothing else (see
 // findExistingManagedCategory). Headquarters is admin only, so it takes the admin
 // channels' shape (headquartersCategoryOverwrites says why its bot entry differs).
-const SECONDARY_CATEGORIES: Record<
-	SecondaryCategoryField,
+const MANAGED_CATEGORIES: Record<
+	ManagedCategoryField,
 	{ logTag: string; overwrites: (guild: Guild, ownerId: string, adminRoleId: string | null) => IOverwriteEntry[] }
 > = {
+	categoryId: {
+		logTag: "notice-board-category",
+		overwrites: (_guild, ownerId) => [
+			{ id: ownerId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+		],
+	},
 	gamesCategoryId: {
 		logTag: "arcade-category",
 		overwrites: (_guild, ownerId) => [
@@ -2182,9 +2190,12 @@ export class GuildSetupManager {
 		// will not undo the admin's decision.
 		if (stored.autoHealEnabled === false) {
 			let wouldRepairCount = 0;
+			const waitingSlots = ((stored as unknown as { onDemandChannels?: string[] }).onDemandChannels ?? []) as string[];
 			for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 				if (!category && spec.categoryField === "categoryId") continue;
 				const storedId = stored[spec.configField] as string | null | undefined;
+				// A slot waiting for its first use is not missing, so it is not counted.
+				if (!storedId && waitingSlots.includes(spec.configField)) continue;
 				if (!storedId) {
 					wouldRepairCount += 1;
 					continue;
@@ -2207,6 +2218,12 @@ export class GuildSetupManager {
 		// than "do not auto-rebuild any slot." This is the inverse semantics
 		// of the legacy null-storedId branch below.
 		const userRemovedSlots = ((stored as unknown as { userRemovedChannels?: string[] }).userRemovedChannels ?? []) as string[];
+		// ⚠️ A notice board slot nobody has asked for yet stays unbuilt (2026-11 item 285
+		// Phase 3). A Headquarters only install gets its notice board one channel at a time
+		// from onDemandChannel, which lists every other still null slot here the moment it
+		// stores categoryId; without this skip the very next boot would read those nulls as
+		// case ③ below and build all of them, undoing the tutorial. A legacy row lists none.
+		const onDemandSlots = new Set(((stored as unknown as { onDemandChannels?: string[] }).onDemandChannels ?? []) as string[]);
 
 		const repaired: string[] = [];
 
@@ -2250,6 +2267,9 @@ export class GuildSetupManager {
 				);
 				continue;
 			}
+			// Only while the slot is still empty: a slot that holds an id (a forced rebuild
+			// built it) is a real channel and is repaired like any other.
+			if (onDemandSlots.has(spec.configField) && !stored[spec.configField]) continue;
 
 			const storedId = stored[spec.configField] as string | null | undefined;
 
@@ -2749,9 +2769,10 @@ export class GuildSetupManager {
 	}
 
 	// ── channel creation ──────────────────────────────────────
-	// ── resolve or create a secondary managed category ────────
-	// What:  hand back the guild's 🎮 ARCADE GAMES or 🏰 DERO HEADQUARTERS category
-	//        (SECONDARY_CATEGORIES says which by field), creating it when the stored
+	// ── resolve or create a managed category ──────────────────
+	// What:  hand back the guild's 🎮 ARCADE GAMES or 🏰 DERO HEADQUARTERS category, or
+	//        🪧 NOTICE BOARD for onDemandChannel (MANAGED_CATEGORIES says which by field),
+	//        creating it when the stored
 	//        id is null or points at something that no longer exists.
 	// Who:   runAutoSetup and repairMissingChannels (a legacy guild whose row
 	//        predates the category). ONE helper set for both categories and both
@@ -2789,14 +2810,14 @@ export class GuildSetupManager {
 	// The lookup half: the stored category, else one already carrying the category's
 	// name, else null (Discord confirmed there is none to reuse), or "unreachable"
 	// when the stored id could not be confirmed either way.
-	private static async findExistingManagedCategory(
+	static async findExistingManagedCategory(
 		guild: Guild,
-		field: SecondaryCategoryField,
+		field: ManagedCategoryField,
 		storedId: string | null | undefined,
 		// The guild row the name is read through (null on a fresh install, the default pack).
 		copyConfig: ICopyConfig | null
 	): Promise<CategoryChannel | null | "unreachable"> {
-		const { logTag } = SECONDARY_CATEGORIES[field];
+		const { logTag } = MANAGED_CATEGORIES[field];
 		if (storedId) {
 			const stored = await GuildSetupManager.fetchStoredCategory(guild, storedId);
 			if (stored === "unreachable") {
@@ -2812,14 +2833,14 @@ export class GuildSetupManager {
 	}
 
 	// The create half, null on a 50013 after routing through handlePermissionFailure.
-	private static async createManagedCategory(
+	static async createManagedCategory(
 		guild: Guild,
-		field: SecondaryCategoryField,
+		field: ManagedCategoryField,
 		ownerId: string,
 		adminRoleId: string | null,
 		copyConfig: ICopyConfig | null
 	): Promise<CategoryChannel | null> {
-		const category = SECONDARY_CATEGORIES[field];
+		const category = MANAGED_CATEGORIES[field];
 		try {
 			return await guild.channels.create({
 				name: resolveCategoryName(field, copyConfig),
@@ -2864,7 +2885,7 @@ export class GuildSetupManager {
 	// an admin to delete rather than deleted by Dero. Reads the channel cache only, the
 	// way adoption.ts scans for a welcome or rules channel: the Guilds intent fills it
 	// at ready, so the scan costs no API call and has no failure of its own.
-	private static findManagedCategoryByName(guild: Guild, field: SecondaryCategoryField, copyConfig: ICopyConfig | null): CategoryChannel | null {
+	private static findManagedCategoryByName(guild: Guild, field: ManagedCategoryField, copyConfig: ICopyConfig | null): CategoryChannel | null {
 		const name = resolveCategoryName(field, copyConfig);
 		const matches = [...(guild.channels.cache?.values() ?? [])].filter(
 			(channel): channel is CategoryChannel => channel?.type === ChannelType.GuildCategory && channel.name === name

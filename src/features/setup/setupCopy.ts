@@ -169,6 +169,9 @@ export const setupCopy = {
 		removed: (mention: string): string => `removed ${mention}`,
 		// Dero took a channel the server already had (post-launch plan item 2).
 		adopted: (channelId: string): string => `now <#${channelId}>, the server's own channel`,
+		// A notice board channel built on its first use (2026-11 item 285 Phase 3).
+		noticeBoardChannel: (channelName: string): string => `${channelName} channel`,
+		builtOnFirstUse: (channelId: string): string => `built <#${channelId}> in the notice board`,
 		capSet: (usd: number): string => `$${usd} a month`,
 		set: (value: string): string => `set to ${value}`,
 		blocked: (serverId: string): string => `blocked ${serverId}`,
@@ -389,6 +392,20 @@ export const setupCopy = {
 				memberRole: "Member role",
 				gating: "Channels gated by the member role",
 				adoptedPlaced: "Your own channels placed",
+			},
+			// The notice board tutorial cards beneath the chart (2026-11 item 285 Phase 3). Each
+			// card's teaching paragraph lives in the guild's pack (channelContent.tutorial);
+			// these are the admin facing labels and answers around it.
+			tutorial: {
+				pendingLine: "⬜ Not built yet. Press the button to add it to 🪧 NOTICE BOARD.",
+				doneLine: (channelId: string): string => `✅ Built: <#${channelId}>`,
+				addButton: "Add this channel",
+				doneButton: "Channel ready",
+				answerTitle: "🪧 Notice board",
+				built: (channelId: string): string => `<#${channelId}> is ready in the notice board.`,
+				alreadyBuilt: (channelId: string): string => `<#${channelId}> is already there, so nothing new was built.`,
+				notBuilt: "Dero could not build that channel just now. Check that Dero may manage channels, then press the button again.",
+				notAdmin: "Only the server owner or an admin can add notice board channels.",
 			},
 		},
 		arcadeControl: {

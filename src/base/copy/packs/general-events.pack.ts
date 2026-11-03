@@ -775,6 +775,45 @@ export const generalEventsCopy: IPluginCopy = {
 			defaultMarkdown: rokCommanderCopy.channelContent.rules.defaultMarkdown,
 			editButtonLabel: "Edit rules",
 		},
+
+		// The notice board tutorial cards, key for key with rok-commander's, plain voice.
+		tutorial: {
+			intro: {
+				title: "📜 Introductions",
+				body:
+					"Where newcomers say hello. Unlike most of Dero's channels, members can post here. Dero greets each new member here with a question, and they introduce themselves by replying with a line or two about who they are and what brought them in. The greeting stays pinned, so the chat never buries it.",
+			},
+			announcements: {
+				title: "📢 Announcements",
+				body:
+					"Where every event reminder and stream announcement posts, pinging the member role. Members only read; the owner and the admin role can post an announcement of their own by writing in the channel. Keep Dero's role able to view and send here, or reminders cannot post.",
+			},
+			schedule: {
+				title: "📅 Schedule",
+				body:
+					"One pinned post that Dero keeps current. You never edit it by hand: add, pause or delete an event with `/events` (or the 🛠️server-config steps) and the post updates itself. A recurring event, such as a weekly stream set with `/events stream weekly`, shows its next time, and that time moves forward each time its reminder fires.",
+			},
+			welcome: {
+				title: "👋 Welcome",
+				body:
+					"Dero logs every member who joins or leaves here, by display name, pinging nobody. Members read it and only Dero writes. If your server already has its own welcome channel, Dero uses that one instead of building a second.",
+			},
+			rules: {
+				title: "📘 Rules",
+				body:
+					"Your server rules in one pinned post. Members read them; the owner and the admin role press its Edit rules button to rewrite them, and the post updates in place. Discord Community asks for a rules channel when you turn it on, so build this one first. If your server already has its own rules channel, Dero uses that one instead of building a second.",
+			},
+			commands: {
+				title: "📖 Command Center",
+				body:
+					"The pinned guide to every member command, with buttons for Account, Levels, Achievements and more. Members only read here, so the guide never gets buried; the commands themselves work in any channel.",
+			},
+			meetingVoice: {
+				title: "🏛️ Meeting Hall",
+				body:
+					"A voice room for your community. Until Dero's voice is switched on in ⚙️dero-config it is an ordinary voice channel and nothing listens; once it is on, members on Dero's task list can bring Dero in with its Join button.",
+			},
+		},
 	},
 
 	// The game request ballot, key for key with rok-commander's, plain voice.

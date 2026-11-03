@@ -17,6 +17,8 @@ import { CHOOSE_BUTTON_ID, adoptedChannelLines, choosableAdoptedChannels, type I
 import { readAdoptionChoice } from "./adoption.js";
 import { isMemberRoleGated } from "./communityOverwrites.js";
 import { setupCopy } from "./setupCopy.js";
+import { buildCards as buildTutorialCards, type TutorialRow } from "./tutorialCards.js";
+import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { DEFAULT_SERVER_TIMEZONE, resolveServerTimezone } from "@utils/tzParser.js";
 
 // ── headquartersCards ───────────────────────────────────────────────────────
@@ -25,7 +27,9 @@ import { DEFAULT_SERVER_TIMEZONE, resolveServerTimezone } from "@utils/tzParser.
 //        numbered checklist whose marks are read from the server as it stands and
 //        whose buttons open each step's existing flow, and the drawn settings chart of
 //        every switch in that channel's domain. 🛠️server-config (2026-10 item 263
-//        Phase 4a) keeps a third, the server switches, between its card and chart.
+//        Phase 4a) keeps a third, the server switches, between its card and chart, and
+//        🧭onboarding keeps the notice board tutorial cards beneath its chart (2026-11
+//        item 285 Phase 3, tutorialCards.ts), one message per channel an admin builds.
 // Who:   GuildSetupManager after a full build and on every boot (refreshIntroEmbeds);
 //        after every change in a domain, fire and forget: the /dero-config and /arcade
 //        commands (the settings panels run them), the voice priority step, the
@@ -92,7 +96,7 @@ const copy = setupCopy.headquarters;
 // ── state ────────────────────────────────────────────────────────────────────
 
 /** The GuildConfig fields this module reads. */
-export interface HeadquartersRow extends IAdoptionChoiceRow {
+export interface HeadquartersRow extends IAdoptionChoiceRow, TutorialRow {
 	deroConfigChannelId?: string | null;
 	onboardingConfigChannelId?: string | null;
 	arcadeControlChannelId?: string | null;
@@ -106,6 +110,7 @@ export interface HeadquartersRow extends IAdoptionChoiceRow {
 	setupStepsMessageIds?: Partial<Record<string, string | null>> | null;
 	settingsChartMessageIds?: Partial<Record<string, string | null>> | null;
 	settingsSwitchesMessageIds?: Partial<Record<string, string | null>> | null;
+	tutorialCardMessageIds?: Partial<Record<string, string | null>> | null;
 	// 🛠️server-config's reads, all off the row.
 	timezone?: string | null;
 	timezoneSetAt?: Date | string | null;
@@ -604,6 +609,24 @@ export async function syncHeadquartersChannel(guild: Guild, domain: Headquarters
 		});
 
 		const writes: Record<string, string> = {};
+		// The tutorial cards come last, so a fresh post reads intro, steps, chart, cards.
+		if (domain === "onboarding") {
+			for (const card of buildTutorialCards(row, getPluginCopy(row as unknown as ICopyConfig))) {
+				const storedCardId = row.tutorialCardMessageIds?.[card.field];
+				const cardId = await keepMessage({
+					channel,
+					storedId: storedCardId,
+					title: card.title,
+					selfId,
+					forcePost,
+					pin: false,
+					shape: { ...shapeOfEmbed(card.message.embeds[0]?.data), buttons: shapeOfRows(card.message.components) },
+					send: () => channel.send(card.message),
+					edit: (message) => message.edit(card.message),
+				});
+				if (cardId && cardId !== storedCardId) writes[`tutorialCardMessageIds.${card.field}`] = cardId;
+			}
+		}
 		if (stepsId && stepsId !== row.setupStepsMessageIds?.[field]) writes[`setupStepsMessageIds.${field}`] = stepsId;
 		if (chartId && chartId !== row.settingsChartMessageIds?.[field]) writes[`settingsChartMessageIds.${field}`] = chartId;
 		if (switchesId && switchesId !== row.settingsSwitchesMessageIds?.[field]) writes[`settingsSwitchesMessageIds.${field}`] = switchesId;
