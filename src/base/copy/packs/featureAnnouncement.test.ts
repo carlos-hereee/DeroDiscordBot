@@ -23,7 +23,11 @@ import { RATED_GAMES, type RatedGame } from "@features/ratings/ratingEngine.js";
 // The 1.7.0 test fixes (2026-10 item 245) ride it too: the copy names the merged
 // commands, never the seventeen names Phase 4b retired, and states the fixes'
 // numbers, which these pins hold to the code: BOT_CONSTANTS, the hangman word
-// bank's shelves and ratingEngine's rated games.
+// bank's shelves and ratingEngine's rated games. 2026-10 item 244's network play
+// rides it as well (owner decision 2026-10-24), so a pin holds both embeds to the
+// network notice's promise: chat never crosses servers. The release ships as 2.0.0
+// (owner decision 2026-10-24), so the last pin holds THE VERSE AWAKENS opener and
+// item 247's onboarding, including the retake warning admins must not miss.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMMANDS = join(HERE, "..", "..", "..", "commands");
@@ -201,5 +205,40 @@ describe("the release announcement", () => {
 		}
 		expect(admins.description).toContain("Every admin command also has a button");
 		expect(members.description).toContain("`/account view:levels`");
+	});
+
+	it("carries network play: the reach, the block list, leaving, and chat never crossing (2026-10 item 244)", () => {
+		const { public: members, innerSanctum: admins } = rokCommanderCopy.featureAnnouncement;
+		// The notice members accept says nothing typed is shared; the announcement must agree.
+		expect(rokCommanderCopy.arcadeNetwork.consent.body).toContain("Nothing you type in a channel is shared");
+		expect(members.description).toContain("never your chat");
+		expect(admins.description).toContain("chat never does");
+		expect(members.description).toContain("`/rating network leave` deletes your consent and your ratings");
+		expect(members.description).toContain("`/rating servers`");
+		expect(admins.description).toContain("`/arcade reach`");
+		expect(admins.description).toContain("`/arcade server block`");
+		// Host controls in both embeds, since a member meets them at a table and an admin answers for them.
+		expect(members.description).toContain("rating band");
+		expect(admins.description).toContain("band by rating");
+	});
+
+	it("opens 2.0.0 on THE VERSE AWAKENS and carries Community Onboarding (2026-10 item 247)", () => {
+		const { public: members, innerSanctum: admins } = rokCommanderCopy.featureAnnouncement;
+		expect(members.title).toContain("THE VERSE AWAKENS");
+		expect(members.description).toContain("realm against realm");
+		expect(members.description).toContain("**A proper welcome.**");
+		expect(admins.description).toContain("Version 2.0.0 is a major one");
+		expect(admins.description).toContain("Configure Onboarding");
+		expect(admins.description).toContain("Earlier members may need to retake Onboarding");
+	});
+
+	// 2026-10 item 257 Phase 3b, owner decision 4: the Verse is teased, never counted. The
+	// line promises no number, no date and nothing unbuilt, so a digit in it is a regression.
+	it("teases the Verse in the public embed with no number in the teaser (2026-10 item 257)", () => {
+		const teaser = "Every game now pays Dero coins, the first currency of something larger. Gather them now, spend them later.";
+		expect(teaser).not.toMatch(/\d/);
+		for (const pack of [rokCommanderCopy, generalEventsCopy]) {
+			expect(pack.featureAnnouncement.public.description).toContain(teaser);
+		}
 	});
 });
