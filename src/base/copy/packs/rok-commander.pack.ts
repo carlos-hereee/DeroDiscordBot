@@ -1184,6 +1184,17 @@ export const rokCommanderCopy = {
 			failed: "I could not save the rules. Nothing was changed. Try again in a moment.",
 			expired: "This control is no longer available.",
 		},
+		// ── the 🎰arcade-control and 🛠️server-config buttons (2026-11 item 285 Phase 4) ──
+		// Admin facing and read in a Headquarters channel or a state notice, so the words
+		// stay plain even in the kingdom voice. The Enable Arcade line is a stub: the
+		// button promises nothing until real activation ships.
+		dismantleSuccess: "🎮 **The arcade is dismantled.** The ARCADE GAMES category and every channel in it are deleted, matches in progress included. It stays down across restarts until `/arcade on` raises it again.",
+		dismantleAlreadyOff: "🎮 **The arcade is already dismantled.** `/arcade on` raises it again.",
+		enableStubComingSoon: "⏳ **Enabling the arcade from this card is coming soon.** Until then it stays as it is, and `/arcade on` raises it.",
+		renameInfoTitle: "✏️ Renaming a channel",
+		renameInfoBody:
+			"To rename a channel I keep, use `/server channels rename`. I remember the name you give it, so it survives auto heal and any rebuild.\n\n" +
+			"Renaming it straight in Discord does not stick: while auto heal is on, I rename the channel back to my default name the next time I start.",
 	},
 
 	// ── streamer / general schedule copy ──────────────────────────

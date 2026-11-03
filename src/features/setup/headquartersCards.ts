@@ -17,6 +17,7 @@ import { CHOOSE_BUTTON_ID, adoptedChannelLines, choosableAdoptedChannels, type I
 import { readAdoptionChoice } from "./adoption.js";
 import { isMemberRoleGated } from "./communityOverwrites.js";
 import { setupCopy } from "./setupCopy.js";
+import { buildButtons as buildArcadeControlButtons } from "./arcadeControlCards.js";
 import { buildCards as buildTutorialCards, type TutorialRow } from "./tutorialCards.js";
 import { getPluginCopy, type ICopyConfig } from "@base/copy/getCopy.js";
 import { DEFAULT_SERVER_TIMEZONE, resolveServerTimezone } from "@utils/tzParser.js";
@@ -61,8 +62,9 @@ export const DOMAIN_CHANNEL_FIELDS: Record<HeadquartersDomain, "deroConfigChanne
 // carries its label (setupCopy), its mark (serverConfigView) and its route
 // (headquartersSteps.ts), so a step inserted anywhere moves its number, its mark and
 // its button together; Phase 4c's timezone came in at the front that way, and Dero's
-// template after it (2026-10 item 262 Phase 4).
-export const SERVER_CONFIG_STEPS = ["timezone", "template", "kvkSeason", "streams", "events", "channels", "leveling"] as const;
+// template after it (2026-10 item 262 Phase 4). The 8th, rename, is an info step that
+// teaches /server channels rename and changes nothing (2026-11 item 285 Phase 4).
+export const SERVER_CONFIG_STEPS = ["timezone", "template", "kvkSeason", "streams", "events", "channels", "leveling", "rename"] as const;
 export type ServerConfigStep = (typeof SERVER_CONFIG_STEPS)[number];
 
 // The server switches message's buttons by key, in order; Refresh standings follows them.
@@ -141,12 +143,17 @@ export interface SwitchesView {
 	buttons: ButtonBuilder[];
 }
 
-/** What one domain shows: its steps, its chart and, for 🛠️server-config, its switches. */
+/**
+ * What one domain shows: its steps, its chart and, for 🛠️server-config, its switches.
+ * `extraButtons` are buttons that sit beside the numbered steps on their own row without
+ * being a step (🎰arcade-control's Dismantle and Enable, 2026-11 item 285 Phase 4).
+ */
 export interface DomainView {
 	title: string;
 	steps: SetupStep[];
 	chart: SettingsChartView;
 	switches?: SwitchesView;
+	extraButtons?: ButtonBuilder[];
 }
 
 const onOff = { onLabel: copy.on, offLabel: copy.off };
@@ -264,6 +271,7 @@ export function arcadeControlView(row: HeadquartersRow): DomainView {
 				value(domain.rows.blocked, copy.count(blocked)),
 			],
 		},
+		extraButtons: buildArcadeControlButtons(),
 	};
 }
 
@@ -314,10 +322,13 @@ export function serverConfigView(row: HeadquartersRow, facts: ServerConfigFacts)
 		events: facts.activeEvents > 0,
 		channels: hidden + renamed > 0,
 		leveling,
+		// An info step has nothing to finish, so it never reads done; it says optional
+		// below so the open mark does not nag.
+		rename: false,
 	};
 	// Not every server runs a KvK season, streams or custom channel names, so those
 	// steps say they are optional rather than nag.
-	const optional: Record<ServerConfigStep, boolean> = { timezone: false, template: false, kvkSeason: true, streams: true, events: false, channels: true, leveling: false };
+	const optional: Record<ServerConfigStep, boolean> = { timezone: false, template: false, kvkSeason: true, streams: true, events: false, channels: true, leveling: false, rename: true };
 	return {
 		title: domain.title,
 		steps: SERVER_CONFIG_STEPS.map((key, index) => ({
@@ -451,6 +462,9 @@ export function buildStepsCard(view: DomainView): { embeds: EmbedBuilder[]; comp
 	for (let start = 0; start < buttons.length && components.length < MAX_STEP_ROWS; start += BUTTONS_PER_ROW) {
 		components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(buttons.slice(start, start + BUTTONS_PER_ROW)));
 	}
+	// Beside the steps, never among them, so a button that is no step keeps its own row and
+	// a step number never shifts when one is added.
+	if (view.extraButtons?.length) components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(view.extraButtons.slice(0, BUTTONS_PER_ROW)));
 	return { embeds: [embed], components };
 }
 

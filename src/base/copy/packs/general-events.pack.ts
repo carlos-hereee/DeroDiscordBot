@@ -880,6 +880,14 @@ export const generalEventsCopy: IPluginCopy = {
 		// The Edit rules modal, owner and admin facing, so it reads the same as
 		// rok-commander's plain wording.
 		rulesEdit: rokCommanderCopy.responses.rulesEdit,
+		// The 🎰arcade-control and 🛠️server-config buttons (2026-11 item 285 Phase 4).
+		dismantleSuccess: "🎮 **The arcade is dismantled.** The ARCADE GAMES category and every channel in it are deleted, matches in progress included. It stays off across restarts until `/arcade on` turns it back on.",
+		dismantleAlreadyOff: "🎮 **The arcade is already off.** `/arcade on` turns it back on.",
+		enableStubComingSoon: "⏳ **Turning the arcade on from this card is coming soon.** Until then it stays as it is, and `/arcade on` turns it on.",
+		renameInfoTitle: "✏️ Renaming a channel",
+		renameInfoBody:
+			"To rename a channel Dero keeps, use `/server channels rename`. Dero remembers the name you give it, so it survives auto heal and any rebuild.\n\n" +
+			"Renaming it straight in Discord does not stick: while auto heal is on, Dero renames the channel back to its default name the next time it starts.",
 	},
 
 	// Streamer-tone copy that already lived in rok-commander.pack.ts. Reproduced

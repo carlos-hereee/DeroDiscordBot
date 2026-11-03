@@ -116,6 +116,20 @@ describe("the step marks, read from a fixture config", () => {
 		expect(arcadeControlView({ gamesCategoryId: "cat", botOpponentsEnabled: false } as HeadquartersRow).steps[1]?.done).toBe(false);
 	});
 
+	// 2026-11 item 285 Phase 4: Dismantle and Enable sit beside the steps on their own row,
+	// so no step number moves and the four step buttons keep their row.
+	it("🎰arcade-control: the Dismantle and Enable buttons ride the card on a row of their own, never as steps", () => {
+		const view = arcadeControlView({ gamesCategoryId: "cat" } as HeadquartersRow);
+		expect(view.steps).toHaveLength(4);
+		expect(view.extraButtons?.map((button) => (button.toJSON() as { custom_id: string }).custom_id)).toEqual(["hqstep:arcadeControl:dismantle", "hqstep:arcadeControl:enableStub"]);
+		const rows = buildStepsCard(view).components.map((row) => row.toJSON().components.map((button) => (button as { custom_id: string }).custom_id));
+		expect(rows).toEqual([
+			["hqstep:arcadeControl:1", "hqstep:arcadeControl:2", "hqstep:arcadeControl:3", "hqstep:arcadeControl:4"],
+			["hqstep:arcadeControl:dismantle", "hqstep:arcadeControl:enableStub"],
+		]);
+		expect(buildStepsCard(view).embeds[0]!.data.description).not.toContain("Dismantle");
+	});
+
 	// R3-19 (2026-10 item 263 Phase 4b): the choice lives on 🧭onboarding's step 2, which
 	// names each adopted channel and its slot, or says there is nothing to choose.
 	it("🧭onboarding: step 2 names the channels Dero adopted, or says there is nothing to choose and shows done", () => {
@@ -142,16 +156,28 @@ describe("🛠️server-config's steps and chart", () => {
 		const view = serverConfigView({}, noEvents);
 		expect(view.title).toBe(copy.serverConfig.title);
 		expect(view.steps.map((step) => step.label)).toEqual(SERVER_CONFIG_STEPS.map((key) => copy.serverConfig.steps[key]));
-		expect(view.steps.map((step) => step.done)).toEqual([false, true, false, false, false, false, true]);
+		expect(view.steps.map((step) => step.done)).toEqual([false, true, false, false, false, false, true, false]);
 		expect(view.steps.map((step) => step.customId)).toEqual(SERVER_CONFIG_STEPS.map((_key, index) => stepCustomId("serverConfig", index + 1)));
 	});
 
-	it("marks every step done for a configured server", () => {
+	// 2026-11 item 285 Phase 4: rename is an info step, so it is pending always, optional
+	// so it does not nag, and the 8th button.
+	it("adds rename as the 8th step: never done, optional, carrying hqstep:serverConfig:8", () => {
+		const view = serverConfigView({}, noEvents);
+		expect(view.steps).toHaveLength(8);
+		expect(view.steps[7]).toMatchObject({ label: copy.serverConfig.steps.rename, done: false, optional: true, customId: "hqstep:serverConfig:8" });
+		const configured = serverConfigView({ timezone: "America/New_York", leveling: { enabled: true } }, { now: NOW, activeEvents: 3, pausedEvents: 1, weeklySchedules: 1 });
+		expect(doneOf(configured, "rename")).toBe(false);
+		const rows = buildStepsCard(view).components;
+		expect(rows.map((row) => row.components.length)).toEqual([5, 3]);
+	});
+
+	it("marks every step but the info step done for a configured server", () => {
 		const view = serverConfigView(
 			{ timezone: "America/New_York", kvkSeasonEnd: new Date(NOW + 86_400_000), hiddenChannels: ["leaderboardChannelId"], leveling: { enabled: true } },
 			{ now: NOW, activeEvents: 3, pausedEvents: 1, weeklySchedules: 1 }
 		);
-		expect(view.steps.every((step) => step.done)).toBe(true);
+		expect(view.steps.filter((step) => !step.done).map((step) => step.label)).toEqual([copy.serverConfig.steps.rename]);
 	});
 
 	it("reads a past KvK season and switched off leveling as not done", () => {
@@ -161,8 +187,8 @@ describe("🛠️server-config's steps and chart", () => {
 	});
 
 	// ── step 1, the server's timezone (2026-10 item 263 Phase 4c) ──
-	it("puts the server's timezone first and Dero's template second, so steps 3 to 7 are the five steps that were 1 to 5", () => {
-		expect([...SERVER_CONFIG_STEPS]).toEqual(["timezone", "template", "kvkSeason", "streams", "events", "channels", "leveling"]);
+	it("puts the server's timezone first and Dero's template second, so steps 3 to 7 are the five steps that were 1 to 5, and rename last", () => {
+		expect([...SERVER_CONFIG_STEPS]).toEqual(["timezone", "template", "kvkSeason", "streams", "events", "channels", "leveling", "rename"]);
 	});
 
 	// ── step 2, Dero's template (2026-10 item 262 Phase 4) ──

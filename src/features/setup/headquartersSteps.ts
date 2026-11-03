@@ -29,6 +29,8 @@ import {
 } from "./headquartersCards.js";
 import { setupCopy } from "./setupCopy.js";
 import { handleAddChannel, tutorialKeyOf, type TutorialChannelKey } from "./tutorialCards.js";
+import { arcadeControlActionOf, handleDismantle, handleEnableStub, type ArcadeControlAction } from "./arcadeControlCards.js";
+import { handleOpen as handleRenameInfo } from "./renameInfoStep.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
 import { TIMEZONE_OPTIONS, resolveServerTimezone } from "@utils/tzParser.js";
@@ -60,7 +62,9 @@ type StepTarget =
 	| { kind: "priority" }
 	| { kind: "timezone" }
 	| { kind: "template" }
-	| { kind: "tutorial"; key: TutorialChannelKey };
+	| { kind: "tutorial"; key: TutorialChannelKey }
+	| { kind: "arcadeControl"; action: ArcadeControlAction }
+	| { kind: "renameInfo" };
 
 const panel = (launchId: string): StepTarget => ({ kind: "launch", launchId });
 const leaf = (command: string, path: string): StepTarget => ({ kind: "leaf", command, path });
@@ -85,6 +89,7 @@ const SERVER_CONFIG_ROUTES: Record<ServerConfigStep, StepTarget> = {
 	events: panel("events"),
 	channels: panel("server-channels"),
 	leveling: panel("leveling"),
+	rename: { kind: "renameInfo" },
 };
 
 // The server switches message: each switch opens its own /server form.
@@ -111,6 +116,12 @@ export function stepTarget(customId: string): StepTarget | null {
 	if (domain === "onboarding") {
 		const key = tutorialKeyOf(step);
 		return key ? { kind: "tutorial", key } : null;
+	}
+	// 🎰arcade-control's Dismantle and Enable buttons carry a word, not a step number
+	// (2026-11 item 285 Phase 4); its numbered steps fall through to the list below.
+	if (domain === "arcadeControl") {
+		const action = arcadeControlActionOf(step);
+		if (action) return { kind: "arcadeControl", action };
 	}
 	return ROUTED_STEPS[domain as HeadquartersDomain]?.[Number(step) - 1] ?? null;
 }
@@ -140,6 +151,14 @@ async function handleStepButton(interaction: ButtonInteraction): Promise<void> {
 	}
 	if (target.kind === "tutorial") {
 		await handleAddChannel(interaction, target.key);
+		return;
+	}
+	if (target.kind === "arcadeControl") {
+		await (target.action === "dismantle" ? handleDismantle(interaction) : handleEnableStub(interaction));
+		return;
+	}
+	if (target.kind === "renameInfo") {
+		await handleRenameInfo(interaction);
 		return;
 	}
 	const launcher = await import("@features/command-buttons/adminCommandLauncher.js");

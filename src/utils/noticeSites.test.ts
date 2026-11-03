@@ -639,6 +639,11 @@ const INVENTORY: readonly NoticeEntry[] = [
 	{ file: "features/setup/renameChannel.ts", within: "renameChannel", anchor: "await showEmbedNotice(interaction, infoEmbed(", kind: "state" },
 	{ file: "features/setup/renameChannel.ts", within: "renameChannel", anchor: "Could not rename the channel", kind: "failure" },
 
+	// ── setup/arcadeControlCards.ts and renameInfoStep.ts (2026-11 item 285 Phase 4) ──
+	{ file: "features/setup/arcadeControlCards.ts", within: "passesGate", kind: "state" },
+	{ file: "features/setup/arcadeControlCards.ts", within: "handleEnableStub", kind: "state" },
+	{ file: "features/setup/renameInfoStep.ts", within: "handleOpen", kind: "state" },
+
 	// ── setup/tutorialCards.ts ──
 	{ file: "features/setup/tutorialCards.ts", within: "handleAddChannel", kind: "state" },
 

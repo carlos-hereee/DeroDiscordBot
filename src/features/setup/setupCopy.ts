@@ -422,6 +422,21 @@ export const setupCopy = {
 				blocked: "Blocked servers",
 			},
 			reach: { "invite-only": "invite only", server: "this server", network: "the rated network" } as Record<string, string>,
+			// The two buttons beside the numbered steps (2026-11 item 285 Phase 4). Their
+			// replies are pack copy (responses.dismantle* and responses.enableStubComingSoon).
+			dismantleButton: "Dismantle Arcade",
+			enableStubButton: "Enable Arcade",
+			notAdmin: "Only the server owner or an admin can use the arcade controls.",
+			// The confirm Dismantle Arcade asks before it deletes anything. Both voices read it
+			// the same, like the self destruct choice it mirrors.
+			dismantleConfirm: {
+				title: "🎮 Dismantle the arcade?",
+				body: "This deletes the 🎮 ARCADE GAMES category and every channel in it, matches in progress included. Stored data stays, and `/arcade on` brings the arcade back.",
+				confirmButton: "Dismantle",
+				cancelButton: "Cancel",
+				cancelled: "Nothing was deleted. The arcade stays as it is.",
+				timedOut: "No answer came in time, so nothing was deleted. Press Dismantle Arcade again to ask once more.",
+			},
 		},
 		// 🛠️server-config (2026-10 item 263 Phase 4a). Steps are keyed, not listed, so an
 		// inserted step (Phase 4c's timezone) moves its number with its label.
@@ -435,6 +450,12 @@ export const setupCopy = {
 				events: "Your events: list, pause, resume or delete",
 				channels: "The server's channels: hide, show, list or rename",
 				leveling: "Leveling settings and XP",
+				rename: "How a renamed channel keeps its name",
+			},
+			// Step 8, an info step (2026-11 item 285 Phase 4): its explainer is pack copy
+			// (responses.renameInfoTitle and responses.renameInfoBody).
+			rename: {
+				notAdmin: "Only the server owner or an admin can open this step.",
 			},
 			chartTitle: "🛠️ Server settings",
 			chartSubtitle: "This server's schedule, channels, leveling and switches.",
