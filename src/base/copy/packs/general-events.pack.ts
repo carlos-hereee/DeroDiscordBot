@@ -859,9 +859,9 @@ export const generalEventsCopy: IPluginCopy = {
 			"The bot's home category and channels already exist.\n" +
 			"You do not need to run setup twice.",
 		setupSuccess: (adminRoleId: string) => ({
-			title: "🪧 NOTICE BOARD Set Up",
+			title: "🏰 Dero Is Set Up",
 			description:
-				"🪧 **NOTICE BOARD has been built.**\n\n" +
+				"🏰 **DERO HEADQUARTERS is ready.**\n\n" +
 				`<@&${adminRoleId}> now has access to the admin channel.\n\n` +
 				"You can configure your first event with `/events stream weekly` or `/events stream announce`.",
 		}),

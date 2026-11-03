@@ -1138,10 +1138,13 @@ export const rokCommanderCopy = {
 			"🪧 **NOTICE BOARD already stands.**\n\n" +
 			"My throne has already been constructed.\n" +
 			"It does not need to be built twice.",
+		// /setup grants the roles and builds no channel, and a fresh install has no notice
+		// board yet (2026-11 item 285 Phase 2), so this names Headquarters, which every
+		// server set up through /setup has.
 		setupSuccess: (adminRoleId: string) => ({
-			title: "🪧 NOTICE BOARD Established",
+			title: "🏰 The Throne Is Claimed",
 			description:
-				"🪧 **NOTICE BOARD has been established.**\n\n" +
+				"🏰 **DERO HEADQUARTERS is yours to command.**\n\n" +
 				`<@&${adminRoleId}> has been granted access ` +
 				"to the inner sanctum.\n\n" +
 				"My presence is now known. Inform your alliance.\n" +
