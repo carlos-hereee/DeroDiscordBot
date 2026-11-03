@@ -663,8 +663,19 @@ describe("R8: a refused grant during /setup", () => {
 				guild,
 				user: { id: OWNER },
 				options: { getRole: (name: string) => ({ id: name === "admin-role" ? ADMIN_ROLE : MEMBER_ROLE }) },
+				deferred: false,
 				reply: vi.fn(async () => undefined),
 				editReply: vi.fn(async () => undefined),
+				// Before setup only 🔒inner-sanctum exists, so /setup acknowledges quietly and
+				// answers once its work is done (2026-11 item 285 debug pass); with no
+				// 🛠️server-config in this rig the answer is the private follow up.
+				deferReply: vi.fn(async function (this: { deferred: boolean }) {
+					this.deferred = true;
+				}),
+				deleteReply: vi.fn(async () => undefined),
+				followUp: vi.fn(async () => undefined),
+				isModalSubmit: () => false,
+				isMessageComponent: () => false,
 			};
 			await runSetupCommand(interaction as unknown as ChatInputCommandInteraction);
 			return interaction;
@@ -676,13 +687,13 @@ describe("R8: a refused grant during /setup", () => {
 		const { run, granted, allow } = setupRig();
 
 		const failed = await run();
-		expect(descriptionOf(failed.editReply)).toBe(rokCommanderCopy.responses.setupFailed);
+		expect(descriptionOf(failed.followUp)).toBe(rokCommanderCopy.responses.setupFailed);
 		expect(mocks.update).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ setupComplete: true }));
 		expect(granted).not.toContain("ch-rulesChannelId");
 
 		allow();
 		const rerun = await run();
-		expect(sent(rerun.editReply).embeds![0]!.data.title).toBe(rokCommanderCopy.responses.setupSuccess(ADMIN_ROLE).title);
+		expect(sent(rerun.followUp).embeds![0]!.data.title).toBe(rokCommanderCopy.responses.setupSuccess(ADMIN_ROLE).title);
 		expect(granted).toContain(REFUSED_CHANNEL);
 		expect(mocks.update).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ setupComplete: true }));
 	});

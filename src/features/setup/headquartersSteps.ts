@@ -29,7 +29,7 @@ import {
 } from "./headquartersCards.js";
 import { setupCopy } from "./setupCopy.js";
 import { handleAddChannel, tutorialKeyOf, type TutorialChannelKey } from "./tutorialCards.js";
-import { arcadeControlActionOf, handleDismantle, handleEnableStub, type ArcadeControlAction } from "./arcadeControlCards.js";
+import { arcadeControlActionOf, handleDismantle, RETIRED_ENABLE_STUB_TAIL, type ArcadeControlAction } from "./arcadeControlCards.js";
 import { handleOpen as handleRenameInfo } from "./renameInfoStep.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { deroBrainCopy } from "@features/dero-brain/deroBrainCopy.js";
@@ -117,9 +117,11 @@ export function stepTarget(customId: string): StepTarget | null {
 		const key = tutorialKeyOf(step);
 		return key ? { kind: "tutorial", key } : null;
 	}
-	// 🎰arcade-control's Dismantle and Enable buttons carry a word, not a step number
-	// (2026-11 item 285 Phase 4); its numbered steps fall through to the list below.
+	// 🎰arcade-control's Dismantle button carries a word, not a step number (2026-11 item
+	// 285 Phase 4); its numbered steps fall through to the list below. The retired Enable
+	// Arcade stub's press runs the enable step, step 1 (2026-11 item 285 debug pass).
 	if (domain === "arcadeControl") {
+		if (step === RETIRED_ENABLE_STUB_TAIL) return ROUTED_STEPS.arcadeControl?.[0] ?? null;
 		const action = arcadeControlActionOf(step);
 		if (action) return { kind: "arcadeControl", action };
 	}
@@ -154,7 +156,7 @@ async function handleStepButton(interaction: ButtonInteraction): Promise<void> {
 		return;
 	}
 	if (target.kind === "arcadeControl") {
-		await (target.action === "dismantle" ? handleDismantle(interaction) : handleEnableStub(interaction));
+		await handleDismantle(interaction);
 		return;
 	}
 	if (target.kind === "renameInfo") {

@@ -29,7 +29,7 @@ vi.mock("./arcadeSwitch.js", () => ({ turnArcadeOff: mocks.turnArcadeOff }));
 vi.mock("./adminLog.js", () => ({ adminLog: { emitFor: mocks.emitFor } }));
 vi.mock("./headquartersCards.js", () => ({ refreshHeadquartersCards: mocks.refreshHeadquartersCards }));
 
-import { arcadeControlActionOf, arcadeControlCustomId, buildButtons, handleDismantle, handleEnableStub } from "./arcadeControlCards.js";
+import { arcadeControlActionOf, arcadeControlCustomId, buildButtons, handleDismantle } from "./arcadeControlCards.js";
 import { setupCopy } from "./setupCopy.js";
 
 const GUILD = { id: "g1" };
@@ -64,18 +64,17 @@ beforeEach(() => {
 });
 
 describe("the buttons", () => {
-	it("are Dismantle Arcade (danger) and Enable Arcade (secondary), each with its own customId", () => {
+	// The coming soon Enable Arcade stub is retired (2026-11 item 285 debug pass, owner
+	// ruling): while the arcade is off the card is the enable step itself.
+	it("is Dismantle Arcade (danger) alone", () => {
 		const buttons = buildButtons().map((button) => button.toJSON() as { custom_id: string; label: string; style: number });
-		expect(buttons).toEqual([
-			{ type: 2, custom_id: "hqstep:arcadeControl:dismantle", label: "Dismantle Arcade", style: ButtonStyle.Danger },
-			{ type: 2, custom_id: "hqstep:arcadeControl:enableStub", label: "Enable Arcade", style: ButtonStyle.Secondary },
-		]);
+		expect(buttons).toEqual([{ type: 2, custom_id: "hqstep:arcadeControl:dismantle", label: "Dismantle Arcade", style: ButtonStyle.Danger }]);
 	});
 
-	it("round trip through their customId tail, and a tail no button carries names nothing", () => {
+	it("round trips through its customId tail, and a tail no button carries names nothing", () => {
 		expect(arcadeControlActionOf("dismantle")).toBe("dismantle");
-		expect(arcadeControlActionOf("enableStub")).toBe("enableStub");
-		expect(arcadeControlCustomId("enableStub")).toBe("hqstep:arcadeControl:enableStub");
+		expect(arcadeControlCustomId("dismantle")).toBe("hqstep:arcadeControl:dismantle");
+		expect(arcadeControlActionOf("enableStub")).toBeNull();
 		expect(arcadeControlActionOf("1")).toBeNull();
 		expect(arcadeControlActionOf("toString")).toBeNull();
 	});
@@ -186,49 +185,13 @@ describe("Dismantle Arcade", () => {
 	});
 });
 
-describe("Enable Arcade (stub)", () => {
-	it("tells a presser who is no admin so, and says nothing else", async () => {
-		mocks.gateOwnerOrAdmin.mockResolvedValue(false);
-		const { interaction } = press();
-
-		await handleEnableStub(interaction);
-
-		expect(mocks.showNotice).toHaveBeenCalledTimes(1);
-		expect(mocks.showNotice).toHaveBeenCalledWith(interaction, expect.objectContaining({ sections: [setupCopy.headquarters.arcadeControl.notAdmin] }));
-	});
-
-	it("says coming soon as a state notice with the pack's line, changes nothing, sends no DM and posts no prompt", async () => {
-		const { interaction, reply, dm } = press();
-
-		await handleEnableStub(interaction);
-
-		expect(mocks.showNotice).toHaveBeenCalledWith(interaction, { title: rokCommanderCopy.notice.arcade, sections: [rokCommanderCopy.responses.enableStubComingSoon] });
-		expect(rokCommanderCopy.responses.enableStubComingSoon.toLowerCase()).toContain("coming soon");
-		expect(dm).not.toHaveBeenCalled();
-		expect(reply).not.toHaveBeenCalled();
-		expect(mocks.askInChannel).not.toHaveBeenCalled();
-		expect(mocks.turnArcadeOff).not.toHaveBeenCalled();
-		expect(mocks.emitFor).not.toHaveBeenCalled();
-	});
-
-	it("speaks in the guild's own pack voice", async () => {
-		mocks.findByGuildId.mockResolvedValue({ guildId: GUILD.id, pluginId: "general-events" });
-		const { interaction } = press();
-
-		await handleEnableStub(interaction);
-
-		expect(mocks.showNotice).toHaveBeenCalledWith(interaction, { title: generalEventsCopy.notice.arcade, sections: [generalEventsCopy.responses.enableStubComingSoon] });
-	});
-});
-
 describe("the copy", () => {
 	it("carries no long dash in either pack, the buttons or the confirm", () => {
 		const lines = [rokCommanderCopy.responses, generalEventsCopy.responses].flatMap((responses) => [
 			responses.dismantleSuccess,
 			responses.dismantleAlreadyOff,
-			responses.enableStubComingSoon,
 		]);
-		const { dismantleButton, enableStubButton, notAdmin, dismantleConfirm } = setupCopy.headquarters.arcadeControl;
-		for (const line of [...lines, dismantleButton, enableStubButton, notAdmin, ...Object.values(dismantleConfirm)]) expect(line).not.toMatch(LONG_DASHES);
+		const { dismantleButton, enableTitle, notAdmin, dismantleConfirm } = setupCopy.headquarters.arcadeControl;
+		for (const line of [...lines, dismantleButton, enableTitle, notAdmin, ...Object.values(dismantleConfirm)]) expect(line).not.toMatch(LONG_DASHES);
 	});
 });

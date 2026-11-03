@@ -69,8 +69,11 @@ function press(customId: string, userId = OWNER) {
 	};
 }
 
-// A modal submit carries no showModal, so every refusal on it answers privately.
-function submit(customId: string, values: { word?: string; choice?: string }, userId = OWNER) {
+// A modal submit carries no showModal, so every refusal on it answers privately. Each
+// select the submit names is present in its fields, as Discord sends them.
+function submit(customId: string, values: { word?: string; choice?: string; autoHeal?: string }, userId = OWNER) {
+	const selects: Record<string, string | undefined> = { self_destruct_choice: values.choice, self_destruct_auto_heal: values.autoHeal };
+	const present = Object.entries(selects).filter((entry): entry is [string, string] => entry[1] !== undefined);
 	return {
 		id: "submit-1",
 		customId,
@@ -79,7 +82,11 @@ function submit(customId: string, values: { word?: string; choice?: string }, us
 		client: {},
 		deferred: false,
 		replied: false,
-		fields: { getTextInputValue: () => values.word ?? "", getStringSelectValues: () => (values.choice ? [values.choice] : []) },
+		fields: {
+			fields: new Map(present.map(([id, value]) => [id, { customId: id, values: [value] }])),
+			getTextInputValue: () => values.word ?? "",
+			getStringSelectValues: (id: string) => (selects[id] ? [selects[id]!] : []),
+		},
 		reply: vi.fn(async () => undefined),
 		deferReply: vi.fn(async () => undefined),
 		editReply: vi.fn(async () => undefined),
@@ -87,8 +94,9 @@ function submit(customId: string, values: { word?: string; choice?: string }, us
 	};
 }
 
-const choose = (choice: string, userId = OWNER) => submit("self_destruct:choose", { choice }, userId);
-const confirmWord = (word: string, userId = OWNER) => submit("self_destruct:modal", { word }, userId);
+const choose = (choice: string, userId = OWNER, autoHeal = "on") => submit("self_destruct:choose", { choice, autoHeal }, userId);
+const confirmWord = (word: string, userId = OWNER, autoHeal = "on") => submit(`self_destruct:modal:${autoHeal}`, { word }, userId);
+const autoHealWrites = () => mocks.update.mock.calls.filter((call) => "autoHealEnabled" in (call[1] as object));
 
 async function clickButton(interaction: ReturnType<typeof press>): Promise<void> {
 	registerSelfDestructHandlers();
@@ -143,11 +151,17 @@ describe("the choice modal", () => {
 		expect(text).toContain("Stored records");
 		expect(text).toContain("adopted it is kept");
 
-		const select = modal.components.find((component) => component.component)!.component!;
-		expect(select.required).toBe(true);
-		expect([select.min_values, select.max_values]).toEqual([1, 1]);
-		expect(select.options.map((option) => option.label)).toEqual(["Just delete channels", "Delete my data", "Arcade only"]);
-		expect(select.options.some((option) => option.default)).toBe(false);
+		const [select, autoHeal] = modal.components.filter((component) => component.component).map((component) => component.component!);
+		expect(select!.required).toBe(true);
+		expect([select!.min_values, select!.max_values]).toEqual([1, 1]);
+		expect(select!.options.map((option) => option.label)).toEqual(["Just delete channels", "Delete my data", "Arcade only"]);
+		expect(select!.options.some((option) => option.default)).toBe(false);
+		// The auto heal select (2026-11 item 285 debug pass, owner ruling): required with no
+		// default too, so the owner reads why a deleted channel would come back.
+		expect(autoHeal!.custom_id).toBe("self_destruct_auto_heal");
+		expect(autoHeal!.required).toBe(true);
+		expect(autoHeal!.options.map((option) => option.value)).toEqual(["on", "off"]);
+		expect(autoHeal!.options.some((option) => option.default)).toBe(false);
 		expect(modal.components.length).toBeLessThanOrEqual(5);
 	});
 
@@ -218,6 +232,51 @@ describe("Just delete channels", () => {
 		expect(mocks.resetConfigsToDefault.mock.invocationCallOrder[0]!).toBeLessThan(mocks.rebuildDestroyedHomebase.mock.invocationCallOrder[0]!);
 		expect(mocks.update.mock.calls[2]).toEqual(["g1", { homebaseDestroyed: false }]);
 		expect(mocks.rebuildDestroyedHomebase.mock.invocationCallOrder[0]!).toBeLessThan(mocks.update.mock.invocationCallOrder[2]!);
+	});
+});
+
+describe("the auto heal pick", () => {
+	// The settings reset turns auto heal back on, so the pick is written after it and
+	// before the rebuild, and the done line says so (2026-11 item 285 debug pass).
+	for (const [label, makeSubmit, done] of [
+		["Just delete channels", () => choose("channels", OWNER, "off"), c.channelsDone],
+		["Delete my data", () => confirmWord("CONFIRM", OWNER, "off"), c.deleteDone],
+	] as const) {
+		it(`${label}: Turn auto heal off writes it after the reset and before the rebuild, and says so`, async () => {
+			const interaction = makeSubmit();
+			await submitModal(interaction);
+
+			expect(autoHealWrites().map((call) => call[1])).toEqual([{ autoHealEnabled: false }]);
+			const write = mocks.update.mock.invocationCallOrder[mocks.update.mock.calls.findIndex((call) => "autoHealEnabled" in (call[1] as object))]!;
+			expect(mocks.resetConfigsToDefault.mock.invocationCallOrder[0]!).toBeLessThan(write);
+			expect(write).toBeLessThan(mocks.rebuildDestroyedHomebase.mock.invocationCallOrder[0]!);
+			expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: `${done} ${REBUILT} ${c.autoHealOffDone}` }));
+		});
+	}
+
+	it("Keep auto heal on writes nothing about it", async () => {
+		await submitModal(choose("channels", OWNER, "on"));
+		expect(autoHealWrites()).toEqual([]);
+	});
+
+	it("a choice modal from an older build, with no auto heal select, leaves auto heal as it was", async () => {
+		await submitModal(submit("self_destruct:choose", { choice: "channels" }));
+		expect(autoHealWrites()).toEqual([]);
+	});
+
+	it("names the failure when auto heal could not be turned off", async () => {
+		mocks.update.mockImplementation(async (_id: string, payload: Record<string, unknown>) => {
+			if ("autoHealEnabled" in payload) throw new Error("write failed");
+		});
+		const interaction = choose("channels", OWNER, "off");
+		await submitModal(interaction);
+
+		expect(interaction.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: `${c.channelsDone} ${REBUILT} ${c.autoHealOffFailed}` }));
+	});
+
+	it("Arcade only ignores the pick", async () => {
+		await submitModal(choose("arcade", OWNER, "off"));
+		expect(autoHealWrites()).toEqual([]);
 	});
 });
 
@@ -325,17 +384,26 @@ describe("Delete my data", () => {
 		await submitModal(interaction);
 
 		const reply = (interaction.reply.mock.calls[0] as unknown as [Reply])[0];
-		expect(buttonIds(reply)).toEqual(["self_destruct:delete"]);
+		expect(buttonIds(reply)).toEqual(["self_destruct:delete:on"]);
 		expect(mocks.update).not.toHaveBeenCalled();
 		expect(mocks.wipeServerData).not.toHaveBeenCalled();
 		expect(auditDetails()).toEqual([]);
 	});
 
-	it("Type CONFIRM opens the CONFIRM modal for the owner", async () => {
-		const interaction = press("self_destruct:delete");
-		await clickButton(interaction);
-		const modal = (interaction.showModal.mock.calls[0] as unknown as [{ toJSON(): { custom_id: string } }])[0];
-		expect(modal.toJSON().custom_id).toBe("self_destruct:modal");
+	it("Type CONFIRM opens the CONFIRM modal for the owner, carrying the auto heal pick", async () => {
+		for (const pick of ["on", "off"]) {
+			const interaction = press(`self_destruct:delete:${pick}`);
+			await clickButton(interaction);
+			const modal = (interaction.showModal.mock.calls[0] as unknown as [{ toJSON(): { custom_id: string } }])[0];
+			expect(modal.toJSON().custom_id).toBe(`self_destruct:modal:${pick}`);
+		}
+	});
+
+	it("carries Turn auto heal off from the choice to the Type CONFIRM button", async () => {
+		const interaction = choose("data", OWNER, "off");
+		await submitModal(interaction);
+
+		expect(buttonIds((interaction.reply.mock.calls[0] as unknown as [Reply])[0])).toEqual(["self_destruct:delete:off"]);
 	});
 
 	it.each(["confirm", "Confirm", "CONFIRMED", ""])("deletes nothing when the owner typed %j", async (word) => {

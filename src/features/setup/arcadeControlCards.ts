@@ -11,17 +11,18 @@ import { turnArcadeOff } from "./arcadeSwitch.js";
 import { setupCopy } from "./setupCopy.js";
 
 // ── arcadeControlCards ──────────────────────────────────────────────────────
-// What:  the two buttons that sit beside the numbered steps on 🎰arcade-control's steps
-//        card (2026-11 item 285 Phase 4): Dismantle Arcade, which takes the arcade down
-//        the way /arcade off does but only after a Dismantle or Cancel confirm, and Enable
-//        Arcade, a stub that promises nothing yet and says "coming soon" so the card shows
-//        where activation will live.
+// What:  the button that sits beside the numbered steps on 🎰arcade-control's steps card
+//        while the arcade is on (2026-11 item 285 Phase 4): Dismantle Arcade, which takes
+//        the arcade down the way /arcade off does but only after a Dismantle or Cancel
+//        confirm. While the arcade is off the card is the one Turn the arcade on step
+//        instead, so the coming soon Enable Arcade stub is retired (2026-11 item 285 debug
+//        pass, owner ruling); an older card's stub press runs that step.
 // Who:   headquartersCards.ts puts buildButtons on the card; headquartersSteps.ts routes
-//        each press here as `hqstep:arcadeControl:dismantle` or `...:enableStub`.
+//        each press here as `hqstep:arcadeControl:dismantle`.
 // Where: the teardown is arcadeSwitch.turnArcadeOff, the one way the arcade goes off, so a
 //        button, /arcade off and a self destruct cannot take it down differently. The
 //        confirm is askInChannel, the codebase's one confirm then act prompt. Nothing here
-//        touches a channel itself, and neither button DMs anyone.
+//        touches a channel itself, and the button DMs nobody.
 // How:   each press re-runs the owner or admin gate, because a button outlives the role
 //        that was allowed to press it. A stray press on Dismantle only posts the confirm.
 
@@ -36,9 +37,12 @@ const DISMANTLE_CONFIRM_MS = 60_000;
 const DISMANTLE_CONFIRM_ID = "confirm_dismantle_arcade";
 const DISMANTLE_CANCEL_ID = "cancel_dismantle_arcade";
 
-/** The step tails the two buttons carry after `hqstep:arcadeControl:`. */
-export const ARCADE_CONTROL_STEP_TAILS = { dismantle: "dismantle", enableStub: "enableStub" } as const;
+/** The step tail the button carries after `hqstep:arcadeControl:`. */
+export const ARCADE_CONTROL_STEP_TAILS = { dismantle: "dismantle" } as const;
 export type ArcadeControlAction = keyof typeof ARCADE_CONTROL_STEP_TAILS;
+
+/** The tail the retired Enable Arcade stub carried; a press on a card not redrawn yet runs the enable step. */
+export const RETIRED_ENABLE_STUB_TAIL = "enableStub";
 
 /** The customId of one button: `hqstep:arcadeControl:<tail>`. */
 export function arcadeControlCustomId(action: ArcadeControlAction): string {
@@ -51,15 +55,11 @@ export function arcadeControlActionOf(step: string): ArcadeControlAction | null 
 }
 
 /**
- * The two buttons, in card order. Both stay pressable whatever state the arcade is in: a
- * press on an arcade that is already down answers so, which keeps a card the boot sweep
- * has not redrawn yet from showing a button that silently does nothing.
+ * The buttons beside the steps while the arcade is on. Dismantle stays pressable on a card
+ * the boot sweep has not redrawn yet: a press on an arcade already down answers so.
  */
 export function buildButtons(): ButtonBuilder[] {
-	return [
-		new ButtonBuilder().setCustomId(arcadeControlCustomId("dismantle")).setLabel(copy.dismantleButton).setStyle(ButtonStyle.Danger),
-		new ButtonBuilder().setCustomId(arcadeControlCustomId("enableStub")).setLabel(copy.enableStubButton).setStyle(ButtonStyle.Secondary),
-	];
+	return [new ButtonBuilder().setCustomId(arcadeControlCustomId("dismantle")).setLabel(copy.dismantleButton).setStyle(ButtonStyle.Danger)];
 }
 
 // ── the presses ──────────────────────────────────────────────────────────────
@@ -128,19 +128,4 @@ export async function handleDismantle(interaction: ButtonInteraction): Promise<v
 		console.error(`[arcade-control] guild ${guild.id}: dismantling the arcade from its card failed`, error);
 		await prompt.edit({ embeds: [errorEmbed(setupCopy.arcade.offFailed, copyConfig)], components: [] });
 	}
-}
-
-/**
- * Enable Arcade (stub): re-check the presser, then say as a state notice that enabling
- * from the card is coming soon. It changes nothing and sends no DM; real activation is a
- * later phase.
- */
-export async function handleEnableStub(interaction: ButtonInteraction): Promise<void> {
-	const guild = interaction.guild;
-	if (!guild) return;
-	const config = await guildConfigStore.findByGuildId(guild.id);
-	if (!(await passesGate(interaction, config))) return;
-
-	const copyConfig = config as unknown as ICopyConfig | null;
-	await showNotice(interaction, { title: getPluginCopy(copyConfig).notice.arcade, sections: [getPluginCopy(copyConfig).responses.enableStubComingSoon] });
 }

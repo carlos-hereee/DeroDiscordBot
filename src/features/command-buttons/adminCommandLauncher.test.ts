@@ -76,8 +76,13 @@ function fakeInteraction(userId: string, extra: Record<string, unknown>) {
 		reply,
 		showModal,
 		deferReply: vi.fn(async () => undefined),
+		deleteReply: vi.fn(async () => undefined),
 		editReply: vi.fn(async () => undefined),
 		followUp: vi.fn(async () => undefined),
+		// Read by answerInChannel's quiet acknowledgement, which /setup takes before setup
+		// has built 🛠️server-config (2026-11 item 285 debug pass).
+		isModalSubmit: () => false,
+		isMessageComponent: () => false,
 		...extra,
 	};
 	return { interaction, reply, showModal };

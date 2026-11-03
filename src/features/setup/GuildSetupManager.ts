@@ -100,6 +100,30 @@ export function isAdminRolePending(adminRoleId: string | null | undefined): admi
 	return !adminRoleId;
 }
 
+/**
+ * Whether the server has never finished setup: no row, or one with no admin role that was
+ * never marked complete (a new server, or one self destruct reset). A row that finished
+ * setup once keeps its full Headquarters whatever its role reads.
+ */
+export function isAwaitingSetup(row: unknown): boolean {
+	const fields = (row ?? {}) as { adminRoleId?: string | null; setupComplete?: boolean | null };
+	return isAdminRolePending(fields.adminRoleId) && !fields.setupComplete;
+}
+
+/**
+ * Whether a channel slot waits for setup: a 🏰 DERO HEADQUARTERS channel other than
+ * 🔒inner-sanctum, on a row awaiting setup, whose slot is still empty (2026-11 item 285
+ * debug pass, owner ruling: a new server and a self destructed one both start with
+ * 🔒inner-sanctum alone, and Set up Dero builds the rest). The ONE test the first build,
+ * the boot sweep and a forced rebuild's settle step all read, so auto heal can never
+ * build a channel the tutorial holds back. A slot holding an id is a real channel and is
+ * repaired like any other.
+ */
+export function waitsForSetup(spec: Pick<IChannelSpec, "configField" | "categoryField">, row: unknown): boolean {
+	if (spec.categoryField !== "headquartersCategoryId" || spec.configField === "adminChannelId") return false;
+	return isAwaitingSetup(row) && !((row ?? {}) as Record<string, unknown>)[spec.configField];
+}
+
 // 🔒inner-sanctum's Set up Dero button. Its customId is an admin command launcher id,
 // so adminCommandLauncher answers the press (gated to the owner, since no admin role
 // exists yet) and setup's own run re-checks the owner.
@@ -328,6 +352,9 @@ export class GuildSetupManager {
 		// forced rebuild still takes the full path below, byte for byte as before. This flag
 		// is the one branch; every step it touches reads it rather than deciding again.
 		const headquartersOnly = existing === null || !(existing as { categoryId?: string | null }).categoryId;
+		// A build with no admin role (a new server, a self destructed one) makes 🔒inner-sanctum
+		// alone; applyAdminRole builds the rest of Headquarters (see waitsForSetup).
+		const headquartersAwaitingSetup = isAwaitingSetup(existing);
 
 		// The SECOND category is LOOKED UP before the homebase category is built, and
 		// only CREATED after it, so the sidebar order stays NOTICE BOARD then ARCADE
@@ -469,7 +496,8 @@ export class GuildSetupManager {
 			},
 			config,
 			roles,
-			storedRow
+			storedRow,
+			headquartersAwaitingSetup
 		);
 		const { adoptedChannelIds, adoptions } = built;
 		const { scheduleMessageId, introMessageIds } = await GuildSetupManager.populateChannels(
@@ -660,6 +688,8 @@ export class GuildSetupManager {
 		for (const { field, category } of reused) {
 			for (const spec of GuildSetupManager.CHANNEL_SPECS.filter((entry) => entry.categoryField === field)) {
 				if (removedSlots.has(spec.configField)) continue;
+				// A reused Headquarters with no admin role keeps its waiting slots for Set up Dero.
+				if (waitsForSetup(spec, row)) continue;
 				const storedId = row[spec.configField];
 				if (typeof storedId === "string" && storedId.length > 0) {
 					const live = await GuildSetupManager.fetchStoredChannel(guild, storedId, GuildSetupManager.isChannelOfSpecKind(spec));
@@ -2235,8 +2265,9 @@ export class GuildSetupManager {
 			for (const spec of GuildSetupManager.CHANNEL_SPECS) {
 				if (!category && spec.categoryField === "categoryId") continue;
 				const storedId = stored[spec.configField] as string | null | undefined;
-				// A slot waiting for its first use is not missing, so it is not counted.
+				// A slot waiting for its first use, or for setup, is not missing, so it is not counted.
 				if (!storedId && waitingSlots.includes(spec.configField)) continue;
+				if (waitsForSetup(spec, stored)) continue;
 				if (!storedId) {
 					wouldRepairCount += 1;
 					continue;
@@ -2311,6 +2342,10 @@ export class GuildSetupManager {
 			// Only while the slot is still empty: a slot that holds an id (a forced rebuild
 			// built it) is a real channel and is repaired like any other.
 			if (onDemandSlots.has(spec.configField) && !stored[spec.configField]) continue;
+			// ⚠️ A Headquarters slot waiting for setup stays unbuilt (2026-11 item 285 debug
+			// pass): 🔒inner-sanctum is the tutorial's first step, so a boot before Set up Dero
+			// must not read the empty slots as case ③ below and build all of them.
+			if (waitsForSetup(spec, stored)) continue;
 
 			const storedId = stored[spec.configField] as string | null | undefined;
 
@@ -2830,6 +2865,42 @@ export class GuildSetupManager {
 			memberRoleId: config.memberRoleId,
 			setupComplete: true,
 		});
+
+		// After the role is stored, so every channel built now grants it.
+		await GuildSetupManager.buildHeadquartersAwaitingSetup(guild);
+	}
+
+	/**
+	 * Build every 🏰 DERO HEADQUARTERS channel that waited for setup (waitsForSetup), now
+	 * that the admin role is stored. applyAdminRole calls it, so Set up Dero and /setup both
+	 * finish Headquarters before they answer in 🛠️server-config. Each channel goes through
+	 * repairOneChannel, the one single channel build, which grants the stored roles and
+	 * posts the intro; the cards then post fresh beneath the new intros. Never throws: a
+	 * channel it could not build is left to the boot sweep, which no longer skips it once
+	 * the role is set. A slot the admin removed stays removed.
+	 */
+	static async buildHeadquartersAwaitingSetup(guild: Guild): Promise<void> {
+		try {
+			let row = asPlainRow(await guildConfigStore.findByGuildId(guild.id)) as (Record<string, unknown> & { adminRoleId?: string | null }) | null;
+			if (!row?.headquartersCategoryId) return;
+			// The one category lookup the build and the sweep use; an unconfirmed id builds nothing.
+			const category = await GuildSetupManager.findExistingManagedCategory(guild, "headquartersCategoryId", row.headquartersCategoryId as string, copyConfigOf(row));
+			if (!category || category === "unreachable") return;
+			const removed = new Set((row.userRemovedChannels as string[] | undefined) ?? []);
+			const built = new Set<string>();
+			for (const spec of GuildSetupManager.CHANNEL_SPECS) {
+				if (spec.categoryField !== "headquartersCategoryId" || row[spec.configField] || removed.has(spec.configField)) continue;
+				try {
+					row = (await GuildSetupManager.repairOneChannel(guild, category, spec, row)).stored;
+					built.add(spec.configField);
+				} catch (error) {
+					console.warn(`[headquarters] could not build ${spec.configField} after setup in guild ${guild.id}; the boot sweep builds it later`, error);
+				}
+			}
+			if (built.size > 0) await syncAllHeadquarters(guild, built);
+		} catch (error) {
+			console.warn(`[headquarters] could not finish Headquarters after setup in guild ${guild.id}; the boot sweep builds what is missing`, error);
+		}
 	}
 
 	// ── channel creation ──────────────────────────────────────
@@ -2981,7 +3052,9 @@ export class GuildSetupManager {
 		roles: { voice: IOverwriteRoles; text: IOverwriteRoles },
 		// The row a forced rebuild replaces (null on a fresh install), read by the welcome
 		// and rules adoption scan and for the pack every channel is named from.
-		storedRow: Record<string, unknown> | null = null
+		storedRow: Record<string, unknown> | null = null,
+		// True while no admin role is set: Headquarters gets 🔒inner-sanctum alone.
+		headquartersAwaitingSetup = false
 	): Promise<{
 		homebase: IBuiltGroup<IHomebaseChannelIds, IHomebaseChannelObjects> | null;
 		arcade: IBuiltGroup<IArcadeChannelIds, IArcadeChannelObjects> | null;
@@ -2996,7 +3069,9 @@ export class GuildSetupManager {
 		const [homebase, arcade, headquarters] = await Promise.all([
 			parents.category ? GuildSetupManager.createHomebaseChannels(guild, parents.category, postures, roles.text, storedRow, names) : null,
 			parents.gamesCategory ? GuildSetupManager.createArcadeChannels(guild, parents.gamesCategory, postures, names) : null,
-			parents.headquartersCategory ? GuildSetupManager.createHeadquartersChannels(guild, parents.headquartersCategory, postures, names) : null,
+			parents.headquartersCategory
+				? GuildSetupManager.createHeadquartersChannels(guild, parents.headquartersCategory, postures, names, headquartersAwaitingSetup)
+				: null,
 		]);
 		return { homebase: homebase?.group ?? null, arcade, headquarters, adoptedChannelIds: homebase?.adoptedChannelIds ?? [], adoptions: homebase?.adoptions ?? [] };
 	}
@@ -3256,59 +3331,35 @@ export class GuildSetupManager {
 		guild: Guild,
 		category: CategoryChannel,
 		postures: IChannelPostures,
-		channels: IPluginCopy["setup"]["channels"]
+		channels: IPluginCopy["setup"]["channels"],
+		// No admin role yet: only 🔒inner-sanctum is built, and every other slot stays null
+		// until applyAdminRole builds it (waitsForSetup).
+		awaitingSetup: boolean
 	): Promise<IBuiltGroup<IHeadquartersChannelIds, IHeadquartersChannelObjects>> {
+		const create = (name: string, permissionOverwrites: IOverwriteEntry[]) =>
+			guild.channels.create({ name, type: ChannelType.GuildText, parent: category.id, permissionOverwrites });
+		const afterSetup = (name: string, permissionOverwrites: IOverwriteEntry[]) => (awaitingSetup ? Promise.resolve(null) : create(name, permissionOverwrites));
 		const [adminChannel, adminLogChannel, deroConfigChannel, onboardingConfigChannel, arcadeControlChannel, serverConfigChannel] = await Promise.all([
 			// 🔒inner-sanctum, or 🔒admin in the streamer pack.
-			guild.channels.create({
-				name: channels.admin,
-				type: ChannelType.GuildText,
-				parent: category.id,
-				permissionOverwrites: postures.admin,
-			}),
+			create(channels.admin, postures.admin),
 			// 🗒️admin-log (post-launch plan item 11), the bot write only audit trail.
-			guild.channels.create({
-				name: channels.adminLog,
-				type: ChannelType.GuildText,
-				parent: category.id,
-				permissionOverwrites: postures.adminLog,
-			}),
-			guild.channels.create({
-				name: channels.deroConfig,
-				type: ChannelType.GuildText,
-				parent: category.id,
-				permissionOverwrites: postures.admin,
-			}),
-			guild.channels.create({
-				name: channels.onboardingConfig,
-				type: ChannelType.GuildText,
-				parent: category.id,
-				permissionOverwrites: postures.admin,
-			}),
-			guild.channels.create({
-				name: channels.arcadeControl,
-				type: ChannelType.GuildText,
-				parent: category.id,
-				permissionOverwrites: postures.admin,
-			}),
+			afterSetup(channels.adminLog, postures.adminLog),
+			afterSetup(channels.deroConfig, postures.admin),
+			afterSetup(channels.onboardingConfig, postures.admin),
+			afterSetup(channels.arcadeControl, postures.admin),
 			// 🛠️server-config, the fourth (2026-10 item 263 Phase 4a); a fresh server never gets 🎛️admin-controls.
-			guild.channels.create({
-				name: channels.serverConfig,
-				type: ChannelType.GuildText,
-				parent: category.id,
-				permissionOverwrites: postures.admin,
-			}),
+			afterSetup(channels.serverConfig, postures.admin),
 		]);
 
 		return {
 			ids: {
 				headquartersCategoryId: category.id,
 				adminChannelId: adminChannel.id,
-				adminLogChannelId: adminLogChannel.id,
-				deroConfigChannelId: deroConfigChannel.id,
-				onboardingConfigChannelId: onboardingConfigChannel.id,
-				arcadeControlChannelId: arcadeControlChannel.id,
-				serverConfigChannelId: serverConfigChannel.id,
+				adminLogChannelId: adminLogChannel?.id ?? null,
+				deroConfigChannelId: deroConfigChannel?.id ?? null,
+				onboardingConfigChannelId: onboardingConfigChannel?.id ?? null,
+				arcadeControlChannelId: arcadeControlChannel?.id ?? null,
+				serverConfigChannelId: serverConfigChannel?.id ?? null,
 			},
 			objects: { adminChannel, adminLogChannel, deroConfigChannel, onboardingConfigChannel, arcadeControlChannel, serverConfigChannel },
 		};
@@ -3523,6 +3574,8 @@ export class GuildSetupManager {
 		copyConfig: ICopyConfig | null
 	): Promise<Record<string, string>> {
 		const { adminChannel, adminLogChannel, deroConfigChannel, onboardingConfigChannel, arcadeControlChannel, serverConfigChannel } = discordChannels;
+		// A channel still waiting for setup was not built, so it has no intro to post.
+		const introIn = async (channel: TextChannel | null, embed: EmbedBuilder) => (channel ? channel.send({ embeds: [embed] }) : null);
 		const [adminMsg, adminLogMsg, deroConfigMsg, onboardingConfigMsg, arcadeControlMsg, serverConfigMsg] = await Promise.all([
 			// The welcome when a forced rebuild granted the stored admin role, the pending
 			// card on a fresh install, through the one resolver refreshIntroEmbeds also reads,
@@ -3533,20 +3586,21 @@ export class GuildSetupManager {
 				components: GuildSetupManager.resolveIntroComponents("adminChannelId", copyConfig, adminRoleId) ?? [],
 			}),
 			// 🗒️admin-log's header, edited in place on later boots like every intro.
-			adminLogChannel.send({ embeds: [ChannelContent.adminLogIntro(copyConfig)] }),
-			deroConfigChannel.send({ embeds: [ChannelContent.deroConfigIntro(copyConfig)] }),
-			onboardingConfigChannel.send({ embeds: [ChannelContent.onboardingConfigIntro(copyConfig)] }),
-			arcadeControlChannel.send({ embeds: [ChannelContent.arcadeControlIntro(copyConfig)] }),
-			serverConfigChannel.send({ embeds: [ChannelContent.serverConfigIntro(copyConfig)] }),
+			introIn(adminLogChannel, ChannelContent.adminLogIntro(copyConfig)),
+			introIn(deroConfigChannel, ChannelContent.deroConfigIntro(copyConfig)),
+			introIn(onboardingConfigChannel, ChannelContent.onboardingConfigIntro(copyConfig)),
+			introIn(arcadeControlChannel, ChannelContent.arcadeControlIntro(copyConfig)),
+			introIn(serverConfigChannel, ChannelContent.serverConfigIntro(copyConfig)),
 		]);
-		return {
+		const posted: Record<string, string | undefined> = {
 			adminChannelId: adminMsg.id,
-			adminLogChannelId: adminLogMsg.id,
-			deroConfigChannelId: deroConfigMsg.id,
-			onboardingConfigChannelId: onboardingConfigMsg.id,
-			arcadeControlChannelId: arcadeControlMsg.id,
-			serverConfigChannelId: serverConfigMsg.id,
+			adminLogChannelId: adminLogMsg?.id,
+			deroConfigChannelId: deroConfigMsg?.id,
+			onboardingConfigChannelId: onboardingConfigMsg?.id,
+			arcadeControlChannelId: arcadeControlMsg?.id,
+			serverConfigChannelId: serverConfigMsg?.id,
 		};
+		return Object.fromEntries(Object.entries(posted).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
 	}
 
 	// ── intro embed refresh on boot ──────────────────────────────

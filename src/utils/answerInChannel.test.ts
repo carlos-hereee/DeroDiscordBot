@@ -202,6 +202,32 @@ describe("beginChannelAnswer", () => {
 		expect(fake.deferUpdate).toHaveBeenCalled();
 	});
 
+	// /setup before setup has run: only 🔒inner-sanctum exists, and the work builds
+	// 🛠️server-config (2026-11 item 285 debug pass), so the channel is looked up at send.
+	it("with channelBuiltByWork, acknowledges quietly and posts in the channel the work built", async () => {
+		const channels = allChannels();
+		const fake = interaction({ kind: "modal", channels });
+		const answer = await beginChannelAnswer(fake, "admin", { config: { ...CONFIG, serverConfigChannelId: null }, channelBuiltByWork: true });
+
+		expect(answer.channelId).toBeNull();
+		expect(fake.deferUpdate).toHaveBeenCalledTimes(1);
+		expect(fake.deferReply).not.toHaveBeenCalled();
+		await answer.send({ content: "Set up." });
+		expect(channels.get("c-admin")!.send).toHaveBeenCalledWith(expect.objectContaining({ content: "<@u-asker> Set up." }));
+		expect(fake.followUp).not.toHaveBeenCalled();
+	});
+
+	it("with channelBuiltByWork, falls back to a private follow up when the work built no channel", async () => {
+		mocks.findByGuildId.mockResolvedValue({ ...CONFIG, serverConfigChannelId: null });
+		const fake = interaction({ kind: "modal", channels: allChannels() });
+		// discord.js marks a deferUpdate as deferred, which is what sends the fallback as a follow up.
+		fake.deferUpdate.mockImplementation(async () => void Object.assign(fake, { deferred: true }));
+		const answer = await beginChannelAnswer(fake, "admin", { config: { ...CONFIG, serverConfigChannelId: null }, channelBuiltByWork: true });
+
+		await answer.send({ content: "Setup failed." });
+		expect(fake.followUp).toHaveBeenCalledWith(expect.objectContaining({ content: "Setup failed.", flags: MessageFlags.Ephemeral }));
+	});
+
 	it("defers privately and edits that reply when the server has no channel", async () => {
 		mocks.findByGuildId.mockResolvedValue(null);
 		const fake = interaction();

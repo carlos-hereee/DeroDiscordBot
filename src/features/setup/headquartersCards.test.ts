@@ -106,27 +106,38 @@ describe("the step marks, read from a fixture config", () => {
 
 	// Chips, the monthly post and the bots share the /arcade panel, so they are one step
 	// (2026-10 item 263 Phase 4b, owner decision 15).
-	it("🎰arcade-control: four steps, the arcade off and nothing set marking only the panel step, whose switches default on", () => {
+	// 2026-11 item 285 debug pass, owner ruling: while the arcade is off the channel shows the
+	// enable step alone, with no chart and no Dismantle.
+	it("🎰arcade-control while the arcade is off: one Turn the arcade on step, no chart and no other button", () => {
 		const off = arcadeControlView({ gamesCategoryId: null } as HeadquartersRow);
-		expect(off.steps.map((step) => step.done)).toEqual([false, true, false, false]);
-		expect(off.steps.map((step) => step.label)).toEqual(copy.arcadeControl.steps);
-		expect(off.steps.at(-1)?.optional).toBe(true);
-		const on = arcadeControlView({ gamesCategoryId: "cat", chipEconomyEnabled: false, challengeReach: "network", blockedNetworkGuildIds: ["x"] } as HeadquartersRow);
-		expect(on.steps.map((step) => step.done)).toEqual([true, false, true, true]);
-		expect(arcadeControlView({ gamesCategoryId: "cat", botOpponentsEnabled: false } as HeadquartersRow).steps[1]?.done).toBe(false);
+		expect(off.title).toBe(copy.arcadeControl.enableTitle);
+		expect(off.steps.map((step) => [step.label, step.done, step.customId])).toEqual([[copy.arcadeControl.steps[0], false, "hqstep:arcadeControl:1"]]);
+		expect(off.chart).toBeNull();
+		expect(off.extraButtons ?? []).toEqual([]);
+		const rows = buildStepsCard(off).components.map((row) => row.toJSON().components.map((button) => (button as { custom_id: string }).custom_id));
+		expect(rows).toEqual([["hqstep:arcadeControl:1"]]);
 	});
 
-	// 2026-11 item 285 Phase 4: Dismantle and Enable sit beside the steps on their own row,
-	// so no step number moves and the four step buttons keep their row.
-	it("🎰arcade-control: the Dismantle and Enable buttons ride the card on a row of their own, never as steps", () => {
+	it("🎰arcade-control while the arcade is on: the remaining three steps, numbered from 1, each keeping its route", () => {
+		const on = arcadeControlView({ gamesCategoryId: "cat", chipEconomyEnabled: false, challengeReach: "network", blockedNetworkGuildIds: ["x"] } as HeadquartersRow);
+		expect(on.title).toBe(copy.arcadeControl.title);
+		expect(on.steps.map((step) => step.label)).toEqual(copy.arcadeControl.steps.slice(1));
+		expect(on.steps.map((step) => step.done)).toEqual([false, true, true]);
+		expect(on.steps.at(-1)?.optional).toBe(true);
+		expect(on.chart?.title).toBe(copy.arcadeControl.chartTitle);
+		expect(arcadeControlView({ gamesCategoryId: "cat", botOpponentsEnabled: false } as HeadquartersRow).steps[0]?.done).toBe(false);
+		expect(arcadeControlView({ gamesCategoryId: "cat" } as HeadquartersRow).steps[0]?.done).toBe(true);
+		expect(marks(buildStepsCard(on).embeds[0]!.data.description)).toHaveLength(3);
+		expect(buildStepsCard(on).embeds[0]!.data.description).toContain("**Step 1");
+	});
+
+	// Dismantle sits beside the steps on its own row (2026-11 item 285 Phase 4); the retired
+	// Enable stub is gone from the card.
+	it("🎰arcade-control: Dismantle rides the card on a row of its own, never as a step", () => {
 		const view = arcadeControlView({ gamesCategoryId: "cat" } as HeadquartersRow);
-		expect(view.steps).toHaveLength(4);
-		expect(view.extraButtons?.map((button) => (button.toJSON() as { custom_id: string }).custom_id)).toEqual(["hqstep:arcadeControl:dismantle", "hqstep:arcadeControl:enableStub"]);
+		expect(view.extraButtons?.map((button) => (button.toJSON() as { custom_id: string }).custom_id)).toEqual(["hqstep:arcadeControl:dismantle"]);
 		const rows = buildStepsCard(view).components.map((row) => row.toJSON().components.map((button) => (button as { custom_id: string }).custom_id));
-		expect(rows).toEqual([
-			["hqstep:arcadeControl:1", "hqstep:arcadeControl:2", "hqstep:arcadeControl:3", "hqstep:arcadeControl:4"],
-			["hqstep:arcadeControl:dismantle", "hqstep:arcadeControl:enableStub"],
-		]);
+		expect(rows).toEqual([["hqstep:arcadeControl:2", "hqstep:arcadeControl:3", "hqstep:arcadeControl:4"], ["hqstep:arcadeControl:dismantle"]]);
 		expect(buildStepsCard(view).embeds[0]!.data.description).not.toContain("Dismantle");
 	});
 
@@ -243,7 +254,8 @@ describe("readDomainView", () => {
 	const titles: Record<string, string> = {
 		deroConfig: copy.deroConfig.title,
 		onboarding: copy.onboarding.title,
-		arcadeControl: copy.arcadeControl.title,
+		// An empty row has no arcade, so 🎰arcade-control reads as its enable card.
+		arcadeControl: copy.arcadeControl.enableTitle,
 		serverConfig: copy.serverConfig.title,
 	};
 
@@ -260,7 +272,7 @@ describe("readDomainView", () => {
 		]);
 		const view = await readDomainView(guild, {}, "serverConfig");
 		expect([doneOf(view, "streams"), doneOf(view, "events")]).toEqual([true, true]);
-		const valueOf = (label: string) => view.chart.rows.find((row) => row.label === label);
+		const valueOf = (label: string) => view.chart?.rows.find((row) => row.label === label);
 		expect(valueOf(copy.serverConfig.rows.pausedEvents)).toMatchObject({ value: "1" });
 	});
 });
@@ -299,6 +311,7 @@ interface FakeMessage {
 	components: unknown[];
 	pin: ReturnType<typeof vi.fn>;
 	edit: ReturnType<typeof vi.fn>;
+	delete: ReturnType<typeof vi.fn>;
 }
 
 function rig(row: Partial<HeadquartersRow>) {
@@ -320,6 +333,7 @@ function rig(row: Partial<HeadquartersRow>) {
 				message.components = update.components ?? [];
 				message.embeds = (update.embeds ?? []).map((embed) => ({ title: embed.toJSON().title as string | undefined, data: embed.toJSON() }));
 			}),
+			delete: vi.fn(async () => void messages.delete(message.id)),
 		};
 		messages.set(message.id, message);
 		return message;
@@ -343,7 +357,7 @@ function rig(row: Partial<HeadquartersRow>) {
 	} as unknown as Guild;
 	const stored: HeadquartersRow = { arcadeControlChannelId: "ch-arcade", gamesCategoryId: "cat", ...row };
 	store.findByGuildId.mockImplementation(async () => stored);
-	store.update.mockImplementation(async (_guildId: string, writes: Record<string, string>) => {
+	store.update.mockImplementation(async (_guildId: string, writes: Record<string, string | null>) => {
 		for (const [path, value] of Object.entries(writes)) {
 			const [group, key] = path.split(".") as ["setupStepsMessageIds" | "settingsChartMessageIds" | "settingsSwitchesMessageIds", string];
 			stored[group] = { ...(stored[group] ?? {}), [key]: value };
@@ -433,6 +447,49 @@ describe("syncHeadquartersChannel", () => {
 		await syncHeadquartersChannel(guild, "serverConfig");
 		expect(switches!.edit).toHaveBeenCalledOnce();
 		expect(send).toHaveBeenCalledTimes(3);
+	});
+
+	// 2026-11 item 285 debug pass, owner ruling: the enable card is replaced, not edited,
+	// once the arcade is on, and the chart only exists while it is on.
+	it("🎰arcade-control while the arcade is off posts the enable card alone, and no chart", async () => {
+		const { guild, send, messages, stored } = rig({ gamesCategoryId: null });
+		await syncHeadquartersChannel(guild, "arcadeControl");
+
+		expect(send).toHaveBeenCalledOnce();
+		expect([...messages.values()].map((message) => message.embeds[0]!.title)).toEqual([copy.arcadeControl.enableTitle]);
+		expect(stored.settingsChartMessageIds?.arcadeControlChannelId).toBeUndefined();
+	});
+
+	it("turning the arcade on deletes the enable card, then posts the steps card and the chart beneath", async () => {
+		const { guild, send, messages, stored } = rig({ gamesCategoryId: null });
+		await syncHeadquartersChannel(guild, "arcadeControl");
+		const [enable] = [...messages.values()];
+
+		stored.gamesCategoryId = "cat";
+		await syncHeadquartersChannel(guild, "arcadeControl");
+
+		expect(enable!.delete).toHaveBeenCalledOnce();
+		expect(enable!.edit).not.toHaveBeenCalled();
+		expect(send).toHaveBeenCalledTimes(3);
+		expect([...messages.values()].map((message) => message.embeds[0]!.title)).toEqual([copy.arcadeControl.title, copy.arcadeControl.chartTitle]);
+		const [steps, chart] = [...messages.values()];
+		expect(steps!.pin).toHaveBeenCalledOnce();
+		expect(stored.setupStepsMessageIds?.arcadeControlChannelId).toBe(steps!.id);
+		expect(stored.settingsChartMessageIds?.arcadeControlChannelId).toBe(chart!.id);
+	});
+
+	it("turning the arcade off swaps back: the steps card and the chart go, the enable card posts", async () => {
+		const { guild, messages, stored } = rig({});
+		await syncHeadquartersChannel(guild, "arcadeControl");
+		const [steps, chart] = [...messages.values()];
+
+		stored.gamesCategoryId = null;
+		await syncHeadquartersChannel(guild, "arcadeControl");
+
+		expect(steps!.delete).toHaveBeenCalledOnce();
+		expect(chart!.delete).toHaveBeenCalledOnce();
+		expect([...messages.values()].map((message) => message.embeds[0]!.title)).toEqual([copy.arcadeControl.enableTitle]);
+		expect(stored.settingsChartMessageIds?.arcadeControlChannelId).toBeNull();
 	});
 
 	it("does nothing for a guild with no such channel, and never throws", async () => {

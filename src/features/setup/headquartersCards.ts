@@ -151,7 +151,9 @@ export interface SwitchesView {
 export interface DomainView {
 	title: string;
 	steps: SetupStep[];
-	chart: SettingsChartView;
+	// Null when the channel shows its steps card alone (🎰arcade-control while the arcade
+	// is off); a chart already posted is then deleted.
+	chart: SettingsChartView | null;
 	switches?: SwitchesView;
 	extraButtons?: ButtonBuilder[];
 }
@@ -249,15 +251,21 @@ export function arcadeControlView(row: HeadquartersRow): DomainView {
 	// Chips, the monthly post and the bots are one step since they share the /arcade panel
 	// (2026-10 item 263 Phase 4b, owner decision 15); marks, labels and routes stay index based.
 	const done = [arcadeOn, chipsOn && monthlyPost && bots, reach === "network", blocked > 0];
+	const steps = domain.steps.map((label, index) => ({
+		label,
+		done: done[index] ?? false,
+		// Blocking a server is never required, so its step says so rather than nagging.
+		optional: index === domain.steps.length - 1,
+		customId: stepCustomId("arcadeControl", index + 1),
+	}));
+	// While the arcade is off the channel shows one card, the enable step alone, with no
+	// chart and no Dismantle (2026-11 item 285 debug pass, owner ruling). Once it is on that
+	// card is replaced by the rest of the steps, which keep their routes (step 2 is still
+	// hqstep:arcadeControl:2) while the card numbers them from 1.
+	if (!arcadeOn) return { title: domain.enableTitle, steps: steps.slice(0, 1), chart: null };
 	return {
 		title: domain.title,
-		steps: domain.steps.map((label, index) => ({
-			label,
-			done: done[index] ?? false,
-			// Blocking a server is never required, so its step says so rather than nagging.
-			optional: index === domain.steps.length - 1,
-			customId: stepCustomId("arcadeControl", index + 1),
-		})),
+		steps: steps.slice(1),
 		chart: {
 			title: domain.chartTitle,
 			subtitle: domain.chartSubtitle,
@@ -514,6 +522,10 @@ interface KeptMessageInput {
 	shape: MessageShape;
 	send: () => Promise<Message>;
 	edit: (message: Message) => Promise<unknown>;
+	// A stored message with another title is deleted and posted fresh rather than edited,
+	// so a card that changed what it is (🎰arcade-control's enable card and its steps card)
+	// lands below the channel's other messages instead of keeping the old one's place.
+	replaceWhenRetitled?: boolean;
 }
 
 // The message by its stored id, else Dero's recent message with the same title, so a
@@ -527,8 +539,12 @@ async function findKeptMessage(input: KeptMessageInput): Promise<Message | null>
 
 /** Keep one message present and current; the id to store, or the stored one when a write failed. */
 async function keepMessage(input: KeptMessageInput): Promise<string | null> {
-	const existing = input.forcePost ? null : await findKeptMessage(input);
+	let existing = input.forcePost ? null : await findKeptMessage(input);
 	try {
+		if (existing && input.replaceWhenRetitled && existing.embeds[0]?.title !== input.title) {
+			await existing.delete().catch((error) => console.warn(`[headquarters] could not delete the replaced "${existing?.embeds[0]?.title}" in channel ${input.channel.id}`, error));
+			existing = null;
+		}
 		if (existing) {
 			if (!sameShape(shapeOfMessage(existing), input.shape)) await input.edit(existing);
 			return existing.id;
@@ -540,6 +556,24 @@ async function keepMessage(input: KeptMessageInput): Promise<string | null> {
 	} catch (error) {
 		console.warn(`[headquarters] keeping "${input.title}" in channel ${input.channel.id} failed`, error);
 		return input.storedId ?? null;
+	}
+}
+
+/**
+ * Delete a message the view no longer has, by its stored id. Answers the id still to store:
+ * null once it is gone (or there was none), the stored id when the delete failed so the
+ * next sync tries again.
+ */
+async function dropMessage(channel: TextChannel, storedId: string | null | undefined): Promise<string | null> {
+	if (!storedId) return null;
+	const message = await channel.messages.fetch(storedId).catch(() => null);
+	if (!message) return null;
+	try {
+		await message.delete();
+		return null;
+	} catch (error) {
+		console.warn(`[headquarters] could not delete message ${storedId} in channel ${channel.id}`, error);
+		return storedId;
 	}
 }
 
@@ -574,6 +608,7 @@ export async function syncHeadquartersChannel(guild: Guild, domain: Headquarters
 			selfId,
 			forcePost,
 			pin: true,
+			replaceWhenRetitled: true,
 			shape: { ...shapeOfEmbed(steps.embeds[0]?.data), buttons: shapeOfRows(steps.components) },
 			send: () => channel.send(steps),
 			edit: (message) => message.edit(steps),
@@ -598,31 +633,38 @@ export async function syncHeadquartersChannel(guild: Guild, domain: Headquarters
 				})
 			: null;
 
-		const chartEmbed = settingsChartEmbed(view.chart);
-		const chartShape = { ...shapeOfEmbed(chartEmbed.data), buttons: shapeOfRows([]) };
-		// Drawn only when the chart must be written: an unchanged chart costs no render.
-		const chartPayload = async () => {
-			const drawn = await withRenderFallback(() => renderSettingsChart(view.chart), () => null);
-			if (!isRenderPayload(drawn)) return { embeds: [chartEmbed], files: [], attachments: [] };
-			return { embeds: [new EmbedBuilder(chartEmbed.data).setImage(drawn.ref)], files: [drawn.attachment], attachments: [] };
-		};
-		const chartId = await keepMessage({
-			channel,
-			storedId: row.settingsChartMessageIds?.[field],
-			title: view.chart.title,
-			selfId,
-			forcePost,
-			pin: false,
-			shape: chartShape,
-			send: async () => {
-				const { embeds, files } = await chartPayload();
-				return channel.send({ embeds, files });
-			},
-			// `attachments: []` drops the old drawing, or every redraw would stack another file.
-			edit: async (message) => message.edit(await chartPayload()),
-		});
+		const chart = view.chart;
+		const storedChartId = row.settingsChartMessageIds?.[field];
+		let chartId: string | null;
+		if (chart) {
+			const chartEmbed = settingsChartEmbed(chart);
+			const chartShape = { ...shapeOfEmbed(chartEmbed.data), buttons: shapeOfRows([]) };
+			// Drawn only when the chart must be written: an unchanged chart costs no render.
+			const chartPayload = async () => {
+				const drawn = await withRenderFallback(() => renderSettingsChart(chart), () => null);
+				if (!isRenderPayload(drawn)) return { embeds: [chartEmbed], files: [], attachments: [] };
+				return { embeds: [new EmbedBuilder(chartEmbed.data).setImage(drawn.ref)], files: [drawn.attachment], attachments: [] };
+			};
+			chartId = await keepMessage({
+				channel,
+				storedId: storedChartId,
+				title: chart.title,
+				selfId,
+				forcePost,
+				pin: false,
+				shape: chartShape,
+				send: async () => {
+					const { embeds, files } = await chartPayload();
+					return channel.send({ embeds, files });
+				},
+				// `attachments: []` drops the old drawing, or every redraw would stack another file.
+				edit: async (message) => message.edit(await chartPayload()),
+			});
+		} else {
+			chartId = await dropMessage(channel, storedChartId);
+		}
 
-		const writes: Record<string, string> = {};
+		const writes: Record<string, string | null> = {};
 		// The tutorial cards come last, so a fresh post reads intro, steps, chart, cards.
 		if (domain === "onboarding") {
 			for (const card of buildTutorialCards(row, getPluginCopy(row as unknown as ICopyConfig))) {
@@ -642,7 +684,7 @@ export async function syncHeadquartersChannel(guild: Guild, domain: Headquarters
 			}
 		}
 		if (stepsId && stepsId !== row.setupStepsMessageIds?.[field]) writes[`setupStepsMessageIds.${field}`] = stepsId;
-		if (chartId && chartId !== row.settingsChartMessageIds?.[field]) writes[`settingsChartMessageIds.${field}`] = chartId;
+		if (chartId !== (storedChartId ?? null) && (chartId || storedChartId)) writes[`settingsChartMessageIds.${field}`] = chartId;
 		if (switchesId && switchesId !== row.settingsSwitchesMessageIds?.[field]) writes[`settingsSwitchesMessageIds.${field}`] = switchesId;
 		if (Object.keys(writes).length > 0) await guildConfigStore.update(guild.id, writes);
 	} catch (error) {

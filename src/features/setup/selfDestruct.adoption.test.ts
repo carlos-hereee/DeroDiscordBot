@@ -60,7 +60,7 @@ function rig() {
 
 	const guild = { id: "g1", ownerId: OWNER, channels: { fetch: vi.fn(async (id: string) => channels.get(id) ?? null) } };
 	const interaction = {
-		customId: "self_destruct:modal",
+		customId: "self_destruct:modal:on",
 		user: { id: OWNER },
 		guild,
 		client: {},

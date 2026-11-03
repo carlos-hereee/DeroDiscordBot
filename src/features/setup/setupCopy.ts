@@ -204,15 +204,25 @@ export const setupCopy = {
 		choiceModalBody: [
 			"**Self destruct deletes every Dero channel and its message history.**",
 			"",
-			"It also puts every Dero setting back to its default, so the next /setup builds Dero fresh, starting with 🏰 DERO HEADQUARTERS. Stored records (announcements, schedules, members' levels, game history and the rest) stay unless you pick Delete my data, which deletes them too and asks you to type CONFIRM first.",
+			"It also puts every Dero setting back to its default and builds Dero fresh, starting with 🔒inner-sanctum alone. Stored records (announcements, schedules, members' levels, game history and the rest) stay unless you pick Delete my data, which deletes them too and asks you to type CONFIRM first.",
 			"",
 			"A welcome or rules channel your server had before Dero adopted it is kept.",
 		].join("\n"),
 		choiceLabel: "What should Dero do?",
+		// The second select (2026-11 item 285 debug pass, owner ruling): auto heal is why a
+		// deleted Dero channel comes back, so the owner decides it here and reads why.
+		autoHealLabel: "Auto heal afterwards",
+		autoHealHint: "Auto heal rebuilds any Dero channel that goes missing. Arcade only ignores this.",
+		autoHealChoices: {
+			on: { label: "Keep auto heal on", description: "Dero rebuilds any of its channels that go missing." },
+			off: { label: "Turn auto heal off", description: "A deleted Dero channel stays gone until /server auto-heal turns it on." },
+		},
+		autoHealOffDone: "Auto heal is off, so a deleted Dero channel stays gone; /server auto-heal turns it back on.",
+		autoHealOffFailed: "Auto heal could not be turned off; /server auto-heal turns it off.",
 		choices: {
 			channels: {
 				label: "Just delete channels",
-				description: "Delete Dero's channels and reset its settings, keep the records. /setup starts fresh.",
+				description: "Delete Dero's channels and reset its settings, keep the records. Dero starts fresh.",
 				emoji: "🧹",
 			},
 			data: {
@@ -417,6 +427,9 @@ export const setupCopy = {
 		},
 		arcadeControl: {
 			title: "🎰 Arcade setup",
+			// The one card 🎰arcade-control shows while the arcade is off (2026-11 item 285
+			// debug pass): its step is steps[0], and the full card above shows the rest.
+			enableTitle: "🎰 Turn the arcade on",
 			steps: ["Turn the arcade on", "Chips, the daily claim, the monthly post and Dero bot opponents", "Rated network reach and registration", "Block servers from your network"],
 			chartTitle: "🎰 Arcade settings",
 			chartSubtitle: "Every switch and setting of the arcade in this server.",
@@ -429,10 +442,9 @@ export const setupCopy = {
 				blocked: "Blocked servers",
 			},
 			reach: { "invite-only": "invite only", server: "this server", network: "the rated network" } as Record<string, string>,
-			// The two buttons beside the numbered steps (2026-11 item 285 Phase 4). Their
-			// replies are pack copy (responses.dismantle* and responses.enableStubComingSoon).
+			// The button beside the numbered steps while the arcade is on (2026-11 item 285
+			// Phase 4). Its replies are pack copy (responses.dismantle*).
 			dismantleButton: "Dismantle Arcade",
-			enableStubButton: "Enable Arcade",
 			notAdmin: "Only the server owner or an admin can use the arcade controls.",
 			// The confirm Dismantle Arcade asks before it deletes anything. Both voices read it
 			// the same, like the self destruct choice it mirrors.

@@ -23,7 +23,8 @@ import { Collection, DiscordAPIError, RESTJSONErrorCodes, type Client, type Guil
 //   R8  backfill DMs every owner     driven: one send per guild, spaced, one failure no stop
 //   R9  em dash in new copy          driven: both packs, setupCopy and the new sources
 //   R10 consumer reads a null id     driven: every on demand field has a builder
-//   R11 Enable stub sends a DM       driven: the handler source has no DM or private reply
+//   R11 Enable stub sends a DM       driven: the handler source has no DM or private reply;
+//                                    the stub itself is retired (2026-11 item 285 debug pass)
 // Owner manual (no seam a test can reach): the live DM and chip render in Discord, the
 // soak on two test guilds and the restart that sends no second DM; all in the runbook.
 
@@ -296,8 +297,10 @@ describe("R11: the Enable Arcade stub sends a DM", () => {
 		expect(source).not.toMatch(/createDM|\.send\(|users\.send|MessageFlags\.Ephemeral|ephemeral\s*:/);
 	});
 
-	it("says coming soon through the pack-free state notice the Phase 4 test pins", () => {
-		const pinned = sourceOf("features/setup/arcadeControlCards.test.ts");
-		expect(pinned).toContain("expect(dm).not.toHaveBeenCalled()");
+	// The coming soon stub is retired: the card no longer carries it, and an older card's
+	// press runs the enable step instead (2026-11 item 285 debug pass, owner ruling).
+	it("no longer puts the stub on the card", () => {
+		const source = sourceOf("features/setup/arcadeControlCards.ts");
+		expect(source).not.toMatch(/handleEnableStub|enableStubButton/);
 	});
 });

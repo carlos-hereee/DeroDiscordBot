@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, PermissionFlagsBits, type ChatInputCommandInteraction, type RepliableInteraction } from "discord.js";
-import { GuildSetupManager, isHeadquartersOnly } from "@features/setup/GuildSetupManager.js";
+import { GuildSetupManager, isAdminRolePending, isHeadquartersOnly } from "@features/setup/GuildSetupManager.js";
 import { guildConfigStore } from "@db/stores/guildConfigStore.js";
 import { getPluginCopy } from "@base/copy/getCopy.js";
 import { LOG_MESSAGES } from "@base/constants/log-messages.js";
@@ -58,9 +58,9 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 	if (config?.homebaseDestroyed) {
 		const adminRole = options.getRole("admin-role", true);
 		const memberRole = options.getRole("member-role", true);
-		// A demolished homebase has no Headquarters channel left to name, so this answer
-		// takes answerInChannel's private fallback (its stored ids point at deleted channels).
-		const answer = await beginChannelAnswer(interaction, "admin", { config });
+		// A demolished homebase has no 🛠️server-config left, and the role grant below builds
+		// it, so the answer looks for it again once the work is done.
+		const answer = await beginChannelAnswer(interaction, "admin", { config, channelBuiltByWork: true });
 		try {
 			// Self destruct rebuilds Headquarters itself, so this branch runs only when that
 			// rebuild did not stand. A rebuild that does not stand here either keeps the flag:
@@ -118,7 +118,9 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 
 	// The result posts in 🛠️server-config (2026-10 item 257 Phase 5), pinging the admin
 	// who ran setup; the command itself is acknowledged quietly (2026-10 item 263 R3-10).
-	const answer = await beginChannelAnswer(interaction, "admin", { config });
+	// Before setup only 🔒inner-sanctum exists, and applyAdminRole builds 🛠️server-config
+	// (2026-11 item 285 debug pass), so the answer looks for it again once that is done.
+	const answer = await beginChannelAnswer(interaction, "admin", { config, channelBuiltByWork: isAdminRolePending(config.adminRoleId) });
 
 	try {
 		await GuildSetupManager.applyAdminRole(interaction.guild!, {

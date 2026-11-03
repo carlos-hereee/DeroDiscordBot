@@ -63,17 +63,19 @@ export interface IArcadeChannelIds {
 }
 
 // 🏰 DERO HEADQUARTERS, the THIRD managed category (2026-10 item 257 Phase 2a): its own
-// id, 🔒inner-sanctum, 🗒️admin-log and the four admin config channels.
+// id, 🔒inner-sanctum, 🗒️admin-log and the four admin config channels. Every channel but
+// 🔒inner-sanctum is null while it waits for setup (2026-11 item 285 debug pass): a build
+// with no admin role makes 🔒inner-sanctum alone, and Set up Dero builds the rest.
 export interface IHeadquartersChannelIds {
 	headquartersCategoryId: string;
 	adminChannelId: string;
 	// 🗒️admin-log, the bot write only audit trail (post-launch plan item 11).
-	adminLogChannelId: string;
-	deroConfigChannelId: string;
-	onboardingConfigChannelId: string;
-	arcadeControlChannelId: string;
+	adminLogChannelId: string | null;
+	deroConfigChannelId: string | null;
+	onboardingConfigChannelId: string | null;
+	arcadeControlChannelId: string | null;
 	// 🛠️server-config, the fourth config channel (2026-10 item 263 Phase 4a).
-	serverConfigChannelId: string;
+	serverConfigChannelId: string | null;
 }
 
 // ── live channel objects, passed straight to the intro posters so nothing is re-fetched ──
@@ -101,13 +103,14 @@ export interface IArcadeChannelObjects {
 	arcadeVoiceChannel: VoiceChannel;
 }
 
+// Null exactly where IHeadquartersChannelIds is: a channel waiting for setup is not built.
 export interface IHeadquartersChannelObjects {
 	adminChannel: TextChannel;
-	adminLogChannel: TextChannel;
-	deroConfigChannel: TextChannel;
-	onboardingConfigChannel: TextChannel;
-	arcadeControlChannel: TextChannel;
-	serverConfigChannel: TextChannel;
+	adminLogChannel: TextChannel | null;
+	deroConfigChannel: TextChannel | null;
+	onboardingConfigChannel: TextChannel | null;
+	arcadeControlChannel: TextChannel | null;
+	serverConfigChannel: TextChannel | null;
 }
 
 /** One built group: the ids to persist and the live channels to post intros into. */

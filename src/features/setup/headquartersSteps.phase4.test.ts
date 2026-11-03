@@ -8,7 +8,6 @@ import type { ButtonInteraction } from "discord.js";
 
 const mocks = vi.hoisted(() => ({
 	handleDismantle: vi.fn(),
-	handleEnableStub: vi.fn(),
 	handleRenameInfo: vi.fn(),
 	openAdminLaunch: vi.fn(),
 	openAdminLeaf: vi.fn(),
@@ -18,7 +17,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./arcadeControlCards.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("./arcadeControlCards.js")>()),
 	handleDismantle: mocks.handleDismantle,
-	handleEnableStub: mocks.handleEnableStub,
 }));
 vi.mock("./renameInfoStep.js", () => ({ handleOpen: mocks.handleRenameInfo }));
 vi.mock("@features/command-buttons/adminCommandLauncher.js", () => ({ openAdminLaunch: mocks.openAdminLaunch, openAdminLeaf: mocks.openAdminLeaf }));
@@ -39,9 +37,9 @@ beforeEach(() => {
 });
 
 describe("stepTarget for the arcade control buttons", () => {
-	it("routes the two named buttons", () => {
+	it("routes Dismantle, and the retired Enable stub to the enable step (2026-11 item 285 debug pass)", () => {
 		expect(stepTarget("hqstep:arcadeControl:dismantle")).toEqual({ kind: "arcadeControl", action: "dismantle" });
-		expect(stepTarget("hqstep:arcadeControl:enableStub")).toEqual({ kind: "arcadeControl", action: "enableStub" });
+		expect(stepTarget("hqstep:arcadeControl:enableStub")).toEqual(stepTarget("hqstep:arcadeControl:1"));
 	});
 
 	it("leaves the four numbered steps and every other word where they were", () => {
@@ -69,16 +67,16 @@ describe("a press", () => {
 		await mocks.buttons.get("hqstep")!(interaction);
 
 		expect(mocks.handleDismantle).toHaveBeenCalledWith(interaction);
-		expect(mocks.handleEnableStub).not.toHaveBeenCalled();
 		expect(mocks.openAdminLeaf).not.toHaveBeenCalled();
 	});
 
-	it("on Enable Arcade goes to handleEnableStub alone", async () => {
+	it("on an older card's Enable Arcade opens the enable step, /arcade on, and never Dismantle", async () => {
 		const interaction = press("hqstep:arcadeControl:enableStub");
 
 		await mocks.buttons.get("hqstep")!(interaction);
 
-		expect(mocks.handleEnableStub).toHaveBeenCalledWith(interaction);
+		expect(mocks.openAdminLeaf).toHaveBeenCalledOnce();
+		expect(mocks.openAdminLeaf.mock.calls[0]).toEqual(expect.arrayContaining(["arcade", "on"]));
 		expect(mocks.handleDismantle).not.toHaveBeenCalled();
 	});
 

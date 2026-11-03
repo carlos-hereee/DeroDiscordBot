@@ -89,6 +89,15 @@ export interface AnswerOptions {
 	config?: AnswerChannelConfig | null;
 }
 
+/** beginChannelAnswer's options: AnswerOptions, plus a channel the work itself builds. */
+export interface BeginAnswerOptions extends AnswerOptions {
+	// The work this answer waits on builds the audience's channel (/setup builds
+	// 🛠️server-config, 2026-11 item 285 debug pass). The press is then acknowledged quietly
+	// and the channel is looked up again at send, falling back privately only if it is
+	// still missing, instead of deferring privately on a channel that does not exist yet.
+	channelBuiltByWork?: boolean;
+}
+
 /**
  * A confirm then act prompt posted where its audience's answers go. Only the member who
  * asked can press it: anyone else gets a notice and the press does nothing.
@@ -161,12 +170,17 @@ export async function answerInChannel(interaction: RepliableInteraction, audienc
  * only when `channelId` is null, because only that private defer is still waiting.
  * Never throws.
  */
-export async function beginChannelAnswer(interaction: RepliableInteraction, audience: AnswerAudience, options: AnswerOptions = {}): Promise<PendingChannelAnswer> {
+export async function beginChannelAnswer(interaction: RepliableInteraction, audience: AnswerAudience, options: BeginAnswerOptions = {}): Promise<PendingChannelAnswer> {
 	const config = options.config === undefined ? await readConfig(interaction) : options.config;
 	const channel = await resolveAnswerChannel(interaction, audience, config);
 	if (channel) {
 		await acknowledgeQuietly(interaction);
 		return { channelId: channel.id, send: (answer) => answerInChannel(interaction, audience, answer, { config }) };
+	}
+	if (options.channelBuiltByWork) {
+		await acknowledgeQuietly(interaction);
+		// No config passed on: the row is read again, so the channel the work built is found.
+		return { channelId: null, send: (answer) => answerInChannel(interaction, audience, answer) };
 	}
 	// The sanctioned private fallback (see the module header): no channel to name, so the
 	// slow answer is deferred privately and send edits that private reply.

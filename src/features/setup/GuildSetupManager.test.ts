@@ -24,7 +24,7 @@ vi.mock("@features/voice/deroVoiceRooms.js", () => ({
 	DERO_VOICE_ROOM_FIELDS: ["meetingVoiceChannelId", "arcadeVoiceChannelId"],
 }));
 
-import { GuildSetupManager, isHeadquartersOnly } from "./GuildSetupManager.js";
+import { GuildSetupManager, isHeadquartersOnly, waitsForSetup } from "./GuildSetupManager.js";
 import { allowDeroVoiceRooms, replaceDeroVoiceRoom } from "@features/voice/deroVoiceRooms.js";
 import { CHALLENGE_GAMES } from "@features/game-rooms/challengeBoardEmbeds.js";
 import { ChannelContent } from "./ChannelContent.js";
@@ -2080,11 +2080,15 @@ describe("GuildSetupManager voice rooms", () => {
 	it("still posts the pending card and grants no admin role on a fresh install", async () => {
 		const { guild, calls, created } = await runAutoSetup(null);
 
-		// A fresh install builds Headquarters alone (2026-11 item 285 Phase 2), so only
-		// its channels exist to carry a posture.
+		// A fresh install builds 🔒inner-sanctum alone (2026-11 item 285 debug pass), so only
+		// it exists to carry a posture.
 		const headquartersCalls = textCallsBySpec(calls).filter(({ spec }) => spec.categoryField === "headquartersCategoryId");
 		expect(headquartersCalls).toHaveLength(6);
 		for (const { spec, call } of headquartersCalls) {
+			if (spec.configField !== "adminChannelId") {
+				expect(call, `${spec.displayName} waits for setup`).toBeUndefined();
+				continue;
+			}
 			expect(call, `${spec.displayName} built`).toBeDefined();
 			expect(call?.permissionOverwrites, `${spec.displayName} posture`).toEqual(
 				communityOverwritesFor(overwriteKindOf(spec), guild, { ownerId: OWNER_ID }, { memberRoleId: null, adminRoleId: null })
@@ -2432,7 +2436,9 @@ describe("GuildSetupManager on a Headquarters only install", () => {
 		});
 	}
 
-	it("builds the Headquarters category and its six channels, and nothing else", async () => {
+	// 🔒inner-sanctum is the tutorial's first step (2026-11 item 285 debug pass, owner
+	// ruling): Set up Dero builds the other five through applyAdminRole.
+	it("builds the Headquarters category and 🔒inner-sanctum alone, and nothing else", async () => {
 		guildConfigMock.findByGuildId.mockResolvedValue(null);
 		const guild = makeInstallGuild();
 
@@ -2441,14 +2447,14 @@ describe("GuildSetupManager on a Headquarters only install", () => {
 		const calls = callsOf(guild);
 		expect(calls.filter((call) => call.type === ChannelType.GuildCategory).map((call) => call.name)).toEqual([rokCommanderCopy.setup.headquartersCategoryName]);
 		const channels = calls.filter((call) => call.type !== ChannelType.GuildCategory);
-		expect(channels.map((call) => call.name).sort()).toEqual(HEADQUARTERS_SPECS.map((spec) => packChannels[spec.nameKey]).sort());
+		expect(channels.map((call) => call.name)).toEqual([packChannels.admin]);
 		for (const call of channels) expect(call.parent, call.name).toBe(HEADQUARTERS_PARENT);
 		expect(HEADQUARTERS_SPECS.map((spec) => spec.configField).sort()).toEqual(
 			["adminChannelId", "adminLogChannelId", "arcadeControlChannelId", "deroConfigChannelId", "onboardingConfigChannelId", "serverConfigChannelId"].sort()
 		);
 	});
 
-	it("stores both unbuilt category ids as null, the six Headquarters ids, and the arcade off", async () => {
+	it("stores both unbuilt category ids as null, 🔒inner-sanctum's id, the five waiting slots as null, and the arcade off", async () => {
 		guildConfigMock.findByGuildId.mockResolvedValue(null);
 		const guild = makeInstallGuild();
 
@@ -2459,7 +2465,10 @@ describe("GuildSetupManager on a Headquarters only install", () => {
 		expect(payload.categoryId).toBeNull();
 		expect(payload.gamesCategoryId).toBeNull();
 		expect(payload.headquartersCategoryId).toBe(HEADQUARTERS_PARENT);
-		for (const spec of HEADQUARTERS_SPECS) expect(payload[spec.configField], spec.configField).toBe(`new-${packChannels[spec.nameKey]}`);
+		for (const spec of HEADQUARTERS_SPECS) {
+			const expected = spec.configField === "adminChannelId" ? `new-${packChannels[spec.nameKey]}` : null;
+			expect(payload[spec.configField], spec.configField).toBe(expected);
+		}
 		for (const field of [...NOTICE_BOARD_FIELDS, ...ARCADE_FIELDS]) expect(payload[field], field).toBeUndefined();
 		// Off exactly as turnArcadeOff leaves it, so the boot sweep never builds it and
 		// /arcade on can bring it back; no arcade switch is written for an unbuilt arcade.
@@ -2567,6 +2576,60 @@ describe("GuildSetupManager on a Headquarters only install", () => {
 		const calls = callsOf(guild);
 		expect(calls.map((call) => call.name)).toEqual([packChannels.deroConfig]);
 		expect(calls[0]!.parent).toBe("hq-cat-1");
+	});
+
+	// ── waiting for setup (2026-11 item 285 debug pass, owner ruling) ─────────
+	// A new server and a self destructed one hold 🔒inner-sanctum alone until Set up Dero.
+	const WAITING_FIELDS = HEADQUARTERS_SPECS.map((spec) => spec.configField).filter((field) => field !== "adminChannelId");
+	const awaitingRow = (overrides: Record<string, unknown> = {}) =>
+		makeHeadquartersOnlyRow({ adminRoleId: null, setupComplete: false, ...Object.fromEntries(WAITING_FIELDS.map((field) => [field, null])), ...overrides });
+
+	it("reads a slot as waiting for setup only while setup never ran and the slot is empty", () => {
+		const serverConfig = HEADQUARTERS_SPECS.find((spec) => spec.configField === "serverConfigChannelId")!;
+		const sanctum = HEADQUARTERS_SPECS.find((spec) => spec.configField === "adminChannelId")!;
+		expect(waitsForSetup(serverConfig, awaitingRow())).toBe(true);
+		expect(waitsForSetup(serverConfig, null)).toBe(true);
+		expect(waitsForSetup(sanctum, awaitingRow({ adminChannelId: null }))).toBe(false);
+		expect(waitsForSetup(serverConfig, awaitingRow({ adminRoleId: "role-admin" }))).toBe(false);
+		expect(waitsForSetup(serverConfig, awaitingRow({ setupComplete: true }))).toBe(false);
+		expect(waitsForSetup(serverConfig, awaitingRow({ serverConfigChannelId: "ch-serverconfig" }))).toBe(false);
+		const intro = GuildSetupManager.CHANNEL_SPECS.find((spec) => spec.configField === "introChannelId")!;
+		expect(waitsForSetup(intro, awaitingRow({ introChannelId: null }))).toBe(false);
+	});
+
+	it("leaves the five waiting Headquarters slots unbuilt on a boot before setup", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(awaitingRow());
+		const guild = makeGuild({ channelFetchMap: LIVE_HEADQUARTERS });
+
+		const result = await GuildSetupManager.ensureHomebase(makeClient({ selfId: "bot-1" }), guild);
+
+		expect(result).toEqual({ action: "skipped", repairedChannels: [] });
+		expect(createMockOf(guild)).not.toHaveBeenCalled();
+	});
+
+	it("builds every waiting slot under Headquarters once setup stores the admin role", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(awaitingRow({ adminRoleId: "role-admin", setupComplete: true }));
+		const guild = makeGuild({ channelFetchMap: LIVE_HEADQUARTERS });
+
+		await GuildSetupManager.buildHeadquartersAwaitingSetup(guild);
+
+		const calls = callsOf(guild);
+		expect(calls.map((call) => call.name).sort()).toEqual(HEADQUARTERS_SPECS.filter((spec) => spec.configField !== "adminChannelId").map((spec) => packChannels[spec.nameKey]).sort());
+		for (const call of calls) expect(call.parent, call.name).toBe("hq-cat-1");
+	});
+
+	it("builds nothing after setup for a slot the admin removed, or one already standing", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(
+			awaitingRow({ adminRoleId: "role-admin", setupComplete: true, deroConfigChannelId: "ch-deroconfig", userRemovedChannels: ["arcadeControlChannelId"] })
+		);
+		const guild = makeGuild({ channelFetchMap: { ...LIVE_HEADQUARTERS, "ch-deroconfig": { id: "ch-deroconfig" } } });
+
+		await GuildSetupManager.buildHeadquartersAwaitingSetup(guild);
+
+		const names = callsOf(guild).map((call) => call.name);
+		expect(names).not.toContain(packChannels.deroConfig);
+		expect(names).not.toContain(packChannels.arcadeControl);
+		expect(names).toContain(packChannels.serverConfig);
 	});
 
 	it("still runs the legacy sweep, notice board included, on a row that holds categoryId", async () => {

@@ -13,14 +13,16 @@ const mocks = vi.hoisted(() => ({
 	rebuildDestroyedHomebase: vi.fn(),
 	applyAdminRole: vi.fn(),
 	send: vi.fn(),
+	beginChannelAnswer: vi.fn(),
 }));
 
 vi.mock("@db/stores/guildConfigStore.js", () => ({ guildConfigStore: { findByGuildId: mocks.findByGuildId, update: mocks.update } }));
 vi.mock("@features/setup/GuildSetupManager.js", () => ({
 	GuildSetupManager: { rebuildDestroyedHomebase: mocks.rebuildDestroyedHomebase, applyAdminRole: mocks.applyAdminRole },
 	isHeadquartersOnly: () => false,
+	isAdminRolePending: (adminRoleId: string | null | undefined) => !adminRoleId,
 }));
-vi.mock("@utils/answerInChannel.js", () => ({ beginChannelAnswer: vi.fn(async () => ({ send: mocks.send })) }));
+vi.mock("@utils/answerInChannel.js", () => ({ beginChannelAnswer: mocks.beginChannelAnswer }));
 vi.mock("@utils/textModal.js", () => ({ showNotice: vi.fn() }));
 
 import { execute } from "./setup.js";
@@ -42,6 +44,7 @@ const sentTitles = () => mocks.send.mock.calls.map((call) => (call[0] as { embed
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mocks.beginChannelAnswer.mockImplementation(async () => ({ send: mocks.send }));
 	mocks.findByGuildId.mockResolvedValueOnce({ guildId: "guild-1", homebaseDestroyed: true, setupComplete: false });
 });
 
@@ -63,5 +66,24 @@ describe("/setup rebuilding a self destructed server", () => {
 
 		expect(mocks.applyAdminRole).not.toHaveBeenCalled();
 		expect(mocks.update).not.toHaveBeenCalled();
+	});
+});
+
+// Before setup only 🔒inner-sanctum exists, and the role grant builds 🛠️server-config
+// (2026-11 item 285 debug pass), so the answer looks for its channel once that is done.
+describe("/setup's answer before and after setup", () => {
+	it("waits for the channel the work builds while no admin role is set", async () => {
+		mocks.findByGuildId.mockReset().mockResolvedValue({ guildId: "guild-1", categoryId: "cat-1", setupComplete: false, adminRoleId: null });
+		await execute(makeInteraction());
+
+		expect(mocks.beginChannelAnswer).toHaveBeenCalledWith(expect.anything(), "admin", expect.objectContaining({ channelBuiltByWork: true }));
+		expect(mocks.applyAdminRole).toHaveBeenCalledOnce();
+	});
+
+	it("answers in the standing channel once an admin role is set", async () => {
+		mocks.findByGuildId.mockReset().mockResolvedValue({ guildId: "guild-1", categoryId: "cat-1", setupComplete: false, adminRoleId: "role-old" });
+		await execute(makeInteraction());
+
+		expect(mocks.beginChannelAnswer).toHaveBeenCalledWith(expect.anything(), "admin", expect.objectContaining({ channelBuiltByWork: false }));
 	});
 });

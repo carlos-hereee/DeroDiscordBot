@@ -46,9 +46,11 @@ import { GuildSetupManager } from "./GuildSetupManager.js";
 //   ② Type CONFIRM opens the CONFIRM modal. Only the exact word deletes:
 //      demolishHomebase, then wipeServerData, then resetConfigsToDefault, so the
 //      data AND the settings go (owner decision 4a).
-// Both teardowns then build 🏰 DERO HEADQUARTERS fresh, as a new install does, so the
-// new 🔒inner-sanctum offers Set up Dero (owner ruling, 2026-11 item 285 debug pass:
-// self destruct starts over, it does not leave Dero channel free). GuildConfig
+// Both teardowns then build Dero fresh, as a new install does: 🔒inner-sanctum alone,
+// offering Set up Dero (owner rulings, 2026-11 item 285 debug pass: self destruct starts
+// over, it does not leave Dero channel free). The choice modal also asks whether auto
+// heal stays on, and the pick rides the Type CONFIRM button and the CONFIRM modal, so
+// the owner knows why deleted channels stay gone or come back. GuildConfig
 // .homebaseDestroyed holds the homebase gone during the teardown and across a restart
 // until that rebuild stands, or until /setup rebuilds it when the rebuild failed. The
 // select IS the confirmation for the two choices that keep the data, which is why it
@@ -62,7 +64,8 @@ import { GuildSetupManager } from "./GuildSetupManager.js";
 //
 // customId scheme `self_destruct:<action>`, routed on the "self_destruct" prefix via
 // interactionRegistry: prompt (the guide button), choose (the choice modal), delete
-// (Type CONFIRM, opens the CONFIRM modal) and modal (the CONFIRM modal). Anything
+// (Type CONFIRM, opens the CONFIRM modal) and modal (the CONFIRM modal); delete and modal
+// carry the auto heal pick as a third part, `self_destruct:delete:off`. Anything
 // else, including `reset`, `cancel` and `confirm` from a prompt still open from an
 // older build, answers as a stale control and does nothing its label once said.
 
@@ -73,10 +76,15 @@ const DELETE_ID = `${PREFIX}:delete`;
 const MODAL_ID = `${PREFIX}:modal`;
 const CONFIRM_WORD_FIELD = "confirm_word";
 const CHOICE_FIELD = "self_destruct_choice";
+const AUTO_HEAL_FIELD = "self_destruct_auto_heal";
 
 /** The three things self destruct can do, as the select's values. */
 export const SELF_DESTRUCT_CHOICES = ["channels", "data", "arcade"] as const;
 export type SelfDestructChoice = (typeof SELF_DESTRUCT_CHOICES)[number];
+
+/** Whether auto heal stays on after a teardown, as the second select's values. */
+export const AUTO_HEAL_CHOICES = ["on", "off"] as const;
+export type AutoHealChoice = (typeof AUTO_HEAL_CHOICES)[number];
 
 const c = setupCopy.selfDestruct;
 
@@ -175,11 +183,19 @@ export function buildChoiceModal(): ModalBuilder {
 	// Required with no default: an owner must pick a choice by hand, so a stray
 	// Submit can never run one.
 	const select = new StringSelectMenuBuilder().setCustomId(CHOICE_FIELD).setRequired(true).setMinValues(1).setMaxValues(1).addOptions(options);
+	// Also required with no default, so the owner reads why deleted channels would come back.
+	const autoHealOptions = AUTO_HEAL_CHOICES.map((choice) =>
+		new StringSelectMenuOptionBuilder().setValue(choice).setLabel(c.autoHealChoices[choice].label).setDescription(c.autoHealChoices[choice].description)
+	);
+	const autoHeal = new StringSelectMenuBuilder().setCustomId(AUTO_HEAL_FIELD).setRequired(true).setMinValues(1).setMaxValues(1).addOptions(autoHealOptions);
 	return new ModalBuilder()
 		.setCustomId(CHOICE_MODAL_ID)
 		.setTitle(c.choiceModalTitle)
 		.addTextDisplayComponents(new TextDisplayBuilder().setContent(c.choiceModalBody))
-		.addLabelComponents(new LabelBuilder().setLabel(c.choiceLabel).setStringSelectMenuComponent(select));
+		.addLabelComponents(
+			new LabelBuilder().setLabel(c.choiceLabel).setStringSelectMenuComponent(select),
+			new LabelBuilder().setLabel(c.autoHealLabel).setDescription(c.autoHealHint).setStringSelectMenuComponent(autoHeal)
+		);
 }
 
 /**
@@ -194,9 +210,9 @@ export async function showSelfDestructChoices(interaction: ButtonInteraction | C
 	await interaction.showModal(buildChoiceModal());
 }
 
-function buildConfirmModal(): ModalBuilder {
+function buildConfirmModal(autoHeal: AutoHealChoice): ModalBuilder {
 	return new ModalBuilder()
-		.setCustomId(MODAL_ID)
+		.setCustomId(`${MODAL_ID}:${autoHeal}`)
 		.setTitle(c.modalTitle)
 		.addComponents(
 			new ActionRowBuilder<TextInputBuilder>().addComponents(
@@ -227,7 +243,7 @@ async function handleSelfDestruct(interaction: ButtonInteraction): Promise<void>
 	}
 
 	if (action === "delete") {
-		await interaction.showModal(buildConfirmModal());
+		await interaction.showModal(buildConfirmModal(autoHealFromCustomId(interaction.customId)));
 		return;
 	}
 
@@ -259,10 +275,24 @@ function readChoice(interaction: ModalSubmitInteraction): SelfDestructChoice | n
 	return SELF_DESTRUCT_CHOICES.find((choice) => choice === value) ?? null;
 }
 
+// "on" unless the owner picked off: a choice modal from an older build has no auto heal
+// select, and leaving auto heal as it was is what such a submit always meant.
+function readAutoHeal(interaction: ModalSubmitInteraction): AutoHealChoice {
+	const field = interaction.fields.fields.get(AUTO_HEAL_FIELD);
+	if (!field) return "on";
+	const [value] = interaction.fields.getStringSelectValues(AUTO_HEAL_FIELD);
+	return value === "off" ? "off" : "on";
+}
+
+// The pick the Type CONFIRM button and the CONFIRM modal carry as their third part.
+function autoHealFromCustomId(customId: string): AutoHealChoice {
+	return customId.split(":")[2] === "off" ? "off" : "on";
+}
+
 async function runChoice(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
 	const choice = readChoice(interaction);
 	if (choice === "channels") {
-		await runJustDeleteChannels(interaction, guild);
+		await runJustDeleteChannels(interaction, guild, readAutoHeal(interaction));
 		return;
 	}
 	if (choice === "arcade") {
@@ -275,7 +305,7 @@ async function runChoice(interaction: ModalSubmitInteraction, guild: Guild): Pro
 		// 🛠️server-config (2026-10 item 257 Phase 5): a modal Submit opens no notice,
 		// and its button refuses everyone but the server owner (refuseNonOwner).
 		const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-			new ButtonBuilder().setCustomId(DELETE_ID).setLabel(c.typeConfirmLabel).setEmoji("🗑️").setStyle(ButtonStyle.Danger)
+			new ButtonBuilder().setCustomId(`${DELETE_ID}:${readAutoHeal(interaction)}`).setLabel(c.typeConfirmLabel).setEmoji("🗑️").setStyle(ButtonStyle.Danger)
 		);
 		await answerInChannel(interaction, "admin", { embeds: [infoEmbed(c.deleteDataTitle, c.deleteDataBody, COLORS.ERROR)], components: [row] });
 		return;
@@ -290,7 +320,7 @@ async function runChoice(interaction: ModalSubmitInteraction, guild: Guild): Pro
 // "every setting kept"), then Dero built fresh, Headquarters only. Its answers stay
 // private: they answer an interaction in a channel being deleted, and the rebuilt
 // 🔒inner-sanctum carries the next step.
-async function runJustDeleteChannels(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
+async function runJustDeleteChannels(interaction: ModalSubmitInteraction, guild: Guild, autoHeal: AutoHealChoice): Promise<void> {
 	// Logged BEFORE the teardown on purpose: the log channel is about to be deleted,
 	// and the BotLog row is written either way.
 	auditAttempt(interaction, c.auditChannelsConfirmed);
@@ -311,7 +341,7 @@ async function runJustDeleteChannels(interaction: ModalSubmitInteraction, guild:
 		console.error(`[self-destruct] settings reset failed in guild ${guild.id}`, error);
 		content = c.deletePartial([c.settingsLabel]);
 	}
-	content = `${content} ${await rebuildAfterTeardown(guild)}`;
+	content = `${content} ${await rebuildAfterTeardown(guild, autoHeal)}`;
 	// Best effort: the channel this ran in may already be gone.
 	await interaction.followUp({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined);
 }
@@ -368,7 +398,7 @@ async function handleConfirmModal(interaction: ModalSubmitInteraction, guild: Gu
 		failed.push(c.settingsLabel);
 	}
 	const outcome = failed.length === 0 ? c.deleteDone : c.deletePartial(failed);
-	const content = `${outcome} ${await rebuildAfterTeardown(guild)}`;
+	const content = `${outcome} ${await rebuildAfterTeardown(guild, autoHealFromCustomId(interaction.customId))}`;
 	// Best-effort follow-up; the channel this ran in is already gone, and an
 	// ephemeral follow up may go with it.
 	await interaction.followUp({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined);
@@ -376,13 +406,31 @@ async function handleConfirmModal(interaction: ModalSubmitInteraction, guild: Gu
 
 /**
  * Build Dero fresh after either teardown and return the line that says where to go
- * next. Runs after the settings reset, so the new Headquarters reads default settings.
+ * next. Runs after the settings reset, so the new Headquarters reads default settings,
+ * and turns auto heal off first when the owner asked (the reset turned it back on).
  * The flag is cleared only once the rebuild stands, so the boot sweep then repairs the
  * new Headquarters like any other; a rebuild that does not stand (Dero lost Manage
  * Channels, a write failed) keeps the flag, and the line names /setup, whose rebuild
  * branch is the retry. Never throws: the teardown is done whatever happens here.
  */
-async function rebuildAfterTeardown(guild: Guild): Promise<string> {
+async function rebuildAfterTeardown(guild: Guild, autoHeal: AutoHealChoice): Promise<string> {
+	const autoHealLine = await applyAutoHealChoice(guild.id, autoHeal);
+	return [await rebuildLine(guild), autoHealLine].filter(Boolean).join(" ");
+}
+
+// The owner's auto heal pick, and the sentence the done line adds for it (none for on).
+async function applyAutoHealChoice(guildId: string, autoHeal: AutoHealChoice): Promise<string> {
+	if (autoHeal === "on") return "";
+	try {
+		await guildConfigStore.update(guildId, { autoHealEnabled: false });
+		return c.autoHealOffDone;
+	} catch (error) {
+		console.error(`[self-destruct] could not turn auto heal off in guild ${guildId}`, error);
+		return c.autoHealOffFailed;
+	}
+}
+
+async function rebuildLine(guild: Guild): Promise<string> {
 	try {
 		if (!(await GuildSetupManager.rebuildDestroyedHomebase(guild))) return c.rebuildFailed;
 		await guildConfigStore.update(guild.id, { homebaseDestroyed: false });
