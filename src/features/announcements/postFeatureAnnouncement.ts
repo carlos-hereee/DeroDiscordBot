@@ -79,7 +79,8 @@ const VERSION_SHIPPED_AT: Record<string, string> = {
 	"1.4.0": "2026-04-25T00:00:00Z",
 	"1.5.0": "2026-05-11T00:00:00Z",
 	"1.5.1": "2026-05-13T00:00:00Z",
-	"1.7.0": "2026-09-28T00:00:00Z",
+	// The release prepared as 1.7.0 ships as 2.0.0, so 1.7.0 never reached a guild.
+	"2.0.0": "2026-11-03T00:00:00Z",
 };
 
 export async function postFeatureAnnouncements(client: Client): Promise<void> {
