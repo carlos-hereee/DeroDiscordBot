@@ -429,7 +429,9 @@ async function demolishHomebase(guild: Guild, actorId: string): Promise<void> {
 async function clearManagedSlots(guildId: string): Promise<void> {
 	const cleared = Object.fromEntries([...HOMEBASE_CHANNEL_FIELDS, ...MANAGED_CATEGORY_FIELDS].map((field) => [field, null]));
 	try {
-		await guildConfigStore.update(guildId, { ...cleared, onDemandChannels: [], tutorialCardMessageIds: {} });
+		// The two roles /setup picked go too, so the rebuilt 🔒inner-sanctum starts at step
+		// one with its Set up Dero button, like a new server (isAdminRolePending reads it).
+		await guildConfigStore.update(guildId, { ...cleared, adminRoleId: null, memberRoleId: null, onDemandChannels: [], tutorialCardMessageIds: {} });
 	} catch (error) {
 		console.warn(`[self-destruct] could not clear the stored channel ids in guild ${guildId}; the next /setup rebuilds the old layout`, error);
 	}

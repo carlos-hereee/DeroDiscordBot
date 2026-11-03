@@ -73,10 +73,13 @@ export async function run(interaction: RepliableInteraction, options: CommandOpt
 			// back before clearing the flag. Otherwise the owner is stranded with
 			// the flag cleared, a stale categoryId, and no channels, unable to
 			// rebuild via /setup. Re-read the fresh config and verify the category.
+			// A self destructed server rebuilds 🏰 DERO HEADQUARTERS alone (2026-11 item 285
+			// debug pass), storing no notice board, so the category proved is the notice
+			// board's when there is one and Headquarters' otherwise. Checking only categoryId
+			// failed every such rebuild and left the roles unset.
 			const rebuilt = await guildConfigStore.findByGuildId(interaction.guildId!);
-			const category = rebuilt?.categoryId
-				? await interaction.guild!.channels.fetch(rebuilt.categoryId).catch(() => null)
-				: null;
+			const rebuiltCategoryId = rebuilt?.categoryId ?? (rebuilt as { headquartersCategoryId?: string | null } | null)?.headquartersCategoryId ?? null;
+			const category = rebuiltCategoryId ? await interaction.guild!.channels.fetch(rebuiltCategoryId).catch(() => null) : null;
 			if (!category) {
 				// Leave homebaseDestroyed=true so a retry re-enters this branch.
 				await answer.send({ embeds: [errorEmbed(responses.setupFailed)] });

@@ -2496,6 +2496,19 @@ describe("GuildSetupManager on a Headquarters only install", () => {
 		expect(payload.userRemovedChannels).toEqual(ARCADE_FIELDS);
 	});
 
+	// A /setup retried after a self destruct, or a forced rebuild of a Headquarters only
+	// server, finds its Headquarters id stored and still no notice board: it stays fresh.
+	it("keeps a forced rebuild of a Headquarters only row Headquarters only", async () => {
+		guildConfigMock.findByGuildId.mockResolvedValue(makeHeadquartersOnlyRow({ homebaseDestroyed: true }));
+		const guild = makeInstallGuild();
+
+		await GuildSetupManager.autoSetup(guild, { guildId: "guild-1", ownerId: "owner-1" }, { force: true });
+
+		const categories = callsOf(guild).filter((call) => call.type === ChannelType.GuildCategory).map((call) => call.name);
+		expect(categories).not.toContain(rokCommanderCopy.setup.categoryName);
+		expect(categories).not.toContain(rokCommanderCopy.setup.gamesCategoryName);
+	});
+
 	it("leaves a legacy row alone without force, exactly as before", async () => {
 		guildConfigMock.findByGuildId.mockResolvedValue(makeStoredConfig());
 		const guild = makeInstallGuild();
